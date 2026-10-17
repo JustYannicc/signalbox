@@ -60,7 +60,8 @@ import * as CloudflareSearchIndex from "../search/CloudflareSearchIndex.ts";
 import * as CloudThreadService from "../thread/CloudThreadService.ts";
 import * as ThreadInbox from "../thread/ThreadInbox.ts";
 import * as ThreadsLive from "../thread/ThreadsLive.ts";
-import * as ModelManifest from "../thread/ModelManifest.ts";
+import * as ModelManifest from "../models/ModelManifest.ts";
+import * as ModelCatalog from "../models/ModelCatalog.ts";
 import { scriptedProviderEnabled } from "../thread/scriptedProvider.ts";
 import type { MachineBackendEnv } from "../thread/runner/MachineBackend.ts";
 import { type PreviewEnv, previewSettings } from "../thread/preview/previewHost.ts";
@@ -338,7 +339,7 @@ const makeRuntime = (ctx: DurableObjectState, env: UserObjectEnv) => {
               ),
             ),
           ),
-          Layer.provideMerge(ModelManifest.layer),
+          Layer.provideMerge(ModelCatalog.layer.pipe(Layer.provideMerge(ModelManifest.layer))),
           Layer.provideMerge(
             GitHub.layerForUsers(GitHub.gitHubEndpoints(env)).pipe(
               Layer.provide(FetchHttpClient.layer),

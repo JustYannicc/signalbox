@@ -40,6 +40,26 @@ beforeEach(() => {
 });
 
 describe("addBrowserSurface", () => {
+  it("opens the cloud agent's existing browser without creating a preview session", async () => {
+    const openPreview = vi.fn(async (_input: PreviewOpenInput) =>
+      AsyncResult.success(snapshot("wrong-preview")),
+    );
+    useRightPanelStore.getState().open(threadRef, "agent-browser");
+    useRightPanelStore.getState().close(threadRef);
+
+    await addBrowserSurface({
+      threadRef,
+      openPreview: ({ input }) => openPreview(input),
+      target: "agent-browser",
+    });
+
+    const panel = selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, threadRef);
+    expect(openPreview).not.toHaveBeenCalled();
+    expect(panel.activeSurfaceId).toBe("agent-browser");
+    expect(panel.surfaces).toEqual([{ id: "agent-browser", kind: "agent-browser" }]);
+    expect(readThreadPreviewState(threadRef).sessions).toEqual({});
+  });
+
   it("opens under the requested profile", async () => {
     const openPreview = vi.fn(async (_input: PreviewOpenInput) =>
       AsyncResult.success(snapshot("tab-1")),

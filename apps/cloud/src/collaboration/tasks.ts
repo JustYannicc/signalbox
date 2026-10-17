@@ -7,7 +7,7 @@ import type {
 import * as Effect from "effect/Effect";
 
 import type * as ThreadInbox from "../thread/ThreadInbox.ts";
-import { poolKindOfInstance } from "../thread/providerCatalog.ts";
+import { poolKindOfInstance } from "../models/ModelRouting.ts";
 import { activeRun, isTerminalRunStatus } from "../thread/runLifecycle.ts";
 import { latestLogicalRun, runOrigin } from "../thread/runContinuations.ts";
 import type { TaskRecords } from "./taskRecords.ts";

@@ -10,6 +10,7 @@ import {
   ServerSettingsError,
 } from "@t3tools/contracts";
 import { AccountHubRpcError } from "@t3tools/contracts/accountHub";
+import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
@@ -17,15 +18,9 @@ import * as Schedule from "effect/Schedule";
 import * as Stream from "effect/Stream";
 
 import * as Environment from "../environment.ts";
-import {
-  accountPool,
-  limitsSource,
-  overview,
-  poolDefaultModelSelection,
-  poolProviderInstances,
-} from "../pool/poolViews.ts";
+import { accountPool, limitsSource, overview } from "../pool/poolViews.ts";
 import type { PoolActor } from "../pool/PoolEngine.ts";
-import { makePoolModelCatalog, type PoolModelCatalog } from "../pool/poolModelCatalog.ts";
+import * as ModelCatalog from "../models/ModelCatalog.ts";
 import * as PoolSignIns from "./PoolSignIns.ts";
 import * as UserPools from "./UserPools.ts";
 import * as UserModelSettings from "./UserModelSettings.ts";
@@ -89,18 +84,7 @@ export const POOL_REQUIRED_SCOPES = {
 const notYet = (what: string) =>
   Effect.fail(new AccountHubRpcError({ detail: `Signalbox Cloud pools can't ${what} yet.` }));
 
-/** The server config with the user's pools in it. */
-const configOf = (
-  identity: Environment.CloudEnvironmentIdentity,
-  state: UserPools.PoolsState,
-  { checkedAt, providers }: Effect.Success<ReturnType<PoolModelCatalog>>,
-) => {
-  return Environment.serverConfig(identity, checkedAt, {
-    providers,
-    instances: poolProviderInstances(state.map((entry) => entry.pool)),
-    defaultModelSelection: poolDefaultModelSelection(providers),
-  });
-};
+const now = Effect.map(DateTime.now, DateTime.formatIso);
 
 const NO_POOLS: UserPools.PoolsState = [];
 
@@ -116,7 +100,7 @@ const serverSettingsError = (operation: "normalize" | "write-file" = "normalize"
   new ServerSettingsError({ settingsPath: "cloud model settings", operation });
 
 /** What settings say about the pools: their instances, named after them, and the default model. */
-const settingsKey = (config: ReturnType<typeof configOf>) =>
+const settingsKey = (config: ReturnType<typeof Environment.serverConfig>) =>
   JSON.stringify([
     config.settings.providerInstances,
     config.settings.defaultModelSelection,
@@ -170,13 +154,17 @@ export const makePoolHandlers = (input: {
   Effect.gen(function* () {
     const pools = yield* UserPools.UserPools;
     const signIns = yield* PoolSignIns.PoolSignIns;
-    const poolModelCatalog = yield* makePoolModelCatalog;
+    const catalog = yield* ModelCatalog.ModelCatalog;
     const modelSettings = yield* UserModelSettings.UserModelSettings;
     const { actor, identity } = input;
     const configNowOf = (state: UserPools.PoolsState) =>
-      poolModelCatalog(state).pipe(Effect.map((catalog) => configOf(identity, state, catalog)));
+      Effect.flatMap(now, (checkedAt) =>
+        Effect.map(catalog.view({ pools: state, checkedAt }), (view) =>
+          Environment.serverConfig(identity, checkedAt, view),
+        ),
+      );
     const withModelSettings = (
-      config: ReturnType<typeof configOf>,
+      config: ReturnType<typeof Environment.serverConfig>,
       saved: UserModelSettings.ModelSettingsSnapshot,
     ) => {
       const filtered = UserModelSettings.filterAvailableModels(
@@ -315,7 +303,9 @@ export const makePoolHandlers = (input: {
         followPools(pools, actor).pipe(
           Stream.mapEffect((state) =>
             Effect.map(Clock.currentTimeMillis, (now) =>
-              state.map((entry) => overview(entry.pool, entry.source, now)),
+              state.map(
+                (entry) => entry.lastKnownOverview ?? overview(entry.pool, entry.source, now),
+              ),
             ),
           ),
         ),
