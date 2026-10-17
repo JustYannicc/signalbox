@@ -955,6 +955,8 @@ function deriveTurnFolds(input: {
   timelineEntries: ReadonlyArray<TimelineEntry>;
   terminalAssistantMessageIds: ReadonlySet<string>;
   latestRun: TimelineLatestRun | null;
+  /** signalbox: each settled run's own status and times; see settledRunSummaries. */
+  settledRuns: ReadonlyMap<RunId, TimelineLatestRun> | undefined;
   unfoldedRunIds: ReadonlySet<RunId>;
   runlessWorkActive: boolean;
   liveSubagentEntryIds: ReadonlySet<string>;
@@ -1104,22 +1106,24 @@ function deriveTurnFolds(input: {
       continue;
     }
 
-    const isLatestInterruptedTurn =
-      input.latestRun?.runId === runId && input.latestRun.status === "interrupted";
+    // A turn's own run says how it ended and how long it took, even once a newer turn is latest.
+    const run =
+      input.latestRun?.runId === runId ? input.latestRun : (input.settledRuns?.get(runId) ?? null);
+    const isInterruptedTurn = run?.status === "interrupted";
     // A turn cut short by a steer leaves trailing work entries behind its
     // terminal message — take whichever ended last.
     const lastEntryEnd =
       lastEntry.kind === "message" ? lastEntry.message.updatedAt : lastEntry.createdAt;
     const elapsedMs =
-      input.latestRun?.runId === runId && input.latestRun.startedAt && input.latestRun.completedAt
-        ? computeElapsedMs(input.latestRun.startedAt, input.latestRun.completedAt)
+      run?.startedAt && run.completedAt
+        ? computeElapsedMs(run.startedAt, run.completedAt)
         : computeElapsedMs(
             group.startBoundary ?? firstEntry.createdAt,
             maxIsoTimestamp(group.terminalEntry?.message.updatedAt ?? null, lastEntryEnd) ??
               lastEntryEnd,
           );
     const duration = elapsedMs !== null ? formatDuration(elapsedMs) : null;
-    const label = isLatestInterruptedTurn
+    const label = isInterruptedTurn
       ? duration
         ? `You stopped after ${duration}`
         : "You stopped this response"
@@ -1291,7 +1295,12 @@ function timelineRowEntries(entries: ReadonlyArray<TimelineEntry>) {
 function deriveTimelineTurnFolds(
   input: Pick<
     MessagesTimelineRowsInput,
-    "timelineEntries" | "latestRun" | "isWorking" | "runlessWorkActive" | "runningRunId"
+    | "timelineEntries"
+    | "latestRun"
+    | "settledRuns"
+    | "isWorking"
+    | "runlessWorkActive"
+    | "runningRunId"
   >,
 ) {
   const timelineEntries = timelineRowEntries(input.timelineEntries);
@@ -1306,6 +1315,7 @@ function deriveTimelineTurnFolds(
     timelineEntries,
     terminalAssistantMessageIds: deriveTerminalAssistantMessageIds(timelineEntries),
     latestRun: input.latestRun ?? null,
+    settledRuns: input.settledRuns,
     unfoldedRunIds: new Set([...activeVisualResponseRunIds, ...failedRunIds]),
     runlessWorkActive: input.isWorking && input.runlessWorkActive === true,
     liveSubagentEntryIds: liveSubagentCardEntryIds(timelineEntries),
@@ -1316,6 +1326,7 @@ function deriveTimelineTurnFolds(
 export function deriveMessagesTimelineRows(input: {
   timelineEntries: ReadonlyArray<TimelineEntry>;
   latestRun?: TimelineLatestRun | null;
+  settledRuns?: ReadonlyMap<RunId, TimelineLatestRun>;
   runningRunId?: RunId | null;
   expandedRunIds?: ReadonlySet<RunId>;
   expandedAttemptIds?: ReadonlySet<RunAttemptId>;
@@ -1370,6 +1381,7 @@ export function deriveMessagesTimelineRows(input: {
     timelineEntries: timelineEntries,
     terminalAssistantMessageIds,
     latestRun: input.latestRun ?? null,
+    settledRuns: input.settledRuns,
     unfoldedRunIds: new Set([...activeVisualResponseRunIds, ...failedRunIds]),
     runlessWorkActive,
     liveSubagentEntryIds,
@@ -1991,7 +2003,12 @@ export function timelineEntryTurnFoldRunId(
 export function timelineTurnFoldRunIdsByEntryId(
   input: Pick<
     MessagesTimelineRowsInput,
-    "timelineEntries" | "latestRun" | "isWorking" | "runlessWorkActive" | "runningRunId"
+    | "timelineEntries"
+    | "latestRun"
+    | "settledRuns"
+    | "isWorking"
+    | "runlessWorkActive"
+    | "runningRunId"
   >,
 ): ReadonlyMap<string, RunId> {
   const byEntryId = new Map<string, RunId>();

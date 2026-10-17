@@ -63,6 +63,7 @@ import {
   type EnvironmentId,
   type MessageId,
   type ModelSelection,
+  type OrchestrationV2Run,
   type ProjectScript,
   type ProjectId,
   type PreviewAnnotationPayload,
@@ -533,6 +534,7 @@ import {
   startAttachmentUpload,
 } from "../lib/attachmentUploadQueue";
 import { sanitizeThreadErrorMessage } from "~/rpc/transportError";
+import { useSettledRunSummaries } from "./chat/settledRunSummaries"; // signalbox
 import { RightPanelSheet } from "./RightPanelSheet";
 import { previewEnvironment } from "../state/preview";
 import { clampFileAttachmentUploadBytes } from "@t3tools/client-runtime/state/attachments";
@@ -578,6 +580,7 @@ import { recallableComposerPrompt } from "./chat/composerPromptHistory";
 import { observeResize } from "~/lib/observeResize";
 
 const EMPTY_PROVIDERS: ServerProvider[] = [];
+const EMPTY_RUNS: ReadonlyArray<OrchestrationV2Run> = [];
 const EMPTY_PROVIDER_MODELS: ServerProvider["models"] = [];
 const EMPTY_USAGE_LIMIT_SOURCES: UsageLimitSourceSnapshots = [];
 import type { CodexArtifactTemplate } from "@t3tools/shared/codexArtifactTemplates";
@@ -1556,6 +1559,7 @@ export default function ChatView(props: ChatViewProps) {
     () => (serverProjection === null ? null : deriveThreadActivityRun(serverProjection)),
     [serverProjection],
   );
+  const settledRuns = useSettledRunSummaries(serverProjection?.runs ?? EMPTY_RUNS); // signalbox
   const serverRuntime = useMemo(
     () => (serverProjection === null ? null : deriveThreadRuntime(serverProjection)),
     [serverProjection],
@@ -8532,6 +8536,7 @@ export default function ChatView(props: ChatViewProps) {
                 providerStatuses={timelineProviders}
                 runs={paintOnlyDisplayedTimeline ? [] : (serverProjection?.runs ?? [])}
                 latestRun={paintOnlyDisplayedTimeline ? null : activeActivityRun}
+                settledRuns={paintOnlyDisplayedTimeline ? undefined : settledRuns}
                 runningRunId={paintOnlyDisplayedTimeline ? null : activeRunningTurnId}
                 turnDiffSummaries={
                   paintOnlyDisplayedTimeline ? EMPTY_HELD_TURN_DIFF_SUMMARIES : turnDiffSummaries
