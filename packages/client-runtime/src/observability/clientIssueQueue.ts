@@ -253,7 +253,7 @@ export function createClientIssueQueue() {
             .filter((entry) => failedDestinations.has(entry.event.environmentId))
             .map((entry) => entry.event.environmentId),
         );
-        if (failed > 0 && pending.length > 0) {
+        if (failed > 0 && pending.length > 0 && skippedDestinations.size === 0) {
           scheduleNextRetry();
         } else if (pending.length === 0) {
           retryCount = 0;

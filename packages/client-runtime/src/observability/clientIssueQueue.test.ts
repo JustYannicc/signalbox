@@ -138,6 +138,58 @@ describe("client issue queue", () => {
     expect(getClientIssueReportingStats()).toEqual({ pending: 1, dropped: 0 });
   });
 
+  it("preserves a retry that fires during another destination's failing send", async () => {
+    let attemptsA = 0;
+    let attemptsB = 0;
+    const blockedB = Promise.withResolvers<void>();
+    const startedB = Promise.withResolvers<void>();
+    const nextScheduled = Promise.withResolvers<number>();
+    const retries: Array<() => Promise<ClientIssueFlushResult> | undefined> = [];
+    const delays: number[] = [];
+    configureClientIssueReporting({
+      client: "web",
+      release: "development",
+      scheduleRetry: (callback, delayMs) => {
+        retries.push(callback);
+        delays.push(delayMs);
+        if (delayMs === 5_000) nextScheduled.resolve(attemptsA);
+        return () => undefined;
+      },
+      send: async (event) => {
+        if (event.environmentId === "env-a") {
+          attemptsA += 1;
+          throw new Error("offline A");
+        }
+        attemptsB += 1;
+        if (attemptsB === 1) {
+          startedB.resolve();
+          await blockedB.promise;
+        }
+        throw new Error("offline B");
+      },
+    });
+    reportClientIssue({
+      code: "connection.status",
+      severity: "error",
+      source: "ui",
+      environmentId: "env-a",
+    });
+    await flushClientIssues();
+    reportClientIssue({
+      code: "connection.status",
+      severity: "error",
+      source: "ui",
+      environmentId: "env-b",
+    });
+    await startedB.promise;
+    const collidedRetry = retries[0]!();
+    blockedB.reject(new Error("offline B"));
+    await collidedRetry;
+    expect(await nextScheduled.promise).toBe(2);
+    expect(delays).toEqual([1_000, 5_000]);
+    expect(attemptsB).toBe(2);
+  });
+
   it("exhausts three timer retries and recovers on a new report after the cooldown", async () => {
     let nowMillis = 0;
     vi.spyOn(performance, "now").mockImplementation(() => nowMillis);
