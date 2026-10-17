@@ -11,6 +11,7 @@ import { PERSONAL_CONTEXT_ID } from "@t3tools/contracts/signalboxContexts";
 import { DurableObject } from "cloudflare:workers";
 import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
+import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as ManagedRuntime from "effect/ManagedRuntime";
@@ -318,6 +319,8 @@ export class ThreadObject extends DurableObject<ThreadObjectEnv> implements Thre
       (at) => this.setAlarmNoLaterThan(at),
     );
     this.recovery = makeRecoveryDrill(env, {
+      incarnation: () =>
+        this.runtime.runPromise(Effect.flatMap(Crypto.Crypto, (crypto) => crypto.randomUUIDv4())),
       load: () => ctx.storage.get<RecoveryDrillState>("recovery-drill-v1"),
       save: (state) => ctx.storage.put("recovery-drill-v1", state),
       inspect: (userId, commandIds) =>

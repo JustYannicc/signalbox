@@ -51,6 +51,7 @@ export interface RecoveryDrillState {
 }
 
 interface RecoveryDrillHost {
+  readonly incarnation: () => Promise<string>;
   readonly load: () => Promise<RecoveryDrillState | undefined>;
   readonly save: (state: RecoveryDrillState) => Promise<void>;
   readonly inspect: (
@@ -69,8 +70,8 @@ const matches = (expected: typeof Expected.Type, evidence: RecoveryEvidence) =>
 
 /** Private service-binding controls. The public Worker never routes requests here. */
 export const makeRecoveryDrill = (env: RecoveryDrillEnv, host: RecoveryDrillHost) => {
-  let incarnation: string | undefined;
-  const incarnationOf = () => (incarnation ??= crypto.randomUUID());
+  let incarnation: Promise<string> | undefined;
+  const incarnationOf = () => (incarnation ??= host.incarnation());
   return {
     async command(userId: string, input: unknown) {
       if (!recoveryDrillsEnabled(env)) return rejection("disabled");
@@ -83,11 +84,11 @@ export const makeRecoveryDrill = (env: RecoveryDrillEnv, host: RecoveryDrillHost
       if (command.action === "enroll") {
         const state = stored ?? { enabled: true, userId, faults: [] };
         await host.save({ ...state, enabled: true });
-        return { incarnation: incarnationOf(), evidence, state: { ...state, enabled: true } };
+        return { incarnation: await incarnationOf(), evidence, state: { ...state, enabled: true } };
       }
       if (stored === undefined || stored.userId !== userId) return rejection("not_enrolled");
       if (command.action === "inspect")
-        return { incarnation: incarnationOf(), evidence, state: stored };
+        return { incarnation: await incarnationOf(), evidence, state: stored };
       if (command.action === "disable") {
         const state = {
           ...stored,
@@ -97,13 +98,13 @@ export const makeRecoveryDrill = (env: RecoveryDrillEnv, host: RecoveryDrillHost
           ),
         };
         await host.save(state);
-        return { incarnation: incarnationOf(), evidence, state };
+        return { incarnation: await incarnationOf(), evidence, state };
       }
       if (!stored.enabled) return rejection("not_enrolled");
       const previous = stored.faults.find((fault) => fault.id === command.id);
       if (previous !== undefined) {
         return previous.action === command.action
-          ? { incarnation: incarnationOf(), evidence, state: stored, replayed: true }
+          ? { incarnation: await incarnationOf(), evidence, state: stored, replayed: true }
           : rejection("id_conflict");
       }
       if (command.expected === undefined || !matches(command.expected, evidence)) {
@@ -114,7 +115,7 @@ export const makeRecoveryDrill = (env: RecoveryDrillEnv, host: RecoveryDrillHost
       const fault: Fault = {
         id: command.id,
         action: command.action,
-        incarnation: incarnationOf(),
+        incarnation: await incarnationOf(),
         before: evidence,
         deliveries: [],
         complete: command.action === "reset",
@@ -127,7 +128,7 @@ export const makeRecoveryDrill = (env: RecoveryDrillEnv, host: RecoveryDrillHost
       await host.save(state);
       if (command.action === "reset") host.reset();
       else await host.arm();
-      return { incarnation: incarnationOf(), evidence, state };
+      return { incarnation: await incarnationOf(), evidence, state };
     },
 
     async alarm(

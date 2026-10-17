@@ -37,8 +37,10 @@ const fixture = (env: RecoveryDrillEnv = preview) => {
   let resets = 0;
   let arms = 0;
   let inspected = 0;
+  let incarnations = 0;
   const drill = () =>
     makeRecoveryDrill(env, {
+      incarnation: async () => `object-${++incarnations}`,
       load: async () => structuredClone(state),
       save: async (value) => {
         state = structuredClone(value);
