@@ -228,6 +228,10 @@ export class DriveObject extends DurableObject<DriveObjectEnv> implements DriveO
     return this.api.restoreCheckpoint(...args);
   }
 
+  undoRestore(...args: Parameters<DriveObjectApi["undoRestore"]>) {
+    return this.api.undoRestore(...args);
+  }
+
   updateToLatest(...args: Parameters<DriveObjectApi["updateToLatest"]>) {
     return this.api.updateToLatest(...args);
   }

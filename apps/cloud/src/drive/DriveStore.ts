@@ -120,6 +120,16 @@ export interface RestoreCheckpointRequest {
   readonly generation: number;
 }
 
+export interface UndoRestoreRequest {
+  readonly threadId: string;
+  readonly restoreOperationId: string;
+  readonly operationId: string;
+  readonly expectedThread: Oid | null;
+  readonly expectedWip: Oid | null;
+  /** The generation currently held by the thread; undo advances it by one. */
+  readonly generation: number;
+}
+
 export interface UpdateToLatestRequest {
   readonly threadId: string;
   readonly operationId: string;
@@ -319,11 +329,20 @@ export class DriveStore extends Context.Service<
     /**
      * Restores branch and autosave to a retained checkpoint, fencing older machines.
      * The caller stops the active Runner first; this advances generation so any
-     * subsequent write from the stopped Runner is refused.
+     * subsequent write from the stopped Runner is refused. The next Runner uses
+     * the generation returned with the operation result.
      */
     readonly restoreCheckpoint: (
       userId: string,
       request: RestoreCheckpointRequest,
+    ) => Effect.Effect<CheckpointOperationResult, SqlError>;
+    /**
+     * Reverses one successful restore while preserving current refs under private refs.
+     * The next Runner must use the generation returned here.
+     */
+    readonly undoRestore: (
+      userId: string,
+      request: UndoRestoreRequest,
     ) => Effect.Effect<CheckpointOperationResult, SqlError>;
     /**
      * Explicitly drops a thread's historical input-view pins. The caller stops
@@ -441,6 +460,9 @@ const migrations = Migrator.fromRecord({
   "0006_ref_events": DriveEvents.createTables,
   // Immutable turn checkpoints and idempotent fork/restore receipts (#498).
   "0007_drive_revisions": DriveRevisions.createTables,
+  // Undo snapshots for restores already tracked by 0007.
+  "0008_drive_restore_snapshots": DriveRevisions.createRestoreTables,
+  "0009_ref_deletions": DriveEvents.allowDeletedRefs,
 });
 
 /** Applies every migration not recorded yet (`storage/migrations.ts`). Never edit or rename a merged one. */
@@ -600,11 +622,15 @@ const make = Effect.gen(function* () {
   const land = (
     name: string,
     before: Oid | null,
-    after: Oid,
+    after: Oid | null,
     by: { readonly threadId: string } | { readonly userId: string },
   ) => {
     const threadId = "threadId" in by ? by.threadId : null;
-    return setRef(name, after, "threadId" in by ? by.threadId : by.userId).pipe(
+    const move =
+      after === null
+        ? sql`DELETE FROM refs WHERE name = ${name}`.pipe(Effect.asVoid)
+        : setRef(name, after, "threadId" in by ? by.threadId : by.userId);
+    return move.pipe(
       Effect.andThen(
         before === after ? Effect.void : events.record({ ref: name, before, after, threadId }),
       ),
@@ -1026,6 +1052,8 @@ const make = Effect.gen(function* () {
     wipRef,
     setRef,
     land,
+    removeRef: (name) => sql`DELETE FROM refs WHERE name = ${name}`.pipe(Effect.asVoid),
+    internalRef: storedRef,
     fence,
   });
 

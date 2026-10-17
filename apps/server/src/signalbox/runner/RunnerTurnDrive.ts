@@ -65,14 +65,35 @@ const recordCheckpoint = (input: {
   readonly emit: (item: RunnerItem) => Effect.Effect<void>;
 }) =>
   Effect.gen(function* () {
-    yield* input.drive.recordCheckpoint({
-      threadId: input.threadId,
-      runId: input.runId,
-      turnId: input.turnId,
-      commit: input.checkpoint.commit,
-      start: input.checkpoint.start,
-      views: input.views,
-    });
+    yield* input.drive
+      .recordCheckpoint({
+        threadId: input.threadId,
+        runId: input.runId,
+        turnId: input.turnId,
+        commit: input.checkpoint.commit,
+        start: input.checkpoint.start,
+        views: input.views,
+      })
+      .pipe(
+        Effect.catchCause((cause) => {
+          const error = Cause.squash(cause);
+          return Effect.logError(
+            "retaining the turn's checkpoint failed",
+            Cause.pretty(cause),
+          ).pipe(
+            Effect.andThen(
+              input.emit(
+                notice(
+                  input.runId,
+                  isUserFacing(error)
+                    ? `Retaining this turn's checkpoint failed: ${error.message}`
+                    : "Retaining this turn's checkpoint failed; its files remain saved.",
+                ),
+              ),
+            ),
+          );
+        }),
+      );
     yield* input.emit({ kind: "drive.checkpoint", runId: input.runId, ...input.checkpoint });
   });
 

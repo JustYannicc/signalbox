@@ -1,11 +1,15 @@
 import { afterEach, describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
+import * as Layer from "effect/Layer";
+import * as SqlClient from "effect/sql/SqlClient";
+import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 
 import { makeMemoryCloud } from "../testing.ts";
 import * as UserDirectory from "../user/UserDirectory.ts";
 import { DriveDirectory } from "./DriveDirectory.ts";
 import { DriveRefEvent } from "./DriveEvents.ts";
+import * as DriveEvents from "./DriveEvents.ts";
 import { MAIN_REF, machineRef, threadRef, wipRef } from "./DriveStore.ts";
 import { makeMemoryDrives, makeRepo } from "./driveTesting.ts";
 import { uploadPack } from "./DriveUploads.ts";
@@ -72,6 +76,83 @@ const refsOf = (moves: ReadonlyArray<DriveRefEvent>) =>
   moves.map((move) => [move.ref, move.before, move.after]);
 
 describe("drive events", () => {
+  it.effect("undoing a restore to an unborn branch delivers its deletion", () =>
+    Effect.gen(function* () {
+      const { received, drive, upload } = setup();
+      const driveId = "my/personal/user_1";
+      const git = repo();
+      git.write("notes.md", "interrupted work\n");
+      const first = git.commit("Interrupted turn");
+      yield* upload(driveId, "t1", git.pack([first]));
+      const handle = yield* drive(driveId);
+      const as = writer("user_1", "t1");
+      yield* handle.open(as);
+      yield* handle.updateRefs(as, [{ name: wipRef("t1"), old: null, new: first }]);
+      expect(
+        (yield* handle.recordCheckpoint(as, {
+          runId: "interrupted-run",
+          turnId: "interrupted-turn",
+          commit: first,
+          start: null,
+          notes: first,
+          views: { shortcuts: [], context: null },
+        }))._tag,
+      ).toBe("ok");
+      expect(
+        (yield* handle.restoreCheckpoint("user_1", {
+          threadId: "t1",
+          runId: "interrupted-run",
+          operationId: "restore",
+          expectedThread: null,
+          expectedWip: first,
+          generation: 1,
+        }))._tag,
+      ).toBe("ok");
+      expect(
+        yield* handle.undoRestore("user_1", {
+          threadId: "t1",
+          restoreOperationId: "restore",
+          operationId: "undo",
+          expectedThread: first,
+          expectedWip: first,
+          generation: 2,
+        }),
+      ).toMatchObject({ _tag: "ok", refs: { thread: null, wip: first } });
+      const moves = received.flatMap((delivery) => delivery.moves);
+      expect(refsOf(moves)).toEqual([
+        [threadRef("t1"), null, first],
+        [threadRef("t1"), first, null],
+      ]);
+      expect(moves[1]).toMatchObject({ commits: [], commitsTruncated: false });
+    }),
+  );
+
+  it.effect("upgrades pending events without reusing pruned sequence numbers", () => {
+    const layer = DriveEvents.layer("my/personal/user_1").pipe(
+      Layer.provideMerge(NodeSqliteClient.layer({ filename: ":memory:" })),
+    );
+    return Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      yield* DriveEvents.createTables;
+      yield* sql`CREATE TABLE members (user_id TEXT, role TEXT)`;
+      const events = yield* DriveEvents.DriveEvents;
+      const first = { ref: "threads/t1", before: null, after: "first", threadId: "t1" };
+      yield* events.record(first);
+      yield* events.record({ ...first, after: "second" });
+      yield* events.record({ ...first, after: "third" });
+      yield* sql`DELETE FROM ref_events WHERE seq > 1`;
+      yield* sql`DELETE FROM ref_event_deliveries WHERE seq > 1`;
+      const pending = yield* events.pending("user_1", 10);
+      yield* DriveEvents.allowDeletedRefs.pipe(sql.withTransaction);
+      expect(yield* events.pending("user_1", 10)).toEqual(pending);
+      yield* events.record({ ...first, before: "first", after: null });
+      expect(yield* events.pending("user_1", 10)).toMatchObject([
+        { sequence: 1, after: "first" },
+        { sequence: 4, before: "first", after: null },
+      ]);
+    }).pipe(Effect.provide(layer));
+  });
+
   it.effect("main and branch moves reach the owner in order, and a failed call is sent again", () =>
     Effect.gen(function* () {
       const { received, state, drive, upload } = setup();

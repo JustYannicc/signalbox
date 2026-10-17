@@ -16,6 +16,7 @@ import type {
   PromisedFile,
   RefWrite,
   RestoreCheckpointRequest,
+  UndoRestoreRequest,
   Shortcut,
   ShortcutChange,
   StoredCommit,
@@ -116,6 +117,10 @@ export interface DriveObjectApi {
     userId: string,
     request: RestoreCheckpointRequest,
   ) => Promise<CheckpointOperationResult>;
+  readonly undoRestore: (
+    userId: string,
+    request: UndoRestoreRequest,
+  ) => Promise<CheckpointOperationResult>;
   readonly updateToLatest: (
     userId: string,
     request: UpdateToLatestRequest,
@@ -179,6 +184,7 @@ export function handleFor(api: DriveObjectApi): DriveHandle {
     checkpoint: wrap("checkpoint"),
     forkCheckpoint: wrap("forkCheckpoint"),
     restoreCheckpoint: wrap("restoreCheckpoint"),
+    undoRestore: wrap("undoRestore"),
     updateToLatest: wrap("updateToLatest"),
   } as DriveHandle;
 }

@@ -31,6 +31,24 @@ export const createTables = Effect.gen(function* () {
   )`;
 });
 
+/** Restore undo snapshots are separate so drives that already ran 0007 upgrade safely. */
+export const createRestoreTables = Effect.gen(function* () {
+  const sql = yield* SqlClient.SqlClient;
+  yield* sql`CREATE TABLE drive_restore_snapshots (
+    thread_id TEXT NOT NULL,
+    restore_operation_id TEXT NOT NULL,
+    before_thread_oid TEXT,
+    before_wip_oid TEXT,
+    before_pinned_views TEXT,
+    before_revision TEXT,
+    restored_pinned_views TEXT NOT NULL,
+    restored_revision TEXT NOT NULL,
+    restored_generation INTEGER NOT NULL,
+    undone_by TEXT,
+    PRIMARY KEY (thread_id, restore_operation_id)
+  )`;
+});
+
 const ViewsJson = Schema.fromJsonString(CheckpointViews);
 export const encodeViews = Schema.encodeSync(ViewsJson);
 export const decodeViews = Schema.decodeUnknownSync(ViewsJson);
@@ -51,6 +69,17 @@ const RestoreRequestJson = Schema.fromJsonString(
 );
 export const encodeRestoreRequest = Schema.encodeSync(RestoreRequestJson);
 
+const UndoRestoreRequestJson = Schema.fromJsonString(
+  Schema.Struct({
+    threadId: Schema.String,
+    restoreOperationId: Schema.String,
+    expectedThread: Schema.NullOr(Schema.String),
+    expectedWip: Schema.NullOr(Schema.String),
+    generation: Schema.Number,
+  }),
+);
+export const encodeUndoRestoreRequest = Schema.encodeSync(UndoRestoreRequestJson);
+
 const UpdateToLatestRequestJson = Schema.fromJsonString(
   Schema.Struct({
     threadId: Schema.String,
@@ -66,6 +95,12 @@ export const checkpointRef = (threadId: string, runId: string) =>
 
 export const checkpointNotesRef = (threadId: string, runId: string) =>
   `signalbox/notes/checkpoints/${encodeURIComponent(threadId)}/${encodeURIComponent(runId)}`;
+
+export const restoreSnapshotRef = (threadId: string, operationId: string, head: "thread" | "wip") =>
+  `signalbox/restores/${encodeURIComponent(threadId)}/${encodeURIComponent(operationId)}/before-${head}`;
+
+export const restoreUndoRef = (threadId: string, operationId: string, head: "thread" | "wip") =>
+  `signalbox/restore-undos/${encodeURIComponent(threadId)}/${encodeURIComponent(operationId)}/${head}`;
 
 export const notesRef = (threadId: string) => `signalbox/notes/${encodeURIComponent(threadId)}`;
 
@@ -86,6 +121,18 @@ export const OperationRow = Schema.Struct({
   request_json: Schema.String,
 });
 export const decodeOperationRows = Schema.decodeUnknownSync(Schema.Array(OperationRow));
+
+export const RestoreSnapshotRow = Schema.Struct({
+  before_thread_oid: Schema.NullOr(Schema.String),
+  before_wip_oid: Schema.NullOr(Schema.String),
+  before_pinned_views: Schema.NullOr(Schema.String),
+  before_revision: Schema.NullOr(Schema.String),
+  restored_pinned_views: Schema.String,
+  restored_revision: Schema.String,
+  restored_generation: Schema.Number,
+  undone_by: Schema.NullOr(Schema.String),
+});
+export const decodeRestoreSnapshotRows = Schema.decodeUnknownSync(Schema.Array(RestoreSnapshotRow));
 
 export const ThreadRevisionRow = Schema.Struct({
   base: Schema.NullOr(Schema.String),
