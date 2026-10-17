@@ -174,6 +174,9 @@ const boundedDiagnostic = (value: string, token: string, maxLength: number) => {
   return sanitized.length > maxLength ? `${sanitized.slice(0, maxLength)}…` : sanitized;
 };
 
+const boundedResponseHeader = (value: string) =>
+  value.length > 120 ? `${value.slice(0, 120)}…` : value;
+
 const responseDiagnostics = (
   requestKind: GitHubRequestKind,
   response: HttpClientResponse.HttpClientResponse,
@@ -189,11 +192,29 @@ const responseDiagnostics = (
     response.headers["content-length"] === undefined
       ? undefined
       : boundedDiagnostic(response.headers["content-length"], token, 120);
+  const rateLimitHeaders = {
+    ...(response.headers["x-ratelimit-remaining"] === undefined
+      ? {}
+      : { remaining: boundedResponseHeader(response.headers["x-ratelimit-remaining"]) }),
+    ...(response.headers["x-ratelimit-reset"] === undefined
+      ? {}
+      : { reset: boundedResponseHeader(response.headers["x-ratelimit-reset"]) }),
+    ...(response.headers["x-ratelimit-resource"] === undefined
+      ? {}
+      : { resource: boundedResponseHeader(response.headers["x-ratelimit-resource"]) }),
+    ...(response.headers["x-ratelimit-used"] === undefined
+      ? {}
+      : { used: boundedResponseHeader(response.headers["x-ratelimit-used"]) }),
+    ...(response.headers["retry-after"] === undefined
+      ? {}
+      : { retryAfter: boundedResponseHeader(response.headers["retry-after"]) }),
+  };
   return {
     requestKind,
     ...(excerpt === undefined ? {} : { responseExcerpt: excerpt }),
     ...(contentType === undefined ? {} : { responseContentType: contentType }),
     ...(contentLength === undefined ? {} : { responseContentLength: contentLength }),
+    ...(Object.keys(rateLimitHeaders).length === 0 ? {} : { responseRateLimits: rateLimitHeaders }),
   };
 };
 
@@ -261,6 +282,9 @@ export const makeGitHubApi = (
       ...(error.responseContentLength === undefined
         ? {}
         : { responseContentLength: error.responseContentLength }),
+      ...(error.responseRateLimits === undefined
+        ? {}
+        : { responseRateLimits: error.responseRateLimits }),
     });
 
   const readResponseText = (
@@ -391,7 +415,7 @@ export const makeGitHubApi = (
                     operation,
                     status: response.status,
                     message: "GitHub's answer is too large to read.",
-                    requestKind,
+                    ...responseDiagnostics(requestKind, response, "", token),
                   }),
                 );
               }

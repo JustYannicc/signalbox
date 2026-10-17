@@ -12,6 +12,16 @@ export class GitHubError extends Schema.TaggedError<GitHubError>()("GitHubError"
   /** Sanitized response headers that help identify malformed GitHub answers. */
   responseContentType: Schema.optional(Schema.String),
   responseContentLength: Schema.optional(Schema.String),
+  /** GitHub's bounded rate-limit headers, when present on an answer. */
+  responseRateLimits: Schema.optional(
+    Schema.Struct({
+      remaining: Schema.optional(Schema.String),
+      reset: Schema.optional(Schema.String),
+      resource: Schema.optional(Schema.String),
+      used: Schema.optional(Schema.String),
+      retryAfter: Schema.optional(Schema.String),
+    }),
+  ),
   /** When GitHub's rate limit lets the caller ask again (epoch ms), when it said. */
   retryAt: Schema.optional(Schema.Number),
 }) {}
