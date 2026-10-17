@@ -59,6 +59,11 @@ import * as ThreadEngine from "./thread/ThreadEngine.ts";
 import * as StatusNoteModel from "./thread/statusLine/StatusNoteModel.ts";
 import * as ThreadStatusNotes from "./thread/statusLine/ThreadStatusNotes.ts";
 import * as ThreadKindTurns from "./thread/ThreadKindTurns.ts";
+import * as LearnerService from "./learner/LearnerService.ts";
+import * as LearnerJev from "./learner/LearnerJev.ts";
+import * as LearnerSummary from "./learner/LearnerSummary.ts";
+import * as LearnerHomes from "./user/LearnerHomes.ts";
+import * as UserLearner from "./user/UserLearner.ts";
 import * as KindClassifier from "./threadKinds/KindClassifier.ts";
 import { makeThreadObjectApi } from "./thread/threadObjectApi.ts";
 import { browserUpdateLine, previewsLine } from "./thread/threadWire.ts";
@@ -327,6 +332,7 @@ const makeUserRuntime = (
               SignInGrants.layer,
               PoolSignIns.layer,
               CloudThreadService.layer.pipe(Layer.provideMerge(ThreadsLive.layer)),
+              UserLearner.layer.pipe(Layer.provideMerge(LearnerHomes.layer)),
               PersonBrowsers.layer(kernel),
             ),
           ),
@@ -360,6 +366,11 @@ const makeUserRuntime = (
             Layer.mergeAll(UserDrives.layer, UserPools.layer, UserThreadKinds.layer),
           ),
           Layer.provideMerge(Layer.mergeAll(classifier, ChatArchive.layerAlarmNone)),
+          Layer.provideMerge(
+            Layer.mergeAll(LearnerService.layer, LearnerSummary.layerNone).pipe(
+              Layer.provideMerge(LearnerJev.layerNone),
+            ),
+          ),
           Layer.provideMerge(Layer.mergeAll(layerMemoryStore, ModelManifest.layerBundled)),
           Layer.provideMerge(Layer.mergeAll(drives, people, github)),
           Layer.provideMerge(

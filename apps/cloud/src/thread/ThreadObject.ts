@@ -18,7 +18,7 @@ import type { SqlError } from "effect/sql/SqlError";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
 
 import { canWrite, myDriveId } from "../drive/driveAccess.ts";
-import type { ModelGatewayRecord } from "../modelGateway/modelGatewayRecord.ts";
+import type { ModelGatewayRecord } from "../models/ModelRecords.ts";
 import {
   type DriveObjectNamespace,
   layerDurableObjects as layerDriveDirectory,
