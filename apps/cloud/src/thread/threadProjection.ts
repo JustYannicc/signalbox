@@ -73,13 +73,26 @@ export function workStartedAt(projection: OrchestrationV2ThreadProjection): Date
   return earliest;
 }
 
+/** The newest request waiting on the person, as upstream's shell picks it. */
+const pendingRequestOf = (projection: OrchestrationV2ThreadProjection) => {
+  const newest = projection.runtimeRequests
+    .filter((request) => request.status === "pending")
+    .toSorted(
+      (left, right) =>
+        DateTime.toEpochMillis(right.createdAt) - DateTime.toEpochMillis(left.createdAt),
+    )[0];
+  return newest === undefined
+    ? null
+    : { id: newest.id, kind: newest.kind, createdAt: newest.createdAt };
+};
+
 const byOrdinalDesc = (left: OrchestrationV2Run, right: OrchestrationV2Run) =>
   right.ordinal - left.ordinal;
 
 /**
  * The thread's sidebar row. Follows upstream's `threadShellFromProjection` for
- * everything a cloud thread can have; runtime requests and goals never occur
- * here yet, so they stay empty. Its only background work is `monitors`, the
+ * everything a cloud thread can have: its newest request still waiting on its
+ * person (`runtimeRequests.ts`), as upstream's; goals never occur here yet. Its only background work is `monitors`, the
  * automation runs attached to it, which show and hold it in Working exactly
  * as upstream's monitors do.
  */
@@ -123,7 +136,7 @@ export function threadShellFromProjection(
     activityRunStartedAt:
       activityRun === null ? null : orchestrationV2RunWorkStartedAt(activityRun),
     status: latestRun?.status ?? "idle",
-    pendingRuntimeRequest: null,
+    pendingRuntimeRequest: pendingRequestOf(projection),
     latestVisibleMessage: null,
     latestUserMessageAt: userMessages[0]?.updatedAt ?? null,
     latestUserAuthoredMessageAt:

@@ -60,7 +60,7 @@ const decodeOrNull =
     }
   };
 const decodeAppend = decodeOrNull(sessionJson.append.decode);
-const decodeRegistration = decodeOrNull(secretsJson.registration.decode);
+const decodeRegistration = decodeOrNull(secretsJson.registrationRequest.decode);
 
 type SessionServices = ThreadRunner | ThreadStore | SessionRows | SqlClient.SqlClient;
 
@@ -97,6 +97,26 @@ const json = (body: string) => ({ status: 200, body, json: true });
 export const serveSessionRequest = (input: SessionRequest) =>
   Effect.gen(function* () {
     const { pathname, searchParams } = new URL(input.url);
+    if (input.method === "POST" && pathname === SESSION_PATHS.secrets) {
+      const registration = decodeRegistration(input.body);
+      if (registration === null) return text("Unreadable request.", 400);
+      const answer = yield* ThreadRunner.use((runner) =>
+        runner.registerSecrets(input.token, registration),
+      );
+      switch (answer._tag) {
+        case "registered":
+          return json(secretsJson.registrationResult.encode({ warnings: answer.warnings }));
+        case "denied":
+          return text(
+            answer.reason === "capability"
+              ? "This Runner requires run-scoped secret registration."
+              : "A newer machine or turn replaced this one.",
+            403,
+          );
+        case "unavailable":
+          return text("The session store is unavailable right now.", 500);
+      }
+    }
     const verdict = yield* ThreadRunner.use((runner) => runner.authorizeSession(input.token));
     if (verdict._tag === "denied") return text(verdict.reason, 403);
     const rows = yield* SessionRows;
@@ -113,29 +133,6 @@ export const serveSessionRequest = (input: SessionRequest) =>
       return written === null
         ? text("A newer machine replaced this one.", 403)
         : json(sessionJson.appendResult.encode(written));
-    }
-    if (input.method === "POST" && pathname === SESSION_PATHS.secrets) {
-      const registration = decodeRegistration(input.body);
-      if (registration === null) return text("Unreadable request.", 400);
-      const sql = yield* SqlClient.SqlClient;
-      const store = yield* ThreadStore;
-      const registered = yield* Effect.gen(function* () {
-        // A newer machine took the lease after the token was checked.
-        const lease = yield* store.machine;
-        if (lease.status === "none" || lease.generation !== verdict.generation) return false;
-        yield* store.registerSecretValues(verdict.generation, registration.secrets);
-        return true;
-      }).pipe(
-        sql.withTransaction,
-        // Logged without its cause, which could quote what was being written.
-        Effect.catchCause(() =>
-          Effect.as(Effect.logError("registering the thread's secrets failed"), null),
-        ),
-      );
-      if (registered === null) return text("The session store is unavailable right now.", 500);
-      return registered
-        ? text("Registered.", 200)
-        : text("A newer machine replaced this one.", 403);
     }
     if (input.method === "GET" && pathname === SESSION_PATHS.streams) {
       const streams = yield* rows.streams(searchParams.get("prefix") ?? "");

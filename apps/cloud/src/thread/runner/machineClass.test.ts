@@ -35,6 +35,7 @@ const fakeBackend = (kind: "cloudflare" | "boat", idleTailMs: number): MachineBa
     image: null,
     connectTimeoutMs: CONNECT_TIMEOUT_MS,
     idleTailMs,
+    guardsSends: false,
     ensure: () => Effect.succeed({ desired: "running", actual: "running", machineId: kind }),
     stop: () => status,
     destroy: () => status,

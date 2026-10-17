@@ -38,6 +38,7 @@ export const SIGNALBOX_FOLDERS_WS_METHODS = {
   setPhase: "signalbox.folders.setPhase",
   setSecrets: "signalbox.folders.setSecrets",
   setOnePassword: "signalbox.folders.setOnePassword",
+  revokeSecretSend: "signalbox.folders.revokeSecretSend",
   setGitHubLend: "signalbox.folders.setGitHubLend",
 } as const;
 
@@ -53,6 +54,7 @@ export const SIGNALBOX_FOLDERS_REQUIRED_SCOPES = {
   [SIGNALBOX_FOLDERS_WS_METHODS.setPhase]: AuthOrchestrationOperateScope,
   [SIGNALBOX_FOLDERS_WS_METHODS.setSecrets]: AuthOrchestrationOperateScope,
   [SIGNALBOX_FOLDERS_WS_METHODS.setOnePassword]: AuthOrchestrationOperateScope,
+  [SIGNALBOX_FOLDERS_WS_METHODS.revokeSecretSend]: AuthOrchestrationOperateScope,
   [SIGNALBOX_FOLDERS_WS_METHODS.setGitHubLend]: AuthOrchestrationOperateScope,
 } as const;
 
@@ -82,6 +84,21 @@ export type OnePasswordEnvironmentId = typeof OnePasswordEnvironmentId.Type;
 export const FolderSecrets = Schema.Struct({ environmentId: OnePasswordEnvironmentId });
 export type FolderSecrets = typeof FolderSecrets.Type;
 
+/**
+ * A host the person always lets agents send one of an Environment's secrets
+ * to (#592). The first time an agent sends a secret to a new host, the thread
+ * asks them; "Always" keeps one of these, and revoking it makes the next send
+ * ask again. A host is a URL's host, with its port when it isn't the default.
+ */
+export const SecretSend = Schema.Struct({
+  /** The thread's home: null is the owner's top level. */
+  folderId: Schema.NullOr(FolderId),
+  environmentId: OnePasswordEnvironmentId,
+  name: TrimmedNonEmptyString.check(Schema.isMaxLength(256)),
+  host: TrimmedNonEmptyString.check(Schema.isMaxLength(260)),
+  grantedAt: NonNegativeInt,
+});
+export type SecretSend = typeof SecretSend.Type;
 /** One stage a folder can be in, as people name it. */
 export const FOLDER_PHASE_NAME_MAX_LENGTH = 48;
 export const FolderPhaseName = TrimmedNonEmptyString.check(
@@ -203,6 +220,8 @@ export const SignalboxFoldersSnapshot = Schema.Struct({
    * secrets load. Its token never leaves the cloud but for the thread's machine.
    */
   onePassword: Schema.optionalKey(Schema.Struct({ connectedAt: NonNegativeInt })),
+  /** The hosts agents may always send each secret to. Absent from a cloud older than this field. */
+  secretSends: Schema.optionalKey(Schema.Array(SecretSend)),
   folders: Schema.Array(Folder),
   threadHomes: Schema.Array(FolderThreadHome),
   projectHomes: Schema.Array(FolderProjectHome),
@@ -308,6 +327,12 @@ export const FolderSetOnePasswordInput = Schema.Struct({
 });
 export type FolderSetOnePasswordInput = typeof FolderSetOnePasswordInput.Type;
 
+/** Stops agents always sending one secret to one host: the next send asks again. */
+export const FolderRevokeSecretSendInput = SecretSend.mapFields(
+  ({ folderId, environmentId, name, host }) => ({ folderId, environmentId, name, host }),
+);
+export type FolderRevokeSecretSendInput = typeof FolderRevokeSecretSendInput.Type;
+
 /** Lends the user's connected GitHub account to a folder's CI steps, or stops lending it. */
 export const FolderSetGitHubLendInput = Schema.Struct({ id: FolderId, lent: Schema.Boolean });
 export type FolderSetGitHubLendInput = typeof FolderSetGitHubLendInput.Type;
@@ -356,5 +381,6 @@ export const SIGNALBOX_FOLDERS_RPCS = [
   change(SIGNALBOX_FOLDERS_WS_METHODS.setPhase, FolderSetPhaseInput),
   change(SIGNALBOX_FOLDERS_WS_METHODS.setSecrets, FolderSetSecretsInput),
   change(SIGNALBOX_FOLDERS_WS_METHODS.setOnePassword, FolderSetOnePasswordInput),
+  change(SIGNALBOX_FOLDERS_WS_METHODS.revokeSecretSend, FolderRevokeSecretSendInput),
   change(SIGNALBOX_FOLDERS_WS_METHODS.setGitHubLend, FolderSetGitHubLendInput),
 ] as const;

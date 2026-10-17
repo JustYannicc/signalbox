@@ -37,6 +37,8 @@ const makeFakeThread = Effect.gen(function* () {
   const committed = yield* Ref.make<ReadonlyArray<RunnerItem>>([]);
   const acked = yield* Ref.make(0);
   const hellos = yield* Ref.make<ReadonlyArray<number>>([]);
+  /** Whether each hello says registrations are fenced to that process's runs. */
+  const helloRunScopedSecrets = yield* Ref.make<ReadonlyArray<boolean | undefined>>([]);
   /** The runs each `hello` said its process holds. */
   const helloRuns = yield* Ref.make<ReadonlyArray<ReadonlyArray<RunId> | undefined>>([]);
   const dropAfterCommit = yield* Ref.make(false);
@@ -59,6 +61,7 @@ const makeFakeThread = Effect.gen(function* () {
           switch (message.type) {
             case "hello":
               yield* Ref.update(hellos, (all) => [...all, message.lastAckedSequence]);
+              yield* Ref.update(helloRunScopedSecrets, (all) => [...all, message.runScopedSecrets]);
               yield* Ref.update(helloRuns, (all) => [...all, message.takenRunIds]);
               yield* reply({
                 type: "welcome",
@@ -91,7 +94,16 @@ const makeFakeThread = Effect.gen(function* () {
       inbox === null ? Effect.void : Effect.asVoid(Queue.offer(inbox, message)),
     );
 
-  return { transport, committed, acked, hellos, helloRuns, dropAfterCommit, toCurrent };
+  return {
+    transport,
+    committed,
+    acked,
+    hellos,
+    helloRunScopedSecrets,
+    helloRuns,
+    dropAfterCommit,
+    toCurrent,
+  };
 });
 
 /** A harness whose reports the test writes by hand. */
@@ -274,6 +286,7 @@ describe("RunnerSession", () => {
         expect(yield* Ref.get(thread.hellos)).toEqual([0, 1]);
         // And with the turn it holds, so the thread knows it is still running here.
         expect(yield* Ref.get(thread.helloRuns)).toEqual([[], [runId]]);
+        expect(yield* Ref.get(thread.helloRunScopedSecrets)).toEqual([true, true]);
       }),
     ),
   );

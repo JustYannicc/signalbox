@@ -283,6 +283,8 @@ export const makeBoatMachineBackend = ({
     image: settings.image,
     connectTimeoutMs: CONNECT_TIMEOUT_MS,
     idleTailMs: IDLE_TAIL_MS,
+    // A VM's own network: nothing checks where its requests go yet.
+    guardsSends: false,
     ensure,
     stop: () => letGo("stopped"),
     destroy: () => letGo("destroyed"),

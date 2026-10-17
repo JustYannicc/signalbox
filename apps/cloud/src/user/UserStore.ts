@@ -32,6 +32,7 @@ import * as FolderTables from "./folderTables.ts";
 import * as ThreadKindTables from "./threadKindTables.ts";
 import * as StatusNoteTables from "./statusNoteTables.ts";
 import * as OnePasswordAccount from "./OnePasswordAccount.ts";
+import * as SecretSends from "./SecretSends.ts";
 import * as SignInTables from "../signIn/signInTables.ts";
 import * as UserPools from "./UserPools.ts";
 import * as UserSections from "./UserSections.ts";
@@ -215,6 +216,7 @@ const migrations = Migrator.fromRecord({
   "0016_local_keys": LocalKeys.createTables,
   "0017_api_keys": LocalKeys.addApiScopes,
   "0018_sign_in_grants": SignInTables.createTables,
+  "0019_secret_sends": SecretSends.createTables,
   // Each thread's latest status note (#670, `UserThreadStatus`).
   "0019_status_notes": StatusNoteTables.createTables,
   "0019_notes": NoteTables.createTables,
@@ -226,6 +228,7 @@ const migrations = Migrator.fromRecord({
     )`;
   }),
   "0020_folder_phases": FolderTables.addPhases,
+  "0021_folder_secret_sends": SecretSends.addFolderScope,
 });
 
 /** Applies every migration not recorded yet (`storage/migrations.ts`). Never edit or rename a merged one. */

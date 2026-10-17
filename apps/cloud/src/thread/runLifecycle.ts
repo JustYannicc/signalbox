@@ -8,6 +8,7 @@ import type {
 } from "@t3tools/contracts";
 
 import { driverFor, runnerInstanceFor } from "./providerCatalog.ts";
+import { expireRequestEvents } from "./runtimeRequests.ts";
 import {
   attemptEvent,
   type DecisionContext,
@@ -223,6 +224,8 @@ export function finishRunEvents(
       : [];
   return [
     ...(options.leading ?? []),
+    // Nothing waits on its person's answers once it's over (`runtimeRequests.ts`).
+    ...expireRequestEvents(projection, run, ctx),
     ...(attempt === undefined
       ? []
       : [

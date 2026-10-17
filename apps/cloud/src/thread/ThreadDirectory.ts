@@ -51,6 +51,8 @@ import {
   type ThreadObjectReply,
   wire,
 } from "./threadWire.ts";
+import type { SecretValues } from "./runner/secretValues.ts";
+import type { EgressDispatchAnswer, SendAnswer, SendRequest } from "./egressTypes.ts";
 
 /**
  * How the Worker and user objects reach thread objects. Every thread has
@@ -450,6 +452,11 @@ export interface ThreadObjectNamespace {
     readonly recordModelRequest: (record: ModelGatewayRecord) => Promise<void>;
     readonly authorizeDrive: (token: string) => Promise<DriveAuthorization>;
     readonly authorizeRemote: (token: string) => Promise<RemoteAuthorization>;
+    /** The machine's egress check (#592, `egress/`): the values to look for, and the decision. */
+    readonly egressSecrets: () => Promise<SecretValues>;
+    readonly egressUploadDrive: () => Promise<string | null>;
+    readonly authorizeSend: (input: SendRequest) => Promise<SendAnswer>;
+    readonly dispatchSend: (request: Request, revision: number) => Promise<EgressDispatchAnswer>;
     /** The thread's status line for its agent (`statusLineJson.read`); null before it exists. */
     readonly statusLine: () => Promise<string | null>;
     /** The agent's note (`statusLineJson.writeRequest`); the stored note, null when the thread is gone. */

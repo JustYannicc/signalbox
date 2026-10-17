@@ -72,6 +72,7 @@ import * as DrivePeople from "./user/DrivePeople.ts";
 import * as DriveSharing from "./user/DriveSharing.ts";
 import * as DriveShortcuts from "./user/DriveShortcuts.ts";
 import * as OnePasswordAccount from "./user/OnePasswordAccount.ts";
+import * as SecretSends from "./user/SecretSends.ts";
 import * as ResourceBindings from "./user/ResourceBindings.ts";
 import * as ThreadContexts from "./user/threadContexts.ts";
 import * as UserContexts from "./user/UserContexts.ts";
@@ -136,6 +137,7 @@ export const layerMemoryStore = LegacySections.layer.pipe(
       UserContexts.layerWithDrives,
       ResourceBindings.layer,
       OnePasswordAccount.layer,
+      SecretSends.layer,
     ),
   ),
   Layer.provideMerge(Layer.effectDiscard(UserStore.migrate)),

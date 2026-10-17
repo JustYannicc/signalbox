@@ -8,8 +8,10 @@ import {
   type RunnerMessageInput,
   type RunnerTurn,
 } from "@signalbox/runner-protocol/RunnerProtocol";
-import type { SecretValue } from "@signalbox/runner-protocol/SecretScrubber";
-import type { SecretsAccess } from "@signalbox/runner-protocol/SecretsProtocol";
+import type {
+  SecretsAccess,
+  SecretsRegistration,
+} from "@signalbox/runner-protocol/SecretsProtocol";
 import type { SessionAccess } from "@signalbox/runner-protocol/SessionProtocol";
 import {
   MessageId,
@@ -282,7 +284,7 @@ export const makeRunnerTurns = Effect.fn("makeRunnerTurns")(function* (input: {
   /** Registers them with the thread, with the turn's session token (`makeSecretsRegistrar`). */
   readonly registerSecrets?: (
     token: string,
-    secrets: ReadonlyArray<SecretValue>,
+    registration: SecretsRegistration,
   ) => Effect.Effect<void, SecretsRegisterError>;
 }) {
   const scope = yield* Effect.scope;
@@ -1009,14 +1011,17 @@ export const makeRunnerTurns = Effect.fn("makeRunnerTurns")(function* (input: {
                     notice: (message) =>
                       input.emit({ kind: "secrets.notice", runId: turn.runId, message }),
                     info: (message) => input.emit(log(turn.runId, "info", message)),
-                    register: (secrets) =>
+                    register: (registration) =>
                       sessionAccess === null || input.registerSecrets === undefined
                         ? Effect.fail(
                             new SecretsRegisterError({
                               message: "this machine can't reach the thread to register them",
                             }),
                           )
-                        : input.registerSecrets(sessionAccess.token, secrets),
+                        : input.registerSecrets(sessionAccess.token, {
+                            ...registration,
+                            runId: turn.runId,
+                          }),
                   })
                   .pipe(
                     Effect.mapError(

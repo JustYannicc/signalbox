@@ -47,6 +47,14 @@
       "types": "./src/SecretsProtocol.ts",
       "import": "./src/SecretsProtocol.ts"
     },
+    "./SecretProtection": {
+      "types": "./src/SecretProtection.ts",
+      "import": "./src/SecretProtection.ts"
+    },
+    "./SyntheticSecrets": {
+      "types": "./src/SyntheticSecrets.ts",
+      "import": "./src/SyntheticSecrets.ts"
+    },
     "./BrowserProtocol": {
       "types": "./src/BrowserProtocol.ts",
       "import": "./src/BrowserProtocol.ts"
@@ -54,6 +62,14 @@
     "./SecretScrubber": {
       "types": "./src/SecretScrubber.ts",
       "import": "./src/SecretScrubber.ts"
+    },
+    "./SecretPlaceholders": {
+      "types": "./src/SecretPlaceholders.ts",
+      "import": "./src/SecretPlaceholders.ts"
+    },
+    "./testing/SecretsFixture": {
+      "types": "./src/testing/SecretsFixture.ts",
+      "import": "./src/testing/SecretsFixture.ts"
     }
   },
   "scripts": {

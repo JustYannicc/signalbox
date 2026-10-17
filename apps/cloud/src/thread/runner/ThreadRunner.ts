@@ -1,5 +1,10 @@
 import type { CommitAuthor, DriveAccess } from "@signalbox/runner-protocol/DriveProtocol";
 import type { SecretValue } from "@signalbox/runner-protocol/SecretScrubber";
+import {
+  binaryProtectionWarnings,
+  type SecretProtectionWarning,
+} from "@signalbox/runner-protocol/SecretProtection";
+import type { SecretsRegistrationRequest } from "@signalbox/runner-protocol/SecretsProtocol";
 import type { SessionAccess } from "@signalbox/runner-protocol/SessionProtocol";
 import type { OnePasswordEnvironmentId } from "@t3tools/contracts/signalboxFolders";
 import {
@@ -23,6 +28,7 @@ import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as SqlClient from "effect/sql/SqlClient";
 import { formatDuration } from "@t3tools/shared/orchestrationTiming";
 
 import { myDriveId } from "../../drive/driveAccess.ts";
@@ -36,6 +42,7 @@ import { gatewayProviderFor, poolIdOfInstance } from "../providerCatalog.ts";
 import { holdsNativeSession } from "../session/nativeSession.ts";
 import { steersOf } from "../steering.ts";
 import { SessionRows } from "../session/SessionRows.ts";
+import { saveSecretSources } from "../egress/secretSendTables.ts";
 import { sessionToken } from "../session/sessionToken.ts";
 import * as ThreadEngine from "../ThreadEngine.ts";
 import { applyEvents } from "../threadProjection.ts";
@@ -260,10 +267,17 @@ export interface RunnerWork {
    * without a turn. The owner's token to read them is `secretsToken`.
    */
   readonly secrets: ReadonlyArray<OnePasswordEnvironmentId>;
+  /** Whether the machine's requests pass the thread's egress check (#592), so placeholders fill. */
+  readonly guarded: boolean;
   readonly activeRunId: RunId | null;
   /** The messages steered into the live run while its harness runs it, oldest first (#562). */
   readonly steers: ReadonlyArray<RunnerMessageInput>;
 }
+
+type SecretRegistrationAnswer =
+  | { readonly _tag: "registered"; readonly warnings: ReadonlyArray<SecretProtectionWarning> }
+  | { readonly _tag: "denied"; readonly reason: "lease" | "run" | "capability" }
+  | { readonly _tag: "unavailable" };
 
 export class ThreadRunner extends Context.Service<
   ThreadRunner,
@@ -311,6 +325,11 @@ export class ThreadRunner extends Context.Service<
     readonly authorizeDrive: (token: string) => Effect.Effect<DriveAuthorization>;
     /** Whether the session API may act for `token`'s holder: the machine holding the lease. */
     readonly authorizeSession: (token: string) => Effect.Effect<SessionAuthorization>;
+    /** Atomically registers masking history and optional current fills for the live lease/run. */
+    readonly registerSecrets: (
+      token: string,
+      registration: SecretsRegistrationRequest,
+    ) => Effect.Effect<SecretRegistrationAnswer>;
     /** Whether `token` may fetch the thread's drive's remote right now (#135). */
     readonly authorizeRemote: (token: string) => Effect.Effect<RemoteAuthorization>;
     /**
@@ -407,6 +426,7 @@ const make = Effect.gen(function* () {
   const engine = yield* ThreadEngine.ThreadEngine;
   const previews = yield* PreviewHold;
   const store = yield* ThreadStore.ThreadStore;
+  const sql = yield* SqlClient.SqlClient;
   const sessionRows = yield* SessionRows;
   const crypto = yield* Crypto.Crypto;
   const backends = yield* MachineBackend;
@@ -533,6 +553,7 @@ const make = Effect.gen(function* () {
           disconnectedAt: null,
           drains: hello.drains === true,
           steers: hello.steers === true,
+          runScopedSecrets: lease.runScopedSecrets === true || hello.runScopedSecrets === true,
         },
         result: {
           _tag: "welcome",
@@ -794,6 +815,10 @@ const make = Effect.gen(function* () {
           : { ...untraced, traceId: yield* withCrypto(traceIdOf(untraced.runId)) };
       const grant = projection === null ? undefined : modelGrantFor(projection, yield* ownerId);
       const run = projection === null ? undefined : harnessRun(projection);
+      if (turn !== null && lease.status === "connected") {
+        // Repairs the active run marker when this turn predates run-scoped registrations.
+        yield* Effect.orDie(store.beginSecretRun(lease.generation, turn.runId));
+      }
       const driveId = turn === null || !drivesEnabled ? null : yield* driveOf;
       return keep<RunnerWork>({
         generation: lease.generation,
@@ -823,6 +848,7 @@ const make = Effect.gen(function* () {
             ? null
             : { token: yield* sessionTokenOf(lease.token, projection.thread.id, lease.generation) },
         secrets: turn === null ? [] : yield* Effect.orDie(store.secrets),
+        guarded: backends[classOf(lease)].guardsSends,
         activeRunId: run?.id ?? null,
         // Only a Runner that takes steers is handed them.
         steers:
@@ -870,10 +896,22 @@ const make = Effect.gen(function* () {
       // The model never sees a secret (#591): a turn whose folders name some is
       // served only once the machine running it registered their values.
       const secrets = yield* Effect.orDie(store.secretValues);
-      if (
-        (yield* Effect.orDie(store.secrets)).length > 0 &&
-        secrets.registered !== current.generation
-      ) {
+      const environments = yield* Effect.orDie(store.secrets);
+      const legacySources = current.legacySecretEnvironments;
+      const legacyReady =
+        current.runScopedSecrets !== true &&
+        secrets.registered === current.generation &&
+        secrets.current.length === 0 &&
+        (legacySources === undefined
+          ? // A pre-run-identity receipt came from the original lease-checked endpoint.
+            secrets.registeredRunId === null
+          : legacySources.length === environments.length &&
+            legacySources.every((environment, index) => environment === environments[index]));
+      const runReady =
+        legacySources === undefined &&
+        secrets.registered === current.generation &&
+        secrets.registeredRunId === grant.runId;
+      if (environments.length > 0 && !runReady && !legacyReady) {
         return {
           _tag: "unregistered",
           runId: grant.runId,
@@ -1009,6 +1047,61 @@ const make = Effect.gen(function* () {
       }
       return { _tag: "granted", generation: current.generation } satisfies SessionAuthorization;
     });
+
+  const registerSecrets: ThreadRunner["Service"]["registerSecrets"] = (token, registration) =>
+    Effect.gen(function* () {
+      const authorization = yield* authorizeSession(token);
+      if (authorization._tag === "denied") {
+        return { _tag: "denied", reason: "lease" } as const;
+      }
+      const projection = yield* engine.projection;
+      const run = projection === null ? undefined : harnessRun(projection);
+      if (
+        run === undefined ||
+        (registration.runId !== undefined && registration.runId !== run.id)
+      ) {
+        return { _tag: "denied", reason: "run" } as const;
+      }
+      // Only a genuine old payload derives its run here. It can mask history,
+      // but never supplies current substitutions or sources for Always grants.
+      const legacy = registration.runId === undefined;
+      const machine = yield* store.machine;
+      const previous = yield* store.secretValues;
+      if (
+        legacy &&
+        (machine.runScopedSecrets === true ||
+          (machine.legacySecretEnvironments === undefined &&
+            previous.registered === machine.generation &&
+            previous.registeredRunId !== null))
+      ) {
+        return { _tag: "denied", reason: "capability" } as const;
+      }
+      const registered = yield* store.registerSecretValues(
+        authorization.generation,
+        run.id,
+        registration.secrets,
+        legacy ? [] : registration.current,
+      );
+      if (!registered) return { _tag: "denied", reason: "run" } as const;
+      yield* saveSecretSources(legacy ? [] : (registration.sources ?? []));
+      yield* store.saveMachine({
+        ...machine,
+        runScopedSecrets: !legacy || machine.runScopedSecrets === true,
+        legacySecretEnvironments: legacy ? yield* store.secrets : undefined,
+      });
+      return {
+        _tag: "registered",
+        warnings: binaryProtectionWarnings(registration.secrets),
+      } as const;
+    }).pipe(
+      sql.withTransaction,
+      Effect.provideService(SqlClient.SqlClient, sql),
+      Effect.catchCause(() =>
+        Effect.as(Effect.logError("registering the thread's secrets failed"), {
+          _tag: "unavailable",
+        } as const),
+      ),
+    );
 
   const reconcile: ThreadRunner["Service"]["reconcile"] = withLease(
     ({ projection, lease, now }, ctx) =>
@@ -1219,6 +1312,7 @@ const make = Effect.gen(function* () {
     authorizeModel,
     authorizeDrive,
     authorizeSession,
+    registerSecrets,
     authorizeRemote,
     commitAuthor,
     freshSessionText: freshSessionTextOf,

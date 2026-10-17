@@ -36,6 +36,7 @@ import { hasPendingTurnWork, scriptedStep } from "./scriptedTurn.ts";
 import { type Decision, decide, decideLaunch, type ThreadWorktree } from "./threadDecider.ts";
 import type { DecisionContext } from "./threadEvents.ts";
 import { applyEvents, threadShellFromProjection, workStartedAt } from "./threadProjection.ts";
+import { activeRun } from "./runLifecycle.ts";
 import { noteKey, noteRunId, supersedes } from "./statusLine/statusNotePolicy.ts";
 import * as ThreadStore from "./ThreadStore.ts";
 import * as TurnModels from "./TurnModels.ts";
@@ -369,6 +370,7 @@ const make = Effect.gen(function* () {
     }
     // The thread's first commit creates its storage.
     if (current.thread === null) yield* Effect.orDie(store.initialize);
+    const machine = input.machine ?? (yield* Effect.orDie(store.machine));
     const nextKey = summaryKey(projection, current.monitors, current.statusNote);
     const head = yield* Effect.orDie(
       store.commit({
@@ -379,6 +381,7 @@ const make = Effect.gen(function* () {
         ...(input.secrets === undefined ? {} : { secrets: input.secrets }),
         ...(current.thread === null ? { owner } : {}),
         ...(input.machine ? { machine: input.machine } : {}),
+        secretRun: { generation: machine.generation, runId: activeRun(projection)?.id ?? null },
         summaryChanged: nextKey !== current.summaryKey,
       }),
     );

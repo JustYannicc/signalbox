@@ -1,0 +1,390 @@
+import type { RunnerItem } from "@signalbox/runner-protocol/RunnerProtocol";
+import { CommandId, type ProviderApprovalDecision, RuntimeRequestId } from "@t3tools/contracts";
+import { FolderId, OnePasswordEnvironmentId } from "@t3tools/contracts/signalboxFolders";
+import { describe, expect, it } from "@effect/vitest";
+import * as Context from "effect/Context";
+import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
+import * as Layer from "effect/Layer";
+import * as Logger from "effect/Logger";
+import * as SqlClient from "effect/sql/SqlClient";
+
+import { UserDirectory, UserObjectError } from "../../user/UserDirectory.ts";
+import {
+  connect,
+  freshDatabase,
+  launch,
+  liveTurn,
+  owner,
+  personal,
+  send,
+  snapshot,
+  threadId,
+  turnReport,
+  withObject,
+} from "../runnerTesting.ts";
+import type * as ThreadEngine from "../ThreadEngine.ts";
+import { threadShellFromProjection } from "../threadProjection.ts";
+import { saveSecretSources } from "../secretRegistrationTesting.ts";
+import * as ThreadSends from "../ThreadSends.ts";
+
+const environment = OnePasswordEnvironmentId.make("envfolder");
+const homeA = FolderId.make("folder-a");
+const homeB = FolderId.make("folder-b");
+const HOST = "hooks.example.test";
+
+/** The owner's object as the gate asks it: the grants it keeps, and what it answers. */
+const fakeOwner = () => {
+  const kept: Array<{ environmentId: string; name: string; host: string }> = [];
+  const allowedCalls: Array<unknown> = [];
+  const keptCalls: Array<unknown> = [];
+  const folderLookups: Array<string> = [];
+  let allowed = new Set<string>();
+  let folderId: string | null = homeA;
+  let folderLookupFails = false;
+  let nextKeepFailure: Error | null = null;
+  const users = {
+    forUser: () => ({
+      secretSendFolder: (thread: string) =>
+        Effect.gen(function* () {
+          folderLookups.push(thread);
+          if (folderLookupFails) {
+            return yield* new UserObjectError({
+              operation: "secretSendFolder",
+              cause: new Error("offline"),
+            });
+          }
+          return folderId;
+        }),
+      secretSendsAllowed: (input: {
+        readonly folderId: string | null;
+        readonly host: string;
+        readonly sends: ReadonlyArray<unknown>;
+      }) =>
+        Effect.sync(() => {
+          allowedCalls.push(input);
+          const { folderId, host } = input;
+          return [...allowed]
+            .filter((key) => key.startsWith(`${folderId ?? "top"} `) && key.endsWith(` ${host}`))
+            .map((key) => key.split(" ")[1]!);
+        }),
+      keepSecretSends: (input: {
+        readonly folderId: string | null;
+        readonly grants: ReadonlyArray<{
+          environmentId: string;
+          name: string;
+          host: string;
+        }>;
+      }) => {
+        if (nextKeepFailure !== null) {
+          const error = nextKeepFailure;
+          nextKeepFailure = null;
+          return Effect.die(error);
+        }
+        return Effect.sync(() => {
+          keptCalls.push(input);
+          const grants = input.grants;
+          kept.push(...grants);
+          for (const grant of grants) {
+            allowed.add(`${input.folderId ?? "top"} ${grant.name} ${grant.host}`);
+          }
+        });
+      },
+    }),
+  } as unknown as UserDirectory["Service"];
+  return {
+    users,
+    kept,
+    allowedCalls,
+    keptCalls,
+    folderLookups,
+    setFolder: (next: string | null) => {
+      folderId = next;
+    },
+    failFolderLookup: () => {
+      folderLookupFails = true;
+    },
+    failNextKeep: (error: Error) => {
+      nextKeepFailure = error;
+    },
+    revokeAll: () => {
+      allowed = new Set();
+    },
+  };
+};
+
+/** The thread mid-turn on its machine, with the gate over it. */
+const midTurn = <A, E>(
+  owned: ReturnType<typeof fakeOwner>,
+  use: (input: {
+    readonly engine: ThreadEngine.ThreadEngine["Service"];
+    readonly sends: ThreadSends.ThreadSends["Service"];
+    readonly endTurn: Effect.Effect<void>;
+  }) => Effect.Effect<A, E>,
+) =>
+  withObject(freshDatabase(), (engine, runner, context) =>
+    Effect.gen(function* () {
+      yield* launch(engine);
+      const machine = yield* connect(runner);
+      const turn = yield* liveTurn(runner);
+      const report = turnReport(turn.runId, turn.runOrdinal, turn.providerThread);
+      let sequence = 0;
+      const batch = (items: ReadonlyArray<RunnerItem>) =>
+        runner.batch({ generation: machine.generation, sequence: ++sequence, items });
+      yield* batch([report.started]);
+      yield* saveSecretSources([{ name: "KEY", environment }]).pipe(
+        Effect.provideService(SqlClient.SqlClient, Context.get(context, SqlClient.SqlClient)),
+      );
+      const endTurn = Effect.asVoid(batch([report.terminal]));
+      return yield* ThreadSends.ThreadSends.use((sends) => use({ engine, sends, endTurn })).pipe(
+        Effect.provide(
+          ThreadSends.layer.pipe(
+            Layer.provide(Layer.succeedContext(context)),
+            Layer.provide(Layer.succeed(UserDirectory, owned.users)),
+          ),
+        ),
+      );
+    }),
+  );
+
+const respond = (
+  engine: ThreadEngine.ThreadEngine["Service"],
+  requestId: string,
+  decision: ProviderApprovalDecision,
+) =>
+  engine.dispatch(
+    owner,
+    {
+      type: "runtime-request.respond",
+      commandId: CommandId.make(`respond-${requestId}-${decision}`),
+      threadId,
+      requestId: RuntimeRequestId.make(requestId),
+      decision,
+    },
+    personal,
+  );
+
+const pendingRequests = (engine: ThreadEngine.ThreadEngine["Service"]) =>
+  Effect.map(snapshot(engine), ({ projection }) =>
+    projection.runtimeRequests.filter((request) => request.status === "pending"),
+  );
+
+describe("ThreadSends", () => {
+  it.effect(
+    "asks once for a new host, waits for the answer, and sends for the rest of the turn",
+    () =>
+      midTurn(fakeOwner(), ({ engine, sends }) =>
+        Effect.gen(function* () {
+          const first = yield* sends.authorize({ host: HOST, names: ["KEY"], waitMs: 0 });
+          expect(first._tag).toBe("waiting");
+          const [request] = yield* pendingRequests(engine);
+          expect(request?.kind).toBe("permission");
+          const { projection } = yield* snapshot(engine);
+          // The thread waits on its person, as a harness's approval would have it.
+          expect(threadShellFromProjection(projection).pendingRuntimeRequest?.id).toBe(request?.id);
+          const row = projection.turnItems.find((item) => item.type === "approval_request");
+          expect(row).toMatchObject({
+            prompt: `An agent wants to send this secret to ${HOST}: KEY`,
+            options: [
+              { decision: "decline" },
+              { decision: "acceptAlways", label: `Always send to ${HOST}` },
+              { decision: "accept" },
+            ],
+          });
+
+          // Sending again while the person hasn't answered doesn't ask twice.
+          const waiting = yield* sends
+            .authorize({ host: HOST, names: ["KEY"], waitMs: 60_000 })
+            .pipe(Effect.forkChild);
+          yield* respond(engine, request!.id, "accept");
+          yield* sends.settle;
+          expect(yield* Fiber.join(waiting)).toEqual({ _tag: "allowed" });
+          expect((yield* snapshot(engine)).projection.runtimeRequests).toHaveLength(1);
+
+          expect(yield* sends.authorize({ host: HOST, names: ["KEY"], waitMs: 0 })).toEqual({
+            _tag: "allowed",
+          });
+          const after = (yield* snapshot(engine)).projection;
+          expect(threadShellFromProjection(after).pendingRuntimeRequest).toBeNull();
+          const notices = after.turnItems.filter((item) => item.type === "system_notice");
+          expect(notices.map((item) => item.type === "system_notice" && item.message)).toEqual([
+            `Sent the secret KEY to ${HOST}.`,
+          ]);
+          // Another host is another question.
+          expect(
+            (yield* sends.authorize({ host: "other.example.test", names: ["KEY"], waitMs: 0 }))
+              ._tag,
+          ).toBe("waiting");
+        }),
+      ),
+  );
+
+  it.effect("asks once for sends made together", () =>
+    midTurn(fakeOwner(), ({ engine, sends }) =>
+      Effect.gen(function* () {
+        const answers = yield* Effect.all(
+          Array.from({ length: 5 }, () =>
+            sends.authorize({ host: HOST, names: ["KEY"], waitMs: 0 }),
+          ),
+          { concurrency: "unbounded" },
+        );
+        expect(answers.map((answer) => answer._tag)).toEqual(Array(5).fill("waiting"));
+        expect(yield* pendingRequests(engine)).toHaveLength(1);
+      }),
+    ),
+  );
+
+  it.effect("keeps an Always answer in the owner's object, which a revoke ends", () => {
+    const owned = fakeOwner();
+    return midTurn(owned, ({ engine, sends }) =>
+      Effect.gen(function* () {
+        yield* sends.authorize({ host: HOST, names: ["KEY"], waitMs: 0 });
+        const [request] = yield* pendingRequests(engine);
+        yield* respond(engine, request!.id, "acceptAlways");
+        yield* sends.settle;
+        expect(owned.kept).toEqual([{ environmentId: environment, name: "KEY", host: HOST }]);
+        expect((yield* sends.authorize({ host: HOST, names: ["KEY"], waitMs: 0 }))._tag).toBe(
+          "allowed",
+        );
+
+        owned.revokeAll();
+        expect((yield* sends.authorize({ host: HOST, names: ["KEY"], waitMs: 0 }))._tag).toBe(
+          "waiting",
+        );
+      }),
+    );
+  });
+
+  it.effect("logs no defect details when keeping an Always answer fails", () => {
+    const owned = fakeOwner();
+    const canary = "secret-send-settle-canary";
+    const logs: Array<string> = [];
+    const logger = Logger.map(Logger.formatJson, (line) => void logs.push(line));
+    return midTurn(owned, ({ engine, sends }) =>
+      Effect.gen(function* () {
+        expect((yield* sends.authorize({ host: HOST, names: ["KEY"], waitMs: 0 }))._tag).toBe(
+          "waiting",
+        );
+        const [request] = yield* pendingRequests(engine);
+        yield* respond(engine, request!.id, "acceptAlways");
+        owned.failNextKeep(new Error(canary));
+
+        // Settle contains this defect; the failed grant stays unmarked and is retried.
+        yield* sends.settle;
+        const emitted = logs.join("\n");
+        expect(emitted).toContain("settling secret sends failed");
+        expect(emitted).not.toContain(canary);
+        expect(owned.keptCalls).toEqual([]);
+
+        yield* sends.settle;
+        expect(owned.keptCalls).toHaveLength(1);
+      }).pipe(Effect.provide(Logger.layer([logger]))),
+    );
+  });
+
+  it.effect("checks and keeps Always grants for this thread's home", () => {
+    const owned = fakeOwner();
+    return midTurn(owned, ({ engine, sends }) =>
+      Effect.gen(function* () {
+        yield* sends.authorize({ host: HOST, names: ["KEY"], waitMs: 0 });
+        expect(owned.folderLookups).toContain(threadId);
+        expect(owned.allowedCalls[0]).toMatchObject({
+          folderId: homeA,
+          host: HOST,
+          sends: [{ folderId: homeA, environmentId: environment, name: "KEY" }],
+        });
+        const [request] = yield* pendingRequests(engine);
+        yield* respond(engine, request!.id, "acceptAlways");
+        yield* sends.settle;
+        expect(owned.keptCalls).toEqual([
+          {
+            folderId: homeA,
+            grants: [{ environmentId: environment, name: "KEY", host: HOST }],
+          },
+        ]);
+      }),
+    );
+  });
+
+  it.effect("refuses sends when the owner's folder can't be read", () => {
+    const owned = fakeOwner();
+    owned.failFolderLookup();
+    return midTurn(owned, ({ engine, sends }) =>
+      Effect.gen(function* () {
+        expect(yield* sends.authorize({ host: HOST, names: ["KEY"], waitMs: 0 })).toMatchObject({
+          _tag: "refused",
+        });
+        expect(owned.allowedCalls).toEqual([]);
+        expect(yield* pendingRequests(engine)).toHaveLength(0);
+      }),
+    );
+  });
+
+  it.effect("keeps an Always answer scoped to the home where its ask started", () => {
+    const owned = fakeOwner();
+    return midTurn(owned, ({ engine, sends }) =>
+      Effect.gen(function* () {
+        expect((yield* sends.authorize({ host: HOST, names: ["KEY"], waitMs: 0 }))._tag).toBe(
+          "waiting",
+        );
+        const [request] = yield* pendingRequests(engine);
+        owned.setFolder(homeB);
+        yield* respond(engine, request!.id, "acceptAlways");
+        yield* sends.settle;
+
+        expect(owned.keptCalls).toEqual([
+          {
+            folderId: homeA,
+            grants: [{ environmentId: environment, name: "KEY", host: HOST }],
+          },
+        ]);
+        expect((yield* sends.authorize({ host: HOST, names: ["KEY"], waitMs: 0 }))._tag).toBe(
+          "waiting",
+        );
+        expect(yield* pendingRequests(engine)).toHaveLength(1);
+      }),
+    );
+  });
+
+  it.effect("refuses for the turn once the person says no, and asks again next turn", () =>
+    midTurn(fakeOwner(), ({ engine, sends, endTurn }) =>
+      Effect.gen(function* () {
+        yield* sends.authorize({ host: HOST, names: ["KEY"], waitMs: 0 });
+        const [request] = yield* pendingRequests(engine);
+        yield* respond(engine, request!.id, "decline");
+        const refused = yield* sends.authorize({ host: HOST, names: ["KEY"], waitMs: 0 });
+        expect(refused).toEqual({
+          _tag: "refused",
+          message: `The person said no to sending KEY to ${HOST} this turn.`,
+        });
+
+        yield* endTurn;
+        expect((yield* sends.authorize({ host: HOST, names: ["KEY"], waitMs: 0 }))._tag).toBe(
+          "refused",
+        );
+        yield* send(engine, 2, "again");
+        expect((yield* sends.authorize({ host: HOST, names: ["KEY"], waitMs: 0 }))._tag).toBe(
+          "waiting",
+        );
+        expect(yield* pendingRequests(engine)).toHaveLength(1);
+      }),
+    ),
+  );
+
+  it.effect("lets an unanswered ask go when its turn ends", () =>
+    midTurn(fakeOwner(), ({ engine, sends, endTurn }) =>
+      Effect.gen(function* () {
+        yield* sends.authorize({ host: HOST, names: ["KEY"], waitMs: 0 });
+        yield* endTurn;
+        const { projection } = yield* snapshot(engine);
+        expect(projection.runtimeRequests.map((request) => request.status)).toEqual(["expired"]);
+        expect(threadShellFromProjection(projection).pendingRuntimeRequest).toBeNull();
+        // Too late to answer it.
+        const late = yield* Effect.flip(
+          respond(engine, projection.runtimeRequests[0]!.id, "accept"),
+        );
+        expect(late.message).toBe("That request isn't waiting for an answer anymore.");
+      }),
+    ),
+  );
+});
