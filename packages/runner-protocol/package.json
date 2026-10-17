@@ -31,6 +31,10 @@
       "types": "./src/BranchProtocol.ts",
       "import": "./src/BranchProtocol.ts"
     },
+    "./PullRequestReviewTools": {
+      "types": "./src/PullRequestReviewTools.ts",
+      "import": "./src/PullRequestReviewTools.ts"
+    },
     "./AutomationProtocol": {
       "types": "./src/AutomationProtocol.ts",
       "import": "./src/AutomationProtocol.ts"

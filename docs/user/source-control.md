@@ -44,8 +44,10 @@ GitHub where you grant or request it.
 After connecting GitHub and adding a repository, open **Pull Requests** to read its reviews,
 checks, conversations and changed files on web, desktop or mobile. A thread can also link a
 review from another GitHub repository your account can access. If GitHub cannot provide the
-review, Signalbox reports the problem so you can retry. Cloud reviews are read-only; open the
-pull request on GitHub to comment or merge.
+review, Signalbox reports the problem so you can retry. Cloud review screens are read-only.
+Ask the agent working in a repository's folder to read its review conversations, reply, and
+resolve or reopen them. It acts through your connected GitHub account. Open GitHub for other
+review actions or to merge.
 
 To work on a repository, choose **Add project → GitHub repository** and pick it from your
 repositories, or type its `owner/name`. Signalbox doesn't copy
