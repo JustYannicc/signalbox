@@ -1,7 +1,9 @@
-import type {
-  MachineUsage,
-  RunnerItem,
-  RunnerTurn,
+import {
+  REQUEST_HEAVY_MACHINE_COMMAND,
+  REQUEST_HEAVY_MACHINE_REASON,
+  type MachineUsage,
+  type RunnerItem,
+  type RunnerTurn,
 } from "@signalbox/runner-protocol/RunnerProtocol";
 import {
   MessageId,
@@ -43,17 +45,27 @@ import { makeRunnerTurns } from "./RunnerTurns.ts";
 const threadId = ThreadId.make("thread-1");
 const instanceId = ProviderInstanceId.make("codex");
 const driver = ProviderDriverKind.make("codex");
+const claudeInstanceId = ProviderInstanceId.make("claudeAgent");
+const claudeDriver = ProviderDriverKind.make("claudeAgent");
 const providerThread = {
   id: ProviderThreadId.make("pt-1"),
   nativeThreadRef: null,
 } as unknown as OrchestrationV2ProviderThread;
+const claudeProviderThread = {
+  id: ProviderThreadId.make("pt-claude"),
+  nativeThreadRef: null,
+} as unknown as OrchestrationV2ProviderThread;
 
-const turnFor = (n: number, thread = providerThread): RunnerTurn =>
+const turnFor = (
+  n: number,
+  thread = providerThread,
+  selectedInstanceId: typeof instanceId | typeof claudeInstanceId = instanceId,
+): RunnerTurn =>
   ({
     runId: RunId.make(`run-${n}`),
     traceId: `trace-${n}`,
     attemptId: RunAttemptId.make(`attempt-${n}`),
-    modelSelection: { instanceId, model: "m" },
+    modelSelection: { instanceId: selectedInstanceId, model: "m" },
     providerThread: thread,
     appThread: { pullRequests: [] },
   }) as unknown as RunnerTurn;
@@ -126,60 +138,74 @@ const providerTurnStarted = (n: number): ProviderAdapterV2Event =>
  * An adapter whose session the test drives: `ensureThread` waits until the
  * test lets it finish, and every call is recorded.
  */
-const makeFakeAdapter = Effect.gen(function* () {
-  const events = yield* Queue.unbounded<ProviderAdapterV2Event>();
-  const loaded = yield* Deferred.make<void>();
-  const calls: Array<string> = [];
-  /** What each `startTurn` got, beyond what `calls` names. */
-  const started: Array<{
-    readonly providerTurnOrdinal: number;
-    readonly text: string | undefined;
-    readonly nativeThreadRef: unknown;
-  }> = [];
-  const opened = { count: 0 };
-  const session = {
-    providerSessionId: ProviderSessionId.make("session-1"),
-    providerSession: {},
-    events: Stream.fromQueue(events),
-    ensureThread: () => Effect.as(Deferred.await(loaded), providerThread),
-    resumeThread: () => Effect.die(new Error("no rollout for Bearer sk-live-resume-secret")),
-    startTurn: (input: {
-      readonly runId: string;
-      readonly restartContinuationOfRunId?: string;
+const makeFakeAdapterFor = (selection: {
+  readonly instanceId: typeof instanceId | typeof claudeInstanceId;
+  readonly driver: typeof driver | typeof claudeDriver;
+  readonly providerThread: OrchestrationV2ProviderThread;
+}) =>
+  Effect.gen(function* () {
+    const events = yield* Queue.unbounded<ProviderAdapterV2Event>();
+    const loaded = yield* Deferred.make<void>();
+    const calls: Array<string> = [];
+    /** What each `startTurn` got, beyond what `calls` names. */
+    const started: Array<{
       readonly providerTurnOrdinal: number;
-      readonly message?: { readonly text: string };
-      readonly providerThread: { readonly nativeThreadRef: unknown };
-    }) =>
-      Effect.sync(() => {
-        started.push({
-          providerTurnOrdinal: input.providerTurnOrdinal,
-          text: input.message?.text,
-          nativeThreadRef: input.providerThread.nativeThreadRef,
-        });
-        calls.push(
-          input.restartContinuationOfRunId === undefined
-            ? `start ${input.runId}`
-            : `start ${input.runId} continuing ${input.restartContinuationOfRunId}`,
-        );
-      }),
-    interruptTurn: (input: { readonly providerTurnId: string }) =>
-      Effect.sync(() => void calls.push(`interrupt ${input.providerTurnId}`)),
-    steerTurn: (input: {
-      readonly providerTurnId: string;
-      readonly message: { readonly messageId: string };
-    }) =>
-      Effect.sync(
-        () => void calls.push(`steer ${input.providerTurnId} ${input.message.messageId}`),
-      ),
-  } as unknown as ProviderAdapterV2SessionRuntime;
-  const adapter = {
-    instanceId,
-    driver,
-    openSession: () => Effect.sync(() => (opened.count++, session)),
-  } as unknown as ProviderAdapterV2["Service"];
-  return { adapter, events, loaded, calls, started, opened };
+      readonly text: string | undefined;
+      readonly nativeThreadRef: unknown;
+    }> = [];
+    const opened = { count: 0 };
+    const session = {
+      providerSessionId: ProviderSessionId.make("session-1"),
+      providerSession: {},
+      events: Stream.fromQueue(events),
+      ensureThread: () => Effect.as(Deferred.await(loaded), selection.providerThread),
+      resumeThread: () => Effect.die(new Error("no rollout for Bearer sk-live-resume-secret")),
+      startTurn: (input: {
+        readonly runId: string;
+        readonly restartContinuationOfRunId?: string;
+        readonly providerTurnOrdinal: number;
+        readonly message?: { readonly text: string };
+        readonly providerThread: { readonly nativeThreadRef: unknown };
+      }) =>
+        Effect.sync(() => {
+          started.push({
+            providerTurnOrdinal: input.providerTurnOrdinal,
+            text: input.message?.text,
+            nativeThreadRef: input.providerThread.nativeThreadRef,
+          });
+          calls.push(
+            input.restartContinuationOfRunId === undefined
+              ? `start ${input.runId}`
+              : `start ${input.runId} continuing ${input.restartContinuationOfRunId}`,
+          );
+        }),
+      interruptTurn: (input: { readonly providerTurnId: string }) =>
+        Effect.sync(() => void calls.push(`interrupt ${input.providerTurnId}`)),
+      steerTurn: (input: {
+        readonly providerTurnId: string;
+        readonly message: { readonly messageId: string };
+      }) =>
+        Effect.sync(
+          () => void calls.push(`steer ${input.providerTurnId} ${input.message.messageId}`),
+        ),
+    } as unknown as ProviderAdapterV2SessionRuntime;
+    const adapter = {
+      instanceId: selection.instanceId,
+      driver: selection.driver,
+      openSession: () => Effect.sync(() => (opened.count++, session)),
+    } as unknown as ProviderAdapterV2["Service"];
+    return { adapter, events, loaded, calls, started, opened };
+  });
+const makeFakeAdapter = makeFakeAdapterFor({
+  instanceId,
+  driver,
+  providerThread,
 });
-
+const makeFakeClaudeAdapter = makeFakeAdapterFor({
+  instanceId: claudeInstanceId,
+  driver: claudeDriver,
+  providerThread: claudeProviderThread,
+});
 describe("RunnerTurns", () => {
   it.effect(
     "interrupts a stopped turn once the harness names it, even after the next one starts",
@@ -1549,17 +1575,24 @@ describe("RunnerTurns", () => {
     );
 
     describe("on a light machine", () => {
-      const command = (status: "running" | "completed", input: string, exitCode?: number) => {
+      const command = (
+        status: "running" | "completed",
+        input: string,
+        exitCode?: number,
+        runId = RunId.make("run-1"),
+        eventDriver: typeof driver | typeof claudeDriver = driver,
+        selectedThread: OrchestrationV2ProviderThread = providerThread,
+      ) => {
         const now = DateTime.makeUnsafe(0);
         return {
           type: "turn_item.updated",
-          driver,
+          driver: eventDriver,
           turnItem: {
             id: TurnItemId.make(`item-${input}`),
             threadId,
-            runId: RunId.make("run-1"),
+            runId,
             nodeId: null,
-            providerThreadId: providerThread.id,
+            providerThreadId: selectedThread.id,
             providerTurnId: ProviderTurnId.make("native-1"),
             nativeItemRef: null,
             parentItemId: null,
@@ -1577,9 +1610,14 @@ describe("RunnerTurns", () => {
       };
 
       /** A light machine's turn with a drive, and everything it did in order. */
-      const lightTurn = (machineClass: "light" | "heavy") =>
+      const lightTurn = (machineClass: "light" | "heavy", harness: "codex" | "claude" = "codex") =>
         Effect.gen(function* () {
-          const fake = yield* makeFakeAdapter;
+          const fakeAdapter = harness === "claude" ? makeFakeClaudeAdapter : makeFakeAdapter;
+          const fake = yield* fakeAdapter;
+          const selectedInstance = harness === "claude" ? claudeInstanceId : instanceId;
+          const selectedDriver = harness === "claude" ? claudeDriver : driver;
+          const selectedThread = harness === "claude" ? claudeProviderThread : providerThread;
+          const reported: Array<RunnerItem> = [];
           const log: Array<string> = [];
           const { sessions } = yield* makeFakeSessions(log);
           const drive = {
@@ -1592,32 +1630,143 @@ describe("RunnerTurns", () => {
           } as unknown as RunnerDrive;
           const turns = yield* makeRunnerTurns({
             threadId,
-            adapters: new Map([[instanceId, fake.adapter]]),
+            adapters: new Map([[selectedInstance, fake.adapter]]),
             cwd: "/tmp",
             useModelToken: () => Effect.void,
             usage: Effect.succeed(unmeasured),
             emit: (item) =>
-              Effect.sync(
-                () =>
-                  void log.push(
-                    item.kind === "provider" ? `emit ${String(item.event.type)}` : item.kind,
-                  ),
-              ),
+              Effect.sync(() => {
+                reported.push(item);
+                log.push(item.kind === "provider" ? `emit ${String(item.event.type)}` : item.kind);
+              }),
             openDrive: () => Effect.succeed(drive),
             sessions,
             machineClass,
           });
           yield* Deferred.succeed(fake.loaded, undefined);
           yield* turns.start({
-            turn: turnFor(1),
+            turn: turnFor(1, selectedThread, selectedInstance),
             modelToken: "token-1",
             drive: { driveId: "my/personal/user_1", token: "sbd1.x.y", remoteToken: null },
             sessions: { token: "sbs1.t.1" },
           });
           yield* settle;
           log.length = 0;
-          return { fake, log };
+          return { fake, log, reported, selectedDriver, selectedThread };
         });
+
+      it.effect.each(["codex", "claude"] as const)(
+        "lets %s request a heavy machine through the outgrown path",
+        (harness) =>
+          Effect.scoped(
+            Effect.gen(function* () {
+              const { fake, log, reported, selectedDriver, selectedThread } = yield* lightTurn(
+                "light",
+                harness,
+              );
+              const input =
+                harness === "claude"
+                  ? `/bin/bash -lc '${REQUEST_HEAVY_MACHINE_COMMAND}'`
+                  : REQUEST_HEAVY_MACHINE_COMMAND;
+              yield* Queue.offer(
+                fake.events,
+                command(
+                  "running",
+                  input,
+                  undefined,
+                  RunId.make("run-1"),
+                  selectedDriver,
+                  selectedThread,
+                ),
+              );
+              for (let round = 0; round < 30; round++) yield* Effect.yieldNow;
+
+              expect(reported.filter((item) => item.kind === "log")).toEqual([]);
+              expect(log).toEqual([
+                "settle turn_item.updated",
+                "emit turn_item.updated",
+                "drive save",
+                "flush " + selectedDriver,
+                "machine.outgrown",
+              ]);
+              expect(reported.find((item) => item.kind === "machine.outgrown")).toMatchObject({
+                runId: RunId.make("run-1"),
+                reason: REQUEST_HEAVY_MACHINE_REASON,
+              });
+            }),
+          ),
+      );
+
+      it.effect("ignores an explicit request from a stale run", () =>
+        Effect.scoped(
+          Effect.gen(function* () {
+            const { fake, log, reported, selectedDriver, selectedThread } =
+              yield* lightTurn("light");
+            yield* Queue.offer(
+              fake.events,
+              command(
+                "running",
+                REQUEST_HEAVY_MACHINE_COMMAND,
+                undefined,
+                RunId.make("run-old"),
+                selectedDriver,
+                selectedThread,
+              ),
+            );
+            for (let round = 0; round < 20; round++) yield* Effect.yieldNow;
+            expect(log).not.toContain("machine.outgrown");
+
+            yield* Queue.offer(
+              fake.events,
+              command(
+                "running",
+                REQUEST_HEAVY_MACHINE_COMMAND,
+                undefined,
+                RunId.make("run-1"),
+                selectedDriver,
+                selectedThread,
+              ),
+            );
+            for (let round = 0; round < 30; round++) yield* Effect.yieldNow;
+            expect(reported.filter((item) => item.kind === "machine.outgrown")).toHaveLength(1);
+          }),
+        ),
+      );
+
+      it.effect.each(["codex", "claude"] as const)(
+        "treats a heavy-machine request from %s as a no-op",
+        (harness) =>
+          Effect.scoped(
+            Effect.gen(function* () {
+              const { fake, log, reported, selectedDriver, selectedThread } = yield* lightTurn(
+                "heavy",
+                harness,
+              );
+              for (const status of ["running", "completed"] as const) {
+                yield* Queue.offer(
+                  fake.events,
+                  command(
+                    status,
+                    REQUEST_HEAVY_MACHINE_COMMAND,
+                    undefined,
+                    RunId.make("run-1"),
+                    selectedDriver,
+                    selectedThread,
+                  ),
+                );
+              }
+              for (let round = 0; round < 30; round++) yield* Effect.yieldNow;
+              expect(reported.filter((item) => item.kind === "machine.outgrown")).toEqual([]);
+              expect(log).toEqual([
+                "settle turn_item.updated",
+                "emit turn_item.updated",
+                "autosave",
+                "settle turn_item.updated",
+                "emit turn_item.updated",
+              ]);
+            }),
+          ),
+      );
 
       it.effect("saves everything, then hands a build to a heavy machine and drops the rest", () =>
         Effect.scoped(

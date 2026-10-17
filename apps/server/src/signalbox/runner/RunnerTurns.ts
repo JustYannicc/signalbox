@@ -345,11 +345,13 @@ export const makeRunnerTurns = Effect.fn("makeRunnerTurns")(function* (input: {
     if (event.type !== "turn_item.updated" || event.turnItem.type !== "command_execution") {
       return null;
     }
-    const { id, status } = event.turnItem;
+    const { id, status, runId } = event.turnItem;
+    if (runId === null || runId !== latestRunId || runId !== runningRunId) return null;
     const key = `${id}:${status === "running" || status === "pending" ? "start" : "end"}`;
     if (classified.has(key)) return null;
     classified.add(key);
-    return outgrownBy(event);
+    const reason = outgrownBy(event);
+    return reason === null ? null : { runId, reason };
   };
 
   /**
@@ -697,10 +699,8 @@ export const makeRunnerTurns = Effect.fn("makeRunnerTurns")(function* (input: {
           if (yield* holdForDrive(event, (held, runId) => deliver(held, runId))) return;
           yield* track(event);
           yield* deliver(event);
-          const reason = input.machineClass === "light" ? outgrownByOnce(event) : null;
-          if (reason !== null && latestRunId !== null) {
-            yield* moveUp(latestRunId, reason);
-          }
+          const upgrade = input.machineClass === "light" ? outgrownByOnce(event) : null;
+          if (upgrade !== null) yield* moveUp(upgrade.runId, upgrade.reason);
         }),
       ),
       Effect.catchCause((cause) =>

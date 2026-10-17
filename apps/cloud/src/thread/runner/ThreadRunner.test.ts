@@ -12,6 +12,7 @@ import { HARNESS_MODES_UNSUPPORTED } from "../threadDecider.ts";
 import { CONNECT_TIMEOUT_MS, IDLE_TAIL_MS } from "./MachineBackend.ts";
 import { DRAIN_TIMEOUT_MS } from "./ThreadRunner.ts";
 import { CONTINUE_PROMPT, MAX_CONTINUATIONS } from "./runRecovery.ts";
+import { REQUEST_HEAVY_MACHINE_INSTRUCTIONS } from "./machineInstructions.ts";
 import {
   claude,
   claudeDriver,
@@ -998,7 +999,7 @@ describe("ThreadRunner", () => {
           });
           yield* connect(runner);
           const work = yield* runner.work;
-          expect(work.drive?.instructions).toEqual(levels);
+          expect(work.drive?.instructions).toEqual([...levels, REQUEST_HEAVY_MACHINE_INSTRUCTIONS]);
         }),
       { drives: true },
     ),
@@ -1036,7 +1037,7 @@ describe("ThreadRunner", () => {
           const work = yield* runner.work;
           // The continuation: a run of its own.
           expect(work.turn?.runId).not.toBe(turn.runId);
-          expect(work.drive?.instructions).toEqual(levels);
+          expect(work.drive?.instructions).toEqual([...levels, REQUEST_HEAVY_MACHINE_INSTRUCTIONS]);
         }),
       { drives: true },
     ),

@@ -1,4 +1,8 @@
 import type { ProviderAdapterV2Event } from "@t3tools/provider-core/server/ProviderAdapter";
+import {
+  REQUEST_HEAVY_MACHINE_COMMAND,
+  REQUEST_HEAVY_MACHINE_REASON,
+} from "@signalbox/runner-protocol/RunnerProtocol";
 
 /**
  * When a turn on a light machine needs a heavy one (#113, #134). The light
@@ -201,6 +205,32 @@ export const heavyCommand = (command: string): string | null => {
   return null;
 };
 
+/** Whether the agent ran the explicit, harmless request command. */
+const requestsHeavyMachine = (command: string): boolean => {
+  const requestIn = (text: string): boolean =>
+    commandsOf(text).some((words) => {
+      let start = 0;
+      while (
+        start < words.length &&
+        (WRAPPERS.has(baseName(words[start]!)) ||
+          /^\w+=/.test(words[start]!) ||
+          words[start]!.startsWith("-") ||
+          /^\d+[smh]?$/.test(words[start]!))
+      ) {
+        start++;
+      }
+      const tool = words[start] === undefined ? undefined : baseName(words[start]!);
+      if (tool === undefined) return false;
+      if (SHELLS.has(tool)) {
+        const flag = words.findIndex((word, index) => index > start && /^-\w*c\w*$/.test(word));
+        const script = flag === -1 ? undefined : words[flag + 1];
+        return script === undefined ? false : requestIn(script);
+      }
+      return words.slice(start).join(" ") === REQUEST_HEAVY_MACHINE_COMMAND;
+    });
+  return requestIn(command);
+};
+
 /**
  * Why `event` moves its turn to a heavy machine, or null. A heavy command
  * counts as soon as it starts, so the light machine is let go before it gets
@@ -210,6 +240,11 @@ export const outgrownBy = (event: ProviderAdapterV2Event): string | null => {
   if (event.type !== "turn_item.updated") return null;
   const item = event.turnItem;
   if (item.type !== "command_execution") return null;
+  const canRequest =
+    item.status === "pending" || item.status === "running" || item.status === "completed";
+  if (canRequest && requestsHeavyMachine(item.input)) {
+    return REQUEST_HEAVY_MACHINE_REASON;
+  }
   if (item.status === "running" || item.status === "pending") {
     const tool = heavyCommand(item.input);
     return tool === null ? null : `It runs \`${tool}\`, which needs a bigger machine.`;

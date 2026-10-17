@@ -121,22 +121,19 @@ export function recoverRunEvents(
     queue: "keep",
     leading: [
       ...aborted,
-      ...systemNoticeEvents(
-        projection,
-        run,
-        move === undefined
-          ? {
+      // Outgrown reasons are already in the turn's machine diagnostic record.
+      ...(move === undefined
+        ? systemNoticeEvents(
+            projection,
+            run,
+            {
               id: TurnItemId.make(`turn-item:${run.id}:machine-lost`),
               title: "Machine",
               message: "The machine running this turn went away. It picks up on a new one.",
-            }
-          : {
-              id: TurnItemId.make(`turn-item:${run.id}:machine-outgrown`),
-              title: "Machine",
-              message: `${move.reason} This turn picks up on a bigger machine.`,
             },
-        ctx,
-      ),
+            ctx,
+          )
+        : []),
     ],
   });
   const afterEnd = applyEvents(projection, ended) ?? projection;
