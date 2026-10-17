@@ -4,6 +4,7 @@ import {
 } from "@signalbox/runner-protocol/BranchProtocol";
 import {
   CommandId,
+  type GitCommandError,
   type GitActionProgressEvent,
   GitManagerError,
   type GitRunStackedActionInput,
@@ -11,6 +12,8 @@ import {
   type GitStackedAction,
   SourceControlProviderKind,
   type ThreadId,
+  type VcsListRefsInput,
+  type VcsListRefsResult,
   type VcsStatusLocalResult,
   type VcsStatusRemoteResult,
   type VcsStatusStreamEvent,
@@ -42,6 +45,7 @@ import * as UserDrives from "../user/UserDrives.ts";
 import { GitHub } from "./GitHub.ts";
 import type { GitHubError, GitHubPullRequest } from "./GitHubApi.ts";
 import { GitHubConnection } from "./GitHubConnection.ts";
+import { makeGitHubRefs } from "./GitHubRefs.ts";
 
 /**
  * A thread's own branch in an imported repository, as the git panel sees it
@@ -173,6 +177,10 @@ const OPENS_PR: ReadonlySet<GitStackedAction> = new Set(["create_pr", "commit_pu
 export class GitHubBranches extends Context.Service<
   GitHubBranches,
   {
+    readonly listRefs: (
+      actor: Actor,
+      input: VcsListRefsInput,
+    ) => Effect.Effect<VcsListRefsResult, GitCommandError>;
     readonly status: (
       actor: Actor,
       cwd: string,
@@ -197,6 +205,7 @@ export class GitHubBranches extends Context.Service<
 >()("@signalbox/cloud/github/GitHubBranches") {}
 
 const make = Effect.gen(function* () {
+  const listRefs = yield* makeGitHubRefs;
   const github = yield* GitHub;
   const connection = yield* GitHubConnection;
   const userDrives = yield* UserDrives.UserDrives;
@@ -657,7 +666,7 @@ const make = Effect.gen(function* () {
     );
   };
 
-  return GitHubBranches.of({ status, watch, runAction, publish });
+  return GitHubBranches.of({ listRefs, status, watch, runAction, publish });
 });
 
 export const layer = Layer.effect(GitHubBranches, make);

@@ -116,6 +116,7 @@ const toPull = (body: typeof PullBody.Type): GitHubPullRequest => ({
 });
 
 const RefBody = Schema.Struct({ object: Schema.Struct({ sha: Schema.String }) });
+const RefsBody = Schema.Array(Schema.Struct({ ref: Schema.String, ...RefBody.fields }));
 const CommitBody = Schema.Struct({ sha: Schema.String });
 const MergeBody = Schema.Struct({ merged: Schema.Boolean });
 const TreeBody = Schema.Struct({
@@ -449,6 +450,14 @@ export const makeGitHubApi = (
         ),
         token,
       ).pipe(Effect.map((body) => body?.object.sha ?? null)),
+    /** All branch refs. GitHub's matching-refs endpoint returns the whole namespace without paging. */
+    listRefs: (token: string, repository: string) =>
+      json(
+        "listRefs",
+        RefsBody,
+        HttpClientRequest.get(`${api}/repos/${repository}/git/matching-refs/heads/`),
+        token,
+      ),
     /** The newest pull request from `branch` in the same repository, in any state. */
     pullForBranch: (token: string, repository: string, branch: string) => {
       const url = new URL(`${api}/repos/${repository}/pulls`);
