@@ -1,5 +1,6 @@
 import { ProviderDriverKind, ProviderInstanceId } from "@t3tools/contracts";
 import { poolSourceId } from "@t3tools/contracts/accountHub";
+import type { ModelManifestCatalogs } from "@t3tools/shared/modelManifest";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -53,7 +54,7 @@ const layer = ModelCatalog.layer.pipe(
             ],
           },
         },
-      }),
+      } satisfies ModelManifestCatalogs),
     }),
   ),
 );
