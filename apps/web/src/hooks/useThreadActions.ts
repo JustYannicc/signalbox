@@ -537,7 +537,7 @@ export function useThreadActions() {
         return deleteResult;
       }
       refreshArchivedThreadsForEnvironment(threadRef.environmentId);
-      if (!usesSignalboxTrash) releaseComposerDraftUploads(threadRef);
+      releaseComposerDraftUploads(threadRef);
       clearComposerDraftForThread(threadRef);
       clearProjectDraftThreadById(
         scopeProjectRef(threadRef.environmentId, thread.projectId),

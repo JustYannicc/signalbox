@@ -139,6 +139,9 @@ vi.mock("../terminalUiStateStore", () => ({
       clearTerminalUiState: () => state.localEffects.push("clear-terminal-ui"),
     }),
 }));
+vi.mock("../previewStateStore", () => ({
+  clearThreadPreviewState: () => state.localEffects.push("clear-preview-ui"),
+}));
 vi.mock("../uiStateStore", () => ({
   useUiStateStore: (select: (store: unknown) => unknown) =>
     select({
@@ -358,7 +361,7 @@ describe("thread action permissions", () => {
     expect(state.requests.map((request) => request.action)).toEqual(["delete"]);
     expect(state.confirm).not.toHaveBeenCalled();
     expect(state.localEffects).toContain("clear-terminal-ui");
-    expect(state.localEffects).not.toContain("release-uploads");
+    expect(state.localEffects).toContain("release-uploads");
   });
 
   it("keeps local state and the worktree when cloud Trash rejects deletion", async () => {
