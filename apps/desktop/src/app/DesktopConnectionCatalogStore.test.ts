@@ -28,22 +28,26 @@ const encodeLegacySavedEnvironments = Schema.encodeEffect(
     Schema.Struct({ version: Schema.Literal(1), records: Schema.Array(Schema.Unknown) }),
   ),
 );
-function layerSafeStorageFor(available: boolean, failDecrypt: Ref.Ref<boolean> | null = null) {
+function layerSafeStorageFor(
+  available: boolean,
+  failDecrypt: Ref.Ref<boolean> | null = null,
+  prefix = "encrypted:",
+) {
   return Layer.succeed(ElectronSafeStorage.ElectronSafeStorage, {
     isEncryptionAvailable: Effect.succeed(available),
-    encryptString: (value) => Effect.succeed(textEncoder.encode(`encrypted:${value}`)),
+    encryptString: (value) => Effect.succeed(textEncoder.encode(`${prefix}${value}`)),
     decryptString: (value) => {
       return Effect.gen(function* () {
         const decoded = textDecoder.decode(value);
         if (
-          !decoded.startsWith("encrypted:") ||
+          !decoded.startsWith(prefix) ||
           (failDecrypt !== null && (yield* Ref.get(failDecrypt)))
         ) {
           return yield* new ElectronSafeStorage.ElectronSafeStorageDecryptError({
             cause: new Error("invalid encrypted catalog"),
           });
         }
-        return decoded.slice("encrypted:".length);
+        return decoded.slice(prefix.length);
       });
     },
     selectedStorageBackend: Effect.succeedNone,
@@ -59,6 +63,10 @@ function layerFor(
     encryptionAvailable,
     failDecrypt,
   ),
+  runtime?: Pick<
+    DesktopEnvironment.MakeDesktopEnvironmentInput,
+    "dirname" | "platform" | "isPackaged"
+  >,
 ) {
   const layerEnvironment = DesktopEnvironment.layer({
     dirname: "/repo/apps/desktop/src",
@@ -70,9 +78,13 @@ function layerFor(
     isPackaged: true,
     resourcesPath: "/missing/resources",
     runningUnderArm64Translation: false,
+    ...runtime,
   }).pipe(
     Layer.provide(
-      Layer.mergeAll(NodeServices.layer, DesktopConfig.layerTest({ T3CODE_HOME: baseDir })),
+      Layer.mergeAll(
+        NodeServices.layer,
+        DesktopConfig.layerTest(runtime ? {} : { T3CODE_HOME: baseDir }),
+      ),
     ),
   );
   const layerDependencies = Layer.mergeAll(
@@ -104,6 +116,120 @@ const withStore = <A, E, R>(
   }).pipe(Effect.provide(NodeServices.layer), Effect.scoped);
 
 describe("DesktopConnectionCatalogStore", () => {
+  it.effect.each([
+    { platform: "darwin", isPackaged: true },
+    { platform: "linux", isPackaged: false },
+    { platform: "win32", isPackaged: false },
+  ] as const)("preserves the shared catalog path for %o", (runtime) =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const baseDir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "catalog-shared-path-" });
+      const layer = layerFor(baseDir, true, null, NodeServices.layer, layerSafeStorageFor(true), {
+        dirname: "/runtime/apps/desktop/dist-electron",
+        ...runtime,
+      });
+      yield* Effect.gen(function* () {
+        const environment = yield* DesktopEnvironment.DesktopEnvironment;
+        const store = yield* DesktopConnectionCatalogStore.DesktopConnectionCatalogStore;
+        assert.isTrue(yield* store.set("unchanged shared catalog"));
+        const document = yield* fileSystem.readFileString(
+          (yield* Path.Path).join(environment.stateDir, "connection-catalog.json"),
+        );
+        assert.include(
+          document,
+          Base64.encode(textEncoder.encode("encrypted:unchanged shared catalog")),
+        );
+      }).pipe(Effect.provide(layer));
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
+
+  it.effect("keeps local Mac runtimes' catalogs separate even with a shared default home", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const baseDir = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "catalog-runtime-isolation-",
+      });
+      const runtime = (dirname: string) =>
+        layerFor(
+          baseDir,
+          true,
+          null,
+          NodeServices.layer,
+          layerSafeStorageFor(true, null, `key:${dirname}:`),
+          { dirname, platform: "darwin", isPackaged: false },
+        );
+      const first = runtime("/first/apps/desktop/dist-electron");
+      const second = runtime("/second/apps/desktop/dist-electron");
+      const set = (catalog: string) =>
+        Effect.flatMap(DesktopConnectionCatalogStore.DesktopConnectionCatalogStore, (store) =>
+          store.set(catalog),
+        );
+      const get = Effect.flatMap(
+        DesktopConnectionCatalogStore.DesktopConnectionCatalogStore,
+        (store) => store.get,
+      );
+      const clear = Effect.flatMap(
+        DesktopConnectionCatalogStore.DesktopConnectionCatalogStore,
+        (store) => store.clear,
+      );
+
+      assert.isTrue(yield* set("first credentials").pipe(Effect.provide(first)));
+      assert.deepStrictEqual(yield* get.pipe(Effect.provide(second)), Option.none());
+      assert.isTrue(yield* set("second credentials").pipe(Effect.provide(second)));
+      assert.deepStrictEqual(
+        yield* get.pipe(Effect.provide(first)),
+        Option.some("first credentials"),
+      );
+      assert.deepStrictEqual(
+        yield* get.pipe(Effect.provide(second)),
+        Option.some("second credentials"),
+      );
+      yield* clear.pipe(Effect.provide(second));
+      assert.deepStrictEqual(
+        yield* get.pipe(Effect.provide(first)),
+        Option.some("first credentials"),
+      );
+      assert.deepStrictEqual(yield* get.pipe(Effect.provide(second)), Option.none());
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
+
+  it.effect("leaves shared catalog and legacy files untouched in the new local Mac namespace", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const baseDir = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "catalog-legacy-isolation-",
+      });
+      const layer = layerFor(baseDir, true, null, NodeServices.layer, layerSafeStorageFor(true), {
+        dirname: "/local/apps/desktop/dist-electron",
+        platform: "darwin",
+        isPackaged: false,
+      });
+      yield* Effect.gen(function* () {
+        const environment = yield* DesktopEnvironment.DesktopEnvironment;
+        const store = yield* DesktopConnectionCatalogStore.DesktopConnectionCatalogStore;
+        const catalogPath = (yield* Path.Path).join(
+          environment.stateDir,
+          "connection-catalog.json",
+        );
+        const legacyRegistry = "invalid legacy registry must never be read with the new key";
+        const sharedCatalog = "unrelated existing catalog must never be read or overwritten";
+        yield* fileSystem.makeDirectory(environment.stateDir, { recursive: true });
+        yield* fileSystem.writeFileString(environment.savedEnvironmentRegistryPath, legacyRegistry);
+        assert.deepStrictEqual(yield* store.get, Option.none());
+        yield* fileSystem.writeFileString(catalogPath, sharedCatalog);
+        assert.deepStrictEqual(yield* store.get, Option.none());
+        assert.isTrue(yield* store.set("local credentials"));
+        assert.deepStrictEqual(yield* store.get, Option.some("local credentials"));
+        yield* store.clear;
+        assert.deepStrictEqual(yield* store.get, Option.none());
+        assert.equal(yield* fileSystem.readFileString(catalogPath), sharedCatalog);
+        assert.equal(
+          yield* fileSystem.readFileString(environment.savedEnvironmentRegistryPath),
+          legacyRegistry,
+        );
+      }).pipe(Effect.provide(layer));
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
   it.effect("persists, reads, and clears an encrypted connection catalog", () =>
     withStore(
       Effect.gen(function* () {
