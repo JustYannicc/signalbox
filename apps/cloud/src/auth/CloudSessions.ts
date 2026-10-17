@@ -10,6 +10,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 
+import * as Evlog from "../observability/Evlog.ts";
 import * as UserDirectory from "../user/UserDirectory.ts";
 import type { SessionRecord } from "../user/UserStore.ts";
 import * as CloudTokens from "./CloudTokens.ts";
@@ -136,18 +137,28 @@ const make = Effect.gen(function* () {
     sessionId: AuthSessionId.make(claims.sid),
   });
 
+  // Whoever a request turns out to be is its wide event's person.
+  const annotatePerson = (claims: SessionClaims) =>
+    Evlog.annotate({ person: { id: claims.userId } });
+
   const claims: CloudSessions["Service"]["claims"] = ({ cookie, bearer }) => {
     const token = cookie ?? bearer;
     if (!token) return Effect.fail(new CloudCredentialError({ reason: "missing_credential" }));
     return tokens
       .verify("session", token)
-      .pipe(Effect.mapBoth({ onFailure: invalid, onSuccess: toClaims }));
+      .pipe(
+        Effect.mapBoth({ onFailure: invalid, onSuccess: toClaims }),
+        Effect.tap(annotatePerson),
+      );
   };
 
   const ticketClaims: CloudSessions["Service"]["ticketClaims"] = (ticket) =>
     tokens
       .verify("ticket", ticket)
-      .pipe(Effect.mapBoth({ onFailure: invalid, onSuccess: toClaims }));
+      .pipe(
+        Effect.mapBoth({ onFailure: invalid, onSuccess: toClaims }),
+        Effect.tap(annotatePerson),
+      );
 
   const authenticate: CloudSessions["Service"]["authenticate"] = Effect.fn(
     "CloudSessions.authenticate",
