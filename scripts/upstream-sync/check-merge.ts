@@ -5,8 +5,8 @@
  *
  *   node scripts/upstream-sync/check-merge.ts --base <ref> --head <ref> --upstream <ref> [--report]
  *
- * Only conflicts the head introduces count: files that conflict for head but
- * not for base. `--report` prints them as warnings and always exits 0.
+ * Only conflicts the PR's merge into base introduces count: files that conflict
+ * after merging but not for base. `--report` prints warnings and always exits 0.
  */
 import * as NodePath from "node:path";
 import * as NodeUtil from "node:util";
