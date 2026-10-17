@@ -39,6 +39,7 @@ import { NodeRuntimeUnavailableError } from "@t3tools/shared/nodeRuntime";
 
 import * as DeviceService from "./DeviceService.ts";
 import * as DeviceAgentLiveness from "./DeviceAgentLiveness.ts";
+import * as AgentDeviceProxyRegistry from "./AgentDeviceProxyRegistry.ts";
 import {
   deviceLeaseDirectory,
   makeFileDeviceLeaseStore,
@@ -85,7 +86,7 @@ describe("DeviceService.stateStream", () => {
   );
 });
 
-const fixture = Effect.fn("fixture")(function* (
+const makeFixture = Effect.fn("fixture")(function* (
   onBoot: Effect.Effect<void> = Effect.void,
   bootError?: string,
   failListAfterShutdown = false,
@@ -102,6 +103,7 @@ const fixture = Effect.fn("fixture")(function* (
   onShutdown: Effect.Effect<void> = Effect.void,
   onDeviceHostReady: Effect.Effect<void> = Effect.void,
 ) {
+  const agentDeviceProxyRegistry = yield* AgentDeviceProxyRegistry.AgentDeviceProxyRegistry;
   const settings = yield* Ref.make(DEFAULT_SERVER_SETTINGS);
   const starts: string[] = [];
   const agentStarts: string[] = [];
@@ -266,9 +268,176 @@ const fixture = Effect.fn("fixture")(function* (
       ...(leaseRuntime.waitForLeaseRetry === undefined
         ? {}
         : { waitForLeaseRetry: leaseRuntime.waitForLeaseRetry }),
-    }).pipe(Effect.provide(runtimeLayer));
+    }).pipe(
+      Effect.provide(runtimeLayer),
+      Effect.provideService(
+        AgentDeviceProxyRegistry.AgentDeviceProxyRegistry,
+        agentDeviceProxyRegistry,
+      ),
+    );
   }
-  return { service, starts, agentStarts, agentStops, requests, settings };
+  return { service, starts, agentStarts, agentStops, requests, settings, agentDeviceProxyRegistry };
+});
+
+const fixture = (...args: Parameters<typeof makeFixture>) =>
+  makeFixture(...args).pipe(Effect.provide(AgentDeviceProxyRegistry.layer));
+
+describe("agent device targets", () => {
+  it.effect("binds CLI configs to the current agent lease and isolates later providers", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-agent-target-service-" });
+        const { service, agentDeviceProxyRegistry: registry } = yield* fixture(
+          Effect.void,
+          undefined,
+          false,
+          undefined,
+          false,
+          undefined,
+          { automaticCleanup: false },
+          true,
+          baseDir,
+          baseDir,
+        );
+        yield* service.configure({ enabled: true, agentAccessEnabled: true });
+        yield* service.list;
+
+        const threadId = ThreadId.make("agent-target-service-test");
+        const deviceId = DeviceId.make("emulator-5554");
+        const firstProvider = ProviderSessionId.make("provider-one");
+        const firstOwner = { kind: "agent" as const, providerSessionId: firstProvider };
+        const firstSession = yield* service.open(
+          { threadId, hostId: LOCAL_DEVICE_HOST_ID, deviceId, platform: "android" },
+          firstOwner,
+        );
+        const firstTarget = yield* service.agentTarget({
+          threadId,
+          hostId: firstSession.hostId,
+          deviceId: firstSession.deviceId,
+          sessionId: firstSession.sessionId,
+          leaseId: firstSession.leaseId,
+          providerSessionId: firstProvider,
+        });
+        const firstRegistration = yield* registry.get(firstSession.sessionId);
+        expect((yield* service.state).sessions).toContainEqual(firstSession);
+        expect(firstRegistration).toMatchObject({
+          session: {
+            sessionId: firstSession.sessionId,
+            leaseId: firstSession.leaseId,
+            ownerKind: "agent",
+            providerSessionId: firstProvider,
+            threadId,
+            hostId: LOCAL_DEVICE_HOST_ID,
+            deviceId,
+            platform: "android",
+          },
+          endpoint: {
+            baseUrl: "http://agent.test",
+            token: "test",
+          },
+        });
+        expect(firstRegistration).not.toBeNull();
+        expect(firstTarget).toEqual({
+          args: ["--config", firstRegistration!.configPath, "--session", firstSession.sessionId],
+          sessionId: firstSession.sessionId,
+        });
+        const firstConfigText = yield* fs.readFileString(firstRegistration!.configPath);
+        const firstConfig = JSON.parse(firstConfigText) as {
+          readonly daemonBaseUrl: string;
+          readonly daemonAuthToken: string;
+        };
+        expect(firstConfig.daemonBaseUrl).toMatch(
+          new RegExp(
+            `^http://127\\.0\\.0\\.1:\\d+/api/agent-device/${encodeURIComponent(firstSession.sessionId)}/$`,
+          ),
+        );
+        expect(firstConfig.daemonAuthToken).toBe(firstRegistration!.proxyToken);
+        expect(firstRegistration!.proxyToken).not.toBe(firstRegistration!.endpoint.token);
+
+        yield* service.close(
+          {
+            threadId,
+            hostId: firstSession.hostId,
+            deviceId: firstSession.deviceId,
+            sessionId: firstSession.sessionId,
+            leaseId: firstSession.leaseId,
+          },
+          firstOwner,
+        );
+        const staleTarget = yield* Effect.exit(
+          service.agentTarget({
+            threadId,
+            hostId: firstSession.hostId,
+            deviceId: firstSession.deviceId,
+            sessionId: firstSession.sessionId,
+            leaseId: firstSession.leaseId,
+            providerSessionId: firstProvider,
+          }),
+        );
+        expect(Exit.isFailure(staleTarget)).toBe(true);
+        expect(yield* fs.readFileString(firstRegistration!.configPath)).toBe(firstConfigText);
+
+        const nextProvider = ProviderSessionId.make("provider-two");
+        const nextOwner = { kind: "agent" as const, providerSessionId: nextProvider };
+        const nextSession = yield* service.open(
+          { threadId, hostId: LOCAL_DEVICE_HOST_ID, deviceId, platform: "android" },
+          nextOwner,
+        );
+        const nextTarget = yield* service.agentTarget({
+          threadId,
+          hostId: nextSession.hostId,
+          deviceId: nextSession.deviceId,
+          sessionId: nextSession.sessionId,
+          leaseId: nextSession.leaseId,
+          providerSessionId: nextProvider,
+        });
+        const nextRegistration = yield* registry.get(nextSession.sessionId);
+        expect(nextRegistration?.session).toMatchObject({
+          sessionId: nextSession.sessionId,
+          leaseId: nextSession.leaseId,
+          ownerKind: "agent",
+          providerSessionId: nextProvider,
+          threadId,
+          hostId: LOCAL_DEVICE_HOST_ID,
+          deviceId,
+        });
+        expect(nextRegistration!.configPath).not.toBe(firstRegistration!.configPath);
+        expect(nextRegistration!.proxyToken).not.toBe(firstRegistration!.proxyToken);
+        expect(nextTarget.args).toEqual([
+          "--config",
+          nextRegistration!.configPath,
+          "--session",
+          nextSession.sessionId,
+        ]);
+        expect(yield* fs.readFileString(firstRegistration!.configPath)).toBe(firstConfigText);
+
+        yield* service.close(
+          {
+            threadId,
+            hostId: firstSession.hostId,
+            deviceId: firstSession.deviceId,
+            sessionId: firstSession.sessionId,
+            leaseId: firstSession.leaseId,
+          },
+          firstOwner,
+        );
+        expect((yield* service.state).sessions.map((session) => session.sessionId)).toContain(
+          nextSession.sessionId,
+        );
+        yield* service.close(
+          {
+            threadId,
+            hostId: nextSession.hostId,
+            deviceId: nextSession.deviceId,
+            sessionId: nextSession.sessionId,
+            leaseId: nextSession.leaseId,
+          },
+          nextOwner,
+        );
+      }).pipe(Effect.provide(NodeServices.layer)),
+    ),
+  );
 });
 
 describe("device setup consent", () => {
@@ -1837,6 +2006,12 @@ it.effect("reconciles SSH host settings without publishing no-op changes", () =>
     expect(removedFiles).toHaveLength(1);
   }).pipe(
     Effect.scoped,
-    Effect.provide(Layer.mergeAll(ServerSettings.layerTest(), NodeServices.layer)),
+    Effect.provide(
+      Layer.mergeAll(
+        ServerSettings.layerTest(),
+        NodeServices.layer,
+        AgentDeviceProxyRegistry.layer,
+      ),
+    ),
   ),
 );

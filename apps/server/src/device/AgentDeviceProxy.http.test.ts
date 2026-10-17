@@ -10,9 +10,11 @@ import {
 } from "@t3tools/contracts";
 import * as NodeHttp from "node:http";
 import * as NodeStream from "node:stream";
+import * as NodeHttpPlatform from "@effect/platform-node/NodeHttpPlatform";
 import * as Context from "effect/Context";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as PubSub from "effect/PubSub";
@@ -32,6 +34,7 @@ import * as AgentDeviceProxyRegistry from "./AgentDeviceProxyRegistry.ts";
 import * as DeviceAgentDiagnostics from "./DeviceAgentDiagnostics.ts";
 import type { AgentDeviceSession } from "./AgentDeviceSession.ts";
 import * as DeviceService from "./DeviceService.ts";
+import * as ServerHttp from "../http.ts";
 
 const PROXY_TOKEN = "proxy-token";
 const DAEMON_TOKEN = "daemon-token";
@@ -97,6 +100,7 @@ const readBody = async (request: NodeHttp.IncomingMessage) => {
 };
 
 const listen = async (handler: (request: Request) => Promise<Response>) => {
+  const responseHeaders: Array<Readonly<Record<string, string>>> = [];
   const server = NodeHttp.createServer((incoming, outgoing) => {
     void (async () => {
       const headers = new Headers();
@@ -113,6 +117,7 @@ const listen = async (handler: (request: Request) => Promise<Response>) => {
         },
       );
       const response = await handler(request);
+      responseHeaders.push(Object.fromEntries(response.headers.entries()));
       outgoing.statusCode = response.status;
       response.headers.forEach((value, name) => outgoing.setHeader(name, value));
       if (response.body === null) {
@@ -133,6 +138,7 @@ const listen = async (handler: (request: Request) => Promise<Response>) => {
   if (!address || typeof address === "string") throw new Error("Test server did not bind TCP");
   return {
     url: `http://127.0.0.1:${address.port}`,
+    responseHeaders,
     close: () =>
       new Promise<void>((resolve, reject) => {
         server.close((error) => (error ? reject(error) : resolve()));
@@ -151,8 +157,18 @@ it.effect("observes authenticated daemon failures across the real HTTP proxy bou
       const encoder = new TextEncoder();
       const releaseClosedResponse = yield* Deferred.make<void>();
       const releaseReplacedResponse = yield* Deferred.make<void>();
+      const releaseIncrementalResponse = yield* Deferred.make<void>();
+      const progressDecoded = yield* Deferred.make<void>();
+      const terminalDecoded = yield* Deferred.make<void>();
       const progressRecord = `${JSON.stringify({ type: "progress", text: "x".repeat(2 * 1024 * 1024) })}\n`;
       const typedResponse = `${JSON.stringify({ type: "response", response: JSON.parse(typedFailure) })}\n`;
+      const incrementalProgress = `${JSON.stringify({ type: "progress", text: "first chunk" })}\n`;
+      const incrementalFailure = JSON.stringify({
+        jsonrpc: "2.0",
+        id: "request-incremental",
+        error: (JSON.parse(typedFailure) as { error: unknown }).error,
+      });
+      const incrementalTerminal = `${JSON.stringify({ type: "response", response: JSON.parse(incrementalFailure) })}\n`;
       const successResponse = `${JSON.stringify({
         type: "response",
         response: { jsonrpc: "2.0", id: "request-large-success", result: { ok: true } },
@@ -213,21 +229,30 @@ it.effect("observes authenticated daemon failures across the real HTTP proxy bou
                                 ).pipe(Effect.as(encoder.encode(typedResponse))),
                               ),
                             )
-                          : Stream.make(
-                              encoder.encode(
-                                JSON.stringify({
-                                  type: "response",
-                                  response:
-                                    command === "unknown"
-                                      ? JSON.parse(unknownFailure)
-                                      : {
-                                          jsonrpc: "2.0",
-                                          id: "request-success",
-                                          result: { ok: true },
-                                        },
-                                }),
-                              ),
-                            );
+                          : command === "incremental"
+                            ? Stream.concat(
+                                Stream.make(encoder.encode(incrementalProgress)),
+                                Stream.fromEffect(
+                                  Deferred.await(releaseIncrementalResponse).pipe(
+                                    Effect.as(encoder.encode(incrementalTerminal)),
+                                  ),
+                                ),
+                              )
+                            : Stream.make(
+                                encoder.encode(
+                                  JSON.stringify({
+                                    type: "response",
+                                    response:
+                                      command === "unknown"
+                                        ? JSON.parse(unknownFailure)
+                                        : {
+                                            jsonrpc: "2.0",
+                                            id: "request-success",
+                                            result: { ok: true },
+                                          },
+                                  }),
+                                ),
+                              );
           return HttpServerResponse.stream(responseBody, {
             status: command === "large" ? 207 : 200,
             headers: {
@@ -244,6 +269,33 @@ it.effect("observes authenticated daemon failures across the real HTTP proxy bou
       );
       const daemonServer = yield* Effect.acquireRelease(
         Effect.promise(() => listen(daemonHandler)),
+        (server) => Effect.promise(() => server.close()),
+      );
+      const replacementDaemonRequests: Array<string> = [];
+      const replacementDaemonServer = yield* Effect.acquireRelease(
+        Effect.promise(() =>
+          listen(async (request) => {
+            const body = await request.text();
+            if (
+              request.headers.get("authorization") !== "Bearer new-daemon-token" ||
+              request.headers.get("x-agent-device-token") !== "new-daemon-token"
+            ) {
+              return new Response("Unauthorized", { status: 401 });
+            }
+            replacementDaemonRequests.push(body);
+            return new Response(
+              `${JSON.stringify({
+                type: "response",
+                response: {
+                  jsonrpc: "2.0",
+                  id: "request-success",
+                  result: { provider: "replacement" },
+                },
+              })}\n`,
+              { headers: { "content-type": "application/x-ndjson" } },
+            );
+          }),
+        ),
         (server) => Effect.promise(() => server.close()),
       );
 
@@ -293,6 +345,8 @@ it.effect("observes authenticated daemon failures across the real HTTP proxy bou
                 Layer.succeed(AgentDeviceProxyRegistry.AgentDeviceProxyRegistry, registry),
               ),
               Layer.provideMerge(Layer.succeed(HttpClient.HttpClient, fetchClient)),
+              Layer.provideMerge(ServerHttp.layerHttpCompression),
+              Layer.provideMerge(NodeHttpPlatform.layer),
             ),
             { disableLogger: true },
           ),
@@ -303,14 +357,25 @@ it.effect("observes authenticated daemon failures across the real HTTP proxy bou
         Effect.promise(() => listen(proxyHandler)),
         (server) => Effect.promise(() => server.close()),
       );
-      const send = (command: string, bodySession = liveSession.sessionId) =>
-        fetchClient.execute(
+      const send = (
+        command: string,
+        options: {
+          readonly bodySession?: string;
+          readonly sessionId?: string;
+          readonly proxyToken?: string;
+        } = {},
+      ) => {
+        const sessionId = options.sessionId ?? liveSession.sessionId;
+        const bodySession = options.bodySession ?? sessionId;
+        const proxyToken = options.proxyToken ?? PROXY_TOKEN;
+        return fetchClient.execute(
           HttpClientRequest.make("POST")(
-            `${proxyServer.url}/api/agent-device/${liveSession.sessionId}/rpc`,
+            `${proxyServer.url}/api/agent-device/${sessionId}/rpc`,
           ).pipe(
             HttpClientRequest.setHeaders({
-              authorization: `Bearer ${PROXY_TOKEN}`,
-              "x-agent-device-token": PROXY_TOKEN,
+              authorization: `Bearer ${proxyToken}`,
+              "x-agent-device-token": proxyToken,
+              "accept-encoding": "gzip",
               "content-type": "application/json",
               cookie: "browser-session=secret",
               dpop: "browser-proof",
@@ -319,6 +384,7 @@ it.effect("observes authenticated daemon failures across the real HTTP proxy bou
             HttpClientRequest.bodyText(requestBody(command, bodySession)),
           ),
         );
+      };
 
       const typed = yield* send("large");
       const typedBody = yield* typed.text;
@@ -389,6 +455,44 @@ it.effect("observes authenticated daemon failures across the real HTTP proxy bou
       expect(yield* largeSuccess.text).toBe(`${progressRecord}${successResponse}`);
       expect(yield* diagnostics.snapshot).toEqual([]);
 
+      const incremental = yield* send("incremental");
+      let pendingLine = "";
+      const decoder = new TextDecoder();
+      const decodedRecordTypes: Array<string> = [];
+      const readIncrementalBody = yield* Stream.runForEach(incremental.stream, (chunk) =>
+        Effect.gen(function* () {
+          pendingLine += decoder.decode(chunk, { stream: true });
+          const records = pendingLine.split("\n");
+          pendingLine = records.pop() ?? "";
+          for (const line of records) {
+            if (line.length === 0) continue;
+            const record = JSON.parse(line) as { readonly type: string };
+            decodedRecordTypes.push(record.type);
+            if (record.type === "progress") yield* Deferred.succeed(progressDecoded, undefined);
+            if (record.type === "response") yield* Deferred.succeed(terminalDecoded, undefined);
+          }
+        }),
+      ).pipe(Effect.forkChild);
+      yield* Deferred.await(progressDecoded);
+      expect(decodedRecordTypes).toEqual(["progress"]);
+      expect(
+        proxyServer.responseHeaders.some((headers) => headers["content-encoding"] === "gzip"),
+      ).toBe(true);
+      yield* Deferred.succeed(releaseIncrementalResponse, undefined);
+      yield* Fiber.join(readIncrementalBody);
+      yield* Deferred.await(terminalDecoded);
+      expect(decodedRecordTypes).toEqual(["progress", "response"]);
+      expect(yield* diagnostics.snapshot).toMatchObject([
+        {
+          sessionId: liveSession.sessionId,
+          reason: "simulator_service_hub_unavailable",
+          diagnosticId: "diag-typed",
+        },
+      ]);
+      const clearedIncremental = yield* send("success");
+      yield* clearedIncremental.text;
+      expect(yield* diagnostics.snapshot).toEqual([]);
+
       const unknown = yield* send("unknown");
       expect(yield* unknown.text).toContain(unknownFailure);
       expect(yield* diagnostics.snapshot).toMatchObject([
@@ -421,22 +525,47 @@ it.effect("observes authenticated daemon failures across the real HTTP proxy bou
       yield* SynchronizedRef.set(deviceState, stateWith([liveSession]));
       yield* PubSub.publish(deviceChanges, stateWith([liveSession]));
       const beforeMismatch = daemonRequests.length;
-      const mismatched = yield* send("success", "different-session");
+      const mismatched = yield* send("success", { bodySession: "different-session" });
       expect(mismatched.status).toBe(409);
       yield* mismatched.text;
       expect(daemonRequests).toHaveLength(beforeMismatch);
 
       const replaced = yield* send("replace");
+      const replacementSession: AgentDeviceSession = {
+        ...liveSession,
+        leaseId: "lease-provider-new",
+        providerSessionId: ProviderSessionId.make("provider-new"),
+        threadId: ThreadId.make("thread-provider-new"),
+        deviceId: DeviceId.make("device-provider-new"),
+      };
+      yield* SynchronizedRef.set(deviceState, stateWith([replacementSession]));
+      yield* PubSub.publish(deviceChanges, stateWith([replacementSession]));
       const replacementRegistration = yield* registry.register({
         ...registrationInput,
-        configPath: "/state/agent-session-new-token.json",
+        session: replacementSession,
+        configPath: "/state/agent-session-provider-new.json",
         proxyToken: "new-proxy-token",
+        endpoint: {
+          baseUrl: `${replacementDaemonServer.url}/`,
+          token: "new-daemon-token",
+          entryPath: "/replacement-agent-device.mjs",
+        },
       });
       yield* Deferred.succeed(releaseReplacedResponse, undefined);
       expect(yield* replaced.text).toContain(typedFailure);
       expect(yield* diagnostics.snapshot).toEqual([]);
       expect(yield* registry.isCurrent(registration)).toBe(false);
       expect(yield* registry.isCurrent(replacementRegistration)).toBe(true);
+      const beforeStaleProviderRequest = replacementDaemonRequests.length;
+      const staleProvider = yield* send("success", { proxyToken: PROXY_TOKEN });
+      expect(staleProvider.status).toBe(401);
+      yield* staleProvider.text;
+      expect(replacementDaemonRequests).toHaveLength(beforeStaleProviderRequest);
+
+      const currentProvider = yield* send("success", { proxyToken: "new-proxy-token" });
+      expect(yield* currentProvider.text).toContain('"provider":"replacement"');
+      expect(replacementDaemonRequests).toEqual([requestBody("success")]);
+      expect(daemonRequests).toHaveLength(beforeMismatch + 1);
     }),
   ),
 );

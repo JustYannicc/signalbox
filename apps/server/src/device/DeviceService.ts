@@ -30,7 +30,7 @@ import { resolveNodeExecutable, nodeRuntimeUnavailableMessage } from "@t3tools/s
 import * as Path from "effect/Path";
 import { ensureAgentDevice, ensureDeviceHub } from "./DeviceToolchain.ts";
 import * as ServerConfig from "../config.ts";
-import { agentDeviceConfigPath, writeAgentDeviceConfig } from "./AgentDeviceTarget.ts";
+import { agentDeviceConfigDir, configureAgentDeviceSession } from "./AgentDeviceTarget.ts";
 import * as Context from "effect/Context";
 import * as Clock from "effect/Clock";
 import * as Crypto from "effect/Crypto";
@@ -49,6 +49,8 @@ import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http";
 import * as ServerSettings from "../serverSettings.ts";
 import { isLocalSshDeviceHost, remoteSshDeviceHosts } from "./localSshDeviceHost.ts";
 import * as DeviceAgentLiveness from "./DeviceAgentLiveness.ts";
+import * as AgentDeviceProxyRegistry from "./AgentDeviceProxyRegistry.ts";
+import type { AgentDeviceSession } from "./AgentDeviceSession.ts";
 
 import { readDeviceDetail, runDeviceAction } from "./DeviceActions.ts";
 import * as ProcessRunner from "../processRunner.ts";
@@ -151,6 +153,8 @@ export class DeviceService extends Context.Service<
       hostId: DeviceHostId;
       deviceId: DeviceId;
       sessionId: string;
+      leaseId: string;
+      providerSessionId: ProviderSessionId;
     }) => Effect.Effect<
       { readonly args: ReadonlyArray<string>; readonly sessionId: string },
       DeviceError
@@ -218,6 +222,47 @@ interface DeviceOpenRequestState {
 const vendorPrefix = (platform: DevicePlatform) =>
   platform === "ios" ? "/vendor/serve-sim" : "/vendor/serve-emu";
 
+const agentSessionFor = (
+  state: DeviceServiceState,
+  input: {
+    readonly threadId: ThreadId;
+    readonly hostId: DeviceHostId;
+    readonly deviceId: DeviceId;
+    readonly sessionId: string;
+    readonly leaseId: string;
+    readonly providerSessionId: ProviderSessionId;
+  },
+): AgentDeviceSession | undefined => {
+  const session = state.sessions.find(
+    (candidate) =>
+      candidate.sessionId === input.sessionId &&
+      candidate.leaseId === input.leaseId &&
+      candidate.ownerKind === "agent" &&
+      candidate.providerSessionId === input.providerSessionId &&
+      candidate.threadId === input.threadId &&
+      candidate.hostId === input.hostId &&
+      candidate.deviceId === input.deviceId,
+  );
+  if (!session || session.providerSessionId === undefined) return undefined;
+  return {
+    sessionId: session.sessionId,
+    leaseId: session.leaseId,
+    ownerKind: "agent",
+    providerSessionId: session.providerSessionId,
+    threadId: session.threadId,
+    hostId: session.hostId,
+    deviceId: session.deviceId,
+    platform: session.platform,
+  };
+};
+
+const staleAgentTarget = () =>
+  new DeviceOperationError({
+    operation: "agent target",
+    reason: "stale_session",
+    cause: new Error("The requested agent device session is no longer current."),
+  });
+
 export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* (
   hosts: ReadonlyMap<DeviceHostId, DeviceHost.DeviceHost["Service"]>,
   testHost: DeviceService["Service"]["testHost"] = (host) =>
@@ -230,6 +275,7 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
   configureAgent: (
     hostId: DeviceHostId,
     ready: DeviceHost.DeviceHostAgentReady,
+    session?: AgentDeviceSession,
   ) => Effect.Effect<string, DeviceError> = (hostId) =>
     Effect.fail(
       new DeviceHostUnavailableError({
@@ -1670,6 +1716,8 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
       ),
       agentTarget: (input) =>
         Effect.gen(function* () {
+          if (!agentSessionFor((yield* SynchronizedRef.get(stateRef)).state, input))
+            return yield* staleAgentTarget();
           const host = yield* resolveHost(input.hostId);
           const ready = yield* agentReadinessIfSupported(input.hostId);
           if (!ready)
@@ -1678,19 +1726,25 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
               reason:
                 "Agent device access requires enabled device support, agent access, and an available simulator platform on this host.",
             });
-          const configPath = yield* lifecycleLock.withPermit(
-            Effect.gen(function* () {
+          const target = yield* lifecycleLock.withPermit(
+            SynchronizedRef.modifyEffect(stateRef, ({ state }) => {
               if (hosts.get(host.id) !== host)
-                return yield* new DeviceHostUnavailableError({
-                  hostId: host.id,
-                  reason: "Host configuration changed. Retry the operation.",
-                });
-              return yield* configureAgent(input.hostId, ready);
+                return Effect.fail(
+                  new DeviceHostUnavailableError({
+                    hostId: host.id,
+                    reason: "Host configuration changed. Retry the operation.",
+                  }),
+                );
+              const session = agentSessionFor(state, input);
+              if (!session) return Effect.fail(staleAgentTarget());
+              return configureAgent(input.hostId, ready, session).pipe(
+                Effect.map((configPath) => [{ configPath, session }, { state }] as const),
+              );
             }),
           );
           return {
-            args: ["--config", configPath, "--session", input.sessionId],
-            sessionId: input.sessionId,
+            args: ["--config", target.configPath, "--session", target.session.sessionId],
+            sessionId: target.session.sessionId,
           };
         }),
       state: SynchronizedRef.get(stateRef).pipe(Effect.map(({ state }) => state)),
@@ -1747,21 +1801,34 @@ export const make = (
     const runner = yield* ProcessRunner.ProcessRunner;
     const settings = yield* ServerSettings.ServerSettingsService;
     const agentLiveness = yield* DeviceAgentLiveness.DeviceAgentLiveness;
+    const agentDeviceProxyRegistry = yield* AgentDeviceProxyRegistry.AgentDeviceProxyRegistry;
     const scope = yield* Scope.Scope;
     const hosts = new Map<DeviceHostId, DeviceHost.DeviceHost["Service"]>([
       [localHost.id, localHost],
     ]);
     const crypto = yield* Crypto.Crypto;
-    const configPath = (hostId: DeviceHostId) =>
-      agentDeviceConfigPath(config.stateDir, hostId, path).pipe(
+    const configDir = (hostId: DeviceHostId) =>
+      agentDeviceConfigDir(config.stateDir, hostId, path).pipe(
         Effect.provideService(Crypto.Crypto, crypto),
       );
-    const configureAgent = (hostId: DeviceHostId, ready: DeviceHost.DeviceHostAgentReady) =>
-      Effect.gen(function* () {
-        const file = yield* configPath(hostId);
-        yield* writeAgentDeviceConfig(file, ready.agentDevice);
-        return file;
+    const configureAgent = (
+      hostId: DeviceHostId,
+      ready: DeviceHost.DeviceHostAgentReady,
+      session?: AgentDeviceSession,
+    ) => {
+      if (session === undefined) return Effect.fail(staleAgentTarget());
+      if (session.hostId !== hostId) return Effect.fail(staleAgentTarget());
+      return configureAgentDeviceSession({
+        stateDir: config.stateDir,
+        serverPort: config.port,
+        session,
+        endpoint: ready.agentDevice,
       }).pipe(
+        Effect.provideService(
+          AgentDeviceProxyRegistry.AgentDeviceProxyRegistry,
+          agentDeviceProxyRegistry,
+        ),
+        Effect.provideService(Crypto.Crypto, crypto),
         Effect.provideService(FileSystem.FileSystem, fs),
         Effect.provideService(Path.Path, path),
         Effect.mapError(
@@ -1773,6 +1840,7 @@ export const make = (
             }),
         ),
       );
+    };
     const probeContext =
       yield* Effect.context<Effect.Services<ReturnType<typeof SshDeviceHost.probe>>>();
     const localTargetContext =
@@ -1858,7 +1926,9 @@ export const make = (
           ({ id, scope }) =>
             Effect.gen(function* () {
               yield* Scope.close(scope, Exit.void);
-              yield* fs.remove(yield* configPath(id), { force: true }).pipe(Effect.ignore);
+              yield* fs
+                .remove(yield* configDir(id), { force: true, recursive: true })
+                .pipe(Effect.ignore);
             }),
           { concurrency: 4, discard: true },
         );

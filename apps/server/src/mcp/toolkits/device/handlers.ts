@@ -179,6 +179,8 @@ const handlers = {
           hostId: target.hostId,
           deviceId: session.deviceId,
           sessionId: session.sessionId,
+          leaseId: session.leaseId,
+          providerSessionId,
         });
         if (agentArgs.sessionId !== session.sessionId) {
           return yield* new DeviceToolUnavailableError({

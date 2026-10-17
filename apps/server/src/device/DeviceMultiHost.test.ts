@@ -1,5 +1,5 @@
 import { expect, it } from "@effect/vitest";
-import { ThreadId } from "@t3tools/contracts";
+import { ProviderSessionId, ThreadId } from "@t3tools/contracts";
 import * as Deferred from "effect/Deferred";
 import * as Fiber from "effect/Fiber";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
@@ -92,12 +92,27 @@ it.effect("keeps hosts independent when serials collide and another host fails",
     expect(state.sessions.map((session) => session.hostId)).toEqual(["b"]);
     expect(state.hostStatuses.a?.status).toBe("ready");
     expect(state.hostStatuses.offline?.status).toBe("failed");
+    const panelSession = state.sessions[0]!;
+    yield* service.close({
+      threadId,
+      hostId: panelSession.hostId,
+      deviceId: panelSession.deviceId,
+      sessionId: panelSession.sessionId,
+      leaseId: panelSession.leaseId,
+    });
+    const providerSessionId = ProviderSessionId.make("provider-session-b");
+    const agentSession = yield* service.open(
+      { threadId, hostId: "b", deviceId: "emulator-5554", platform: "android" },
+      { kind: "agent", providerSessionId },
+    );
     const targeting = yield* service
       .agentTarget({
         threadId,
         hostId: "b",
         deviceId: "emulator-5554",
-        sessionId: "explicit-device-session",
+        sessionId: agentSession.sessionId,
+        leaseId: agentSession.leaseId,
+        providerSessionId,
       })
       .pipe(Effect.forkChild);
     yield* Deferred.await(writeStarted);
