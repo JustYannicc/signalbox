@@ -1348,13 +1348,14 @@ const make = Effect.fn("makeWithDatabase")(function* (
       const scope = Context.getUnsafe(fiber.context, Scope.Scope);
       const clock = fiber.getRef(Clock.Clock);
       const start = clock.monotonicTimeNanosUnsafe();
+      const acquire = Effect.tap(Effect.interruptible(target.lock.take(1)), () => {
+        const pending = fiber.getRef(TransactionAcquire);
+        if (pending !== undefined) pending.acquired = acquired(target, clock, start);
+        return Scope.addFinalizer(scope, target.lock.release(1));
+      });
       return Effect.as(
-        // The caller may already be masked by SqlClient while it waits to begin.
-        Effect.tap(Effect.interruptible(target.lock.take(1)), () => {
-          const pending = fiber.getRef(TransactionAcquire);
-          if (pending !== undefined) pending.acquired = acquired(target, clock, start);
-          return Scope.addFinalizer(scope, target.lock.release(1));
-        }),
+        // Semaphore.take claims the permit before it returns; don't yield before its finalizer is registered.
+        Effect.provideService(acquire, Scheduler.PreventSchedulerYield, true),
         target.connection,
       );
     }),

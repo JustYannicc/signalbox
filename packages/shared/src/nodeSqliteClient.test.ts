@@ -11,6 +11,7 @@ import * as Logger from "effect/Logger";
 import * as Path from "effect/Path";
 import * as Scheduler from "effect/Scheduler";
 import * as Scope from "effect/Scope";
+import * as Semaphore from "effect/Semaphore";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as Statement from "effect/sql/Statement";
 import * as TestClock from "effect/testing/TestClock";
@@ -2264,6 +2265,74 @@ it.effect.skipIf(!supportsNoopCheckpoint)(
 
         // The cancelled acquisition must not leave the writer permit or SQLite transaction held.
         yield* sql.withTransaction(sql`SELECT 1`);
+      }),
+    ),
+);
+
+it.effect.skipIf(!supportsNoopCheckpoint)(
+  "releases a writer permit when cancellation arrives as the grant yields",
+  () =>
+    withCheckpointClient((sql) =>
+      Effect.gen(function* () {
+        yield* sql.unsafe("CREATE TABLE grant_race(value INTEGER PRIMARY KEY)").unprepared;
+
+        type ObservedSemaphore = Semaphore.Semaphore & { readonly taken: number };
+        const semaphorePrototype = Object.getPrototypeOf(Semaphore.makeUnsafe(1)) as {
+          take(this: ObservedSemaphore, permits: number): Effect.Effect<number>;
+        };
+        const take = semaphorePrototype.take;
+        let writerSemaphore: ObservedSemaphore | undefined;
+        let controlled: ReturnType<typeof schedulerPausedWhen> | undefined;
+        let transaction: Fiber.Fiber<unknown, unknown> | undefined;
+        const takeSpy = vi.spyOn(semaphorePrototype, "take").mockImplementation(function (
+          this: ObservedSemaphore,
+          permits: number,
+        ) {
+          // oxlint-disable-next-line typescript/no-this-alias -- The test must observe the real permit owner.
+          if (writerSemaphore === undefined && permits === 1) writerSemaphore = this;
+          return take.call(this, permits);
+        });
+        yield* Effect.addFinalizer(() =>
+          Effect.gen(function* () {
+            controlled?.resume();
+            if (transaction !== undefined && transaction.pollUnsafe() === undefined) {
+              yield* Fiber.interrupt(transaction);
+            }
+            takeSpy.mockRestore();
+            // On the buggy path the interrupted fiber never installed its finalizer.
+            if (writerSemaphore?.taken === 1) {
+              yield* writerSemaphore.release(1);
+            }
+          }),
+        );
+
+        const pauseController = schedulerPausedWhen(() => writerSemaphore?.taken === 1);
+        controlled = pauseController;
+        transaction = yield* Effect.forkChild(
+          sql
+            .withTransaction(Effect.never)
+            .pipe(Effect.provideService(Scheduler.Scheduler, pauseController.scheduler)),
+          { startImmediately: true },
+        );
+        yield* Effect.promise(() => pauseController.paused);
+        assert.isDefined(writerSemaphore);
+        assert.equal(writerSemaphore.taken, 1);
+        assert.isUndefined(transaction.pollUnsafe());
+
+        const interrupt = yield* Effect.forkChild(Fiber.interrupt(transaction), {
+          startImmediately: true,
+        });
+        pauseController.resume();
+        yield* Fiber.join(interrupt);
+        assert.equal((yield* Fiber.await(transaction))._tag, "Failure");
+        assert.equal(writerSemaphore.taken, 0);
+
+        yield* sql.unsafe("INSERT INTO grant_race VALUES (1)").unprepared;
+        yield* sql.withTransaction(sql`INSERT INTO grant_race VALUES (2)`);
+        assert.deepEqual(
+          yield* sql.unsafe("SELECT value FROM grant_race ORDER BY value").unprepared,
+          [{ value: 1 }, { value: 2 }],
+        );
       }),
     ),
 );
