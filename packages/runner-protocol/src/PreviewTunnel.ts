@@ -4,6 +4,8 @@ import {
   AgentBrowserStep,
   SignalboxPreviewPort,
 } from "@t3tools/contracts/signalboxPreviews";
+import { DriveAccess } from "./DriveProtocol.ts";
+import { PreviewService } from "./PreviewServices.ts";
 import * as Schema from "effect/Schema";
 
 import { jsonCodec as frameCodec } from "./jsonCodec.ts";
@@ -18,18 +20,23 @@ import { jsonCodec as frameCodec } from "./jsonCodec.ts";
  *    socket. The thread `welcome`s only the machine holding the lease, so a
  *    stale machine can't serve; a newer generation closes the tunnel.
  * 2. The Runner reports the web servers listening on the machine (`ports`)
- *    whenever they change. Only those ports are reachable.
- * 3. The thread opens streams: `request` (HTTP) or `ws.open` (a WebSocket,
+ *    whenever they change. Only those ports are reachable. Agents also
+ *    declare restartable dev servers (`services`); the thread stores the
+ *    declaration and confirms with `services.saved` before the tool replies.
+ * 3. A welcomed Runner receives the stored service declarations and preview
+ *    drive access. It restores the drive before starting services; a tunnel
+ *    reconnect reuses those processes instead of preparing the drive again.
+ * 4. The thread opens streams: `request` (HTTP) or `ws.open` (a WebSocket,
  *    e.g. Vite's HMR). Each stream has a number the thread picks. Bodies and
  *    WebSocket messages travel as binary data frames (`dataFrame`); control
  *    frames are JSON text.
- * 4. HTTP: the thread sends the request body as data then `end`; the Runner
+ * 5. HTTP: the thread sends the request body as data then `end`; the Runner
  *    answers `head`, the body as data, then `end`, or `fail` at any point.
  *    WebSocket: the Runner answers `ws.opened` or `fail`; then messages flow
  *    both ways as data until either side sends `ws.close`. `cancel` drops a
  *    stream the thread no longer wants.
  *
- * 5. The agent's browser (#587), when the Runner's `hello` says `mirror`:
+ * 6. The agent's browser (#587), when the Runner's `hello` says `mirror`:
  *    `mirror.open` streams one viewer's mirror of a tab as newline-delimited
  *    `AgentBrowserUpdate` JSON in body data frames, until either side ends
  *    it (`cancel` from the thread; `end` or `fail` from the Runner).
@@ -73,6 +80,7 @@ export const TunnelRunnerMessage = Schema.Union([
     mirror: Schema.optionalKey(Schema.Boolean),
   }),
   Schema.Struct({ type: Schema.Literal("ports"), ports: Schema.Array(PreviewPort) }),
+  Schema.Struct({ type: Schema.Literal("services"), services: Schema.Array(PreviewService) }),
   /** A finished step of the agent's browsing; its recording follows as body data. */
   Schema.Struct({ type: Schema.Literal("trail.step"), stream: Stream, step: AgentBrowserStep }),
   Schema.Struct({
@@ -97,7 +105,12 @@ export type TunnelRunnerMessage = typeof TunnelRunnerMessage.Type;
 
 /** Thread to Runner. */
 export const TunnelThreadMessage = Schema.Union([
-  Schema.Struct({ type: Schema.Literal("welcome") }),
+  Schema.Struct({
+    type: Schema.Literal("welcome"),
+    services: Schema.optionalKey(Schema.Array(PreviewService)),
+    drive: Schema.optionalKey(Schema.NullOr(DriveAccess)),
+  }),
+  Schema.Struct({ type: Schema.Literal("services.saved"), services: Schema.Array(PreviewService) }),
   Schema.Struct({ type: Schema.Literal("refused"), message: Schema.String }),
   Schema.Struct({
     type: Schema.Literal("request"),
