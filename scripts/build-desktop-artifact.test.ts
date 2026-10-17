@@ -96,6 +96,7 @@ import {
   WslRuntimeArchiveMissingError,
   wslRuntimeArchiveStem,
 } from "./build-desktop-artifact.ts";
+import { readInstalledCliPackageDirectories } from "./lib/cli-package-paths.ts";
 import { BRAND_ASSET_PATHS } from "./lib/brand-assets.ts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { symlinksSupported } from "@t3tools/shared/testing/symlinks";
@@ -2590,7 +2591,7 @@ it.effect("treats napi-rs loaders as native", () =>
 );
 
 it.effect.skipIf(!symlinksSupported)(
-  "finds native loaders through global virtual-store hoist links",
+  "finds native loaders through direct and hoisted package links",
   () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
@@ -2602,14 +2603,26 @@ it.effect.skipIf(!symlinksSupported)(
       yield* fs.makeDirectory(modules, { recursive: true });
       yield* fs.makeDirectory(native, { recursive: true });
       yield* fs.writeFileString(path.join(native, "binding.gyp"), "{}");
+      yield* fs.writeFileString(path.join(native, "package.json"), '{"name":"native"}');
       yield* fs.symlink(native, path.join(modules, "native"));
       const found = yield* findStorePackageDirectory(repo, "native");
-      assert.strictEqual(found, path.join(modules, "native"));
+      assert.strictEqual(found, yield* fs.realPath(native));
       if (found === null) throw new Error("Missing native package");
       assert.strictEqual(yield* hasNativeLoaderMarkers(found), true);
       assert.strictEqual(yield* findStorePackageDirectory(repo, "missing"), null);
       const local = path.join(repo, "node_modules/.pnpm/legacy@1/node_modules/legacy");
       yield* fs.makeDirectory(local, { recursive: true });
       assert.strictEqual(yield* findStorePackageDirectory(repo, "legacy"), local);
+      yield* fs.writeFileString(path.join(local, "package.json"), '{"name":"legacy"}');
+      const directModules = path.join(repo, "apps/server/node_modules");
+      yield* fs.makeDirectory(directModules, { recursive: true });
+      yield* fs.symlink(local, path.join(directModules, "legacy"));
+      assert.strictEqual(
+        yield* findStorePackageDirectory(repo, "legacy"),
+        yield* fs.realPath(local),
+      );
+      const installed = yield* readInstalledCliPackageDirectories(repo);
+      assert.strictEqual(installed.get("native"), yield* fs.realPath(native));
+      assert.strictEqual(installed.get("legacy"), yield* fs.realPath(local));
     }).pipe(Effect.provide(NodeServices.layer)),
 );

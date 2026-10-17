@@ -35,6 +35,7 @@ import {
   findInlinedExternalPackages,
   selectCliRuntimeExternalDependencies,
 } from "./lib/cli-external-packages.ts";
+import { findInstalledCliPackageDirectory } from "./lib/cli-package-paths.ts";
 import { loadRepoEnv } from "./lib/public-config.ts";
 import { selectDesktopRuntimeExternalDependencies } from "./lib/desktop-external-packages.ts";
 import { resolveCatalogDependencies } from "./lib/resolve-catalog.ts";
@@ -2028,9 +2029,8 @@ export const findStorePackageDirectory = Effect.fn("findStorePackageDirectory")(
 ) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  // Global virtual stores keep private hoist links here, without local package files.
-  const hoisted = path.join(repoRoot, "node_modules/.pnpm/node_modules", packageName);
-  if (yield* fs.exists(hoisted)) return hoisted;
+  const installed = yield* findInstalledCliPackageDirectory(repoRoot, packageName);
+  if (installed !== null) return installed;
   const storeDir = path.join(repoRoot, "node_modules/.pnpm");
   const exists = (candidate: string) =>
     fs.exists(candidate).pipe(Effect.orElseSucceed(() => false));
