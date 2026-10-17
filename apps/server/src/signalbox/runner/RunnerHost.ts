@@ -189,6 +189,18 @@ export const makeRunnerHost = Effect.fn("makeRunnerHost")(function* (config: Run
           const dependencies = yield* makeRunnerDependencies({ cwd, caches, environment });
           const preparing = yield* Semaphore.make(1);
           const openingDrive = yield* Semaphore.make(1);
+          let filesPrepared = false;
+          const turnDependencies = {
+            ...dependencies,
+            prepare: (notify: Parameters<typeof dependencies.prepare>[0]) =>
+              dependencies.prepare(notify).pipe(
+                Effect.tap(() =>
+                  Effect.sync(() => {
+                    filesPrepared = true;
+                  }),
+                ),
+              ),
+          };
           let openedDrive: { readonly driveId: string; readonly drive: RunnerDrive } | null = null;
           const openDrive = (access: DriveAccess) =>
             openingDrive.withPermits(1)(
@@ -217,10 +229,13 @@ export const makeRunnerHost = Effect.fn("makeRunnerHost")(function* (config: Run
             preparing
               .withPermits(1)(
                 Effect.gen(function* () {
+                  // A late tunnel must not re-prepare files an agent is already editing.
+                  if (filesPrepared) return;
                   const drive = yield* openDrive(access);
                   yield* drive.prepare(null, access.author, access.instructions);
                   yield* dependencies.prepare(() => Effect.void);
                   yield* drive.restoreDependencyEdits;
+                  filesPrepared = true;
                 }),
               )
               .pipe(
@@ -262,7 +277,7 @@ export const makeRunnerHost = Effect.fn("makeRunnerHost")(function* (config: Run
                   ),
                 usage: usage.sample,
                 emit,
-                dependencies,
+                dependencies: turnDependencies,
                 preparing,
                 secrets,
                 registerSecrets,
