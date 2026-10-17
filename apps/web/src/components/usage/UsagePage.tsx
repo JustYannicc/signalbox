@@ -1260,6 +1260,11 @@ function UsageEnvironmentFilter({
   const hasIssue =
     selectedEnvironments.some((environment) => environment.error !== null) ||
     contractMismatches.length > 0;
+  // signalbox: one environment and no price editor would leave this menu empty.
+  const hasDetails = showUsageStatus && (isPartial || hasIssue || duplicateSources.length > 0);
+  if (!showsEnvironmentUi && !canEditModelPrices && !hasDetails) {
+    return <WorkspaceBreadcrumbText>{label}</WorkspaceBreadcrumbText>;
+  }
 
   return (
     <Menu>
