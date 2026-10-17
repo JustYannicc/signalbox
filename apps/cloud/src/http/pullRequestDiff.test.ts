@@ -13,7 +13,7 @@ import * as Layer from "effect/Layer";
 
 import * as CloudSessions from "../auth/CloudSessions.ts";
 import * as CloudTokens from "../auth/CloudTokens.ts";
-import * as CloudThreadService from "../thread/CloudThreadService.ts";
+import * as Threads from "../thread/Threads.ts";
 import * as Platform from "../platform.ts";
 import { CLOUD_TEST_ENV, layerConfig, makeMemoryCloud } from "../testing.ts";
 import * as UserDirectory from "../user/UserDirectory.ts";
@@ -63,8 +63,8 @@ const setup = Effect.gen(function* () {
   );
   const cloudContext = yield* Layer.build(cloud.userObject(USER_ID));
   const threadServiceLayer = Layer.succeed(
-    CloudThreadService.CloudThreadService,
-    Context.get(cloudContext, CloudThreadService.CloudThreadService),
+    Threads.Threads,
+    Context.get(cloudContext, Threads.Threads),
   );
   const services = Layer.mergeAll(layerConfig(), threadServiceLayer).pipe(
     Layer.provideMerge(CloudSessions.layer),
