@@ -225,6 +225,7 @@ const migrations = Migrator.fromRecord({
       value TEXT NOT NULL
     )`;
   }),
+  "0020_folder_phases": FolderTables.addPhases,
 });
 
 /** Applies every migration not recorded yet (`storage/migrations.ts`). Never edit or rename a merged one. */
