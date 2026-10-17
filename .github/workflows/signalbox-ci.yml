@@ -31,6 +31,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v6
         with:
+          fetch-depth: 0
           sparse-checkout: |
             /*
             !/.repos/
@@ -53,6 +54,14 @@ jobs:
 
       - name: Ensure Electron runtime is installed
         run: vp run --filter @t3tools/desktop ensure:electron
+
+      - name: Check module boundaries
+        env:
+          BOUNDARIES_BASE: ${{ github.event.pull_request.base.sha || github.event.before || 'origin/main' }}
+        run: |
+          git fetch --no-tags https://github.com/pingdotgg/t3code.git main:refs/remotes/upstream/main
+          node --test scripts/boundaries/tests.mjs
+          vp run lint:boundaries --base "$BOUNDARIES_BASE"
 
       - name: Check unused code
         run: vp run knip:check
@@ -275,10 +284,9 @@ jobs:
       - name: Exercise release-only workflow steps
         run: node scripts/release-smoke.ts
 
-  # Fails when a PR adds conflicts with upstream T3 Code: files that conflict after
-  # merging the PR into its fresh base but not on that base, so a pending sync doesn't
-  # block every PR. On main it only reports. A PR that merges upstream also
-  # fails when it drops a `signalbox:` hook line.
+  # Warns about conflicts the PR's merge into its current base adds with upstream.
+  # Upstream conflicts are the next sync's cost, not a gate on Signalbox changes.
+  # A PR that merges upstream still fails if it drops a `signalbox:` hook line.
   upstream_merge:
     name: Upstream Merge
     runs-on: ubuntu-latest
@@ -318,7 +326,7 @@ jobs:
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
           case "$EVENT_NAME" in
-            pull_request) set -- --base "refs/remotes/origin/$BASE_REF" --head "$HEAD_SHA" ;;
+            pull_request) set -- --base "refs/remotes/origin/$BASE_REF" --head "$HEAD_SHA" --report ;;
             push) set -- --base HEAD --report ;;
             *) set -- --base origin/main ;;
           esac

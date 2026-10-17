@@ -166,13 +166,17 @@ export class PoolEngine extends Context.Service<
     readonly startLogin: (
       actor: PoolActor,
       provider: CliProxyApi.PoolLoginProvider,
+      flow?: CliProxyApi.PoolLoginFlow,
     ) => Effect.Effect<CliProxyApi.LoginStart, Failure>;
     readonly loginStatus: (
       actor: PoolActor,
       state: string,
     ) => Effect.Effect<CliProxyApi.LoginStatus, Failure>;
-    readonly completeLogin: (actor: PoolActor, redirectUrl: string) => Effect.Effect<void, Failure>;
-    readonly cancelLogin: (actor: PoolActor, state: string) => Effect.Effect<void, Failure>;
+    readonly completeLogin: (
+      actor: PoolActor,
+      callback: CliProxyApi.LoginCallback,
+    ) => Effect.Effect<void, Failure>;
+    readonly cancelLogin: (actor: PoolActor, state: string) => Effect.Effect<boolean, Failure>;
     readonly updateAccount: (
       actor: PoolActor,
       name: string,
@@ -984,13 +988,13 @@ const make = Effect.gen(function* () {
       return Math.max(now, next);
     });
 
-  const startLogin: PoolEngine["Service"]["startLogin"] = (actor, provider) =>
+  const startLogin: PoolEngine["Service"]["startLogin"] = (actor, provider, flow) =>
     Effect.gen(function* () {
       const { row } = yield* access(actor, "admin");
       yield* refuseIfLinked(row);
       const endpoint = endpointOf(row);
       const known = yield* refreshAccounts(row);
-      const login = yield* CliProxyApi.startLogin(endpoint, provider);
+      const login = yield* CliProxyApi.startLogin(endpoint, provider, flow);
       const now = yield* Clock.currentTimeMillis;
       yield* sql`INSERT INTO logins (state, started_by, started_at, known)
         VALUES (${login.state}, ${actor.userId}, ${now},
@@ -1023,17 +1027,18 @@ const make = Effect.gen(function* () {
       return status;
     });
 
-  const completeLogin: PoolEngine["Service"]["completeLogin"] = (actor, redirectUrl) =>
+  const completeLogin: PoolEngine["Service"]["completeLogin"] = (actor, callback) =>
     Effect.gen(function* () {
       const { row } = yield* access(actor, "admin");
-      yield* CliProxyApi.completeLogin(endpointOf(row), redirectUrl);
+      yield* CliProxyApi.completeLogin(endpointOf(row), callback);
     });
 
   const cancelLogin: PoolEngine["Service"]["cancelLogin"] = (actor, state) =>
     Effect.gen(function* () {
       const { row } = yield* access(actor, "admin");
-      yield* sql`DELETE FROM logins WHERE state = ${state}`;
-      yield* CliProxyApi.cancelLogin(endpointOf(row), state);
+      const cancelled = yield* CliProxyApi.cancelLogin(endpointOf(row), state);
+      if (cancelled) yield* sql`DELETE FROM logins WHERE state = ${state}`;
+      return cancelled;
     });
 
   const updateAccount: PoolEngine["Service"]["updateAccount"] = (actor, name, action) =>
