@@ -1,4 +1,4 @@
-import { LegendList } from "@legendapp/list/react";
+import { LegendList, type LegendListRef } from "@legendapp/list/react";
 import { useAtomValue } from "@effect/atom-react";
 import {
   detectDeviceTimezone,
@@ -11,7 +11,7 @@ import type { PersonTimezoneSettings } from "@t3tools/contracts/personTimezone";
 import * as Option from "effect/Option";
 import { AsyncResult } from "effect/reactivity";
 import { CheckIcon } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 
 import { useAtomCommand } from "../../state/use-atom-command";
 import { personTimezone } from "../../state/personTimezone";
@@ -25,7 +25,7 @@ import {
   ComboboxTrigger,
 } from "../ui/combobox";
 import { SelectButton } from "../ui/select";
-import { SettingsRow } from "./settingsLayout";
+import { SettingResetButton, SettingsRow } from "./settingsLayout";
 import { searchableSetting } from "./settingsSearch";
 import { useSettingsScope } from "./SettingsScopeContext";
 
@@ -43,8 +43,8 @@ function describeTimezone(settings: PersonTimezoneSettings): string {
   const mode =
     settings.source === "manual"
       ? `Manual: ${settings.timezone}.`
-      : `Automatic follows the latest connected client; currently ${settings.timezone}.`;
-  return `${mode} New schedules use this time zone. Existing schedules keep their saved time zone.`;
+      : `Automatic: ${settings.timezone}, from your devices.`;
+  return `${mode} New schedules use it; existing ones keep their time zone.`;
 }
 
 function TimezoneSettingsRow({ environmentId }: { readonly environmentId: EnvironmentId }) {
@@ -55,6 +55,8 @@ function TimezoneSettingsRow({ environmentId }: { readonly environmentId: Enviro
   const setTimezone = useAtomCommand(personTimezone.set);
   const reportTimezone = useAtomCommand(personTimezone.report);
   const [query, setQuery] = useState("");
+  const [open, setOpen] = useState(false);
+  const listRef = useRef<LegendListRef | null>(null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -139,17 +141,41 @@ function TimezoneSettingsRow({ environmentId }: { readonly environmentId: Enviro
       {...searchableSetting("person-timezone")}
       description={description}
       status={status}
+      resetAction={
+        settings?.source === "manual" ? (
+          <SettingResetButton
+            label="time zone"
+            tooltip="Use automatic time zone"
+            disabled={saving || !canSet || !canReport}
+            onClick={() => void choose(AUTOMATIC_CHOICE)}
+          />
+        ) : undefined
+      }
       control={
         <Combobox<TimezoneChoice>
           items={choices}
           filteredItems={filteredChoices}
+          autoHighlight
+          virtualized
+          open={open}
+          onOpenChange={(nextOpen) => {
+            setOpen(nextOpen);
+            if (nextOpen) setQuery("");
+          }}
+          onItemHighlighted={(_value, details) => {
+            if (!open || details.index < 0 || details.reason !== "keyboard") return;
+            void listRef.current?.scrollIndexIntoView({ index: details.index, animated: false });
+          }}
           filter={null}
           itemToStringLabel={(choice) => choice.label}
           isItemEqualToValue={(left, right) => left.value === right.value}
           value={selectedChoice}
           disabled={saving || settings === null || !canSet || !canReport}
           onValueChange={(choice) => {
-            if (choice) void choose(choice);
+            if (choice) {
+              setOpen(false);
+              void choose(choice);
+            }
           }}
         >
           <div className="max-w-52">
@@ -165,23 +191,29 @@ function TimezoneSettingsRow({ environmentId }: { readonly environmentId: Enviro
               onChange={(event) => setQuery(event.target.value)}
             />
             <ComboboxEmpty>No matching time zones.</ComboboxEmpty>
-            <ComboboxListVirtualized>
-              <LegendList<TimezoneChoice>
-                data={filteredChoices}
-                keyExtractor={(choice) => choice.value}
-                estimatedItemSize={32}
-                drawDistance={360}
-                style={{ height: Math.min(filteredChoices.length * 32, 288) }}
-                renderItem={({ item, index }) => (
-                  <ComboboxItem index={index} key={item.value} value={item}>
-                    <span className="min-w-0 flex-1 truncate">{item.label}</span>
-                    {selectedChoice.value === item.value ? (
-                      <CheckIcon aria-hidden className="size-3.5 shrink-0 text-muted-foreground" />
-                    ) : null}
-                  </ComboboxItem>
-                )}
-              />
-            </ComboboxListVirtualized>
+            <div className="relative min-h-0 max-h-72 w-full flex-1 overflow-hidden">
+              <ComboboxListVirtualized>
+                <LegendList<TimezoneChoice>
+                  ref={listRef}
+                  data={filteredChoices}
+                  keyExtractor={(choice) => choice.value}
+                  estimatedItemSize={32}
+                  drawDistance={360}
+                  style={{ height: Math.min(filteredChoices.length * 32, 288) }}
+                  renderItem={({ item, index }) => (
+                    <ComboboxItem index={index} key={item.value} value={item}>
+                      <span className="min-w-0 flex-1 truncate">{item.label}</span>
+                      {selectedChoice.value === item.value ? (
+                        <CheckIcon
+                          aria-hidden
+                          className="size-3.5 shrink-0 text-muted-foreground"
+                        />
+                      ) : null}
+                    </ComboboxItem>
+                  )}
+                />
+              </ComboboxListVirtualized>
+            </div>
           </ComboboxPopup>
         </Combobox>
       }

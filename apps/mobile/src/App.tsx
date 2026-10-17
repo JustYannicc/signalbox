@@ -1,5 +1,5 @@
 import { PermissionUpdateNotice } from "./features/connection/PermissionUpdateNotice";
-import { PersonTimezoneReporter } from "./connection/PersonTimezoneReporter";
+import { PersonTimezoneReporter } from "./connection/PersonTimezoneReporter"; // signalbox: client timezone
 import * as Linking from "expo-linking";
 import * as SplashScreen from "expo-splash-screen";
 import { useEffect } from "react";
@@ -89,7 +89,7 @@ function AppContent() {
   return (
     <>
       <SplashScreenCoordinator />
-      <PersonTimezoneReporter />
+      <PersonTimezoneReporter /* signalbox: client timezone */ />
       <SubscriptionUsageCoordinator />
       <PermissionUpdateNotice />
       <GestureHandlerRootView className="flex-1">

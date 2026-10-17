@@ -3,7 +3,7 @@ import { RouterProvider } from "@tanstack/react-router";
 import { BrowserProfileReporter } from "./browser/BrowserProfileReporter";
 import { ElectronBrowserHost } from "./browser/ElectronBrowserHost";
 import { QuitHoldOverlay } from "./components/QuitHoldOverlay";
-import { PersonTimezoneReporter } from "./connection/PersonTimezoneReporter";
+import { PersonTimezoneReporter } from "./connection/PersonTimezoneReporter"; // signalbox: client timezone
 import { AppAtomRegistryProvider } from "./rpc/atomRegistry";
 import type { AppRouter } from "./router";
 
@@ -15,7 +15,7 @@ import type { AppRouter } from "./router";
 export function AppRoot({ router }: { readonly router: AppRouter }) {
   return (
     <AppAtomRegistryProvider>
-      <PersonTimezoneReporter />
+      <PersonTimezoneReporter /* signalbox: client timezone */ />
       <RouterProvider router={router} />
       <ElectronBrowserHost />
       <BrowserProfileReporter />

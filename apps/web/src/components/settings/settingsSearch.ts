@@ -402,7 +402,7 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["timestamp clock locale system browser os 12 hour 24 hour"],
   },
   {
-    id: "person-timezone",
+    id: "person-timezone", // signalbox: person timezone
     capability: "personTimezone",
     title: "Time zone",
     to: "/settings/general",

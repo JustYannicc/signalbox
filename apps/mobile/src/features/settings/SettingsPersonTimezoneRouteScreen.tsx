@@ -40,8 +40,8 @@ function describeTimezone(settings: PersonTimezoneSettings): string {
   const mode =
     settings.source === "manual"
       ? `Manual: ${settings.timezone}.`
-      : `Automatic follows the latest connected client; currently ${settings.timezone}.`;
-  return `${mode} New schedules use this time zone. Existing schedules keep their saved time zone.`;
+      : `Automatic: ${settings.timezone}, from your devices.`;
+  return `${mode} New schedules use it; existing ones keep their time zone.`;
 }
 
 export function SettingsPersonTimezoneRouteScreen() {
@@ -84,13 +84,15 @@ function PersonTimezoneChoices({ environmentId }: { readonly environmentId: Envi
   const choices = useMemo<ReadonlyArray<TimezoneChoice>>(
     () => [
       AUTOMATIC_CHOICE,
-      ...supportedTimezones().map((zone): TimezoneChoice => ({
-        kind: "manual",
-        value: zone,
-        label: zone,
-      })),
+      ...supportedTimezones(settings?.timezone ?? detectDeviceTimezone()).map(
+        (zone): TimezoneChoice => ({
+          kind: "manual",
+          value: zone,
+          label: zone,
+        }),
+      ),
     ],
-    [],
+    [settings?.timezone],
   );
   const filteredChoices = useMemo(() => {
     const needle = query.trim().toLocaleLowerCase();
@@ -196,7 +198,7 @@ function PersonTimezoneChoices({ environmentId }: { readonly environmentId: Envi
         <ListChoiceRow
           label={item.label}
           description={
-            item.kind === "automatic" ? "Follows the latest connected client." : undefined
+            item.kind === "automatic" ? "Uses the time zone from your devices." : undefined
           }
           selected={selectedValue === item.value}
           separated={index > 0}
