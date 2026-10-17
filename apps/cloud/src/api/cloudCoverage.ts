@@ -31,7 +31,6 @@ const poolHarnesses = exempt("Pools run each harness; nothing installs per user.
 /** Keys are operation names, or `prefix.*` for every operation under a prefix. */
 export const CLOUD_UNSERVED: Readonly<Record<string, Unserved>> = {
   "settings.get": gap("#440"),
-  "keybindings.*": gap("#440"),
   "secrets.answer": gap("#797"),
 
   // The rest of a thread's lifecycle.
