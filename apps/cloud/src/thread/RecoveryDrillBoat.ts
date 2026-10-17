@@ -18,22 +18,22 @@ export interface BoatRecoveryMachineSnapshot {
   readonly hydrated: boolean | null;
 }
 
-export interface BoatRecoveryControlShape {
-  /** A fresh provider read. The null result from Boat is a verified absence. */
-  readonly inspect: (machineId: string) => Effect.Effect<BoatRecoveryMachineSnapshot, BoatApiError>;
-  /** Uses Boat's destructive DELETE with its required confirmation header. */
-  readonly remove: (machineId: string) => Effect.Effect<void, BoatApiError>;
-}
-
 export class BoatRecoveryControl extends Context.Service<
   BoatRecoveryControl,
-  BoatRecoveryControlShape | null
+  {
+    /** A fresh provider read. The null result from Boat is a verified absence. */
+    readonly inspect: (
+      machineId: string,
+    ) => Effect.Effect<BoatRecoveryMachineSnapshot, BoatApiError>;
+    /** Uses Boat's destructive DELETE with its required confirmation header. */
+    readonly remove: (machineId: string) => Effect.Effect<void, BoatApiError>;
+  } | null
 >()("@signalbox/cloud/thread/RecoveryDrillBoat/BoatRecoveryControl") {}
 
 const safeState = (state: string) =>
   state.length <= 40 && /^[a-z][a-z0-9_-]*$/iu.test(state) ? state : "unknown";
 
-const makeBoatRecoveryControl = (api: BoatApi): BoatRecoveryControlShape => ({
+const makeBoatRecoveryControl = (api: BoatApi): NonNullable<BoatRecoveryControl["Service"]> => ({
   inspect: (machineId) =>
     Effect.flatMap(
       api.get(machineId),
