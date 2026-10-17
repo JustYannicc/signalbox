@@ -89,6 +89,24 @@ export function folderMenuActions(input: {
       state: folder.githubLend ? "on" : undefined,
     });
   }
+  // Phases by position: names can hold anything an id can't (#677).
+  actions.push(
+    folder.phase === undefined
+      ? { id: "folder:phases", title: "Add phases…" }
+      : {
+          id: "folder:phase",
+          title: "Phase",
+          subtitle: folder.phase.current,
+          subactions: [
+            ...folder.phase.phases.map((phase, index) => ({
+              id: `folder:phase:${index}`,
+              title: phase,
+              state: phase === folder.phase?.current ? ("on" as const) : undefined,
+            })),
+            { id: "folder:phases", title: "Edit phases…" },
+          ],
+        },
+  );
   if (input.notes) actions.push({ id: "folder:notes", title: "Scratch pad" });
   actions.push(
     { id: "folder:instructions", title: "Instructions…" },
@@ -102,6 +120,8 @@ export type FolderMenuChoice =
   | { readonly _tag: "rename" }
   | { readonly _tag: "move"; readonly input: FolderMoveInput }
   | { readonly _tag: "pool"; readonly poolId: AccountPoolId | null }
+  | { readonly _tag: "phase"; readonly current: string }
+  | { readonly _tag: "phases" }
   | { readonly _tag: "githubLend"; readonly lent: boolean }
   | { readonly _tag: "instructions" }
   | { readonly _tag: "notes" }
@@ -118,6 +138,13 @@ export function parseFolderMenuEvent(input: {
   if (event === "folder:new-child") return { _tag: "newChild" };
   if (event === "folder:rename") return { _tag: "rename" };
   if (event === "folder:instructions") return { _tag: "instructions" };
+  if (event === "folder:phases") return { _tag: "phases" };
+  if (event.startsWith("folder:phase:")) {
+    const current = folder.phase?.phases[Number(event.slice("folder:phase:".length))];
+    return current === undefined || current === folder.phase?.current
+      ? null
+      : { _tag: "phase", current };
+  }
   // A switch: choosing it flips the lend.
   if (event === "folder:github-lend") return { _tag: "githubLend", lent: !folder.githubLend };
   if (event === "folder:notes") return { _tag: "notes" };
