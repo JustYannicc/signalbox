@@ -50,6 +50,19 @@ const json = (answer: Effect.Success<ReturnType<typeof callOperation>>) => {
 };
 
 describe("public API calls", () => {
+  it.effect("requires thread read access for a command output snapshot", () =>
+    Effect.gen(function* () {
+      const { call } = yield* setup;
+      const input = { threadId: "hidden-thread", itemId: "hidden-command" };
+      const unscoped = json(
+        yield* call("threads.commandOutput", input, person([AuthOrchestrationOperateScope])),
+      );
+      expect(unscoped.status).toBe(403);
+      const missing = json(yield* call("threads.commandOutput", input));
+      expect(missing.status).toBe(422);
+      expect(missing.body).toMatchObject({ error: { _tag: "OrchestrationV2CommandOutputError" } });
+    }),
+  );
   it.effect("reads and saves analytics consent through the public reach map", () =>
     Effect.gen(function* () {
       const { call } = yield* setup;

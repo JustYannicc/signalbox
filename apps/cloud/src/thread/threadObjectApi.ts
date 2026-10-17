@@ -13,8 +13,8 @@ import { ThreadBrowsing } from "./browsing/ThreadBrowsing.ts";
 import { TurnReports } from "./diagnostics/TurnReports.ts";
 import type { ThreadObjectApi } from "./ThreadDirectory.ts";
 import * as ThreadEngine from "./ThreadEngine.ts";
+import { encodeBatchLine, jsonLine, type ThreadObjectReply, wire } from "./threadWire.ts";
 import * as PullRequestSync from "./pullRequests/PullRequestSync.ts";
-import { encodeBatchLine, type ThreadObjectReply, wire } from "./threadWire.ts";
 
 // Diagnostic records are plain JSON values already (ISO times, no class instances).
 const encodeRecord = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
@@ -64,6 +64,17 @@ export const makeThreadObjectApi = (
     );
   const engine = ThreadEngine.ThreadEngine;
   return {
+    commandOutput: (actor, input) =>
+      run(
+        engine.use((service) =>
+          service.commandOutput(actor, wire.commandOutputInput.decode(input)).pipe(
+            Effect.map((stream) =>
+              stream.pipe(Stream.map(jsonLine(wire.commandOutputFrame)), Stream.toReadableStream()),
+            ),
+            Effect.catchTags({ ThreadNotFoundError: () => Effect.succeed(null) }),
+          ),
+        ),
+      ),
     dispatch: async (actor, command, creation) => {
       const result = await reply(
         engine.use((service) => service.dispatch(actor, wire.command.decode(command), creation)),

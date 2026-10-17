@@ -3,6 +3,8 @@ import type { ModelGatewayProvider } from "@signalbox/runner-protocol/RunnerProt
 import type { StatusNoteView } from "@signalbox/runner-protocol/StatusLineProtocol";
 import type {
   OrchestrationV2Command,
+  OrchestrationV2CommandOutputFrame,
+  OrchestrationV2SubscribeCommandOutputInput,
   OrchestrationV2SubscribeThreadInput,
   OrchestrationV2ThreadLaunchResult,
   OrchestrationV2ThreadStreamItem,
@@ -95,6 +97,10 @@ export interface ThreadObjectApi {
   readonly snapshot: (actor: Actor) => Promise<ThreadObjectReply<unknown>>;
   /** Newline-delimited JSON batches, or null when the actor cannot see the thread. */
   readonly subscribe: (actor: Actor, input: unknown) => Promise<ReadableStream<Uint8Array> | null>;
+  readonly commandOutput: (
+    actor: Actor,
+    input: unknown,
+  ) => Promise<ReadableStream<Uint8Array> | null>;
   /** The thread's current summary, when `actor` owns it. */
   readonly summary: (actor: Actor) => Promise<unknown>;
   /** Reads a linked pull request now, when `actor` can see the thread and link. */
@@ -185,6 +191,10 @@ export interface ThreadHandle {
     ThreadNotFoundError | ThreadObjectError
   >;
   readonly summary: (actor: Actor) => Effect.Effect<ThreadSummary | null, ThreadObjectError>;
+  readonly commandOutput: (
+    actor: Actor,
+    input: OrchestrationV2SubscribeCommandOutputInput,
+  ) => Stream.Stream<OrchestrationV2CommandOutputFrame, ThreadNotFoundError | ThreadObjectError>;
   /** Asks GitHub to refresh one current link; invisible threads and missing links are not found. */
   readonly requestPullRequestSync: (
     actor: Actor,
@@ -325,6 +335,12 @@ const lines = <A>(
 /** Wraps any `ThreadObjectApi` (a Durable Object stub, or a test double) as Effects. */
 export function handleFor(api: ThreadObjectApi): ThreadHandle {
   return {
+    commandOutput: (actor, input) =>
+      lines(
+        "commandOutput",
+        () => api.commandOutput(actor, wire.commandOutputInput.encode(input)),
+        wire.commandOutputFrame.decode,
+      ),
     dispatch: (actor, command, creation) =>
       call("dispatch", () => api.dispatch(actor, wire.command.encode(command), creation)).pipe(
         Effect.flatMap(fromReply),

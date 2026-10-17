@@ -110,6 +110,7 @@ export const descriptor = (identity: CloudEnvironmentIdentity): ExecutionEnviron
     threadStatusNotes: true,
     // The thread object picks start or queue itself, so clients skip reading the projection first.
     serverResolvedCommandContext: true,
+    commandOutputStreaming: true,
     // Each account pool reports its accounts as a source (`pool/poolViews.ts`).
     usageLimitSources: true,
     // Pools only sign in Claude and ChatGPT accounts, for now: no API keys, imports or OpenCode.

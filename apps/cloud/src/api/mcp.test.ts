@@ -1,4 +1,7 @@
 import { describe, expect, it } from "@effect/vitest";
+import { CommandId, MessageId, ThreadId, TurnItemId } from "@t3tools/contracts";
+import { PERSONAL_CONTEXT_ID } from "@t3tools/contracts/signalboxContexts";
+import { normalizeTerminalOutput } from "@t3tools/shared/terminalOutput";
 import * as ConfigProvider from "effect/ConfigProvider";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -7,6 +10,11 @@ import * as Schema from "effect/Schema";
 import * as CloudTokens from "../auth/CloudTokens.ts";
 import { signLocalKey } from "../localKeys/LocalKeys.ts";
 import { layerConfig, makeMemoryCloud } from "../testing.ts";
+import * as Environment from "../environment.ts";
+import { scriptedModelSelection } from "../thread/scriptedProvider.ts";
+import { ThreadEngine } from "../thread/ThreadEngine.ts";
+import { turnItemEvent } from "../thread/threadEvents.ts";
+import { Threads } from "../thread/Threads.ts";
 import * as UserDirectory from "../user/UserDirectory.ts";
 import { handleMcpRequest, protectedResourceMetadata } from "./mcpRoutes.ts";
 
@@ -87,10 +95,86 @@ const connect = Effect.gen(function* () {
     Effect.flatMap(rpc("tools/call", { name, arguments: args }), (answer) =>
       decodeToolResult(answer.result),
     );
-  return { rpc, tool };
+  return { rpc, tool, cloud };
 });
 
 describe("Signalbox's MCP", () => {
+  it.effect("reads a bounded command output snapshot without waiting for its live stream", () =>
+    Effect.gen(function* () {
+      const { tool, cloud } = yield* connect;
+      const threadId = ThreadId.make("command-thread");
+      const itemId = TurnItemId.make("command-item");
+      yield* Threads.use((threads) =>
+        threads.launch(
+          { userId, contextIds: [PERSONAL_CONTEXT_ID] },
+          {
+            commandId: CommandId.make("command-launch"),
+            threadId,
+            projectId: Environment.SCRATCH_PROJECT_ID,
+            title: "Command output",
+            modelSelection: scriptedModelSelection,
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            workspaceStrategy: { type: "root" },
+            initialMessage: {
+              messageId: MessageId.make("command-message"),
+              text: "Run a command",
+              attachments: [],
+            },
+          },
+        ),
+      ).pipe(Effect.provide(cloud.layerFor(userId)));
+      const output = `${"old line\n".repeat(10_000)}last line\rfinal line\n`;
+      yield* cloud.inThread(
+        threadId,
+        ThreadEngine.use((engine) =>
+          engine.apply((projection, ctx) => {
+            const run = projection?.runs[0];
+            if (run === undefined) return Effect.die("Expected a run");
+            return Effect.succeed({
+              events: [
+                turnItemEvent(ctx, {
+                  id: itemId,
+                  threadId,
+                  runId: run.id,
+                  nodeId: run.rootNodeId,
+                  providerThreadId: run.providerThreadId,
+                  providerTurnId: null,
+                  nativeItemRef: null,
+                  parentItemId: null,
+                  ordinal: 10,
+                  status: "running",
+                  title: "Print output",
+                  startedAt: ctx.now,
+                  completedAt: null,
+                  updatedAt: ctx.now,
+                  type: "command_execution",
+                  input: "print output",
+                  output,
+                }),
+              ],
+              result: undefined,
+            });
+          }),
+        ),
+      );
+      const result = yield* tool("signalbox_call", {
+        operation: "threads.commandOutput",
+        input: { threadId, itemId },
+      });
+      expect(result.isError ?? false).toBe(false);
+      const frame = JSON.parse(result.content[0]!.text);
+      expect(frame).toMatchObject({ kind: "replace", running: true, truncated: true });
+      expect(normalizeTerminalOutput(frame.text).text).toContain("final line");
+      expect(frame.text.length).toBeLessThan(70_000);
+      const missing = yield* tool("signalbox_call", {
+        operation: "threads.commandOutput",
+        input: { threadId: "someone-elses-thread", itemId },
+      });
+      expect(missing.isError).toBe(true);
+      expect(missing.content[0]!.text).not.toContain("final line");
+    }),
+  );
   it.effect("says where clients get a token for this cloud", () =>
     Effect.gen(function* () {
       const response = yield* protectedResourceMetadata(
