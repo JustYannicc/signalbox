@@ -19,11 +19,12 @@ import * as Context from "effect/Context";
 
 import * as CloudThreadService from "../thread/CloudThreadService.ts";
 import * as ThreadInbox from "../thread/ThreadInbox.ts";
-import type { Actor } from "../thread/ThreadEngine.ts";
+import { type Actor, ThreadCommandRejectedError } from "../thread/ThreadAccess.ts";
 import * as ThreadDirectory from "../thread/ThreadDirectory.ts";
 import { threadShellFromProjection } from "../thread/threadProjection.ts";
 import * as UserDrives from "../user/UserDrives.ts";
 import * as UserStore from "../user/UserStore.ts";
+import { ThreadContexts } from "../user/threadContexts.ts";
 import { isTerminalRunStatus } from "@signalbox/automations/runs";
 
 /**
@@ -34,11 +35,22 @@ import { isTerminalRunStatus } from "@signalbox/automations/runs";
  */
 
 const isAutomationError = Schema.is(AutomationError);
+const isThreadCommandRejectedError = Schema.is(ThreadCommandRejectedError);
 
 const hostError =
   (what: string) =>
   (cause: { readonly message: string }): AutomationError =>
     new AutomationError({ message: `${what}: ${cause.message}`, cause });
+
+const launchError = (cause: AutomationError | ThreadInbox.ThreadInboxError) =>
+  hostError("Couldn't start the thread")(
+    cause._tag === "ThreadInboxError" &&
+      cause.code === "rejected" &&
+      isThreadCommandRejectedError(cause.cause) &&
+      cause.cause.commandType === "thread.launch"
+      ? cause.cause
+      : cause,
+  );
 
 /** Feeds the engine's domain event stream; `CloudAutomations.threadEvents` publishes into it. */
 export class ThreadEventFeed extends Context.Service<
@@ -112,6 +124,7 @@ export const layer = Layer.effect(
     const drives = yield* UserDrives.UserDrives;
     const feed = yield* ThreadEventFeed;
     const inbox = yield* ThreadInbox.ThreadInbox;
+    const contexts = yield* ThreadContexts;
 
     const owner = ownerActor.pipe(
       Effect.provideService(UserStore.UserStore, store),
@@ -141,6 +154,7 @@ export const layer = Layer.effect(
           Effect.flatMap((actor) => inbox.read(actor, threadId)),
           Effect.mapError(hostError("Couldn't read the thread inbox")),
         ),
+      initialModelSelection: (projectId) => contexts.initialModelSelection(projectId),
       launch: (input) =>
         owner.pipe(
           Effect.flatMap((actor) =>
@@ -150,7 +164,7 @@ export const layer = Layer.effect(
               projectId: input.projectId,
               title: input.title,
               generateTitle: false,
-              modelSelection: input.modelSelection,
+              ...(input.modelSelection ? { modelSelection: input.modelSelection } : {}),
               runtimeMode: input.runtimeMode,
               interactionMode: input.interactionMode,
               workspaceStrategy: input.workspace,
@@ -158,7 +172,7 @@ export const layer = Layer.effect(
             }),
           ),
           Effect.map(({ threadId }) => ({ threadId })),
-          Effect.mapError(hostError("Couldn't start the thread")),
+          Effect.mapError(launchError),
         ),
       send: (input) =>
         Effect.gen(function* () {

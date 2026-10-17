@@ -1,5 +1,6 @@
 import {
   parseAutomationAsk,
+  ProjectId,
   type AutomationError,
   type AutomationRunSummary,
 } from "@t3tools/contracts";
@@ -17,11 +18,24 @@ import { fail } from "./errors.ts";
 import { isExternalRunSystem, type ExternalRuns } from "./external.ts";
 import { asRecord, fromJson, toJson } from "./json.ts";
 import { modelPrompt } from "./modelSteps.ts";
-import type { AutomationFunctions, CallbackLink } from "./host.ts";
+import {
+  AutomationThreads,
+  type AutomationFunctions,
+  type AutomationModelSteps,
+  type CallbackLink,
+} from "./host.ts";
 import { waitsOnEvents } from "./events/runWaits.ts";
 import { explained } from "./runLog.ts";
+import { runModelStep } from "./runModelStep.ts";
 import { retryAfterMs, retryPolicy, stepTimeoutMs } from "./stepPolicy.ts";
-import { httpRequest, isRetryableStatus, launchAgent, wakeAt, type StepStart } from "./steps.ts";
+import {
+  httpRequest,
+  isRetryableStatus,
+  launchAgent,
+  modelFor,
+  wakeAt,
+  type StepStart,
+} from "./steps.ts";
 import { nowIso } from "./time.ts";
 import type { AutomationRow, RunRow, StepRow, WorkflowStore } from "./WorkflowStore.ts";
 
@@ -42,6 +56,7 @@ export interface StartStepDependencies {
   readonly store: WorkflowStore;
   readonly services: Context.Context<EngineServices>;
   readonly functions: AutomationFunctions["Service"];
+  readonly models: AutomationModelSteps["Service"] | undefined;
   /** `w.run` on another system's runners. */
   readonly external: Pick<ExternalRuns, "start">;
   readonly connections: Effect.Success<typeof makeConnections>;
@@ -83,8 +98,44 @@ export const makeStartStep =
         return thread();
       case "llm":
       case "judge":
-      case "extract":
-        return thread(modelPrompt(step.verb, step.label, asRecord(first)));
+      case "extract": {
+        const verb = step.verb;
+        const options = asRecord(first);
+        const models = deps.models;
+        if (models === undefined) return thread(modelPrompt(verb, step.label, options));
+        return runModelStep({
+          verb,
+          label: step.label,
+          options,
+          complete: (prompt) =>
+            Effect.gen(function* () {
+              let currentDefaults = defaults();
+              if (
+                currentDefaults.modelSelection === null &&
+                !(typeof options.provider === "string" && typeof options.model === "string")
+              ) {
+                const threads = yield* AutomationThreads;
+                currentDefaults = {
+                  ...currentDefaults,
+                  modelSelection: yield* threads.initialModelSelection(
+                    ProjectId.make(automation.project_id),
+                  ),
+                };
+              }
+              const modelSelection = yield* modelFor(options, currentDefaults);
+              if (modelSelection === null)
+                return yield* fail("Choose a model or set a default in Settings.");
+              return yield* models.complete({
+                projectId: automation.project_id,
+                modelSelection,
+                prompt,
+              });
+            }),
+        }).pipe(
+          Effect.provideContext(deps.services),
+          Effect.map((value): StepOutcome => ({ type: "done", value })),
+        );
+      }
       case "http":
         return Effect.gen(function* () {
           const value = yield* httpRequest(first, {

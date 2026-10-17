@@ -9,6 +9,7 @@ import {
   WS_METHODS,
 } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
+import { resolveInitialModelSelection } from "@t3tools/shared/defaultModelSelection";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
@@ -206,11 +207,12 @@ describe("cloud pool models", () => {
       ]);
       expect(claude?.models[0]?.capabilities?.optionDescriptors?.length).toBeGreaterThan(0);
       expect(claude?.models.at(-1)?.capabilities).toBeNull();
-      // New threads start on the manifest's default, in Personal.
-      expect(current.settings.defaultModelSelection).toEqual({
-        instanceId: "claude_hub",
-        model: "claude-fable-5-1",
+      const economical = resolveInitialModelSelection({
+        providers: claude === undefined ? [] : [claude],
       });
+      expect(economical).not.toBeNull();
+      expect(current.settings.defaultModelSelection).toEqual(economical);
+      expect(claude?.models.some((model) => model.slug === economical?.model)).toBe(true);
       // No ChatGPT account: Codex offers nothing and says to add one.
       expect(provider("codex_hub")).toMatchObject({
         status: "error",

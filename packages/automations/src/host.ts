@@ -75,7 +75,8 @@ export interface AutomationThreadLaunch {
   readonly commandId: CommandId;
   readonly projectId: ProjectId;
   readonly title: string;
-  readonly modelSelection: ModelSelection;
+  /** Omitted when the host should resolve the thread's current default on launch. */
+  readonly modelSelection?: ModelSelection;
   readonly runtimeMode: RuntimeMode;
   readonly interactionMode: ProviderInteractionMode;
   readonly workspace: AgentWorkspace;
@@ -117,6 +118,9 @@ export interface AutomationThreadsShape {
   readonly readInbox?: (
     threadId: ThreadId,
   ) => Effect.Effect<AutomationThreadInboxSnapshot, AutomationError>;
+  readonly initialModelSelection: (
+    projectId: ProjectId,
+  ) => Effect.Effect<ModelSelection | null, AutomationError>;
   readonly launch: (
     input: AutomationThreadLaunch,
   ) => Effect.Effect<{ readonly threadId: ThreadId }, AutomationError>;
@@ -253,6 +257,18 @@ export class AutomationModels extends Context.Service<
     } | null>;
   }
 >()("@signalbox/automations/host/AutomationModels") {}
+
+/** Text-only model calls, when the host has a gateway instead of a harness. */
+export class AutomationModelSteps extends Context.Service<
+  AutomationModelSteps,
+  {
+    readonly complete: (input: {
+      readonly projectId: string;
+      readonly modelSelection: ModelSelection;
+      readonly prompt: string;
+    }) => Effect.Effect<string, AutomationError>;
+  }
+>()("@signalbox/automations/host/AutomationModelSteps") {}
 
 /**
  * Held until the host is ready to run work, when it has such a moment (a

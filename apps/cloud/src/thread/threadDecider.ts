@@ -1,4 +1,5 @@
 import {
+  type ModelSelection,
   MessageId,
   type OrchestrationV2AppThread,
   type OrchestrationV2AppThreadLineage,
@@ -399,7 +400,10 @@ export function decide(
  */
 export function decideLaunch(
   projection: Projection | null,
-  input: OrchestrationV2ThreadLaunchInput & { readonly threadId: ThreadId },
+  input: OrchestrationV2ThreadLaunchInput & {
+    readonly threadId: ThreadId;
+    readonly modelSelection: ModelSelection;
+  },
   ctx: DecisionContext,
   worktree: ThreadWorktree | null = null,
   lineage?: OrchestrationV2AppThreadLineage,
