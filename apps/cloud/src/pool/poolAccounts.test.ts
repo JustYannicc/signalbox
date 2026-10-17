@@ -21,6 +21,71 @@ const CLAUDE_USAGE_REFRESHED = JSON.stringify({
 });
 
 describe("PoolEngine account snapshots", () => {
+  it.effect("retries after a background account-list request stops answering", () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(T0);
+    const external = makeFakeCliProxyApi();
+    let blocked = false;
+    let listCalls = 0;
+    const pending: Array<() => void> = [];
+    const { promise: started, resolve: signalStart } = Promise.withResolvers<void>();
+    const object = makeMemoryPoolObject((request) => {
+      if (new URL(request.url).pathname.endsWith("/credentials")) {
+        listCalls += 1;
+        if (blocked) {
+          signalStart();
+          return new Promise<Response>((resolve, reject) => {
+            pending.push(() => void external.serve(request).then(resolve, reject));
+          });
+        }
+      }
+      return external.serve(request);
+    });
+    return Effect.gen(function* () {
+      const pool = yield* Effect.promise(() => object.runtime.runPromise(PoolEngine.PoolEngine));
+      yield* TestClock.setTime(T0);
+      yield* pool.initialize;
+      yield* pool.create(alice, { name: "Personal", personal: true });
+      yield* pool.setBacking(alice, {
+        mode: "external",
+        url: "https://proxy.example.test",
+        managementKey: "management",
+        clientKey: "client",
+      });
+      yield* pool.accounts(alice);
+      const callsBefore = listCalls;
+      const staleAt = T0 + PoolEngine.ACCOUNTS_FRESH_MS + 1;
+      vi.setSystemTime(staleAt);
+      yield* TestClock.setTime(staleAt);
+      blocked = true;
+      const read = yield* Effect.forkChild(pool.accounts(alice));
+      yield* Effect.promise(() => started);
+      vi.setSystemTime(staleAt + PoolEngine.ACCOUNTS_READ_TIMEOUT_MS + 1);
+      yield* TestClock.adjust(PoolEngine.ACCOUNTS_READ_TIMEOUT_MS + 1);
+      expect((yield* Fiber.join(read)).error).toBeTruthy();
+      expect(listCalls).toBe(callsBefore + 1);
+
+      const retryAt = staleAt + PoolEngine.ACCOUNTS_REFRESH_TIMEOUT_MS + 1;
+      vi.setSystemTime(retryAt);
+      yield* TestClock.setTime(retryAt);
+      blocked = false;
+      const retry = yield* Effect.forkChild(pool.accounts(alice));
+      vi.setSystemTime(retryAt + PoolEngine.ACCOUNTS_READ_TIMEOUT_MS + 1);
+      yield* TestClock.adjust(PoolEngine.ACCOUNTS_READ_TIMEOUT_MS + 1);
+      const retried = yield* Fiber.join(retry);
+      expect(listCalls).toBe(callsBefore + 2);
+      expect(retried.error).toBeNull();
+    }).pipe(
+      Effect.ensuring(
+        Effect.sync(() => {
+          blocked = false;
+          for (const release of pending) release();
+          vi.useRealTimers();
+        }),
+      ),
+    );
+  });
+
   it.effect(
     "keeps an unchanged snapshot fresh while an external usage probe hangs, then retries",
     () => {

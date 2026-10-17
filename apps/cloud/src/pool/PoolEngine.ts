@@ -341,6 +341,9 @@ export const ACCOUNTS_FRESH_MS = 30_000;
 /** A passive account snapshot never waits on an unbounded pool or provider read. */
 export const ACCOUNTS_READ_TIMEOUT_MS = 750;
 
+/** A stuck upstream request must release the shared refresh so polling can retry. */
+export const ACCOUNTS_REFRESH_TIMEOUT_MS = 120_000;
+
 const ACCOUNTS_READ_TIMEOUT_MESSAGE =
   "The pool did not refresh its account snapshot in time. Try again shortly.";
 
@@ -882,6 +885,10 @@ const make = Effect.gen(function* () {
       if (row.backing !== "external" && !(yield* container.running)) return;
       yield* refreshAccounts(row, undefined, { passive: true });
     }).pipe(
+      Effect.timeoutOrElse({
+        duration: ACCOUNTS_REFRESH_TIMEOUT_MS,
+        orElse: () => Effect.logWarning("pool account snapshot refresh timed out"),
+      }),
       Effect.catch((cause) => Effect.logWarning("pool account snapshot refresh failed", { cause })),
     );
 
