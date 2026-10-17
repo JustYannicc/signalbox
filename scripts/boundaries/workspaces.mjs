@@ -3,11 +3,12 @@ import * as NodePath from "node:path";
 
 const TEST = /(?:^|\/)(?:tests?|__tests__)\/|\.(?:test|spec)\.[cm]?[jt]sx?$/;
 
+export const WORKSPACE_MANIFEST =
+  /^(?:(?:apps|packages|infra)\/[^/]+|scripts|oxlint-plugin-t3code)\/package\.json$/;
+
 export function readWorkspaces(files) {
   return files
-    .filter((file) =>
-      /^(?:(?:apps|packages|infra)\/[^/]+|scripts|oxlint-plugin-t3code)\/package\.json$/.test(file),
-    )
+    .filter((file) => WORKSPACE_MANIFEST.test(file))
     .map((file) => ({
       directory: NodePath.posix.dirname(file),
       ...JSON.parse(NodeFS.readFileSync(file, "utf8")),

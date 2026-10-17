@@ -10,12 +10,10 @@ import * as Stream from "effect/Stream";
 
 import { makeDriveReader } from "./DriveReader.ts";
 import { GITHUB_LIMITS, packForPush } from "./gitPush.ts";
-import { concatBytes, parseCommit } from "./git/gitObjects.ts";
 import { DriveDirectory } from "./DriveDirectory.ts";
 import * as DriveRevisions from "./DriveRevisions.ts";
 import * as DriveEvents from "./DriveEvents.ts";
-import { makeMemoryDrives, makeRepo } from "./driveTesting.ts";
-import { verifyPack } from "./git/gitPack.ts";
+import { concatBytes, registerPack, makeMemoryDrives, makeRepo } from "./driveTesting.ts";
 import { uploadPack } from "./DriveUploads.ts";
 import * as DriveStore from "./DriveStore.ts";
 import { threadRef, wipRef } from "./DriveStore.ts";
@@ -48,36 +46,6 @@ const upload = (
   uploadPack({ driveId: DRIVE, threadId, idx: packed.idx, pack: packed.pack }).pipe(
     Effect.provide(drives.layer),
   );
-
-const registerPack = (threadId: string, packed: ReturnType<ReturnType<typeof makeRepo>["pack"]>) =>
-  Effect.gen(function* () {
-    const verified = yield* Effect.promise(() => verifyPack(packed.pack, packed.idx));
-    const commits = [...verified.structure].flatMap(([oid, object]) => {
-      if (object.type !== "commit") return [];
-      const commit = parseCommit(object.content);
-      return [
-        {
-          oid,
-          tree: commit.tree,
-          parents: commit.parents,
-          authorName: commit.author.name,
-          authorEmail: commit.author.email,
-          time: commit.author.time,
-          message: commit.message,
-        },
-      ];
-    });
-    return yield* DriveStore.DriveStore.use((store) =>
-      store.registerPack({
-        name: verified.name,
-        size: packed.pack.length,
-        threadId,
-        objects: verified.objects,
-        commits,
-        external: [...verified.external],
-      }),
-    );
-  });
 
 const views: DriveCheckpointRecord["views"] = {
   shortcuts: [{ path: "docs", target: "my/personal/docs", commit: null }],
