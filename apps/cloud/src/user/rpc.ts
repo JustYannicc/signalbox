@@ -65,6 +65,11 @@ import {
   SIGNALBOX_SIGN_IN_WS_METHODS,
 } from "@t3tools/contracts/signalboxSignIn";
 import {
+  SIGNALBOX_PERSON_BROWSER_REQUIRED_SCOPES,
+  SIGNALBOX_PERSON_BROWSER_WS_METHODS,
+  SignalboxPersonBrowserError,
+} from "@t3tools/contracts/signalboxPersonBrowser";
+import {
   SIGNALBOX_REPOSITORIES_REQUIRED_SCOPES,
   SIGNALBOX_REPOSITORIES_WS_METHODS,
 } from "@t3tools/contracts/signalboxRepositories";
@@ -107,6 +112,7 @@ import { AUTOMATION_RPC_SCOPES } from "@signalbox/automations/rpcScopes";
 import { makePushHandlers } from "../push/pushRpc.ts";
 import { makeKeysHandlers } from "./keysRpc.ts";
 import { makeSignInHandlers } from "../signIn/signInRpc.ts";
+import * as LoginService from "../signIn/LoginService.ts";
 import { makeNotesHandlers, NOTES_METHODS } from "../notes/notesRpc.ts";
 import { DriveShortcuts } from "./DriveShortcuts.ts";
 import * as UserContexts from "./UserContexts.ts";
@@ -207,6 +213,7 @@ const SERVED = [
   ...Object.values(SIGNALBOX_THREAD_STATUS_WS_METHODS),
   ...Object.values(SIGNALBOX_KEYS_WS_METHODS),
   ...Object.values(SIGNALBOX_SIGN_IN_WS_METHODS),
+  ...Object.values(SIGNALBOX_PERSON_BROWSER_WS_METHODS),
   ...SECTION_METHODS,
   ...POOL_METHODS,
   // The user's automations (`automations/`), run on this object.
@@ -285,6 +292,7 @@ const REQUIRED_SCOPES = {
   ...SIGNALBOX_THREAD_STATUS_REQUIRED_SCOPES,
   ...SIGNALBOX_KEYS_REQUIRED_SCOPES,
   ...SIGNALBOX_SIGN_IN_REQUIRED_SCOPES,
+  ...SIGNALBOX_PERSON_BROWSER_REQUIRED_SCOPES,
   // The same scopes a self-hosted server requires (`apps/server/src/sections/rpcScopes.ts`).
   [WS_METHODS.sectionsSubscribe]: AuthOrchestrationReadScope,
   [WS_METHODS.sectionsCreate]: AuthOrchestrationOperateScope,
@@ -377,6 +385,14 @@ const kindsCall = <A>(effect: Effect.Effect<A, SqlError>) =>
           ),
         ),
     }),
+  );
+
+const personBrowserCall = <A>(effect: Effect.Effect<A, unknown>, message: string) =>
+  effect.pipe(
+    Effect.tapError((cause) =>
+      Effect.logError("cloud browser profile operation failed", { cause }),
+    ),
+    Effect.mapError(() => new SignalboxPersonBrowserError({ message })),
   );
 
 const storageFailed = (cause: unknown) =>
@@ -505,6 +521,7 @@ export const layerHandlers = (input: {
         scopes: input.scopes ?? AuthStandardClientScopes,
       });
       const signIn = yield* makeSignInHandlers({ userId });
+      const personBrowser = yield* LoginService.LoginService;
       return {
         ...pools.handlers,
         ...pushes,
@@ -512,6 +529,16 @@ export const layerHandlers = (input: {
         ...notes,
         ...keys,
         ...signIn,
+        [SIGNALBOX_PERSON_BROWSER_WS_METHODS.profileStatus]: () =>
+          personBrowserCall(
+            personBrowser.profileStatus,
+            "Cloud browser availability could not be checked. Try again.",
+          ),
+        [SIGNALBOX_PERSON_BROWSER_WS_METHODS.clearProfile]: () =>
+          personBrowserCall(
+            personBrowser.clearProfile,
+            "Cloud browser sign-ins could not be cleared. Try again.",
+          ),
         [WS_METHODS.subscribeServerConfig]: (request) => pools.configStream(request),
         [WS_METHODS.serverGetConfig]: () => pools.configNow,
         [WS_METHODS.serverProbe]: () => Effect.succeed({}),

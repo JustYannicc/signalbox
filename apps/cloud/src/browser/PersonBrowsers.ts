@@ -6,6 +6,7 @@ import * as Layer from "effect/Layer";
 import * as Metric from "effect/Metric";
 import * as Redacted from "effect/Redacted";
 import * as Semaphore from "effect/Semaphore";
+import * as Schema from "effect/Schema";
 import { HttpClient } from "effect/http";
 import type { SqlError } from "effect/sql/SqlError";
 
@@ -54,15 +55,31 @@ export class PersonBrowsers extends Context.Service<
       readonly threadId: string;
       readonly sessionId: string;
     }) => Effect.Effect<void, SqlError>;
+    /** Whether this account has access to its one managed profile. */
+    readonly profileStatus: Effect.Effect<{ readonly available: boolean }, SqlError>;
     /**
-     * The login service's first step (#576): deletes the thread's session and
-     * the one that writes the profile back, saving it, since only that one
-     * could save the profile over a login made after it. The thread's next
-     * session loads the login.
+     * Ends the profile writer and this thread's session, then holds the
+     * session lock for the complete Managed Auth operation.
      */
-    readonly endForSignIn: (threadId: string | null) => Effect.Effect<void, SqlError>;
+    readonly withSignIn: <A, E, R>(input: {
+      readonly threadId: string | null;
+      readonly run: (profileName: string) => Effect.Effect<A, E, R>;
+    }) => Effect.Effect<A, E | SqlError | KernelApiError | PersonBrowserUnavailableError, R>;
+    /** Closes every session, forgets automatic re-login state, then deletes the profile. */
+    readonly clearProfile: (
+      forgetSignInRecords: () => Effect.Effect<void, SqlError>,
+    ) => Effect.Effect<void, SqlError | KernelApiError | PersonBrowserUnavailableError>;
   }
 >()("@signalbox/cloud/browser/PersonBrowsers") {}
+
+export class PersonBrowserUnavailableError extends Schema.TaggedError<PersonBrowserUnavailableError>()(
+  "PersonBrowserUnavailableError",
+  {},
+) {
+  override get message(): string {
+    return "The cloud browser profile is unavailable.";
+  }
+}
 
 /** Worker secrets the person's browser reads. Deploys pass an unset secret as empty. */
 export interface PersonBrowsersEnv {
@@ -111,9 +128,11 @@ const make = (kernel: KernelApi | null) =>
       );
 
     // Asked on every new session, so a profile Kernel lost is made again.
+    const profileName = (ownerId: string) => Effect.map(hashSecret(crypto, ownerId), profileNameOf);
+
     const ensureProfile = (api: KernelApi, ownerId: string) =>
       Effect.gen(function* () {
-        const name = profileNameOf(yield* hashSecret(crypto, ownerId));
+        const name = yield* profileName(ownerId);
         yield* api.ensureProfile(name);
         return name;
       });
@@ -188,6 +207,10 @@ const make = (kernel: KernelApi | null) =>
         }),
       );
 
+    /** Used before Managed Auth and profile deletion; a failure must leave the writer intact. */
+    const removeStrict = (api: KernelApi, sessionId: string) =>
+      api.deleteBrowser(sessionId).pipe(Effect.andThen(sessions.ended(sessionId)));
+
     const end: PersonBrowsers["Service"]["end"] = ({ threadId, sessionId }) =>
       Effect.gen(function* () {
         if (kernel === null) return;
@@ -200,16 +223,44 @@ const make = (kernel: KernelApi | null) =>
         traced("PersonBrowsers.end", { "thread.id": threadId }),
       );
 
-    const endForSignIn: PersonBrowsers["Service"]["endForSignIn"] = (threadId) =>
+    const profileStatus: PersonBrowsers["Service"]["profileStatus"] = Effect.map(
+      owner,
+      (ownerId) => ({ available: kernel !== null && ownerId !== null }),
+    );
+
+    const withSignIn: PersonBrowsers["Service"]["withSignIn"] = ({ threadId, run }) =>
       Effect.gen(function* () {
-        if (kernel === null) return;
+        if (kernel === null) return yield* Effect.fail(new PersonBrowserUnavailableError({}));
+        const ownerId = yield* owner;
+        if (ownerId === null) return yield* Effect.fail(new PersonBrowserUnavailableError({}));
         const ending = (yield* sessions.open).filter(
           (row) => row.writer || row.thread_id === threadId,
         );
-        yield* Effect.forEach(ending, (row) => remove(kernel, row.session_id), { discard: true });
-      }).pipe(opening.withPermits(1), traced("PersonBrowsers.endForSignIn", {}));
+        yield* Effect.forEach(ending, (row) => removeStrict(kernel, row.session_id), {
+          discard: true,
+          concurrency: 1,
+        });
+        const name = yield* ensureProfile(kernel, ownerId);
+        return yield* run(name);
+      }).pipe(opening.withPermits(1), traced("PersonBrowsers.withSignIn", {}));
 
-    return PersonBrowsers.of({ open, end, endForSignIn });
+    const clearProfile: PersonBrowsers["Service"]["clearProfile"] = (forgetSignInRecords) =>
+      Effect.gen(function* () {
+        if (kernel === null) return yield* Effect.fail(new PersonBrowserUnavailableError({}));
+        const ownerId = yield* owner;
+        if (ownerId === null) return yield* Effect.fail(new PersonBrowserUnavailableError({}));
+        const name = yield* profileName(ownerId);
+        const open = yield* sessions.open;
+        yield* Effect.forEach(open, (row) => removeStrict(kernel, row.session_id), {
+          discard: true,
+          concurrency: 1,
+        });
+        // Clearing this first prevents the hourly sweep from restoring sign-ins after deletion.
+        yield* forgetSignInRecords();
+        yield* kernel.deleteProfile(name);
+      }).pipe(opening.withPermits(1), traced("PersonBrowsers.clearProfile", {}));
+
+    return PersonBrowsers.of({ open, end, profileStatus, withSignIn, clearProfile });
   });
 
 /** On `kernel`, or with no person's browser when it's null. */

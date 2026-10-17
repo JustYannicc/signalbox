@@ -1,5 +1,6 @@
 import { DeviceHostUpdates } from "../device/DeviceHostUpdates";
 import { DeviceToolVersions } from "../device/DeviceToolVersions";
+import { useAtomValue } from "@effect/atom-react";
 import { useScopedSettings, useUpdateScopedSettings } from "./useScopedSettings";
 import { ScopedSwitch } from "./ScopedSwitch";
 import { DeviceHostsSettings } from "./DeviceHostsSettings";
@@ -39,6 +40,7 @@ import { MoreVertical, Plus as PlusIcon } from "lucide-react";
 import { useCallback, useRef, useState } from "react";
 
 import { ScreenRotationIcon } from "~/browser/ScreenRotationIcon";
+import { useIsSignalboxCloud } from "~/github/CloudGitHubSettings";
 import { AnimatedHeight } from "~/components/AnimatedHeight";
 import { resolveEnvironmentOptionLabel } from "~/components/BranchToolbar.logic";
 import { previewBridge } from "~/components/preview/previewBridge";
@@ -47,12 +49,15 @@ import { useEnvironments, usePrimaryEnvironment } from "~/state/environments";
 import { deviceEnvironment, useDeviceState } from "~/state/device";
 import {
   readEnvironmentScope,
+  useEnvironmentSessionState,
   useEnvironmentScope,
-  useEnvironmentsWithScope,
+  useEnvironmentsWithScopeResolution,
 } from "~/state/session";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { previewEnvironment } from "~/state/preview";
+import { signalboxPersonBrowser } from "~/state/signalboxPersonBrowser";
 import { useServerConfigs } from "~/state/entities";
+import { useEnvironmentQuery } from "~/state/query";
 import { useEnvironmentSupports } from "~/state/environmentCapabilities";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import {
@@ -122,6 +127,7 @@ import { ProjectDefaultsSettings } from "./ProjectDefaultsSettings";
 import { useSettingsScope } from "./SettingsScopeContext";
 import { BrowserImportWizard, type WizardTarget } from "./BrowserImportWizard";
 import type { ImportOutcome } from "./browserImportWizard.logic";
+import { resolveBrowserSettingsAvailability } from "./browserSettings.logic";
 
 const FILL_VALUE = "fill";
 const RESPONSIVE_VALUE = "responsive";
@@ -163,22 +169,6 @@ export function browserProfileRemovalAvailable(
   serverBrowserCount = 0,
 ): boolean {
   return (bridgeAvailable || serverBrowserCount > 0) && environmentsReady && environmentCount > 0;
-}
-
-export function browserSettingsAvailability(input: {
-  readonly isElectron: boolean;
-  readonly serverBrowser: boolean;
-  readonly devices: boolean;
-}) {
-  const interactiveBrowser = input.isElectron || input.serverBrowser;
-  return {
-    browserProfiles: interactiveBrowser,
-    viewport: interactiveBrowser,
-    desktopViewDefaults: input.isElectron,
-    recording: input.isElectron,
-    appLinkTarget: interactiveBrowser,
-    floatingPreview: interactiveBrowser || input.devices,
-  };
 }
 
 const RESPONSIVE_SEED_SIZE = { width: 1280, height: 800 } as const;
@@ -300,7 +290,7 @@ function BrowserViewportSetting({ disabled }: { readonly disabled: boolean }) {
   return (
     <SettingsRow
       {...searchableSetting("browser-default-viewport")}
-      description="Tab size for you and agents. Fill fits the panel; other sizes show the device toolbar."
+      description="Tab size for browser previews. Fill fits the panel; other sizes show the device toolbar."
       resetAction={
         !disabled && viewport._tag !== DEFAULT_BROWSER_VIEWPORT._tag ? (
           <SettingResetButton
@@ -977,12 +967,119 @@ function BrowserAutoShowFloatingPreviewSetting({ disabled }: { readonly disabled
   );
 }
 
+function CloudBrowserProfileSetting({ environmentId }: { readonly environmentId: EnvironmentId }) {
+  const status = useEnvironmentQuery(
+    signalboxPersonBrowser.profileStatus({ environmentId, input: {} }),
+  );
+  const session = useEnvironmentSessionState(environmentId);
+  const runClearProfile = useAtomCommand(signalboxPersonBrowser.clearProfile, {
+    reportFailure: false,
+  });
+  const canClear = useAtomValue(signalboxPersonBrowser.clearProfile.permissionAtom(environmentId));
+  const [confirmOpen, setConfirmOpen] = useState(false);
+  const [clearing, setClearing] = useState(false);
+  const accessChecking = session.isPending || (session.data === null && !session.hasError);
+  const clearAvailable =
+    status.data?.available === true && canClear && !accessChecking && !session.hasError;
+  const rowStatus =
+    status.isPending || (status.data === null && status.error === null)
+      ? "Checking cloud browser availability."
+      : status.error !== null
+        ? "Cloud browser availability could not be checked."
+        : status.data?.available !== true
+          ? "Managed cloud browser is unavailable."
+          : session.hasError
+            ? "Access could not be checked. Reconnect the cloud environment."
+            : accessChecking
+              ? "Checking access."
+              : !canClear
+                ? "This connection cannot clear browser sign-ins."
+                : undefined;
+
+  const clearProfile = () => {
+    if (!clearAvailable || clearing) return;
+    setClearing(true);
+    void runClearProfile({ environmentId, input: {} })
+      .then((result) => {
+        if (result._tag === "Failure") {
+          toastManager.add({
+            type: "error",
+            title: "Could not clear cloud browser sign-ins",
+            description: "The profile data is still there. Try again.",
+          });
+          return;
+        }
+        toastManager.add({ type: "success", title: "Cleared cloud browser sign-ins" });
+        setConfirmOpen(false);
+      })
+      .catch(() => {
+        toastManager.add({
+          type: "error",
+          title: "Could not clear cloud browser sign-ins",
+          description: "The profile data is still there. Try again.",
+        });
+      })
+      .finally(() => setClearing(false));
+  };
+
+  return (
+    <>
+      <SettingsRow
+        {...searchableSetting("cloud-browser-profile")}
+        description="Signalbox Cloud keeps one private profile for your account. Agents use it for real sites, and its cookies and site storage stay saved between sessions. It is created the first time an agent opens a site."
+        status={rowStatus}
+        control={
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={!clearAvailable || clearing}
+            onClick={() => setConfirmOpen(true)}
+          >
+            Clear saved sign-ins
+          </Button>
+        }
+      />
+      <AlertDialog
+        open={confirmOpen}
+        onOpenChange={(open) => {
+          if (!clearing) setConfirmOpen(open);
+        }}
+      >
+        <AlertDialogPopup>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Clear cloud browser sign-ins?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Open browser sessions close first. Signalbox then removes this profile's cookies and
+              site storage. The profile is recreated empty when an agent opens a site again.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogClose
+              disabled={clearing}
+              render={<Button variant="outline" disabled={clearing} />}
+            >
+              Cancel
+            </AlertDialogClose>
+            <Button
+              variant="destructive"
+              disabled={!clearAvailable || clearing}
+              onClick={clearProfile}
+            >
+              {clearing ? "Clearing…" : "Clear sign-ins"}
+            </Button>
+          </AlertDialogFooter>
+        </AlertDialogPopup>
+      </AlertDialog>
+    </>
+  );
+}
+
 function BrowserProfilesSetting({
   disabled,
-  serverBrowserEnvironmentIds,
+  serverBrowserClearEnvironmentIds,
 }: {
   readonly disabled: boolean;
-  readonly serverBrowserEnvironmentIds: ReadonlyArray<EnvironmentId>;
+  readonly serverBrowserClearEnvironmentIds: ReadonlyArray<EnvironmentId>;
 }) {
   const userProfiles = useClientSettings((settings) => settings.browserProfiles);
   const defaultProfileId = useClientSettings((settings) => settings.browserDefaultProfileId);
@@ -1004,7 +1101,7 @@ function BrowserProfilesSetting({
     reportFailure: false,
   });
   const serverProfileData: ServerProfileData = {
-    environmentIds: serverBrowserEnvironmentIds,
+    environmentIds: serverBrowserClearEnvironmentIds,
     clear: async (environmentId, profileId) => {
       const result = await runClearServerProfile({ environmentId, input: { profileId } });
       if (result._tag === "Failure") throw squashAtomCommandFailure(result);
@@ -1518,6 +1615,11 @@ function BrowserProfilesSetting({
 
 export function IntegrationsSettingsPanel() {
   const browserSettings = useBrowserSettingsAvailability();
+  const primaryEnvironment = usePrimaryEnvironment();
+  const isSignalboxCloud = useIsSignalboxCloud(primaryEnvironment?.environmentId ?? null);
+  const cloudBrowserEnvironmentId = isSignalboxCloud
+    ? (primaryEnvironment?.environmentId ?? null)
+    : null;
 
   return (
     <SettingsPageContainer>
@@ -1525,18 +1627,21 @@ export function IntegrationsSettingsPanel() {
       {/* signalbox: automations */}
       <ConnectedServicesSettings />
       <SettingsSection id="browser" title="Browser">
+        {cloudBrowserEnvironmentId === null ? null : (
+          <CloudBrowserProfileSetting environmentId={cloudBrowserEnvironmentId} />
+        )}
         <SettingsUnavailableGroup
           message={
-            browserSettings.checking
+            browserSettings.checkingBrowserSettings
               ? "Checking connected environments for browser support."
               : browserSettings.browserProfiles
                 ? undefined
-                : "Profiles and viewport defaults need the desktop app or preview access to a server browser."
+                : "Browser profiles and viewport defaults apply to the desktop browser or a connected server browser."
           }
         >
           <BrowserProfilesSetting
             disabled={!browserSettings.browserProfiles}
-            serverBrowserEnvironmentIds={browserSettings.serverBrowserEnvironmentIds}
+            serverBrowserClearEnvironmentIds={browserSettings.serverBrowserClearEnvironmentIds}
           />
           <BrowserViewportSetting disabled={!browserSettings.viewport} />
         </SettingsUnavailableGroup>
@@ -1554,11 +1659,11 @@ export function IntegrationsSettingsPanel() {
         </SettingsUnavailableGroup>
         <BrowserLinkTargetSetting
           appTargetAvailable={browserSettings.appLinkTarget}
-          checking={browserSettings.checking}
+          checking={browserSettings.checkingAppLinkTarget}
         />
         <SettingsUnavailableGroup
           message={
-            browserSettings.checking
+            browserSettings.checkingFloatingPreview
               ? "Checking connected environments for browser or device support."
               : browserSettings.floatingPreview
                 ? undefined
@@ -1577,37 +1682,23 @@ export function IntegrationsSettingsPanel() {
 function useBrowserSettingsAvailability() {
   const { environments, isReady } = useEnvironments();
   const serverConfigs = useServerConfigs();
-  const canOperatePreviews = useEnvironmentsWithScope(environments, AuthPreviewOperateScope);
-  const serverBrowserEnvironmentIds = environments.flatMap(({ environmentId, connection }) =>
-    connection.phase === "connected" &&
-    serverConfigs.get(environmentId)?.environment.capabilities.serverBrowser === true &&
-    canOperatePreviews.has(environmentId)
-      ? [environmentId]
-      : [],
+  const previewPermissions = useEnvironmentsWithScopeResolution(
+    environments,
+    AuthPreviewOperateScope,
   );
-  const devices = environments.some(
-    ({ environmentId, connection }) =>
-      connection.phase === "connected" &&
-      serverConfigs.get(environmentId)?.environment.capabilities.devices === true,
-  );
-  const checking =
-    !isElectron &&
-    serverBrowserEnvironmentIds.length === 0 &&
-    (!isReady ||
-      environments.some(
-        ({ environmentId, connection }) =>
-          connection.phase === "connecting" ||
-          connection.phase === "reconnecting" ||
-          (connection.phase === "connected" && !serverConfigs.has(environmentId)),
-      ));
-
-  return {
-    ...browserSettingsAvailability({
-      isElectron,
-      serverBrowser: serverBrowserEnvironmentIds.length > 0,
-      devices,
+  return resolveBrowserSettingsAvailability({
+    isElectron,
+    environmentsReady: isReady,
+    environments: environments.map(({ environmentId, connection }) => {
+      const config = serverConfigs.get(environmentId);
+      return {
+        environmentId,
+        connectionPhase: connection.phase,
+        configKnown: config !== undefined,
+        serverBrowser: config?.environment.capabilities.serverBrowser === true,
+        devices: config?.environment.capabilities.devices === true,
+        previewPermission: previewPermissions.get(environmentId) ?? "unresolved",
+      };
     }),
-    checking,
-    serverBrowserEnvironmentIds,
-  };
+  });
 }
