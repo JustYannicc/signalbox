@@ -6,7 +6,7 @@ import * as NodePath from "node:path";
 
 import { createAgentProcessRegistry } from "./registry.ts";
 
-export const tempDirectories: Array<string> = [];
+const tempDirectories: Array<string> = [];
 
 export const makeFixture = () => {
   const root = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "signalbox-agent-processes-"));

@@ -25,7 +25,7 @@ export const resolveGitCommonDir = (worktreePath: string): string => {
   return canonicalDirectory(NodePath.resolve(worktreePath, output));
 };
 
-export const isPathWithin = (root: string, candidate: string): boolean => {
+const isPathWithin = (root: string, candidate: string): boolean => {
   const relative = NodePath.relative(root, candidate);
   return (
     relative === "" ||
