@@ -331,7 +331,14 @@ const makeUserRuntime = (
           ),
           // No push credentials, so phones are recorded and every push is skipped.
           Layer.provideMerge(
-            PushNotifier.layerWithDevices(EnvironmentId.make(CLOUD_TEST_ENV.ENVIRONMENT_ID)).pipe(
+            Layer.unwrap(
+              Effect.map(UserStore.UserStore, (store) =>
+                PushNotifier.layerWithDevices(
+                  EnvironmentId.make(CLOUD_TEST_ENV.ENVIRONMENT_ID),
+                  (sid) => Effect.map(store.findSession(sid), (session) => session !== null),
+                ),
+              ),
+            ).pipe(
               Layer.provide(
                 Layer.mergeAll(
                   FetchHttpClient.layer,
