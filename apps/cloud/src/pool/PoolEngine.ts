@@ -725,16 +725,6 @@ const make = Effect.gen(function* () {
               WHERE id = 1`.pipe(Effect.andThen(Effect.fail(error))),
         }),
       );
-      // The models the accounts serve. A failed read keeps the last list.
-      yield* CliProxyApi.listModels(endpoint).pipe(
-        Effect.flatMap((models) => withSql(PoolModels.store(models, now))),
-        Effect.catchTags({
-          PoolBackendError: (error) =>
-            Effect.logWarning("pool model list read failed", error.detail, error.cause).pipe(
-              Effect.andThen(withSql(PoolModels.markTried(now))),
-            ),
-        }),
-      );
       const cached = yield* cachedAccounts;
       const mode: PoolLimits.ReadMode =
         options?.passive === true || options?.probe === true ? "probe" : "free";
@@ -742,6 +732,16 @@ const make = Effect.gen(function* () {
         Effect.gen(function* () {
           yield* storeAccountRows(live, cached.accounts, now, contributors);
           yield* sql`UPDATE accounts_state SET checked_at = ${now}, error = NULL WHERE id = 1`;
+        }),
+      );
+      // Account freshness must not wait for model discovery or provider usage probes.
+      yield* CliProxyApi.listModels(endpoint).pipe(
+        Effect.flatMap((models) => withSql(PoolModels.store(models, now))),
+        Effect.catchTags({
+          PoolBackendError: (error) =>
+            Effect.logWarning("pool model list read failed", error.detail, error.cause).pipe(
+              Effect.andThen(withSql(PoolModels.markTried(now))),
+            ),
         }),
       );
       yield* refreshLimits(endpoint, live, now, mode);
@@ -962,9 +962,7 @@ const make = Effect.gen(function* () {
       // The account list may already have committed while its usage probes were slow.
       const after = yield* cachedAccounts;
       if (after.checkedAt > cached.checkedAt) return after;
-      const now = yield* Clock.currentTimeMillis;
-      yield* sql`UPDATE accounts_state SET checked_at = ${now},
-        error = ${ACCOUNTS_READ_TIMEOUT_MESSAGE} WHERE id = 1`;
+      yield* sql`UPDATE accounts_state SET error = ${ACCOUNTS_READ_TIMEOUT_MESSAGE} WHERE id = 1`;
       return yield* cachedAccounts;
     });
 

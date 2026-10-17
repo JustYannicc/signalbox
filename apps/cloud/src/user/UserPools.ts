@@ -33,12 +33,15 @@ import { ACCOUNTS_FRESH_MS } from "../pool/PoolEngine.ts";
 import * as PoolDirectory from "../pool/PoolDirectory.ts";
 import { encodeLinkToken } from "../pool/poolLink.ts";
 import * as UserFolders from "./UserFolders.ts";
+import * as PoolSnapshotCache from "./poolSnapshotCache.ts";
 import {
   type PoolEntry,
   type UserPool,
   accountPool,
   poolOfInstance,
   usageSource,
+  overview,
+  modelsForSnapshot,
 } from "../pool/poolViews.ts";
 
 /**
@@ -187,6 +190,8 @@ const poolFailure = (error: PoolDirectory.PoolObjectError | PoolRejectedError) =
 
 const make = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
+  const withSql = <A, E>(effect: Effect.Effect<A, E, SqlClient.SqlClient>) =>
+    Effect.provideService(effect, SqlClient.SqlClient, sql);
   const directory = yield* PoolDirectory.PoolDirectory;
   const folders = yield* UserFolders.UserFolders;
   const crypto = yield* Crypto.Crypto;
@@ -209,6 +214,38 @@ const make = Effect.gen(function* () {
     role: "role" in accounts ? accounts.role : null,
     routing: "routing" in accounts ? accounts.routing : null,
   });
+
+  const timedOutEntry = (pool: UserPool, known: Option.Option<PoolSnapshot>, now: number) =>
+    Effect.gen(function* () {
+      const previous = Option.isSome(known)
+        ? known.value.state.find(
+            (entry) =>
+              entry.pool.objectName === pool.objectName &&
+              Equal.equals(entry.pool.backing, pool.backing) &&
+              (entry.lastKnownOverview !== undefined || !entry.source.error),
+          )
+        : undefined;
+      const cached =
+        previous === undefined
+          ? yield* withSql(PoolSnapshotCache.read(pool)).pipe(
+              Effect.catch((error) =>
+                Effect.logWarning("pool snapshot cache read failed", error).pipe(Effect.as(null)),
+              ),
+            )
+          : null;
+      const lastKnownOverview =
+        previous?.lastKnownOverview ??
+        (previous === undefined ? cached?.overview : overview(previous.pool, previous.source, now));
+      const base = entryFor(pool, { error: POOL_READ_TIMEOUT_MESSAGE }, now);
+      if (lastKnownOverview === undefined) return base;
+      const error = "Pool status is taking too long to refresh. Showing the last known snapshot.";
+      return {
+        ...base,
+        models: previous === undefined ? (cached?.models ?? []) : modelsForSnapshot(previous),
+        lastKnownOverview: { ...lastKnownOverview, name: pool.name, error },
+        source: { ...base.source, error },
+      } satisfies PoolEntry;
+    });
 
   const rows = sql<PoolRow>`SELECT id, object_name, name, personal, backing_url FROM pools
     ORDER BY personal DESC, created_at, id`.pipe(Effect.map((all) => all.map(fromRow)));
@@ -256,21 +293,16 @@ const make = Effect.gen(function* () {
     });
 
   /** Reads every pool's accounts and shares the result with every subscriber. */
-  const unavailableState = (
-    observed: Option.Option<PoolSnapshot>,
-    minimumRead: number,
-    message: string,
-  ) =>
+  const unavailableState = (observed: Option.Option<PoolSnapshot>, minimumRead: number) =>
     Effect.gen(function* () {
       const latest = yield* SubscriptionRef.get(current);
       if (latest !== observed && Option.isSome(latest) && latest.value.readId >= minimumRead) {
         return latest.value.state;
       }
-      // The user object owns pool names; don't reuse account details from an older read here.
       const readId = ++nextRead;
       const all = yield* rows.pipe(Effect.catchTags({ SqlError: storageFailed }));
       const now = yield* Clock.currentTimeMillis;
-      const state = all.map((pool) => entryFor(pool, { error: message }, now));
+      const state = yield* Effect.forEach(all, (pool) => timedOutEntry(pool, latest, now));
       return yield* SubscriptionRef.modify(current, (known) =>
         known !== observed && Option.isSome(known) && known.value.readId >= minimumRead
           ? [known.value.state, known]
@@ -305,21 +337,27 @@ const make = Effect.gen(function* () {
                   .forPool(pool.objectName)
                   .accounts(actor)
                   .pipe(
+                    Effect.map((accounts) => entryFor(pool, accounts, now)),
                     Effect.timeoutOrElse({
                       duration: POOL_ACCOUNT_READ_TIMEOUT_MS,
-                      orElse: () => Effect.succeed({ error: POOL_READ_TIMEOUT_MESSAGE }),
+                      orElse: () => timedOutEntry(pool, latest, now),
                     }),
                     Effect.catchTags({
-                      PoolRejectedError: (error) => Effect.succeed({ error: error.reason }),
+                      PoolRejectedError: (error) =>
+                        withSql(PoolSnapshotCache.clear(pool.id)).pipe(
+                          Effect.as(entryFor(pool, { error: error.reason }, now)),
+                        ),
                       PoolObjectError: (error) =>
-                        Effect.map(PoolDirectory.poolErrorMessage(error), (message) => ({
-                          error: message,
-                        })),
+                        Effect.map(PoolDirectory.poolErrorMessage(error), (message) =>
+                          entryFor(pool, { error: message }, now),
+                        ),
                     }),
-                    Effect.map((accounts) => entryFor(pool, accounts, now)),
                   ),
               { concurrency: "unbounded" },
             );
+            yield* Effect.forEach(state, (entry) => withSql(PoolSnapshotCache.store(entry, now)), {
+              discard: true,
+            });
             yield* SubscriptionRef.set(current, Option.some({ state, checkedAt: now, readId }));
             return state;
           }),
@@ -328,7 +366,7 @@ const make = Effect.gen(function* () {
           // The DO's RPC Promise can outlive its caller. Bound that call and the semaphore queue.
           Effect.timeoutOrElse({
             duration: POOL_SNAPSHOT_TIMEOUT_MS,
-            orElse: () => unavailableState(observed, minimumRead, POOL_READ_TIMEOUT_MESSAGE),
+            orElse: () => unavailableState(observed, minimumRead),
           }),
         );
     });
@@ -464,6 +502,7 @@ const make = Effect.gen(function* () {
       // left behind by a failure here can be deleted again.
       yield* call(directory.forPool(pool.objectName).delete(actor));
       yield* sql`DELETE FROM pools WHERE id = ${pool.id}`.pipe(
+        Effect.andThen(withSql(PoolSnapshotCache.clear(pool.id))),
         Effect.andThen(folders.forgetPool(pool.id)),
         Effect.catchTags({ SqlError: storageFailed }),
       );
@@ -478,6 +517,7 @@ const make = Effect.gen(function* () {
   ) =>
     Effect.gen(function* () {
       const info = yield* call(directory.forPool(pool.objectName).setBacking(actor, backing));
+      yield* withSql(PoolSnapshotCache.clear(pool.id));
       yield* sql`UPDATE pools SET backing_url = ${backingUrl(info.backing)} WHERE id = ${pool.id}`.pipe(
         Effect.catchTags({ SqlError: storageFailed }),
       );
