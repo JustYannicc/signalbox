@@ -10,8 +10,8 @@ import type { ThreadEngine } from "../ThreadEngine.ts";
 import { ThreadStore } from "../ThreadStore.ts";
 import { runEvent, turnItemEvent } from "../threadEvents.ts";
 import { threadShellFromProjection } from "../threadProjection.ts";
-import type { ThreadRunner } from "../runner/ThreadRunner.ts";
 import {
+  type ThreadRunner,
   connect,
   freshDatabase,
   launch,

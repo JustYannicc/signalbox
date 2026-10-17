@@ -25,11 +25,9 @@ import * as TestClock from "effect/testing/TestClock";
 
 import { layerThreadObject } from "../../testing.ts";
 import { ThreadEngine } from "../ThreadEngine.ts";
-import { ThreadRunner } from "../runner/ThreadRunner.ts";
-import { turnReport } from "../runnerTesting.ts";
-import * as ThreadSecretRequests from "./ThreadSecretRequests.ts";
+import { ThreadRunner, turnReport } from "../runnerTesting.ts";
+import * as ThreadSecretRequests from "../ThreadSecrets.ts";
 import { secretRequestJson } from "@signalbox/runner-protocol/SecretRequestProtocol";
-import { serveSecretRequest } from "./secretRequestRoutes.ts";
 
 const threadId = ThreadId.make("secret-thread");
 const projectId = ProjectId.make("scratch");
@@ -301,7 +299,7 @@ describe("cloud secret requests", () => {
   it.effect("the private HTTP response returns only status and opaque ref", () =>
     withThread(({ secrets, generation, request, requestId, waitForCard }) =>
       Effect.gen(function* () {
-        const waiting = yield* serveSecretRequest(
+        const waiting = yield* ThreadSecretRequests.serveSecretRequest(
           generation,
           secretRequestJson.request.encode(request),
         ).pipe(

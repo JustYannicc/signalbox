@@ -53,7 +53,7 @@ import { deliverPendingSummary } from "./thread/summaryOutbox.ts";
 import * as ThreadDirectory from "./thread/ThreadDirectory.ts";
 import * as ThreadBrowsing from "./thread/browsing/ThreadBrowsing.ts";
 import * as ThreadEngine from "./thread/ThreadEngine.ts";
-import * as ThreadSecretRequests from "./thread/secrets/ThreadSecretRequests.ts";
+import * as ThreadSecretRequests from "./thread/ThreadSecrets.ts";
 import * as StatusNoteModel from "./thread/statusLine/StatusNoteModel.ts";
 import * as ThreadStatusNotes from "./thread/statusLine/ThreadStatusNotes.ts";
 import * as ThreadKindTurns from "./thread/ThreadKindTurns.ts";

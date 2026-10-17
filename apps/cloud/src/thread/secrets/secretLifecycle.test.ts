@@ -13,8 +13,9 @@ import * as SqlClient from "effect/sql/SqlClient";
 import * as TestClock from "effect/testing/TestClock";
 
 import { finishRunEvents } from "../runLifecycle.ts";
-import { recoverRunEvents } from "../runner/runRecovery.ts";
 import {
+  type ThreadRunner,
+  recoverRunEvents,
   connect,
   freshDatabase,
   launch,
@@ -25,12 +26,11 @@ import {
   turnReport,
   withObject,
 } from "../runnerTesting.ts";
-import type { ThreadRunner } from "../runner/ThreadRunner.ts";
 import type { ThreadEngine } from "../ThreadEngine.ts";
 import { runEvent, turnItemEvent } from "../threadEvents.ts";
 import { threadShellFromProjection } from "../threadProjection.ts";
 import { ThreadStore } from "../ThreadStore.ts";
-import { ThreadSecretRequests } from "./ThreadSecretRequests.ts";
+import { ThreadSecretRequests } from "../ThreadSecrets.ts";
 
 const requestId = TurnItemId.make("persisted-secret-request");
 const value = "synthetic-unused-custody";
