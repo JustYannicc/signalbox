@@ -3,9 +3,11 @@ import { afterEach, describe, expect, it } from "@effect/vitest";
 import * as NodeChildProcess from "node:child_process";
 import * as NodePath from "node:path";
 import * as Effect from "effect/Effect";
+import * as Stream from "effect/Stream";
 
 import { makeDriveReader } from "./DriveReader.ts";
-import { packForPush } from "./gitPush.ts";
+import { GITHUB_LIMITS, packForPush } from "./gitPush.ts";
+import { concatBytes } from "./git/gitObjects.ts";
 import { DriveDirectory } from "./DriveDirectory.ts";
 import { makeMemoryDrives, makeRepo } from "./driveTesting.ts";
 import { uploadPack } from "./DriveUploads.ts";
@@ -120,10 +122,12 @@ describe("drive checkpoints and revisions", () => {
           head: second,
           old: first,
           remoteHas: [first],
+          limits: GITHUB_LIMITS,
         }).pipe(Effect.provide(drives.layer));
+        const pushPack = concatBytes(yield* Stream.runCollect(push.pack));
         const pushHash = NodeChildProcess.execFileSync("git", ["index-pack", "--stdin"], {
           cwd: git.dir,
-          input: push.pack,
+          input: pushPack,
           encoding: "utf8",
         })
           .trim()
