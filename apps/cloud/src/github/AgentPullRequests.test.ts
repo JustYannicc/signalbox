@@ -595,8 +595,12 @@ describe("cloud agent pull request operations (#861)", () => {
       expect(replyCalls).toBe(1);
       expect(logs.join("\n")).not.toContain(TOKEN);
     }).pipe(
-      Effect.provide(layer),
-      Effect.provide(Logger.layer([Logger.map(Logger.formatJson, (line) => void logs.push(line))])),
+      Effect.provide(
+        Layer.mergeAll(
+          layer,
+          Logger.layer([Logger.map(Logger.formatJson, (line) => void logs.push(line))]),
+        ),
+      ),
     );
   });
 
