@@ -387,6 +387,48 @@ describe("Task done automation", () => {
     ]);
   });
 
+  it("keeps waiting when a pull request is linked while another is being verified", async () => {
+    const stop = new Error("still waiting");
+    let waits = 0;
+    const test = fixture({
+      verification: [{ state: "unknown", evidence: "Production check still running." }],
+      wait: (label) => {
+        waits++;
+        if (label !== "Wait for deployment evidence") throw stop;
+        // PR 43 is linked, still open, while PR 42's deployment is being proven.
+        test.setPullRequests([
+          mergedPullRequest,
+          { ...unmergedPullRequest, number: 43, url: "https://github.com/example/project/pull/43" },
+        ]);
+        test.setVerificationText(
+          JSON.stringify({
+            state: "live",
+            commit: COMMIT,
+            evidence: "Production smoke check passed.",
+          }),
+        );
+        return { event: "turn.finished", threadId: "verification-1" };
+      },
+    });
+
+    await expect(
+      test.run({
+        threadId: "task-1",
+        condition: {
+          type: "all",
+          conditions: [
+            { type: "pullRequestsMergedAndLive" },
+            { type: "date", at: "2026-10-17T11:00:00.000Z" },
+          ],
+        },
+        expectedGeneration: 4,
+        at: "2026-10-17T10:00:00.000Z",
+      }),
+    ).rejects.toBe(stop);
+    expect(waits).toBe(2);
+    expect(test.calls.some((call) => call.args.action === "complete")).toBe(false);
+  });
+
   it("does not archive while a newly linked pull request is still open", async () => {
     const stop = new Error("still waiting");
     let waits = 0;

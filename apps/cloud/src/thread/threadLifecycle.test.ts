@@ -206,6 +206,32 @@ describe("cloud thread lifecycle", () => {
     ),
   );
 
+  it.effect("a pinned task keeps its pin through settling and reopening", () =>
+    withEngine((engine) =>
+      Effect.gen(function* () {
+        yield* launch(engine);
+        yield* runToIdle(engine);
+        yield* dispatch(engine, { type: "thread.pin", commandId: makeId("keep-pin"), threadId });
+        const pinnedAt = (yield* snapshot(engine)).thread.pinnedAt;
+        yield* dispatch(engine, {
+          type: "thread.settle",
+          commandId: makeId("keep-settle"),
+          threadId,
+        });
+        expect((yield* snapshot(engine)).thread.archivedAt).not.toBeNull();
+        yield* dispatch(engine, {
+          type: "thread.unsettle",
+          commandId: makeId("keep-reopen"),
+          threadId,
+          reason: "user",
+        });
+        const reopened = yield* snapshot(engine);
+        expect(reopened.thread.archivedAt).toBeNull();
+        expect(reopened.thread.pinnedAt).toEqual(pinnedAt);
+      }),
+    ),
+  );
+
   it.effect("settles an archived thread in place, keeping when it was archived", () =>
     withEngine((engine) =>
       Effect.gen(function* () {

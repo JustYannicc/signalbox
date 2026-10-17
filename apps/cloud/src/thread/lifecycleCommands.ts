@@ -171,19 +171,18 @@ export function decideLifecycleCommand(
     const alreadySettled =
       latest.settledOverride === "settled" &&
       latest.settledAt !== null &&
-      !wasPinned &&
-      (!archiveInPlace || latest.archivedAt !== null);
+      (archiveInPlace ? latest.archivedAt !== null : !wasPinned);
     const settledAt = alreadySettled ? latest.settledAt : (command.settledAt ?? ctx.now);
     const settled = {
       ...latest,
-      ...(archiveInPlace ? { archivedAt: latest.archivedAt ?? settledAt } : {}),
       settledOverride: "settled" as const,
       settledAt,
       pullRequests: latest.pullRequests?.map(({ watch: _watch, ...link }) => link),
       unsettledAt: null,
-      pinnedAt: null,
-      pinOrderKey: null,
-      activeOrderKey: null,
+      // An archived task keeps its pin and place for when it reopens, as on the server.
+      ...(archiveInPlace
+        ? { archivedAt: latest.archivedAt ?? settledAt }
+        : { pinnedAt: null, pinOrderKey: null, activeOrderKey: null }),
       updatedAt: alreadySettled ? latest.updatedAt : ctx.now,
     };
     return accept([...events, threadEvent(ctx, "thread.settled", settled)]);

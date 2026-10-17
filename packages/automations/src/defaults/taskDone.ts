@@ -301,7 +301,9 @@ async function verifyPullRequestLeaves(w, leaves: Condition[], satisfied: boolea
     if (state.record?.generation !== generation || state.thread.archivedAt !== null) return false;
     if (!pullRequestsMerged(state)) return true;
     const verification = await verifyMergedPullRequests(w, threadId, state, generation, verified);
-    if (!verification.valid) return false;
+    // A pull request linked mid-verification leaves the leaf unmet; keep waiting for it to merge.
+    if (!verification.valid)
+      return verification.state.record?.generation === generation && verification.state.thread.archivedAt === null;
     for (const [index, leaf] of leaves.entries())
       if (conditionType(leaf) === "pullRequestsMergedAndLive") satisfied[index] = true;
     return true;
