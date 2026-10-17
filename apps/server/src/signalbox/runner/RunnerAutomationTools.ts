@@ -53,7 +53,10 @@ const FORWARDED = [
 ] as const;
 
 /** Forwarded too, with no server tool to match: folders are Signalbox Cloud's (#677). */
-export const RUNNER_CLOUD_ONLY_TOOLS = ["set_folder_phase"] as const;
+export const RUNNER_CLOUD_ONLY_TOOLS = [
+  "set_folder_phase",
+  "automation_github_subscriptions",
+] as const;
 
 /**
  * Upstream's pull request target (`mcp/toolkits/pullRequests/tools.ts`), which
