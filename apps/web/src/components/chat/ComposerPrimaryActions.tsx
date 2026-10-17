@@ -121,10 +121,13 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
 }: ComposerPrimaryActionsProps) {
   const environmentCopy = useOneEnvironmentCopy(); // signalbox
   const [stopPhase, setStopPhase] = useState<"pending" | "timedOut" | "landed" | null>(null);
-  // Once the stop has landed, interruptible again means a new run started.
-  if ((stopPhase === "pending" || stopPhase === "timedOut") && !canInterrupt)
-    setStopPhase("landed");
-  else if (stopPhase === "landed" && canInterrupt) setStopPhase(null);
+  // canInterrupt includes the operate permission, so only read it as run state while that
+  // permission holds. Once the stop has landed, interruptible again means a new run started.
+  if (canOperateThread) {
+    if ((stopPhase === "pending" || stopPhase === "timedOut") && !canInterrupt)
+      setStopPhase("landed");
+    else if (stopPhase === "landed" && canInterrupt) setStopPhase(null);
+  }
   const isStopping = stopPhase === "pending" || stopPhase === "landed";
   useEffect(() => {
     if (stopPhase !== "pending") return;
