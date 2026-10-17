@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
+import argparse
 import json
 import re
-import sys
 from pathlib import Path
 from typing import Any, NoReturn
 from urllib.parse import urlsplit
@@ -91,21 +91,29 @@ def matching_holds(version: str, *manifests: dict[str, Any]) -> list[dict[str, A
 
 
 def main() -> None:
-    if len(sys.argv) not in (3, 4, 5):
-        fail(
-            "usage: python3 -m scripts.cliproxyapi.release_policy current.json version [candidate.json [branch-base.json]]"
-        )
-    manifests = [read_json(Path(sys.argv[1]))]
-    if len(sys.argv) >= 4:
-        candidate = read_json(Path(sys.argv[3]))
-        # Sync may refresh a stale PR after a person lifts a hold on main.
-        # Preserve holds introduced by an unmerged rollback instead.
-        if len(sys.argv) != 5 or holds(candidate) != holds(
-            read_json(Path(sys.argv[4]))
-        ):
-            manifests.append(candidate)
-    blocked = matching_holds(sys.argv[2], *manifests)
-    print(json.dumps({"held": bool(blocked), "holds": blocked}))
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("current", type=Path)
+    parser.add_argument("version")
+    parser.add_argument("candidate", type=Path, nargs="?")
+    parser.add_argument("branch_base", type=Path, nargs="?")
+    parser.add_argument("--backstop", action="store_true")
+    args = parser.parse_args()
+    current = read_json(args.current)
+    manifests = [current]
+    candidate = read_json(args.candidate) if args.candidate else {}
+    # Sync may refresh a stale PR after a person lifts a hold on main.
+    # Preserve holds introduced by an unmerged rollback instead.
+    if args.candidate and (
+        args.branch_base is None
+        or holds(candidate) != holds(read_json(args.branch_base))
+    ):
+        manifests.append(candidate)
+    blocked = matching_holds(args.version, *manifests)
+    stale = args.backstop and (
+        not matching_holds(current["version"], current)
+        or holds(candidate) != holds(current)
+    )
+    print(json.dumps({"held": bool(blocked), "holds": blocked, "staleRollback": stale}))
 
 
 if __name__ == "__main__":

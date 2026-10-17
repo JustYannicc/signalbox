@@ -399,12 +399,24 @@ recovery decision as well as an image rollback.
 The manifest's `holds` array blocks releases from each entry's inclusive `from`
 version until its optional exclusive `before` version. Scheduled sync skips a
 held latest release and shows the reason and upstream issue in the run summary.
-Auto-merge checks holds from both current main and the release PR, including
-when main changes, so an existing bump cannot drop a hold to bypass it. Updates
-preserve holds. To lift one, remove its entry on main. After a fixed release
-passes the reproduction, set `before` to that version on main and rerun sync.
-Until the alert automation is connected, these steps require a maintainer or an
-agent to provide and verify the evidence.
+Auto-merge checks holds from both current main and the release PR, then fetches
+and checks main again immediately before requesting the merge. Updates preserve
+holds. To lift one, remove its entry on main. After a fixed release passes the
+reproduction, set `before` to that version on main and rerun sync.
+
+A final recheck leaves a seconds-long race before GitHub merges. Release sync
+also runs on main manifest pushes. Before fetching an upstream release, it checks
+whether the current pin is held and automatically prepares a rollback PR using
+the hold's full `lastGood` snapshot and evidence. It preserves current holds,
+reuses an identical pending rollback without resetting its checks, and reports
+the PR through the existing release-problem issue. Unrelated branch work or
+unmerged hold edits stop the update for a maintainer. Auto-merge refuses a
+rollback when its recheck sees changed hold metadata on main.
+
+The rollback uses the same smoke, deploy and CI gates. It changes the pin only
+after that PR merges; a failed gate can delay recovery. Detection, reproduction,
+upstream reporting and evidence for a new hold still require a maintainer or an
+agent until the alert automation is connected.
 
 A self-hosted server that moved a pool here keeps a pool link (`pool/poolLink.ts`,
 `/api/pool-link`): a token naming the pool's object plus a secret only that
