@@ -304,7 +304,7 @@
       "rpc": "automations.taskLifecycle",
       "access": "write",
       "input": "3213177c",
-      "output": "e7da7246"
+      "output": "bd5a7f00"
     },
     {
       "name": "automations.validate",
