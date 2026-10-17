@@ -27,6 +27,7 @@ import { projectOfDrive } from "../user/contextProjects.ts";
 import * as UserDrives from "../user/UserDrives.ts";
 import * as UserFolders from "../user/UserFolders.ts";
 import * as UserStore from "../user/UserStore.ts";
+import * as UserTimezone from "../user/UserTimezone.ts";
 import {
   AutomationAlarm,
   CloudAutomations,
@@ -112,6 +113,12 @@ const make = Effect.gen(function* () {
   const feed = yield* CloudThreads.ThreadEventFeed;
   const compiler = yield* CloudCompilerModule.CloudCompiler;
   const service = yield* CloudThreadService.CloudThreadService;
+  const userTimezone = yield* UserTimezone.UserTimezone;
+  const savedTimezone = userTimezone.timezone.pipe(
+    Effect.mapError(
+      (cause) => new AutomationError({ message: "Couldn't read your saved timezone.", cause }),
+    ),
+  );
   const push = yield* PushNotifier;
   const sql = yield* SqlClient.SqlClient;
   const alarm = yield* AutomationAlarm;
@@ -132,7 +139,14 @@ const make = Effect.gen(function* () {
   );
   yield* engine.registerPullRequestReads(yield* PullRequestReadsModule.PullRequestReads);
   yield* engine.registerExternalRunner("github-actions", yield* makeGitHubActionsRunner);
-  const tools = makeCloudTools({ engine, compiler, threads, folders, github: githubHooks });
+  const tools = makeCloudTools({
+    engine,
+    compiler,
+    timezone: savedTimezone,
+    threads,
+    folders,
+    github: githubHooks,
+  });
 
   // Notices queue up while the engine works and go out before the request ends.
   const notices = yield* Queue.unbounded<AutomationNotice>();
@@ -243,6 +257,12 @@ const make = Effect.gen(function* () {
           return yield* new AutomationError({ message: CloudCompilerModule.COMPILE_WHERE });
         }
         const compiled = yield* CloudCompilerModule.acceptCompiled(input.compiled);
+        const defaultTimezone =
+          compiled.meta.triggers?.some(
+            (trigger) => "cron" in trigger && trigger.timezone === undefined,
+          ) === true
+            ? yield* savedTimezone
+            : undefined;
         const defaults = yield* defaultsForSave({
           engine,
           projectId: input.projectId,
@@ -254,13 +274,18 @@ const make = Effect.gen(function* () {
         return yield* compiler.withStaged(
           input.source,
           compiled,
-          engine.save({
-            source: input.source,
-            projectId: input.projectId,
-            defaults,
-            ...(input.automationId ? { automationId: input.automationId } : {}),
-            ...(input.draft === true ? { draft: true } : {}),
-          }),
+          engine.save(
+            {
+              source: input.source,
+              projectId: input.projectId,
+              defaults,
+              ...(input.automationId ? { automationId: input.automationId } : {}),
+              ...(input.draft === true ? { draft: true } : {}),
+            },
+            undefined,
+            undefined,
+            defaultTimezone,
+          ),
         );
       }).pipe(Effect.tap(() => flush)),
     receiveHook: (request) =>

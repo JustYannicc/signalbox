@@ -6,6 +6,12 @@ import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 
 import type { Oid } from "./git/gitObjects.ts";
+import type {
+  HistoryOrigin,
+  HistoryResult,
+  HistorySnapshot,
+  HistoryStartResult,
+} from "./DriveHistory.ts";
 import type { AccessDelivery, DrivePerson, MembershipChange } from "./DriveMembers.ts";
 import type {
   DriveWriter,
@@ -63,6 +69,13 @@ export interface DriveObjectApi {
     request: BindPublicationRequest,
   ) => Promise<DrivePublicationResult>;
   readonly finishPublication: (userId: string, id: string) => Promise<DrivePublicationResult>;
+  readonly packStorage: (name: string) => Promise<string | null>;
+  readonly history: (userId: string) => Promise<HistoryResult>;
+  readonly historyOrigin: (userId: string) => Promise<HistoryOrigin | null>;
+  readonly startFromHistory: (
+    userId: string,
+    history: HistorySnapshot,
+  ) => Promise<HistoryStartResult>;
   readonly open: (writer: DriveWriter) => Promise<RefWrite>;
   readonly refs: (threadId: string | null, packsAfter?: number) => Promise<ThreadRefs>;
   readonly ref: (name: string) => Promise<Oid | null>;
@@ -184,6 +197,10 @@ export function handleFor(api: DriveObjectApi): DriveHandle {
     recordPublicationCreated: wrap("recordPublicationCreated"),
     bindPublication: wrap("bindPublication"),
     finishPublication: wrap("finishPublication"),
+    packStorage: wrap("packStorage"),
+    history: wrap("history"),
+    historyOrigin: wrap("historyOrigin"),
+    startFromHistory: wrap("startFromHistory"),
     open: wrap("open"),
     refs: wrap("refs"),
     ref: wrap("ref"),

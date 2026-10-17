@@ -4,6 +4,7 @@ import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 
 import { callOperation } from "../api/apiCall.ts";
+import { handleFor } from "../drive/DriveDirectory.ts";
 import { uploadPack } from "../drive/DriveUploads.ts";
 import {
   CWD,
@@ -15,6 +16,57 @@ import {
 } from "./githubPublicationTesting.ts";
 
 describe("cloud repository publication", () => {
+  it.effect("publishes retained shared history without copying packs or changing its source", () =>
+    Effect.gen(function* () {
+      const f = yield* publicationFixture({ history: false });
+      const sourceId = "folder/personal/retained-history";
+      const source = handleFor(f.cloud.drives.apiFor(sourceId));
+      yield* source.setup({
+        name: "Original",
+        members: [{ userId: USER, email: "octo@example.invalid", name: "Octo", role: "owner" }],
+      });
+      expect(
+        (yield* uploadPack({
+          driveId: sourceId,
+          threadId: "seed",
+          ...f.source.pack([f.wip]),
+        }).pipe(Effect.provide(f.cloud.drives.layer)))._tag,
+      ).toBe("ok");
+      expect((yield* source.replaceMain(USER, { expectedMain: null, newMain: f.main }))._tag).toBe(
+        "ok",
+      );
+      const before = yield* source.refs(null);
+      const packKeys = f.cloud.drives.bucket.keys();
+      const history = yield* source.history(USER);
+      if (history._tag !== "ok") throw new Error(history.reason);
+      expect(yield* f.drive.startFromHistory(USER, history.history)).toEqual({
+        _tag: "ok",
+        sourceDriveId: sourceId,
+        head: f.main,
+      });
+      expect(f.cloud.drives.bucket.keys()).toEqual(packKeys);
+
+      const result = yield* f.publish();
+      expect(result.status).toBe("pushed");
+      expect(f.github.head("main")).toBe(f.main);
+      expect(f.git(["rev-list", "main"]).toString().trim().split("\n")).toEqual([f.main, f.first]);
+      expect(f.git(["show", `${f.first}:old.txt`]).toString()).toBe("original bytes\n");
+      expect(f.git(["show", "main:README.md"]).toString()).toBe("current main bytes\n");
+      expect(
+        f
+          .git(["cat-file", "--batch-check"], new TextEncoder().encode(`${f.thread}\n${f.wip}\n`))
+          .toString(),
+      ).toBe(`${f.thread} missing\n${f.wip} missing\n`);
+      expect(f.git(["fsck", "--full", "--no-reflogs"]).toString()).toBe("");
+      expect(yield* source.refs(null)).toEqual(before);
+      expect(yield* f.drive.historyOrigin(USER)).toEqual({ sourceDriveId: sourceId, head: f.main });
+      expect(f.cloud.drives.bucket.keys()).toEqual(packKeys);
+      expect(yield* f.publish()).toEqual(result);
+      expect(f.creations).toHaveLength(1);
+      expect(f.receiveCalls()).toHaveLength(1);
+    }),
+  );
+
   it.effect("publishes both parents of a committed merge with their historical bytes", () =>
     Effect.gen(function* () {
       const f = yield* publicationFixture();

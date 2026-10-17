@@ -21,6 +21,61 @@ const CLAUDE_USAGE_REFRESHED = JSON.stringify({
 });
 
 describe("PoolEngine account snapshots", () => {
+  it.effect("publishes fresh accounts while model discovery is still running", () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(T0);
+    const external = makeFakeCliProxyApi();
+    let blocked = false;
+    const pending: Array<() => void> = [];
+    const { promise: started, resolve: signalStart } = Promise.withResolvers<void>();
+    const object = makeMemoryPoolObject((request) => {
+      if (blocked && new URL(request.url).pathname === "/v1/models") {
+        signalStart();
+        return new Promise<Response>((resolve, reject) => {
+          pending.push(() => void external.serve(request).then(resolve, reject));
+        });
+      }
+      return external.serve(request);
+    });
+    return Effect.gen(function* () {
+      const pool = yield* Effect.promise(() => object.runtime.runPromise(PoolEngine.PoolEngine));
+      yield* TestClock.setTime(T0);
+      yield* pool.initialize;
+      yield* pool.create(alice, { name: "Personal", personal: true });
+      yield* pool.setBacking(alice, {
+        mode: "external",
+        url: "https://proxy.example.test",
+        managementKey: "management",
+        clientKey: "client",
+      });
+      const login = yield* pool.startLogin(alice, "claude");
+      yield* pool.completeLogin(alice, `http://localhost/callback?code=c&state=${login.state}`);
+      yield* pool.loginStatus(alice, login.state);
+      const known = yield* pool.accounts(alice);
+      const staleAt = T0 + PoolEngine.ACCOUNTS_FRESH_MS + 1;
+      vi.setSystemTime(staleAt);
+      yield* TestClock.setTime(staleAt);
+      blocked = true;
+      const read = yield* Effect.forkChild(pool.accounts(alice));
+      yield* Effect.promise(() => started);
+      vi.setSystemTime(staleAt + PoolEngine.ACCOUNTS_READ_TIMEOUT_MS + 1);
+      yield* TestClock.adjust(PoolEngine.ACCOUNTS_READ_TIMEOUT_MS + 1);
+      const snapshot = yield* Fiber.join(read);
+      expect(snapshot.models).toEqual(known.models);
+      expect(snapshot.accounts).toEqual(known.accounts);
+      expect(snapshot.checkedAt).toBe(staleAt);
+      expect(snapshot.error).toBeNull();
+    }).pipe(
+      Effect.ensuring(
+        Effect.sync(() => {
+          blocked = false;
+          for (const release of pending) release();
+          vi.useRealTimers();
+        }),
+      ),
+    );
+  });
+
   it.effect("retries after a background account-list request stops answering", () => {
     vi.useFakeTimers({ toFake: ["Date"] });
     vi.setSystemTime(T0);
