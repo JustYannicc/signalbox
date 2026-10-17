@@ -16,6 +16,52 @@ const START = Date.parse("2026-10-05T08:00:00.000Z");
 const iso = (at: number) => DateTime.formatIso(DateTime.makeUnsafe(at));
 
 describe("pool advice", () => {
+  it.effect("records the full 2% to 50% rise across pause and resume", () =>
+    Effect.gen(function* () {
+      const backend = makeFakeCliProxyApi();
+      const fake = {
+        type: "claude",
+        email: "private@example.test",
+        disabled: false,
+        signals: {
+          "anthropic-ratelimit-unified-7d-utilization": "0.02",
+          "anthropic-ratelimit-unified-7d-reset": String((START + 7 * 24 * HOUR_MS) / 1000),
+        },
+        observedAt: iso(START),
+      };
+      backend.accounts.set("claude.json", fake);
+      const object = makeMemoryPoolObject(backend.serve);
+      const engine = yield* Effect.promise(() => object.runtime.runPromise(PoolEngine.PoolEngine));
+      yield* engine.initialize;
+      yield* TestClock.setTime(START);
+      yield* engine.create(alice, { name: "Work", personal: false });
+      yield* engine.setBacking(alice, {
+        mode: "external",
+        url: "https://proxy.test",
+        managementKey: "management",
+        clientKey: "client",
+      });
+      yield* TestClock.setTime(START + HOUR_MS);
+      yield* engine.updateAccount(alice, "claude.json", "pause");
+      expect(yield* engine.advice(alice)).toEqual([]);
+      const now = START + 24 * HOUR_MS;
+      yield* TestClock.setTime(now);
+      fake.signals["anthropic-ratelimit-unified-7d-utilization"] = "0.5";
+      fake.observedAt = iso(now);
+      yield* engine.updateAccount(alice, "claude.json", "resume");
+      expect(
+        yield* Effect.promise(() =>
+          object.runtime.runPromise(
+            SqlClient.SqlClient.use(
+              (sql) => sql<{ total: number }>`SELECT sum(consumed) AS total FROM usage_hours`,
+            ),
+          ),
+        ),
+      ).toEqual([{ total: 48 }]);
+      expect((yield* engine.advice(alice))?.[0]?.historyHours).toBe(24);
+    }),
+  );
+
   it.effect(
     "records quota observation times, preserves history on cached reads and hides advice from members",
     () =>

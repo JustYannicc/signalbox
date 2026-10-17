@@ -430,6 +430,7 @@ export const makeFakeCliProxyApi = () => {
 export const makeMemoryPoolObject = (
   external: (request: Request) => Promise<Response> = () =>
     Promise.reject(new Error("No external CLIProxyAPI in this test")),
+  options?: { readonly filename: string },
 ) => {
   const cliProxyApi = makeFakeCliProxyApi();
   const container = PoolContainer.makeFake((request) => cliProxyApi.serve(request));
@@ -444,7 +445,14 @@ export const makeMemoryPoolObject = (
         ),
       ),
       Layer.provideMerge(
-        Layer.mergeAll(NodeSqliteClient.layer({ filename: ":memory:" }), Platform.layerCrypto),
+        Layer.mergeAll(
+          NodeSqliteClient.layer({
+            filename: options?.filename ?? ":memory:",
+            readerWorker: false,
+            checkpointWorker: false,
+          }),
+          Platform.layerCrypto,
+        ),
       ),
     ),
   );

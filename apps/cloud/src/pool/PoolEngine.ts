@@ -25,6 +25,7 @@ import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 import * as Migrator from "effect/sql/Migrator";
 import * as SqlClient from "effect/sql/SqlClient";
+import { takesTurns } from "@t3tools/shared/poolUsage";
 import type { SqlError } from "effect/sql/SqlError";
 
 import * as Migrations from "../storage/migrations.ts";
@@ -170,6 +171,8 @@ export class PoolEngine extends Context.Service<
     readonly refreshModelsAtAlarm: () => Effect.Effect<void, SqlError>;
     /** The next catalog refresh alarm for a pool with accounts or an external backing. */
     readonly nextModelsRefreshAt: () => Effect.Effect<number | null, SqlError>;
+    readonly refreshUsageAtAlarm: () => Effect.Effect<void, SqlError>;
+    readonly nextUsageSampleAt: () => Effect.Effect<number | null, SqlError>;
     readonly startLogin: (
       actor: PoolActor,
       provider: CliProxyApi.PoolLoginProvider,
@@ -311,6 +314,7 @@ const migrations = Migrator.fromRecord({
   "0008_thread_accounts": ThreadAccounts.createTables,
   "0009_model_metadata": PoolModels.addMetadata,
   "0010_usage_history": PoolUsageHistory.createTables,
+  "0011_usage_sampling": PoolUsageHistory.addSampling,
 });
 
 /** Applies every migration not recorded yet (`storage/migrations.ts`). Never edit or rename a merged one. */
@@ -1041,7 +1045,7 @@ const make = Effect.gen(function* () {
       const read = yield* Effect.flatMap(cachedAccounts, withLimits);
       return yield* withSql(
         PoolUsageHistory.advice(
-          PoolUsageHistory.accountsWithQuota(read.accounts),
+          PoolUsageHistory.accountsWithQuota(read.accounts).filter(takesTurns),
           yield* Clock.currentTimeMillis,
         ),
       );
@@ -1089,6 +1093,38 @@ const make = Effect.gen(function* () {
               : now;
       return Math.max(now, next);
     });
+
+  const nextUsageSampleAt: PoolEngine["Service"]["nextUsageSampleAt"] = () =>
+    Effect.gen(function* () {
+      const row = yield* poolRow;
+      if (row === null || !(yield* schedulesModels(row))) return null;
+      return yield* withSql(PoolUsageHistory.nextSampleAt(yield* Clock.currentTimeMillis));
+    });
+
+  const samplingUsage = yield* Semaphore.make(1);
+  const refreshUsageAtAlarm: PoolEngine["Service"]["refreshUsageAtAlarm"] = () =>
+    Effect.gen(function* () {
+      const next = yield* nextUsageSampleAt();
+      const now = yield* Clock.currentTimeMillis;
+      if (next === null || next > now) return;
+      yield* withSql(PoolUsageHistory.sampledAt(now));
+      const row = yield* poolRow;
+      if (row === null) return;
+      // Unlike foreground snapshots, the quarter-hourly sample may wake a sleeping pool.
+      const endpoint = endpointOf(row, { models: true });
+      yield* ensureManagedConfig(endpoint);
+      const live = yield* CliProxyApi.listAccounts(endpoint);
+      yield* refreshLimits(endpoint, live, now, "probe");
+    }).pipe(
+      samplingUsage.withPermits(1),
+      Effect.timeoutOrElse({
+        duration: ACCOUNTS_REFRESH_TIMEOUT_MS,
+        orElse: () => Effect.logWarning("pool usage sample timed out"),
+      }),
+      Effect.catchTags({
+        PoolBackendError: (cause) => Effect.logWarning("pool usage sample failed", { cause }),
+      }),
+    );
 
   const startLogin: PoolEngine["Service"]["startLogin"] = (actor, provider, flow) =>
     Effect.gen(function* () {
@@ -1286,6 +1322,8 @@ const make = Effect.gen(function* () {
     cachedModels: cachedModelsForActor,
     refreshModelsAtAlarm,
     nextModelsRefreshAt,
+    refreshUsageAtAlarm,
+    nextUsageSampleAt,
     startLogin,
     loginStatus,
     completeLogin,

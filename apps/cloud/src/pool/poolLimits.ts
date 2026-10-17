@@ -554,6 +554,7 @@ export const refresh = (
         live.map((account) => ({ ...account, usageLimits: limits.get(account.name) ?? null })),
       ),
       now,
+      live.map((account) => account.name),
     );
     const count = (outcome: Outcome) => reads.filter((each) => each.outcome === outcome).length;
     yield* Effect.annotateCurrentSpan({

@@ -97,14 +97,16 @@ export class PoolObject
     }
     this.runtime = makeRuntime(ctx);
     const poolObject = ctx.id.toString();
-    const scheduleCatalogAlarm = async () => {
+    const scheduleRefreshAlarm = async () => {
       try {
-        // An existing idle or catalog alarm will recalculate both deadlines when it fires.
-        if ((await ctx.storage.getAlarm()) !== null) return;
-        const at = await this.runtime.runPromise(
-          PoolEngine.PoolEngine.use((engine) => engine.nextModelsRefreshAt()),
+        const deadlines = await this.runtime.runPromise(
+          PoolEngine.PoolEngine.use((engine) =>
+            Effect.all([engine.nextModelsRefreshAt(), engine.nextUsageSampleAt()]),
+          ),
         );
-        if (at !== null) await scheduleEarlierAlarm(ctx.storage, at);
+        for (const at of deadlines) {
+          if (at !== null) await scheduleEarlierAlarm(ctx.storage, at);
+        }
       } catch (cause) {
         log.error({
           action: "pool.models_alarm_schedule_failed",
@@ -121,7 +123,7 @@ export class PoolObject
             Effect.annotateSpans(effect, "pool.object", poolObject),
           );
         } finally {
-          await scheduleCatalogAlarm();
+          await scheduleRefreshAlarm();
         }
       },
       // Erased, the object is an empty pool again, so a repeated delete still answers.
@@ -136,7 +138,7 @@ export class PoolObject
       if (ctx.container?.running) {
         await scheduleEarlierAlarm(ctx.storage, Date.now() + PoolContainer.IDLE_TIMEOUT_MS);
       }
-      await scheduleCatalogAlarm();
+      await scheduleRefreshAlarm();
     });
   }
 
@@ -247,6 +249,17 @@ export class PoolObject
   override async alarm() {
     try {
       await this.runtime.runPromise(
+        PoolEngine.PoolEngine.use((engine) => engine.refreshUsageAtAlarm()),
+      );
+    } catch (cause) {
+      log.error({
+        action: "pool.usage_alarm_refresh_failed",
+        pool: { id: this.ctx.id.toString() },
+        cause: String(cause),
+      });
+    }
+    try {
+      await this.runtime.runPromise(
         PoolEngine.PoolEngine.use((engine) => engine.refreshModelsAtAlarm()),
       );
     } catch (cause) {
@@ -264,7 +277,12 @@ export class PoolObject
     const refresh = await this.runtime.runPromise(
       PoolEngine.PoolEngine.use((engine) => engine.nextModelsRefreshAt()),
     );
-    const at = [next, refresh].filter((value): value is number => value !== null).sort()[0];
+    const usage = await this.runtime.runPromise(
+      PoolEngine.PoolEngine.use((engine) => engine.nextUsageSampleAt()),
+    );
+    const at = [next, refresh, usage]
+      .filter((value): value is number => value !== null)
+      .sort((a, b) => a - b)[0];
     if (at !== undefined) await this.ctx.storage.setAlarm(at);
   }
 
