@@ -395,6 +395,14 @@
       "output": "383ed6ee"
     },
     {
+      "name": "deviceAgentDiagnostics.subscribe",
+      "rpc": "subscribeDeviceAgentDiagnostics",
+      "access": "read",
+      "stream": "snapshot",
+      "input": "03c2b661",
+      "output": "3173b4e0"
+    },
+    {
       "name": "deviceState.subscribe",
       "rpc": "subscribeDeviceState",
       "access": "read",

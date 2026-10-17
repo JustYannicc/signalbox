@@ -1,5 +1,6 @@
 import * as Dialog from "../../components/ui/Dialog";
 import {
+  agentDeviceSessionIdForPanelSession,
   deviceToolVersionLabels,
   deviceToolUpdateOwnership,
   deviceToolUpdatePolicy,
@@ -95,6 +96,9 @@ function DevicePreviewScreen({
   const panelSessionRef = useRef<DeviceSession | null>(null);
   const streamRef = useRef<DeviceStreamRef>(null);
   const state = useEnvironmentQuery(deviceEnvironment.state({ environmentId, input: {} }));
+  const agentDiagnostics = useEnvironmentQuery(
+    deviceEnvironment.agentDiagnostics({ environmentId, input: {} }),
+  );
   const previews = useMemo(
     () => threadDevicePreviews(state.data, threadId),
     [state.data, threadId],
@@ -216,6 +220,14 @@ function DevicePreviewScreen({
     previewPlatform,
     threadId,
   ]);
+  const agentSessionId = agentDeviceSessionIdForPanelSession(
+    preview?.session,
+    state.data?.sessions ?? [],
+  );
+  const agentCommandFailure = agentSessionId
+    ? agentDiagnostics.data?.find((failure) => failure.sessionId === agentSessionId)
+    : undefined;
+  const deviceControlsTopInset = agentCommandFailure ? 0 : insets.top;
   const onInputConnected = useCallback(async (connected: boolean) => {
     setInputConnected(connected);
     if (connected) setControlsVisible(false);
@@ -407,82 +419,130 @@ function DevicePreviewScreen({
   return (
     <View className="flex-1" style={{ backgroundColor: themeVariables["--color-sheet-solid"] }}>
       <StatusBar hidden animated />
-      {preview && focused && foreground ? (
-        <OpenDevicePreview
-          key={`${preview.key}:${streamAttempt}`}
-          environmentId={environmentId}
-          preview={preview}
-          streamRef={streamRef}
-          onInputConnected={onInputConnected}
-          observer={observer}
-        />
-      ) : (
-        <View className="flex-1 items-center justify-center gap-4 px-6">
-          {state.error ? (
-            <>
-              <AppText selectable className="text-center text-sm text-foreground-muted">
-                {state.error}
-              </AppText>
-              <Pressable
-                accessibilityRole="button"
-                className="rounded-full border border-secondary-border bg-secondary px-6 py-3"
-                onPress={state.refresh}
-              >
-                <AppText className="text-secondary-foreground">Retry</AppText>
-              </Pressable>
-            </>
-          ) : focused && foreground ? (
-            <AppActivityIndicator color={themeVariables["--color-icon"]} />
-          ) : null}
+      {agentCommandFailure ? (
+        <View
+          className="shrink-0 gap-1 rounded-xl border border-warning-border bg-warning px-3.5 py-3"
+          style={{
+            marginTop: Math.max(insets.top, 12),
+            marginLeft: Math.max(insets.left, 12),
+            marginRight: Math.max(insets.right, 12),
+          }}
+        >
+          <AppText
+            accessibilityRole="alert"
+            accessibilityLiveRegion="polite"
+            numberOfLines={1}
+            className="text-sm font-t3-medium text-warning-foreground"
+          >
+            agent-device {agentCommandFailure.command} failed
+          </AppText>
+          <AppText selectable numberOfLines={2} className="text-xs text-warning-foreground">
+            {agentCommandFailure.hint ?? agentCommandFailure.message}
+          </AppText>
+          <Pressable
+            accessibilityRole="button"
+            className="min-h-12 justify-center"
+            onPress={() =>
+              Dialog.alert(
+                "Agent-device failure",
+                [
+                  agentCommandFailure.message,
+                  agentCommandFailure.hint,
+                  agentCommandFailure.reason ? `Reason: ${agentCommandFailure.reason}` : null,
+                  agentCommandFailure.diagnosticId
+                    ? `Diagnostic ID: ${agentCommandFailure.diagnosticId}`
+                    : null,
+                  agentCommandFailure.logPath ? `Log path: ${agentCommandFailure.logPath}` : null,
+                ]
+                  .filter((entry) => entry !== null)
+                  .join("\n\n"),
+              )
+            }
+          >
+            <AppText className="text-xs font-t3-medium text-warning-foreground underline">
+              View details
+            </AppText>
+          </Pressable>
         </View>
-      )}
-      {controlsVisible ? (
-        <Animated.View
-          entering={OVERLAY_ENTERING}
-          exiting={OVERLAY_EXITING}
-          pointerEvents="box-none"
-          className="absolute inset-0"
-        >
-          {inputConnected ? (
-            <Pressable
-              accessibilityLabel="Hide device controls"
-              className="absolute inset-0 bg-black/30"
-              onPress={() => setControlsVisible(false)}
-            />
-          ) : null}
-          <View className="px-3" style={{ paddingTop: Math.max(insets.top, 12) }}>
-            <GlassSurface className="flex-row items-center gap-1 p-1">
-              <ControlPill
-                accessibilityLabel="Close device preview"
-                icon="xmark"
-                onPress={onClose}
-              />
-              <AppText numberOfLines={1} className="flex-1 text-center font-t3-medium text-base">
-                {preview?.name ?? "Devices"}
-              </AppText>
-              <ControlPill
-                accessibilityLabel="Home"
-                icon="house"
-                disabled={!inputConnected || observer}
-                onPress={pressHome}
-              />
-              <DeviceOptionsMenu items={menuItems} />
-            </GlassSurface>
+      ) : null}
+      <View className="relative min-h-0 flex-1">
+        {preview && focused && foreground ? (
+          <OpenDevicePreview
+            key={`${preview.key}:${streamAttempt}`}
+            environmentId={environmentId}
+            preview={preview}
+            streamRef={streamRef}
+            onInputConnected={onInputConnected}
+            observer={observer}
+          />
+        ) : (
+          <View className="flex-1 items-center justify-center gap-4 px-6">
+            {state.error ? (
+              <>
+                <AppText selectable className="text-center text-sm text-foreground-muted">
+                  {state.error}
+                </AppText>
+                <Pressable
+                  accessibilityRole="button"
+                  className="rounded-full border border-secondary-border bg-secondary px-6 py-3"
+                  onPress={state.refresh}
+                >
+                  <AppText className="text-secondary-foreground">Retry</AppText>
+                </Pressable>
+              </>
+            ) : focused && foreground ? (
+              <AppActivityIndicator color={themeVariables["--color-icon"]} />
+            ) : null}
           </View>
-        </Animated.View>
-      ) : (
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel="Show device controls"
-          accessibilityHint="Shaking the phone also shows them"
-          hitSlop={12}
-          className="absolute h-6 w-16 items-center justify-center self-center"
-          style={{ top: Math.max(insets.top - 18, 4) }}
-          onPress={() => setControlsVisible(true)}
-        >
-          <View className="h-1.5 w-10 rounded-full bg-white/40" />
-        </Pressable>
-      )}
+        )}
+        {controlsVisible ? (
+          <Animated.View
+            entering={OVERLAY_ENTERING}
+            exiting={OVERLAY_EXITING}
+            pointerEvents="box-none"
+            className="absolute inset-0"
+          >
+            {inputConnected ? (
+              <Pressable
+                accessibilityLabel="Hide device controls"
+                className="absolute inset-0 bg-black/30"
+                onPress={() => setControlsVisible(false)}
+              />
+            ) : null}
+            <View className="px-3" style={{ paddingTop: Math.max(deviceControlsTopInset, 12) }}>
+              <GlassSurface className="flex-row items-center gap-1 p-1">
+                <ControlPill
+                  accessibilityLabel="Close device preview"
+                  icon="xmark"
+                  onPress={onClose}
+                />
+                <AppText numberOfLines={1} className="flex-1 text-center font-t3-medium text-base">
+                  {preview?.name ?? "Devices"}
+                </AppText>
+                <ControlPill
+                  accessibilityLabel="Home"
+                  icon="house"
+                  disabled={!inputConnected || observer}
+                  onPress={pressHome}
+                />
+                <DeviceOptionsMenu items={menuItems} />
+              </GlassSurface>
+            </View>
+          </Animated.View>
+        ) : (
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Show device controls"
+            accessibilityHint="Shaking the phone also shows them"
+            hitSlop={12}
+            className="absolute h-6 w-16 items-center justify-center self-center"
+            style={{ top: Math.max(deviceControlsTopInset - 18, 4) }}
+            onPress={() => setControlsVisible(true)}
+          >
+            <View className="h-1.5 w-10 rounded-full bg-white/40" />
+          </Pressable>
+        )}
+      </View>
     </View>
   );
 }

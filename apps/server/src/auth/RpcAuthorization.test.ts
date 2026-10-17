@@ -176,6 +176,12 @@ describe("RPC authorization scopes", () => {
     }
   });
 
+  it("keeps device agent diagnostics behind orchestration read access", () => {
+    expect(requiredScopeForRpcMethod(WS_METHODS.subscribeDeviceAgentDiagnostics)).toBe(
+      AuthOrchestrationReadScope,
+    );
+  });
+
   it("separates passive terminal observation from operations that can change a shell", () => {
     for (const method of [
       WS_METHODS.terminalObserve,

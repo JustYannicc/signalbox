@@ -1,4 +1,4 @@
-import { ThreadId, type DeviceServiceState } from "@t3tools/contracts";
+import { ProviderSessionId, ThreadId, type DeviceServiceState } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import { selectedThreadDevicePreview, threadDevicePreviews } from "./threadDevicePreviews";
@@ -101,6 +101,29 @@ describe("thread device previews", () => {
     const afterClose = threadDevicePreviews({ ...state, sessions: [state.sessions[0]!] }, threadId);
     expect(selectedThreadDevicePreview(afterClose, selectedKey)?.name).toBe("Pixel 9");
     expect(selectedThreadDevicePreview([], selectedKey)).toBeNull();
+  });
+
+  it("uses one preview for a panel and agent session sharing a device lease", () => {
+    const agentSession = {
+      ...state.sessions[0]!,
+      sessionId: "agent-session",
+      leaseId: "shared-lease",
+      ownerKind: "agent" as const,
+      providerSessionId: ProviderSessionId.make("provider-session"),
+    };
+    const panelSession = {
+      ...state.sessions[0]!,
+      sessionId: "panel-session",
+      leaseId: "shared-lease",
+      ownerKind: "panel" as const,
+    };
+    const previews = threadDevicePreviews(
+      { ...state, sessions: [agentSession, panelSession] },
+      threadId,
+    );
+
+    expect(previews).toHaveLength(1);
+    expect("ownerKind" in previews[0]!.session && previews[0]!.session.ownerKind).toBe("panel");
   });
 
   it("can view an open session before device discovery metadata arrives", () => {

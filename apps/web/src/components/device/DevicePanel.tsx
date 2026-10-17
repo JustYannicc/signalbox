@@ -20,13 +20,14 @@ import { Dialog } from "~/components/ui/dialog";
 import { WizardPopup } from "~/components/ui/wizard";
 import { Spinner } from "~/components/ui/spinner";
 import { cn } from "~/lib/utils";
-import { deviceEnvironment, useDeviceState } from "~/state/device";
+import { deviceEnvironment, useDeviceAgentCommandFailure, useDeviceState } from "~/state/device";
 import { formatEnvironmentQueryError } from "~/state/query";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { DeviceLoadingView } from "./DeviceLoadingView";
 import { DeviceSetup, deviceHubReadiness } from "./DeviceSetup";
 import { DeviceWorkspace } from "./DeviceWorkspace";
 import { settleDeviceOpenForSurface } from "./deviceOpenSurfaceRequest";
+import { DeviceAgentCommandFailureNotice } from "./DeviceAgentCommandFailureNotice";
 import { PreviewPanelShell, type PreviewPanelMode } from "../preview/PreviewPanelShell";
 
 const platformLabel = (platform: DevicePlatform) =>
@@ -86,6 +87,7 @@ export function DevicePanel(props: {
           session.leaseId === panelSession.leaseId,
       )
     : undefined;
+  const agentCommandFailure = useDeviceAgentCommandFailure(environmentId, activeSession, sessions);
   const activeDevice = activeSession
     ? state.devices.find(
         (device) => device.hostId === activeSession.hostId && device.id === activeSession.deviceId,
@@ -429,6 +431,9 @@ export function DevicePanel(props: {
         <div role="status" className="border-b px-3 py-2 text-xs text-muted-foreground">
           Waiting to reacquire this device…
         </div>
+      ) : null}
+      {agentCommandFailure ? (
+        <DeviceAgentCommandFailureNotice failure={agentCommandFailure} />
       ) : null}
       <div className="@container relative flex min-h-0 flex-1">
         {activeDevice && activeSession ? (

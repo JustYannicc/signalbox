@@ -1,23 +1,23 @@
-import type { DeviceServiceState, ThreadId } from "@t3tools/contracts";
+import type { DeviceServiceState, DeviceSession, ThreadId } from "@t3tools/contracts";
 
 /** Host identity is part of the selection because Android serials repeat across hosts. */
 export function threadDevicePreviews(state: DeviceServiceState | null, threadId: ThreadId) {
-  const sessions = new Map<string, NonNullable<typeof state>["sessions"][number]>();
+  const sessions = new Map<string, DeviceSession>();
   for (const session of state?.sessions ?? []) {
     if (session.threadId !== threadId) continue;
     const key = JSON.stringify([session.hostId, session.deviceId]);
     const current = sessions.get(key);
-    const score = (candidate: typeof session) =>
+    const score = (candidate: DeviceSession) =>
       candidate.ownerKind === "panel" ? (candidate.observer === true ? 1 : 2) : 0;
     if (!current || score(session) > score(current)) sessions.set(key, session);
   }
-  return [...sessions.values()].map((session) => {
+  return Array.from(sessions, ([key, session]) => {
     const device = state?.devices.find(
       (device) => device.hostId === session.hostId && device.id === session.deviceId,
     );
     const host = state?.hosts.find((host) => host.id === session.hostId);
     return {
-      key: JSON.stringify([session.hostId, session.deviceId]),
+      key,
       session,
       name: device?.name ?? (session.platform === "ios" ? "iOS Simulator" : "Android Emulator"),
       description: [device?.version, host?.label].filter(Boolean).join(" · "),
