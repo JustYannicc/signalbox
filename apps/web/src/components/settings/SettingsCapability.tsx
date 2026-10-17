@@ -1,8 +1,9 @@
 import { Navigate, useLocation } from "@tanstack/react-router";
 import type { ReactNode } from "react";
 
+import { useEnvironmentUiState } from "~/state/environmentCapabilities";
 import { useOptionalSettingsScope } from "./SettingsScopeContext";
-import { settingsItemSupported, settingsPathSupported } from "./settingsCapabilities";
+import { settingsItemGate, settingsPathGate } from "./settingsCapabilities";
 import { useUnsupportedSettingsCapabilities } from "./useAvailableSettingsSearchItems";
 
 /** Skip mounting controls whose requests the selected server cannot serve. */
@@ -13,7 +14,8 @@ export function SettingsCapability({ id, children }: { id: string; children: Rea
       ? { machine: scope.environment.environmentId }
       : scope?.search,
   );
-  return settingsItemSupported(id, unsupported) ? children : null;
+  const configKnown = useEnvironmentUiState() !== "unknown";
+  return settingsItemGate(id, unsupported, configKnown) === "show" ? children : null;
 }
 
 /** Saved links must follow the same capability policy as the Settings navigation. */
@@ -25,9 +27,7 @@ export function SettingsCapabilityBoundary({ children }: { children: ReactNode }
       ? { machine: scope.environment.environmentId }
       : scope?.search,
   );
-  return settingsPathSupported(pathname, unsupported) ? (
-    children
-  ) : (
-    <Navigate to="/settings/general" replace />
-  );
+  const gate = settingsPathGate(pathname, unsupported, useEnvironmentUiState() !== "unknown");
+  if (gate === "wait") return null;
+  return gate === "show" ? children : <Navigate to="/settings/general" replace />;
 }

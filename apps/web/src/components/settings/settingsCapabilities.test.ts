@@ -5,7 +5,7 @@ import {
   isSettingsPathAvailable,
   SETTINGS_SEARCH_ITEMS,
 } from "./settingsSearch";
-import { settingsItemSupported } from "./settingsCapabilities";
+import { settingsItemGate, settingsItemSupported, settingsPathGate } from "./settingsCapabilities";
 
 const availability = {
   hasCloudPublicConfig: true,
@@ -91,5 +91,19 @@ describe("settings capability requirements", () => {
         (item) => item.id === "keybinding-chat.newLocal",
       )?.title,
     ).toBe("Chat: New Local");
+  });
+
+  it("waits for the environment to report before mounting or redirecting gated pages", () => {
+    const none = new Set<never>();
+    const cloud = new Set(["localFilesystem", "otherEnvironments", "serverSettingsWrite"] as const);
+    expect(settingsPathGate("/settings/connections", none, false)).toBe("wait");
+    expect(settingsPathGate("/settings/storage", none, false)).toBe("wait");
+    expect(settingsItemGate("product-analytics", none, false)).toBe("wait");
+    expect(settingsPathGate("/settings/general", none, false)).toBe("show");
+    expect(settingsPathGate("/settings/storage", cloud, true)).toBe("hide");
+    expect(settingsItemGate("product-analytics", cloud, true)).toBe("hide");
+    // Self-hosted servers never report these capabilities, so they keep everything.
+    expect(settingsPathGate("/settings/connections", none, true)).toBe("show");
+    expect(settingsItemGate("project-actions", none, true)).toBe("show");
   });
 });

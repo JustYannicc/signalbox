@@ -50,6 +50,10 @@ vi.mock("./SettingsScopeContext", async () => {
 vi.mock("./useAvailableSettingsSearchItems", () => ({
   useUnsupportedSettingsCapabilities: () => new Set(),
 }));
+vi.mock("../../state/environmentCapabilities", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../state/environmentCapabilities")>()),
+  useEnvironmentUiState: () => "shown",
+}));
 vi.mock("../../state/environments", () => ({ useEnvironments: () => ({ environments: [] }) }));
 vi.mock("../ui/sidebar", () => ({
   SidebarInset: ({ children }: { children: ReactNode }) => <div>{children}</div>,

@@ -18,6 +18,12 @@ const ITEM_CAPABILITIES: Readonly<Record<string, readonly SignalboxEnvironmentCa
   "project-actions": ["terminal", "serverSettingsWrite"],
 };
 
+function itemRequirements(id: string): readonly SignalboxEnvironmentCapability[] {
+  return id.startsWith("source-control-host-")
+    ? ["serverSettingsWrite"]
+    : (ITEM_CAPABILITIES[id] ?? []);
+}
+
 export function settingsPathSupported(
   path: string,
   unsupported: ReadonlySet<SignalboxEnvironmentCapability>,
@@ -31,8 +37,38 @@ export function settingsItemSupported(
   id: string,
   unsupported: ReadonlySet<SignalboxEnvironmentCapability>,
 ): boolean {
-  const requirements = id.startsWith("source-control-host-")
-    ? ["serverSettingsWrite" as const]
-    : (ITEM_CAPABILITIES[id] ?? []);
-  return requirements.every((capability) => !unsupported.has(capability));
+  return itemRequirements(id).every((capability) => !unsupported.has(capability));
+}
+
+export type SettingsGate = "show" | "hide" | "wait";
+
+/**
+ * Until an environment reports, absent capabilities mean "not known yet", not "supported":
+ * mounting would flash cloud-incompatible controls and redirecting would bounce self-hosted links.
+ */
+function resolveGate(
+  requirements: readonly SignalboxEnvironmentCapability[],
+  unsupported: ReadonlySet<SignalboxEnvironmentCapability>,
+  configKnown: boolean,
+): SettingsGate {
+  if (requirements.length === 0) return "show";
+  if (!configKnown) return "wait";
+  return requirements.some((capability) => unsupported.has(capability)) ? "hide" : "show";
+}
+
+export function settingsPathGate(
+  path: string,
+  unsupported: ReadonlySet<SignalboxEnvironmentCapability>,
+  configKnown: boolean,
+): SettingsGate {
+  const capability = PAGE_CAPABILITIES[path];
+  return resolveGate(capability ? [capability] : [], unsupported, configKnown);
+}
+
+export function settingsItemGate(
+  id: string,
+  unsupported: ReadonlySet<SignalboxEnvironmentCapability>,
+  configKnown: boolean,
+): SettingsGate {
+  return resolveGate(itemRequirements(id), unsupported, configKnown);
 }
