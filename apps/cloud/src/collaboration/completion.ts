@@ -2,6 +2,8 @@ import {
   CommandId,
   MessageId,
   type OrchestrationV2DomainEvent,
+  type OrchestrationV2Run,
+  type OrchestrationV2ThreadProjection,
   ThreadId,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
@@ -11,6 +13,13 @@ import * as ThreadInbox from "../thread/ThreadInbox.ts";
 import { CloudThreadService } from "../thread/CloudThreadService.ts";
 import { UserDrives } from "../user/UserDrives.ts";
 import { CloudCollaboration } from "./CloudCollaboration.ts";
+
+const wasStopped = (
+  projection: OrchestrationV2ThreadProjection,
+  run: OrchestrationV2Run | undefined,
+) =>
+  run?.status === "interrupted" &&
+  !projection.runs.some((candidate) => candidate.restartContinuationOfRunId === run.id);
 
 /**
  * The child's event outbox delivers its original result to the parent even
@@ -22,10 +31,7 @@ export const deliverCompletion = (
 ) =>
   Effect.gen(function* () {
     const stopEvents = events.flatMap(({ event }) =>
-      event.type === "run.updated" &&
-      (event.payload.status === "interrupted" || event.payload.status === "cancelled")
-        ? [event.payload.ordinal]
-        : [],
+      event.type === "run.updated" && event.payload.status === "interrupted" ? [event.payload] : [],
     );
     const terminal = events.some(
       ({ event }) =>
@@ -41,12 +47,13 @@ export const deliverCompletion = (
     if (userId === null) return;
     const actor = { userId, contextIds: yield* drives.value.contextIds };
     const childId = ThreadId.make(threadId);
+    const { projection } = yield* threads.value.threadSnapshot(actor, childId);
     const collaboration = yield* Effect.serviceOption(CloudCollaboration);
     if (Option.isSome(collaboration))
-      for (const ordinal of stopEvents)
-        yield* collaboration.value.stopDescendants(childId, ordinal);
+      for (const run of stopEvents)
+        if (wasStopped(projection, run))
+          yield* collaboration.value.stopDescendants(childId, run.ordinal);
     if (!terminal) return;
-    const { projection } = yield* threads.value.threadSnapshot(actor, childId);
     const { lineage } = projection.thread;
     const parentThreadId = lineage.parentThreadId;
     if (lineage.relationshipToParent !== "subagent" || parentThreadId === null) return;
@@ -65,15 +72,14 @@ export const deliverCompletion = (
         )
           return;
         const parentRun = parent.projection.runs.toSorted((a, b) => b.ordinal - a.ordinal)[0];
-        if (parentRun?.status === "interrupted" || parentRun?.status === "cancelled") return;
+        if (wasStopped(parent.projection, parentRun)) return;
         const delegatedFromRun =
           disposition.parentOrdinal === null
             ? undefined
             : parent.projection.runs.find(
                 (candidate) => candidate.ordinal === disposition.parentOrdinal,
               );
-        if (delegatedFromRun?.status === "interrupted" || delegatedFromRun?.status === "cancelled")
-          return;
+        if (wasStopped(parent.projection, delegatedFromRun)) return;
         const messages = projection.messages.filter(
           (message) =>
             message.runId === run.id && message.role === "assistant" && !message.streaming,

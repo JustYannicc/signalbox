@@ -148,6 +148,15 @@ export const make = Effect.gen(function* () {
     Effect.gen(function* () {
       const { caller, projection } = yield* access.read(source, input.threadId);
       yield* access.writable(caller.projection, projection);
+      const parentRun = activeRun(caller.projection) ?? latestRun(caller.projection);
+      const ownedChild =
+        projection.thread.lineage.relationshipToParent === "subagent" &&
+        projection.thread.lineage.parentThreadId === source;
+      if (
+        !(yield* records.canDelegate(source, parentRun?.ordinal ?? 0)) ||
+        (ownedChild && parentRun?.status === "interrupted")
+      )
+        return yield* refuse("This task was stopped. Start a new turn before sending work.");
       if (input.mode === "restart")
         return yield* refuse(
           "Restart isn't available in cloud collaboration yet. Interrupt the run, then send a new message.",
@@ -168,12 +177,7 @@ export const make = Effect.gen(function* () {
           input.mode === "queue" ? { type: "queue_after_active" } : { type: "start_immediately" },
         deliveryIntent: input.mode === "steer" ? "steer" : "auto",
       });
-      const parentRun = activeRun(caller.projection);
-      if (
-        projection.thread.lineage.relationshipToParent === "subagent" &&
-        projection.thread.lineage.parentThreadId === source &&
-        parentRun !== undefined
-      ) {
+      if (ownedChild && parentRun !== undefined) {
         const updated = yield* access.read(source, input.threadId);
         const childRun = updated.projection.runs.find((run) => run.id === receipt.runId);
         if (childRun !== undefined)
@@ -253,7 +257,7 @@ export const make = Effect.gen(function* () {
     }).pipe(Effect.mapError(collaborationFailure));
 
   const capabilities = yield* makeCapabilities(access);
-  const tasks = makeTasks({ access, inbox, key, wait, interrupt, capabilities, records });
+  const tasks = makeTasks({ access, inbox, key, wait, capabilities, records });
   return CloudCollaboration.of({ list, read, send, wait, interrupt, capabilities, ...tasks });
 });
 

@@ -368,7 +368,9 @@ const make = Effect.gen(function* () {
             workVisible: (threadId, driveId) => {
               const projectId = scope.drives.find((drive) => drive.id === driveId)?.projectId;
               if (projectId === undefined) return Effect.succeed(false);
-              return threads.forThread(threadId).contextWorkVisible(scope.actor, projectId);
+              return threads
+                .forThread(ThreadId.make(threadId))
+                .contextWorkVisible(scope.actor, projectId);
             },
           }).pipe(
             Effect.provideService(DriveDirectory, directory),

@@ -1,6 +1,14 @@
 import { describe, expect, it } from "@effect/vitest";
-import { CommandId, MessageId, ThreadId, type ProjectId } from "@t3tools/contracts";
+import {
+  CommandId,
+  MessageId,
+  ThreadId,
+  type OrchestrationV2ThreadProjection,
+  type ProjectId,
+} from "@t3tools/contracts";
 import { PERSONAL_CONTEXT_ID, SignalboxContextId } from "@t3tools/contracts/signalboxContexts";
+import * as Clock from "effect/Clock";
+import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
@@ -11,11 +19,16 @@ import { makeMemoryCloud } from "../testing.ts";
 import { SCRATCH_PROJECT_ID } from "../environment.ts";
 import { CloudThreadService } from "../thread/CloudThreadService.ts";
 import { ThreadCommandRejectedError } from "../thread/ThreadEngine.ts";
+import { ThreadObjectError } from "../thread/ThreadDirectory.ts";
+import { applyEvents } from "../thread/threadProjection.ts";
+import { scriptedStep } from "../thread/scriptedTurn.ts";
 import { scriptedModelSelection } from "../thread/scriptedProvider.ts";
 import { projectIdForContext } from "../user/contextProjects.ts";
 import { UserFolders } from "../user/UserFolders.ts";
-import { make } from "./CloudCollaboration.ts";
+import { CloudCollaboration, make } from "./CloudCollaboration.ts";
+import { deliverCompletion } from "./completion.ts";
 import { wire } from "../thread/threadWire.ts";
+import { recoverRunEvents } from "../thread/runner/runRecovery.ts";
 
 const source = ThreadId.make("source");
 const target = ThreadId.make("target");
@@ -286,6 +299,335 @@ describe("cloud thread collaboration", () => {
       const parentAfter = yield* service.read(source, { threadId: source });
       expect(parentAfter.items).toEqual(parentBefore.items);
       expect(parentAfter.recentRuns).toEqual(parentBefore.recentRuns);
+    }),
+  );
+
+  it.effect("cancelling a queued parent turn leaves its earlier child's result deliverable", () =>
+    Effect.gen(function* () {
+      const { cloud, service, threads } = yield* setup;
+      const parent = yield* service.send(source, { threadId: source, message: "Parent turn N" });
+      const child = yield* service.delegate(source, { task: "Return the child result" });
+      const queued = yield* service.send(source, {
+        threadId: source,
+        message: "Parent turn N+1",
+        mode: "queue",
+      });
+
+      yield* threads.dispatchCommand(
+        { userId, contextIds: [PERSONAL_CONTEXT_ID] },
+        {
+          type: "queued-run.cancel",
+          commandId: CommandId.make("cancel-parent-turn-n-plus-one"),
+          threadId: source,
+          runId: queued.runId,
+        },
+      );
+      yield* cloud.settle;
+
+      expect(parent.runId).not.toBe(queued.runId);
+      expect((yield* service.status(source, { taskId: child.taskId })).status).toBe("completed");
+      expect(
+        (yield* service.read(source, { threadId: source })).recentRuns.find(
+          (run) => run.runId === queued.runId,
+        )?.status,
+      ).toBe("cancelled");
+      expect(
+        (yield* service.read(source, { threadId: source })).items.some((item) =>
+          item.text?.startsWith(`Child task cloud-task:${child.childThreadId} completed.`),
+        ),
+      ).toBe(true);
+    }),
+  );
+
+  it.effect("a recovery continuation keeps its child alive and accepts the child's result", () =>
+    Effect.gen(function* () {
+      const { cloud, service, threads } = yield* setup;
+      const parent = yield* service.send(source, { threadId: source, message: "Parent run" });
+      const child = yield* service.delegate(source, { task: "Complete after parent recovery" });
+      const context = { now: DateTime.makeUnsafe(yield* Clock.currentTimeMillis) };
+
+      const parentSnapshot = yield* threads.threadSnapshot(
+        { userId, contextIds: [PERSONAL_CONTEXT_ID] },
+        source,
+      );
+      const startedParent = applyEvents(
+        parentSnapshot.projection,
+        scriptedStep(parentSnapshot.projection, context),
+      );
+      if (startedParent === null) throw new Error("expected the parent run to start");
+      const parentRun = startedParent.runs.find((run) => run.id === parent.runId);
+      if (parentRun === undefined) throw new Error("expected the parent run");
+      const recoveryEvents = recoverRunEvents(startedParent, parentRun, context);
+      const recoveredParent = applyEvents(startedParent, recoveryEvents);
+      if (recoveredParent === null) throw new Error("expected the recovery projection");
+      let parentProjection: OrchestrationV2ThreadProjection = recoveredParent;
+      const continuation = parentProjection.runs.find(
+        (run) => run.restartContinuationOfRunId === parent.runId,
+      );
+      if (continuation === undefined) throw new Error("expected a recovery continuation");
+
+      const childSnapshot = yield* threads.threadSnapshot(
+        { userId, contextIds: [PERSONAL_CONTEXT_ID] },
+        child.childThreadId,
+      );
+      let childProjection = childSnapshot.projection;
+      let deliveredChildProjection: OrchestrationV2ThreadProjection = childSnapshot.projection;
+      const childCompletionEvents = [];
+      for (
+        let steps = 0;
+        steps < 100 &&
+        childProjection.runs.find((run) => run.ordinal === 1)?.status !== "completed";
+        steps++
+      ) {
+        const events = scriptedStep(childProjection, context);
+        if (events.length === 0) throw new Error("expected the child run to advance");
+        childCompletionEvents.push(...events);
+        childProjection = applyEvents(childProjection, events)!;
+      }
+      expect(childProjection.runs.find((run) => run.ordinal === 1)?.status).toBe("completed");
+
+      const baseDispatch = threads.dispatchCommand;
+      const eventThreads = {
+        ...threads,
+        threadSnapshot: (actor: Parameters<typeof threads.threadSnapshot>[0], threadId: ThreadId) =>
+          threads.threadSnapshot(actor, threadId).pipe(
+            Effect.map((snapshot) => ({
+              ...snapshot,
+              projection:
+                threadId === source
+                  ? parentProjection
+                  : threadId === child.childThreadId
+                    ? deliveredChildProjection
+                    : snapshot.projection,
+            })),
+          ),
+        dispatchCommand: (
+          actor: Parameters<typeof threads.dispatchCommand>[0],
+          command: Parameters<typeof threads.dispatchCommand>[1],
+          expectedRun?: Parameters<typeof threads.dispatchCommand>[2],
+        ) =>
+          Effect.gen(function* () {
+            const childResult =
+              command.type === "message.dispatch" && command.senderThreadId === child.childThreadId;
+            const accepted = yield* baseDispatch(
+              actor,
+              command,
+              childResult ? undefined : expectedRun,
+            );
+            if (childResult) {
+              parentProjection = (yield* threads.threadSnapshot(actor, source)).projection;
+            }
+            return accepted;
+          }),
+      };
+      const collaboration = yield* make.pipe(
+        Effect.provideService(CloudThreadService, eventThreads),
+        Effect.provide(cloud.layerFor(userId)),
+      );
+      const deliver = (
+        threadId: ThreadId,
+        events: ReadonlyArray<{ readonly event: (typeof recoveryEvents)[number] }>,
+      ) =>
+        deliverCompletion(threadId, events).pipe(
+          Effect.provideService(CloudThreadService, eventThreads),
+          Effect.provideService(CloudCollaboration, collaboration),
+          Effect.provide(cloud.layerFor(userId)),
+        );
+
+      const interrupted = recoveryEvents.find(
+        (event) =>
+          event.type === "run.updated" &&
+          event.payload.id === parent.runId &&
+          event.payload.status === "interrupted",
+      );
+      if (interrupted === undefined)
+        throw new Error("expected the recovered run to be interrupted");
+      yield* deliver(source, [{ event: interrupted }]);
+      expect(
+        (yield* threads.threadSnapshot(
+          { userId, contextIds: [PERSONAL_CONTEXT_ID] },
+          child.childThreadId,
+        )).projection.runs[0]?.status,
+      ).toBe("starting");
+
+      deliveredChildProjection = childProjection;
+      yield* deliver(
+        child.childThreadId,
+        childCompletionEvents.map((event) => ({ event })),
+      );
+      expect(
+        (yield* threads.threadSnapshot(
+          { userId, contextIds: [PERSONAL_CONTEXT_ID] },
+          source,
+        )).projection.messages.some((message) =>
+          message.text.startsWith(`Child task cloud-task:${child.childThreadId} completed.`),
+        ),
+      ).toBe(true);
+      expect(continuation.restartContinuationOfRunId).toBe(parent.runId);
+    }),
+  );
+
+  it.effect(
+    "a stopped child cannot send late work, while an idle root can still send elsewhere",
+    () =>
+      Effect.gen(function* () {
+        const { cloud, service, threads } = yield* setup;
+        const parent = yield* service.send(source, { threadId: source, message: "Parent run" });
+        const child = yield* service.delegate(source, { task: "Child work" });
+        const grandchild = yield* service.delegate(child.childThreadId, { task: "Nested work" });
+        yield* service.cancel(source, { taskId: child.taskId, clientRequestId: "stop-child" });
+
+        expect(
+          yield* Effect.result(
+            service.send(child.childThreadId, {
+              threadId: grandchild.childThreadId,
+              message: "Late nested send",
+            }),
+          ),
+        ).toMatchObject({ _tag: "Failure", failure: { code: "invalid_request" } });
+
+        yield* threads.dispatchCommand(
+          { userId, contextIds: [PERSONAL_CONTEXT_ID] },
+          {
+            type: "run.interrupt",
+            commandId: CommandId.make("interrupt-root-before-late-child-send"),
+            threadId: source,
+            runId: parent.runId,
+          },
+        );
+        expect(
+          yield* Effect.result(
+            service.send(source, {
+              threadId: child.childThreadId,
+              message: "Late root send to owned child",
+            }),
+          ),
+        ).toMatchObject({ _tag: "Failure", failure: { code: "invalid_request" } });
+
+        const unrelated = yield* service.send(source, {
+          threadId: target,
+          message: "An unrelated root send remains available",
+        });
+        expect(unrelated.runId).toBeTruthy();
+        yield* cloud.settle;
+      }),
+  );
+
+  it.effect("records a child follow-up against its latest completed parent run", () =>
+    Effect.gen(function* () {
+      const { cloud, service } = yield* setup;
+      const child = yield* service.delegate(source, { task: "Parent task" });
+      yield* cloud.settle;
+      const grandchild = yield* service.delegate(child.childThreadId, { task: "Nested task" });
+      yield* service.send(child.childThreadId, {
+        threadId: grandchild.childThreadId,
+        message: "Nested follow-up after the parent run ended",
+        mode: "queue",
+      });
+
+      yield* service.cancel(source, { taskId: child.taskId, clientRequestId: "stop-parent-task" });
+      yield* cloud.settle;
+      const nested = yield* service.read(source, { threadId: grandchild.childThreadId });
+      expect(nested.recentRuns.map((run) => [run.ordinal, run.status]).toSorted()).toEqual([
+        [1, "interrupted"],
+        [2, "cancelled"],
+      ]);
+    }),
+  );
+
+  it.effect("cancels a queued child run that starts between the stop snapshot and command", () =>
+    Effect.gen(function* () {
+      for (const clientRequestId of [undefined, "stable-stop-request"]) {
+        const { cloud, service, threads } = yield* setup;
+        const child = yield* service.delegate(source, { task: "Original child turn" });
+        const original = yield* service.status(source, { taskId: child.taskId });
+        const originalRunId = original.childRunId;
+        if (originalRunId === null) throw new Error("expected the original run");
+        const queued = yield* service.send(source, {
+          threadId: child.childThreadId,
+          message: "Queued child turn",
+          mode: "queue",
+        });
+        let raced = false;
+        const racing = yield* make.pipe(
+          Effect.provideService(CloudThreadService, {
+            ...threads,
+            dispatchCommand: (actor, command, expectedRun) =>
+              Effect.gen(function* () {
+                if (
+                  !raced &&
+                  command.type === "queued-run.cancel" &&
+                  command.runId === queued.runId
+                ) {
+                  raced = true;
+                  yield* threads.dispatchCommand(actor, {
+                    type: "run.interrupt",
+                    commandId: CommandId.make("start-queued-before-cancel"),
+                    threadId: child.childThreadId,
+                    runId: originalRunId,
+                  });
+                }
+                return yield* threads.dispatchCommand(actor, command, expectedRun);
+              }),
+          }),
+          Effect.provide(cloud.layerFor(userId)),
+        );
+        const input = {
+          taskId: child.taskId,
+          ...(clientRequestId === undefined ? {} : { clientRequestId }),
+        };
+        yield* racing.cancel(source, input);
+        yield* racing.cancel(source, input);
+        const after = yield* service.read(source, { threadId: child.childThreadId });
+        expect(raced).toBe(true);
+        expect(after.recentRuns.map((run) => run.status)).toEqual(["interrupted", "interrupted"]);
+        yield* cloud.settle;
+      }
+    }),
+  );
+
+  it.effect("stops siblings after a transient child failure and retries the failed stop", () =>
+    Effect.gen(function* () {
+      const { cloud, service, threads } = yield* setup;
+      yield* service.send(source, { threadId: source, message: "Parent work" });
+      const children = [
+        yield* service.delegate(source, { task: "First child" }),
+        yield* service.delegate(source, { task: "Second child" }),
+      ].toSorted((a, b) => a.childThreadId.localeCompare(b.childThreadId));
+      const first = children[0]!;
+      const second = children[1]!;
+      let failed = false;
+      const flaky = yield* make.pipe(
+        Effect.provideService(CloudThreadService, {
+          ...threads,
+          dispatchCommand: (actor, command, expectedRun) => {
+            if (
+              !failed &&
+              command.type === "run.interrupt" &&
+              command.threadId === first.childThreadId
+            ) {
+              failed = true;
+              return Effect.fail(
+                new ThreadObjectError({
+                  operation: "dispatch",
+                  cause: new Error("temporary object failure"),
+                }),
+              );
+            }
+            return threads.dispatchCommand(actor, command, expectedRun);
+          },
+        }),
+        Effect.provide(cloud.layerFor(userId)),
+      );
+      expect(yield* Effect.result(flaky.stopDescendants(source, 1))).toMatchObject({
+        _tag: "Failure",
+        failure: { code: "orchestration_error" },
+      });
+      expect((yield* service.status(source, { taskId: first.taskId })).status).toBe("running");
+      expect((yield* service.status(source, { taskId: second.taskId })).status).toBe("interrupted");
+      yield* flaky.stopDescendants(source, 1);
+      expect((yield* service.status(source, { taskId: first.taskId })).status).toBe("interrupted");
+      yield* cloud.settle;
     }),
   );
 

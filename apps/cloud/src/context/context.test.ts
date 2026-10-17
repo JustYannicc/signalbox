@@ -14,7 +14,7 @@ import {
   MessageId,
   ORCHESTRATION_V2_WS_METHODS,
   ThreadId,
-  type ProjectId,
+  ProjectId,
 } from "@t3tools/contracts";
 import { SignalboxContextId } from "@t3tools/contracts/signalboxContexts";
 import { SIGNALBOX_DRIVES_WS_METHODS } from "@t3tools/contracts/signalboxDrives";
@@ -87,15 +87,12 @@ const setup = Effect.gen(function* () {
                 const archivedProjectId = projectIds?.find((id) =>
                   String(id).startsWith("drive:shared/org_acme/"),
                 );
-                if (
-                  (input as { query?: string }).query === "archive probe" &&
-                  archivedProjectId !== undefined
-                ) {
+                if (input.query === "archive probe" && archivedProjectId !== undefined) {
                   return Effect.succeed({
                     hits: [
                       {
                         threadId: ThreadId.make("archived-search-thread"),
-                        projectId: archivedProjectId,
+                        projectId: ProjectId.make(archivedProjectId),
                         title: "Old billing decision",
                         archived: true,
                         itemId: "archived-search-item",
@@ -466,9 +463,7 @@ describe("context API (#141)", () => {
       expect(env.searchCalls.at(-1)).toMatchObject({
         actor: { contextIds: [SignalboxContextId.make("personal")] },
       });
-      expect(
-        (env.searchCalls.at(-1)?.actor as { projectIds: ReadonlyArray<ProjectId> }).projectIds,
-      ).not.toContain(env.billing.projectId);
+      expect(env.searchCalls.at(-1)?.actor.projectIds).not.toContain(env.billing.projectId);
     }),
   );
 
@@ -480,9 +475,7 @@ describe("context API (#141)", () => {
       // A stale listing cannot keep a revoked target drive in search scope.
       const personalSearch = yield* search(env, "archive probe");
       expect(personalSearch.hits).toEqual([]);
-      expect(
-        (env.searchCalls.at(-1)?.actor as { projectIds: ReadonlyArray<ProjectId> }).projectIds,
-      ).not.toContain(env.billing.projectId);
+      expect(env.searchCalls.at(-1)?.actor.projectIds).not.toContain(env.billing.projectId);
 
       // The same stale listing cannot authorize a request from that revoked drive.
       const revokedReader = { ...env.reader, driveId: env.billing.id };
@@ -613,6 +606,7 @@ describe("context API (#141)", () => {
         live: true,
         packsAfter: 0,
       };
+      yield* launch(env.bob, ThreadId.make(late.threadId), billing.projectId, "Prepare Q3 reports");
       yield* DriveDirectory.use((directory) => directory.forDrive(billing.id).open(late)).pipe(
         Effect.provide(cloud.drives.layer),
       );

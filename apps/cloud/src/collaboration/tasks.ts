@@ -10,12 +10,12 @@ import {
 import { runtimeModeWithin } from "@signalbox/automations/access";
 import type { CollaborationInput } from "@t3tools/contracts/signalboxCollaboration";
 import * as Effect from "effect/Effect";
-import type { SqlError } from "effect/sql/SqlError";
 
 import type * as ThreadInbox from "../thread/ThreadInbox.ts";
 import { poolKindOfInstance } from "../thread/providerCatalog.ts";
 import { activeRun, isLiveRun } from "../thread/runLifecycle.ts";
 import type { TaskRecords } from "./taskRecords.ts";
+import { makeTaskStops } from "./taskStops.ts";
 import { collaborationFailure, refuse, type CollaborationAccess } from "./access.ts";
 import type { CollaborationLifecycle, CollaborationService } from "./CloudCollaboration.ts";
 
@@ -86,7 +86,6 @@ export const makeTasks = (deps: {
     request: string | undefined,
   ) => Effect.Effect<string>;
   readonly wait: CollaborationService["wait"];
-  readonly interrupt: CollaborationService["interrupt"];
   readonly capabilities: CollaborationService["capabilities"];
   readonly records: TaskRecords;
 }) => {
@@ -151,8 +150,7 @@ export const makeTasks = (deps: {
         });
       } else {
         if (
-          (active === undefined &&
-            (latest?.status === "interrupted" || latest?.status === "cancelled")) ||
+          (active === undefined && latest?.status === "interrupted") ||
           !(yield* deps.records.canDelegate(source, ordinal))
         )
           return yield* refuse("This task was stopped. Start a new turn before delegating again.");
@@ -262,106 +260,7 @@ export const makeTasks = (deps: {
       };
     }).pipe(Effect.mapError(collaborationFailure));
 
-  const stopRunTree = (
-    parent: ThreadId,
-    child: ThreadId,
-    throughOrdinal: number,
-    options: {
-      readonly reason?: string;
-      readonly clientRequestId?: string;
-      readonly ownerStop?: boolean;
-    } = {},
-  ): Effect.Effect<void, OrchestratorMcpFailure | SqlError> =>
-    Effect.gen(function* () {
-      const found = yield* deps.access.read(parent, child).pipe(
-        Effect.catchIf(
-          (error) => error.code === "thread_not_found",
-          () => Effect.succeed(null),
-        ),
-      );
-      if (
-        found === null ||
-        found.projection.thread.lineage.relationshipToParent !== "subagent" ||
-        found.projection.thread.lineage.parentThreadId !== parent
-      )
-        return;
-      if (!options.ownerStop)
-        yield* deps.access.writable(found.caller.projection, found.projection);
-      // Fence late completions and delegations before issuing any interrupts.
-      yield* deps.records.stop(child, throughOrdinal);
-      const descendants = yield* deps.records.childrenThrough(child, throughOrdinal);
-      for (const descendant of descendants)
-        yield* stopRunTree(child, descendant.childThreadId, descendant.throughOrdinal, options);
-      // Queued runs go first so interrupting the active run cannot start one of them.
-      const runs = found.projection.runs
-        .filter(
-          (run) => run.ordinal <= throughOrdinal && (run.status === "queued" || isLiveRun(run)),
-        )
-        .toSorted(
-          (a, b) =>
-            Number(a.status !== "queued") - Number(b.status !== "queued") || a.ordinal - b.ordinal,
-        );
-      for (const run of runs) {
-        const requestId =
-          options.clientRequestId === undefined
-            ? `cloud-task-stop:${child}:${throughOrdinal}:${run.id}`
-            : `${options.clientRequestId}:${child}:${run.id}`;
-        // A person's Stop revokes work even if the parent has since entered plan mode.
-        // It still uses current thread access and the recorded child lineage above.
-        const interrupt = options.ownerStop
-          ? deps.access.threads
-              .dispatchCommand(
-                found.caller.actor,
-                run.status === "queued"
-                  ? {
-                      type: "queued-run.cancel",
-                      commandId: CommandId.make(requestId),
-                      threadId: child,
-                      runId: run.id,
-                    }
-                  : {
-                      type: "run.interrupt",
-                      commandId: CommandId.make(requestId),
-                      threadId: child,
-                      runId: run.id,
-                    },
-              )
-              .pipe(Effect.asVoid, Effect.mapError(collaborationFailure))
-          : deps
-              .interrupt(parent, {
-                threadId: child,
-                runId: run.id,
-                ...(options.reason === undefined ? {} : { reason: options.reason }),
-                clientRequestId: requestId,
-              })
-              .pipe(Effect.asVoid);
-        yield* interrupt.pipe(
-          Effect.catchIf(
-            (error) => error.code === "thread_not_found",
-            () => Effect.void,
-          ),
-        );
-      }
-    });
-
-  const stopDescendants = (parent: ThreadId, parentOrdinal: number) =>
-    Effect.gen(function* () {
-      const children = yield* deps.records.childrenThrough(parent, parentOrdinal);
-      for (const child of children)
-        yield* stopRunTree(parent, child.childThreadId, child.throughOrdinal, {
-          ownerStop: true,
-        }).pipe(
-          Effect.catchTags({
-            OrchestratorMcpFailure: (error) =>
-              error.code === "capability_denied"
-                ? Effect.logWarning("child stop refused", {
-                    parentThreadId: parent,
-                    childThreadId: child.childThreadId,
-                  })
-                : Effect.fail(error),
-          }),
-        );
-    }).pipe(deps.records.lock.withPermits(1), Effect.mapError(collaborationFailure));
+  const { stopRunTree, stopDescendants } = makeTaskStops(deps);
 
   const completion: CollaborationLifecycle["completion"] = (child, childOrdinal, deliver) =>
     Effect.gen(function* () {
