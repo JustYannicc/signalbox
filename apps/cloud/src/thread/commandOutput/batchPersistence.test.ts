@@ -11,9 +11,16 @@ import * as Effect from "effect/Effect";
 import * as SqlClient from "effect/sql/SqlClient";
 
 import { ThreadStore } from "../ThreadStore.ts";
-import { freshDatabase, withObject } from "../runner/runnerTestKit.ts";
-import { MAX_COMMAND_OUTPUT_TAILS } from "./retainedOutput.ts";
-import { delta, firstFrame, reportCommand, start, target } from "./testKit.ts";
+import {
+  MAX_COMMAND_OUTPUT_TAILS,
+  delta,
+  firstFrame,
+  freshDatabase,
+  reportCommand,
+  start,
+  target,
+  withObject,
+} from "../commandOutputTestKit.ts";
 
 describe("command output batch persistence", () => {
   it.effect("folds 256 interleaved chunks in order and writes each command only once", () =>

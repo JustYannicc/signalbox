@@ -15,9 +15,17 @@ import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 
 import { ThreadStore } from "../ThreadStore.ts";
-import { freshDatabase, owner, withObject } from "../runner/runnerTestKit.ts";
-import { MAX_COMMAND_OUTPUT_TAILS } from "./retainedOutput.ts";
-import { delta, firstFrame, reportCommand, start, target } from "./testKit.ts";
+import {
+  MAX_COMMAND_OUTPUT_TAILS,
+  delta,
+  firstFrame,
+  freshDatabase,
+  owner,
+  reportCommand,
+  start,
+  target,
+  withObject,
+} from "../commandOutputTestKit.ts";
 
 describe("cloud command output retention", () => {
   it.effect("bounds raw delta tails and persists truncation through a restart", () =>

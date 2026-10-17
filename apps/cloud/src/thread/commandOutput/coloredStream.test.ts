@@ -10,8 +10,16 @@ import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 
-import { freshDatabase, owner, withObject } from "../runner/runnerTestKit.ts";
-import { delta, firstFrame, reportCommand, start, target } from "./testKit.ts";
+import {
+  delta,
+  firstFrame,
+  freshDatabase,
+  owner,
+  reportCommand,
+  start,
+  target,
+  withObject,
+} from "../commandOutputTestKit.ts";
 
 describe("colored command output streaming", () => {
   it.effect("appends colored growth and replaces cursor rewrites with identical client state", () =>

@@ -16,8 +16,18 @@ import * as TestClock from "effect/testing/TestClock";
 import { appendTerminalOutput, EMPTY_TERMINAL_OUTPUT } from "@t3tools/shared/terminalOutput";
 
 import { ThreadStore } from "../ThreadStore.ts";
-import { freshDatabase, owner, personal, threadId, withObject } from "../runner/runnerTestKit.ts";
-import { delta, firstFrame, reportCommand, start, target } from "./testKit.ts";
+import {
+  delta,
+  firstFrame,
+  freshDatabase,
+  owner,
+  personal,
+  reportCommand,
+  start,
+  target,
+  threadId,
+  withObject,
+} from "../commandOutputTestKit.ts";
 
 const shown = (text: string) => appendTerminalOutput(EMPTY_TERMINAL_OUTPUT, text).text;
 
