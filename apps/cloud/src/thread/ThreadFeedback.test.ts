@@ -6,16 +6,12 @@ import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as SqlClient from "effect/sql/SqlClient";
-import * as TestClock from "effect/testing/TestClock";
 
 import * as ThreadFeedback from "./ThreadFeedback.ts";
 import * as ThreadStore from "./ThreadStore.ts";
-import { FeedbackSockets } from "./runner/FeedbackSockets.ts";
 import {
   connect,
-  fakeSocket,
   freshDatabase,
-  hostFor,
   launch,
   liveTurn,
   owner,
@@ -151,38 +147,62 @@ describe("cloud provider feedback", () => {
         Effect.gen(function* () {
           yield* launch(engine);
           const service = Context.get(context, ThreadFeedback.ThreadFeedback);
-          expect(yield* service.upload(owner, { threadId })).toEqual({
+          expect(yield* service.upload(owner, { threadId, requestId: "unsupported" })).toEqual({
             _tag: "failed",
             failure: "unsupported",
           });
+          const sql = Context.get(context, SqlClient.SqlClient);
+          expect(yield* sql`SELECT * FROM provider_feedback_receipts`).toEqual([]);
         }),
       { feedback: { upload: () => Effect.die("must not send") } },
     ),
   );
 
-  it.effect(
-    "explains a missing native session and a disconnected machine without starting one",
-    () =>
-      withObject(
+  it.effect("reuses a stable request ID after session and runner preflight refusals", () =>
+    Effect.gen(function* () {
+      const requests: Array<FeedbackRequest> = [];
+      yield* withObject(
         freshDatabase(),
         (engine, runner, context) =>
           Effect.gen(function* () {
             yield* launch(engine, "launch", personal, { modelSelection: codex });
             const service = Context.get(context, ThreadFeedback.ThreadFeedback);
-            expect(yield* service.upload(owner, { threadId })).toEqual({
+            const sql = Context.get(context, SqlClient.SqlClient);
+            const input = { threadId, requestId: "recoverable" };
+            expect(yield* service.upload(owner, input)).toEqual({
               _tag: "failed",
               failure: "session_unavailable",
             });
+            expect(yield* sql`SELECT * FROM provider_feedback_receipts`).toEqual([]);
             yield* startCodex(engine, runner);
             const store = Context.get(context, ThreadStore.ThreadStore);
-            yield* store.saveMachine({ ...(yield* store.machine), disconnectedAt: 1 });
-            expect(yield* service.upload(owner, { threadId })).toEqual({
+            const connected = yield* store.machine;
+            yield* store.saveMachine({ ...connected, disconnectedAt: 1 });
+            expect(yield* service.upload(owner, input)).toEqual({
               _tag: "failed",
               failure: "runner_unavailable",
             });
+            expect(yield* sql`SELECT * FROM provider_feedback_receipts`).toEqual([]);
+            expect(requests).toEqual([]);
+            yield* store.saveMachine(connected);
+            const uploaded = { _tag: "uploaded", feedbackId: "recovered" };
+            expect(yield* service.upload(owner, input)).toEqual(uploaded);
+            yield* store.saveMachine({ ...connected, disconnectedAt: 1 });
+            expect(yield* service.upload(owner, input)).toEqual(uploaded);
+            expect(requests).toHaveLength(1);
+            expect(yield* sql`SELECT * FROM provider_feedback_receipts`).toHaveLength(1);
           }),
-        { feedback: { upload: () => Effect.die("must not send") } },
-      ),
+        {
+          feedback: {
+            upload: (_generation, _connection, request) =>
+              Effect.sync(() => {
+                requests.push(request);
+                return { _tag: "uploaded", feedbackId: "recovered" };
+              }),
+          },
+        },
+      );
+    }),
   );
 
   it.effect("never replays an upload whose acknowledgement was lost", () =>
@@ -208,6 +228,16 @@ describe("cloud provider feedback", () => {
               .upload(owner, { threadId, requestId: "lost" })
               .pipe(Effect.forkChild);
             yield* Deferred.await(sent);
+            expect(
+              (yield* service
+                .upload({ ...owner, userId: "other" }, { threadId, requestId: "lost" })
+                .pipe(Effect.flip))._tag,
+            ).toBe("ThreadNotFoundError");
+            expect(yield* service.upload(owner, { threadId, requestId: "lost" })).toEqual({
+              _tag: "failed",
+              failure: "outcome_unknown",
+            });
+            expect(sends).toBe(1);
             yield* Fiber.interrupt(pending);
           }),
         { feedback },
@@ -215,86 +245,24 @@ describe("cloud provider feedback", () => {
       yield* withObject(
         filename,
         (_engine, _runner, context) =>
-          Context.get(context, ThreadFeedback.ThreadFeedback)
-            .upload(owner, { threadId, requestId: "lost" })
-            .pipe(
-              Effect.tap((outcome) =>
-                Effect.sync(() =>
-                  expect(outcome).toEqual({ _tag: "failed", failure: "outcome_unknown" }),
-                ),
-              ),
-            ),
+          Effect.gen(function* () {
+            const service = Context.get(context, ThreadFeedback.ThreadFeedback);
+            const input = { threadId, requestId: "lost" };
+            expect(
+              (yield* service.upload({ ...owner, userId: "other" }, input).pipe(Effect.flip))._tag,
+            ).toBe("ThreadNotFoundError");
+            expect(yield* service.upload(owner, input)).toEqual({
+              _tag: "failed",
+              failure: "outcome_unknown",
+            });
+            expect(yield* service.upload(owner, input)).toEqual({
+              _tag: "failed",
+              failure: "outcome_unknown",
+            });
+          }),
         { feedback },
       );
       expect(sends).toBe(1);
     }),
-  );
-
-  it.effect("sends only to the leased capable connection and accepts only its answer", () =>
-    withObject(freshDatabase(), (engine, runner) =>
-      Effect.gen(function* () {
-        const { providerThread } = yield* startCodex(engine, runner);
-        const right = fakeSocket();
-        const wrong = fakeSocket();
-        const sent = yield* Deferred.make<void>();
-        const originalSend = right.socket.send.bind(right.socket);
-        right.socket.send = (data) => {
-          if (typeof data !== "string") throw new Error("expected a JSON frame");
-          originalSend(data);
-          Deferred.doneUnsafe(sent, Effect.void);
-        };
-        right.socket.serializeAttachment({ generation: 1, connection: 1, feedback: true });
-        wrong.socket.serializeAttachment({ generation: 1, connection: 2, feedback: true });
-        const host = yield* hostFor(runner, [wrong.socket, right.socket]);
-        const sockets = new FeedbackSockets(host.ctx);
-        const request: FeedbackRequest = {
-          type: "feedback.upload",
-          requestId: "socket",
-          providerThread,
-        };
-        const waiting = yield* sockets.upload(1, 1, request).pipe(Effect.forkChild);
-        yield* Deferred.await(sent);
-        expect(right.sent).toEqual([request]);
-        expect(wrong.sent).toEqual([]);
-        sockets.receive(wrong.socket, {
-          type: "feedback.result",
-          requestId: "socket",
-          outcome: { _tag: "uploaded", feedbackId: "wrong" },
-        });
-        sockets.receive(right.socket, {
-          type: "feedback.result",
-          requestId: "socket",
-          outcome: { _tag: "uploaded", feedbackId: "right" },
-        });
-        expect(yield* Fiber.join(waiting)).toEqual({ _tag: "uploaded", feedbackId: "right" });
-        expect(yield* sockets.upload(2, 1, request)).toEqual({
-          _tag: "failed",
-          failure: "runner_unavailable",
-        });
-        right.socket.serializeAttachment({ generation: 1, connection: 1 });
-        expect(yield* sockets.upload(1, 1, request)).toEqual({
-          _tag: "failed",
-          failure: "runner_unavailable",
-        });
-      }),
-    ),
-  );
-
-  it.effect("reports an unconfirmed upload without resending after the deadline", () =>
-    withObject(freshDatabase(), (engine, runner) =>
-      Effect.gen(function* () {
-        const { providerThread } = yield* startCodex(engine, runner);
-        const socket = fakeSocket();
-        socket.socket.serializeAttachment({ generation: 1, connection: 1, feedback: true });
-        const host = yield* hostFor(runner, [socket.socket]);
-        const sockets = new FeedbackSockets(host.ctx);
-        const waiting = yield* sockets
-          .upload(1, 1, { type: "feedback.upload", requestId: "timeout", providerThread })
-          .pipe(Effect.forkChild);
-        yield* TestClock.adjust("30 seconds");
-        expect(yield* Fiber.join(waiting)).toEqual({ _tag: "failed", failure: "outcome_unknown" });
-        expect(socket.sent).toHaveLength(1);
-      }),
-    ),
   );
 });

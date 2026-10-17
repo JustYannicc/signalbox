@@ -52,7 +52,7 @@ import {
 } from "./runner/runnerSockets.ts";
 import * as ThreadRunner from "./runner/ThreadRunner.ts";
 import * as ThreadFeedback from "./ThreadFeedback.ts";
-import { FeedbackSockets } from "./runner/FeedbackSockets.ts";
+import { FeedbackSockets } from "./FeedbackSockets.ts";
 import * as SessionRows from "./session/SessionRows.ts";
 import { handleSessionRequest, isSessionApiPath } from "./session/sessionRoutes.ts";
 import { deliverPendingEvents } from "./eventOutbox.ts";

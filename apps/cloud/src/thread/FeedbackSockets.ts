@@ -5,7 +5,7 @@ import type {
 import { threadFrame } from "@signalbox/runner-protocol/RunnerProtocol";
 import * as Effect from "effect/Effect";
 
-import type { FeedbackTransport } from "../ThreadFeedback.ts";
+import type { FeedbackTransport } from "./ThreadFeedback.ts";
 
 interface FeedbackAttachment {
   readonly generation: number;

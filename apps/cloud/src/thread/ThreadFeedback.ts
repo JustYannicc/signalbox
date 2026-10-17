@@ -75,33 +75,37 @@ const make = Effect.gen(function* () {
           (candidate) => candidate.id === projection.thread.activeProviderThreadId,
         ) ?? projection.providerThreads.at(-1);
       const lease = yield* Effect.orDie(store.machine);
-      // Claim before sending. An interrupted request or lost acknowledgement is never retried.
+      if (providerThread !== undefined && providerThread.driver !== "codex") {
+        return { _tag: "failed", failure: "unsupported" } as const;
+      }
+      if (
+        providerThread?.providerSessionId == null ||
+        providerThread.nativeThreadRef?.nativeId == null
+      ) {
+        return { _tag: "failed", failure: "session_unavailable" } as const;
+      }
+      if (lease.status !== "connected" || lease.disconnectedAt !== null) {
+        return { _tag: "failed", failure: "runner_unavailable" } as const;
+      }
+      // Claim only when dispatch can begin. A lost acknowledgement must never trigger a retry.
       const claimed = yield* Effect.orDie(sql`
         INSERT INTO provider_feedback_receipts
           (request_id, provider_thread_id, generation, created_at)
-        VALUES (${requestId}, ${providerThread?.id ?? null}, ${lease.generation}, ${yield* Clock.currentTimeMillis})
+        VALUES (${requestId}, ${providerThread.id}, ${lease.generation}, ${yield* Clock.currentTimeMillis})
         ON CONFLICT DO NOTHING RETURNING request_id
       `);
       if (claimed.length === 0) return unknown;
-      const outcome: FeedbackOutcome =
-        providerThread !== undefined && providerThread.driver !== "codex"
-          ? { _tag: "failed", failure: "unsupported" }
-          : providerThread?.providerSessionId == null ||
-              providerThread.nativeThreadRef?.nativeId == null
-            ? { _tag: "failed", failure: "session_unavailable" }
-            : lease.status !== "connected" || lease.disconnectedAt !== null
-              ? { _tag: "failed", failure: "runner_unavailable" }
-              : yield* transport.upload(lease.generation, lease.connection ?? 0, {
-                  type: "feedback.upload",
-                  requestId,
-                  providerThread: {
-                    ...providerThread,
-                    providerInstanceId:
-                      runnerInstanceFor(providerThread.providerInstanceId) ??
-                      providerThread.providerInstanceId,
-                  },
-                  ...(input.reason === undefined ? {} : { reason: input.reason }),
-                });
+      const outcome = yield* transport.upload(lease.generation, lease.connection ?? 0, {
+        type: "feedback.upload",
+        requestId,
+        providerThread: {
+          ...providerThread,
+          providerInstanceId:
+            runnerInstanceFor(providerThread.providerInstanceId) ??
+            providerThread.providerInstanceId,
+        },
+        ...(input.reason === undefined ? {} : { reason: input.reason }),
+      });
       yield* Effect.orDie(sql`
         UPDATE provider_feedback_receipts SET outcome = ${encodeOutcome(outcome)}
         WHERE request_id = ${requestId}
