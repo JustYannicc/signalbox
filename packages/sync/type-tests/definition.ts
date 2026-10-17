@@ -4,6 +4,10 @@ import * as Schema from "effect/Schema";
 import { defineHome, type SyncHome } from "../src/definition.ts";
 import { table } from "../src/table.ts";
 
+// @ts-expect-error Operation factories are scoped to defineHome's build callback.
+import { change as standaloneChange } from "../src/definition.ts";
+void standaloneChange;
+
 const items = table({
   row: Schema.Struct({ id: Schema.String, amount: Schema.Number }),
   key: ["id"],
@@ -56,6 +60,45 @@ void bound.view({ personId: "user" }, "item", 1);
 // @ts-expect-error Typed domain commands reject wrong arguments.
 void bound.change({ personId: "user" }, "increment", { id: "key", by: "one" }, "operation");
 
+defineHome({ actor: Schema.String, home: Schema.String, tables: { items } }, () => ({
+  views: {},
+  // @ts-expect-error Foreign definitions retain their original home's context.
+  changes: { foreign: home.changes.increment },
+  projections: {},
+}));
+
+defineHome({ actor: Schema.String, home: Schema.String, tables: { items } }, () => ({
+  views: {
+    // @ts-expect-error Hand-written operations must match this home's context and schemas.
+    malformed: {
+      kind: "view" as const,
+      input: Schema.String,
+      output: Schema.Number,
+      failure: Schema.Never,
+      run: (_context: { readonly nope: true }, _input: boolean) => Effect.succeed("not a number"),
+    },
+  },
+  changes: {},
+  projections: {},
+}));
+
+const metadataConfig = { actor: Schema.String, home: Schema.String, tables: { items } };
+const metadataHome = defineHome(metadataConfig, () => ({
+  views: {},
+  changes: {},
+  projections: {},
+}));
+const configActorSchema: typeof metadataConfig.actor = metadataHome.actor;
+void configActorSchema;
+
+defineHome(metadataConfig, () => ({
+  views: {},
+  changes: {},
+  projections: {},
+  // @ts-expect-error Home metadata comes from the first argument.
+  actor: Schema.Number,
+}));
+
 // Handler output validation is retained during declaration.
 defineHome({ actor: Schema.String, home: Schema.String, tables: { items } }, ({ view }) => ({
   views: {
@@ -70,3 +113,13 @@ defineHome({ actor: Schema.String, home: Schema.String, tables: { items } }, ({ 
   changes: {},
   projections: {},
 }));
+
+const typedActorHome = defineHome(
+  { actor: Schema.Struct({ personId: Schema.String }), home: Schema.String, tables: { items } },
+  () => ({ views: {}, changes: {}, projections: {} }),
+);
+declare const actorBound: SyncHome<typeof typedActorHome.actor.Type, never, typeof typedActorHome>;
+void actorBound;
+// @ts-expect-error SyncHome's actor must match its definition.
+declare const wrongActorBound: SyncHome<number, never, typeof typedActorHome>;
+void wrongActorBound;

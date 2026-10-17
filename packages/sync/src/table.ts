@@ -4,6 +4,7 @@ import * as Schema from "effect/Schema";
 
 type NonEmpty<T> = readonly [T, ...T[]];
 type AnyRowSchema = Schema.Schema<unknown>;
+type ReservedStorageField = "_id" | "_creationTime";
 type KeyScalar = string | number | boolean | null;
 type KeyField<Row> = {
   [Field in keyof Row]-?: {} extends Pick<Row, Field>
@@ -21,10 +22,13 @@ export type Table<
   readonly row: RowSchema;
   readonly key: KeyFields;
   readonly indexes: Indexes;
+  readonly [tableDefinitionBrand]: true;
 };
 type AnyTable = Table;
 
 export type TableMap = Readonly<Record<string, Table>>;
+
+const tableDefinitionBrand: unique symbol = Symbol("TableDefinition");
 
 export type IndexDefinition<
   Row,
@@ -44,11 +48,19 @@ export interface TableDefinition<
   RowSchema extends AnyRowSchema,
   KeyFields extends NonEmpty<KeyField<Schema.Schema.Type<RowSchema>>>,
   Indexes extends IndexMap<Schema.Schema.Type<RowSchema>>,
-> {
+> extends Table<RowSchema, KeyFields, Indexes> {
   readonly row: RowSchema;
   readonly key: KeyFields;
   readonly indexes: Indexes;
 }
+
+type HasReservedStorageField<Row> = Row extends unknown
+  ? Extract<keyof Row, ReservedStorageField> extends never
+    ? false
+    : true
+  : never;
+type RowSchemaWithoutReservedStorageFields<RowSchema extends AnyRowSchema> =
+  true extends HasReservedStorageField<Schema.Schema.Type<RowSchema>> ? never : unknown;
 
 /** Defines the domain key and queryable indexes without exposing a storage engine's id. */
 export const table = <
@@ -56,18 +68,21 @@ export const table = <
   const KeyFields extends NonEmpty<KeyField<Schema.Schema.Type<RowSchema>>>,
   const Indexes extends IndexMap<Schema.Schema.Type<RowSchema>>,
 >(definition: {
-  readonly row: RowSchema;
+  readonly row: RowSchema & RowSchemaWithoutReservedStorageFields<RowSchema>;
   readonly key: KeyFields;
   readonly indexes: Indexes;
 }): TableDefinition<RowSchema, KeyFields, Indexes> =>
   Object.freeze({
     ...definition,
     indexes: Object.freeze({ ...definition.indexes }),
+    [tableDefinitionBrand]: true as const,
   });
 
 export type Row<T extends AnyTable> = Schema.Schema.Type<T["row"]>;
 
-type TableKeyFields<T> = T extends { readonly key: infer Fields extends readonly string[] }
+type TableKeyFields<T> = T extends {
+  readonly key: infer Fields extends readonly string[];
+}
   ? Fields
   : never;
 
@@ -83,7 +98,9 @@ type DomainKey<RowValue, Fields extends readonly string[]> = Fields extends read
 type IndexNames<T extends AnyTable> = keyof T["indexes"] & string;
 
 type UniqueIndexNames<T extends AnyTable> = {
-  [Name in keyof T["indexes"]]-?: T["indexes"][Name] extends { readonly unique: true }
+  [Name in keyof T["indexes"]]-?: T["indexes"][Name] extends {
+    readonly unique: true;
+  }
     ? Name
     : never;
 }[keyof T["indexes"]] &
@@ -133,6 +150,22 @@ export type PageCursor<T extends AnyTable, Name extends IndexNames<T>> = string 
   };
 };
 
+/** Builds the codec for a continuation cursor scoped to one validated table and index. */
+export const pageCursorSchema = <T extends AnyTable, Name extends IndexNames<T>>(
+  table: T,
+  index: Name,
+): Schema.Codec<PageCursor<T, Name>, string, never, never> => {
+  if (!Object.prototype.hasOwnProperty.call(table.indexes, index)) {
+    throw new Error(`Unknown table index: ${index}`);
+  }
+
+  return Schema.String.pipe(
+    Schema.refine((value): value is PageCursor<T, Name> => typeof value === "string", {
+      identifier: `PageCursor<${index}>`,
+    }),
+  );
+};
+
 export type TablePage<T extends AnyTable, Name extends IndexNames<T>> = {
   readonly rows: ReadonlyArray<Row<T>>;
   readonly after: PageCursor<T, Name> | undefined;
@@ -145,10 +178,18 @@ export type IndexPageOptions<T extends AnyTable, Name extends IndexNames<T>> = P
   /** The adapter enforces the configured maximum page size. */
   readonly limit: number;
   readonly after?: PageCursor<T, Name>;
+  /** Defaults to ascending index order. */
+  readonly order?: "asc" | "desc";
 };
 
 export class TableReadError extends Schema.TaggedError<TableReadError>()("TableReadError", {
   table: Schema.String,
+  reason: Schema.Literals([
+    "invalid_row",
+    "invalid_cursor",
+    "invalid_query",
+    "storage_unavailable",
+  ]),
 }) {}
 
 export class TableWriteError extends Schema.TaggedError<TableWriteError>()("TableWriteError", {
@@ -157,6 +198,7 @@ export class TableWriteError extends Schema.TaggedError<TableWriteError>()("Tabl
     "key_conflict",
     "key_mismatch",
     "missing_row",
+    "invalid_row",
     "unique_conflict",
     "storage_unavailable",
   ]),

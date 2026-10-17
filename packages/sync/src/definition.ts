@@ -82,7 +82,7 @@ type OperationConfig<
   Context,
 > = Omit<Operation<string, Input, Output, Failure, Context>, "kind">;
 
-export const view = <
+const view = <
   Input extends Schema.Constraint,
   Output extends Schema.Constraint,
   Failure extends Schema.Constraint,
@@ -91,7 +91,7 @@ export const view = <
   config: OperationConfig<Input, Output, Failure, Context>,
 ) => Object.freeze({ ...config, kind: "view" as const });
 
-export const change = <
+const change = <
   Input extends Schema.Constraint,
   Output extends Schema.Constraint,
   Failure extends Schema.Constraint,
@@ -100,7 +100,7 @@ export const change = <
   config: OperationConfig<Input, Output, Failure, Context>,
 ) => Object.freeze({ ...config, kind: "change" as const });
 
-export const projection = <
+const projection = <
   Input extends Schema.Constraint,
   Output extends Schema.Constraint,
   Failure extends Schema.Constraint,
@@ -134,27 +134,90 @@ export interface HomeOperations {
   readonly projections: Operations<"projection">;
 }
 
+type CheckedOperation<Operation, Kind extends string, Context> = Operation extends {
+  readonly kind: Kind;
+  readonly input: infer Input extends Schema.Constraint;
+  readonly output: infer Output extends Schema.Constraint;
+  readonly failure: infer Failure extends Schema.Constraint;
+  readonly run: infer Run;
+}
+  ? Run extends (
+      context: Context,
+      input: Input["Type"],
+    ) => Effect.Effect<Output["Type"], Failure["Type"] | TableError>
+    ? Operation
+    : never
+  : never;
+
+type CheckedOperations<
+  Operations extends Readonly<Record<string, OperationShape>>,
+  Kind extends string,
+  Context,
+> = {
+  readonly [Name in keyof Operations]: CheckedOperation<Operations[Name], Kind, Context>;
+};
+
+type CheckedDefinitions<
+  Definitions extends HomeOperations,
+  ViewContext,
+  ChangeContext,
+  ProjectionContext,
+> = {
+  readonly views: CheckedOperations<Definitions["views"], "view", ViewContext>;
+  readonly changes: CheckedOperations<Definitions["changes"], "change", ChangeContext>;
+  readonly projections: CheckedOperations<
+    Definitions["projections"],
+    "projection",
+    ProjectionContext
+  >;
+};
+
 /** Builds metadata only. An adapter binds it to one server-resolved home and its authorization guard. */
 export const defineHome = <
   Actor extends Schema.Constraint,
   Home extends Schema.Constraint,
   const Tables extends TableMap,
-  const Definitions extends HomeOperations,
+  const Definitions extends HomeOperations & {
+    readonly actor?: never;
+    readonly home?: never;
+    readonly tables?: never;
+  },
 >(
   config: { readonly actor: Actor; readonly home: Home; readonly tables: Tables },
   build: (operations: {
     readonly view: Factory<"view", ReadContext<Tables, Actor["Type"], Home["Type"]>>;
     readonly change: Factory<"change", TransactionContext<Tables, Actor["Type"], Home["Type"]>>;
     readonly projection: Factory<"projection", WriteContext<Tables, Home["Type"]>>;
-  }) => Definitions,
-) => Object.freeze({ ...config, ...build({ view, change, projection }) });
+  }) => Definitions &
+    CheckedDefinitions<
+      Definitions,
+      ReadContext<Tables, Actor["Type"], Home["Type"]>,
+      TransactionContext<Tables, Actor["Type"], Home["Type"]>,
+      WriteContext<Tables, Home["Type"]>
+    >,
+) => {
+  const definitions = build({ view, change, projection });
+
+  return Object.freeze({
+    ...definitions,
+    actor: config.actor,
+    home: config.home,
+    tables: config.tables,
+  });
+};
 
 export type Input<Op extends OperationShape> = Op["input"]["Type"];
 export type Output<Op extends OperationShape> = Op["output"]["Type"];
 export type Failure<Op extends OperationShape> = Op["failure"]["Type"];
 
 /** Trusted ingress is a server capability supplied by the owning module, never public request data. */
-export interface SyncHome<Actor, Ingress, Definitions extends HomeOperations> {
+export interface SyncHome<
+  Actor,
+  Ingress,
+  Definitions extends HomeOperations & {
+    readonly actor: Schema.Constraint & { readonly Type: Actor };
+  },
+> {
   readonly view: <K extends keyof Definitions["views"] & string>(
     actor: Actor,
     operation: K,
