@@ -1,0 +1,23 @@
+{
+  "name": "@signalbox/sync",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./table": "./src/table.ts",
+    "./definition": "./src/definition.ts"
+  },
+  "scripts": {
+    "test": "node ./codegen-proof/run.mjs && vp test run --dir . --maxWorkers=2",
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
+  "dependencies": {
+    "effect": "catalog:",
+    "lunorash": "1.0.0-alpha.398"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20260604.1",
+    "@types/node": "catalog:",
+    "typescript": "catalog:",
+    "vite-plus": "catalog:"
+  }
+}
