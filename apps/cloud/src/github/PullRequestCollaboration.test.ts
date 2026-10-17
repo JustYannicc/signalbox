@@ -126,17 +126,20 @@ describe("cloud PR collaboration", () => {
     }).pipe(Effect.provide(storage)),
   );
 
-  it.effect("keeps partial GraphQL mutation results pending even with a permission error", () =>
+  it.effect("keeps partial GraphQL mutation results pending despite errors", () =>
     Effect.gen(function* () {
-      const f = yield* fixture;
-      f.state.partial = true;
-      f.state.errors = [{ type: "FORBIDDEN" }];
-      yield* f.writes.replyToThread(reply).pipe(Effect.flip);
-      f.state.errors = undefined;
-      expect(yield* f.writes.replyToThread(reply).pipe(Effect.flip)).toMatchObject({
-        reason: "pending",
-      });
-      expect(f.state.writes).toBe(1);
+      for (const type of ["FORBIDDEN", "RATE_LIMITED"]) {
+        const f = yield* fixture;
+        const input = { ...reply, operationId: `partial-${type}` };
+        f.state.partial = true;
+        f.state.errors = [{ type }];
+        yield* f.writes.replyToThread(input).pipe(Effect.flip);
+        f.state.errors = undefined;
+        expect(yield* f.writes.replyToThread(input).pipe(Effect.flip)).toMatchObject({
+          reason: "pending",
+        });
+        expect(f.state.writes).toBe(1);
+      }
     }).pipe(Effect.provide(storage)),
   );
 
