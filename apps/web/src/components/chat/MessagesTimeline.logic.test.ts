@@ -23,6 +23,7 @@ import { makeStreamingTimelineFixture } from "../../test-fixtures";
 import type { TurnDiffSummary } from "../../types";
 import { describe, expect, it } from "vite-plus/test";
 import { EnvironmentId, MessageId, RunId } from "@t3tools/contracts";
+import { deriveRunContinuations } from "@t3tools/client-runtime/state/thread-execution";
 import { serializeAssistantCitation } from "@t3tools/shared/assistantCitations";
 import {
   computeStableMessagesTimelineRows,
@@ -1730,6 +1731,121 @@ describe("deriveMessagesTimelineRows", () => {
         expanded: false,
       }),
     ]);
+  });
+
+  it("folds linked continuation runs together with the terminal status and inherited duration", () => {
+    const rootRunId = RunId.make("continuation-root");
+    const continuationRunId = RunId.make("continuation-resume");
+    const at = (value: string) => DateTime.makeUnsafe(value);
+    const runContinuations = deriveRunContinuations([
+      {
+        id: rootRunId,
+        ordinal: 1,
+        restartContinuationOfRunId: undefined,
+        status: "interrupted",
+        requestedAt: at("2026-01-01T00:00:00Z"),
+        startedAt: at("2026-01-01T00:00:01Z"),
+        workStartedAt: at("2026-01-01T00:00:00Z"),
+        completedAt: at("2026-01-01T00:00:30Z"),
+      },
+      {
+        id: continuationRunId,
+        ordinal: 2,
+        restartContinuationOfRunId: rootRunId,
+        status: "completed",
+        requestedAt: at("2026-01-01T00:00:31Z"),
+        startedAt: at("2026-01-01T00:00:35Z"),
+        workStartedAt: at("2026-01-01T00:00:00Z"),
+        completedAt: at("2026-01-01T00:01:24Z"),
+      },
+    ]);
+    const assistant = (id: string, runId: RunId, createdAt: string) => ({
+      id,
+      kind: "message" as const,
+      createdAt,
+      message: {
+        id: MessageId.make(id),
+        role: "assistant" as const,
+        text: id,
+        runId,
+        createdAt,
+        updatedAt: createdAt,
+        streaming: false,
+      },
+    });
+    const input: Parameters<typeof deriveMessagesTimelineRows>[0] = {
+      timelineEntries: [
+        {
+          id: "continuation-prompt",
+          kind: "message",
+          createdAt: "2026-01-01T00:00:00Z",
+          message: {
+            id: MessageId.make("continuation-prompt"),
+            role: "user",
+            text: "Run checks",
+            runId: rootRunId,
+            createdAt: "2026-01-01T00:00:00Z",
+            updatedAt: "2026-01-01T00:00:00Z",
+            streaming: false,
+          },
+        },
+        assistant("root-reply", rootRunId, "2026-01-01T00:00:10Z"),
+        {
+          id: "root-work-entry",
+          kind: "work",
+          createdAt: "2026-01-01T00:00:20Z",
+          entry: {
+            id: "root-work",
+            createdAt: "2026-01-01T00:00:20Z",
+            runId: rootRunId,
+            label: "First command",
+            tone: "tool",
+          },
+        },
+        {
+          id: "continuation-work-entry",
+          kind: "work",
+          createdAt: "2026-01-01T00:00:50Z",
+          entry: {
+            id: "continuation-work",
+            createdAt: "2026-01-01T00:00:50Z",
+            runId: continuationRunId,
+            label: "Resumed command",
+            tone: "tool",
+          },
+        },
+        assistant("continuation-final", continuationRunId, "2026-01-01T00:01:24Z"),
+      ],
+      latestRun: {
+        runId: continuationRunId,
+        status: "completed",
+        startedAt: "2026-01-01T00:00:00Z",
+        completedAt: "2026-01-01T00:01:24Z",
+        runContinuations,
+      },
+      isWorking: false,
+      activeTurnStartedAt: null,
+      turnDiffSummaries: [],
+      supportsConversationRollback: false,
+    };
+    const rows = deriveMessagesTimelineRows(input);
+
+    const folds = rows.filter((row) => row.kind === "turn-fold");
+    expect(folds).toHaveLength(1);
+    expect(folds[0]).toMatchObject({
+      runId: rootRunId,
+      label: "Worked for 1m 24s",
+    });
+
+    const expanded = deriveMessagesTimelineRows({
+      ...input,
+      expandedRunIds: new Set([rootRunId]),
+    });
+    expect(
+      expanded
+        .filter((row) => row.kind === "work")
+        .flatMap((row) => row.groupedEntries.map((entry) => entry.runId)),
+    ).toEqual(expect.arrayContaining([rootRunId, continuationRunId]));
   });
 
   // signalbox: a newer turn must not rewrite how an older one ended (sweep G, 2026-10-17)

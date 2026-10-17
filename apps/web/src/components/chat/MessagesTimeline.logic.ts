@@ -55,6 +55,7 @@ import {
   type TurnItemId,
 } from "@t3tools/contracts";
 import type { ThreadRunSummary } from "@t3tools/client-runtime/state/shell";
+import type { RunContinuationSummary } from "@t3tools/client-runtime/state/thread-execution";
 import {
   resolveT3McpToolDefinition,
   resolveT3McpToolPresentation,
@@ -477,6 +478,7 @@ export type TimelineLatestRun = Pick<
    * component needs no prop of its own.
    */
   readonly settledRuns?: ReadonlyMap<RunId, TimelineLatestRun> | undefined;
+  readonly runContinuations?: ReadonlyMap<RunId, RunContinuationSummary> | undefined;
 };
 
 const LIVE_ACTIVITY_ROW_ID = "live-activity-row";
@@ -968,6 +970,9 @@ function deriveTurnFolds(input: {
   completeSupersededReplyEntryIds: ReadonlySet<string>;
 }): ReadonlyMap<string, TurnFold> {
   const interruptedRunIds = new Set<RunId>();
+  const continuations = input.latestRun?.runContinuations;
+  const logicalRunId = (runId: RunId) => continuations?.get(runId)?.rootRunId ?? runId;
+  const unfoldedRunIds = new Set([...input.unfoldedRunIds].map(logicalRunId));
   const promptIndexByRunId = new Map<RunId, number>();
   for (const [index, entry] of input.timelineEntries.entries()) {
     if (timelineEntryStartsResponse(entry)) {
@@ -980,7 +985,7 @@ function deriveTurnFolds(input: {
       (entry.projectedItem.item.type === "run_interrupt_request" ||
         entry.projectedItem.item.type === "run_interrupt_result")
     ) {
-      interruptedRunIds.add(entry.projectedItem.item.runId);
+      interruptedRunIds.add(logicalRunId(entry.projectedItem.item.runId));
     }
   }
 
@@ -1023,10 +1028,11 @@ function deriveTurnFolds(input: {
     // Resuming a subagent moves its item to the resuming run, but the item
     // keeps its place in the turn that started it. It folds with that turn,
     // so the later run's fold still opens under its own prompt.
-    const runId =
+    const attributedRunId =
       responseKey !== null && (promptIndexByRunId.get(ownRunId) ?? -1) > index
         ? responseKey
         : ownRunId;
+    const runId = logicalRunId(attributedRunId);
     if (runId === runlessKey && timelineEntryFailedItem(entry) !== null) {
       runlessFailedKeys.add(runId);
     }
@@ -1056,7 +1062,7 @@ function deriveTurnFolds(input: {
   const foldsByAnchorEntryId = new Map<string, TurnFold>();
   for (const [runId, group] of groupsByRunId) {
     if (
-      input.unfoldedRunIds.has(runId) ||
+      unfoldedRunIds.has(runId) ||
       interruptedRunIds.has(runId) ||
       runlessFailedKeys.has(runId) ||
       (input.runlessWorkActive && runId === runlessKey)
@@ -1114,6 +1120,7 @@ function deriveTurnFolds(input: {
     // A turn's own settled run says how it ended and how long it took, from when it left the
     // queue, even once a newer turn is latest.
     const run =
+      input.latestRun?.runContinuations?.get(runId) ??
       input.latestRun?.settledRuns?.get(runId) ??
       (input.latestRun?.runId === runId ? input.latestRun : null);
     const isInterruptedTurn = run?.status === "interrupted";

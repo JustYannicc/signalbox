@@ -20,6 +20,7 @@ import {
   type OrchestrationV2TurnItem,
 } from "@t3tools/contracts";
 import { resolveUserMessagePresentation } from "@t3tools/client-runtime/user-message";
+import { deriveRunContinuations } from "@t3tools/client-runtime/state/thread-execution";
 import { summarizeToolGroup } from "@t3tools/client-runtime/work-log/presentation";
 import * as DateTime from "effect/DateTime";
 import { describe, expect, it } from "vite-plus/test";
@@ -1083,6 +1084,134 @@ describe("buildThreadFeed", () => {
       "work-toggle",
       "message",
     ]);
+  });
+
+  it("folds a machine continuation under its initiating run and uses cumulative timing", () => {
+    const rootRunId = runId;
+    const continuationRunId = RunId.make("run-resume");
+    const at = (value: string) => DateTime.makeUnsafe(value);
+    const runContinuations = deriveRunContinuations([
+      {
+        id: rootRunId,
+        ordinal: 1,
+        status: "interrupted",
+        requestedAt: at("2026-06-20T00:00:00.000Z"),
+        startedAt: at("2026-06-20T00:00:01.000Z"),
+        workStartedAt: at("2026-06-20T00:00:00.000Z"),
+        completedAt: at("2026-06-20T00:00:30.000Z"),
+      },
+      {
+        id: continuationRunId,
+        ordinal: 2,
+        restartContinuationOfRunId: rootRunId,
+        status: "completed",
+        requestedAt: at("2026-06-20T00:00:31.000Z"),
+        startedAt: at("2026-06-20T00:00:35.000Z"),
+        workStartedAt: at("2026-06-20T00:00:00.000Z"),
+        completedAt: at("2026-06-20T00:01:24.000Z"),
+      },
+    ]);
+    const resumedCommand = {
+      ...command("2026-06-20T00:00:55.000Z"),
+      id: TurnItemId.make("item-resumed-command"),
+      runId: continuationRunId,
+      ordinal: 3,
+    };
+    const finalMessage = {
+      ...assistantMessage("2026-06-20T00:01:24.000Z"),
+      id: TurnItemId.make("item-resumed-assistant"),
+      messageId: MessageId.make("message-resumed-assistant"),
+      runId: continuationRunId,
+      ordinal: 4,
+    };
+    const feed = buildThreadFeed([
+      projected({ ...userMessage(), runId: rootRunId }, 0),
+      projected({ ...assistantMessage("2026-06-20T00:00:10.000Z"), text: "Starting." }, 1),
+      projected(command("2026-06-20T00:00:20.000Z"), 2),
+      projected(resumedCommand, 3),
+      projected(finalMessage, 4),
+    ]);
+    const latestRun = {
+      runId: continuationRunId,
+      status: "completed" as const,
+      startedAt: "2026-06-20T00:00:00.000Z",
+      completedAt: "2026-06-20T00:01:24.000Z",
+      runContinuations,
+    };
+
+    const collapsed = deriveThreadFeedPresentation(feed, latestRun, new Set());
+    expect(collapsed.filter((entry) => entry.type === "run-fold")).toEqual([
+      expect.objectContaining({
+        id: `run-fold:${rootRunId}`,
+        runId: rootRunId,
+        label: "Worked for 1m 24s",
+      }),
+    ]);
+
+    const expanded = deriveThreadFeedPresentation(feed, latestRun, new Set([rootRunId]));
+    const visibleRunIds = expanded.flatMap((entry) =>
+      entry.type === "activity-group"
+        ? [entry.runId, ...entry.activities.map((activity) => activity.runId)]
+        : entry.type === "work-toggle"
+          ? [entry.runId]
+          : [],
+    );
+    expect(visibleRunIds).toEqual(expect.arrayContaining([rootRunId, continuationRunId]));
+  });
+
+  it("keeps an unlinked interrupted run labeled as stopped", () => {
+    const interruptedRunId = RunId.make("interrupted-run");
+    const at = (value: string) => DateTime.makeUnsafe(value);
+    const runContinuations = deriveRunContinuations([
+      {
+        id: interruptedRunId,
+        ordinal: 1,
+        status: "interrupted",
+        requestedAt: at("2026-06-20T00:00:00.000Z"),
+        startedAt: at("2026-06-20T00:00:01.000Z"),
+        workStartedAt: at("2026-06-20T00:00:00.000Z"),
+        completedAt: at("2026-06-20T00:00:47.000Z"),
+      },
+    ]);
+    const feed = buildThreadFeed([
+      projected({ ...userMessage(), runId: interruptedRunId }, 0),
+      projected(
+        {
+          ...assistantMessage("2026-06-20T00:00:10.000Z"),
+          id: TurnItemId.make("interrupted-opening"),
+          messageId: MessageId.make("interrupted-opening-message"),
+          runId: interruptedRunId,
+          text: "I will check.",
+        },
+        1,
+      ),
+      projected({ ...command("2026-06-20T00:00:20.000Z"), runId: interruptedRunId }, 2),
+      projected(
+        {
+          ...assistantMessage("2026-06-20T00:00:47.000Z"),
+          id: TurnItemId.make("interrupted-final"),
+          messageId: MessageId.make("interrupted-final-message"),
+          runId: interruptedRunId,
+        },
+        3,
+      ),
+    ]);
+
+    const presented = deriveThreadFeedPresentation(
+      feed,
+      {
+        runId: interruptedRunId,
+        status: "interrupted",
+        startedAt: "2026-06-20T00:00:00.000Z",
+        completedAt: "2026-06-20T00:00:47.000Z",
+        runContinuations,
+      },
+      new Set(),
+    );
+    expect(presented.find((entry) => entry.type === "run-fold")).toMatchObject({
+      runId: interruptedRunId,
+      label: "You stopped after 47s",
+    });
   });
 
   it("keeps an active run expanded and detects failures from completed command output", () => {

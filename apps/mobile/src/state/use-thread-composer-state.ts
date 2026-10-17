@@ -7,6 +7,7 @@ import { threadRuntimeIsActive } from "@t3tools/client-runtime/state/shell";
 import { resolvePendingHandoff } from "@t3tools/client-runtime/handoff";
 import {
   deriveProviderSubagentStatus,
+  deriveRunContinuations,
   deriveRunlessWorkStartedAt,
   deriveThreadActivityRun,
   deriveThreadRuntime,
@@ -34,7 +35,10 @@ import {
   submitCodexFeedback,
   type CodexFeedbackSubmission,
 } from "@t3tools/client-runtime/state/threads";
-import { resolveThreadWorkingStartedAt } from "@t3tools/client-runtime/state/models";
+import {
+  resolveThreadWorkingStartedAt,
+  type ThreadRunSummary,
+} from "@t3tools/client-runtime/state/models";
 import { upgradeLegacyContextMessage } from "@t3tools/shared/composerContextLegacy";
 import { composerContextSendBlockReason, reidentifyComposerContext } from "../lib/composerContext";
 import { uuidv4 } from "../lib/uuid";
@@ -55,7 +59,7 @@ import {
 } from "../lib/composerImages";
 import type { DraftComposerImageAttachment } from "../lib/composerImages";
 import { scopedThreadKey } from "../lib/scopedEntities";
-import { buildThreadFeed } from "../lib/threadActivity";
+import { buildThreadFeed, type ThreadFeedLatestRun } from "../lib/threadActivity";
 import { acknowledgedThreadMessagesAtom } from "./acknowledged-thread-messages";
 import { appendPendingThreadMessages } from "../features/threads/pending-thread-feed";
 import { threadAllowsProviderSwitch } from "./thread-provider-switching";
@@ -355,13 +359,16 @@ export function useThreadComposerState() {
         : (selectedThreadShell?.runtime ?? null),
     [selectedThreadProjection, selectedThreadShell?.runtime],
   );
-  const selectedThreadActivityRun = useMemo(
-    () =>
-      selectedThreadProjection
-        ? deriveThreadActivityRun(selectedThreadProjection.projection)
-        : (selectedThreadShell?.latestRun ?? null),
-    [selectedThreadProjection, selectedThreadShell?.latestRun],
-  );
+  const selectedThreadActivityRun = useMemo<
+    (ThreadFeedLatestRun & Pick<ThreadRunSummary, "requestedAt">) | null
+  >(() => {
+    if (!selectedThreadProjection) return selectedThreadShell?.latestRun ?? null;
+    const projection = selectedThreadProjection.projection;
+    const run = deriveThreadActivityRun(projection);
+    return run === null
+      ? null
+      : { ...run, runContinuations: deriveRunContinuations(projection.runs) };
+  }, [selectedThreadProjection, selectedThreadShell?.latestRun]);
 
   const isCompacting = useMemo(() => {
     const queuedCompact = selectedThreadQueuedMessages.some(
