@@ -74,6 +74,9 @@ const INHERITED = [
   "NODE_EXTRA_CA_CERTS",
 ];
 
+const agentToolBashEnvironmentFile = (home: string) =>
+  NodePath.join(home, ".signalbox-agent-bash-env");
+
 export function harnessEnvironment(
   host: NodeJS.ProcessEnv,
   layout: MachineLayout,
@@ -101,7 +104,7 @@ export const agentToolEnvironment = (
       .filter((entry): entry is string => entry !== undefined && entry.length > 0)
       .join(NodePath.delimiter),
     PWD: cwd,
-    ...(home === undefined ? {} : { BASH_ENV: NodePath.join(home, ".signalbox-agent-bash-env") }),
+    ...(home === undefined ? {} : { BASH_ENV: agentToolBashEnvironmentFile(home) }),
   };
 };
 
@@ -209,7 +212,7 @@ export const prepareMachine = Effect.fn("prepareMachine")(function* (
   if (cwd !== undefined) {
     // Bash login profiles can replace PATH after the provider process starts.
     yield* fs.writeFileString(
-      path.join(layout.home, ".signalbox-agent-bash-env"),
+      agentToolBashEnvironmentFile(layout.home),
       agentToolBashEnvironment(cwd),
     );
   }

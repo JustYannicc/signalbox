@@ -14,6 +14,8 @@ import { makeMemorySessionStore } from "./sessionStoreTesting.ts";
 
 const ROLLOUT = "2026/10/08/rollout-2026-10-08T10-00-00-thread.jsonl";
 const STREAM = `codex/${ROLLOUT}`;
+const LATER_ROLLOUT = "2026/10/08/rollout-2026-10-08T11-00-00-thread.jsonl";
+const LATER_STREAM = `codex/${LATER_ROLLOUT}`;
 
 /** Codex's home on a fresh temporary disk, with the store and tailer around it. */
 const setup = (
@@ -43,7 +45,7 @@ const setup = (
         const before = (yield* fs.exists(file)) ? yield* fs.readFileString(file) : "";
         yield* fs.writeFileString(file, before + text);
       });
-    return { fs, file, store, rollouts, append };
+    return { fs, codexHome, file, store, rollouts, append };
   });
 
 describe("RunnerCodexRollouts", () => {
@@ -146,6 +148,35 @@ describe("RunnerCodexRollouts", () => {
     ).pipe(Effect.provide(NodeServices.layer)),
   );
 
+  it.live("rebases remotely restored session metadata after the initial local scan", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const from = "/home/user/signalbox/workspaces/thread:abc/drive";
+        const to = "/home/user/signalbox/workspaces/encoded/dGhyZWFkOmFiYw/drive";
+        const sessionMeta = JSON.stringify({
+          type: "session_meta",
+          payload: { id: "session-2", cwd: from },
+        });
+        const { fs, codexHome, store, rollouts } = yield* setup({}, { from, to });
+        yield* rollouts.restore;
+
+        // A later turn can discover a stream that was not listed at first restore.
+        store.streams.set(LATER_STREAM, [sessionMeta]);
+        yield* rollouts.restore;
+
+        const path = yield* Path.Path;
+        const laterFile = path.join(codexHome, "sessions", LATER_ROLLOUT);
+        expect(store.streams.get(LATER_STREAM)).toEqual([sessionMeta]);
+        expect(yield* fs.readFileString(laterFile)).toBe(
+          `${JSON.stringify({
+            type: "session_meta",
+            payload: { id: "session-2", cwd: to },
+          })}\n`,
+        );
+      }),
+    ).pipe(Effect.provide(NodeServices.layer)),
+  );
+
   it.live("keeps an open provider writer attached while live tailing a new rollout", () =>
     Effect.scoped(
       Effect.gen(function* () {
@@ -163,6 +194,8 @@ describe("RunnerCodexRollouts", () => {
         const writer = NodeFS.openSync(file, "a");
         try {
           const inode = NodeFS.statSync(file).ino;
+          yield* rollouts.restore;
+          expect(NodeFS.statSync(file).ino).toBe(inode);
           yield* rollouts.settle(10_000);
           expect(NodeFS.statSync(file).ino).toBe(inode);
 

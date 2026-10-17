@@ -89,6 +89,38 @@ describe("RunnerPaths", () => {
       }).pipe(Effect.provide(NodeServices.layer)),
   );
 
+  it.effect("creates transcript path aliases before restoring onto an empty machine", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const home = yield* fs.makeTempDirectoryScoped();
+      const threadId = "thread:fresh-machine";
+      const planned = runnerPaths(path, home, threadId);
+      expect(yield* fs.exists(planned.workspaceRoot)).toBe(false);
+      expect(yield* fs.exists(planned.machineRoot)).toBe(false);
+      expect(yield* fs.exists(planned.legacyWorkspaceRoot!)).toBe(false);
+      expect(yield* fs.exists(planned.legacyMachineRoot!)).toBe(false);
+
+      const fresh = yield* prepareRunnerPaths(home, threadId);
+      expect(yield* fs.readLink(fresh.legacyWorkspaceRoot!)).toBe(fresh.workspaceRoot);
+      expect(yield* fs.readLink(fresh.legacyMachineRoot!)).toBe(fresh.machineRoot);
+
+      // The drive store restores files after path preparation; old transcript paths must already resolve.
+      const restoredFile = path.join(fresh.cwd, "src", "main.ts");
+      yield* fs.makeDirectory(path.dirname(restoredFile), { recursive: true });
+      yield* fs.writeFileString(restoredFile, "restored source");
+      expect(yield* fs.readFileString(path.join(fresh.legacyCwd!, "src", "main.ts"))).toBe(
+        "restored source",
+      );
+
+      const index = path.join(fresh.machineRoot, "codex", "state_5.sqlite");
+      yield* fs.makeDirectory(path.dirname(index), { recursive: true });
+      yield* fs.writeFileString(index, "valid index");
+      expect((yield* prepareRunnerPaths(home, threadId)).cwd).toBe(fresh.cwd);
+      expect(yield* fs.readFileString(index)).toBe("valid index");
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
   it.effect("repairs a prior rename that left stale Codex indexes and no alias", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
@@ -157,6 +189,34 @@ describe("RunnerPaths", () => {
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 
+  it.effect("refuses a foreign legacy alias without touching either tree", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const home = yield* fs.makeTempDirectoryScoped();
+      const threadId = "thread:foreign-alias";
+      const current = runnerPaths(path, home, threadId);
+      const legacyWorkspace = current.legacyWorkspaceRoot!;
+      const foreignRoot = path.join(home, "workspaces", "another-thread");
+      yield* fs.makeDirectory(foreignRoot, { recursive: true });
+      yield* fs.makeDirectory(current.workspaceRoot, { recursive: true });
+      yield* fs.writeFileString(path.join(foreignRoot, "foreign.txt"), "foreign data");
+      yield* fs.writeFileString(path.join(current.workspaceRoot, "current.txt"), "current data");
+      yield* fs.symlink(foreignRoot, legacyWorkspace);
+
+      const error = yield* Effect.flip(prepareRunnerPaths(home, threadId));
+      expect(error).toBeInstanceOf(RunnerPathMigrationConflictError);
+      expect(error).toMatchObject({ threadId, legacyPath: legacyWorkspace });
+      expect(yield* fs.readLink(legacyWorkspace)).toBe(foreignRoot);
+      expect(yield* fs.readFileString(path.join(legacyWorkspace, "foreign.txt"))).toBe(
+        "foreign data",
+      );
+      expect(yield* fs.readFileString(path.join(current.workspaceRoot, "current.txt"))).toBe(
+        "current data",
+      );
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
   it.effect("rejects a host root that would put a colon back in PWD and HOME", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
@@ -170,7 +230,7 @@ describe("RunnerPaths", () => {
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 
-  it.effect("allows Windows drive-letter roots with semicolon-delimited PATH", () =>
+  it.effect("uses the Windows PATH-list separator for the home check", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
@@ -180,6 +240,22 @@ describe("RunnerPaths", () => {
         Effect.provideService(HostProcess.Platform, "win32"),
       );
       expect(paths.cwd).toContain("C:runner");
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("rejects the Windows PATH-list separator in the Runner home", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fs.makeTempDirectoryScoped();
+      const home = path.join(root, "runner;path");
+      const error = yield* Effect.flip(
+        prepareRunnerPaths(home, "thread-safe").pipe(
+          Effect.provideService(HostProcess.Platform, "win32"),
+        ),
+      );
+      expect(error).toBeInstanceOf(RunnerPathsHomeError);
+      expect(error).toMatchObject({ home, threadId: "thread-safe" });
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 });

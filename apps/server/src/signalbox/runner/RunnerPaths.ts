@@ -21,7 +21,7 @@ export class RunnerPathsHomeError extends Schema.TaggedError<RunnerPathsHomeErro
   { home: Schema.String, threadId: Schema.String },
 ) {
   override get message(): string {
-    return "The Runner home path contains the PATH separator.";
+    return "The Runner home path contains the host PATH-list separator.";
   }
 }
 
@@ -85,7 +85,9 @@ export const prepareRunnerPaths = Effect.fn("prepareRunnerPaths")(function* (
 ) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  if ((yield* HostProcess.Platform) !== "win32" && home.includes(":")) {
+  const platform = yield* HostProcess.Platform;
+  const pathListSeparator = platform === "win32" ? ";" : ":";
+  if (home.includes(pathListSeparator)) {
     return yield* new RunnerPathsHomeError({ home, threadId });
   }
   const paths = runnerPaths(path, home, threadId);
@@ -122,7 +124,15 @@ export const prepareRunnerPaths = Effect.fn("prepareRunnerPaths")(function* (
     machine: boolean,
   ) =>
     Effect.gen(function* () {
-      if (legacy === undefined || state._tag === "None" || state._tag === "Alias") return;
+      if (legacy === undefined || state._tag === "Alias") return;
+
+      if (state._tag === "None") {
+        // A fresh machine still needs old transcript paths to work after the drive is restored.
+        yield* fs.makeDirectory(current, { recursive: true });
+        yield* fs.makeDirectory(path.dirname(legacy), { recursive: true });
+        yield* fs.symlink(current, legacy);
+        return;
+      }
 
       const root = state._tag === "Legacy" ? legacy : current;
       if (machine) {

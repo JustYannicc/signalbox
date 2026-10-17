@@ -86,18 +86,27 @@ export const makeCodexRollouts = Effect.fn("makeCodexRollouts")(function* (input
   const cursors = new Map<string, number>();
   /** Streams the store held at the last restore; null until then, and nothing is tailed. */
   let listed: ReadonlySet<string> | null = null;
+  /** The local paths are migrated once before Codex resumes; remote rows still rebase per restore. */
+  let localCwdMigrationScanned = input.cwdMigration === undefined;
   let polling = false;
   const lock = yield* Semaphore.make(1);
 
   const rebaseRow = (row: string) => {
-    if (input.cwdMigration === undefined) return row;
+    const migration = input.cwdMigration;
+    if (
+      migration === undefined ||
+      !row.includes('"session_meta"') ||
+      !row.includes(JSON.stringify(migration.from))
+    ) {
+      return row;
+    }
     const object = Option.getOrNull(decodeJsonObjectString(row));
     if (object === null || object.type !== "session_meta") return row;
     const payload = Option.getOrNull(decodeJsonObject(object.payload));
-    if (payload === null || payload.cwd !== input.cwdMigration.from) return row;
+    if (payload === null || payload.cwd !== migration.from) return row;
     return JSON.stringify({
       ...object,
-      payload: { ...payload, cwd: input.cwdMigration.to },
+      payload: { ...payload, cwd: migration.to },
     });
   };
 
@@ -176,17 +185,19 @@ export const makeCodexRollouts = Effect.fn("makeCodexRollouts")(function* (input
   const restore: CodexRollouts["restore"] = lock
     .withPermits(1)(
       Effect.gen(function* () {
-        // Codex has not resumed yet, so all legacy paths can be rewritten without
-        // swapping a rollout inode while the provider has it open for appends.
-        if (input.cwdMigration !== undefined && (yield* fs.exists(sessionsDir))) {
-          for (const relative of yield* fs.readDirectory(sessionsDir, { recursive: true })) {
-            if (
-              relative.endsWith(".jsonl") &&
-              relativePathOf(`${CODEX_STREAM_PREFIX}${relative}`)
-            ) {
-              yield* rebaseFile(path.join(sessionsDir, relative));
+        if (!localCwdMigrationScanned) {
+          // The first restore runs before Codex resumes. Later restores may share a live writer.
+          if (yield* fs.exists(sessionsDir)) {
+            for (const relative of yield* fs.readDirectory(sessionsDir, { recursive: true })) {
+              if (
+                relative.endsWith(".jsonl") &&
+                relativePathOf(`${CODEX_STREAM_PREFIX}${relative}`)
+              ) {
+                yield* rebaseFile(path.join(sessionsDir, relative));
+              }
             }
           }
+          localCwdMigrationScanned = true;
         }
         const stored = yield* input.client.streams(CODEX_STREAM_PREFIX);
         for (const { stream, count } of stored) {
