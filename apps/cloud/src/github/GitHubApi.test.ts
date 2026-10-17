@@ -154,3 +154,20 @@ it.effect("preserves ordinary authentication advice", () => {
     expect(error.responseExcerpt).toContain(message);
   });
 });
+
+it.effect("returns GitHub's exact side counts for a commit comparison", () =>
+  Effect.gen(function* () {
+    const comparison = yield* makeGitHubApi(
+      responseClient({
+        ahead_by: 3,
+        behind_by: 2,
+        merge_base_commit: { sha: "b".repeat(40) },
+      }),
+    ).compare("token", "owner/repo", "a".repeat(40), "c".repeat(40));
+    expect(comparison).toEqual({
+      aheadBy: 3,
+      behindBy: 2,
+      mergeBase: "b".repeat(40),
+    });
+  }),
+);

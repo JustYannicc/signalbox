@@ -132,6 +132,14 @@ export class DriveObject extends DurableObject<DriveObjectEnv> implements DriveO
     return this.api.updateRefs(...args);
   }
 
+  savePull(...args: Parameters<DriveObjectApi["savePull"]>) {
+    return this.api.savePull(...args);
+  }
+
+  pullReceipt(...args: Parameters<DriveObjectApi["pullReceipt"]>) {
+    return this.api.pullReceipt(...args);
+  }
+
   reconcile(...args: Parameters<DriveObjectApi["reconcile"]>) {
     return this.api.reconcile(...args);
   }

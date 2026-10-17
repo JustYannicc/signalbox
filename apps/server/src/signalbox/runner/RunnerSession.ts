@@ -207,6 +207,9 @@ export const makeRunnerSession = Effect.fn("makeRunnerSession")(function* (
           Effect.forkIn(scope),
           Effect.asVoid,
         );
+      case "git.pull":
+        // Fetches can take a while. Keep receiving turns, interrupts and drain requests meanwhile.
+        return Effect.asVoid(Effect.forkIn(turns.pull(message), scope));
       case "end":
         return Deferred.succeed(ended, message.reason).pipe(Effect.andThen(connection.close));
       default:

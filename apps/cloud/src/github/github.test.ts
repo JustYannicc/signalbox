@@ -252,6 +252,17 @@ describe("GitHub-backed drives", () => {
       });
       const cwd = launched.projection.thread.worktreePath!;
 
+      const missingBranchPull = yield* rpc[WS_METHODS.vcsPull]({
+        cwd,
+        operationId: "pull-missing-branch",
+      }).pipe(Effect.flip);
+      expect(missingBranchPull).toMatchObject({
+        operation: "GitHubBranches.pull",
+        command: "git pull --ff-only",
+      });
+      if (missingBranchPull._tag !== "GitCommandError") return expect.unreachable();
+      expect(missingBranchPull.detail).toContain("GitHub has no branch named signalbox/0000abcd");
+
       // What the thread's Runner does in its turn: mirror the remote's head, commit, auto-save.
       const handle = (yield* DriveDirectory).forDrive(driveId);
       const writer = { threadId, userId, generation: 1, live: true, packsAfter: 0 };
@@ -281,6 +292,23 @@ describe("GitHub-backed drives", () => {
         { name: threadRef(threadId), old: remote.head, new: turn },
         { name: wipRef(threadId), old: null, new: autosave },
       ]);
+
+      // Both sides advanced from a shallow imported base. The unpublished linear commit
+      // adds one to GitHub's exact comparison without requiring the base's missing ancestors.
+      const branch = "signalbox/0000abcd";
+      git(remote.machine, ["checkout", "-B", "remote-update", remote.head]);
+      NodeFS.writeFileSync(NodePath.join(remote.machine, "remote.md"), "changed on GitHub\n");
+      git(remote.machine, ["add", "remote.md"]);
+      git(remote.machine, ["commit", "-m", "Remote update"]);
+      git(remote.machine, ["push", remote.bare, `HEAD:refs/heads/${branch}`]);
+      const divergentStatus = yield* rpc[WS_METHODS.subscribeVcsStatus]({ cwd }).pipe(
+        Stream.take(1),
+        Stream.runHead,
+      );
+      expect(divergentStatus).toMatchObject(
+        Option.some({ remote: { hasUpstream: true, aheadCount: 1, behindCount: 1 } }),
+      );
+      git(remote.bare, ["update-ref", "-d", `refs/heads/${branch}`]);
 
       const status = () =>
         rpc[WS_METHODS.subscribeVcsStatus]({ cwd }).pipe(Stream.take(1), Stream.runHead);
@@ -329,6 +357,37 @@ describe("GitHub-backed drives", () => {
           remote: { hasUpstream: true, aheadCount: 0, pr: { number: 1, state: "open" } },
         }),
       );
+
+      // A newer remote head is measured exactly against this local commit, not guessed as one
+      // commit behind. The test fake keeps the new commit reachable as GitHub's compare API does.
+      git(remote.machine, ["checkout", "-B", "remote-update", turn]);
+      NodeFS.writeFileSync(NodePath.join(remote.machine, "remote.md"), "changed on GitHub\n");
+      git(remote.machine, ["add", "remote.md"]);
+      git(remote.machine, ["commit", "-m", "Remote update"]);
+      git(remote.machine, ["push", remote.bare, `HEAD:refs/heads/${branch}`]);
+      expect(yield* status()).toMatchObject(
+        Option.some({ remote: { hasUpstream: true, aheadCount: 0, behindCount: 1 } }),
+      );
+      const remoteAdvance = git(remote.machine, ["rev-parse", "HEAD"]);
+      const unpublishedMerge = git(remote.machine, [
+        "commit-tree",
+        git(remote.machine, ["rev-parse", "HEAD^{tree}"]),
+        "-p",
+        turn,
+        "-p",
+        remoteAdvance,
+        "-m",
+        "Unpublished merge",
+      ]);
+      yield* uploadPack({ driveId, threadId, ...remote.pack([unpublishedMerge], [remote.head]) });
+      yield* handle.updateRefs(writer, [
+        { name: threadRef(threadId), old: turn, new: unpublishedMerge },
+      ]);
+      expect(yield* status()).toMatchObject(Option.some({ remote: null }));
+      yield* handle.updateRefs(writer, [
+        { name: threadRef(threadId), old: unpublishedMerge, new: turn },
+      ]);
+      git(remote.bare, ["update-ref", `refs/heads/${branch}`, turn]);
 
       // Merged on GitHub: it's the remote's head that main may now mirror.
       github.merge(1);

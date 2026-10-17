@@ -9,6 +9,7 @@ import { ThreadBrowsing } from "./browsing/ThreadBrowsing.ts";
 import { TurnReports } from "./diagnostics/TurnReports.ts";
 import type { ThreadObjectApi } from "./ThreadDirectory.ts";
 import * as ThreadEngine from "./ThreadEngine.ts";
+import * as ThreadPulls from "./ThreadPulls.ts";
 import { encodeBatchLine, type ThreadObjectReply, wire } from "./threadWire.ts";
 
 // Diagnostic records are plain JSON values already (ISO times, no class instances).
@@ -23,7 +24,11 @@ const encodeRecord = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
  */
 export const makeThreadObjectApi = (
   run: <A, E>(
-    effect: Effect.Effect<A, E, ThreadEngine.ThreadEngine | TurnReports | ThreadBrowsing>,
+    effect: Effect.Effect<
+      A,
+      E,
+      ThreadEngine.ThreadEngine | TurnReports | ThreadBrowsing | ThreadPulls.ThreadPulls
+    >,
   ) => Promise<A>,
   afterChange: () => Promise<void>,
   wakeAt: (at: number) => Promise<void>,
@@ -35,7 +40,7 @@ export const makeThreadObjectApi = (
     effect: Effect.Effect<
       A,
       ThreadEngine.ThreadNotFoundError | ThreadEngine.ThreadCommandRejectedError,
-      ThreadEngine.ThreadEngine | ThreadBrowsing
+      ThreadEngine.ThreadEngine | ThreadBrowsing | ThreadPulls.ThreadPulls
     >,
   ): Promise<ThreadObjectReply<A>> =>
     run(
@@ -177,6 +182,37 @@ export const makeThreadObjectApi = (
           Effect.map(browsing.record(actor), browsingWire.head.encode),
         ),
       ),
+    pullOwner: (actor, driveId) =>
+      run(ThreadPulls.ThreadPulls.use((pulls) => pulls.owner(actor, driveId))),
+    pullTarget: (actor, driveId, operationId, branch) =>
+      run(
+        ThreadPulls.ThreadPulls.use((pulls) => pulls.target(actor, driveId, operationId, branch)),
+      ),
+    reservePublication: (actor, driveId, operationId) =>
+      reply(
+        ThreadPulls.ThreadPulls.use((pulls) =>
+          pulls.reservePublication(actor, driveId, operationId),
+        ),
+      ),
+    releasePublication: (actor, driveId, operationId) =>
+      run(
+        ThreadPulls.ThreadPulls.use((pulls) =>
+          pulls.releasePublication(actor, driveId, operationId),
+        ),
+      ),
+    pull: async (actor, input) => {
+      const decoded = wire.pullInput.decode(input);
+      const begun = await reply(
+        ThreadPulls.ThreadPulls.use((pulls) => pulls.begin(actor, decoded)),
+      );
+      if (begun._tag !== "ok") return begun;
+      await afterChange();
+      return reply(
+        ThreadPulls.ThreadPulls.use((pulls) =>
+          Effect.map(pulls.wait(actor, decoded.operationId), wire.pullResult.encode),
+        ),
+      );
+    },
     summary: (actor) =>
       run(
         engine.use((service) =>

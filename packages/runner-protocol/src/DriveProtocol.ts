@@ -2,6 +2,7 @@ import { NonNegativeInt } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 
 import { jsonCodec } from "./jsonCodec.ts";
+import { PULL_PATHS, pullReceiptPath } from "./PullProtocol.ts";
 
 /**
  * How a thread's machine reads and writes its drive (#119, #131). A drive is
@@ -78,7 +79,11 @@ export const DRIVE_PATHS = {
   /** A git smart-HTTP remote: `<remote>/info/refs` and `<remote>/git-upload-pack`. */
   remote: `${DRIVE_API_PREFIX}/remote`,
   shortcuts: `${DRIVE_API_PREFIX}/shortcuts`,
+  pullSave: PULL_PATHS.save,
+  pullReceipts: PULL_PATHS.receipts,
 } as const;
+
+export { pullReceiptPath };
 
 /** Where a shortcut target's packs download from. */
 export const shortcutPacksPath = (target: string) =>

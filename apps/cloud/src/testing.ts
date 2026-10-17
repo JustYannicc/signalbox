@@ -29,7 +29,7 @@ import * as CloudSessions from "./auth/CloudSessions.ts";
 import * as CloudTokens from "./auth/CloudTokens.ts";
 import * as CloudConfig from "./CloudConfig.ts";
 import { canWrite, myDriveId } from "./drive/driveAccess.ts";
-import type * as DriveDirectory from "./drive/DriveDirectory.ts";
+import * as DriveDirectory from "./drive/DriveDirectory.ts";
 import * as DriveFiles from "./drive/DriveFiles.ts";
 import type { DrivePerson } from "./drive/DriveMembers.ts";
 import type * as DrivePacks from "./drive/DrivePacks.ts";
@@ -66,6 +66,8 @@ import * as SessionRows from "./thread/session/SessionRows.ts";
 import * as PullRequestPolls from "./thread/pullRequests/PullRequestPolls.ts";
 import * as PullRequestSync from "./thread/pullRequests/PullRequestSync.ts";
 import * as ThreadStore from "./thread/ThreadStore.ts";
+import * as ThreadPulls from "./thread/ThreadPulls.ts";
+import * as PullState from "./thread/PullState.ts";
 import * as ModelManifest from "./thread/ModelManifest.ts";
 import * as TurnModels from "./thread/TurnModels.ts";
 import { contextOfProject } from "./user/contextProjects.ts";
@@ -194,6 +196,7 @@ export const layerThreadObject = (
   machines: Layer.Layer<MachineBackend.MachineBackend> = MachineBackends.layerNone,
   options: {
     readonly drives?: boolean;
+    readonly driveDirectory?: Layer.Layer<DriveDirectory.DriveDirectory>;
     /** Whether a thread's owner may change files in its drive; yes unless given. */
     readonly writes?: (
       userId: string,
@@ -215,6 +218,8 @@ export const layerThreadObject = (
   } = {},
 ) =>
   ThreadRunner.layer.pipe(
+    Layer.provideMerge(ThreadPulls.layerReports.pipe(Layer.provideMerge(ThreadPulls.layer))),
+    Layer.provideMerge(options.driveDirectory ?? Layer.empty),
     Layer.provideMerge(
       Layer.succeed(ThreadRunner.ThreadDrives, {
         enabled: options.drives === true,
@@ -239,7 +244,7 @@ export const layerThreadObject = (
     Layer.provideMerge(options.analytics ?? CloudAnalytics.layerOff),
     Layer.provideMerge(machines),
     Layer.provideMerge(DiagnosticsStore.layer),
-    Layer.provideMerge(Layer.mergeAll(ThreadStore.layer, SessionRows.layer)),
+    Layer.provideMerge(Layer.mergeAll(ThreadStore.layer, SessionRows.layer, PullState.layer)),
     Layer.provideMerge(Layer.mergeAll(NodeSqliteClient.layer({ filename }), Platform.layerCrypto)),
   );
 
@@ -481,6 +486,9 @@ export const makeMemoryCloud = (
   const layerThreadObjectInMemory = () =>
     layerThreadObject(":memory:", MachineBackends.layerNone, {
       drives: true,
+      driveDirectory: Layer.succeed(DriveDirectory.DriveDirectory, {
+        forDrive: (id) => DriveDirectory.handleFor(drives.apiFor(id)),
+      }),
       writes: (userId, driveId) =>
         Effect.map(userDirectory.forUser(userId).driveAccess(driveId), canWrite),
       secretsToken: (userId) => userDirectory.forUser(userId).onePasswordToken(),
@@ -506,6 +514,7 @@ export const makeMemoryCloud = (
         E,
         | ThreadEngine.ThreadEngine
         | ThreadStore.ThreadStore
+        | ThreadPulls.ThreadPulls
         | UserDirectory.UserDirectory
         | TurnReports.TurnReports
         | ThreadBrowsing.ThreadBrowsing
