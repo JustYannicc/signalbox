@@ -17,6 +17,10 @@
       "vite": { "entry": [".github/**/*.test.cjs"] },
       "vitest": { "entry": [".github/**/*.test.cjs"] },
     },
+    "packages/shared": {
+      "includeEntryExports": true,
+      "entry": ["src/agentProcesses/cli.ts", "src/agentProcesses/preload.ts"], // Lifecycle hooks and Node's --import.
+    },
     "scripts": {
       // Knip loads its preprocessor through a CLI option; native verification and
       // worktree setup (from t3.json) run directly.
@@ -38,6 +42,7 @@
       // Vite+ pack entries and the launcher used by installed background services.
       "entry": [
         "src/bin.ts!",
+        "src/signalbox/runner/main.ts!", // Started through the process cleanup wrapper.
         "src/claude-history-worker.ts!",
         "scripts/cli.ts",
         "scripts/evaluate-thread-titles.ts",
@@ -74,11 +79,12 @@
         "infra/check-plan.ts",
       ],
       // `cloudflare:workers` is a Workers runtime module, not a package.
-      "ignoreDependencies": ["cloudflare"],
+      "ignoreDependencies": ["cloudflare", "wrangler"], // Wrangler runs through the process cleanup wrapper.
     },
     "apps/desktop": {
       // Electron loads these bundles by filename rather than importing them.
       "entry": [
+        "scripts/start-electron.mjs", // Started through the process cleanup wrapper.
         "gnome-extension/extension.js!",
         "src/electron/WindowsForegroundFocusWorker.ts!",
         "src/snapShot/GlobalShiftShortcutWorker.ts!",

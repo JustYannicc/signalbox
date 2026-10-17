@@ -9,6 +9,9 @@ export class GitHubError extends Schema.TaggedError<GitHubError>()("GitHubError"
   requestKind: Schema.optional(Schema.Literals(["rest", "graphql", "git"])),
   /** A short, sanitized excerpt of the response body, when an answer arrived. */
   responseExcerpt: Schema.optional(Schema.String),
+  /** Sanitized response headers that help identify malformed GitHub answers. */
+  responseContentType: Schema.optional(Schema.String),
+  responseContentLength: Schema.optional(Schema.String),
   /** When GitHub's rate limit lets the caller ask again (epoch ms), when it said. */
   retryAt: Schema.optional(Schema.Number),
 }) {}
