@@ -13,7 +13,7 @@ import {
   snapshot,
   threadId,
   withObject,
-} from "./runnerTestKit.ts";
+} from "../runnerTesting.ts";
 
 describe("native answer Runner upgrades", () => {
   it.effect.each(["light", "heavy"] as const)(

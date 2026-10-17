@@ -21,7 +21,14 @@ import {
 } from "./runLifecycle.ts";
 import { interruptRunEvents } from "./scriptedTurn.ts";
 import { canSteer, steerEvents, steerTarget } from "./steering.ts";
-import { type DecisionContext, ids, messageEvent, runEvent, threadEvent } from "./threadEvents.ts";
+import {
+  type Decision,
+  type DecisionContext,
+  ids,
+  messageEvent,
+  runEvent,
+  threadEvent,
+} from "./threadEvents.ts";
 import { applyEvents } from "./threadProjection.ts";
 
 /**
@@ -31,10 +38,6 @@ import { applyEvents } from "./threadProjection.ts";
  * its state from SQL and a dozen services, so the shapes of its events are
  * followed here rather than its code.
  */
-
-export type Decision =
-  | { readonly _tag: "accepted"; readonly events: ReadonlyArray<OrchestrationV2DomainEvent> }
-  | { readonly _tag: "rejected"; readonly message: string };
 
 const accept = (events: ReadonlyArray<OrchestrationV2DomainEvent>): Decision => ({
   _tag: "accepted",

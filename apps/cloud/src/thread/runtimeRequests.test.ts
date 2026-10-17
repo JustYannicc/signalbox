@@ -36,7 +36,7 @@ import {
   threadId,
   turnReport,
   withObject,
-} from "./runner/runnerTestKit.ts";
+} from "./runnerTesting.ts";
 
 const requestId = RuntimeRequestId.make("native-request-1");
 const encodeRequest = Schema.encodeSync(Schema.toCodecJson(OrchestrationV2RuntimeRequest));

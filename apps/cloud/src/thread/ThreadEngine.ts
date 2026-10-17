@@ -34,8 +34,8 @@ import * as SqlClient from "effect/sql/SqlClient";
 
 import { traceIdOf } from "./diagnostics/traceId.ts";
 import { hasPendingTurnWork, scriptedStep } from "./scriptedTurn.ts";
-import { type Decision, decide, decideLaunch, type ThreadWorktree } from "./threadDecider.ts";
-import type { DecisionContext } from "./threadEvents.ts";
+import { decide, decideLaunch, type ThreadWorktree } from "./threadDecider.ts";
+import type { Decision, DecisionContext } from "./threadEvents.ts";
 import { expireEndedRuntimeRequests } from "./runtimeRequests.ts";
 import { activeRun } from "./runLifecycle.ts";
 import * as ThreadSecretStore from "./secrets/ThreadSecretStore.ts";
