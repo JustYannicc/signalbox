@@ -9,6 +9,7 @@
       // Keep vendored reference repositories outside the root project.
       "project": ["*.{js,mjs,cjs,ts,mts,cts}", ".github/**/*.cjs"],
       "entry": [
+        ".dependency-cruiser.cjs",
         // CodeRabbit loads its configuration by filename.
         ".coderabbit.config.ts",
         ".github/scripts/thread-transfer-report.cjs",
@@ -24,6 +25,8 @@
         "mobile-native-client.ts",
         "setup-worktree.ts",
         "workload-cost-replay.ts", // signalbox: workload analytics
+        "boundaries/check.mjs", // signalbox: module boundaries
+        "boundaries/tests.mjs", // signalbox: module boundaries
       ],
       // The `t3` npm package's files: copied into the package, never imported.
       "ignore": ["npm-launcher/**"],

@@ -4,7 +4,7 @@ const { pathToFileURL } = require("node:url");
 const { getDefaultConfig } = require("expo/metro-config");
 const { withUniwindConfig } = require("uniwind/metro");
 const extraThemes = require("./generated-uniwind-theme-names.json");
-const { pnpmMetroWatchFolders } = require("../../scripts/lib/pnpm-virtual-store.ts");
+const { pnpmMetroWatchFolders } = require("@t3tools/shared/pnpmVirtualStore");
 
 /** @type {import("expo/metro-config").MetroConfig} */
 const config = getDefaultConfig(__dirname);

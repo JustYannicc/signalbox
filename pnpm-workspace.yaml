@@ -320,6 +320,10 @@ packageExtensions:
   "expo-quick-actions@6.0.2":
     dependencies:
       "@expo/config-plugins": 58.0.9
+  # dependency-cruiser needs the JS compiler API; the app uses native TypeScript 7.
+  "dependency-cruiser@18.6.0":
+    dependencies:
+      typescript: 6.0.3
   "@clerk/expo@*":
     dependencies:
       "@expo/config-plugins": 58.0.9

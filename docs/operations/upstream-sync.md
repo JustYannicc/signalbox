@@ -66,6 +66,11 @@ the sync still lands merges that leave workflow files alone.
    node scripts/upstream-sync/sync.ts --post-merge
    ```
 
+   This prunes fixed module-boundary baseline entries once the merge is committed. After
+   resolving conflicts and committing the merge, rerun
+   `node scripts/boundaries/check.mjs --write-baseline` and commit any baseline changes.
+   New fork violations still fail CI and must be fixed before merging the PR.
+
 4. Grep for new identity values upstream may have added (`com.t3tools`, `t3code://`, `~/.t3`,
    `3773`, `"t3"` executables) and route them to Signalbox's. The automated sync can't do this
    one.

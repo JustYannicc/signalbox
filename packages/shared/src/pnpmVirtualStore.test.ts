@@ -9,7 +9,7 @@ import {
   pnpmViteFsAllow,
   pnpmVirtualStoreFolders,
   pnpmMetroWatchFolders,
-} from "./pnpm-virtual-store.ts";
+} from "@t3tools/shared/pnpmVirtualStore";
 
 const roots: string[] = [];
 afterEach(() => {

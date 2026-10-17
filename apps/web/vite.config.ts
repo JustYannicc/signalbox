@@ -17,7 +17,7 @@ import {
 import { loadRepoEnv } from "../../scripts/lib/public-config";
 import { thirdPartyLicensesPlugin } from "../../scripts/lib/third-party-licenses";
 import { tailwindPlugins } from "./vite/tailwind";
-import { pnpmViteFsAllow } from "../../scripts/lib/pnpm-virtual-store";
+import { pnpmViteFsAllow } from "@t3tools/shared/pnpmVirtualStore";
 
 const repoEnv = loadRepoEnv();
 Object.assign(process.env, repoEnv);
