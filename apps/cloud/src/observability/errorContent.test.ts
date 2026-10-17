@@ -3,9 +3,14 @@ import { initLogger, type WideEvent } from "evlog";
 import { toSentryErrorEvent, toSentryLog } from "evlog/sentry";
 import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
+import * as Schema from "effect/Schema";
 
 import * as Evlog from "./Evlog.ts";
 import { redactContent } from "./content.ts";
+
+class RejectedInput extends Schema.TaggedError<RejectedInput>()("RejectedInput", {
+  cause: Schema.Defect(),
+}) {}
 
 describe("error content at the drain", () => {
   it.effect("keeps rejected input out of Sentry logs and issues", () => {
@@ -20,7 +25,7 @@ describe("error content at the drain", () => {
     });
     return Effect.gen(function* () {
       yield* Effect.logError("cloud request failed", Cause.pretty(Cause.die(new Error(canary))));
-      yield* Effect.fail(new Error(canary));
+      return yield* Effect.fail(new RejectedInput({ cause: new Error(canary) }));
     }).pipe(
       Evlog.withUnit("request.failure"),
       Effect.provide(Evlog.layer),
