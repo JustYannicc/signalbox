@@ -11,7 +11,7 @@ import { type AuthEnvironmentScope, AuthEnvironmentScopes } from "@t3tools/contr
 
 import * as CloudTokens from "../auth/CloudTokens.ts";
 import { hashRangeOf, hashSecret, isPublicId, publicIdOf } from "../auth/hashedSecrets.ts";
-import type { ModelUsage } from "../modelGateway/modelGatewayRecord.ts";
+import type { ModelUsage } from "../models/ModelRecords.ts";
 import { randomKey } from "../pool/PoolLinks.ts";
 
 /**
