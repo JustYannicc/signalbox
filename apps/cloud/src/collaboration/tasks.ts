@@ -11,7 +11,7 @@ import { runtimeModeWithin } from "@signalbox/automations/access";
 import type { CollaborationInput } from "@t3tools/contracts/signalboxCollaboration";
 import * as Effect from "effect/Effect";
 
-import type { ThreadInboxShape } from "../thread/ThreadInbox.ts";
+import type * as ThreadInbox from "../thread/ThreadInbox.ts";
 import { poolKindOfInstance } from "../thread/providerCatalog.ts";
 import { isLiveRun } from "../thread/runLifecycle.ts";
 import type { TaskRecords } from "./taskRecords.ts";
@@ -78,7 +78,7 @@ const taskResult = (
 
 export const makeTasks = (deps: {
   readonly access: CollaborationAccess;
-  readonly inbox: ThreadInboxShape;
+  readonly inbox: ThreadInbox.ThreadInbox["Service"];
   readonly key: (
     source: ThreadId,
     operation: string,

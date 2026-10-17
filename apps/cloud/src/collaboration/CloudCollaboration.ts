@@ -20,7 +20,7 @@ import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
 import { threadShellFromProjection as threadShell } from "../thread/threadProjection.ts";
-import { make as makeInbox } from "../thread/ThreadInbox.ts";
+import * as ThreadInbox from "../thread/ThreadInbox.ts";
 import { UserShell } from "../user/UserShell.ts";
 import { isLiveRun } from "../thread/runLifecycle.ts";
 import { makeAccess, collaborationFailure, refuse } from "./access.ts";
@@ -50,7 +50,7 @@ export const make = Effect.gen(function* () {
   const access = yield* makeAccess;
   const crypto = yield* Crypto.Crypto;
   const shellService = yield* UserShell;
-  const inbox = yield* makeInbox;
+  const inbox = yield* ThreadInbox.make;
 
   /** A retry keeps its command and message ids, including after its first run finishes. */
   const key = (sourceThreadId: ThreadId, operation: string, requestId: string | undefined) =>

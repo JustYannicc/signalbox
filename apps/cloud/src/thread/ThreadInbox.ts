@@ -26,8 +26,19 @@ type RunGuard = { readonly id: RunId; readonly status: OrchestrationV2Run["statu
 
 export class ThreadInboxError extends Schema.TaggedError<ThreadInboxError>()("ThreadInboxError", {
   code: Schema.Literals(["not_found", "rejected", "unavailable"]),
-  message: Schema.String,
-}) {}
+  cause: Schema.optional(Schema.Defect()),
+}) {
+  override get message(): string {
+    switch (this.code) {
+      case "not_found":
+        return "Thread or run not found.";
+      case "rejected":
+        return "The thread inbox rejected the request.";
+      case "unavailable":
+        return "The thread inbox is unavailable. Try again.";
+    }
+  }
+}
 
 export interface InboxState {
   readonly threadId: ThreadId;
@@ -57,35 +68,37 @@ export interface InboxWait {
   readonly result: { readonly messageId: MessageId; readonly text: string } | null;
 }
 
-export interface ThreadInboxShape {
-  readonly post: (
-    actor: Actor,
-    message: Message,
-    expectedRun?: RunGuard,
-  ) => Effect.Effect<InboxReceipt, ThreadInboxError>;
-  readonly start: (
-    actor: Actor,
-    input: OrchestrationV2ThreadLaunchInput,
-    lineage?: OrchestrationV2AppThreadLineage,
-  ) => Effect.Effect<{ readonly threadId: ThreadId }, ThreadInboxError>;
-  readonly read: (actor: Actor, threadId: ThreadId) => Effect.Effect<InboxState, ThreadInboxError>;
-  /** Resumes the thread's own journal; no sidebar or search index participates in coordination. */
-  readonly changes: (
-    actor: Actor,
-    threadId: ThreadId,
-  ) => Stream.Stream<InboxState, ThreadInboxError>;
-  readonly wait: (
-    actor: Actor,
-    input: { readonly threadId: ThreadId; readonly runId?: RunId; readonly timeoutMs?: number },
-  ) => Effect.Effect<InboxWait, ThreadInboxError>;
-}
-
 /** Addressable thread inboxes. Platform routing and persistence stay behind this interface. */
-export class ThreadInbox extends Context.Service<ThreadInbox, ThreadInboxShape>()(
-  "@signalbox/cloud/thread/ThreadInbox",
-) {}
+export class ThreadInbox extends Context.Service<
+  ThreadInbox,
+  {
+    readonly post: (
+      actor: Actor,
+      message: Message,
+      expectedRun?: RunGuard,
+    ) => Effect.Effect<InboxReceipt, ThreadInboxError>;
+    readonly start: (
+      actor: Actor,
+      input: OrchestrationV2ThreadLaunchInput,
+      lineage?: OrchestrationV2AppThreadLineage,
+    ) => Effect.Effect<{ readonly threadId: ThreadId }, ThreadInboxError>;
+    readonly read: (
+      actor: Actor,
+      threadId: ThreadId,
+    ) => Effect.Effect<InboxState, ThreadInboxError>;
+    /** Resumes the thread's own journal; no sidebar or search index participates in coordination. */
+    readonly changes: (
+      actor: Actor,
+      threadId: ThreadId,
+    ) => Stream.Stream<InboxState, ThreadInboxError>;
+    readonly wait: (
+      actor: Actor,
+      input: { readonly threadId: ThreadId; readonly runId?: RunId; readonly timeoutMs?: number },
+    ) => Effect.Effect<InboxWait, ThreadInboxError>;
+  }
+>()("@signalbox/cloud/thread/ThreadInbox") {}
 
-const failure = (cause: { readonly _tag: string; readonly message: string }) =>
+const failure = (cause: { readonly _tag: string }) =>
   new ThreadInboxError({
     code:
       cause._tag === "ThreadNotFoundError"
@@ -93,7 +106,7 @@ const failure = (cause: { readonly _tag: string; readonly message: string }) =>
         : cause._tag === "ThreadCommandRejectedError"
           ? "rejected"
           : "unavailable",
-    message: cause._tag === "ThreadNotFoundError" ? "Thread not found." : cause.message,
+    cause,
   });
 const stateOf = (projection: OrchestrationV2ThreadProjection, sequence: number): InboxState => ({
   threadId: projection.thread.id,
@@ -121,13 +134,13 @@ const answerOf = (state: InboxState, runId: RunId | undefined, timedOut: boolean
 /** Cloud adapter over the thread's existing durable journal; it never creates another sequence. */
 export const make = Effect.gen(function* () {
   const threads = yield* CloudThreadService;
-  const read: ThreadInboxShape["read"] = (actor, threadId) =>
+  const read: ThreadInbox["Service"]["read"] = (actor, threadId) =>
     threads.threadSnapshot(actor, threadId).pipe(
       Effect.map(({ projection, snapshotSequence }) => stateOf(projection, snapshotSequence)),
       Effect.mapError(failure),
     );
 
-  const post: ThreadInboxShape["post"] = (actor, message, expectedRun) =>
+  const post: ThreadInbox["Service"]["post"] = (actor, message, expectedRun) =>
     Effect.gen(function* () {
       const accepted = yield* threads
         .dispatchCommand(
@@ -145,7 +158,6 @@ export const make = Effect.gen(function* () {
       if (run === undefined)
         return yield* new ThreadInboxError({
           code: "unavailable",
-          message: "The inbox accepted the message but its run is unavailable.",
         });
       return {
         threadId: message.threadId,
@@ -162,7 +174,7 @@ export const make = Effect.gen(function* () {
       };
     });
 
-  const start: ThreadInboxShape["start"] = (actor, input, lineage) =>
+  const start: ThreadInbox["Service"]["start"] = (actor, input, lineage) =>
     Effect.gen(function* () {
       // Creation and delivery may retry independently. A crash between them leaves an empty,
       // addressable thread; replaying the same message then starts its first turn once.
@@ -187,7 +199,7 @@ export const make = Effect.gen(function* () {
       return { threadId: child.threadId };
     });
 
-  const changes: ThreadInboxShape["changes"] = (actor, threadId) =>
+  const changes: ThreadInbox["Service"]["changes"] = (actor, threadId) =>
     Stream.unwrap(
       Effect.gen(function* () {
         const initial = yield* threads
@@ -222,12 +234,12 @@ export const make = Effect.gen(function* () {
       }),
     );
 
-  const wait: ThreadInboxShape["wait"] = (actor, input) =>
+  const wait: ThreadInbox["Service"]["wait"] = (actor, input) =>
     Effect.gen(function* () {
       const first = yield* read(actor, input.threadId);
       const runId = input.runId ?? first.runs.toSorted((a, b) => b.ordinal - a.ordinal)[0]?.id;
       if (input.runId !== undefined && !first.runs.some((run) => run.id === input.runId))
-        return yield* new ThreadInboxError({ code: "not_found", message: "Run not found." });
+        return yield* new ThreadInboxError({ code: "not_found" });
       const initial = answerOf(first, runId, false);
       if (runId === undefined || terminal(initial.status)) return initial;
       const duration = Number.isFinite(input.timeoutMs)

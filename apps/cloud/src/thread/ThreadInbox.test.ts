@@ -10,7 +10,7 @@ import { SCRATCH_PROJECT_ID } from "../environment.ts";
 import { makeMemoryCloud } from "../testing.ts";
 import { CloudThreadService } from "./CloudThreadService.ts";
 import { ThreadCommandRejectedError } from "./ThreadEngine.ts";
-import { make } from "./ThreadInbox.ts";
+import * as ThreadInbox from "./ThreadInbox.ts";
 import { scriptedModelSelection } from "./scriptedProvider.ts";
 
 const actor = { userId: "inbox-user", contextIds: [PERSONAL_CONTEXT_ID] };
@@ -42,7 +42,7 @@ const setup = Effect.gen(function* () {
     .forUser(actor.userId)
     .recordSignIn({ id: actor.userId, email: "inbox@b.c" });
   const threads = yield* CloudThreadService.pipe(Effect.provide(cloud.layerFor(actor.userId)));
-  const inbox = yield* make.pipe(Effect.provide(cloud.layerFor(actor.userId)));
+  const inbox = yield* ThreadInbox.make.pipe(Effect.provide(cloud.layerFor(actor.userId)));
   yield* inbox.start(actor, input);
   return { cloud, threads, inbox };
 });
@@ -60,7 +60,7 @@ describe("thread inbox", () => {
       };
       yield* inbox.post(actor, queued);
       yield* cloud.settle;
-      const restarted = yield* make.pipe(Effect.provide(cloud.layerFor(actor.userId)));
+      const restarted = yield* ThreadInbox.make.pipe(Effect.provide(cloud.layerFor(actor.userId)));
       const retry = yield* restarted.post(actor, {
         ...message,
         commandId: CommandId.make("retry"),
@@ -93,21 +93,22 @@ describe("thread inbox", () => {
         commandId: CommandId.make("child-launch"),
         initialMessage: { text: "CHILD_RESULT", attachments: [] },
       };
-      const failed = yield* make.pipe(
+      const deliveryError = new ThreadCommandRejectedError({
+        commandId: "delivery",
+        commandType: "message.dispatch",
+        reason: "private upstream failure detail",
+      });
+      const failed = yield* ThreadInbox.make.pipe(
         Effect.provideService(CloudThreadService, {
           ...threads,
-          dispatchCommand: () =>
-            Effect.fail(
-              new ThreadCommandRejectedError({
-                commandId: "delivery",
-                commandType: "message.dispatch",
-                reason: "temporary failure",
-              }),
-            ),
+          dispatchCommand: () => Effect.fail(deliveryError),
         }),
         Effect.provide(cloud.layerFor(actor.userId)),
       );
-      expect((yield* Effect.result(failed.start(actor, child)))._tag).toBe("Failure");
+      const failure = yield* Effect.flip(failed.start(actor, child));
+      expect(failure.code).toBe("rejected");
+      expect(failure.message).toBe("The thread inbox rejected the request.");
+      expect(failure.cause).toBe(deliveryError);
       expect((yield* inbox.read(actor, child.threadId)).runs).toHaveLength(0);
       yield* inbox.start(actor, child);
       yield* inbox.start(actor, child);
@@ -127,7 +128,7 @@ describe("thread inbox", () => {
         const { cloud, threads, inbox } = yield* setup;
         const posted = yield* inbox.post(actor, message);
         const subscribed = yield* Deferred.make<void>();
-        const live = yield* make.pipe(
+        const live = yield* ThreadInbox.make.pipe(
           Effect.provideService(CloudThreadService, {
             ...threads,
             subscribeThread: (who, query) =>

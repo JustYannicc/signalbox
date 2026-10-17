@@ -7,7 +7,7 @@ import {
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 
-import { make as makeInbox } from "../thread/ThreadInbox.ts";
+import * as ThreadInbox from "../thread/ThreadInbox.ts";
 import { CloudThreadService } from "../thread/CloudThreadService.ts";
 import { UserDrives } from "../user/UserDrives.ts";
 
@@ -51,7 +51,7 @@ export const deliverCompletion = (
       messages.at(-1)?.text ??
       `The child ended with status ${run.status}. Read its activity for details.`;
     const id = `cloud-task-result:${childId}:${run.id}`;
-    const inbox = yield* makeInbox;
+    const inbox = yield* ThreadInbox.make;
     yield* inbox.post(
       actor,
       {
