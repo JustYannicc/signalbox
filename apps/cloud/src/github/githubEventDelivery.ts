@@ -109,8 +109,9 @@ export const makeGitHubEventDelivery = Effect.gen(function* () {
           ),
         );
         const events = new Set(signal.events);
+        const checksCompleted = signal.events.includes("pr.checks.completed");
         if (
-          signal.events.includes("pr.checks.completed") &&
+          checksCompleted &&
           (facts.headSha !== before?.head_sha || checksState !== before?.checks_state)
         ) {
           if (checksState === "passing") events.add("pr.checks.passed");
@@ -141,7 +142,12 @@ export const makeGitHubEventDelivery = Effect.gen(function* () {
         yield* store
           .facts(row.id, number, {
             headSha: facts.headSha,
-            checksState,
+            // PR updates can arrive after checks finish; only check deliveries advance this cursor.
+            checksState: checksCompleted
+              ? checksState
+              : before !== undefined && facts.headSha === before.head_sha
+                ? before.checks_state
+                : null,
             mergeability: facts.mergeability,
           })
           .pipe(

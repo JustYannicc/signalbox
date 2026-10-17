@@ -25,18 +25,35 @@ export default workflow(async (_w, pr: unknown) => pr);`;
         const saved = (yield* tool("automation_save", { source, compiled: compiled.compiled })) as {
           automation: { automationId: string };
         };
+        const updatesSource = source
+          .replace("Check transitions", "Observe PR updates")
+          .replace(event, "pr.updated");
+        const updatesCompiled = compileForCloud(updatesSource);
+        if (!updatesCompiled.ok) return yield* Effect.die(updatesCompiled.diagnostics);
+        yield* tool("automation_save", {
+          source: updatesSource,
+          compiled: updatesCompiled.compiled,
+        });
         const subscription = (yield* cloud.inUser(
           "user_1",
           GitHubWebhooks.use((hooks) => hooks.store.list),
         ))[0]!;
         const branch = github.pulls[0]!.head;
         const firstHead = github.head(branch)!;
-        const deliver = (sha: string, deliveryId: string) =>
+        const deliver = (
+          sha: string,
+          deliveryId: string,
+          gitHubEvent: "check_suite" | "pull_request" = "check_suite",
+        ) =>
           Effect.gen(function* () {
             const body = JSON.stringify({
-              action: "completed",
               repository: { full_name: "owner/repo" },
-              check_suite: { head_sha: sha, pull_requests: [{ number: 1 }] },
+              ...(gitHubEvent === "check_suite"
+                ? {
+                    action: "completed",
+                    check_suite: { head_sha: sha, pull_requests: [{ number: 1 }] },
+                  }
+                : { action: "synchronize", pull_request: { number: 1 } }),
             });
             const signature = yield* Effect.promise(() => signedBody(body, subscription.secret));
             expect(
@@ -47,7 +64,7 @@ export default workflow(async (_w, pr: unknown) => pr);`;
                 query: "",
                 body: new TextEncoder().encode(body),
                 headers: {
-                  "x-github-event": "check_suite",
+                  "x-github-event": gitHubEvent,
                   "x-github-delivery": deliveryId,
                   "x-hub-signature-256": signature,
                 },
@@ -67,8 +84,17 @@ export default workflow(async (_w, pr: unknown) => pr);`;
         const secondHead = github.head(branch)!;
         expect(secondHead).not.toBe(firstHead);
         expect((yield* deliver(firstHead, "stale-head-a")).runs).toHaveLength(1);
-        const detail = yield* deliver(secondHead, "head-b");
-        expect(detail.runs).toHaveLength(2);
+        expect((yield* deliver(secondHead, "head-b")).runs).toHaveLength(2);
+        github.pushEmptyCommit(branch);
+        const thirdHead = github.head(branch)!;
+        expect(thirdHead).not.toBe(secondHead);
+        expect(
+          (yield* deliver(thirdHead, "delayed-update-head-c", "pull_request")).runs,
+        ).toHaveLength(2);
+        const detail = yield* deliver(thirdHead, "head-c");
+        expect(detail.runs).toHaveLength(3);
+        yield* deliver(thirdHead, "another-update-head-c", "pull_request");
+        expect((yield* deliver(thirdHead, "another-check-head-c")).runs).toHaveLength(3);
         const outputs = yield* cloud.inUser(
           "user_1",
           WorkflowEngine.use((engine) =>
@@ -80,6 +106,7 @@ export default workflow(async (_w, pr: unknown) => pr);`;
           expect.arrayContaining([
             expect.objectContaining({ event, headSha: firstHead }),
             expect.objectContaining({ event, headSha: secondHead }),
+            expect.objectContaining({ event, headSha: thirdHead }),
           ]),
         );
       }).pipe(run);
