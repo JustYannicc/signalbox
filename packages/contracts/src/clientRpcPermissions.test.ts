@@ -4,8 +4,18 @@ import {
   AUTOMATION_WS_METHODS,
   AuthOrchestrationOperateScope,
   AuthOrchestrationReadScope,
+  AuthPreviewOperateScope,
   clientRpcRequiredScopes,
-} from "./index.ts";
+} from "@t3tools/contracts";
+import { SIGNALBOX_PERSON_BROWSER_WS_METHODS } from "@t3tools/contracts/signalboxPersonBrowser";
+
+describe("cloud browser profile permissions", () => {
+  it("requires preview control permission to clear saved sign-ins", () => {
+    expect(clientRpcRequiredScopes(SIGNALBOX_PERSON_BROWSER_WS_METHODS.clearProfile, {})).toEqual([
+      AuthPreviewOperateScope,
+    ]);
+  });
+});
 
 describe("task lifecycle client RPC permissions", () => {
   it("lets read actions use orchestration read scope", () => {

@@ -45,6 +45,37 @@ describe("Kernel's API (#574)", () => {
     }),
   );
 
+  it.effect("deletes only the named profile and treats a missing one as already clear", () =>
+    Effect.gen(function* () {
+      const { asked, api } = fakeKernel({
+        "DELETE /profiles/sb%2Fone%20person": { status: 204 },
+        "DELETE /profiles/gone": { status: 404, body: { code: "not_found" } },
+      });
+      yield* api.deleteProfile("sb/one person");
+      yield* api.deleteProfile("gone");
+      expect(asked.map(({ route }) => route)).toEqual([
+        "DELETE /profiles/sb%2Fone%20person",
+        "DELETE /profiles/gone",
+      ]);
+    }),
+  );
+
+  it.effect("does not hide profile deletion failures", () =>
+    Effect.gen(function* () {
+      const { api } = fakeKernel({
+        "DELETE /profiles/sb-abc": {
+          status: 403,
+          body: { code: "forbidden", message: "Profile cannot be deleted." },
+        },
+      });
+      expect(yield* Effect.flip(api.deleteProfile("sb-abc"))).toMatchObject({
+        operation: "deleteProfile",
+        status: 403,
+        code: "forbidden",
+      });
+    }),
+  );
+
   it.effect("reads a deleted or unknown browser as gone, and deleting a gone one as done", () =>
     Effect.gen(function* () {
       const { api } = fakeKernel({

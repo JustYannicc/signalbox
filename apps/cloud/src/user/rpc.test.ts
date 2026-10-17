@@ -2,6 +2,7 @@ import {
   AUTOMATION_WS_METHODS,
   AuthOrchestrationOperateScope,
   AuthOrchestrationReadScope,
+  AuthPreviewOperateScope,
   type AuthEnvironmentScope,
   CommandId,
   EnvironmentId,
@@ -12,6 +13,7 @@ import {
   TurnItemId,
   WS_METHODS,
 } from "@t3tools/contracts";
+import { SIGNALBOX_PERSON_BROWSER_WS_METHODS } from "@t3tools/contracts/signalboxPersonBrowser";
 import { describe, expect, it } from "@effect/vitest";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -106,6 +108,21 @@ const sidebar = (rpc: Rpc) =>
   );
 
 describe("cloud RPC", () => {
+  it.effect("serves the person's one managed browser profile through the user RPC", () =>
+    Effect.gen(function* () {
+      const rpc = yield* client([AuthOrchestrationReadScope, AuthPreviewOperateScope]);
+      expect(yield* rpc[SIGNALBOX_PERSON_BROWSER_WS_METHODS.profileStatus]({})).toEqual({
+        available: false,
+      });
+
+      const failure = yield* Effect.flip(rpc[SIGNALBOX_PERSON_BROWSER_WS_METHODS.clearProfile]({}));
+      expect(failure).toMatchObject({
+        _tag: "SignalboxPersonBrowserError",
+        message: "Cloud browser sign-ins could not be cleared. Try again.",
+      });
+    }).pipe(Effect.scoped),
+  );
+
   it.effect("emits resume transitions and its marker under the requesting trace", () =>
     Effect.gen(function* () {
       const spans: Array<Tracer.NativeSpan> = [];
