@@ -1,6 +1,6 @@
 import { describe, expect, it } from "@effect/vitest";
 import { RunId, type OrchestrationV2Run } from "@t3tools/contracts";
-import { runContinuationChain, runOrigin } from "../thread/runContinuations.ts";
+import { latestLogicalRun, runContinuationChain, runOrigin } from "../thread/runContinuations.ts";
 
 import { hasPendingTaskRuns, latestTaskTerminalRun } from "./taskRuns.ts";
 
@@ -49,6 +49,19 @@ describe("task run recovery", () => {
       recovery.id,
     ]);
     expect(hasPendingTaskRuns(runs, original)).toBe(true);
+  });
+
+  it("ranks logical roots before following the latest root's continuation tail", () => {
+    const previous = run("run:1", 1, "interrupted");
+    const latestRoot = run("run:2", 2, "completed");
+    const recovery = run("run:3", 3, "interrupted", previous.id);
+    const latestRootRecovery = run("run:4", 4, "running", latestRoot.id);
+
+    expect(latestLogicalRun([previous, latestRoot, recovery])?.id).toBe(latestRoot.id);
+    expect(latestLogicalRun([latestRoot, recovery, previous])?.id).toBe(latestRoot.id);
+    expect(latestLogicalRun([previous, latestRootRecovery, recovery, latestRoot])?.id).toBe(
+      latestRootRecovery.id,
+    );
   });
 
   it("returns the original alone and returns an empty chain for a missing run", () => {

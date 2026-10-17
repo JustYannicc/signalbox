@@ -15,8 +15,8 @@ import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
 import * as ThreadStore from "../ThreadStore.ts";
-import { TurnReports } from "../diagnostics/TurnReports.ts";
 import {
+  TurnReports,
   claudeDriver,
   connect,
   freshDatabase,
@@ -26,8 +26,8 @@ import {
   snapshot,
   turnReport,
   withObject,
-} from "./runnerTestKit.ts";
-import type { NativeChildBatchInput } from "./nativeChildBatch.ts";
+} from "../ThreadTestKit.ts";
+import type { NativeChildBatchInput } from "../NativeChildProtocol.ts";
 
 const encodeThread = Schema.encodeEffect(Schema.toCodecJson(OrchestrationV2AppThread));
 const encodeMessage = Schema.encodeEffect(Schema.toCodecJson(OrchestrationV2ConversationMessage));

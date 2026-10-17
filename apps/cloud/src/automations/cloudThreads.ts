@@ -111,7 +111,7 @@ export const layer = Layer.effect(
     const store = yield* UserStore.UserStore;
     const drives = yield* UserDrives.UserDrives;
     const feed = yield* ThreadEventFeed;
-    const inbox = yield* ThreadInbox.make;
+    const inbox = yield* ThreadInbox.ThreadInbox;
 
     const owner = ownerActor.pipe(
       Effect.provideService(UserStore.UserStore, store),

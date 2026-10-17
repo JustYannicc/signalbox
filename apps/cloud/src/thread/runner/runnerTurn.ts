@@ -21,7 +21,14 @@ import * as Exit from "effect/Exit";
 import * as Schema from "effect/Schema";
 
 import { isHarnessInstance, runnerInstanceFor } from "../providerCatalog.ts";
-import { activeRun, finishRunEvents, providerThreadFor, type RunEnding } from "../runLifecycle.ts";
+import {
+  activeRun,
+  finishRunEvents,
+  isLiveRun,
+  isTerminalRunStatus,
+  providerThreadFor,
+  type RunEnding,
+} from "../runLifecycle.ts";
 import {
   attemptEvent,
   type DecisionContext,
@@ -625,23 +632,11 @@ export function runnerBatchEvents(
     if (next.length === 0) continue;
     const driven = steers ? next : next.map((event) => asDriven(event, steers));
     events.push(...driven);
-    const previouslyLiveRuns = new Set(
-      current.runs
-        .filter(
-          (run) =>
-            run.status === "preparing" ||
-            run.status === "starting" ||
-            run.status === "running" ||
-            run.status === "waiting",
-        )
-        .map((run) => run.id),
-    );
+    const previouslyLiveRuns = new Set(current.runs.filter(isLiveRun).map((run) => run.id));
     for (const event of driven) {
       if (
         event.type === "run.updated" &&
-        (event.payload.status === "completed" ||
-          event.payload.status === "failed" ||
-          event.payload.status === "interrupted") &&
+        isTerminalRunStatus(event.payload.status) &&
         previouslyLiveRuns.has(event.payload.id)
       ) {
         newlyTerminalRunIds.add(event.payload.id);

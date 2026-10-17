@@ -19,10 +19,17 @@ import * as ThreadInbox from "../thread/ThreadInbox.ts";
 import { applyEvents } from "../thread/threadProjection.ts";
 import { scriptedModelSelection } from "../thread/scriptedProvider.ts";
 import { scriptedStep } from "../thread/scriptedTurn.ts";
-import { recoverRunEvents } from "../thread/runner/runRecovery.ts";
+import { recoverRunEvents } from "../thread/ThreadRecovery.ts";
 import { decide } from "../thread/threadDecider.ts";
 import { CloudCollaboration, make } from "./CloudCollaboration.ts";
 import { deliverCompletion } from "./completion.ts";
+import { CollaborationError } from "./errors.ts";
+import {
+  completeRun,
+  controlledParentThreads,
+  queuedParent,
+  stopRecovery,
+} from "./tests/completionHarness.ts";
 
 const actor = { userId: "completion-user", contextIds: [PERSONAL_CONTEXT_ID] };
 const source = ThreadId.make("completion-source");
@@ -230,6 +237,156 @@ describe("child completion delivery", () => {
       expect((yield* env.threads.threadSnapshot(actor, source)).projection.runs).toHaveLength(0);
       yield* env.deliver(events);
       expect((yield* env.threads.threadSnapshot(actor, source)).projection.runs).toHaveLength(1);
+    }),
+  );
+
+  it.effect("delivers a root's child result when a higher recovery continuation was stopped", () =>
+    Effect.gen(function* () {
+      const env = yield* setup;
+      const actor = { userId: "completion-user", contextIds: [PERSONAL_CONTEXT_ID] };
+      const context = { now: DateTime.makeUnsafe(yield* Clock.currentTimeMillis) };
+      const initial = (yield* env.threads.threadSnapshot(actor, source)).projection;
+      const started = queuedParent(initial, context);
+      const stopped = stopRecovery(started.projection, started.original, context, false);
+      const parentProjection = stopped.projection;
+      expect(parentProjection.runs.find((run) => run.ordinal === 2)?.status).toBe("starting");
+      expect(parentProjection.runs.find((run) => run.ordinal === 3)?.status).toBe("interrupted");
+
+      const controlled = controlledParentThreads(env.threads, source, parentProjection, context);
+      const collaboration = yield* make.pipe(
+        Effect.provide(ThreadInbox.layer),
+        Effect.provideService(CloudThreadService, controlled.service),
+        Effect.provide(env.cloud.layerFor(actor.userId)),
+      );
+      const task = yield* collaboration.delegate(source, {
+        task: "Return a result for parent root two",
+        clientRequestId: "parent-root-two-child",
+      });
+      const retry = yield* collaboration.delegate(source, {
+        task: "Return a result for parent root two",
+        clientRequestId: "parent-root-two-child",
+      });
+      expect(task.childThreadId).toBe(retry.childThreadId);
+      expect(task.childRunId).toBe(retry.childRunId);
+      const originalChildRunId = task.childRunId;
+      if (originalChildRunId === null) throw new Error("Expected the original child receipt.");
+
+      const completed = yield* completeRun(
+        env.threads,
+        actor,
+        task.childThreadId,
+        originalChildRunId,
+        context,
+      );
+      controlled.child(task.childThreadId, completed.projection);
+      const deliver = (events: ReadonlyArray<ReturnType<typeof scriptedStep>[number]>) =>
+        deliverCompletion(
+          task.childThreadId,
+          events.map((event) => ({ event })),
+        ).pipe(
+          Effect.provide(ThreadInbox.layer),
+          Effect.provideService(CloudThreadService, controlled.service),
+          Effect.provideService(CloudCollaboration, collaboration),
+          Effect.provide(env.cloud.layerFor(actor.userId)),
+        );
+      yield* deliver(completed.events);
+      yield* deliver(completed.events);
+
+      const resultMessageId = MessageId.make(
+        `cloud-task-result:${task.childThreadId}:${originalChildRunId}`,
+      );
+      expect(
+        controlled.parent().messages.filter((message) => message.id === resultMessageId),
+      ).toHaveLength(1);
+      expect(controlled.parentDispatchSequences).toHaveLength(2);
+      expect(controlled.parentDispatchSequences[1]).toBe(controlled.parentDispatchSequences[0]);
+      expect(controlled.parent().runs.find((run) => run.ordinal === 2)?.status).toBe("starting");
+    }),
+  );
+
+  it.effect("suppresses a child result during a transient stop-cascade retry window", () =>
+    Effect.gen(function* () {
+      const env = yield* setup;
+      const actor = { userId: "completion-user", contextIds: [PERSONAL_CONTEXT_ID] };
+      const context = { now: DateTime.makeUnsafe(yield* Clock.currentTimeMillis) };
+      const initial = (yield* env.threads.threadSnapshot(actor, source)).projection;
+      const started = queuedParent(initial, context);
+      const controlled = controlledParentThreads(env.threads, source, started.projection, context);
+      const collaboration = yield* make.pipe(
+        Effect.provide(ThreadInbox.layer),
+        Effect.provideService(CloudThreadService, controlled.service),
+        Effect.provide(env.cloud.layerFor(actor.userId)),
+      );
+      const task = yield* collaboration.delegate(source, {
+        task: "Do not deliver after the parent root was stopped",
+        clientRequestId: "stopped-root-child",
+      });
+      const originalChildRunId = task.childRunId;
+      if (originalChildRunId === null) throw new Error("Expected the original child receipt.");
+
+      const stopped = stopRecovery(controlled.parent(), started.original, context, true);
+      const parentProjection = stopped.projection;
+      const { continuation } = stopped;
+      controlled.setParent(parentProjection);
+      const stopEvent = stopped.events.find(
+        (event) =>
+          event.type === "run.updated" &&
+          event.payload.id === continuation.id &&
+          event.payload.status === "interrupted",
+      );
+      if (stopEvent === undefined) throw new Error("Expected the recovery stop event.");
+
+      const retryingCascade = CloudCollaboration.of({
+        ...collaboration,
+        stopDescendants: () =>
+          Effect.fail(CollaborationError.unavailable("stop_descendants", new Error("retry"))),
+      });
+      expect(
+        yield* Effect.result(
+          deliverCompletion(source, [{ event: stopEvent }]).pipe(
+            Effect.provide(ThreadInbox.layer),
+            Effect.provideService(CloudThreadService, controlled.service),
+            Effect.provideService(CloudCollaboration, retryingCascade),
+            Effect.provide(env.cloud.layerFor(actor.userId)),
+          ),
+        ),
+      ).toMatchObject({
+        _tag: "Failure",
+        failure: { _tag: "CollaborationError", operation: "stop_descendants" },
+      });
+      expect(
+        yield* collaboration.completion(task.childThreadId, 1, (disposition) =>
+          Effect.succeed(disposition),
+        ),
+      ).toEqual({ allowed: true, parentOrdinal: 1 });
+
+      const completed = yield* completeRun(
+        env.threads,
+        actor,
+        task.childThreadId,
+        originalChildRunId,
+        context,
+      );
+      controlled.child(task.childThreadId, completed.projection);
+      yield* deliverCompletion(
+        task.childThreadId,
+        completed.events.map((event) => ({ event })),
+      ).pipe(
+        Effect.provide(ThreadInbox.layer),
+        Effect.provideService(CloudThreadService, controlled.service),
+        Effect.provideService(CloudCollaboration, collaboration),
+        Effect.provide(env.cloud.layerFor(actor.userId)),
+      );
+
+      expect(controlled.parentDispatchSequences).toEqual([]);
+      expect(controlled.parent().runs.find((run) => run.ordinal === 2)?.status).toBe("queued");
+      expect(
+        controlled
+          .parent()
+          .messages.some((message) =>
+            message.id.startsWith(`cloud-task-result:${task.childThreadId}:`),
+          ),
+      ).toBe(false);
     }),
   );
 });

@@ -16,7 +16,6 @@ import * as Effect from "effect/Effect";
 import * as Hex from "effect/encoding/Hex";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
-import type { SqlError } from "effect/sql/SqlError";
 import * as Stream from "effect/Stream";
 
 import { threadShellFromProjection as threadShell } from "../thread/threadProjection.ts";
@@ -28,14 +27,14 @@ import {
   isTerminalRunStatus,
   isRunWaitBoundary,
 } from "../thread/runLifecycle.ts";
-import { makeAccess, collaborationFailure, refuse } from "./access.ts";
+import { makeAccess, refuse } from "./access.ts";
 import { listItem, readPage } from "./threadReads.ts";
 import { makeCapabilities } from "./capabilities.ts";
 import { makeTasks } from "./tasks.ts";
 import { stopRunCommand } from "./stopCommand.ts";
 import { makeTaskRecords } from "./taskRecords.ts";
-import type { CollaborationError } from "./errors.ts";
-import { runContinuationChain, runOrigin } from "../thread/runContinuations.ts";
+import { CollaborationError } from "./errors.ts";
+import { latestLogicalRun, runContinuationChain, runOrigin } from "../thread/runContinuations.ts";
 
 export class CloudCollaboration extends Context.Service<
   CloudCollaboration,
@@ -56,12 +55,12 @@ export class CloudCollaboration extends Context.Service<
         readonly allowed: boolean;
         readonly parentOrdinal: number | null;
       }) => Effect.Effect<A, E, R>,
-    ) => Effect.Effect<A, E | SqlError, R>;
+    ) => Effect.Effect<A, E | CollaborationError, R>;
   }
 >()("@signalbox/cloud/collaboration/CloudCollaboration") {}
 
 const latestRun = (projection: OrchestrationV2ThreadProjection) =>
-  projection.runs.toSorted((a, b) => b.ordinal - a.ordinal)[0];
+  latestLogicalRun(projection.runs);
 const encodeKey = Schema.encodeSync(Schema.fromJsonString(Schema.Array(Schema.String)));
 
 export const make = Effect.gen(function* () {
@@ -102,7 +101,11 @@ export const make = Effect.gen(function* () {
     Effect.gen(function* () {
       const caller = yield* access.source(source);
       const projectId = input.projectId ?? caller.projection.thread.projectId;
-      const shell = yield* shellService.snapshot;
+      const shell = yield* shellService.snapshot.pipe(
+        Effect.catchTags({
+          SqlError: (cause) => Effect.fail(CollaborationError.unavailable("list_threads", cause)),
+        }),
+      );
       const now = yield* Clock.currentTimeMillis;
       const candidates = shell.threads.filter(
         (thread) =>
@@ -145,7 +148,7 @@ export const make = Effect.gen(function* () {
         total: matching.length,
         nextCursor: cursor + page.length < matching.length ? cursor + page.length : null,
       };
-    }).pipe(Effect.mapError(collaborationFailure));
+    });
 
   const send: CloudCollaboration["Service"]["send"] = (source, input) =>
     Effect.gen(function* () {
@@ -167,20 +170,27 @@ export const make = Effect.gen(function* () {
         );
       const operation = yield* key(source, `send:${input.threadId}`, input.clientRequestId);
       const messageId = MessageId.make(`message:${operation}`);
-      const receipt = yield* inbox.post(caller.actor, {
-        type: "message.dispatch",
-        commandId: CommandId.make(`collaboration:${operation}`),
-        threadId: input.threadId,
-        messageId,
-        text: input.message,
-        attachments: [],
-        createdBy: "agent",
-        creationSource: "mcp",
-        senderThreadId: source,
-        dispatchMode:
-          input.mode === "queue" ? { type: "queue_after_active" } : { type: "start_immediately" },
-        deliveryIntent: input.mode === "steer" ? "steer" : "auto",
-      });
+      const receipt = yield* inbox
+        .post(caller.actor, {
+          type: "message.dispatch",
+          commandId: CommandId.make(`collaboration:${operation}`),
+          threadId: input.threadId,
+          messageId,
+          text: input.message,
+          attachments: [],
+          createdBy: "agent",
+          creationSource: "mcp",
+          senderThreadId: source,
+          dispatchMode:
+            input.mode === "queue" ? { type: "queue_after_active" } : { type: "start_immediately" },
+          deliveryIntent: input.mode === "steer" ? "steer" : "auto",
+        })
+        .pipe(
+          Effect.catchTags({
+            ThreadInboxError: (cause) =>
+              Effect.fail(CollaborationError.fromInbox("send_message", cause)),
+          }),
+        );
       if (ownedChild && parentRun !== undefined) {
         const updated = yield* access.read(source, input.threadId);
         const childRun = updated.projection.runs.find((run) => run.id === receipt.runId);
@@ -188,7 +198,7 @@ export const make = Effect.gen(function* () {
           yield* records.recordRun(source, parentOrdinal, input.threadId, childRun.ordinal);
       }
       return receipt;
-    }).pipe(records.lock.withPermits(1), Effect.mapError(collaborationFailure));
+    }).pipe(records.lock.withPermits(1));
 
   const wait: CloudCollaboration["Service"]["wait"] = (source, input) =>
     Effect.gen(function* () {
@@ -211,19 +221,26 @@ export const make = Effect.gen(function* () {
         Effect.andThen(Effect.never),
       );
       const result = yield* Effect.raceFirst(
-        inbox.wait(first.caller.actor, {
-          threadId: input.threadId,
-          ...(runId === undefined ? {} : { runId }),
-          ...(input.timeoutMs === undefined ? {} : { timeoutMs: input.timeoutMs }),
-          followRecovery: true,
-        }),
+        inbox
+          .wait(first.caller.actor, {
+            threadId: input.threadId,
+            ...(runId === undefined ? {} : { runId }),
+            ...(input.timeoutMs === undefined ? {} : { timeoutMs: input.timeoutMs }),
+            followRecovery: true,
+          })
+          .pipe(
+            Effect.catchTags({
+              ThreadInboxError: (cause) =>
+                Effect.fail(CollaborationError.fromInbox("wait_for_run", cause)),
+            }),
+          ),
         revoked,
       );
       const after = yield* access.read(source, input.threadId);
       if (after.projection.thread.deletedAt !== null)
         return yield* refuse("Thread not found.", "thread_not_found");
       return result;
-    }).pipe(Effect.mapError(collaborationFailure));
+    });
 
   const interrupt: CloudCollaboration["Service"]["interrupt"] = (source, input) =>
     Effect.gen(function* () {
@@ -241,12 +258,33 @@ export const make = Effect.gen(function* () {
         `interrupt:${input.threadId}:${run.id}`,
         input.clientRequestId,
       );
-      yield* access.threads.dispatchCommand(
-        caller.actor,
-        stopRunCommand(CommandId.make(operation), run, input.reason),
-      );
+      yield* access.threads
+        .dispatchCommand(caller.actor, stopRunCommand(CommandId.make(operation), run, input.reason))
+        .pipe(
+          Effect.catchTags({
+            ThreadNotFoundError: (cause) =>
+              Effect.fail(
+                new CollaborationError({
+                  code: "thread_not_found",
+                  message: "Thread not found.",
+                  cause,
+                }),
+              ),
+            ThreadCommandRejectedError: (cause) =>
+              Effect.fail(
+                new CollaborationError({
+                  code: "orchestration_error",
+                  message: "The thread refused the request.",
+                  operation: "interrupt_run",
+                  cause,
+                }),
+              ),
+            ThreadObjectError: (cause) =>
+              Effect.fail(CollaborationError.unavailable("interrupt_run", cause)),
+          }),
+        );
       return { threadId: input.threadId, runId: run.id, status: "interrupt_requested" as const };
-    }).pipe(Effect.mapError(collaborationFailure));
+    });
 
   const capabilities = yield* makeCapabilities(access);
   const tasks = makeTasks({ access, inbox, key, wait, capabilities, records });

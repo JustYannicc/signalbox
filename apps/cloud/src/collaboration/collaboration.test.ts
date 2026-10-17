@@ -23,14 +23,16 @@ import * as ThreadInbox from "../thread/ThreadInbox.ts";
 import { ThreadCommandRejectedError } from "../thread/ThreadEngine.ts";
 import { ThreadObjectError } from "../thread/ThreadDirectory.ts";
 import { applyEvents } from "../thread/threadProjection.ts";
+import { decide } from "../thread/threadDecider.ts";
 import { scriptedStep } from "../thread/scriptedTurn.ts";
 import { scriptedModelSelection } from "../thread/scriptedProvider.ts";
 import { projectIdForContext } from "../user/contextProjects.ts";
 import { UserFolders } from "../user/UserFolders.ts";
 import { CloudCollaboration, make } from "./CloudCollaboration.ts";
 import { deliverCompletion } from "./completion.ts";
+import { recoveredQueuedProjection } from "./tests/completionHarness.ts";
 import { wire } from "../thread/threadWire.ts";
-import { recoverRunEvents } from "../thread/runner/runRecovery.ts";
+import { recoverRunEvents } from "../thread/ThreadRecovery.ts";
 
 const source = ThreadId.make("source");
 const target = ThreadId.make("target");
@@ -540,6 +542,95 @@ describe("cloud thread collaboration", () => {
         [1, "interrupted"],
         [2, "cancelled"],
       ]);
+    }),
+  );
+
+  it.effect("delegates and sends to an owned child after a later root completes", () =>
+    Effect.gen(function* () {
+      const { cloud, threads } = yield* setup;
+      const actor = { userId, contextIds: [PERSONAL_CONTEXT_ID] };
+      const context = { now: DateTime.makeUnsafe(yield* Clock.currentTimeMillis) };
+      const initial = (yield* threads.threadSnapshot(actor, source)).projection;
+      let parentProjection = recoveredQueuedProjection(initial, context);
+      const latestRoot = parentProjection.runs.find((run) => run.ordinal === 2);
+      if (latestRoot === undefined) throw new Error("expected the queued parent root");
+      expect(latestRoot.status).toBe("starting");
+      for (let steps = 0; steps < 100; steps++) {
+        if (parentProjection.runs.find((run) => run.id === latestRoot.id)?.status === "completed")
+          break;
+        const events = scriptedStep(parentProjection, context);
+        if (events.length === 0) throw new Error("expected the second parent run to advance");
+        parentProjection = applyEvents(parentProjection, events)!;
+        if (parentProjection.runs.find((run) => run.id === latestRoot.id)?.status === "completed")
+          break;
+      }
+      expect(parentProjection.runs.find((run) => run.id === latestRoot.id)?.status).toBe(
+        "completed",
+      );
+      expect(parentProjection.runs.find((run) => run.ordinal === 3)?.status).toBe("interrupted");
+
+      const controlledThreads = {
+        ...threads,
+        threadSnapshot: (who: Parameters<typeof threads.threadSnapshot>[0], id: ThreadId) =>
+          threads
+            .threadSnapshot(who, id)
+            .pipe(
+              Effect.map((snapshot) =>
+                id === source ? { ...snapshot, projection: parentProjection } : snapshot,
+              ),
+            ),
+        dispatchCommand: (
+          who: Parameters<typeof threads.dispatchCommand>[0],
+          command: Parameters<typeof threads.dispatchCommand>[1],
+          expectedRun?: Parameters<typeof threads.dispatchCommand>[2],
+        ) => {
+          if (!("threadId" in command) || command.threadId !== source)
+            return threads.dispatchCommand(who, command, expectedRun);
+          const decision = decide(
+            parentProjection,
+            command,
+            context,
+            expectedRun === undefined ? {} : { run: expectedRun },
+          );
+          if (decision._tag === "rejected")
+            return Effect.fail(
+              ThreadCommandRejectedError.forCommand(
+                { id: command.commandId, type: command.type },
+                decision.message,
+                decision.code,
+              ),
+            );
+          parentProjection = applyEvents(parentProjection, decision.events)!;
+          return Effect.succeed({ sequence: parentProjection.runs.length + 100 });
+        },
+      };
+      const controlled = yield* make.pipe(
+        Effect.provide(ThreadInbox.layer),
+        Effect.provideService(CloudThreadService, controlledThreads),
+        Effect.provide(cloud.layerFor(userId)),
+      );
+      expect(yield* controlled.wait(source, { threadId: source })).toMatchObject({
+        runId: latestRoot.id,
+        status: "completed",
+        timedOut: false,
+      });
+      const first = yield* controlled.delegate(source, {
+        task: "Work after the completed root",
+        clientRequestId: "after-recovered-root",
+      });
+      const retry = yield* controlled.delegate(source, {
+        task: "Work after the completed root",
+        clientRequestId: "after-recovered-root",
+      });
+      expect(first.childThreadId).toBe(retry.childThreadId);
+      expect(first.childRunId).toBe(retry.childRunId);
+
+      const sent = yield* controlled.send(source, {
+        threadId: first.childThreadId,
+        message: "Follow up after the completed root",
+        mode: "queue",
+      });
+      expect(sent.runId).toBeTruthy();
     }),
   );
 

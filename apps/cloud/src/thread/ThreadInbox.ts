@@ -30,6 +30,13 @@ export class ThreadInboxError extends Schema.TaggedError<ThreadInboxError>()("Th
   code: Schema.Literals(["not_found", "rejected", "run_changed", "unavailable"]),
   cause: Schema.optional(Schema.Defect()),
 }) {
+  static fromRejection(cause: { readonly code?: string | undefined }): ThreadInboxError {
+    return new ThreadInboxError({
+      code: cause.code === "run_changed" || cause.code === "unavailable" ? cause.code : "rejected",
+      cause,
+    });
+  }
+
   override get message(): string {
     switch (this.code) {
       case "not_found":
@@ -107,23 +114,6 @@ export class ThreadInbox extends Context.Service<
   }
 >()("@signalbox/cloud/thread/ThreadInbox") {}
 
-const isInboxError = Schema.is(ThreadInboxError);
-const failure = (cause: { readonly _tag: string; readonly code?: unknown }) =>
-  isInboxError(cause)
-    ? cause
-    : new ThreadInboxError({
-        code:
-          cause._tag === "ThreadNotFoundError"
-            ? "not_found"
-            : cause._tag === "ThreadCommandRejectedError"
-              ? cause.code === "run_changed"
-                ? "run_changed"
-                : cause.code === "unavailable"
-                  ? "unavailable"
-                  : "rejected"
-              : "unavailable",
-        cause,
-      });
 const stateOf = (projection: OrchestrationV2ThreadProjection, sequence: number): InboxState => ({
   threadId: projection.thread.id,
   sequence,
@@ -158,12 +148,17 @@ export const make = Effect.gen(function* () {
   const threads = yield* CloudThreadService;
   const read: ThreadInbox["Service"]["read"] = (actor, threadId) =>
     threads.threadSnapshot(actor, threadId).pipe(
+      Effect.catchTags({
+        ThreadNotFoundError: (cause) =>
+          Effect.fail(new ThreadInboxError({ code: "not_found", cause })),
+        ThreadObjectError: (cause) =>
+          Effect.fail(new ThreadInboxError({ code: "unavailable", cause })),
+      }),
       Effect.flatMap(({ projection, snapshotSequence }) =>
         projection.thread.deletedAt !== null
           ? Effect.fail(new ThreadInboxError({ code: "not_found" }))
           : Effect.succeed(stateOf(projection, snapshotSequence)),
       ),
-      Effect.mapError(failure),
     );
 
   const post: ThreadInbox["Service"]["post"] = (actor, message, expectedRun) =>
@@ -177,7 +172,16 @@ export const make = Effect.gen(function* () {
           },
           expectedRun,
         )
-        .pipe(Effect.mapError(failure));
+        .pipe(
+          Effect.catchTags({
+            ThreadNotFoundError: (cause) =>
+              Effect.fail(new ThreadInboxError({ code: "not_found", cause })),
+            ThreadObjectError: (cause) =>
+              Effect.fail(new ThreadInboxError({ code: "unavailable", cause })),
+            ThreadCommandRejectedError: (cause) =>
+              Effect.fail(ThreadInboxError.fromRejection(cause)),
+          }),
+        );
       const after = yield* read(actor, message.threadId);
       const saved = after.messages.find((candidate) => candidate.id === message.messageId);
       const run = after.runs.find((candidate) => candidate.id === saved?.runId);
@@ -205,9 +209,15 @@ export const make = Effect.gen(function* () {
       // Creation and delivery may retry independently. A crash between them leaves an empty,
       // addressable thread; replaying the same message then starts its first turn once.
       const { initialMessage, ...creation } = input;
-      const child = yield* threads
-        .launchThread(actor, creation, lineage)
-        .pipe(Effect.mapError(failure));
+      const child = yield* threads.launchThread(actor, creation, lineage).pipe(
+        Effect.catchTags({
+          ThreadNotFoundError: (cause) =>
+            Effect.fail(new ThreadInboxError({ code: "not_found", cause })),
+          ThreadObjectError: (cause) =>
+            Effect.fail(new ThreadInboxError({ code: "unavailable", cause })),
+          ThreadCommandRejectedError: (cause) => Effect.fail(ThreadInboxError.fromRejection(cause)),
+        }),
+      );
       if (initialMessage !== undefined)
         yield* post(actor, {
           type: "message.dispatch",
@@ -228,9 +238,14 @@ export const make = Effect.gen(function* () {
   const changes: ThreadInbox["Service"]["changes"] = (actor, threadId) =>
     Stream.unwrap(
       Effect.gen(function* () {
-        const initial = yield* threads
-          .threadSnapshot(actor, threadId)
-          .pipe(Effect.mapError(failure));
+        const initial = yield* threads.threadSnapshot(actor, threadId).pipe(
+          Effect.catchTags({
+            ThreadNotFoundError: (cause) =>
+              Effect.fail(new ThreadInboxError({ code: "not_found", cause })),
+            ThreadObjectError: (cause) =>
+              Effect.fail(new ThreadInboxError({ code: "unavailable", cause })),
+          }),
+        );
         if (initial.projection.thread.deletedAt !== null)
           return yield* new ThreadInboxError({ code: "not_found" });
         let projection: OrchestrationV2ThreadProjection | null = initial.projection;
@@ -257,7 +272,14 @@ export const make = Effect.gen(function* () {
             }),
           ),
           Stream.filter((state) => state !== null),
-          Stream.mapError(failure),
+          Stream.catchTags({
+            ThreadNotFoundError: (cause) =>
+              Stream.fail(new ThreadInboxError({ code: "not_found", cause })),
+            ThreadObjectError: (cause) =>
+              Stream.fail(new ThreadInboxError({ code: "unavailable", cause })),
+            ThreadCommandRejectedError: (cause) =>
+              Stream.fail(ThreadInboxError.fromRejection(cause)),
+          }),
         );
         return Stream.concat(
           Stream.make(stateOf(initial.projection, initial.snapshotSequence)),

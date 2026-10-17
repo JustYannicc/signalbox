@@ -29,7 +29,9 @@ import { migrateBrowsing } from "./browsing/browsingTables.ts";
 import { migratePullRequestPolls } from "./pullRequests/PullRequestPolls.ts";
 import { migrateStatusNote, readNote, writeNote } from "./statusLine/statusNoteTables.ts";
 import { type MachineRecord, MachineRecords, NO_MACHINE_RECORD } from "./runner/MachineBackend.ts";
-import { nativeChildPendingWire, type NativeChildPending } from "./runner/nativeChildBatch.ts";
+import type { NativeChildPending } from "./NativeChildProtocol.ts";
+import { nativeChildPendingWire } from "./runner/nativeChildBatch.ts";
+import type { ThreadOwner } from "./ThreadOwner.ts";
 import {
   migrateSecretValues,
   readSecretValues,
@@ -37,6 +39,8 @@ import {
   type SecretValues,
 } from "./runner/secretValues.ts";
 import { type ThreadMonitor, ThreadMonitorWire } from "./threadWire.ts";
+
+export type { ThreadOwner } from "./ThreadOwner.ts";
 
 /**
  * What one thread's Durable Object persists: its event log, the receipt of
@@ -54,17 +58,6 @@ const EVENT_FORMAT = 1;
 export interface StoredEvent {
   readonly sequence: number;
   readonly event: OrchestrationV2DomainEvent;
-}
-
-export interface ThreadOwner {
-  readonly userId: string;
-  /** The context the thread acts as, fixed at creation (see `CloudThreadService`). */
-  readonly contextId: SignalboxContextId;
-  /**
-   * The drive the thread works in, fixed at creation. Null for threads created
-   * before shared drives, which work in their owner's My Drive.
-   */
-  readonly driveId: string | null;
 }
 
 export interface NativeChildPendingChanges {

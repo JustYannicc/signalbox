@@ -12,7 +12,7 @@ import * as ThreadInbox from "../thread/ThreadInbox.ts";
 import { CloudThreadService } from "../thread/CloudThreadService.ts";
 import { UserDrives } from "../user/UserDrives.ts";
 import { CloudCollaboration } from "./CloudCollaboration.ts";
-import { runContinuationChain } from "../thread/runContinuations.ts";
+import { latestLogicalRun, runContinuationChain, runOrigin } from "../thread/runContinuations.ts";
 import { isTerminalRunStatus } from "../thread/runLifecycle.ts";
 
 const wasStopped = (
@@ -69,15 +69,23 @@ export const deliverCompletion = (
           parent.projection.thread.deletedAt !== null
         )
           return;
-        const parentRun = parent.projection.runs.toSorted((a, b) => b.ordinal - a.ordinal)[0];
-        if (wasStopped(parent.projection, parentRun)) return;
         const delegatedFromRun =
-          disposition.parentOrdinal === null
-            ? undefined
-            : parent.projection.runs.find(
-                (candidate) => candidate.ordinal === disposition.parentOrdinal,
+          disposition.parentOrdinal === null || disposition.parentOrdinal === 0
+            ? latestLogicalRun(parent.projection.runs)
+            : runOrigin(
+                parent.projection.runs,
+                parent.projection.runs.find(
+                  (candidate) => candidate.ordinal === disposition.parentOrdinal,
+                ),
               );
-        if (wasStopped(parent.projection, delegatedFromRun)) return;
+        const delegatedFromTail = runContinuationChain(parent.projection.runs, delegatedFromRun).at(
+          -1,
+        );
+        if (delegatedFromTail?.status === "interrupted") return;
+        // The command guard is physical: any newer persisted run invalidates this CAS.
+        const latestPersistedRun = parent.projection.runs.toSorted(
+          (a, b) => b.ordinal - a.ordinal,
+        )[0];
         const messages = projection.messages.filter(
           (message) =>
             message.runId === run.id && message.role === "assistant" && !message.streaming,
@@ -101,7 +109,9 @@ export const deliverCompletion = (
             text: `Child task cloud-task:${childId} ${run.status}.\n\n${summary.slice(0, 12_000)}${summary.length > 12_000 ? "\n\nResult truncated. Read task_status for the full result." : ""}`,
             dispatchMode: { type: "queue_after_active" },
           },
-          parentRun === undefined ? null : { id: parentRun.id, status: parentRun.status },
+          latestPersistedRun === undefined
+            ? null
+            : { id: latestPersistedRun.id, status: latestPersistedRun.status },
         );
       });
     yield* collaboration.completion(childId, original.ordinal, deliver);

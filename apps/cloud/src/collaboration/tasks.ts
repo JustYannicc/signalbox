@@ -1,16 +1,20 @@
 import { CommandId, MessageId, NodeId, ThreadId } from "@t3tools/contracts";
 import { runtimeModeWithin } from "@signalbox/automations/access";
-import type { CollaborationInput } from "@t3tools/contracts/signalboxCollaboration";
+import type {
+  CollaborationInput,
+  CollaborationOutput,
+} from "@t3tools/contracts/signalboxCollaboration";
 import * as Effect from "effect/Effect";
 
 import type * as ThreadInbox from "../thread/ThreadInbox.ts";
 import { poolKindOfInstance } from "../thread/providerCatalog.ts";
 import { activeRun, isTerminalRunStatus } from "../thread/runLifecycle.ts";
-import { runOrigin } from "../thread/runContinuations.ts";
+import { latestLogicalRun, runOrigin } from "../thread/runContinuations.ts";
 import type { TaskRecords } from "./taskRecords.ts";
 import { makeTaskStops } from "./taskStops.ts";
-import { collaborationFailure, refuse, type CollaborationAccess } from "./access.ts";
-import type { CloudCollaboration } from "./CloudCollaboration.ts";
+import { refuse, type CollaborationAccess } from "./access.ts";
+import { CollaborationError } from "./errors.ts";
+import type { makeCapabilities } from "./capabilities.ts";
 import { taskResult } from "./taskRuns.ts";
 
 const TASK_PREFIX = "cloud-task:";
@@ -23,8 +27,11 @@ export const makeTasks = (deps: {
     operation: string,
     request: string | undefined,
   ) => Effect.Effect<string>;
-  readonly wait: CloudCollaboration["Service"]["wait"];
-  readonly capabilities: CloudCollaboration["Service"]["capabilities"];
+  readonly wait: (
+    source: ThreadId,
+    input: CollaborationInput<"wait">,
+  ) => Effect.Effect<CollaborationOutput<"wait">, CollaborationError>;
+  readonly capabilities: Effect.Success<ReturnType<typeof makeCapabilities>>;
   readonly records: TaskRecords;
 }) => {
   const ownedTask = (source: ThreadId, taskId: string) =>
@@ -41,7 +48,10 @@ export const makeTasks = (deps: {
       return found;
     });
 
-  const status: CloudCollaboration["Service"]["status"] = (source, input) =>
+  const status = (
+    source: ThreadId,
+    input: CollaborationInput<"status">,
+  ): Effect.Effect<CollaborationOutput<"status">, CollaborationError> =>
     Effect.gen(function* () {
       const { projection } = yield* ownedTask(source, input.taskId);
       if (projection.thread.deletedAt !== null)
@@ -49,11 +59,14 @@ export const makeTasks = (deps: {
       return taskResult(projection);
     });
 
-  const delegate: CloudCollaboration["Service"]["delegate"] = (source, input) =>
+  const delegate = (
+    source: ThreadId,
+    input: CollaborationInput<"delegate">,
+  ): Effect.Effect<CollaborationOutput<"delegate">, CollaborationError> =>
     Effect.gen(function* () {
       const caller = yield* deps.access.source(source);
       const active = activeRun(caller.projection);
-      const latest = caller.projection.runs.toSorted((a, b) => b.ordinal - a.ordinal)[0];
+      const latest = latestLogicalRun(caller.projection.runs);
       const sourceRun = runOrigin(caller.projection.runs, active ?? latest);
       const ordinal = sourceRun?.ordinal ?? 0;
       if (input.isolation === "shared")
@@ -82,18 +95,25 @@ export const makeTasks = (deps: {
         )
           return yield* status(source, { taskId: NodeId.make(`${TASK_PREFIX}${childId}`) });
         // Creation may have committed before the initial delivery. Retry that same message.
-        yield* deps.inbox.post(caller.actor, {
-          type: "message.dispatch",
-          commandId: CommandId.make(`collaboration:${operation}`),
-          threadId: childId,
-          messageId: MessageId.make(`message:${operation}`),
-          text: input.task,
-          attachments: [],
-          createdBy: "agent",
-          creationSource: "mcp",
-          senderThreadId: source,
-          dispatchMode: { type: "queue_after_active" },
-        });
+        yield* deps.inbox
+          .post(caller.actor, {
+            type: "message.dispatch",
+            commandId: CommandId.make(`collaboration:${operation}`),
+            threadId: childId,
+            messageId: MessageId.make(`message:${operation}`),
+            text: input.task,
+            attachments: [],
+            createdBy: "agent",
+            creationSource: "mcp",
+            senderThreadId: source,
+            dispatchMode: { type: "queue_after_active" },
+          })
+          .pipe(
+            Effect.catchTags({
+              ThreadInboxError: (cause) =>
+                Effect.fail(CollaborationError.fromInbox("retry_task_message", cause)),
+            }),
+          );
       } else {
         if (
           (active === undefined && latest?.status === "interrupted") ||
@@ -161,37 +181,61 @@ export const makeTasks = (deps: {
           );
         yield* deps.records.record(source, childId, ordinal);
         // File first: the very first turn must resolve the parent's complete home chain.
-        yield* deps.access.folders.moveThread({ threadId: childId, folderId: caller.home });
-        yield* deps.inbox.start(
-          caller.actor,
-          {
-            commandId: CommandId.make(`collaboration:${operation}`),
-            threadId: childId,
-            projectId: parent.projectId,
-            title: input.title ?? input.task.split("\n")[0]!.slice(0, 120),
-            creationSource: "mcp",
-            modelSelection,
-            runtimeMode,
-            interactionMode,
-            workspaceStrategy: { type: "root" },
-            initialMessage: {
-              messageId: MessageId.make(`message:${operation}`),
-              text: input.task,
-              attachments: [],
-            },
-          },
-          {
-            parentThreadId: source,
-            rootThreadId: parent.lineage.rootThreadId,
-            relationshipToParent: "subagent",
-          },
+        yield* deps.access.folders.moveThread({ threadId: childId, folderId: caller.home }).pipe(
+          Effect.catchTags({
+            SqlError: (cause) =>
+              Effect.fail(CollaborationError.unavailable("file_child_thread", cause)),
+            FolderRefusedError: (cause) =>
+              Effect.fail(
+                new CollaborationError({
+                  code: "orchestration_error",
+                  message: "The thread refused the request.",
+                  operation: "file_child_thread",
+                  cause,
+                }),
+              ),
+          }),
         );
+        yield* deps.inbox
+          .start(
+            caller.actor,
+            {
+              commandId: CommandId.make(`collaboration:${operation}`),
+              threadId: childId,
+              projectId: parent.projectId,
+              title: input.title ?? input.task.split("\n")[0]!.slice(0, 120),
+              creationSource: "mcp",
+              modelSelection,
+              runtimeMode,
+              interactionMode,
+              workspaceStrategy: { type: "root" },
+              initialMessage: {
+                messageId: MessageId.make(`message:${operation}`),
+                text: input.task,
+                attachments: [],
+              },
+            },
+            {
+              parentThreadId: source,
+              rootThreadId: parent.lineage.rootThreadId,
+              relationshipToParent: "subagent",
+            },
+          )
+          .pipe(
+            Effect.catchTags({
+              ThreadInboxError: (cause) =>
+                Effect.fail(CollaborationError.fromInbox("start_child_thread", cause)),
+            }),
+          );
       }
       const taskId = NodeId.make(`${TASK_PREFIX}${childId}`);
       return yield* status(source, { taskId });
-    }).pipe(deps.records.lock.withPermits(1), Effect.mapError(collaborationFailure));
+    }).pipe(deps.records.lock.withPermits(1));
 
-  const delegateAndWait: CloudCollaboration["Service"]["delegate"] = (source, input) =>
+  const delegateAndWait = (
+    source: ThreadId,
+    input: CollaborationInput<"delegate">,
+  ): Effect.Effect<CollaborationOutput<"delegate">, CollaborationError> =>
     Effect.gen(function* () {
       const initial = yield* delegate(source, input);
       if (input.mode !== "wait" || initial.workState === "result_available") return initial;
@@ -204,17 +248,27 @@ export const makeTasks = (deps: {
         ...(yield* status(source, { taskId: initial.taskId })),
         waitTimedOut: waited.timedOut,
       };
-    }).pipe(Effect.mapError(collaborationFailure));
+    });
 
   const { stopRunTree, stopDescendants } = makeTaskStops(deps);
 
-  const completion: CloudCollaboration["Service"]["completion"] = (child, childOrdinal, deliver) =>
+  const completion = <A, E, R>(
+    child: ThreadId,
+    childOrdinal: number,
+    deliver: (disposition: {
+      readonly allowed: boolean;
+      readonly parentOrdinal: number | null;
+    }) => Effect.Effect<A, E, R>,
+  ): Effect.Effect<A, E | CollaborationError, R> =>
     Effect.gen(function* () {
       const disposition = yield* deps.records.completion(child, childOrdinal);
       return yield* deliver(disposition);
     }).pipe(deps.records.lock.withPermits(1));
 
-  const cancel: CloudCollaboration["Service"]["cancel"] = (source, input) =>
+  const cancel = (
+    source: ThreadId,
+    input: CollaborationInput<"cancel">,
+  ): Effect.Effect<CollaborationOutput<"cancel">, CollaborationError> =>
     Effect.gen(function* () {
       const { projection } = yield* ownedTask(source, input.taskId);
       yield* stopRunTree(
@@ -229,7 +283,7 @@ export const makeTasks = (deps: {
         taskId: input.taskId,
         status: isTerminalRunStatus(state) ? state : ("cancel_requested" as const),
       };
-    }).pipe(Effect.mapError(collaborationFailure));
+    });
   return {
     delegate: delegateAndWait,
     status,

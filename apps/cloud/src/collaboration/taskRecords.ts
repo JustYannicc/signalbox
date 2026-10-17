@@ -2,6 +2,7 @@ import type { ThreadId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Semaphore from "effect/Semaphore";
 import * as SqlClient from "effect/sql/SqlClient";
+import { CollaborationError } from "./errors.ts";
 
 /** Independent of the sidebar outbox: cancellation must see even a just-created child. */
 export const createTables = Effect.gen(function* () {
@@ -44,7 +45,11 @@ export const makeTaskRecords = Effect.gen(function* () {
           (parent_thread_id, parent_ordinal, child_thread_id, child_through_ordinal)
           VALUES (${parent}, ${parentOrdinal}, ${child}, 1)
           ON CONFLICT (parent_thread_id, parent_ordinal, child_thread_id) DO NOTHING`;
-      }),
+      }).pipe(
+        Effect.catchTags({
+          SqlError: (cause) => Effect.fail(CollaborationError.unavailable("record_task", cause)),
+        }),
+      ),
     recordRun: (parent: ThreadId, parentOrdinal: number, child: ThreadId, childOrdinal: number) =>
       Effect.gen(function* () {
         const rows = yield* sql`SELECT child_thread_id FROM collaboration_tasks
@@ -55,7 +60,12 @@ export const makeTaskRecords = Effect.gen(function* () {
           VALUES (${parent}, ${parentOrdinal}, ${child}, ${childOrdinal})
           ON CONFLICT (parent_thread_id, parent_ordinal, child_thread_id)
           DO UPDATE SET child_through_ordinal = MAX(child_through_ordinal, excluded.child_through_ordinal)`;
-      }),
+      }).pipe(
+        Effect.catchTags({
+          SqlError: (cause) =>
+            Effect.fail(CollaborationError.unavailable("record_task_run", cause)),
+        }),
+      ),
     childrenThrough: (parent: ThreadId, parentOrdinal: number) =>
       sql<{
         readonly child_thread_id: ThreadId;
@@ -70,15 +80,27 @@ export const makeTaskRecords = Effect.gen(function* () {
             throughOrdinal: row.child_through_ordinal,
           })),
         ),
+        Effect.catchTags({
+          SqlError: (cause) =>
+            Effect.fail(CollaborationError.unavailable("read_task_children", cause)),
+        }),
       ),
     stop: (child: ThreadId, ordinal: number) =>
       sql`UPDATE collaboration_tasks
         SET stopped_through_ordinal = MAX(stopped_through_ordinal, ${ordinal})
-        WHERE child_thread_id = ${child}`,
+        WHERE child_thread_id = ${child}`.pipe(
+        Effect.catchTags({
+          SqlError: (cause) =>
+            Effect.fail(CollaborationError.unavailable("record_task_stop", cause)),
+        }),
+      ),
     canDelegate: (parent: ThreadId, ordinal: number) =>
       sql<{ readonly stopped_through_ordinal: number }>`SELECT stopped_through_ordinal
         FROM collaboration_tasks WHERE child_thread_id = ${parent}`.pipe(
         Effect.map((rows) => rows[0] === undefined || rows[0].stopped_through_ordinal < ordinal),
+        Effect.catchTags({
+          SqlError: (cause) => Effect.fail(CollaborationError.unavailable("read_task_stop", cause)),
+        }),
       ),
     completion: (child: ThreadId, childOrdinal: number) =>
       Effect.gen(function* () {
@@ -99,7 +121,12 @@ export const makeTaskRecords = Effect.gen(function* () {
           allowed,
           parentOrdinal: parentRuns[0]?.parent_ordinal ?? null,
         };
-      }),
+      }).pipe(
+        Effect.catchTags({
+          SqlError: (cause) =>
+            Effect.fail(CollaborationError.unavailable("read_task_completion", cause)),
+        }),
+      ),
   };
 });
 

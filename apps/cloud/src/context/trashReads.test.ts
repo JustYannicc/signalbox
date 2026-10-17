@@ -9,7 +9,7 @@ import {
   owner,
   threadObjectApiFor,
   withObject,
-} from "../thread/runner/runnerTestKit.ts";
+} from "../thread/ThreadTestKit.ts";
 
 it.effect("context reads include archived history and refuse trashed history immediately", () =>
   withObject(freshDatabase(), (engine, _runner, context) =>

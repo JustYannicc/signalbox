@@ -51,3 +51,13 @@ export const runOrigin = <Run extends RunContinuationLink>(
     seen.add(current.id);
   }
 };
+
+/** The tail of the latest root run, ignoring continuations of older roots. */
+export const latestLogicalRun = <Run extends RunContinuationLink>(
+  runs: ReadonlyArray<Run>,
+): Run | undefined => {
+  const root = runs
+    .filter((run) => run.restartContinuationOfRunId === undefined)
+    .toSorted((left, right) => right.ordinal - left.ordinal)[0];
+  return runContinuationChain(runs, root).at(-1);
+};

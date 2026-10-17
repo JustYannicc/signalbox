@@ -15,7 +15,7 @@ import { ThreadCommandRejectedError } from "./ThreadEngine.ts";
 import * as ThreadInbox from "./ThreadInbox.ts";
 import { scriptedModelSelection } from "./scriptedProvider.ts";
 import { scriptedStep } from "./scriptedTurn.ts";
-import { recoverRunEvents } from "./runner/runRecovery.ts";
+import { recoverRunEvents } from "./ThreadRecovery.ts";
 import { applyEvents } from "./threadProjection.ts";
 
 const actor = { userId: "inbox-user", contextIds: [PERSONAL_CONTEXT_ID] };

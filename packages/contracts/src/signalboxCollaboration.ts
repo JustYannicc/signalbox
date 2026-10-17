@@ -193,3 +193,13 @@ export const SIGNALBOX_COLLABORATION_SCOPES = {
   "signalbox.collaboration.cancel": AuthOrchestrationOperateScope,
   "signalbox.collaboration.interrupt": AuthOrchestrationOperateScope,
 } as const;
+
+export const SIGNALBOX_COLLABORATION_OPERATE_SCOPES = {
+  "signalbox.collaboration.send": SIGNALBOX_COLLABORATION_SCOPES["signalbox.collaboration.send"],
+  "signalbox.collaboration.delegate":
+    SIGNALBOX_COLLABORATION_SCOPES["signalbox.collaboration.delegate"],
+  "signalbox.collaboration.cancel":
+    SIGNALBOX_COLLABORATION_SCOPES["signalbox.collaboration.cancel"],
+  "signalbox.collaboration.interrupt":
+    SIGNALBOX_COLLABORATION_SCOPES["signalbox.collaboration.interrupt"],
+} as const;

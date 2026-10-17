@@ -1,29 +1,37 @@
 import type { CollaborationInput } from "@t3tools/contracts/signalboxCollaboration";
+import type { ThreadId } from "@t3tools/contracts";
 import { providerChildTasks } from "@t3tools/shared/providerChildTasks";
 import * as Effect from "effect/Effect";
 
 import { makePoolModelCatalog } from "../pool/poolModelCatalog.ts";
 import { forThread } from "../thread/turnPool.ts";
 import { UserPools } from "../user/UserPools.ts";
-import { collaborationFailure, type CollaborationAccess } from "./access.ts";
-import type { CloudCollaboration } from "./CloudCollaboration.ts";
+import type { CollaborationAccess } from "./access.ts";
+import { CollaborationError } from "./errors.ts";
 
 export const makeCapabilities = (access: CollaborationAccess) =>
   Effect.gen(function* () {
     const pools = yield* UserPools;
     const poolModelCatalog = yield* makePoolModelCatalog;
-    const capabilities: CloudCollaboration["Service"]["capabilities"] = (
-      source,
-      _input: CollaborationInput<"capabilities">,
-    ) =>
+    const capabilities = (source: ThreadId, _input: CollaborationInput<"capabilities">) =>
       Effect.gen(function* () {
         const caller = yield* access.source(source);
         const { thread } = caller.projection;
-        const chain = yield* access.folders.turn({ threadId: source, projectId: thread.projectId });
+        const chain = yield* access.folders
+          .turn({ threadId: source, projectId: thread.projectId })
+          .pipe(
+            Effect.catchTags({
+              SqlError: (cause) =>
+                Effect.fail(CollaborationError.unavailable("read_model_home", cause)),
+            }),
+          );
         const poolId = forThread(chain.pools, thread.projectId);
-        const state = (yield* pools.state(caller.actor)).filter(
-          (entry) => entry.pool.id === poolId,
-        );
+        const state = (yield* pools.state(caller.actor).pipe(
+          Effect.catchTags({
+            AccountHubRpcError: (cause) =>
+              Effect.fail(CollaborationError.unavailable("read_model_pools", cause)),
+          }),
+        )).filter((entry) => entry.pool.id === poolId);
         const { providers } = yield* poolModelCatalog(state);
         return {
           parentThreadId: source,
@@ -64,6 +72,6 @@ export const makeCapabilities = (access: CollaborationAccess) =>
             maxBatchThreads: 1,
           },
         };
-      }).pipe(Effect.mapError(collaborationFailure));
+      });
     return capabilities;
   });

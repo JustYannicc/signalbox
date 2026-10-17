@@ -1,4 +1,3 @@
-import type { RunnerItem } from "@signalbox/runner-protocol/RunnerProtocol";
 import {
   OrchestrationV2AppThread,
   OrchestrationV2Subagent,
@@ -9,9 +8,18 @@ import {
 import { SignalboxContextId } from "@t3tools/contracts/signalboxContexts";
 import * as Schema from "effect/Schema";
 
-import type { ThreadOwner } from "../ThreadStore.ts";
-
-export type ProviderRunnerItem = Extract<RunnerItem, { readonly kind: "provider" }>;
+import type {
+  NativeChildBatchInput,
+  NativeChildPending as NativeChildPendingType,
+} from "../NativeChildProtocol.ts";
+export type {
+  NativeChildBatchInput,
+  NativeChildBatchInputAppThread,
+  NativeChildBatchResult,
+  NativeChildPending,
+  NativeChildPendingItem,
+  ProviderRunnerItem,
+} from "../NativeChildProtocol.ts";
 
 const ProviderRunnerItemWire = Schema.Struct({
   kind: Schema.Literal("provider"),
@@ -46,28 +54,6 @@ const NativeChildPending = Schema.Struct({
   items: Schema.Array(ProviderRunnerItemWire),
 });
 
-export interface NativeChildBatchInput {
-  readonly parentThreadId: ThreadId;
-  readonly parentRunId: RunId;
-  readonly childThreadId: ThreadId;
-  readonly generation: number;
-  readonly sequence: number;
-  readonly owner: ThreadOwner;
-  /** Present on the batch that first introduces the child to the parent Runner. */
-  readonly appThread: NativeChildBatchInputAppThread;
-  readonly attestation: typeof OrchestrationV2Subagent.Type;
-  readonly items: ReadonlyArray<ProviderRunnerItem>;
-}
-
-/** A refusal crosses the Durable Object boundary as data; storage failures still reject the RPC. */
-export type NativeChildBatchResult =
-  | { readonly _tag: "saved" }
-  | { readonly _tag: "child_mismatch" };
-
-export type NativeChildPending = typeof NativeChildPending.Type;
-
-export type NativeChildBatchInputAppThread = typeof OrchestrationV2AppThread.Type;
-
 const codec = Schema.toCodecJson(NativeChildBatch);
 export const nativeChildBatchWire = {
   encode: Schema.encodeSync(codec) as (input: NativeChildBatchInput) => unknown,
@@ -76,8 +62,10 @@ export const nativeChildBatchWire = {
 
 const pendingCodec = Schema.fromJsonString(Schema.Array(Schema.toCodecJson(NativeChildPending)));
 export const nativeChildPendingWire = {
-  encode: Schema.encodeSync(pendingCodec) as (input: ReadonlyArray<NativeChildPending>) => string,
+  encode: Schema.encodeSync(pendingCodec) as (
+    input: ReadonlyArray<NativeChildPendingType>,
+  ) => string,
   decode: Schema.decodeUnknownSync(pendingCodec) as (
     input: string,
-  ) => ReadonlyArray<NativeChildPending>,
+  ) => ReadonlyArray<NativeChildPendingType>,
 };

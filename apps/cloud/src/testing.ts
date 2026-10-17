@@ -70,7 +70,7 @@ import * as ThreadRunner from "./thread/runner/ThreadRunner.ts";
 import type {
   NativeChildBatchInput,
   NativeChildBatchResult,
-} from "./thread/runner/nativeChildBatch.ts";
+} from "./thread/NativeChildProtocol.ts";
 import * as SessionRows from "./thread/session/SessionRows.ts";
 import * as PullRequestPolls from "./thread/pullRequests/PullRequestPolls.ts";
 import * as PullRequestSync from "./thread/pullRequests/PullRequestSync.ts";

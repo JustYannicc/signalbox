@@ -1,12 +1,11 @@
 import { CommandId, type OrchestrationV2Run, type ThreadId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
-import type { SqlError } from "effect/sql/SqlError";
 
 import { isLiveRun } from "../thread/runLifecycle.ts";
-import { collaborationFailure, type CollaborationAccess } from "./access.ts";
+import type { CollaborationAccess } from "./access.ts";
 import type { TaskRecords } from "./taskRecords.ts";
-import type { CollaborationError } from "./errors.ts";
+import { CollaborationError } from "./errors.ts";
 import { stopRunCommand } from "./stopCommand.ts";
 import { runContinuationChain } from "../thread/runContinuations.ts";
 
@@ -23,7 +22,7 @@ export const makeTaskStops = (deps: {
       readonly clientRequestId?: string | undefined;
       readonly ownerStop?: boolean;
     } = {},
-  ): Effect.Effect<void, CollaborationError | SqlError> =>
+  ): Effect.Effect<void, CollaborationError> =>
     Effect.gen(function* () {
       const found = yield* deps.access.read(parent, child).pipe(
         Effect.catchIf(
@@ -81,10 +80,17 @@ export const makeTaskStops = (deps: {
                     return;
                   // A queued run may start after the snapshot. Its interrupt needs a fresh receipt.
                   if (run.status === "queued" && isLiveRun(current)) return yield* stopRun(current);
-                  return yield* Effect.fail(collaborationFailure(error));
+                  return yield* new CollaborationError({
+                    code: "orchestration_error",
+                    message: "The thread refused the request.",
+                    operation: "stop_task_run",
+                    cause: error,
+                  });
                 }),
+              ThreadNotFoundError: () => Effect.void,
+              ThreadObjectError: (cause) =>
+                Effect.fail(CollaborationError.unavailable("stop_task_run", cause)),
             }),
-            Effect.mapError(collaborationFailure),
             Effect.catchIf(
               (error) => error.code === "thread_not_found",
               () => Effect.void,
@@ -119,7 +125,7 @@ export const makeTaskStops = (deps: {
       );
       const failure = outcomes.find(Exit.isFailure);
       if (failure !== undefined) return yield* Effect.failCause(failure.cause);
-    }).pipe(deps.records.lock.withPermits(1), Effect.mapError(collaborationFailure));
+    }).pipe(deps.records.lock.withPermits(1));
 
   return { stopRunTree, stopDescendants };
 };

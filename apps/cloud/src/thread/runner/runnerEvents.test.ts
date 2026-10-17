@@ -10,7 +10,7 @@ import {
 import * as DateTime from "effect/DateTime";
 import { describe, expect, it } from "@effect/vitest";
 
-import { recordedEvents, recordedNativeChildEvents } from "./runnerEvents.ts";
+import { recordedEvents, recordedNativeChildEvents } from "../ThreadRunnerProof.ts";
 
 const parentThreadId = ThreadId.make("thread:parent");
 const childThreadId = ThreadId.make("thread:child");

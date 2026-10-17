@@ -19,13 +19,11 @@ import {
   SIGNALBOX_PREVIEWS_WS_METHODS,
 } from "./signalboxPreviews.ts"; // signalbox: previews
 import { SIGNALBOX_THREAD_KINDS_WS_METHODS } from "./signalboxThreadKinds.ts"; // signalbox: thread kinds
+import { SIGNALBOX_COLLABORATION_OPERATE_SCOPES } from "./signalboxCollaboration.ts";
 
 /** Incremental client enforcement; the server still authorizes every request. */
 export const CLIENT_GUARDED_RPC_SCOPES = {
-  "signalbox.collaboration.send": AuthOrchestrationOperateScope,
-  "signalbox.collaboration.delegate": AuthOrchestrationOperateScope,
-  "signalbox.collaboration.cancel": AuthOrchestrationOperateScope,
-  "signalbox.collaboration.interrupt": AuthOrchestrationOperateScope,
+  ...SIGNALBOX_COLLABORATION_OPERATE_SCOPES, // signalbox: cloud collaboration
   [WS_METHODS.serverRunStorageCleanup]: AuthSettingsWriteScope,
   [WS_METHODS.serverCheckOtlpEndpoint]: AuthSettingsWriteScope,
   [WS_METHODS.pullRequestsRunAction]: AuthSourceControlWriteScope,

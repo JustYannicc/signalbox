@@ -4,7 +4,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
 import * as SearchIndex from "../SearchIndex.ts";
-import * as SqliteSearchIndex from "./SqliteSearchIndex.ts";
+import * as SqliteSearchIndex from "../SearchTestKit.ts";
 
 const home = { ownerId: "owner-1", projectId: "project-1" };
 

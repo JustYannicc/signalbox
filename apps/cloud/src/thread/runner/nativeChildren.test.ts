@@ -28,9 +28,9 @@ import {
   snapshot,
   turnReport,
   withObject,
-} from "./runnerTestKit.ts";
-import type { NativeChildBatchInput } from "./nativeChildBatch.ts";
-import { runnerBatchEvents } from "./runnerTurn.ts";
+} from "../ThreadTestKit.ts";
+import type { NativeChildBatchInput } from "../NativeChildProtocol.ts";
+import { runnerBatchEvents } from "../ThreadRunnerProof.ts";
 
 const encodeThread = Schema.encodeEffect(Schema.toCodecJson(OrchestrationV2AppThread));
 const encodeMessage = Schema.encodeEffect(Schema.toCodecJson(OrchestrationV2ConversationMessage));
