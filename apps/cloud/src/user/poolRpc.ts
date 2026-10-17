@@ -200,7 +200,7 @@ export const makePoolHandlers = (input: {
           favorites: filtered.favorites,
           providerModelPreferences: filtered.providerModelPreferences,
           defaultModelSelection:
-            filtered.defaultModelSelection ?? config.settings.defaultModelSelection,
+            saved.defaultModelSelection ?? config.settings.defaultModelSelection,
         },
       };
     };

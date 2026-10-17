@@ -2,7 +2,6 @@ import type { BrowserSignInAnswer } from "@signalbox/runner-protocol/BrowserProt
 import type { SignInSource } from "@t3tools/contracts/signalboxSignIn";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
-import * as Crypto from "effect/Crypto";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -12,9 +11,8 @@ import * as Semaphore from "effect/Semaphore";
 import { HttpClient } from "effect/http";
 import type { SqlError } from "effect/sql/SqlError";
 
-import { hashSecret } from "../auth/hashedSecrets.ts";
-import { profileNameOf } from "../browser/browserPolicy.ts";
 import { type KernelAuth, makeKernelAuth } from "../browser/KernelAuth.ts";
+import { type KernelApiError } from "../browser/KernelApi.ts";
 import * as PersonBrowsers from "../browser/PersonBrowsers.ts";
 import { makeProfileId } from "../user/profileId.ts";
 import { makeTraced } from "../user/tracing.ts";
@@ -64,6 +62,13 @@ export class LoginService extends Context.Service<
       readonly requester: string;
       readonly site: string;
     }) => Effect.Effect<BrowserSignInAnswer, SqlError>;
+    /** Whether the account's one managed browser profile is available. */
+    readonly profileStatus: Effect.Effect<{ readonly available: boolean }, SqlError>;
+    /** Clears sessions, saved site data and the automatic re-login records. */
+    readonly clearProfile: Effect.Effect<
+      void,
+      SqlError | KernelApiError | PersonBrowsers.PersonBrowserUnavailableError
+    >;
     /** Logs in again, with nobody asked, wherever Kernel found the person's profile logged out. */
     readonly sweep: Effect.Effect<void, SqlError>;
   }
@@ -151,7 +156,6 @@ const make = (options: {
     const grants = yield* SignInGrants;
     const browsers = yield* PersonBrowsers.PersonBrowsers;
     const alarm = yield* LoginAlarm;
-    const crypto = yield* Crypto.Crypto;
     const owner = yield* makeProfileId;
     const sourceOfThread = yield* makeThreadSources;
     const kept = yield* makeSignInLogins;
@@ -189,10 +193,24 @@ const make = (options: {
       },
     ) =>
       Effect.gen(function* () {
-        yield* browsers.endForSignIn(input.threadId);
-        const profileName = profileNameOf(yield* hashSecret(crypto, input.ownerId));
-        return yield* runLogin(ready, { ...input, profileName, pause });
-      }).pipe(oneLogin.withPermits(1));
+        return yield* browsers.withSignIn({
+          threadId: input.threadId,
+          run: (profileName) => runLogin(ready, { ...input, profileName, pause }),
+        });
+      }).pipe(
+        Effect.catchTags({
+          PersonBrowserUnavailableError: () =>
+            Effect.succeed({
+              _tag: "unreachable",
+              reason: "the cloud browser is unavailable",
+            } as const),
+          KernelApiError: () =>
+            Effect.succeed({
+              _tag: "unreachable",
+              reason: "Kernel could not close the existing browser session",
+            } as const),
+        }),
+      );
 
     /** Records a login's end; a signed-in site is kept signed in from now on. */
     const record = (row: Parameters<typeof kept.signedIn>[0], outcome: Outcome) =>
@@ -291,6 +309,7 @@ const make = (options: {
             count(answer._tag, "agent"),
           ]),
         ),
+        oneLogin.withPermits(1),
         traced("LoginService.signIn", {
           "thread.id": input.threadId,
           "requester.id": input.requester,
@@ -304,6 +323,20 @@ const make = (options: {
       if (nextDue !== null) yield* alarm.armBy(Math.max(nextDue, now + 1000));
     }).pipe(
       Effect.catchCause((cause) => Effect.logError("arming the re-login sweep failed", { cause })),
+    );
+
+    const profileStatus: LoginService["Service"]["profileStatus"] = browsers.profileStatus;
+
+    const clearProfile: LoginService["Service"]["clearProfile"] = oneLogin.withPermits(1)(
+      Effect.gen(function* () {
+        yield* browsers.clearProfile((profileName) =>
+          Effect.gen(function* () {
+            if (kernel !== null) yield* kernel.clearConnections(profileName);
+            yield* kept.clear();
+          }),
+        );
+        nextDue = null;
+      }),
     );
 
     /**
@@ -360,9 +393,9 @@ const make = (options: {
         yield* count(answerOf(row.site, chosen, outcome)._tag, "sweep");
         break;
       }
-    }).pipe(Effect.ensuring(rearm), traced("LoginService.sweep", {}));
+    }).pipe(Effect.ensuring(rearm), oneLogin.withPermits(1), traced("LoginService.sweep", {}));
 
-    return LoginService.of({ signIn, sweep });
+    return LoginService.of({ signIn, profileStatus, clearProfile, sweep });
   });
 
 /** On `kernel` and `executor`; without either, every sign-in says why it can't. */

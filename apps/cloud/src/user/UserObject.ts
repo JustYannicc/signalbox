@@ -12,11 +12,13 @@ import * as Schema from "effect/Schema";
 
 import * as CloudAssets from "../assets/CloudAssets.ts";
 import * as Evlog from "../observability/Evlog.ts";
+import * as ClientRpcTracing from "../observability/clientRpcTracing.ts";
 import * as IdentityProvider from "../account/IdentityProvider.ts";
 import * as CloudConfig from "../CloudConfig.ts";
 import { AutomationAlarm, CloudAutomations } from "../automations/CloudAutomations.ts";
 import * as PersonBrowsers from "../browser/PersonBrowsers.ts";
 import * as CloudEngine from "../automations/cloudEngine.ts";
+import { layerModelCompletion } from "../models/cloudflare.ts";
 import { HookOrigin } from "../automations/cloudIngress.ts";
 import { layerWorkflows } from "../automations/workflowRunner.ts";
 import { type AttachmentObjects, attachmentStorage } from "../attachments/attachmentObjects.ts";
@@ -72,7 +74,7 @@ import * as DriveSharing from "./DriveSharing.ts";
 import * as DriveShortcuts from "./DriveShortcuts.ts";
 import * as OnePasswordAccount from "./OnePasswordAccount.ts";
 import * as ResourceBindings from "./ResourceBindings.ts";
-import * as ThreadContexts from "./threadContexts.ts";
+import * as ThreadContextLayers from "./threadContextLayers.ts";
 import * as UserContexts from "./UserContexts.ts";
 import * as UserDrives from "./UserDrives.ts";
 import { makeUserObjectApi } from "./userObjectApi.ts";
@@ -127,6 +129,10 @@ export interface UserObjectEnv
   readonly POOLS: PoolDirectory.PoolObjectNamespace;
   /** `1` in dev and tests: clients may pick the scripted provider (`scriptedProvider.ts`). */
   readonly SCRIPTED_PROVIDER?: string;
+  /** The Worker binding that accepts filtered client RPC trace batches. */
+  readonly TRACE_EXPORT?: Pick<Fetcher, "fetch">;
+  /** Secret shared with the Worker-side trace intake. */
+  readonly TRACE_EXPORT_TOKEN?: string;
 }
 
 const decodeEnvironmentId = Schema.decodeSync(EnvironmentId);
@@ -220,6 +226,7 @@ const makeRuntime = (ctx: DurableObjectState, env: UserObjectEnv) => {
         Layer.mergeAll(
           layerWorkflows(env.AUTOMATION_RUNS),
           layerAutomationAlarm(storage),
+          layerModelCompletion({ pools: env.POOLS }, { localWorkerd: env.LOCAL_WORKERD === "1" }),
           Layer.succeed(HookOrigin, env.AUTOMATION_HOOK_ORIGIN ?? ""),
         ),
       ),
@@ -262,8 +269,7 @@ const makeRuntime = (ctx: DurableObjectState, env: UserObjectEnv) => {
           Layer.provideMerge(GitHubConnection.layer),
           Layer.provideMerge(
             Layer.mergeAll(
-              ThreadContexts.layer,
-              UserPools.layer,
+              ThreadContextLayers.layer.pipe(Layer.provideMerge(UserPools.layer)),
               UserThreadKinds.layerTurns,
               // The person's browser for real sites (#574), on Kernel.
               PersonBrowsers.layerFromEnv(env).pipe(Layer.provide(FetchHttpClient.layer)),
@@ -359,6 +365,7 @@ const makeRuntime = (ctx: DurableObjectState, env: UserObjectEnv) => {
               Layer.orDie,
             ),
           ),
+          Layer.provideMerge(ClientRpcTracing.layer(env, (promise) => ctx.waitUntil(promise))),
         ),
       ),
     ),
@@ -564,6 +571,10 @@ export class UserObject extends DurableObject<UserObjectEnv> implements UserObje
 
   contextIds() {
     return this.api.contextIds();
+  }
+
+  clientTraceDimensions(threadIds: Parameters<UserObjectApi["clientTraceDimensions"]>[0]) {
+    return this.api.clientTraceDimensions(threadIds);
   }
 
   recordDriveAccess(entry: Parameters<UserObjectApi["recordDriveAccess"]>[0]) {
