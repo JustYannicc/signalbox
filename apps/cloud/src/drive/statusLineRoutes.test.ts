@@ -13,7 +13,7 @@ import * as Environment from "../environment.ts";
 import { pauseTaskDone } from "../automations/taskLifecycleTesting.ts";
 import { makeMemoryCloud } from "../testing.ts";
 import * as CloudThreadService from "../thread/CloudThreadService.ts";
-import type { DriveAuthorization } from "../thread/runner/ThreadRunner.ts";
+import type { DriveAuthorization } from "../thread/ThreadAuthorization.ts";
 import { scriptedModelSelection } from "../thread/scriptedProvider.ts";
 import { wire } from "../thread/threadWire.ts";
 import * as UserFolders from "../user/UserFolders.ts";

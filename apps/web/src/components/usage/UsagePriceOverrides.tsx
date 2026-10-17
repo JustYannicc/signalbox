@@ -3,7 +3,7 @@ import { AuthSettingsWriteScope, type EnvironmentId, sessionGrantsScope } from "
 import { ChevronDownIcon, PlusIcon, RotateCcwIcon, XIcon } from "lucide-react";
 import * as Option from "effect/Option";
 import { AsyncResult, Atom } from "effect/reactivity";
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { cn } from "../../lib/utils";
 import { environmentPresentations } from "../../state/presentation";
@@ -41,7 +41,11 @@ import {
   type UsagePriceTarget,
   type UsagePriceWriteResult,
 } from "./usagePriceTargets";
-import { useShowsEnvironmentUi } from "../../state/environmentCapabilities";
+import {
+  readEnvironmentSupports,
+  useShowsEnvironmentUi,
+} from "../../state/environmentCapabilities";
+import { useCanEditUsagePrices } from "./usagePriceCapabilities"; // signalbox
 
 const priceTargetsAtom = Atom.make((get): readonly UsagePriceTarget[] =>
   [...get(environmentPresentations.presentationsAtom)].map(([environmentId, environment]) => {
@@ -71,13 +75,15 @@ const priceTargetsAtom = Atom.make((get): readonly UsagePriceTarget[] =>
           ? "Offline"
           : settings === null
             ? "Prices not loaded"
-            : environment.serverConfig?.environment.capabilities.usagePriceOverrides !== true
-              ? "Update server to edit prices"
-              : access === "pending"
-                ? "Checking permissions…"
-                : access === "denied"
-                  ? "Read-only access"
-                  : null,
+            : environment.serverConfig?.environment.capabilities.serverSettingsWrite === false
+              ? "Server settings are read-only here"
+              : environment.serverConfig?.environment.capabilities.usagePriceOverrides !== true
+                ? "Update server to edit prices"
+                : access === "pending"
+                  ? "Checking permissions…"
+                  : access === "denied"
+                    ? "Read-only access"
+                    : null,
     };
   }),
 );
@@ -94,7 +100,7 @@ type SaveAttempt = {
   >;
 };
 
-export function UsagePriceOverrides({
+function UsagePriceOverridesDialog({
   usage,
   initialSelectedEnvironmentIds,
   initialModel,
@@ -255,6 +261,7 @@ export function UsagePriceOverrides({
       })),
       changes: new Map([...changes].map(([id, plan]) => [id, plan.changes])),
       write: async (input) =>
+        readEnvironmentSupports(input.environmentId, "serverSettingsWrite") &&
         readEnvironmentScope(input.environmentId, AuthSettingsWriteScope)
           ? updateSettings(input)
           : { _tag: "Failure" },
@@ -625,4 +632,15 @@ export function UsagePriceOverrides({
       </DialogPopup>
     </Dialog>
   );
+}
+
+// signalbox: closes the editor as soon as no selected environment can save prices.
+export function UsagePriceOverrides(props: Parameters<typeof UsagePriceOverridesDialog>[0]) {
+  const canEdit = useCanEditUsagePrices(props.initialSelectedEnvironmentIds);
+  const { onOpenChange } = props;
+  // Close for real, so the editor can't reappear on its own if editing comes back.
+  useEffect(() => {
+    if (!canEdit) onOpenChange(false);
+  }, [canEdit, onOpenChange]);
+  return canEdit ? <UsagePriceOverridesDialog {...props} /> : null;
 }

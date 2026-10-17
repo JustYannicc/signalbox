@@ -201,11 +201,13 @@ Architecture and its constraints: `docs/internals/overview.md`. Glossary: `docs/
 ## Where code lives
 
 Before adding a module or importing across modules, read [workspace boundaries](packages/README.md) and [cloud module boundaries](apps/cloud/src/README.md).
+Before changing thread execution or live events, read the [threads module](apps/cloud/src/thread/README.md).
 
 For live people views or explicit location joins, read [presence](apps/cloud/src/presence/README.md).
 
 - `apps/server` - WebSocket, orchestration, providers, checkpointing. Effect-heavy: read [Effect services](docs/internals/effect-services.md) before adding server code, and `.repos/effect-smol/LLMS.md` for the Effect library itself.
 - `apps/cloud` - the hosted product on Cloudflare: Workers, Durable Objects, the model gateway, drives, pools and automations. Deploys through Alchemy.
+- For model authorization or gateway adapter changes, read [models](apps/cloud/src/models/README.md).
 - `apps/web` - React/Vite UI. `apps/desktop` wraps it, `apps/mobile` is React Native, `apps/marketing` is the site.
 - `packages/contracts` - Effect/Schema contracts plus small derived helpers. No heavy runtime logic.
 - `packages/shared` - shared runtime utils, subpath exports, no barrel.

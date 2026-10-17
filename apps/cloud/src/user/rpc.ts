@@ -94,11 +94,13 @@ import { CloudAttachments } from "../attachments/CloudAttachments.ts";
 import * as Environment from "../environment.ts";
 import * as GitHubActions from "../github/GitHubActions.ts";
 import * as GitHubBranches from "../github/GitHubBranches.ts";
+import * as CloudPullRequests from "../github/CloudPullRequestsService.ts";
 import { makeGitHubImport } from "../github/GitHubImport.ts";
 import * as DriveBrowsing from "./driveBrowsing.ts";
 import * as CloudThreadService from "../thread/CloudThreadService.ts";
+import * as Threads from "../thread/Threads.ts";
 import { deviceMember, makeBrowsingHandlers } from "../thread/browsing/browsingRpc.ts";
-import { type Actor, ThreadNotFoundError } from "../thread/ThreadEngine.ts";
+import { type Actor, ThreadNotFoundError } from "../thread/ThreadAccess.ts";
 import type { BrowserReply } from "../thread/threadWire.ts";
 import { DriveSharing } from "./DriveSharing.ts";
 import { makePoolHandlers, POOL_METHODS, POOL_REQUIRED_SCOPES } from "./poolRpc.ts";
@@ -108,6 +110,11 @@ import { AUTOMATION_RPC_SCOPES } from "@signalbox/automations/rpcScopes";
 import { makePushHandlers } from "../push/pushRpc.ts";
 import { makeKeysHandlers } from "./keysRpc.ts";
 import { makeSignInHandlers } from "../signIn/signInRpc.ts";
+import {
+  ANALYTICS_METHODS,
+  ANALYTICS_REQUIRED_SCOPES,
+  makeAnalyticsHandlers,
+} from "./analyticsRpc.ts";
 import { makeNotesHandlers, NOTES_METHODS } from "../notes/notesRpc.ts";
 import { DriveShortcuts } from "./DriveShortcuts.ts";
 import * as UserContexts from "./UserContexts.ts";
@@ -192,6 +199,23 @@ const SERVED = [
   WS_METHODS.vcsRefreshStatus,
   WS_METHODS.vcsPull,
   WS_METHODS.gitRunStackedAction,
+  // Cloud pull-request reads (`github/CloudPullRequests.ts`).
+  WS_METHODS.pullRequestsList,
+  WS_METHODS.pullRequestsListStats,
+  WS_METHODS.pullRequestsSummary,
+  WS_METHODS.pullRequestsRouting,
+  WS_METHODS.pullRequestsRoutingIdentity,
+  WS_METHODS.pullRequestsStack,
+  WS_METHODS.pullRequestsLinkedThreads,
+  WS_METHODS.pullRequestsDetail,
+  WS_METHODS.pullRequestsPreview,
+  WS_METHODS.pullRequestsChecks,
+  WS_METHODS.pullRequestsActivity,
+  WS_METHODS.pullRequestsThreadComments,
+  WS_METHODS.pullRequestsDiffFileContents,
+  WS_METHODS.pullRequestsInvalidate,
+  WS_METHODS.pullRequestsSubscribeRefreshes,
+  WS_METHODS.gitResolvePullRequest,
   ...Object.values(SIGNALBOX_CONTEXTS_WS_METHODS),
   ...Object.values(SIGNALBOX_DRIVES_WS_METHODS),
   ...Object.values(SIGNALBOX_FOLDERS_WS_METHODS),
@@ -213,6 +237,7 @@ const SERVED = [
   ...POOL_METHODS,
   // The user's automations (`automations/`), run on this object.
   ...AUTOMATION_METHODS,
+  ...ANALYTICS_METHODS,
 ] as const;
 type ServedTag = (typeof SERVED)[number];
 type WsRpcs = RpcGroup.Rpcs<typeof WsRpcGroup>;
@@ -233,6 +258,7 @@ const REQUIRED_SCOPES = {
   [WS_METHODS.subscribeServerConfig]: AuthOrchestrationReadScope,
   [WS_METHODS.serverGetConfig]: AuthOrchestrationReadScope,
   [WS_METHODS.serverUpdateSettings]: AuthSettingsWriteScope,
+  ...ANALYTICS_REQUIRED_SCOPES,
   [WS_METHODS.serverProbe]: AuthOrchestrationReadScope,
   [WS_METHODS.serverReportClientActivity]: AuthOrchestrationReadScope,
   [WS_METHODS.subscribeServerLifecycle]: AuthOrchestrationReadScope,
@@ -264,6 +290,22 @@ const REQUIRED_SCOPES = {
   [WS_METHODS.vcsRefreshStatus]: AuthOrchestrationReadScope,
   [WS_METHODS.vcsPull]: AuthSourceControlWriteScope,
   [WS_METHODS.gitRunStackedAction]: AuthSourceControlWriteScope,
+  [WS_METHODS.pullRequestsList]: AuthOrchestrationReadScope,
+  [WS_METHODS.pullRequestsListStats]: AuthOrchestrationReadScope,
+  [WS_METHODS.pullRequestsSummary]: AuthOrchestrationReadScope,
+  [WS_METHODS.pullRequestsRouting]: AuthOrchestrationReadScope,
+  [WS_METHODS.pullRequestsRoutingIdentity]: AuthOrchestrationReadScope,
+  [WS_METHODS.pullRequestsStack]: AuthOrchestrationReadScope,
+  [WS_METHODS.pullRequestsLinkedThreads]: AuthOrchestrationReadScope,
+  [WS_METHODS.pullRequestsDetail]: AuthOrchestrationReadScope,
+  [WS_METHODS.pullRequestsPreview]: AuthOrchestrationReadScope,
+  [WS_METHODS.pullRequestsChecks]: AuthOrchestrationReadScope,
+  [WS_METHODS.pullRequestsActivity]: AuthOrchestrationReadScope,
+  [WS_METHODS.pullRequestsThreadComments]: AuthOrchestrationReadScope,
+  [WS_METHODS.pullRequestsDiffFileContents]: AuthOrchestrationReadScope,
+  [WS_METHODS.pullRequestsInvalidate]: AuthOrchestrationReadScope,
+  [WS_METHODS.pullRequestsSubscribeRefreshes]: AuthOrchestrationReadScope,
+  [WS_METHODS.gitResolvePullRequest]: AuthOrchestrationReadScope,
   ...SIGNALBOX_CONTEXTS_REQUIRED_SCOPES,
   ...SIGNALBOX_DRIVES_REQUIRED_SCOPES,
   ...SIGNALBOX_FOLDERS_REQUIRED_SCOPES,
@@ -419,6 +461,7 @@ export const layerHandlers = (input: {
     Effect.gen(function* () {
       const shell = yield* UserShell.UserShell;
       const threads = yield* CloudThreadService.CloudThreadService;
+      const coreThreads = yield* Threads.Threads;
       const assets = yield* CloudAssets.CloudAssets;
       const contexts = yield* UserContexts.UserContexts;
       const sections = yield* LegacySections.LegacySections;
@@ -441,6 +484,7 @@ export const layerHandlers = (input: {
       });
       const branches = yield* GitHubBranches.GitHubBranches;
       const githubActions = yield* GitHubActions.GitHubActions;
+      const pullRequests = yield* CloudPullRequests.CloudPullRequests;
       const attachments = yield* CloudAttachments;
       /**
        * Fails with not-found once the user leaves a context and so can't see
@@ -457,7 +501,7 @@ export const layerHandlers = (input: {
                 const left = [...known].some((id) => !actor.contextIds.includes(id));
                 known = new Set(actor.contextIds);
                 if (!left) return false;
-                return yield* threads.threadSnapshot(actor, threadId).pipe(
+                return yield* coreThreads.snapshot(actor, threadId).pipe(
                   Effect.as(false),
                   Effect.catchTags({ ThreadNotFoundError: () => Effect.succeed(true) }),
                   Effect.orElseSucceed(() => false),
@@ -511,6 +555,7 @@ export const layerHandlers = (input: {
         scopes: input.scopes ?? AuthStandardClientScopes,
       });
       const signIn = yield* makeSignInHandlers({ userId });
+      const analytics = yield* makeAnalyticsHandlers;
       return {
         ...pools.handlers,
         ...pushes,
@@ -518,6 +563,7 @@ export const layerHandlers = (input: {
         ...notes,
         ...keys,
         ...signIn,
+        ...analytics,
         [WS_METHODS.subscribeServerConfig]: (request) => pools.configStream(request),
         [WS_METHODS.serverGetConfig]: () => pools.configNow,
         [WS_METHODS.serverProbe]: () => Effect.succeed({}),
@@ -586,7 +632,7 @@ export const layerHandlers = (input: {
           ),
         [ORCHESTRATION_V2_WS_METHODS.dispatchCommand]: (command) =>
           threadCall(
-            Effect.flatMap(actorNow, (actor) => threads.dispatchCommand(actor, command)),
+            Effect.flatMap(actorNow, (actor) => coreThreads.dispatch(actor, command)),
             (message) =>
               new OrchestrationV2DispatchCommandError({
                 commandId: command.commandId,
@@ -596,7 +642,7 @@ export const layerHandlers = (input: {
           ),
         [ORCHESTRATION_V2_WS_METHODS.launchThread]: (request) =>
           threadCall(
-            Effect.flatMap(actorNow, (actor) => threads.launchThread(actor, request)),
+            Effect.flatMap(actorNow, (actor) => coreThreads.launch(actor, request)),
             (message) =>
               new OrchestrationV2ThreadLaunchError({
                 commandId: request.commandId,
@@ -606,7 +652,7 @@ export const layerHandlers = (input: {
           ),
         [ORCHESTRATION_V2_WS_METHODS.subscribeThread]: (request) =>
           Stream.unwrap(
-            Effect.map(actorNow, (actor) => threads.subscribeThread(actor, request)),
+            Effect.map(actorNow, (actor) => coreThreads.subscribe(actor, request)),
           ).pipe(
             Stream.interruptWhen(lostSight(request.threadId)),
             Stream.flattenIterable,
@@ -622,7 +668,7 @@ export const layerHandlers = (input: {
         [ORCHESTRATION_V2_WS_METHODS.getThreadProjection]: (request) =>
           threadCall(
             Effect.map(
-              Effect.flatMap(actorNow, (actor) => threads.threadSnapshot(actor, request.threadId)),
+              Effect.flatMap(actorNow, (actor) => coreThreads.snapshot(actor, request.threadId)),
               (snapshot) => snapshot.projection,
             ),
             (message) =>
@@ -706,6 +752,24 @@ export const layerHandlers = (input: {
               ...(status.remote ?? { hasUpstream: false, aheadCount: 0, behindCount: 0, pr: null }),
             })),
           ),
+        [WS_METHODS.pullRequestsList]: (request) => pullRequests.list(request),
+        [WS_METHODS.pullRequestsListStats]: (request) => pullRequests.listStats(request),
+        [WS_METHODS.pullRequestsSummary]: (request) => pullRequests.summary(request),
+        [WS_METHODS.pullRequestsRouting]: (request) => pullRequests.routing(request),
+        [WS_METHODS.pullRequestsRoutingIdentity]: (request) =>
+          pullRequests.routingIdentity(request),
+        [WS_METHODS.pullRequestsStack]: (request) => pullRequests.stack(request),
+        [WS_METHODS.pullRequestsLinkedThreads]: (request) => pullRequests.linkedThreads(request),
+        [WS_METHODS.pullRequestsDetail]: (request) => pullRequests.detail(request),
+        [WS_METHODS.pullRequestsPreview]: (request) => pullRequests.preview(request),
+        [WS_METHODS.pullRequestsChecks]: (request) => pullRequests.checks(request),
+        [WS_METHODS.pullRequestsActivity]: (request) => pullRequests.activity(request),
+        [WS_METHODS.pullRequestsThreadComments]: (request) => pullRequests.threadComments(request),
+        [WS_METHODS.pullRequestsDiffFileContents]: (request) =>
+          pullRequests.diffFileContents(request),
+        [WS_METHODS.pullRequestsInvalidate]: (request) => pullRequests.invalidate(request),
+        [WS_METHODS.pullRequestsSubscribeRefreshes]: () => pullRequests.subscribeRefreshes,
+        [WS_METHODS.gitResolvePullRequest]: (request) => pullRequests.resolvePullRequest(request),
         [WS_METHODS.gitRunStackedAction]: (request) =>
           Stream.unwrap(Effect.map(actorNow, (actor) => branches.runAction(actor, request))),
         // A thread's branch only takes commits from its own turns.

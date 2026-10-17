@@ -95,6 +95,7 @@ import {
 } from "./usageShortcuts";
 import { useEscapeToGoBack } from "../../hooks/useNavigateBack";
 import { PROVIDER_ORDER, PROVIDER_PRESENTATION, providersWithUsage } from "./usageProviders";
+import { useCanEditUsagePrices } from "./usagePriceCapabilities"; // signalbox
 import {
   readUsagePagePreferences,
   saveUsagePagePreferences,
@@ -1245,6 +1246,7 @@ function UsageEnvironmentFilter({
   readonly contractMismatches: MergedUsage["contractMismatches"];
   readonly onOpenModelPrices: () => void;
 }) {
+  const canEditModelPrices = useCanEditUsagePrices(selectedEnvironmentIds); // signalbox
   const allSelected = selectedEnvironmentIds === null;
   // signalbox: one environment, so this menu only carries status and model prices.
   const showsEnvironmentUi = useShowsEnvironmentUi();
@@ -1258,6 +1260,11 @@ function UsageEnvironmentFilter({
   const hasIssue =
     selectedEnvironments.some((environment) => environment.error !== null) ||
     contractMismatches.length > 0;
+  // signalbox: one environment and no price editor would leave this menu empty.
+  const hasDetails = showUsageStatus && (isPartial || hasIssue || duplicateSources.length > 0);
+  if (!showsEnvironmentUi && !canEditModelPrices && !hasDetails) {
+    return <WorkspaceBreadcrumbText>{label}</WorkspaceBreadcrumbText>;
+  }
 
   return (
     <Menu>
@@ -1358,11 +1365,15 @@ function UsageEnvironmentFilter({
             contractMismatches={contractMismatches}
           />
         ) : null}
-        <MenuSeparator />
-        <MenuItem onClick={onOpenModelPrices}>
-          <SlidersHorizontalIcon aria-hidden />
-          Model prices
-        </MenuItem>
+        {canEditModelPrices ? (
+          <>
+            <MenuSeparator />
+            <MenuItem onClick={onOpenModelPrices}>
+              <SlidersHorizontalIcon aria-hidden />
+              Model prices
+            </MenuItem>
+          </>
+        ) : null}
       </MenuPopup>
     </Menu>
   );
