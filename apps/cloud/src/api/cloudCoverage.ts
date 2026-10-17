@@ -32,7 +32,6 @@ const poolHarnesses = exempt("Pools run each harness; nothing installs per user.
 export const CLOUD_UNSERVED: Readonly<Record<string, Unserved>> = {
   "settings.get": gap("#440"),
   "keybindings.*": gap("#440"),
-  "analytics.*": gap("#284"),
 
   // Waiting on you: approvals, questions and secret requests.
   "threads.respond": gap("#410"),
@@ -67,22 +66,8 @@ export const CLOUD_UNSERVED: Readonly<Record<string, Unserved>> = {
   "threads.search": gap("#334"),
   "threads.searchOne": gap("#334"),
 
-  // Pull requests, linked and followed (`pr.*` for automations).
-  "pullRequests.list": gap("#814"),
-  "pullRequests.listStats": gap("#814"),
-  "pullRequests.summary": gap("#814"),
-  "pullRequests.routing": gap("#814"),
-  "pullRequests.routingIdentity": gap("#814"),
-  "pullRequests.stack": gap("#814"),
-  "pullRequests.linkedThreads": gap("#814"),
-  "pullRequests.detail": gap("#814"),
-  "pullRequests.preview": gap("#814"),
-  "pullRequests.checks": gap("#814"),
-  "pullRequests.activity": gap("#814"),
-  "pullRequests.threadComments": gap("#814"),
-  "pullRequests.diffFileContents": gap("#814"),
-  "pullRequests.refresh": gap("#814"),
-  "pullRequests.subscribeRefreshes": gap("#814"),
+  // Pull-request reads are served by `github/CloudPullRequests.ts` (#814).
+  // The later slices own writes and personal review state.
   "pullRequests.reviewGuide": gap("#815"),
   "pullRequests.generateReviewGuide": gap("#815"),
   "pullRequests.filesViewed": gap("#815"),
@@ -101,7 +86,6 @@ export const CLOUD_UNSERVED: Readonly<Record<string, Unserved>> = {
   "pullRequests.setLabels": gap("#817"),
   "threads.pullRequest.watch": gap("#818"),
   "git.preparePullRequestThread": gap("#818"),
-  "git.resolvePullRequest": gap("#814"),
 
   // Git beyond the thread's own branch.
   "vcs.listRefs": gap("#809"),
