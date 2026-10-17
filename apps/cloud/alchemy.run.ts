@@ -247,7 +247,7 @@ function deploy(
     // no keys: the cloud's `ModelGrants` entrypoint checks every token.
     const gateway = yield* Cloudflare.Worker("ModelGateway", {
       name: target.gatewayWorker,
-      main: here("src/modelGateway/worker.ts"),
+      main: here("src/models/gatewayWorker.ts"),
       compatibility,
       workersDev: false,
       domain: { name: target.gatewayDomain, zoneId: SIGNALBOX_ZONE_ID },

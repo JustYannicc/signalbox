@@ -2,7 +2,7 @@ import { describe, expect, it } from "@effect/vitest";
 import { RunId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 
-import type { ModelGatewayRecord } from "../modelGateway/modelGatewayRecord.ts";
+import type { ModelGatewayRecord } from "./ModelRecords.ts";
 import type { PoolObjectNamespace } from "../pool/PoolDirectory.ts";
 import type { ThreadObjectNamespace } from "../thread/ThreadDirectory.ts";
 import type { UserObjectNamespace } from "../user/UserDirectory.ts";
