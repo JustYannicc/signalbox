@@ -172,7 +172,7 @@
       "rpc": "automations.customize",
       "access": "write",
       "input": "91eb786d",
-      "output": "de208150"
+      "output": "2e94ba08"
     },
     {
       "name": "automations.delete",
@@ -187,7 +187,7 @@
       "rpc": "automations.discardDraft",
       "access": "write",
       "input": "e4926bda",
-      "output": "de208150"
+      "output": "2e94ba08"
     },
     {
       "name": "automations.disconnect",
@@ -202,7 +202,7 @@
       "access": "read",
       "stream": "snapshot",
       "input": "e4926bda",
-      "output": "6cfec324"
+      "output": "3af231ca"
     },
     {
       "name": "automations.list",
@@ -210,7 +210,7 @@
       "access": "read",
       "stream": "snapshot",
       "input": "03c2b661",
-      "output": "a1386d18"
+      "output": "86625594"
     },
     {
       "name": "automations.notices",
@@ -225,14 +225,14 @@
       "rpc": "automations.publish",
       "access": "write",
       "input": "b3f469e7",
-      "output": "de208150"
+      "output": "2e94ba08"
     },
     {
       "name": "automations.rotateWebhook",
       "rpc": "automations.rotateWebhook",
       "access": "write",
       "input": "e4926bda",
-      "output": "de208150"
+      "output": "2e94ba08"
     },
     {
       "name": "automations.run",
@@ -254,7 +254,7 @@
       "access": "read",
       "stream": "snapshot",
       "input": "5b9c822a",
-      "output": "b013495f"
+      "output": "022797fa"
     },
     {
       "name": "automations.runs.retry",
@@ -269,21 +269,21 @@
       "access": "write",
       "compiles": true,
       "input": "e4a20fc8",
-      "output": "e9ad0c58"
+      "output": "4a3e4ebe"
     },
     {
       "name": "automations.setEnabled",
       "rpc": "automations.setEnabled",
       "access": "write",
       "input": "a3f5fcc8",
-      "output": "de208150"
+      "output": "2e94ba08"
     },
     {
       "name": "automations.setWebhookSecret",
       "rpc": "automations.setWebhookSecret",
       "access": "write",
       "input": "2af82751",
-      "output": "de208150"
+      "output": "2e94ba08"
     },
     {
       "name": "automations.stopAttached",
@@ -543,7 +543,7 @@
       "rpc": "signalbox.folders.create",
       "access": "write",
       "input": "f9c41d1b",
-      "output": "786cc416"
+      "output": "1479e2e0"
     },
     {
       "name": "folders.delete",
@@ -551,7 +551,7 @@
       "access": "write",
       "destructive": true,
       "input": "a3ac90c6",
-      "output": "786cc416"
+      "output": "1479e2e0"
     },
     {
       "name": "folders.list",
@@ -559,49 +559,56 @@
       "access": "read",
       "stream": "snapshot",
       "input": "03c2b661",
-      "output": "786cc416"
+      "output": "1479e2e0"
     },
     {
       "name": "folders.move",
       "rpc": "signalbox.folders.move",
       "access": "write",
       "input": "e8e9d1d8",
-      "output": "786cc416"
+      "output": "1479e2e0"
     },
     {
       "name": "folders.revokeSecretSend",
       "rpc": "signalbox.folders.revokeSecretSend",
       "access": "write",
       "input": "e3128732",
-      "output": "786cc416"
+      "output": "1479e2e0"
+    },
+    {
+      "name": "folders.setGitHubLend",
+      "rpc": "signalbox.folders.setGitHubLend",
+      "access": "write",
+      "input": "6c500f30",
+      "output": "1479e2e0"
     },
     {
       "name": "folders.setInstructions",
       "rpc": "signalbox.folders.setInstructions",
       "access": "write",
       "input": "50051613",
-      "output": "786cc416"
+      "output": "1479e2e0"
     },
     {
       "name": "folders.setOnePassword",
       "rpc": "signalbox.folders.setOnePassword",
       "access": "write",
       "input": "55e4b414",
-      "output": "786cc416"
+      "output": "1479e2e0"
     },
     {
       "name": "folders.setSecrets",
       "rpc": "signalbox.folders.setSecrets",
       "access": "write",
       "input": "8c1300cc",
-      "output": "786cc416"
+      "output": "1479e2e0"
     },
     {
       "name": "folders.update",
       "rpc": "signalbox.folders.update",
       "access": "write",
       "input": "83f5ef8c",
-      "output": "786cc416"
+      "output": "1479e2e0"
     },
     {
       "name": "git.preparePullRequestThread",
@@ -660,6 +667,57 @@
       "access": "write",
       "input": "a3ac90c6",
       "output": "2e0ff267"
+    },
+    {
+      "name": "notes.accept",
+      "rpc": "signalbox.notes.accept",
+      "access": "write",
+      "input": "b86ab6f1",
+      "output": "1276a316"
+    },
+    {
+      "name": "notes.create",
+      "rpc": "signalbox.notes.create",
+      "access": "write",
+      "input": "bd0d5ba3",
+      "output": "aae409c1"
+    },
+    {
+      "name": "notes.delete",
+      "rpc": "signalbox.notes.delete",
+      "access": "write",
+      "destructive": true,
+      "input": "a3ac90c6",
+      "output": "aae409c1"
+    },
+    {
+      "name": "notes.dismissReading",
+      "rpc": "signalbox.notes.dismissReading",
+      "access": "write",
+      "input": "a3ac90c6",
+      "output": "aae409c1"
+    },
+    {
+      "name": "notes.list",
+      "rpc": "signalbox.notes.subscribe",
+      "access": "read",
+      "stream": "snapshot",
+      "input": "03c2b661",
+      "output": "aae409c1"
+    },
+    {
+      "name": "notes.readAgain",
+      "rpc": "signalbox.notes.readAgain",
+      "access": "write",
+      "input": "a3ac90c6",
+      "output": "aae409c1"
+    },
+    {
+      "name": "notes.update",
+      "rpc": "signalbox.notes.update",
+      "access": "write",
+      "input": "73e0bcf6",
+      "output": "aae409c1"
     },
     {
       "name": "pools.addApiKey",
@@ -1463,7 +1521,7 @@
       "rpc": "server.getConfig",
       "access": "read",
       "input": "03c2b661",
-      "output": "f08e1bf9"
+      "output": "16378cfb"
     },
     {
       "name": "server.refreshProviders",
@@ -1500,7 +1558,7 @@
       "access": "read",
       "stream": "snapshot",
       "input": "240ec835",
-      "output": "31482770"
+      "output": "7fbc36f2"
     },
     {
       "name": "settings.get",
@@ -1847,7 +1905,7 @@
       "rpc": "signalbox.folders.moveThread",
       "access": "write",
       "input": "218150d1",
-      "output": "786cc416"
+      "output": "1479e2e0"
     },
     {
       "name": "threads.pin",
@@ -2086,6 +2144,14 @@
       "access": "write",
       "input": "7068e784",
       "output": "aebf4e45"
+    },
+    {
+      "name": "threadStatus.list",
+      "rpc": "signalbox.threadStatus.subscribe",
+      "access": "read",
+      "stream": "snapshot",
+      "input": "03c2b661",
+      "output": "259e0077"
     },
     {
       "name": "usage.refreshRates",

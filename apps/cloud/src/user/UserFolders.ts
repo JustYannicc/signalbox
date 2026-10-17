@@ -31,6 +31,7 @@ import * as SqlClient from "effect/sql/SqlClient";
 import type { SqlError } from "effect/sql/SqlError";
 
 import { parseDriveId } from "../drive/driveAccess.ts";
+import { moveNotesUp } from "../notes/noteTables.ts";
 import type { TurnInstructions, TurnPools, TurnSecrets } from "../thread/turnPool.ts";
 import { contextOfProject, driveOfProject, projectIdForDrive } from "./contextProjects.ts";
 import { foldDrives } from "./driveFolders.ts";
@@ -102,6 +103,8 @@ export interface FolderState {
   readonly onePasswordConnectedAt: number | null;
   /** The hosts agents may always send each secret to (#592, `SecretSends.ts`). */
   readonly secretSends: ReadonlyArray<SecretSend>;
+  /** The folders the user lent a GitHub account to (#641). */
+  readonly githubLends: ReadonlyMap<FolderId, ResourceBindings.GitHubLend>;
 }
 
 export class UserFolders extends Context.Service<
@@ -111,6 +114,10 @@ export class UserFolders extends Context.Service<
     /** The state now, then again after every change, owners' and drives' included. */
     readonly states: Stream.Stream<FolderState, SqlError>;
     readonly snapshot: Effect.Effect<SignalboxFoldersSnapshot, SqlError>;
+    /** Where a thread lives now (`homeOf`), with the state that says so. */
+    readonly threadHome: (
+      threadId: ThreadId,
+    ) => Effect.Effect<{ readonly state: FolderState; readonly home: FolderId | null }, SqlError>;
     /** `states` as snapshots. */
     readonly changes: Stream.Stream<SignalboxFoldersSnapshot, SqlError>;
     readonly create: (input: FolderCreateInput) => Effect.Effect<SignalboxFoldersSnapshot, Failure>;
@@ -145,6 +152,14 @@ export class UserFolders extends Context.Service<
     /** Stops agents always sending a secret to a host: the next send asks again. */
     readonly revokeSecretSend: (
       input: FolderRevokeSecretSendInput,
+    ) => Effect.Effect<SignalboxFoldersSnapshot, Failure>;
+    /**
+     * Lends GitHub account `login` to a folder for its CI steps, or stops (null).
+     * `GitHubActions.setLend` decides the login: the user's connected account.
+     */
+    readonly setGitHubLend: (
+      folderId: FolderId,
+      login: string | null,
     ) => Effect.Effect<SignalboxFoldersSnapshot, Failure>;
     /** Takes a deleted pool off every level, so they inherit from above again. */
     readonly forgetPool: (poolId: string) => Effect.Effect<void, SqlError>;
@@ -286,6 +301,7 @@ const make = Effect.gen(function* () {
         revision: state?.revision ?? 0,
         onePasswordConnectedAt: yield* onePassword.connectedAt,
         secretSends: yield* secretSends.inForce,
+        githubLends: yield* bindings.githubLends,
       } satisfies FolderState;
     });
 
@@ -318,6 +334,18 @@ const make = Effect.gen(function* () {
   });
 
   const snapshot: UserFolders["Service"]["snapshot"] = Effect.map(state, toSnapshot);
+
+  const threadHome: UserFolders["Service"]["threadHome"] = (threadId) =>
+    Effect.gen(function* () {
+      const current = yield* state;
+      const indexed = yield* indexedThread(threadId);
+      const home = homeOf(current.tree, {
+        threadId,
+        projectId: indexed?.projectId ?? null,
+        ownerId: indexed?.contextId ?? null,
+      });
+      return { state: current, home };
+    });
 
   const states: UserFolders["Service"]["states"] = Stream.unwrap(
     Effect.map(PubSub.subscribe(changed), (subscription) =>
@@ -421,7 +449,11 @@ const make = Effect.gen(function* () {
           const driveId =
             input.files === null ? null : yield* filesFor(current, input.files, folder.ownerId);
           if (driveId !== folder.driveId) {
+            // A lend was for the repository the files were; other files need lending again.
+            yield* bindings.setGitHubLend(folder.id, null);
             if (driveId !== null) {
+              const from = current.tree.folders.find((entry) => entry.driveId === driveId);
+              if (from) yield* bindings.setGitHubLend(from.id, null);
               yield* sql`UPDATE folders SET drive_id = NULL WHERE drive_id = ${driveId}`;
             }
             yield* sql`UPDATE folders SET drive_id = ${driveId} WHERE id = ${folder.id}`;
@@ -506,8 +538,12 @@ const make = Effect.gen(function* () {
         }
         yield* sql`UPDATE thread_homes SET folder_id = ${parentId}, filed_at = ${now}
           WHERE folder_id = ${input.id}`;
+        yield* moveNotesUp(input.id, parentId).pipe(
+          Effect.provideService(SqlClient.SqlClient, sql),
+        );
         yield* sql`DELETE FROM folders WHERE id = ${input.id}`;
         yield* bindings.setPool(levelOf(input.id), null);
+        yield* bindings.setGitHubLend(input.id, null);
         return true;
       }),
     ).pipe(traced("UserFolders.delete", { "folder.id": input.id }));
@@ -637,6 +673,20 @@ const make = Effect.gen(function* () {
     changedWith(secretSends.revoke(input)).pipe(
       Effect.andThen(snapshot),
       traced("UserFolders.revokeSecretSend", {}),
+    );
+
+  const setGitHubLend: UserFolders["Service"]["setGitHubLend"] = (folderId, login) =>
+    mutate((current) =>
+      Effect.gen(function* () {
+        const folder = yield* requireFolder(current, folderId);
+        yield* annotateOwner(folder.ownerId);
+        return yield* bindings.setGitHubLend(folder.id, login);
+      }),
+    ).pipe(
+      traced("UserFolders.setGitHubLend", {
+        "folder.id": folderId,
+        "folder.change": login === null ? "github-lend-stop" : "github-lend",
+      }),
     );
 
   const forgetPool: UserFolders["Service"]["forgetPool"] = (poolId) =>
@@ -792,6 +842,7 @@ const make = Effect.gen(function* () {
     adoptLegacy,
     state,
     snapshot,
+    threadHome,
     changes,
     create,
     update,
@@ -801,6 +852,7 @@ const make = Effect.gen(function* () {
     setInstructions,
     setSecrets,
     setOnePassword,
+    setGitHubLend,
     adoptOnePassword,
     allowedSends,
     keepSends,

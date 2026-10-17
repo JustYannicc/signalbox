@@ -45,6 +45,8 @@ import { useSelectedThreadWorktree } from "../../../state/use-selected-thread-wo
 import { vcsEnvironment } from "../../../state/vcs";
 import { resolveGitOverviewReviewNavigationAction } from "./git-overview-navigation";
 import { MetaCard, SheetListRow, menuItemIconName, statusSummary } from "./gitSheetComponents";
+import { useEnvironmentSupports } from "../../../state/environmentCapabilities"; // signalbox
+import { ownBranchMenuItems } from "@t3tools/client-runtime/state/signalboxOwnBranch"; // signalbox
 
 const HEADER_SCROLL_EDGE_EFFECTS = nativeHeaderScrollEdgeEffects(Platform.OS, Platform.Version);
 
@@ -77,6 +79,9 @@ function GitOverviewSheetContent(props: GitOverviewSheetProps) {
   const environmentId = EnvironmentId.make(props.route.params.environmentId);
   const threadId = ThreadId.make(props.route.params.threadId);
   const { selectedThread, selectedEnvironmentRuntime } = useThreadSelection();
+  const supportsWorktrees = useEnvironmentSupports(environmentId, "worktrees"); // signalbox
+  // signalbox: server paths mean nothing to someone who can't reach that machine.
+  const showsWorktreePath = useEnvironmentSupports(environmentId, "localFilesystem");
   const { selectedThreadCwd, selectedThreadWorktreePath } = useSelectedThreadWorktree();
   const supportsLinkedPrSnapshots =
     selectedEnvironmentRuntime?.serverConfig?.environment.capabilities.threadPullRequests === true;
@@ -112,10 +117,11 @@ function GitOverviewSheetContent(props: GitOverviewSheetProps) {
   const hasPrimaryRemote = gitStatus.data?.hasPrimaryRemote ?? false;
   const isDefaultRef = gitStatus.data?.isDefaultRef ?? false;
 
-  const menuItems = useMemo(
-    () => (isRepo ? buildMenuItems(gitStatus.data, busy, hasPrimaryRemote) : []),
-    [busy, gitStatus.data, hasPrimaryRemote, isRepo],
-  );
+  const menuItems = useMemo(() => {
+    const items = isRepo ? buildMenuItems(gitStatus.data, busy, hasPrimaryRemote) : [];
+    // signalbox: a thread on its own branch commits from its turns, never here.
+    return supportsWorktrees ? items : ownBranchMenuItems(items);
+  }, [busy, gitStatus.data, hasPrimaryRemote, isRepo, supportsWorktrees]);
 
   const sheetMenuItems = useMemo(
     () =>
@@ -332,23 +338,28 @@ function GitOverviewSheetContent(props: GitOverviewSheetProps) {
             );
           }}
         />
-        {Platform.OS !== "android" ? <View className="ml-12 h-px bg-border" /> : null}
-        <SheetListRow
-          icon="point.topleft.down.curvedto.point.bottomright.up"
-          title="Branches & worktrees"
-          subtitle={
-            canChangeThreadBranch
-              ? "Switch branch, create branch, or move to a worktree"
-              : "View branches and worktrees"
-          }
-          disabled={busy || !isRepo}
-          onPress={() =>
-            navigation.navigate("GitBranches", {
-              environmentId: String(environmentId),
-              threadId: String(threadId),
-            })
-          }
-        />
+        {Platform.OS !== "android" && supportsWorktrees ? ( // signalbox
+          <View className="ml-12 h-px bg-border" />
+        ) : null}
+        {/* signalbox: without worktrees each thread has its own branch: the sheet's title */}
+        {supportsWorktrees ? (
+          <SheetListRow
+            icon="point.topleft.down.curvedto.point.bottomright.up"
+            title="Branches & worktrees"
+            subtitle={
+              canChangeThreadBranch
+                ? "Switch branch, create branch, or move to a worktree"
+                : "View branches and worktrees"
+            }
+            disabled={busy || !isRepo}
+            onPress={() =>
+              navigation.navigate("GitBranches", {
+                environmentId: String(environmentId),
+                threadId: String(threadId),
+              })
+            }
+          />
+        ) : null}
       </View>
 
       {linkedPrChains.length > 0 ? (
@@ -404,7 +415,9 @@ function GitOverviewSheetContent(props: GitOverviewSheetProps) {
         </View>
       ) : null}
 
-      {currentWorktreePath ? <MetaCard label="Worktree" value={currentWorktreePath} /> : null}
+      {currentWorktreePath && showsWorktreePath ? ( // signalbox
+        <MetaCard label="Worktree" value={currentWorktreePath} />
+      ) : null}
     </ScrollView>
   );
 

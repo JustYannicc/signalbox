@@ -58,5 +58,9 @@ export function createSignalboxFoldersAtoms<R, E>(
       label: "signalbox-folders:revoke-secret-send",
       tag: SIGNALBOX_FOLDERS_WS_METHODS.revokeSecretSend,
     }),
+    setGitHubLend: createEnvironmentRpcCommand(runtime, {
+      label: "signalbox-folders:set-github-lend",
+      tag: SIGNALBOX_FOLDERS_WS_METHODS.setGitHubLend,
+    }),
   };
 }

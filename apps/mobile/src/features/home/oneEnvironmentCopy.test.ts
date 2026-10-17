@@ -26,6 +26,24 @@ describe("environment copy with only Signalbox Cloud", () => {
     );
   });
 
+  it("calls the cloud Signalbox wherever its environment label shows", () => {
+    expect(oneEnvironmentCopy("Reconnecting to Signalbox Cloud...")).toBe(
+      "Reconnecting to Signalbox...",
+    );
+    expect(oneEnvironmentCopy("Signalbox Cloud (PR #685) is disconnected")).toBe(
+      "Signalbox is disconnected",
+    );
+  });
+
+  it("rewords connection errors that name the environment", () => {
+    expect(oneEnvironmentCopy("The environment credential is invalid.")).toBe(
+      "Your Signalbox sign-in expired. Sign in again.",
+    );
+    expect(oneEnvironmentCopy("Could not synchronize environment data.")).toBe(
+      "Couldn't sync your threads.",
+    );
+  });
+
   it("leaves text it doesn't know as upstream wrote it", () => {
     expect(oneEnvironmentCopy("Couldn't load pull requests")).toBe("Couldn't load pull requests");
   });

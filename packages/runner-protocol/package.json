@@ -31,6 +31,10 @@
       "types": "./src/AutomationProtocol.ts",
       "import": "./src/AutomationProtocol.ts"
     },
+    "./StatusLineProtocol": {
+      "types": "./src/StatusLineProtocol.ts",
+      "import": "./src/StatusLineProtocol.ts"
+    },
     "./drivePaths": {
       "types": "./src/drivePaths.ts",
       "import": "./src/drivePaths.ts"

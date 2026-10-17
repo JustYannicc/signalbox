@@ -153,3 +153,17 @@ export function runActions(
 export function canRetryRun(run: Pick<AutomationRunSummary, "status">): boolean {
   return run.status === "failed" || run.status === "cancelled";
 }
+
+/** The question a run waits on in one environment, e.g. the payment an agent handed over (#579). */
+export function waitingQuestionForRun(
+  entries: ReadonlyArray<{ readonly environmentId: string; readonly automation: Automation }>,
+  environmentId: string,
+  runId: string,
+): AutomationWaitingQuestion | undefined {
+  for (const entry of entries) {
+    if (entry.environmentId !== environmentId) continue;
+    const question = entry.automation.waiting.find((each) => each.runId === runId);
+    if (question !== undefined) return question;
+  }
+  return undefined;
+}

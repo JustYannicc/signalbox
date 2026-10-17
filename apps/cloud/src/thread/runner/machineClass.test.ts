@@ -171,7 +171,7 @@ describe("machine classes", () => {
     ),
   );
 
-  it.effect("moves a run up when its light machine dies mid-turn, and stays heavy", () =>
+  it.effect("moves a run up when its light machine runs out of memory, and stays heavy", () =>
     Effect.gen(function* () {
       const filename = freshDatabase();
       yield* withObject(
@@ -188,14 +188,17 @@ describe("machine classes", () => {
               items: [report.started],
             });
             // An older machine's exit changes nothing; the lease's own moves the run up.
-            yield* runner.machineExited(machine.generation - 1, "exited");
+            yield* runner.machineExited(machine.generation - 1, {
+              detail: "The machine ran out of memory (exit 137).",
+              outOfMemory: true,
+            });
             expect((yield* snapshot(engine)).projection.runs.map((run) => run.status)).toEqual([
               "running",
             ]);
-            yield* runner.machineExited(
-              machine.generation,
-              "The machine ran out of memory (exit 137).",
-            );
+            yield* runner.machineExited(machine.generation, {
+              detail: "The machine ran out of memory (exit 137).",
+              outOfMemory: true,
+            });
             const { projection } = yield* snapshot(engine);
             expect(projection.runs.map((run) => run.status)).toEqual(["interrupted", "starting"]);
           }),
@@ -204,6 +207,44 @@ describe("machine classes", () => {
       // After an eviction, every machine the thread asks for is still heavy.
       const next = yield* withObject(filename, (_engine, runner) => runner.reconcile, options);
       expect(next).toMatchObject({ ensure: { generation: 2 }, machineClass: "heavy" });
+    }),
+  );
+
+  // #555: Cloudflare restarts a thread's container on every deploy.
+  it.effect("continues a run whose light machine a rollout restarted on another light one", () =>
+    Effect.gen(function* () {
+      const filename = freshDatabase();
+      yield* withObject(
+        filename,
+        (engine, runner) =>
+          Effect.gen(function* () {
+            yield* launch(engine);
+            const machine = yield* connect(runner);
+            const turn = yield* liveTurn(runner);
+            const report = turnReport(turn.runId, turn.runOrdinal, turn.providerThread);
+            yield* runner.batch({
+              generation: machine.generation,
+              sequence: 1,
+              items: [report.started],
+            });
+            yield* runner.machineExited(machine.generation, {
+              detail:
+                "The machine stopped: Runtime signalled the container to exit due to a new version rollout: 130",
+              outOfMemory: false,
+            });
+            const { projection } = yield* snapshot(engine);
+            expect(projection.runs.map((run) => run.status)).toEqual(["interrupted", "starting"]);
+            const notices = projection.turnItems.filter((item) => item.type === "system_notice");
+            expect(JSON.stringify(notices)).not.toContain("bigger machine");
+            expect(yield* connect(runner)).toMatchObject({
+              generation: machine.generation + 1,
+              machineClass: "light",
+            });
+          }),
+        options,
+      );
+      const next = yield* withObject(filename, (_engine, runner) => runner.reconcile, options);
+      expect(next).toMatchObject({ machineClass: "light" });
     }),
   );
 

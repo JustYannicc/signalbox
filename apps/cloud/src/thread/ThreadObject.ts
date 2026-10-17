@@ -1,5 +1,6 @@
 import * as SqliteClient from "@effect/sql-sqlite-do/SqliteClient";
 import { PREVIEW_TUNNEL_PATH } from "@signalbox/runner-protocol/PreviewTunnel";
+import { statusLineJson } from "@signalbox/runner-protocol/StatusLineProtocol";
 import {
   type ModelGatewayProvider,
   RUNNER_HEARTBEAT_PING,
@@ -62,7 +63,10 @@ import { type BrowserReply, wire } from "./threadWire.ts";
 import * as ThreadStore from "./ThreadStore.ts";
 import * as TurnModels from "./TurnModels.ts";
 import { scriptedProviderEnabled } from "./scriptedProvider.ts";
+import { noteView } from "./statusLine/statusNotePolicy.ts";
 import * as PullRequestSync from "./pullRequests/PullRequestSync.ts";
+import * as StatusNoteModel from "./statusLine/StatusNoteModel.ts";
+import * as ThreadStatusNotes from "./statusLine/ThreadStatusNotes.ts";
 
 /**
  * One per thread, named by its thread id, always in the EU jurisdiction. It
@@ -197,6 +201,14 @@ const makeRuntime = (
       Layer.provideMerge(ThreadBrowsing.layer),
       // Where its machine may send its secrets (#592).
       Layer.provideMerge(ThreadSends.layer),
+      // Its status note (#670), written by the runtime through the owner's pool when the agent didn't.
+      Layer.provideMerge(
+        ThreadStatusNotes.layer.pipe(
+          Layer.provide(
+            StatusNoteModel.layerPools(env.POOLS, { localWorkerd: env.LOCAL_WORKERD === "1" }),
+          ),
+        ),
+      ),
       Layer.provideMerge(ThreadEngine.layer),
       Layer.provideMerge(
         TurnModels.layer({ scripted: scriptedProviderEnabled(env) }).pipe(
@@ -273,8 +285,8 @@ export class ThreadObject extends DurableObject<ThreadObjectEnv> implements Thre
           (ctx as unknown as { readonly exports: ThreadEgressExports }).exports.ThreadEgress({
             props: { threadId: this.threadId() },
           }),
-        onExit: (detail, generation) =>
-          void this.machineExited(detail, generation).catch((cause: unknown) =>
+        onExit: (exit, generation) =>
+          void this.machineExited(exit, generation).catch((cause: unknown) =>
             this.runtime.runPromise(Effect.logError("machine exit failed", String(cause))),
           ),
       },
@@ -338,9 +350,9 @@ export class ThreadObject extends DurableObject<ThreadObjectEnv> implements Thre
   }
 
   /** The thread's container stopped on its own: its lease is over (see `ThreadRunner.machineExited`). */
-  private async machineExited(detail: string, generation: number) {
+  private async machineExited(exit: MachineBackend.MachineExit, generation: number) {
     await this.runtime.runPromise(
-      ThreadRunner.ThreadRunner.use((runner) => runner.machineExited(generation, detail)),
+      ThreadRunner.ThreadRunner.use((runner) => runner.machineExited(generation, exit)),
     );
     await this.armAlarm();
   }
@@ -412,6 +424,27 @@ export class ThreadObject extends DurableObject<ThreadObjectEnv> implements Thre
     return this.runtime.runPromise(
       ThreadRunner.ThreadRunner.use((runner) => runner.authorizeRemote(token)),
     );
+  }
+
+  /** The thread's status line for its agent, from the drive API, which checked its token (#670). */
+  statusLine() {
+    return this.runtime.runPromise(
+      ThreadStatusNotes.ThreadStatusNotes.use((notes) => notes.line).pipe(
+        Effect.map((line) => (line === null ? null : statusLineJson.read.encode(line))),
+      ),
+    );
+  }
+
+  /** The agent's status note (`statusLineJson.writeRequest`); answers the stored note's view. */
+  async writeStatusNote(input: string) {
+    const note = await this.runtime.runPromise(
+      ThreadStatusNotes.ThreadStatusNotes.use((notes) =>
+        notes.write(statusLineJson.writeRequest.decode(input)),
+      ).pipe(Effect.catchTags({ ThreadNotFoundError: () => Effect.succeed(null) })),
+    );
+    // The new summary revision goes out on the alarm.
+    await this.armAlarm();
+    return note === null ? null : noteView(note);
   }
 
   previews(...[actor]: Parameters<ThreadObjectApi["previews"]>) {
@@ -590,6 +623,11 @@ export class ThreadObject extends DurableObject<ThreadObjectEnv> implements Thre
       PullRequestSync.PullRequestSync.use((sync) => sync.dueAt),
     );
     if (pullRequestsAt !== null) await this.setAlarmNoLaterThan(pullRequestsAt);
+    const now = await this.now();
+    const statusNoteAt = await this.runtime.runPromise(
+      ThreadStatusNotes.ThreadStatusNotes.use((notes) => notes.dueAt(now)),
+    );
+    if (statusNoteAt !== null) await this.setAlarmNoLaterThan(statusNoteAt);
     const sharingEndsAt = await this.runtime.runPromise(
       ThreadBrowsing.ThreadBrowsing.use((browsing) => browsing.sharingEndsAt),
     );
@@ -849,6 +887,16 @@ export class ThreadObject extends DurableObject<ThreadObjectEnv> implements Thre
       return now + retryDelay(1);
     });
     const diagnosticsWakeAt = await this.tendDiagnostics(now);
+    // A turn that ended without its status note gets one written (#670).
+    const statusNoteWakeAt = await this.runtime.runPromise(
+      ThreadStatusNotes.ThreadStatusNotes.use((notes) => notes.tend(now)).pipe(
+        Effect.catchCause((cause) =>
+          Effect.logError("runtime status note failed", Cause.pretty(cause)).pipe(
+            Effect.as(now + retryDelay(1)),
+          ),
+        ),
+      ),
+    );
     const sharing = await this.runtime.runPromise(
       ThreadBrowsing.ThreadBrowsing.use((browsing) => browsing.expire).pipe(
         Effect.map((at) => ({ ok: true, at })),
@@ -870,14 +918,24 @@ export class ThreadObject extends DurableObject<ThreadObjectEnv> implements Thre
             ))
           ? now
           : null;
+    // A runtime status note gave the summary a new revision after it went out.
+    const summaryAt =
+      this.nextDeliveryAt > 0
+        ? this.nextDeliveryAt
+        : (await this.runtime.runPromise(
+              ThreadEngine.ThreadEngine.use((engine) => engine.hasPendingSummary),
+            ))
+          ? now
+          : null;
     const due = [
       step.more ? now + (step.ok ? STEP_INTERVAL_MS : retryDelay(this.stepFailures)) : null,
-      this.nextDeliveryAt > 0 ? this.nextDeliveryAt : null,
+      summaryAt,
       eventsAt,
       machineWakeAt,
       diagnosticsWakeAt,
       pullRequestsWakeAt,
       sharingWakeAt,
+      statusNoteWakeAt,
     ].filter((at) => at !== null);
     if (due.length > 0) await this.setAlarmNoLaterThan(Math.min(...due));
   }

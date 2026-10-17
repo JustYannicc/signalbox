@@ -10,7 +10,9 @@ import type { CDPSession, Page } from "playwright-core";
  * rrweb's recorder in a tab of the agent's browser (#587): what the mirror
  * replays and the trail keeps. The recorder runs in the page's main world in
  * every frame; only the top frame reports, and cross-origin frames post to it
- * (`recordCrossOriginIframes`). It reports over a CDP binding on the tab's own
+ * (`recordCrossOriginIframes`), sending their document again whenever the top
+ * frame takes a full snapshot (card fields live in such frames, #663). It
+ * reports over a CDP binding on the tab's own
  * session, under a random name the script takes and deletes before the page's
  * own scripts run, so a site sees no automation global (Playwright's
  * `exposeBinding` would leave `__playwright__binding__` behind). What the
@@ -49,6 +51,15 @@ const BATCH_MS = 100;
 export const RECORDING_CHECKOUT_CHARS = 8_000_000;
 
 /**
+ * Page-side: whether an input is a payment card field, by its autocomplete,
+ * name or id. The recorder masks these, and a page with one visible is a
+ * payment (`RunnerBrowserPayment.ts`), by the same rule.
+ */
+export const CARD_FIELD = `((input) =>
+  /(^|\\s)cc-(number|csc|exp)/i.test((input.getAttribute && input.getAttribute("autocomplete")) || "") ||
+  /card[-_]?number|(?<![a-z])(cc[-_]?number|cvc|cvv2?)(?![a-z])/i.test((input.name || "") + " " + (input.id || "")))`;
+
+/**
  * A name for a tab's recorder in its pages. Keep one per tab: a reconnect
  * injects again into the same document, and stops the recorder already there
  * by this name.
@@ -85,6 +96,15 @@ const pageScript = (recorder: string, binding: string, key: string) => `(() => {
   const top = window.top === window;
   if (top && typeof send !== "function") return;
   const key = ${JSON.stringify(key)};
+  const cardField = ${CARD_FIELD};
+  // Whether a card field sits in this element or the three around it.
+  const besideCard = (element) => {
+    if (!element || !element.ownerDocument) return false;
+    const cards = [...element.ownerDocument.querySelectorAll("input")].filter(cardField);
+    for (let at = element, depth = 0; at && depth < 4; at = at.parentElement, depth++)
+      if (cards.some((card) => at.contains(card))) return true;
+    return false;
+  };
   // Reconnecting to the person's browser injects again into the same document.
   if (top) globalThis[key]?.stop();
   const holder = {};
@@ -120,27 +140,58 @@ ${recorder}}).call(holder);
     if (!timer) timer = setTimer(() => flush(true), ${BATCH_MS});
   };
   const options = {
-    emit,
     recordAfter: "DOMContentLoaded",
     recordCrossOriginIframes: true,
     inlineStylesheet: true,
-    maskInputOptions: { password: true },
+    // Every input goes through maskInputFn, which masks passwords and card
+    // fields: what a person pays with stays out of the mirror and the trail.
+    maskInputOptions: { password: true, input: true },
+    maskInputFn: (text, element) =>
+      element && (element.type === "password" || cardField(element)) ? "*".repeat(text.length) : text,
+    // Every text goes through maskTextFn, which masks the digits of text that
+    // sits beside a card field: Stripe's field also writes the number as text.
+    maskTextSelector: "*",
+    maskTextFn: (text, element) => (/\\d/.test(text) && besideCard(element) ? text.replace(/\\d/g, "*") : text),
     sampling: { scroll: 150, mousemove: false },
   };
+  // A full snapshot replays every cross-origin frame empty until that frame
+  // sends its own again, and rrweb never asks it to (rrweb#1720): ask each
+  // child frame, which asks its own children in turn.
+  const snapshotFrames = () => {
+    for (let index = 0; index < window.length; index++)
+      try { window[index].postMessage({ [key]: "snapshot" }, "*"); } catch {}
+  };
+  if (!top)
+    addEventListener("message", (event) => {
+      if (event.source !== window.parent || !event.data || event.data[key] !== "snapshot") return;
+      try { record.takeFullSnapshot(); } catch {}
+      snapshotFrames();
+    });
   let canvas = false;
   let stopRecording;
+  let session;
   const start = () => {
     stopRecording = undefined;
+    // rrweb leaves a stopped recording's frame listener on the window, which
+    // would replay frames again under stale ids; only this session's events count.
+    const own = {};
+    session = own;
+    const sessionEmit = (event) => {
+      if (session !== own) return;
+      emit(event);
+      if (event.type === 2) snapshotFrames();
+    };
     if (canvas)
       try {
         stopRecording = record({
           ...options,
+          emit: sessionEmit,
           recordCanvas: true,
           sampling: { ...options.sampling, canvas: 1 },
           dataURLOptions: { type: "image/webp", quality: 0.6 },
         });
       } catch {}
-    if (!stopRecording) stopRecording = record(options);
+    if (!stopRecording) stopRecording = record({ ...options, emit: sessionEmit });
   };
   start();
   if (!top) return;

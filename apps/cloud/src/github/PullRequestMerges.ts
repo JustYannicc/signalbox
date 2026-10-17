@@ -40,6 +40,11 @@ export interface MergeEvidence {
   readonly title: string;
   readonly state: PullRequestState;
   readonly headSha: string;
+  /** Where it comes from and goes: a folder's gate can treat its own branches differently. */
+  readonly headBranch: string;
+  readonly baseBranch: string;
+  /** The head branch's repository; another one's means a fork. Null when GitHub lost it (deleted fork). */
+  readonly headRepository: string | null;
   readonly isDraft: boolean;
   readonly mergeability: PullRequestMergeability;
   /** GitHub's own decision; approvals by apps alone don't count here as they do in upstream's summary. */
@@ -83,6 +88,7 @@ const EVIDENCE_QUERY = `query PullRequestMergeEvidence($owner: String!, $name: S
   repository(owner: $owner, name: $name) {
     pullRequest(number: $number) {
       title state isDraft mergeable reviewDecision headRefOid
+      headRefName baseRefName headRepository { nameWithOwner }
       reviewThreads(first: 100) { nodes { isResolved } pageInfo { hasNextPage } }
       files(first: 100) { nodes { path } pageInfo { hasNextPage endCursor } }
     }
@@ -142,6 +148,9 @@ const decodeEvidence = answerOf(
       Schema.Literals(["APPROVED", "CHANGES_REQUESTED", "REVIEW_REQUIRED"]),
     ),
     headRefOid: Schema.String,
+    headRefName: Schema.String,
+    baseRefName: Schema.String,
+    headRepository: Schema.NullOr(Schema.Struct({ nameWithOwner: Schema.String })),
     reviewThreads: Schema.Struct({
       nodes: Schema.Array(Schema.Struct({ isResolved: Schema.Boolean })),
       pageInfo: Schema.Struct({ hasNextPage: Schema.Boolean }),
@@ -295,6 +304,9 @@ const make = Effect.gen(function* () {
       title: pullRequest.title,
       state: STATES[pullRequest.state] ?? "open",
       headSha: pullRequest.headRefOid,
+      headBranch: pullRequest.headRefName,
+      baseBranch: pullRequest.baseRefName,
+      headRepository: pullRequest.headRepository?.nameWithOwner ?? null,
       isDraft: pullRequest.isDraft,
       mergeability: MERGEABILITY[pullRequest.mergeable],
       reviewDecision:

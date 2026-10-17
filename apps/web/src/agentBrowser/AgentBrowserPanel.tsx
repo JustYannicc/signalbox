@@ -27,6 +27,7 @@ import { Button } from "../components/ui/button";
 import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from "../components/ui/empty";
 import { toastManager } from "../components/ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../components/ui/tooltip";
+import { AgentBrowserHandoffNotice } from "./AgentBrowserHandoffNotice";
 import { AgentBrowserMirrorFrame } from "./AgentBrowserMirrorFrame";
 import { AgentBrowserTrail } from "./AgentBrowserTrail";
 import { useAgentBrowserLease } from "./useAgentBrowserLease";
@@ -251,6 +252,15 @@ export function AgentBrowserPanel(props: {
           )
         ) : null}
       </div>
+
+      {live && view.handoff !== null && selectedStepId === null ? (
+        <AgentBrowserHandoffNotice
+          environmentId={environmentId}
+          site={view.handoff.site}
+          runId={view.handoff.runId}
+          ownBrowserUrl={view.handoff.ownBrowserUrl}
+        />
+      ) : null}
 
       {/* Kernel's refusal shows even when it kept the agent from opening any tab. */}
       {view !== null && !view.offline && view.problem !== null ? (

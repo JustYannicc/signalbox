@@ -38,6 +38,7 @@ export const SIGNALBOX_FOLDERS_WS_METHODS = {
   setSecrets: "signalbox.folders.setSecrets",
   setOnePassword: "signalbox.folders.setOnePassword",
   revokeSecretSend: "signalbox.folders.revokeSecretSend",
+  setGitHubLend: "signalbox.folders.setGitHubLend",
 } as const;
 
 /** Reading the tree is reading the sidebar; the rest changes what threads run on. */
@@ -52,6 +53,7 @@ export const SIGNALBOX_FOLDERS_REQUIRED_SCOPES = {
   [SIGNALBOX_FOLDERS_WS_METHODS.setSecrets]: AuthOrchestrationOperateScope,
   [SIGNALBOX_FOLDERS_WS_METHODS.setOnePassword]: AuthOrchestrationOperateScope,
   [SIGNALBOX_FOLDERS_WS_METHODS.revokeSecretSend]: AuthOrchestrationOperateScope,
+  [SIGNALBOX_FOLDERS_WS_METHODS.setGitHubLend]: AuthOrchestrationOperateScope,
 } as const;
 
 export const FolderId = TrimmedNonEmptyString.check(Schema.isMaxLength(128)).pipe(
@@ -124,6 +126,13 @@ export const Folder = Schema.Struct({
   instructions: Schema.optionalKey(Instructions),
   /** Its secrets: what threads in it and below get, over the same names from above. */
   secrets: Schema.optionalKey(FolderSecrets),
+  /**
+   * The GitHub account the user lent to this folder: its automations' steps
+   * on GitHub Actions run as it (#641). Absent: none lent, so they don't run.
+   */
+  githubLend: Schema.optionalKey(
+    Schema.Struct({ login: TrimmedNonEmptyString, lentAt: NonNegativeInt }),
+  ),
 });
 export type Folder = typeof Folder.Type;
 
@@ -253,6 +262,10 @@ export const FolderRevokeSecretSendInput = SecretSend.mapFields(
 );
 export type FolderRevokeSecretSendInput = typeof FolderRevokeSecretSendInput.Type;
 
+/** Lends the user's connected GitHub account to a folder's CI steps, or stops lending it. */
+export const FolderSetGitHubLendInput = Schema.Struct({ id: FolderId, lent: Schema.Boolean });
+export type FolderSetGitHubLendInput = typeof FolderSetGitHubLendInput.Type;
+
 export class SignalboxFoldersUnavailableError extends Schema.TaggedError<SignalboxFoldersUnavailableError>()(
   "SignalboxFoldersUnavailableError",
   {},
@@ -297,4 +310,5 @@ export const SIGNALBOX_FOLDERS_RPCS = [
   change(SIGNALBOX_FOLDERS_WS_METHODS.setSecrets, FolderSetSecretsInput),
   change(SIGNALBOX_FOLDERS_WS_METHODS.setOnePassword, FolderSetOnePasswordInput),
   change(SIGNALBOX_FOLDERS_WS_METHODS.revokeSecretSend, FolderRevokeSecretSendInput),
+  change(SIGNALBOX_FOLDERS_WS_METHODS.setGitHubLend, FolderSetGitHubLendInput),
 ] as const;

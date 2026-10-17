@@ -1,4 +1,5 @@
-import { AutomationError } from "@t3tools/contracts";
+import { statusLineJson } from "@signalbox/runner-protocol/StatusLineProtocol";
+import { AutomationError, ThreadId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
@@ -32,6 +33,7 @@ import * as UserShell from "./UserShell.ts";
 import * as UserStore from "./UserStore.ts";
 import * as UserThreadKinds from "./UserThreadKinds.ts";
 import * as UserFolders from "./UserFolders.ts";
+import * as UserThreadStatus from "./UserThreadStatus.ts";
 
 const decodeDriveEvents = Schema.decodeUnknownSync(Schema.Array(DriveRefEvent));
 
@@ -56,6 +58,7 @@ export const makeUserObjectApi = (
       | UserPreviewSetup.UserPreviewSetup
       | GitHubBranches.GitHubBranches
       | UserThreadKinds.UserThreadKinds
+      | UserThreadStatus.UserThreadStatus
       | LocalKeys.LocalKeys
       | ResourceBindings.ResourceBindings
       | OnePasswordAccount.OnePasswordAccount
@@ -100,6 +103,11 @@ export const makeUserObjectApi = (
         Effect.flatMap(UserShell.UserShell, (shell) =>
           UserThreadKinds.UserThreadKinds.use((kinds) =>
             kinds.recordSummary(summary, shell.recordThreadSummary(summary)),
+          ),
+        ).pipe(
+          // Its status note (#670), once the index has the row it joins.
+          Effect.andThen(
+            UserThreadStatus.UserThreadStatus.use((status) => status.recordSummary(summary)),
           ),
         ),
       );
@@ -173,6 +181,12 @@ export const makeUserObjectApi = (
       ),
     publishBranch: (input) => run(publishBranch(input)),
     automationTool: (threadId, name, input) => run(automationTool(threadId, name, input)),
+    folderStatus: (threadId) =>
+      run(
+        UserThreadStatus.UserThreadStatus.use((status) =>
+          status.folderStatus(ThreadId.make(threadId)),
+        ).pipe(Effect.map(statusLineJson.folder.encode)),
+      ),
     browserSession: (input) =>
       run(PersonBrowsers.PersonBrowsers.use((browsers) => browsers.open(input))),
     browserSignIn: (input) => run(LoginService.LoginService.use((logins) => logins.signIn(input))),

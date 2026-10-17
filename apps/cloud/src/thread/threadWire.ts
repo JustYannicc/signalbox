@@ -18,6 +18,7 @@ import {
   SignalboxPreviewPort,
   SignalboxThreadPreviews,
 } from "@t3tools/contracts/signalboxPreviews";
+import { ThreadStatusNote } from "@t3tools/contracts/signalboxStatusLine";
 import * as Schema from "effect/Schema";
 
 /**
@@ -52,6 +53,8 @@ export const ThreadSummaryWire = Schema.Struct({
    * the thread's kind. Absent: none yet, or an object from before #46.
    */
   workStartedAt: Schema.optionalKey(Schema.DateTimeUtc),
+  /** The thread's status note (#670). Absent: none written yet, or an object from before. */
+  statusNote: Schema.optionalKey(ThreadStatusNote),
 });
 
 export const LaunchInputWire = Schema.Struct({

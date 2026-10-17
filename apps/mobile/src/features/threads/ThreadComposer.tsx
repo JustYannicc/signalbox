@@ -648,6 +648,7 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
       environmentId: props.environmentId,
       projectId: props.selectedThread.projectId,
       poolHome: { threadId: props.selectedThread.id }, // signalbox
+      threadId: props.selectedThread.id, // signalbox: status line
       providerInstanceId: currentModelSelection.instanceId,
       ...(lockedProviderInstanceId ? { lockedProviderInstanceId } : {}),
       providerGroups: threadProviderGroups,

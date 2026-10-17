@@ -1,6 +1,6 @@
 /**
  * Where a thread lives, as its header names it where the environment keeps
- * folders: the folder path ("Work / Signalbox"), or its owner at the top level.
+ * folders: the folder path ("Work / Signalbox"), or the level it sits at the top of.
  * The breadcrumb's action starts a new thread in that same place. Null where
  * the environment has no folders, so the header keeps naming the project.
  */
@@ -9,6 +9,7 @@ import {
   folderPath,
   homeOfThread,
   ownerFilesProject,
+  ownerLevelName,
 } from "@t3tools/client-runtime/state/signalboxFolders";
 import type { EnvironmentId, ProjectId, ThreadId } from "@t3tools/contracts";
 import { useCallback, useMemo } from "react";
@@ -40,7 +41,8 @@ export function useFolderBreadcrumb(input: {
     return {
       home,
       ownerProjectId: ownerFilesProject(owner),
-      label: path.length === 0 ? owner.name : path.map((folder) => folder.name).join(" / "),
+      label:
+        path.length === 0 ? ownerLevelName(owner) : path.map((folder) => folder.name).join(" / "),
     };
   }, [contexts, input.projectId, input.threadId, snapshot]);
   const onNewThread = useCallback(() => {

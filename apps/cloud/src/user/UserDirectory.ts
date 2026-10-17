@@ -228,6 +228,11 @@ export interface UserObjectApi {
    */
   readonly automationTool: (threadId: string, name: string, input: unknown) => Promise<ToolResult>;
   /**
+   * What's going on in a thread's home folder, for its agent
+   * (`drive/statusLineRoutes.ts`, `UserThreadStatus`), as `statusLineJson.folder` text.
+   */
+  readonly folderStatus: (threadId: string) => Promise<string>;
+  /**
    * The person's browser for a thread's running turn (`drive/browserRoutes.ts`,
    * `browser/PersonBrowsers.ts`): its session, or a refusal in words.
    */
@@ -355,6 +360,7 @@ const METHODS = Object.keys({
   readableDrives: true,
   publishBranch: true,
   automationTool: true,
+  folderStatus: true,
   browserSession: true,
   browserSignIn: true,
   checkSignIn: true,

@@ -1,11 +1,12 @@
 import type { DriveAccess } from "@signalbox/runner-protocol/DriveProtocol";
-import type {
-  MachineClass,
-  MachineUsage,
-  RunnerItem,
-  RunnerLogLevel,
-  RunnerMessageInput,
-  RunnerTurn,
+import {
+  type MachineClass,
+  type MachineUsage,
+  onFreshSession,
+  type RunnerItem,
+  type RunnerLogLevel,
+  type RunnerMessageInput,
+  type RunnerTurn,
 } from "@signalbox/runner-protocol/RunnerProtocol";
 import type {
   SecretsAccess,
@@ -792,7 +793,11 @@ export const makeRunnerTurns = Effect.fn("makeRunnerTurns")(function* (input: {
       yield* Scope.close(open.scope, Exit.void);
     });
 
-  /** The provider thread the harness will run on, keeping the thread's own identity for it. */
+  /**
+   * The provider thread the harness will run on, keeping the thread's own
+   * identity for it, and the turn to start there: on a new session when the
+   * native resume fails, with the conversation the thread sent for that case.
+   */
   const loadProviderThread = (
     session: ProviderAdapterV2SessionRuntime,
     turn: RunnerTurn,
@@ -808,7 +813,7 @@ export const makeRunnerTurns = Effect.fn("makeRunnerTurns")(function* (input: {
       });
     const loaded =
       turn.providerThread.nativeThreadRef === null
-        ? ensure(turn.providerThread)
+        ? Effect.map(ensure(turn.providerThread), (providerThread) => ({ providerThread, turn }))
         : session
             .resumeThread({
               providerThread: turn.providerThread,
@@ -817,27 +822,32 @@ export const makeRunnerTurns = Effect.fn("makeRunnerTurns")(function* (input: {
               runtimePolicy,
             })
             .pipe(
+              Effect.map((providerThread) => ({ providerThread, turn })),
               Effect.catchCause((cause) =>
-                Effect.logWarning(
-                  "native resume failed; starting a fresh session",
-                  Cause.pretty(cause),
-                ).pipe(
-                  Effect.andThen(
-                    input.emit(
-                      log(
-                        turn.runId,
-                        "warning",
-                        `native resume failed; starting a fresh session: ${causeText(cause)}`,
-                      ),
+                Effect.gen(function* () {
+                  yield* Effect.logWarning(
+                    "native resume failed; starting a fresh session",
+                    Cause.pretty(cause),
+                  );
+                  yield* input.emit(
+                    log(
+                      turn.runId,
+                      "warning",
+                      `native resume failed; starting a fresh session: ${causeText(cause)}`,
                     ),
-                  ),
-                  Effect.andThen(ensure({ ...turn.providerThread, nativeThreadRef: null })),
-                ),
+                  );
+                  // A thread from before #653 sent no conversation: the message alone it is.
+                  const fresh: RunnerTurn = onFreshSession(
+                    turn,
+                    turn.freshSessionText ?? turn.message.text,
+                  );
+                  return { providerThread: yield* ensure(fresh.providerThread), turn: fresh };
+                }),
               ),
             );
-    return Effect.map(loaded, (providerThread) => ({
-      ...providerThread,
-      id: turn.providerThread.id,
+    return Effect.map(loaded, (loaded) => ({
+      turn: loaded.turn,
+      providerThread: { ...loaded.providerThread, id: turn.providerThread.id },
     }));
   };
 
@@ -1008,7 +1018,11 @@ export const makeRunnerTurns = Effect.fn("makeRunnerTurns")(function* (input: {
         instructions: prepared.drive?.instructions ?? "",
         secrets: prepared.secrets,
       });
-      const providerThread = yield* loadProviderThread(session, turn, runtimePolicy);
+      const { providerThread, turn: starting } = yield* loadProviderThread(
+        session,
+        turn,
+        runtimePolicy,
+      );
       if (pinning !== null) yield* Fiber.join(pinning);
       if (attachments !== null) yield* Fiber.join(attachments);
       const started = yield* ordered.withPermits(1)(
@@ -1046,16 +1060,16 @@ export const makeRunnerTurns = Effect.fn("makeRunnerTurns")(function* (input: {
         threadId: input.threadId,
         runId: turn.runId,
         runOrdinal: turn.runOrdinal,
-        providerTurnOrdinal: turn.providerTurnOrdinal,
+        providerTurnOrdinal: starting.providerTurnOrdinal,
         attemptId: turn.attemptId,
         rootNodeId: turn.rootNodeId,
         providerThread,
-        message: turn.message,
+        message: starting.message,
         modelSelection: turn.modelSelection,
         runtimePolicy,
-        ...(turn.restartContinuationOfRunId === undefined
+        ...(starting.restartContinuationOfRunId === undefined
           ? {}
-          : { restartContinuationOfRunId: turn.restartContinuationOfRunId }),
+          : { restartContinuationOfRunId: starting.restartContinuationOfRunId }),
       });
     }).pipe(
       Effect.catchCause((cause) =>

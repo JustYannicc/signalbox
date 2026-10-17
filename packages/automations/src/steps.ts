@@ -5,6 +5,7 @@ import {
   ProviderInstanceId,
   ThreadId,
   type AutomationDefaults,
+  type ExternalRun,
   type ModelSelection,
   type ProviderOptionSelection,
   type ProviderInteractionMode,
@@ -17,6 +18,10 @@ import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import * as Stream from "effect/Stream";
 
 import { subagentResultForRun } from "@t3tools/provider-core/server/subagentProjection";
+import {
+  resolveThreadCurrentPullRequest,
+  threadPullRequestsOf,
+} from "@t3tools/shared/threadPullRequests";
 import { automationError, errorMessage, fail, isAutomationError } from "./errors.ts";
 import { AutomationModels, AutomationThreads, type AgentWorkspace } from "./host.ts";
 import { asRecord, jsonOrText } from "./json.ts";
@@ -35,6 +40,9 @@ export type StepStart =
       readonly agentRunId?: string;
       readonly wakeAt?: string;
       readonly event?: string;
+      /** The run in another system the step started (`external.ts`), read again at `pollAt`. */
+      readonly external?: ExternalRun;
+      readonly pollAt?: string;
     };
 
 /** When a `sleep` or `waitFor` timeout ends: `{ minutes: 5 }`-style durations add up; `until` is an ISO time. */
@@ -255,7 +263,12 @@ export const agentResult = (threadId: string, runId?: string | null) =>
       turnItemTypes: ["assistant_message", "error"],
     });
     const { text } = subagentResultForRun(records, run);
-    const pullRequest = shell.branchPullRequest ?? shell.linkedPullRequest ?? null;
+    // The cloud keeps a thread's pull requests only as links (`create_pr` adds one); servers also fill the legacy fields.
+    const current = resolveThreadCurrentPullRequest(threadPullRequestsOf(shell));
+    const pullRequest =
+      shell.branchPullRequest ??
+      shell.linkedPullRequest ??
+      (current === null ? null : current.kind === "single" ? current.link : current.top);
     return run.status === "completed"
       ? ({
           ok: true,

@@ -11,6 +11,10 @@ import {
   type ThreadId,
 } from "@t3tools/contracts";
 import type { SignalboxContextId } from "@t3tools/contracts/signalboxContexts";
+import type {
+  ThreadStatusNote,
+  ThreadStatusNoteInput,
+} from "@t3tools/contracts/signalboxStatusLine";
 import type { OnePasswordEnvironmentId } from "@t3tools/contracts/signalboxFolders";
 import type { FolderInstructions } from "@signalbox/runner-protocol/DriveProtocol";
 import { contextAllows } from "../drive/driveAccess.ts";
@@ -32,6 +36,7 @@ import { hasPendingTurnWork, scriptedStep } from "./scriptedTurn.ts";
 import { type Decision, decide, decideLaunch, type ThreadWorktree } from "./threadDecider.ts";
 import type { DecisionContext } from "./threadEvents.ts";
 import { applyEvents, threadShellFromProjection, workStartedAt } from "./threadProjection.ts";
+import { noteKey, noteRunId, supersedes } from "./statusLine/statusNotePolicy.ts";
 import * as ThreadStore from "./ThreadStore.ts";
 import * as TurnModels from "./TurnModels.ts";
 import {
@@ -222,6 +227,19 @@ export class ThreadEngine extends Context.Service<
       actor: Actor,
       monitors: ReadonlyArray<ThreadMonitor>,
     ) => Effect.Effect<void, ThreadNotFoundError>;
+    /** The thread's status note (#670); null until one was written or before the thread exists. */
+    readonly statusNote: Effect.Effect<ThreadStatusNote | null>;
+    /**
+     * Replaces the status note, giving the sidebar row a new revision. The
+     * agent's note belongs to the live run, else the latest; the runtime's to
+     * the run it was written for, and is dropped (null) once a newer run is live.
+     */
+    readonly writeStatusNote: (
+      input: ThreadStatusNoteInput,
+      by:
+        | { readonly author: "agent" }
+        | { readonly author: "runtime"; readonly runId: ThreadStatusNote["runId"] },
+    ) => Effect.Effect<ThreadStatusNote | null, ThreadNotFoundError>;
     /** Whether committed events wait for the owner's automations (`eventOutbox.ts`). */
     readonly hasPendingEvents: Effect.Effect<boolean>;
     /** Up to `limit` committed events the owner's automations have not acknowledged, oldest first. */
@@ -245,6 +263,8 @@ interface State {
   readonly thread: Thread | null;
   /** The automation runs attached to the thread, kept outside its log. */
   readonly monitors: ReadonlyArray<ThreadMonitor>;
+  /** The status note, kept outside its log like the monitors. */
+  readonly statusNote: ThreadStatusNote | null;
   /** `summaryKey` of the current projection, so a commit computes only the new one. */
   readonly summaryKey: string;
 }
@@ -256,13 +276,16 @@ interface State {
 const summaryKey = (
   projection: OrchestrationV2ThreadProjection | null,
   monitors: ReadonlyArray<ThreadMonitor>,
+  note: ThreadStatusNote | null,
 ) => {
   if (projection === null) return "";
   const { updatedAt: _updatedAt, ...rest } = threadShellFromProjection(projection, monitors);
   const started = workStartedAt(projection);
-  return JSON.stringify(
-    started === null ? rest : { ...rest, workStartedAt: DateTime.toEpochMillis(started) },
-  );
+  return JSON.stringify({
+    ...rest,
+    ...(started === null ? {} : { workStartedAt: DateTime.toEpochMillis(started) }),
+    statusNote: noteKey(note),
+  });
 };
 
 const toStreamItem = (stored: ThreadStore.StoredEvent): OrchestrationV2ThreadStreamItem => ({
@@ -285,10 +308,15 @@ const make = Effect.gen(function* () {
     ? yield* Effect.orDie(
         Effect.andThen(
           store.initialize,
-          Effect.all({ events: store.events(0), owner: store.owner, monitors: store.monitors }),
+          Effect.all({
+            events: store.events(0),
+            owner: store.owner,
+            monitors: store.monitors,
+            statusNote: store.statusNote,
+          }),
         ),
       )
-    : { events: [], owner: null, monitors: [] };
+    : { events: [], owner: null, monitors: [], statusNote: null };
   const initialProjection = applyEvents(
     null,
     initial.events.map((stored) => stored.event),
@@ -300,7 +328,8 @@ const make = Effect.gen(function* () {
         ? null
         : { owner: initial.owner, projection: initialProjection },
     monitors: initial.monitors,
-    summaryKey: summaryKey(initialProjection, initial.monitors),
+    statusNote: initial.statusNote,
+    summaryKey: summaryKey(initialProjection, initial.monitors, initial.statusNote),
   });
 
   const serialized = lock.withPermits(1);
@@ -340,7 +369,7 @@ const make = Effect.gen(function* () {
     }
     // The thread's first commit creates its storage.
     if (current.thread === null) yield* Effect.orDie(store.initialize);
-    const nextKey = summaryKey(projection, current.monitors);
+    const nextKey = summaryKey(projection, current.monitors, current.statusNote);
     const head = yield* Effect.orDie(
       store.commit({
         head: current.head,
@@ -353,12 +382,7 @@ const make = Effect.gen(function* () {
         summaryChanged: nextKey !== current.summaryKey,
       }),
     );
-    yield* Ref.set(state, {
-      head,
-      thread: { owner, projection },
-      monitors: current.monitors,
-      summaryKey: nextKey,
-    });
+    yield* Ref.set(state, { ...current, head, thread: { owner, projection }, summaryKey: nextKey });
     if (events.length > 0) {
       yield* PubSub.publish(
         published,
@@ -626,7 +650,7 @@ const make = Effect.gen(function* () {
 
   const summaryOf = (
     thread: Thread,
-    monitors: ReadonlyArray<ThreadMonitor>,
+    current: Pick<State, "monitors" | "statusNote">,
     revision: number,
   ): ThreadSummary => {
     const started = workStartedAt(thread.projection);
@@ -634,8 +658,9 @@ const make = Effect.gen(function* () {
       threadId: thread.projection.thread.id,
       contextId: thread.owner.contextId,
       revision,
-      shell: threadShellFromProjection(thread.projection, monitors),
+      shell: threadShellFromProjection(thread.projection, current.monitors),
       ...(started === null ? {} : { workStartedAt: started }),
+      ...(current.statusNote === null ? {} : { statusNote: current.statusNote }),
     };
   };
 
@@ -645,15 +670,15 @@ const make = Effect.gen(function* () {
       const thread = ownedBy(current, actor);
       if (thread === null) return null;
       const outbox = yield* Effect.orDie(store.outbox);
-      return summaryOf(thread, current.monitors, outbox.revision);
+      return summaryOf(thread, current, outbox.revision);
     });
 
   const undelivered = Effect.gen(function* () {
-    const { thread, monitors } = yield* Ref.get(state);
-    if (thread === null) return null;
+    const current = yield* Ref.get(state);
+    if (current.thread === null) return null;
     const outbox = yield* Effect.orDie(store.outbox);
     return outbox.revision > outbox.delivered
-      ? { thread, monitors, revision: outbox.revision }
+      ? { thread: current.thread, current, revision: outbox.revision }
       : null;
   });
 
@@ -669,7 +694,7 @@ const make = Effect.gen(function* () {
         ? null
         : {
             ownerUserId: pending.thread.owner.userId,
-            summary: summaryOf(pending.thread, pending.monitors, pending.revision),
+            summary: summaryOf(pending.thread, pending.current, pending.revision),
           },
   );
 
@@ -683,11 +708,38 @@ const make = Effect.gen(function* () {
         const thread = ownedBy(current, actor);
         if (thread === null) return yield* new ThreadNotFoundError();
         // Stored even while a turn hides them, so they show once it ends.
-        const nextKey = summaryKey(thread.projection, monitors);
+        const nextKey = summaryKey(thread.projection, monitors, current.statusNote);
         yield* Effect.orDie(
           store.saveMonitors({ monitors, summaryChanged: nextKey !== current.summaryKey }),
         );
         yield* Ref.set(state, { ...current, monitors, summaryKey: nextKey });
+      }),
+    );
+
+  const statusNote: ThreadEngine["Service"]["statusNote"] = Effect.map(
+    Ref.get(state),
+    (current) => current.statusNote,
+  );
+
+  const writeStatusNote: ThreadEngine["Service"]["writeStatusNote"] = (input, by) =>
+    serialized(
+      Effect.gen(function* () {
+        const current = yield* Ref.get(state);
+        if (current.thread === null) return yield* new ThreadNotFoundError();
+        const { projection } = current.thread;
+        if (by.author === "runtime" && supersedes(projection, by.runId)) return null;
+        const note: ThreadStatusNote = {
+          ...input,
+          writtenAt: yield* DateTime.now,
+          writtenBy: by.author,
+          runId: by.author === "runtime" ? by.runId : noteRunId(projection),
+        };
+        const nextKey = summaryKey(projection, current.monitors, note);
+        yield* Effect.orDie(
+          store.saveStatusNote({ note, summaryChanged: nextKey !== current.summaryKey }),
+        );
+        yield* Ref.set(state, { ...current, statusNote: note, summaryKey: nextKey });
+        return note;
       }),
     );
 
@@ -728,6 +780,8 @@ const make = Effect.gen(function* () {
     pendingSummary,
     acknowledgeSummary,
     setMonitors,
+    statusNote,
+    writeStatusNote,
     hasPendingEvents,
     pendingEvents,
     acknowledgeEvents,

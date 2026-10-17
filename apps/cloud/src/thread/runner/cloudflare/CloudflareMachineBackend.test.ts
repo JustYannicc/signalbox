@@ -4,7 +4,7 @@ import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 
 import { CONFIG_PATH } from "../boat/BoatMachineBackend.ts";
-import type { MachineRequest } from "../MachineBackend.ts";
+import type { MachineExit, MachineRequest } from "../MachineBackend.ts";
 import { makeCloudflareMachineBackend, RUNNER_PORT } from "./CloudflareMachineBackend.ts";
 
 const threadId = ThreadId.make("thread-light");
@@ -17,7 +17,7 @@ const request = (generation: number, machineClass: MachineRequest["machineClass"
 
 /**
  * `ctx.container` as the backend uses it. `refusals` is how many times the
- * Runner host is not listening yet after a start; `crash` exits the container
+ * Runner host is not listening yet after a start; `crash` and `fail` exit the container
  * on its own.
  */
 const makeFakeContainer = (refusals = 0) => {
@@ -65,11 +65,12 @@ const makeFakeContainer = (refusals = 0) => {
       };
     },
   };
-  const crash = (exitCode: number) => {
+  const fail = (cause: unknown) => {
     container.running = false;
-    exit?.reject(Object.assign(new Error("exited"), { exitCode }));
+    exit?.reject(cause);
   };
-  return { container: container as unknown as Container, log, handedOver, crash };
+  const crash = (exitCode: number) => fail(Object.assign(new Error("exited"), { exitCode }));
+  return { container: container as unknown as Container, log, handedOver, crash, fail };
 };
 
 const settings = { cloudUrl: "https://app.signalbox.run", modelGatewayUrl: "https://gw.example" };
@@ -187,7 +188,7 @@ describe("CloudflareMachineBackend", () => {
         egress: null,
         ...fake,
         settings,
-        onExit: (detail, generation) => void exits.push(`${generation}: ${detail}`),
+        onExit: (exit, generation) => void exits.push(`${generation}: ${exit.detail}`),
       });
       yield* backend.ensure(request(1));
       yield* backend.stop(threadId);
@@ -195,6 +196,44 @@ describe("CloudflareMachineBackend", () => {
       fake.crash(137);
       yield* Effect.promise(() => Promise.resolve());
       expect(exits).toEqual(["2: The machine ran out of memory (exit 137)."]);
+    }),
+  );
+
+  // #555: only memory moves a light thread up; a deploy's restart is a lost machine.
+  it.effect("says whether an exit was out of memory", () =>
+    Effect.gen(function* () {
+      const rollout = new Error(
+        "Runtime signalled the container to exit due to a new version rollout: 130",
+      );
+      const exitOf = (stop: (fake: ReturnType<typeof makeFakeContainer>) => void) =>
+        Effect.gen(function* () {
+          const fake = makeFakeContainer();
+          const exits: Array<MachineExit> = [];
+          const backend = makeCloudflareMachineBackend({
+            ...fake,
+            settings,
+            egress: null,
+            onExit: (exit) => void exits.push(exit),
+          });
+          yield* backend.ensure(request(1));
+          stop(fake);
+          yield* Effect.promise(() => Promise.resolve());
+          return exits;
+        });
+
+      expect(yield* exitOf((fake) => fake.crash(137))).toEqual([
+        { detail: "The machine ran out of memory (exit 137).", outOfMemory: true },
+      ]);
+      expect(yield* exitOf((fake) => fake.fail(rollout))).toEqual([
+        {
+          detail:
+            "The machine stopped: Runtime signalled the container to exit due to a new version rollout: 130",
+          outOfMemory: false,
+        },
+      ]);
+      expect(yield* exitOf((fake) => fake.crash(1))).toEqual([
+        { detail: "The machine exited with code 1.", outOfMemory: false },
+      ]);
     }),
   );
 });

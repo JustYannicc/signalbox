@@ -131,6 +131,7 @@ import {
   resolveSelectedProviderEnvironmentId,
 } from "./ProviderSettingsPanel.logic";
 import { useShowsEnvironmentUi } from "../../state/environmentCapabilities";
+import { useOneEnvironmentCopy } from "~/state/oneEnvironmentCopy"; // signalbox
 
 function modelListChanges(current: ReadonlyArray<string>, next: ReadonlyArray<string>) {
   const currentSet = new Set(current);
@@ -294,6 +295,7 @@ export function ProviderSettingsPanel(target: ProviderSettingsTarget) {
 }
 
 function ProviderSettingsPanelContent(target: ProviderSettingsTarget) {
+  const environmentCopy = useOneEnvironmentCopy(); // signalbox
   const { environments, isReady } = useEnvironments();
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const searchTargetId = useSettingsSearchTargetId();
@@ -430,12 +432,12 @@ function ProviderSettingsPanelContent(target: ProviderSettingsTarget) {
       {options.length === 0 && !targetEnvironmentMissing ? (
         <ProviderSettingsPlaceholder
           icon={<EnvironmentMachineIcon kind={resolveEnvironmentMachineKind(null)} />}
-          title={isReady ? "No connected devices" : "Loading devices"}
-          description={
+          title={environmentCopy(isReady ? "No connected devices" : "Loading devices")}
+          description={environmentCopy(
             isReady
               ? "Connect an execution environment before configuring providers."
-              : "Reading connected execution environments."
-          }
+              : "Reading connected execution environments.",
+          )}
         />
       ) : null}
 

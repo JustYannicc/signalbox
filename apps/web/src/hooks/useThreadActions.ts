@@ -181,7 +181,7 @@ export async function requestThreadUnpinConfirmation(input: {
     confirm(
       [
         `Unpin thread "${input.title}"?`,
-        "This will move the thread out of your pinned section.",
+        "It will no longer stay above your active work.", // signalbox: no "section" in the UI (#686)
       ].join("\n"),
     ),
   );

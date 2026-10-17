@@ -129,6 +129,12 @@ const makeFakeAdapter = Effect.gen(function* () {
   const events = yield* Queue.unbounded<ProviderAdapterV2Event>();
   const loaded = yield* Deferred.make<void>();
   const calls: Array<string> = [];
+  /** What each `startTurn` got, beyond what `calls` names. */
+  const started: Array<{
+    readonly providerTurnOrdinal: number;
+    readonly text: string | undefined;
+    readonly nativeThreadRef: unknown;
+  }> = [];
   const opened = { count: 0 };
   const session = {
     providerSessionId: ProviderSessionId.make("session-1"),
@@ -136,15 +142,25 @@ const makeFakeAdapter = Effect.gen(function* () {
     events: Stream.fromQueue(events),
     ensureThread: () => Effect.as(Deferred.await(loaded), providerThread),
     resumeThread: () => Effect.die(new Error("no rollout for Bearer sk-live-resume-secret")),
-    startTurn: (input: { readonly runId: string; readonly restartContinuationOfRunId?: string }) =>
-      Effect.sync(
-        () =>
-          void calls.push(
-            input.restartContinuationOfRunId === undefined
-              ? `start ${input.runId}`
-              : `start ${input.runId} continuing ${input.restartContinuationOfRunId}`,
-          ),
-      ),
+    startTurn: (input: {
+      readonly runId: string;
+      readonly restartContinuationOfRunId?: string;
+      readonly providerTurnOrdinal: number;
+      readonly message?: { readonly text: string };
+      readonly providerThread: { readonly nativeThreadRef: unknown };
+    }) =>
+      Effect.sync(() => {
+        started.push({
+          providerTurnOrdinal: input.providerTurnOrdinal,
+          text: input.message?.text,
+          nativeThreadRef: input.providerThread.nativeThreadRef,
+        });
+        calls.push(
+          input.restartContinuationOfRunId === undefined
+            ? `start ${input.runId}`
+            : `start ${input.runId} continuing ${input.restartContinuationOfRunId}`,
+        );
+      }),
     interruptTurn: (input: { readonly providerTurnId: string }) =>
       Effect.sync(() => void calls.push(`interrupt ${input.providerTurnId}`)),
     steerTurn: (input: {
@@ -160,7 +176,7 @@ const makeFakeAdapter = Effect.gen(function* () {
     driver,
     openSession: () => Effect.sync(() => (opened.count++, session)),
   } as unknown as ProviderAdapterV2["Service"];
-  return { adapter, events, loaded, calls, opened };
+  return { adapter, events, loaded, calls, started, opened };
 });
 
 describe("RunnerTurns", () => {
@@ -1004,7 +1020,11 @@ describe("RunnerTurns", () => {
           ...providerThread,
           nativeThreadRef: "native-thread",
         } as unknown as OrchestrationV2ProviderThread;
-        yield* turns.start({ turn: turnFor(1, resumable), modelToken: "token-1" });
+        // A thread from before #653 sends no conversation for a new session.
+        yield* turns.start({
+          turn: { ...turnFor(1, resumable), message: { text: "Hi" } } as unknown as RunnerTurn,
+          modelToken: "token-1",
+        });
         yield* settle;
 
         expect(reported.map(label)).toEqual(["log run-1 warning", "turn.started run-1"]);
@@ -1013,6 +1033,49 @@ describe("RunnerTurns", () => {
           "native resume failed; starting a fresh session: Error: no rollout for Bearer [REDACTED]",
         );
         expect(fake.calls).toEqual(["start run-1"]);
+        expect(fake.started).toEqual([
+          { providerTurnOrdinal: 1, text: "Hi", nativeThreadRef: null },
+        ]);
+      }),
+    ),
+  );
+
+  // #653: a continuation or later turn on a new session would start with no conversation.
+  it.effect("starts a failed resume fresh, with the conversation the thread sent", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fake = yield* makeFakeAdapter;
+        const turns = yield* makeRunnerTurns({
+          threadId,
+          adapters: new Map([[instanceId, fake.adapter]]),
+          cwd: "/tmp",
+          useModelToken: () => Effect.void,
+          usage: Effect.succeed(unmeasured),
+          emit: () => Effect.void,
+        });
+        yield* Deferred.succeed(fake.loaded, undefined);
+        const resumable = {
+          ...providerThread,
+          nativeThreadRef: "native-thread",
+        } as unknown as OrchestrationV2ProviderThread;
+        const fresh = "User:\nRemember 42.\n\nUser message:\nContinue where you left off.";
+        yield* turns.start({
+          turn: {
+            ...turnFor(2, resumable),
+            providerTurnOrdinal: 3,
+            message: { text: "Continue where you left off." },
+            restartContinuationOfRunId: RunId.make("run-1"),
+            freshSessionText: fresh,
+          } as unknown as RunnerTurn,
+          modelToken: "token-1",
+        });
+        yield* settle;
+
+        // A new session has nothing to continue: it gets the conversation as a request.
+        expect(fake.calls).toEqual(["start run-2"]);
+        expect(fake.started).toEqual([
+          { providerTurnOrdinal: 1, text: fresh, nativeThreadRef: null },
+        ]);
       }),
     ),
   );
