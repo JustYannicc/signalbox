@@ -16,16 +16,20 @@ import {
   SettingsEnvironmentFilterHeader,
 } from "./components/SettingsEnvironmentFilterHeader";
 import { useSettingsEnvironmentFilter, type SettingsTarget } from "./settings-environment-filter";
+import { visibleProjectCheckouts } from "./settingsProjectOverview.logic";
+import { useShowsEnvironmentUi } from "../../state/environmentCapabilities"; // signalbox
 
 export function SettingsProjectOverviewRouteScreen() {
   const insets = useSafeAreaInsets();
   const { selectedTargets, projectGroups, selectedProjectKey } = useSettingsEnvironmentFilter();
+  const showsEnvironments = useShowsEnvironmentUi();
   const group = projectGroups.find((entry) => entry.key === selectedProjectKey);
   const selectedEnvironmentIds = new Set(selectedTargets.map((entry) => entry.environmentId));
   const members =
     group?.members
       .map((entry) => entry.project)
       .filter((project) => selectedEnvironmentIds.has(project.environmentId)) ?? [];
+  const checkoutMembers = visibleProjectCheckouts(members, selectedTargets);
 
   return (
     <>
@@ -40,13 +44,15 @@ export function SettingsProjectOverviewRouteScreen() {
         >
           {members.length === 0 ? (
             <Text className="px-2 text-base text-foreground-muted">
-              This project has no checkout on the selected connected environments. Change the filter
-              above.
+              {showsEnvironments
+                ? "This project isn't available on the selected connected environments. Change the filter above."
+                : "This folder isn't available."}
             </Text>
           ) : (
             <ProjectOverviewContent
               key={`${selectedProjectKey}:${members.map((member) => member.id).join(",")}`}
               members={members}
+              checkoutMembers={checkoutMembers}
               environments={selectedTargets}
             />
           )}
@@ -58,6 +64,7 @@ export function SettingsProjectOverviewRouteScreen() {
 
 function ProjectOverviewContent(props: {
   readonly members: readonly EnvironmentProject[];
+  readonly checkoutMembers: readonly EnvironmentProject[];
   readonly environments: readonly SettingsTarget[];
 }) {
   const representative = props.members[0]!;
@@ -106,9 +113,13 @@ function ProjectOverviewContent(props: {
           <Text className="text-xl font-t3-semibold text-foreground" numberOfLines={2}>
             {displayName}
           </Text>
-          <Text className="text-sm text-foreground-muted">
-            {props.members.length === 1 ? "1 checkout" : `${props.members.length} checkouts`}
-          </Text>
+          {props.checkoutMembers.length > 0 ? (
+            <Text className="text-sm text-foreground-muted">
+              {props.checkoutMembers.length === 1
+                ? "1 checkout"
+                : `${props.checkoutMembers.length} checkouts`}
+            </Text>
+          ) : null}
         </View>
       </View>
 
@@ -139,37 +150,39 @@ function ProjectOverviewContent(props: {
         </View>
       </SettingsSection>
 
-      <SettingsSection title="Checkouts">
-        {props.members.map((member, index) => {
-          const environment = props.environments.find(
-            (entry) => entry.environmentId === member.environmentId,
-          );
-          return (
-            <View
-              key={`${member.environmentId}:${member.id}`}
-              className={index === 0 ? "gap-1 p-4" : "gap-1 border-t border-border-subtle p-4"}
-            >
-              <Text
-                className={
-                  Platform.OS === "android"
-                    ? "text-base text-foreground"
-                    : "text-lg text-foreground"
-                }
+      {props.checkoutMembers.length > 0 ? (
+        <SettingsSection title="Checkouts">
+          {props.checkoutMembers.map((member, index) => {
+            const environment = props.environments.find(
+              (entry) => entry.environmentId === member.environmentId,
+            );
+            return (
+              <View
+                key={`${member.environmentId}:${member.id}`}
+                className={index === 0 ? "gap-1 p-4" : "gap-1 border-t border-border-subtle p-4"}
               >
-                {environment?.label ?? "Environment"}
-              </Text>
-              {environment?.displayUrl ? (
-                <Text className="text-sm leading-normal text-foreground-muted">
-                  {environment.displayUrl}
+                <Text
+                  className={
+                    Platform.OS === "android"
+                      ? "text-base text-foreground"
+                      : "text-lg text-foreground"
+                  }
+                >
+                  {environment?.label ?? "Environment"}
                 </Text>
-              ) : null}
-              <Text className="text-sm leading-normal text-foreground-muted" selectable>
-                {member.workspaceRoot}
-              </Text>
-            </View>
-          );
-        })}
-      </SettingsSection>
+                {environment?.displayUrl ? (
+                  <Text className="text-sm leading-normal text-foreground-muted">
+                    {environment.displayUrl}
+                  </Text>
+                ) : null}
+                <Text className="text-sm leading-normal text-foreground-muted" selectable>
+                  {member.workspaceRoot}
+                </Text>
+              </View>
+            );
+          })}
+        </SettingsSection>
+      ) : null}
     </>
   );
 }

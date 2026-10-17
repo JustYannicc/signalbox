@@ -24,6 +24,7 @@ import { PushNotifier } from "../push/PushNotifier.ts";
 import * as CloudThreadService from "../thread/CloudThreadService.ts";
 import { projectOfDrive } from "../user/contextProjects.ts";
 import * as UserDrives from "../user/UserDrives.ts";
+import * as UserFolders from "../user/UserFolders.ts";
 import * as UserStore from "../user/UserStore.ts";
 import {
   AutomationAlarm,
@@ -130,10 +131,13 @@ const make = Effect.gen(function* () {
   yield* ensureCursors.pipe(Effect.orDie);
   const merges = yield* PullRequestMergesModule.PullRequestMerges;
   const changedFiles = yield* makeChangedFiles;
-  yield* engine.registerBuiltinTools(makeCloudBuiltinTools({ threads, service, owner, merges }));
+  const folders = yield* UserFolders.UserFolders;
+  yield* engine.registerBuiltinTools(
+    makeCloudBuiltinTools({ threads, service, owner, merges, folders }),
+  );
   yield* engine.registerPullRequestReads(yield* PullRequestReadsModule.PullRequestReads);
   yield* engine.registerExternalRunner("github-actions", yield* makeGitHubActionsRunner);
-  const tools = makeCloudTools({ engine, compiler, threads });
+  const tools = makeCloudTools({ engine, compiler, threads, folders });
 
   // Notices queue up while the engine works and go out before the request ends.
   const notices = yield* Queue.unbounded<AutomationNotice>();

@@ -22,7 +22,7 @@ import { useAtomCommand } from "../../state/use-atom-command";
 const previewTitle = (port: SignalboxPreviewPort) =>
   `Open ${port.processName ?? "the dev server"} on port ${port.port}`;
 
-/** Mints a fresh link and opens it in the in-app browser, where HMR keeps working. */
+/** The browser signs in separately, so a shared link cannot borrow this app's identity. */
 function useOpenThreadPreview(environmentId: EnvironmentId, threadId: ThreadId) {
   const open = useAtomCommand(signalboxPreviews.open, { reportFailure: false });
   const opening = useRef(false);
@@ -57,9 +57,7 @@ const AGENT_BROWSER_LABEL = "Agent's browser";
 const AGENT_BROWSER_ICON = { ios: "macwindow", android: "desktop_windows" } as const;
 
 /**
- * The thread screen's header plus its running dev servers and the agent's
- * browser, shown only when the thread's Signalbox Cloud machine serves one or
- * the agent has browsed: one entry opens directly, several open a menu. iOS
+ * Declared previews remain available while the thread's machine is stopped. iOS
  * gets a native header item beside the git controls; Android gets a header
  * action or menu. The agent's browser opens only when asked.
  */
@@ -118,7 +116,7 @@ function PreviewsHeader({ environmentId, threadId, ...props }: AppBarProps & Thr
         : {
             accessibilityLabel: browsed
               ? `The agent's browser and ${offered.length} ${offered.length === 1 ? "preview" : "previews"}`
-              : `${offered.length} previews running`,
+              : `${offered.length} previews`,
             icon: { name: "globe", type: "sfSymbol" },
             identifier: "thread-right-previews",
             label: "Previews",

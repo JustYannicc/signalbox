@@ -51,6 +51,7 @@ import { useAtomCommand } from "~/state/use-atom-command";
 import { useTheme } from "./useTheme";
 import { environmentSession, readEnvironmentScope, useEnvironmentScope } from "~/state/session";
 import { appAtomRegistry } from "~/rpc/atomRegistry";
+import { useWritableModelSettings } from "./useWritableModelSettings";
 
 const CLIENT_SETTINGS_PERSISTENCE_ERROR_SCOPE = "[CLIENT_SETTINGS]";
 
@@ -398,9 +399,7 @@ export async function prepareModelPreferencesPatch(
 }
 
 export function useUpdateEnvironmentModelPreferences(environmentId: EnvironmentId | null) {
-  const settings = useAtomValue(
-    environmentId ? serverEnvironment.settingsValueAtom(environmentId) : noEnvironmentSettingsAtom,
-  );
+  const settings = useWritableModelSettings(environmentId);
   const save = useAtomCommand(serverEnvironment.updateSettings, "model preferences update");
   return useCallback(
     async (patch: ServerSettingsPatch) => {

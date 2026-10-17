@@ -6,6 +6,8 @@ import { createSignalboxPushAtoms } from "@t3tools/client-runtime/state/signalbo
 import { connectionAtomRuntime } from "../../connection/runtime";
 import { appAtomRegistry } from "../../state/atom-registry";
 import { environmentServerConfigsAtom } from "../../state/server";
+import { savedConnectionsByIdAtom } from "../../state/use-remote-environment-registry";
+import type { SavedRemoteConnection } from "../../lib/connection";
 
 /**
  * signalbox: Signalbox Cloud pushes straight to this phone, with no relay
@@ -16,6 +18,53 @@ import { environmentServerConfigsAtom } from "../../state/server";
  */
 
 const commands = createSignalboxPushAtoms(connectionAtomRuntime);
+
+export type SignalboxCloudPushStatus = "unknown" | "pending" | "registered" | "disabled" | "failed";
+let status: SignalboxCloudPushStatus = "unknown";
+let registeredIdentity = "";
+let generation = 0;
+const listeners = new Set<() => void>();
+
+/** A new cloud session must register again, even when its environment id is unchanged. */
+export function signalboxCloudPushIdentity(
+  configs: ReadonlyMap<EnvironmentId, ServerConfig>,
+  connections: Readonly<Record<EnvironmentId, SavedRemoteConnection>>,
+): string {
+  return JSON.stringify(
+    signalboxCloudIds(configs).map((id) => {
+      const connection = connections[id];
+      return [id, connection?.httpBaseUrl, connection?.bearerToken, connection?.dpopAccessToken];
+    }),
+  );
+}
+
+const currentIdentity = () =>
+  signalboxCloudPushIdentity(
+    appAtomRegistry.get(environmentServerConfigsAtom),
+    appAtomRegistry.get(savedConnectionsByIdAtom),
+  );
+
+function setStatus(next: SignalboxCloudPushStatus): void {
+  status = next;
+  for (const listener of listeners) listener();
+}
+
+export function getSignalboxCloudPushStatus(): SignalboxCloudPushStatus {
+  return registeredIdentity === currentIdentity() ? status : "unknown";
+}
+
+export function subscribeSignalboxCloudPushStatus(listener: () => void): () => void {
+  listeners.add(listener);
+  return () => {
+    listeners.delete(listener);
+  };
+}
+
+export function resetSignalboxCloudPushStatus(identity = currentIdentity()): void {
+  generation++;
+  registeredIdentity = identity;
+  setStatus("unknown");
+}
 
 /** The connected environments that are Signalbox Cloud, in a stable order. */
 export function signalboxCloudIds(
@@ -31,9 +80,15 @@ export function signalboxCloudIds(
 export async function registerWithSignalboxClouds(
   request: RelayDeviceRegistrationRequest,
 ): Promise<void> {
-  await Promise.all(
+  const ids = signalboxCloudIds(appAtomRegistry.get(environmentServerConfigsAtom));
+  if (ids.length === 0) return;
+  const attempt = ++generation;
+  const identity = currentIdentity();
+  registeredIdentity = identity;
+  setStatus("pending");
+  const results = await Promise.all(
     // A cloud that couldn't be reached hears it on the next foreground.
-    signalboxCloudIds(appAtomRegistry.get(environmentServerConfigsAtom)).map((environmentId) =>
+    ids.map((environmentId) =>
       runAtomCommand(
         appAtomRegistry,
         commands.registerDevice,
@@ -41,5 +96,13 @@ export async function registerWithSignalboxClouds(
         { reportFailure: false },
       ),
     ),
+  );
+  if (attempt !== generation || identity !== currentIdentity()) return;
+  setStatus(
+    results.every((result) => result._tag === "Success")
+      ? request.pushToken && request.preferences.notificationsEnabled
+        ? "registered"
+        : "disabled"
+      : "failed",
   );
 }

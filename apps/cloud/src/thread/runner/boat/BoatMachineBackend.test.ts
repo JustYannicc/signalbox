@@ -24,7 +24,15 @@ const settings: Extract<MachineSettings, { kind: "boat" }> = {
   ttlSeconds: 3600,
 };
 
-type Operation = "create" | "get" | "setTtl" | "resume" | "stop" | "delete" | "writeFile";
+type Operation =
+  | "create"
+  | "get"
+  | "setTtl"
+  | "resume"
+  | "stop"
+  | "delete"
+  | "writeFile"
+  | "execute";
 
 /**
  * boat as far as a thread's machine sees it: idempotent creates, a sandbox that
@@ -33,7 +41,7 @@ type Operation = "create" | "get" | "setTtl" | "resume" | "stop" | "delete" | "w
 const makeFakeBoat = () => {
   const sandboxes = new Map<
     string,
-    { state: string; setupStatus?: string; files: Map<string, string> }
+    { state: string; setupStatus?: string; hydrated?: boolean; files: Map<string, string> }
   >();
   const keys = new Map<string, string>();
   const calls: Array<Operation> = [];
@@ -59,8 +67,13 @@ const makeFakeBoat = () => {
       return Effect.succeed(result);
     });
   const sandboxOf = (id: string): BoatSandbox => {
-    const { state, setupStatus } = sandboxes.get(id)!;
-    return { id, state, ...(setupStatus === undefined ? {} : { setupStatus }) };
+    const { state, setupStatus, hydrated } = sandboxes.get(id)!;
+    return {
+      id,
+      state,
+      ...(setupStatus === undefined ? {} : { setupStatus }),
+      ...(hydrated === undefined ? {} : { hydrated }),
+    };
   };
 
   const api: BoatApi = {
@@ -74,6 +87,7 @@ const makeFakeBoat = () => {
         keys.set(key, id);
         return sandboxOf(id);
       }),
+    execute: () => answer("execute", () => undefined),
     get: (id) => answer("get", () => (sandboxes.has(id) ? sandboxOf(id) : null)),
     setTtl: (id) =>
       answer("setTtl", () => {
@@ -165,6 +179,50 @@ describe("BoatMachineBackend", () => {
         cloudUrl: settings.cloudUrl,
         image: settings.image,
       });
+    }),
+  );
+
+  it.effect("upgrades a legacy VM in place before configuring its Runner, once across wakes", () =>
+    Effect.gen(function* () {
+      const boat = makeFakeBoat();
+      const store = makeStore();
+      const backend = yield* makeBackend(boat, store);
+      yield* backend.ensure(request(1));
+      boat.settle();
+      boat.lose("execute");
+      const failed = yield* Effect.flip(backend.ensure(request(1)));
+      expect(failed.message).toContain("execute");
+      expect(boat.config("bx_1")).toBeNull();
+      expect(store.current().setupKey).toBeUndefined();
+
+      yield* backend.ensure(request(1));
+      expect(boat.config("bx_1")?.generation).toBe(1);
+      expect(boat.calls.indexOf("execute")).toBeLessThan(boat.calls.indexOf("writeFile"));
+      yield* backend.stop(threadId);
+      boat.settle();
+      const again = yield* makeBackend(boat, store);
+      yield* again.ensure(request(2));
+      boat.settle();
+      yield* again.ensure(request(2));
+      expect(boat.calls.filter((call) => call === "execute")).toHaveLength(2);
+      expect(boat.sandboxes.size).toBe(1);
+      expect(boat.config("bx_1")?.generation).toBe(2);
+    }),
+  );
+
+  it.effect("does not install or hand off a turn while a ready VM is still hydrating", () =>
+    Effect.gen(function* () {
+      const boat = makeFakeBoat();
+      const backend = yield* makeBackend(boat, makeStore());
+      yield* backend.ensure(request(1));
+      boat.settle();
+      boat.sandboxes.get("bx_1")!.hydrated = false;
+      expect((yield* backend.ensure(request(1))).actual).toBe("starting");
+      expect(boat.calls).not.toContain("execute");
+      expect(boat.config("bx_1")).toBeNull();
+      boat.sandboxes.get("bx_1")!.hydrated = true;
+      expect((yield* backend.ensure(request(1))).actual).toBe("running");
+      expect(boat.config("bx_1")?.generation).toBe(1);
     }),
   );
 

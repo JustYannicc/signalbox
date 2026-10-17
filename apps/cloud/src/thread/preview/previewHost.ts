@@ -1,4 +1,7 @@
-import type { ThreadId } from "@t3tools/contracts";
+import { PortSchema, ThreadId } from "@t3tools/contracts";
+import * as Base64Url from "effect/encoding/Base64Url";
+import * as Result from "effect/Result";
+import * as Schema from "effect/Schema";
 import * as Cookies from "effect/http/Cookies";
 
 /**
@@ -111,3 +114,18 @@ export function withoutCookie(header: string | null, name: string): string | nul
     .map((part) => part.trim());
   return kept.length === 0 ? null : kept.join("; ");
 }
+
+// This cookie remembers where to sign in again. It grants no access.
+export const PREVIEW_ROUTE_COOKIE = "signalbox_preview_route";
+const targetJson = Schema.fromJsonString(Schema.Struct({ threadId: ThreadId, port: PortSchema }));
+const encodeTarget = Schema.encodeSync(targetJson);
+const decodeTarget = Schema.decodeUnknownOption(targetJson);
+export const previewRouteCookie = (threadId: ThreadId, port: number) =>
+  Base64Url.encode(encodeTarget({ threadId, port }));
+export const readPreviewRoute = (cookie: string | null) => {
+  if (cookie === null) return null;
+  const bytes = Base64Url.decode(cookie);
+  if (!Result.isSuccess(bytes)) return null;
+  const value = decodeTarget(new TextDecoder().decode(bytes.success));
+  return value._tag === "Some" ? value.value : null;
+};

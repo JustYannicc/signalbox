@@ -491,6 +491,28 @@ describe("getDefaultProviderInstanceModel", () => {
     expect(resolved?.length).toBeGreaterThan(0);
   });
 
+  it("does not invent a driver default for an empty hub catalog", () => {
+    const instanceId = ProviderInstanceId.make("claude_hub");
+    const providers = [
+      provider({
+        provider: ProviderDriverKind.make("claudeAgent"),
+        instanceId,
+        models: [],
+      }),
+    ];
+    const providerInstances = {
+      [instanceId]: {
+        driver: ProviderDriverKind.make("claudeAgent"),
+        config: { setupMode: "hub" },
+      },
+    };
+
+    expect(
+      getDefaultProviderInstanceModel(providers, instanceId, providerInstances),
+    ).toBeUndefined();
+    expect(resolveDefaultProviderModelSelection(providers, null, providerInstances)).toBeNull();
+  });
+
   it("honors the instance's declared default before model-list order", () => {
     const providers = [
       provider({

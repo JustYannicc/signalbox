@@ -38,7 +38,7 @@ function previewTitle(port: SignalboxPreviewPort) {
 }
 
 /**
- * Opens a fresh link to one of the thread's previews. The web build
+ * The web build
  * reserves the tab inside the click, since browsers block tabs opened after
  * an await; desktop hands the link to the system browser.
  */
@@ -85,10 +85,8 @@ function useOpenThreadPreview(environmentId: EnvironmentId, threadId: ThreadId) 
 }
 
 /**
- * The thread's running dev servers and the agent's browser, in the chat
- * header. Shows up only when the thread's Signalbox Cloud machine serves one
- * or the agent has browsed: appearing is the notification. The browser opens
- * in the side panel, only when asked.
+ * Declared servers stay in the header while their machine is stopped.
+ * The agent's browser opens in the side panel only when asked.
  */
 export const ThreadPreviewsControl = memo(function ThreadPreviewsControl(props: {
   readonly environmentId: EnvironmentId;

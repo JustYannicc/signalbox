@@ -3,7 +3,7 @@
  * both open it; `FolderDialogs`, mounted once with the app shell, shows it.
  */
 import type { EnvironmentId } from "@t3tools/contracts";
-import type { SignalboxContextId } from "@t3tools/contracts/signalboxContexts";
+import type { SignalboxContext, SignalboxContextId } from "@t3tools/contracts/signalboxContexts";
 import type { Folder, FolderLevel } from "@t3tools/contracts/signalboxFolders";
 import { create } from "zustand";
 
@@ -31,6 +31,13 @@ export type FolderDialog =
       /** The folder's name; null for the top level. */
       readonly name: string | null;
       readonly instructions: string;
+    }
+  | {
+      /** A folder's phases, one per line; its kind of tree picks the template offered. */
+      readonly kind: "phases";
+      readonly environmentId: EnvironmentId;
+      readonly folder: Folder;
+      readonly ownerKind: SignalboxContext["kind"];
     }
   | {
       /** A level's 1Password Environment, and the user's token; it reads both live. */

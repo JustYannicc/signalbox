@@ -18,12 +18,15 @@ import { folderCountsAtom, folderPoolChoicesAtom, folderStatusSummariesAtom } fr
 import { folderFilterKey, parseFolderFilterKey } from "./folder-filter";
 import { folderMenuActions, topLevelMenuActions } from "./folder-menus";
 import { FolderInstructionsSheet } from "./FolderInstructionsSheet";
+import { FolderPhasesSheet } from "./FolderPhasesSheet";
 import { FolderNodeRow, OwnerTopLevelRow } from "./FolderNavigationRows";
 import { useFolderActions } from "./use-folder-actions";
 
 const PERSONAL_TOP_ACTIONS = topLevelMenuActions({ personal: true });
 const PERSONAL_TOP_ACTIONS_WITH_NOTES = topLevelMenuActions({ personal: true, notes: true });
 const ORGANIZATION_TOP_ACTIONS = topLevelMenuActions({ personal: false });
+
+const NO_OWNERS: ReadonlyArray<SignalboxContext> = [];
 
 export function FolderNavigationEnvironment(props: {
   readonly environmentId: EnvironmentId;
@@ -39,7 +42,12 @@ export function FolderNavigationEnvironment(props: {
   const counts = useAtomValue(folderCountsAtom(environmentId));
   const summaries = useAtomValue(folderStatusSummariesAtom(environmentId));
   const pools = useAtomValue(folderPoolChoicesAtom(environmentId));
-  const actions = useFolderActions({ environmentId, snapshot, pools });
+  const actions = useFolderActions({
+    environmentId,
+    snapshot,
+    pools,
+    owners: owners?.contexts ?? NO_OWNERS,
+  });
   const hasNotes = useEnvironmentHasNotes(environmentId);
   const openThread = useOpenThread();
   const openNoteThread = useCallback(
@@ -170,6 +178,14 @@ export function FolderNavigationEnvironment(props: {
           editing={actions.editing}
           onSave={actions.saveInstructions}
           onClose={actions.closeEditor}
+        />
+      ) : null}
+      {actions.editingPhases ? (
+        <FolderPhasesSheet
+          key={actions.editingPhases.folder.id}
+          editing={actions.editingPhases}
+          onSave={actions.savePhases}
+          onClose={actions.closePhasesEditor}
         />
       ) : null}
       {actions.notes && hasNotes ? (

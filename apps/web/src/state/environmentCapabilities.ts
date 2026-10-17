@@ -7,6 +7,7 @@ import { useAtomValue } from "@effect/atom-react";
 import {
   type EnvironmentId,
   type SignalboxEnvironmentCapability,
+  environmentCanWriteModelSettings,
   environmentSupports,
   showsEnvironmentUi,
 } from "@t3tools/contracts";
@@ -19,12 +20,14 @@ import { isHostedStaticApp } from "../hostedPairing";
 import { isLocalEnvironmentDisabled } from "../localEnvironment";
 import { environmentServerConfigsAtom, primaryServerConfigAtom, serverEnvironment } from "./server";
 
-/** Supported until the environment says otherwise, including while its config loads. */
+/** Supported until the environment says otherwise, unless the caller waits for config. */
 export function useEnvironmentSupports(
   environmentId: EnvironmentId | null | undefined,
   capability: SignalboxEnvironmentCapability,
+  options: { readonly waitForConfig?: boolean } = {},
 ): boolean {
   const config = useAtomValue(serverEnvironment.configValueAtom(environmentId ?? null));
+  if (options.waitForConfig && config === null) return false;
   return environmentSupports(config?.environment.capabilities, capability);
 }
 
@@ -37,6 +40,13 @@ export function readEnvironmentSupports(
     appAtomRegistry.get(environmentServerConfigsAtom).get(environmentId)?.environment.capabilities,
     capability,
   );
+}
+
+export function useEnvironmentCanWriteModelSettings(
+  environmentId: EnvironmentId | null | undefined,
+): boolean {
+  const config = useAtomValue(serverEnvironment.configValueAtom(environmentId ?? null));
+  return environmentCanWriteModelSettings(config?.environment.capabilities);
 }
 
 /**

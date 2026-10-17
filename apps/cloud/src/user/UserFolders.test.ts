@@ -308,6 +308,62 @@ describe("UserFolders", () => {
       }).pipe(Effect.provide(layerMemoryStore)),
   );
 
+  it.effect("gives new folders their tree's phases, which people move, edit and clear", () =>
+    Effect.gen(function* () {
+      const { folders, contexts } = yield* services;
+      yield* contexts.syncOrganizations([{ id: ACME, name: "Acme" }]);
+      let snapshot = yield* folders.create({ name: "Trip", parentId: null });
+      snapshot = yield* folders.create({ name: "Payments", parentId: null, ownerId: ACME });
+      snapshot = yield* folders.create({ name: "Live", parentId: null, phases: null });
+      const phaseOf = (name: string) =>
+        snapshot.folders.find((folder) => folder.name === name)?.phase;
+      expect(phaseOf("Trip")).toEqual({ phases: ["Idea", "Doing", "Done"], current: "Idea" });
+      expect(phaseOf("Payments")).toEqual({
+        phases: ["Proposal", "Initiative", "Implementation", "Testing", "Production"],
+        current: "Proposal",
+      });
+      expect(phaseOf("Live")).toBeUndefined();
+
+      // Skipping ahead, matched ignoring case, as an automation would on a first deploy.
+      const payments = idOf(snapshot, "Payments");
+      snapshot = yield* folders.setPhase({ id: payments, current: "production" });
+      expect(phaseOf("Payments")?.current).toBe("Production");
+      const revision = snapshot.revision;
+      snapshot = yield* folders.setPhase({ id: payments, current: "Production" });
+      expect(snapshot.revision).toBe(revision);
+
+      // A new list keeps the current phase when it's still there, else starts at the first.
+      snapshot = yield* folders.setPhase({
+        id: payments,
+        phases: ["Pilot", " Production ", "Sunset"],
+      });
+      expect(phaseOf("Payments")).toEqual({
+        phases: ["Pilot", "Production", "Sunset"],
+        current: "Production",
+      });
+      snapshot = yield* folders.setPhase({ id: payments, phases: ["Beta", "GA"] });
+      expect(phaseOf("Payments")).toEqual({ phases: ["Beta", "GA"], current: "Beta" });
+
+      expect(yield* reasonOf(folders.setPhase({ id: payments, current: "Shipped" }))).toBe(
+        "invalid",
+      );
+      expect(yield* reasonOf(folders.setPhase({ id: payments, phases: ["A", "a"] }))).toBe(
+        "invalid",
+      );
+      expect(yield* reasonOf(folders.setPhase({ id: payments, phases: [] }))).toBe("invalid");
+
+      // Cleared, then given phases again.
+      snapshot = yield* folders.setPhase({ id: payments, phases: null });
+      expect(phaseOf("Payments")).toBeUndefined();
+      expect(yield* reasonOf(folders.setPhase({ id: payments, current: "GA" }))).toBe("invalid");
+      snapshot = yield* folders.setPhase({ id: payments, phases: ["Beta", "GA"], current: "GA" });
+      expect(phaseOf("Payments")).toEqual({ phases: ["Beta", "GA"], current: "GA" });
+      expect(yield* reasonOf(folders.setPhase({ id: "gone" as never, phases: null }))).toBe(
+        "not-found",
+      );
+    }).pipe(Effect.provide(layerMemoryStore)),
+  );
+
   it.effect("lends a GitHub account to a folder for CI steps, and takes it back (#641)", () =>
     Effect.gen(function* () {
       const { folders, store } = yield* services;
@@ -358,7 +414,8 @@ describe("UserFolders", () => {
       yield* sql`DROP TABLE thread_homes`;
       yield* sql`DROP TABLE folders_state`;
       yield* sql`DROP TABLE onepassword_account`;
-      yield* sql`DELETE FROM effect_sql_migrations WHERE migration_id IN (13, 15)`;
+      yield* sql`DELETE FROM effect_sql_migrations
+        WHERE migration_id IN (13, 15) OR (migration_id = 20 AND name = 'folder_phases')`;
       yield* sql`INSERT INTO sections (id, context_id, parent_id, name, position) VALUES
         ('work', 'personal', NULL, 'Work', 0),
         ('clients', 'personal', 'work', 'Clients', 0),
@@ -375,11 +432,16 @@ describe("UserFolders", () => {
       yield* indexThread(clientThread, PERSONAL_CONTEXT_ID, projectIdForDrive(CLIENT_DRIVE));
 
       yield* UserStore.migrate;
+      const sameId = yield* sql<{ name: string }>`SELECT name FROM effect_sql_migrations
+        WHERE migration_id = 20 ORDER BY name`;
+      expect(sameId.map((row) => row.name)).toEqual(["folder_phases", "model_settings"]);
       const folders = yield* UserFolders.UserFolders;
       const snapshot = yield* folders.snapshot;
 
       // Sections keep their ids; the drive takes its place in Clients; Acme's stays Acme's.
       expect(outline(snapshot)).toEqual([{ Work: [{ Clients: ["Northwind files"] }] }]);
+      // Folders that already existed, and drives' folders, start with no phase.
+      expect(snapshot.folders.filter((folder) => folder.phase !== undefined)).toEqual([]);
       expect(outline(snapshot, ACME)).toEqual(["Ops", "Payments drive"]);
       const northwind = snapshot.folders.find((folder) => folder.name === "Northwind files")!;
       expect(northwind.files).toEqual({ projectId: projectIdForDrive(CLIENT_DRIVE) });

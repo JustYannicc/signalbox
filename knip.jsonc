@@ -93,10 +93,12 @@
       // Worktree setup (scripts/setup-worktree.ts) runs this directly.
       // signalbox: agent browser; the mirror page is a second Vite entry (vite.config.ts).
       // signalbox: upstream's flat sidebar stays in the tree, unmounted, so upstream merges apply (#683).
+      // signalbox: upstream's store-links row too: T3 Code's store app can't sign in to Signalbox Cloud.
       "entry": [
         "scripts/warm-dep-cache.ts",
         "src/agentBrowser/mirror/main.ts!",
         "src/components/Sidebar.tsx",
+        "src/components/settings/MobileAppSettingsRow.tsx",
       ],
       // UI component modules are copied and adapted as cohesive sets. Keep their
       // named subcomponents even before they have callers; the file audit still
