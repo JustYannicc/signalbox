@@ -53,6 +53,7 @@ import {
   protectedResourceMetadata,
 } from "./api/mcpRoutes.ts";
 import * as CloudThreadService from "./thread/CloudThreadService.ts";
+import * as ThreadsLive from "./thread/ThreadsLive.ts";
 import type { LocalKeyVerifier } from "./thread/runner/modelGrants.ts";
 import * as ThreadDirectory from "./thread/ThreadDirectory.ts";
 import * as ThreadKindTurns from "./thread/ThreadKindTurns.ts";
@@ -93,7 +94,7 @@ export const layerServices = (input: {
     Layer.provideMerge(
       Layer.mergeAll(
         CloudAccounts.layer,
-        CloudThreadService.layer,
+        CloudThreadService.layer.pipe(Layer.provideMerge(ThreadsLive.layer)),
         PreviewSetup.layer,
         ThreadKindRoutes.layerTestClock,
       ),
