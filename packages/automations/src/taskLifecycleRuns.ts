@@ -12,9 +12,9 @@ import * as Semaphore from "effect/Semaphore";
 
 import type { TaskLifecycleInput, TaskLifecycleResult } from "@t3tools/contracts/taskLifecycle";
 
+import { DONE_CONDITION_KEY, type Attachments } from "./attachments.ts";
 import { fail } from "./errors.ts";
 import type { AutomationThreadsShape } from "./host.ts";
-import type { Attachments } from "./attachments.ts";
 import { asRecord, fromJson } from "./json.ts";
 import { builtInById } from "./defaults/registry.ts";
 import type { RunLinkStore } from "./runLinkStore.ts";
@@ -68,7 +68,7 @@ export const makeTaskLifecycleRuns = (deps: {
       const ids = new Set<string>();
       if (runId && runId !== except) ids.add(runId);
       for (const link of yield* deps.links.runningAttachedTo(threadId)) {
-        if (link.attach_key === "done-condition" && link.run_id !== except) ids.add(link.run_id);
+        if (link.attach_key === DONE_CONDITION_KEY && link.run_id !== except) ids.add(link.run_id);
       }
       for (const id of ids) yield* deps.endRunById(id);
     });
@@ -87,13 +87,13 @@ export const makeTaskLifecycleRuns = (deps: {
       const existing = yield* deps.links.getLink(input.runId);
       const runInput = asRecord(fromJson(run.input_json));
       const belongsToThread =
-        (existing?.thread_id === input.threadId && existing.attach_key === "done-condition") ||
+        (existing?.thread_id === input.threadId && existing.attach_key === DONE_CONDITION_KEY) ||
         runInput.threadId === input.threadId;
       if (!belongsToThread)
         return yield* fail("The done-condition run wasn't started for this task.");
       if (
         existing &&
-        !(existing.thread_id === input.threadId && existing.attach_key === "done-condition") &&
+        !(existing.thread_id === input.threadId && existing.attach_key === DONE_CONDITION_KEY) &&
         (existing.thread_id !== null || existing.attach_key !== null)
       )
         return yield* fail("The done-condition run is attached somewhere else.");
@@ -115,7 +115,7 @@ export const makeTaskLifecycleRuns = (deps: {
       yield* deps.links.adoptAttachment({
         runId: input.runId,
         threadId: input.threadId,
-        key: "done-condition",
+        key: DONE_CONDITION_KEY,
         label: `Done when: ${result.record.condition.summary}`,
         startedAt: validation.run.started_at,
       });
@@ -175,7 +175,7 @@ export const makeTaskLifecycleRuns = (deps: {
         trigger: "manual",
         attach: {
           threadId: id,
-          key: "done-condition",
+          key: DONE_CONDITION_KEY,
           label: `Done when: ${condition.summary}`,
         },
         projectId: ProjectId.make(shell.projectId),
@@ -264,6 +264,22 @@ export const makeTaskLifecycleRuns = (deps: {
     );
 
   const onDomainEvent = (event: Parameters<TaskLifecycleActions["onDomainEvent"]>[0]) => {
+    // Ending a task ends its waiting done-condition run, unless that run just completed it:
+    // completion records the outcome before it settles, and this runs after the action.
+    if (
+      event.type === "thread.settled" ||
+      event.type === "thread.archived" ||
+      event.type === "thread.deleted"
+    )
+      return serialized(
+        event.threadId,
+        Effect.gen(function* () {
+          const record = yield* deps.records.read(event.threadId);
+          if (event.type !== "thread.deleted" && record?.outcome != null) return;
+          yield* cancelConditionRuns(event.threadId, record?.condition?.runId ?? undefined);
+        }),
+      );
+
     if (event.type === "thread.unsettled" || event.type === "thread.unarchived")
       return serialized(
         event.threadId,
