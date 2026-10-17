@@ -59,6 +59,16 @@ export function pnpmMetroWatchFolders(workspaceRoot: string): string[] {
         const candidate = NodePath.join(modules, name);
         if (!NodeFS.existsSync(candidate)) continue;
         const target = NodeFS.realpathSync(candidate);
+        const relative = NodePath.relative(workspaceRoot, target);
+        if (
+          relative !== ".." &&
+          !relative.startsWith(`..${NodePath.sep}`) &&
+          !NodePath.isAbsolute(relative)
+        ) {
+          // A workspace package can resolve different peer slots from the mobile app.
+          pending.push(NodePath.join(target, "node_modules"));
+          continue;
+        }
         if (!stores.some((store) => target.startsWith(`${store}${NodePath.sep}`))) continue;
         const packageBoundary = target.lastIndexOf(`${NodePath.sep}node_modules${NodePath.sep}`);
         if (packageBoundary === -1) continue;

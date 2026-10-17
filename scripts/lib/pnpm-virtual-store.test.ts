@@ -64,8 +64,9 @@ test.skipIf(!symlinksSupported)(
     const slotA = NodePath.join(store, "direct/1/hash-a");
     const slotB = NodePath.join(store, "transitive/1/hash-b");
     const slotUnused = NodePath.join(store, "unused/1/hash-c");
+    const slotWorkspace = NodePath.join(store, "workspace-peer/1/hash-d");
     const modules = NodePath.join(workspace, "apps/mobile/node_modules");
-    for (const slot of [slotA, slotB, slotUnused]) {
+    for (const slot of [slotA, slotB, slotUnused, slotWorkspace]) {
       NodeFS.mkdirSync(NodePath.join(slot, "node_modules/pkg"), { recursive: true });
     }
     NodeFS.mkdirSync(modules, { recursive: true });
@@ -89,7 +90,18 @@ test.skipIf(!symlinksSupported)(
       NodePath.join(slotB, "node_modules/cycle"),
       "dir",
     );
-    NodeAssert.deepEqual(pnpmMetroWatchFolders(workspace).sort(), [slotA, slotB].sort());
+    const shared = NodePath.join(workspace, "packages/shared");
+    NodeFS.mkdirSync(NodePath.join(shared, "node_modules"), { recursive: true });
+    NodeFS.symlinkSync(shared, NodePath.join(modules, "shared"), "dir");
+    NodeFS.symlinkSync(
+      NodePath.join(slotWorkspace, "node_modules/pkg"),
+      NodePath.join(shared, "node_modules/pkg"),
+      "dir",
+    );
+    NodeAssert.deepEqual(
+      pnpmMetroWatchFolders(workspace).sort(),
+      [slotA, slotB, slotWorkspace].sort(),
+    );
   },
 );
 
