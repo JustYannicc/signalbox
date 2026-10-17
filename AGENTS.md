@@ -199,6 +199,7 @@ Architecture and its constraints: `docs/internals/overview.md`. Glossary: `docs/
 
 - `apps/server` - WebSocket, orchestration, providers, checkpointing. Effect-heavy: read [Effect services](docs/internals/effect-services.md) before adding server code, and `.repos/effect-smol/LLMS.md` for the Effect library itself.
 - `apps/cloud` - the hosted product on Cloudflare: Workers, Durable Objects, the model gateway, drives, pools and automations. Deploys through Alchemy.
+- For learner scope or evidence-routing changes, read `apps/cloud/src/learner/README.md`.
 - `apps/web` - React/Vite UI. `apps/desktop` wraps it, `apps/mobile` is React Native, `apps/marketing` is the site.
 - `packages/contracts` - Effect/Schema contracts plus small derived helpers. No heavy runtime logic.
 - `packages/shared` - shared runtime utils, subpath exports, no barrel.

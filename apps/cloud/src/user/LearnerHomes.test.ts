@@ -43,20 +43,18 @@ const setup = Effect.gen(function* () {
 });
 
 describe("learner homes", () => {
-  it.effect(
-    "resolves distinct person, folder and company stores from the thread's actual home",
-    () =>
-      Effect.gen(function* () {
-        const { homes, folderId } = yield* setup;
-        const person = yield* homes.home(personalThread);
-        const folder = yield* homes.home(folderThread);
-        const company = yield* homes.home(companyThread);
-        expect(new Set([person.scope, folder.scope, company.scope]).size).toBe(3);
-        expect(folder.folderId).toBe(folderId);
-        expect(person.folderId).toBeNull();
-        expect(company.treeId).toBe(COMPANY);
-        expect(person.treeId).toBe(PERSONAL_CONTEXT_ID);
-      }).pipe(Effect.provide(LearnerHomes.layer.pipe(Layer.provideMerge(layerMemoryStore)))),
+  it.effect("resolves personal levels and rejects company homes", () =>
+    Effect.gen(function* () {
+      const { homes, folderId } = yield* setup;
+      const person = yield* homes.home(personalThread);
+      const folder = yield* homes.home(folderThread);
+      const company = yield* Effect.flip(homes.home(companyThread));
+      expect(new Set([person.scope, folder.scope]).size).toBe(2);
+      expect(folder.folderId).toBe(folderId);
+      expect(person.folderId).toBeNull();
+      expect(company.reason).toBe("unsupported-company");
+      expect(person.treeId).toBe(PERSONAL_CONTEXT_ID);
+    }).pipe(Effect.provide(LearnerHomes.layer.pipe(Layer.provideMerge(layerMemoryStore)))),
   );
 
   it.effect("allows descendant summaries but refuses another tree, sibling and private root", () =>

@@ -2,11 +2,8 @@ import { EventId, MessageId, ThreadId } from "@t3tools/contracts";
 import { PERSONAL_CONTEXT_ID, SignalboxContextId } from "@t3tools/contracts/signalboxContexts";
 import { describe, expect, it } from "@effect/vitest";
 import * as DateTime from "effect/DateTime";
-import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
-import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
-import * as Option from "effect/Option";
 import * as SqlClient from "effect/sql/SqlClient";
 
 import * as Environment from "../environment.ts";
@@ -57,41 +54,6 @@ const setup = Effect.gen(function* () {
 });
 
 describe("user learner", () => {
-  it.effect("refuses an in-flight query if its membership was revoked while Jev answered", () =>
-    Effect.gen(function* () {
-      const started = yield* Deferred.make<void>();
-      const release = yield* Deferred.make<void>();
-      const judge = LearnerJev.LearnerJev.of({
-        classifyPair: () => Effect.succeedNone,
-        matchDraft: () => Effect.succeedNone,
-        relevance: ({ candidates }) =>
-          Effect.succeed(candidates.map((lens) => ({ lensId: lens.id, probability: 0.99 }))),
-        outcome: () => Effect.succeedNone,
-        summarySafe: () => Effect.succeed(false),
-        coverage: () =>
-          Effect.gen(function* () {
-            yield* Deferred.succeed(started, undefined);
-            yield* Deferred.await(release);
-            return Option.some("clear" as const);
-          }),
-      });
-      yield* Effect.gen(function* () {
-        const { learner } = yield* setup;
-        yield* learner.statement(company, {
-          text: "Company-only rule",
-          reason: "The owner stated it.",
-        });
-        const query = yield* Effect.forkChild(
-          Effect.flip(learner.query(company, "Company decision")),
-        );
-        yield* Deferred.await(started);
-        yield* (yield* UserContexts.UserContexts).syncOrganizations([]);
-        yield* Deferred.succeed(release, undefined);
-        expect((yield* Fiber.join(query))._tag).toBe("LearnerAccessError");
-      }).pipe(Effect.provide(layersWith(Layer.succeed(LearnerJev.LearnerJev, judge))));
-    }),
-  );
-
   it.effect(
     "takes committed thread events once at their home without teaching from conversation alone",
     () =>
@@ -170,48 +132,75 @@ describe("user learner", () => {
     }).pipe(Effect.provide(layers)),
   );
 
-  it.effect(
-    "keeps owner statements per level and deletes company contributions on membership revocation",
-    () =>
-      Effect.gen(function* () {
-        const { learner, homes, folderId } = yield* setup;
-        for (const [id, text] of [
-          [root, "Private preference"],
-          [project, "Project preference"],
-          [company, "Company preference"],
-        ] as const) {
-          yield* learner.statement(id, { text, reason: "The owner stated this." });
-        }
-        expect((yield* learner.lenses(root, {})).lenses.map((lens) => lens.text)).toEqual([
-          "Private preference",
-        ]);
-        expect((yield* learner.lenses(root, { folderId })).lenses.map((lens) => lens.text)).toEqual(
-          ["Project preference"],
-        );
-        expect((yield* learner.lenses(project, {})).lenses.map((lens) => lens.text)).toEqual([
-          "Project preference",
-        ]);
-        const companyHome = yield* homes.home(company);
-        yield* (yield* UserContexts.UserContexts).syncOrganizations([]);
-        expect(
-          (yield* (yield* LearnerService.LearnerService).lenses({ scope: companyHome.scope }))
-            .lenses,
-        ).toEqual([]);
-        expect((yield* learner.lenses(root, {})).lenses).toHaveLength(1);
-        expect((yield* Effect.flip(learner.query(company, "Company preference")))._tag).toBe(
-          "LearnerAccessError",
-        );
-        yield* (yield* UserContexts.UserContexts).syncOrganizations([
-          { id: COMPANY, name: "Acme" },
-        ]);
-        expect((yield* learner.lenses(company, {})).lenses).toEqual([]);
-        yield* learner.statement(company, {
-          text: "A fresh company rule",
-          reason: "Stated after rejoining.",
-        });
-        expect((yield* learner.lenses(company, {})).lenses.map((lens) => lens.text)).toEqual([
-          "A fresh company rule",
-        ]);
-      }).pipe(Effect.provide(layers)),
+  it.effect("keeps owner statements at their personal level", () =>
+    Effect.gen(function* () {
+      const { learner, folderId } = yield* setup;
+      yield* learner.statement(root, { text: "Private preference", reason: "Owner statement" });
+      yield* learner.statement(project, { text: "Project preference", reason: "Owner statement" });
+      expect((yield* learner.lenses(root, {})).lenses.map((lens) => lens.text)).toEqual([
+        "Private preference",
+      ]);
+      expect((yield* learner.lenses(root, { folderId })).lenses.map((lens) => lens.text)).toEqual([
+        "Project preference",
+      ]);
+      expect((yield* learner.lenses(project, {})).lenses.map((lens) => lens.text)).toEqual([
+        "Project preference",
+      ]);
+    }).pipe(Effect.provide(layers)),
+  );
+
+  it.effect("refuses every company learner operation and skips company observations", () =>
+    Effect.gen(function* () {
+      const { learner } = yield* setup;
+      const event = {
+        eventId: "company-draft",
+        source: "thread",
+        kind: "draft" as const,
+        content: "Company decision",
+      };
+      for (const attempt of [
+        learner.log(company, event),
+        learner.statement(company, { text: "Company rule", reason: "Owner statement" }),
+        learner.query(company, "Company decision"),
+        learner.lenses(company, {}),
+      ]) {
+        const failure = yield* Effect.flip(attempt);
+        expect(failure._tag).toBe("LearnerAccessError");
+        if (failure._tag === "LearnerAccessError")
+          expect(failure.reason).toBe("unsupported-company");
+      }
+      yield* learner.query(root, "No personal evidence");
+      const at = DateTime.makeUnsafe(0);
+      yield* learner.observe(company, [
+        {
+          sequence: 1,
+          event: {
+            id: EventId.make("company-event"),
+            threadId: company,
+            type: "message.updated",
+            occurredAt: at,
+            payload: {
+              id: MessageId.make("company-message"),
+              threadId: company,
+              runId: null,
+              nodeId: null,
+              role: "user",
+              text: "Keep company evidence out of personal stores.",
+              createdAt: at,
+              updatedAt: at,
+              createdBy: "user",
+              creationSource: "web",
+              streaming: false,
+              attachments: [],
+            },
+          },
+        },
+      ]);
+      const sql = yield* SqlClient.SqlClient;
+      const events = yield* sql`SELECT event_id FROM sbx_level_learner_668_events`;
+      const lenses = yield* sql`SELECT id FROM sbx_level_learner_668_lenses`;
+      expect(events).toEqual([]);
+      expect(lenses).toEqual([]);
+    }).pipe(Effect.provide(layers)),
   );
 });

@@ -104,8 +104,9 @@ look up its team notes when they need them. They never see your private notes.
 ### Learning from decisions
 
 In cloud threads, ask the agent to remember a rule for the thread's current folder or to consult
-what that level has learned. Your personal top level, each folder, and each organization keep
-separate learning. Moving a thread changes where new decisions are recorded; it does not copy
+what that level has learned. Your personal top level and each personal folder keep
+separate learning. Company learners are not available yet.
+Moving a thread changes where new decisions are recorded; it does not copy
 its earlier learning into the new folder.
 
 Agents can pair a recommendation with your later decision to learn a rule. A learned rule needs

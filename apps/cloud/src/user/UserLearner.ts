@@ -126,7 +126,9 @@ const make = Effect.gen(function* () {
       ).pipe(
         Effect.catchTags({
           LearnerAccessError: (error) =>
-            error.reason === "not-member" ? Effect.void : Effect.fail(error),
+            error.reason === "not-member" || error.reason === "unsupported-company"
+              ? Effect.void
+              : Effect.fail(error),
         }),
       ),
   });

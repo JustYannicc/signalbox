@@ -105,10 +105,3 @@ export const deleteTreeContributions = (
     yield* sql`DELETE FROM sbx_level_learner_668_events WHERE tree_id = ${treeId}`;
     yield* sql`DELETE FROM sbx_level_learner_668_settings WHERE tree_id = ${treeId}`;
   });
-
-/** A new membership permits fresh contributions; it never restores deleted learning. */
-export const allowTreeContributions = (sql: SqlClient.SqlClient, treeId: string) =>
-  Effect.gen(function* () {
-    yield* createTables(sql);
-    yield* sql`DELETE FROM sbx_level_learner_668_revoked_trees WHERE tree_id = ${treeId}`;
-  });

@@ -15,9 +15,10 @@ import * as UserFolders from "./UserFolders.ts";
 
 export class LearnerAccessError extends Schema.TaggedError<LearnerAccessError>()(
   "LearnerAccessError",
-  { reason: Schema.Literals(["unknown-thread", "not-member", "not-below"]) },
+  { reason: Schema.Literals(["unknown-thread", "not-member", "not-below", "unsupported-company"]) },
 ) {
   override get message() {
+    if (this.reason === "unsupported-company") return "Company learners aren't available yet.";
     return "That learner is outside this thread's level.";
   }
 }
@@ -68,6 +69,9 @@ const make = Effect.gen(function* () {
       if (!state.contexts.some((context) => context.id === thread.context_id)) {
         return yield* new LearnerAccessError({ reason: "not-member" });
       }
+      if (thread.context_id !== PERSONAL_CONTEXT_ID) {
+        return yield* new LearnerAccessError({ reason: "unsupported-company" });
+      }
       const folderId = homeOf(state.tree, {
         threadId,
         projectId: thread.project_id,
@@ -86,17 +90,11 @@ const make = Effect.gen(function* () {
         "owner.id": thread.context_id,
         ...(folderId === null ? {} : { "folder.id": folderId }),
       });
-      // A user's private root is never a company root. Folder ids are scoped by their owner too.
       const at = (id: FolderId | null): LearnerHome => {
         const pool = poolResolver(state.tree)(id);
         return {
-          scope: JSON.stringify([
-            thread.context_id === PERSONAL_CONTEXT_ID ? "person" : "company",
-            person,
-            thread.context_id,
-            id,
-          ]),
-          treeId: thread.context_id,
+          scope: JSON.stringify(["person", person, PERSONAL_CONTEXT_ID, id]),
+          treeId: PERSONAL_CONTEXT_ID,
           folderId: id,
           pool:
             pool === null

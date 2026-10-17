@@ -14,7 +14,6 @@ import * as Stream from "effect/Stream";
 import * as SqlClient from "effect/sql/SqlClient";
 import type { SqlError } from "effect/sql/SqlError";
 
-import { allowTreeContributions, deleteTreeContributions } from "../learner/LearnerStore.ts";
 import { contextProjectIds, projectIdForContext } from "./contextProjects.ts";
 import * as UserDriveIndex from "./UserDriveIndex.ts";
 
@@ -125,12 +124,6 @@ const make = Effect.gen(function* () {
       if (unchanged) return;
       yield* sql.withTransaction(
         Effect.gen(function* () {
-          for (const previous of current) {
-            if (!orgs.some((org) => org.id === previous.id)) {
-              yield* deleteTreeContributions(sql, previous.id);
-            }
-          }
-          for (const org of orgs) yield* allowTreeContributions(sql, org.id);
           yield* sql`UPDATE organizations SET member = 0`;
           yield* Effect.forEach(
             orgs,
