@@ -78,6 +78,9 @@
         "alchemy.run.ts!",
         "infra/boxd-spike.alchemy.ts!",
         "infra/check-plan.ts",
+        "infra/syncProbe/alchemy.run.ts!",
+        "infra/syncProbe/worker.ts!",
+        "infra/syncProbe/lunora/identity.ts",
       ],
       // `cloudflare:workers` is a Workers runtime module, not a package.
       "ignoreDependencies": ["cloudflare", "wrangler"], // Wrangler runs through the process cleanup wrapper.
