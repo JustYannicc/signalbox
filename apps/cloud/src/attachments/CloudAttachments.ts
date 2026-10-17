@@ -510,6 +510,36 @@ export const layer = ({ objects, prefix }: AttachmentStorage) =>
                 .digest("SHA-256", new TextEncoder().encode(key))
                 .pipe(Effect.orDie);
               const id = ChatAttachmentId.make(Ids.pendingId(Ids.uuidOf(Hex.encode(digest)), null));
+              const pending = {
+                type: "image" as const,
+                id,
+                name: attachment.name,
+                mimeType: attachment.mimeType,
+                sizeBytes: bytes.byteLength,
+                ...(attachment.source === undefined ? {} : { source: attachment.source }),
+              };
+              const unavailable = () =>
+                new PersistChatAttachmentsError({
+                  message: "Attachments can't be stored right now. Try again.",
+                });
+              const existing = yield* storage("head", () => objects.head(keyOf(id))).pipe(
+                Effect.mapError(unavailable),
+              );
+              // A failed retry must not replace or delete bytes already returned to the caller.
+              if (existing !== null) {
+                const saved = metaOf(existing);
+                if (
+                  existing.size !== bytes.byteLength ||
+                  saved.owner !== userId ||
+                  saved.type !== "image" ||
+                  saved.mime !== attachment.mimeType
+                ) {
+                  return yield* new PersistChatAttachmentsError({
+                    message: "The stored attachment does not match this image.",
+                  });
+                }
+                return pending;
+              }
               const token = yield* tokens.sign({
                 _tag: "attachment-upload",
                 u: userId,
@@ -525,18 +555,9 @@ export const layer = ({ objects, prefix }: AttachmentStorage) =>
                 bytes.byteLength,
               );
               if (stored._tag !== "stored") {
-                return yield* new PersistChatAttachmentsError({
-                  message: "Attachments can't be stored right now. Try again.",
-                });
+                return yield* unavailable();
               }
-              return {
-                type: "image" as const,
-                id,
-                name: attachment.name,
-                mimeType: attachment.mimeType,
-                sizeBytes: bytes.byteLength,
-                ...(attachment.source === undefined ? {} : { source: attachment.source }),
-              };
+              return pending;
             }),
           );
           return { attachments: pending };

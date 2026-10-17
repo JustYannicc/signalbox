@@ -95,6 +95,66 @@ const withService = <A, E>(
 };
 
 describe("CloudAttachments", () => {
+  it.effect("preserves successful pending bytes when a later retry cannot read storage", () => {
+    const objects = makeMemoryObjects();
+    let reads = 0;
+    let writes = 0;
+    const failing = {
+      ...objects,
+      put: (...args: Parameters<typeof objects.put>) => {
+        writes++;
+        return objects.put(...args);
+      },
+      head: async (key: string) => {
+        if (++reads === 3) throw new Error("test retry lookup failure");
+        return objects.head(key);
+      },
+    };
+    return CloudAttachments.use((service) =>
+      Effect.gen(function* () {
+        const threadId = ThreadId.make("successful-retry-thread");
+        const input = {
+          threadId,
+          messageId: MessageId.make("successful-retry-message"),
+          attachments: [
+            {
+              type: "image" as const,
+              name: "shot.png",
+              mimeType: "image/png",
+              sizeBytes: PNG.length,
+              dataUrl: `data:image/png;base64,${Base64.encode(PNG)}`,
+            },
+          ],
+        };
+        const results = yield* Effect.all(
+          [
+            Effect.result(service.persistImages(userId, input)),
+            Effect.result(service.persistImages(userId, input)),
+          ],
+          { concurrency: 2 },
+        );
+        const saved = results[0];
+        if (saved._tag !== "Success") throw new Error("first request should succeed");
+        expect(results[1]._tag).toBe("Failure");
+        expect(writes).toBe(1);
+        const file = yield* service.open({
+          userId,
+          attachmentId: saved.success.attachments[0]!.id,
+          canSee: () => Effect.succeed(false),
+        });
+        expect(file).not.toBeNull();
+        expect(yield* bytesOf(file!.body)).toEqual(PNG);
+        const claimed = yield* service.claim({
+          userId,
+          threadId,
+          commandId: "send-after-retry",
+          attachments: saved.success.attachments,
+        });
+        expect(claimed.attachments[0]?.id).toMatch(/^successful-retry-thread-/);
+      }),
+    ).pipe(Effect.provide(layerAttachments(failing)));
+  });
+
   it.effect("keeps a successful retry's pending bytes when another write fails", () => {
     const objects = makeMemoryObjects();
     let writes = 0;
