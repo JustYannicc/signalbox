@@ -2,6 +2,7 @@ import { RUNNER_PROTOCOL_VERSION } from "@signalbox/runner-protocol/RunnerProtoc
 import type { WorktreeSetupCancelInput } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Context from "effect/Context";
+import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import {
   fakeSocket,
@@ -16,6 +17,8 @@ import { onRunnerMessage, pushRunnerWork } from "./runner/runnerSockets.ts";
 import type * as ThreadEngine from "./ThreadEngine.ts";
 import { PullRequestSync } from "./pullRequests/PullRequestSync.ts";
 import { makeThreadObjectApi } from "./threadObjectApi.ts";
+
+const encodeJson = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
 
 export const preparationApi = (
   context: Parameters<Parameters<typeof withObject>[1]>[2],
@@ -45,7 +48,9 @@ export const loadingPreparation = (
     const socket = fakeSocket();
     const host = yield* hostFor(runner, [socket.socket]);
     const say = (message: object) =>
-      Effect.promise(() => onRunnerMessage(host, socket.socket, JSON.stringify(message)));
+      encodeJson(message).pipe(
+        Effect.flatMap((body) => Effect.promise(() => onRunnerMessage(host, socket.socket, body))),
+      );
     yield* say({
       ...hello(plan.ensure.generation, plan.ensure.token),
       protocolVersion: RUNNER_PROTOCOL_VERSION,

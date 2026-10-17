@@ -20,6 +20,7 @@ export const threadId = "preparation-api-thread";
 const userId = "preparation-owner";
 const scopes = ["orchestration:read", "orchestration:operate"] as const;
 const decodeSnapshot = Schema.decodeUnknownSync(WorktreeSetupSnapshot);
+const encodeJson = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
 
 export const setup = Effect.gen(function* () {
   const cloud = makeMemoryCloud();
@@ -52,15 +53,16 @@ export const setup = Effect.gen(function* () {
   yield* pool.completeLogin({ userId }, `http://localhost/callback?code=c&state=${login.state}`);
   yield* pool.loginStatus({ userId }, login.state);
   const api = (name: string, input: object, key = ownerKey) =>
-    Effect.suspend(() =>
-      handleApiRequest(
-        new Request(`https://cloud.test/api/v1/${name}`, {
-          method: "POST",
-          headers: { authorization: `Bearer ${key}`, "content-type": "application/json" },
-          body: JSON.stringify(input),
-        }),
+    encodeJson(input).pipe(
+      Effect.flatMap((body) =>
+        handleApiRequest(
+          new Request(`https://cloud.test/api/v1/${name}`, {
+            method: "POST",
+            headers: { authorization: `Bearer ${key}`, "content-type": "application/json" },
+            body,
+          }),
+        ),
       ),
-    ).pipe(
       Effect.provide(layer),
       Effect.flatMap((response) =>
         Effect.promise(async () => ({

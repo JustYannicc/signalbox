@@ -138,8 +138,8 @@ describe("preparation through production API and MCP", () => {
           isError: Schema.optional(Schema.Boolean),
           content: Schema.Array(Schema.Struct({ text: Schema.String })),
         });
-        const decodeAnswer = Schema.decodeUnknownSync(Schema.fromJsonString(Answer));
-        const decodeTool = Schema.decodeUnknownSync(ToolResult);
+        const decodeAnswer = Schema.decodeUnknownEffect(Schema.fromJsonString(Answer));
+        const decodeTool = Schema.decodeUnknownEffect(ToolResult);
         let id = 0;
         const client = (key: string) => {
           let session: string | null = null;
@@ -163,21 +163,20 @@ describe("preparation through production API and MCP", () => {
                 Effect.promise(async () => {
                   session = response.headers.get("mcp-session-id") ?? session;
                   const body = await response.text();
-                  return decodeAnswer(
-                    body.trimStart().startsWith("{")
-                      ? body
-                      : (body
-                          .split("\n")
-                          .find((line) => line.startsWith("data:"))
-                          ?.slice(5) ?? "{}"),
-                  );
+                  return body.trimStart().startsWith("{")
+                    ? body
+                    : (body
+                        .split("\n")
+                        .find((line) => line.startsWith("data:"))
+                        ?.slice(5) ?? "{}");
                 }),
               ),
+              Effect.flatMap(decodeAnswer),
             );
           return {
             rpc,
             tool: (operation: string, input: object) =>
-              Effect.map(
+              Effect.flatMap(
                 rpc("tools/call", { name: "signalbox_call", arguments: { operation, input } }),
                 (answer) => decodeTool(answer.result),
               ),
