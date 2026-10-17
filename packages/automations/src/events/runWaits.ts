@@ -256,6 +256,9 @@ export const makeRunWaits = (deps: RunWaitDependencies) => {
         const { patterns, where, watch } = stepListens(step);
         for (const event of inbox) {
           if (taken.has(event.seq)) continue;
+          // A previous delivery may have claimed this event and failed before
+          // settlement. Only that same still-waiting step may retry the claim.
+          if (event.consumed_by !== null && event.consumed_by !== step.step_key) continue;
           if (!patterns.some((pattern) => automationEventMatches(pattern, event.name))) continue;
           const envelope = asRecord(fromJson(event.envelope_json));
           if (!whereMatches(where, envelope)) continue;
@@ -264,7 +267,11 @@ export const makeRunWaits = (deps: RunWaitDependencies) => {
             const watcher = yield* runWatcher;
             if (!watch || !watcher || !watchMatches(watcher, watch, envelope)) continue;
           }
-          if (!(yield* links.consume(runId, event.seq, step.step_key))) continue;
+          if (
+            event.consumed_by === null &&
+            !(yield* links.consume(runId, event.seq, step.step_key))
+          )
+            continue;
           taken.add(event.seq);
           yield* deps.complete(runId, step.step_key, { ok: true, value: envelope });
           break;
@@ -287,8 +294,9 @@ export const makeRunWaits = (deps: RunWaitDependencies) => {
           envelope_json: toJson(envelope),
           received_at: at,
         });
-        if (!kept) continue;
-        yield* links.trimInbox(listener.runId, INBOX_LIMIT);
+        if (kept) yield* links.trimInbox(listener.runId, INBOX_LIMIT);
+        // A previous attempt may have saved the event but failed before it
+        // settled a step. Its redelivery must retry that work as well.
         yield* deliverPending(listener.runId);
       }
     });

@@ -32,7 +32,7 @@ export const makeChangedFiles = Effect.gen(function* () {
     Option.isSome(directory) && Option.isSome(packs)
       ? { directory: directory.value, packs: packs.value }
       : null;
-  return (driveId: string, before: string | null, after: string) =>
+  return (driveId: string, before: string | null, after: string | null) =>
     drives === null
       ? Effect.succeed(null)
       : Effect.gen(function* () {

@@ -12,6 +12,8 @@ allowBuilds:
   browser-tabs-lock: false
   bufferutil: false
   core-js: false
+  # Lunora's CLI includes optional SSH, protobuf and Vue tooling; codegen uses none of their install hooks.
+  cpu-features: false
   electron: true
   electron-winstaller: false
   esbuild: true
@@ -20,10 +22,13 @@ allowBuilds:
   node-pty: true
   # Ships N-API prebuilds; its install script only rebuilds from source.
   objc-js: false
+  protobufjs: false
   "react-native-enriched-markdown@file:apps/mobile/deps/react-native-enriched-markdown-1.2.0-t3.15.tgz": true
   sharp: true
+  ssh2: false
   tsc-rs: true
   utf-8-validate: false
+  vue-demi: false
   workerd: false
 
 catalog:
@@ -211,6 +216,12 @@ minimumReleaseAgeExclude:
   - "@react-native/virtualized-lists@0.88.0"
   - react-native-svg@15.16.0
   - "@expo/schema-utils@58.0.2"
+  - "@lunora/agent@1.0.0-alpha.217"
+  - "@lunora/cli@1.0.0-alpha.399"
+  - "@lunora/codegen@1.0.0-alpha.315"
+  - "@lunora/config@1.0.0-alpha.363"
+  - "@lunora/seed@1.0.0-alpha.228"
+  - lunorash@1.0.0-alpha.398
 
 overrides:
   # Keep jsdom's optional peer consistent so Vite+ has one test-runner instance.
@@ -297,6 +308,10 @@ overrides:
   yaml: "catalog:"
 
 packageExtensions:
+  # dependency-cruiser needs the JS compiler API; the app uses native TypeScript 7.
+  "dependency-cruiser@18.6.0":
+    dependencies:
+      typescript: 6.0.3
   "@clerk/expo@*":
     dependencies:
       "@expo/config-plugins": 58.0.9
