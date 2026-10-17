@@ -23,8 +23,8 @@ const CONTEXT_CHARS = 64_000;
 const MESSAGE_CHARS = 16_000;
 
 /**
- * The conversation before `turn`, newest messages first within the budget,
- * plus the first request, which usually says what the thread is for.
+ * The conversation before `turn`. Undo keeps the full retained text; other
+ * session recovery keeps recent messages and the first request within a budget.
  */
 export function transcriptBefore(projection: OrchestrationV2ThreadProjection, turn: Turn): string {
   // The main agent's side of it: each run's root node (or none named), not its subagents'.
@@ -32,6 +32,8 @@ export function transcriptBefore(projection: OrchestrationV2ThreadProjection, tu
   const rolledBack = new Set(
     projection.runs.filter((run) => run.status === "rolled_back").map((run) => run.id),
   );
+  // Undo clears the native session; its replacement must retain the entire surviving conversation.
+  const afterUndo = rolledBack.size > 0;
   const messages = projection.turnItems
     .flatMap((item) =>
       (item.type === "user_message" || item.type === "assistant_message") &&
@@ -39,12 +41,18 @@ export function transcriptBefore(projection: OrchestrationV2ThreadProjection, tu
       item.runId !== turn.runId &&
       (item.runId === null || !rolledBack.has(item.runId)) &&
       rootNodes.has(item.nodeId)
-        ? [{ ordinal: item.ordinal, role: item.type, text: cut(item.text, MESSAGE_CHARS).text }]
+        ? [
+            {
+              ordinal: item.ordinal,
+              role: item.type,
+              text: afterUndo ? item.text : cut(item.text, MESSAGE_CHARS).text,
+            },
+          ]
         : [],
     )
     .sort((left, right) => left.ordinal - right.ordinal);
   const kept = new Set<number>();
-  let remaining = CONTEXT_CHARS;
+  let remaining = afterUndo ? Infinity : CONTEXT_CHARS;
   const keep = (index: number) => {
     const message = messages[index];
     if (message === undefined || message.text.length > remaining) return false;

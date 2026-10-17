@@ -20,10 +20,14 @@ describe("current conversation after rollback", () => {
     () =>
       withObject(freshDatabase(), (engine, runner) =>
         Effect.gen(function* () {
-          yield* launch(engine);
+          const retainedRequest = `Retained request: ${"x".repeat(20_000)} request end`;
+          const retainedAnswer = `Retained answer: ${"y".repeat(70_000)} answer end`;
+          yield* launch(engine, "launch-1", undefined, { text: retainedRequest });
           const machine = yield* connect(runner);
           const first = yield* liveTurn(runner);
-          const firstReport = turnReport(first.runId, first.runOrdinal, first.providerThread);
+          const firstReport = turnReport(first.runId, first.runOrdinal, first.providerThread, {
+            replyText: retainedAnswer,
+          });
           yield* runner.batch({
             generation: machine.generation,
             sequence: 1,
@@ -53,7 +57,8 @@ describe("current conversation after rollback", () => {
           expect(threadTurns(projection, null).map((turn) => turn.turn)).toEqual([1]);
           yield* send(engine, 3, "Continue after undo");
           const next = yield* liveTurn(runner);
-          expect(next.message.text).toContain("Hello!");
+          expect(next.message.text).toContain(retainedRequest);
+          expect(next.message.text).toContain(retainedAnswer);
           expect(next.message.text).toContain("Continue after undo");
           expect(next.message.text).not.toContain("zebra");
         }),
