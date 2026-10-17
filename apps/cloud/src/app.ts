@@ -67,7 +67,7 @@ import * as ThreadsLive from "./thread/ThreadsLive.ts";
 import type { LocalKeyVerifier } from "./models/ModelProtocol.ts";
 import * as ThreadDirectory from "./thread/ThreadDirectory.ts";
 import * as ThreadKindTurns from "./thread/ThreadKindTurns.ts";
-import * as ThreadContexts from "./user/threadContexts.ts";
+import * as ThreadContextLayers from "./user/threadContextLayers.ts";
 import * as UserDirectory from "./user/UserDirectory.ts";
 
 /**
@@ -133,7 +133,7 @@ export const layerServices = (input: {
     Layer.provideMerge(CloudAttachments.layer(input.attachments)),
     Layer.provideMerge(PreviewSetup.layerSourceHttp),
     // The Worker only reads threads; they are created in their user's object.
-    Layer.provideMerge(Layer.mergeAll(ThreadContexts.layerWorker, ThreadKindTurns.layerNone)),
+    Layer.provideMerge(Layer.mergeAll(ThreadContextLayers.layerWorker, ThreadKindTurns.layerNone)),
     Layer.provideMerge(CloudSessions.layer),
     Layer.provideMerge(GitHub.layerForUsers(GitHub.gitHubEndpoints(input.vars))),
     Layer.provideMerge(CloudTokens.layer),
