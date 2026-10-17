@@ -14,7 +14,7 @@ import {
 } from "@signalbox/runner-protocol/PreviewTunnel";
 import type { DriveAccess } from "@signalbox/runner-protocol/DriveProtocol";
 import type { PreviewService } from "@signalbox/runner-protocol/PreviewServices";
-import type { PreviewConfiguration } from "./PreviewState.ts";
+import type { PreviewConfiguration } from "../PreviewState.ts";
 import {
   PREVIEW_SCRIPT_PATH,
   PREVIEW_VIEW_PATH,
@@ -24,6 +24,7 @@ import {
   withPreviewLease,
 } from "./previewPage.ts";
 import type { ThreadId } from "@t3tools/contracts";
+import { previewLabel } from "@t3tools/shared/preview";
 
 import { BrowserMirror, type BrowserMirrorHost } from "./BrowserMirror.ts";
 import { requestHeaders, responseHeaders, sendableCloseCode } from "./previewHeaders.ts";
@@ -34,7 +35,6 @@ import {
   previewRouteCookie,
   readPreviewRoute,
   PREVIEW_TICKET_PATH,
-  previewLabel,
   previewOrigin,
   type PreviewSettings,
   readCookie,
@@ -369,6 +369,9 @@ export class PreviewGateway {
           type: "welcome",
           services: configuration.services,
           drive: await this.host.drive(),
+          ...(this.host.settings === null
+            ? {}
+            : { previewHostSuffix: this.host.settings.hostSuffix }),
         }),
       );
       this.mirror.connected();

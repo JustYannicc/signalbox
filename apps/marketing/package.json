@@ -5,9 +5,9 @@
   "type": "module",
   "scripts": {
     "stage:install-scripts": "node scripts/stage-install-scripts.mjs",
-    "dev": "node scripts/stage-install-scripts.mjs && astro dev",
+    "dev": "node scripts/stage-install-scripts.mjs && node ../../packages/shared/src/agentProcesses/cli.ts run -- astro dev",
     "build": "node scripts/stage-install-scripts.mjs && astro build",
-    "preview": "astro preview",
+    "preview": "node ../../packages/shared/src/agentProcesses/cli.ts run -- astro preview",
     "typecheck": "astro check"
   },
   "dependencies": {
