@@ -7,7 +7,7 @@ import {
 import { ThreadId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 
-import type { DriveAuthorization } from "../thread/runner/ThreadRunner.ts";
+import type { ThreadObjectNamespace } from "../thread/ThreadDirectory.ts";
 import type { DriveRouteEnv } from "./driveRoutes.ts";
 import { handleDriveRequest } from "./driveRoutes.ts";
 import { driveToken } from "./driveToken.ts";
@@ -29,19 +29,20 @@ const env = {
   THREADS: {
     idFromName: (name: string) => name,
     jurisdiction: () => ({ idFromName: (name: string) => name }),
-    get: (threadId: ThreadId) => ({
-      authorizeDrive: async (token: string): Promise<DriveAuthorization> =>
-        token === tokens.get(threadId)
-          ? {
-              _tag: "granted",
-              threadId,
-              userId: OWNER,
-              driveId: `my/personal/${OWNER}`,
-              generation: 1,
-              live: threadId !== IDLE,
-            }
-          : { _tag: "denied", reason: "Not this thread's drive token." },
-    }),
+    get: (threadId: ThreadId) =>
+      ({
+        authorizeDrive: async (token: string) =>
+          token === tokens.get(threadId)
+            ? {
+                _tag: "granted",
+                threadId,
+                userId: OWNER,
+                driveId: `my/personal/${OWNER}`,
+                generation: 1,
+                live: threadId !== IDLE,
+              }
+            : { _tag: "denied", reason: "Not this thread's drive token." },
+      }) satisfies Pick<ReturnType<ThreadObjectNamespace["get"]>, "authorizeDrive">,
   },
   USERS: {
     idFromName: (name: string) => name,
