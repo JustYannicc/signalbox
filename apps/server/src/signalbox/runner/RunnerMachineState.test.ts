@@ -104,7 +104,7 @@ describe("RunnerMachineState", () => {
             "dependencies.json",
           ]);
 
-          const turn = yield* first.runner.finishTurn({ message: "Start" });
+          const turn = yield* first.runner.finishTurn();
           expect(turn.outcome._tag).toBe("landed");
           const { thread, main } = drive.refs("t1");
           expect(filesOf(drive.store, thread!)).toEqual([".gitignore", "src/app.ts"]);
@@ -132,7 +132,7 @@ describe("RunnerMachineState", () => {
         yield* a.runner.prepare("remote-token");
         write(a.cwd, ".gitignore", ".env\n");
         write(a.cwd, ".env", "TOKEN=only-for-ta\n");
-        yield* a.runner.finishTurn({ message: "Ignore .env" });
+        yield* a.runner.finishTurn();
         const secretBlob = git(a.cwd, "hash-object", ".env");
 
         const b = yield* threadMachine(drive, root, "vm-b", "tb");
@@ -156,7 +156,7 @@ describe("RunnerMachineState", () => {
         write(a.cwd, "README.md", "# Project\n");
         write(a.cwd, "src/big.ts", "x".repeat(10_000));
         write(a.cwd, "data/a.csv", "1,2,3\n");
-        yield* a.runner.finishTurn({ message: "Project" });
+        yield* a.runner.finishTurn();
 
         const b = yield* threadMachine(drive, root, "vm-b", "tb");
         yield* b.runner.prepare("remote-token");
@@ -309,7 +309,7 @@ describe("RunnerMachineState", () => {
           write(first.cwd, "node_modules/pkg/patched.js", "patched by the agent\n");
           // A node_modules nothing rebuilds is kept like any other folder.
           write(first.cwd, "vendor/node_modules/lib/index.js", "kept\n");
-          const turn = yield* first.runner.finishTurn({ message: "Patch" });
+          const turn = yield* first.runner.finishTurn();
           expect(turn.checkpoint?.skipped).toEqual([{ path: "node_modules", recipe }]);
 
           const machine = drive.refs("t1").machine!;
@@ -360,7 +360,7 @@ describe("RunnerMachineState", () => {
         // A repository of its own inside the checkout.
         write(first.cwd, "notes/clone/README.md", "# Clone\n");
         git(NodePath.join(first.cwd, "notes/clone"), "init", "-q");
-        const turn = yield* first.runner.finishTurn({ message: "Tools" });
+        const turn = yield* first.runner.finishTurn();
         expect(turn.checkpoint?.skipped).toEqual([
           { path: "tools/[id]/target", recipe: "Build output: cargo builds it again" },
           { path: "notes/clone", recipe: "A repository of its own: its history isn't kept here" },
@@ -422,7 +422,7 @@ describe("RunnerMachineState", () => {
         // Ignored by the repository's own excludes, not by a .gitignore.
         NodeFS.appendFileSync(NodePath.join(first.cwd, ".git", "info", "exclude"), ".env\n");
         write(first.cwd, ".env", "SECRET=leak\n");
-        yield* first.runner.finishTurn({ message: "one" });
+        yield* first.runner.finishTurn();
         expect(filesOf(drive.store, drive.refs("t1").main!)).toEqual(["src/app.ts"]);
 
         const second = yield* threadMachine(drive, root, "vm-2", "t1");
@@ -433,7 +433,7 @@ describe("RunnerMachineState", () => {
         yield* second.runner.autosave;
         yield* second.runner.flush;
         expect(filesOf(drive.store, drive.refs("t1").wip!)).toEqual(["src/app.ts"]);
-        yield* second.runner.finishTurn({ message: "two" });
+        yield* second.runner.finishTurn();
         expect(filesOf(drive.store, drive.refs("t1").main!)).toEqual(["src/app.ts"]);
         expect(drive.objectsVisibleTo("t9").has(git(second.cwd, "hash-object", ".env"))).toBe(
           false,
@@ -462,12 +462,12 @@ describe("RunnerMachineState", () => {
           expect(read(second.cwd, ".env")).toBe("SECRET=leak\n");
           expect(exists(second.cwd, ".gitignore")).toBe(false);
           write(second.cwd, "src/app.ts", "export {};\n");
-          yield* second.runner.finishTurn({ message: "two" });
+          yield* second.runner.finishTurn();
           expect(filesOf(drive.store, drive.refs("t1").main!)).toEqual(["src/app.ts"]);
 
           // Un-ignored on purpose, it's the thread's to commit.
           write(second.cwd, ".gitignore", "!.env\n");
-          yield* second.runner.finishTurn({ message: "three" });
+          yield* second.runner.finishTurn();
           expect(filesOf(drive.store, drive.refs("t1").main!)).toEqual([
             ".env",
             ".gitignore",
