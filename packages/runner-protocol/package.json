@@ -15,6 +15,10 @@
       "types": "./src/PreviewTunnel.ts",
       "import": "./src/PreviewTunnel.ts"
     },
+    "./PreviewServices": {
+      "types": "./src/PreviewServices.ts",
+      "import": "./src/PreviewServices.ts"
+    },
     "./DriveProtocol": {
       "types": "./src/DriveProtocol.ts",
       "import": "./src/DriveProtocol.ts"

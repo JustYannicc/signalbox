@@ -6,6 +6,7 @@ import type { HomeProjectScope } from "../home/homeThreadList";
 import {
   filterProjectScopes,
   getProjectScopeSelectionTarget,
+  projectScopeSubtitle,
   resolveDraftProjectSelection,
   resolveEnvironmentProjectMatch,
 } from "./new-task-project-selection";
@@ -66,6 +67,24 @@ describe("getProjectScopeSelectionTarget", () => {
     const projects = [makeProject("t3code-mac", "mac"), makeProject("t3code-server", "server")];
     expect(getProjectScopeSelectionTarget(makeScope(projects), EnvironmentId.make("other"))).toBe(
       projects[0],
+    );
+  });
+});
+
+describe("projectScopeSubtitle", () => {
+  it("hides machine paths and workspace counts when the environment is cloud-hosted", () => {
+    const project = makeProject("t3code", "cloud");
+    expect(projectScopeSubtitle(makeScope([project]), project, false)).toBeNull();
+    const duplicate = makeProject("t3code-copy", "cloud");
+    expect(projectScopeSubtitle(makeScope([project, duplicate]), project, false)).toBeNull();
+  });
+
+  it("keeps paths and checkout counts on self-hosted environments", () => {
+    const project = makeProject("t3code", "self-hosted");
+    const workspace = makeProject("t3code-copy", "self-hosted");
+    expect(projectScopeSubtitle(makeScope([project]), project, true)).toBe("/work/t3code");
+    expect(projectScopeSubtitle(makeScope([project, workspace]), project, true)).toBe(
+      "2 workspaces",
     );
   });
 });
