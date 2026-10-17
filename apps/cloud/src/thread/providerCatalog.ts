@@ -192,11 +192,17 @@ export const poolServerProvider = (input: {
   readonly instanceId: ProviderInstanceId;
   readonly displayName: string;
   readonly signedIn: boolean;
+  readonly unavailableReason?: string | undefined;
   readonly models: ReadonlyArray<ServerProviderModel>;
   readonly checkedAt: string;
 }): ServerProvider => {
   const harness = harnessByPoolKind.get(input.kind)!;
   const ready = input.signedIn && input.models.length > 0;
+  const message =
+    input.unavailableReason ??
+    (input.signedIn && !ready
+      ? "This pool's accounts serve no models right now. Try again shortly."
+      : undefined);
   return {
     instanceId: input.instanceId,
     driver: harness.driver,
@@ -208,12 +214,25 @@ export const poolServerProvider = (input: {
     enabled: true,
     installed: true,
     version: null,
-    // Signed out, clients say to add an account to the pool (`ProviderStatusBanner`).
-    status: ready ? "ready" : input.signedIn ? "warning" : "error",
-    ...(input.signedIn && !ready
-      ? { message: "This pool's accounts serve no models right now. Try again shortly." }
-      : {}),
-    auth: { status: input.signedIn ? "authenticated" : "unauthenticated" },
+    // An accounts read can fail while cached accounts still serve the cached models.
+    status:
+      ready && input.unavailableReason === undefined
+        ? "ready"
+        : input.signedIn
+          ? "warning"
+          : "error",
+    ...(message === undefined ? {} : { message }),
+    auth: {
+      status:
+        !input.signedIn && input.unavailableReason
+          ? "unknown"
+          : input.signedIn
+            ? "authenticated"
+            : "unauthenticated",
+    },
+    ...(input.unavailableReason === undefined
+      ? {}
+      : { unavailableReason: input.unavailableReason }),
     checkedAt: input.checkedAt,
     availability: "available",
     models: input.signedIn ? input.models : [],

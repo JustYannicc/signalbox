@@ -184,11 +184,13 @@ export const poolProviders = (
   pools.flatMap(({ pool, source, models }) =>
     CLOUD_POOL_KINDS.map((kind) => {
       const [instanceId, config] = instanceOf(kind, pool);
+      const signedIn = canRun(source, POOL_INSTANCE_KINDS[kind].driver);
       return poolServerProvider({
         kind,
         instanceId,
         displayName: config.displayName ?? POOL_INSTANCE_KINDS[kind].displayName,
-        signedIn: canRun(source, POOL_INSTANCE_KINDS[kind].driver),
+        signedIn,
+        ...(source.error ? { unavailableReason: source.error } : {}),
         models: harnessModels(kind, models, manifest),
         checkedAt,
       });
