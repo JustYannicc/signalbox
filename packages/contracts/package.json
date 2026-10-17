@@ -31,6 +31,10 @@
       "types": "./src/sections.ts",
       "import": "./src/sections.ts"
     },
+    "./personTimezone": {
+      "types": "./src/personTimezone.ts",
+      "import": "./src/personTimezone.ts"
+    },
     "./signalboxAnalytics": {
       "types": "./src/signalboxAnalytics.ts",
       "import": "./src/signalboxAnalytics.ts"
