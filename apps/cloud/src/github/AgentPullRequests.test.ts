@@ -379,6 +379,33 @@ describe("cloud agent pull request operations (#861)", () => {
     });
   });
 
+  it.effect("answers a review reply through its top-level comment", () => {
+    let replyTarget: string | undefined;
+    return Effect.gen(function* () {
+      const result = yield* execute(
+        { _tag: "reply", commentId: 9002, body: "Fixed.", operationId: "nested-reply" },
+        {
+          api: {
+            agentComments: () =>
+              Effect.succeed(
+                json({
+                  issueComments: [],
+                  reviews: [],
+                  reviewComments: [{ id: 9001 }, { id: 9002, in_reply_to_id: 9001 }],
+                }),
+              ),
+            agentReply: (_token, _repository, _number, commentId) => {
+              replyTarget = commentId;
+              return Effect.succeed(json({ id: 7002, in_reply_to_id: 9001, body: "Fixed." }));
+            },
+          },
+        },
+      );
+      expect(replyTarget).toBe("9001");
+      expect(result).toMatchObject({ comment: { id: 7002, inReplyToId: 9001 } });
+    });
+  });
+
   it.effect("forwards a checked image and returns its Markdown reference", () => {
     const imageBytes = Uint8Array.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
     const url = "https://github.com/user-attachments/assets/test";
@@ -496,6 +523,42 @@ describe("cloud agent pull request operations (#861)", () => {
       expect(result).toMatchObject({ pullRequest: { number: PR_NUMBER, headBranch: BRANCH } });
     });
   });
+
+  it.effect("allows the same operation to retry after a definite GitHub refusal", () =>
+    Effect.gen(function* () {
+      for (const status of [401, 403, 404, 422, 429]) {
+        let calls = 0;
+        const layer = makeLayer({
+          api: {
+            agentReply: () => {
+              calls += 1;
+              return calls > 1
+                ? Effect.succeed(json({ id: 7002, body: "Fixed." }))
+                : status === 404
+                  ? Effect.succeed(null)
+                  : Effect.fail(
+                      new GitHubError({ operation: "reply", status, message: "Refused." }),
+                    );
+            },
+          },
+        });
+        yield* Effect.gen(function* () {
+          const service = yield* AgentPullRequests.AgentPullRequests;
+          const request: Request = {
+            _tag: "reply",
+            commentId: 9001,
+            body: "Fixed.",
+            operationId: `refused-${status}`,
+          };
+          const first = yield* service.execute(THREAD_ID, request).pipe(Effect.result);
+          expect(first._tag).toBe("Failure");
+          const retried = yield* service.execute(THREAD_ID, request);
+          expect(retried).toMatchObject({ comment: { id: 7002 } });
+          expect(calls).toBe(2);
+        }).pipe(Effect.provide(layer));
+      }
+    }),
+  );
 
   it.effect("does not repeat a reply after an ambiguous provider failure", () => {
     let replyCalls = 0;

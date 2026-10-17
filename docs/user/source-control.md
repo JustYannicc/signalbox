@@ -51,6 +51,8 @@ Once the pull request is merged on GitHub, new threads start from the merged com
 Ask the agent to update its pull request description, post a comment, reply to a review, or
 attach a screenshot. It uses the same GitHub connection to act on its own branch's pull request;
 you don't need to give it a token or finish the action on GitHub.
+You can edit or delete comments on GitHub, and remove a screenshot from the description or
+comment that displays it.
 
 Signalbox saves a thread's files as it goes. Those saves stay in Signalbox; only the thread's
 commits are pushed: the one each turn ends with, and the one an agent makes when it publishes. Imported repositories appear under Personal for now.

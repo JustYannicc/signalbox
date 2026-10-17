@@ -17,20 +17,19 @@ import * as GitHub from "./GitHub.ts";
 import * as GitHubConnection from "./GitHubConnection.ts";
 import {
   AgentPullRequestError,
-  errorForCategory,
   isAgentPullRequestError,
   safeApiError,
 } from "./agentPullRequestError.ts";
 import {
   commentsOutput,
   createdCommentOutput,
-  hasReviewComment,
   imageMatchesMime,
   isOwnedPullRequest,
   markdownImage,
   parseComments,
   parseJson,
   pullOutput,
+  reviewReplyTarget,
   sanitizeUrl,
 } from "./agentPullRequestOutput.ts";
 import { makeAgentPullRequestReceipts } from "./agentPullRequestReceipts.ts";
@@ -55,11 +54,13 @@ export const layer = Layer.effect(
     const directory = yield* Effect.serviceOption(DriveDirectory);
     const connection = yield* GitHubConnection.GitHubConnection;
     const github = yield* GitHub.GitHub;
-    const receipts = yield* makeAgentPullRequestReceipts(errorForCategory).pipe(Effect.orDie);
+    const receipts = yield* makeAgentPullRequestReceipts(AgentPullRequestError.forCategory).pipe(
+      Effect.orDie,
+    );
 
     const signedInActor = Effect.gen(function* () {
       const userId = yield* drives.userId;
-      if (userId === null) return yield* errorForCategory("permission");
+      if (userId === null) return yield* AgentPullRequestError.forCategory("permission");
       const actor: Actor = { userId, contextIds: yield* drives.contextIds };
       return actor;
     });
@@ -68,22 +69,22 @@ export const layer = Layer.effect(
       Effect.gen(function* () {
         const snapshot = yield* threads
           .threadSnapshot(actor, ThreadId.make(threadId))
-          .pipe(Effect.mapError(() => errorForCategory("permission")));
+          .pipe(Effect.mapError(() => AgentPullRequestError.forCategory("permission")));
         const projection = snapshot.projection;
         const driveId = driveOfProject(projection.thread.projectId, actor.userId);
         if (driveId === null || directory._tag === "None")
-          return yield* errorForCategory("permission");
+          return yield* AgentPullRequestError.forCategory("permission");
         const role = yield* drives
           .access(driveId)
-          .pipe(Effect.mapError(() => errorForCategory("permission")));
-        if (!canWriteDrive(role)) return yield* errorForCategory("permission");
+          .pipe(Effect.mapError(() => AgentPullRequestError.forCategory("permission")));
+        if (!canWriteDrive(role)) return yield* AgentPullRequestError.forCategory("permission");
         const remote = yield* directory.value
           .forDrive(driveId)
           .remote()
-          .pipe(Effect.mapError(() => errorForCategory("unavailable")));
+          .pipe(Effect.mapError(() => AgentPullRequestError.forCategory("unavailable")));
         const repository =
           remote?.provider === "github" ? parseRepository(remote.repository) : null;
-        if (repository === null) return yield* errorForCategory("permission");
+        if (repository === null) return yield* AgentPullRequestError.forCategory("permission");
         const branch = remoteThreadWorktree(driveId, ThreadId.make(threadId)).branch;
         const thread = projection.thread;
         const linked = thread.branchPullRequest ?? thread.linkedPullRequest ?? null;
@@ -108,9 +109,9 @@ export const layer = Layer.effect(
         const raw = yield* github.api
           .agentPull(token, target.repository, target.number)
           .pipe(Effect.mapError(safeApiError));
-        if (raw === null) return yield* errorForCategory("not_found", 404);
+        if (raw === null) return yield* AgentPullRequestError.forCategory("not_found", 404);
         const pull = parseJson(raw);
-        if (pull === null) return yield* errorForCategory("unavailable");
+        if (pull === null) return yield* AgentPullRequestError.forCategory("unavailable");
         if (
           !isOwnedPullRequest(pull, {
             number: target.number,
@@ -118,7 +119,7 @@ export const layer = Layer.effect(
             branch: target.branch,
           })
         ) {
-          return yield* errorForCategory("permission", 403);
+          return yield* AgentPullRequestError.forCategory("permission", 403);
         }
         return pull;
       });
@@ -129,7 +130,7 @@ export const layer = Layer.effect(
           .agentComments(token, repository, number)
           .pipe(Effect.mapError(safeApiError));
         const comments = parseComments(text);
-        if (comments === null) return yield* errorForCategory("unavailable");
+        if (comments === null) return yield* AgentPullRequestError.forCategory("unavailable");
         return comments;
       });
 
@@ -147,7 +148,7 @@ export const layer = Layer.effect(
             Effect.mapError(safeApiError),
             Effect.flatMap((pull) =>
               pull === null
-                ? Effect.fail(errorForCategory("not_found"))
+                ? Effect.fail(AgentPullRequestError.forCategory("not_found"))
                 : Effect.succeed(pull.number),
             ),
           );
@@ -161,9 +162,10 @@ export const layer = Layer.effect(
           if (prior._tag === "replay") return prior.result;
         }
         const token = yield* connection.accessToken.pipe(
-          Effect.mapError(() => errorForCategory("not_connected")),
+          Effect.mapError(() => AgentPullRequestError.forCategory("not_connected")),
         );
-        if (token === null || token.trim() === "") return yield* errorForCategory("not_connected");
+        if (token === null || token.trim() === "")
+          return yield* AgentPullRequestError.forCategory("not_connected");
         const number = yield* resolveNumber(token, scope);
         const target = { ...scope, number };
         const pull = yield* pullFor(token, target);
@@ -180,7 +182,7 @@ export const layer = Layer.effect(
             const edited = yield* github.api
               .agentEdit(token, target.repository, target.number, request.body)
               .pipe(Effect.mapError(safeApiError));
-            if (edited === null) return yield* errorForCategory("not_found", 404);
+            if (edited === null) return yield* AgentPullRequestError.forCategory("not_found", 404);
             return { number: target.number, updated: true };
           }
           case "comment":
@@ -194,15 +196,19 @@ export const layer = Layer.effect(
                   const response = yield* github.api
                     .agentComment(token, target.repository, target.number, request.body)
                     .pipe(Effect.mapError(safeApiError));
+                  if (response === null)
+                    return yield* AgentPullRequestError.forCategory("not_found", 404);
                   const comment = createdCommentOutput(response, token, false);
-                  if (comment === null) return yield* errorForCategory("unavailable");
+                  if (comment === null)
+                    return yield* AgentPullRequestError.forCategory("unavailable");
                   return { number: target.number, comment };
                 }),
             });
           case "reply": {
             const comments = yield* commentsFor(token, target.repository, target.number);
-            if (!hasReviewComment(comments, request.commentId))
-              return yield* errorForCategory("permission", 403);
+            const commentId = reviewReplyTarget(comments, request.commentId);
+            if (commentId === null)
+              return yield* AgentPullRequestError.forCategory("permission", 403);
             return yield* receipts.run({
               threadId,
               repository: target.repository,
@@ -215,26 +221,30 @@ export const layer = Layer.effect(
                       token,
                       target.repository,
                       target.number,
-                      String(request.commentId),
+                      String(commentId),
                       request.body,
                     )
                     .pipe(Effect.mapError(safeApiError));
+                  if (response === null)
+                    return yield* AgentPullRequestError.forCategory("not_found", 404);
                   const comment = createdCommentOutput(response, token, true);
-                  if (comment === null) return yield* errorForCategory("unavailable");
+                  if (comment === null)
+                    return yield* AgentPullRequestError.forCategory("unavailable");
                   return { number: target.number, comment };
                 }),
             });
           }
           case "image": {
             const decoded = Base64.decode(request.base64);
-            if (Result.isFailure(decoded)) return yield* errorForCategory("invalid");
+            if (Result.isFailure(decoded))
+              return yield* AgentPullRequestError.forCategory("invalid");
             const bytes = decoded.success;
             if (
               bytes.byteLength === 0 ||
               bytes.byteLength > PR_IMAGE_LIMIT ||
               !imageMatchesMime(request.mimeType, bytes)
             ) {
-              return yield* errorForCategory("invalid");
+              return yield* AgentPullRequestError.forCategory("invalid");
             }
             return yield* receipts.run({
               threadId,
@@ -247,9 +257,9 @@ export const layer = Layer.effect(
                     .agentImage(token, target.repository, request.name, request.mimeType, bytes)
                     .pipe(Effect.mapError(safeApiError));
                   if (uploaded === null || typeof uploaded.url !== "string")
-                    return yield* errorForCategory("not_found", 404);
+                    return yield* AgentPullRequestError.forCategory("not_found", 404);
                   const url = sanitizeUrl(uploaded.url, token);
-                  if (url === null) return yield* errorForCategory("unavailable");
+                  if (url === null) return yield* AgentPullRequestError.forCategory("unavailable");
                   return {
                     number: target.number,
                     url,
@@ -268,7 +278,9 @@ export const layer = Layer.effect(
             ? Effect.fail(error)
             : Effect.logWarning("agent pull request operation failed", {
                 operation: request._tag,
-              }).pipe(Effect.andThen(Effect.fail(errorForCategory("unavailable")))),
+              }).pipe(
+                Effect.andThen(Effect.fail(AgentPullRequestError.forCategory("unavailable"))),
+              ),
         ),
       );
 

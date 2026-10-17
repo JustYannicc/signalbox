@@ -22,6 +22,14 @@ export class AgentPullRequestError extends Schema.TaggedError<AgentPullRequestEr
     retryAt: Schema.optional(Schema.Number),
   },
 ) {
+  static forCategory(category: AgentPullRequestError["category"], status = 0, retryAt?: number) {
+    return new AgentPullRequestError({
+      category,
+      status,
+      ...(retryAt === undefined ? {} : { retryAt }),
+    });
+  }
+
   override get message(): string {
     switch (this.category) {
       case "invalid":
@@ -46,17 +54,6 @@ export class AgentPullRequestError extends Schema.TaggedError<AgentPullRequestEr
 
 export const isAgentPullRequestError = Schema.is(AgentPullRequestError);
 
-export const errorForCategory = (
-  category: AgentPullRequestError["category"],
-  status = 0,
-  retryAt?: number,
-) =>
-  new AgentPullRequestError({
-    category,
-    status,
-    ...(retryAt === undefined ? {} : { retryAt }),
-  });
-
 const categoryForStatus = (status: number): AgentPullRequestError["category"] => {
   if (status === 401) return "not_connected";
   if (status === 403) return "permission";
@@ -66,7 +63,7 @@ const categoryForStatus = (status: number): AgentPullRequestError["category"] =>
 };
 
 export const safeApiError = (error: Pick<GitHubError, "status" | "retryAt">) =>
-  errorForCategory(
+  AgentPullRequestError.forCategory(
     error.retryAt === undefined ? categoryForStatus(error.status) : "unavailable",
     error.status,
     error.retryAt,

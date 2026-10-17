@@ -4,7 +4,7 @@ import * as Effect from "effect/Effect";
 import * as Hex from "effect/encoding/Hex";
 import * as SqlClient from "effect/sql/SqlClient";
 
-import type { AgentPullRequestError } from "./agentPullRequestError.ts";
+import { type AgentPullRequestError, isAgentPullRequestError } from "./agentPullRequestError.ts";
 import { parseJson } from "./agentPullRequestOutput.ts";
 
 type ReceiptRow = {
@@ -17,6 +17,9 @@ type WriteRequest = Extract<Request, { readonly _tag: "comment" | "reply" | "ima
 
 type RefusalCategory = "conflict" | "pending" | "unavailable";
 type Refuse = (category: RefusalCategory) => AgentPullRequestError;
+
+// Timeouts and server errors can follow a successful write, so their claims stay pending.
+const REFUSED_STATUSES = new Set([400, 401, 403, 404, 409, 413, 415, 422, 429]);
 
 export const makeAgentPullRequestReceipts = (refuse: Refuse) =>
   Effect.gen(function* () {
@@ -102,7 +105,15 @@ export const makeAgentPullRequestReceipts = (refuse: Refuse) =>
         const receipt = yield* claim(args.threadId, args.operationId, requestHash);
         if (receipt._tag === "replay") return receipt.result;
         // A lost response is ambiguous, so a pending operation id can never write twice.
-        const result = yield* args.write();
+        const result = yield* args.write().pipe(
+          Effect.tapError((error) =>
+            isAgentPullRequestError(error) && REFUSED_STATUSES.has(error.status)
+              ? sql`DELETE FROM agent_pull_request_operations
+                  WHERE thread_id = ${args.threadId} AND operation_id = ${args.operationId}
+                    AND request_hash = ${requestHash} AND status = 'pending'`.pipe(Effect.asVoid)
+              : Effect.void,
+          ),
+        );
         yield* finish(args.threadId, args.operationId, result);
         return result;
       });

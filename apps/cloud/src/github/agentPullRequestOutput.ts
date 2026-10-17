@@ -94,10 +94,22 @@ export const parseComments = (text: string | null): CommentLists | null => {
   return { issueComments, reviewComments, reviews };
 };
 
-export const hasReviewComment = (comments: CommentLists, commentId: number) =>
-  comments.reviewComments.some(
+export const reviewReplyTarget = (comments: CommentLists, commentId: number) => {
+  const selected = comments.reviewComments.find(
     (comment) => isObject(comment) && numberField(comment, "id") === commentId,
   );
+  if (!isObject(selected)) return null;
+  // GitHub accepts replies only against the top-level comment in a review thread.
+  const rootId = numberField(selected, "in_reply_to_id") ?? commentId;
+  return comments.reviewComments.some(
+    (comment) =>
+      isObject(comment) &&
+      numberField(comment, "id") === rootId &&
+      numberField(comment, "in_reply_to_id") === null,
+  )
+    ? rootId
+    : null;
+};
 
 export const commentsOutput = (comments: CommentLists, token: string) => ({
   issueComments: comments.issueComments
