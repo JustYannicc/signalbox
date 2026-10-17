@@ -87,6 +87,10 @@ export const redactContent = (event: Record<string, unknown>): void => {
     return node;
   };
   try {
+    // Hook credentials are path segments, including on rejected requests.
+    if (typeof event.path === "string" && event.path.startsWith("/api/hooks/")) {
+      event.path = "/api/hooks/:userId/:hookId/[REDACTED]";
+    }
     visit(event, false);
     const turn = event.turn;
     if (event.action === "turn" && typeof turn === "object" && turn !== null) {
