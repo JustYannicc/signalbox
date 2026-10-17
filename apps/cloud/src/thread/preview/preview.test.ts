@@ -1,11 +1,11 @@
 import { ThreadId } from "@t3tools/contracts";
+import { previewLabel } from "@t3tools/shared/preview";
 import { describe, expect, it } from "@effect/vitest";
 
 import { requestHeaders, responseHeaders } from "./previewHeaders.ts";
 import {
   isPreviewHost,
   labelOfHost,
-  previewLabel,
   previewOrigin,
   previewSettings,
   withoutCookie,

@@ -129,14 +129,17 @@ export const descriptor = (identity: CloudEnvironmentIdentity): ExecutionEnviron
       : {}),
     // Importing a GitHub repository registers it at once (`github/GitHubImport.ts`).
     projectCloneTracking: true,
-    // Threads link pull requests and keep their state synced (`thread/pullRequests/`), so the
-    // sidebar badge and Thread details show them. The `pullRequests.*` reads and watching are #397.
+    // Threads link pull requests and keep their state synced (`thread/pullRequests/`), and this
+    // environment serves PR reads through `github/CloudPullRequests.ts` (#814).
+    pullRequests: true,
+    pullRequestChecks: true,
     threadPullRequests: true,
     // Threads run on machines nobody operates, and the user never runs this server.
     terminal: false,
     worktrees: false,
     serverSettingsWrite: false,
     modelSettingsWrite: true,
+    analyticsSettings: true,
     devices: false,
     scheduledTasks: false,
     localFilesystem: false,

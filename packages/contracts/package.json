@@ -86,6 +86,10 @@
     "./signalboxRepositories": {
       "types": "./src/signalboxRepositories.ts",
       "import": "./src/signalboxRepositories.ts"
+    },
+    "./signalboxLearner": {
+      "types": "./src/signalboxLearner.ts",
+      "import": "./src/signalboxLearner.ts"
     }
   },
   "scripts": {
