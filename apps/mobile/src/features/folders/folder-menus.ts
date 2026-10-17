@@ -92,6 +92,7 @@ export function folderMenuActions(input: {
   if (input.notes) actions.push({ id: "folder:notes", title: "Scratch pad" });
   actions.push(
     { id: "folder:instructions", title: "Instructions…" },
+    { id: "folder:secrets", title: "Secrets…" },
     { id: "folder:delete", title: "Delete folder", attributes: { destructive: true } },
   );
   return actions;
@@ -104,6 +105,7 @@ export type FolderMenuChoice =
   | { readonly _tag: "pool"; readonly poolId: AccountPoolId | null }
   | { readonly _tag: "githubLend"; readonly lent: boolean }
   | { readonly _tag: "instructions" }
+  | { readonly _tag: "secrets" }
   | { readonly _tag: "notes" }
   | { readonly _tag: "delete" };
 
@@ -118,6 +120,7 @@ export function parseFolderMenuEvent(input: {
   if (event === "folder:new-child") return { _tag: "newChild" };
   if (event === "folder:rename") return { _tag: "rename" };
   if (event === "folder:instructions") return { _tag: "instructions" };
+  if (event === "folder:secrets") return { _tag: "secrets" };
   // A switch: choosing it flips the lend.
   if (event === "folder:github-lend") return { _tag: "githubLend", lent: !folder.githubLend };
   if (event === "folder:notes") return { _tag: "notes" };
@@ -159,6 +162,7 @@ export function topLevelMenuActions(input: {
     { id: "top:new-folder", title: "New folder" },
     ...(input.notes ? [{ id: "top:notes", title: "Scratch pad" }] : []),
     { id: "top:instructions", title: "Instructions…" },
+    { id: "top:secrets", title: "Secrets…" },
   ];
 }
 

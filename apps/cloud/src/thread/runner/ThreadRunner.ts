@@ -42,6 +42,7 @@ import { applyEvents } from "../threadProjection.ts";
 import * as ThreadStore from "../ThreadStore.ts";
 import type { StopReason } from "../diagnostics/DiagnosticsStore.ts";
 import { isLeaseToken } from "./leaseToken.ts";
+import type { SecretEnvironmentNames } from "../turnPool.ts";
 import { MachineBackend, type MachineExit } from "./MachineBackend.ts";
 import { machineClassFor } from "./machineClass.ts";
 import { isModelToken, type ModelGrant, modelToken } from "./modelToken.ts";
@@ -260,6 +261,8 @@ export interface RunnerWork {
    * without a turn. The owner's token to read them is `secretsToken`.
    */
   readonly secrets: ReadonlyArray<OnePasswordEnvironmentId>;
+  /** Present for turns whose owner resolved per-Environment subfolder access. */
+  readonly environmentNames?: SecretEnvironmentNames;
   readonly activeRunId: RunId | null;
   /** The messages steered into the live run while its harness runs it, oldest first (#562). */
   readonly steers: ReadonlyArray<RunnerMessageInput>;
@@ -401,6 +404,17 @@ const needsUpkeep = (lease: ThreadStore.MachineLease, live: boolean, previewHeld
   }
 };
 
+const needsSecretUpgrade = (
+  lease: ThreadStore.MachineLease,
+  run: ReturnType<typeof harnessRun>,
+  hasSecrets: boolean,
+) =>
+  lease.status === "connected" &&
+  lease.secretScopes !== true &&
+  run !== undefined &&
+  awaitsHandoff(run) &&
+  hasSecrets;
+
 const make = Effect.gen(function* () {
   const engine = yield* ThreadEngine.ThreadEngine;
   const previews = yield* PreviewHold;
@@ -531,6 +545,7 @@ const make = Effect.gen(function* () {
           disconnectedAt: null,
           drains: hello.drains === true,
           steers: hello.steers === true,
+          secretScopes: hello.secretScopes === true,
         },
         result: {
           _tag: "welcome",
@@ -792,14 +807,18 @@ const make = Effect.gen(function* () {
           : { ...untraced, traceId: yield* withCrypto(traceIdOf(untraced.runId)) };
       const grant = projection === null ? undefined : modelGrantFor(projection, yield* ownerId);
       const run = projection === null ? undefined : harnessRun(projection);
+      const secrets = turn === null ? [] : yield* Effect.orDie(store.secrets);
+      const upgrading = needsSecretUpgrade(lease, run, secrets.length > 0);
       const driveId = turn === null || !drivesEnabled ? null : yield* driveOf;
+      const environmentNames =
+        turn === null ? undefined : yield* Effect.orDie(store.secretEnvironmentNames);
       return keep<RunnerWork>({
         generation: lease.generation,
-        needsUpkeep: needsUpkeep(lease, run !== undefined, yield* previews.held),
+        needsUpkeep: upgrading || needsUpkeep(lease, run !== undefined, yield* previews.held),
         drain: lease.drain?._tag === "asked" ? lease.drain.id : null,
-        turn,
+        turn: upgrading ? null : turn,
         modelToken:
-          turn === null || grant === undefined || lease.token === null
+          upgrading || turn === null || grant === undefined || lease.token === null
             ? null
             : yield* modelToken(lease.token, grant),
         drive:
@@ -820,7 +839,8 @@ const make = Effect.gen(function* () {
           turn === null || lease.token === null || projection === null
             ? null
             : { token: yield* sessionTokenOf(lease.token, projection.thread.id, lease.generation) },
-        secrets: turn === null ? [] : yield* Effect.orDie(store.secrets),
+        secrets: upgrading ? [] : secrets,
+        ...(environmentNames === undefined ? {} : { environmentNames }),
         activeRunId: run?.id ?? null,
         // Only a Runner that takes steers is handed them.
         steers:
@@ -1094,6 +1114,12 @@ const make = Effect.gen(function* () {
             detail: `The Runner did not reconnect within ${RECONNECT_TIMEOUT_MS / 1000} s.`,
             lost: true,
             recover: run !== undefined,
+          });
+        }
+        if (needsSecretUpgrade(lease, run, (yield* Effect.orDie(store.secrets)).length > 0)) {
+          return yield* release({
+            reason: "error",
+            detail: "Replacing a Runner that cannot enforce secret name filters.",
           });
         }
         if (run !== undefined || (yield* previews.held)) {

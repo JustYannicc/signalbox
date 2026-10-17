@@ -63,12 +63,14 @@ describe("a folder's menu", () => {
     expect(has("clients")).toBe(false);
   });
 
-  it("ends with instructions and delete", () => {
+  it("ends with instructions, secrets and delete", () => {
     const actions = folderMenuActions({ snapshot, folder: byId("notes"), pools });
-    expect(actions.slice(-2).map((action) => action.title)).toEqual([
+    expect(actions.slice(-3).map((action) => action.title)).toEqual([
       "Instructions…",
+      "Secrets…",
       "Delete folder",
     ]);
+    expect(parse("notes", "folder:secrets")).toEqual({ _tag: "secrets" });
   });
 
   it("opens the folder's notes only where the environment keeps them", () => {
@@ -76,7 +78,12 @@ describe("a folder's menu", () => {
       folderMenuActions({ snapshot, folder: byId("notes"), pools, notes }).map(
         (action) => action.id,
       );
-    expect(ids(true).slice(-3)).toEqual(["folder:notes", "folder:instructions", "folder:delete"]);
+    expect(ids(true).slice(-4)).toEqual([
+      "folder:notes",
+      "folder:instructions",
+      "folder:secrets",
+      "folder:delete",
+    ]);
     expect(ids(false)).not.toContain("folder:notes");
     expect(parse("notes", "folder:notes")).toEqual({ _tag: "notes" });
   });
@@ -128,10 +135,11 @@ describe("a folder's menu", () => {
 });
 
 describe("an owner's top level", () => {
-  it("has instructions of its own only for Personal", () => {
+  it("offers top-level settings only for Personal", () => {
     expect(topLevelMenuActions({ personal: true }).map((action) => action.id)).toEqual([
       "top:new-folder",
       "top:instructions",
+      "top:secrets",
     ]);
     expect(topLevelMenuActions({ personal: false }).map((action) => action.id)).toEqual([
       "top:new-folder",
@@ -140,7 +148,7 @@ describe("an owner's top level", () => {
 
   it("has a notes pad only for Personal, where the environment keeps notes", () => {
     expect(topLevelMenuActions({ personal: true, notes: true }).map((action) => action.id)).toEqual(
-      ["top:new-folder", "top:notes", "top:instructions"],
+      ["top:new-folder", "top:notes", "top:instructions", "top:secrets"],
     );
     expect(
       topLevelMenuActions({ personal: false, notes: true }).map((action) => action.id),

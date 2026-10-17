@@ -9,6 +9,7 @@ import {
   instructionsOf,
   isWithin,
   poolResolver,
+  secretResolutionOf,
   secretsOf,
   type Tree,
   type TreeFolder,
@@ -102,19 +103,74 @@ describe("folderTree", () => {
     expect(instructionsOf(tree({ topInstructions: null }), id("payments"))).toEqual([]);
   });
 
-  it("gives a home every 1Password Environment up its chain, the top level first", () => {
+  it("gives ancestors only opted-in names and the home its full Environment", () => {
     const env = OnePasswordEnvironmentId.make;
     const named = tree({
-      topSecrets: env("top"),
+      topSecrets: { environmentId: env("top"), includeSubfolders: ["TOP_KEY"] },
       folders: tree().folders.map((each) =>
-        each.name === "Work" || each.name === "Northwind"
-          ? { ...each, secrets: env(each.name.toLowerCase()) }
-          : each,
+        each.name === "Work"
+          ? {
+              ...each,
+              secrets: { environmentId: env("work"), includeSubfolders: ["WORK_KEY"] },
+            }
+          : each.name === "Northwind"
+            ? { ...each, secrets: { environmentId: env("northwind") } }
+            : each,
       ),
     });
     expect(secretsOf(named, id("northwind"))).toEqual(["top", "work", "northwind"]);
     expect(secretsOf(named, id("clients"))).toEqual(["top", "work"]);
+    expect(secretResolutionOf(named, id("clients")).environmentNames).toEqual([
+      ["TOP_KEY"],
+      ["WORK_KEY"],
+    ]);
     expect(secretsOf(tree(), id("northwind"))).toEqual([]);
+  });
+
+  it("keeps repeated Environment assignments in chain order with their own name filters", () => {
+    const envA = OnePasswordEnvironmentId.make("env-a");
+    const envB = OnePasswordEnvironmentId.make("env-b");
+    const repeated = tree({
+      topSecrets: { environmentId: envA, includeSubfolders: ["X"] },
+      folders: tree().folders.map((each) =>
+        each.name === "Work"
+          ? {
+              ...each,
+              secrets: {
+                environmentId: envB,
+                includeSubfolders: ["X"],
+              },
+            }
+          : each.name === "Clients"
+            ? { ...each, secrets: { environmentId: envA, includeSubfolders: ["Y"] } }
+            : each,
+      ),
+    });
+
+    expect(secretResolutionOf(repeated, id("northwind"))).toEqual({
+      environments: ["env-a", "env-b", "env-a"],
+      environmentNames: [["X"], ["X"], ["Y"]],
+    });
+  });
+
+  it("does not let an empty nearer allowlist revoke names shared above", () => {
+    const envA = OnePasswordEnvironmentId.make("env-a");
+    const envB = OnePasswordEnvironmentId.make("env-b");
+    const emptyNearerAssignment = tree({
+      topSecrets: { environmentId: envA, includeSubfolders: ["X"] },
+      folders: tree().folders.map((each) =>
+        each.name === "Work"
+          ? { ...each, secrets: { environmentId: envB, includeSubfolders: ["X"] } }
+          : each.name === "Clients"
+            ? { ...each, secrets: { environmentId: envA, includeSubfolders: [] } }
+            : each,
+      ),
+    });
+
+    expect(secretResolutionOf(emptyNearerAssignment, id("northwind"))).toEqual({
+      environments: ["env-a", "env-b"],
+      environmentNames: [["X"], ["X"]],
+    });
   });
 
   it("runs every folder on the nearest pool up its chain, at any depth", () => {

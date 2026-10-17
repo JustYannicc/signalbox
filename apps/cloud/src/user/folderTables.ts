@@ -54,3 +54,10 @@ export const addSecrets = Effect.gen(function* () {
   yield* sql`ALTER TABLE folders ADD COLUMN secrets_environment_id TEXT`;
   yield* sql`ALTER TABLE folders_state ADD COLUMN secrets_environment_id TEXT`;
 });
+
+/** `UserStore`'s `0021_folder_secret_subfolders` migration; empty until a source opts in. */
+export const addSecretSubfolders = Effect.gen(function* () {
+  const sql = yield* SqlClient.SqlClient;
+  yield* sql`ALTER TABLE folders ADD COLUMN secrets_include_subfolders TEXT NOT NULL DEFAULT '[]'`;
+  yield* sql`ALTER TABLE folders_state ADD COLUMN secrets_include_subfolders TEXT NOT NULL DEFAULT '[]'`;
+});

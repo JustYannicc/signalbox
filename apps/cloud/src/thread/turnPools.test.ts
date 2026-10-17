@@ -268,7 +268,7 @@ describe("turn pools", () => {
         )!.id;
         yield* folders.setSecrets({
           level: { _tag: "top" },
-          secrets: { environmentId: env("env-top") },
+          secrets: { environmentId: env("env-top"), includeSubfolders: ["TOP_KEY"] },
         });
         yield* folders.setSecrets({
           level: { _tag: "folder", folderId: work },
@@ -287,6 +287,7 @@ describe("turn pools", () => {
           initialMessage: { messageId: MessageId.make("message-0"), text: "Hi", attachments: [] },
         });
         expect(yield* cloud.threadSecrets(threadId)).toEqual(["env-top", "env-work"]);
+        expect(yield* cloud.threadSecretEnvironmentNames(threadId)).toEqual([["TOP_KEY"], null]);
         yield* cloud.settle;
 
         // Moved to Home, which names none: its next turn gets the top level's only.
@@ -294,6 +295,17 @@ describe("turn pools", () => {
         expect(yield* cloud.threadSecrets(threadId)).toEqual(["env-top", "env-work"]);
         yield* send(claudeOn("claude_hub"));
         expect(yield* cloud.threadSecrets(threadId)).toEqual(["env-top"]);
+        expect(yield* cloud.threadSecretEnvironmentNames(threadId)).toEqual([["TOP_KEY"]]);
+        yield* cloud.settle;
+
+        // A changed allowlist is applied by the next turn's owner resolution.
+        yield* folders.setSecrets({
+          level: { _tag: "top" },
+          secrets: { environmentId: env("env-top"), includeSubfolders: [] },
+        });
+        yield* send(claudeOn("claude_hub"));
+        expect(yield* cloud.threadSecrets(threadId)).toEqual([]);
+        expect(yield* cloud.threadSecretEnvironmentNames(threadId)).toEqual([]);
         yield* cloud.settle;
       }),
   );

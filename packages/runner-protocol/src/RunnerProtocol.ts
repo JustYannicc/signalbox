@@ -290,6 +290,8 @@ export const RunnerHello = Schema.Struct({
   takenRunIds: Schema.optional(Schema.Array(RunId)),
   /** The Runner takes `steer` (#562). Absent: an older one, which closes on frames it can't read. */
   steers: Schema.optional(Schema.Boolean),
+  /** The Runner enforces per-Environment name filters. Older Runners must be replaced before loading secrets. */
+  secretScopes: Schema.optional(Schema.Boolean),
 });
 export type RunnerHello = typeof RunnerHello.Type;
 

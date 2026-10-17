@@ -134,7 +134,12 @@ export const launch = (
   );
 
 /** The user sends message `n` of the thread, to start right away. */
-export const send = (engine: ThreadEngine.ThreadEngine["Service"], n: number, text: string) =>
+export const send = (
+  engine: ThreadEngine.ThreadEngine["Service"],
+  n: number,
+  text: string,
+  creation: ThreadEngine.ThreadCreation = personal,
+) =>
   engine.dispatch(
     owner,
     {
@@ -149,7 +154,7 @@ export const send = (engine: ThreadEngine.ThreadEngine["Service"], n: number, te
       dispatchMode: { type: "start_immediately" },
       deliveryIntent: "auto",
     },
-    personal,
+    creation,
   );
 
 /** Stores a row of Claude's session `nativeId`, as a machine's session store does. */
@@ -170,6 +175,7 @@ export const hello = (generation: number, token: string) => ({
   token,
   lastAckedSequence: 0,
   drains: true,
+  secretScopes: true,
 });
 
 const off = <T extends Record<string, unknown>>(fields: T) =>

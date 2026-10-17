@@ -212,6 +212,8 @@ const migrations = Migrator.fromRecord({
   "0014_push_devices": PushDevices.createTables,
   "0014_thread_kinds": ThreadKindTables.createTables,
   "0015_folder_secrets": Effect.andThen(FolderTables.addSecrets, OnePasswordAccount.createTables),
+  // Secret names that a level explicitly lets its subfolders resolve (#695).
+  "0021_folder_secret_subfolders": FolderTables.addSecretSubfolders,
   "0016_local_keys": LocalKeys.createTables,
   "0017_api_keys": LocalKeys.addApiScopes,
   "0018_sign_in_grants": SignInTables.createTables,

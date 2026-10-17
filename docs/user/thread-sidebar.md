@@ -61,13 +61,19 @@ variables for things like `vp run dev` or tests. Signalbox never shows their val
 3. Choose **Secrets…** in a folder's menu, or in the **⋯** menu next to **Folders** for the top level, and
    paste the Environment ID and the token.
 
+By default, an Environment's variables stay in the folder or top level that sets it. To share one
+with child folders, enter its exact variable name under **Include in subfolders** and turn it on.
+Changes apply on the next turn. Only names you turn on are saved. Add a name again to opt it in
+later.
+
 You add the token once; it covers all your folders. **Disconnect** in any folder's Secrets stops
 secrets loading everywhere.
 
-- Secrets load when a thread starts. New threads get a change right away; a running thread gets it
-  the next time it starts up again.
-- A thread gets the secrets of every level from the top level down to its folder. When two levels
-  set the same name, the nearer folder wins.
+- Secrets load when a thread starts. Changing the assigned Environment or which names it shares
+  with subfolders takes effect on the next turn, without restarting the thread.
+- A thread gets every variable from its home level. It gets variables from ancestors only when they
+  opt those names into subfolders. If names clash, the nearer folder wins. The source summary lists
+  only ancestors with at least one name opted in.
 - Variables the agent needs for its own model access (`ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`,
   `CLAUDE_CODE_OAUTH_TOKEN`) and ones Signalbox sets itself, such as `HOME` or `PATH`, are skipped.
 - The agent's model never sees a value. Wherever a value would show, in a transcript or in what

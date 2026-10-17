@@ -1,4 +1,5 @@
 import { CommandId, MessageId, type RunId } from "@t3tools/contracts";
+import { OnePasswordEnvironmentId } from "@t3tools/contracts/signalboxFolders";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 
@@ -121,6 +122,98 @@ const command = <T extends object>(type: string, fields: T) => ({
 });
 
 describe("runnerSockets", () => {
+  it.effect("sends the turn's per-Environment secret names to the Runner", () =>
+    withObject(freshDatabase(), (engine, runner) =>
+      Effect.gen(function* () {
+        const environments = [
+          OnePasswordEnvironmentId.make("env-parent"),
+          OnePasswordEnvironmentId.make("env-own"),
+        ];
+        const environmentNames = [["SHARED"], null] as const;
+        yield* launch(engine, "launch-1", {
+          ...personal,
+          secrets: {
+            top: [],
+            projects: {},
+            thread: environments,
+            environmentNames: { top: [], projects: {}, thread: environmentNames },
+          },
+        });
+        const plan = yield* runner.reconcile;
+        if (plan.ensure === null) throw new Error("expected a machine request");
+        yield* runner.ensured(plan.ensure.generation);
+        const sockets: Array<WebSocket> = [];
+        const host = yield* hostFor(runner, sockets);
+        const socket = fakeSocket();
+        sockets.push(socket.socket);
+        yield* say(host, socket, {
+          ...hello(plan.ensure.generation, plan.ensure.token),
+          takenRunIds: [],
+        });
+
+        const start = socket.sent.find((message) => message.type === "turn.start");
+        if (start?.type !== "turn.start") throw new Error("expected the turn");
+        expect(start.secrets?.environmentNames).toEqual(environmentNames);
+      }),
+    ),
+  );
+
+  it.effect("replaces an old Runner before handing it a turn with secret filters", () => {
+    let tokenReads = 0;
+    return withObject(
+      freshDatabase(),
+      (engine, runner) =>
+        Effect.gen(function* () {
+          const environment = OnePasswordEnvironmentId.make("env-scoped");
+          yield* launch(engine, "launch-scoped", {
+            ...personal,
+            secrets: {
+              top: [],
+              projects: {},
+              thread: [environment],
+              environmentNames: { top: [], projects: {}, thread: [["SHARED"]] },
+            },
+          });
+          const plan = yield* runner.reconcile;
+          if (plan.ensure === null) throw new Error("expected a machine request");
+          const pending = yield* liveTurn(runner);
+          yield* runner.ensured(plan.ensure.generation);
+          const sockets: Array<WebSocket> = [];
+          const host = yield* hostFor(runner, sockets);
+          const old = fakeSocket();
+          sockets.push(old.socket);
+          yield* say(host, old, {
+            ...hello(plan.ensure.generation, plan.ensure.token),
+            secretScopes: false,
+          });
+          expect(old.sent.map((message) => message.type)).toEqual(["welcome"]);
+          expect(tokenReads).toBe(0);
+          expect((yield* runner.work).needsUpkeep).toBe(true);
+          const release = yield* runner.reconcile;
+          expect(release.release).toBe(plan.ensure.generation);
+          const replacement = yield* runner.reconcile;
+          if (replacement.ensure === null) throw new Error("expected a replacement");
+          expect(replacement.ensure.generation).toBe(plan.ensure.generation + 1);
+          yield* runner.ensured(replacement.ensure.generation);
+          const current = fakeSocket();
+          sockets.push(current.socket);
+          yield* say(host, current, hello(replacement.ensure.generation, replacement.ensure.token));
+          const start = current.sent.find((message) => message.type === "turn.start");
+          if (start?.type !== "turn.start") throw new Error("expected the pending turn");
+          expect(start.turn.runId).toBe(pending.runId);
+          expect(start.secrets?.environmentNames).toEqual([["SHARED"]]);
+          expect(tokenReads).toBe(1);
+        }),
+      {
+        secretsToken: () =>
+          Effect.sync(() => {
+            tokenReads += 1;
+            return "ops_fake_scope_test";
+          }),
+      },
+    );
+  });
+
   it.effect("holds a waiting turn back while its pull requests are being read (#495)", () =>
     withObject(freshDatabase(), (engine, runner) =>
       Effect.gen(function* () {

@@ -100,9 +100,88 @@ const sessions = { token: "session-token" };
 const access = (
   environments: ReadonlyArray<OnePasswordEnvironmentId>,
   token: string | null = TOKEN,
-): SecretsAccess => ({ token, environments });
+): SecretsAccess => ({ token, environments, environmentNames: environments.map(() => null) });
 
 describe("RunnerSecrets", () => {
+  it.effect("keeps per-key precedence when an Environment appears twice on the chain", () =>
+    Effect.gen(function* () {
+      const account = fakeOnePassword({
+        [top]: [variable("X", "outer-x"), variable("Y", "near-y")],
+        [folder]: [variable("X", "middle-x")],
+      });
+      const secrets = makeRunnerSecrets({
+        onePassword: account.onePassword,
+        mask: makeSecretMask(),
+        reserved: () => new Set(),
+      });
+      const { report } = reporter();
+      yield* secrets.load(
+        {
+          ...access([top, folder, top]),
+          environmentNames: [["X"], ["X"], ["Y"]],
+        },
+        report,
+      );
+      expect(secrets.environment()).toEqual({ X: "middle-x", Y: "near-y" });
+    }),
+  );
+
+  it.effect("does not read an Environment missing from an explicit name filter", () =>
+    Effect.gen(function* () {
+      const account = fakeOnePassword({ [top]: [variable("PRIVATE", "never-load-this")] });
+      const secrets = makeRunnerSecrets({
+        onePassword: account.onePassword,
+        mask: makeSecretMask(),
+        reserved: () => new Set(),
+      });
+      const { report, registered } = reporter();
+      yield* secrets.load({ ...access([top]), environmentNames: [] }, report);
+      expect(secrets.environment()).toEqual({});
+      expect(account.calls).toEqual([]);
+      yield* secrets.load({ token: TOKEN, environments: [top] }, report);
+      expect(account.calls).toEqual([]);
+      expect(registered).toEqual([[], []]);
+    }),
+  );
+
+  it.effect(
+    "loads and registers only ancestor keys opted into subfolders, and changes next turn",
+    () =>
+      Effect.gen(function* () {
+        const account = fakeOnePassword({
+          [top]: [variable("PRIVATE", "parent-only"), variable("SHARED", "parent-shared")],
+          [folder]: [variable("OWN", "own-value")],
+        });
+        const mask = makeSecretMask();
+        const secrets = makeRunnerSecrets({
+          onePassword: account.onePassword,
+          mask,
+          reserved: () => new Set(),
+        });
+        const { report, registered } = reporter();
+        const scoped = {
+          ...access([top, folder]),
+          environmentNames: [["SHARED"], null],
+        };
+        expect(yield* secrets.load(scoped, report)).toBe(1);
+        expect(secrets.environment()).toEqual({ SHARED: "parent-shared", OWN: "own-value" });
+        expect(registered).toEqual([
+          [
+            { name: "SHARED", value: "parent-shared" },
+            { name: "OWN", value: "own-value" },
+          ],
+        ]);
+        expect(mask.text("parent-only parent-shared")).toBe("parent-only {{secret:SHARED}}");
+
+        expect(yield* secrets.load({ ...scoped, environmentNames: [[], null] }, report)).toBe(2);
+        expect(secrets.environment()).toEqual({ OWN: "own-value" });
+        expect(registered.at(-1)).toEqual([{ name: "OWN", value: "own-value" }]);
+
+        expect(yield* secrets.load(scoped, report)).toBe(3);
+        expect(secrets.environment()).toEqual({ SHARED: "parent-shared", OWN: "own-value" });
+      }),
+  );
+
   it.effect("gives the chain's variables, a nearer folder's over the top level's", () =>
     Effect.gen(function* () {
       const account = fakeOnePassword({

@@ -1,4 +1,7 @@
-import { OnePasswordEnvironmentId } from "@t3tools/contracts/signalboxFolders";
+import {
+  OnePasswordEnvironmentId,
+  SecretEnvironmentName,
+} from "@t3tools/contracts/signalboxFolders";
 import * as Schema from "effect/Schema";
 
 import { jsonCodec } from "./jsonCodec.ts";
@@ -26,6 +29,10 @@ export const SecretsAccess = Schema.Struct({
   token: Schema.NullOr(Schema.String),
   /** Top level first; a nearer folder's variable replaces one of the same name from above. */
   environments: Schema.Array(OnePasswordEnvironmentId),
+  /** One filter per Environment, in the same order. Null loads all names at the home. */
+  environmentNames: Schema.optionalKey(
+    Schema.Array(Schema.NullOr(Schema.Array(SecretEnvironmentName))),
+  ),
 });
 export type SecretsAccess = typeof SecretsAccess.Type;
 

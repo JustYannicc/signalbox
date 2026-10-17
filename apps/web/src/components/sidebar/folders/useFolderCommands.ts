@@ -16,7 +16,7 @@ import type {
   FolderId,
   FolderLevel,
   FolderMoveInput,
-  OnePasswordEnvironmentId,
+  FolderSecrets,
   SignalboxFoldersSnapshot,
 } from "@t3tools/contracts/signalboxFolders";
 import { useMemo } from "react";
@@ -121,20 +121,16 @@ export function useFolderCommands() {
           "Could not save instructions",
           setInstructions({ environmentId, input: { level, instructions } }),
         ),
-      /** Null stops loading secrets at this level. */
+      /** Null removes this source; updates replace the complete source settings. */
       setSecrets: (
         environmentId: EnvironmentId,
         level: FolderLevel,
-        secretsEnvironmentId: OnePasswordEnvironmentId | null,
+        secrets: FolderSecrets | null,
       ): Attempt =>
         attempted(
           setSecrets({
             environmentId,
-            input: {
-              level,
-              secrets:
-                secretsEnvironmentId === null ? null : { environmentId: secretsEnvironmentId },
-            },
+            input: { level, secrets },
           }),
         ),
       /** The user's service account token, for every level; null disconnects it. */

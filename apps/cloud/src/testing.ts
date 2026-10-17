@@ -605,6 +605,12 @@ export const makeMemoryCloud = (
           ThreadStore.ThreadStore.use((store) => Effect.orDie(store.secrets)),
         ),
       ),
+    threadSecretEnvironmentNames: (threadId: string) =>
+      Effect.promise(() =>
+        threadFor(threadId).run(
+          ThreadStore.ThreadStore.use((store) => Effect.orDie(store.secretEnvironmentNames)),
+        ),
+      ),
     /** The instructions each of a thread's runs was started with, by run id. */
     runInstructions: (threadId: string, runId: string) =>
       Effect.promise(() =>
