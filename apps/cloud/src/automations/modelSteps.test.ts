@@ -1,6 +1,7 @@
 import { describe, expect, it } from "@effect/vitest";
 import { ProjectId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
 import { AutomationModelSteps } from "@signalbox/automations/host";
 import { transientCause } from "@signalbox/automations/stepPolicy";
 
@@ -77,9 +78,12 @@ export default workflow(async (w) => await w.${verb}("Ready?", { prompt: "Checks
           prompt: "Hello",
         }),
       ).pipe(
-        Effect.provide(CloudModelSteps.layer),
-        Effect.provide(ModelCompletion.layer((name) => harness.cloud.pools.objectFor(name).api)),
-        Effect.provide(harness.cloud.userObject(HOOK_USER)),
+        Effect.provide(
+          CloudModelSteps.layer.pipe(
+            Layer.provide(ModelCompletion.layer((name) => harness.cloud.pools.objectFor(name).api)),
+            Layer.provide(harness.cloud.userObject(HOOK_USER)),
+          ),
+        ),
         Effect.flip,
       );
       expect(transientCause(error)?.retryAfterMs).toBe(60_000);
