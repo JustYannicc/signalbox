@@ -100,6 +100,9 @@ const makeDrive = (actions: Array<string>) => {
     }),
     changed: Effect.succeed(true),
     restoreDependencyEdits: Effect.void,
+    checkpointViews: (context) => ({ context, shortcuts: [] }),
+    recordCheckpoint: () => Effect.void,
+    captureCheckpoint: Effect.succeed(null),
     finishTurn: () => Effect.succeed({ checkpoint: null, outcome: { _tag: "nothing_saved" } }),
     continueAfterResolution: Effect.succeed({ _tag: "nothing_saved" }),
     takeInMain: Effect.succeed({ _tag: "nothing_saved" }),
@@ -182,8 +185,8 @@ const takeResult = (queue: Queue.Queue<TerminalReport>, requestId: string) =>
       report.type === "result" && report.requestId === requestId,
   );
 
-const openCommand = (): TerminalCommand => ({
-  type: "open",
+const openCommand = () => ({
+  type: "open" as const,
   threadId,
   terminalId,
   generation: 1,
@@ -479,6 +482,7 @@ it.layer(layer, { excludeTestServices: true })("RunnerTerminals", (it) => {
           command: { ...openCommand(), cols: 132, rows: 40 },
         });
         expect((yield* takeResult(fixture.incoming, "open-1")).result.type).toBe("opened");
+        expect(fixture.ptyAdapter.processes).toHaveLength(1);
         expect(yield* Queue.size(fixture.incoming)).toBe(0);
 
         process.emitData("live after retry\n");

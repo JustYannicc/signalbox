@@ -135,14 +135,19 @@ const make = Effect.gen(function* () {
   const reconcile: ThreadTerminals["Service"]["reconcile"] = events.apply((projection) =>
     Effect.gen(function* () {
       if (projection === null) return retain(undefined);
-      if (projection.thread.deletedAt === null) {
-        const lease = yield* Effect.orDie(threadStore.machine);
-        if (lease.status === "requested") yield* bindStarting(lease.generation, null);
-        return retain(undefined);
-      }
+      const lease = yield* Effect.orDie(threadStore.machine);
+      const deleted = projection.thread.deletedAt !== null;
       for (const record of yield* Effect.orDie(records.all)) {
         if (!terminalHoldsMachine(record)) continue;
-        if (record.leaseGeneration === 0) {
+        if (
+          record.leaseGeneration > 0 &&
+          (lease.status === "none" || record.leaseGeneration !== lease.generation)
+        ) {
+          yield* fail(record, "The terminal's machine stopped. Restart the terminal to continue.");
+          continue;
+        }
+        const neverOpened = record.leaseGeneration === 0 || lease.status === "requested";
+        if ((deleted && neverOpened) || (record.status === "closing" && neverOpened)) {
           yield* Effect.orDie(records.abandon(record.terminalId, record.generation));
           const closed: TerminalStore.TerminalRecord = {
             ...record,
@@ -161,8 +166,9 @@ const make = Effect.gen(function* () {
           });
           continue;
         }
-        yield* queueClose(record);
+        if (deleted) yield* queueClose(record);
       }
+      if (!deleted && lease.status === "requested") yield* bindStarting(lease.generation, null);
       return retain(undefined);
     }),
   );

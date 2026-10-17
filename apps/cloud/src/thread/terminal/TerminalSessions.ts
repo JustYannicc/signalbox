@@ -24,6 +24,7 @@ import type * as Stream from "effect/Stream";
 
 import * as Environment from "../../environment.ts";
 import * as ThreadEngine from "../ThreadEngine.ts";
+import * as ThreadStore from "../ThreadStore.ts";
 import * as ThreadRunner from "../runner/ThreadRunner.ts";
 import * as TerminalEvents from "./TerminalEvents.ts";
 import * as TerminalStore from "./TerminalStore.ts";
@@ -97,6 +98,7 @@ const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
 
 const make = Effect.gen(function* () {
   const engine = yield* ThreadEngine.ThreadEngine;
+  const threadStore = yield* ThreadStore.ThreadStore;
   const records = yield* TerminalStore.TerminalStore;
   const events = yield* TerminalEvents.TerminalEvents;
   const crypto = yield* Crypto.Crypto;
@@ -364,17 +366,24 @@ const make = Effect.gen(function* () {
           Effect.gen(function* () {
             if (!ensureThread(projection, input.threadId))
               return no(new ThreadEngine.ThreadNotFoundError());
+            const lease = yield* Effect.orDie(threadStore.machine);
             for (const record of yield* Effect.orDie(records.all)) {
               if (input.terminalId !== undefined && record.terminalId !== input.terminalId)
                 continue;
               if (record.status === "closing") continue;
               yield* Effect.orDie(records.abandon(record.terminalId, record.generation));
+              const processMayExist =
+                record.leaseGeneration > 0 &&
+                record.leaseGeneration === lease.generation &&
+                lease.status !== "none" &&
+                lease.status !== "requested";
               const requestId =
-                record.leaseGeneration > 0 && terminalHoldsMachine(record) ? yield* uuid : null;
+                processMayExist && terminalHoldsMachine(record) ? yield* uuid : null;
               const next: TerminalStore.TerminalRecord = {
                 ...record,
                 status: requestId === null ? "closed" : "closing",
                 closeRequestId: requestId,
+                pid: requestId === null ? null : record.pid,
                 deleteHistory: input.deleteHistory === true,
                 history: input.deleteHistory === true ? "" : record.history,
                 hasRunningSubprocess: requestId === null ? false : record.hasRunningSubprocess,

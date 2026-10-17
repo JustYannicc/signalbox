@@ -986,6 +986,7 @@ describe("cloud thread terminals", () => {
         const newerInput = { ...input, terminalId: "term-2" };
         yield* terminals.open(owner, newerInput);
         yield* terminals.lost(requestedGeneration);
+        yield* terminals.reconcile;
 
         expect(yield* store.get(input.terminalId)).toMatchObject({ status: "error" });
         expect(yield* store.get(newerInput.terminalId)).toMatchObject({
@@ -995,5 +996,91 @@ describe("cloud thread terminals", () => {
         expect(yield* terminals.held).toBe(true);
       }),
     ),
+  );
+
+  it.effect.each([false, true])(
+    "releases terminals whose runner lease retired without a lost notification (closing: %s)",
+    (closing) =>
+      setupIdleThread(({ terminals, runner, store }) =>
+        Effect.gen(function* () {
+          const initial = yield* terminals.open(owner, input);
+          const machine = yield* connect(runner);
+          const welcome = yield* runner.hello(hello(machine.generation, machine.token));
+          if (welcome._tag !== "welcome") throw new Error("expected a welcome");
+          yield* terminals.connected(machine.generation, "retiring-process");
+          const opening = (yield* terminals.work(machine.generation))[0]!;
+          yield* terminals.report(machine.generation, welcome.connection, {
+            type: "result",
+            requestId: opening.requestId,
+            terminalId: input.terminalId,
+            generation: generationOf(initial),
+            leaseGeneration: machine.generation,
+            result: opened(initial),
+          });
+          yield* terminals.write(owner, {
+            ...input,
+            generation: generationOf(initial),
+            commandId: "retired-input",
+            data: "echo retired",
+          });
+          if (closing) yield* terminals.close(owner, input);
+          yield* runner.ended(machine.generation, "retired without a terminal notification");
+          if (closing) {
+            const replacement = yield* runner.reconcile;
+            expect(replacement.ensure?.generation).toBe(machine.generation + 1);
+          }
+
+          yield* terminals.reconcile;
+          expect(yield* terminals.held).toBe(false);
+          expect(yield* store.get(input.terminalId)).toMatchObject({
+            status: closing ? "closed" : "error",
+            processLost: true,
+            pid: null,
+          });
+          expect(yield* store.pending(machine.generation)).toEqual([]);
+          expect((yield* runner.reconcile).ensure).toBeNull();
+        }),
+      ),
+  );
+
+  it.effect.each(["close", "delete"] as const)(
+    "%s releases a terminal bound to a machine that has not connected",
+    (action) =>
+      setupIdleThread(({ terminals, runner, store, engine }) =>
+        Effect.gen(function* () {
+          const initial = yield* terminals.open(owner, input);
+          yield* terminals.write(owner, {
+            ...input,
+            generation: generationOf(initial),
+            commandId: "cancelled-before-connect",
+            data: "echo never run",
+          });
+          const requested = yield* runner.reconcile;
+          const leaseGeneration = requested.ensure?.generation;
+          if (leaseGeneration === undefined) throw new Error("expected a machine request");
+          yield* terminals.reconcile;
+          expect(yield* store.get(input.terminalId)).toMatchObject({ leaseGeneration });
+
+          if (action === "close") yield* terminals.close(owner, input);
+          else {
+            yield* markDeleted(engine);
+            yield* terminals.reconcile;
+          }
+
+          expect(yield* terminals.held).toBe(false);
+          expect(yield* store.get(input.terminalId)).toMatchObject({
+            status: "closed",
+            pid: null,
+          });
+          expect(
+            yield* store.byCommandId(input.terminalId, "cancelled-before-connect"),
+          ).toMatchObject({
+            outcome: "abandoned",
+            data: null,
+          });
+          expect(yield* store.pending(leaseGeneration)).toEqual([]);
+          expect((yield* runner.reconcile).ensure).toBeNull();
+        }),
+      ),
   );
 });
