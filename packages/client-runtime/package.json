@@ -295,6 +295,10 @@
       "types": "./src/state/foldersModel.ts",
       "default": "./src/state/foldersModel.ts"
     },
+    "./state/signalboxSearchModel": {
+      "types": "./src/state/signalboxSearchModel.ts",
+      "default": "./src/state/signalboxSearchModel.ts"
+    },
     "./state/signalboxNotes": {
       "types": "./src/state/notes.ts",
       "default": "./src/state/notes.ts"

@@ -103,6 +103,7 @@ import { editPendingThreadMessage } from "../../state/edit-pending-thread-messag
 import { deviceEnvironment } from "../../state/device";
 import { useEnvironmentQuery } from "../../state/query";
 import { threadDevicePreviews } from "../devices/threadDevicePreviews";
+import { ThreadFindBar } from "./find/ThreadFindBar"; // signalbox: thread find
 import { ThreadBrowserFloat } from "../browser/ThreadBrowserFloat";
 import { useThreadServerBrowserTabs } from "../../state/preview";
 import { useThreadBrowsingTabCount } from "../../state/browsing";
@@ -1126,6 +1127,16 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
         <View className="flex-1" />
       )}
 
+      {showContent ? ( // signalbox: thread find (#792)
+        <ThreadFindBar
+          key={selectedThreadKey}
+          environmentId={props.environmentId}
+          threadId={props.selectedThread.id}
+          listRef={listRef}
+          feed={props.selectedThreadFeed}
+          top={navigationHeaderHeight}
+        />
+      ) : null}
       {showContent ? (
         <ThreadBrowserFloat
           key={selectedThreadKey}

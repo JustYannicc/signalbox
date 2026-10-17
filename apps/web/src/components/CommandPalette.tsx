@@ -5,6 +5,7 @@ import { accountSignOutPaletteItem } from "../account/accountPaletteItem"; // si
 import { useAutomationPaletteItems } from "./automations/automationPaletteItems"; // signalbox: automations
 import { useFolderPaletteItems } from "./sidebar/folders/folderPaletteItems"; // signalbox: folders
 import { useNotesPaletteItems } from "./notes/notesPaletteItems"; // signalbox: notes
+import { useContentSearchPalette } from "./search/contentSearchPaletteItems"; // signalbox: thread search
 import { useRepositoryPickerGroups } from "./addProject/repositoryPicker"; // signalbox: repositories
 import {
   addProjectCloneSources,
@@ -770,7 +771,18 @@ function OpenCommandPaletteDialog(props: {
     [environments],
   );
   const threadSearchQuery = currentView === null && !isActionsOnly ? deferredQuery : "";
-  const threadSearch = useThreadSearch(environmentIds, threadSearchQuery);
+  // signalbox: Home's search reaches inside threads through the search service (#792).
+  const contentSearch = useContentSearchPalette({
+    query: threadSearchQuery,
+    environmentIds,
+    threads,
+    openThread: (thread) =>
+      navigate({
+        to: "/$environmentId/$threadId",
+        params: buildThreadRouteParams(scopeThreadRef(thread.environmentId, thread.id)),
+      }),
+  });
+  const threadSearch = useThreadSearch(contentSearch.legacyEnvironmentIds, threadSearchQuery);
   const threadContentMatchByKey = useMemo(
     () =>
       new Map(
@@ -2414,27 +2426,29 @@ function OpenCommandPaletteDialog(props: {
             ? changeAppearanceItem.groups
             : (currentView?.groups ?? rootGroups);
 
-  const filteredGroups = filterCommandPaletteGroups({
-    activeGroups,
-    query: deferredQuery,
-    isInSubmenu: currentView !== null,
-    projectSearchItems: projectSearchItems,
-    settingsSearchItems,
-    threadSearchItems:
-      linkedThreadSearch?.linkedThreads && deferredQuery === linkedThreadSearch.query
-        ? buildLinkedThreadActionItems({
-            ...linkedThreadSearch.linkedThreads,
-            query: linkedThreadSearch.query,
-            icon: <MessageSquareIcon className={ITEM_ICON_CLASS} />,
-            runThread: async (thread) => {
-              await navigate({
-                to: "/$environmentId/$threadId",
-                params: buildThreadRouteParams(scopeThreadRef(thread.environmentId, thread.id)),
-              });
-            },
-          })
-        : allThreadItems,
-  });
+  const filteredGroups = contentSearch.applyToGroups(
+    filterCommandPaletteGroups({
+      activeGroups,
+      query: deferredQuery,
+      isInSubmenu: currentView !== null,
+      projectSearchItems: projectSearchItems,
+      settingsSearchItems,
+      threadSearchItems:
+        linkedThreadSearch?.linkedThreads && deferredQuery === linkedThreadSearch.query
+          ? buildLinkedThreadActionItems({
+              ...linkedThreadSearch.linkedThreads,
+              query: linkedThreadSearch.query,
+              icon: <MessageSquareIcon className={ITEM_ICON_CLASS} />,
+              runThread: async (thread) => {
+                await navigate({
+                  to: "/$environmentId/$threadId",
+                  params: buildThreadRouteParams(scopeThreadRef(thread.environmentId, thread.id)),
+                });
+              },
+            })
+          : allThreadItems,
+    }),
+  ); // signalbox: content search
 
   const handleAddProjectForEnvironment = useCallback(
     async (input: {
@@ -3736,7 +3750,7 @@ function OpenCommandPaletteDialog(props: {
                 ? {
                     emptyStateMessage: "Press Enter to create this folder and add it as a project.",
                   }
-                : threadSearch.isPending
+                : threadSearch.isPending || contentSearch.isPending // signalbox: content search
                   ? { emptyStateMessage: "Searching thread messages…" }
                   : isOnAddProjectEnvironmentsView && addProjectAvailability === "connecting"
                     ? { emptyStateMessage: addProjectConnectingMessage }
