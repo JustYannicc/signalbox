@@ -4,7 +4,18 @@ import * as Deferred from "effect/Deferred";
 import * as Fiber from "effect/Fiber";
 import { describe, expect, it } from "@effect/vitest";
 
-import { makeAgentCleanup } from "./agentCleanup.ts";
+import { type AgentCleanup, makeAgentCleanup } from "./agentCleanup.ts";
+
+const withRemovalGate = <A, E, R>(
+  service: AgentCleanup["Service"],
+  worktreePath: string,
+  removal: (commonDir: string) => Effect.Effect<A, E, R>,
+) =>
+  Effect.gen(function* () {
+    const gate = yield* service.acquireWorktreeRemovalGate(worktreePath);
+    if (Option.isNone(gate)) return Option.none();
+    return Option.some(yield* removal(gate.value));
+  }).pipe(Effect.scoped);
 
 describe("agent process cleanup", () => {
   it.effect("preserves Windows worktree cleanup only for an empty registry", () =>
@@ -26,7 +37,7 @@ describe("agent process cleanup", () => {
         sessions: async () => [],
       });
 
-      const result = yield* service.withWorktreeRemovalGate("/worktrees/feature", () =>
+      const result = yield* withRemovalGate(service, "/worktrees/feature", () =>
         Effect.succeed("removed"),
       );
       expect(Option.getOrNull(result)).toBe("removed");
@@ -57,7 +68,7 @@ describe("agent process cleanup", () => {
       });
 
       let removed = false;
-      const result = yield* service.withWorktreeRemovalGate("/worktrees/feature", () =>
+      const result = yield* withRemovalGate(service, "/worktrees/feature", () =>
         Effect.sync(() => {
           removed = true;
         }),
@@ -97,7 +108,7 @@ describe("agent process cleanup", () => {
       });
 
       let removalRan = false;
-      const result = yield* service.withWorktreeRemovalGate("/worktrees/feature", (commonDir) =>
+      const result = yield* withRemovalGate(service, "/worktrees/feature", (commonDir) =>
         Effect.sync(() => {
           calls.push(`remove:${commonDir}`);
           removalRan = true;
@@ -132,7 +143,7 @@ describe("agent process cleanup", () => {
         });
 
         let removalRan = false;
-        const result = yield* service.withWorktreeRemovalGate("/worktrees/feature", () =>
+        const result = yield* withRemovalGate(service, "/worktrees/feature", () =>
           Effect.sync(() => {
             removalRan = true;
           }),
@@ -157,7 +168,7 @@ describe("agent process cleanup", () => {
         sessions: async () => [],
       });
 
-      const result = yield* service.withWorktreeRemovalGate("/worktrees/feature", () =>
+      const result = yield* withRemovalGate(service, "/worktrees/feature", () =>
         Effect.succeed("removed"),
       );
       expect(Option.getOrNull(result)).toBe("removed");
@@ -181,7 +192,7 @@ describe("agent process cleanup", () => {
         sessions: async () => [],
       });
 
-      const result = yield* service.withWorktreeRemovalGate("/worktrees/feature", () =>
+      const result = yield* withRemovalGate(service, "/worktrees/feature", () =>
         Effect.succeed("removed"),
       );
       expect(Option.isNone(result)).toBe(true);
@@ -206,9 +217,9 @@ describe("agent process cleanup", () => {
         sessions: async () => [],
       });
 
-      const exit = yield* service
-        .withWorktreeRemovalGate("/worktrees/feature", () => Effect.fail("git remove failed"))
-        .pipe(Effect.exit);
+      const exit = yield* withRemovalGate(service, "/worktrees/feature", () =>
+        Effect.fail("git remove failed"),
+      ).pipe(Effect.exit);
       expect(exit._tag).toBe("Failure");
       expect(released).toBe(true);
     }),
@@ -233,14 +244,12 @@ describe("agent process cleanup", () => {
         sessions: async () => [],
       });
 
-      const fiber = yield* service
-        .withWorktreeRemovalGate("/worktrees/feature", () =>
-          Effect.gen(function* () {
-            yield* Deferred.succeed(enteredRemoval, undefined);
-            return yield* Effect.never;
-          }),
-        )
-        .pipe(Effect.forkChild);
+      const fiber = yield* withRemovalGate(service, "/worktrees/feature", () =>
+        Effect.gen(function* () {
+          yield* Deferred.succeed(enteredRemoval, undefined);
+          return yield* Effect.never;
+        }),
+      ).pipe(Effect.forkChild);
       yield* Deferred.await(enteredRemoval);
       yield* Fiber.interrupt(fiber);
       expect(released).toBe(true);

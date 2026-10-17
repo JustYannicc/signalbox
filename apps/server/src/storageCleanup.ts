@@ -800,60 +800,47 @@ const make = Effect.gen(function* () {
           )
         )
           return keep("settings changed since check");
-        const removal = yield* agentCleanup.withWorktreeRemovalGate(
-          worktreePath,
-          (lockedCommonDir) =>
-            Effect.gen(function* () {
-              // Keep registration closed from this final check through removal.
-              const blockedBeforeRemoval = yield* blockedSinceCheck(false);
-              if (blockedBeforeRemoval !== null)
-                return { kind: "kept" as const, reason: blockedBeforeRemoval };
-              const [worktreeCommonDir, projectCommonDir] = yield* Effect.all([
-                gitCommonDirectory(worktreePath),
-                gitCommonDirectory(project.workspaceRoot),
-              ]);
-              if (
-                worktreeCommonDir === null ||
-                projectCommonDir === null ||
-                pathKey(worktreeCommonDir) !== pathKey(lockedCommonDir) ||
-                pathKey(projectCommonDir) !== pathKey(lockedCommonDir)
-              )
-                return {
-                  kind: "kept" as const,
-                  reason: "repository or branch changed since check",
-                };
-              if (yield* branchChanged(worktreePath, thread.branch))
-                return {
-                  kind: "kept" as const,
-                  reason: "repository or branch changed since check",
-                };
-              if (
-                (yield* git.resolveCommit({ cwd: worktreePath, revision: "HEAD" })).commitSha !==
-                head.commitSha
-              )
-                return { kind: "kept" as const, reason: "commit changed since check" };
-              const finalChangesAfterStop = yield* localChangesReason(worktreePath, settings);
-              if (finalChangesAfterStop !== null)
-                return { kind: "kept" as const, reason: finalChangesAfterStop };
-              // Git still refuses removal if a tracked edit arrives after this check.
-              if (settings.worktreeKeepWhen === "tracked-changes")
-                yield* cleanupGit(worktreePath, ["clean", "-ffdx"], "git clean");
-              yield* cleanupGit(
-                project.workspaceRoot,
-                ["-c", "status.showUntrackedFiles=normal", "worktree", "remove", worktreePath],
-                "git worktree remove",
-              );
-              return { kind: "removed" as const };
-            }),
+        const removalGate = yield* agentCleanup.acquireWorktreeRemovalGate(worktreePath);
+        if (Option.isNone(removalGate))
+          return keep("a registered process is still using the worktree");
+        const blockedBeforeRemoval = yield* blockedSinceCheck(false);
+        if (blockedBeforeRemoval !== null) return keep(blockedBeforeRemoval);
+        const [worktreeCommonDir, projectCommonDir] = yield* Effect.all([
+          gitCommonDirectory(worktreePath),
+          gitCommonDirectory(project.workspaceRoot),
+        ]);
+        if (
+          worktreeCommonDir === null ||
+          projectCommonDir === null ||
+          pathKey(worktreeCommonDir) !== pathKey(removalGate.value) ||
+          pathKey(projectCommonDir) !== pathKey(removalGate.value)
+        )
+          return keep("repository or branch changed since check");
+        if (yield* branchChanged(worktreePath, thread.branch))
+          return keep("repository or branch changed since check");
+        if (
+          (yield* git.resolveCommit({ cwd: worktreePath, revision: "HEAD" })).commitSha !==
+          head.commitSha
+        )
+          return keep("commit changed since check");
+        const finalChangesAfterStop = yield* localChangesReason(worktreePath, settings);
+        if (finalChangesAfterStop !== null) return keep(finalChangesAfterStop);
+        // Clean only untracked files; Git must still refuse removal if a tracked
+        // edit arrives after our last status check.
+        if (settings.worktreeKeepWhen === "tracked-changes")
+          yield* cleanupGit(worktreePath, ["clean", "-ffdx"], "git clean");
+        yield* cleanupGit(
+          project.workspaceRoot,
+          ["-c", "status.showUntrackedFiles=normal", "worktree", "remove", "--", worktreePath],
+          "git worktree remove",
         );
-        if (Option.isNone(removal)) return keep("a registered process is still using the worktree");
-        if (removal.value.kind === "kept") return keep(removal.value.reason);
         entries.push({ ...entry, outcome: "removed", reason: sentence(removalReason), bytes });
         yield* gitManager.invalidateStatus(project.workspaceRoot);
         // Preserve branch and path: ProviderTurnStartService recreates the checkout
         // from that branch when the thread is resumed.
         yield* Effect.logInfo("storage cleanup removed worktree", { threadId: thread.id });
       }).pipe(
+        Effect.scoped,
         (effect) => withWorkspaceLease(worktreePath, effect),
         Effect.catch((error) =>
           Effect.gen(function* () {

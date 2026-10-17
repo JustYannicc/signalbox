@@ -576,14 +576,11 @@ const cleanupFixture = (
         branchPullRequest: () => Effect.succeed(branchPullRequest),
       } as unknown as GitManager.GitManager["Service"]),
       Effect.provideService(AgentCleanup.AgentCleanup, {
-        withWorktreeRemovalGate: <A, E, R>(
-          _worktreePath: string,
-          removal: (commonDir: string) => Effect.Effect<A, E, R>,
-        ): Effect.Effect<Option.Option<A>, E, R> =>
+        acquireWorktreeRemovalGate: () =>
           Effect.gen(function* () {
             if (!worktreeProcessesQuiescent) return Option.none();
             yield* onStopWorktree();
-            return Option.some(yield* removal(gitCommonDir));
+            return Option.some(gitCommonDir);
           }),
         reap: () => Effect.void,
       } as unknown as AgentCleanup.AgentCleanup["Service"]),

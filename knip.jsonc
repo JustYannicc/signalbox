@@ -33,6 +33,7 @@
       // Vite+ pack entries and the launcher used by installed background services.
       "entry": [
         "src/bin.ts!",
+        "src/signalbox/runner/main.ts!", // Started through the process cleanup wrapper.
         "src/claude-history-worker.ts!",
         "scripts/cli.ts",
         "scripts/evaluate-thread-titles.ts",
@@ -64,11 +65,12 @@
       // the plan guard CI runs with node.
       "entry": ["src/modelGateway/worker.ts!", "alchemy.run.ts!", "infra/check-plan.ts"],
       // `cloudflare:workers` is a Workers runtime module, not a package.
-      "ignoreDependencies": ["cloudflare"],
+      "ignoreDependencies": ["cloudflare", "wrangler"], // Wrangler runs through the process cleanup wrapper.
     },
     "apps/desktop": {
       // Electron loads these bundles by filename rather than importing them.
       "entry": [
+        "scripts/start-electron.mjs", // Started through the process cleanup wrapper.
         "gnome-extension/extension.js!",
         "src/electron/WindowsForegroundFocusWorker.ts!",
         "src/snapShot/GlobalShiftShortcutWorker.ts!",
