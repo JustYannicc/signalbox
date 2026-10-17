@@ -30,6 +30,7 @@ import { type ModelPoolRoute, poolObjectName } from "../../pool/PoolDirectory.ts
 import { isRemoteToken, remoteToken } from "../../drive/remoteToken.ts";
 import type { UserObjectError } from "../../user/UserDirectory.ts";
 import { traceIdOf } from "../diagnostics/traceId.ts";
+import { failedPreparationEvents, readyPreparationEvents } from "../preparationCommands.ts";
 import { TurnDiagnostics } from "../diagnostics/TurnDiagnostics.ts";
 import { driveToken, isDriveToken } from "../../drive/driveToken.ts";
 import { gatewayProviderFor, poolIdOfInstance } from "../providerCatalog.ts";
@@ -238,6 +239,8 @@ export interface MachinePlan {
   readonly runId: RunId | null;
   /** `release`'s Runner vanished rather than being let go: its machine may have stopped itself. */
   readonly lost: boolean;
+  /** Retry waits here until the released machine is confirmed stopped. */
+  readonly retryPreparationReleaseGeneration: number | null;
 }
 
 /** What the connected Runner should be doing right now. */
@@ -290,6 +293,10 @@ export class ThreadRunner extends Context.Service<
     }) => Effect.Effect<void>;
     /** The backend confirmed a request. */
     readonly ensured: (generation: number) => Effect.Effect<void>;
+    /** A backend setup failure ended before the provider turn started. */
+    readonly preparationFailed: (generation: number, detail: string) => Effect.Effect<MachinePlan>;
+    /** Clears a retry fence only after every backend confirms the old machine stopped. */
+    readonly preparationReleaseSettled: (generation: number) => Effect.Effect<boolean>;
     readonly work: Effect.Effect<RunnerWork>;
     readonly reconcile: Effect.Effect<MachinePlan>;
     /** The pool moved the thread off its account during `runId` (`pool/threadAccounts.ts`). */
@@ -352,6 +359,7 @@ const IDLE: MachinePlan = {
   wakeAt: null,
   runId: null,
   lost: false,
+  retryPreparationReleaseGeneration: null,
 };
 const BUSY: MachinePlan = { ...IDLE, busy: true };
 const UNNEEDED: MachinePlan = { ...IDLE, stop: true };
@@ -511,8 +519,14 @@ const make = Effect.gen(function* () {
         !awaitsHandoff(run) &&
         hello.takenRunIds !== undefined &&
         !hello.takenRunIds.includes(run.id);
-      const events = lost ? recoverRunEvents(projection, run, ctx) : [];
-      const active = lost ? harnessRun(applyEvents(projection, events) ?? projection) : run;
+      const preparationReady = run === null ? [] : readyPreparationEvents(projection, run.id, ctx);
+      const afterPreparation = applyEvents(projection, preparationReady) ?? projection;
+      const events = [
+        ...preparationReady,
+        ...(lost && run !== null ? recoverRunEvents(afterPreparation, run, ctx) : []),
+      ];
+      const active =
+        events.length === 0 ? run : harnessRun(applyEvents(projection, events) ?? projection);
       // A Runner too old to say what it holds is taken to hold a run it reported started.
       const heldRunId =
         active != null &&
@@ -743,6 +757,45 @@ const make = Effect.gen(function* () {
     updateLease(generation, (lease, now) =>
       lease.status === "none" || lease.ensuredAt !== null ? null : { ...lease, ensuredAt: now },
     );
+
+  const preparationFailed: ThreadRunner["Service"]["preparationFailed"] = (generation, detail) =>
+    withLease(({ projection, lease, now }, ctx) => {
+      const run = projection === null ? undefined : harnessRun(projection);
+      if (
+        projection === null ||
+        run === undefined ||
+        lease.status === "none" ||
+        lease.generation !== generation
+      ) {
+        return Effect.succeed(keep(IDLE));
+      }
+      const events = failedPreparationEvents(projection, run.id, detail, ctx);
+      if (events === null) return Effect.succeed(keep(IDLE));
+      return Effect.as(sessionEnded(lease, { reason: "error", detail, runId: run.id, now }), {
+        events,
+        machine: {
+          ...released(lease),
+          retryPreparationReleaseGeneration: generation,
+        },
+        result: {
+          ...UNNEEDED,
+          release: generation,
+          runId: run.id,
+          retryPreparationReleaseGeneration: generation,
+        },
+      } satisfies ThreadEngine.EngineDecision<MachinePlan>);
+    });
+
+  const preparationReleaseSettled: ThreadRunner["Service"]["preparationReleaseSettled"] = (
+    generation,
+  ) =>
+    withLease(({ lease }) => {
+      if (lease.status !== "none" || lease.retryPreparationReleaseGeneration !== generation) {
+        return Effect.succeed(keep(false));
+      }
+      const { retryPreparationReleaseGeneration: _releasedGeneration, ...settled } = lease;
+      return Effect.succeed({ events: [], machine: settled, result: true });
+    });
 
   /**
    * The owner's 1Password token, asked of their object outside the thread's
@@ -1016,6 +1069,7 @@ const make = Effect.gen(function* () {
           readonly recover?: boolean;
           readonly lost?: boolean;
           readonly idleSince?: number;
+          readonly retryPreparationReleaseGeneration?: number;
         }) => {
           const events =
             projection === null || run === undefined
@@ -1031,17 +1085,41 @@ const make = Effect.gen(function* () {
             projection === null ? Effect.void : sessionEnded(lease, { ...input, runId, now }),
             {
               events,
-              machine: released(lease),
+              machine: {
+                ...released(lease),
+                ...(input.retryPreparationReleaseGeneration === undefined
+                  ? {}
+                  : {
+                      retryPreparationReleaseGeneration: input.retryPreparationReleaseGeneration,
+                    }),
+              },
               result: {
                 ...UNNEEDED,
                 release: lease.generation,
                 runId,
                 lost: input.lost === true,
                 wakeAt: continues ? now : null,
+                retryPreparationReleaseGeneration: input.retryPreparationReleaseGeneration ?? null,
               },
             } satisfies ThreadEngine.EngineDecision<MachinePlan>,
           );
         };
+        const retryReleaseGeneration = lease.retryPreparationReleaseGeneration;
+        if (retryReleaseGeneration !== undefined) {
+          if (lease.status === "none") {
+            return keep({
+              ...UNNEEDED,
+              runId,
+              wakeAt: now + ENSURE_RETRY_MS,
+              retryPreparationReleaseGeneration: retryReleaseGeneration,
+            });
+          }
+          return yield* release({
+            reason: "error",
+            detail: "Releasing the old machine before retrying workspace preparation.",
+            retryPreparationReleaseGeneration: retryReleaseGeneration,
+          });
+        }
         if (lease.status === "none") {
           if (run === undefined || projection === null) return keep(UNNEEDED);
           const generation = lease.generation + 1;
@@ -1223,6 +1301,8 @@ const make = Effect.gen(function* () {
     machineExited,
     disconnected,
     ensured,
+    preparationFailed,
+    preparationReleaseSettled,
     work,
     reconcile,
     accountMoved,

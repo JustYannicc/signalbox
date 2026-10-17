@@ -90,6 +90,8 @@ export interface MachineLease {
   readonly machineClass?: MachineClass | undefined;
   /** The thread outgrew the light class, so every machine from now on is heavy. Kept across leases. */
   readonly movedUp?: boolean | undefined;
+  /** The old generation must be confirmed stopped before a preparation retry asks for another. */
+  readonly retryPreparationReleaseGeneration?: number | undefined;
   /** This generation's Runner answers `drain` (#493), as its `hello` said. */
   readonly drains?: boolean | undefined;
   /** This generation's Runner takes `steer` (#562), as its `hello` said. */
@@ -372,6 +374,7 @@ const MachineLeaseJson = Schema.fromJsonString(
     ackedSequence: Schema.Number,
     machineClass: Schema.optional(MachineClass),
     movedUp: Schema.optional(Schema.Boolean),
+    retryPreparationReleaseGeneration: Schema.optional(Schema.Number),
     drains: Schema.optional(Schema.Boolean),
     steers: Schema.optional(Schema.Boolean),
     drain: Schema.optional(

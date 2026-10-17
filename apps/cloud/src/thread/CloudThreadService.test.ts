@@ -1,4 +1,5 @@
 import {
+  ChatAttachmentId,
   CommandId,
   MessageId,
   type OrchestrationV2ThreadStreamItem,
@@ -14,6 +15,7 @@ import * as Stream from "effect/Stream";
 import { applyOrchestrationV2ProjectionEvent } from "@t3tools/client-runtime/state/orchestration-v2-projection";
 
 import { makeMemoryObjects } from "../attachments/attachmentTesting.ts";
+import { CloudAttachments } from "../attachments/CloudAttachments.ts";
 import * as Environment from "../environment.ts";
 import * as Platform from "../platform.ts";
 import { PERSONAL_CONTEXT_ID } from "@t3tools/contracts/signalboxContexts";
@@ -141,6 +143,136 @@ describe("CloudThreadService", () => {
         },
       );
       expect(other.threadId).not.toBe(first.threadId);
+    }),
+  );
+
+  it.effect("claims queued-edit attachments for their uploader and releases stale copies", () =>
+    Effect.gen(function* () {
+      const cloud = makeMemoryCloud();
+      const service = yield* CloudThreadService.CloudThreadService.pipe(
+        Effect.provide(cloud.layerPersonal(actor.userId)),
+      );
+      const uploads = yield* CloudAttachments.CloudAttachments.pipe(
+        Effect.provide(layerAttachments(cloud.attachmentObjects)),
+      );
+      const bytes = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 1, 2, 3, 4]);
+      const upload = (userId: string, name: string) =>
+        Effect.gen(function* () {
+          const minted = yield* uploads.issueUpload(userId, {
+            name,
+            mimeType: "image/png",
+            sizeBytes: bytes.length,
+          });
+          const token = minted.relativeUrl.split("/").at(-1) ?? "";
+          const stored = yield* uploads.storeUpload(
+            token,
+            new Blob([bytes.slice()]).stream(),
+            bytes.length,
+          );
+          if (stored._tag !== "stored") throw new Error("expected the image upload to be stored");
+          return {
+            type: "image" as const,
+            id: ChatAttachmentId.make(minted.attachmentId),
+            name,
+            mimeType: "image/png",
+            sizeBytes: bytes.length,
+          };
+        });
+
+      const launched = yield* service.launchThread(actor, {
+        commandId: CommandId.make("queue-edit-launch"),
+        threadId: ThreadId.make("thread-queue-attachments"),
+        projectId: Environment.SCRATCH_PROJECT_ID,
+        title: "Queued attachment",
+        modelSelection: scriptedModelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        workspaceStrategy: { type: "root" },
+        initialMessage: { text: "Active", attachments: [] },
+      });
+      yield* service.dispatchCommand(actor, {
+        type: "message.dispatch",
+        commandId: CommandId.make("queue-attachment-message"),
+        createdBy: "user",
+        creationSource: "web",
+        threadId: launched.threadId,
+        messageId: MessageId.make("queue-attachment-message"),
+        text: "Queued message",
+        attachments: [],
+        dispatchMode: { type: "start_immediately" },
+        deliveryIntent: "auto",
+      });
+      const queued = (yield* service.threadSnapshot(actor, launched.threadId)).projection.runs.find(
+        (run) => run.status === "queued",
+      );
+      if (queued === undefined) throw new Error("expected a queued run");
+
+      const owned = yield* upload(actor.userId, "owned.png");
+      yield* service.dispatchCommand(actor, {
+        type: "queued-run.edit",
+        commandId: CommandId.make("queue-edit-owned-attachment"),
+        threadId: launched.threadId,
+        runId: queued.id,
+        text: "Edited with owned attachment",
+        attachments: [owned],
+      });
+      const edited = (yield* service.threadSnapshot(actor, launched.threadId)).projection;
+      const editedMessage = edited.messages.find((message) => message.id === queued.userMessageId);
+      const copied = editedMessage?.attachments[0];
+      if (copied === undefined) throw new Error("expected the owned attachment to be copied");
+      expect(editedMessage?.text).toBe("Edited with owned attachment");
+      expect(copied.id).not.toBe(owned.id);
+      expect(
+        edited.visibleTurnItems.find(
+          (row) => row.item.type === "user_message" && row.item.messageId === queued.userMessageId,
+        )?.item,
+      ).toMatchObject({
+        type: "user_message",
+        text: "Edited with owned attachment",
+        attachments: [copied],
+      });
+
+      const foreign = yield* upload("user_2", "foreign.png");
+      const foreignEdit = yield* Effect.flip(
+        service.dispatchCommand(actor, {
+          type: "queued-run.edit",
+          commandId: CommandId.make("queue-edit-foreign-attachment"),
+          threadId: launched.threadId,
+          runId: queued.id,
+          text: "Should not land",
+          attachments: [foreign],
+        }),
+      );
+      expect(foreignEdit).toMatchObject({ _tag: "ThreadCommandRejectedError" });
+
+      const stale = yield* upload(actor.userId, "stale.png");
+      yield* service.dispatchCommand(actor, {
+        type: "queued-run.cancel",
+        commandId: CommandId.make("queue-attachment-cancel"),
+        threadId: launched.threadId,
+        runId: queued.id,
+      });
+      const keysBeforeStaleEdit = cloud.attachmentObjects.keys();
+      const staleEdit = yield* Effect.flip(
+        service.dispatchCommand(actor, {
+          type: "queued-run.edit",
+          commandId: CommandId.make("queue-edit-stale-attachment"),
+          threadId: launched.threadId,
+          runId: queued.id,
+          text: "Should remain cancelled",
+          attachments: [stale],
+        }),
+      );
+      expect(staleEdit).toMatchObject({
+        _tag: "ThreadCommandRejectedError",
+        reason: `Run ${queued.id} is not queued.`,
+      });
+      expect(cloud.attachmentObjects.keys()).toEqual(keysBeforeStaleEdit);
+      expect(
+        (yield* service.threadSnapshot(actor, launched.threadId)).projection.messages.find(
+          (message) => message.id === queued.userMessageId,
+        ),
+      ).toMatchObject({ text: "Edited with owned attachment", attachments: [copied] });
     }),
   );
 

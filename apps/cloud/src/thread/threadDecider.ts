@@ -14,6 +14,8 @@ import * as DateTime from "effect/DateTime";
 import { isHarnessInstance } from "./providerCatalog.ts";
 import { decideLifecycleCommand } from "./lifecycleCommands.ts";
 import { pullRequestLinkEvents } from "./pullRequests/pullRequestLinks.ts";
+import { decidePreparationCommand } from "./preparationCommands.ts";
+import { decideQueuedRunCommand } from "./queuedRunCommands.ts";
 import {
   activeRun,
   cancelQueuedEvents,
@@ -86,6 +88,9 @@ const CLOUD_COMMAND_TYPES = [
   "thread.pin",
   "thread.unpin",
   "thread.pin.reorder",
+  "queued-run.edit",
+  "queued-run.reorder",
+  "prepared-run.retry",
 ] as const satisfies ReadonlyArray<OrchestrationV2Command["type"]>;
 type CloudCommand = CommandOf<(typeof CLOUD_COMMAND_TYPES)[number]>;
 
@@ -276,6 +281,14 @@ export function decide(
     case "thread.unpin":
     case "thread.pin.reorder":
       return decideLifecycleCommand(projection, command, ctx) ?? reject(unsupported(command.type));
+    case "queued-run.edit":
+    case "queued-run.reorder":
+    case "prepared-run.retry":
+      return (
+        decideQueuedRunCommand(projection, command, ctx) ??
+        decidePreparationCommand(projection, command, ctx) ??
+        reject(unsupported(command.type))
+      );
     case "message.dispatch":
       return dispatchMessage(projection, command, ctx);
     case "run.interrupt": {

@@ -1,15 +1,26 @@
 import { type RunnerItem } from "@signalbox/runner-protocol/RunnerProtocol";
-import { CommandId, MessageId, ProjectId, ProviderInstanceId } from "@t3tools/contracts";
+import {
+  CommandId,
+  MessageId,
+  ProjectId,
+  ProviderInstanceId,
+  RunAttemptId,
+  ORCHESTRATION_V2_WORKSPACE_PREPARATION_FAILURE_CODE,
+} from "@t3tools/contracts";
 import { PERSONAL_CONTEXT_ID, SignalboxContextId } from "@t3tools/contracts/signalboxContexts";
 import { OnePasswordEnvironmentId } from "@t3tools/contracts/signalboxFolders";
 import { describe, expect, it } from "@effect/vitest";
 import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
 import * as TestClock from "effect/testing/TestClock";
 
 import { UserObjectError } from "../../user/UserDirectory.ts";
 import { HARNESS_MODES_UNSUPPORTED } from "../threadDecider.ts";
+import { failedPreparationEvents } from "../preparationCommands.ts";
 import { CONNECT_TIMEOUT_MS, IDLE_TAIL_MS } from "./MachineBackend.ts";
+import * as MachineBackend from "./MachineBackend.ts";
+import * as PreparationRetryStop from "./preparationRetryStop.ts";
 import { DRAIN_TIMEOUT_MS } from "./ThreadRunner.ts";
 import { CONTINUE_PROMPT, MAX_CONTINUATIONS } from "./runRecovery.ts";
 import {
@@ -414,6 +425,169 @@ describe("ThreadRunner", () => {
         expect(yield* runner.hello(hello(1, plan.ensure?.token ?? ""))).toMatchObject({
           reason: "stale_generation",
         });
+      }),
+    ),
+  );
+
+  it.effect("releases the prior generation and waits for its stop before preparing a retry", () => {
+    const stopOrder: Array<string> = [];
+    let stopAttempts = 0;
+    const status = (
+      desired: MachineBackend.MachineStatus["desired"],
+      actual: MachineBackend.MachineStatus["actual"],
+    ): MachineBackend.MachineStatus => ({
+      desired,
+      actual,
+      machineId: actual === "none" || actual === "stopped" ? null : "machine-1",
+    });
+    const backend: MachineBackend.MachineBackendShape = {
+      kind: "local",
+      shape: "test",
+      image: "test",
+      connectTimeoutMs: CONNECT_TIMEOUT_MS,
+      idleTailMs: IDLE_TAIL_MS,
+      ensure: () => Effect.succeed(status("running", "running")),
+      stop: () =>
+        Effect.sync(() => {
+          const actual = stopAttempts++ === 0 ? "running" : "stopped";
+          stopOrder.push(`stop:${actual}`);
+          return status("stopped", actual);
+        }),
+      destroy: () => Effect.succeed(status("destroyed", "stopped")),
+      inspect: () => Effect.succeed(status("stopped", "stopped")),
+      refresh: () => Effect.void,
+      refreshEveryMs: null,
+      pending: Effect.succeed(false),
+    };
+    const backends = { light: backend, heavy: backend };
+    const machines = Layer.succeed(MachineBackend.MachineBackend, backends);
+
+    return withObject(
+      freshDatabase(),
+      (engine, runner) =>
+        Effect.gen(function* () {
+          yield* launch(engine);
+          const oldMachine = yield* connect(runner);
+          yield* send(engine, 2, "Queued behind setup");
+          const runId = (yield* snapshot(engine)).projection.runs[0]!.id;
+          yield* engine.apply((projection, ctx) =>
+            Effect.succeed({
+              events:
+                projection === null
+                  ? []
+                  : (failedPreparationEvents(projection, runId, "Runner setup failed.", ctx) ?? []),
+              result: undefined,
+            }),
+          );
+
+          yield* engine.dispatch(
+            owner,
+            {
+              type: "prepared-run.retry",
+              commandId: CommandId.make("command:retry-preparation"),
+              threadId,
+              runId,
+            },
+            personal,
+          );
+          expect(yield* snapshot(engine)).toMatchObject({
+            projection: {
+              runs: [
+                {
+                  status: "preparing",
+                  activeAttemptId: RunAttemptId.make(`attempt:${runId}:2`),
+                },
+                { status: "queued", queueHeld: false },
+              ],
+              messages: [{ text: "Hi" }, { text: "Queued behind setup" }],
+            },
+          });
+
+          const released = yield* runner.reconcile;
+          expect(released).toMatchObject({
+            release: oldMachine.generation,
+            ensure: null,
+            retryPreparationReleaseGeneration: oldMachine.generation,
+          });
+          expect(yield* runner.leaseToken(oldMachine.generation)).toBeNull();
+
+          const waitingForStop = yield* runner.reconcile;
+          expect(waitingForStop).toMatchObject({
+            ensure: null,
+            stop: true,
+            retryPreparationReleaseGeneration: oldMachine.generation,
+          });
+
+          const incompleteStop = yield* PreparationRetryStop.stopForPreparationRetry({
+            backends,
+            threadId,
+            generation: oldMachine.generation,
+            settle: (generation) =>
+              Effect.tap(runner.preparationReleaseSettled(generation), () =>
+                Effect.sync(() => stopOrder.push(`settle:${generation}`)),
+              ),
+          });
+          expect(incompleteStop).toEqual({ stopped: false, settled: false });
+          expect(stopOrder).toEqual(["stop:running"]);
+          expect(yield* runner.reconcile).toMatchObject({ ensure: null, stop: true });
+
+          const stopped = yield* PreparationRetryStop.stopForPreparationRetry({
+            backends,
+            threadId,
+            generation: oldMachine.generation,
+            settle: (generation) =>
+              Effect.tap(runner.preparationReleaseSettled(generation), () =>
+                Effect.sync(() => stopOrder.push(`settle:${generation}`)),
+              ),
+          });
+          expect(stopped).toEqual({ stopped: true, settled: true });
+          expect(stopOrder).toEqual([
+            "stop:running",
+            "stop:stopped",
+            `settle:${oldMachine.generation}`,
+          ]);
+
+          const replacement = yield* runner.reconcile;
+          expect(replacement.ensure?.generation).toBe(oldMachine.generation + 1);
+          expect(yield* runner.hello(hello(oldMachine.generation, oldMachine.token))).toMatchObject(
+            {
+              reason: "stale_generation",
+            },
+          );
+        }),
+      { machines },
+    );
+  });
+
+  it.effect("ignores a late preparation failure after the Runner has started its turn", () =>
+    withObject(freshDatabase(), (engine, runner) =>
+      Effect.gen(function* () {
+        yield* launch(engine);
+        const machine = yield* connect(runner);
+        const turn = yield* liveTurn(runner);
+        const report = turnReport(turn.runId, turn.runOrdinal, turn.providerThread);
+        yield* runner.batch({
+          generation: machine.generation,
+          sequence: 1,
+          items: [report.started],
+        });
+
+        const staleFailure = yield* runner.preparationFailed(
+          machine.generation,
+          "A delayed setup failure from the previous machine request.",
+        );
+        expect(staleFailure).toMatchObject({ release: null, ensure: null, stop: false });
+        expect(yield* runner.leaseToken(machine.generation)).toBe(machine.token);
+
+        const { projection } = yield* snapshot(engine);
+        expect(projection.runs[0]?.status).toBe("running");
+        expect(
+          projection.turnItems.some(
+            (item) =>
+              item.type === "error" &&
+              item.failure.code === ORCHESTRATION_V2_WORKSPACE_PREPARATION_FAILURE_CODE,
+          ),
+        ).toBe(false);
       }),
     ),
   );

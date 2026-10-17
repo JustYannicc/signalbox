@@ -497,8 +497,21 @@ const make = Effect.gen(function* () {
               }),
             );
         }
+        // A retry reuses the run but must not reuse its machine generation. The
+        // marker is committed with the accepted retry so reconciliation first
+        // fences and stops the old Runner, then asks for the next generation.
+        const retryMachine =
+          command.type === "prepared-run.retry" && decision.events.length > 0
+            ? yield* Effect.map(Effect.orDie(store.machine), (machine) => ({
+                ...machine,
+                retryPreparationReleaseGeneration:
+                  machine.retryPreparationReleaseGeneration ??
+                  (machine.status === "none" ? undefined : machine.generation),
+              }))
+            : undefined;
         const sequence = yield* commit({
           events: decision.events,
+          ...(retryMachine === undefined ? {} : { machine: retryMachine }),
           command: {
             ...command,
             ...(started === undefined

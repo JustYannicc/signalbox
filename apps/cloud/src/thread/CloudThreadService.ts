@@ -380,7 +380,10 @@ const make = Effect.gen(function* () {
           )
         : null;
       const creation = placed(place, threadId, turn);
-      if (command.type !== "message.dispatch") {
+      if (
+        command.type !== "message.dispatch" &&
+        !(command.type === "queued-run.edit" && command.attachments !== undefined)
+      ) {
         return yield* directory.forThread(threadId).dispatch(actor, command, creation);
       }
       return yield* withClaimed(
@@ -389,7 +392,7 @@ const make = Effect.gen(function* () {
           actor,
           threadId,
           command: { id: command.commandId, type: command.type },
-          attachments: command.attachments,
+          attachments: command.attachments ?? [],
         },
         (claimed) =>
           directory

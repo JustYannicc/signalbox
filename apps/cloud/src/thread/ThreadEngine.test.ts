@@ -287,6 +287,85 @@ describe("ThreadEngine", () => {
     ),
   );
 
+  it.effect("edits and reorders queued messages atomically, then rejects a stale edit", () =>
+    withObject(freshDatabase(), (engine) =>
+      Effect.gen(function* () {
+        yield* launch(engine);
+        yield* engine.step;
+        yield* engine.dispatch(owner, send("queue-2", "Second"), personal);
+        yield* engine.dispatch(owner, send("queue-3", "Third"), personal);
+
+        const before = yield* engine.snapshot(owner);
+        const [firstQueued, secondQueued] = before.projection.runs.filter(
+          (run) => run.status === "queued",
+        );
+        if (firstQueued === undefined || secondQueued === undefined) {
+          throw new Error("expected two queued runs");
+        }
+
+        const reorder: OrchestrationV2Command = {
+          type: "queued-run.reorder",
+          commandId: CommandId.make("queue-reorder"),
+          threadId,
+          runId: secondQueued.id,
+          beforeRunId: firstQueued.id,
+        };
+        const reordered = yield* engine.dispatch(owner, reorder, personal);
+        expect(yield* engine.dispatch(owner, reorder, personal)).toEqual(reordered);
+
+        const edit: OrchestrationV2Command = {
+          type: "queued-run.edit",
+          commandId: CommandId.make("queue-edit"),
+          threadId,
+          runId: firstQueued.id,
+          text: "Edited second message",
+        };
+        const edited = yield* engine.dispatch(owner, edit, personal);
+        expect(yield* engine.dispatch(owner, edit, personal)).toEqual(edited);
+
+        const pending = (yield* engine.snapshot(owner)).projection;
+        const pendingRunOrder = pending.runs
+          .filter((run) => run.status === "queued")
+          .toSorted((left, right) => left.queuePosition! - right.queuePosition!);
+        expect(pendingRunOrder.map((run) => run.id)).toEqual([secondQueued.id, firstQueued.id]);
+        expect(
+          pending.messages.find((message) => message.id === firstQueued.userMessageId)?.text,
+        ).toBe("Edited second message");
+        expect(
+          pending.visibleTurnItems.find((row) => row.item.id === `turn-item:${firstQueued.id}:user`)
+            ?.item,
+        ).toMatchObject({ type: "user_message", text: "Edited second message" });
+        const replay = yield* replayFrom(engine, before.snapshotSequence);
+        const replayed = applyEvents(
+          before.projection,
+          replay.flatMap((item) => (item.kind === "event" ? [item.event] : [])),
+        );
+        expect(replayed).toEqual(pending);
+
+        yield* runToIdle(engine);
+        const staleEdit = {
+          ...edit,
+          commandId: CommandId.make("queue-edit-after-promotion"),
+        };
+        const rejected = yield* Effect.flip(engine.dispatch(owner, staleEdit, personal));
+        expect(rejected._tag).toBe("ThreadCommandRejectedError");
+        expect(yield* Effect.flip(engine.dispatch(owner, staleEdit, personal))).toEqual(rejected);
+
+        const settled = (yield* engine.snapshot(owner)).projection;
+        expect(
+          settled.messages
+            .filter((message) => message.role === "user")
+            .map((message) => message.text),
+        ).toEqual(["Hello cloud", "Edited second message", "Third"]);
+        expect(yield* assistantTexts(engine)).toEqual([
+          scriptedReply("Hello cloud"),
+          scriptedReply("Third"),
+          scriptedReply("Edited second message"),
+        ]);
+      }),
+    ),
+  );
+
   it.effect("stops a turn, holds the queue, and resumes it on request", () =>
     withObject(freshDatabase(), (engine) =>
       Effect.gen(function* () {

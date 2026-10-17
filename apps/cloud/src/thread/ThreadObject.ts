@@ -39,6 +39,7 @@ import * as TurnDiagnostics from "./diagnostics/TurnDiagnostics.ts";
 import * as TurnReports from "./diagnostics/TurnReports.ts";
 import { layerFromEnv as layerMachineBackend } from "./runner/machineBackends.ts";
 import * as MachineBackend from "./runner/MachineBackend.ts";
+import * as PreparationRetryStop from "./runner/preparationRetryStop.ts";
 import {
   acceptRunnerSocket,
   endRunners,
@@ -623,6 +624,7 @@ export class ThreadObject extends DurableObject<ThreadObjectEnv> implements Thre
     const ensure = plan.ensure;
     const threadId = this.threadId();
     if (ensure !== null || plan.stop) {
+      let preparationFailurePlan: ThreadRunner.MachinePlan | null = null;
       // The backend call under way, for what a failure is logged as.
       let operation: MachineReport["operation"] = "ensure";
       // `ok`: the backend did what it could; `false` backs off. A machine that is
@@ -664,7 +666,23 @@ export class ThreadObject extends DurableObject<ThreadObjectEnv> implements Thre
               }
             }
             operation = "stop";
-            return yield* stopAll(null);
+            if (plan.retryPreparationReleaseGeneration === null) {
+              return yield* stopAll(null);
+            }
+            const retryStop = yield* PreparationRetryStop.stopForPreparationRetry({
+              backends,
+              threadId,
+              generation: plan.retryPreparationReleaseGeneration,
+              report: (status) => report({ operation: "stop", status }),
+              settle: (generation) =>
+                ThreadRunner.ThreadRunner.use((runner) =>
+                  runner.preparationReleaseSettled(generation),
+                ),
+            });
+            if (retryStop.settled) {
+              wakeAt = now;
+            }
+            return retryStop.stopped;
           }
           // A thread that changed class lets its machine on the other backend go first.
           operation = "stop";
@@ -676,9 +694,18 @@ export class ThreadObject extends DurableObject<ThreadObjectEnv> implements Thre
             machineClass: plan.machineClass,
           });
           yield* report({ operation: "ensure", status });
+          if (status.actual === "failed") {
+            preparationFailurePlan = yield* ThreadRunner.ThreadRunner.use((runner) =>
+              runner.preparationFailed(
+                ensure.generation,
+                status.detail ?? "The machine failed during workspace preparation.",
+              ),
+            );
+            return true;
+          }
           if (status.actual !== "running") {
             yield* Effect.logInfo("machine not up yet", status);
-            return status.actual !== "failed";
+            return true;
           }
           yield* ThreadRunner.ThreadRunner.use((runner) => runner.ensured(ensure.generation));
           return true;
@@ -699,9 +726,44 @@ export class ThreadObject extends DurableObject<ThreadObjectEnv> implements Thre
           }),
         ),
       );
-      this.machineFailures = ok ? 0 : this.machineFailures + 1;
-      if (!ok) {
-        wakeAt = now + retryDelay(this.machineFailures);
+      // The Runner may have reported that the turn started while `ensure`
+      // returned a stale failure. Only stop the machine when the generation
+      // fenced preparation failure actually released its lease.
+      if (preparationFailurePlan?.release != null) {
+        endRunners(this.ctx, preparationFailurePlan.release, "Workspace preparation failed.");
+        await this.gateway.release(preparationFailurePlan.release);
+        const retryStop = await this.runtime.runPromise(
+          Effect.gen(function* () {
+            const backends = yield* MachineBackend.MachineBackend;
+            const generation = preparationFailurePlan!.retryPreparationReleaseGeneration;
+            if (generation === null) return { stopped: false, settled: false };
+            return yield* PreparationRetryStop.stopForPreparationRetry({
+              backends,
+              threadId,
+              generation,
+              settle: (releasedGeneration) =>
+                ThreadRunner.ThreadRunner.use((runner) =>
+                  runner.preparationReleaseSettled(releasedGeneration),
+                ),
+            });
+          }).pipe(
+            Effect.catchTags({
+              MachineBackendError: (error) =>
+                Effect.logError(
+                  "machine stop after preparation failure failed",
+                  error.message,
+                ).pipe(Effect.as({ stopped: false, settled: false })),
+            }),
+          ),
+        );
+        this.machineFailures = retryStop.stopped ? 0 : this.machineFailures + 1;
+        wakeAt =
+          retryStop.stopped && retryStop.settled
+            ? preparationFailurePlan.wakeAt
+            : now + retryDelay(Math.max(1, this.machineFailures));
+      } else {
+        this.machineFailures = ok ? 0 : this.machineFailures + 1;
+        if (!ok) wakeAt = now + retryDelay(this.machineFailures);
       }
     }
     if (plan.busy) {
