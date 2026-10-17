@@ -113,6 +113,8 @@ export function commandOutputFrame(
   const running = isLiveRun(target.run) && activeItem;
   const output =
     target.item.output !== undefined &&
+    // An explicitly clipped provider result cannot supersede the drained live tail.
+    !(target.item.outputTruncated === true && retained?.hasChunks === true) &&
     (!activeItem || retained === null || retained.hasChunks === false)
       ? persistedOutput(target.item.output)
       : retained;
@@ -121,7 +123,7 @@ export function commandOutputFrame(
     sequence,
     // Missing legacy/evicted tails cannot claim to be complete, even on failure.
     text: output?.text ?? "",
-    truncated: output?.truncated ?? true,
+    truncated: target.item.outputTruncated === true || (output?.truncated ?? true),
     running,
   };
 }

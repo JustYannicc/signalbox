@@ -4245,6 +4245,10 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           const webSearchResults = webSearchResultsFromClaudeOutput(input.output);
           const webFetchUrl = firstStringInputField(input.toolInput, ["url"])?.trim();
           const outputValue = claudeNativeToolOutputValue(input.output);
+          const persistedOutputPath =
+            typeof outputValue === "object" && outputValue !== null
+              ? Reflect.get(outputValue, "persistedOutputPath")
+              : undefined;
           const outputText =
             itemType === "command_execution"
               ? claudeCommandOutputText(input.output)
@@ -4256,6 +4260,11 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                   type: "command_execution",
                   input: commandInputFromClaudeTool(input.toolName, input.toolInput),
                   ...(outputText.length === 0 ? {} : { output: outputText }),
+                  // signalbox: Claude's inline prefix cannot replace the drained full-output tail.
+                  ...(typeof persistedOutputPath === "string" &&
+                  persistedOutputPath.trim().length > 0
+                    ? { outputTruncated: true }
+                    : {}),
                 }
               : itemType === "file_change"
                 ? {

@@ -189,6 +189,78 @@ describe("retained cloud command output", () => {
     ),
   );
 
+  it.effect("keeps the drained tail when the provider explicitly clipped its final prefix", () =>
+    Effect.gen(function* () {
+      const filename = freshDatabase();
+      const output = `SB802_LIVE\n${"x".repeat(75_000)}\nSB802_TAIL\n`;
+      const settled = yield* withObject(filename, (engine, runner) =>
+        Effect.gen(function* () {
+          const { batch, turn, command } = yield* start(engine, runner);
+          yield* batch(2, [delta(turn.runId, output)]);
+          const tail = yield* firstFrame(engine);
+          const clipped = {
+            ...command,
+            status: "completed" as const,
+            output: output.slice(0, 30_000),
+            outputTruncated: true,
+          };
+          yield* batch(3, [reportCommand(turn.runId, clipped)]);
+          const final = yield* firstFrame(engine);
+          expect(final).toMatchObject({ text: tail.text, truncated: true, running: false });
+          expect(shown(final.text)).toContain("SB802_TAIL");
+          expect(final.text.length).toBeLessThanOrEqual(64 * 1024);
+          return final;
+        }),
+      );
+      yield* withObject(filename, (engine) =>
+        Effect.gen(function* () {
+          expect(yield* firstFrame(engine)).toEqual(settled);
+        }),
+      );
+    }),
+  );
+
+  it.effect("reports explicit provider clipping even when no live tail was captured", () =>
+    withObject(freshDatabase(), (engine, runner) =>
+      Effect.gen(function* () {
+        const { batch, turn, command } = yield* start(engine, runner);
+        const clipped = {
+          ...command,
+          status: "completed" as const,
+          output: "prefix",
+          outputTruncated: true,
+        };
+        yield* batch(2, [reportCommand(turn.runId, clipped)]);
+        expect(yield* firstFrame(engine)).toMatchObject({
+          text: "prefix",
+          truncated: true,
+          running: false,
+        });
+      }),
+    ),
+  );
+
+  it.effect("lets a complete final of any length replace a longer stale live tail", () =>
+    withObject(freshDatabase(), (engine, runner) =>
+      Effect.gen(function* () {
+        const { batch, turn, command } = yield* start(engine, runner);
+        yield* batch(2, [delta(turn.runId, "stale".repeat(15_000))]);
+        const output = `${"x".repeat(29_992)}\nwarning`;
+        yield* batch(3, [
+          reportCommand(turn.runId, {
+            ...command,
+            status: "completed",
+            output,
+            outputTruncated: false,
+          }),
+        ]);
+        const final = yield* firstFrame(engine);
+        expect(final.text === output).toBe(true);
+        expect(final).toMatchObject({ truncated: false, running: false });
+      }),
+    ),
+  );
+
   it.effect("subscribes under the lock and coalesces slow readers to the settled tail", () =>
     withObject(freshDatabase(), (engine, runner) =>
       Effect.gen(function* () {
