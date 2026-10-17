@@ -19,6 +19,7 @@ import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
+import * as Tracer from "effect/Tracer";
 import * as RpcTest from "effect/rpc/RpcTest";
 import * as SqlClient from "effect/sql/SqlClient";
 
@@ -105,6 +106,44 @@ const sidebar = (rpc: Rpc) =>
   );
 
 describe("cloud RPC", () => {
+  it.effect("emits resume transitions and its marker under the requesting trace", () =>
+    Effect.gen(function* () {
+      const spans: Array<Tracer.NativeSpan> = [];
+      const tracer = Tracer.make({
+        span(options) {
+          const span = new Tracer.NativeSpan(options);
+          spans.push(span);
+          return span;
+        },
+      });
+      yield* Effect.gen(function* () {
+        const rpc = yield* client();
+        yield* launch(rpc);
+        const first = yield* openThread(rpc);
+        const snapshot = first.find((item) => item.kind === "snapshot");
+        if (snapshot?.kind !== "snapshot") throw new Error("Expected the initial snapshot");
+        const resumed = yield* rpc[ORCHESTRATION_V2_WS_METHODS.subscribeThread]({
+          threadId,
+          afterSequence: snapshot.snapshotSequence,
+          requestCompletionMarker: true,
+        }).pipe(
+          Stream.takeUntil((item) => item.kind === "synchronized"),
+          Stream.runCollect,
+        );
+        expect(resumed.at(-1)?.kind).toBe("synchronized");
+      }).pipe(Effect.withSpan("test.resume"), Effect.provideService(Tracer.Tracer, tracer));
+      const transitions = spans.filter((span) => span.name.startsWith("orchestration.sync."));
+      expect(transitions.map((span) => span.attributes.get("sync.transition"))).toContain(
+        "resuming",
+      );
+      expect(transitions.map((span) => span.attributes.get("sync.transition"))).toContain(
+        "marker_emitted",
+      );
+      expect(new Set(transitions.map((span) => span.traceId)).size).toBe(1);
+      expect(transitions.every((span) => span.status._tag === "Ended")).toBe(true);
+    }).pipe(Effect.scoped),
+  );
+
   it.effect("restores a legacy shell's confirmation marker from its stored revision", () =>
     Effect.gen(function* () {
       const { cloud, rpc } = yield* connect();
@@ -155,10 +194,10 @@ describe("cloud RPC", () => {
       });
       // RpcTest bypasses serialization; exercise the socket's success codec too.
       const codec = Schema.toCodecJson(OrchestrationV2DispatchCommandResult);
-      const encoded = Schema.encodeSync(codec)(receipt);
+      const encoded = yield* Schema.encodeEffect(codec)(receipt);
       expect(encoded).toEqual(receipt);
-      expect(Schema.decodeUnknownSync(codec)(encoded)).toEqual(receipt);
-      expect(Schema.decodeUnknownSync(codec)({ sequence: receipt.sequence })).toEqual({
+      expect(yield* Schema.decodeEffect(codec)(encoded)).toEqual(receipt);
+      expect(yield* Schema.decodeEffect(codec)({ sequence: receipt.sequence })).toEqual({
         sequence: receipt.sequence,
       });
     }).pipe(Effect.scoped),
