@@ -82,7 +82,8 @@ export const layer = Layer.effect(
 export const layerWorker = Layer.succeed(
   ThreadContexts,
   ThreadContexts.of({
-    placeOfProject: () => Effect.die("Threads are created in their user's object."),
+    // Worker reads cannot resolve an acting user's writable home. Adoption happens in their object.
+    placeOfProject: () => Effect.succeed(null),
     turn: () => Effect.die("Turns start in their user's object."),
   }),
 );

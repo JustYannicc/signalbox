@@ -104,6 +104,26 @@ export class DriveObject extends DurableObject<DriveObjectEnv> implements DriveO
   }
 
   // Durable Object RPC dispatches to prototype methods, so each one is spelled out.
+  beginPublication(...args: Parameters<DriveObjectApi["beginPublication"]>) {
+    return this.api.beginPublication(...args);
+  }
+
+  markPublicationCreating(...args: Parameters<DriveObjectApi["markPublicationCreating"]>) {
+    return this.api.markPublicationCreating(...args);
+  }
+
+  recordPublicationCreated(...args: Parameters<DriveObjectApi["recordPublicationCreated"]>) {
+    return this.api.recordPublicationCreated(...args);
+  }
+
+  bindPublication(...args: Parameters<DriveObjectApi["bindPublication"]>) {
+    return this.api.bindPublication(...args);
+  }
+
+  finishPublication(...args: Parameters<DriveObjectApi["finishPublication"]>) {
+    return this.api.finishPublication(...args);
+  }
+
   open(...args: Parameters<DriveObjectApi["open"]>) {
     return this.api.open(...args);
   }

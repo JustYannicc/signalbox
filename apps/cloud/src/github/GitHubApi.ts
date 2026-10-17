@@ -80,6 +80,12 @@ const Repository = Schema.Struct({
   ssh_url: Schema.String,
 });
 export type GitHubRepository = typeof Repository.Type;
+const PublicationRepository = Schema.Struct({
+  ...Repository.fields,
+  private: Schema.Boolean,
+  description: Schema.NullOr(Schema.String),
+});
+export type GitHubPublicationRepository = typeof PublicationRepository.Type;
 
 const PullBody = Schema.Struct({
   number: Schema.Number,
@@ -396,6 +402,49 @@ export const makeGitHubApi = (
     viewer: (token: string) => json("viewer", Viewer, HttpClientRequest.get(`${api}/user`), token),
     repository: (token: string, repository: string) =>
       json("repository", Repository, HttpClientRequest.get(`${api}/repos/${repository}`), token),
+    publicationRepository: (token: string, repository: string) =>
+      json(
+        "publicationRepository",
+        PublicationRepository,
+        HttpClientRequest.get(`${api}/repos/${repository}`),
+        token,
+      ),
+    clearPublicationDescription: (token: string, repository: string) =>
+      json(
+        "clearPublicationDescription",
+        PublicationRepository,
+        HttpClientRequest.patch(`${api}/repos/${repository}`).pipe(
+          HttpClientRequest.bodyJsonUnsafe({ description: null }),
+        ),
+        token,
+      ),
+    createRepository: (
+      token: string,
+      input: {
+        readonly owner: string;
+        readonly name: string;
+        readonly personal: boolean;
+        readonly private: boolean;
+        readonly description: string;
+      },
+    ) =>
+      json(
+        "createRepository",
+        PublicationRepository,
+        HttpClientRequest.post(
+          input.personal
+            ? `${api}/user/repos`
+            : `${api}/orgs/${encodeURIComponent(input.owner)}/repos`,
+        ).pipe(
+          HttpClientRequest.bodyJsonUnsafe({
+            name: input.name,
+            private: input.private,
+            description: input.description,
+            auto_init: false,
+          }),
+        ),
+        token,
+      ),
     /** The repositories the user can push to, most recently pushed first: one page, enough to pick from. */
     repositories: (token: string) =>
       json(

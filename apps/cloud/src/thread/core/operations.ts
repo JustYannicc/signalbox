@@ -24,6 +24,7 @@ import { type Actor, ThreadCommandRejectedError, ThreadNotFoundError } from "../
 import type { ThreadCreation } from "../ThreadEngine.ts";
 import * as Threads from "../Threads.ts";
 import { resuming } from "./resuming.ts";
+import { makeWorkspaceRefresh } from "./remoteWorkspace.ts";
 
 type Batch = ReadonlyArray<OrchestrationV2ThreadStreamItem>;
 
@@ -109,6 +110,13 @@ export const makeThreads = Effect.gen(function* () {
   const attachments = yield* CloudAttachments;
   const kindTurns = yield* ThreadKindTurns;
 
+  const refreshedSnapshot = makeWorkspaceRefresh({ directory, threadContexts, crypto });
+
+  const refreshRemoteWorkspace: Threads.Threads["Service"]["refreshRemoteWorkspace"] = (
+    actor,
+    threadId,
+  ) => Effect.asVoid(refreshedSnapshot(actor, threadId));
+
   /** The thread's turn from its home's chain, with its kind's level and the status line's last on it. */
   const turnOf = (
     threadId: ThreadId,
@@ -135,6 +143,12 @@ export const makeThreads = Effect.gen(function* () {
           { id: command.commandId, type: command.type },
           unsupported(command.type),
         );
+      }
+      if (
+        command.type !== "thread.create" &&
+        (PICKS_A_POOL.has(command.type) || command.type === "queue.resume")
+      ) {
+        yield* refreshRemoteWorkspace(actor, threadId);
       }
       // Only a create can make a thread, so only a create names its place. The
       // thread object rejects a new thread without one, after replaying retries.
@@ -171,6 +185,11 @@ export const makeThreads = Effect.gen(function* () {
 
   const launchThread: Threads.Threads["Service"]["launch"] = (actor, input) =>
     Effect.gen(function* () {
+      if (input.reuseExistingThread === true && input.threadId !== undefined) {
+        yield* refreshRemoteWorkspace(actor, input.threadId).pipe(
+          Effect.catchTags({ ThreadNotFoundError: () => Effect.void }),
+        );
+      }
       const place = yield* threadContexts.placeOfProject(input.projectId);
       // Receipts live in the thread's object, so a launch without an id needs
       // the same id on every retry: derive it from who launched and the command id.
@@ -218,7 +237,9 @@ export const makeThreads = Effect.gen(function* () {
 
   const threadSnapshot: Threads.Threads["Service"]["snapshot"] = (actor, threadId) =>
     Effect.map(
-      directory.forThread(threadId).snapshot(actor),
+      refreshedSnapshot(actor, threadId).pipe(
+        Effect.catchTags({ ThreadCommandRejectedError: Effect.die }),
+      ),
       ({ snapshotSequence, projection }) => ({
         snapshotSequence,
         projection,
@@ -242,6 +263,9 @@ export const makeThreads = Effect.gen(function* () {
   const subscribeThread: Threads.Threads["Service"]["subscribe"] = (actor, input) =>
     Stream.unwrap(
       Effect.gen(function* () {
+        yield* refreshRemoteWorkspace(actor, input.threadId).pipe(
+          Effect.catchTags({ ThreadCommandRejectedError: Effect.die }),
+        );
         const handle = directory.forThread(input.threadId);
         const cursor = yield* Ref.make(input.afterSequence);
         yield* traceSynchronization("connecting", {
@@ -287,6 +311,7 @@ export const makeThreads = Effect.gen(function* () {
   return Threads.Threads.of({
     launch: launchThread,
     dispatch: dispatchCommand,
+    refreshRemoteWorkspace,
     snapshot: threadSnapshot,
     history: threadHistoryPage,
     subscribe: subscribeThread,

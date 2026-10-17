@@ -8,6 +8,7 @@ import * as Effect from "effect/Effect";
 import * as TestClock from "effect/testing/TestClock";
 
 import { UserObjectError } from "../../user/UserDirectory.ts";
+import { remoteThreadWorktree } from "../../user/contextProjects.ts";
 import { HARNESS_MODES_UNSUPPORTED } from "../threadDecider.ts";
 import { CONNECT_TIMEOUT_MS, IDLE_TAIL_MS } from "./MachineBackend.ts";
 import { DRAIN_TIMEOUT_MS } from "./ThreadRunner.ts";
@@ -38,6 +39,75 @@ const POOL_CLAUDE = {
 };
 
 describe("ThreadRunner", () => {
+  it.effect(
+    "keeps a saved native session and checkpoints across publication and object restart",
+    () =>
+      Effect.gen(function* () {
+        const filename = freshDatabase();
+        const driveId = "folder/personal/publication";
+        const place = { ...personal, place: { ...personal.place, driveId } };
+        const before = yield* withObject(filename, (engine, runner, context) =>
+          Effect.gen(function* () {
+            yield* launch(engine, "launch-1", place, ProjectId.make(`drive:${driveId}`));
+            const machine = yield* connect(runner);
+            const turn = yield* liveTurn(runner);
+            const report = turnReport(turn.runId, turn.runOrdinal, turn.providerThread);
+            yield* runner.batch({
+              generation: machine.generation,
+              sequence: 1,
+              items: [
+                report.started,
+                {
+                  kind: "drive.checkpoint",
+                  runId: turn.runId,
+                  start: null,
+                  commit: "a".repeat(40),
+                  files: [{ path: "work.txt", kind: "added", additions: 1, deletions: 0 }],
+                },
+                report.full,
+                report.terminal,
+              ],
+            });
+            yield* saveSession(context, "claude-session-1");
+            yield* runner.ended(machine.generation, "test");
+            return yield* snapshot(engine);
+          }),
+        );
+        yield* withObject(filename, (engine, runner) =>
+          Effect.gen(function* () {
+            const worktree = remoteThreadWorktree(driveId, threadId);
+            yield* engine.dispatch(
+              owner,
+              {
+                type: "thread.metadata.update",
+                commandId: CommandId.make("adopt-publication"),
+                threadId,
+              },
+              { place: null, pools: null, worktree },
+            );
+            const adopted = yield* snapshot(engine);
+            expect(adopted.projection.providerThreads).toEqual(before.projection.providerThreads);
+            expect(adopted.projection.providerThreads[0]?.nativeThreadRef?.nativeId).toBe(
+              "claude-session-1",
+            );
+            expect(adopted.projection.checkpoints).toEqual(before.projection.checkpoints);
+            expect(adopted.projection.checkpoints).toHaveLength(1);
+            expect(adopted.projection.messages).toEqual(before.projection.messages);
+            yield* send(engine, 2, "Continue after publication");
+            yield* connect(runner);
+            expect(yield* liveTurn(runner)).toMatchObject({
+              providerTurnOrdinal: 2,
+              providerThread: { nativeThreadRef: { nativeId: "claude-session-1" } },
+            });
+            expect((yield* snapshot(engine)).projection.thread).toMatchObject({
+              branch: worktree.branch,
+              worktreePath: worktree.path,
+            });
+          }),
+        );
+      }),
+  );
+
   it.effect("answers for a thread that does not exist without touching storage", () =>
     withObject(freshDatabase(), (_engine, runner) =>
       Effect.gen(function* () {

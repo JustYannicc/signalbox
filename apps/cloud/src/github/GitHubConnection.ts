@@ -38,6 +38,7 @@ const EXPIRY_MARGIN_MS = 60_000;
 
 export type ConnectStart =
   | { readonly _tag: "started"; readonly url: string }
+  | { readonly _tag: "expired" }
   | { readonly _tag: "unavailable" };
 
 export type ConnectResult =
@@ -219,8 +220,12 @@ const make = Effect.gen(function* () {
       if (pipes === null || id === null) return { _tag: "unavailable" } as const;
       const now = yield* Clock.currentTimeMillis;
       yield* sql`DELETE FROM github_connect_grants WHERE expires_at <= ${now}`;
-      yield* sql`INSERT INTO github_connect_grants (grant_id, expires_at)
-        VALUES (${input.grantId}, ${now + GRANT_TTL_MS})`;
+      const inserted = yield* sql<{
+        readonly grant_id: string;
+      }>`INSERT INTO github_connect_grants (grant_id, expires_at)
+        VALUES (${input.grantId}, ${now + GRANT_TTL_MS})
+        ON CONFLICT (grant_id) DO NOTHING RETURNING grant_id`;
+      if (inserted.length === 0) return { _tag: "expired" } as const;
       const url = yield* pipes
         .authorizeUrl({ userId: id, returnTo: input.returnTo })
         .pipe(
@@ -269,8 +274,11 @@ const make = Effect.gen(function* () {
   const abort: GitHubConnection["Service"]["abort"] = (grantId) =>
     Effect.gen(function* () {
       const now = yield* Clock.currentTimeMillis;
-      const spent = yield* sql<{ readonly grant_id: string }>`DELETE FROM github_connect_grants
-        WHERE grant_id = ${grantId} AND expires_at > ${now} RETURNING grant_id`;
+      // Keep a tombstone until expiry so a native start URL cannot restart an aborted attempt.
+      const spent = yield* sql<{
+        readonly grant_id: string;
+      }>`UPDATE github_connect_grants SET used = 2
+        WHERE grant_id = ${grantId} AND used != 2 AND expires_at > ${now} RETURNING grant_id`;
       // Pipes now holds whatever account the other browser authorized, in this user's slot.
       if (spent.length > 0) yield* forgetEverywhere;
     });

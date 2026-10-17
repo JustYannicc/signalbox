@@ -676,6 +676,7 @@ describe("drive checkpoints and revisions", () => {
         [7, "drive_revisions"],
         [8, "drive_restore_snapshots"],
         [9, "ref_deletions"],
+        [10, "drive_repository_publication"],
       ]);
     }).pipe(Effect.provide(layer));
   });

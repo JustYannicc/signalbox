@@ -10,6 +10,10 @@ import {
   type AccountHandoffRequest,
 } from "@t3tools/contracts/account";
 import * as Schema from "effect/Schema";
+import {
+  GITHUB_CONNECT_PATH,
+  GitHubNativeConnectResponse,
+} from "@t3tools/contracts/signalboxGitHubConnect";
 
 /**
  * Client side of Signalbox accounts, shared by web, desktop and mobile.
@@ -21,6 +25,27 @@ import * as Schema from "effect/Schema";
 const decodeSessionState = Schema.decodeUnknownSync(AccountSessionState);
 const decodeHandoffResult = Schema.decodeUnknownSync(AccountHandoffResult);
 const isSignInError = Schema.is(AccountSignInError);
+const decodeGitHubNativeConnect = Schema.decodeUnknownSync(GitHubNativeConnectResponse);
+
+/** Open this URL in the native auth session, then refresh GitHub discovery on return or dismissal. */
+export async function startGitHubNativeConnect(
+  origin: string,
+  token: string,
+  returnUrl: string,
+  init?: { readonly fetch?: typeof fetch },
+): Promise<string> {
+  const response = await (init?.fetch ?? fetch)(
+    `${trimTrailingSlash(origin)}${GITHUB_CONNECT_PATH}`,
+    {
+      method: "POST",
+      credentials: "omit",
+      headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+      body: JSON.stringify({ returnUrl }),
+    },
+  );
+  if (!response.ok) throw new Error(`GitHub connection request failed (${response.status}).`);
+  return decodeGitHubNativeConnect(await response.json()).url;
+}
 
 function trimTrailingSlash(value: string): string {
   return value.endsWith("/") ? value.slice(0, -1) : value;

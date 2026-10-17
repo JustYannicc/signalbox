@@ -262,7 +262,7 @@ export const makeRunnerDrive = Effect.fn("makeRunnerDrive")(function* (input: {
   let conflicted: ReadonlyArray<string> = [];
   /** The main a turn start reported conflicting, and its merge message, until taken in or dropped. */
   let syncing: { readonly main: string; readonly message: string } | null = null;
-  /** The remote the drive is backed by, once read; a drive's remote never changes. */
+  /** Refreshed at turn boundaries: a local drive may have been published meanwhile. */
   let remote: DriveRemote | null | undefined = undefined;
   /** Whether a turn start opened the drive here: only then is there anything to save. */
   let prepared = false;
@@ -519,6 +519,7 @@ export const makeRunnerDrive = Effect.fn("makeRunnerDrive")(function* (input: {
   });
 
   const resolveAndLand = Effect.gen(function* () {
+    remote = yield* drive.refresh;
     if (yield* mergeInProgress) {
       const files = yield* concludeMerge;
       if (files.length > 0) return { _tag: "conflict", files } as DriveOutcome;
@@ -691,12 +692,11 @@ export const makeRunnerDrive = Effect.fn("makeRunnerDrive")(function* (input: {
         /** The remote's default branch, when this turn start fetched it: only then is it current. */
         let fetchedMain: string | null = null;
         // A drive backed by a remote brings `main` up to it before opening pins the branch's base.
-        // Unknown until read once; a drive with none never gets one.
-        if (remote !== null && remoteToken !== null) {
+        {
           const current = yield* input.client.state;
           remote = current.remote;
           let fetched: Effect.Success<ReturnType<typeof fetchHistory>> | null = null;
-          if (remote !== null) {
+          if (remote !== null && remoteToken !== null) {
             // The drive keeps the remote's files on the remote; git fetches them as it needs them.
             const credentials = remoteCredentialFile(input.cwd);
             yield* fs.writeFileString(
@@ -835,6 +835,8 @@ export const makeRunnerDrive = Effect.fn("makeRunnerDrive")(function* (input: {
     exclusive(
       withMachineState(
         Effect.gen(function* () {
+          // Publication can happen while this turn is working. Never land its work on remote main.
+          remote = yield* drive.refresh;
           // Committing now would commit onto the rebase's detached HEAD; the branch stays as last saved.
           if (yield* rebasing) {
             return {
@@ -945,7 +947,7 @@ export const makeRunnerDrive = Effect.fn("makeRunnerDrive")(function* (input: {
   const saveBranch: RunnerDrive["saveBranch"] = (message) =>
     exclusive(
       Effect.gen(function* () {
-        if (remote === undefined) remote = yield* drive.refresh;
+        remote = yield* drive.refresh;
         if (remote === null) {
           return {
             _tag: "not_saved",

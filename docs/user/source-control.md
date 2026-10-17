@@ -152,6 +152,12 @@ For a local Git repository without a remote, **Publish Repository** creates a ho
 adds it as `origin`, and pushes your commits. If there are no commits yet, it creates the remote;
 make your first commit before pushing.
 
+For a cloud folder with its own files, open a thread's details and choose **Publish to GitHub**.
+Connect your GitHub account, choose a repository name and visibility, and publish under your
+account or an organization where you can create repositories. Signalbox connects the folder
+and pushes its committed history; work on thread branches stays separate. A folder with no
+commits creates an empty repository, ready for its first push.
+
 ## Create a pull request
 
 Use a thread's Git actions to commit, push, and create a pull request. Signalbox can generate commit

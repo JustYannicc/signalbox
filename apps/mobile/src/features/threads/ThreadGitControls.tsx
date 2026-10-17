@@ -22,6 +22,7 @@ import { useCallback, useMemo } from "react";
 import { useEnvironmentScope } from "../../state/session";
 import { useEnvironmentSupports } from "../../state/environmentCapabilities"; // signalbox
 import { ownBranchQuickAction } from "@t3tools/client-runtime/state/signalboxOwnBranch"; // signalbox
+import { usePublishableFolder } from "../folders/usePublishableFolder"; // signalbox: #810
 import {
   basename,
   getTerminalStatusLabel,
@@ -137,8 +138,22 @@ function useThreadGitControlModel(props: ThreadGitMenuProps) {
   );
   const hasPrimaryRemote = gitStatus?.hasPrimaryRemote ?? false;
   const isDefaultRef = gitStatus?.isDefaultRef ?? false;
+  // signalbox: a cloud folder with files and no remote can be published instead (#810).
+  const publishableFolder = usePublishableFolder(
+    environmentId ? EnvironmentId.make(String(environmentId)) : null,
+    threadId ? ThreadId.make(String(threadId)) : null,
+  );
+  const publishesFolder = publishableFolder !== null && !isRepo;
 
   const quickAction = useMemo(() => {
+    if (publishesFolder) {
+      return {
+        label: "Publish to GitHub",
+        disabled: !canWriteSourceControl,
+        kind: "open_publish" as const,
+        hint: canWriteSourceControl ? undefined : "This connection cannot change source control.",
+      };
+    }
     if (!isRepo) {
       return {
         label: "Git unavailable",
@@ -156,13 +171,23 @@ function useThreadGitControlModel(props: ThreadGitMenuProps) {
           hint: "This connection cannot change source control.",
         }
       : action;
-  }, [busy, canWriteSourceControl, gitStatus, hasPrimaryRemote, isDefaultRef, isRepo, ownBranch]);
+  }, [
+    busy,
+    canWriteSourceControl,
+    gitStatus,
+    hasPrimaryRemote,
+    isDefaultRef,
+    isRepo,
+    ownBranch,
+    publishesFolder,
+  ]);
 
   const quickActionHint = quickAction.disabled
     ? (quickAction.hint ?? "This action is unavailable.")
     : null;
 
   const quickActionIcon: QuickActionIcon = (() => {
+    if (quickAction.kind === "open_publish") return "arrow.up.circle";
     if (quickAction.kind === "run_pull") return "arrow.down.circle";
     if (quickAction.kind === "open_pr") return "arrow.up.right.circle";
     if (quickAction.kind === "run_action") {
@@ -228,6 +253,14 @@ function useThreadGitControlModel(props: ThreadGitMenuProps) {
 
   const runQuickAction = useCallback(async () => {
     if (quickAction.disabled) return;
+    if (publishesFolder && publishableFolder !== null) {
+      navigation.navigate("PublishFolder", {
+        environmentId: String(environmentId),
+        projectId: String(publishableFolder.drive.projectId),
+        threadId: String(threadId),
+      });
+      return;
+    }
     if (quickAction.kind === "open_pr") {
       await openExistingPr();
       return;
@@ -239,7 +272,17 @@ function useThreadGitControlModel(props: ThreadGitMenuProps) {
     if (quickAction.kind === "run_action" && quickAction.action) {
       await runActionWithPrompt({ action: quickAction.action });
     }
-  }, [onPull, openExistingPr, quickAction, runActionWithPrompt]);
+  }, [
+    environmentId,
+    navigation,
+    onPull,
+    openExistingPr,
+    publishableFolder,
+    publishesFolder,
+    quickAction,
+    runActionWithPrompt,
+    threadId,
+  ]);
 
   const openFiles = useCallback(() => {
     if (props.onOpenFilesInspector) {

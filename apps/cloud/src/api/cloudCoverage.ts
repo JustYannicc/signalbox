@@ -107,7 +107,6 @@ export const CLOUD_UNSERVED: Readonly<Record<string, Unserved>> = {
   "vcs.listRefs": gap("#809"),
   "review.getDiffFileContents": gap("#809"),
   "sourceControl.cloneRepository": githubImports,
-  "sourceControl.publishRepository": gap("#810"),
 
   // Files in folders without a machine.
   "projects.writeFile": gap("#439"),

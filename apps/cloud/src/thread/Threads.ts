@@ -35,6 +35,11 @@ export class Threads extends Context.Service<
       actor: Actor,
       command: OrchestrationV2Command,
     ) => Effect.Effect<{ readonly sequence: number }, ThreadError>;
+    /** Adopts a newly published drive's own thread branch, using the current authoritative home. */
+    readonly refreshRemoteWorkspace: (
+      actor: Actor,
+      threadId: ThreadId,
+    ) => Effect.Effect<void, ThreadError>;
     readonly snapshot: (
       actor: Actor,
       threadId: ThreadId,
