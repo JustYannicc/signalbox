@@ -29,6 +29,7 @@ import * as GitHub from "../github/GitHub.ts";
 import type { PackBucket } from "../drive/DrivePacks.ts";
 import * as Platform from "../platform.ts";
 import * as PoolDirectory from "../pool/PoolDirectory.ts";
+import * as PreviewState from "./preview/PreviewState.ts";
 import * as BrowserTrail from "./preview/BrowserTrail.ts";
 import { PreviewGateway } from "./preview/PreviewGateway.ts";
 import { type PreviewEnv, previewSettings } from "./preview/previewHost.ts";
@@ -224,6 +225,7 @@ const makeRuntime = (
         Layer.mergeAll(
           ThreadStore.layer,
           SessionRows.layer,
+          PreviewState.layer,
           BrowserTrail.layer(attachmentStorage(env), threadId),
         ),
       ),
@@ -256,6 +258,15 @@ export class ThreadObject extends DurableObject<ThreadObjectEnv> implements Thre
       ctx,
       settings: previewSettings(env),
       threadId: () => this.threadId(),
+      appOrigin: env.CLOUD_URL ?? "http://localhost:8787",
+      configuration: () =>
+        this.runtime.runPromise(PreviewState.PreviewState.use((state) => state.configuration)),
+      saveServices: (services) =>
+        this.runtime.runPromise(
+          PreviewState.PreviewState.use((state) => state.saveServices(services)),
+        ),
+      drive: () =>
+        this.runtime.runPromise(ThreadRunner.ThreadRunner.use((runner) => runner.previewDrive)),
       leaseToken: (generation, token) =>
         this.runtime.runPromise(
           ThreadRunner.ThreadRunner.use((runner) => runner.leaseToken(generation, token)),
@@ -422,8 +433,8 @@ export class ThreadObject extends DurableObject<ThreadObjectEnv> implements Thre
     return this.gateway.subscribe(actor.userId);
   }
 
-  previewLink(...[actor, port]: Parameters<ThreadObjectApi["previewLink"]>) {
-    return this.gateway.link(actor.userId, port);
+  previewLink(...[actor, port, handoff]: Parameters<ThreadObjectApi["previewLink"]>) {
+    return this.gateway.link(actor.userId, port, handoff);
   }
 
   browserWatch(...[actor, tabId]: Parameters<ThreadObjectApi["browserWatch"]>) {
