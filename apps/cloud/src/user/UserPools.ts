@@ -59,6 +59,7 @@ export type PoolsState = ReadonlyArray<PoolEntry>;
 interface PoolSnapshot {
   readonly state: PoolsState;
   readonly checkedAt: number;
+  readonly readId: number;
 }
 
 /** One pool object gets this long to answer its part of a user snapshot. */
@@ -191,6 +192,7 @@ const make = Effect.gen(function* () {
   );
   const current = yield* SubscriptionRef.make(Option.none<PoolSnapshot>());
   const reading = yield* Semaphore.make(1);
+  let nextRead = 0;
 
   const entryFor = (
     pool: UserPool,
@@ -250,30 +252,46 @@ const make = Effect.gen(function* () {
     });
 
   /** Reads every pool's accounts and shares the result with every subscriber. */
-  const unavailableState = (observed: Option.Option<PoolSnapshot>, message: string) =>
+  const unavailableState = (
+    observed: Option.Option<PoolSnapshot>,
+    minimumRead: number,
+    message: string,
+  ) =>
     Effect.gen(function* () {
       const latest = yield* SubscriptionRef.get(current);
-      if (latest !== observed && Option.isSome(latest)) return latest.value.state;
+      if (latest !== observed && Option.isSome(latest) && latest.value.readId >= minimumRead) {
+        return latest.value.state;
+      }
       // The user object owns pool names; don't reuse account details from an older read here.
+      const readId = ++nextRead;
       const all = yield* rows.pipe(Effect.catchTags({ SqlError: storageFailed }));
       const now = yield* Clock.currentTimeMillis;
       const state = all.map((pool) => entryFor(pool, { error: message }, now));
       return yield* SubscriptionRef.modify(current, (known) =>
-        known !== observed && Option.isSome(known)
+        known !== observed && Option.isSome(known) && known.value.readId >= minimumRead
           ? [known.value.state, known]
-          : [state, Option.some({ state, checkedAt: now })],
+          : [state, Option.some({ state, checkedAt: now, readId })],
       );
     });
 
-  const refresh: UserPools["Service"]["refresh"] = (actor) =>
+  const refresh = (actor: PoolActor, passive = false) =>
     Effect.gen(function* () {
       const observed = yield* SubscriptionRef.get(current);
+      // Explicit refreshes must include mutations that happened after an in-flight read began.
+      const minimumRead = nextRead + (passive ? 0 : 1);
       return yield* reading
         .withPermits(1)(
           Effect.gen(function* () {
             const latest = yield* SubscriptionRef.get(current);
             // Coalesce queued reads even when their snapshots share the same clock millisecond.
-            if (latest !== observed && Option.isSome(latest)) return latest.value.state;
+            if (
+              latest !== observed &&
+              Option.isSome(latest) &&
+              latest.value.readId >= minimumRead
+            ) {
+              return latest.value.state;
+            }
+            const readId = ++nextRead;
             const all = yield* pools(actor);
             const now = yield* Clock.currentTimeMillis;
             const state = yield* Effect.forEach(
@@ -298,7 +316,7 @@ const make = Effect.gen(function* () {
                   ),
               { concurrency: "unbounded" },
             );
-            yield* SubscriptionRef.set(current, Option.some({ state, checkedAt: now }));
+            yield* SubscriptionRef.set(current, Option.some({ state, checkedAt: now, readId }));
             return state;
           }),
         )
@@ -306,7 +324,7 @@ const make = Effect.gen(function* () {
           // The DO's RPC Promise can outlive its caller. Bound that call and the semaphore queue.
           Effect.timeoutOrElse({
             duration: POOL_SNAPSHOT_TIMEOUT_MS,
-            orElse: () => unavailableState(observed, POOL_READ_TIMEOUT_MESSAGE),
+            orElse: () => unavailableState(observed, minimumRead, POOL_READ_TIMEOUT_MESSAGE),
           }),
         );
     });
@@ -323,7 +341,7 @@ const make = Effect.gen(function* () {
       ) {
         return known.value.state;
       }
-      return yield* refresh(actor);
+      return yield* refresh(actor, true);
     });
 
   // Pool alarms update their own objects, so reread at the shared cache TTL to

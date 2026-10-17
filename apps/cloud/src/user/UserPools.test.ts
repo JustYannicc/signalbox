@@ -358,4 +358,44 @@ describe("UserPools config subscriptions", () => {
       for (const release of pending) release();
     }).pipe(Effect.provide(cloud.userObject(userId)), Effect.scoped);
   });
+
+  it.effect("an explicit refresh includes mutations made during an older passive read", () => {
+    const cloud = makeMemoryCloud();
+    return Effect.gen(function* () {
+      const pools = yield* UserPools.UserPools;
+      yield* pools.state(actor);
+      const objectName = `${userId}:personal`;
+      const personal = cloud.pools.objectFor(objectName);
+      const pool = cloud.pools.directory.forPool(objectName);
+      const originalAccounts = personal.api.accounts;
+      const { promise: started, resolve: signalStart } = Promise.withResolvers<void>();
+      let release!: () => void;
+      let calls = 0;
+      cloud.pools.objects.set(objectName, {
+        ...personal,
+        api: {
+          ...personal.api,
+          accounts: async (reader) => {
+            const snapshot = await originalAccounts(reader);
+            if (++calls !== 1) return snapshot;
+            signalStart();
+            return new Promise((resolve) => {
+              release = () => resolve(snapshot);
+            });
+          },
+        },
+      });
+      yield* TestClock.adjust(PoolEngine.ACCOUNTS_FRESH_MS + 1);
+      const oldRead = yield* Effect.forkChild(pools.state(actor));
+      yield* Effect.promise(() => started);
+      const changed = yield* pool.setRouting(actor, { strategy: "fill-first" });
+      const refreshed = yield* Effect.forkChild(pools.refresh(actor));
+      yield* Effect.yieldNow;
+      release();
+      yield* Fiber.join(oldRead);
+      const snapshot = yield* Fiber.join(refreshed);
+      expect(snapshot.find((entry) => entry.pool.personal)?.routing).toEqual(changed.routing);
+      expect(calls).toBe(2);
+    }).pipe(Effect.provide(cloud.userObject(userId)), Effect.scoped);
+  });
 });
