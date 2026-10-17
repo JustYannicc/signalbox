@@ -112,6 +112,7 @@ const harness = (options: HarnessOptions = {}) =>
 
     const threads: AutomationThreadsShape = {
       getThreadShell: () => Effect.succeed(thread),
+      initialModelSelection: () => Effect.succeed(null),
       getThreadRecords: (_threadId: ThreadId, fields: ReadonlyArray<ThreadRecordField>) => {
         recordReads.push(fields);
         const selected: ThreadRecords<ThreadRecordField> = {
