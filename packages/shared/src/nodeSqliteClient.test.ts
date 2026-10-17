@@ -879,8 +879,7 @@ const holdWorkerMessage = (worker: NodeWorkerThreads.Worker, type: string) => {
   };
 };
 
-const schedulerPausedBefore = (operation: number) => {
-  let operations = 0;
+const schedulerPausedWhen = (shouldPause: () => boolean) => {
   let yielded = false;
   let pauseNextTask = false;
   let resumeTask: (() => void) | undefined;
@@ -904,8 +903,7 @@ const schedulerPausedBefore = (operation: number) => {
     executionMode: mixed.executionMode,
     makeDispatcher: () => mixed.makeDispatcher(),
     shouldYield: () => {
-      operations++;
-      if (!yielded && operations === operation) {
+      if (!yielded && shouldPause()) {
         yielded = true;
         pauseNextTask = true;
         return true;
@@ -922,6 +920,11 @@ const schedulerPausedBefore = (operation: number) => {
       task?.();
     },
   };
+};
+
+const schedulerPausedBefore = (operation: number) => {
+  let operations = 0;
+  return schedulerPausedWhen(() => ++operations === operation);
 };
 
 const observeWriterWaiters = (worker: NodeWorkerThreads.Worker, count: number) => {
@@ -1118,6 +1121,147 @@ it.effect.skipIf(!supportsNoopCheckpoint)(
 );
 
 it.effect.skipIf(!supportsNoopCheckpoint)(
+  "resumes queued writes through the scheduler one at a time",
+  () =>
+    withCheckpointClient((sql, filename) =>
+      Effect.gen(function* () {
+        const worker = startedWorkers.at(-1)!;
+        const truncateRequested = waitForWorkerMessage(worker, "truncate-request");
+        const truncateStarted = waitForWorkerMessage(worker, "truncate-start");
+        const checkpointRequests = pauseCheckpointRequests(worker);
+        yield* Effect.addFinalizer(() => Effect.sync(checkpointRequests.release));
+
+        yield* sql.unsafe("PRAGMA journal_size_limit = 1048576").unprepared;
+        yield* sql.unsafe("CREATE TABLE pages(payload BLOB)").unprepared;
+        yield* sql.unsafe("CREATE TABLE waited_writes(value INTEGER PRIMARY KEY)").unprepared;
+        yield* sql.unsafe(`
+          WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < 6000)
+          INSERT INTO pages(payload) SELECT randomblob(4000) FROM n
+        `).unprepared;
+        const request = checkpointRequests.queued[0]?.[0];
+        assert(typeof request === "object" && request !== null && "id" in request);
+
+        const reader = yield* Effect.acquireRelease(
+          Effect.sync(() => new NodeSqlite.DatabaseSync(filename)),
+          (database) => Effect.sync(() => database.close()),
+        );
+        reader.exec("BEGIN");
+        assert.equal(reader.prepare("SELECT COUNT(*) AS count FROM pages").get()?.count, 6000);
+        const requestId = (request as { readonly id: unknown }).id;
+        const truncateFinished = waitForCheckpointMessage(worker, requestId);
+        checkpointRequests.sendNext();
+        checkpointRequests.release();
+        const truncate = yield* Effect.promise(() => truncateRequested);
+        assert.isBelow(truncate.log as number, 10_000);
+        assert.equal(truncate.checkpointed, truncate.log);
+        yield* Effect.promise(() => truncateStarted);
+
+        let completedWrites = 0;
+        let writesInDispatch = 0;
+        let maxWritesInDispatch = 0;
+        let schedulerDispatching = false;
+        let inUnblockingMessage = false;
+        let writesInWorkerMessage = 0;
+        let writesOutsideScheduler = 0;
+        let heartbeatScheduled = false;
+        let resolveHeartbeat: (completed: number) => void = () => {};
+        const heartbeat = new Promise<number>((resolve) => {
+          resolveHeartbeat = resolve;
+        });
+        const immediateScheduler = new Scheduler.MixedScheduler("async", (task) => {
+          const handle = setImmediate(() => {
+            schedulerDispatching = true;
+            writesInDispatch = 0;
+            try {
+              task();
+            } finally {
+              maxWritesInDispatch = Math.max(maxWritesInDispatch, writesInDispatch);
+              schedulerDispatching = false;
+            }
+          });
+          return () => clearImmediate(handle);
+        });
+        const writeScheduler: Scheduler.Scheduler = {
+          executionMode: immediateScheduler.executionMode,
+          makeDispatcher: () => immediateScheduler.makeDispatcher(),
+          shouldYield: () => false,
+        };
+        const originalRun = NodeSqlite.StatementSync.prototype.run;
+        const runSpy = vi
+          .spyOn(NodeSqlite.StatementSync.prototype, "run")
+          .mockImplementation(function (this: NodeSqlite.StatementSync, ...params) {
+            if (this.sourceSQL.includes("INSERT INTO waited_writes")) {
+              if (inUnblockingMessage) writesInWorkerMessage++;
+              if (!schedulerDispatching) writesOutsideScheduler++;
+              else writesInDispatch++;
+            }
+            return originalRun.apply(this, params);
+          });
+        yield* Effect.addFinalizer(() => Effect.sync(() => runSpy.mockRestore()));
+
+        const originalEmit = worker.emit.bind(worker) as (
+          eventName: string | symbol,
+          ...args: unknown[]
+        ) => boolean;
+        const emitSpy = vi.spyOn(worker, "emit").mockImplementation((eventName, ...args) => {
+          const message = args[0];
+          const unblocksWriter =
+            eventName === "message" &&
+            typeof message === "object" &&
+            message !== null &&
+            "type" in message &&
+            message.type === "checkpoint" &&
+            "truncateId" in message &&
+            typeof message.truncateId === "number" &&
+            "blocked" in message &&
+            message.blocked === false;
+          if (!unblocksWriter || heartbeatScheduled) return originalEmit(eventName, ...args);
+
+          inUnblockingMessage = true;
+          try {
+            const result = originalEmit(eventName, ...args);
+            heartbeatScheduled = true;
+            setImmediate(() => resolveHeartbeat(completedWrites));
+            return result;
+          } finally {
+            inUnblockingMessage = false;
+          }
+        });
+        yield* Effect.addFinalizer(() => Effect.sync(() => emitSpy.mockRestore()));
+
+        const waiterCount = 40;
+        const writerWaiters = observeWriterWaiters(worker, waiterCount);
+        yield* Effect.addFinalizer(() => Effect.sync(writerWaiters.restore));
+        const writeFibers = [];
+        for (let value = 0; value < waiterCount; value++) {
+          writeFibers.push(
+            yield* Effect.forkChild(
+              sql.unsafe(`INSERT INTO waited_writes VALUES (${value})`).unprepared.pipe(
+                Effect.provideService(Scheduler.Scheduler, writeScheduler),
+                Effect.tap(() => Effect.sync(() => completedWrites++)),
+              ),
+              { startImmediately: true },
+            ),
+          );
+        }
+        yield* Effect.promise(() => writerWaiters.ready);
+
+        reader.exec("ROLLBACK");
+        yield* Effect.promise(() => truncateFinished);
+        const writesAtHeartbeat = yield* Effect.promise(() => heartbeat);
+        assert.isAbove(writesAtHeartbeat, 0);
+        assert.isBelow(writesAtHeartbeat, waiterCount);
+        assert.equal(writesInWorkerMessage, 0);
+        assert.equal(writesOutsideScheduler, 0);
+
+        for (const fiber of writeFibers) yield* Fiber.join(fiber);
+        assert.equal(completedWrites, waiterCount);
+        assert.equal(maxWritesInDispatch, 1);
+      }),
+    ),
+);
+
+it.effect.skipIf(!supportsNoopCheckpoint)(
   "rechecks admission after the scheduler yields before a write",
   () =>
     withCheckpointClient(
@@ -1223,6 +1367,54 @@ it.effect.skipIf(!supportsNoopCheckpoint)(
           ]);
         }),
       { readerWorker: true },
+    ),
+);
+
+it.effect.skipIf(!supportsNoopCheckpoint)(
+  "keeps transaction admission masked until BEGIN has a rollback handler",
+  () =>
+    withCheckpointClient((sql, filename) =>
+      Effect.gen(function* () {
+        yield* sql.unsafe("CREATE TABLE transaction_writes(value INTEGER PRIMARY KEY)").unprepared;
+        const seed = yield* Effect.acquireRelease(
+          Effect.sync(() => new NodeSqlite.DatabaseSync(filename)),
+          (database) => Effect.sync(() => database.close()),
+        );
+        let beginExecuted = false;
+        const originalRun = NodeSqlite.StatementSync.prototype.run;
+        const runSpy = vi
+          .spyOn(NodeSqlite.StatementSync.prototype, "run")
+          .mockImplementation(function (this: NodeSqlite.StatementSync, ...params) {
+            const result = originalRun.apply(this, params);
+            if (/^\s*BEGIN\b/i.test(this.sourceSQL)) beginExecuted = true;
+            return result;
+          });
+        yield* Effect.addFinalizer(() => Effect.sync(() => runSpy.mockRestore()));
+
+        const controlled = schedulerPausedWhen(() => beginExecuted);
+        const transactionFiber = yield* Effect.forkChild(
+          sql
+            .withTransaction(sql`INSERT INTO transaction_writes VALUES (1)`)
+            .pipe(Effect.provideService(Scheduler.Scheduler, controlled.scheduler)),
+          { startImmediately: true },
+        );
+        yield* Effect.promise(() => controlled.paused);
+        assert.isTrue(beginExecuted);
+        assert.isUndefined(transactionFiber.pollUnsafe());
+
+        const interruptFiber = yield* Effect.forkChild(Fiber.interrupt(transactionFiber), {
+          startImmediately: true,
+        });
+        controlled.resume();
+        yield* Fiber.join(interruptFiber);
+        assert.equal((yield* Fiber.await(transactionFiber))._tag, "Failure");
+
+        yield* sql.unsafe("INSERT INTO transaction_writes VALUES (2)").unprepared;
+        assert.deepEqual(
+          seed.prepare("SELECT value FROM transaction_writes ORDER BY value").all(),
+          [{ value: 2 }],
+        );
+      }),
     ),
 );
 

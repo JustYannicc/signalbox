@@ -14,6 +14,7 @@ import * as Option from "effect/Option";
 import * as Predicate from "effect/Predicate";
 import * as References from "effect/References";
 import * as Schema from "effect/Schema";
+import * as Scheduler from "effect/Scheduler";
 import * as Scope from "effect/Scope";
 import * as Semaphore from "effect/Semaphore";
 import * as Context from "effect/Context";
@@ -913,32 +914,36 @@ const startCheckpointWorker = Effect.fnUntraced(function* (
   });
   // After the listeners: adding a "message" listener refs the worker again.
   worker.unref();
-  runWithAdmission = <A>(write: boolean, execute: () => SqliteExecutionResult<A>) =>
+  const waitForAdmission = (write: boolean) =>
     Effect.interruptible(
-      Effect.callback<A, SqlError>((resume) => {
+      Effect.callback<void>(function (this: Scheduler.Scheduler, resume) {
+        const dispatcher = this.makeDispatcher();
         let cancelled = false;
-        const attempt = () => {
-          if (cancelled) return;
-          if (needsBackpressure(write)) {
-            waiters.push({ write, resume: attempt });
-            worker.ref();
-            check(true);
-            return;
-          }
-          const result = execute();
-          resume(
-            result._tag === "Success" ? Effect.succeed(result.value) : Effect.fail(result.error),
-          );
+        const waiter = {
+          write,
+          resume: () => {
+            if (!cancelled) dispatcher.scheduleTask(() => resume(Effect.void), 0);
+          },
         };
-        attempt();
+        waiters.push(waiter);
+        worker.ref();
+        check(true);
         return Effect.sync(() => {
           cancelled = true;
-          const index = waiters.findIndex((waiter) => waiter.resume === attempt);
+          const index = waiters.indexOf(waiter);
           if (index !== -1) waiters.splice(index, 1);
           if (waiters.length === 0) worker.unref();
         });
       }),
     );
+  runWithAdmission = <A>(write: boolean, execute: () => SqliteExecutionResult<A>) =>
+    Effect.suspend(() => {
+      if (needsBackpressure(write)) {
+        return Effect.flatMap(waitForAdmission(write), () => runWithAdmission(write, execute));
+      }
+      const result = execute();
+      return sqliteExecutionToEffect(result);
+    });
   return { check, runWithAdmission };
 });
 
