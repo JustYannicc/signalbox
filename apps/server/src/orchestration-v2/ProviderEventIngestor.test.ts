@@ -177,7 +177,12 @@ function threadCreatedEvent(
   });
 }
 
-const layer = it.layer(layerTest);
+// Keep the suite's SQLite maintenance fiber on the pinned test timeline.
+const layer = it.layer(
+  Layer.unwrap(
+    TestClock.setTime(Date.parse("2026-09-07T00:00:00.000Z")).pipe(Effect.as(layerTest)),
+  ),
+);
 
 it.effect("records accepted billed turn usage once without billing the context window", () => {
   const recorded: Array<Readonly<Record<string, unknown>>> = [];
@@ -668,7 +673,6 @@ layer("ProviderEventIngestorV2", (it) => {
 
   it.effect("carries plan-step durations through consecutive and restarted ingestion", () =>
     Effect.gen(function* () {
-      yield* TestClock.setTime(Date.parse("2026-09-07T00:00:00.000Z"));
       const now = yield* DateTime.now;
       const eventSink = yield* EventSink.EventSinkV2;
       const projectionStore = yield* ProjectionStore.ProjectionStoreV2;

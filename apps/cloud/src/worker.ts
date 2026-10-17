@@ -2,6 +2,7 @@ import type { ModelGatewayProvider } from "@signalbox/runner-protocol/RunnerProt
 import { isDevProxiedPath } from "@t3tools/shared/devProxy";
 import { WorkerEntrypoint } from "cloudflare:workers";
 import { withEvlog } from "evlog/workers";
+import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
 import { type CloudApp, layerServices, makeCloudApp } from "./app.ts";
@@ -13,7 +14,8 @@ import { routePreview } from "./thread/preview/previewRoute.ts";
 import { attachmentStorage } from "./attachments/attachmentObjects.ts";
 import { handleDriveRequest, isDriveApiPath } from "./drive/driveRoutes.ts";
 import { ModelGatewayRecord } from "./modelGateway/modelGatewayRecord.ts";
-import { reportModelRequest, serveModel } from "./thread/runner/modelGrants.ts";
+import * as ModelAccess from "./models/ModelAccess.ts";
+import { layerModelAccess } from "./models/cloudflare.ts";
 import { connectRunner, isRunnerSocketPath } from "./thread/runner/runnerRoute.ts";
 import { forwardSessionRequest, isSessionApiPath } from "./thread/session/sessionRoutes.ts";
 import {
@@ -145,6 +147,28 @@ export default {
 
 const decodeModelGatewayRecord = Schema.decodeUnknownOption(ModelGatewayRecord);
 
+let modelAccess: ModelAccess.ModelAccess["Service"] | undefined;
+
+const modelAccessFor = (env: CloudEnv) => {
+  modelAccess ??= Effect.runSync(
+    ModelAccess.ModelAccess.pipe(
+      Effect.provide(
+        layerModelAccess(
+          {
+            threads: env.THREADS,
+            users: env.USERS,
+            pools: env.POOLS,
+            // A turn token never initializes the app or needs its signing secret.
+            verifyLocalKey: (key) => appFor(env).verifyLocalKey(key),
+          },
+          { localWorkerd: env.LOCAL_WORKERD === "1" },
+        ),
+      ),
+    ),
+  );
+  return modelAccess;
+};
+
 /**
  * Asked by the ModelGateway Worker, over its service binding, to serve a
  * harness's model request, and told what each request did afterwards.
@@ -154,31 +178,13 @@ const decodeModelGatewayRecord = Schema.decodeUnknownOption(ModelGatewayRecord);
 export class ModelGrants extends WorkerEntrypoint<CloudEnv> {
   /** Checks a request's token or local key and, granted, sends it to its pool. */
   serve(token: string, provider: ModelGatewayProvider, path: string, request: Request) {
-    const { THREADS, USERS, POOLS, LOCAL_WORKERD } = this.env;
-    // Only a local key needs the app, to check its signature; a turn's token never builds it.
-    const verifyLocalKey = (key: string) => appFor(this.env).verifyLocalKey(key);
-    return serveModel(
-      {
-        threads: THREADS,
-        users: USERS,
-        pools: POOLS,
-        verifyLocalKey,
-        token,
-        provider,
-        path,
-        request,
-      },
-      { localWorkerd: LOCAL_WORKERD === "1" },
-    );
+    return modelAccessFor(this.env).serve({ token, provider, path, request });
   }
 
   /** A served request's record, for its thread or key. Anything that does not decode is dropped. */
   async report(record: unknown): Promise<void> {
     const decoded = decodeModelGatewayRecord(record);
     if (decoded._tag === "None") return;
-    const { THREADS, USERS } = this.env;
-    await reportModelRequest({ threads: THREADS, users: USERS }, decoded.value, {
-      localWorkerd: this.env.LOCAL_WORKERD === "1",
-    });
+    await modelAccessFor(this.env).report(decoded.value);
   }
 }

@@ -3,7 +3,7 @@ import type { ModelGatewayProvider } from "@signalbox/runner-protocol/RunnerProt
 import { defineWorkerFetch } from "evlog/workers";
 
 import * as Evlog from "../observability/evlogWorkers.ts";
-import type { ModelServeReply } from "../thread/runner/modelGrants.ts";
+import type { ModelServeReply } from "../models/ModelProtocol.ts";
 import { handleModelRequest } from "./modelGateway.ts";
 import type { ModelGatewayRecord } from "./modelGatewayRecord.ts";
 

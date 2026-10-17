@@ -1,7 +1,7 @@
 import type { ModelGatewayProvider } from "@signalbox/runner-protocol/RunnerProtocol";
 import type { RunId, ThreadId } from "@t3tools/contracts";
 
-import { isLeaseToken, signLeaseToken, threadOfLeaseToken } from "./leaseToken.ts";
+import { isLeaseToken, signLeaseToken, threadOfLeaseToken } from "./runner/leaseToken.ts";
 
 /**
  * Model tokens: what a thread's harness presents to the ModelGateway. There is

@@ -228,6 +228,9 @@ importers:
 
   apps/cloud:
     dependencies:
+      '@boxd-sh/sdk':
+        specifier: 0.2.17
+        version: 0.2.17
       '@cloudflare/dynamic-workflows':
         specifier: 0.1.1
         version: 0.1.1
@@ -246,6 +249,9 @@ importers:
       '@signalbox/runner-protocol':
         specifier: workspace:*
         version: link:../../packages/runner-protocol
+      '@signalbox/sync':
+        specifier: workspace:*
+        version: link:../../packages/sync
       '@t3tools/client-runtime':
         specifier: workspace:*
         version: link:../../packages/client-runtime
@@ -15169,6 +15175,13 @@ packages:
     peerDependencies:
       '@types/emscripten': '>=1.39.6'
 
+  '@boxd-sh/sdk@0.2.17':
+    resolution: {integrity: sha512-Ap9DSCvkCgw9P/+7NOdaauLBO7V5Gbr91XnW+u3bQW4w37MLqeAmZFvIJ/EnAd94xDZjX2bqPnWoTRBNXhJlQw==}
+    engines: {node: '>=20'}
+
+  '@bufbuild/protobuf@2.16.0':
+    resolution: {integrity: sha512-FWa0sPlqYGJgpTs6OxBRcL/AW4JT0OIO+W1ajerluoTVh8CV0B7XM1qsNCRgnkSCkRCgOICKHRQlY17jrsm0+Q==}
+
 snapshots:
 
   2g@1.0.1(typescript@7.0.2):
@@ -29639,3 +29652,10 @@ snapshots:
     dependencies:
       '@types/emscripten': 1.41.5
       type-fest: 5.7.0
+
+  '@boxd-sh/sdk@0.2.17':
+    dependencies:
+      '@bufbuild/protobuf': 2.16.0
+      '@grpc/grpc-js': 1.14.6
+
+  '@bufbuild/protobuf@2.16.0': {}
