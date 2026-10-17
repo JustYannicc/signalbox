@@ -4,6 +4,7 @@ import type * as NodeNet from "node:net";
 
 import { NodeWS } from "@effect/platform-node-shared/NodeSocket";
 import { describe, expect, it } from "@effect/vitest";
+import * as Cause from "effect/Cause";
 import {
   DATA_KIND,
   type DataFrame,
@@ -21,12 +22,16 @@ import {
   tunnelThreadFrame,
 } from "@signalbox/runner-protocol/PreviewTunnel";
 import { ThreadId } from "@t3tools/contracts";
+import type { DriveAccess } from "@signalbox/runner-protocol/DriveProtocol";
+import type { PreviewService } from "@signalbox/runner-protocol/PreviewServices";
 import type {
   AgentBrowserInput,
   AgentBrowserStep,
   AgentBrowserUpdate,
 } from "@t3tools/contracts/signalboxPreviews";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
+import * as Fiber from "effect/Fiber";
 import * as Queue from "effect/Queue";
 import * as TestClock from "effect/testing/TestClock";
 
@@ -39,6 +44,7 @@ import {
   runPreviewTunnel,
 } from "./RunnerPreviewTunnel.ts";
 import { RunnerConnectionError } from "./RunnerSession.ts";
+import type { RunnerPreviewServices } from "./RunnerPreviewServices.ts";
 import { threadSocketUrl } from "./runnerSocket.ts";
 
 const threadId = ThreadId.make("thread-1");
@@ -100,7 +106,34 @@ const makePorts = (initial: ReadonlyArray<PreviewPort>) => {
   return { source, set };
 };
 
-const startTunnel = (ports: ReadonlyArray<number>, mirror?: BrowserMirror) =>
+const makeServiceState = (initial: ReadonlyArray<PreviewService> = []) => {
+  let current = initial;
+  let restores = 0;
+  const service: RunnerPreviewServices["Service"] = {
+    start: () => Effect.void,
+    stop: () => Effect.void,
+    restore: (services) =>
+      Effect.sync(() => {
+        current = services;
+        restores++;
+      }),
+    list: Effect.sync(() => current),
+  };
+  return {
+    service,
+    set: (services: ReadonlyArray<PreviewService>) => (current = services),
+    get restores() {
+      return restores;
+    },
+  };
+};
+
+const startTunnel = (
+  ports: ReadonlyArray<number>,
+  mirror?: BrowserMirror,
+  services = makeServiceState(),
+  prepareServices: (drive: DriveAccess) => Effect.Effect<void> = () => Effect.void,
+) =>
   Effect.gen(function* () {
     const thread = yield* makeFakeThread;
     const portSource = makePorts(ports.map((port) => ({ port, processName: "node" })));
@@ -110,9 +143,11 @@ const startTunnel = (ports: ReadonlyArray<number>, mirror?: BrowserMirror) =>
       token: "lease-token",
       transport: thread.transport,
       ports: portSource.source,
+      services: services.service,
+      prepareServices,
       ...(mirror === undefined ? {} : { mirror }),
     });
-    return { thread, tunnel, setPorts: portSource.set };
+    return { thread, tunnel, setPorts: portSource.set, services };
   });
 
 const next = (socket: FakeSocket) => Queue.take(socket.fromRunner);
@@ -131,7 +166,11 @@ const nextData = (socket: FakeSocket) =>
   });
 
 /** Takes the next socket, checks its hello, and welcomes it. */
-const welcome = (thread: { readonly sockets: Queue.Queue<FakeSocket> }, mirror = false) =>
+const welcome = (
+  thread: { readonly sockets: Queue.Queue<FakeSocket> },
+  mirror = false,
+  extra: Partial<Extract<TunnelThreadMessage, { type: "welcome" }>> = {},
+) =>
   Effect.gen(function* () {
     const socket = yield* Queue.take(thread.sockets);
     expect(yield* nextControl(socket)).toEqual({
@@ -142,7 +181,7 @@ const welcome = (thread: { readonly sockets: Queue.Queue<FakeSocket> }, mirror =
       token: "lease-token",
       ...(mirror ? { mirror: true } : {}),
     });
-    yield* socket.toRunner({ type: "welcome" });
+    yield* socket.toRunner({ type: "welcome", ...extra });
     return socket;
   });
 
@@ -384,6 +423,69 @@ describe("RunnerPreviewTunnel", () => {
     ),
   );
 
+  it.live(
+    "restores saved services once and retries an unacknowledged declaration after reconnect",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const access: DriveAccess = {
+            driveId: "drive-1",
+            token: "drive-token",
+            remoteToken: null,
+          };
+          const saved: PreviewService[] = [{ port: 4173, command: "pnpm dev", cwd: "." }];
+          const prepared: Array<DriveAccess> = [];
+          const { thread, tunnel, services } = yield* startTunnel(
+            [],
+            undefined,
+            makeServiceState(),
+            (drive) => Effect.sync(() => prepared.push(drive)),
+          );
+          let socket = yield* welcome(thread, false, { drive: access, services: saved });
+          expect(yield* nextControl(socket)).toEqual({ type: "ports", ports: [] });
+          expect(prepared).toEqual([access]);
+          expect(services.restores).toBe(1);
+
+          services.set(saved);
+          const saving = yield* Effect.forkChild(tunnel.persistServices(saved));
+          expect(yield* nextControl(socket)).toEqual({ type: "services", services: saved });
+          yield* socket.drop;
+
+          socket = yield* welcome(thread, false, { drive: access, services: saved });
+          expect(yield* nextControl(socket)).toEqual({ type: "ports", ports: [] });
+          expect(yield* nextControl(socket)).toEqual({ type: "services", services: saved });
+          yield* socket.toRunner({ type: "services.saved", services: saved });
+          yield* Fiber.join(saving);
+          expect(prepared).toEqual([access]);
+          expect(services.restores).toBe(1);
+        }),
+      ),
+  );
+
+  it.live("does not prepare the drive when the thread has no saved services", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const access: DriveAccess = {
+          driveId: "drive-1",
+          token: "drive-token",
+          remoteToken: null,
+        };
+        const prepared: Array<DriveAccess> = [];
+        const { thread, services } = yield* startTunnel(
+          [],
+          undefined,
+          makeServiceState(),
+          (drive) => Effect.sync(() => prepared.push(drive)),
+        );
+        const socket = yield* welcome(thread, false, { drive: access, services: [] });
+
+        expect(yield* nextControl(socket)).toEqual({ type: "ports", ports: [] });
+        expect(prepared).toEqual([]);
+        expect(services.restores).toBe(1);
+      }),
+    ),
+  );
+
   it.live("proxies a WebSocket both ways and closes it from either side", () =>
     Effect.scoped(
       Effect.gen(function* () {
@@ -506,6 +608,8 @@ describe("RunnerPreviewTunnel", () => {
             threadSocketUrl(`http://127.0.0.1:${cloud.port}`, PREVIEW_TUNNEL_PATH, threadId),
           ),
           ports: makePorts([{ port, processName: null }]).source,
+          services: makeServiceState().service,
+          prepareServices: () => Effect.void,
         });
         expect(yield* Queue.take(events)).toBe(`tunnel ${PREVIEW_TUNNEL_PATH}?threadId=thread-1`);
         const text = (frame: string | Uint8Array) => {
@@ -647,10 +751,28 @@ describe("RunnerPreviewTunnel", () => {
     Effect.scoped(
       Effect.gen(function* () {
         const { thread, tunnel } = yield* startTunnel([]);
+        const saving = yield* Effect.forkChild(
+          tunnel.persistServices([{ port: 4173, command: "pnpm dev", cwd: "." }]),
+        );
+        yield* Effect.yieldNow;
         const socket = yield* Queue.take(thread.sockets);
         expect(yield* nextControl(socket)).toMatchObject({ type: "hello" });
         yield* socket.toRunner({ type: "refused", message: "A newer generation holds the lease." });
         expect(yield* tunnel.ended).toBe("refused: A newer generation holds the lease.");
+        const savingExit = yield* Effect.exit(Fiber.join(saving));
+        const readyExit = yield* Effect.exit(tunnel.ready);
+        const laterSaveExit = yield* Effect.exit(
+          tunnel.persistServices([{ port: 4173, command: "pnpm dev", cwd: "." }]),
+        );
+        expect(Exit.isFailure(savingExit)).toBe(true);
+        expect(Exit.isFailure(readyExit)).toBe(true);
+        expect(Exit.isFailure(laterSaveExit)).toBe(true);
+        if (Exit.isFailure(savingExit)) {
+          expect(Cause.squash(savingExit.cause)).toBeInstanceOf(RunnerConnectionError);
+        }
+        if (Exit.isFailure(laterSaveExit)) {
+          expect(Cause.squash(laterSaveExit.cause)).toBeInstanceOf(RunnerConnectionError);
+        }
         yield* TestClock.adjust("10 minutes");
         expect(yield* Queue.size(thread.sockets)).toBe(0);
       }),

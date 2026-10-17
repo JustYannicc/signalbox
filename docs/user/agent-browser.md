@@ -29,3 +29,9 @@ The agent keeps its browser open only while it waits, for up to 30 minutes. To c
 Every step the agent takes in the browser, and every stretch you drove, is kept with the thread. Card numbers and passwords are masked in it. Pick a step in the panel to see the page as it was when that step finished, even after the machine has stopped. Pages are rebuilt from what was recorded, so images and styles that a site has since changed may look different.
 
 Steps stay in the browser panel. They're never added to the conversation, so the agent only sees what it looked at itself.
+
+## Open a dev server
+
+Choose a dev server from **Previews** to open it in your browser. If the thread's machine has stopped, opening the preview starts it and the dev server again. You do not need to send another message. Keep the tab open while you use it; after the last preview closes, the machine stops after its normal idle period.
+
+You must be signed in as someone who can see the thread. A shared preview link asks for your own sign-in.

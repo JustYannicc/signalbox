@@ -12,7 +12,7 @@ import { openCommandPalette } from "../../commandPaletteBus";
 import { useHandleNewThread } from "../../hooks/useHandleNewThread";
 import { shortcutLabelForCommand } from "../../keybindings";
 import { startNewThreadFromContext } from "../../lib/chatThreadActions";
-import { useProjects } from "../../state/entities";
+import { useSidebarProjectGroups } from "../../hooks/useSidebarProjectGroups";
 import { primaryServerKeybindingsAtom } from "../../state/server";
 import { shouldCreateNewThreadInCurrentProject } from "../Sidebar.logic";
 import { Kbd } from "../ui/kbd";
@@ -21,7 +21,7 @@ import { SidebarMenu, SidebarMenuButton, SidebarMenuItem, useSidebar } from "../
 export function SidebarNewButton() {
   const { isMobile, setOpenMobile } = useSidebar();
   const newThreadContext = useHandleNewThread();
-  const projectCount = useProjects().length;
+  const projectCount = useSidebarProjectGroups().length;
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   const shortcut =
     shortcutLabelForCommand(keybindings, "chat.new") ??

@@ -111,4 +111,41 @@ describe("project pools", () => {
       instanceId: "claude_hub_empty",
     });
   });
+
+  it("keeps an unreadable pool distinct from sign-in and a signed-in pool with no models", () => {
+    const downId = ProviderInstanceId.make("claude_hub_down");
+    const emptyId = ProviderInstanceId.make("codex_hub_no_models");
+    const unavailable = {
+      ...provider(downId, "claudeAgent", [], false),
+      status: "error",
+      auth: { status: "unknown" },
+      availability: "available",
+      message: "The pool is unavailable right now. Try again.",
+    } as unknown as ServerProvider;
+    const noModels = {
+      ...provider(emptyId, "codex", [], true),
+      status: "warning",
+      message: "This pool's accounts serve no models right now. Try again shortly.",
+    } as unknown as ServerProvider;
+    const instances = {
+      ...providerInstances,
+      [downId]: hub("down"),
+      [emptyId]: hub("no-models"),
+    };
+
+    expect(
+      poolNeed({ pool: onPool("down"), providerInstances: instances, providers: [unavailable] }),
+    ).toEqual({
+      _tag: "unavailable",
+      poolId: "down",
+      message: "The pool is unavailable right now. Try again.",
+    });
+    expect(
+      poolNeed({ pool: onPool("no-models"), providerInstances: instances, providers: [noModels] }),
+    ).toEqual({
+      _tag: "noModels",
+      poolId: "no-models",
+      message: "This pool's accounts serve no models right now. Try again shortly.",
+    });
+  });
 });
