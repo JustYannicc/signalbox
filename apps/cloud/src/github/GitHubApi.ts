@@ -6,6 +6,7 @@ import * as Effect from "effect/Effect";
 import * as Base64 from "effect/encoding/Base64";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
+import type * as Stream from "effect/Stream";
 import { type HttpClient, HttpClientRequest, type HttpClientResponse } from "effect/http";
 
 /**
@@ -159,7 +160,13 @@ export const makeGitHubApi = (
 
   const send = (operation: string, request: HttpClientRequest.HttpClientRequest) =>
     client.execute(request.pipe(HttpClientRequest.setHeader("user-agent", "signalbox-cloud"))).pipe(
-      // The request (with tokens or the App's secret) stays out of the error, which gets logged.
+      // Requests and underlying errors can contain credentials; log only the failure category.
+      Effect.tapError((error) =>
+        Effect.logWarning("GitHub request failed", {
+          operation,
+          reason: error.reason._tag,
+        }),
+      ),
       Effect.mapError(
         () => new GitHubError({ operation, status: 0, message: "GitHub did not answer." }),
       ),
@@ -415,8 +422,8 @@ export const makeGitHubApi = (
         ),
         token,
       ),
-    /** One `git-receive-pack` request (`gitPush.ts` builds it); answers the raw result. */
-    receivePack: (token: string, repository: string, body: Uint8Array) =>
+    /** One `git-receive-pack` request, streamed as `gitPush.ts` builds it; answers the raw result. */
+    receivePack: (token: string, repository: string, body: Stream.Stream<Uint8Array, unknown>) =>
       send(
         "receivePack",
         HttpClientRequest.post(`${web}/${repository}.git/git-receive-pack`).pipe(
@@ -424,7 +431,10 @@ export const makeGitHubApi = (
             authorization: gitAuthorization(token),
             accept: "application/x-git-receive-pack-result",
           }),
-          HttpClientRequest.bodyUint8Array(body, "application/x-git-receive-pack-request"),
+          // Sent chunked, as `git push` sends a big one.
+          HttpClientRequest.bodyStream(body, {
+            contentType: "application/x-git-receive-pack-request",
+          }),
         ),
       ).pipe(
         Effect.flatMap((response) =>

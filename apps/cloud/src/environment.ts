@@ -136,6 +136,7 @@ export const descriptor = (identity: CloudEnvironmentIdentity): ExecutionEnviron
     terminal: false,
     worktrees: false,
     serverSettingsWrite: false,
+    modelSettingsWrite: true,
     devices: false,
     scheduledTasks: false,
     localFilesystem: false,

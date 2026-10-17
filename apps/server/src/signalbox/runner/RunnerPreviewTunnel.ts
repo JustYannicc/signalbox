@@ -7,12 +7,15 @@ import {
   type TunnelThreadMessage,
   tunnelThreadFrame,
 } from "@signalbox/runner-protocol/PreviewTunnel";
+import type { DriveAccess } from "@signalbox/runner-protocol/DriveProtocol";
+import type { PreviewService } from "@signalbox/runner-protocol/PreviewServices";
 import type { ThreadId } from "@t3tools/contracts";
 import type { AgentBrowserStep } from "@t3tools/contracts/signalboxPreviews";
 import * as Cause from "effect/Cause";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Queue from "effect/Queue";
+import * as Semaphore from "effect/Semaphore";
 import type * as Scope from "effect/Scope";
 
 import { makeTrailSender, serveMirror } from "./previewMirror.ts";
@@ -20,6 +23,7 @@ import { proxyHttp, type ProxyStream, proxyWebSocket, type TunnelFrame } from ".
 import type { BrowserMirror, MirrorViewer } from "./RunnerBrowserMirror.ts";
 import { RunnerConnectionError, reconnectDelay } from "./RunnerSession.ts";
 import { openThreadSocket } from "./runnerSocket.ts";
+import type { RunnerPreviewServices } from "./RunnerPreviewServices.ts";
 
 /**
  * The machine end of the PreviewGateway's tunnel (`PreviewTunnel.ts` in the
@@ -64,6 +68,10 @@ export interface PreviewTunnelInput {
   readonly token: string;
   readonly transport: PreviewTunnelTransport;
   readonly ports: PreviewPortSource;
+  /** Commands the thread declared, scoped to this Runner and its drive. */
+  readonly services: RunnerPreviewServices["Service"];
+  /** Opens/restores the drive and installs its dependencies before services start. */
+  readonly prepareServices: (drive: DriveAccess) => Effect.Effect<void, RunnerConnectionError>;
   /** The agent's browser, which viewers watch through the thread. */
   readonly mirror?: BrowserMirror;
 }
@@ -71,9 +79,35 @@ export interface PreviewTunnelInput {
 export interface PreviewTunnel {
   /** Why the tunnel stopped: the thread refused it, or its scope closed. */
   readonly ended: Effect.Effect<string>;
+  /** Completes after this Runner's declarations were reconciled with the first welcome. */
+  readonly ready: Effect.Effect<void, RunnerConnectionError>;
+  /** Persists the current declarations and completes after the thread acknowledges them. */
+  readonly persistServices: (
+    services: ReadonlyArray<PreviewService>,
+  ) => Effect.Effect<void, RunnerConnectionError>;
 }
 
 const encoder = new TextEncoder();
+const sameServices = (
+  left: ReadonlyArray<PreviewService>,
+  right: ReadonlyArray<PreviewService>,
+) => {
+  const sorted = (services: ReadonlyArray<PreviewService>) =>
+    services.toSorted((a, b) => a.port - b.port);
+  const a = sorted(left);
+  const b = sorted(right);
+  return (
+    a.length === b.length &&
+    a.every((service, index) => {
+      const other = b[index]!;
+      return (
+        service.port === other.port &&
+        service.command === other.command &&
+        service.cwd === other.cwd
+      );
+    })
+  );
+};
 
 const decodeFrame = (frame: string | Uint8Array): TunnelThreadMessage | DataFrame => {
   if (typeof frame === "string") return tunnelThreadFrame.decode(frame);
@@ -96,13 +130,54 @@ export const runPreviewTunnel = Effect.fn("runPreviewTunnel")(function* (
 ): Effect.fn.Return<PreviewTunnel, never, Scope.Scope> {
   const ended = yield* Deferred.make<string>();
   yield* Effect.addFinalizer(() => Deferred.succeed(ended, "stopped"));
+  const ready = yield* Deferred.make<void, RunnerConnectionError>();
+  let terminalError: RunnerConnectionError | null = null;
   const log = { threadId: input.threadId, generation: input.generation };
+  const servicesLock = yield* Semaphore.make(1);
+  let servicesRevision = 0;
+  let savedServicesRevision = 0;
+  let desiredServices: ReadonlyArray<PreviewService> = [];
+  let notifyServiceChange: ((revision: number) => void) | null = null;
+  const serviceWaiters = new Map<number, Deferred.Deferred<void, RunnerConnectionError>>();
+  const failPending = (error: RunnerConnectionError) =>
+    Effect.gen(function* () {
+      const first = yield* Effect.sync(() => {
+        if (terminalError !== null) return false;
+        terminalError = error;
+        return true;
+      });
+      if (!first) return;
+      yield* Deferred.fail(ready, error);
+      for (const waiter of serviceWaiters.values()) yield* Deferred.fail(waiter, error);
+      yield* Effect.sync(() => serviceWaiters.clear());
+    });
+  yield* Effect.addFinalizer(() =>
+    failPending(new RunnerConnectionError({ message: "The preview tunnel stopped." })),
+  );
+  const persistServices = (services: ReadonlyArray<PreviewService>) =>
+    servicesLock.withPermits(1)(
+      Effect.gen(function* () {
+        const ack = yield* Deferred.make<void, RunnerConnectionError>();
+        const registration = yield* Effect.sync(() => {
+          if (terminalError !== null) return { _tag: "Stopped" as const, error: terminalError };
+          servicesRevision++;
+          desiredServices = services;
+          serviceWaiters.set(servicesRevision, ack);
+          return { _tag: "Pending" as const, revision: servicesRevision };
+        });
+        if (registration._tag === "Stopped") return yield* registration.error;
+        if (notifyServiceChange !== null) notifyServiceChange(registration.revision);
+        yield* Deferred.await(ack);
+      }),
+    );
 
   // Plain variables: every read and write below happens in one synchronous step.
   let ports: ReadonlyArray<PreviewPort> = [];
   /** Sends the ports on the welcomed connection, if there is one. */
   let reportPorts: ((ports: ReadonlyArray<PreviewPort>) => void) | null = null;
   let welcomed = false;
+  let serviceDrivePrepared = false;
+  let servicesRestored = false;
   /** Steps waiting for a welcomed connection; `uploadStep` sends on the current one. */
   const backlog: Array<{ readonly step: AgentBrowserStep; readonly events: Uint8Array }> = [];
   let uploadStep: ((step: AgentBrowserStep, events: Uint8Array) => void) | null = null;
@@ -143,17 +218,44 @@ export const runPreviewTunnel = Effect.fn("runPreviewTunnel")(function* (
       });
       const answer = yield* connection.receive;
       if ("type" in answer && answer.type === "refused") {
+        yield* failPending(
+          new RunnerConnectionError({ message: "The preview tunnel was refused." }),
+        );
         yield* Deferred.succeed(ended, `refused: ${answer.message}`);
         return;
       }
       if (!("type" in answer) || answer.type !== "welcome") {
         return yield* new RunnerConnectionError({ message: "Expected the thread's welcome." });
       }
+      if (answer.drive !== undefined) {
+        if (answer.drive === null) {
+          if (!servicesRestored) {
+            yield* input.services.restore([]);
+            servicesRestored = true;
+          }
+        } else {
+          const savedServices = answer.services ?? [];
+          if (savedServices.length > 0 && !serviceDrivePrepared) {
+            yield* input.prepareServices(answer.drive);
+            serviceDrivePrepared = true;
+          }
+          if (!servicesRestored) {
+            const restored = yield* Effect.exit(input.services.restore(savedServices));
+            servicesRestored = true;
+            if (restored._tag === "Failure") {
+              yield* Effect.logWarning("could not restore preview services", log);
+            }
+          }
+        }
+      }
+      yield* Deferred.succeed(ready, undefined);
       welcomed = true;
       yield* Effect.logInfo("preview tunnel connected", log);
 
       // Streams answer from Node callbacks; one writer keeps their frames in order.
       const outbox = yield* Queue.unbounded<TunnelFrame>();
+      const serviceChanges = yield* Queue.unbounded<number>();
+      const serviceAcks = yield* Queue.unbounded<ReadonlyArray<PreviewService>>();
       const streams = new Map<number, ProxyStream>();
       const mirrors = new Map<number, MirrorViewer>();
       const emit = (frame: TunnelFrame) => void Queue.offerUnsafe(outbox, frame);
@@ -161,6 +263,7 @@ export const runPreviewTunnel = Effect.fn("runPreviewTunnel")(function* (
         Effect.sync(() => {
           reportPorts = null;
           uploadStep = null;
+          notifyServiceChange = null;
           // The thread fails its side of every stream when the socket goes.
           for (const stream of streams.values()) stream.abort();
           streams.clear();
@@ -172,8 +275,12 @@ export const runPreviewTunnel = Effect.fn("runPreviewTunnel")(function* (
         reportPorts = (next) => emit({ type: "ports", ports: next });
         reportPorts(ports);
         uploadStep = (step, events) => sendTrailStep(emit, step, events);
+        notifyServiceChange = (revision) => void Queue.offerUnsafe(serviceChanges, revision);
         for (const entry of backlog.splice(0)) uploadStep(entry.step, entry.events);
       });
+      if (servicesRevision > savedServicesRevision) {
+        yield* Queue.offer(serviceChanges, servicesRevision);
+      }
 
       const open = (message: Extract<TunnelThreadMessage, { type: "request" | "ws.open" }>) => {
         const { stream, port } = message;
@@ -217,6 +324,8 @@ export const runPreviewTunnel = Effect.fn("runPreviewTunnel")(function* (
             return watch(message);
           case "mirror.input":
             return mirrors.get(message.stream)?.input(message.input);
+          case "services.saved":
+            return Queue.offerUnsafe(serviceAcks, message.services);
           case "end":
             return streams.get(message.stream)?.end();
           case "cancel":
@@ -238,7 +347,29 @@ export const runPreviewTunnel = Effect.fn("runPreviewTunnel")(function* (
       const readLoop = Effect.forever(
         Effect.flatMap(connection.receive, (message) => Effect.sync(() => dispatch(message))),
       );
-      return yield* Effect.raceFirst(readLoop, writeLoop);
+      const serviceLoop = Effect.forever(
+        Effect.gen(function* () {
+          yield* Queue.take(serviceChanges);
+          const snapshot = { revision: servicesRevision, services: desiredServices };
+          yield* connection.send({ type: "services", services: snapshot.services });
+          let saved = false;
+          while (!saved) {
+            const ack = yield* Queue.take(serviceAcks);
+            if (sameServices(snapshot.services, ack)) {
+              saved = true;
+              savedServicesRevision = Math.max(savedServicesRevision, snapshot.revision);
+              const completed = [...serviceWaiters.entries()].filter(
+                ([revision]) => revision <= savedServicesRevision,
+              );
+              for (const [revision, waiter] of completed) {
+                serviceWaiters.delete(revision);
+                yield* Deferred.succeed(waiter, undefined);
+              }
+            }
+          }
+        }),
+      );
+      return yield* Effect.raceFirst(Effect.raceFirst(readLoop, writeLoop), serviceLoop);
     }),
   );
 
@@ -258,5 +389,5 @@ export const runPreviewTunnel = Effect.fn("runPreviewTunnel")(function* (
     }
   }).pipe(Effect.forkScoped);
 
-  return { ended: Deferred.await(ended) };
+  return { ended: Deferred.await(ended), ready: Deferred.await(ready), persistServices };
 });
