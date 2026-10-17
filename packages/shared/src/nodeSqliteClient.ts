@@ -723,32 +723,70 @@ const startCheckpointWorker = Effect.fnUntraced(function* (
   } catch {
     frameStatusUnknown = true;
   }
-  const waiters: Array<{
+  type AdmissionWaiter = {
     readonly write: boolean;
-    readonly resume: () => void;
-  }> = [];
+    resume: () => void;
+    state: "queued" | "elected" | "settled" | "cancelled";
+  };
+  const waiters: Array<AdmissionWaiter> = [];
+  let electedWaiter: AdmissionWaiter | undefined;
   let runWithAdmission: <A>(
     write: boolean,
     execute: () => SqliteExecutionResult<A>,
+    admitted?: AdmissionWaiter,
   ) => Effect.Effect<A, SqlError>;
   const backlogFrames = () => logFrames - checkpointedFrames;
   const resumeWaiter = (waiter: (typeof waiters)[number]) => waiter.resume();
   const resumeWaiters = () => {
-    for (const waiter of waiters.splice(0)) resumeWaiter(waiter);
+    const elected = electedWaiter;
+    electedWaiter = undefined;
+    if (elected !== undefined && elected.state !== "cancelled") {
+      elected.state = "settled";
+      resumeWaiter(elected);
+    }
+    for (const waiter of waiters.splice(0)) {
+      if (waiter.state === "cancelled") continue;
+      waiter.state = "settled";
+      resumeWaiter(waiter);
+    }
     worker.unref();
   };
   const resumeWaitersBelowThreshold = () => {
     if (
       waiters.length > 0 &&
+      electedWaiter === undefined &&
       !frameStatusUnknown &&
       !checkpointBlocked &&
       truncateRequestId === undefined &&
       logFrames < CHECKPOINT_BACKPRESSURE_FRAMES
     ) {
       const waiter = waiters.shift();
-      if (waiter !== undefined) resumeWaiter(waiter);
+      if (waiter !== undefined) {
+        waiter.state = "elected";
+        electedWaiter = waiter;
+        resumeWaiter(waiter);
+      }
       if (waiters.length === 0) worker.unref();
     }
+  };
+  const cancelWaiter = (waiter: AdmissionWaiter) => {
+    const wasElected = waiter.state === "elected" && electedWaiter === waiter;
+    if (waiter.state === "queued") {
+      const index = waiters.indexOf(waiter);
+      if (index !== -1) waiters.splice(index, 1);
+    } else if (wasElected) {
+      electedWaiter = undefined;
+    }
+    if (waiter.state !== "settled") waiter.state = "cancelled";
+    if (wasElected) {
+      // A cancelled elected wake transfers its one admission to the next waiter.
+      resumeWaitersBelowThreshold();
+    }
+    if (waiters.length === 0) worker.unref();
+  };
+  const settleAdmission = (waiter: AdmissionWaiter) => {
+    if (electedWaiter === waiter) electedWaiter = undefined;
+    waiter.state = "settled";
   };
   const needsBackpressure = (write: boolean) =>
     write &&
@@ -914,33 +952,51 @@ const startCheckpointWorker = Effect.fnUntraced(function* (
   });
   // After the listeners: adding a "message" listener refs the worker again.
   worker.unref();
-  const waitForAdmission = (write: boolean) =>
-    Effect.interruptible(
-      Effect.callback<void>(function (this: Scheduler.Scheduler, resume) {
-        const dispatcher = this.makeDispatcher();
-        let cancelled = false;
-        const waiter = {
-          write,
-          resume: () => {
-            if (!cancelled) dispatcher.scheduleTask(() => resume(Effect.void), 0);
-          },
-        };
-        waiters.push(waiter);
-        worker.ref();
-        check(true);
-        return Effect.sync(() => {
-          cancelled = true;
-          const index = waiters.indexOf(waiter);
-          if (index !== -1) waiters.splice(index, 1);
-          if (waiters.length === 0) worker.unref();
-        });
-      }),
-    );
-  runWithAdmission = <A>(write: boolean, execute: () => SqliteExecutionResult<A>) =>
+  const waitForAdmission = <A>(write: boolean, execute: () => SqliteExecutionResult<A>) =>
+    Effect.suspend(() => {
+      let scheduled = false;
+      let resumed = false;
+      const waiter: AdmissionWaiter = {
+        write,
+        state: "queued",
+        resume: () => {},
+      };
+      const wait = Effect.interruptible(
+        Effect.callback<void>(function (this: Scheduler.Scheduler, continueAdmission) {
+          const dispatcher = this.makeDispatcher();
+          waiter.resume = () => {
+            if (waiter.state === "cancelled" || scheduled || resumed) return;
+            scheduled = true;
+            dispatcher.scheduleTask(() => {
+              scheduled = false;
+              if (waiter.state === "cancelled" || resumed) return;
+              resumed = true;
+              continueAdmission(Effect.void);
+            }, 0);
+          };
+          waiters.push(waiter);
+          worker.ref();
+          check(true);
+          return Effect.sync(() => cancelWaiter(waiter));
+        }),
+      );
+      return wait.pipe(
+        Effect.flatMap(() => runWithAdmission(write, execute, waiter)),
+        // Keep cancellation ownership through the retry's final gate check.
+        Effect.onInterrupt(() => Effect.sync(() => cancelWaiter(waiter))),
+      );
+    });
+  runWithAdmission = <A>(
+    write: boolean,
+    execute: () => SqliteExecutionResult<A>,
+    admitted?: AdmissionWaiter,
+  ) =>
     Effect.suspend(() => {
       if (needsBackpressure(write)) {
-        return Effect.flatMap(waitForAdmission(write), () => runWithAdmission(write, execute));
+        if (admitted !== undefined) settleAdmission(admitted);
+        return waitForAdmission(write, execute);
       }
+      if (admitted !== undefined) settleAdmission(admitted);
       const result = execute();
       return sqliteExecutionToEffect(result);
     });
@@ -1287,13 +1343,14 @@ const make = Effect.fn("makeWithDatabase")(function* (
       }),
     );
   const transactionAcquirer = Effect.flatMap(route, (target) =>
-    Effect.uninterruptibleMask((restore) => {
+    Effect.uninterruptibleMask(() => {
       const fiber = Fiber.getCurrent()!;
       const scope = Context.getUnsafe(fiber.context, Scope.Scope);
       const clock = fiber.getRef(Clock.Clock);
       const start = clock.monotonicTimeNanosUnsafe();
       return Effect.as(
-        Effect.tap(restore(target.lock.take(1)), () => {
+        // The caller may already be masked by SqlClient while it waits to begin.
+        Effect.tap(Effect.interruptible(target.lock.take(1)), () => {
           const pending = fiber.getRef(TransactionAcquire);
           if (pending !== undefined) pending.acquired = acquired(target, clock, start);
           return Scope.addFinalizer(scope, target.lock.release(1));

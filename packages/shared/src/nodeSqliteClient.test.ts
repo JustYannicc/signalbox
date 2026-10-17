@@ -1640,6 +1640,150 @@ it.effect.skipIf(!supportsNoopCheckpoint)(
 );
 
 it.effect.skipIf(!supportsNoopCheckpoint)(
+  "hands a canceled reserved connection wake to the next raw SQL waiter before dispatch",
+  () =>
+    withCheckpointClient((sql, filename) =>
+      Effect.gen(function* () {
+        const worker = startedWorkers.at(-1)!;
+        const { reader, checkpointRequests } = yield* blockCheckpointBehindReader(
+          sql,
+          filename,
+          worker,
+        );
+        const connection = yield* sql.reserve;
+        const admission = observeWriterWaiters(worker, 2);
+        const scheduled = schedulerHoldingDispatch();
+        const writeA = yield* Effect.forkChild(
+          connection
+            .executeUnprepared("INSERT INTO entries VALUES (?)", [1], undefined)
+            .pipe(Effect.provideService(Scheduler.Scheduler, scheduled.scheduler)),
+          { startImmediately: true },
+        );
+        const writeBStarted = yield* Deferred.make<void>();
+        const writeBFinished = yield* Deferred.make<void>();
+        yield* Effect.forkChild(
+          Effect.gen(function* () {
+            yield* Deferred.succeed(writeBStarted, undefined);
+            yield* connection.executeUnprepared("INSERT INTO entries VALUES (?)", [2], undefined);
+            yield* Deferred.succeed(writeBFinished, undefined);
+          }),
+          { startImmediately: true },
+        );
+        yield* Deferred.await(writeBStarted);
+        yield* Effect.promise(() => admission.ready);
+        admission.restore();
+        scheduled.arm();
+
+        const truncateFinished = waitForTruncateCompletion(worker);
+        checkpointRequests.release();
+        yield* checkpointWorkerReply(worker);
+        reader.exec("ROLLBACK");
+        yield* Effect.promise(() => truncateFinished);
+        yield* Effect.promise(() => scheduled.paused);
+        assert.isUndefined(writeA.pollUnsafe());
+
+        let checksAfterWake = 0;
+        const postMessage = worker.postMessage.bind(worker);
+        const postSpy = vi.spyOn(worker, "postMessage").mockImplementation((...args) => {
+          const request = args[0];
+          if (
+            typeof request === "object" &&
+            request !== null &&
+            "type" in request &&
+            request.type === "check"
+          ) {
+            checksAfterWake++;
+          }
+          postMessage(...args);
+        });
+        yield* Effect.addFinalizer(() => Effect.sync(() => postSpy.mockRestore()));
+
+        yield* Fiber.interrupt(writeA);
+        scheduled.resume();
+        yield* Effect.promise(() => new Promise<void>((resolve) => setImmediate(resolve)));
+        assert.isTrue(yield* Deferred.isDone(writeBFinished));
+        assert.equal(checksAfterWake, 0);
+        assert.deepEqual(reader.prepare("SELECT value FROM entries ORDER BY value").all(), [
+          { value: 2 },
+        ]);
+      }),
+    ),
+);
+
+it.effect.skipIf(!supportsNoopCheckpoint)(
+  "hands a canceled reserved connection wake to the next raw SQL waiter after resume",
+  () =>
+    withCheckpointClient((sql, filename) =>
+      Effect.gen(function* () {
+        const worker = startedWorkers.at(-1)!;
+        const { reader, checkpointRequests } = yield* blockCheckpointBehindReader(
+          sql,
+          filename,
+          worker,
+        );
+        const connection = yield* sql.reserve;
+        const admission = observeWriterWaiters(worker, 2);
+        const scheduled = schedulerHoldingDispatchAfterResume();
+        const writeA = yield* Effect.forkChild(
+          connection
+            .executeUnprepared("INSERT INTO entries VALUES (?)", [1], undefined)
+            .pipe(Effect.provideService(Scheduler.Scheduler, scheduled.scheduler)),
+          { startImmediately: true },
+        );
+        const writeBStarted = yield* Deferred.make<void>();
+        const writeBFinished = yield* Deferred.make<void>();
+        yield* Effect.forkChild(
+          Effect.gen(function* () {
+            yield* Deferred.succeed(writeBStarted, undefined);
+            yield* connection.executeUnprepared("INSERT INTO entries VALUES (?)", [2], undefined);
+            yield* Deferred.succeed(writeBFinished, undefined);
+          }),
+          { startImmediately: true },
+        );
+        yield* Deferred.await(writeBStarted);
+        yield* Effect.promise(() => admission.ready);
+        admission.restore();
+        scheduled.arm();
+
+        const truncateFinished = waitForTruncateCompletion(worker);
+        checkpointRequests.release();
+        yield* checkpointWorkerReply(worker);
+        reader.exec("ROLLBACK");
+        yield* Effect.promise(() => truncateFinished);
+        yield* Effect.promise(() => scheduled.admissionPaused);
+        scheduled.resume();
+        yield* Effect.promise(() => scheduled.continuationPaused);
+        assert.isUndefined(writeA.pollUnsafe());
+
+        let checksAfterWake = 0;
+        const postMessage = worker.postMessage.bind(worker);
+        const postSpy = vi.spyOn(worker, "postMessage").mockImplementation((...args) => {
+          const request = args[0];
+          if (
+            typeof request === "object" &&
+            request !== null &&
+            "type" in request &&
+            request.type === "check"
+          ) {
+            checksAfterWake++;
+          }
+          postMessage(...args);
+        });
+        yield* Effect.addFinalizer(() => Effect.sync(() => postSpy.mockRestore()));
+
+        yield* Fiber.interrupt(writeA);
+        scheduled.releaseContinuation();
+        yield* Effect.promise(() => new Promise<void>((resolve) => setImmediate(resolve)));
+        assert.isTrue(yield* Deferred.isDone(writeBFinished));
+        assert.equal(checksAfterWake, 0);
+        assert.deepEqual(reader.prepare("SELECT value FROM entries ORDER BY value").all(), [
+          { value: 2 },
+        ]);
+      }),
+    ),
+);
+
+it.effect.skipIf(!supportsNoopCheckpoint)(
   "rechecks admission after the scheduler yields before a write",
   () =>
     withCheckpointClient(
@@ -2028,6 +2172,99 @@ it.effect.skipIf(!supportsNoopCheckpoint)(
           yield* sql.withTransaction(sql`SELECT 1`);
         }),
       { readerWorker: true },
+    ),
+);
+
+it.effect.skipIf(!supportsNoopCheckpoint)(
+  "interrupts a transaction waiting for the writer permit while admission stays blocked",
+  () =>
+    withCheckpointClient((sql, filename) =>
+      Effect.gen(function* () {
+        const worker = startedWorkers.at(-1)!;
+        const { reader, checkpointRequests } = yield* blockCheckpointBehindReader(
+          sql,
+          filename,
+          worker,
+        );
+        const writeFinished = yield* Deferred.make<void>();
+        const admission = observeWriterWaiters(worker, 1);
+        yield* Effect.addFinalizer(() => Effect.sync(admission.restore));
+        yield* Effect.forkChild(
+          sql
+            .unsafe("INSERT INTO entries VALUES (1)")
+            .unprepared.pipe(Effect.tap(() => Deferred.succeed(writeFinished, undefined))),
+          { startImmediately: true },
+        );
+        yield* Effect.promise(() => admission.ready);
+        admission.restore();
+
+        const transactionStarted = yield* Deferred.make<void>();
+        const transactionEntered = yield* Deferred.make<void>();
+        const holdTransaction = yield* Deferred.make<void>();
+        const transaction = yield* Effect.forkChild(
+          Effect.gen(function* () {
+            yield* Deferred.succeed(transactionStarted, undefined);
+            return yield* sql.withTransaction(
+              Effect.gen(function* () {
+                yield* Deferred.succeed(transactionEntered, undefined);
+                yield* Deferred.await(holdTransaction);
+              }),
+            );
+          }),
+          { startImmediately: true },
+        );
+        yield* Deferred.await(transactionStarted);
+        yield* Effect.yieldNow;
+
+        const interruptFinished = yield* Deferred.make<void>();
+        yield* Effect.forkChild(
+          Fiber.interrupt(transaction).pipe(
+            Effect.tap(() => Deferred.succeed(interruptFinished, undefined)),
+          ),
+          { startImmediately: true },
+        );
+        yield* Effect.yieldNow;
+        assert.isTrue(yield* Deferred.isDone(interruptFinished));
+        assert.isFalse(yield* Deferred.isDone(writeFinished));
+        assert.isFalse(yield* Deferred.isDone(transactionEntered));
+        assert.equal((yield* Fiber.await(transaction))._tag, "Failure");
+
+        const reserveStarted = yield* Deferred.make<void>();
+        const reservation = yield* Effect.forkChild(
+          Effect.gen(function* () {
+            yield* Deferred.succeed(reserveStarted, undefined);
+            yield* Effect.scoped(sql.reserve);
+          }),
+          { startImmediately: true },
+        );
+        yield* Deferred.await(reserveStarted);
+        yield* Effect.yieldNow;
+        const reserveInterruptFinished = yield* Deferred.make<void>();
+        yield* Effect.forkChild(
+          Fiber.interrupt(reservation).pipe(
+            Effect.tap(() => Deferred.succeed(reserveInterruptFinished, undefined)),
+          ),
+          { startImmediately: true },
+        );
+        yield* Effect.yieldNow;
+        assert.isTrue(yield* Deferred.isDone(reserveInterruptFinished));
+        assert.isFalse(yield* Deferred.isDone(writeFinished));
+        assert.equal((yield* Fiber.await(reservation))._tag, "Failure");
+
+        const truncateFinished = waitForTruncateCompletion(worker);
+        checkpointRequests.release();
+        reader.exec("ROLLBACK");
+        const truncate = yield* Effect.promise(() => truncateFinished);
+        assert.isFalse(truncate.blocked as boolean);
+        yield* Deferred.await(writeFinished);
+        yield* checkpointWorkerReply(worker);
+        assert.deepEqual(reader.prepare("SELECT value FROM entries ORDER BY value").all(), [
+          { value: 1 },
+        ]);
+
+        // The cancelled acquisition must not leave the writer permit or SQLite transaction held.
+        yield* sql.withTransaction(sql`SELECT 1`);
+      }),
     ),
 );
 
