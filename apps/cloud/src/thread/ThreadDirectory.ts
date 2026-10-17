@@ -23,7 +23,7 @@ import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
 import type { ModelAuthorization } from "../models/ModelProtocol.ts";
-import type { ModelGatewayRecord } from "../modelGateway/modelGatewayRecord.ts";
+import type { ModelGatewayRecord } from "../models/ModelRecords.ts";
 import type { ThreadContextTurns, ThreadMatch } from "../context/threadContext.ts";
 import type {
   BrowsingCommand,

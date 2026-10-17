@@ -11,6 +11,7 @@ import type { OnePasswordEnvironmentId } from "@t3tools/contracts/signalboxFolde
 import {
   type MachineClass,
   type ModelGatewayProvider,
+  MIN_RUNNER_PROTOCOL_VERSION,
   RUNNER_PROTOCOL_VERSION,
   type RunnerHello,
   type RunnerItem,
@@ -43,6 +44,7 @@ import { TurnDiagnostics } from "../diagnostics/TurnDiagnostics.ts";
 import { driveToken, isDriveToken } from "../../drive/driveToken.ts";
 import { gatewayProviderFor, poolIdOfInstance } from "../providerCatalog.ts";
 import { holdsNativeSession } from "../session/nativeSession.ts";
+import * as PreviewState from "../PreviewState.ts";
 import { steersOf } from "../steering.ts";
 import { SessionRows } from "../session/SessionRows.ts";
 import { sessionToken } from "../session/sessionToken.ts";
@@ -365,6 +367,7 @@ const needsUpkeep = (lease: ThreadStore.MachineLease, live: boolean, previewHeld
 const make = Effect.gen(function* () {
   const engine = yield* ThreadEngine.ThreadEngine;
   const previews = yield* PreviewHold;
+  const previewState = yield* PreviewState.PreviewState;
   const store = yield* ThreadStore.ThreadStore;
   const sessionRows = yield* SessionRows;
   const crypto = yield* Crypto.Crypto;
@@ -450,7 +453,10 @@ const make = Effect.gen(function* () {
           }),
           keep<HelloResult>({ _tag: "refused", reason, message }),
         );
-      if (hello.protocolVersion !== RUNNER_PROTOCOL_VERSION) {
+      if (
+        hello.protocolVersion < MIN_RUNNER_PROTOCOL_VERSION ||
+        hello.protocolVersion > RUNNER_PROTOCOL_VERSION
+      ) {
         return refuse(
           "protocol_version",
           `This thread speaks Runner protocol ${RUNNER_PROTOCOL_VERSION}.`,
@@ -1038,9 +1044,11 @@ const make = Effect.gen(function* () {
           }
           const generation = lease.generation + 1;
           const token = yield* newToken;
+          const savedServices = (yield* Effect.orDie(previewState.configuration)).services;
           const machineClass = machineClassFor({
             worktreePath: projection.thread.worktreePath,
-            movedUp: lease.movedUp === true,
+            movedUp:
+              lease.movedUp === true || lease.machineClass === "heavy" || savedServices.length > 0,
           });
           if (run !== undefined) {
             yield* diagnostics.machineRequested({ generation, run, now, machineClass });

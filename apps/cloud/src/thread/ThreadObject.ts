@@ -18,7 +18,7 @@ import type { SqlError } from "effect/sql/SqlError";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
 
 import { canWrite, myDriveId } from "../drive/driveAccess.ts";
-import type { ModelGatewayRecord } from "../modelGateway/modelGatewayRecord.ts";
+import type { ModelGatewayRecord } from "../models/ModelRecords.ts";
 import type { DriveObjectNamespace } from "../drive/DriveDirectory.ts";
 import { type AttachmentObjects, attachmentStorage } from "../attachments/attachmentObjects.ts";
 import {
@@ -29,7 +29,7 @@ import * as GitHub from "../github/GitHub.ts";
 import type { PackBucket } from "../drive/DrivePacks.ts";
 import * as Platform from "../platform.ts";
 import * as PoolDirectory from "../pool/PoolDirectory.ts";
-import * as PreviewState from "./preview/PreviewState.ts";
+import * as PreviewState from "./PreviewState.ts";
 import * as BrowserTrail from "./preview/BrowserTrail.ts";
 import { PreviewGateway } from "./preview/PreviewGateway.ts";
 import { type PreviewEnv, previewSettings } from "./preview/previewHost.ts";
