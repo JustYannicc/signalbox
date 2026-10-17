@@ -341,6 +341,22 @@ const make = Effect.gen(function* () {
     Effect.gen(function* () {
       if (state.head === remoteHead) return { aheadCount: 0, behindCount: 0 };
       if (state.head === null) return null;
+      const local = yield* commitsSince(
+        target.drive,
+        state.head,
+        new Set([
+          remoteHead,
+          ...[state.refs.base, state.refs.main, ...state.refs.shallow].filter(
+            (oid): oid is Oid => oid !== null,
+          ),
+        ]),
+      ).pipe(Effect.mapError(() => failure(cwd, "status", "The drive is unavailable right now.")));
+      if (
+        local.reached.has(remoteHead) &&
+        local.commits.every((commit) => commit.parents.length === 1)
+      ) {
+        return { aheadCount: local.commits.length, behindCount: 0 };
+      }
       let cursor = state.head;
       for (let unpublished = 0; unpublished <= MAX_LOCAL_STATUS_COMMITS; unpublished++) {
         const comparison = yield* github.api.compare(
@@ -368,7 +384,7 @@ const make = Effect.gen(function* () {
         cursor = commit.parents[0]!;
       }
       return null;
-    });
+    }).pipe(Effect.catchTags({ GitHubError: () => Effect.succeed(null) }));
 
   type Target = Effect.Success<ReturnType<typeof resolve>>;
 

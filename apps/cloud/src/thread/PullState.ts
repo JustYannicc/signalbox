@@ -6,6 +6,8 @@ import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
 import type { SqlError } from "effect/sql/SqlError";
 
+export const MAX_PULL_FAILURES = 3;
+
 export const migratePulls = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
   yield* sql`CREATE TABLE thread_git_pulls (
@@ -56,6 +58,7 @@ export class PullReports extends Context.Service<
   {
     readonly reported: (generation: number, result: PullResult) => Effect.Effect<void>;
     readonly revoke: (id: string, reason?: string) => Effect.Effect<void>;
+    readonly exhausted: (id: string, generation: number) => Effect.Effect<void>;
   }
 >()("@signalbox/cloud/thread/PullReports") {}
 
@@ -103,8 +106,15 @@ const retryPull = (id: string, generation: number, sequence: number, at: number)
     const sql = yield* SqlClient.SqlClient;
     yield* sql`UPDATE thread_git_pulls SET phase = 'selected', attempts = attempts + 1, retry_at = ${at},
       retry_generation = ${generation}, retry_sequence = ${sequence}
-    WHERE id = ${id} AND phase <> 'completed'
+    WHERE id = ${id} AND phase = 'running' AND generation = ${generation}
       AND (retry_generation IS NULL OR retry_generation <> ${generation} OR retry_sequence < ${sequence})`;
+  });
+
+const losePull = (id: string, generation: number) =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    yield* sql`UPDATE thread_git_pulls SET phase = 'selected', attempts = attempts + 1, retry_at = NULL
+      WHERE id = ${id} AND phase = 'running' AND generation = ${generation}`;
   });
 
 const Publication = Schema.Struct({
@@ -147,6 +157,7 @@ export class PullState extends Context.Service<
       at: number,
     ) => Effect.Effect<void, SqlError>;
     readonly finish: (result: PullResult) => Effect.Effect<void, SqlError>;
+    readonly lost: (id: string, generation: number) => Effect.Effect<void, SqlError>;
     readonly publication: Effect.Effect<typeof Publication.Type | null, SqlError>;
     readonly reservePublication: (
       id: string,
@@ -174,6 +185,7 @@ export const layer = Layer.effect(
       assign: (id, generation) => run(assignPull(id, generation)),
       finish: (result) => run(finishPull(result)),
       retry: (id, generation, sequence, at) => run(retryPull(id, generation, sequence, at)),
+      lost: (id, generation) => run(losePull(id, generation)),
       publication: run(publication),
       reservePublication: (id, actorId, driveId, until) =>
         run(reservePublication(id, actorId, driveId, until)),

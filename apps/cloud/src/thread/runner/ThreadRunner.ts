@@ -804,6 +804,7 @@ const make = Effect.gen(function* () {
         lease.pulls === true &&
         lease.token !== null &&
         run === undefined &&
+        pending.attempts < PullState.MAX_PULL_FAILURES &&
         (pending.retry_at === null || pending.retry_at <= now)
           ? {
               operation: pending.operation,
@@ -1077,6 +1078,24 @@ const make = Effect.gen(function* () {
         const backend = backends[classOf(lease)];
         const run = projection === null ? undefined : harnessRun(projection);
         let pending = projection === null ? null : yield* Effect.orDie(pullState.pending);
+        if (
+          pending !== null &&
+          lease.status === "none" &&
+          pending.generation === lease.generation
+        ) {
+          yield* Effect.orDie(pullState.lost(pending.id, lease.generation));
+          pending = yield* Effect.orDie(pullState.pending);
+        }
+        let exhausted = false;
+        if (
+          pending !== null &&
+          pending.phase === "selected" &&
+          pending.attempts >= PullState.MAX_PULL_FAILURES
+        ) {
+          yield* pulls.exhausted(pending.id, lease.generation);
+          pending = yield* Effect.orDie(pullState.pending);
+          exhausted = pending === null;
+        }
         let revoked = false;
         if (pending !== null && drives._tag === "Some") {
           const actorWrites = yield* drives.value
@@ -1136,10 +1155,12 @@ const make = Effect.gen(function* () {
             } satisfies ThreadEngine.EngineDecision<MachinePlan>,
           );
         };
-        if (revoked) {
+        if (revoked || exhausted) {
           return yield* release({
             reason: "idle",
-            detail: "The pull stopped because drive access changed.",
+            detail: exhausted
+              ? "The pull exhausted its retry budget."
+              : "The pull stopped because drive access changed.",
           });
         }
         if (lease.status === "none") {
@@ -1148,6 +1169,7 @@ const make = Effect.gen(function* () {
             return keep(UNNEEDED);
           }
           const generation = lease.generation + 1;
+          if (pending !== null) yield* Effect.orDie(pullState.assign(pending.id, generation));
           const token = yield* newToken;
           const savedServices = (yield* Effect.orDie(previewState.configuration)).services;
           const machineClass = machineClassFor({

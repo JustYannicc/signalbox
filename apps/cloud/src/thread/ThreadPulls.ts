@@ -4,6 +4,7 @@ import * as Context from "effect/Context";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as SqlClient from "effect/sql/SqlClient";
 
 import { DriveDirectory } from "../drive/DriveDirectory.ts";
 import { canWrite, myDriveId } from "../drive/driveAccess.ts";
@@ -35,6 +36,7 @@ export class ThreadPulls extends Context.Service<
     /** Called under the engine lock, before the reporting batch is acknowledged. */
     readonly reported: (generation: number, result: PullResult) => Effect.Effect<void>;
     readonly revoke: (id: string, reason?: string) => Effect.Effect<void>;
+    readonly exhausted: (id: string, generation: number) => Effect.Effect<void>;
     readonly reservePublication: (
       actor: Actor,
       driveId: string,
@@ -51,8 +53,18 @@ const make = Effect.gen(function* () {
   const engine = yield* ThreadEngine.ThreadEngine;
   const store = yield* ThreadStore.ThreadStore;
   const state = yield* PullState.PullState;
+  const sql = yield* SqlClient.SqlClient;
   const directory = yield* Effect.serviceOption(DriveDirectory);
   const waiters = new Map<string, Deferred.Deferred<PullResult>>();
+
+  const notify = (result: PullResult) =>
+    Effect.gen(function* () {
+      const waiter = waiters.get(result.id);
+      if (waiter !== undefined) {
+        yield* Deferred.succeed(waiter, result);
+        waiters.delete(result.id);
+      }
+    });
 
   const accessible = (actor: Actor, driveId: string) =>
     Effect.gen(function* () {
@@ -217,11 +229,7 @@ const make = Effect.gen(function* () {
       if (receipt === null && result.outcome !== "refused") return;
       const settled = receipt ?? result;
       yield* Effect.orDie(state.finish(settled));
-      const waiter = waiters.get(result.id);
-      if (waiter !== undefined) {
-        yield* Deferred.succeed(waiter, settled);
-        waiters.delete(result.id);
-      }
+      yield* notify(settled);
     });
 
   const revoke: ThreadPulls["Service"]["revoke"] = (
@@ -243,11 +251,62 @@ const make = Effect.gen(function* () {
           pending.operation.expectedWip !== pending.operation.expectedThread,
       };
       yield* Effect.orDie(state.finish(result));
-      const waiter = waiters.get(id);
-      if (waiter !== undefined) {
-        yield* Deferred.succeed(waiter, result);
-        waiters.delete(id);
-      }
+      yield* notify(result);
+    });
+
+  const exhausted: ThreadPulls["Service"]["exhausted"] = (id, generation) =>
+    Effect.gen(function* () {
+      const pending = yield* Effect.orDie(state.byId(id));
+      const machine = yield* Effect.orDie(store.machine);
+      if (
+        pending === null ||
+        pending.phase === "completed" ||
+        pending.attempts < PullState.MAX_PULL_FAILURES ||
+        machine.generation !== generation ||
+        (pending.phase === "running" && machine.status !== "none")
+      )
+        return;
+      const owner = yield* Effect.orDie(store.owner);
+      const projection = yield* engine.projection;
+      if (owner === null || projection === null || directory._tag === "None") return;
+      const drive = directory.value.forDrive(pending.drive_id);
+      const writer = {
+        threadId: projection.thread.id,
+        userId: owner.userId,
+        generation: generation + 1,
+        live: false,
+        packsAfter: 0,
+      };
+      // Fence first: a save already admitted by the old token either committed before
+      // this open (and has a receipt) or cannot change refs after terminal settlement.
+      yield* Effect.orDie(drive.open(writer));
+      const receipt = yield* Effect.orDie(drive.pullReceipt(writer, id));
+      const result: PullResult = receipt ?? {
+        id,
+        target: pending.operation.target,
+        head: pending.operation.expectedThread,
+        wip: pending.operation.expectedWip,
+        outcome: "refused",
+        reason: "Pull stopped after three failed attempts. Try pulling again.",
+        hasWorkingTreeChanges:
+          pending.operation.expectedWip !== null &&
+          pending.operation.expectedWip !== pending.operation.expectedThread,
+      };
+      // A restart must not reuse this checkout after the pending slot was cleared.
+      yield* Effect.orDie(
+        sql.withTransaction(
+          Effect.andThen(
+            store.saveMachine({
+              ...ThreadStore.NO_MACHINE,
+              generation,
+              machineClass: machine.machineClass,
+              movedUp: machine.movedUp,
+            }),
+            state.finish(result),
+          ),
+        ),
+      );
+      yield* notify(result);
     });
 
   const reservePublication: ThreadPulls["Service"]["reservePublication"] = (actor, driveId, id) =>
@@ -286,6 +345,7 @@ const make = Effect.gen(function* () {
     wait,
     reported,
     revoke,
+    exhausted,
     reservePublication,
     releasePublication,
   });
@@ -295,5 +355,5 @@ export const layer = Layer.effect(ThreadPulls, make);
 
 export const layerReports = Layer.effect(
   PullState.PullReports,
-  Effect.map(ThreadPulls, ({ reported, revoke }) => ({ reported, revoke })),
+  Effect.map(ThreadPulls, ({ reported, revoke, exhausted }) => ({ reported, revoke, exhausted })),
 );

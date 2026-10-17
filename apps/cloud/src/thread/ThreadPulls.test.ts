@@ -9,6 +9,7 @@ import * as Layer from "effect/Layer";
 import * as TestClock from "effect/testing/TestClock";
 
 import { DriveDirectory, handleFor } from "../drive/DriveDirectory.ts";
+import { wipRef } from "../drive/DriveStore.ts";
 import { uploadPack } from "../drive/DriveUploads.ts";
 import { makeMemoryDrives, makeRepo } from "../drive/driveTesting.ts";
 import { remoteThreadWorktree } from "../user/contextProjects.ts";
@@ -94,6 +95,242 @@ const idle = (
   });
 
 describe("durable thread pull", () => {
+  it.effect.each(["interrupted", "lost"] as const)(
+    "ends after three %s attempts, wakes its caller and fences late saves before the next turn",
+    (failure) =>
+      withFixture((f) =>
+        withObject(
+          f.database,
+          (engine, runner, context) =>
+            Effect.gen(function* () {
+              let machine = yield* idle(engine, runner);
+              const pulls = Context.get(context, ThreadPulls.ThreadPulls);
+              const state = Context.get(context, PullState.PullState);
+              yield* Effect.promise(() =>
+                f.handle.updateRefs(
+                  {
+                    threadId,
+                    userId: owner.userId,
+                    generation: machine.generation,
+                    live: false,
+                    packsAfter: 0,
+                  },
+                  [{ name: wipRef(threadId), old: null, new: f.target }],
+                ),
+              );
+              yield* pulls.begin(owner, {
+                driveId: DRIVE,
+                operationId: "bounded",
+                target: f.target,
+                branch: worktree.branch,
+              });
+              const waiting = yield* Effect.forkChild(pulls.wait(owner, "bounded"));
+              const firstWork = yield* runner.work;
+              const operation = firstWork.pull!.operation;
+              const workToken = firstWork.pull!.drive.token;
+              for (let attempt = 0; attempt < 3; attempt++) {
+                const work = yield* runner.work;
+                expect(work.pull?.operation).toEqual(operation);
+                expect((yield* runner.reconcile).busy).toBe(true);
+                if (failure === "interrupted") {
+                  const batch = {
+                    generation: machine.generation,
+                    sequence: 2 + attempt * 2,
+                    items: [
+                      { kind: "git.pull.interrupted", id: "bounded" },
+                      { kind: "git.pull.interrupted", id: "bounded" },
+                    ] as const,
+                  };
+                  yield* runner.batch(batch);
+                  yield* runner.batch(batch);
+                  yield* runner.batch({ ...batch, sequence: batch.sequence + 1 });
+                  expect((yield* state.byId("bounded"))?.attempts).toBe(attempt + 1);
+                  expect((yield* runner.work).pull).toBeNull();
+                } else {
+                  yield* runner.machineExited(machine.generation, {
+                    detail: "out of memory",
+                    outOfMemory: true,
+                  });
+                  yield* runner.ended(machine.generation, "duplicate loss notification");
+                }
+                if (attempt < 2) {
+                  if (failure === "interrupted") {
+                    yield* TestClock.adjust(1_000 * 2 ** attempt);
+                  } else {
+                    machine = yield* connect(runner);
+                    expect((yield* state.byId("bounded"))?.attempts).toBe(attempt + 1);
+                  }
+                }
+              }
+              const stopped = yield* runner.reconcile;
+              expect(stopped.ensure).toBeNull();
+              expect(stopped.busy).toBe(false);
+              expect(yield* state.pending).toBeNull();
+              expect(yield* Fiber.join(waiting)).toMatchObject({
+                id: "bounded",
+                outcome: "refused",
+                head: f.first,
+                wip: f.target,
+                hasWorkingTreeChanges: true,
+                reason: "Pull stopped after three failed attempts. Try pulling again.",
+              });
+              expect((yield* runner.authorizeDrive(workToken))._tag).toBe("denied");
+              yield* send(engine, 2, "continue after failed pull");
+              const late = yield* Effect.promise(() =>
+                f.handle.savePull(
+                  {
+                    threadId,
+                    userId: owner.userId,
+                    generation: machine.generation,
+                    live: false,
+                    packsAfter: 0,
+                  },
+                  {
+                    operation,
+                    result: {
+                      id: operation.id,
+                      target: f.target,
+                      head: f.target,
+                      wip: f.target,
+                      outcome: "pulled",
+                      reason: null,
+                      hasWorkingTreeChanges: false,
+                    },
+                  },
+                ),
+              );
+              expect(late.outcome).toBe("refused");
+              expect(yield* Effect.promise(() => f.handle.refs(threadId))).toMatchObject({
+                thread: f.first,
+                wip: f.target,
+              });
+              expect((yield* runner.reconcile).ensure).not.toBeNull();
+            }),
+          { drives: true, driveDirectory: f.directory },
+        ),
+      ),
+  );
+
+  it.effect.each(["interrupted", "lost"] as const)(
+    "keeps a committed success whose report was lost at the %s attempt limit",
+    (failure) =>
+      withFixture((f) =>
+        withObject(
+          f.database,
+          (engine, runner, context) =>
+            Effect.gen(function* () {
+              let machine = yield* idle(engine, runner);
+              const pulls = Context.get(context, ThreadPulls.ThreadPulls);
+              yield* pulls.begin(owner, {
+                driveId: DRIVE,
+                operationId: "saved-at-limit",
+                target: f.target,
+                branch: worktree.branch,
+              });
+              const waiting = yield* Effect.forkChild(pulls.wait(owner, "saved-at-limit"));
+              const operation = (yield* runner.work).pull!.operation;
+              const result: PullResult = {
+                id: operation.id,
+                target: f.target,
+                head: f.target,
+                wip: f.target,
+                outcome: "pulled",
+                reason: null,
+                hasWorkingTreeChanges: false,
+              };
+              for (let attempt = 0; attempt < 3; attempt++) {
+                yield* runner.work;
+                if (attempt === 2) {
+                  const writer = {
+                    threadId,
+                    userId: owner.userId,
+                    generation: machine.generation,
+                    live: false,
+                    packsAfter: 0,
+                  };
+                  yield* Effect.promise(() => f.handle.open(writer));
+                  expect(
+                    yield* Effect.promise(() => f.handle.savePull(writer, { operation, result })),
+                  ).toEqual(result);
+                }
+                if (failure === "interrupted") {
+                  yield* runner.batch({
+                    generation: machine.generation,
+                    sequence: attempt + 2,
+                    items: [{ kind: "git.pull.interrupted", id: operation.id }],
+                  });
+                  if (attempt < 2) yield* TestClock.adjust(1_000 * 2 ** attempt);
+                } else {
+                  yield* runner.ended(machine.generation, "lost completion");
+                  if (attempt < 2) machine = yield* connect(runner);
+                }
+              }
+              expect((yield* runner.reconcile).ensure).toBeNull();
+              expect(yield* Context.get(context, PullState.PullState).pending).toBeNull();
+              expect(yield* Fiber.join(waiting)).toEqual(result);
+              expect((yield* Effect.promise(() => f.handle.refs(threadId))).thread).toBe(f.target);
+              yield* send(engine, 2, "continue after successful pull");
+            }),
+          { drives: true, driveDirectory: f.directory },
+        ),
+      ),
+  );
+
+  it.effect("bounds machines that never connect across object eviction", () =>
+    withFixture((f) =>
+      Effect.gen(function* () {
+        yield* withObject(
+          f.database,
+          (engine, runner, context) =>
+            Effect.gen(function* () {
+              const machine = yield* idle(engine, runner);
+              yield* runner.ended(machine.generation, "finished before pull");
+              yield* Context.get(context, ThreadPulls.ThreadPulls).begin(owner, {
+                driveId: DRIVE,
+                operationId: "no-runner",
+                target: f.target,
+                branch: worktree.branch,
+              });
+            }),
+          { drives: true, driveDirectory: f.directory },
+        );
+        for (let attempt = 0; attempt < 3; attempt++) {
+          yield* withObject(
+            f.database,
+            (_engine, runner) =>
+              Effect.gen(function* () {
+                const requested = yield* runner.reconcile;
+                expect(requested.ensure?.generation).toBe(attempt + 2);
+                yield* TestClock.adjust("1 hour");
+                expect((yield* runner.reconcile).release).toBe(attempt + 2);
+              }),
+            { drives: true, driveDirectory: f.directory },
+          );
+        }
+        yield* withObject(
+          f.database,
+          (engine, runner, context) =>
+            Effect.gen(function* () {
+              const stopped = yield* runner.reconcile;
+              expect(stopped.ensure).toBeNull();
+              expect(stopped.busy).toBe(false);
+              expect(
+                (yield* Context.get(context, PullState.PullState).byId("no-runner"))?.attempts,
+              ).toBe(3);
+              expect(
+                (yield* Context.get(context, ThreadPulls.ThreadPulls).wait(owner, "no-runner"))
+                  .outcome,
+              ).toBe("refused");
+              expect((yield* runner.reconcile).ensure).toBeNull();
+              yield* send(engine, 2, "retry with a normal turn");
+              expect((yield* runner.reconcile).ensure).not.toBeNull();
+            }),
+          { drives: true, driveDirectory: f.directory },
+        );
+      }),
+    ),
+  );
+
   it.effect.each([5, 6])(
     "refuses Pull on a protocol %i runner without the capability",
     (protocolVersion) =>
