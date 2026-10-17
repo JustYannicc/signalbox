@@ -407,7 +407,7 @@ export function createThreadEnvironmentAtoms<R, E>(
       concurrency,
     }),
   };
-  const optimistic = createOptimisticThreadLifecycle(runtime, snapshotAtom);
+  const optimistic = createOptimisticThreadLifecycle(runtime, snapshotAtom, commands);
   return {
     ...commands,
     snapshotAtom: optimistic.snapshotAtom,
@@ -465,41 +465,29 @@ export function createThreadEnvironmentAtoms<R, E>(
       ...thread,
       autoSettleDisabledAt: input.enabled ? null : (thread.autoSettleDisabledAt ?? now),
     })),
-    pin: optimistic.wrap(
-      commands.pin,
-      (thread, input, now) => ({
-        ...thread,
-        pinnedAt: thread.pinnedAt ?? now,
-        pinOrderKey: thread.pinnedAt == null ? (input.orderKey ?? null) : thread.pinOrderKey,
-        ...(thread.settledOverride === "settled"
-          ? {
-              settledOverride: "active" as const,
-              settledAt: null,
-              unsettledAt: now,
-            }
-          : {}),
-        snoozedUntil: null,
-        snoozedAt: null,
-      }),
-      "threadPinning",
-    ),
-    unpin: optimistic.wrap(
-      commands.unpin,
-      (thread) => ({
-        ...thread,
-        pinnedAt: null,
-        pinOrderKey: null,
-      }),
-      "threadPinning",
-    ),
-    reorderPin: optimistic.wrap(
-      commands.reorderPin,
-      (thread, input) => ({
-        ...thread,
-        pinOrderKey: input.orderKey,
-      }),
-      "threadPinReorder",
-    ),
+    pin: optimistic.wrap(commands.pin, (thread, input, now) => ({
+      ...thread,
+      pinnedAt: thread.pinnedAt ?? now,
+      pinOrderKey: thread.pinnedAt == null ? (input.orderKey ?? null) : thread.pinOrderKey,
+      ...(thread.settledOverride === "settled"
+        ? {
+            settledOverride: "active" as const,
+            settledAt: null,
+            unsettledAt: now,
+          }
+        : {}),
+      snoozedUntil: null,
+      snoozedAt: null,
+    })),
+    unpin: optimistic.wrap(commands.unpin, (thread) => ({
+      ...thread,
+      pinnedAt: null,
+      pinOrderKey: null,
+    })),
+    reorderPin: optimistic.wrap(commands.reorderPin, (thread, input) => ({
+      ...thread,
+      pinOrderKey: input.orderKey,
+    })),
     reorderActive: optimistic.wrap(commands.reorderActive, (thread, input) => ({
       ...thread,
       activeOrderKey: input.orderKey,

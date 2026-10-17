@@ -292,6 +292,7 @@ import {
 import { readThreadKind, useThreadKind } from "../state/signalboxThreadKinds"; // signalbox: thread kinds
 import { ThreadKindAge, ThreadKindButton } from "./threadKind/ThreadKindIcon"; // signalbox: thread kinds
 import { selectThreadKindMenuItem } from "./threadKind/threadKindMenu"; // signalbox: thread kinds
+import { beginLedgerThreadDrop } from "./sidebar/ledgerThreadDrop"; // signalbox: optimistic ledger
 import { useShowsEnvironmentUi } from "../state/environmentCapabilities";
 
 const EMPTY_PROVIDER_ENTRIES: ReadonlyMap<string, ProviderInstanceEntry> = new Map();
@@ -307,15 +308,10 @@ const WORKING_SHELF_EXPANDED_KEY = "t3code:sidebar:working-expanded";
 
 const inboxReturns = createInboxReturnTracker();
 
-// Pin, unpin and pinned key writes project through the shared optimistic
-// ledger, so only settle and active-shelf moves still hold a drop here.
 type SidebarOptimisticDrop = {
   readonly key: string;
   readonly sourceSection: SidebarSection;
-  readonly section: "active" | "settled";
-  // False holds only the active order: the ledger alone decides whether the
-  // row is pinned, so a rejected unpin restores it from source.
-  readonly holdsSection: boolean;
+  readonly section: "pinned" | "active" | "settled";
   readonly occurredAt: string;
   readonly clearsSnooze: boolean;
   readonly order: readonly string[] | null;
@@ -547,14 +543,19 @@ function partitionSidebarThreads(input: SidebarThreadPartitionInput) {
     if (capabilities?.threadPinning === true && capabilities.threadPinReorder === true) {
       draggable.add(threadKey);
     }
-    if (optimisticDrop?.key === threadKey && optimisticDrop.holdsSection) {
+    if (optimisticDrop?.key === threadKey) {
       const projected = applySidebarThreadDrop(
         thread,
         optimisticDrop.section,
         optimisticDrop.occurredAt,
         optimisticDrop.assignedKeys.get(threadKey),
       );
-      (optimisticDrop.section === "settled" ? settled : inbox(projected)).push(
+      (optimisticDrop.section === "pinned"
+        ? pinned
+        : optimisticDrop.section === "settled"
+          ? settled
+          : inbox(projected)
+      ).push(
         optimisticDrop.clearsSnooze
           ? projected
           : { ...projected, snoozedAt: thread.snoozedAt, snoozedUntil: thread.snoozedUntil },
@@ -575,14 +576,22 @@ function partitionSidebarThreads(input: SidebarThreadPartitionInput) {
       ).push(thread);
     }
   }
+  // Server capability only gates DRAGGING — it must not influence the
+  // sort, or mixed-version fleets would render different pinned orders on
+  // web and mobile from the same data.
+  const sortedPinned = sortPinnedThreadsForSidebar(pinned);
   const sortedActive = workingShelfEnabled
     ? sortInboxThreadsByReturn(active, inboxReturns.returnedAt)
     : sortThreadsForSidebar(active);
   return {
-    // Server capability only gates DRAGGING — it must not influence the
-    // sort, or mixed-version fleets would render different pinned orders on
-    // web and mobile from the same data.
-    pinnedThreads: sortPinnedThreadsForSidebar(pinned),
+    pinnedThreads:
+      optimisticDrop?.section !== "pinned" || optimisticDrop.order === null
+        ? sortedPinned
+        : orderItemsByPreferredIds({
+            items: sortedPinned,
+            preferredIds: optimisticDrop.order,
+            getId: (thread) => scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
+          }),
     draggableThreadKeys: draggable,
     activeReorderableThreadKeys: activeReorderable,
     activeThreads:
@@ -607,10 +616,11 @@ function partitionSidebarThreads(input: SidebarThreadPartitionInput) {
 function isOptimisticDropReleased(input: {
   readonly optimisticDrop: SidebarOptimisticDrop;
   readonly threads: readonly EnvironmentThreadShell[];
+  readonly pinnedKeys: readonly string[];
   readonly activeKeys: readonly string[];
   readonly now: string;
 }): boolean {
-  const { optimisticDrop, threads, activeKeys, now } = input;
+  const { optimisticDrop, threads, pinnedKeys, activeKeys, now } = input;
   const canonicalByKey = new Map(
     threads.map((thread) => [
       scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
@@ -634,7 +644,6 @@ function isOptimisticDropReleased(input: {
   ) {
     return true;
   }
-  if (!optimisticDrop.holdsSection && canonicalSection !== optimisticDrop.section) return true;
   if (optimisticDrop.order === null) {
     // Settle also emits unpin/unsnooze events. Wait for the entire move
     // before releasing the projected fields and sort timestamps.
@@ -649,21 +658,23 @@ function isOptimisticDropReleased(input: {
   }
   if (canonicalSection !== optimisticDrop.section) return false;
   if (optimisticDrop.clearsSnooze && thread.snoozedUntil != null) return false;
-  const canonicalDestination = activeKeys.flatMap((key) => {
+  const destinationKeys = optimisticDrop.section === "pinned" ? pinnedKeys : activeKeys;
+  const canonicalDestination = destinationKeys.flatMap((key) => {
     const canonical = canonicalByKey.get(key);
     return canonical === undefined ? [] : [canonical];
   });
   const keyByThread = new Map(
     canonicalDestination.map((thread) => [
       scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
-      thread.activeOrderKey ?? null,
+      (optimisticDrop.section === "pinned" ? thread.pinOrderKey : thread.activeOrderKey) ?? null,
     ]),
   );
   const heldOrder = optimisticDrop.order;
   const heldKeys = new Set(heldOrder);
   const membershipChanged =
-    activeKeys.length !== heldOrder.length || activeKeys.some((key) => !heldKeys.has(key));
-  const foreignKeyLanded = activeKeys.some((threadKey) => {
+    destinationKeys.length !== heldOrder.length ||
+    destinationKeys.some((key) => !heldKeys.has(key));
+  const foreignKeyLanded = destinationKeys.some((threadKey) => {
     const currentKey = keyByThread.get(threadKey) ?? null;
     if (currentKey === (optimisticDrop.keysAtDrop.get(threadKey) ?? null)) return false;
     return currentKey !== optimisticDrop.assignedKeys.get(threadKey);
@@ -2716,9 +2727,9 @@ export default function Sidebar() {
   // selection, then clear the guard when the picker opens again.
   const suppressNextScopeChangeRef = useRef(false);
   const highlightedProjectScopeKeyRef = useRef<string | null>(null);
-  // Keep a settle or active-shelf drop at its destination while its server
-  // applies the lifecycle command and any order-key writes. The next pickup
-  // waits for this hold so a second drop cannot replace an unconfirmed placement.
+  // Keep a dropped row at its destination while its server applies the
+  // lifecycle command and any order-key writes. The next pickup waits for
+  // this hold so a second drop cannot replace an unconfirmed placement.
   const [optimisticDrop, setOptimisticDrop] = useState<SidebarOptimisticDrop | null>(null);
   const threadSearchInputRef = useRef<HTMLInputElement>(null);
   const [threadSearchQuery, setThreadSearchQuery] = useState("");
@@ -3364,6 +3375,7 @@ export default function Sidebar() {
     isOptimisticDropReleased({
       optimisticDrop,
       threads,
+      pinnedKeys,
       activeKeys,
       now: snoozeNow,
     })
@@ -3626,41 +3638,65 @@ export default function Sidebar() {
       )
     )
       return;
-    const toastDropFailure = (result: AtomCommandResult<unknown, unknown>, title: string) => {
-      if (result._tag === "Success" || isAtomCommandInterrupted(result)) return;
-      const error = squashAtomCommandFailure(result);
-      toastManager.add(
-        stackedThreadToast({
-          type: "error",
-          title,
-          description: error instanceof Error ? error.message : "An error occurred.",
-        }),
-      );
+    if (
+      beginLedgerThreadDrop({
+        plan,
+        threadRef,
+        threadByKey,
+        actions: {
+          pinThread,
+          unpinThread,
+          unsettleThread,
+          unsnoozeThread,
+          reorderPinnedThread,
+          reorderActiveThread,
+        },
+      })
+    )
+      return; // signalbox: the optimistic ledger owns pin drops
+    const drop = {
+      key: activeKey,
+      sourceSection: activeSection,
+      section: target.section,
+      occurredAt: new Date().toISOString(),
+      clearsSnooze:
+        plan.kind === "pin" ||
+        plan.kind === "settle" ||
+        (plan.kind === "move-active" && plan.unsnooze),
+      order: plan.kind === "settle" ? null : plan.order,
+      keysAtDrop: target.section === "active" ? activeKeysById : pinnedKeysById,
+      assignedKeys: new Map(assignments.map(({ id, orderKey }) => [id, orderKey])),
     };
-    if (plan.kind === "settle") {
-      const drop: SidebarOptimisticDrop = {
-        key: activeKey,
-        sourceSection: activeSection,
-        section: "settled",
-        holdsSection: true,
-        occurredAt: new Date().toISOString(),
-        clearsSnooze: true,
-        order: null,
-        keysAtDrop: activeKeysById,
-        assignedKeys: new Map(),
+    setOptimisticDrop(drop);
+    void (async () => {
+      const run = async (
+        operation: Promise<AtomCommandResult<unknown, unknown>>,
+        title: string,
+      ) => {
+        const result = await operation;
+        if (result._tag === "Success") return true;
+        setOptimisticDrop((current) => (current === drop ? null : current));
+        if (!isAtomCommandInterrupted(result)) {
+          const error = squashAtomCommandFailure(result);
+          toastManager.add(
+            stackedThreadToast({
+              type: "error",
+              title,
+              description: error instanceof Error ? error.message : "An error occurred.",
+            }),
+          );
+        }
+        return false;
       };
-      setOptimisticDrop(drop);
-      settlingThreadKeysRef.current.add(activeKey);
-      const navigateAfterSettle = planForwardNavigation(activeKey);
-      void settleThread(threadRef)
-        .finally(() => settlingThreadKeysRef.current.delete(activeKey))
-        .then((result) => {
-          if (result._tag !== "Success") {
-            setOptimisticDrop((current) => (current === drop ? null : current));
-            toastDropFailure(result, "Failed to settle thread");
-            return;
-          }
+      switch (plan.kind) {
+        case "settle": {
+          settlingThreadKeysRef.current.add(activeKey);
+          const navigateAfterSettle = planForwardNavigation(activeKey);
+          const settled = await run(settleThread(threadRef), "Failed to settle thread").finally(
+            () => settlingThreadKeysRef.current.delete(activeKey),
+          );
           if (
+            settled &&
             shouldNavigateAfterThreadPark({
               threadKey: activeKey,
               currentThreadKey: routeThreadKeyRef.current,
@@ -3670,56 +3706,46 @@ export default function Sidebar() {
             })
           )
             navigateAfterSettle?.();
-        });
-      return;
-    }
-    const drop: SidebarOptimisticDrop | null =
-      plan.kind === "move-active" && !(plan.unpin && plan.order === null)
-        ? {
-            key: activeKey,
-            sourceSection: activeSection,
-            section: "active",
-            holdsSection: !plan.unpin,
-            occurredAt: new Date().toISOString(),
-            clearsSnooze: plan.unsnooze,
-            order: plan.order,
-            keysAtDrop: activeKeysById,
-            assignedKeys: new Map(assignments.map(({ id, orderKey }) => [id, orderKey])),
-          }
-        : null;
-    if (drop !== null) setOptimisticDrop(drop);
-    // Each command projects through the shared ledger the moment it starts, so
-    // every intent begins now rather than after the previous one's network.
-    // Commands on one thread still reach its server in this order.
-    const intents: (readonly [Promise<AtomCommandResult<unknown, unknown>>, string])[] = [];
-    if (plan.kind === "move-active") {
-      if (plan.unpin) intents.push([unpinThread(threadRef), "Failed to unpin thread"]);
-      if (plan.unsettle) intents.push([unsettleThread(threadRef), "Failed to un-settle thread"]);
-      if (plan.unsnooze) intents.push([unsnoozeThread(threadRef), "Failed to wake thread"]);
-    } else if (plan.kind === "pin") {
-      intents.push([
-        pinThread(threadRef, plan.orderKey === undefined ? {} : { orderKey: plan.orderKey }),
-        "Failed to pin thread",
-      ]);
-    }
-    for (const assignment of plan.kind === "pin" ? plan.extraAssignments : plan.assignments) {
-      const thread = threadByKey.get(assignment.id);
-      if (thread === undefined) continue;
-      const ref = scopeThreadRef(thread.environmentId, thread.id);
-      intents.push(
-        plan.kind === "move-active"
-          ? [reorderActiveThread(ref, assignment.orderKey), "Failed to reorder active threads"]
-          : [reorderPinnedThread(ref, assignment.orderKey), "Failed to reorder pinned threads"],
-      );
-    }
-    void (async () => {
-      // One toast for the first failure; a dropped connection fails them all.
-      for (const [operation, title] of intents) {
-        const result = await operation;
-        if (result._tag === "Success") continue;
-        if (drop !== null) setOptimisticDrop((current) => (current === drop ? null : current));
-        toastDropFailure(result, title);
-        return;
+          return;
+        }
+        case "move-active":
+          if (plan.unpin && !(await run(unpinThread(threadRef), "Failed to unpin thread"))) return;
+          if (
+            plan.unsettle &&
+            !(await run(unsettleThread(threadRef), "Failed to un-settle thread"))
+          )
+            return;
+          if (plan.unsnooze && !(await run(unsnoozeThread(threadRef), "Failed to wake thread")))
+            return;
+          break;
+        case "pin":
+          if (
+            !(await run(
+              pinThread(threadRef, plan.orderKey === undefined ? {} : { orderKey: plan.orderKey }),
+              "Failed to pin thread",
+            ))
+          )
+            return;
+          break;
+        case "reorder-pinned":
+          break;
+      }
+      const keyWrites = plan.kind === "pin" ? plan.extraAssignments : plan.assignments;
+      for (const assignment of keyWrites) {
+        const thread = threadByKey.get(assignment.id);
+        if (thread === undefined) continue;
+        if (
+          !(await run(
+            (plan.kind === "move-active" ? reorderActiveThread : reorderPinnedThread)(
+              scopeThreadRef(thread.environmentId, thread.id),
+              assignment.orderKey,
+            ),
+            plan.kind === "move-active"
+              ? "Failed to reorder active threads"
+              : "Failed to reorder pinned threads",
+          ))
+        )
+          return;
       }
     })();
   };

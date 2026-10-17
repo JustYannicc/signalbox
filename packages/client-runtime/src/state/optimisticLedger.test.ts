@@ -13,7 +13,10 @@ interface State {
 const initial: State = { pinned: false, title: "before", applied: [], revision: 0 };
 const registries: AtomRegistry.AtomRegistry[] = [];
 
-function setup(rejectedLimit = 20) {
+function setup(
+  rejectedLimit = 20,
+  unknownProjectionPolicy?: "retain" | "retire-before-confirmed-resource",
+) {
   const registry = AtomRegistry.make();
   registries.push(registry);
   const sources = Atom.family((_scope: OptimisticScope) => Atom.make(initial).pipe(Atom.keepAlive));
@@ -21,6 +24,7 @@ function setup(rejectedLimit = 20) {
   const ledger = createOptimisticLedger<State, number, string>({
     sourceAtom: sources,
     rejectedLimit,
+    ...(unknownProjectionPolicy === undefined ? {} : { unknownProjectionPolicy }),
   });
   const begin = (commandId: string, pinned: boolean, target = scope) =>
     ledger.begin(registry, {
@@ -28,9 +32,9 @@ function setup(rejectedLimit = 20) {
       project: (state) => ({ ...state, pinned }),
       confirm: (state) => state.applied.includes(commandId),
     });
-  const read = () => registry.get(ledger.snapshotAtom(scope));
-  const entries = () => registry.get(ledger.entriesAtom(scope));
-  return { registry, source, ledger, begin, read, entries };
+  const read = (target = scope) => registry.get(ledger.snapshotAtom(target));
+  const entries = (target = scope) => registry.get(ledger.entriesAtom(target));
+  return { registry, source, sources, ledger, begin, read, entries };
 }
 
 afterEach(() => {
@@ -138,6 +142,315 @@ describe("optimistic ledger", () => {
     expect(registry.get(ledger.entriesAtom(scope, "unknown"))).toHaveLength(1);
     registry.set(source, { ...initial, pinned: true, applied: ["pin"] });
     expect(entries()).toEqual([]);
+  });
+
+  it.each(["ack-before-event", "event-before-ack"] as const)(
+    "retires an earlier unknown projection on confirmed resource state (%s)",
+    (order) => {
+      const { begin, read, entries, registry, source, ledger } = setup(
+        20,
+        "retire-before-confirmed-resource",
+      );
+      const unknown = ledger.begin(registry, {
+        key: { ...scope, commandId: "unpin" },
+        actionId: "thread.unpin",
+        startedAt: 123,
+        project: (state) => ({ ...state, pinned: false }),
+        confirm: (state) => state.applied.includes("unpin"),
+      });
+      unknown.acknowledge(7);
+      unknown.markUnknown();
+
+      const confirmed = begin("pin", true);
+      const observed: boolean[] = [];
+      const unsubscribe = registry.subscribe(ledger.snapshotAtom(scope), (state) =>
+        observed.push(state.pinned),
+      );
+      observed.length = 0;
+      if (order === "ack-before-event") confirmed.acknowledge(8);
+      registry.set(source, { ...initial, pinned: true, applied: ["pin"] });
+      if (order === "event-before-ack") confirmed.acknowledge(8);
+
+      expect(read().pinned).toBe(true);
+      expect(observed).not.toContain(false);
+      expect(entries()).toHaveLength(1);
+      expect(entries()[0]).toMatchObject({
+        key: { commandId: "unpin" },
+        actionId: "thread.unpin",
+        startedAt: 123,
+        status: "unknown",
+        acknowledgment: { status: "acknowledged", receipt: 7 },
+      });
+      unsubscribe();
+    },
+  );
+
+  it("retires an older intent that becomes unknown after the later intent is confirmed", () => {
+    const { ledger, registry, source, read, entries } = setup(
+      20,
+      "retire-before-confirmed-resource",
+    );
+    const earlier = ledger.begin(registry, {
+      key: { ...scope, commandId: "unpin" },
+      project: (state) => ({ ...state, pinned: false }),
+      confirm: (state) => state.applied.includes("unpin"),
+    });
+    ledger.begin(registry, {
+      key: { ...scope, commandId: "pin" },
+      project: (state) => ({ ...state, pinned: true }),
+      confirm: (state) => state.applied.includes("pin"),
+    });
+
+    registry.set(source, { ...initial, pinned: true, applied: ["pin"] });
+    earlier.markUnknown();
+
+    expect(entries()).toMatchObject([{ key: { commandId: "unpin" }, status: "unknown" }]);
+    expect(read().pinned).toBe(true);
+  });
+
+  it.each([
+    ["default", undefined, "speculative title"],
+    ["retire-before-confirmed-resource", "retire-before-confirmed-resource", "server title"],
+  ] as const)("uses %s behavior for an unrelated authoritative field", (_name, policy, title) => {
+    const { ledger, registry, source, read, entries } = setup(20, policy);
+    const unknown = ledger.begin(registry, {
+      key: { ...scope, commandId: "rename" },
+      actionId: "thread.rename",
+      startedAt: 12,
+      project: (state) => ({ ...state, title: "speculative title" }),
+      confirm: (state) => state.applied.includes("rename"),
+    });
+    unknown.markUnknown();
+    ledger.begin(registry, {
+      key: { ...scope, commandId: "pin" },
+      project: (state) => ({ ...state, pinned: true }),
+      confirm: (state) => state.applied.includes("pin"),
+    });
+
+    registry.set(source, {
+      ...initial,
+      title: "server title",
+      pinned: true,
+      applied: ["pin"],
+    });
+
+    expect(read().title).toBe(title);
+    expect(entries()).toMatchObject([
+      {
+        key: { commandId: "rename" },
+        actionId: "thread.rename",
+        startedAt: 12,
+        status: "unknown",
+      },
+    ]);
+  });
+
+  it("allows a later pending projection after retiring an earlier unknown one", () => {
+    const { ledger, registry, source, read } = setup(20, "retire-before-confirmed-resource");
+    const earlier = ledger.begin(registry, {
+      key: { ...scope, commandId: "rename" },
+      project: (state) => ({ ...state, title: "speculative title" }),
+      confirm: (state) => state.applied.includes("rename"),
+    });
+    earlier.markUnknown();
+    ledger.begin(registry, {
+      key: { ...scope, commandId: "pin" },
+      project: (state) => ({ ...state, pinned: true }),
+      confirm: (state) => state.applied.includes("pin"),
+    });
+    registry.set(source, { ...initial, title: "server title", pinned: true, applied: ["pin"] });
+
+    ledger.begin(registry, {
+      key: { ...scope, commandId: "later-rename" },
+      project: (state) => ({ ...state, title: `${state.title}!` }),
+      confirm: () => false,
+    });
+
+    expect(read()).toMatchObject({ title: "server title!", pinned: true });
+  });
+
+  it("keeps active duplicate age and gives a rejected retry a fresh age", () => {
+    const { ledger, registry, source, read } = setup(20, "retire-before-confirmed-resource");
+    const original = ledger.begin(registry, {
+      key: { ...scope, commandId: "rename" },
+      project: (state) => ({ ...state, title: "original guess" }),
+      confirm: (state) => state.applied.includes("rename"),
+    });
+    const duplicate = ledger.begin(registry, {
+      key: { ...scope, commandId: "rename" },
+      project: (state) => ({ ...state, title: "duplicate guess" }),
+      confirm: (state) => state.applied.includes("rename"),
+    });
+    ledger.begin(registry, {
+      key: { ...scope, commandId: "pin" },
+      project: (state) => ({ ...state, pinned: true }),
+      confirm: (state) => state.applied.includes("pin"),
+    });
+    registry.set(source, { ...initial, title: "server title", pinned: true, applied: ["pin"] });
+    duplicate.markUnknown();
+    expect(read().title).toBe("server title");
+    original.cancel();
+
+    ledger.clear(registry, scope);
+    const rejected = ledger.begin(registry, {
+      key: { ...scope, commandId: "retry" },
+      project: (state) => ({ ...state, title: "rejected guess" }),
+      confirm: (state) => state.applied.includes("retry"),
+    });
+    rejected.reject("Retry");
+    ledger.begin(registry, {
+      key: { ...scope, commandId: "later-pin" },
+      project: (state) => ({ ...state, pinned: true }),
+      confirm: (state) => state.applied.includes("later-pin"),
+    });
+    registry.set(source, {
+      ...initial,
+      title: "server title",
+      pinned: true,
+      applied: ["later-pin"],
+    });
+    const retry = ledger.begin(registry, {
+      key: { ...scope, commandId: "retry" },
+      project: (state) => ({ ...state, title: "fresh retry guess" }),
+      confirm: (state) => state.applied.includes("retry"),
+    });
+    retry.markUnknown();
+
+    expect(read().title).toBe("fresh retry guess");
+  });
+
+  it("does not retire an unknown projection for an acknowledgment or unrelated revision", () => {
+    const { ledger, registry, source, read, entries } = setup(
+      20,
+      "retire-before-confirmed-resource",
+    );
+    const unknown = ledger.begin(registry, {
+      key: { ...scope, commandId: "rename" },
+      project: (state) => ({ ...state, title: "speculative title" }),
+      confirm: (state) => state.applied.includes("rename"),
+    });
+    unknown.markUnknown();
+    const unconfirmed = ledger.begin(registry, {
+      key: { ...scope, commandId: "pin" },
+      project: (state) => ({ ...state, pinned: true }),
+      confirm: (state) => state.applied.includes("pin"),
+    });
+    unconfirmed.acknowledge(4);
+    registry.set(source, { ...initial, title: "server title", revision: 9000, applied: ["other"] });
+
+    expect(read().title).toBe("speculative title");
+    expect(entries().map((entry) => [entry.key.commandId, entry.status])).toEqual([
+      ["rename", "unknown"],
+      ["pin", "confirming"],
+    ]);
+  });
+
+  it("shows a late authoritative event after its retired unknown projection", () => {
+    const { ledger, registry, source, read, entries } = setup(
+      20,
+      "retire-before-confirmed-resource",
+    );
+    const lateIntent = ledger.begin(registry, {
+      key: { ...scope, commandId: "rename" },
+      project: (state) => ({ ...state, title: "speculative title" }),
+      confirm: (state) => state.applied.includes("rename"),
+    });
+    lateIntent.markUnknown();
+    ledger.begin(registry, {
+      key: { ...scope, commandId: "pin" },
+      project: (state) => ({ ...state, pinned: true }),
+      confirm: (state) => state.applied.includes("pin"),
+    });
+    registry.set(source, { ...initial, title: "server title", pinned: true, applied: ["pin"] });
+    expect(read().title).toBe("server title");
+    expect(entries()).toMatchObject([{ key: { commandId: "rename" }, status: "unknown" }]);
+
+    lateIntent.acknowledge(9);
+    expect(read().title).toBe("server title");
+    expect(entries()).toMatchObject([
+      {
+        key: { commandId: "rename" },
+        status: "confirming",
+        acknowledgment: { status: "acknowledged", receipt: 9 },
+      },
+    ]);
+
+    registry.set(source, {
+      ...initial,
+      title: "late authoritative title",
+      pinned: false,
+      applied: ["pin", "rename"],
+    });
+
+    expect(read().title).toBe("late authoritative title");
+    expect(read().pinned).toBe(false);
+    expect(entries()).toEqual([]);
+  });
+
+  it("isolates confirmation cutoffs by scope and registry and resets them on clear", () => {
+    const { begin, entries, ledger, read, registry, sources } = setup(
+      20,
+      "retire-before-confirmed-resource",
+    );
+    const unknown = ledger.begin(registry, {
+      key: { ...scope, commandId: "rename" },
+      project: (state) => ({ ...state, title: "speculative title" }),
+      confirm: (state) => state.applied.includes("rename"),
+    });
+
+    for (const [index, other] of [
+      { ...scope, accountId: "bob" },
+      { ...scope, environmentId: "other-cloud" },
+      { ...scope, resourceId: "another-thread" },
+    ].entries()) {
+      ledger.begin(registry, {
+        key: { ...other, commandId: `confirm-${index}` },
+        project: (state) => ({ ...state, pinned: true }),
+        confirm: (state) => state.applied.includes(`confirm-${index}`),
+      });
+      registry.set(sources(other), { ...initial, pinned: true, applied: [`confirm-${index}`] });
+    }
+    expect(read().pinned).toBe(false);
+    expect(entries()[0]?.status).toBe("pending");
+
+    const otherRegistry = AtomRegistry.make();
+    registries.push(otherRegistry);
+    ledger.begin(otherRegistry, {
+      key: { ...scope, commandId: "other-registry" },
+      project: (state) => ({ ...state, pinned: true }),
+      confirm: (state) => state.applied.includes("other-registry"),
+    });
+    otherRegistry.set(sources(scope), {
+      ...initial,
+      pinned: true,
+      applied: ["other-registry"],
+    });
+    unknown.markUnknown();
+    expect(read().title).toBe("speculative title");
+    expect(entries()[0]?.status).toBe("unknown");
+
+    ledger.begin(registry, {
+      key: { ...scope, commandId: "confirmed-before-clear" },
+      project: (state) => ({ ...state, pinned: true }),
+      confirm: (state) => state.applied.includes("confirmed-before-clear"),
+    });
+    registry.set(sources(scope), {
+      ...initial,
+      pinned: true,
+      applied: ["confirmed-before-clear"],
+    });
+    expect(read().pinned).toBe(true);
+
+    const stale = begin("reuse", true);
+    ledger.clear(registry, scope);
+    const fresh = begin("reuse", false);
+    stale.acknowledge(9);
+    stale.markUnknown();
+    stale.reject("late rejection");
+    stale.cancel();
+    expect(entries()).toMatchObject([{ key: { commandId: "reuse" }, status: "pending" }]);
+    expect(read().pinned).toBe(false);
+    fresh.cancel();
   });
 
   it("isolates accounts, environments, resources and registries", () => {

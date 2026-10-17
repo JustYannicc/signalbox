@@ -43,12 +43,22 @@ export interface OptimisticIntent<State, Receipt> extends OptimisticMetadata {
 export function createOptimisticLedger<State, Receipt = void, Rejection = unknown>(options: {
   readonly sourceAtom: (scope: OptimisticScope) => Atom.Atom<State>;
   readonly rejectedLimit?: number;
+  /**
+   * A confirmed complete-resource snapshot may retire earlier unknown projections.
+   * Earlier entries remain until their own confirmation predicate proves them.
+   */
+  readonly unknownProjectionPolicy?: "retain" | "retire-before-confirmed-resource";
 }) {
   type Entry = OptimisticEntry<Receipt, Rejection> & { readonly token: symbol };
   type ActiveEntry = Exclude<Entry, { readonly status: "rejected" }> &
-    Pick<OptimisticIntent<State, Receipt>, "project" | "confirm">;
+    Pick<OptimisticIntent<State, Receipt>, "project" | "confirm"> & {
+      readonly ordinal: number;
+      readonly projectionRetired: boolean;
+    };
   type StoredEntry = ActiveEntry | Extract<Entry, { readonly status: "rejected" }>;
   const rejectedLimit = options.rejectedLimit ?? 20;
+  const retireBeforeConfirmedResource =
+    options.unknownProjectionPolicy === "retire-before-confirmed-resource";
   if (!Number.isSafeInteger(rejectedLimit) || rejectedLimit < 0) {
     throw new RangeError("rejectedLimit must be a non-negative safe integer");
   }
@@ -61,16 +71,25 @@ export function createOptimisticLedger<State, Receipt = void, Rejection = unknow
   const entriesFamily = Atom.family((_scope: OptimisticScope) =>
     Atom.make<ReadonlyArray<StoredEntry>>([]).pipe(Atom.keepAlive),
   );
+  const confirmedCutoffs = Atom.family((_scope: OptimisticScope) =>
+    Atom.make(0).pipe(Atom.keepAlive),
+  );
   const resource = (scope: OptimisticScope) => {
     const key = scopeKey(scope);
-    return { entries: entriesFamily(key), source: options.sourceAtom(key) };
+    return {
+      entries: entriesFamily(key),
+      confirmedCutoff: confirmedCutoffs(key),
+      source: options.sourceAtom(key),
+    };
   };
   type Resource = ReturnType<typeof resource>;
+  let nextOrdinal = 0;
   const snapshots = Atom.family((scope: OptimisticScope) => {
     const { entries, source } = resource(scope);
     return Atom.make((get) =>
       get(entries).reduce(
-        (state, entry) => (entry.status === "rejected" ? state : entry.project(state)),
+        (state, entry) =>
+          entry.status === "rejected" || entry.projectionRetired ? state : entry.project(state),
         get(source),
       ),
     );
@@ -100,10 +119,42 @@ export function createOptimisticLedger<State, Receipt = void, Rejection = unknow
 
   function reconcile(registry: AtomRegistry.AtomRegistry, target: Resource, state: State) {
     const previous = registry.get(target.entries);
-    const next = previous.filter(
-      (entry) => entry.status === "rejected" || !entry.confirm(state, entry.acknowledgment),
-    );
-    if (next.length !== previous.length) registry.set(target.entries, next);
+    const confirmed = new Set<ActiveEntry>();
+    for (const entry of previous) {
+      if (entry.status !== "rejected" && entry.confirm(state, entry.acknowledgment)) {
+        confirmed.add(entry);
+      }
+    }
+
+    let cutoff = registry.get(target.confirmedCutoff);
+    if (retireBeforeConfirmedResource) {
+      for (const entry of confirmed) cutoff = Math.max(cutoff, entry.ordinal);
+    }
+
+    let changed = false;
+    const next: StoredEntry[] = [];
+    for (const entry of previous) {
+      if (entry.status === "rejected") {
+        next.push(entry);
+      } else if (confirmed.has(entry)) {
+        changed = true;
+      } else if (
+        retireBeforeConfirmedResource &&
+        entry.status === "unknown" &&
+        entry.ordinal < cutoff &&
+        !entry.projectionRetired
+      ) {
+        next.push({ ...entry, projectionRetired: true });
+        changed = true;
+      } else {
+        next.push(entry);
+      }
+    }
+
+    if (cutoff !== registry.get(target.confirmedCutoff)) {
+      registry.set(target.confirmedCutoff, cutoff);
+    }
+    if (changed) registry.set(target.entries, next);
     stopIfIdle(registry, target);
   }
 
@@ -132,10 +183,15 @@ export function createOptimisticLedger<State, Receipt = void, Rejection = unknow
         ? existing.token
         : Symbol(intent.key.commandId);
     if (existing === undefined || existing.status === "rejected") {
+      if (!Number.isSafeInteger(nextOrdinal)) {
+        throw new RangeError("optimistic ledger begin ordinal exhausted");
+      }
       const fresh: ActiveEntry = {
         ...intent,
         key: { ...intent.key },
         token,
+        ordinal: nextOrdinal++,
+        projectionRetired: false,
         status: "pending",
         acknowledgment: { status: "pending" },
       };
@@ -163,7 +219,12 @@ export function createOptimisticLedger<State, Receipt = void, Rejection = unknow
         reconcile(registry, target, registry.get(target.source));
       },
       markUnknown() {
-        update((entry) => ({ ...entry, status: "unknown" }));
+        update((entry) => ({
+          ...entry,
+          status: "unknown",
+          projectionRetired:
+            entry.projectionRetired || entry.ordinal < registry.get(target.confirmedCutoff),
+        }));
       },
       reject(cause: Rejection) {
         update((entry) => ({
@@ -206,6 +267,7 @@ export function createOptimisticLedger<State, Receipt = void, Rejection = unknow
     /** Release unresolved intents and their source subscription when leaving an account or resource. */
     clear(registry: AtomRegistry.AtomRegistry, scope: OptimisticScope) {
       const target = resource(scope);
+      registry.set(target.confirmedCutoff, 0);
       registry.set(target.entries, []);
       stopIfIdle(registry, target);
     },

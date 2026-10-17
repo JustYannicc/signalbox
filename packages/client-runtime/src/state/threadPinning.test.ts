@@ -3,9 +3,12 @@ import { CommandId, type AuthSessionState } from "@t3tools/contracts";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Queue from "effect/Queue";
+import * as Option from "effect/Option";
+import * as SubscriptionRef from "effect/SubscriptionRef";
 
 import { managedRelaySessionAtom } from "../relay/managedRelayState.ts";
-import { EnvironmentRpcUnavailableError } from "../rpc/client.ts";
+import { RpcClientError } from "effect/rpc";
+import * as Socket from "effect/socket/Socket";
 import {
   ENVIRONMENT_ID,
   makeHarness,
@@ -161,6 +164,69 @@ describe("shared optimistic pin commands", () => {
     }),
   );
 
+  it.effect.each(["event-first", "ack-first"] as const)(
+    "does not revive an older unknown unpin after a confirmed pin with %s ordering",
+    (order) =>
+      Effect.gen(function* () {
+        const h = yield* makeHarness();
+        h.registry.set(h.snapshotAtom(ENVIRONMENT_ID), {
+          ...SNAPSHOT,
+          threads: [{ ...SNAPSHOT.threads[0]!, pinnedAt: NOW }],
+        });
+        const unpin = h.commands.unpin.run(h.registry, target);
+        const first = yield* Queue.take(h.requests);
+        yield* Deferred.fail(
+          first.reply,
+          new RpcClientError.RpcClientError({
+            reason: new Socket.SocketCloseError({ code: 1006 }),
+          }),
+        );
+        yield* Effect.promise(() => unpin);
+        expect(h.registry.get(h.visibleAtom)?.threads[0]?.pinnedAt).toBeNull();
+        const pin = h.commands.pin.run(h.registry, target);
+        const second = yield* Queue.take(h.requests);
+        const observed: boolean[] = [];
+        const unsubscribe = h.registry.subscribe(h.visibleAtom, (snapshot) =>
+          observed.push(snapshot?.threads[0]?.pinnedAt != null),
+        );
+        const confirmed = {
+          ...SNAPSHOT,
+          snapshotSequence: 4,
+          threads: [{ ...SNAPSHOT.threads[0]!, pinnedAt: NOW }],
+        };
+        if (order === "event-first") h.registry.set(h.snapshotAtom(ENVIRONMENT_ID), confirmed);
+        yield* Deferred.succeed(second.reply, { sequence: 4 });
+        yield* Effect.promise(() => pin);
+        if (order === "ack-first") h.registry.set(h.snapshotAtom(ENVIRONMENT_ID), confirmed);
+        const entries = h.registry.get(
+          h.commands.optimistic.entriesAtom(ENVIRONMENT_ID, THREAD_ID),
+        );
+        expect(entries).toHaveLength(1);
+        expect(entries[0]).toMatchObject({
+          status: "unknown",
+          key: { commandId: first.command.commandId },
+        });
+        expect(h.registry.get(h.visibleAtom)?.threads[0]?.pinnedAt).toEqual(NOW);
+        expect(observed).not.toContain(false);
+        unsubscribe();
+      }),
+  );
+
+  it.effect("rolls back when the connection disappears before the request is sent", () =>
+    Effect.gen(function* () {
+      const h = yield* makeHarness();
+      yield* SubscriptionRef.set(h.supervisor.session, Option.none());
+      const result = h.commands.pin.run(h.registry, target);
+      expect(h.registry.get(h.visibleAtom)?.threads[0]?.pinnedAt).toBeDefined();
+      expect((yield* Effect.promise(() => result))._tag).toBe("Failure");
+      expect(h.registry.get(h.visibleAtom)).toBe(SNAPSHOT);
+      expect(
+        h.registry.get(h.commands.optimistic.entriesAtom(ENVIRONMENT_ID, THREAD_ID))[0]?.status,
+      ).toBe("rejected");
+      expect(yield* Queue.size(h.requests)).toBe(0);
+    }),
+  );
+
   it.effect("keeps a lost reply unconfirmed without replaying or rolling back the pin", () =>
     Effect.gen(function* () {
       const h = yield* makeHarness();
@@ -168,10 +234,7 @@ describe("shared optimistic pin commands", () => {
       const request = yield* Queue.take(h.requests);
       yield* Deferred.fail(
         request.reply,
-        new EnvironmentRpcUnavailableError({
-          environmentId: ENVIRONMENT_ID,
-          message: "The reply was lost.",
-        }),
+        new RpcClientError.RpcClientError({ reason: new Socket.SocketCloseError({ code: 1006 }) }),
       );
       expect((yield* Effect.promise(() => result))._tag).toBe("Failure");
       h.registry.set(h.snapshotAtom(ENVIRONMENT_ID), { ...SNAPSHOT, snapshotSequence: 100 });

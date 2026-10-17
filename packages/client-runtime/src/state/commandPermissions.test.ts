@@ -151,6 +151,26 @@ describe("command permissions", () => {
       }),
     ),
   );
+  it.effect(
+    "uses the same refusal before and after authorization while allowing unknown grants to load",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const registry = yield* setup;
+          expect(permissions.check(registry, env)).toBeNull();
+          registry.set(sessions(env), AsyncResult.success(grant(false)));
+          const known = permissions.check(registry, env);
+          const awaited = yield* permissions.authorize(registry, env).pipe(Effect.flip);
+          expect(known).not.toBeNull();
+          expect(known?.requiredScope).toBe(awaited.requiredScope);
+          expect(known?.requiredPermission).toBe(awaited.requiredPermission);
+          expect(known?.message).toBe(awaited.message);
+          registry.set(sessions(env), AsyncResult.success(grant(true)));
+          expect(permissions.check(registry, env)).toBeNull();
+        }),
+      ),
+  );
+
   it.effect("waits for an initial grant", () =>
     Effect.scoped(
       Effect.gen(function* () {

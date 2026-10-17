@@ -3,7 +3,6 @@ import {
   EnvironmentAuthorizationError,
   EnvironmentId,
   ORCHESTRATION_V2_WS_METHODS,
-  sessionGrantsScope,
   ThreadId,
   type OrchestrationV2DispatchCommandResult,
   type OrchestrationV2ShellSnapshot,
@@ -48,14 +47,19 @@ export function createOptimisticThreadLifecycle<R, E>(
   sourceSnapshotAtom: (
     environmentId: EnvironmentId,
   ) => Atom.Atom<OrchestrationV2ShellSnapshot | null>,
+  commands: { readonly pin: object; readonly unpin: object; readonly reorderPin: object },
 ) {
+  const capabilities = new Map<object, "threadPinning" | "threadPinReorder">([
+    [commands.pin, "threadPinning"],
+    [commands.unpin, "threadPinning"],
+    [commands.reorderPin, "threadPinReorder"],
+  ]);
   const sessions = createEnvironmentSessionAtoms(runtime);
   const options = {
     permissions: createCommandPermissions(runtime, ORCHESTRATION_V2_WS_METHODS.dispatchCommand),
     configAtom: sessions.initialConfigValueAtom,
-    sessionAtom: sessions.sessionStateValueAtom,
   };
-  const accountId = (session: { readonly accountId: string } | null) =>
+  const accountScopeKey = (session: { readonly accountId: string } | null) =>
     JSON.stringify([session?.accountId ?? null]);
   const scope = (
     account: string,
@@ -93,6 +97,7 @@ export function createOptimisticThreadLifecycle<R, E>(
   const ledger = createOptimisticLedger<ThreadSource, Receipt, Cause.Cause<unknown>>({
     sourceAtom: (key) =>
       sources(EnvironmentId.make(key.environmentId))(ThreadId.make(key.resourceId)),
+    unknownProjectionPolicy: "retire-before-confirmed-resource",
   });
   const entries = Atom.family((environmentId: EnvironmentId) =>
     Atom.family((threadId: ThreadId) =>
@@ -100,7 +105,7 @@ export function createOptimisticThreadLifecycle<R, E>(
         Atom.make((get) =>
           get(
             ledger.entriesAtom(
-              scope(accountId(get(managedRelaySessionAtom)), environmentId, threadId),
+              scope(accountScopeKey(get(managedRelaySessionAtom)), environmentId, threadId),
               status,
             ),
           ),
@@ -112,7 +117,7 @@ export function createOptimisticThreadLifecycle<R, E>(
     Atom.make((get) => {
       const snapshot = get(sourceSnapshotAtom(environmentId));
       if (snapshot === null) return null;
-      const account = accountId(get(managedRelaySessionAtom));
+      const account = accountScopeKey(get(managedRelaySessionAtom));
       let changed = false;
       const threads = snapshot.threads.map((thread) => {
         const projected = get(ledger.snapshotAtom(scope(account, environmentId, thread.id))).thread;
@@ -133,7 +138,7 @@ export function createOptimisticThreadLifecycle<R, E>(
     const id = JSON.stringify([key.accountId, key.environmentId, key.resourceId]);
     if (active.has(id)) return;
     const unsubscribeAccount = registry.subscribe(managedRelaySessionAtom, (session) => {
-      if (accountId(session) !== key.accountId) ledger.clear(registry, key);
+      if (accountScopeKey(session) !== key.accountId) ledger.clear(registry, key);
     });
     const unsubscribeEntries = registry.subscribe(ledger.entriesAtom(key), (current) => {
       if (current.some((entry) => entry.status !== "rejected")) return;
@@ -166,8 +171,8 @@ export function createOptimisticThreadLifecycle<R, E>(
       now: DateTime.Utc,
       accepted: boolean,
     ) => OrchestrationV2ThreadShell,
-    capability?: "threadPinning" | "threadPinReorder",
   ) {
+    const capability = capabilities.get(command);
     return {
       ...command,
       requiredScopes: options.permissions.requiredScopes,
@@ -176,23 +181,8 @@ export function createOptimisticThreadLifecycle<R, E>(
         registry: AtomRegistry.AtomRegistry,
         target: { readonly environmentId: EnvironmentId; readonly input: Input },
       ): Promise<AtomCommandResult<Receipt, E | PreflightError>> => {
-        const session = registry.get(options.sessionAtom(target.environmentId));
-        const missingScope =
-          session === null
-            ? undefined
-            : options.permissions
-                .requiredScopes(target.input)
-                .find((required) => !sessionGrantsScope(session, required));
-        if (missingScope !== undefined) {
-          return AsyncResult.failure(
-            Cause.fail(
-              new EnvironmentAuthorizationError({
-                requiredScope: missingScope,
-                message: "This connection cannot change threads.",
-              }),
-            ),
-          );
-        }
+        const denial = options.permissions.check(registry, target.environmentId, target.input);
+        if (denial !== null) return AsyncResult.failure(Cause.fail(denial));
         const config = registry.get(options.configAtom(target.environmentId));
         if (
           capability !== undefined &&
@@ -218,7 +208,7 @@ export function createOptimisticThreadLifecycle<R, E>(
         };
         const key = {
           ...scope(
-            accountId(registry.get(managedRelaySessionAtom)),
+            accountScopeKey(registry.get(managedRelaySessionAtom)),
             target.environmentId,
             input.threadId,
           ),

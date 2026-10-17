@@ -1,5 +1,4 @@
 import type { ThreadMoveDestination } from "../threads/threadOrder";
-import type { AtomCommandResult } from "@t3tools/client-runtime/state/runtime";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
 import { canSnooze, effectiveSnoozed } from "@t3tools/client-runtime/state/thread-settled";
 import { AuthOrchestrationOperateScope } from "@t3tools/contracts";
@@ -8,6 +7,7 @@ import * as Haptics from "expo-haptics";
 import { useCallback, useRef } from "react";
 
 import { withThreadDismissal } from "./thread-dismissal";
+import { beginLedgerThreadMove } from "./ledgerThreadMove"; // signalbox: optimistic ledger
 import * as Dialog from "../../components/ui/Dialog";
 import { scopedThreadKey } from "../../lib/scopedEntities";
 import { refreshArchivedThreadsForEnvironment } from "../archive/useArchivedThreadSnapshots";
@@ -643,67 +643,23 @@ export function useThreadListActions(): {
           return false;
       }
       selectionHaptic();
-      const movedId = scopedThreadKey(thread.environmentId, thread.id);
-      const reorder = section === "pinned" ? reorderPinnedMutation : reorderActiveMutation;
-      if (section === "pinned" || lifecycle.unpin) {
-        // Each command projects through the shared ledger the moment it starts,
-        // so every intent begins now rather than after the previous one's
-        // network, and the sheet stays usable. One thread's commands still
-        // reach its server in this order.
-        const intents: Promise<readonly [string, AtomCommandResult<unknown, unknown>]>[] = [];
-        const begin = (title: string, operation: Promise<AtomCommandResult<unknown, unknown>>) =>
-          intents.push(operation.then((result) => [title, result] as const));
-        if (crossSection && section === "pinned") {
-          const orderKey = assignments.find(({ id }) => id === movedId)?.orderKey;
-          begin(
-            "Could not pin thread",
-            pinMutation({
-              environmentId: thread.environmentId,
-              input: { threadId: thread.id, ...(orderKey === undefined ? {} : { orderKey }) },
-            }),
-          );
-        } else if (crossSection) {
-          begin(
-            "Could not unpin thread",
-            unpinMutation({ environmentId: thread.environmentId, input: { threadId: thread.id } }),
-          );
-          // These wait for row dismissal before starting, so the moved row's key
-          // write has to queue behind them instead of racing ahead.
-          if (lifecycle.unsettle && !(await unsettleThread(thread))) return false;
-          if (lifecycle.unsnooze && !(await unsnoozeThread(thread))) return false;
-        }
-        for (const assignment of assignments) {
-          if (
-            crossSection &&
-            section === "pinned" &&
-            thread.pinnedAt == null &&
-            assignment.id === movedId
-          )
-            continue;
-          const target = shellByKey.get(assignment.id);
-          if (target === undefined) continue;
-          begin(
-            "Could not move thread",
-            reorder({
-              environmentId: target.environmentId,
-              input: { threadId: target.id, orderKey: assignment.orderKey },
-            }),
-          );
-        }
-        // One alert for the first failure; a dropped connection fails them all.
-        for (const [title, result] of await Promise.all(intents)) {
-          if (result._tag === "Success") continue;
-          const error = Cause.squash(result.cause);
-          Dialog.alert(
-            title,
-            error instanceof Error && error.message.trim().length > 0
-              ? error.message
-              : "The thread could not be moved.",
-          );
-          return false;
-        }
-        return true;
-      }
+      // signalbox: the optimistic ledger owns pin moves
+      const ledgerMove = beginLedgerThreadMove({
+        thread,
+        section,
+        crossSection,
+        lifecycle,
+        assignments,
+        shellByKey,
+        commands: {
+          pin: pinMutation,
+          unpin: unpinMutation,
+          reorder: section === "pinned" ? reorderPinnedMutation : reorderActiveMutation,
+          unsettleThread,
+          unsnoozeThread,
+        },
+      });
+      if (ledgerMove !== null) return ledgerMove;
       appAtomRegistry.set(threadDropBusyAtom, true);
       const pending = crossSection
         ? null
@@ -711,18 +667,41 @@ export function useThreadListActions(): {
             createPendingThreadOrder({
               section,
               ordered,
-              movedId,
+              movedId: scopedThreadKey(thread.environmentId, thread.id),
               direction,
               assignments,
             }),
           );
       let succeeded = false;
+      const reorder = section === "pinned" ? reorderPinnedMutation : reorderActiveMutation;
       try {
         if (crossSection) {
-          if (lifecycle.unsettle && !(await unsettleThread(thread))) return false;
-          if (lifecycle.unsnooze && !(await unsnoozeThread(thread))) return false;
+          if (section === "pinned") {
+            const orderKey = assignments.find(
+              ({ id }) => id === scopedThreadKey(thread.environmentId, thread.id),
+            )?.orderKey;
+            const result = await pinMutation({
+              environmentId: thread.environmentId,
+              input: { threadId: thread.id, ...(orderKey === undefined ? {} : { orderKey }) },
+            });
+            if (result._tag === "Failure") {
+              Dialog.alert("Could not pin thread", String(Cause.squash(result.cause)));
+              return false;
+            }
+          } else {
+            if (lifecycle.unpin && !(await unpinThread(thread))) return false;
+            if (lifecycle.unsettle && !(await unsettleThread(thread))) return false;
+            if (lifecycle.unsnooze && !(await unsnoozeThread(thread))) return false;
+          }
         }
         for (const assignment of assignments) {
+          if (
+            crossSection &&
+            section === "pinned" &&
+            thread.pinnedAt == null &&
+            assignment.id === scopedThreadKey(thread.environmentId, thread.id)
+          )
+            continue;
           if (pending !== null && !pending.isPending()) return false;
           const target = shellByKey.get(assignment.id);
           if (target === undefined) continue;
@@ -756,6 +735,7 @@ export function useThreadListActions(): {
       reorderPinnedMutation,
       pinMutation,
       unpinMutation,
+      unpinThread,
       unsettleThread,
       unsnoozeThread,
     ],
