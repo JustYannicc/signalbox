@@ -1,0 +1,322 @@
+diff --git a/internal/api/handlers/management/auth_files_provider_oauth.go b/internal/api/handlers/management/auth_files_provider_oauth.go
+index 48fc4ef..9815081 100644
+--- a/internal/api/handlers/management/auth_files_provider_oauth.go
++++ b/internal/api/handlers/management/auth_files_provider_oauth.go
+@@ -59,8 +59,15 @@ func (h *Handler) RequestAnthropicToken(c *gin.Context) {
+ 	// Initialize Claude auth service
+ 	anthropicAuth := claude.NewClaudeAuth(h.cfg)
+ 
+-	// Generate authorization URL (then override redirect_uri to reuse server port)
+-	authURL, state, err := anthropicAuth.GenerateAuthURL(state, pkceCodes)
++	manual := strings.EqualFold(strings.TrimSpace(c.Query("flow")), "manual")
++	redirectURI := claude.RedirectURI
++	authURL := ""
++	if manual {
++		redirectURI = claude.ManualRedirectURI
++		authURL, state, err = anthropicAuth.GenerateManualAuthURL(state, pkceCodes)
++	} else {
++		authURL, state, err = anthropicAuth.GenerateAuthURL(state, pkceCodes)
++	}
+ 	if err != nil {
+ 		log.Errorf("Failed to generate authorization URL: %v", err)
+ 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to generate authorization url"})
+@@ -69,7 +76,9 @@ func (h *Handler) RequestAnthropicToken(c *gin.Context) {
+ 
+ 	RegisterOAuthSession(state, "anthropic")
+ 
+-	isWebUI := isWebUIRequest(c)
++	// Manual auth returns to Anthropic's hosted page, so no local callback
++	// forwarder is needed even when this request came from the web UI.
++	isWebUI := isWebUIRequest(c) && !manual
+ 	var forwarder *callbackForwarder
+ 	if isWebUI {
+ 		targetURL, errTarget := h.managementCallbackURL("/anthropic/callback")
+@@ -143,7 +152,7 @@ func (h *Handler) RequestAnthropicToken(c *gin.Context) {
+ 		code := strings.Split(rawCode, "#")[0]
+ 
+ 		// Exchange code for tokens using internal auth service
+-		bundle, errExchange := anthropicAuth.ExchangeCodeForTokens(ctx, code, state, pkceCodes)
++		bundle, errExchange := anthropicAuth.ExchangeCodeForTokensWithRedirect(ctx, code, state, redirectURI, pkceCodes)
+ 		if errExchange != nil {
+ 			authErr := claude.NewAuthenticationError(claude.ErrCodeExchangeFailed, errExchange)
+ 			log.Errorf("Failed to exchange authorization code for tokens: %v", authErr)
+@@ -192,7 +201,11 @@ func (h *Handler) RequestAnthropicToken(c *gin.Context) {
+ 		CompleteOAuthSession(state)
+ 	}()
+ 
+-	c.JSON(200, gin.H{"status": "ok", "url": authURL, "state": state})
++	response := gin.H{"status": "ok", "url": authURL, "state": state}
++	if manual {
++		response["flow"] = "manual"
++	}
++	c.JSON(200, response)
+ }
+ 
+ func (h *Handler) RequestCodexToken(c *gin.Context) {
+diff --git a/internal/api/handlers/management/auth_files_v8_claude_manual_test.go b/internal/api/handlers/management/auth_files_v8_claude_manual_test.go
+new file mode 100644
+index 0000000..52911b7
+--- /dev/null
++++ b/internal/api/handlers/management/auth_files_v8_claude_manual_test.go
+@@ -0,0 +1,68 @@
++package management
++
++import (
++	"encoding/json"
++	"net/http"
++	"net/http/httptest"
++	"net/url"
++	"testing"
++	"time"
++
++	"github.com/gin-gonic/gin"
++	"github.com/router-for-me/CLIProxyAPI/v8/internal/auth/claude"
++	"github.com/router-for-me/CLIProxyAPI/v8/internal/config"
++)
++
++func TestStartOAuthV8ClaudeManualFlowUsesHostedCallbackWithoutForwarder(t *testing.T) {
++	gin.SetMode(gin.TestMode)
++	replaceOAuthSessionStoreForTest(t, newOAuthSessionStore(time.Minute))
++	h := NewHandlerWithoutConfigFilePath(&config.Config{AuthDir: t.TempDir()}, nil)
++	router := gin.New()
++	router.GET("/v8/management/oauth/auth-url", h.StartOAuthV8)
++	router.DELETE("/v8/management/oauth/session", h.CancelAuthSession)
++
++	callbackForwardersMu.Lock()
++	before := callbackForwarders[anthropicCallbackPort]
++	callbackForwardersMu.Unlock()
++	start := httptest.NewRecorder()
++	router.ServeHTTP(start, httptest.NewRequest(http.MethodGet,
++		"/v8/management/oauth/auth-url?provider=claude&flow=manual&is_webui=1", nil))
++	if start.Code != http.StatusOK {
++		t.Fatalf("start status = %d, body=%s", start.Code, start.Body.String())
++	}
++	var response struct {
++		URL   string `json:"url"`
++		State string `json:"state"`
++		Flow  string `json:"flow"`
++	}
++	if err := json.Unmarshal(start.Body.Bytes(), &response); err != nil {
++		t.Fatal(err)
++	}
++	parsed, err := url.Parse(response.URL)
++	if err != nil {
++		t.Fatal(err)
++	}
++	if response.Flow != "manual" || parsed.Scheme+"://"+parsed.Host+parsed.Path != claude.ManualAuthURL {
++		t.Fatalf("manual flow response = %s", start.Body.String())
++	}
++	if got := parsed.Query().Get("redirect_uri"); got != claude.ManualRedirectURI {
++		t.Fatalf("redirect_uri = %q, want %q", got, claude.ManualRedirectURI)
++	}
++	if response.State == "" {
++		t.Fatal("manual flow response has no state")
++	}
++
++	callbackForwardersMu.Lock()
++	after := callbackForwarders[anthropicCallbackPort]
++	callbackForwardersMu.Unlock()
++	if after != before {
++		t.Fatal("manual flow started or replaced the local Claude callback forwarder")
++	}
++
++	cancel := httptest.NewRecorder()
++	router.ServeHTTP(cancel, httptest.NewRequest(http.MethodDelete,
++		"/v8/management/oauth/session?state="+url.QueryEscape(response.State), nil))
++	if cancel.Code != http.StatusOK {
++		t.Fatalf("cancel status = %d, body=%s", cancel.Code, cancel.Body.String())
++	}
++}
+diff --git a/internal/auth/claude/anthropic_auth.go b/internal/auth/claude/anthropic_auth.go
+index b3b2618..826c17e 100644
+--- a/internal/auth/claude/anthropic_auth.go
++++ b/internal/auth/claude/anthropic_auth.go
+@@ -29,10 +29,13 @@ const (
+ 	ProfileURL      = "https://api.anthropic.com/api/oauth/profile"
+ 	// RolesURL is the claude_cli role endpoint the native client queries right
+ 	// after a successful token exchange, alongside the profile lookup.
+-	RolesURL         = "https://api.anthropic.com/api/oauth/claude_cli/roles"
+-	ClientID         = "9d1c250a-e61b-44d9-88ed-5944d1962f5e"
+-	RedirectURI      = "http://localhost:54545/callback"
+-	ClaudeOAuthScope = "user:profile user:inference user:sessions:claude_code user:mcp_servers user:file_upload"
++	RolesURL          = "https://api.anthropic.com/api/oauth/claude_cli/roles"
++	ClientID          = "9d1c250a-e61b-44d9-88ed-5944d1962f5e"
++	RedirectURI       = "http://localhost:54545/callback"
++	ClaudeOAuthScope  = "user:profile user:inference user:sessions:claude_code user:mcp_servers user:file_upload"
++	ManualAuthURL     = "https://claude.com/cai/oauth/authorize"
++	ManualRedirectURI = "https://platform.claude.com/oauth/code/callback"
++	ManualOAuthScope  = "org:create_api_key " + ClaudeOAuthScope
+ 
+ 	claudeRefreshMinBackoff       = 5 * time.Second
+ 	claudeRefreshMaxBackoff       = 5 * time.Minute
+@@ -321,6 +324,16 @@ func (o *ClaudeAuth) inspectOAuthAccount(ctx context.Context, accessToken string
+ //   - string: The state parameter for verification
+ //   - error: An error if PKCE codes are missing or URL generation fails
+ func (o *ClaudeAuth) GenerateAuthURL(state string, pkceCodes *PKCECodes) (string, string, error) {
++	return buildAuthURL(AuthURL, RedirectURI, ClaudeOAuthScope, state, pkceCodes)
++}
++
++// GenerateManualAuthURL creates an authorization URL whose callback is hosted
++// by Anthropic, so the browser does not need to reach this server.
++func (o *ClaudeAuth) GenerateManualAuthURL(state string, pkceCodes *PKCECodes) (string, string, error) {
++	return buildAuthURL(ManualAuthURL, ManualRedirectURI, ManualOAuthScope, state, pkceCodes)
++}
++
++func buildAuthURL(endpoint, redirectURI, scope, state string, pkceCodes *PKCECodes) (string, string, error) {
+ 	if pkceCodes == nil {
+ 		return "", "", fmt.Errorf("PKCE codes are required")
+ 	}
+@@ -329,14 +342,14 @@ func (o *ClaudeAuth) GenerateAuthURL(state string, pkceCodes *PKCECodes) (string
+ 		"code":                  {"true"},
+ 		"client_id":             {ClientID},
+ 		"response_type":         {"code"},
+-		"redirect_uri":          {RedirectURI},
+-		"scope":                 {ClaudeOAuthScope},
++		"redirect_uri":          {redirectURI},
++		"scope":                 {scope},
+ 		"code_challenge":        {pkceCodes.CodeChallenge},
+ 		"code_challenge_method": {"S256"},
+ 		"state":                 {state},
+ 	}
+ 
+-	authURL := fmt.Sprintf("%s?%s", AuthURL, params.Encode())
++	authURL := fmt.Sprintf("%s?%s", endpoint, params.Encode())
+ 	return authURL, state, nil
+ }
+ 
+@@ -372,9 +385,18 @@ func (c *ClaudeAuth) parseCodeAndState(code string) (parsedCode, parsedState str
+ //   - *ClaudeAuthBundle: The complete authentication bundle with tokens
+ //   - error: An error if token exchange fails
+ func (o *ClaudeAuth) ExchangeCodeForTokens(ctx context.Context, code, state string, pkceCodes *PKCECodes) (*ClaudeAuthBundle, error) {
++	return o.ExchangeCodeForTokensWithRedirect(ctx, code, state, RedirectURI, pkceCodes)
++}
++
++// ExchangeCodeForTokensWithRedirect exchanges a code using the redirect URI
++// that generated it. Anthropic binds authorization codes to that URI.
++func (o *ClaudeAuth) ExchangeCodeForTokensWithRedirect(ctx context.Context, code, state, redirectURI string, pkceCodes *PKCECodes) (*ClaudeAuthBundle, error) {
+ 	if pkceCodes == nil {
+ 		return nil, fmt.Errorf("PKCE codes are required for token exchange")
+ 	}
++	if strings.TrimSpace(redirectURI) == "" {
++		redirectURI = RedirectURI
++	}
+ 	newCode, newState := o.parseCodeAndState(code)
+ 
+ 	// Prepare token exchange request. The struct field order reproduces the key
+@@ -383,7 +405,7 @@ func (o *ClaudeAuth) ExchangeCodeForTokens(ctx context.Context, code, state stri
+ 	reqBody := authorizationCodeExchangeRequest{
+ 		GrantType:    "authorization_code",
+ 		Code:         newCode,
+-		RedirectURI:  RedirectURI,
++		RedirectURI:  redirectURI,
+ 		ClientID:     ClientID,
+ 		CodeVerifier: pkceCodes.CodeVerifier,
+ 		State:        state,
+diff --git a/internal/auth/claude/anthropic_manual_auth_test.go b/internal/auth/claude/anthropic_manual_auth_test.go
+new file mode 100644
+index 0000000..fe6dd03
+--- /dev/null
++++ b/internal/auth/claude/anthropic_manual_auth_test.go
+@@ -0,0 +1,102 @@
++package claude
++
++import (
++	"context"
++	"io"
++	"net/http"
++	"net/url"
++	"testing"
++)
++
++func TestManualClaudeGenerateAuthURLUsesHostedCallback(t *testing.T) {
++	authURL, state, err := (&ClaudeAuth{}).GenerateManualAuthURL(
++		"state-value",
++		&PKCECodes{CodeChallenge: "challenge", CodeVerifier: "verifier"},
++	)
++	if err != nil {
++		t.Fatal(err)
++	}
++	parsed, err := url.Parse(authURL)
++	if err != nil {
++		t.Fatal(err)
++	}
++	if state != "state-value" || parsed.Scheme+"://"+parsed.Host+parsed.Path != ManualAuthURL {
++		t.Fatalf("manual authorization = %q, state %q", authURL, state)
++	}
++	want := map[string]string{
++		"code":                  "true",
++		"client_id":             ClientID,
++		"response_type":         "code",
++		"redirect_uri":          ManualRedirectURI,
++		"scope":                 ManualOAuthScope,
++		"code_challenge":        "challenge",
++		"code_challenge_method": "S256",
++		"state":                 "state-value",
++	}
++	query := parsed.Query()
++	for key, value := range want {
++		if query.Get(key) != value {
++			t.Fatalf("%s = %q, want %q", key, query.Get(key), value)
++		}
++	}
++	if len(query) != len(want) {
++		t.Fatalf("authorization query has %d fields, want %d", len(query), len(want))
++	}
++}
++
++func TestGenerateAuthURLKeepsTheLocalCallback(t *testing.T) {
++	authURL, _, err := (&ClaudeAuth{}).GenerateAuthURL(
++		"state-value",
++		&PKCECodes{CodeChallenge: "challenge", CodeVerifier: "verifier"},
++	)
++	if err != nil {
++		t.Fatal(err)
++	}
++	parsed, err := url.Parse(authURL)
++	if err != nil {
++		t.Fatal(err)
++	}
++	if parsed.Scheme+"://"+parsed.Host+parsed.Path != AuthURL {
++		t.Fatalf("local authorization endpoint = %q, want %q", parsed.String(), AuthURL)
++	}
++	if got := parsed.Query().Get("redirect_uri"); got != RedirectURI {
++		t.Fatalf("local redirect_uri = %q, want %q", got, RedirectURI)
++	}
++	if got := parsed.Query().Get("scope"); got != ClaudeOAuthScope {
++		t.Fatalf("local scope = %q, want %q", got, ClaudeOAuthScope)
++	}
++}
++
++func TestManualClaudeCodeExchangeUsesTheSameHostedRedirect(t *testing.T) {
++	var tokenBody string
++	auth := &ClaudeAuth{httpClient: &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
++		switch req.URL.String() {
++		case TokenURL:
++			body, err := io.ReadAll(req.Body)
++			if err != nil {
++				t.Fatal(err)
++			}
++			tokenBody = string(body)
++			return jsonResponse(req, `{"access_token":"access","refresh_token":"refresh","expires_in":28800}`), nil
++		case ProfileURL:
++			return jsonResponse(req, `{"account":{"uuid":"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa","email":"user@example.com"},"organization":{"uuid":"bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb","name":"Example"}}`), nil
++		case RolesURL:
++			return jsonResponse(req, `{"roles":["claude_code_user"]}`), nil
++		default:
++			t.Fatalf("unexpected OAuth request URL %s", req.URL)
++			return nil, nil
++		}
++	})}}
++
++	_, err := auth.ExchangeCodeForTokensWithRedirect(
++		context.Background(), "authorization-code#state-value", "state-value", ManualRedirectURI,
++		&PKCECodes{CodeVerifier: "verifier"},
++	)
++	if err != nil {
++		t.Fatal(err)
++	}
++	want := `{"grant_type":"authorization_code","code":"authorization-code","redirect_uri":"` + ManualRedirectURI + `","client_id":"` + ClientID + `","code_verifier":"verifier","state":"state-value"}`
++	if tokenBody != want {
++		t.Fatalf("token exchange body = %s, want %s", tokenBody, want)
++	}
++}
