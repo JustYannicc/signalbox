@@ -217,6 +217,7 @@ function deploy(
       limits: { cpuMs: 300_000 },
       env: {
         ...env,
+        AUTOMATION_HOOK_ORIGIN: `https://${target.cloudDomain}`,
         // Binding and class names are the Durable Objects' identity.
         USERS: Cloudflare.DurableObject<UserObject>(DO.USERS),
         EXECUTOR_TOKEN_BINDINGS: Cloudflare.DurableObject<ExecutorTokenBindingObject>(

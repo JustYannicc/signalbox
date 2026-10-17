@@ -85,7 +85,9 @@ export const makeUserObjectApi = (
   ) => run(GitHubConnection.GitHubConnection.use(f));
   /** A run's instance calling in; a rejection is its cue to retry. */
   const withAutomations = <A>(
-    f: (automations: CloudAutomations.CloudAutomationsShape) => Effect.Effect<A, AutomationError>,
+    f: (
+      automations: CloudAutomations.CloudAutomations["Service"],
+    ) => Effect.Effect<A, AutomationError>,
   ) =>
     Effect.flatMap(Effect.serviceOption(CloudAutomations.CloudAutomations), (automations) =>
       Option.isNone(automations)
@@ -93,6 +95,8 @@ export const makeUserObjectApi = (
         : f(automations.value),
     );
   return {
+    receiveHook: (request) =>
+      run(withAutomations((automations) => automations.receiveHook(request))),
     recordSignIn: (profile) => use((store) => store.recordSignIn(profile)),
     profile: () => use((store) => store.profile),
     createSession: (input) => use((store) => store.createSession(input)),

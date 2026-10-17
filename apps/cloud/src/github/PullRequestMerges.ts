@@ -9,6 +9,7 @@ import {
   PullRequestBranchToDelete,
   PullRequestSourceBranch,
 } from "@t3tools/source-control-github/server/pullRequestReads.graphql";
+import { ellipsize } from "@t3tools/shared/String";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -35,6 +36,14 @@ export interface PullRequestTarget {
   readonly number: number;
 }
 
+export interface MergeReview {
+  readonly author: string | null;
+  readonly state: "approved" | "changes-requested" | "commented" | "dismissed" | "pending";
+  readonly submittedAt: string | null;
+  readonly body: string;
+  readonly url: string | null;
+}
+
 /** A pull request as a merge gate judges it. A null part is one GitHub didn't answer. */
 export interface MergeEvidence {
   readonly title: string;
@@ -45,6 +54,12 @@ export interface MergeEvidence {
   readonly baseBranch: string;
   /** The head branch's repository; another one's means a fork. Null when GitHub lost it (deleted fork). */
   readonly headRepository: string | null;
+  /** The base branch's commit and repository; null when GitHub can't resolve either one. */
+  readonly baseSha: string | null;
+  readonly baseRepository: string | null;
+  /** Labels and latest review records; null when GitHub returned only part of either list. */
+  readonly labels: ReadonlyArray<string> | null;
+  readonly reviews: ReadonlyArray<MergeReview> | null;
   readonly isDraft: boolean;
   readonly mergeability: PullRequestMergeability;
   /** GitHub's own decision; approvals by apps alone don't count here as they do in upstream's summary. */
@@ -88,7 +103,14 @@ const EVIDENCE_QUERY = `query PullRequestMergeEvidence($owner: String!, $name: S
   repository(owner: $owner, name: $name) {
     pullRequest(number: $number) {
       title state isDraft mergeable reviewDecision headRefOid
-      headRefName baseRefName headRepository { nameWithOwner }
+      headRefName baseRefName baseRefOid
+      headRepository { nameWithOwner }
+      baseRepository { nameWithOwner }
+      labels(first: 100) { nodes { name } pageInfo { hasNextPage } }
+      latestReviews(first: 20) {
+        nodes { state submittedAt body url author { login } }
+        pageInfo { hasNextPage }
+      }
       reviewThreads(first: 100) { nodes { isResolved } pageInfo { hasNextPage } }
       files(first: 100) { nodes { path } pageInfo { hasNextPage endCursor } }
     }
@@ -128,6 +150,32 @@ const Files = Schema.NullOr(
     }),
   }),
 );
+const Labels = Schema.NullOr(
+  Schema.Struct({
+    nodes: Schema.Array(Schema.Struct({ name: Schema.String })),
+    pageInfo: Schema.Struct({ hasNextPage: Schema.Boolean }),
+  }),
+);
+const Reviews = Schema.NullOr(
+  Schema.Struct({
+    nodes: Schema.Array(
+      Schema.Struct({
+        state: Schema.Literals([
+          "APPROVED",
+          "CHANGES_REQUESTED",
+          "COMMENTED",
+          "DISMISSED",
+          "PENDING",
+        ]),
+        submittedAt: Schema.NullOr(Schema.String),
+        body: Schema.String,
+        url: Schema.NullOr(Schema.String),
+        author: Schema.NullOr(Schema.Struct({ login: Schema.String })),
+      }),
+    ),
+    pageInfo: Schema.Struct({ hasNextPage: Schema.Boolean }),
+  }),
+);
 const answerOf = <S extends Schema.Codec<unknown, unknown>>(pullRequest: S) =>
   Schema.decodeUnknownOption(
     Schema.fromJsonString(
@@ -150,7 +198,11 @@ const decodeEvidence = answerOf(
     headRefOid: Schema.String,
     headRefName: Schema.String,
     baseRefName: Schema.String,
+    baseRefOid: Schema.NullOr(Schema.String),
     headRepository: Schema.NullOr(Schema.Struct({ nameWithOwner: Schema.String })),
+    baseRepository: Schema.NullOr(Schema.Struct({ nameWithOwner: Schema.String })),
+    labels: Labels,
+    latestReviews: Reviews,
     reviewThreads: Schema.Struct({
       nodes: Schema.Array(Schema.Struct({ isResolved: Schema.Boolean })),
       pageInfo: Schema.Struct({ hasNextPage: Schema.Boolean }),
@@ -196,6 +248,14 @@ const DECISIONS = {
   CHANGES_REQUESTED: "changes-requested",
   REVIEW_REQUIRED: "review-required",
 } as const;
+const REVIEW_STATES = {
+  APPROVED: "approved",
+  CHANGES_REQUESTED: "changes-requested",
+  COMMENTED: "commented",
+  DISMISSED: "dismissed",
+  PENDING: "pending",
+} as const;
+const REVIEW_BODY_LIMIT = 4_000;
 
 const failure = (operation: string, message: string, status = 200) =>
   new GitHubError({ operation, status, message });
@@ -307,6 +367,22 @@ const make = Effect.gen(function* () {
       headBranch: pullRequest.headRefName,
       baseBranch: pullRequest.baseRefName,
       headRepository: pullRequest.headRepository?.nameWithOwner ?? null,
+      baseSha: pullRequest.baseRefOid,
+      baseRepository: pullRequest.baseRepository?.nameWithOwner ?? null,
+      labels:
+        pullRequest.labels === null || pullRequest.labels.pageInfo.hasNextPage
+          ? null
+          : pullRequest.labels.nodes.map((label) => label.name),
+      reviews:
+        pullRequest.latestReviews === null || pullRequest.latestReviews.pageInfo.hasNextPage
+          ? null
+          : pullRequest.latestReviews.nodes.map((review): MergeReview => ({
+              author: review.author?.login ?? null,
+              state: REVIEW_STATES[review.state],
+              submittedAt: review.submittedAt,
+              body: ellipsize(review.body, REVIEW_BODY_LIMIT),
+              url: review.url,
+            })),
       isDraft: pullRequest.isDraft,
       mergeability: MERGEABILITY[pullRequest.mergeable],
       reviewDecision:
