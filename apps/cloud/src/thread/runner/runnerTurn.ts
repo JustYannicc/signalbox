@@ -82,6 +82,7 @@ interface NativeChildCandidate {
 }
 
 type NativeChildFailure =
+  | "missing_attestation"
   | "attestation_thread_mismatch"
   | "attestation_run_mismatch"
   | "attestation_origin_mismatch"
@@ -672,6 +673,8 @@ export function runnerBatchEvents(
   for (const subagent of current.subagents) {
     if (
       subagent.origin === "provider_native" &&
+      subagent.runId !== null &&
+      subagent.childThreadId !== null &&
       newlyTerminalRunIds.has(subagent.runId) &&
       !nativeChildCandidates.has(keyOf(subagent.runId, subagent.childThreadId))
     ) {

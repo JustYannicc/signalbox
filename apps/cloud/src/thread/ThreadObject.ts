@@ -389,6 +389,10 @@ export class ThreadObject extends DurableObject<ThreadObjectEnv> implements Thre
     return this.api.searchDocuments(...args);
   }
 
+  contextWorkVisible(...args: Parameters<ThreadObjectApi["contextWorkVisible"]>) {
+    return this.api.contextWorkVisible(...args);
+  }
+
   find(...args: Parameters<ThreadObjectApi["find"]>) {
     return this.api.find(...args);
   }

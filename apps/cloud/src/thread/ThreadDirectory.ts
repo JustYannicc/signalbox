@@ -9,6 +9,7 @@ import type {
   OrchestrationV2ThreadLaunchResult,
   OrchestrationV2ThreadStreamItem,
   ThreadId,
+  ProjectId,
 } from "@t3tools/contracts";
 import type {
   AgentBrowserInput,
@@ -119,6 +120,7 @@ export interface ThreadObjectApi {
     actor: Actor,
     itemIds: ReadonlyArray<string>,
   ) => Promise<SearchThreadDocuments | null>;
+  readonly contextWorkVisible: (actor: Actor, expectedProjectId: ProjectId) => Promise<boolean>;
   readonly find: (
     actor: Actor,
     input: unknown,
@@ -220,6 +222,10 @@ export interface ThreadHandle {
     actor: Actor,
     itemIds: ReadonlyArray<string>,
   ) => Effect.Effect<SearchThreadDocuments | null, ThreadObjectError>;
+  readonly contextWorkVisible: (
+    actor: Actor,
+    expectedProjectId: ProjectId,
+  ) => Effect.Effect<boolean, ThreadObjectError>;
   readonly find: (
     actor: Actor,
     input: OrchestrationV2SearchThreadInput,
@@ -386,6 +392,8 @@ export function handleFor(api: ThreadObjectApi): ThreadHandle {
       ),
     searchDocuments: (actor, itemIds) =>
       call("searchDocuments", () => api.searchDocuments(actor, itemIds)),
+    contextWorkVisible: (actor, projectId) =>
+      call("contextWorkVisible", () => api.contextWorkVisible(actor, projectId)),
     find: (actor, input) =>
       call("find", () => api.find(actor, wire.findInput.encode(input))).pipe(
         Effect.flatMap(fromReply),

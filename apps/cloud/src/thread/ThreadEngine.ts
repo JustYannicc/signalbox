@@ -307,6 +307,11 @@ export class ThreadEngine extends Context.Service<
       actor: Actor,
       itemIds: ReadonlyArray<string>,
     ) => Effect.Effect<SearchThreadDocuments | null>;
+    /** Internal drive search only. The caller first checks access to the expected project's drive. */
+    readonly contextWorkVisible: (
+      actor: Actor,
+      expectedProjectId: ProjectId,
+    ) => Effect.Effect<boolean>;
     /** Finds a current in-thread match in the authorized projection. */
     readonly find: (
       actor: Actor,
@@ -1138,6 +1143,16 @@ const make = Effect.gen(function* () {
   const canSee: ThreadEngine["Service"]["canSee"] = (actor) =>
     Effect.map(Ref.get(state), (current) => visibleTo(current, actor) !== null);
 
+  const contextWorkVisible: ThreadEngine["Service"]["contextWorkVisible"] = (actor, projectId) =>
+    Effect.map(
+      Ref.get(state),
+      ({ thread }) =>
+        thread !== null &&
+        thread.projection.thread.deletedAt === null &&
+        thread.projection.thread.projectId === projectId &&
+        actor.contextIds.includes(thread.owner.contextId),
+    );
+
   return ThreadEngine.of({
     canSee,
     dispatch,
@@ -1164,6 +1179,7 @@ const make = Effect.gen(function* () {
     acknowledgeSearchDelivery,
     backfill,
     searchDocuments,
+    contextWorkVisible,
     find,
   });
 });

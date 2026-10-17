@@ -91,6 +91,8 @@ export const makeThreadObjectApi = (
     },
     searchDocuments: (actor, itemIds) =>
       run(engine.use((service) => service.searchDocuments(actor, itemIds))),
+    contextWorkVisible: (actor, projectId) =>
+      run(engine.use((service) => service.contextWorkVisible(actor, projectId))),
     find: (actor, input) =>
       reply(engine.use((service) => service.find(actor, wire.findInput.decode(input)))),
     subscribe: (actor, input) =>
@@ -120,7 +122,9 @@ export const makeThreadObjectApi = (
       run(
         engine.use((service) =>
           service.snapshot(actor).pipe(
-            Effect.map(({ projection }) => matchThread(projection, terms)),
+            Effect.map(({ projection }) =>
+              projection.thread.deletedAt === null ? matchThread(projection, terms) : null,
+            ),
             Effect.catchTags({ ThreadNotFoundError: () => Effect.succeed(null) }),
           ),
         ),
@@ -129,11 +133,15 @@ export const makeThreadObjectApi = (
       run(
         engine.use((service) =>
           service.snapshot(actor).pipe(
-            Effect.map(({ projection }) => ({
-              title: projection.thread.title,
-              projectId: projection.thread.projectId,
-              turns: threadTurns(projection, turn),
-            })),
+            Effect.map(({ projection }) =>
+              projection.thread.deletedAt === null
+                ? {
+                    title: projection.thread.title,
+                    projectId: projection.thread.projectId,
+                    turns: threadTurns(projection, turn),
+                  }
+                : null,
+            ),
             Effect.catchTags({ ThreadNotFoundError: () => Effect.succeed(null) }),
           ),
         ),

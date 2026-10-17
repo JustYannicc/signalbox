@@ -8,6 +8,7 @@ import {
   type OrchestrationV2ThreadProjection,
   type OrchestrationV2TurnItem,
   type RunId,
+  type ThreadId,
   type TurnItemId,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";

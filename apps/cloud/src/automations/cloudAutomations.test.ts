@@ -206,14 +206,11 @@ export default workflow(async (w, event: { threadId: string }) => {
       const { cloud, rpc, thread, tool, engine } = yield* setup;
       const agent = yield* thread("thread-waiter", "Wait for another thread");
       const finished = yield* thread("thread-finished", "Already finished");
-      const finishedInbox = yield* cloud.inUser(
-        userId,
-        Effect.gen(function* () {
-          const actor = yield* ownerActor;
-          const inbox = yield* ThreadInbox.make;
-          return yield* inbox.read(actor, finished);
-        }),
-      );
+      const finishedInbox = yield* Effect.gen(function* () {
+        const actor = yield* ownerActor;
+        const inbox = yield* ThreadInbox.make;
+        return yield* inbox.read(actor, finished);
+      }).pipe(Effect.provide(cloud.layerFor(userId)));
       const finishedRun = finishedInbox.runs.toSorted(
         (left, right) => right.ordinal - left.ordinal,
       )[0]!;

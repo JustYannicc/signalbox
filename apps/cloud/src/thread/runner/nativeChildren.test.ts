@@ -228,10 +228,10 @@ describe("provider-native child history", () => {
                 [
                   item({
                     type: "app_thread.created",
-                    appThread: {
-                      ...encodedAppThread,
+                    appThread: yield* encodeThread({
+                      ...appThread,
                       activeProviderThreadId: ProviderThreadId.make("different-provider-thread"),
-                    },
+                    }),
                   }),
                   item({ type: "message.updated", message: encodedMessage }),
                   terminal,
@@ -247,10 +247,10 @@ describe("provider-native child history", () => {
                 [
                   item({
                     type: "app_thread.created",
-                    appThread: {
-                      ...encodedAppThread,
+                    appThread: yield* encodeThread({
+                      ...appThread,
                       activeProviderThreadId: ProviderThreadId.make("different-provider-thread"),
-                    },
+                    }),
                   }),
                   terminal,
                 ],
