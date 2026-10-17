@@ -45,6 +45,8 @@ export { AutomationHost, AutomationWorkflow } from "./automations/automationWork
 export interface CloudEnv
   extends UserObjectEnv, ThreadObjectEnv, PoolObjectEnv, PreviewCleanupEnv, AutomationWorkflowEnv {
   readonly ASSETS: { readonly fetch: (request: Request) => Promise<Response> };
+  readonly TRACE_EXPORT?: Fetcher;
+  readonly TRACE_EXPORT_TOKEN?: string;
 }
 
 /** Plain string vars and secrets, for the config provider. Bindings are objects. */

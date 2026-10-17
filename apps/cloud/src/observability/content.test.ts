@@ -27,6 +27,40 @@ describe("redactContent", () => {
     });
   });
 
+  it.each([
+    "code",
+    "state",
+    "access_token",
+    "refresh_token",
+    "id_token",
+    "token",
+    "ticket",
+    "api_key",
+    "client_secret",
+  ])("redacts %s and URL fields before any drain sees them", (key) => {
+    const event = {
+      action: "request",
+      state: "ready",
+      code: "redirect",
+      request: {
+        url: `https://example.com/oauth?${key}=canary-credential`,
+        query_string: `${key}=canary-credential`,
+        status: 302,
+      },
+      attributes: {
+        "url.full": `https://example.com/?${key}=canary-credential`,
+        "url.query": `${key}=canary-credential`,
+        "http.url": `https://example.com/?${key}=canary-credential`,
+      },
+    };
+    redactContent(event);
+    expect(JSON.stringify(event)).not.toContain("canary");
+    expect(event.request.status).toBe(302);
+    expect(event.state).toBe("ready");
+    expect(event.code).toBe("redirect");
+    expect(event.attributes["url.query"]).toBe(REDACTED);
+  });
+
   it("handles cycles", () => {
     const turn: Record<string, unknown> = { id: "run-1", text: "a reply" };
     turn.self = turn;

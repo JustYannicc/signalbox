@@ -307,6 +307,10 @@
       "types": "./src/relayTracing.ts",
       "import": "./src/relayTracing.ts"
     },
+    "./traceUrlScrubbing": {
+      "types": "./src/traceUrlScrubbing.ts",
+      "import": "./src/traceUrlScrubbing.ts"
+    },
     "./preview": {
       "types": "./src/preview.ts",
       "import": "./src/preview.ts"

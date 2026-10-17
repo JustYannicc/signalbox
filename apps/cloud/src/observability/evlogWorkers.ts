@@ -1,7 +1,7 @@
 import { toLoggerConfig, toMiddlewareOptions } from "evlog";
 import { initWorkersLogger } from "evlog/workers";
 
-import config from "../../evlog.config.ts";
+import config, { drain } from "../../evlog.config.ts";
 
 /**
  * The Effect-free half of the cloud's evlog setup, for the Workers' fetch
@@ -44,3 +44,6 @@ export const init = () => initWorkersLogger(toLoggerConfig(config));
 
 /** `withEvlog`'s options, from `evlog.config.ts`. */
 export const requestOptions = toMiddlewareOptions(config);
+
+// Manual emits only enqueue a batch; the runtime must also cover its actual send.
+export const drainsSettled = () => drain?.settled() ?? Promise.resolve();

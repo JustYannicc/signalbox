@@ -39,6 +39,13 @@ const drains = [
 // Batched per isolate; each unit hands the batch's send to `waitUntil`.
 const pipeline = createDrainPipeline<DrainContext>({ batch: { size: 50, intervalMs: 1000 } });
 
+export const drain =
+  drains.length === 0
+    ? undefined
+    : pipeline(async (batch) => {
+        await Promise.allSettled(drains.map((send) => send(batch)));
+      });
+
 export default defineEvlog({
   service: "signalbox-cloud",
   environment: process.env.SIGNALBOX_STAGE || "development",
@@ -48,9 +55,5 @@ export default defineEvlog({
   exclude: ["/assets/**"],
   // Everything is kept for now. Once info is sampled, failures and slow work still are.
   sampling: { keep: [{ status: 400 }, { duration: 1000 }] },
-  ...(drains.length > 0 && {
-    drain: pipeline(async (batch) => {
-      await Promise.allSettled(drains.map((drain) => drain(batch)));
-    }),
-  }),
+  ...(drain !== undefined && { drain }),
 });

@@ -22,6 +22,20 @@ export const CONTENT_KEYS: ReadonlySet<string> = new Set([
   "cause",
   "message",
   "stack",
+  // URLs can contain single-use OAuth codes as well as reusable credentials.
+  "url",
+  "url.full",
+  "url.query",
+  "http.url",
+  "query_string",
+  "queryString",
+  "token",
+  "access_token",
+  "refresh_token",
+  "id_token",
+  "ticket",
+  "api_key",
+  "client_secret",
 ]);
 
 export const REDACTED = "[REDACTED]";
