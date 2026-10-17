@@ -75,6 +75,7 @@ const makeOwner = () => {
   const received: Array<Delivery> = [];
   const state = { down: false };
   const automations = CloudAutomations.CloudAutomations.of({
+    save: () => Effect.die("not used"),
     receiveHook: () => Effect.die("not used"),
     threadEvents: (input) =>
       state.down
@@ -557,7 +558,7 @@ describe("current cloud item history", () => {
                       `;
                       if (state?.cursor === 100) {
                         yield* Deferred.succeed(committed, undefined);
-                        yield* Effect.never;
+                        return yield* Effect.never;
                       }
                     }),
                   ),

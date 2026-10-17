@@ -1,5 +1,6 @@
 import {
   parseAutomationAsk,
+  ProjectId,
   type AutomationError,
   type AutomationRunSummary,
 } from "@t3tools/contracts";
@@ -17,7 +18,12 @@ import { fail } from "./errors.ts";
 import { isExternalRunSystem, type ExternalRuns } from "./external.ts";
 import { asRecord, fromJson, toJson } from "./json.ts";
 import { modelPrompt } from "./modelSteps.ts";
-import type { AutomationFunctions, AutomationModelSteps, CallbackLink } from "./host.ts";
+import {
+  AutomationThreads,
+  type AutomationFunctions,
+  type AutomationModelSteps,
+  type CallbackLink,
+} from "./host.ts";
 import { waitsOnEvents } from "./events/runWaits.ts";
 import { explained } from "./runLog.ts";
 import { runModelStep } from "./runModelStep.ts";
@@ -102,15 +108,29 @@ export const makeStartStep =
           label: step.label,
           options,
           complete: (prompt) =>
-            modelFor(options, defaults()).pipe(
-              Effect.flatMap((modelSelection) =>
-                models.complete({
-                  projectId: automation.project_id,
-                  modelSelection,
-                  prompt,
-                }),
-              ),
-            ),
+            Effect.gen(function* () {
+              let currentDefaults = defaults();
+              if (
+                currentDefaults.modelSelection === null &&
+                !(typeof options.provider === "string" && typeof options.model === "string")
+              ) {
+                const threads = yield* AutomationThreads;
+                currentDefaults = {
+                  ...currentDefaults,
+                  modelSelection: yield* threads.initialModelSelection(
+                    ProjectId.make(automation.project_id),
+                  ),
+                };
+              }
+              const modelSelection = yield* modelFor(options, currentDefaults);
+              if (modelSelection === null)
+                return yield* fail("Choose a model or set a default in Settings.");
+              return yield* models.complete({
+                projectId: automation.project_id,
+                modelSelection,
+                prompt,
+              });
+            }),
         }).pipe(
           Effect.provideContext(deps.services),
           Effect.map((value): StepOutcome => ({ type: "done", value })),

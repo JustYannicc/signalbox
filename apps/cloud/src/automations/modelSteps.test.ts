@@ -1,6 +1,7 @@
 import { describe, expect, it } from "@effect/vitest";
 import { ProjectId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
 import { AutomationModelSteps } from "@signalbox/automations/host";
 import { transientCause } from "@signalbox/automations/stepPolicy";
 
@@ -40,6 +41,49 @@ const allFieldNames = (value: unknown): Array<string> => {
 };
 
 describe("cloud model steps", () => {
+  it.effect("resolves an unsaved model from the current pool when a model step runs", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeModelStepHarness();
+      const automation = yield* harness.save(
+        `export const meta = { name: "Deferred model" } as const;
+export default workflow(async (w) => await w.llm("Summarize", { prompt: "Hello" }));`,
+        SCRATCH_PROJECT_ID,
+        null,
+      );
+      const { gateway } = yield* connectModelPool(harness.cloud, ["claude"], () => ({
+        text: "Resolved from the current pool.",
+      }));
+
+      const done = yield* harness.startAndWait(automation.id);
+
+      expect(done.run.status).toBe("succeeded");
+      expect(done.output).toBe("Resolved from the current pool.");
+      expect(gateway.requests).toHaveLength(1);
+      expect(gateway.requests[0]?.body.model).toEqual(expect.any(String));
+      expect(yield* harness.threadProjectionIds()).toEqual([]);
+    }),
+  );
+
+  it.effect("reports an absent model before forwarding an implicit model step", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeModelStepHarness();
+      const automation = yield* harness.save(
+        `export const meta = { name: "Missing model" } as const;
+export default workflow(async (w) => await w.llm("Summarize", { prompt: "Hello" }));`,
+        SCRATCH_PROJECT_ID,
+        null,
+      );
+      const { gateway } = yield* connectModelPool(harness.cloud, [], () => ({ text: "Unused" }));
+
+      const done = yield* harness.startAndWait(automation.id);
+
+      expect(done.run.status).toBe("failed");
+      expect(done.run.error).toContain("Choose a model or set a default");
+      expect(gateway.requests).toEqual([]);
+      expect(yield* harness.threadProjectionIds()).toEqual([]);
+    }),
+  );
+
   it.effect("passes the pool's Retry-After to the model retry policy", () =>
     Effect.gen(function* () {
       const harness = yield* makeModelStepHarness();
@@ -55,9 +99,12 @@ describe("cloud model steps", () => {
           prompt: "Hello",
         }),
       ).pipe(
-        Effect.provide(CloudModelSteps.layer),
-        Effect.provide(ModelCompletion.layer((name) => harness.cloud.pools.objectFor(name).api)),
-        Effect.provide(harness.cloud.userObject(HOOK_USER)),
+        Effect.provide(
+          CloudModelSteps.layer.pipe(
+            Layer.provide(ModelCompletion.layer((name) => harness.cloud.pools.objectFor(name).api)),
+            Layer.provide(harness.cloud.userObject(HOOK_USER)),
+          ),
+        ),
         Effect.flip,
       );
       expect(transientCause(error)?.retryAfterMs).toBe(60_000);
