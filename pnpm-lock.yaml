@@ -310,7 +310,7 @@ importers:
         version: 24.12.4
       alchemy:
         specifier: 2.0.0-beta.80
-        version: 2.0.0-beta.80(patch_hash=0e3e0a80b1a06032e5093f70c7fa71969756b71dd3319af6bc9cc9537155f6a1)(9a5a6e7279f08315ec7bae137bbc0950)
+        version: 2.0.0-beta.80(patch_hash=0e3e0a80b1a06032e5093f70c7fa71969756b71dd3319af6bc9cc9537155f6a1)(fd26ac643d2a47190fed1b2b3e18f752)
       typescript:
         specifier: 'catalog:'
         version: 7.0.2
@@ -22454,7 +22454,7 @@ snapshots:
       json-schema-traverse: 1.0.0
       require-from-string: 2.0.2
 
-  alchemy@2.0.0-beta.80(patch_hash=0e3e0a80b1a06032e5093f70c7fa71969756b71dd3319af6bc9cc9537155f6a1)(9a5a6e7279f08315ec7bae137bbc0950):
+  alchemy@2.0.0-beta.80(patch_hash=0e3e0a80b1a06032e5093f70c7fa71969756b71dd3319af6bc9cc9537155f6a1)(b3ec8503f5c642c9bb0bbb60bfc1a3fd):
     dependencies:
       '@alchemy.run/cloudflare-runtime': 2.0.0-beta.80(@distilled.cloud/cloudflare@1.0.0-rc.13(patch_hash=6972313f9f56d8f5a35723062efab65ab9be4ea1472ff42ab6c3fbb15c448f68)(effect@4.0.5))(@effect/platform-node@4.0.5(bufferutil@4.1.0)(effect@4.0.5)(redis@6.2.1)(utf-8-validate@6.0.6))(@types/node@24.12.4)(effect@4.0.5)(esbuild@0.28.2)(jiti@2.7.0)(rolldown@1.2.5)(terser@5.48.0)(typescript@7.0.2)(unrun@0.2.39)(yaml@2.9.0)
       '@alchemy.run/floci': 2.0.0-beta.80(effect@4.0.5)
@@ -22538,7 +22538,7 @@ snapshots:
       - unrun
       - utf-8-validate
 
-  alchemy@2.0.0-beta.80(patch_hash=0e3e0a80b1a06032e5093f70c7fa71969756b71dd3319af6bc9cc9537155f6a1)(b3ec8503f5c642c9bb0bbb60bfc1a3fd):
+  alchemy@2.0.0-beta.80(patch_hash=0e3e0a80b1a06032e5093f70c7fa71969756b71dd3319af6bc9cc9537155f6a1)(fd26ac643d2a47190fed1b2b3e18f752):
     dependencies:
       '@alchemy.run/cloudflare-runtime': 2.0.0-beta.80(@distilled.cloud/cloudflare@1.0.0-rc.13(patch_hash=6972313f9f56d8f5a35723062efab65ab9be4ea1472ff42ab6c3fbb15c448f68)(effect@4.0.5))(@effect/platform-node@4.0.5(bufferutil@4.1.0)(effect@4.0.5)(redis@6.2.1)(utf-8-validate@6.0.6))(@types/node@24.12.4)(effect@4.0.5)(esbuild@0.28.2)(jiti@2.7.0)(rolldown@1.2.5)(terser@5.48.0)(typescript@7.0.2)(unrun@0.2.39)(yaml@2.9.0)
       '@alchemy.run/floci': 2.0.0-beta.80(effect@4.0.5)
