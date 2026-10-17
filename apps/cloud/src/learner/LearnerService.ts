@@ -383,9 +383,19 @@ const make = Effect.gen(function* () {
               ${action.occurred_at}) ON CONFLICT(draft_event_id, action_event_id) DO NOTHING`;
           for (const score of scored) {
             if (score === null) continue;
+            // Old decisions may match a rule, but cannot become later validation when retried.
             yield* sql`INSERT INTO sbx_level_learner_668_evidence
               (lens_id, precedent_id, tree_id, outcome, occurred_at)
-              VALUES (${score.lens.id}, ${id}, ${action.tree_id}, ${score.outcome}, ${action.occurred_at})
+              SELECT ${score.lens.id}, ${id}, ${action.tree_id}, ${score.outcome}, ${action.occurred_at}
+              WHERE ${score.lens.owner_stated} = 1 OR EXISTS (
+                SELECT 1 FROM sbx_level_learner_668_precedents seed
+                JOIN sbx_level_learner_668_events seed_action
+                  ON seed_action.event_id = seed.action_event_id
+                JOIN sbx_level_learner_668_events current_action
+                  ON current_action.event_id = ${action.event_id}
+                WHERE seed.id = ${score.lens.seed_precedent_id}
+                  AND current_action.rowid > seed_action.rowid
+              )
               ON CONFLICT(lens_id, precedent_id) DO NOTHING`;
           }
           if (

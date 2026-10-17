@@ -346,6 +346,71 @@ describe("level learner service", () => {
       ),
   );
 
+  it.effect(
+    "a retried older decision cannot validate a newer lens, even with equal timestamps",
+    () => {
+      let classifyOlder = false;
+      return Effect.gen(function* () {
+        const service = yield* LearnerService.LearnerService;
+        for (const [prefix, content] of [
+          ["older", "Earlier decision: wait for checks"],
+          ["seed", "Wait for checks"],
+        ] as const) {
+          yield* log(service, {
+            eventId: `${prefix}-draft`,
+            kind: "draft",
+            input: "Release safely",
+            content,
+            objectId: prefix,
+          });
+          yield* log(service, {
+            eventId: `${prefix}-action`,
+            kind: "human_action",
+            content,
+            objectId: prefix,
+          });
+        }
+        classifyOlder = true;
+        const retried = yield* service.query({ scope: "person", task: "Release safely" });
+        expect(retried.precedents).toHaveLength(2);
+        expect(retried.lenses).toHaveLength(1);
+        expect(retried.lenses[0]).toMatchObject({ supports: 0, misses: 0, served: false });
+        expect(retried.answerAlone).toBe(false);
+        expect((yield* service.lenses({ scope: "person" })).lenses).toEqual([]);
+
+        yield* log(service, {
+          eventId: "later-draft",
+          kind: "draft",
+          input: "Release safely",
+          content: "Wait for checks",
+          objectId: "later",
+        });
+        yield* log(service, {
+          eventId: "later-action",
+          kind: "human_action",
+          content: "Wait for checks",
+          objectId: "later",
+        });
+        const validated = yield* service.query({ scope: "person", task: "Release safely" });
+        expect(validated.lenses).toHaveLength(1);
+        expect(validated.lenses[0]).toMatchObject({ supports: 1, served: true });
+        expect(validated.answerAlone).toBe(true);
+      }).pipe(
+        Effect.provide(
+          layerFor(
+            fakeJev({
+              classify: ({ action }) =>
+                action.startsWith("Earlier") && !classifyOlder
+                  ? Option.none()
+                  : Option.some("confirmed"),
+              outcome: () => Option.some("support"),
+            }),
+          ),
+        ),
+      );
+    },
+  );
+
   it.effect("requires Jev to establish clear coverage before answering alone", () => {
     let coverage: Option.Option<"clear" | "contradiction"> = Option.none();
     return Effect.gen(function* () {
