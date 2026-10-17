@@ -22,7 +22,7 @@ export class TrashAlarm extends Context.Service<
   {
     readonly armBy: (at: number) => Effect.Effect<void>;
   }
->()("@signalbox/cloud/trash/TrashAlarm") {}
+>()("@signalbox/cloud/trash/TrashWorkflow/TrashAlarm") {}
 
 /** The cloud keeps Trash and restore; irreversible cleanup is intentionally unavailable. */
 export const layerPreview = Layer.succeed(

@@ -43,7 +43,7 @@ const make = Effect.gen(function* () {
     effect.pipe(
       Effect.tapError((cause) => Effect.logError(`trash ${operation} failed`, { cause })),
       Effect.mapError((cause) =>
-        cause instanceof FolderRefusedError || cause instanceof SignalboxTrashError
+        Schema.is(FolderRefusedError)(cause) || Schema.is(SignalboxTrashError)(cause)
           ? failed(cause.message)
           : failed(`Could not ${operation}. Trash will retry.`),
       ),

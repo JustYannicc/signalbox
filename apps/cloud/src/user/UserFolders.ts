@@ -74,6 +74,11 @@ import * as UserContexts from "./UserContexts.ts";
 import * as UserDriveIndex from "./UserDriveIndex.ts";
 import * as FolderTrashStore from "./folderTrash.ts";
 
+const encodeTrashFolderIds = Schema.encodeSync(Schema.fromJsonString(Schema.Array(FolderId)));
+const encodeTrashDriveIds = Schema.encodeSync(Schema.fromJsonString(Schema.Array(Schema.String)));
+const encodeTrashThreadIds = Schema.encodeSync(Schema.fromJsonString(Schema.Array(ThreadId)));
+const encodeTrashNoteIds = Schema.encodeSync(Schema.fromJsonString(Schema.Array(NoteId)));
+
 /**
  * The user's folders, in their own object (#227): the one kind of level
  * below the top, nesting freely. A folder belongs to one owner's tree
@@ -662,9 +667,9 @@ const make = Effect.gen(function* () {
               (trash_id, folder_id, owner_id, title, parent_id, position, folder_ids, drive_ids,
                 thread_ids, note_ids, deleted_at, restore_until, status)
             VALUES (${record.trashId}, ${record.folderId}, ${record.ownerId}, ${record.title},
-              ${record.parentId}, ${record.position}, ${JSON.stringify(record.folderIds)},
-              ${JSON.stringify(record.driveIds)}, ${JSON.stringify(record.threadIds)},
-              ${JSON.stringify(record.noteIds)},
+              ${record.parentId}, ${record.position}, ${encodeTrashFolderIds(record.folderIds)},
+              ${encodeTrashDriveIds(record.driveIds)}, ${encodeTrashThreadIds(record.threadIds)},
+              ${encodeTrashNoteIds(record.noteIds)},
               ${record.deletedAt}, ${record.restoreUntil}, 'trashed')`;
           yield* sql`UPDATE folders SET trash_id = ${trashId}, trashed_at = ${deletedAt}
             WHERE id IN ${sql.in(folderIds)} AND trash_id IS NULL`;

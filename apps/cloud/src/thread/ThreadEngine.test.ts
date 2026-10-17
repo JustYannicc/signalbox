@@ -15,6 +15,7 @@ import {
 } from "@t3tools/contracts";
 import { PERSONAL_CONTEXT_ID } from "@t3tools/contracts/signalboxContexts";
 import { afterEach, describe, expect, it } from "@effect/vitest";
+import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
@@ -177,7 +178,7 @@ describe("ThreadEngine", () => {
         yield* engine.dispatch(owner, send("send-queued", "Next"), personal);
         const beforeTrash = yield* engine.snapshot(owner);
         expect(beforeTrash.projection.runs.map((run) => run.status)).toEqual(["running", "queued"]);
-        const deletedAt = Date.now();
+        const deletedAt = yield* Clock.currentTimeMillis;
         const input = {
           trashId: "trash-1",
           deletedAt,
@@ -228,7 +229,7 @@ describe("ThreadEngine", () => {
     withObject(freshDatabase(), (engine, store) =>
       Effect.gen(function* () {
         const original = yield* launch(engine);
-        const deletedAt = Date.now();
+        const deletedAt = yield* Clock.currentTimeMillis;
         const input = {
           trashId: "trash-purge-disabled",
           deletedAt,

@@ -4,6 +4,7 @@ import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
 
 import * as CloudAutomations from "../automations/CloudAutomations.ts";
@@ -38,6 +39,7 @@ interface Ownership {
 }
 
 const failed = (message: string) => new SignalboxTrashError({ message });
+const encodeThreadIds = Schema.encodeSync(Schema.fromJsonString(Schema.Array(Schema.String)));
 
 const make = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
@@ -46,7 +48,7 @@ const make = Effect.gen(function* () {
 
   const ownership = (threadIds: ReadonlyArray<string>) =>
     Effect.gen(function* () {
-      const encodedThreads = JSON.stringify([...new Set(threadIds)]);
+      const encodedThreads = encodeThreadIds([...new Set(threadIds)]);
       const rows = yield* sql<RunRow>`
         WITH RECURSIVE trash_threads(thread_id) AS (
           SELECT value FROM json_each(${encodedThreads})
@@ -205,7 +207,7 @@ const make = Effect.gen(function* () {
       return { ready: notStopped.length === 0, retained } satisfies PrepareAutomationTrashResult;
     }).pipe(
       Effect.mapError((cause) =>
-        cause instanceof SignalboxTrashError
+        Schema.is(SignalboxTrashError)(cause)
           ? cause
           : failed("Could not prepare automation runs for Trash."),
       ),
@@ -217,6 +219,6 @@ const make = Effect.gen(function* () {
 export class TrashAutomations extends Context.Service<
   TrashAutomations,
   Effect.Success<typeof make>
->()("@signalbox/cloud/trash/TrashAutomations") {}
+>()("@signalbox/cloud/trash/trashAutomations") {}
 
 export const layer = Layer.effect(TrashAutomations, make);

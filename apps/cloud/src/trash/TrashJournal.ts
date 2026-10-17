@@ -1,10 +1,13 @@
 import * as Effect from "effect/Effect";
+import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
 import type { SqlError } from "effect/sql/SqlError";
 
 import { decodeRows, encodePlannedRemovals, encodeTargets } from "./trashTables.ts";
 import type { FolderTrash } from "./TrashResources.ts";
 import type { PlannedRemoval, Row } from "./trashTables.ts";
+
+const encodeDriveIds = Schema.encodeSync(Schema.fromJsonString(Schema.Array(Schema.String)));
 
 export const makeJournal = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
@@ -51,7 +54,7 @@ export const makeJournal = Effect.gen(function* () {
         planned_removals)
       VALUES (${entry.id}, ${entry.kind}, ${entry.targetId}, ${entry.title}, ${entry.contextId},
         ${entry.deletedAt}, ${entry.purgeAfter}, 'trashed', ${encodeTargets(entry.targets)},
-        ${JSON.stringify(entry.driveIds)}, ${encodePlannedRemovals(entry.plannedRemovals)})
+        ${encodeDriveIds(entry.driveIds)}, ${encodePlannedRemovals(entry.plannedRemovals)})
       ON CONFLICT (id) DO NOTHING`;
         if (entry.commandId !== undefined)
           yield* rememberRequest(entry.commandId, entry.kind, entry.targetId, entry.id);
