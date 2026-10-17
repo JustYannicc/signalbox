@@ -1,5 +1,4 @@
 import * as Clock from "effect/Clock";
-import * as Config from "effect/Config";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -7,11 +6,10 @@ import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 import { HttpClient, HttpClientRequest } from "effect/http";
-import { importPKCS8, SignJWT } from "jose";
 
-import * as CloudConfig from "../CloudConfig.ts";
-import type { PushDevice } from "./PushDevices.ts";
-import type { PushMessage } from "./pushRules.ts";
+import type { PushDevice } from "../PushDevices.ts";
+import type { PushMessage } from "../pushRules.ts";
+import { type ApnsKey, type ServiceAccount, readCredentials, signJwt } from "./credentials.ts";
 
 /**
  * Sends one push to one phone, straight to Apple (APNs) or Google (FCM), the
@@ -50,66 +48,7 @@ export class PushSender extends Context.Service<
       message: PushMessage,
     ) => Effect.Effect<SendOutcome, PushSendError>;
   }
->()("@signalbox/cloud/push/PushSender") {}
-
-interface ApnsKey {
-  readonly teamId: string;
-  readonly keyId: string;
-  readonly privateKey: Redacted.Redacted<string>;
-}
-
-const ServiceAccount = Schema.fromJsonString(
-  Schema.Struct({
-    project_id: Schema.NonEmptyString,
-    client_email: Schema.NonEmptyString,
-    private_key: Schema.NonEmptyString,
-  }),
-);
-type ServiceAccount = typeof ServiceAccount.Type;
-const decodeServiceAccount = Schema.decodeUnknownEffect(ServiceAccount);
-/** The push credentials this deployment has. */
-export const readCredentials = Effect.gen(function* () {
-  const teamId = yield* CloudConfig.optionalSecret("APNS_TEAM_ID");
-  const keyId = yield* CloudConfig.optionalSecret("APNS_KEY_ID");
-  const privateKey = yield* CloudConfig.optionalSecret("APNS_PRIVATE_KEY");
-  const fcmJson = yield* CloudConfig.optionalSecret("FCM_SERVICE_ACCOUNT");
-  const fcm = Option.isNone(fcmJson)
-    ? null
-    : yield* decodeServiceAccount(Redacted.value(fcmJson.value)).pipe(
-        Effect.tapError((cause) => Effect.logError("FCM_SERVICE_ACCOUNT unreadable", { cause })),
-        Effect.orElseSucceed(() => null),
-      );
-  const apns: ApnsKey | null =
-    Option.isSome(teamId) && Option.isSome(keyId) && Option.isSome(privateKey)
-      ? {
-          teamId: Redacted.value(teamId.value).trim(),
-          keyId: Redacted.value(keyId.value).trim(),
-          privateKey: privateKey.value,
-        }
-      : null;
-  return { apns, fcm };
-}).pipe(
-  // A malformed value silences pushes, never the user's object.
-  Effect.catch((cause) =>
-    Effect.as(Effect.logError("push credentials unreadable", { cause }), {
-      apns: null,
-      fcm: null,
-    }),
-  ),
-);
-
-/** A JWT signed with a PKCS#8 PEM key; tolerates keys pasted with literal `\n`. */
-const signJwt = (
-  alg: "ES256" | "RS256",
-  privateKey: string,
-  header: Record<string, string>,
-  claims: Record<string, string | number>,
-) =>
-  Effect.tryPromise(async () =>
-    new SignJWT(claims)
-      .setProtectedHeader({ alg, ...header })
-      .sign(await importPKCS8(privateKey.replace(/\\n/g, "\n").trim(), alg)),
-  );
+>()("@signalbox/cloud/push/adapters/PushSender") {}
 
 /** APNs refuses provider tokens refreshed more often than every 20 minutes or older than an hour. */
 const APNS_TOKEN_TTL_SECONDS = 50 * 60;
