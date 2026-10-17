@@ -21,12 +21,15 @@ Use `vp run dev` for server and web, or `vp run dev:desktop` for the Electron cl
 
 On macOS and Linux, dev and Metro scripts register their processes for cleanup. Use
 `vp run agents:run -- <command>` for another watcher or long-running command. Pass
-`--session-id <id>` before `--` when a harness hook supplies an owner ID. Claude Code
-exports it automatically; Codex supplies it in its session-start context. Commands without
+`--session-id <id>` before `--` to set an owner ID explicitly. Claude Code exports it
+automatically; Codex commands use the runtime's session and thread IDs. Commands without
 an agent owner get a separate ID, so ending an agent session cannot stop a person's server.
 Review and trust the repository hooks when the harness prompts, so session cleanup can run.
 
-`vp run agents:stop` stops registrations in the current checkout, `vp run agents:reap`
+`vp run agents:stop` stops your session's registrations, using the harness environment
+or an explicit `--session-id <id>`. It refuses to stop without a session ID. Pass `--all`
+only when you intend to stop every registration in the checkout, including other sessions.
+`vp run agents:reap`
 retries stale registrations across the repository, and `vp run agents:status --all` shows
 registered PIDs, ports, memory and CPU. These commands check process identity and cwd before
 signaling. Other processes remain untouched. A missing checkout or unverifiable cwd keeps

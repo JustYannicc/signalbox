@@ -19,6 +19,8 @@ if (
   ownerPid > 0 &&
   isPathWithinWorktree(canonicalDirectory(worktreePath), canonicalDirectory(process.cwd()))
 ) {
+  // A descendant must register before executing so it cannot outlive its session
+  // or start untracked while its worktree is being removed.
   await registerProcess({
     worktreePath,
     pid: process.pid,

@@ -556,8 +556,8 @@ const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
   AutomationSkill.layer, // signalbox: automations
   layerThreadSettlementWorker,
   StorageCleanup.layer.pipe(
-    Layer.provide(AgentCleanup.layer),
     Layer.provide(WorktreeCleanupGuard.layer),
+    Layer.provide(AgentCleanup.layer),
     Layer.provide(ProjectionStoreV2.layer),
   ),
   DatabaseStorage.layer.pipe(

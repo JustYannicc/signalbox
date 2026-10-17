@@ -5,7 +5,11 @@ import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
 
 import { registerProcess, stop } from "../../packages/shared/src/agentProcesses/registry.ts";
-import { processSessionId, sessions } from "../../packages/shared/src/agentProcessSessions.ts";
+import {
+  ownedSessionId,
+  processSessionId,
+  sessions,
+} from "../../packages/shared/src/agentProcessSessions.ts";
 import { trackedEnvironment } from "./agent-process-environment.ts";
 
 export async function runTrackedCommand(
@@ -32,7 +36,14 @@ export async function runTrackedCommand(
       child.once("exit", (code) => resolve(code ?? 1));
     });
   }
-  const sessionId = processSessionId(input.sessionId ?? process.env.SIGNALBOX_PROCESS_SESSION_ID);
+  const sessionId = processSessionId(
+    await ownedSessionId(
+      input.worktreePath,
+      input.sessionId ?? process.env.SIGNALBOX_PROCESS_SESSION_ID,
+      process.env.CODEX_THREAD_ID,
+      process.env.CODEX_SESSION_ID,
+    ),
+  );
   let cleanupInProgress: ReturnType<typeof stop> | undefined;
   const cleanup = () => {
     cleanupInProgress ??= stop(input.worktreePath, { sessionId, ownerPid: process.pid }).finally(

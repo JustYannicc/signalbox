@@ -10,10 +10,91 @@ import { expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 
-import { snapshot, status, stop } from "../packages/shared/src/agentProcesses/registry.ts";
+import {
+  registerProcess,
+  snapshot,
+  status,
+  stop,
+} from "../packages/shared/src/agentProcesses/registry.ts";
+import { createNodeProcessOps } from "../packages/shared/src/agentProcesses/processOps.ts";
 
 const command = NodeURL.fileURLToPath(new URL("./agent-processes.ts", import.meta.url));
 const execute = NodeUtil.promisify(NodeChildProcess.execFile);
+
+it.effect("stops only the selected session unless every registration is explicitly requested", () =>
+  Effect.gen(function* () {
+    if ((yield* HostProcess.Platform) === "win32") return;
+    yield* Effect.promise(async () => {
+      const cwd = await NodeFSP.realpath(
+        await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "signalbox-shared-session-stop-")),
+      );
+      const children: Array<{ child: NodeChildProcess.ChildProcess; exited: Promise<void> }> = [];
+      const environment = { ...process.env };
+      delete environment.SIGNALBOX_PROCESS_SESSION_ID;
+      delete environment.CODEX_THREAD_ID;
+      delete environment.CODEX_SESSION_ID;
+      const processOps = createNodeProcessOps();
+      try {
+        await execute("git", ["init", "--quiet", cwd]);
+        for (const sessionId of ["agent-session", "developer-session"]) {
+          const child = NodeChildProcess.spawn(
+            process.execPath,
+            ["-e", "setInterval(()=>{},1000)"],
+            {
+              cwd,
+              stdio: "ignore",
+            },
+          );
+          const exited = new Promise<void>((resolve) => child.once("exit", () => resolve()));
+          children.push({ child, exited });
+          await new Promise<void>((resolve, reject) => {
+            child.once("spawn", resolve);
+            child.once("error", reject);
+          });
+          if (child.pid === undefined) throw new Error("Fixture child has no PID");
+          await registerProcess({ worktreePath: cwd, pid: child.pid, sessionId });
+        }
+        const [agent, developer] = children;
+        await expect(
+          execute(process.execPath, [command, "stop"], { cwd, env: environment }),
+        ).rejects.toThrow("Stopping processes requires --session-id");
+        expect((await processOps.inspect(agent!.child.pid!)).state).toBe("running");
+        expect((await processOps.inspect(developer!.child.pid!)).state).toBe("running");
+
+        await execute(process.execPath, [command, "stop"], {
+          cwd,
+          env: { ...environment, SIGNALBOX_PROCESS_SESSION_ID: "agent-session" },
+        });
+        await agent!.exited;
+        expect((await processOps.inspect(developer!.child.pid!)).state).toBe("running");
+
+        await expect(
+          execute(
+            process.execPath,
+            [command, "stop", "--session-id", "developer-session", "--all"],
+            {
+              cwd,
+              env: environment,
+            },
+          ),
+        ).rejects.toThrow("Choose --session-id or --all, not both");
+        expect((await processOps.inspect(developer!.child.pid!)).state).toBe("running");
+
+        await execute(process.execPath, [command, "stop", "--all"], { cwd, env: environment });
+        await developer!.exited;
+        expect(await snapshot({ worktreePath: cwd })).toEqual([]);
+      } finally {
+        for (const { child, exited } of children) {
+          if (child.pid !== undefined && child.exitCode === null && child.signalCode === null) {
+            child.kill("SIGKILL");
+            await exited;
+          }
+        }
+        await NodeFSP.rm(cwd, { recursive: true, force: true });
+      }
+    });
+  }),
+);
 
 it("runs cleanup commands without installed application dependencies", async () => {
   const cwd = await NodeFSP.realpath(
@@ -74,9 +155,9 @@ it("runs cleanup commands without installed application dependencies", async () 
   }
 });
 
-it.effect(
-  "registers a command and its Node descendants, then a session hook stops exactly them",
-  () =>
+it.effect.each([undefined, "codex-child-runtime"])(
+  "binds a Codex command and its descendants to their own session hooks with agent ID %s",
+  (agentId) =>
     Effect.gen(function* () {
       if ((yield* HostProcess.Platform) === "win32") return;
       yield* Effect.promise(async () => {
@@ -85,19 +166,47 @@ it.effect(
         );
         await execute("git", ["init", "--quiet", cwd]);
         const sessionId = "integration-owned-session";
+        const ownedId = agentId === undefined ? sessionId : `${sessionId}/${agentId}`;
+        const environment: NodeJS.ProcessEnv = {
+          ...process.env,
+          CODEX_THREAD_ID: agentId ?? sessionId,
+          CODEX_SESSION_ID: sessionId,
+        };
+        delete environment.SIGNALBOX_PROCESS_SESSION_ID;
+        delete environment.CLAUDE_ENV_FILE;
         const hook = (hook_event_name: string) =>
           new Promise<void>((resolve, reject) => {
             const child = NodeChildProcess.spawn(process.execPath, [command, "hook"], {
               cwd,
+              env: environment,
               stdio: ["pipe", "pipe", "pipe"],
             });
             let error = "";
+            let output = "";
             child.stderr.on("data", (chunk) => {
               error += String(chunk);
             });
+            child.stdout.on("data", (chunk) => {
+              output += String(chunk);
+            });
             child.once("error", reject);
-            child.once("exit", (code) => (code === 0 ? resolve() : reject(new Error(error))));
-            child.stdin.end(JSON.stringify({ cwd, session_id: sessionId, hook_event_name }));
+            child.once("exit", (code) => {
+              if (code !== 0) return reject(new Error(error));
+              try {
+                JSON.parse(output);
+                resolve();
+              } catch (error) {
+                reject(error);
+              }
+            });
+            child.stdin.end(
+              JSON.stringify({
+                cwd,
+                session_id: sessionId,
+                hook_event_name,
+                ...(agentId === undefined ? {} : { agent_id: agentId }),
+              }),
+            );
           });
         const descendant =
           "console.log(JSON.stringify({ready:process.pid})); setInterval(()=>{},1000)";
@@ -109,21 +218,11 @@ it.effect(
         let wrapper: NodeChildProcess.ChildProcess | undefined;
         let wrapperExit: Promise<number | null> | undefined;
         try {
-          await hook("SessionStart");
+          await hook(agentId === undefined ? "SessionStart" : "SubagentStart");
           wrapper = NodeChildProcess.spawn(
             process.execPath,
-            [
-              command,
-              "run",
-              "--session-id",
-              sessionId,
-              "--",
-              process.execPath,
-              "--input-type=module",
-              "-e",
-              source,
-            ],
-            { cwd, stdio: ["ignore", "pipe", "pipe"] },
+            [command, "run", "--", process.execPath, "--input-type=module", "-e", source],
+            { cwd, env: environment, stdio: ["ignore", "pipe", "pipe"] },
           );
           wrapperExit = new Promise((resolve, reject) => {
             wrapper!.once("error", reject);
@@ -147,7 +246,7 @@ it.effect(
           expect(records.length).toBeGreaterThanOrEqual(2);
           expect(
             records.every(
-              (record) => record.sessionId === sessionId && record.ownerPid === wrapper!.pid,
+              (record) => record.sessionId === ownedId && record.ownerPid === wrapper!.pid,
             ),
           ).toBe(true);
           const running = (await status({ worktreePath: cwd })).filter(
@@ -159,14 +258,14 @@ it.effect(
               (entry) => entry.cpuPercent !== undefined && entry.rssBytes !== undefined,
             ),
           ).toBe(true);
-          await hook("SessionEnd");
+          await hook(agentId === undefined ? "SessionEnd" : "SubagentStop");
           await wrapperExit;
           expect(
             (await status({ worktreePath: cwd })).some((entry) => entry.state === "running"),
           ).toBe(false);
           lines.close();
         } finally {
-          await stop(cwd, { sessionId, graceMs: 100 });
+          await stop(cwd, { sessionId: ownedId, graceMs: 100 });
           if (wrapperExit !== undefined) await wrapperExit;
           await NodeFSP.rm(cwd, { recursive: true, force: true });
         }

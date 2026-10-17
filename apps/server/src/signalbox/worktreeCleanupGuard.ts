@@ -15,11 +15,13 @@ import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Layer from "effect/Layer";
 
+import * as AgentCleanup from "./agentCleanup.ts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as GitManager from "../git/GitManager.ts";
 import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import * as ProviderSessionManager from "../orchestration-v2/ProviderSessionManager.ts";
 import { threadHasQueuedTurnStart } from "../orchestration-v2/ThreadSettlementService.ts";
+import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 
 const decodeThread = Schema.decodeUnknownEffect(
   Schema.fromJsonString(OrchestrationV2AppThreadJson),
@@ -130,6 +132,11 @@ export class WorktreeCleanupGuard extends Context.Service<
       input: WorktreeCleanupGuardInput,
       options?: { readonly verifyCompletion?: boolean },
     ) => Effect.Effect<string | null>;
+    readonly withRemovalGate: <E, R>(
+      input: WorktreeCleanupGuardInput,
+      projectRoot: string,
+      finalize: Effect.Effect<string | null, E, R>,
+    ) => Effect.Effect<string | null, E, R>;
   }
 >()("t3/signalbox/worktreeCleanupGuard") {}
 
@@ -138,8 +145,10 @@ const make = Effect.gen(function* () {
   const path = yield* Path.Path;
   const isWindows = yield* HostProcess.isWindows;
   const sql = yield* SqlClient.SqlClient;
+  const agentCleanup = yield* AgentCleanup.AgentCleanup;
   const projections = yield* ProjectionStore.ProjectionStoreV2;
   const gitManager = yield* GitManager.GitManager;
+  const git = yield* GitVcsDriver.GitVcsDriver;
   const providerSessions = yield* ProviderSessionManager.ProviderSessionManagerV2;
   const pathKey = (target: string) => {
     const resolved = path.resolve(target);
@@ -311,7 +320,56 @@ const make = Effect.gen(function* () {
       ),
     );
 
-  return WorktreeCleanupGuard.of({ check });
+  const gitCommonDirectory = Effect.fn("WorktreeCleanupGuard.gitCommonDirectory")(function* (
+    cwd: string,
+  ) {
+    return yield* git
+      .execute({
+        operation: "WorktreeCleanupGuard.gitCommonDirectory",
+        cwd,
+        args: ["rev-parse", "--git-common-dir"],
+        allowNonZeroExit: true,
+      })
+      .pipe(
+        Effect.flatMap((result) =>
+          result.exitCode === 0 && result.stdout.trim().length > 0
+            ? fs
+                .realPath(path.resolve(cwd, result.stdout.trim()))
+                .pipe(Effect.orElseSucceed(() => null))
+            : Effect.succeed(null),
+        ),
+        Effect.orElseSucceed(() => null),
+      );
+  });
+
+  const withRemovalGate: WorktreeCleanupGuard["Service"]["withRemovalGate"] = (
+    input,
+    projectRoot,
+    finalize,
+  ) =>
+    Effect.gen(function* () {
+      const gate = yield* agentCleanup.acquireWorktreeRemovalGate(input.worktreePath);
+      if (Option.isNone(gate)) return "a registered process is still using the worktree";
+
+      const blocked = yield* check(input, { verifyCompletion: false });
+      if (blocked !== null) return blocked;
+
+      const [worktreeCommonDir, projectCommonDir] = yield* Effect.all([
+        gitCommonDirectory(input.worktreePath),
+        gitCommonDirectory(projectRoot),
+      ]);
+      if (
+        worktreeCommonDir === null ||
+        projectCommonDir === null ||
+        pathKey(worktreeCommonDir) !== pathKey(gate.value) ||
+        pathKey(projectCommonDir) !== pathKey(gate.value)
+      )
+        return "repository or branch changed since check";
+
+      return yield* finalize;
+    }).pipe(Effect.scoped);
+
+  return WorktreeCleanupGuard.of({ check, withRemovalGate });
 });
 
 export const layer = Layer.effect(WorktreeCleanupGuard, make);

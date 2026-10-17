@@ -11,11 +11,24 @@ const sessionPath = (worktreePath: string, sessionId: string) =>
     `${NodeCrypto.createHash("sha256").update(sessionId).digest("hex")}.json`,
   );
 
-export async function recordSession(worktreePath: string, sessionId: string, ended: boolean) {
+export async function recordSession(
+  worktreePath: string,
+  sessionId: string,
+  ended: boolean,
+  runtimeSessionId?: string,
+) {
   const target = sessionPath(worktreePath, sessionId);
   await NodeFSP.mkdir(NodePath.dirname(target), { recursive: true });
   const temporary = `${target}.${NodeCrypto.randomUUID()}.tmp`;
-  await NodeFSP.writeFile(temporary, JSON.stringify({ sessionId, ended }), { mode: 0o600 });
+  await NodeFSP.writeFile(
+    temporary,
+    JSON.stringify({
+      sessionId,
+      ended,
+      ...(runtimeSessionId === undefined ? {} : { runtimeSessionId }),
+    }),
+    { mode: 0o600 },
+  );
   await NodeFSP.rename(temporary, target);
 }
 
@@ -38,13 +51,38 @@ export async function sessions(worktreePath: string) {
           !("sessionId" in value) ||
           typeof value.sessionId !== "string" ||
           !("ended" in value) ||
-          typeof value.ended !== "boolean"
+          typeof value.ended !== "boolean" ||
+          ("runtimeSessionId" in value && typeof value.runtimeSessionId !== "string")
         ) {
           throw new Error("Invalid agent session registration");
         }
-        return { sessionId: value.sessionId, ended: value.ended };
+        return {
+          sessionId: value.sessionId,
+          ended: value.ended,
+          ...("runtimeSessionId" in value && typeof value.runtimeSessionId === "string"
+            ? { runtimeSessionId: value.runtimeSessionId }
+            : {}),
+        };
       }),
   );
+}
+
+export async function ownedSessionId(
+  worktreePath: string,
+  explicit?: string,
+  codexThreadId?: string,
+  codexSessionId?: string,
+) {
+  if (explicit !== undefined && explicit.length > 0) return explicit;
+  const runtimeId = codexThreadId || codexSessionId;
+  if (runtimeId === undefined || runtimeId.length === 0) return undefined;
+  // Native Codex subagent hooks carry the parent session ID separately from the
+  // child's runtime ID. Match that exact ID rather than another session in this checkout.
+  const matches = (await sessions(worktreePath)).filter(
+    (session) => (session.runtimeSessionId ?? session.sessionId) === runtimeId,
+  );
+  if (matches.length > 1) throw new Error("Multiple sessions claim the same Codex thread ID");
+  return matches[0]?.sessionId ?? (codexSessionId || runtimeId);
 }
 
 export function processSessionId(explicit?: string) {

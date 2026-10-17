@@ -49,12 +49,14 @@ import {
   type OrchestrationV2ThreadShell,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
-import { storageCleanupPullRequestMerged } from "./storageCleanup.ts";
 import {
-  worktreeCleanupActivityAt,
+  storageCleanupActivityAt,
+  storageCleanupPullRequestMerged,
+  storageCleanupThreadIdle,
+} from "./storageCleanup.ts";
+import {
   worktreeCleanupFreshWorktree,
   worktreeCleanupPositiveCompletion,
-  worktreeCleanupThreadIdle,
 } from "./signalbox/worktreeCleanupGuard.ts";
 
 const NOW_MS = Date.parse("2026-06-10T12:00:00.000Z");
@@ -119,21 +121,21 @@ describe("V2 storage cleanup eligibility", () => {
   const candidate = () => shell({ branch: "feature", worktreePath: "/worktrees/feature" });
 
   it("allows an idle worktree and rejects the project checkout", () => {
-    expect(worktreeCleanupThreadIdle(candidate(), NOW_MS)).toBe(true);
-    expect(worktreeCleanupThreadIdle(shell(), NOW_MS)).toBe(false);
+    expect(storageCleanupThreadIdle(candidate(), NOW_MS)).toBe(true);
+    expect(storageCleanupThreadIdle(shell(), NOW_MS)).toBe(false);
   });
 
   it.each(["running", "starting", "preparing", "waiting", "queued"] as const)(
     "retains a worktree while its thread is %s",
     (status) => {
-      expect(worktreeCleanupThreadIdle(candidateWithStatus(status), NOW_MS)).toBe(false);
+      expect(storageCleanupThreadIdle(candidateWithStatus(status), NOW_MS)).toBe(false);
     },
   );
 
   it.each(["idle", "completed", "interrupted", "failed", "cancelled", "rolled_back"] as const)(
     "allows cleanup once its thread is %s",
     (status) => {
-      expect(worktreeCleanupThreadIdle(candidateWithStatus(status), NOW_MS)).toBe(true);
+      expect(storageCleanupThreadIdle(candidateWithStatus(status), NOW_MS)).toBe(true);
     },
   );
 
@@ -141,7 +143,7 @@ describe("V2 storage cleanup eligibility", () => {
     "retains %s while background work is pending",
     (status) => {
       expect(
-        worktreeCleanupThreadIdle(
+        storageCleanupThreadIdle(
           {
             ...candidateWithStatus(status),
             pendingBackgroundTasks: [{ taskId: "task-1", kind: "command" }],
@@ -156,7 +158,7 @@ describe("V2 storage cleanup eligibility", () => {
     "retains %s while a runtime request is pending",
     (status) => {
       expect(
-        worktreeCleanupThreadIdle(
+        storageCleanupThreadIdle(
           {
             ...candidateWithStatus(status),
             pendingRuntimeRequest: {
@@ -173,13 +175,13 @@ describe("V2 storage cleanup eligibility", () => {
 
   it("retains an active run even if the shell status is idle", () => {
     expect(
-      worktreeCleanupThreadIdle({ ...candidate(), activeRunId: RunId.make("run") }, NOW_MS),
+      storageCleanupThreadIdle({ ...candidate(), activeRunId: RunId.make("run") }, NOW_MS),
     ).toBe(false);
   });
 
   it("retains a queued prompt before the new run has been projected", () => {
     expect(
-      worktreeCleanupThreadIdle({ ...candidate(), latestUserMessageAt: at(-1_000) }, NOW_MS),
+      storageCleanupThreadIdle({ ...candidate(), latestUserMessageAt: at(-1_000) }, NOW_MS),
     ).toBe(false);
   });
 
@@ -187,7 +189,7 @@ describe("V2 storage cleanup eligibility", () => {
     const thread = candidate();
     const runTime = at(-3 * DAY_MS);
     expect(
-      worktreeCleanupActivityAt({ ...thread, latestRunCompletedAt: runTime, updatedAt: at(0) }),
+      storageCleanupActivityAt({ ...thread, latestRunCompletedAt: runTime, updatedAt: at(0) }),
     ).toBe(DateTime.toEpochMillis(runTime));
   });
 

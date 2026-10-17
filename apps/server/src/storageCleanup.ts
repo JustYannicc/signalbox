@@ -103,6 +103,15 @@ function sameProjectWorktreePolicies(left: ServerSettings, right: ServerSettings
   );
 }
 
+export function storageCleanupThreadIdle(thread: OrchestrationV2ThreadShell, now: number): boolean {
+  return worktreeCleanupThreadIdle(thread, now);
+}
+
+/** PR metadata refreshes must not reset the inactivity clock. */
+export function storageCleanupActivityAt(thread: OrchestrationV2ThreadShell): number {
+  return worktreeCleanupActivityAt(thread);
+}
+
 /** Only a complete subagent chain within this worktree shares ownership. */
 function worktreeOwner(threads: ReadonlyArray<OrchestrationV2ThreadShell>) {
   if (threads.length === 1) return threads[0];
@@ -462,28 +471,6 @@ const make = Effect.gen(function* () {
     return (name?.startsWith("(") ? null : name) !== branch;
   });
 
-  const gitCommonDirectory = Effect.fn("StorageCleanup.gitCommonDirectory")(function* (
-    cwd: string,
-  ) {
-    return yield* git
-      .execute({
-        operation: "StorageCleanup.gitCommonDirectory",
-        cwd,
-        args: ["rev-parse", "--git-common-dir"],
-        allowNonZeroExit: true,
-      })
-      .pipe(
-        Effect.flatMap((result) =>
-          result.exitCode === 0 && result.stdout.trim().length > 0
-            ? fs
-                .realPath(path.resolve(cwd, result.stdout.trim()))
-                .pipe(Effect.orElseSucceed(() => null))
-            : Effect.succeed(null),
-        ),
-        Effect.orElseSucceed(() => null),
-      );
-  });
-
   const localChangesReason = Effect.fn("StorageCleanup.localChangesReason")(function* (
     cwd: string,
     rules: WorktreeCleanupRules,
@@ -600,7 +587,7 @@ const make = Effect.gen(function* () {
       const deletedGroup = deletedThreads.filter(
         (member) => path.resolve(member.worktreePath!) === worktreePath,
       );
-      const activityAt = Math.max(...group.map(worktreeCleanupActivityAt));
+      const activityAt = Math.max(...group.map(storageCleanupActivityAt));
       const deleted = "workspaceRoot" in thread;
       const project = deleted
         ? { workspaceRoot: thread.workspaceRoot }
@@ -624,7 +611,7 @@ const make = Effect.gen(function* () {
         if (project === undefined) return keep("project is unavailable");
         if (
           thread.branch === null ||
-          (!deleted && !group.every((member) => worktreeCleanupThreadIdle(member, now)))
+          (!deleted && !group.every((member) => storageCleanupThreadIdle(member, now)))
         )
           return keep("thread is running or has pending work");
         if (group.some((member) => member.branch !== thread.branch))
@@ -732,7 +719,7 @@ const make = Effect.gen(function* () {
                   ? "not merged"
                   : "has commits beyond the default branch",
           );
-        const completionBlock = yield* worktreeCleanupGuard.check({
+        const guardInput = {
           worktreePath,
           owner: thread,
           branch: thread.branch,
@@ -743,7 +730,8 @@ const make = Effect.gen(function* () {
             thread,
             workspaceRoot,
           })),
-        });
+        };
+        const completionBlock = yield* worktreeCleanupGuard.check(guardInput);
         if (completionBlock !== null) return keep(completionBlock);
         // The guard reads this path's archived and deleted bindings as well as
         // active shells, then checks process-independent safety conditions.
@@ -760,18 +748,7 @@ const make = Effect.gen(function* () {
             return "thread or cleanup settings changed since check";
           const latestHead = yield* git.resolveCommit({ cwd: worktreePath, revision: "HEAD" });
           return yield* worktreeCleanupGuard.check(
-            {
-              worktreePath,
-              owner: thread,
-              branch: thread.branch!,
-              headSha: latestHead.commitSha,
-              now,
-              threads: group,
-              deletedThreads: deletedGroup.map(({ workspaceRoot, ...thread }) => ({
-                thread,
-                workspaceRoot,
-              })),
-            },
+            { ...guardInput, headSha: latestHead.commitSha },
             { verifyCompletion },
           );
         });
@@ -800,40 +777,42 @@ const make = Effect.gen(function* () {
           )
         )
           return keep("settings changed since check");
-        const removalGate = yield* agentCleanup.acquireWorktreeRemovalGate(worktreePath);
-        if (Option.isNone(removalGate))
-          return keep("a registered process is still using the worktree");
-        const blockedBeforeRemoval = yield* blockedSinceCheck(false);
-        if (blockedBeforeRemoval !== null) return keep(blockedBeforeRemoval);
-        const [worktreeCommonDir, projectCommonDir] = yield* Effect.all([
-          gitCommonDirectory(worktreePath),
-          gitCommonDirectory(project.workspaceRoot),
-        ]);
-        if (
-          worktreeCommonDir === null ||
-          projectCommonDir === null ||
-          pathKey(worktreeCommonDir) !== pathKey(removalGate.value) ||
-          pathKey(projectCommonDir) !== pathKey(removalGate.value)
-        )
-          return keep("repository or branch changed since check");
-        if (yield* branchChanged(worktreePath, thread.branch))
-          return keep("repository or branch changed since check");
-        if (
-          (yield* git.resolveCommit({ cwd: worktreePath, revision: "HEAD" })).commitSha !==
-          head.commitSha
-        )
-          return keep("commit changed since check");
-        const finalChangesAfterStop = yield* localChangesReason(worktreePath, settings);
-        if (finalChangesAfterStop !== null) return keep(finalChangesAfterStop);
-        // Clean only untracked files; Git must still refuse removal if a tracked
-        // edit arrives after our last status check.
-        if (settings.worktreeKeepWhen === "tracked-changes")
-          yield* cleanupGit(worktreePath, ["clean", "-ffdx"], "git clean");
-        yield* cleanupGit(
+        const blockedBeforeRemoval = yield* worktreeCleanupGuard.withRemovalGate(
+          guardInput,
           project.workspaceRoot,
-          ["-c", "status.showUntrackedFiles=normal", "worktree", "remove", "--", worktreePath],
-          "git worktree remove",
+          Effect.gen(function* () {
+            const latestProjects = yield* projectStore.listShells();
+            if (yield* containsProjectRoot(worktreePath, [project, ...latestProjects]))
+              return "contains a project checkout";
+            if (hasTerminal(worktreePath)) return "open terminal";
+            if (
+              deleted &&
+              !resolveWorktreeCleanup(yield* settingsService.getSettings, thread.projectId)
+                .worktreeOnDelete
+            )
+              return "thread or cleanup settings changed since check";
+            if (yield* branchChanged(worktreePath, thread.branch))
+              return "repository or branch changed since check";
+            if (
+              (yield* git.resolveCommit({ cwd: worktreePath, revision: "HEAD" })).commitSha !==
+              head.commitSha
+            )
+              return "commit changed since check";
+            const finalChangesAfterStop = yield* localChangesReason(worktreePath, settings);
+            if (finalChangesAfterStop !== null) return finalChangesAfterStop;
+            // Clean only untracked files; Git must still refuse removal if a tracked
+            // edit arrives after our last status check.
+            if (settings.worktreeKeepWhen === "tracked-changes")
+              yield* cleanupGit(worktreePath, ["clean", "-ffdx"], "git clean");
+            yield* cleanupGit(
+              project.workspaceRoot,
+              ["-c", "status.showUntrackedFiles=normal", "worktree", "remove", "--", worktreePath],
+              "git worktree remove",
+            );
+            return null;
+          }),
         );
+        if (blockedBeforeRemoval !== null) return keep(blockedBeforeRemoval);
         entries.push({ ...entry, outcome: "removed", reason: sentence(removalReason), bytes });
         yield* gitManager.invalidateStatus(project.workspaceRoot);
         // Preserve branch and path: ProviderTurnStartService recreates the checkout

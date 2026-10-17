@@ -9,7 +9,11 @@ import {
   stop,
   resolveCommonDir,
 } from "../packages/shared/src/agentProcesses/registry.ts";
-import { recordSession, sessions } from "../packages/shared/src/agentProcessSessions.ts";
+import {
+  ownedSessionId,
+  recordSession,
+  sessions,
+} from "../packages/shared/src/agentProcessSessions.ts";
 import { resolveProcessWorktree } from "./lib/agent-process-worktree.ts";
 import { runTrackedCommand } from "./lib/agent-process-run.ts";
 
@@ -34,9 +38,13 @@ async function harnessHook() {
     "agent_id" in payload && typeof payload.agent_id === "string"
       ? `${payload.session_id}/${payload.agent_id}`
       : payload.session_id;
+  const runtimeSessionId =
+    "agent_id" in payload && typeof payload.agent_id === "string"
+      ? payload.agent_id
+      : payload.session_id;
   const shellValue = `'${sessionId.replaceAll("'", `'"'"'`)}'`;
   if (payload.hook_event_name === "SessionStart" || payload.hook_event_name === "SubagentStart") {
-    await recordSession(worktreePath, sessionId, false);
+    await recordSession(worktreePath, sessionId, false, runtimeSessionId);
     const environmentFile = process.env.CLAUDE_ENV_FILE;
     if (payload.hook_event_name === "SessionStart" && environmentFile !== undefined) {
       await NodeFSP.appendFile(
@@ -57,8 +65,16 @@ async function harnessHook() {
     payload.hook_event_name === "SubagentStop"
   ) {
     // The marker survives the harness's short hook timeout, so the reaper can finish.
-    await recordSession(worktreePath, sessionId, true);
-    await stop(worktreePath, { sessionId, graceMs: 250 });
+    await recordSession(worktreePath, sessionId, true, runtimeSessionId);
+    await stop(worktreePath, {
+      sessionId,
+      graceMs: 250,
+      print: (text) =>
+        new Promise<void>((resolve, reject) => {
+          process.stderr.write(`${text}\n`, (error) => (error ? reject(error) : resolve()));
+        }),
+    });
+    process.stdout.write("{}\n");
   } else {
     throw new Error("Unsupported process cleanup hook event");
   }
@@ -91,8 +107,15 @@ async function main() {
     return;
   }
   if (command === "stop") {
-    const sessionId = options.values["session-id"];
-    const result = await stop(worktreePath, sessionId === undefined ? {} : { sessionId });
+    if (options.values.all && options.values["session-id"] !== undefined) {
+      throw new Error("Choose --session-id or --all, not both");
+    }
+    const result = await stop(
+      worktreePath,
+      options.values.all
+        ? {}
+        : { sessionId: await stopSessionId(worktreePath, options.values["session-id"]) },
+    );
     process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
     return;
   }
@@ -114,6 +137,21 @@ async function main() {
   throw new Error(
     "Usage: agent-processes <run|stop|reap|status|hook> [--worktree PATH] [--session-id ID] [--all]",
   );
+}
+
+async function stopSessionId(worktreePath: string, explicit?: string) {
+  const sessionId = await ownedSessionId(
+    worktreePath,
+    explicit ?? process.env.SIGNALBOX_PROCESS_SESSION_ID,
+    process.env.CODEX_THREAD_ID,
+    process.env.CODEX_SESSION_ID,
+  );
+  if (sessionId === undefined || sessionId.length === 0) {
+    throw new Error(
+      "Stopping processes requires --session-id ID or a harness session environment; use --all to stop every registration in this checkout",
+    );
+  }
+  return sessionId;
 }
 
 await main().catch((error: unknown) => {
