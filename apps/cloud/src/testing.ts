@@ -77,7 +77,8 @@ import * as PullRequestSync from "./thread/pullRequests/PullRequestSync.ts";
 import * as ThreadStore from "./thread/ThreadStore.ts";
 import * as ThreadPulls from "./thread/ThreadPulls.ts";
 import * as PullState from "./thread/PullState.ts";
-import * as ModelManifest from "./thread/ModelManifest.ts";
+import * as ModelManifest from "./models/ModelManifest.ts";
+import * as ModelCatalog from "./models/ModelCatalog.ts";
 import * as TurnModels from "./thread/TurnModels.ts";
 import { contextOfProject } from "./user/contextProjects.ts";
 import * as DrivePeople from "./user/DrivePeople.ts";
@@ -375,7 +376,12 @@ const makeUserRuntime = (
               Layer.provideMerge(LearnerJev.layerNone),
             ),
           ),
-          Layer.provideMerge(Layer.mergeAll(layerMemoryStore, ModelManifest.layerBundled)),
+          Layer.provideMerge(
+            Layer.mergeAll(
+              layerMemoryStore,
+              ModelCatalog.layer.pipe(Layer.provideMerge(ModelManifest.layerBundled)),
+            ),
+          ),
           Layer.provideMerge(Layer.mergeAll(drives, people, github)),
           Layer.provideMerge(
             Layer.mergeAll(

@@ -17,7 +17,7 @@ import {
 import * as Exit from "effect/Exit";
 import * as Schema from "effect/Schema";
 
-import { isHarnessInstance, runnerInstanceFor } from "../providerCatalog.ts";
+import { isHarnessInstance, runnerInstanceFor } from "../../models/ModelRouting.ts";
 import { activeRun, finishRunEvents, providerThreadFor, type RunEnding } from "../runLifecycle.ts";
 import {
   attemptEvent,
