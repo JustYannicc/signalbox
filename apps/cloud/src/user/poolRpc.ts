@@ -3,7 +3,11 @@ import {
   AuthOrchestrationReadScope,
   AuthProvidersManageScope,
   type ServerConfigStreamEvent,
+  type ProviderInstanceMutation,
+  type ServerProvider,
+  type ServerSettingsPatch,
   WS_METHODS,
+  ServerSettingsError,
 } from "@t3tools/contracts";
 import { AccountHubRpcError } from "@t3tools/contracts/accountHub";
 import * as DateTime from "effect/DateTime";
@@ -28,6 +32,7 @@ import type { PoolActor } from "../pool/PoolEngine.ts";
 import * as ModelManifest from "../thread/ModelManifest.ts";
 import * as PoolSignIns from "./PoolSignIns.ts";
 import * as UserPools from "./UserPools.ts";
+import * as UserModelSettings from "./UserModelSettings.ts";
 
 /**
  * The account pool RPCs the cloud serves, all from the user's own object: the
@@ -107,9 +112,25 @@ const configOf = (
 
 const NO_POOLS: UserPools.PoolsState = [];
 
+const availableModelsOf = (providers: ReadonlyArray<ServerProvider>) =>
+  new Map(
+    providers.map((provider) => [
+      provider.instanceId,
+      new Set(provider.models.map((model) => model.slug)),
+    ]),
+  );
+
+const serverSettingsError = (operation: "normalize" | "write-file" = "normalize") =>
+  new ServerSettingsError({ settingsPath: "cloud model settings", operation });
+
 /** What settings say about the pools: their instances, named after them, and the default model. */
 const settingsKey = (config: ReturnType<typeof configOf>) =>
-  JSON.stringify([config.settings.providerInstances, config.settings.defaultModelSelection]);
+  JSON.stringify([
+    config.settings.providerInstances,
+    config.settings.defaultModelSelection,
+    config.settings.favorites,
+    config.settings.providerModelPreferences,
+  ]);
 
 /** Up to 30 seconds between reads of pools that can't be read right now. */
 const READ_AGAIN = Schedule.exponential("1 second").pipe(
@@ -158,10 +179,34 @@ export const makePoolHandlers = (input: {
     const pools = yield* UserPools.UserPools;
     const signIns = yield* PoolSignIns.PoolSignIns;
     const manifest = yield* ModelManifest.ModelManifest;
+    const modelSettings = yield* UserModelSettings.UserModelSettings;
     const { actor, identity } = input;
     const configNowOf = (state: UserPools.PoolsState) =>
       Effect.all([now, manifest.current]).pipe(
         Effect.map(([checkedAt, catalogs]) => configOf(identity, state, checkedAt, catalogs)),
+      );
+    const withModelSettings = (
+      config: ReturnType<typeof configOf>,
+      saved: UserModelSettings.ModelSettingsSnapshot,
+    ) => {
+      const filtered = UserModelSettings.filterAvailableModels(
+        saved,
+        availableModelsOf(config.providers),
+      );
+      return {
+        ...config,
+        settings: {
+          ...config.settings,
+          favorites: filtered.favorites,
+          providerModelPreferences: filtered.providerModelPreferences,
+          defaultModelSelection:
+            filtered.defaultModelSelection ?? config.settings.defaultModelSelection,
+        },
+      };
+    };
+    const configWithModelSettings = (state: UserPools.PoolsState) =>
+      Effect.all([configNowOf(state), modelSettings.snapshot.pipe(Effect.orDie)]).pipe(
+        Effect.map(([config, saved]) => withModelSettings(config, saved)),
       );
 
     /**
@@ -170,9 +215,36 @@ export const makePoolHandlers = (input: {
      * so they go out only then.
      */
     const configStream = (request: { readonly usageLimitSources?: boolean | undefined }) =>
-      poolStates(pools, actor).pipe(
-        Stream.mapEffect((state) =>
-          Effect.map(configNowOf(state), (config) => ({ state, config })),
+      Stream.merge(
+        poolStates(pools, actor).pipe(Stream.map((state) => ({ type: "pools" as const, state }))),
+        modelSettings.changes.pipe(
+          Stream.orDie,
+          Stream.map((settings) => ({ type: "settings" as const, settings })),
+        ),
+      ).pipe(
+        Stream.mapAccum(
+          (): {
+            readonly state: UserPools.PoolsState | null;
+            readonly settings: UserModelSettings.ModelSettingsSnapshot | null;
+          } => ({ state: null, settings: null }),
+          (previous, change) => {
+            const next =
+              change.type === "pools"
+                ? { ...previous, state: change.state }
+                : { ...previous, settings: change.settings };
+            return [
+              next,
+              next.state === null || next.settings === null
+                ? []
+                : [{ state: next.state, saved: next.settings }],
+            ];
+          },
+        ),
+        Stream.mapEffect(({ state, saved }) =>
+          Effect.map(configNowOf(state), (config) => ({
+            state,
+            config: withModelSettings(config, saved),
+          })),
         ),
         Stream.mapAccum(
           (): string | null => null,
@@ -218,8 +290,31 @@ export const makePoolHandlers = (input: {
 
     const configNow = Effect.flatMap(
       pools.state(actor).pipe(Effect.orElseSucceed(() => NO_POOLS)),
-      configNowOf,
+      configWithModelSettings,
     );
+
+    const updateModelSettings = (input: {
+      readonly patch: ServerSettingsPatch;
+      readonly providerInstanceMutation?: ProviderInstanceMutation;
+    }) =>
+      Effect.gen(function* () {
+        if (input.providerInstanceMutation !== undefined) {
+          return yield* Effect.fail(serverSettingsError());
+        }
+        const config = yield* configNow;
+        const saved = yield* modelSettings
+          .update(input.patch, availableModelsOf(config.providers))
+          .pipe(
+            Effect.catchTags({
+              ModelSettingsWriteError: () => Effect.fail(serverSettingsError()),
+              SqlError: (cause) =>
+                Effect.logError("cloud model settings write failed", { cause }).pipe(
+                  Effect.andThen(Effect.fail(serverSettingsError("write-file"))),
+                ),
+            }),
+          );
+        return withModelSettings(config, saved).settings;
+      });
 
     const handlers = {
       [WS_METHODS.accountPoolSubscribe]: () =>
@@ -269,6 +364,7 @@ export const makePoolHandlers = (input: {
         signIns.complete(actor, request),
       [WS_METHODS.providerAuthCancel]: (request: Parameters<typeof signIns.cancel>[1]) =>
         signIns.cancel(actor, request),
+      [WS_METHODS.serverUpdateSettings]: updateModelSettings,
     };
-    return { handlers, configStream, configNow };
+    return { handlers, configStream, configNow, updateModelSettings };
   });

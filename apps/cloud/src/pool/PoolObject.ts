@@ -49,12 +49,10 @@ interface StoreGatewayProps {
   readonly objectId: string;
 }
 
-/**
- * The alarm only ever puts the container to sleep, so it is always exactly
- * when the container may next sleep (see `PoolContainer.sleepIfIdle`).
- */
-const ensureAlarm = async (storage: DurableObjectStorage, at: number) => {
-  if ((await storage.getAlarm()) === null) await storage.setAlarm(at);
+/** Keep an earlier idle or catalog alarm when another request schedules later work. */
+const scheduleEarlierAlarm = async (storage: DurableObjectStorage, at: number) => {
+  const current = await storage.getAlarm();
+  if (current === null || at < current) await storage.setAlarm(at);
 };
 
 // The whole storage, not just `storage.sql`: migrations run in transactions.
@@ -69,7 +67,7 @@ const makeRuntime = (ctx: DurableObjectState) =>
               storeGateway: (
                 ctx as unknown as { readonly exports: PoolExports }
               ).exports.PoolStoreGateway({ props: { objectId: ctx.id.toString() } }),
-              wakeAt: (at) => ctx.waitUntil(ctx.storage.setAlarm(at)),
+              wakeAt: (at) => ctx.waitUntil(scheduleEarlierAlarm(ctx.storage, at)),
               // Each container milestone is a wide event of its own.
               log: (action, fields) =>
                 log.info({ ...fields, action, pool: { id: ctx.id.toString() } }),
@@ -99,9 +97,33 @@ export class PoolObject
     }
     this.runtime = makeRuntime(ctx);
     const poolObject = ctx.id.toString();
+    const scheduleCatalogAlarm = async () => {
+      try {
+        // An existing idle or catalog alarm will recalculate both deadlines when it fires.
+        if ((await ctx.storage.getAlarm()) !== null) return;
+        const at = await this.runtime.runPromise(
+          PoolEngine.PoolEngine.use((engine) => engine.nextModelsRefreshAt()),
+        );
+        if (at !== null) await scheduleEarlierAlarm(ctx.storage, at);
+      } catch (cause) {
+        log.error({
+          action: "pool.models_alarm_schedule_failed",
+          pool: { id: poolObject },
+          cause: String(cause),
+        });
+      }
+    };
     this.api = makePoolObjectApi(
       // Every span the pool records names it (#284); never its name or accounts.
-      (effect) => this.runtime.runPromise(Effect.annotateSpans(effect, "pool.object", poolObject)),
+      async (effect) => {
+        try {
+          return await this.runtime.runPromise(
+            Effect.annotateSpans(effect, "pool.object", poolObject),
+          );
+        } finally {
+          await scheduleCatalogAlarm();
+        }
+      },
       // Erased, the object is an empty pool again, so a repeated delete still answers.
       async () => {
         await ctx.storage.deleteAll();
@@ -112,8 +134,9 @@ export class PoolObject
       await this.runtime.runPromise(PoolEngine.PoolEngine.use((engine) => engine.initialize));
       // A running container always has an alarm to put it to sleep.
       if (ctx.container?.running) {
-        await ensureAlarm(ctx.storage, Date.now() + PoolContainer.IDLE_TIMEOUT_MS);
+        await scheduleEarlierAlarm(ctx.storage, Date.now() + PoolContainer.IDLE_TIMEOUT_MS);
       }
+      await scheduleCatalogAlarm();
     });
   }
 
@@ -218,12 +241,27 @@ export class PoolObject
 
   /** Puts an idle container to sleep (see `PoolContainer.sleepIfIdle`). */
   override async alarm() {
+    try {
+      await this.runtime.runPromise(
+        PoolEngine.PoolEngine.use((engine) => engine.refreshModelsAtAlarm()),
+      );
+    } catch (cause) {
+      log.error({
+        action: "pool.models_alarm_refresh_failed",
+        pool: { id: this.ctx.id.toString() },
+        cause: String(cause),
+      });
+    }
     const next = await this.runtime.runPromise(
       PoolContainer.PoolContainer.use((container) => container.sleepIfIdle(Date.now())).pipe(
         Evlog.withUnit("pool.alarm", { pool: { id: this.ctx.id.toString() } }),
       ),
     );
-    if (next !== null) await this.ctx.storage.setAlarm(next);
+    const refresh = await this.runtime.runPromise(
+      PoolEngine.PoolEngine.use((engine) => engine.nextModelsRefreshAt()),
+    );
+    const at = [next, refresh].filter((value): value is number => value !== null).sort()[0];
+    if (at !== undefined) await this.ctx.storage.setAlarm(at);
   }
 
   /** The container's store calls (see `PoolStoreGateway`). Nothing else reaches `fetch`. */

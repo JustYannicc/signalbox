@@ -485,6 +485,62 @@ describe("instance-scoped model selection", () => {
     });
   });
 
+  it("keeps hub model IDs opaque and marks absent saved IDs unavailable", () => {
+    const instanceId = ProviderInstanceId.make("codex_hub");
+    const driver = ProviderDriverKind.make("codex");
+    const servedModel = "gpt-5.4";
+    const aliasLikeMissingModel = "gpt-5-codex";
+    const baseProvider = provider({ provider: driver, instanceId, models: [servedModel] });
+    const servedProvider = {
+      ...baseProvider,
+      models: [{ ...baseProvider.models[0]!, isCustom: true }],
+    };
+    const settings: UnifiedSettings = {
+      ...DEFAULT_UNIFIED_SETTINGS,
+      providerInstances: {
+        ...DEFAULT_UNIFIED_SETTINGS.providerInstances,
+        [instanceId]: { driver, config: { setupMode: "hub" } },
+      },
+    };
+    const entry = deriveProviderInstanceEntries([servedProvider])[0]!;
+
+    expect(getAppModelOptionsForInstance(settings, entry, aliasLikeMissingModel)).toEqual([
+      expect.objectContaining({ slug: servedModel, isCustom: false }),
+      expect.objectContaining({
+        slug: aliasLikeMissingModel,
+        isCustom: false,
+        isUnavailable: true,
+      }),
+    ]);
+    expect(
+      resolveAppModelSelectionForInstance(
+        instanceId,
+        settings,
+        [servedProvider],
+        aliasLikeMissingModel,
+        { preserveUnavailableSelection: true },
+      ),
+    ).toBe(aliasLikeMissingModel);
+  });
+
+  it("does not invent a text-generation default for an empty hub catalog", () => {
+    const instanceId = ProviderInstanceId.make("codex_hub");
+    const driver = ProviderDriverKind.make("codex");
+    const settings: UnifiedSettings = {
+      ...DEFAULT_UNIFIED_SETTINGS,
+      providerInstances: {
+        ...DEFAULT_UNIFIED_SETTINGS.providerInstances,
+        [instanceId]: { driver, config: { setupMode: "hub" } },
+      },
+    };
+    const providers = [provider({ provider: driver, instanceId, models: [] })];
+
+    expect(resolveAppModelSelectionState(settings, providers)).toMatchObject({
+      instanceId,
+      model: "",
+    });
+  });
+
   it("does not add unavailable options for other providers", () => {
     const providers = [
       provider({

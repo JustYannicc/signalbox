@@ -16,6 +16,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test"
 const state = vi.hoisted(() => ({
   settings: new Map<EnvironmentId, Atom.Writable<ServerSettings | null>>(),
   persist: vi.fn(),
+  modelSettingsWritable: true,
+}));
+
+vi.mock("~/state/environmentCapabilities", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("~/state/environmentCapabilities")>()),
+  useEnvironmentCanWriteModelSettings: () => state.modelSettingsWritable,
 }));
 
 vi.mock("~/state/server", () => ({
@@ -77,6 +83,7 @@ beforeEach(() => {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   registry = AtomRegistry.make();
   state.settings.clear();
+  state.modelSettingsWritable = true;
   durable = new Map();
   writes = [];
   for (const id of [primaryId, remoteId]) {
@@ -117,6 +124,12 @@ afterEach(async () => {
 });
 
 describe("environment favorite toggles", () => {
+  it("does not write when the destination cannot save model settings", async () => {
+    state.modelSettingsWritable = false;
+    await mount();
+    await click();
+    expect(writes).toEqual([]);
+  });
   it.each([false, true])(
     "toggles twice before any server echo when initially favorited=%s",
     async (initiallyFavorited) => {
