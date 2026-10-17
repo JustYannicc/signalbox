@@ -16,6 +16,7 @@ export type SettingsSheetTarget =
   | "SettingsMicrophone"
   | "SettingsFollowUp"
   | "SettingsScheduledTasks"
+  | "SettingsTimeZone"
   | "SettingsConnectedServices" // signalbox: automations
   | "SettingsSignIn" // signalbox: sign-in grants
   | "SettingsProjectGrouping"

@@ -77,7 +77,9 @@ by its name in Executor.
 
 ## Triggers
 
-- **On a schedule**: the automation's page shows when it runs next.
+- **On a schedule**: the automation's page shows when it runs next. Scheduled times use your time
+  zone in **Settings → General → Time zone** (on mobile, **Settings → Time zone**). New schedules
+  use the current time zone; existing schedules keep the zone they were created with.
 - **When a webhook arrives**: copy the URL from the automation's **⋯** menu (on mobile, from its
   page). Anyone with the URL can start a run, so treat it like a password; **New webhook URL**
   replaces it. With [Signalbox Connect](remote-access.md) the URL is public and, with **Hold
