@@ -10,5 +10,5 @@ export function runtimeIsSettingUp(status: ThreadRuntimeSummary["status"] | unde
   return status === "preparing" || status === "starting" || status === "queued";
 }
 
-/** Whether the open thread's turn is setting up; ChatView provides it around the timeline. */
+/** Whether the open thread's turn is setting up; MessagesTimeline provides it from its `settingUpMachine` prop. */
 export const SettingUpMachineContext = createContext(false);
