@@ -636,15 +636,15 @@
       "name": "keybindings.remove",
       "rpc": "server.removeKeybinding",
       "access": "write",
-      "input": "a4e18f33",
-      "output": "feaaef60"
+      "input": "5ed8e313",
+      "output": "2719b7f8"
     },
     {
       "name": "keybindings.upsert",
       "rpc": "server.upsertKeybinding",
       "access": "write",
-      "input": "3270b37e",
-      "output": "feaaef60"
+      "input": "24025fd6",
+      "output": "2719b7f8"
     },
     {
       "name": "keys.create",
@@ -1521,7 +1521,7 @@
       "rpc": "server.getConfig",
       "access": "read",
       "input": "03c2b661",
-      "output": "29489fe2"
+      "output": "bf5c8876"
     },
     {
       "name": "server.refreshProviders",
@@ -1558,7 +1558,7 @@
       "access": "read",
       "stream": "snapshot",
       "input": "240ec835",
-      "output": "08a033e3"
+      "output": "70827de3"
     },
     {
       "name": "settings.get",
@@ -1774,7 +1774,7 @@
       "rpc": "orchestration.launchThread",
       "access": "write",
       "input": "49ccbbaa",
-      "output": "1f509429"
+      "output": "c719de80"
     },
     {
       "name": "threads.delete",
@@ -1807,7 +1807,7 @@
       "rpc": "orchestration.getThreadProjection",
       "access": "read",
       "input": "1276a316",
-      "output": "493e2671"
+      "output": "0425f088"
     },
     {
       "name": "threads.getFullThreadDiff",
@@ -1859,14 +1859,14 @@
       "access": "read",
       "stream": "snapshot",
       "input": "9b1960e6",
-      "output": "96399a4c"
+      "output": "bbbd32e7"
     },
     {
       "name": "threads.listArchived",
       "rpc": "orchestration.getArchivedShellSnapshot",
       "access": "read",
       "input": "03c2b661",
-      "output": "99b6eac5"
+      "output": "afaf884a"
     },
     {
       "name": "threads.markRead",
@@ -2087,7 +2087,7 @@
       "access": "read",
       "stream": "snapshot",
       "input": "438e44e7",
-      "output": "b7ddde4c"
+      "output": "b9fc6dec"
     },
     {
       "name": "threads.subscribeArchived",
@@ -2095,7 +2095,7 @@
       "access": "read",
       "stream": "snapshot",
       "input": "03c2b661",
-      "output": "118e49b8"
+      "output": "f9b5e74e"
     },
     {
       "name": "threads.switchProvider",
@@ -2178,7 +2178,7 @@
       "name": "vcs.createWorktree",
       "rpc": "vcs.createWorktree",
       "access": "write",
-      "input": "4adbaf91",
+      "input": "31750d9d",
       "output": "6e13b7c2"
     },
     {
