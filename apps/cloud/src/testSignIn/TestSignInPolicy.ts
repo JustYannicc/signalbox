@@ -7,12 +7,11 @@ import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 
-const MAX_BODY_BYTES = 8_192;
-const MAX_NONCE_LENGTH = 128;
+export const MAX_BODY_BYTES = 8_192;
 const MAX_EXPIRY_AHEAD_MS = 60_000;
 const SIGN_IN_PATH = "/api/testing/sign-in";
 const encoder = new TextEncoder();
-const REQUEST_KEYS = ["user", "mode", "environmentId", "expiresAt", "nonce"] as const;
+const REQUEST_KEYS = ["user", "mode", "environmentId", "expiresAt"] as const;
 
 const RequestSchema = Schema.Struct({
   user: Schema.Literals([
@@ -28,9 +27,9 @@ const RequestSchema = Schema.Struct({
   mode: Schema.Literals(["browser", "token", "mobile"]),
   environmentId: Schema.String,
   expiresAt: Schema.Number,
-  nonce: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(MAX_NONCE_LENGTH)),
 });
 const decodeRequest = Schema.decodeUnknownEffect(RequestSchema);
+const decodeJson = Schema.decodeEffect(Schema.fromJsonString(Schema.Unknown));
 
 export type TestSignInRequest = typeof RequestSchema.Type;
 
@@ -79,6 +78,7 @@ const hasExactKeys = (value: unknown): value is Record<(typeof REQUEST_KEYS)[num
 export class TestSignInPolicy extends Context.Service<
   TestSignInPolicy,
   {
+    readonly checkEnabled: Effect.Effect<void, TestSignInDeniedError>;
     readonly verify: (
       rawBody: string,
       signature: string | undefined,
@@ -107,6 +107,7 @@ const make = Effect.gen(function* () {
     Redacted.value(secret).length < 32
   ) {
     return TestSignInPolicy.of({
+      checkEnabled: Effect.fail(denied("not_found")),
       verify: () => Effect.fail(denied("not_found")),
     });
   }
@@ -137,9 +138,9 @@ const make = Effect.gen(function* () {
       });
       if (!validSignature) return yield* Effect.fail(denied("unauthorized"));
 
-      const parsed = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.Unknown))(
-        rawBody,
-      ).pipe(Effect.mapError(() => denied("invalid_request")));
+      const parsed = yield* decodeJson(rawBody).pipe(
+        Effect.mapError(() => denied("invalid_request")),
+      );
       if (!hasExactKeys(parsed)) return yield* Effect.fail(denied("invalid_request"));
 
       const request = yield* decodeRequest(parsed).pipe(
@@ -157,7 +158,7 @@ const make = Effect.gen(function* () {
     });
   };
 
-  return TestSignInPolicy.of({ verify });
+  return TestSignInPolicy.of({ checkEnabled: Effect.void, verify });
 });
 
 export const layer = Layer.effect(TestSignInPolicy, make);

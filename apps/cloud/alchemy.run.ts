@@ -17,6 +17,7 @@ import * as Cloudflare from "alchemy/Cloudflare";
 import * as Config from "effect/Config";
 import * as Effect from "effect/Effect";
 import * as Redacted from "effect/Redacted";
+import { testSignInEnv } from "./infra/testSignInEnv.ts";
 
 import {
   AUTOMATION_BINDINGS as AUTOMATION,
@@ -149,14 +150,11 @@ function workerEnv(target: CloudStage) {
           T3CODE_WORKOS_WEBHOOK_SECRET: yield* optionalSecret("T3CODE_WORKOS_WEBHOOK_SECRET"),
         }
       : {
-          E2E_SIGN_IN_SECRET: yield* optionalSecret("E2E_SIGN_IN_SECRET"),
-          E2E_WORKOS_CLIENT_ID: yield* optional("E2E_WORKOS_CLIENT_ID"),
-          E2E_WORKOS_API_KEY: yield* optionalSecret("E2E_WORKOS_API_KEY"),
           // A preview's own Runner image (deploy-cloud.yml's `runner_image`); empty means `nightly`.
           RUNNER_IMAGE: yield* optional("RUNNER_IMAGE"),
         };
 
-    return { ...target.vars, ...shared, ...stageEnv };
+    return { ...target.vars, ...shared, ...stageEnv, ...(yield* testSignInEnv(target.production)) };
   });
 }
 

@@ -1,7 +1,9 @@
 import { describe, expect, it } from "@effect/vitest";
 import * as ConfigProvider from "effect/ConfigProvider";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as TestClock from "effect/testing/TestClock";
 import { HttpClient, HttpClientResponse } from "effect/http";
 
 import * as TestIdentities from "./TestIdentities.ts";
@@ -18,6 +20,16 @@ const RICHARD = {
   last_name: "Hendricks",
 };
 
+const resolveWith = (http: HttpClient.HttpClient, env: Readonly<Record<string, string>>) => {
+  const layer = TestIdentities.layer.pipe(
+    Layer.provide(Layer.succeed(HttpClient.HttpClient, http)),
+    Layer.provide(ConfigProvider.layer(ConfigProvider.fromEnv({ env }))),
+  );
+  return TestIdentities.TestIdentities.use((identities) => identities.resolve("richard")).pipe(
+    Effect.provide(layer),
+  );
+};
+
 const setup = (
   body: unknown = RICHARD,
   env: Readonly<Record<string, string>> = ENV,
@@ -30,14 +42,7 @@ const setup = (
       return HttpClientResponse.fromWeb(request, Response.json(body, { status }));
     }),
   );
-  const layer = TestIdentities.layer.pipe(
-    Layer.provide(Layer.succeed(HttpClient.HttpClient, http)),
-    Layer.provide(ConfigProvider.layer(ConfigProvider.fromEnv({ env }))),
-  );
-  const resolve = TestIdentities.TestIdentities.use((identities) =>
-    identities.resolve("richard"),
-  ).pipe(Effect.provide(layer));
-  return { resolve, requests };
+  return { resolve: resolveWith(http, env), requests };
 };
 
 describe("test identities", () => {
@@ -71,6 +76,23 @@ describe("test identities", () => {
     }),
   );
 
+  it.effect("refuses the normal WorkOS client ID or API key without making a request", () =>
+    Effect.gen(function* () {
+      for (const env of [
+        { ...ENV, T3CODE_WORKOS_CLIENT_ID: ENV.E2E_WORKOS_CLIENT_ID },
+        {
+          ...ENV,
+          T3CODE_WORKOS_CLIENT_ID: "client_normal",
+          T3CODE_WORKOS_API_KEY: ENV.E2E_WORKOS_API_KEY,
+        },
+      ]) {
+        const { resolve, requests } = setup(RICHARD, env);
+        expect((yield* resolve.pipe(Effect.flip))._tag).toBe("TestIdentityUnavailable");
+        expect(requests).toEqual([]);
+      }
+    }),
+  );
+
   it.effect(
     "refuses a different person, a wrong external ID, and unavailable sandbox responses",
     () =>
@@ -88,5 +110,28 @@ describe("test identities", () => {
           "TestIdentityUnavailable",
         );
       }),
+  );
+
+  it.effect("times out while reading a sandbox user response body", () =>
+    Effect.gen(function* () {
+      const http = HttpClient.make((request) =>
+        Effect.sync(() =>
+          HttpClientResponse.fromWeb(
+            request,
+            new Response(
+              new ReadableStream<Uint8Array>({
+                start(controller) {
+                  controller.enqueue(new TextEncoder().encode("{"));
+                },
+              }),
+              { status: 200 },
+            ),
+          ),
+        ),
+      );
+      const resolving = yield* Effect.forkChild(resolveWith(http, ENV));
+      yield* TestClock.adjust(10_000);
+      expect((yield* Fiber.join(resolving).pipe(Effect.flip))._tag).toBe("TestIdentityUnavailable");
+    }).pipe(Effect.provide(TestClock.layer())),
   );
 });

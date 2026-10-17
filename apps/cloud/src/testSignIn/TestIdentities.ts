@@ -21,6 +21,8 @@ const EMAILS = {
   fresh: "casey@signalbox.example",
 } as const;
 
+const LOOKUP_TIMEOUT_MS = 10_000;
+
 const User = Schema.Struct({
   id: Schema.String,
   email: Schema.String,
@@ -57,24 +59,37 @@ const make = Effect.gen(function* () {
   const apiKey = Option.getOrUndefined(
     yield* Config.Redacted("E2E_WORKOS_API_KEY").pipe(Config.option),
   );
+  const normalClientId = Option.getOrUndefined(
+    yield* Config.String("T3CODE_WORKOS_CLIENT_ID").pipe(Config.option),
+  );
+  const normalApiKey = Option.getOrUndefined(
+    yield* Config.Redacted("T3CODE_WORKOS_API_KEY").pipe(Config.option),
+  );
   const http = yield* HttpClient.HttpClient;
 
   const resolve: TestIdentities["Service"]["resolve"] = Effect.fn("TestIdentities.resolve")(
     function* (name) {
       // Production WorkOS keys must never identify test users, even on a preview.
-      if (!clientId || !apiKey || !Redacted.value(apiKey).startsWith("sk_test_")) {
+      if (
+        !clientId ||
+        !apiKey ||
+        !Redacted.value(apiKey).startsWith("sk_test_") ||
+        clientId.trim() === normalClientId?.trim() ||
+        (normalApiKey !== undefined && Redacted.value(apiKey) === Redacted.value(normalApiKey))
+      ) {
         return yield* new TestIdentityUnavailable({});
       }
       const externalId = `signalbox-test:${name}`;
-      const response = yield* http
-        .execute(
+      const { record } = yield* Effect.gen(function* () {
+        const response = yield* http.execute(
           HttpClientRequest.get(
             `https://api.workos.com/user_management/users/external_id/${encodeURIComponent(externalId)}`,
           ).pipe(HttpClientRequest.bearerToken(Redacted.value(apiKey))),
-        )
-        .pipe(Effect.mapError(() => new TestIdentityUnavailable({})));
-      if (response.status !== 200) return yield* new TestIdentityUnavailable({});
-      const record = yield* HttpClientResponse.schemaBodyJson(User)(response).pipe(
+        );
+        if (response.status !== 200) return yield* new TestIdentityUnavailable({});
+        return { record: yield* HttpClientResponse.schemaBodyJson(User)(response) };
+      }).pipe(
+        Effect.timeout(LOOKUP_TIMEOUT_MS),
         Effect.mapError(() => new TestIdentityUnavailable({})),
       );
       if (record.external_id !== externalId || record.email !== EMAILS[name]) {

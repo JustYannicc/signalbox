@@ -47,7 +47,6 @@ const rawRequest = (overrides: Record<string, unknown> = {}, environmentId = "cl
     mode: "browser",
     environmentId,
     expiresAt: NOW + 30_000,
-    nonce: "request-nonce",
     ...overrides,
   });
 
@@ -74,7 +73,6 @@ describe("TestSignInPolicy", () => {
         mode: "browser",
         environmentId: "cloud-preview-73",
         expiresAt: NOW + 60_000,
-        nonce: "request-nonce",
       });
     }),
   );
@@ -129,8 +127,7 @@ describe("TestSignInPolicy", () => {
       const malformedBodies = [
         "{",
         rawRequest().replace(/}$/, ',"unexpected":true}'),
-        rawRequest({ nonce: "" }),
-        rawRequest({ nonce: "n".repeat(129) }),
+        rawRequest({ expiresAt: "tomorrow" }),
         rawRequest({ user: "not-a-test-user" }),
         rawRequest({ mode: "desktop" }),
         "é".repeat(4_097),

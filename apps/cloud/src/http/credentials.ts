@@ -23,11 +23,13 @@ const fullUrl = (request: HttpServerRequest.HttpServerRequest) =>
   // Worker requests retain their absolute URL; reconstructing it from proxy
   // headers can turn an HTTPS callback into http://localhost.
   URL.canParse(request.originalUrl)
-    ? new URL(request.originalUrl)
-    : Option.getOrThrow(HttpServerRequest.toURL(request));
+    ? Option.some(new URL(request.originalUrl))
+    : HttpServerRequest.toURL(request);
 
 /** The request's full URL. */
-export const requestUrl = Effect.map(HttpServerRequest.HttpServerRequest, fullUrl);
+export const requestUrl = Effect.map(HttpServerRequest.HttpServerRequest, (request) =>
+  Option.getOrThrow(fullUrl(request)),
+);
 
 /**
  * The browser's session, from its cookie only: for flows that run browser to
@@ -42,7 +44,10 @@ export const browserSession = Effect.gen(function* () {
 
 /** `Secure` everywhere but plain-http local development. */
 function cookieOptions(request: HttpServerRequest.HttpServerRequest) {
-  const secure = fullUrl(request).protocol === "https:";
+  const secure = Option.match(fullUrl(request), {
+    onNone: () => true,
+    onSome: (url) => url.protocol === "https:",
+  });
   return { httpOnly: true, path: "/", sameSite: "lax", secure } as const;
 }
 

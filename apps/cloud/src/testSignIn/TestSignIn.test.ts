@@ -68,7 +68,6 @@ const setup = (env: Readonly<Record<string, string>> = PREVIEW_ENV) =>
           mode,
           environmentId: env.ENVIRONMENT_ID,
           expiresAt: (yield* Clock.currentTimeMillis) + 30_000,
-          nonce: "test-request-nonce",
         });
         const signed = yield* Effect.promise(async () => {
           const encoder = new TextEncoder();
@@ -187,6 +186,36 @@ describe("test sign-in through normal cloud sessions", () => {
       expect(response.status).toBe(401);
       expect(response.headers.get("set-cookie")).toBeNull();
       expect(resolved).toEqual([]);
+    }),
+  );
+
+  it.effect(
+    "rejects oversized bodies with and without a declared length before identity lookup",
+    () =>
+      Effect.gen(function* () {
+        const { handle, resolved } = yield* setup();
+        for (const headers of [{}, { "content-length": "8193" }]) {
+          const response = yield* Effect.promise(() =>
+            handle(
+              new Request(`${ORIGIN}/api/testing/sign-in`, {
+                method: "POST",
+                headers,
+                body: "x".repeat(8193),
+              }),
+            ),
+          );
+          expect(response.status).toBe(400);
+        }
+        expect(resolved).toEqual([]);
+      }),
+  );
+
+  it.effect("returns production's 404 before attempting to read the body", () =>
+    Effect.gen(function* () {
+      const { handle } = yield* setup({ ...PREVIEW_ENV, SIGNALBOX_STAGE: "production" });
+      const request = new Request(`${ORIGIN}/api/testing/sign-in`, { method: "POST", body: "bad" });
+      yield* Effect.promise(() => request.text());
+      expect((yield* Effect.promise(() => handle(request))).status).toBe(404);
     }),
   );
 });
