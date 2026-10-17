@@ -50,13 +50,6 @@ export const SIGNALBOX_WS_RPC_TAGS = SIGNALBOX_WS_RPCS.map((rpc) => rpc._tag);
 /** Hub errors mapped for the wire. */
 const hubFailure = (error: AccountHubError) => new AccountHubRpcError({ detail: error.detail });
 
-const cloudTimezoneUnavailable = () =>
-  Effect.fail(
-    new PersonTimezoneError({
-      message: "Person timezone settings require Signalbox Cloud.",
-    }),
-  );
-
 /** Handlers for one connection; `clientAnalyticsProps` are its client dimensions. */
 export const layer = (clientAnalyticsProps: Readonly<Record<string, unknown>>) =>
   SignalboxWsRpcGroup.toLayer(
@@ -69,9 +62,27 @@ export const layer = (clientAnalyticsProps: Readonly<Record<string, unknown>>) =
       const sections = yield* makeSectionsWsHandlers;
       return SignalboxWsRpcGroup.of({
         ...analytics,
-        [PERSON_TIMEZONE_WS_METHODS.get]: cloudTimezoneUnavailable,
-        [PERSON_TIMEZONE_WS_METHODS.set]: cloudTimezoneUnavailable,
-        [PERSON_TIMEZONE_WS_METHODS.report]: cloudTimezoneUnavailable,
+        [PERSON_TIMEZONE_WS_METHODS.get]: () =>
+          Effect.fail(
+            new PersonTimezoneError({
+              operation: "read",
+              message: "Person timezone settings require Signalbox Cloud.",
+            }),
+          ),
+        [PERSON_TIMEZONE_WS_METHODS.set]: () =>
+          Effect.fail(
+            new PersonTimezoneError({
+              operation: "set",
+              message: "Person timezone settings require Signalbox Cloud.",
+            }),
+          ),
+        [PERSON_TIMEZONE_WS_METHODS.report]: () =>
+          Effect.fail(
+            new PersonTimezoneError({
+              operation: "report",
+              message: "Person timezone settings require Signalbox Cloud.",
+            }),
+          ),
         ...automationRpcHandlers(automations),
         ...sections,
         ...signalboxContextsWsHandlers,

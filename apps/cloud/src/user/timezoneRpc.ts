@@ -9,24 +9,34 @@ import * as UserTimezone from "./UserTimezone.ts";
 
 export const makeTimezoneHandlers = Effect.gen(function* () {
   const timezone = yield* UserTimezone.UserTimezone;
-  const call = <A>(effect: Effect.Effect<A, SqlError>) =>
+  const call = <A>(
+    operation: PersonTimezoneError["operation"],
+    effect: Effect.Effect<A, SqlError>,
+  ) =>
     effect.pipe(
       Effect.catchTags({
         SqlError: (cause) =>
           Effect.logError("cloud timezone storage failed", { cause }).pipe(
             Effect.andThen(
               Effect.fail(
-                new PersonTimezoneError({ message: "Couldn't save your timezone. Try again." }),
+                new PersonTimezoneError({
+                  operation,
+                  cause,
+                  message:
+                    operation === "read"
+                      ? "Couldn't read your timezone. Try again."
+                      : "Couldn't save your timezone. Try again.",
+                }),
               ),
             ),
           ),
       }),
     );
   return {
-    [methods.get]: () => call(timezone.settings),
+    [methods.get]: () => call("read", timezone.settings),
     [methods.set]: (input: { readonly timezone: string | null }) =>
-      call(timezone.set(input.timezone)),
+      call("set", timezone.set(input.timezone)),
     [methods.report]: (input: { readonly timezone: string }) =>
-      call(timezone.report(input.timezone)),
+      call("report", timezone.report(input.timezone)),
   };
 });

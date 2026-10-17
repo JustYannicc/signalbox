@@ -8,9 +8,12 @@ import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as RpcTest from "effect/rpc/RpcTest";
+import { SqlError, UnknownError } from "effect/sql/SqlError";
 
 import { makeMemoryCloud } from "../testing.ts";
 import * as CloudRpc from "./rpc.ts";
+import * as UserTimezone from "./UserTimezone.ts";
+import { makeTimezoneHandlers } from "./timezoneRpc.ts";
 
 const connect = (cloud: ReturnType<typeof makeMemoryCloud>, userId: string, writable = true) =>
   Effect.andThen(
@@ -37,6 +40,36 @@ const connect = (cloud: ReturnType<typeof makeMemoryCloud>, userId: string, writ
   );
 
 describe("cloud person timezone", () => {
+  it.effect("keeps storage failures and the operation in transport errors", () =>
+    Effect.gen(function* () {
+      const cause = new SqlError({ reason: new UnknownError({ cause: new Error("unavailable") }) });
+      const failed = Effect.fail(cause);
+      const handlers = yield* makeTimezoneHandlers.pipe(
+        Effect.provide(
+          Layer.succeed(
+            UserTimezone.UserTimezone,
+            UserTimezone.UserTimezone.of({
+              settings: failed,
+              timezone: failed,
+              set: () => failed,
+              report: () => failed,
+            }),
+          ),
+        ),
+      );
+      for (const [operation, call] of [
+        ["read", handlers[methods.get]()],
+        ["set", handlers[methods.set]({ timezone: "UTC" })],
+        ["report", handlers[methods.report]({ timezone: "UTC" })],
+      ] as const) {
+        const error = yield* call.pipe(Effect.flip);
+        expect(error.operation).toBe(operation);
+        expect(error.cause).toBe(cause);
+        expect(error.message).not.toContain("unavailable");
+      }
+    }),
+  );
+
   it.effect(
     "shares device detection across clients, preserves manual overrides, and restores detection",
     () =>

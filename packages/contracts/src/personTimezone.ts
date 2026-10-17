@@ -31,7 +31,11 @@ export type PersonTimezoneSettings = typeof PersonTimezoneSettings.Type;
 
 export class PersonTimezoneError extends Schema.TaggedError<PersonTimezoneError>()(
   "PersonTimezoneError",
-  { message: Schema.String },
+  {
+    message: Schema.String,
+    operation: Schema.Literals(["read", "set", "report"]),
+    cause: Schema.optional(Schema.Defect()),
+  },
 ) {}
 
 export const PERSON_TIMEZONE_WS_METHODS = {
