@@ -253,7 +253,15 @@ export const makeFakeCliProxyApi = () => {
         counter += 1;
         const state = `state-${counter}`;
         logins.set(state, { type: provider, done: false });
-        return json({ url: `https://login.example.test/?state=${state}`, state });
+        // Each provider's login ends on its CLIProxyAPI's own `localhost` listener.
+        const redirect =
+          provider === "claude"
+            ? "http://localhost:54545/callback"
+            : "http://localhost:1455/auth/callback";
+        const login = new URL("https://login.example.test/");
+        login.searchParams.set("redirect_uri", redirect);
+        login.searchParams.set("state", state);
+        return json({ url: login.toString(), state });
       }
       case "GET oauth/status": {
         const login = logins.get(url.searchParams.get("state") ?? "");
