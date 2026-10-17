@@ -1,102 +1,255 @@
-import type {
+import {
+  AuthOrchestrationOperateScope,
+  CommandId,
+  EnvironmentAuthorizationError,
   EnvironmentId,
-  OrchestrationV2ShellSnapshot,
-  OrchestrationV2ThreadShell,
+  sessionGrantsScope,
   ThreadId,
+  type AuthSessionState,
+  type OrchestrationV2ShellSnapshot,
+  type OrchestrationV2ThreadShell,
+  type ServerConfig,
 } from "@t3tools/contracts";
+import * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
-import { Atom } from "effect/reactivity";
+import * as Effect from "effect/Effect";
+import * as Random from "effect/Random";
+import { AsyncResult, Atom, AtomRegistry } from "effect/reactivity";
 
-import type { AtomCommand } from "./runtime.ts";
+import { managedRelaySessionAtom } from "../relay/managedRelayState.ts";
+import { EnvironmentRpcUnavailableError } from "../rpc/client.ts";
+import { isOptimisticCommandOutcomeUnknown } from "./optimisticCommandFailure.ts";
+import {
+  createOptimisticLedger,
+  type OptimisticScope,
+  type OptimisticStatus,
+} from "./optimisticLedger.ts";
+import type { AtomCommand, AtomCommandResult } from "./runtime.ts";
 
-interface PendingThreadUpdate {
-  readonly threadId: ThreadId;
-  readonly apply: (thread: OrchestrationV2ThreadShell) => OrchestrationV2ThreadShell;
-  sequence?: number;
-}
+type Receipt = { readonly sequence: number };
+type PreflightError = EnvironmentAuthorizationError | EnvironmentRpcUnavailableError;
+type ThreadSource = {
+  readonly sequence: number | null;
+  readonly thread: OrchestrationV2ThreadShell | null;
+  readonly sharedSequence: boolean;
+};
+
+let operationOrdinal = 0;
+const allocateCommandId = (now: DateTime.Utc) =>
+  CommandId.make(
+    `client:${DateTime.toEpochMillis(now).toString(36)}:${++operationOrdinal}:${Effect.runSync(Random.nextInt).toString(36)}`,
+  );
 
 export function createOptimisticThreadLifecycle(
   sourceSnapshotAtom: (
     environmentId: EnvironmentId,
   ) => Atom.Atom<OrchestrationV2ShellSnapshot | null>,
+  options: {
+    readonly configAtom: (environmentId: EnvironmentId) => Atom.Atom<ServerConfig | null>;
+    readonly sessionAtom: (environmentId: EnvironmentId) => Atom.Atom<AuthSessionState | null>;
+  },
 ) {
-  const pendingAtom = Atom.family((_environmentId: EnvironmentId) =>
-    Atom.make<ReadonlyArray<PendingThreadUpdate>>([]).pipe(Atom.keepAlive),
+  const accountId = (session: { readonly accountId: string } | null) =>
+    JSON.stringify([session?.accountId ?? null]);
+  const scope = (
+    account: string,
+    environmentId: EnvironmentId,
+    threadId: ThreadId,
+  ): OptimisticScope => ({
+    accountId: account,
+    environmentId,
+    resourceId: threadId,
+  });
+  const threadsById = Atom.family((environmentId: EnvironmentId) =>
+    Atom.make(
+      (get) =>
+        new Map(
+          get(sourceSnapshotAtom(environmentId))?.threads.map((thread) => [thread.id, thread]) ??
+            [],
+        ),
+    ),
+  );
+  const sources = Atom.family((environmentId: EnvironmentId) =>
+    Atom.family((threadId: ThreadId) =>
+      Atom.make((get): ThreadSource => {
+        const snapshot = get(sourceSnapshotAtom(environmentId));
+        const config = get(options.configAtom(environmentId));
+        return {
+          sequence: snapshot?.snapshotSequence ?? null,
+          thread: get(threadsById(environmentId)).get(threadId) ?? null,
+          // Cloud's thread receipts and user index have independent counters.
+          sharedSequence:
+            config !== null && config.environment.capabilities.signalboxCloud !== true,
+        };
+      }),
+    ),
+  );
+  const ledger = createOptimisticLedger<ThreadSource, Receipt, Cause.Cause<unknown>>({
+    sourceAtom: (key) =>
+      sources(EnvironmentId.make(key.environmentId))(ThreadId.make(key.resourceId)),
+  });
+  const entries = Atom.family((environmentId: EnvironmentId) =>
+    Atom.family((threadId: ThreadId) =>
+      Atom.family((status: OptimisticStatus | undefined) =>
+        Atom.make((get) =>
+          get(
+            ledger.entriesAtom(
+              scope(accountId(get(managedRelaySessionAtom)), environmentId, threadId),
+              status,
+            ),
+          ),
+        ),
+      ),
+    ),
   );
   const snapshotAtom = Atom.family((environmentId: EnvironmentId) =>
     Atom.make((get) => {
       const snapshot = get(sourceSnapshotAtom(environmentId));
-      const pending = get(pendingAtom(environmentId));
-      if (snapshot === null || pending.length === 0) return snapshot;
-      const byThread = new Map<ThreadId, PendingThreadUpdate[]>();
-      for (const update of pending) {
-        if (update.sequence !== undefined && update.sequence <= snapshot.snapshotSequence) continue;
-        const updates = byThread.get(update.threadId) ?? [];
-        updates.push(update);
-        byThread.set(update.threadId, updates);
-      }
-      if (byThread.size === 0) return snapshot;
-      return {
-        ...snapshot,
-        threads: snapshot.threads.map((thread) =>
-          (byThread.get(thread.id) ?? []).reduce(
-            (current, update) => update.apply(current),
-            thread,
-          ),
-        ),
-      };
+      if (snapshot === null) return null;
+      const account = accountId(get(managedRelaySessionAtom));
+      let changed = false;
+      const threads = snapshot.threads.map((thread) => {
+        const projected = get(ledger.snapshotAtom(scope(account, environmentId, thread.id))).thread;
+        if (projected === null || projected === thread) return thread;
+        changed = true;
+        return projected;
+      });
+      return changed ? { ...snapshot, threads } : snapshot;
     }),
   );
+  const lifetimes = new WeakMap<AtomRegistry.AtomRegistry, Map<string, () => void>>();
+  function observeAccount(registry: AtomRegistry.AtomRegistry, key: OptimisticScope) {
+    let active = lifetimes.get(registry);
+    if (active === undefined) {
+      active = new Map();
+      lifetimes.set(registry, active);
+    }
+    const id = JSON.stringify([key.accountId, key.environmentId, key.resourceId]);
+    if (active.has(id)) return;
+    const unsubscribeAccount = registry.subscribe(managedRelaySessionAtom, (session) => {
+      if (accountId(session) !== key.accountId) ledger.clear(registry, key);
+    });
+    const unsubscribeEntries = registry.subscribe(ledger.entriesAtom(key), (current) => {
+      if (current.some((entry) => entry.status !== "rejected")) return;
+      active.get(id)?.();
+      active.delete(id);
+    });
+    active.set(id, () => {
+      unsubscribeAccount();
+      unsubscribeEntries();
+    });
+  }
 
-  function wrap<Input extends { readonly threadId: ThreadId }, E>(
+  function wrap<
+    Input extends { readonly threadId: ThreadId; readonly commandId?: CommandId },
+    E,
+    Properties extends object,
+  >(
     command: AtomCommand<
-      { readonly environmentId: EnvironmentId; readonly input: Input },
-      { readonly sequence: number },
+      {
+        readonly environmentId: EnvironmentId;
+        readonly input: Input;
+      },
+      Receipt,
       E
-    >,
+    > &
+      Properties,
     apply: (
       thread: OrchestrationV2ThreadShell,
       input: Input,
       now: DateTime.Utc,
       accepted: boolean,
     ) => OrchestrationV2ThreadShell,
-  ): typeof command {
+    capability?: "threadPinning" | "threadPinReorder",
+  ) {
     return {
-      label: command.label,
-      run: async (registry, target) => {
+      ...command,
+      run: async (
+        registry: AtomRegistry.AtomRegistry,
+        target: { readonly environmentId: EnvironmentId; readonly input: Input },
+      ): Promise<AtomCommandResult<Receipt, E | PreflightError>> => {
+        const session = registry.get(options.sessionAtom(target.environmentId));
+        if (session !== null && !sessionGrantsScope(session, AuthOrchestrationOperateScope)) {
+          return AsyncResult.failure(
+            Cause.fail(
+              new EnvironmentAuthorizationError({
+                requiredScope: AuthOrchestrationOperateScope,
+                message: "This connection cannot change threads.",
+              }),
+            ),
+          );
+        }
+        const config = registry.get(options.configAtom(target.environmentId));
+        if (
+          capability !== undefined &&
+          config !== null &&
+          config.environment.capabilities[capability] !== true
+        ) {
+          return AsyncResult.failure(
+            Cause.fail(
+              new EnvironmentRpcUnavailableError({
+                environmentId: target.environmentId,
+                message: "This environment does not support pinning threads.",
+              }),
+            ),
+          );
+        }
         const now = DateTime.nowUnsafe();
-        const pending = pendingAtom(target.environmentId);
-        const source = sourceSnapshotAtom(target.environmentId);
-        const update: PendingThreadUpdate = {
-          threadId: target.input.threadId,
-          apply: (thread) => apply(thread, target.input, now, update.sequence !== undefined),
+        const input = {
+          ...target.input,
+          commandId: target.input.commandId ?? allocateCommandId(now),
         };
-        const remove = () =>
-          registry.update(pending, (current) => current.filter((item) => item !== update));
-        registry.update(pending, (current) => [...current, update]);
-        let confirmed = false;
+        const key = {
+          ...scope(
+            accountId(registry.get(managedRelaySessionAtom)),
+            target.environmentId,
+            input.threadId,
+          ),
+          commandId: input.commandId,
+        };
+        let accepted = false;
+        const intent = ledger.begin(registry, {
+          key,
+          actionId: command.label,
+          startedAt: DateTime.toEpochMillis(now),
+          project: (source) =>
+            source.thread === null
+              ? source
+              : {
+                  ...source,
+                  thread: apply(source.thread, input, now, accepted),
+                },
+          confirm: (source, acknowledgment) =>
+            acknowledgment.status === "acknowledged" &&
+            source.sharedSequence &&
+            source.sequence !== null &&
+            source.sequence >= acknowledgment.receipt.sequence,
+        });
+        observeAccount(registry, key);
         try {
-          const result = await command.run(registry, target);
+          const result = await command.run(registry, { ...target, input });
           if (result._tag === "Success") {
-            update.sequence = result.value.sequence;
-            registry.update(pending, (current) => [...current]);
-            const reconcile = (snapshot: OrchestrationV2ShellSnapshot | null) => {
-              if (snapshot === null || snapshot.snapshotSequence >= result.value.sequence) {
-                remove();
-                unsubscribe();
-              }
-            };
-            const unsubscribe = registry.subscribe(source, reconcile);
-            reconcile(registry.get(source));
-            confirmed = true;
+            accepted = true;
+            intent.acknowledge(result.value);
+          } else if (isOptimisticCommandOutcomeUnknown(result.cause)) {
+            intent.markUnknown();
+          } else {
+            intent.reject(result.cause);
           }
           return result;
-        } finally {
-          if (!confirmed) remove();
+        } catch (error) {
+          intent.markUnknown();
+          throw error;
         }
       },
     };
   }
 
-  return { snapshotAtom, wrap };
+  return {
+    snapshotAtom,
+    wrap,
+    dismissRejection: ledger.dismissRejection,
+    entriesAtom: (environmentId: EnvironmentId, threadId: ThreadId, status?: OptimisticStatus) =>
+      entries(environmentId)(threadId)(status),
+  };
 }

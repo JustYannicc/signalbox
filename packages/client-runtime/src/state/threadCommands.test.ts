@@ -1,128 +1,20 @@
 import { describe, expect, it } from "@effect/vitest";
-import {
-  CommandId,
-  RuntimeRequestId,
-  EnvironmentId,
-  ORCHESTRATION_V2_WS_METHODS,
-  ProjectId,
-  ProviderInstanceId,
-  ThreadId,
-  type OrchestrationV2Command,
-  type OrchestrationV2ShellSnapshot,
-} from "@t3tools/contracts";
+import { CommandId, EnvironmentId } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
-import * as Crypto from "effect/Crypto";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
-import * as Layer from "effect/Layer";
-import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
-import * as SubscriptionRef from "effect/SubscriptionRef";
-import { Atom, AtomRegistry } from "effect/reactivity";
 
-import * as EnvironmentRegistry from "../connection/registry.ts";
-import * as EnvironmentSupervisor from "../connection/supervisor.ts";
-import type { RpcSession } from "../rpc/session.ts";
-import { createThreadEnvironmentAtoms } from "./threadCommands.ts";
-
-const ENVIRONMENT_ID = EnvironmentId.make("remote");
-const THREAD_ID = ThreadId.make("thread");
-const NOW = DateTime.makeUnsafe("2026-09-12T10:00:00.000Z");
-const FUTURE = DateTime.makeUnsafe("2099-01-01T00:00:00.000Z");
-const APPROVAL = {
-  id: RuntimeRequestId.make("approval"),
-  kind: "command" as const,
-  createdAt: NOW,
-};
-const USER_INPUT = {
-  id: RuntimeRequestId.make("input"),
-  kind: "user_input" as const,
-  createdAt: NOW,
-};
-const SNAPSHOT: OrchestrationV2ShellSnapshot = {
-  snapshotSequence: 1,
-  schemaVersion: 2,
-  archivedThreads: [],
-  projects: [],
-  threads: [
-    {
-      id: THREAD_ID,
-      projectId: ProjectId.make("project"),
-      title: "Remote thread",
-      modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" },
-      runtimeMode: "full-access",
-      interactionMode: "default",
-      branch: null,
-      worktreePath: null,
-      createdBy: "user",
-      creationSource: "web",
-      providerInstanceId: ProviderInstanceId.make("codex"),
-      lineage: { rootThreadId: THREAD_ID, parentThreadId: null, relationshipToParent: null },
-      forkedFrom: null,
-      activeProviderThreadId: null,
-      latestRunId: null,
-      activeRunId: null,
-      status: "idle",
-      pendingRuntimeRequest: null,
-      latestVisibleMessage: null,
-      itemCount: 0,
-      visibleItemCount: 0,
-      deletedAt: null,
-      createdAt: NOW,
-      updatedAt: NOW,
-      archivedAt: null,
-      settledOverride: null,
-      settledAt: null,
-      pullRequests: [],
-      latestUserMessageAt: null,
-      hasActionableProposedPlan: false,
-    },
-  ],
-};
-
-const makeHarness = Effect.fn("TestThreadCommands.makeHarness")(function* () {
-  const requests = yield* Queue.unbounded<{
-    command: OrchestrationV2Command;
-    reply: Deferred.Deferred<{ sequence: number }, Error>;
-  }>();
-  const supervisor = EnvironmentSupervisor.EnvironmentSupervisor.of({
-    target: { environmentId: ENVIRONMENT_ID },
-    session: yield* SubscriptionRef.make(
-      Option.some({
-        client: {
-          [ORCHESTRATION_V2_WS_METHODS.dispatchCommand]: (command: OrchestrationV2Command) =>
-            Effect.gen(function* () {
-              const reply = yield* Deferred.make<{ sequence: number }, Error>();
-              yield* Queue.offer(requests, { command, reply });
-              return yield* Deferred.await(reply);
-            }),
-        },
-      } as unknown as RpcSession),
-    ),
-  } as EnvironmentSupervisor.EnvironmentSupervisor["Service"]);
-  const runtime = Atom.runtime(
-    Layer.mergeAll(
-      Layer.succeed(EnvironmentRegistry.EnvironmentRegistry, {
-        run: (_environmentId, effect) =>
-          Effect.provideService(effect, EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
-      } as EnvironmentRegistry.EnvironmentRegistry["Service"]),
-      Layer.succeed(
-        Crypto.Crypto,
-        Crypto.make({
-          randomBytes: (size) => new Uint8Array(size),
-          digest: (_algorithm, data) => Effect.succeed(data),
-        }),
-      ),
-    ),
-  );
-  const snapshotAtom = Atom.family((_environmentId: EnvironmentId) => Atom.make(SNAPSHOT));
-  const commands = createThreadEnvironmentAtoms(runtime, snapshotAtom);
-  const registry = AtomRegistry.make();
-  yield* Effect.addFinalizer(() => Effect.sync(() => registry.dispose()));
-  const visibleAtom = commands.snapshotAtom(ENVIRONMENT_ID);
-  registry.mount(visibleAtom);
-  return { registry, commands, snapshotAtom, visibleAtom, requests };
-});
+import {
+  APPROVAL,
+  ENVIRONMENT_ID,
+  FUTURE,
+  makeHarness,
+  NOW,
+  SNAPSHOT,
+  THREAD_ID,
+  USER_INPUT,
+} from "./threadCommandTestHarness.ts";
 
 describe("remote thread lifecycle commands", () => {
   const actions = [

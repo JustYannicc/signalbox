@@ -10,6 +10,7 @@ import {
 } from "@t3tools/contracts";
 
 import { createOptimisticThreadLifecycle } from "./threadLifecycle.ts";
+import { createEnvironmentSessionAtoms } from "./session.ts";
 import * as DateTime from "effect/DateTime";
 
 import {
@@ -94,6 +95,8 @@ import {
 import type { EnvironmentRegistry } from "../connection/registry.ts";
 import * as EnvironmentSupervisor from "../connection/supervisor.ts";
 import * as ThreadHistoryController from "./threadHistoryController.ts";
+
+export type { OptimisticEntry, OptimisticKey, OptimisticStatus } from "./optimisticLedger.ts";
 
 export type LoadEarlierThreadHistoryInput = {
   readonly threadId: ThreadId;
@@ -405,10 +408,18 @@ export function createThreadEnvironmentAtoms<R, E>(
       concurrency,
     }),
   };
-  const optimistic = createOptimisticThreadLifecycle(snapshotAtom);
+  const sessions = createEnvironmentSessionAtoms(runtime);
+  const optimistic = createOptimisticThreadLifecycle(snapshotAtom, {
+    configAtom: sessions.initialConfigValueAtom,
+    sessionAtom: sessions.sessionStateValueAtom,
+  });
   return {
     ...commands,
     snapshotAtom: optimistic.snapshotAtom,
+    optimistic: {
+      entriesAtom: optimistic.entriesAtom,
+      dismissRejection: optimistic.dismissRejection,
+    },
     settle: optimistic.wrap(commands.settle, (thread, _input, now, accepted) =>
       !accepted &&
       (thread.pendingRuntimeRequest !== null ||
@@ -459,29 +470,41 @@ export function createThreadEnvironmentAtoms<R, E>(
       ...thread,
       autoSettleDisabledAt: input.enabled ? null : (thread.autoSettleDisabledAt ?? now),
     })),
-    pin: optimistic.wrap(commands.pin, (thread, input, now) => ({
-      ...thread,
-      pinnedAt: thread.pinnedAt ?? now,
-      pinOrderKey: thread.pinnedAt == null ? (input.orderKey ?? null) : thread.pinOrderKey,
-      ...(thread.settledOverride === "settled"
-        ? {
-            settledOverride: "active" as const,
-            settledAt: null,
-            unsettledAt: now,
-          }
-        : {}),
-      snoozedUntil: null,
-      snoozedAt: null,
-    })),
-    unpin: optimistic.wrap(commands.unpin, (thread) => ({
-      ...thread,
-      pinnedAt: null,
-      pinOrderKey: null,
-    })),
-    reorderPin: optimistic.wrap(commands.reorderPin, (thread, input) => ({
-      ...thread,
-      pinOrderKey: input.orderKey,
-    })),
+    pin: optimistic.wrap(
+      commands.pin,
+      (thread, input, now) => ({
+        ...thread,
+        pinnedAt: thread.pinnedAt ?? now,
+        pinOrderKey: thread.pinnedAt == null ? (input.orderKey ?? null) : thread.pinOrderKey,
+        ...(thread.settledOverride === "settled"
+          ? {
+              settledOverride: "active" as const,
+              settledAt: null,
+              unsettledAt: now,
+            }
+          : {}),
+        snoozedUntil: null,
+        snoozedAt: null,
+      }),
+      "threadPinning",
+    ),
+    unpin: optimistic.wrap(
+      commands.unpin,
+      (thread) => ({
+        ...thread,
+        pinnedAt: null,
+        pinOrderKey: null,
+      }),
+      "threadPinning",
+    ),
+    reorderPin: optimistic.wrap(
+      commands.reorderPin,
+      (thread, input) => ({
+        ...thread,
+        pinOrderKey: input.orderKey,
+      }),
+      "threadPinReorder",
+    ),
     reorderActive: optimistic.wrap(commands.reorderActive, (thread, input) => ({
       ...thread,
       activeOrderKey: input.orderKey,
