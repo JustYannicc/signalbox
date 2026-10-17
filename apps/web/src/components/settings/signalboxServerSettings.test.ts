@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { acceptsServerSettings, serverSettingsWritable } from "./signalboxServerSettings";
+import {
+  acceptsServerSettings,
+  acceptsServerSettingsPatch,
+  serverSettingsWritable,
+} from "./signalboxServerSettings";
 
 const target = (serverSettingsWrite?: boolean) => ({
   serverConfig: {
@@ -28,5 +32,26 @@ describe("environments that don't save server settings", () => {
     // Unknown until configs load or something connects.
     expect(serverSettingsWritable([loading])).toBe(true);
     expect(serverSettingsWritable([])).toBe(true);
+  });
+});
+
+describe("model settings capability", () => {
+  const modelOnlyCloud = {
+    serverConfig: {
+      environment: {
+        capabilities: { serverSettingsWrite: false, modelSettingsWrite: true },
+      },
+    },
+  };
+
+  it("allows model patches without making unrelated server settings writable", () => {
+    expect(acceptsServerSettingsPatch(modelOnlyCloud, ["defaultModelSelection"])).toBe(true);
+    expect(
+      acceptsServerSettingsPatch(modelOnlyCloud, ["setModelFavorites", "setModelsHidden"]),
+    ).toBe(true);
+    expect(acceptsServerSettingsPatch(modelOnlyCloud, ["providerInstances"])).toBe(false);
+    expect(
+      acceptsServerSettingsPatch(modelOnlyCloud, ["defaultModelSelection", "defaultRuntimeMode"]),
+    ).toBe(false);
   });
 });
