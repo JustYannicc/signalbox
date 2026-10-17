@@ -1543,7 +1543,7 @@
       "rpc": "server.getConfig",
       "access": "read",
       "input": "03c2b661",
-      "output": "d89873a1"
+      "output": "6376296a"
     },
     {
       "name": "server.refreshProviders",
@@ -1580,7 +1580,7 @@
       "access": "read",
       "stream": "snapshot",
       "input": "240ec835",
-      "output": "3a563e06"
+      "output": "6d3003fd"
     },
     {
       "name": "settings.get",
