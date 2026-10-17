@@ -7,21 +7,28 @@ something you want to approve.
 ## Create one
 
 Ask an agent in any thread, for example "Every weekday at 9, summarize new Sentry issues and ask
-me before filing any of them in Linear." The agent writes the automation and saves it. **New
-automation** on the **Automations** page starts that thread for you.
+me before filing any of them in Linear." The agent writes the automation and saves it in the thread's
+folder. **New automation** in a folder's **⋯** menu starts that thread for you.
 
 To change an automation, choose **Change with agent** from its **⋯** menu or above its code (on
 mobile, on the automation's screen or a run's **⋯** menu). It opens a thread with the request
 started; say what to change and send it. **Add a step** on the diagram does the same for one new
-step or trigger. **Automations → Steps** lists everything an automation can do.
+step or trigger. **Automation triggers and steps** in the command palette lists everything an
+automation can do.
 
 To try a change before it goes live, ask the agent to save it as a draft. The automation keeps
 running its live version and its page shows **Draft**: switch between **Live** and **Draft** to
 compare the diagram and code, or read **Changes** for the lines that differ. **Publish** makes the
 draft live; **Discard** drops it. A new automation saved as a draft stays off until you publish it.
 
-To see every automation, open **Automations** from the command palette (`mod+alt+w`) and pick
-**All**.
+## Find one
+
+An automation lives in its folder in Home, next to that folder's threads. A folder's automations
+fold into one row; open it to see them all. One that needs you, with a question waiting or a run
+that failed, shows on its own, and questions also wait at the top of Home, where you can answer
+them without opening anything. Opening an automation shows its runs beside the diagram, the ones
+that need you on top. To jump to any automation, choose **Open automation…** in the command
+palette (`mod+alt+w`).
 
 ## In Signalbox Cloud
 

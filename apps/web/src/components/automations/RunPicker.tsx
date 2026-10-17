@@ -1,7 +1,8 @@
 /**
- * Picks which run the diagram shows. The latest run is the default; picking an
- * older one puts it in the URL (`?run=`) so it can be shared and survives a
- * reload. A running run can be cancelled from here.
+ * The run the diagram shows, with its chat, cancel and retry. The latest run
+ * is the default; picking an older one puts it in the URL (`?run=`) so it can
+ * be shared and survives a reload. Wide screens pick runs from the column
+ * beside the diagram, so there it only names the run; phones pick here.
  */
 import type { AutomationRunSummary, EnvironmentId } from "@t3tools/contracts";
 import { canRetryRun } from "@t3tools/client-runtime/automations/list";
@@ -53,20 +54,25 @@ export function RunPicker(props: {
   return (
     <div className="flex max-w-[min(32rem,calc(100vw-2rem))] flex-col gap-1.5 rounded-lg border bg-card p-1 shadow-sm/5">
       <div className="flex items-center gap-1">
-        <Select value={selected.id} onValueChange={(id) => id && props.onSelect(id)}>
-          <SelectTrigger size="xs" variant="ghost" aria-label="Run shown on the diagram">
-            <SelectValue>
-              <RunLine run={selected} />
-            </SelectValue>
-          </SelectTrigger>
-          <SelectPopup matchTriggerWidth={false} alignItemWithTrigger={false}>
-            {props.runs.map((run) => (
-              <SelectItem key={run.id} value={run.id}>
-                <RunLine run={run} />
-              </SelectItem>
-            ))}
-          </SelectPopup>
-        </Select>
+        <span className="hidden min-w-0 px-2 text-xs md:flex">
+          <RunLine run={selected} />
+        </span>
+        <div className="flex min-w-0 md:hidden">
+          <Select value={selected.id} onValueChange={(id) => id && props.onSelect(id)}>
+            <SelectTrigger size="xs" variant="ghost" aria-label="Run shown on the diagram">
+              <SelectValue>
+                <RunLine run={selected} />
+              </SelectValue>
+            </SelectTrigger>
+            <SelectPopup matchTriggerWidth={false} alignItemWithTrigger={false}>
+              {props.runs.map((run) => (
+                <SelectItem key={run.id} value={run.id}>
+                  <RunLine run={run} />
+                </SelectItem>
+              ))}
+            </SelectPopup>
+          </Select>
+        </div>
         <Tooltip>
           <TooltipTrigger
             render={
