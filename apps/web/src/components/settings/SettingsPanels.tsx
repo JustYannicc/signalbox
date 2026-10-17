@@ -3323,9 +3323,11 @@ export function GeneralSettingsPanel() {
             </Button>
           }
         />
-        {hasDiagnostics ? null : licensesRow /* signalbox */}
+        {/* signalbox: licenses join About without diagnostics */}
+        {hasDiagnostics ? null : licensesRow}
       </SettingsSection>
-      <SettingsSection title="Diagnostics" hidden={!hasDiagnostics /* signalbox */}>
+      {/* signalbox: no Diagnostics section without diagnostics */}
+      <SettingsSection title="Diagnostics" hidden={!hasDiagnostics}>
         <SettingsCapability id="diagnostics">
           <SettingsRow
             {...searchableSetting("diagnostics")}
@@ -3352,7 +3354,8 @@ export function GeneralSettingsPanel() {
             }
           />
         </SettingsCapability>
-        {hasDiagnostics ? licensesRow : null /* signalbox */}
+        {/* signalbox: licenses sit under Diagnostics when it shows */}
+        {hasDiagnostics ? licensesRow : null}
       </SettingsSection>
 
       <LegacyFeaturesSection />
