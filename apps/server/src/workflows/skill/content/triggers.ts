@@ -25,7 +25,7 @@ The workflow gets \`(w, input, trigger)\`. \`trigger.type\` is \`"manual"\`, \`"
 
 ## Webhooks
 
-\`{ webhook: true }\` gives the automation a URL (\`webhook.url\` in \`automation_read\`, public when Signalbox Connect is linked); every request to it starts a run with the body as \`input\` (parsed JSON or form, else text, null when empty). The third argument has \`trigger.method\`, \`trigger.headers\` and \`trigger.query\` (credential-looking ones redacted) and \`trigger.rawBody\`. Requests with the same \`Idempotency-Key\` or \`X-Request-Id\` within 24 hours start one run. Rotating the URL on the automation's page stops the old one.
+\`{ webhook: true }\` gives the automation a URL (\`webhook.url\` in \`automation_read\`, public in the cloud, or when Signalbox Connect is linked); every request to it starts a run with the body as \`input\` (parsed JSON or form, else text, null when empty). The third argument has \`trigger.method\`, \`trigger.headers\` and \`trigger.query\` (credential-looking ones redacted) and \`trigger.rawBody\`. Requests with the same \`X-GitHub-Delivery\` in the cloud, or \`Idempotency-Key\` or \`X-Request-Id\` within 24 hours start one run. Rotating the URL on the automation's page stops the old one.
 
 For a sender that signs requests, let the server check them instead of doing it in code:
 
@@ -37,6 +37,14 @@ triggers: [{ webhook: {
 \`\`\`
 
 The secret never goes in the file: ask the user with \`request_secret\` and pass the \`secretRef\` to \`automation_set_webhook_secret\`. Until it's set, every request is turned away. Requests turned away (bad signature, paused, over 60 a minute, too old) show in \`automation_read\` as \`webhookRejections\`.
+
+## GitHub events in the cloud
+
+Connect GitHub in Settings. Triggers for \`pr.*\`, \`release.published\` and \`issue.opened\` install repository hooks automatically. Set \`where: { repository: "owner/repo" }\` to choose a repository; otherwise the folder's repository is used. The connected account needs permission to manage its hooks. Read \`automation_github_subscriptions\` for setup errors and the active mode. Pausing or deleting the last matching automation removes its hook.
+
+An upstream repository that refuses hook access can supply published releases by polling every five minutes. Its first read records existing releases without starting historical runs. Linked PRs retain their existing watcher; a repository without hook permission does not supply arbitrary PR-opened events.
+
+PR events include current state, mergeability, checks, review decision, unresolved thread count, head/base branches and SHAs, repositories, labels and recent reviews. Incomplete lists are null. Completed checks for an older head are ignored. Use \`pull_request_read\` in a step to refresh facts before acting.
 
 ## Events in Signalbox
 

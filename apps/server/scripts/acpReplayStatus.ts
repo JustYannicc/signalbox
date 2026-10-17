@@ -1,4 +1,4 @@
-// @effect-diagnostics nodeBuiltinImport:off
+// @effect-diagnostics nodeBuiltinImport:off -- Standalone synchronous fixture writer needs Node fs for atomic sibling-file rename.
 import * as NodeCrypto from "node:crypto";
 import * as NodeFS from "node:fs";
 
