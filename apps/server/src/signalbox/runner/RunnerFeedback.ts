@@ -6,6 +6,7 @@ import type {
 } from "@t3tools/contracts";
 import type { ProviderAdapterV2SessionRuntime } from "@t3tools/provider-core/server/ProviderAdapter";
 import * as Effect from "effect/Effect";
+import * as Semaphore from "effect/Semaphore";
 
 type FeedbackSession = Pick<
   ProviderAdapterV2SessionRuntime,
@@ -22,6 +23,7 @@ export const makeRunnerFeedback = (
     { readonly session: FeedbackSession; readonly thread: OrchestrationV2ProviderThread }
   >();
   const receipts = new Map<string, Effect.Effect<FeedbackOutcome>>();
+  const claim = Semaphore.makeUnsafe(1);
   return {
     remember: (session: FeedbackSession, thread: OrchestrationV2ProviderThread) => {
       loaded.set(thread.id, { session, thread });
@@ -29,7 +31,7 @@ export const makeRunnerFeedback = (
     upload: (request: FeedbackRequest): Effect.Effect<FeedbackOutcome> =>
       Effect.suspend(() => {
         const previous = receipts.get(request.requestId);
-        if (previous !== undefined) return previous;
+        if (previous !== undefined) return Effect.succeed(previous);
         const upload = Effect.gen(function* () {
           const target = request.providerThread;
           const held = loaded.get(target.id);
@@ -66,8 +68,8 @@ export const makeRunnerFeedback = (
         return Effect.gen(function* () {
           const once = yield* Effect.cached(upload);
           receipts.set(request.requestId, once);
-          return yield* once;
+          return once;
         });
-      }),
+      }).pipe(claim.withPermits(1), Effect.flatten),
   };
 };
