@@ -113,8 +113,8 @@ const ONE_ENVIRONMENT_PHRASES: ReadonlyArray<readonly [string, string]> = [
   ],
   ["Could not obtain environment link proof", "Could not verify Signalbox for activity updates"],
   ["Could not configure environment relay access", "Could not set up activity updates"],
-  // Relay sign-ins append a DPoP hint to the invalid-credential error.
-  ["The environment credential is invalid.", "Your Signalbox sign-in expired. Sign in again."],
+  // Relay sign-ins append a DPoP hint (often the device clock), so the sign-in may still be fine.
+  ["The environment credential is invalid.", "Signalbox couldn't verify your sign-in."],
   // Incoming shares: "'report.pdf' was skipped because this server does not support files."
   ["because this server does not support files", "because Signalbox doesn't support files yet"],
 ];

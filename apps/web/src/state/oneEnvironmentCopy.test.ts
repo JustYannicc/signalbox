@@ -44,7 +44,7 @@ describe("connection copy with only Signalbox Cloud", () => {
     );
     expect(
       oneEnvironmentCopy("The environment credential is invalid. Check this device's clock."),
-    ).toBe("Your Signalbox sign-in expired. Sign in again. Check this device's clock.");
+    ).toBe("Signalbox couldn't verify your sign-in. Check this device's clock.");
     expect(
       oneEnvironmentCopy("Your cloud sign-in changed. Sign in again to authorize the environment."),
     ).toBe("Your sign-in changed. Sign in again.");

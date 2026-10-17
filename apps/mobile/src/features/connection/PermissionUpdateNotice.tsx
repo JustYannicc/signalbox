@@ -23,8 +23,9 @@ export function PermissionUpdateNotice() {
           environments.filter(({ environmentId, serverConfig }) => {
             const session = get(environmentSession.sessionStateAtom(environmentId));
             return (
-              // signalbox: re-pairing fixes this, and an environment without pairing can't
-              environmentSupports(serverConfig?.environment.capabilities, "accessManagement") &&
+              // signalbox: re-pairing fixes this, so wait until the environment says it pairs at all
+              serverConfig != null &&
+              environmentSupports(serverConfig.environment.capabilities, "accessManagement") &&
               session._tag === "Success" &&
               !session.waiting &&
               sessionHasLegacyPermissions(session.value)

@@ -56,8 +56,8 @@ const ONE_ENVIRONMENT_PHRASES: ReadonlyArray<readonly [string, string]> = [
   // Thread and branch actions the session's scopes don't allow.
   ["This connection cannot", "You can't"],
   ["This connection can't", "You can't"],
-  // Relay sign-ins append a DPoP hint to the invalid-credential error.
-  ["The environment credential is invalid.", "Your Signalbox sign-in expired. Sign in again."],
+  // Relay sign-ins append a DPoP hint (often the device clock), so the sign-in may still be fine.
+  ["The environment credential is invalid.", "Signalbox couldn't verify your sign-in."],
 ];
 
 /** The cloud's environment label, which previews suffix with their PR. */

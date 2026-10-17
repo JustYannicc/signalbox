@@ -75,15 +75,20 @@ export function PermissionUpdateNotice() {
   const { environments } = useEnvironments();
   // signalbox: pairing again is how this is fixed, and the one environment isn't paired.
   if (!useShowsEnvironmentUi()) return null;
-  return environments
-    .filter(({ serverConfig }) =>
-      environmentSupports(serverConfig?.environment.capabilities, "accessManagement"),
-    ) // signalbox: re-pairing fixes this, and an environment without pairing can't
-    .map(({ environmentId, label }) => (
-      <EnvironmentPermissionNotice
-        key={environmentId}
-        environmentId={environmentId}
-        label={label}
-      />
-    ));
+  return (
+    environments
+      // signalbox: re-pairing fixes this, so wait until the environment says it pairs at all
+      .filter(
+        ({ serverConfig }) =>
+          serverConfig != null &&
+          environmentSupports(serverConfig.environment.capabilities, "accessManagement"),
+      )
+      .map(({ environmentId, label }) => (
+        <EnvironmentPermissionNotice
+          key={environmentId}
+          environmentId={environmentId}
+          label={label}
+        />
+      ))
+  );
 }
