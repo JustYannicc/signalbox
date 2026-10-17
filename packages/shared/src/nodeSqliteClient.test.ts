@@ -250,6 +250,32 @@ const makeTempDatabase = Effect.gen(function* () {
   return { filename, other };
 });
 
+it.effect("finishes masked database cleanup after its caller is interrupted", () =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    yield* sql`CREATE TABLE cleanup_writes(value INTEGER PRIMARY KEY)`;
+    const entered = yield* Deferred.make<void>();
+    const work = yield* Effect.forkChild(
+      Deferred.succeed(entered, undefined).pipe(
+        Effect.andThen(Effect.never),
+        Effect.onInterrupt(() =>
+          Effect.gen(function* () {
+            yield* sql`INSERT INTO cleanup_writes VALUES (1)`;
+            yield* sql.withTransaction(sql`INSERT INTO cleanup_writes VALUES (2)`);
+          }),
+        ),
+      ),
+      { startImmediately: true },
+    );
+    yield* Deferred.await(entered);
+    yield* Fiber.interrupt(work);
+    assert.deepEqual(yield* sql`SELECT value FROM cleanup_writes ORDER BY value`.values, [
+      [1],
+      [2],
+    ]);
+  }).pipe(Effect.provide(SqliteClient.layer({ filename: ":memory:" }))),
+);
+
 it.effect("keeps another connection from committing between a transaction's read and write", () =>
   Effect.gen(function* () {
     const { filename, other } = yield* makeTempDatabase;
@@ -2268,6 +2294,54 @@ it.effect.skipIf(!supportsNoopCheckpoint)(
       }),
     ),
 );
+
+for (const transaction of [false, true]) {
+  it.effect.skipIf(!supportsNoopCheckpoint)(
+    `keeps masked cleanup waiting at the checkpoint gate, transaction=${transaction}`,
+    () =>
+      withCheckpointClient((sql, filename) =>
+        Effect.gen(function* () {
+          const worker = startedWorkers.at(-1)!;
+          const { reader, checkpointRequests } = yield* blockCheckpointBehindReader(
+            sql,
+            filename,
+            worker,
+          );
+          const entered = yield* Deferred.make<void>();
+          const cleanupEntered = yield* Deferred.make<void>();
+          const work = yield* Effect.forkChild(
+            Deferred.succeed(entered, undefined).pipe(
+              Effect.andThen(Effect.never),
+              Effect.onInterrupt(() =>
+                Effect.gen(function* () {
+                  yield* Deferred.succeed(cleanupEntered, undefined);
+                  const insert = sql.unsafe("INSERT INTO entries VALUES (1)").unprepared;
+                  yield* transaction ? sql.withTransaction(insert) : insert;
+                }),
+              ),
+            ),
+            { startImmediately: true },
+          );
+          yield* Deferred.await(entered);
+          const interrupt = yield* Effect.forkChild(Fiber.interrupt(work), {
+            startImmediately: true,
+          });
+          yield* Deferred.await(cleanupEntered);
+          yield* Effect.yieldNow;
+          assert.isUndefined(work.pollUnsafe());
+
+          const truncateFinished = waitForTruncateCompletion(worker);
+          checkpointRequests.release();
+          reader.exec("ROLLBACK");
+          yield* Effect.promise(() => truncateFinished);
+          yield* Fiber.join(interrupt);
+          assert.deepEqual(yield* sql.unsafe("SELECT value FROM entries").unprepared, [
+            { value: 1 },
+          ]);
+        }),
+      ),
+  );
+}
 
 it.effect.skipIf(!supportsNoopCheckpoint)(
   "releases a writer permit when cancellation arrives as the grant yields",

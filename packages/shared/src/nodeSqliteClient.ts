@@ -82,10 +82,9 @@ const annotateAcquired = (fiber: Fiber.Fiber<unknown, unknown>, acquired: Acquir
   span.attribute("db.lock_wait_ms", acquired.lockWaitMs);
 };
 
-const TransactionAcquire = Context.Reference<{ acquired?: Acquired } | undefined>(
-  "@t3tools/shared/nodeSqliteClient/TransactionAcquire",
-  { defaultValue: () => undefined },
-);
+const TransactionAcquire = Context.Reference<
+  { acquired?: Acquired; restore: typeof Effect.interruptible | undefined } | undefined
+>("@t3tools/shared/nodeSqliteClient/TransactionAcquire", { defaultValue: () => undefined });
 
 export class UnsupportedNodeSqliteVersionError extends Schema.TaggedError<UnsupportedNodeSqliteVersionError>()(
   "UnsupportedNodeSqliteVersionError",
@@ -961,24 +960,28 @@ const startCheckpointWorker = Effect.fnUntraced(function* (
         state: "queued",
         resume: () => {},
       };
-      const wait = Effect.interruptible(
-        Effect.callback<void>(function (this: Scheduler.Scheduler, continueAdmission) {
-          const dispatcher = this.makeDispatcher();
-          waiter.resume = () => {
-            if (waiter.state === "cancelled" || scheduled || resumed) return;
-            scheduled = true;
-            dispatcher.scheduleTask(() => {
-              scheduled = false;
-              if (waiter.state === "cancelled" || resumed) return;
-              resumed = true;
-              continueAdmission(Effect.void);
-            }, 0);
-          };
-          waiters.push(waiter);
-          worker.ref();
-          check(true);
-          return Effect.sync(() => cancelWaiter(waiter));
-        }),
+      const wait = Effect.uninterruptibleMask((restore) =>
+        Effect.withFiber((fiber) =>
+          (fiber.getRef(TransactionAcquire)?.restore ?? restore)(
+            Effect.callback<void>(function (this: Scheduler.Scheduler, continueAdmission) {
+              const dispatcher = this.makeDispatcher();
+              waiter.resume = () => {
+                if (waiter.state === "cancelled" || scheduled || resumed) return;
+                scheduled = true;
+                dispatcher.scheduleTask(() => {
+                  scheduled = false;
+                  if (waiter.state === "cancelled" || resumed) return;
+                  resumed = true;
+                  continueAdmission(Effect.void);
+                }, 0);
+              };
+              waiters.push(waiter);
+              worker.ref();
+              check(true);
+              return Effect.sync(() => cancelWaiter(waiter));
+            }),
+          ),
+        ),
       );
       return wait.pipe(
         Effect.flatMap(() => runWithAdmission(write, execute, waiter)),
@@ -1343,13 +1346,13 @@ const make = Effect.fn("makeWithDatabase")(function* (
       }),
     );
   const transactionAcquirer = Effect.flatMap(route, (target) =>
-    Effect.uninterruptibleMask(() => {
+    Effect.uninterruptibleMask((restore) => {
       const fiber = Fiber.getCurrent()!;
       const scope = Context.getUnsafe(fiber.context, Scope.Scope);
       const clock = fiber.getRef(Clock.Clock);
       const start = clock.monotonicTimeNanosUnsafe();
-      const acquire = Effect.tap(Effect.interruptible(target.lock.take(1)), () => {
-        const pending = fiber.getRef(TransactionAcquire);
+      const pending = fiber.getRef(TransactionAcquire);
+      const acquire = Effect.tap((pending?.restore ?? restore)(target.lock.take(1)), () => {
         if (pending !== undefined) pending.acquired = acquired(target, clock, start);
         return Scope.addFinalizer(scope, target.lock.release(1));
       });
@@ -1379,13 +1382,19 @@ const make = Effect.fn("makeWithDatabase")(function* (
   const withTransaction = client.withTransaction;
   return Object.assign(client, {
     withTransaction: <A, E, R>(effect: Effect.Effect<A, E, R>) =>
-      Effect.suspend(() => {
-        const pending: { acquired?: Acquired } = {};
+      Effect.uninterruptibleMask((restore) => {
+        // SqlClient masks its setup; waits must inherit the caller's mask, including cleanup.
+        const pending: { acquired?: Acquired; restore: typeof Effect.interruptible | undefined } = {
+          restore,
+        };
         const body = Effect.withFiber<A, E, R>((fiber) => {
           annotateAcquired(fiber, pending.acquired);
+          pending.restore = undefined;
           return effect;
         });
-        return withTransaction(body).pipe(Effect.provideService(TransactionAcquire, pending));
+        return restore(
+          withTransaction(body).pipe(Effect.provideService(TransactionAcquire, pending)),
+        );
       }),
   });
 });
