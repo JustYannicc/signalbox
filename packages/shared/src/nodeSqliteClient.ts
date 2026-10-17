@@ -65,6 +65,15 @@ interface Acquired {
   readonly lockWaitMs: number;
 }
 
+type SqliteExecutionResult<A> =
+  | { readonly _tag: "Success"; readonly value: A }
+  | { readonly _tag: "Failure"; readonly error: SqlError };
+
+const sqliteExecutionToEffect = <A>(
+  result: SqliteExecutionResult<A>,
+): Effect.Effect<A, SqlError> =>
+  result._tag === "Success" ? Effect.succeed(result.value) : Effect.fail(result.error);
+
 const annotateAcquired = (fiber: Fiber.Fiber<unknown, unknown>, acquired: Acquired | undefined) => {
   const span = Context.getOrUndefined(fiber.context, Tracer.ParentSpan);
   if (span?._tag !== "Span" || acquired === undefined) return;
@@ -497,6 +506,7 @@ let frames;
 let checkpoint;
 let truncate;
 let journalSizeLimit = -1;
+let generation = 0;
 let nextTruncateRequestId = 0;
 let pendingTruncate;
 let pendingBarriers = 0;
@@ -523,10 +533,18 @@ const initialize = () => {
 const pendingFrames = (state) => state.log - state.checkpointed;
 const needsBackpressure = (state) =>
   state.log >= workerData.backpressureFrames && state.checkpointed < state.log;
-const check = (id, nextJournalSizeLimit, force) => {
+const check = (id, nextJournalSizeLimit, force, nextGeneration = generation) => {
   initialize();
+  if (Number.isSafeInteger(nextGeneration) && nextGeneration > generation) {
+    generation = nextGeneration;
+  }
   if (pendingTruncate !== undefined) {
-    return { ...pendingTruncate.state, blocked: true, waitingForTruncate: true };
+    return {
+      ...pendingTruncate.state,
+      generation: pendingTruncate.generation,
+      blocked: true,
+      waitingForTruncate: true,
+    };
   }
   if (Number.isSafeInteger(nextJournalSizeLimit) && nextJournalSizeLimit !== journalSizeLimit) {
     db.exec("PRAGMA journal_size_limit = " + nextJournalSizeLimit);
@@ -547,11 +565,13 @@ const check = (id, nextJournalSizeLimit, force) => {
     pendingTruncate = {
       truncateId: ++nextTruncateRequestId,
       checkId: id,
+      generation,
       state,
     };
     parentPort.postMessage({
       type: "truncate-request",
       truncateId: pendingTruncate.truncateId,
+      generation,
       checkId: id,
       ...state,
     });
@@ -559,7 +579,7 @@ const check = (id, nextJournalSizeLimit, force) => {
   }
   blocked ||= needsBackpressure(state);
   const result = { ...state, blocked };
-  parentPort.postMessage({ type: "checkpoint", id, ...result });
+  parentPort.postMessage({ type: "checkpoint", id, generation, ...result });
   return { ...result, waitingForTruncate: false };
 };
 const finishTruncate = (truncateId) => {
@@ -577,7 +597,14 @@ const finishTruncate = (truncateId) => {
     journalSizeLimit >= 0 && statSync(workerData.filename + "-wal").size > journalSizeLimit;
   blocked ||= needsBackpressure(state) || walSizeLimitExceeded;
   pendingTruncate = undefined;
-  parentPort.postMessage({ type: "checkpoint", id: pending.checkId, truncateId, ...state, blocked });
+  parentPort.postMessage({
+    type: "checkpoint",
+    id: pending.checkId,
+    generation: pending.generation,
+    truncateId,
+    ...state,
+    blocked,
+  });
   while (pendingBarriers > 0) {
     pendingBarriers--;
     parentPort.postMessage("barrier");
@@ -589,7 +616,7 @@ const finishTruncate = (truncateId) => {
 const finish = () => {
   const before = frames.get();
   const force = needsBackpressure(before);
-  const state = check(undefined, journalSizeLimit, force);
+  const state = check(undefined, journalSizeLimit, force, generation);
   if (!state.waitingForTruncate && (pendingFrames(state) >= workerData.frames || state.blocked)) {
     idle = setTimeout(finish, workerData.idleMs);
   }
@@ -611,6 +638,7 @@ parentPort.on("message", (request) => {
     checkRequest && checkRequest.id,
     checkRequest && checkRequest.journalSizeLimit,
     checkRequest && checkRequest.force,
+    checkRequest && checkRequest.generation,
   );
   if (isBarrier) {
     if (state.waitingForTruncate) pendingBarriers++;
@@ -683,6 +711,7 @@ const startCheckpointWorker = Effect.fnUntraced(function* (
   let checkpointedFrames = 0;
   let checkpointBlocked = false;
   let frameStatusUnknown = false;
+  let writerGeneration = 1;
   let journalSizeLimit = -1;
   let truncateRequestId: number | undefined;
   let truncatePaused = false;
@@ -695,12 +724,14 @@ const startCheckpointWorker = Effect.fnUntraced(function* (
   }
   const waiters: Array<{
     readonly write: boolean;
-    readonly resume: (effect: Effect.Effect<void>) => void;
+    readonly resume: () => void;
   }> = [];
-  let beforeStatement: (write: boolean) => Effect.Effect<void>;
+  let runWithAdmission: <A>(
+    write: boolean,
+    execute: () => SqliteExecutionResult<A>,
+  ) => Effect.Effect<A, SqlError>;
   const backlogFrames = () => logFrames - checkpointedFrames;
-  const resumeWaiter = (waiter: (typeof waiters)[number]) =>
-    waiter.resume(Effect.suspend(() => beforeStatement(waiter.write)));
+  const resumeWaiter = (waiter: (typeof waiters)[number]) => waiter.resume();
   const resumeWaiters = () => {
     for (const waiter of waiters.splice(0)) resumeWaiter(waiter);
     worker.unref();
@@ -771,6 +802,7 @@ const startCheckpointWorker = Effect.fnUntraced(function* (
       acknowledgeTruncate();
       return;
     }
+    const generation = ++writerGeneration;
     try {
       const state = readFrameCounts();
       logFrames = state.log;
@@ -798,8 +830,15 @@ const startCheckpointWorker = Effect.fnUntraced(function* (
     try {
       const setting = readSafeSqliteInteger(writerJournalSizeLimit.get()?.journal_size_limit);
       if (setting !== undefined) journalSizeLimit = setting;
+      const request = {
+        type: "check",
+        id,
+        generation,
+        journalSizeLimit,
+        force: forceCheckpoint,
+      };
       // oxlint-disable-next-line unicorn/require-post-message-target-origin -- Node workers do not accept a target origin.
-      worker.postMessage({ type: "check", id, journalSizeLimit, force: forceCheckpoint });
+      worker.postMessage(request);
     } catch (cause) {
       handBack(String(cause));
     }
@@ -831,15 +870,23 @@ const startCheckpointWorker = Effect.fnUntraced(function* (
       "blocked" in message &&
       typeof message.blocked === "boolean"
     ) {
-      logFrames = message.log;
-      checkpointedFrames = message.checkpointed;
-      checkpointBlocked = message.blocked;
-      frameStatusUnknown = false;
-      if (
+      // This snapshot follows the acknowledged writer pause, so it can supersede
+      // observations made before the worker took the exclusive checkpoint lock.
+      const completedTruncate =
         "truncateId" in message &&
         typeof message.truncateId === "number" &&
-        message.truncateId === truncateRequestId
-      ) {
+        message.truncateId === truncateRequestId;
+      const currentSnapshot =
+        "generation" in message &&
+        typeof message.generation === "number" &&
+        (message.generation === writerGeneration || completedTruncate);
+      if (currentSnapshot) {
+        logFrames = message.log;
+        checkpointedFrames = message.checkpointed;
+        checkpointBlocked = message.blocked;
+        frameStatusUnknown = false;
+      }
+      if (completedTruncate) {
         truncateRequestId = undefined;
         truncatePaused = false;
       }
@@ -866,28 +913,33 @@ const startCheckpointWorker = Effect.fnUntraced(function* (
   });
   // After the listeners: adding a "message" listener refs the worker again.
   worker.unref();
-  beforeStatement = (write: boolean) => {
-    if (!needsBackpressure(write)) {
-      return Effect.void;
-    }
-    return Effect.interruptible(
-      Effect.callback<void>((resume) => {
-        if (!needsBackpressure(write)) {
-          resume(Effect.suspend(() => beforeStatement(write)));
-          return;
-        }
-        waiters.push({ write, resume });
-        worker.ref();
-        check(true);
+  runWithAdmission = <A>(write: boolean, execute: () => SqliteExecutionResult<A>) =>
+    Effect.interruptible(
+      Effect.callback<A, SqlError>((resume) => {
+        let cancelled = false;
+        const attempt = () => {
+          if (cancelled) return;
+          if (needsBackpressure(write)) {
+            waiters.push({ write, resume: attempt });
+            worker.ref();
+            check(true);
+            return;
+          }
+          const result = execute();
+          resume(
+            result._tag === "Success" ? Effect.succeed(result.value) : Effect.fail(result.error),
+          );
+        };
+        attempt();
         return Effect.sync(() => {
-          const index = waiters.findIndex((waiter) => waiter.resume === resume);
+          cancelled = true;
+          const index = waiters.findIndex((waiter) => waiter.resume === attempt);
           if (index !== -1) waiters.splice(index, 1);
           if (waiters.length === 0) worker.unref();
         });
       }),
     );
-  };
-  return { check, beforeStatement };
+  return { check, runWithAdmission };
 });
 
 const make = Effect.fn("makeWithDatabase")(function* (
@@ -1036,37 +1088,40 @@ const make = Effect.fn("makeWithDatabase")(function* (
       params: ReadonlyArray<unknown>,
       raw: boolean,
     ) =>
-      Effect.flatMap(
-        checkpoint?.beforeStatement(
-          checkpointClassifications.get(statement)?.backpressure ?? false,
-        ) ?? Effect.void,
-        () =>
-          Effect.withFiber<ReadonlyArray<any>, SqlError>((fiber) => {
-            try {
-              const result = withClassification(checkpointClassifications.get(statement), () => {
-                statement.setReadBigInts(Boolean(Context.get(fiber.context, Client.SafeIntegers)));
-                if (hasRows(statement)) {
-                  return { rows: statement.all(...(params as any)), result: undefined };
-                }
-                return { rows: [], result: statement.run(...(params as any)) };
-              });
-              if (result.result === undefined) {
-                return Effect.succeed(result.rows);
+      Effect.withFiber<ReadonlyArray<any>, SqlError>((fiber) => {
+        const classification = checkpointClassifications.get(statement);
+        const execute = (): SqliteExecutionResult<ReadonlyArray<any>> => {
+          try {
+            const result = withClassification(classification, () => {
+              statement.setReadBigInts(Boolean(Context.get(fiber.context, Client.SafeIntegers)));
+              if (hasRows(statement)) {
+                return { rows: statement.all(...(params as any)), result: undefined };
               }
-              return Effect.succeed(
-                raw ? (result.result as unknown as ReadonlyArray<any>) : result.rows,
-              );
-            } catch (cause) {
-              return Effect.fail(
-                new SqlError({
-                  reason: classifyError(cause, "Failed to execute statement", "execute"),
-                }),
-              );
-            } finally {
-              if (checkpointClassifications.get(statement)?.check) checkpoint?.check();
-            }
-          }),
-      );
+              return { rows: [], result: statement.run(...(params as any)) };
+            });
+            return {
+              _tag: "Success",
+              value:
+                result.result === undefined || !raw
+                  ? result.rows
+                  : (result.result as unknown as ReadonlyArray<any>),
+            };
+          } catch (cause) {
+            return {
+              _tag: "Failure",
+              error: new SqlError({
+                reason: classifyError(cause, "Failed to execute statement", "execute"),
+              }),
+            };
+          } finally {
+            if (classification?.check) checkpoint?.check();
+          }
+        };
+        if (checkpoint !== undefined && classification?.backpressure) {
+          return checkpoint.runWithAdmission(true, execute);
+        }
+        return sqliteExecutionToEffect(execute());
+      });
 
     const run = (sql: string, params: ReadonlyArray<unknown>, raw = false) =>
       Effect.flatMap(statementFor(sql, params), (s) => runStatement(s, params, raw));
@@ -1078,40 +1133,40 @@ const make = Effect.fn("makeWithDatabase")(function* (
       Effect.acquireUseRelease(
         Effect.succeed(statement),
         (statement) =>
-          Effect.flatMap(
-            checkpoint?.beforeStatement(
-              checkpointClassifications.get(statement)?.backpressure ?? false,
-            ) ?? Effect.void,
-            () =>
-              Effect.try({
-                try: () => {
-                  const classification = checkpointClassifications.get(statement);
-                  let rows: ReadonlyArray<ReadonlyArray<unknown>>;
-                  try {
-                    rows = withClassification(classification, () => {
-                      statement.setReadBigInts(
-                        Boolean(Context.get(Fiber.getCurrent()!.context, Client.SafeIntegers)),
-                      );
-                      if (hasRows(statement)) {
-                        statement.setReturnArrays(true);
-                        return statement.all(...(params as any)) as unknown as ReadonlyArray<
-                          ReadonlyArray<unknown>
-                        >;
-                      }
-                      statement.run(...(params as any));
-                      return [];
-                    });
-                  } finally {
-                    if (classification?.check) checkpoint?.check();
+          Effect.withFiber<ReadonlyArray<ReadonlyArray<unknown>>, SqlError>((fiber) => {
+            const classification = checkpointClassifications.get(statement);
+            const execute = (): SqliteExecutionResult<ReadonlyArray<ReadonlyArray<unknown>>> => {
+              try {
+                const rows = withClassification(classification, () => {
+                  statement.setReadBigInts(
+                    Boolean(Context.get(fiber.context, Client.SafeIntegers)),
+                  );
+                  if (hasRows(statement)) {
+                    statement.setReturnArrays(true);
+                    return statement.all(...(params as any)) as unknown as ReadonlyArray<
+                      ReadonlyArray<unknown>
+                    >;
                   }
-                  return rows;
-                },
-                catch: (cause) =>
-                  new SqlError({
+                  statement.run(...(params as any));
+                  return [];
+                });
+                return { _tag: "Success", value: rows };
+              } catch (cause) {
+                return {
+                  _tag: "Failure",
+                  error: new SqlError({
                     reason: classifyError(cause, "Failed to execute statement", "execute"),
                   }),
-              }),
-          ),
+                };
+              } finally {
+                if (classification?.check) checkpoint?.check();
+              }
+            };
+            if (checkpoint !== undefined && classification?.backpressure) {
+              return checkpoint.runWithAdmission(true, execute);
+            }
+            return sqliteExecutionToEffect(execute());
+          }),
         (statement) =>
           Effect.try({
             try: () => {
