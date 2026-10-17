@@ -5,6 +5,11 @@ import * as NodeBuffer from "node:buffer";
 import { LunoraClient } from "lunorash/client";
 
 import { api } from "./lunora/_generated/api.ts";
+import {
+  formatConnectionDiagnostics,
+  safeSocketErrorKind,
+  type ConnectionDiagnostic,
+} from "./diagnostics.ts";
 import { issueProbeToken, PROBE_LEVELS } from "./identity.ts";
 
 interface FrameTotals {
@@ -20,10 +25,16 @@ interface ClientState {
   readonly listeners: Set<() => void>;
   readonly values: number[];
   readonly errors: unknown[];
+  readonly socketErrorCounts: Map<string, number>;
+  readonly closeEvents: Map<string, { code: number; count: number; wasClean: boolean }>;
   client: LunoraClient | undefined;
   unsubscribe: (() => void) | undefined;
   opens: number;
   closes: number;
+  incomingFrames: number;
+  incomingBytes: number;
+  outgoingFrames: number;
+  outgoingBytes: number;
 }
 
 interface SqlActivity {
@@ -85,19 +96,33 @@ const measuredWebSocket = (state: ClientState): typeof WebSocket =>
         const size = byteLength((event as MessageEvent<unknown>).data);
         frameTotals.incoming += 1;
         frameTotals.incomingBytes += size;
+        state.incomingFrames += 1;
+        state.incomingBytes += size;
       });
-      this.addEventListener("close", () => {
+      this.addEventListener("error", (event) => {
+        const kind = safeSocketErrorKind(event);
+        state.socketErrorCounts.set(kind, (state.socketErrorCounts.get(kind) ?? 0) + 1);
+        notify(state);
+      });
+      this.addEventListener("close", (event) => {
         state.closes += 1;
+        const { code, wasClean } = event as CloseEvent;
+        const key = `${code}:${wasClean}`;
+        const previous = state.closeEvents.get(key);
+        state.closeEvents.set(key, { code, count: (previous?.count ?? 0) + 1, wasClean });
         notify(state);
       });
     }
 
     override send(data: string | ArrayBufferLike | ArrayBufferView | Blob): void {
-      frameTotals.outgoing += 1;
-      frameTotals.outgoingBytes += byteLength(data);
+      const size = byteLength(data);
       // Node's WebSocket accepts the typed-array views used here; DOM typings
       // admit SharedArrayBuffer-backed views that the browser signature omits.
       super.send(data as string | BufferSource | Blob);
+      frameTotals.outgoing += 1;
+      frameTotals.outgoingBytes += size;
+      state.outgoingFrames += 1;
+      state.outgoingBytes += size;
     }
   };
 
@@ -106,16 +131,22 @@ function notify(state: ClientState) {
 }
 
 function safeError(error: unknown): string {
-  if (
-    typeof error === "object" &&
-    error !== null &&
-    "code" in error &&
-    typeof error.code === "string"
-  ) {
-    return error.code;
-  }
-  if (error instanceof Error) return error.name;
-  return "unknown error";
+  return safeSocketErrorKind(error);
+}
+
+function connectionDiagnostic(state: ClientState): ConnectionDiagnostic {
+  return {
+    levelId: state.levelId,
+    opens: state.opens,
+    closes: state.closes,
+    closeEvents: [...state.closeEvents.values()],
+    socketErrors: [...state.socketErrorCounts].map(([kind, count]) => ({ kind, count })),
+    readyStates: state.sockets.map((socket) => socket.readyState),
+    incomingFrames: state.incomingFrames,
+    incomingBytes: state.incomingBytes,
+    outgoingFrames: state.outgoingFrames,
+    outgoingBytes: state.outgoingBytes,
+  };
 }
 
 function waitFor(
@@ -125,6 +156,8 @@ function waitFor(
   timeoutMs = 20_000,
 ): Promise<void> {
   return new Promise((resolve, reject) => {
+    const connectionState = () =>
+      `WebSocket ${websocketUrl.pathname} client state: ${formatConnectionDiagnostics(watched.map(connectionDiagnostic))}`;
     const finish = (error?: Error) => {
       clearTimeout(timer);
       for (const state of watched) state.listeners.delete(check);
@@ -134,7 +167,7 @@ function waitFor(
     const check = () => {
       const failed = watched.flatMap((state) => state.errors).at(0);
       if (failed !== undefined) {
-        finish(new Error(`${label} failed: ${safeError(failed)}.`));
+        finish(new Error(`${label} failed: ${safeError(failed)}; ${connectionState()}.`));
       } else if (predicate()) {
         finish();
       }
@@ -143,7 +176,7 @@ function waitFor(
       () =>
         finish(
           new Error(
-            `${label} timed out; current values: ${watched.map((state) => state.values.at(-1) ?? "none").join(", ")}.`,
+            `${label} timed out; current values: ${watched.map((state) => state.values.at(-1) ?? "none").join(", ")}; ${connectionState()}.`,
           ),
         ),
       timeoutMs,
@@ -220,10 +253,16 @@ try {
         listeners: new Set(),
         values: [],
         errors: [],
+        socketErrorCounts: new Map(),
+        closeEvents: new Map(),
         client: undefined,
         unsubscribe: undefined,
         opens: 0,
         closes: 0,
+        incomingFrames: 0,
+        incomingBytes: 0,
+        outgoingFrames: 0,
+        outgoingBytes: 0,
       };
       const client = new LunoraClient({
         url: workerUrl.origin,
