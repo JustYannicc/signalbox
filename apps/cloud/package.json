@@ -26,7 +26,7 @@
     "aws4fetch": "1.0.20",
     "diff": "8.0.3",
     "effect": "catalog:",
-    "evlog": "2.30.0",
+    "evlog": "https://github.com/JustYannicc/evlog/releases/download/evlog-effect-preview.2/evlog-2.32.0-effect.2.tgz",
     "fractional-indexing": "4.0.0",
     "jose": "catalog:",
     "tldts": "catalog:"

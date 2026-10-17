@@ -43,13 +43,40 @@ done
 
 containers="$("$wrangler" containers list --json)"
 
-for name in "signalbox-model-gateway-pr-$pr_number" "signalbox-cloud-pr-$pr_number"; do
+for name in "signalbox-model-gateway-pr-$pr_number" "signalbox-cloud-pr-$pr_number" "signalbox-cloud-pr-$pr_number-traces"; do
   if ! grep -Fxq "$name" <<< "$worker_names"; then
     echo "No preview Worker $name to delete."
   elif ! "$wrangler" delete --name "$name" --force; then
     echo "::error::Could not delete preview Worker $name."
     failed=1
   fi
+done
+
+# A failed stack destroy can leave the stage's account-level trace destination.
+page=1
+while true; do
+  if ! result="$(curl --fail --silent --show-error --get \
+    --header "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+    --data-urlencode 'per_page=1000' \
+    --data-urlencode "page=$page" \
+    "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/workers/observability/destinations")"; then
+    echo "::error::Could not list preview trace destinations."
+    failed=1
+    break
+  fi
+  while IFS= read -r slug; do
+    [[ -n "$slug" ]] || continue
+    if ! curl --fail --silent --show-error --request DELETE --output /dev/null \
+      --header "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+      "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/workers/observability/destinations/$slug"; then
+      echo "::error::Could not delete PR #$pr_number's trace destination."
+      failed=1
+    fi
+  done < <(jq -r --arg name "signalbox-cloud-pr-$pr_number-sentry-traces" \
+    '.result[]? | select(.name == $name) | .slug | @uri' <<< "$result")
+  total_pages="$(jq -r '.result_info.total_pages // 1' <<< "$result")"
+  ((page >= total_pages)) && break
+  ((page += 1))
 done
 
 for app in pools threads; do

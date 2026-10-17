@@ -11,6 +11,7 @@ import * as ManagedRuntime from "effect/ManagedRuntime";
 import * as Schema from "effect/Schema";
 
 import * as CloudAssets from "../assets/CloudAssets.ts";
+import * as Evlog from "../observability/Evlog.ts";
 import * as IdentityProvider from "../account/IdentityProvider.ts";
 import * as CloudConfig from "../CloudConfig.ts";
 import { AutomationAlarm, CloudAutomations } from "../automations/CloudAutomations.ts";
@@ -203,7 +204,8 @@ const layerAlarm = (storage: DurableObjectStorage) =>
   );
 
 // The whole storage, not just `storage.sql`: migrations run in transactions.
-const makeRuntime = (storage: DurableObjectStorage, env: UserObjectEnv) => {
+const makeRuntime = (ctx: DurableObjectState, env: UserObjectEnv) => {
+  const { storage } = ctx;
   const drives = layerDrives(env);
   return ManagedRuntime.make(
     // The user's automations (#434), on the services below.
@@ -314,7 +316,14 @@ const makeRuntime = (storage: DurableObjectStorage, env: UserObjectEnv) => {
               }),
             ),
           ),
-          Layer.provideMerge(Layer.mergeAll(SqliteClient.layer({ storage }), Platform.layerCrypto)),
+          Layer.provideMerge(
+            Layer.mergeAll(
+              SqliteClient.layer({ storage }),
+              Platform.layerCrypto,
+              Evlog.layer,
+              Evlog.layerWaitUntil(ctx),
+            ),
+          ),
           Layer.provideMerge(
             IdentityProvider.layer.pipe(
               Layer.provide(CloudConfig.layer),
@@ -358,7 +367,7 @@ export class UserObject extends DurableObject<UserObjectEnv> implements UserObje
       scripted: scriptedProviderEnabled(env),
       attachments: env.DRIVE_PACKS !== undefined,
     };
-    this.runtime = makeRuntime(ctx.storage, env);
+    this.runtime = makeRuntime(ctx, env);
     this.sockets = new ClientSockets({
       ctx,
       identity: this.identity,
@@ -679,6 +688,12 @@ export class UserObject extends DurableObject<UserObjectEnv> implements UserObje
           ),
         ],
         { discard: true },
+      ).pipe(
+        // Named by the person's user id (`UserDirectory`).
+        Evlog.withUnit(
+          "user.alarm",
+          this.ctx.id.name === undefined ? {} : { person: { id: this.ctx.id.name } },
+        ),
       ),
     );
   }
