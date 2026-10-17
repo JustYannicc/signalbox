@@ -115,6 +115,7 @@ export function startRunEvents(
   const started: Run = {
     ...run,
     status: "starting",
+    workStartedAt: run.workStartedAt ?? ctx.now,
     providerThreadId,
     rootNodeId,
     activeAttemptId: attemptId,
@@ -217,6 +218,26 @@ export function finishRunEvents(
   return [
     ...(options.leading ?? []),
     ...expireRuntimeRequests(projection, run.id, ctx, status === "completed"),
+    ...projection.turnItems.flatMap((item) =>
+      item.runId === run.id &&
+      item.id.startsWith(`turn-item:${run.id}:dependencies:`) &&
+      item.type === "notification" &&
+      (item.status === "running" || item.status === "pending")
+        ? [
+            turnItemEvent(ctx, {
+              ...item,
+              status: status === "failed" ? "failed" : "interrupted",
+              outcome: status === "failed" ? "failed" : "cancelled",
+              summary:
+                status === "failed"
+                  ? "Dependency setup did not finish before the turn failed."
+                  : "This turn ended before dependency setup finished.",
+              completedAt: ctx.now,
+              updatedAt: ctx.now,
+            }),
+          ]
+        : [],
+    ),
     ...(attempt === undefined
       ? []
       : [

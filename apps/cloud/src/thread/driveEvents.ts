@@ -1,4 +1,4 @@
-import type { RunnerItem } from "@signalbox/runner-protocol/RunnerProtocol";
+import type { DependencyProgress, RunnerItem } from "@signalbox/runner-protocol/RunnerProtocol";
 import {
   CheckpointId,
   CheckpointRef,
@@ -7,11 +7,12 @@ import {
   type OrchestrationV2DomainEvent,
   type OrchestrationV2Run,
   type OrchestrationV2ThreadProjection,
+  type OrchestrationV2TurnItem,
   TurnItemId,
 } from "@t3tools/contracts";
 
-import { type DecisionContext, unstampedEventId } from "../threadEvents.ts";
-import { systemNoticeEvents } from "./runnerEvents.ts";
+import { type DecisionContext, turnItemEvent, unstampedEventId } from "./threadEvents.ts";
+import { positionTurnItem, systemNoticeEvents } from "./runner/runnerEvents.ts";
 
 /**
  * What a Runner's drive reports become in a thread's log. A turn's saved
@@ -127,4 +128,65 @@ export function noticeEvents(
     },
     ctx,
   );
+}
+
+export function dependencyProgressEvents(
+  projection: Projection,
+  run: Run,
+  progress: DependencyProgress,
+  ctx: DecisionContext,
+): ReadonlyArray<OrchestrationV2DomainEvent> {
+  const id = TurnItemId.make(`turn-item:${run.id}:dependencies:${progress.root}`);
+  const previous = projection.turnItems.find((item) => item.id === id);
+  if (progress.status === "reused" && previous === undefined) return [];
+  const status =
+    progress.status === "installing"
+      ? "running"
+      : progress.status === "failed"
+        ? "failed"
+        : "completed";
+  const common = {
+    id,
+    threadId: projection.thread.id,
+    runId: run.id,
+    nodeId: run.rootNodeId,
+    providerThreadId: run.providerThreadId,
+    providerTurnId: null,
+    nativeItemRef: null,
+    parentItemId: null,
+    ordinal: 0,
+    status,
+    title: null,
+    startedAt: previous?.startedAt ?? ctx.now,
+    completedAt: progress.status === "installing" ? null : ctx.now,
+    updatedAt: ctx.now,
+  } as const;
+  const item: OrchestrationV2TurnItem =
+    progress.status === "failed"
+      ? {
+          ...common,
+          status: "failed",
+          type: "system_notice",
+          message: progress.message,
+        }
+      : {
+          ...common,
+          status,
+          type: "notification",
+          source: { kind: "system" },
+          outcome: progress.status === "installing" ? "updated" : "completed",
+          summary: progress.message,
+          ...(progress.durationMs === undefined
+            ? {}
+            : { detail: `Setup took ${formatDependencyDuration(progress.durationMs)}.` }),
+        };
+  return [turnItemEvent(ctx, positionTurnItem(projection, item))];
+}
+
+function formatDependencyDuration(durationMs: number) {
+  const seconds = Math.floor(durationMs / 1_000);
+  if (seconds < 60) return `${seconds}s`;
+  const minutes = Math.floor(seconds / 60);
+  const remainder = seconds % 60;
+  return remainder === 0 ? `${minutes}m` : `${minutes}m ${remainder}s`;
 }
