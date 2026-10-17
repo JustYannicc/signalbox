@@ -1,52 +1,138 @@
-// @effect-diagnostics nodeBuiltinImport:off -- exercises failure of the standalone fixture's status file write.
+// @effect-diagnostics nodeBuiltinImport:off - Exercises a standalone fixture at its process boundary.
+import * as NodeChildProcess from "node:child_process";
+import * as NodeEvents from "node:events";
 import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
+import * as NodeReadline from "node:readline";
+import * as NodeStream from "node:stream";
+import * as NodeURL from "node:url";
 
 import { assert, it } from "@effect/vitest";
 
-import { type AcpReplayStatusFileSystem, writeAcpReplayStatus } from "./acpReplayStatus.ts";
+it("keeps a rejected inbound response at the failing cursor", () => {
+  const directory = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "acp-replay-rejected-"));
+  const statusPath = NodePath.join(directory, "status.json");
+  const entry = {
+    type: "emit_inbound",
+    frame: { kind: "response", method: "missing-request", result: {} },
+  };
+  try {
+    const child = NodeChildProcess.spawnSync(
+      process.execPath,
+      [
+        "--experimental-strip-types",
+        NodeURL.fileURLToPath(new URL("./acp-replay-agent.ts", import.meta.url)),
+      ],
+      {
+        env: {
+          ...process.env,
+          T3_ACP_REPLAY_TRANSCRIPT: Buffer.from(
+            JSON.stringify({ scenario: "rejected-response", entries: [entry] }),
+          ).toString("base64"),
+          T3_ACP_REPLAY_STATUS_PATH: statusPath,
+        },
+        input: "",
+        encoding: "utf8",
+      },
+    );
+    assert.equal(child.status, 1);
+    assert.deepEqual(JSON.parse(NodeFS.readFileSync(statusPath, "utf8")), {
+      scenario: "rejected-response",
+      cursor: 0,
+      total: 1,
+      failure: {
+        detail: "No pending client request for missing-request",
+        cursor: 0,
+        expected: entry,
+        actual: entry.frame,
+      },
+    });
+  } finally {
+    NodeFS.rmSync(directory, { recursive: true, force: true });
+  }
+});
 
-it("preserves the last complete status when the next write is interrupted", () => {
-  const replayDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "acp-replay-status-"));
-  const statusPath = NodePath.join(replayDir, "status.json");
-  const completedStatus = { scenario: "completed", cursor: 2, total: 2 };
-  const completedJson = JSON.stringify(completedStatus);
-  NodeFS.writeFileSync(statusPath, completedJson, "utf8");
+it("publishes complete replay status before a reply lets the parent stop the agent", async () => {
+  const directory = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "acp-replay-status-"));
+  const statusPath = NodePath.join(directory, "status.json");
+  const transcript = {
+    scenario: "stop-after-reply",
+    entries: [
+      {
+        type: "expect_outbound",
+        frame: { kind: "request", method: "probe", params: "<any>" },
+      },
+      { type: "emit_inbound", frame: { kind: "response", method: "probe", result: {} } },
+    ],
+  };
+  const child = NodeChildProcess.spawn(
+    process.execPath,
+    [
+      "--require",
+      NodeURL.fileURLToPath(new URL("./fixtures/acpReplayStatusBarrier.cjs", import.meta.url)),
+      "--experimental-strip-types",
+      NodeURL.fileURLToPath(new URL("./acp-replay-agent.ts", import.meta.url)),
+    ],
+    {
+      env: {
+        ...process.env,
+        T3_ACP_REPLAY_TRANSCRIPT: Buffer.from(JSON.stringify(transcript)).toString("base64"),
+        T3_ACP_REPLAY_STATUS_PATH: statusPath,
+      },
+      stdio: ["pipe", "pipe", "pipe", "pipe", "pipe"],
+    },
+  );
+  const barrier = child.stdio[3];
+  const release = child.stdio[4];
+  if (
+    !child.stdin ||
+    !child.stdout ||
+    !(barrier instanceof NodeStream.Readable) ||
+    !(release instanceof NodeStream.Writable)
+  ) {
+    child.kill();
+    throw new Error("Replay test pipes are unavailable.");
+  }
+  const controller = new AbortController();
+  const lines = NodeReadline.createInterface({ input: barrier });
+  const reply = NodeEvents.EventEmitter.once(child.stdout, "data", { signal: controller.signal });
+  const paused = NodeEvents.EventEmitter.once(lines, "line", { signal: controller.signal });
+  const exited = NodeEvents.EventEmitter.once(child, "exit");
+  const settled = Promise.allSettled([reply, paused, exited]);
+  child.once("exit", () => controller.abort());
+  child.once("error", (cause) => controller.abort(cause));
+  child.stderr?.resume();
 
   try {
-    const interruptedWrite = new Error("injected status write interruption");
-    const failingFileSystem: AcpReplayStatusFileSystem = {
-      writeFileSync(path) {
-        NodeFS.writeFileSync(path, '{"scenario":"partial', "utf8");
-        throw interruptedWrite;
-      },
-      renameSync: NodeFS.renameSync,
-      rmSync: NodeFS.rmSync,
-    };
-
-    assert.throws(
-      () =>
-        writeAcpReplayStatus(
-          statusPath,
-          JSON.stringify({ scenario: "next", cursor: 3, total: 3 }),
-          failingFileSystem,
-        ),
-      /injected status write interruption/,
+    child.stdin.write(
+      `${JSON.stringify({ jsonrpc: "2.0", id: 1, method: "probe", params: {} })}\n`,
     );
+    const [phase] = await paused;
 
-    const preservedJson = NodeFS.readFileSync(statusPath, "utf8");
-    assert.strictEqual(preservedJson, completedJson);
-    assert.deepEqual(JSON.parse(preservedJson), completedStatus);
+    // Readers must retain the preceding JSON while the next publication is interrupted.
+    assert.deepEqual(JSON.parse(NodeFS.readFileSync(statusPath, "utf8")), {
+      scenario: transcript.scenario,
+      cursor: 1,
+      total: 2,
+    });
+    if (phase === "before") release.write("x");
+    else assert.equal(phase, "after");
+    await reply;
+    child.kill("SIGTERM");
+    await exited;
 
-    const nextStatus = { scenario: "next", cursor: 3, total: 3 };
-    const nextJson = JSON.stringify(nextStatus);
-    writeAcpReplayStatus(statusPath, nextJson);
-
-    const replacedJson = NodeFS.readFileSync(statusPath, "utf8");
-    assert.strictEqual(replacedJson, nextJson);
-    assert.deepEqual(JSON.parse(replacedJson), nextStatus);
+    assert.deepEqual(JSON.parse(NodeFS.readFileSync(statusPath, "utf8")), {
+      scenario: transcript.scenario,
+      cursor: 2,
+      total: 2,
+    });
   } finally {
-    NodeFS.rmSync(replayDir, { recursive: true, force: true });
+    controller.abort();
+    child.kill("SIGTERM");
+    await exited;
+    await settled;
+    lines.close();
+    NodeFS.rmSync(directory, { recursive: true, force: true });
   }
 });
