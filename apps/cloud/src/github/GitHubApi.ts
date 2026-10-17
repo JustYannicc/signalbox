@@ -162,12 +162,7 @@ const sanitizeGitHubDiagnostic = (value: string, token: string) => {
       /((?:access[_-]?token|refresh[_-]?token|token)["']?\s*[:=]\s*["']?)[^"'&,\s}]+/gi,
       "$1[redacted]",
     )
-    .split("")
-    .map((character) => {
-      const code = character.charCodeAt(0);
-      return code < 32 || code === 127 ? " " : character;
-    })
-    .join("")
+    .replace(/\p{Cc}/gu, " ")
     .replace(/\s+/g, " ")
     .trim();
 };
