@@ -436,6 +436,7 @@ import {
 import { expandedImageKey, type ExpandedImagePreview } from "./chat/ExpandedImagePreview";
 import { ThreadDetailsPanel, type ThreadDetailsPanelProps } from "./chat/ThreadDetailsPanel";
 import { NoActiveThreadState } from "./NoActiveThreadState";
+import { useArchivedThreadShell } from "../lib/archivedThreadsState"; // signalbox: settled tasks
 import {
   type EnvironmentOption,
   resolveEffectiveEnvMode,
@@ -1177,7 +1178,12 @@ export default function ChatView(props: ChatViewProps) {
         ? store.getDraftSession(draftId)
         : null,
   );
-  const serverThread = useThreadShell(routeThreadRef);
+  const liveServerThread = useThreadShell(routeThreadRef);
+  // signalbox: a settled task is archived (#671); the route only opens it for settled tasks.
+  const archivedServerThread = useArchivedThreadShell(
+    routeKind === "server" && liveServerThread === null ? routeThreadRef : null,
+  );
+  const serverThread = liveServerThread ?? archivedServerThread;
   const routeThreadDetailRef = resolveThreadDetailRef(routeThreadRef, {
     shellExists: serverThread !== null,
     waitForShell: draftThread !== null,
