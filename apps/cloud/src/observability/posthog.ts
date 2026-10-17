@@ -1,6 +1,6 @@
 export interface PostHogEnv {
-  readonly SIGNALBOX_POSTHOG_ENABLED?: string;
-  readonly T3CODE_TELEMETRY_ENABLED?: string;
+  readonly SIGNALBOX_POSTHOG_ENABLED?: string | undefined;
+  readonly T3CODE_TELEMETRY_ENABLED?: string | undefined;
 }
 
 /** Keep every cloud PostHog sender off until the EU migration (#358) lands. */

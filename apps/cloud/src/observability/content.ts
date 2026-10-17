@@ -17,6 +17,11 @@ export const CONTENT_KEYS: ReadonlySet<string> = new Set([
   "input",
   "output",
   "arguments",
+  // Effect and evlog serialize failures here, including rejected input.
+  "error",
+  "cause",
+  "message",
+  "stack",
 ]);
 
 export const REDACTED = "[REDACTED]";
@@ -39,18 +44,21 @@ const IDENTITY_KEYS = new Set([
 
 /** Replaces every string under a content-shaped key, in place. */
 export const redactContent = (event: Record<string, unknown>): void => {
-  const seen = new WeakSet<object>();
+  const seen = new WeakMap<object, boolean>();
   const visit = (node: unknown, redacting: boolean): unknown => {
     if (typeof node === "string") return redacting ? REDACTED : node;
-    if (typeof node !== "object" || node === null || seen.has(node)) return node;
-    seen.add(node);
+    if (typeof node !== "object" || node === null) return node;
+    // An alias reached through content must upgrade an earlier metadata visit.
+    if (seen.has(node) && (seen.get(node) || !redacting)) return node;
+    seen.set(node, redacting);
     if (Array.isArray(node)) {
-      for (const [index, entry] of node.entries()) node[index] = visit(entry, redacting);
+      for (const [index, entry] of node.entries())
+        node[index] = visit(entry, seen.get(node) === true);
       return node;
     }
     const record = node as Record<string, unknown>;
     for (const [key, value] of Object.entries(record)) {
-      record[key] = visit(value, redacting || CONTENT_KEYS.has(key));
+      record[key] = visit(value, seen.get(node) === true || CONTENT_KEYS.has(key));
     }
     return node;
   };

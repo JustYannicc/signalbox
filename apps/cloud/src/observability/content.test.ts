@@ -23,7 +23,7 @@ describe("redactContent", () => {
         modelTokens: { input: 1200, output: 340 },
         tool: { arguments: { path: REDACTED, lines: 3 }, output: [REDACTED, REDACTED] },
       },
-      requestLogs: [{ level: "info", message: "turn closed", body: REDACTED }],
+      requestLogs: [{ level: "info", message: REDACTED, body: REDACTED }],
     });
   });
 
@@ -34,5 +34,23 @@ describe("redactContent", () => {
     redactContent(event);
     expect(turn.text).toBe(REDACTED);
     expect(turn.self).toBe(turn);
+  });
+
+  it.each([false, true])("redacts aliases regardless of traversal order (%s)", (contentFirst) => {
+    const shared = { nested: ["canary-private-payload"], count: 3 };
+    const event = contentFirst
+      ? { payload: shared, metadata: shared }
+      : { metadata: shared, payload: shared };
+    redactContent(event);
+    expect(event.metadata.nested).toEqual([REDACTED]);
+    expect(event.payload.count).toBe(3);
+    expect(JSON.stringify(event)).not.toContain("canary-private-payload");
+  });
+
+  it("redacts a cycle reached later through a content key", () => {
+    const event: Record<string, unknown> = { note: "canary-private-cycle" };
+    event.payload = event;
+    redactContent(event);
+    expect(event.note).toBe(REDACTED);
   });
 });
