@@ -23,39 +23,6 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' || github.event_name == 'push' }}
 
 jobs:
-  # Reuse upstream's workspace dependency graph. Main and unknown paths keep
-  # full coverage; fork guards below still run on every change.
-  changes:
-    name: Changes
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    outputs:
-      typecheck: ${{ steps.detect.outputs.typecheck }}
-      build: ${{ steps.detect.outputs.build }}
-      test: ${{ steps.detect.outputs.test }}
-      test_packages: ${{ steps.detect.outputs.test_packages }}
-      test_web: ${{ steps.detect.outputs.test_web }}
-      test_server: ${{ steps.detect.outputs.test_server }}
-      rust: ${{ steps.detect.outputs.rust }}
-      release_smoke: ${{ steps.detect.outputs.release_smoke }}
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v6
-        with:
-          fetch-depth: 2
-          sparse-checkout: |
-            /pnpm-workspace.yaml
-            /.github/scripts/ci-changes.cjs
-            /.github/actions/ci-changes/
-            /*/package.json
-            /*/*/package.json
-            !/.repos/
-          sparse-checkout-cone-mode: false
-
-      - name: Detect affected jobs
-        id: detect
-        uses: ./.github/actions/ci-changes
-
   lint:
     name: Lint
     runs-on: ubuntu-latest
@@ -99,8 +66,8 @@ jobs:
 
   typecheck:
     name: Typecheck
-    needs: changes
-    if: ${{ !cancelled() && needs.changes.outputs.typecheck != 'false' }}
+    needs: cloud_migrations
+    if: ${{ !cancelled() && needs.cloud_migrations.outputs.typecheck != 'false' }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -127,8 +94,8 @@ jobs:
 
   build:
     name: Build
-    needs: changes
-    if: ${{ !cancelled() && needs.changes.outputs.build != 'false' }}
+    needs: cloud_migrations
+    if: ${{ !cancelled() && needs.cloud_migrations.outputs.build != 'false' }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -165,8 +132,8 @@ jobs:
   # package suites at once; at 4, CPU-bound property tests hit Vitest's 5s timeout.
   test:
     name: Test
-    needs: changes
-    if: ${{ !cancelled() && needs.changes.outputs.test != 'false' }}
+    needs: cloud_migrations
+    if: ${{ !cancelled() && needs.cloud_migrations.outputs.test != 'false' }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -206,7 +173,7 @@ jobs:
 
       - name: Test
         env:
-          TEST_PACKAGES: ${{ needs.changes.outputs.test_packages }}
+          TEST_PACKAGES: ${{ needs.cloud_migrations.outputs.test_packages }}
         run: |
           filters=(--filter '!t3' --filter '!@t3tools/monorepo' --filter '!@t3tools/web')
           if [[ -n "$TEST_PACKAGES" ]]; then
@@ -217,8 +184,8 @@ jobs:
 
   test_web:
     name: Test Web
-    needs: changes
-    if: ${{ !cancelled() && needs.changes.outputs.test_web != 'false' }}
+    needs: cloud_migrations
+    if: ${{ !cancelled() && needs.cloud_migrations.outputs.test_web != 'false' }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -244,8 +211,8 @@ jobs:
   # shards spread them over runners, split by recorded duration.
   test_server:
     name: Test Server ${{ matrix.shard }}
-    needs: changes
-    if: ${{ !cancelled() && needs.changes.outputs.test_server != 'false' }}
+    needs: cloud_migrations
+    if: ${{ !cancelled() && needs.cloud_migrations.outputs.test_server != 'false' }}
     runs-on: ubuntu-latest
     timeout-minutes: 25
     strategy:
@@ -276,8 +243,8 @@ jobs:
 
   rust:
     name: Rust
-    needs: changes
-    if: ${{ !cancelled() && needs.changes.outputs.rust != 'false' }}
+    needs: cloud_migrations
+    if: ${{ !cancelled() && needs.cloud_migrations.outputs.rust != 'false' }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -308,8 +275,8 @@ jobs:
 
   release_smoke:
     name: Release Smoke
-    needs: changes
-    if: ${{ !cancelled() && needs.changes.outputs.release_smoke != 'false' }}
+    needs: cloud_migrations
+    if: ${{ !cancelled() && needs.cloud_migrations.outputs.release_smoke != 'false' }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -407,6 +374,14 @@ jobs:
     timeout-minutes: 10
     outputs:
       verdict: ${{ steps.check.outputs.verdict }}
+      typecheck: ${{ steps.detect.outputs.typecheck }}
+      build: ${{ steps.detect.outputs.build }}
+      test: ${{ steps.detect.outputs.test }}
+      test_packages: ${{ steps.detect.outputs.test_packages }}
+      test_web: ${{ steps.detect.outputs.test_web }}
+      test_server: ${{ steps.detect.outputs.test_server }}
+      rust: ${{ steps.detect.outputs.rust }}
+      release_smoke: ${{ steps.detect.outputs.release_smoke }}
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -422,6 +397,12 @@ jobs:
         uses: actions/setup-node@v6
         with:
           node-version-file: package.json
+
+      # Share this checkout rather than consuming another runner for detection.
+      # Main and unknown paths keep full coverage; fork guards always run.
+      - name: Detect affected jobs
+        id: detect
+        uses: ./.github/actions/ci-changes
 
       - name: Check cloud migrations
         id: check
@@ -466,14 +447,13 @@ jobs:
           PERSONAL_DATA_DENYLIST: ${{ secrets.PERSONAL_DATA_DENYLIST }}
         run: node scripts/personal-data/check.ts --upstream FETCH_HEAD
 
-  # One required check for branch protection. Only Changes may authorize a
+  # One required check for branch protection. Only path detection may authorize a
   # skipped job. Failures, cancellations and every other skip still fail.
   check:
     name: Check
     if: ${{ always() }}
     needs:
       [
-        changes,
         lint,
         typecheck,
         build,
@@ -494,7 +474,7 @@ jobs:
           RESULTS: ${{ toJSON(needs) }}
         run: |
           echo "$RESULTS" | jq -r 'to_entries[] | "\(.key): \(.value.result)"'
-          echo "$RESULTS" | jq -e '.changes.outputs as $gates
+          echo "$RESULTS" | jq -e '.cloud_migrations.outputs as $gates
             | all(to_entries[];
                 .value.result == "success"
                 or (.value.result == "skipped" and $gates[.key] == "false"))' > /dev/null

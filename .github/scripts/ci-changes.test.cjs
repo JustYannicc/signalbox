@@ -135,10 +135,10 @@ function accepted(results) {
   return spawnSync("jq", ["-e", gate], { input: JSON.stringify(results) }).status === 0;
 }
 
-test("the required check accepts a skip explicitly authorized by Changes", () => {
+test("the required check accepts a skip explicitly authorized by path detection", () => {
   assert.equal(
     accepted({
-      changes: { result: "success", outputs: { test_server: "false" } },
+      cloud_migrations: { result: "success", outputs: { test_server: "false" } },
       lint: { result: "success" },
       test_server: { result: "skipped" },
     }),
@@ -147,10 +147,10 @@ test("the required check accepts a skip explicitly authorized by Changes", () =>
 });
 
 for (const result of ["failure", "cancelled"]) {
-  test(`the required check rejects ${result} even when Changes says the job was unnecessary`, () => {
+  test(`the required check rejects ${result} even when path detection says the job was unnecessary`, () => {
     assert.equal(
       accepted({
-        changes: { result: "success", outputs: { test_server: "false" } },
+        cloud_migrations: { result: "success", outputs: { test_server: "false" } },
         test_server: { result },
       }),
       false,
@@ -162,7 +162,7 @@ for (const outputs of [{}, { test_server: "true" }]) {
   test(`the required check rejects an unexplained skip: ${JSON.stringify(outputs)}`, () => {
     assert.equal(
       accepted({
-        changes: { result: "success", outputs },
+        cloud_migrations: { result: "success", outputs },
         test_server: { result: "skipped" },
       }),
       false,
@@ -171,10 +171,10 @@ for (const outputs of [{}, { test_server: "true" }]) {
 }
 
 test("the required check rejects a failed selector and skipped fork guards", () => {
-  assert.equal(accepted({ changes: { result: "failure", outputs: {} } }), false);
+  assert.equal(accepted({ cloud_migrations: { result: "failure", outputs: {} } }), false);
   assert.equal(
     accepted({
-      changes: { result: "success", outputs: {} },
+      cloud_migrations: { result: "success", outputs: {} },
       upstream_merge: { result: "skipped" },
     }),
     false,
