@@ -33,7 +33,7 @@ const layerRuntime = Layer.merge(
 ).pipe(
   Layer.provideMerge(Dpop.layer),
   Layer.provideMerge(layerHttpClient),
-  Layer.provideMerge(Tracing.layer.pipe(Layer.provide(layerHttpClient))),
+  Layer.provideMerge(Tracing.layer),
   Layer.provideMerge(Persistence.layer),
 );
 

@@ -1,5 +1,7 @@
 import { describe, expect, it } from "@effect/vitest";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 
 import { layerMemoryStore } from "../testing.ts";
@@ -90,6 +92,124 @@ describe("the person's browser (#574)", () => {
     }).pipe(Effect.provide(signedIn(kernel.api)));
   });
 
+  it.effect(
+    "closes every session before forgetting re-login state and deleting the profile",
+    () => {
+      const kernel = memoryKernel();
+      return Effect.gen(function* () {
+        const browsers = yield* PersonBrowsers.PersonBrowsers;
+        yield* browsers.open({ threadId: "thread-a", requester: OWNER });
+        yield* browsers.open({ threadId: "thread-b", requester: OWNER });
+        const profileName = kernel.profiles[0]!;
+
+        const status = yield* browsers.profileStatus;
+        expect(status).toEqual({ available: true });
+        yield* browsers.clearProfile(() =>
+          Effect.sync(() => void kernel.calls.push("forget-sign-ins")),
+        );
+
+        expect(kernel.browsers.size).toBe(0);
+        expect(kernel.profiles).toEqual([]);
+        expect(kernel.deletedProfiles).toEqual([expect.stringMatching(/^sb-[0-9a-f]{32}$/)]);
+        const forgottenAt = kernel.calls.indexOf("forget-sign-ins");
+        const profileDeletedAt = kernel.calls.findIndex((call) =>
+          call.startsWith("delete-profile:"),
+        );
+        const sessionsDeletedAt = kernel.calls
+          .map((call, index) => (call.startsWith("delete-browser:") ? index : -1))
+          .filter((index) => index >= 0);
+        expect(sessionsDeletedAt).toHaveLength(2);
+        expect(sessionsDeletedAt.every((index) => index < forgottenAt)).toBe(true);
+        expect(forgottenAt).toBeLessThan(profileDeletedAt);
+
+        expect(yield* browsers.open({ threadId: "thread-c", requester: OWNER })).toMatchObject({
+          _tag: "ready",
+        });
+        expect(kernel.profiles).toEqual([profileName]);
+      }).pipe(Effect.provide(signedIn(kernel.api)));
+    },
+  );
+
+  it.effect("leaves the profile and login records when any session cannot close", () => {
+    const kernel = memoryKernel();
+    kernel.refuseDeleteWith(
+      new KernelApiError({
+        operation: "deleteBrowser",
+        status: 503,
+        code: null,
+        message: "Kernel is unavailable.",
+      }),
+    );
+    return Effect.gen(function* () {
+      const browsers = yield* PersonBrowsers.PersonBrowsers;
+      yield* browsers.open({ threadId: "thread-a", requester: OWNER });
+      let forgot = false;
+      const error = yield* Effect.flip(
+        browsers.clearProfile(() => Effect.sync(() => void (forgot = true))),
+      );
+
+      expect(error._tag).toBe("KernelApiError");
+      expect(forgot).toBe(false);
+      expect(kernel.deletedProfiles).toEqual([]);
+      expect(kernel.profiles).toHaveLength(1);
+    }).pipe(Effect.provide(signedIn(kernel.api)));
+  });
+
+  it.effect("serializes profile deletion with a Managed Auth sign-in", () => {
+    const kernel = memoryKernel();
+    return Effect.gen(function* () {
+      const browsers = yield* PersonBrowsers.PersonBrowsers;
+      const signInStarted = yield* Deferred.make<string>();
+      const finishSignIn = yield* Deferred.make<void>();
+      const signIn = yield* Effect.forkChild(
+        browsers.withSignIn({
+          threadId: null,
+          run: (profileName) =>
+            Effect.gen(function* () {
+              yield* Deferred.succeed(signInStarted, profileName);
+              yield* Deferred.await(finishSignIn);
+              return profileName;
+            }),
+        }),
+      );
+      const profileName = yield* Deferred.await(signInStarted);
+      const clear = yield* Effect.forkChild(browsers.clearProfile(() => Effect.void));
+      yield* Effect.yieldNow;
+      expect(kernel.deletedProfiles).toEqual([]);
+
+      yield* Deferred.succeed(finishSignIn, undefined);
+      expect(yield* Fiber.join(signIn)).toBe(profileName);
+      yield* Fiber.join(clear);
+      expect(kernel.deletedProfiles).toEqual([profileName]);
+    }).pipe(Effect.provide(signedIn(kernel.api)));
+  });
+
+  it.effect(
+    "finishes deleting the profile when the client disconnects during sign-in cleanup",
+    () => {
+      const kernel = memoryKernel();
+      return Effect.gen(function* () {
+        const browsers = yield* PersonBrowsers.PersonBrowsers;
+        yield* browsers.open({ threadId: "thread-a", requester: OWNER });
+        const clearing = yield* Deferred.make<void>();
+        const finishCleanup = yield* Deferred.make<void>();
+        const clear = yield* Effect.forkChild(
+          browsers.clearProfile(() =>
+            Deferred.succeed(clearing, undefined).pipe(
+              Effect.andThen(Deferred.await(finishCleanup)),
+            ),
+          ),
+        );
+        yield* Deferred.await(clearing);
+        const disconnect = yield* Effect.forkChild(Fiber.interrupt(clear));
+        yield* Deferred.succeed(finishCleanup, undefined);
+        yield* Fiber.join(disconnect);
+        expect(kernel.profiles).toEqual([]);
+        expect(kernel.deletedProfiles).toHaveLength(1);
+      }).pipe(Effect.provide(signedIn(kernel.api)));
+    },
+  );
+
   it.effect("refuses another person's turn without asking Kernel", () => {
     const kernel = memoryKernel();
     return Effect.gen(function* () {
@@ -115,15 +235,19 @@ describe("the person's browser (#574)", () => {
     );
     return Effect.gen(function* () {
       const browsers = yield* PersonBrowsers.PersonBrowsers;
+      expect(yield* browsers.profileStatus).toEqual({ available: true });
       expect(yield* browsers.open({ threadId: "thread-a", requester: OWNER })).toEqual({
         _tag: "refused",
         message:
           "Kernel couldn't open a browser: Concurrent browser limit reached (org_limit_exceeded, HTTP 429).",
       });
       const without = yield* PersonBrowsers.PersonBrowsers.pipe(Effect.provide(signedIn(null)));
+      expect(yield* without.profileStatus).toEqual({ available: false });
       expect(yield* without.open({ threadId: "thread-a", requester: OWNER })).toEqual({
         _tag: "unconfigured",
       });
+      const clearFailure = yield* Effect.flip(without.clearProfile(() => Effect.void));
+      expect(clearFailure._tag).toBe("PersonBrowserUnavailableError");
     }).pipe(Effect.provide(signedIn(kernel.api)));
   });
 });

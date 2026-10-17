@@ -6,9 +6,111 @@ import {
   clearBrowserProfileData,
   importFailureReason,
 } from "./IntegrationsSettings";
+import { resolveBrowserSettingsAvailability } from "./browserSettings.logic";
 
 const environmentId = "environment-a" as EnvironmentId;
 const secondEnvironmentId = "environment-b" as EnvironmentId;
+const thirdEnvironmentId = "environment-c" as EnvironmentId;
+
+describe("browserSettingsAvailability", () => {
+  it("enables browser controls only on connected servers with preview permission", () => {
+    const result = resolveBrowserSettingsAvailability({
+      isElectron: false,
+      environmentsReady: true,
+      environments: [
+        {
+          environmentId,
+          connectionPhase: "connected",
+          configKnown: true,
+          serverBrowser: true,
+          devices: false,
+          previewPermission: "granted",
+        },
+        {
+          environmentId: secondEnvironmentId,
+          connectionPhase: "offline",
+          configKnown: true,
+          serverBrowser: true,
+          devices: false,
+          previewPermission: "granted",
+        },
+        {
+          environmentId: thirdEnvironmentId,
+          connectionPhase: "connected",
+          configKnown: true,
+          serverBrowser: true,
+          devices: false,
+          previewPermission: "denied",
+        },
+      ],
+    });
+
+    expect(result.serverBrowserEnvironmentIds).toEqual([environmentId]);
+    expect(result.serverBrowserClearEnvironmentIds).toEqual([
+      environmentId,
+      secondEnvironmentId,
+      thirdEnvironmentId,
+    ]);
+    expect(result.browserProfiles).toBe(true);
+    expect(result.viewport).toBe(true);
+    expect(result.desktopViewDefaults).toBe(false);
+    expect(result.recording).toBe(false);
+  });
+
+  it("keeps an unresolved session permission in checking state", () => {
+    const result = resolveBrowserSettingsAvailability({
+      isElectron: false,
+      environmentsReady: true,
+      environments: [
+        {
+          environmentId,
+          connectionPhase: "connected",
+          configKnown: true,
+          serverBrowser: true,
+          devices: false,
+          previewPermission: "unresolved",
+        },
+      ],
+    });
+
+    expect(result.serverBrowserEnvironmentIds).toEqual([]);
+    expect(result.serverBrowserClearEnvironmentIds).toEqual([environmentId]);
+    expect(result.checkingBrowserSettings).toBe(true);
+    expect(result.checkingAppLinkTarget).toBe(true);
+  });
+
+  it("does not show floating-preview checking when a device is already available", () => {
+    const result = resolveBrowserSettingsAvailability({
+      isElectron: false,
+      environmentsReady: true,
+      environments: [
+        {
+          environmentId,
+          connectionPhase: "connected",
+          configKnown: true,
+          serverBrowser: false,
+          devices: true,
+          previewPermission: "denied",
+        },
+        {
+          environmentId: secondEnvironmentId,
+          connectionPhase: "connecting",
+          configKnown: false,
+          serverBrowser: false,
+          devices: false,
+          previewPermission: "unresolved",
+        },
+      ],
+    });
+
+    expect(result.browserProfiles).toBe(false);
+    expect(result.viewport).toBe(false);
+    expect(result.appLinkTarget).toBe(false);
+    expect(result.floatingPreview).toBe(true);
+    expect(result.checkingBrowserSettings).toBe(true);
+    expect(result.checkingFloatingPreview).toBe(false);
+  });
+});
 
 describe("clearBrowserProfileData", () => {
   it("waits for cookie and cache cleanup", async () => {
@@ -91,6 +193,51 @@ describe("clearBrowserProfileData with server browsers", () => {
       }),
     ).rejects.toBe(failure);
     expect(bridge.clearCookies).toHaveBeenCalledWith(environmentId, "profile-a");
+  });
+
+  it("attempts every configured server target and fails if one is disconnected or unauthorized", async () => {
+    const targets = resolveBrowserSettingsAvailability({
+      isElectron: false,
+      environmentsReady: true,
+      environments: [
+        {
+          environmentId,
+          connectionPhase: "connected",
+          configKnown: true,
+          serverBrowser: true,
+          devices: false,
+          previewPermission: "granted",
+        },
+        {
+          environmentId: secondEnvironmentId,
+          connectionPhase: "offline",
+          configKnown: true,
+          serverBrowser: true,
+          devices: false,
+          previewPermission: "granted",
+        },
+        {
+          environmentId: thirdEnvironmentId,
+          connectionPhase: "connected",
+          configKnown: true,
+          serverBrowser: true,
+          devices: false,
+          previewPermission: "denied",
+        },
+      ],
+    }).serverBrowserClearEnvironmentIds;
+    const calls: Array<EnvironmentId> = [];
+
+    await expect(
+      clearBrowserProfileData(null, [], "profile-a", {
+        environmentIds: targets,
+        clear: async (target) => {
+          calls.push(target);
+          if (target !== environmentId) throw new Error("target cannot be reached");
+        },
+      }),
+    ).rejects.toThrow("target cannot be reached");
+    expect(calls.toSorted()).toEqual(targets.toSorted());
   });
 });
 
