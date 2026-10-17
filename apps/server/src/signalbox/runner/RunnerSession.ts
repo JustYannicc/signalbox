@@ -234,6 +234,7 @@ export const makeRunnerSession = Effect.fn("makeRunnerSession")(function* (
         build: input.build,
         drains: true,
         steers: true,
+        pulls: true,
         // A started run missing here went with an earlier process on this machine.
         takenRunIds: yield* turns.taken,
       });

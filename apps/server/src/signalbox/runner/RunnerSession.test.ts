@@ -37,6 +37,7 @@ const makeFakeThread = Effect.gen(function* () {
   const committed = yield* Ref.make<ReadonlyArray<RunnerItem>>([]);
   const acked = yield* Ref.make(0);
   const hellos = yield* Ref.make<ReadonlyArray<number>>([]);
+  const helloPulls = yield* Deferred.make<boolean>();
   /** The runs each `hello` said its process holds. */
   const helloRuns = yield* Ref.make<ReadonlyArray<ReadonlyArray<RunId> | undefined>>([]);
   const dropAfterCommit = yield* Ref.make(false);
@@ -58,6 +59,7 @@ const makeFakeThread = Effect.gen(function* () {
           if (!(yield* Ref.get(open))) return yield* closed;
           switch (message.type) {
             case "hello":
+              yield* Deferred.succeed(helloPulls, message.pulls === true);
               yield* Ref.update(hellos, (all) => [...all, message.lastAckedSequence]);
               yield* Ref.update(helloRuns, (all) => [...all, message.takenRunIds]);
               yield* reply({
@@ -91,7 +93,7 @@ const makeFakeThread = Effect.gen(function* () {
       inbox === null ? Effect.void : Effect.asVoid(Queue.offer(inbox, message)),
     );
 
-  return { transport, committed, acked, hellos, helloRuns, dropAfterCommit, toCurrent };
+  return { transport, committed, acked, hellos, helloPulls, helloRuns, dropAfterCommit, toCurrent };
 });
 
 /** A harness whose reports the test writes by hand. */
@@ -169,6 +171,7 @@ describe("RunnerSession", () => {
         const thread = yield* makeFakeThread;
         const turns = yield* makeFakeTurns;
         yield* sessionOf(thread, turns);
+        expect(yield* Deferred.await(thread.helloPulls)).toBe(true);
         yield* settle(
           Effect.map(Ref.get(thread.hellos), (all) => all.length === 1),
           "hello",

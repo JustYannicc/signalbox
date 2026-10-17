@@ -34,7 +34,7 @@ export class ThreadPulls extends Context.Service<
     readonly wait: (actor: Actor, id: string) => Effect.Effect<PullResult, PullError>;
     /** Called under the engine lock, before the reporting batch is acknowledged. */
     readonly reported: (generation: number, result: PullResult) => Effect.Effect<void>;
-    readonly revoke: (id: string) => Effect.Effect<void>;
+    readonly revoke: (id: string, reason?: string) => Effect.Effect<void>;
     readonly reservePublication: (
       actor: Actor,
       driveId: string,
@@ -224,7 +224,10 @@ const make = Effect.gen(function* () {
       }
     });
 
-  const revoke: ThreadPulls["Service"]["revoke"] = (id) =>
+  const revoke: ThreadPulls["Service"]["revoke"] = (
+    id,
+    reason = "You no longer have access to change this drive.",
+  ) =>
     Effect.gen(function* () {
       const pending = yield* Effect.orDie(state.byId(id));
       if (pending === null || pending.phase === "completed") return;
@@ -234,7 +237,7 @@ const make = Effect.gen(function* () {
         head: pending.operation.expectedThread,
         wip: pending.operation.expectedWip,
         outcome: "refused",
-        reason: "You no longer have access to change this drive.",
+        reason,
         hasWorkingTreeChanges:
           pending.operation.expectedWip !== null &&
           pending.operation.expectedWip !== pending.operation.expectedThread,

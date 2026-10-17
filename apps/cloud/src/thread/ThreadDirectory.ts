@@ -20,6 +20,7 @@ import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
+import type { ModelAuthorization } from "../models/ModelProtocol.ts";
 import type { ModelGatewayRecord } from "../modelGateway/modelGatewayRecord.ts";
 import type { ThreadContextTurns, ThreadMatch } from "../context/threadContext.ts";
 import type {
@@ -33,11 +34,7 @@ import { browsingWire } from "./browsing/browsingWire.ts";
 import { ThreadObjectError } from "./ThreadAccess.ts";
 import type { PullInput } from "./threadWire.ts";
 import type { PreviewLinkResult } from "./preview/PreviewGateway.ts";
-import type {
-  DriveAuthorization,
-  ModelAuthorization,
-  RemoteAuthorization,
-} from "./runner/ThreadRunner.ts";
+import type { DriveAuthorization, RemoteAuthorization } from "./ThreadAuthorization.ts";
 import {
   type Actor,
   ThreadCommandRejectedError,
@@ -102,6 +99,8 @@ export interface ThreadObjectApi {
   readonly subscribe: (actor: Actor, input: unknown) => Promise<ReadableStream<Uint8Array> | null>;
   /** The thread's current summary, when `actor` owns it. */
   readonly summary: (actor: Actor) => Promise<unknown>;
+  /** Reads a linked pull request now, when `actor` can see the thread and link. */
+  readonly requestPullRequestSync: (actor: Actor, key: string) => Promise<ThreadObjectReply<void>>;
   /**
    * A turn's diagnostic record as JSON, by run or trace id, or the list of
    * recent turns for null. Null when the actor cannot see the thread or no
@@ -212,6 +211,11 @@ export interface ThreadHandle {
     ThreadNotFoundError | ThreadObjectError
   >;
   readonly summary: (actor: Actor) => Effect.Effect<ThreadSummary | null, ThreadObjectError>;
+  /** Asks GitHub to refresh one current link; invisible threads and missing links are not found. */
+  readonly requestPullRequestSync: (
+    actor: Actor,
+    key: string,
+  ) => Effect.Effect<void, ThreadNotFoundError | ThreadCommandRejectedError | ThreadObjectError>;
   /** See `ThreadObjectApi.diagnostics`; the record is passed through as JSON text. */
   readonly diagnostics: (
     actor: Actor,
@@ -400,6 +404,10 @@ export function handleFor(api: ThreadObjectApi): ThreadHandle {
         (line) => wire.batch.decode(line),
       ),
     diagnostics: (actor, key) => call("diagnostics", () => api.diagnostics(actor, key)),
+    requestPullRequestSync: (actor, key) =>
+      call("requestPullRequestSync", () => api.requestPullRequestSync(actor, key)).pipe(
+        Effect.flatMap(fromReply),
+      ),
     previews: (actor) =>
       lines(
         "previews",

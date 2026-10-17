@@ -55,7 +55,7 @@ export class PullReports extends Context.Service<
   PullReports,
   {
     readonly reported: (generation: number, result: PullResult) => Effect.Effect<void>;
-    readonly revoke: (id: string) => Effect.Effect<void>;
+    readonly revoke: (id: string, reason?: string) => Effect.Effect<void>;
   }
 >()("@signalbox/cloud/thread/PullReports") {}
 

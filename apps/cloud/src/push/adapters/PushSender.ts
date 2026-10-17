@@ -112,55 +112,68 @@ const make = Effect.gen(function* () {
     (cause: unknown) =>
       new PushSendError({ service, status, reason, cause });
 
-  const sendApns = Effect.fn("PushSender.apns")(function* (
-    key: ApnsKey,
-    device: PushDevice,
-    message: PushMessage,
-  ) {
-    if (device.bundleId === null) {
-      return { _tag: "skipped", reason: "the app didn't say its bundle id" } as const;
-    }
-    const jwt = yield* providerToken(key).pipe(Effect.mapError(failure("apns", "signing")));
-    const host =
-      device.apsEnvironment === "production"
-        ? "https://api.push.apple.com"
-        : "https://api.sandbox.push.apple.com";
-    const response = yield* HttpClientRequest.post(`${host}/3/device/${device.pushToken}`).pipe(
-      HttpClientRequest.setHeaders({
-        authorization: `bearer ${jwt}`,
-        "apns-push-type": "alert",
-        "apns-priority": "10",
-        "apns-topic": device.bundleId,
-        "apns-collapse-id": message.group.slice(0, MAX_COLLAPSE_ID),
-      }),
-      HttpClientRequest.bodyJson({
-        aps: {
-          alert: { title: message.title, body: message.body },
-          sound: "default",
-          // Notification Center stacks a thread's pushes together.
-          "thread-id": `${message.environmentId}/${message.group}`,
-        },
-        environmentId: message.environmentId,
-        ...(message.threadId === null ? {} : { threadId: message.threadId }),
-        deepLink: message.deepLink,
-      }),
-      Effect.flatMap(client.execute),
-      Effect.timeout(SEND_TIMEOUT),
-      Effect.mapError(failure("apns", "request")),
-    );
-    if (response.status >= 200 && response.status < 300) return { _tag: "delivered" } as const;
-    const text = yield* response.text.pipe(Effect.orElseSucceed(() => ""));
-    const reason = Option.match(decodeReason(text), {
-      onNone: () => text || "unknown",
-      onSome: (body) => body.reason,
+  const deadline = (service: "apns" | "fcm", operation: "request" | "authorize") =>
+    Effect.timeoutOrElse({
+      duration: SEND_TIMEOUT,
+      orElse: () =>
+        Effect.fail(new PushSendError({ service, status: null, reason: `${operation} timed out` })),
     });
-    if (response.status === 410 || DEAD_APNS_REASONS.has(reason)) {
-      return { _tag: "gone", reason } as const;
-    }
-    // Expired or rejected: the next push signs a fresh one.
-    if (response.status === 403) apnsTokens.delete(`${key.teamId}:${key.keyId}`);
-    return yield* new PushSendError({ service: "apns", status: response.status, reason });
-  });
+
+  const sendApns = Effect.fn("PushSender.apns")(
+    function* (key: ApnsKey, device: PushDevice, message: PushMessage) {
+      if (device.bundleId === null) {
+        return { _tag: "skipped", reason: "the app didn't say its bundle id" } as const;
+      }
+      const jwt = yield* providerToken(key).pipe(Effect.mapError(failure("apns", "signing")));
+      const host =
+        device.apsEnvironment === "production"
+          ? "https://api.push.apple.com"
+          : "https://api.sandbox.push.apple.com";
+      const response = yield* HttpClientRequest.post(`${host}/3/device/${device.pushToken}`).pipe(
+        HttpClientRequest.setHeaders({
+          authorization: `bearer ${jwt}`,
+          "apns-push-type": "alert",
+          "apns-priority": "10",
+          "apns-topic": device.bundleId,
+          "apns-collapse-id": message.group.slice(0, MAX_COLLAPSE_ID),
+        }),
+        HttpClientRequest.bodyJson({
+          aps: {
+            alert: { title: message.title, body: message.body },
+            sound: "default",
+            // Notification Center stacks a thread's pushes together.
+            "thread-id": `${message.environmentId}/${message.group}`,
+          },
+          environmentId: message.environmentId,
+          ...(message.threadId === null ? {} : { threadId: message.threadId }),
+          deepLink: message.deepLink,
+        }),
+        Effect.flatMap(client.execute),
+        Effect.mapError(failure("apns", "request")),
+      );
+      if (response.status >= 200 && response.status < 300) return { _tag: "delivered" } as const;
+      const text = yield* response.text.pipe(Effect.orElseSucceed(() => ""));
+      const deadReason = decodeReason(text).pipe(
+        Option.map((body) => body.reason),
+        Option.filter((reason) => DEAD_APNS_REASONS.has(reason)),
+      );
+      if (response.status === 410 || Option.isSome(deadReason)) {
+        return {
+          _tag: "gone",
+          reason: Option.getOrElse(deadReason, () => "Unregistered"),
+        } as const;
+      }
+      // Expired or rejected: the next push signs a fresh one.
+      if (response.status === 403) apnsTokens.delete(`${key.teamId}:${key.keyId}`);
+      return yield* new PushSendError({
+        service: "apns",
+        status: response.status,
+        reason: "rejected",
+        cause: text,
+      });
+    },
+    deadline("apns", "request"),
+  );
 
   const authorizeFcm = (account: ServiceAccount) =>
     Effect.gen(function* () {
@@ -186,13 +199,13 @@ const make = Effect.gen(function* () {
             }),
           ),
         )
-        .pipe(Effect.timeout(SEND_TIMEOUT), Effect.mapError(failure("fcm", "authorize")));
+        .pipe(Effect.mapError(failure("fcm", "authorize")));
       return yield* response.json.pipe(
         Effect.flatMap(decodeAccessToken),
         Effect.map((body) => body.access_token),
         Effect.mapError(failure("fcm", "authorize", response.status)),
       );
-    });
+    }).pipe(deadline("fcm", "authorize"));
   const fcmAuthorization =
     credentials.fcm === null
       ? null
@@ -205,44 +218,50 @@ const make = Effect.gen(function* () {
     message: PushMessage,
   ) {
     const token = yield* fcmToken.pipe(Effect.tapError(() => invalidateFcmToken));
-    // A notification message: Android shows it without the app running, and a
-    // tap hands `data` to the app like an iOS push.
-    const response = yield* HttpClientRequest.post(
-      `https://fcm.googleapis.com/v1/projects/${encodeURIComponent(projectId)}/messages:send`,
-    ).pipe(
-      HttpClientRequest.bearerToken(token),
-      HttpClientRequest.bodyJson({
-        message: {
-          token: device.pushToken,
-          notification: { title: message.title, body: message.body },
-          data: {
-            environmentId: message.environmentId,
-            ...(message.threadId === null ? {} : { threadId: message.threadId }),
-            deepLink: message.deepLink,
+    return yield* Effect.gen(function* () {
+      // A notification message: Android shows it without the app running, and a
+      // tap hands `data` to the app like an iOS push.
+      const response = yield* HttpClientRequest.post(
+        `https://fcm.googleapis.com/v1/projects/${encodeURIComponent(projectId)}/messages:send`,
+      ).pipe(
+        HttpClientRequest.bearerToken(token),
+        HttpClientRequest.bodyJson({
+          message: {
+            token: device.pushToken,
+            notification: { title: message.title, body: message.body },
+            data: {
+              environmentId: message.environmentId,
+              ...(message.threadId === null ? {} : { threadId: message.threadId }),
+              deepLink: message.deepLink,
+            },
+            android: {
+              priority: "HIGH",
+              // The high-importance channel the app creates when it asks for permission.
+              notification: { tag: message.group, channel_id: "agent-alerts" },
+              ...(device.bundleId === null ? {} : { restricted_package_name: device.bundleId }),
+            },
           },
-          android: {
-            priority: "HIGH",
-            // The high-importance channel the app creates when it asks for permission.
-            notification: { tag: message.group, channel_id: "agent-alerts" },
-            ...(device.bundleId === null ? {} : { restricted_package_name: device.bundleId }),
-          },
-        },
-      }),
-      Effect.flatMap(client.execute),
-      Effect.timeout(SEND_TIMEOUT),
-      Effect.mapError(failure("fcm", "request")),
-    );
-    if (response.status >= 200 && response.status < 300) return { _tag: "delivered" } as const;
-    if (response.status === 401) yield* invalidateFcmToken;
-    const text = yield* response.text.pipe(Effect.orElseSucceed(() => ""));
-    const code = Option.flatMap(decodeFcmError(text), (body) =>
-      Option.fromNullishOr(body.error.details?.find((detail) => detail.errorCode)?.errorCode),
-    );
-    // Only these mean the token is dead; a 404 alone can be a wrong project.
-    if (Option.isSome(code) && DEAD_FCM_CODES.has(code.value)) {
-      return { _tag: "gone", reason: code.value } as const;
-    }
-    return yield* new PushSendError({ service: "fcm", status: response.status, reason: text });
+        }),
+        Effect.flatMap(client.execute),
+        Effect.mapError(failure("fcm", "request")),
+      );
+      if (response.status >= 200 && response.status < 300) return { _tag: "delivered" } as const;
+      if (response.status === 401) yield* invalidateFcmToken;
+      const text = yield* response.text.pipe(Effect.orElseSucceed(() => ""));
+      const code = Option.flatMap(decodeFcmError(text), (body) =>
+        Option.fromNullishOr(body.error.details?.find((detail) => detail.errorCode)?.errorCode),
+      );
+      // Only these mean the token is dead; a 404 alone can be a wrong project.
+      if (Option.isSome(code) && DEAD_FCM_CODES.has(code.value)) {
+        return { _tag: "gone", reason: code.value } as const;
+      }
+      return yield* new PushSendError({
+        service: "fcm",
+        status: response.status,
+        reason: "rejected",
+        cause: text,
+      });
+    }).pipe(deadline("fcm", "request"));
   });
 
   return PushSender.of({

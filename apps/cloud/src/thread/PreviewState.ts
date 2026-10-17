@@ -21,7 +21,7 @@ export class PreviewState extends Context.Service<
       services: ReadonlyArray<PreviewService>,
     ) => Effect.Effect<void, SqlError>;
   }
->()("@signalbox/cloud/thread/preview/PreviewState") {}
+>()("@signalbox/cloud/thread/PreviewState") {}
 
 const servicesJson = Schema.fromJsonString(Schema.Array(PreviewService));
 const encodeServices = Schema.encodeSync(servicesJson);

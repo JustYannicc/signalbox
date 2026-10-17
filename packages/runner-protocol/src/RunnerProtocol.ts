@@ -70,6 +70,8 @@ import { SessionAccess } from "./SessionProtocol.ts";
  */
 
 export const RUNNER_PROTOCOL_VERSION = 6;
+/** Version 5 remains readable while existing machines finish their image rollout. */
+export const MIN_RUNNER_PROTOCOL_VERSION = 5;
 
 export const RUNNER_HEARTBEAT_PING = "ping";
 export const RUNNER_HEARTBEAT_PONG = "pong";
@@ -156,6 +158,20 @@ export type MachineUsage = typeof MachineUsage.Type;
 export const RunnerLogLevel = Schema.Literals(["info", "warning", "error"]);
 export type RunnerLogLevel = typeof RunnerLogLevel.Type;
 
+/** One dependency root's setup state, keyed to its checkout-relative path. */
+export const DependencyProgress = Schema.Struct({
+  root: Schema.String.check(
+    Schema.isPattern(/^(?![\\/])(?![A-Za-z]:)(?!.*(?:^|[\\/])\.\.(?:[\\/]|$)).*$/),
+  ),
+  status: Schema.Literals(["installing", "installed", "reused", "failed"]),
+  message: Schema.String,
+  durationMs: Schema.optional(NonNegativeInt),
+  reason: Schema.optional(
+    Schema.Literals(["new", "lockfile", "toolchain", "unfinished", "adopted"]),
+  ),
+});
+export type DependencyProgress = typeof DependencyProgress.Type;
+
 /** What the Runner is built from, so a turn's diagnostics name the exact software it ran on. */
 export const RunnerBuild = Schema.Struct({
   /** The image's content digest (`…@sha256:…`), when the machine knows it. */
@@ -201,6 +217,12 @@ export const RunnerItem = Schema.Union([
     kind: Schema.Literal("drive.notice"),
     runId: RunId,
     message: Schema.String,
+  }),
+  /** Dependency preparation is progress until it fails; keep each root in one stable row. */
+  Schema.Struct({
+    kind: Schema.Literal("dependencies.progress"),
+    runId: RunId,
+    ...DependencyProgress.fields,
   }),
   /**
    * The harness's session could not be saved, so the Runner stopped the turn
@@ -295,6 +317,8 @@ export const RunnerHello = Schema.Struct({
   takenRunIds: Schema.optional(Schema.Array(RunId)),
   /** The Runner takes `steer` (#562). Absent: an older one, which closes on frames it can't read. */
   steers: Schema.optional(Schema.Boolean),
+  /** The Runner takes `git.pull`; protocol 6 images shipped before Pull may lack it. */
+  pulls: Schema.optional(Schema.Boolean),
 });
 export type RunnerHello = typeof RunnerHello.Type;
 

@@ -11,8 +11,10 @@ import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import * as NodeChildProcess from "node:child_process";
 import * as NodeCrypto from "node:crypto";
 import * as NodeEvents from "node:events";
+import * as NodeFS from "node:fs";
 import * as NodeHttp from "node:http";
 
+import { cliArchiveFileName, cliArchiveStem } from "./build-cli-archive.ts";
 import { buildNpmLauncher } from "./build-npm-launcher.ts";
 
 const VERSION = "1.2.3";
@@ -49,9 +51,13 @@ const run = Effect.fn("test.run")(function* (
 const serveFakeRelease = Effect.fn("test.serveFakeRelease")(function* (root: string) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const key = `${yield* HostProcess.Platform}-${yield* HostProcess.Architecture}`;
-  const stem = `signalbox-${VERSION}-${key}`;
-  const archiveName = `${stem}.tar.gz`;
+  const platform = yield* HostProcess.Platform;
+  const architecture = yield* HostProcess.Architecture;
+  assert.ok(platform === "darwin" || platform === "linux");
+  assert.ok(architecture === "arm64" || architecture === "x64");
+  const target = platform === "darwin" ? "mac" : "linux";
+  const stem = cliArchiveStem(VERSION, target, architecture);
+  const archiveName = cliArchiveFileName(VERSION, target, architecture);
   yield* fs.makeDirectory(path.join(root, "release", stem, "node_modules/native"), {
     recursive: true,
   });
@@ -143,7 +149,11 @@ it.layer(NodeServices.layer)("build-npm-launcher", (it) => {
           cwd: root,
           env,
         });
-        assert.equal(first.stdout.trim(), `stub serve a b launcher=${launcher}`, first.stderr);
+        assert.equal(
+          first.stdout.trim(),
+          `stub serve a b launcher=${NodeFS.realpathSync(launcher)}`,
+          first.stderr,
+        );
         assert.equal(first.exitCode, 7);
         // The same layout the install scripts and `t3 update` use.
         const versionDir = path.join(home, "runtime/versions", VERSION);

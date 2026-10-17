@@ -1,4 +1,5 @@
 import type { PullResult } from "@signalbox/runner-protocol/PullProtocol";
+import type { RunnerHello } from "@signalbox/runner-protocol/RunnerProtocol";
 import { describe, expect, it } from "@effect/vitest";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
@@ -93,6 +94,42 @@ const idle = (
   });
 
 describe("durable thread pull", () => {
+  it.effect.each([5, 6])(
+    "refuses Pull on a protocol %i runner without the capability",
+    (protocolVersion) =>
+      withFixture((f) =>
+        withObject(
+          f.database,
+          (engine, runner, context) =>
+            Effect.gen(function* () {
+              const machine = yield* idle(engine, runner);
+              const legacyHello: RunnerHello = {
+                ...hello(machine.generation, machine.token),
+                protocolVersion,
+              };
+              Reflect.deleteProperty(legacyHello, "pulls");
+              expect((yield* runner.hello(legacyHello))._tag).toBe("welcome");
+              const pulls = Context.get(context, ThreadPulls.ThreadPulls);
+              yield* pulls.begin(owner, {
+                driveId: DRIVE,
+                operationId: "old-runner",
+                target: f.target,
+                branch: worktree.branch,
+              });
+              expect((yield* runner.work).pull).toBeNull();
+              expect(yield* pulls.wait(owner, "old-runner")).toMatchObject({
+                outcome: "refused",
+                reason: "This thread's machine needs an update before it can pull.",
+              });
+              expect(yield* Context.get(context, PullState.PullState).pending).toBeNull();
+              yield* send(engine, 2, "continue normally");
+              expect((yield* runner.work).turn).not.toBeNull();
+            }),
+          { drives: true, driveDirectory: f.directory },
+        ),
+      ),
+  );
+
   it.effect(
     "serializes pull admission with publication and recovers a reservation whose caller went away",
     () =>
