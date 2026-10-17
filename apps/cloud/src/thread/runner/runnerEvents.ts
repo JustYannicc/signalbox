@@ -1,8 +1,7 @@
 import type { RunnerItem } from "@signalbox/runner-protocol/RunnerProtocol";
 import {
   type OrchestrationV2DomainEvent,
-  type OrchestrationV2AppThread,
-  OrchestrationV2AppThreadJson,
+  OrchestrationV2AppThread,
   OrchestrationV2DomainEventJson,
   type OrchestrationV2Run,
   type OrchestrationV2ThreadProjection,
@@ -69,7 +68,8 @@ export const payloadThreadId = (event: Json, payload: Json) =>
   stringField(payload, "threadId") ??
   stringField(event, "threadId");
 
-const decodeAppThread = Schema.decodeUnknownExit(OrchestrationV2AppThreadJson);
+// The Runner encodes explicit undefined fields as null; decode with its codec.
+const decodeAppThread = Schema.decodeUnknownExit(Schema.toCodecJson(OrchestrationV2AppThread));
 
 /** The provider's native child identity, as emitted before its history rows. */
 export function appThreadCreated(
