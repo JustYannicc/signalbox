@@ -48,6 +48,78 @@ const setup = Effect.gen(function* () {
 });
 
 describe("cloud archived shell", () => {
+  it.effect("ignores active updates and removes newly archived rows only once", () =>
+    Effect.gen(function* () {
+      const { cloud, threads, shell } = yield* setup;
+      const activeId = ThreadId.make("never-archived");
+      yield* threads.launchThread(actor, {
+        commandId: CommandId.make("launch-active"),
+        threadId: activeId,
+        projectId: Environment.SCRATCH_PROJECT_ID,
+        title: "Active work",
+        modelSelection: scriptedModelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        workspaceStrategy: { type: "root" },
+      });
+      yield* cloud.settle;
+      const stream = yield* shell.subscribeArchived;
+      const watching = yield* stream.pipe(
+        Stream.takeUntil(
+          (item) => item.kind === "thread.updated" && item.thread.title === "Archived renamed",
+        ),
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+      yield* threads.dispatchCommand(actor, {
+        type: "thread.metadata.update",
+        commandId: CommandId.make("rename-active"),
+        threadId: activeId,
+        title: "Active renamed",
+      });
+      yield* cloud.settle;
+      yield* threads.dispatchCommand(actor, {
+        type: "thread.archive",
+        commandId: CommandId.make("archive-active"),
+        threadId: activeId,
+      });
+      yield* cloud.settle;
+      yield* threads.dispatchCommand(actor, {
+        type: "thread.unarchive",
+        commandId: CommandId.make("reopen-active"),
+        threadId: activeId,
+      });
+      yield* cloud.settle;
+      yield* threads.dispatchCommand(actor, {
+        type: "thread.metadata.update",
+        commandId: CommandId.make("rename-reopened"),
+        threadId: activeId,
+        title: "Reopened renamed",
+      });
+      yield* cloud.settle;
+      yield* threads.dispatchCommand(actor, {
+        type: "thread.metadata.update",
+        commandId: CommandId.make("rename-archived"),
+        threadId,
+        title: "Archived renamed",
+      });
+      yield* cloud.settle;
+      const items = yield* Fiber.join(watching);
+      expect(items.map((item) => item.kind)).toEqual([
+        "snapshot",
+        "thread.updated",
+        "thread.removed",
+        "thread.updated",
+      ]);
+      expect(items[1]).toMatchObject({ kind: "thread.updated", thread: { id: activeId } });
+      expect(items[2]).toMatchObject({ kind: "thread.removed", threadId: activeId });
+      expect(items[3]).toMatchObject({
+        kind: "thread.updated",
+        thread: { id: threadId, title: "Archived renamed" },
+      });
+    }).pipe(Effect.scoped),
+  );
+
   it.effect("drops archived rows and projects when current context access is revoked", () =>
     Effect.gen(function* () {
       const cloud = makeMemoryCloud();
