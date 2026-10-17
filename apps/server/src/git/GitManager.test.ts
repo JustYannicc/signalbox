@@ -1004,8 +1004,10 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
       };
       const branchRechecked = yield* Deferred.make<string>();
       const branchCached = yield* Deferred.make<string>();
+      const localPublishedBeforeRemote = yield* Deferred.make<void>();
       const cacheWatcherReady = yield* Deferred.make<void>();
       let remoteStatusReturned = false;
+      let refreshCompleted = false;
       const { manager, ghCalls } = yield* makeManager({
         ghScenario: {
           prListGate,
@@ -1083,6 +1085,9 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
             if (event._tag === "localUpdated" && event.local.refName === "feature/next-status") {
               return Deferred.succeed(branchCached, event.local.refName ?? "").pipe(Effect.asVoid);
             }
+            if (event._tag === "localUpdated" && event.local.hasWorkingTreeChanges) {
+              return Deferred.succeed(localPublishedBeforeRemote, undefined).pipe(Effect.asVoid);
+            }
             return Effect.void;
           }),
           Stream.drop(1),
@@ -1095,18 +1100,20 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
         );
       yield* Deferred.await(cacheWatcherReady);
 
-      const refresh = yield* broadcaster
-        .refreshStatus(repoDir, { waitForRemote: false })
-        .pipe(Effect.forkScoped);
-      yield* Deferred.await(prListGate.started);
-      const localResult = yield* Fiber.join(refresh).pipe(
-        Effect.timeoutOption(Duration.seconds(5)),
+      const fs = yield* FileSystem.FileSystem;
+      yield* fs.writeFileString(NodePath.join(repoDir, "README.md"), "changed before refresh\n");
+      const refresh = yield* broadcaster.refreshStatus(repoDir).pipe(
+        Effect.tap(() =>
+          Effect.sync(() => {
+            refreshCompleted = true;
+          }),
+        ),
         Effect.forkScoped,
       );
-      yield* TestClock.adjust(Duration.seconds(5));
-      const completedBeforeGh = yield* Fiber.join(localResult);
-      expect(Option.isSome(completedBeforeGh)).toBe(true);
-      expect(Option.getOrThrow(completedBeforeGh).refName).toBe("feature/delayed-status");
+      yield* Deferred.await(localPublishedBeforeRemote);
+      expect(refreshCompleted).toBe(false);
+      yield* Deferred.await(prListGate.started);
+      expect(refreshCompleted).toBe(false);
       expect(ghCalls.some((call) => call.startsWith("pr list "))).toBe(true);
 
       yield* runGit(repoDir, ["checkout", "-b", "feature/next-status"]);
@@ -1114,6 +1121,10 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
       expect(currentBranch.stdout.trim()).toBe("feature/next-status");
       yield* Deferred.succeed(prListGate.release, undefined);
       yield* Deferred.await(prListGate.returned);
+      const refreshed = yield* Fiber.join(refresh);
+      expect(refreshCompleted).toBe(true);
+      expect(refreshed.refName).toBe("feature/next-status");
+      expect(refreshed.pr).toBeNull();
       expect(yield* Deferred.await(branchRechecked)).toBe("feature/next-status");
       expect(yield* Deferred.await(branchCached)).toBe("feature/next-status");
       expect(Option.isSome(yield* Fiber.join(cacheWatcher))).toBe(true);

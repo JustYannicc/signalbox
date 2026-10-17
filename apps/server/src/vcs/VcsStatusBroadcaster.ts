@@ -129,9 +129,13 @@ interface CachedValue<T> {
   readonly value: T;
 }
 
+interface CachedRemoteStatus extends CachedValue<VcsStatusRemoteResult | null> {
+  readonly branch: string | null;
+}
+
 interface CachedVcsStatus {
   readonly local: CachedValue<VcsStatusLocalResult> | null;
-  readonly remote: CachedValue<VcsStatusRemoteResult | null> | null;
+  readonly remote: CachedRemoteStatus | null;
 }
 
 interface ActiveRemotePoller {
@@ -192,10 +196,7 @@ export class VcsStatusBroadcaster extends Context.Service<
     readonly refreshLocalStatus: (
       cwd: string,
     ) => Effect.Effect<VcsStatusLocalResult, GitManagerServiceError>;
-    readonly refreshStatus: (
-      cwd: string,
-      options?: { readonly waitForRemote?: boolean },
-    ) => Effect.Effect<VcsStatusResult, GitManagerServiceError>;
+    readonly refreshStatus: (cwd: string) => Effect.Effect<VcsStatusResult, GitManagerServiceError>;
     readonly refreshPullRequestStatus: (
       cwd: string,
     ) => Effect.Effect<VcsStatusRemoteResult | null, GitManagerServiceError>;
@@ -244,6 +245,25 @@ export const make = Effect.gen(function* () {
     return yield* Ref.get(cacheRef).pipe(Effect.map((cache) => cache.get(cwd) ?? null));
   });
 
+  const readRemoteStatus = Effect.fn("VcsStatusBroadcaster.readRemoteStatus")(function* (
+    cwd: string,
+    options?: Parameters<GitWorkflowService.GitWorkflowService["Service"]["remoteStatus"]>[1],
+    forceRefresh = options?.refreshUpstream !== false,
+  ) {
+    const branchBefore = yield* workflow.currentBranch(cwd);
+    const cached = yield* getCachedStatus(cwd);
+    if (forceRefresh || (cached?.remote != null && cached.remote.branch !== branchBefore)) {
+      yield* workflow.invalidateRemoteStatus(cwd);
+    }
+    const remote = yield* workflow.remoteStatus({ cwd }, options);
+    const branch = yield* workflow.currentBranch(cwd);
+    return {
+      branch,
+      branchChanged: branchBefore !== branch,
+      remote: branchBefore === branch ? remote : null,
+    } as const;
+  });
+
   const updateCachedLocalStatus = Effect.fn("VcsStatusBroadcaster.updateCachedLocalStatus")(
     function* (cwd: string, local: VcsStatusLocalResult, options?: { publish?: boolean }) {
       const nextLocal = {
@@ -252,18 +272,7 @@ export const make = Effect.gen(function* () {
       } satisfies CachedValue<VcsStatusLocalResult>;
       const [shouldPublish, nextRemote] = yield* Ref.modify(cacheRef, (cache) => {
         const previous = cache.get(cwd) ?? { local: null, remote: null };
-        const previousRemote = previous.remote?.value ?? null;
-        const remoteValue =
-          previousRemote?.pr && previousRemote.pr.headRef !== local.refName
-            ? { ...previousRemote, pr: null }
-            : previousRemote;
-        const remote =
-          previous.remote && remoteValue !== previousRemote
-            ? {
-                fingerprint: fingerprintStatusPart(remoteValue),
-                value: remoteValue,
-              }
-            : previous.remote;
+        const remote = previous.remote?.branch === local.refName ? previous.remote : null;
         const nextCache = new Map(cache);
         nextCache.set(cwd, {
           ...previous,
@@ -274,7 +283,9 @@ export const make = Effect.gen(function* () {
           [
             {
               local: previous.local?.fingerprint !== nextLocal.fingerprint,
-              remote: previous.remote?.fingerprint !== remote?.fingerprint,
+              remote:
+                previous.remote?.fingerprint !== remote?.fingerprint ||
+                previous.remote?.branch !== remote?.branch,
             },
             remote?.value ?? null,
           ] as const,
@@ -307,25 +318,33 @@ export const make = Effect.gen(function* () {
   );
 
   const updateCachedRemoteStatus = Effect.fn("VcsStatusBroadcaster.updateCachedRemoteStatus")(
-    function* (cwd: string, remote: VcsStatusRemoteResult | null, options?: { publish?: boolean }) {
+    function* (
+      cwd: string,
+      remote: VcsStatusRemoteResult | null,
+      branch: string | null,
+      options?: { publish?: boolean },
+    ) {
       const [shouldPublish, remoteValue] = yield* Ref.modify(cacheRef, (cache) => {
         const previous = cache.get(cwd) ?? { local: null, remote: null };
-        const local = previous.local?.value;
-        const currentRemote =
-          local && remote?.pr && remote.pr.headRef !== local.refName
-            ? { ...remote, pr: null }
-            : remote;
+        const remoteMatchesLocal =
+          previous.local === null || previous.local.value.refName === branch;
+        const currentRemote = remoteMatchesLocal ? remote : null;
         const nextRemote = {
           fingerprint: fingerprintStatusPart(currentRemote),
           value: currentRemote,
-        } satisfies CachedValue<VcsStatusRemoteResult | null>;
+          branch,
+        } satisfies CachedRemoteStatus;
         const nextCache = new Map(cache);
         nextCache.set(cwd, {
           ...previous,
           remote: nextRemote,
         });
         return [
-          [previous.remote?.fingerprint !== nextRemote.fingerprint, currentRemote] as const,
+          [
+            previous.remote?.fingerprint !== nextRemote.fingerprint ||
+              previous.remote?.branch !== nextRemote.branch,
+            currentRemote,
+          ] as const,
           nextCache,
         ] as const;
       });
@@ -348,10 +367,10 @@ export const make = Effect.gen(function* () {
     cwd: string,
     local: VcsStatusLocalResult,
     remote: VcsStatusRemoteResult | null,
+    remoteBranch: string | null,
     options?: { publish?: boolean },
   ) {
-    const currentRemote =
-      remote?.pr && remote.pr.headRef !== local.refName ? { ...remote, pr: null } : remote;
+    const currentRemote = remoteBranch === local.refName ? remote : null;
     const nextLocal = {
       fingerprint: fingerprintStatusPart(local),
       value: local,
@@ -359,7 +378,8 @@ export const make = Effect.gen(function* () {
     const nextRemote = {
       fingerprint: fingerprintStatusPart(currentRemote),
       value: currentRemote,
-    } satisfies CachedValue<VcsStatusRemoteResult | null>;
+      branch: remoteBranch,
+    } satisfies CachedRemoteStatus;
     const shouldPublish = yield* Ref.modify(cacheRef, (cache) => {
       const previous = cache.get(cwd) ?? { local: null, remote: null };
       const nextCache = new Map(cache);
@@ -369,7 +389,8 @@ export const make = Effect.gen(function* () {
       });
       return [
         previous.local?.fingerprint !== nextLocal.fingerprint ||
-          previous.remote?.fingerprint !== nextRemote.fingerprint,
+          previous.remote?.fingerprint !== nextRemote.fingerprint ||
+          previous.remote?.branch !== nextRemote.branch,
         nextCache,
       ] as const;
     });
@@ -419,14 +440,12 @@ export const make = Effect.gen(function* () {
       cwd,
       Effect.gen(function* () {
         const latest = yield* getCachedStatus(cwd);
-        const [local, remote] = yield* Effect.all(
-          [
-            latest?.local ? Effect.succeed(latest.local.value) : workflow.localStatus({ cwd }),
-            latest?.remote ? Effect.succeed(latest.remote.value) : workflow.remoteStatus({ cwd }),
-          ],
-          { concurrency: "unbounded" },
-        );
-        return yield* updateCachedStatus(cwd, local, remote);
+        let local = latest?.local?.value ?? (yield* workflow.localStatus({ cwd }));
+        const remoteRead = yield* readRemoteStatus(cwd, undefined, false);
+        if (remoteRead.branchChanged || local.refName !== remoteRead.branch) {
+          local = yield* refreshLocalStatusCore(cwd);
+        }
+        return yield* updateCachedStatus(cwd, local, remoteRead.remote, remoteRead.branch);
       }),
     );
   });
@@ -471,11 +490,16 @@ export const make = Effect.gen(function* () {
 
       yield* workflow.pullCurrentBranch(cwd);
       yield* workflow.invalidateStatus(cwd);
-      const [refreshedLocal, refreshedRemote] = yield* Effect.all(
-        [workflow.localStatus({ cwd }), workflow.remoteStatus({ cwd }, { refreshUpstream: false })],
-        { concurrency: "unbounded" },
-      );
-      yield* updateCachedStatus(cwd, refreshedLocal, refreshedRemote, { publish: true });
+      const branchBefore = yield* workflow.currentBranch(cwd);
+      const refreshedLocal = yield* workflow.localStatus({ cwd });
+      yield* updateCachedLocalStatus(cwd, refreshedLocal, { publish: true });
+      const refreshedRemote = yield* workflow.remoteStatus({ cwd }, { refreshUpstream: false });
+      const branch = yield* workflow.currentBranch(cwd);
+      if (branchBefore !== branch || refreshedLocal.refName !== branch) {
+        const currentLocal = yield* refreshLocalStatusCore(cwd);
+        return { local: currentLocal, remote: null };
+      }
+      yield* updateCachedRemoteStatus(cwd, refreshedRemote, branch, { publish: true });
       return { local: refreshedLocal, remote: refreshedRemote };
     }).pipe(
       Effect.catch(() =>
@@ -494,17 +518,20 @@ export const make = Effect.gen(function* () {
     return yield* withRemoteWriteLock(
       cwd,
       Effect.gen(function* () {
-        if (options?.refreshUpstream !== false) {
-          yield* workflow.invalidateRemoteStatus(cwd);
+        const previous = yield* getCachedStatus(cwd);
+        const remoteRead = yield* readRemoteStatus(cwd, options);
+        if (remoteRead.branchChanged) {
+          yield* refreshLocalStatusCore(cwd);
+          return null;
         }
-        const previousRemote = (yield* getCachedStatus(cwd))?.remote?.value;
-        const remote = yield* workflow.remoteStatus({ cwd }, options);
-        if (remote?.pr) {
-          yield* workflow.invalidateLocalStatus(cwd);
-          const local = yield* workflow.localStatus({ cwd });
-          yield* updateCachedLocalStatus(cwd, local, { publish: true });
-          if (remote.pr.headRef !== local.refName) return null;
+        const branch = remoteRead.branch;
+        const previousRemote = previous?.remote?.branch === branch ? previous.remote.value : null;
+        let local = (yield* getCachedStatus(cwd))?.local?.value;
+        if (local && local.refName !== branch) {
+          local = yield* refreshLocalStatusCore(cwd);
         }
+        if (local && local.refName !== branch) return null;
+        const remote = remoteRead.remote;
         const pulled = yield* maybeAutoPull(cwd, remote, options?.policyCwds ?? [cwd]);
         if (pulled !== null) return pulled.remote;
         if (
@@ -514,50 +541,62 @@ export const make = Effect.gen(function* () {
             previousRemote.behindCount !== remote.behindCount ||
             previousRemote.aheadOfDefaultCount !== remote.aheadOfDefaultCount)
         ) {
-          yield* refreshLocalStatusCore(cwd);
+          local = yield* refreshLocalStatusCore(cwd);
+          if (local.refName !== branch) return null;
+          if ((yield* workflow.currentBranch(cwd)) !== branch) {
+            yield* refreshLocalStatusCore(cwd);
+            return null;
+          }
         }
-        return yield* updateCachedRemoteStatus(cwd, remote, { publish: true });
+        return yield* updateCachedRemoteStatus(cwd, remote, branch, { publish: true });
       }),
     );
   });
 
   const refreshStatus: VcsStatusBroadcaster["Service"]["refreshStatus"] = Effect.fn(
     "VcsStatusBroadcaster.refreshStatus",
-  )(function* (rawCwd, options) {
+  )(function* (rawCwd) {
     const cwd = yield* withFileSystem(normalizeCwd(rawCwd));
-    if (options?.waitForRemote === false) {
-      yield* workflow.invalidateStatus(cwd);
-      const local = yield* workflow.localStatus({ cwd });
-      yield* updateCachedLocalStatus(cwd, local, { publish: true });
-      const cached = yield* getCachedStatus(cwd);
-      const remote = cached?.remote?.value ?? null;
-
-      yield* refreshRemoteStatus(cwd, { policyCwds: [rawCwd] }).pipe(
-        Effect.catchCause((cause) =>
-          Effect.logWarning("VCS remote status refresh failed", {
-            cwdLength: cwd.length,
-            ...remoteRefreshFailureDiagnostics(cause),
-          }),
-        ),
-        Effect.forkIn(broadcasterScope),
-      );
-
-      return mergeGitStatusParts(local, remote);
-    }
-
-    // invalidateStatus (not the two partial invalidations) so an explicit
-    // refresh also bypasses GitManager's slow PR-lookup cache.
+    // Full invalidation bumps GitManager's pull request lookup epoch as well as its status caches.
+    yield* workflow.invalidateStatus(cwd);
+    let local = yield* workflow.localStatus({ cwd });
+    local = yield* updateCachedLocalStatus(cwd, local, { publish: true });
     return yield* withRemoteWriteLock(
       cwd,
       Effect.gen(function* () {
+        // Repeat the full invalidation under the remote write lock so another
+        // refresh cannot repopulate the PR cache between invalidation and read.
         yield* workflow.invalidateStatus(cwd);
-        // Local after remote: the fetch can move the base that the Changes totals compare with.
-        const remote = yield* workflow.remoteStatus({ cwd });
+        const remoteRead = yield* readRemoteStatus(cwd, undefined, false);
+        if (remoteRead.branchChanged) {
+          local = yield* refreshLocalStatusCore(cwd);
+          return mergeGitStatusParts(local, null);
+        }
+
         yield* workflow.invalidateLocalStatus(cwd);
-        const local = yield* workflow.localStatus({ cwd });
-        const pulled = yield* maybeAutoPull(cwd, remote, [rawCwd]);
+        local = yield* workflow.localStatus({ cwd });
+        local = yield* updateCachedLocalStatus(cwd, local, { publish: true });
+        if (local.refName !== remoteRead.branch) {
+          return mergeGitStatusParts(local, null);
+        }
+
+        const pulled = yield* maybeAutoPull(cwd, remoteRead.remote, [rawCwd]);
         if (pulled !== null) return mergeGitStatusParts(pulled.local, pulled.remote);
-        return yield* updateCachedStatus(cwd, local, remote, { publish: true });
+
+        const branchAfterLookup = yield* workflow.currentBranch(cwd);
+        if (branchAfterLookup !== remoteRead.branch) {
+          local = yield* refreshLocalStatusCore(cwd);
+          return mergeGitStatusParts(local, null);
+        }
+
+        const currentLocal = (yield* getCachedStatus(cwd))?.local?.value ?? local;
+        if (currentLocal.refName !== remoteRead.branch) {
+          return mergeGitStatusParts(currentLocal, null);
+        }
+        const remote = yield* updateCachedRemoteStatus(cwd, remoteRead.remote, remoteRead.branch, {
+          publish: true,
+        });
+        return mergeGitStatusParts(currentLocal, remote);
       }),
     );
   });
@@ -569,7 +608,7 @@ export const make = Effect.gen(function* () {
         cwd,
         Effect.gen(function* () {
           const cached = yield* getCachedStatus(cwd);
-          if (cached?.remote?.value == null) return null;
+          if (!cached?.local) return null;
           const poller = (yield* SynchronizedRef.get(pollersRef)).get(cwd);
           const demandCwds = poller ? [...(yield* Ref.get(poller.demandCwds)).keys()] : [rawCwd];
           const shouldRefresh = (yield* Effect.forEach(
@@ -579,19 +618,23 @@ export const make = Effect.gen(function* () {
             { concurrency: "unbounded" },
           )).some(Boolean);
           if (!shouldRefresh) return null;
-          // Resolve the checked-out branch again. A cached PR can belong to
-          // the previous branch after an agent checks out another branch.
-          const remote = yield* workflow.remoteStatus(
-            { cwd },
+          const remoteRead = yield* readRemoteStatus(
+            cwd,
             { refreshUpstream: false, refreshMissingPullRequest: true },
+            cached.remote === null,
           );
-          if (remote?.pr) {
-            yield* workflow.invalidateLocalStatus(cwd);
-            const local = yield* workflow.localStatus({ cwd });
-            yield* updateCachedLocalStatus(cwd, local, { publish: true });
-            if (remote.pr.headRef !== local.refName) return null;
+          if (remoteRead.branchChanged) {
+            yield* refreshLocalStatusCore(cwd);
+            return null;
           }
-          return yield* updateCachedRemoteStatus(cwd, remote, { publish: true });
+          const local = (yield* getCachedStatus(cwd))?.local?.value;
+          if (local && local.refName !== remoteRead.branch) {
+            const refreshedLocal = yield* refreshLocalStatusCore(cwd);
+            if (refreshedLocal.refName !== remoteRead.branch) return null;
+          }
+          return yield* updateCachedRemoteStatus(cwd, remoteRead.remote, remoteRead.branch, {
+            publish: true,
+          });
         }),
       );
     });
