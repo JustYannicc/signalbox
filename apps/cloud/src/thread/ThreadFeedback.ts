@@ -17,6 +17,9 @@ import * as ThreadEngine from "./ThreadEngine.ts";
 import * as ThreadStore from "./ThreadStore.ts";
 import { runnerInstanceFor } from "./providerCatalog.ts";
 
+// Only the local transport can prove no frame was sent. Runner failures cannot release a receipt.
+export type FeedbackTransportResult = FeedbackOutcome | { readonly _tag: "not_sent" };
+
 export class FeedbackTransport extends Context.Service<
   FeedbackTransport,
   {
@@ -24,7 +27,7 @@ export class FeedbackTransport extends Context.Service<
       generation: number,
       connection: number,
       request: FeedbackRequest,
-    ) => Effect.Effect<FeedbackOutcome>;
+    ) => Effect.Effect<FeedbackTransportResult>;
   }
 >()("@signalbox/cloud/thread/ThreadFeedback/FeedbackTransport") {}
 
@@ -106,6 +109,12 @@ const make = Effect.gen(function* () {
         },
         ...(input.reason === undefined ? {} : { reason: input.reason }),
       });
+      if (outcome._tag === "not_sent") {
+        yield* Effect.orDie(sql`
+          DELETE FROM provider_feedback_receipts WHERE request_id = ${requestId} AND outcome IS NULL
+        `);
+        return { _tag: "failed", failure: "runner_unavailable" } as const;
+      }
       yield* Effect.orDie(sql`
         UPDATE provider_feedback_receipts SET outcome = ${encodeOutcome(outcome)}
         WHERE request_id = ${requestId}

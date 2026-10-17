@@ -5,7 +5,7 @@ import type {
 import { threadFrame } from "@signalbox/runner-protocol/RunnerProtocol";
 import * as Effect from "effect/Effect";
 
-import type { FeedbackTransport } from "./ThreadFeedback.ts";
+import type { FeedbackTransport, FeedbackTransportResult } from "./ThreadFeedback.ts";
 
 interface FeedbackAttachment {
   readonly generation: number;
@@ -30,7 +30,7 @@ export class FeedbackSockets {
   }
 
   readonly upload: FeedbackTransport["Service"]["upload"] = (generation, connection, request) =>
-    Effect.callback<FeedbackOutcome>((resume) => {
+    Effect.callback<FeedbackTransportResult>((resume) => {
       const socket = this.ctx.getWebSockets("runner").find((candidate) => {
         const attachment = candidate.deserializeAttachment() as FeedbackAttachment | null;
         return (
@@ -40,7 +40,7 @@ export class FeedbackSockets {
         );
       });
       if (socket === undefined) {
-        resume(Effect.succeed({ _tag: "failed", failure: "runner_unavailable" }));
+        resume(Effect.succeed({ _tag: "not_sent" }));
         return;
       }
       this.pending.set(request.requestId, {

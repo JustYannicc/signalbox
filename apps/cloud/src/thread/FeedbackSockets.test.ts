@@ -66,15 +66,34 @@ describe("feedback sockets", () => {
         outcome: { _tag: "uploaded", feedbackId: "right" },
       });
       expect(yield* Fiber.join(waiting)).toEqual({ _tag: "uploaded", feedbackId: "right" });
-      expect(yield* sockets.upload(2, 1, request)).toEqual({
-        _tag: "failed",
-        failure: "runner_unavailable",
-      });
+      expect(yield* sockets.upload(2, 1, request)).toEqual({ _tag: "not_sent" });
       right.socket.serializeAttachment({ generation: 1, connection: 1 });
-      expect(yield* sockets.upload(1, 1, request)).toEqual({
-        _tag: "failed",
-        failure: "runner_unavailable",
-      });
+      expect(yield* sockets.upload(1, 1, request)).toEqual({ _tag: "not_sent" });
+    }),
+  );
+
+  it.effect("does not send a frame until the matching socket advertises feedback", () =>
+    Effect.gen(function* () {
+      const socket = fakeSocket();
+      const sockets = socketsFor([socket.socket]);
+      const request: FeedbackRequest = {
+        type: "feedback.upload",
+        requestId: "capability",
+        providerThread,
+      };
+      const attachments = [
+        null,
+        { generation: 1, connection: 1 },
+        { generation: 1, connection: 1, feedback: false },
+        { generation: 2, connection: 1, feedback: true },
+        { generation: 1, connection: 2, feedback: true },
+        { generation: 1, connection: null, feedback: true },
+      ];
+      for (const attachment of attachments) {
+        socket.socket.serializeAttachment(attachment);
+        expect(yield* sockets.upload(1, 1, request)).toEqual({ _tag: "not_sent" });
+        expect(socket.sent).toEqual([]);
+      }
     }),
   );
 
