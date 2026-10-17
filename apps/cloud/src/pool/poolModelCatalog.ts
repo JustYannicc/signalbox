@@ -4,7 +4,7 @@ import * as Effect from "effect/Effect";
 import { ModelCatalog } from "../models/ModelCatalog.ts";
 import type { PoolEntry } from "./poolViews.ts";
 
-/** One catalog query for server.config, the picker and thread capabilities. Pools own availability. */
+/** Thread capabilities use the same provider view as the picker. Pools own availability. */
 export const makePoolModelCatalog = Effect.gen(function* () {
   const catalog = yield* ModelCatalog;
   return (state: ReadonlyArray<PoolEntry>) =>
