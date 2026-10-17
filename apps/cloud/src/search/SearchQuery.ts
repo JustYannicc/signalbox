@@ -11,7 +11,7 @@ import * as Hex from "effect/encoding/Hex";
 import * as Schema from "effect/Schema";
 import * as Option from "effect/Option";
 import * as ThreadDirectory from "../thread/ThreadDirectory.ts";
-import { type SearchActor } from "./SearchAuthority.ts";
+import type { SearchActor } from "./ThreadSearch.ts";
 import * as SearchAuthority from "./SearchAuthority.ts";
 import * as SearchIndex from "./SearchIndex.ts";
 import * as SearchCursors from "./SearchCursors.ts";

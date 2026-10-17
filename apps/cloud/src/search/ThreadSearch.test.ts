@@ -14,9 +14,10 @@ import * as SearchBackfill from "./SearchBackfill.ts";
 import * as SearchCursors from "./SearchCursors.ts";
 import * as SearchIndex from "./SearchIndex.ts";
 import * as ThreadSearch from "./ThreadSearch.ts";
+import * as ThreadSearchLive from "./ThreadSearchLive.ts";
 import type { SearchCursor } from "./searchCursor.ts";
 
-const actor: SearchAuthority.SearchActor = { userId: "user-1", contextIds: [PERSONAL_CONTEXT_ID] };
+const actor: ThreadSearch.SearchActor = { userId: "user-1", contextIds: [PERSONAL_CONTEXT_ID] };
 const projectId = ProjectId.make("project-1");
 const home = { ownerId: actor.userId, projectId };
 const secondHome = { ownerId: "owner-2", projectId: ProjectId.make("project-2") };
@@ -24,7 +25,7 @@ const memoryDirectory = makeMemoryCloud().threadDirectory;
 
 type SearchIndexService = SearchIndex.SearchIndex["Service"];
 type SearchQuery = Parameters<SearchIndexService["query"]>[0];
-type SearchActor = SearchAuthority.SearchActor;
+type SearchActor = ThreadSearch.SearchActor;
 type FindInput = Parameters<ThreadDirectory.ThreadHandle["find"]>[1];
 type FindEffect = ReturnType<ThreadDirectory.ThreadHandle["find"]>;
 type SearchRecord = NonNullable<
@@ -36,7 +37,7 @@ const scopeForHomes = (
     readonly home: SearchIndex.SearchHome;
     readonly threadIds: ReadonlyArray<string>;
   }>,
-  currentActor: SearchAuthority.SearchActor = actor,
+  currentActor: ThreadSearch.SearchActor = actor,
   revision = 1,
   grants: ReadonlyArray<SearchIndex.SearchHome> = homes.map(({ home: currentHome }) => currentHome),
 ): SearchAuthority.SearchScope => ({ actor: currentActor, revision, homes, grants });
@@ -44,7 +45,7 @@ const scopeForHomes = (
 const scope = (
   threadIds: ReadonlyArray<string>,
   revision = 1,
-  currentActor: SearchAuthority.SearchActor = actor,
+  currentActor: ThreadSearch.SearchActor = actor,
   grants: ReadonlyArray<SearchIndex.SearchHome> = threadIds.length === 0 ? [] : [home],
 ): SearchAuthority.SearchScope =>
   scopeForHomes(
@@ -299,7 +300,7 @@ const makeHarness = (options: {
             step: Effect.void,
           }),
         );
-  const layer = ThreadSearch.layer.pipe(Layer.provide(dependencies));
+  const layer = ThreadSearchLive.layer.pipe(Layer.provide(dependencies));
 
   return {
     layer,

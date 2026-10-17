@@ -10,7 +10,7 @@ vi.mock("cloudflare:workers", () => ({
     }
   },
 }));
-vi.mock("./adapters/SqliteSearchIndex.ts", () => ({
+vi.mock("./SqliteSearchIndex.ts", () => ({
   layer: () => {
     throw new Error("index initialization failed");
   },

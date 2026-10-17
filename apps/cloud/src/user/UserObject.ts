@@ -39,11 +39,12 @@ import * as Platform from "../platform.ts";
 import * as PoolDirectory from "../pool/PoolDirectory.ts";
 import * as UserPreviewSetup from "../previewSetup/UserPreviewSetup.ts";
 import * as PushNotifier from "../push/PushNotifier.ts";
-import * as ThreadSearch from "../search/ThreadSearch.ts";
+import * as ThreadSearchLive from "../search/ThreadSearchLive.ts";
 import * as SearchCursors from "../search/SearchCursors.ts";
 import { searchSettings } from "../search/searchSettings.ts";
 import * as SearchAuthority from "../search/SearchAuthority.ts";
 import * as SearchBackfill from "../search/SearchBackfill.ts";
+import * as SearchBackfillLive from "../search/SearchBackfillLive.ts";
 import * as CloudflareSearchIndex from "../search/CloudflareSearchIndex.ts";
 import * as CloudThreadService from "../thread/CloudThreadService.ts";
 import * as ModelManifest from "../thread/ModelManifest.ts";
@@ -197,7 +198,7 @@ const layerAlarm = (storage: DurableObjectStorage) =>
 // The whole storage, not just `storage.sql`: migrations run in transactions.
 const makeRuntime = (storage: DurableObjectStorage, env: UserObjectEnv) => {
   const drives = layerDrives(env);
-  const searchBackfill = SearchBackfill.layer.pipe(
+  const searchBackfill = SearchBackfillLive.layer.pipe(
     Layer.provide(
       Layer.succeed(SearchBackfill.SearchBackfillAlarm, {
         by: (at) => Effect.promise(() => armBy(storage, at)),
@@ -236,7 +237,7 @@ const makeRuntime = (storage: DurableObjectStorage, env: UserObjectEnv) => {
               UserShell.layer.pipe(Layer.provide(searchBackfill)),
               UserThreadStatus.layer,
               CloudThreadService.layer,
-              ThreadSearch.layer.pipe(
+              ThreadSearchLive.layer.pipe(
                 Layer.provide(Layer.mergeAll(SearchAuthority.layerUser, SearchCursors.layerSql)),
                 Layer.provideMerge(searchBackfill),
               ),

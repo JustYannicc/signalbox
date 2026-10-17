@@ -26,6 +26,7 @@ import * as UserContexts from "../user/UserContexts.ts";
 import * as UserShell from "../user/UserShell.ts";
 import * as UserStore from "../user/UserStore.ts";
 import * as SearchBackfill from "./SearchBackfill.ts";
+import * as SearchBackfillLive from "./SearchBackfillLive.ts";
 import * as SearchIndex from "./SearchIndex.ts";
 
 const userId = "user_1";
@@ -196,7 +197,7 @@ const makeHarness = (options: {
       Layer.effect(UserContexts.UserContexts, UserContexts.UserContexts),
       Layer.succeed(SqlClient.SqlClient, observedSql),
     ).pipe(Layer.provide(userServices));
-    const layer = SearchBackfill.layer.pipe(
+    const layer = SearchBackfillLive.layer.pipe(
       Layer.provide(
         Layer.mergeAll(
           storage,

@@ -12,7 +12,7 @@ import type { SearchHome } from "./SearchIndex.ts";
 import { searchHomeForThread } from "./searchHome.ts";
 import { SearchIndexError } from "./SearchIndex.ts";
 
-export type SearchActor = Actor & { readonly projectIds?: ReadonlyArray<string> };
+import type { SearchActor } from "./ThreadSearch.ts";
 
 export interface SearchScope {
   readonly actor: Actor;

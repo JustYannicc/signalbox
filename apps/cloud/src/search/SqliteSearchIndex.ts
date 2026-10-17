@@ -5,11 +5,11 @@ import * as Schema from "effect/Schema";
 import * as Migrator from "effect/sql/Migrator";
 import * as SqlClient from "effect/sql/SqlClient";
 
-import * as Migrations from "../../storage/migrations.ts";
-import * as SearchIndex from "../SearchIndex.ts";
-import * as SqliteSearchParts from "./SqliteSearchParts.ts";
-import * as SqliteSearchQueries from "./SqliteSearchQueries.ts";
-import * as SqliteSearchSnapshots from "./SqliteSearchSnapshots.ts";
+import * as Migrations from "../storage/migrations.ts";
+import * as SearchIndex from "./SearchIndex.ts";
+import * as SqliteSearchParts from "./adapters/SqliteSearchParts.ts";
+import * as SqliteSearchQueries from "./adapters/SqliteSearchQueries.ts";
+import * as SqliteSearchSnapshots from "./adapters/SqliteSearchSnapshots.ts";
 
 const encodeStrings = Schema.encodeSync(Schema.fromJsonString(Schema.Array(Schema.String)));
 const isSearchIndexError = Schema.is(SearchIndex.SearchIndexError);

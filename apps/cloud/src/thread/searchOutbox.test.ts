@@ -9,7 +9,7 @@ import * as SqlClient from "effect/sql/SqlClient";
 import type * as Scope from "effect/Scope";
 
 import * as SearchIndex from "../search/SearchIndex.ts";
-import * as SqliteSearchIndex from "../search/adapters/SqliteSearchIndex.ts";
+import * as SqliteSearchIndex from "../search/SqliteSearchIndex.ts";
 import * as ThreadEngine from "./ThreadEngine.ts";
 import * as ThreadStore from "./ThreadStore.ts";
 import { deliverPendingSearch } from "./searchOutbox.ts";

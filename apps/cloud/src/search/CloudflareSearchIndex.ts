@@ -6,7 +6,7 @@ import * as Layer from "effect/Layer";
 import * as ManagedRuntime from "effect/ManagedRuntime";
 import * as Schema from "effect/Schema";
 
-import * as SqliteSearchIndex from "./adapters/SqliteSearchIndex.ts";
+import * as SqliteSearchIndex from "./SqliteSearchIndex.ts";
 import * as SearchIndex from "./SearchIndex.ts";
 import { searchSettings, SearchSettings, type SearchSettingsEnv } from "./searchSettings.ts";
 

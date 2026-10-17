@@ -10,7 +10,7 @@ import * as Layer from "effect/Layer";
 import * as SqlClient from "effect/sql/SqlClient";
 
 import * as SearchIndex from "../SearchIndex.ts";
-import * as SqliteSearchIndex from "./SqliteSearchIndex.ts";
+import * as SqliteSearchIndex from "../SqliteSearchIndex.ts";
 
 const home = { ownerId: "owner-1", projectId: "project-1" };
 const databaseDirectories: Array<string> = [];
