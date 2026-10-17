@@ -4,6 +4,15 @@ import { describe, expect, it } from "vite-plus/test";
 import { CLOUD_UNSERVED, cloudServes, cloudUnserved, coverageKeyMatches } from "./cloudCoverage.ts";
 
 describe("cloud API coverage", () => {
+  it("serves queued edits and reorders through the cloud decider", () => {
+    for (const name of ["threads.queuedRun.edit", "threads.queuedRun.reorder"]) {
+      const operation = operations.find((candidate) => candidate.name === name);
+      if (operation === undefined) throw new Error(`Missing ${name}`);
+      expect(cloudServes(operation)).toBe(true);
+      expect(cloudUnserved(operation)).toBeUndefined();
+    }
+  });
+
   it("serves analytics preferences instead of leaving Settings with unknown RPCs", () => {
     const analytics = operations.filter((operation) => operation.name.startsWith("analytics."));
     expect(analytics.map((operation) => operation.name).sort()).toEqual([

@@ -409,3 +409,141 @@ describe("ThreadEngine", () => {
     ),
   );
 });
+
+describe("queue edit/reorder persistence", () => {
+  it.effect(
+    "commits once, survives eviction, replays to clients and starts the edited queue head",
+    () =>
+      Effect.gen(function* () {
+        const filename = freshDatabase();
+        const commands = yield* withObject(filename, (engine) =>
+          Effect.gen(function* () {
+            yield* launch(engine);
+            yield* engine.dispatch(owner, send("second", "Second"), personal);
+            yield* engine.dispatch(owner, send("third", "Third"), personal);
+            const before = yield* engine.snapshot(owner);
+            const second = before.projection.runs[1]!;
+            const third = before.projection.runs[2]!;
+            const edit = {
+              type: "queued-run.edit" as const,
+              commandId: CommandId.make("edit-second"),
+              threadId,
+              runId: second.id,
+              text: "Edited second",
+            };
+            const reorder = {
+              type: "queued-run.reorder" as const,
+              commandId: CommandId.make("third-first"),
+              threadId,
+              runId: third.id,
+              beforeRunId: second.id,
+            };
+            const edited = yield* engine.dispatch(owner, edit, personal);
+            const reordered = yield* engine.dispatch(owner, reorder, personal);
+            expect(yield* engine.dispatch(owner, edit, personal)).toEqual(edited);
+            expect(yield* engine.dispatch(owner, reorder, personal)).toEqual(reordered);
+            const after = yield* engine.snapshot(owner);
+            const replay = yield* replayFrom(engine, before.snapshotSequence);
+            const events = replay.flatMap((item) => (item.kind === "event" ? [item.event] : []));
+            expect(events.filter((event) => event.type === "message.updated")).toHaveLength(1);
+            expect(applyEvents(before.projection, events)).toEqual(after.projection);
+            for (const command of [edit, reorder]) {
+              const refused = yield* engine
+                .dispatch(
+                  stranger,
+                  { ...command, commandId: CommandId.make(`stranger-${command.type}`) },
+                  personal,
+                )
+                .pipe(Effect.flip);
+              expect(refused._tag).toBe("ThreadNotFoundError");
+            }
+            expect((yield* engine.snapshot(owner)).snapshotSequence).toBe(after.snapshotSequence);
+            return { edit, reorder, edited, reordered };
+          }),
+        );
+        yield* withObject(filename, (engine) =>
+          Effect.gen(function* () {
+            expect(yield* engine.dispatch(owner, commands.edit, personal)).toEqual(commands.edited);
+            expect(yield* engine.dispatch(owner, commands.reorder, personal)).toEqual(
+              commands.reordered,
+            );
+            yield* runToIdle(engine);
+            expect(yield* assistantTexts(engine)).toEqual([
+              scriptedReply("Hello cloud"),
+              scriptedReply("Third"),
+              scriptedReply("Edited second"),
+            ]);
+            const snapshot = yield* engine.snapshot(owner);
+            expect(
+              snapshot.projection.messages
+                .filter((message) => message.role === "user")
+                .map((message) => message.text),
+            ).toEqual(["Hello cloud", "Edited second", "Third"]);
+          }),
+        );
+      }),
+  );
+
+  it.effect("records stale edit/reorder refusals and keeps messages after cancel and start", () =>
+    withObject(freshDatabase(), (engine) =>
+      Effect.gen(function* () {
+        yield* launch(engine);
+        for (const action of ["cancel", "start"] as const) {
+          yield* engine.dispatch(owner, send(action, action), personal);
+          const before = yield* engine.snapshot(owner);
+          const queued = before.projection.runs.at(-1)!;
+          if (action === "cancel") {
+            yield* engine.dispatch(
+              owner,
+              {
+                type: "queued-run.cancel",
+                commandId: CommandId.make("cancel-queued"),
+                threadId,
+                runId: queued.id,
+              },
+              personal,
+            );
+          } else {
+            // Finish the live run and let the queued run start under the engine's lock.
+            for (let steps = 0; steps < 200; steps++) {
+              const current = yield* engine.snapshot(owner);
+              if (current.projection.runs.find((run) => run.id === queued.id)?.status !== "queued")
+                break;
+              yield* engine.step;
+            }
+          }
+          const changed = yield* engine.snapshot(owner);
+          const edit = {
+            type: "queued-run.edit" as const,
+            commandId: CommandId.make(`stale-edit-${action}`),
+            threadId,
+            runId: queued.id,
+            text: "Must not land",
+          };
+          const reorder = {
+            type: "queued-run.reorder" as const,
+            commandId: CommandId.make(`stale-reorder-${action}`),
+            threadId,
+            runId: queued.id,
+            beforeRunId: null,
+          };
+          for (const command of [edit, reorder]) {
+            const rejected = yield* engine.dispatch(owner, command, personal).pipe(Effect.flip);
+            expect(rejected).toMatchObject({
+              _tag: "ThreadCommandRejectedError",
+              commandId: command.commandId,
+              commandType: command.type,
+            });
+            expect(yield* engine.dispatch(owner, command, personal).pipe(Effect.flip)).toEqual(
+              rejected,
+            );
+          }
+          expect((yield* engine.snapshot(owner)).projection.messages).toEqual(
+            changed.projection.messages,
+          );
+          expect((yield* engine.snapshot(owner)).snapshotSequence).toBe(changed.snapshotSequence);
+        }
+      }),
+    ),
+  );
+});
