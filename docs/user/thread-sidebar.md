@@ -164,6 +164,16 @@ Tasks leave through **Done** when you hover their row. Chats you leave alone arc
 after seven idle days; hover a chat's icon to see when. Change or turn this off in **Settings →
 General → Archive idle chats after**. Bring an archived chat back from **Settings → Archive**.
 
+## Answer an ask
+
+An agent can leave a **Blocker** when it needs your input, **Ready** when it needs your go,
+or **Considering** when a decision needs time. Ask it to leave one in the thread. Each question
+explains why it matters, what your answer unblocks, and what the agent recommends.
+
+Answer with an option or your own words. You can answer some questions now and leave the rest
+for another round. An ask stays in the thread after the agent finishes; answering later sends
+your reply back to the agent. Archiving the thread closes its remaining asks and keeps their history.
+
 ## Pin and reorder threads
 
 Pin a thread from its menu to keep it above your active work.

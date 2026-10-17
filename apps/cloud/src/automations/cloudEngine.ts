@@ -143,10 +143,15 @@ const make = Effect.gen(function* () {
     for (const notice of yield* Queue.clear(notices)) yield* push.automationNotice(notice);
   });
   /** The alarm goes off for the next cron, or sooner to tell an instance an outcome again. */
-  const nextAlarmAt = Effect.all([runs.nextCronAt, runs.nextRedeliveryAt]).pipe(
-    Effect.map(([cron, redelivery]) =>
-      cron === null ? redelivery : redelivery === null ? cron : Math.min(cron, redelivery),
-    ),
+  const nextAlarmAt = Effect.all([
+    runs.nextCronAt,
+    runs.nextRedeliveryAt,
+    engine.nextAskSyncAt,
+  ]).pipe(
+    Effect.map((times) => {
+      const pending = times.filter((at): at is number => at !== null);
+      return pending.length ? Math.min(...pending) : null;
+    }),
   );
   const flush = drainAndPush.pipe(Effect.andThen(nextAlarmAt), Effect.flatMap(alarm.arm));
 
@@ -205,6 +210,8 @@ const make = Effect.gen(function* () {
     )(...call.args);
 
   return CloudAutomations.of({
+    answerAsk: (command, ask) =>
+      engine.answerSignalboxAsk(command, ask).pipe(Effect.andThen(flush)),
     threadEvents: ({ threadId, events }) =>
       Effect.gen(function* () {
         const { fresh, take } = yield* freshSince("thread", threadId, events);

@@ -107,6 +107,7 @@ const makeFakeTurns = Effect.gen(function* () {
       interrupt: () => Effect.void,
       keepOnly: () => Effect.void,
       steer: () => Effect.void,
+      respondToRuntimeRequest: () => Effect.void,
       drain: Ref.update(drains, (count) => count + 1).pipe(Effect.andThen(Ref.get(unsaved))),
       taken: Ref.get(startedTurns),
     } satisfies RunnerTurns);

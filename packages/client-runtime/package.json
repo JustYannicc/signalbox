@@ -558,6 +558,10 @@
     "./pull-request-markdown": {
       "types": "./src/pullRequestMarkdown.ts",
       "default": "./src/pullRequestMarkdown.ts"
+    },
+    "./state/signalboxAsks": {
+      "types": "./src/state/signalboxAsks.ts",
+      "default": "./src/state/signalboxAsks.ts"
     }
   },
   "scripts": {

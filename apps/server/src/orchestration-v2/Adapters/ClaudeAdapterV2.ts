@@ -3179,6 +3179,9 @@ export function claudeUserInputQuestions(
               label,
               description:
                 typeof optionRecord.description === "string" ? optionRecord.description.trim() : "",
+              ...(typeof optionRecord.preview === "string"
+                ? { preview: optionRecord.preview }
+                : {}),
             },
           ];
         })

@@ -16,6 +16,7 @@ import * as Result from "effect/Result";
 import { automationTriggers, errorDetailOf, stepArgs, stepAsk } from "./columns.ts";
 import { builtInOfRow } from "./defaults/registry.ts";
 import { fromJson } from "./json.ts";
+import { decodeAsk } from "./askRecord.ts";
 import type { AutomationRow, RunSummaryRow, StepRow, WaitingAskRow } from "./WorkflowStore.ts";
 
 /** Stored rows as the contracts clients and agents see. */
@@ -94,6 +95,7 @@ function waitingQuestion(step: WaitingAskRow): AutomationWaitingQuestion {
     multi: ask.multi,
     fields: ask.fields,
     since: step.started_at,
+    ...(step.ask_json ? { commonAsk: decodeAsk(step.ask_json) } : {}),
   };
 }
 
@@ -141,6 +143,7 @@ export function stepView(row: StepRow): AutomationStep {
     attempt: row.attempt,
     startedAt: row.started_at,
     finishedAt: row.finished_at,
+    ...(row.ask_json ? { commonAsk: decodeAsk(row.ask_json) } : {}),
   };
 }
 

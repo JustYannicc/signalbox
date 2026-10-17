@@ -1,3 +1,5 @@
+import { expireRuntimeRequests } from "./expireRuntimeRequests.ts";
+import { mirrorNativeAskEvents } from "@t3tools/shared/signalboxAsks";
 import {
   type CommandId,
   EventId,
@@ -333,7 +335,14 @@ const make = Effect.gen(function* () {
   }) {
     const current = yield* Ref.get(state);
     const owner = current.thread?.owner ?? input.owner;
-    const events = yield* stamp(input.events);
+    const events = yield* stamp(
+      current.thread === null
+        ? input.events
+        : mirrorNativeAskEvents(
+            current.thread.projection,
+            expireRuntimeRequests(current.thread.projection, input.events),
+          ),
+    );
     const projection = applyEvents(current.thread?.projection ?? null, events);
     if (owner === undefined || projection === null) {
       return yield* Effect.die("A thread's first commit must create it.");
@@ -527,7 +536,10 @@ const make = Effect.gen(function* () {
               }
             : onItsPool,
           ctx,
-          creation.idleSinceMs === undefined ? {} : { idleSinceMs: creation.idleSinceMs },
+          {
+            ...(creation.idleSinceMs === undefined ? {} : { idleSinceMs: creation.idleSinceMs }),
+            personId: actor.userId,
+          },
         );
       },
     ).pipe(Effect.map(({ sequence }) => ({ sequence })));

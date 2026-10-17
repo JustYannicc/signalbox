@@ -10,6 +10,11 @@ import {
   OrchestrationV2ProviderThread,
   PositiveInt,
   ProviderInteractionMode,
+  ProviderSessionId,
+  ProviderTurnId,
+  ProviderApprovalDecision,
+  ProviderUserInputAnswers,
+  RuntimeRequestId,
   RunAttemptId,
   RunId,
   RuntimeMode,
@@ -69,6 +74,17 @@ import { SessionAccess } from "./SessionProtocol.ts";
  */
 
 export const RUNNER_PROTOCOL_VERSION = 5;
+
+/** Additive frames are gated by hello capabilities, so existing v5 Runners still connect. */
+export const RunnerRuntimeResponse = Schema.Struct({
+  runId: RunId,
+  requestId: RuntimeRequestId,
+  providerSessionId: ProviderSessionId,
+  providerTurnId: ProviderTurnId,
+  decision: Schema.optional(ProviderApprovalDecision),
+  answers: Schema.optional(ProviderUserInputAnswers),
+});
+export type RunnerRuntimeResponse = typeof RunnerRuntimeResponse.Type;
 
 export const RUNNER_HEARTBEAT_PING = "ping";
 export const RUNNER_HEARTBEAT_PONG = "pong";
@@ -290,6 +306,8 @@ export const RunnerHello = Schema.Struct({
   takenRunIds: Schema.optional(Schema.Array(RunId)),
   /** The Runner takes `steer` (#562). Absent: an older one, which closes on frames it can't read. */
   steers: Schema.optional(Schema.Boolean),
+  /** Takes `runtime-request.respond`; absent on older v5 Runners. */
+  runtimeRequestResponses: Schema.optional(Schema.Boolean),
 });
 export type RunnerHello = typeof RunnerHello.Type;
 
@@ -349,6 +367,11 @@ export const ThreadMessage = Schema.Union([
    * Only to a Runner whose `hello` said it `steers`.
    */
   Schema.Struct({ type: Schema.Literal("steer"), runId: RunId, message: RunnerMessageInput }),
+  /** Replayed from committed runtime requests on reconnect; never sent to an older Runner. */
+  Schema.Struct({
+    type: Schema.Literal("runtime-request.respond"),
+    response: RunnerRuntimeResponse,
+  }),
   /**
    * The thread is about to let the machine go (#493): save everything it
    * wrote, then answer `machine.drained` with this `id`. Its tokens hold until

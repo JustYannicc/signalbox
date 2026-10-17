@@ -9,6 +9,7 @@ import {
   RuntimeRequestId,
   ThreadId,
 } from "@t3tools/contracts";
+import type { SignalboxAsk } from "@t3tools/contracts/signalboxAsks";
 import { SIGNALBOX_PUSH_WS_METHODS } from "@t3tools/contracts/signalboxPush";
 import { describe, expect, it } from "@effect/vitest";
 import * as ConfigProvider from "effect/ConfigProvider";
@@ -98,6 +99,57 @@ describe("pushFor", () => {
     next: OrchestrationV2ThreadShell,
     now = T0 + 70_000,
   ) => pushFor({ environmentId, previous, next, now });
+
+  const blocker = (id = "ask", round = 1): SignalboxAsk => ({
+    id,
+    kind: "blocker",
+    status: "pending",
+    source: { kind: "agent" },
+    createdAt: "2026-10-15T12:00:00.000Z",
+    updatedAt: "2026-10-15T12:00:00.000Z",
+    questions: [
+      {
+        id: "question",
+        question: "Proceed?",
+        why: "Need your decision",
+        unblocks: "Delivery",
+        recommendation: "Yes",
+        options: [],
+        blocking: true,
+        decisionOwner: "You",
+        surface: { kind: "kit", component: "choice" },
+      },
+    ],
+    rounds: [
+      {
+        number: round,
+        questionIds: ["question"],
+        answers: [],
+        deferredQuestionIds: [],
+        openedAt: "2026-10-15T12:00:00.000Z",
+        closedAt: null,
+      },
+    ],
+  });
+
+  it("deduplicates durable blockers by ask and round after the turn has finished", () => {
+    const finished = ended("completed", 70_000);
+    const first = { ...finished, asks: [blocker()] };
+    expect(push(finished, first)?.phase).toBe("waiting_for_input");
+    expect(push(first, { ...first, updatedAt: at(80_000) })).toBeNull();
+    expect(push(first, { ...first, asks: [blocker("ask", 2)] })?.phase).toBe("waiting_for_input");
+    expect(push(first, { ...first, asks: [blocker("other")] })?.phase).toBe("waiting_for_input");
+  });
+
+  it("does not push Ready, Considering, or nonblocking asks", () => {
+    for (const ask of [
+      { ...blocker(), kind: "ready" },
+      { ...blocker(), kind: "considering" },
+      { ...blocker(), questions: [{ ...blocker().questions[0], blocking: false }] },
+    ] satisfies SignalboxAsk[]) {
+      expect(push(running, shell({ asks: [ask] }))).toBeNull();
+    }
+  });
 
   it("pushes a thread that starts waiting for an answer or an approval, once", () => {
     expect(push(running, waiting("user_input"))).toEqual({

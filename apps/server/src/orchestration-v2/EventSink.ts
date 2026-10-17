@@ -1,3 +1,4 @@
+import { mirrorNativeAskEvents } from "@t3tools/shared/signalboxAsks";
 import {
   CommandId,
   type OrchestrationV2Run,
@@ -305,6 +306,38 @@ const layerBase: Layer.Layer<
         });
       });
 
+    const mirrorAskEvents = (events: ReadonlyArray<OrchestrationV2DomainEvent>) =>
+      Effect.gen(function* () {
+        let result = events;
+        const threadIds = new Set(
+          events
+            .filter(
+              (event) =>
+                (event.type === "runtime-request.updated" && event.payload.kind === "user_input") ||
+                event.type === "thread.archived" ||
+                (event.type === "turn-item.updated" && event.payload.type === "user_input_request"),
+            )
+            .map((event) => event.threadId),
+        );
+        for (const threadId of threadIds) {
+          const created = events.find(
+            (event) => event.type === "thread.created" && event.threadId === threadId,
+          );
+          const projection =
+            created?.type === "thread.created"
+              ? { thread: created.payload, runtimeRequests: [], turnItems: [] }
+              : yield* projectionStore.getThreadRecords(
+                  threadId,
+                  ["runtimeRequests", "turnItems"],
+                  {
+                    turnItemTypes: ["user_input_request"],
+                  },
+                );
+          result = mirrorNativeAskEvents(projection, result);
+        }
+        return result;
+      });
+
     const normalizeEvents = (events: ReadonlyArray<OrchestrationV2DomainEvent>) => {
       const runOrdinals = new Map(
         events.flatMap((event) =>
@@ -325,7 +358,7 @@ const layerBase: Layer.Layer<
                 .pipe(Effect.map((payload) => ({ ...event, payload })))
             : Effect.succeed(event),
         { concurrency: 1 },
-      );
+      ).pipe(Effect.flatMap(mirrorAskEvents));
     };
 
     const applyStoredEvents = (storedEvents: ReadonlyArray<OrchestrationV2StoredEvent>) =>

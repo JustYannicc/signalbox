@@ -3,6 +3,14 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./signalboxAsks": {
+      "types": "./src/signalboxAsks.ts",
+      "import": "./src/signalboxAsks.ts"
+    },
+    "./nativeElicitation": {
+      "types": "./src/nativeElicitation.ts",
+      "import": "./src/nativeElicitation.ts"
+    },
     "./signalboxAppUrl": {
       "types": "./src/signalboxAppUrl.ts",
       "import": "./src/signalboxAppUrl.ts"

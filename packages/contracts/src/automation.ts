@@ -5,6 +5,7 @@ import { IsoDateTime, ProjectId, ThreadId, TrimmedNonEmptyString } from "./baseS
 import { ModelSelection } from "./modelSelection.ts";
 import { ProviderInteractionMode, RuntimeMode } from "./providerPolicy.ts";
 import { ScheduledTaskWebhookEndpoint } from "./scheduledTask.ts";
+import { SignalboxAsk } from "./signalboxAsks.ts";
 import {
   WorkflowDiagnostic,
   WorkflowGraph,
@@ -91,6 +92,7 @@ export const AutomationWaitingQuestion = Schema.Struct({
   /** The form to fill in before answering. */
   fields: Schema.Array(AutomationAskField),
   since: IsoDateTime,
+  commonAsk: Schema.optional(SignalboxAsk),
 });
 export type AutomationWaitingQuestion = typeof AutomationWaitingQuestion.Type;
 
@@ -140,6 +142,7 @@ export const AutomationStep = Schema.Struct({
   attempt: Schema.Int,
   startedAt: IsoDateTime,
   finishedAt: Schema.NullOr(IsoDateTime),
+  commonAsk: Schema.optional(SignalboxAsk),
 });
 export type AutomationStep = typeof AutomationStep.Type;
 

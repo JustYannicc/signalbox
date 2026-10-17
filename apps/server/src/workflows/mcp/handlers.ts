@@ -98,6 +98,7 @@ export const layer = McpToolAccess.toLayer(
                   .pipe(Effect.orElseSucceed(() => null)))?.projectId
               : (projectId ?? caller.caller?.projectId);
             return yield* engine.startRun({
+              originThreadId: caller.caller?.id,
               automationId,
               input,
               trigger: "manual",

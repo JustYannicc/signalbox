@@ -10,6 +10,7 @@ import {
   type RunnerItem,
   type RunnerMessageInput,
   type RunnerRefusal,
+  type RunnerRuntimeResponse,
   type RunnerTurn,
 } from "@signalbox/runner-protocol/RunnerProtocol";
 import type {
@@ -46,6 +47,7 @@ import { MachineBackend, type MachineExit } from "./MachineBackend.ts";
 import { machineClassFor } from "./machineClass.ts";
 import { isModelToken, type ModelGrant, modelToken } from "./modelToken.ts";
 import { freshSessionText, freshSessionTurn } from "./freshSession.ts";
+import { runtimeResponsesOf } from "./runtimeResponses.ts";
 import { continuedRun, recoverRunEvents } from "./runRecovery.ts";
 import {
   accountMovedEvents,
@@ -263,6 +265,7 @@ export interface RunnerWork {
   readonly activeRunId: RunId | null;
   /** The messages steered into the live run while its harness runs it, oldest first (#562). */
   readonly steers: ReadonlyArray<RunnerMessageInput>;
+  readonly runtimeResponses: ReadonlyArray<RunnerRuntimeResponse>;
 }
 
 export class ThreadRunner extends Context.Service<
@@ -822,6 +825,8 @@ const make = Effect.gen(function* () {
             : { token: yield* sessionTokenOf(lease.token, projection.thread.id, lease.generation) },
         secrets: turn === null ? [] : yield* Effect.orDie(store.secrets),
         activeRunId: run?.id ?? null,
+        runtimeResponses:
+          projection === null || run === undefined ? [] : runtimeResponsesOf(projection, run),
         // Only a Runner that takes steers is handed them.
         steers:
           projection === null || run?.status !== "running" || lease.steers !== true

@@ -96,6 +96,10 @@ it.effect(
         const engine = yield* WorkflowEngine;
         yield* engine.registerBuiltinTools(tools.handler);
         const ask = yield* requestMerge(engine, "Fixes login; tests pass.");
+        expect(ask.ask.commonAsk).toMatchObject({
+          kind: "ready",
+          source: { kind: "automation", runId: ask.runId, stepKey: ask.stepKey },
+        });
         // Nothing merges before someone says so, and the thread shows what it waits for.
         expect(actions(tools)).toEqual(["read"]);
         expect(monitorsOf("thread-9").map((task) => task.description)).toEqual([

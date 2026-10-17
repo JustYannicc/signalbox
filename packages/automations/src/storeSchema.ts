@@ -88,6 +88,9 @@ const TABLES = [
     attempt INTEGER NOT NULL DEFAULT 1,
     error_detail_json TEXT,
     agent_run_id TEXT,
+    ask_json TEXT,
+    ask_synced_at TEXT,
+    ask_receipts_json TEXT NOT NULL DEFAULT '[]',
     PRIMARY KEY (run_id, step_key)
   )`,
   `CREATE TABLE IF NOT EXISTS signalbox_automation_memory (
@@ -205,6 +208,9 @@ const ADDED_COLUMNS: ReadonlyArray<readonly [string, string, string]> = [
   ["signalbox_automations", "live_since", "TEXT"],
   ["signalbox_automation_versions", "worker_module", "TEXT"],
   ["signalbox_automation_runs", "instance_at", "TEXT"],
+  ["signalbox_automation_steps", "ask_json", "TEXT"],
+  ["signalbox_automation_steps", "ask_synced_at", "TEXT"],
+  ["signalbox_automation_steps", "ask_receipts_json", "TEXT NOT NULL DEFAULT '[]'"],
 ];
 
 /** Indexes go last: some cover added columns. */

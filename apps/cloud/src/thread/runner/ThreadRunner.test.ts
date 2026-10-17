@@ -8,7 +8,6 @@ import * as Effect from "effect/Effect";
 import * as TestClock from "effect/testing/TestClock";
 
 import { UserObjectError } from "../../user/UserDirectory.ts";
-import { HARNESS_MODES_UNSUPPORTED } from "../threadDecider.ts";
 import { CONNECT_TIMEOUT_MS, IDLE_TAIL_MS } from "./MachineBackend.ts";
 import { DRAIN_TIMEOUT_MS } from "./ThreadRunner.ts";
 import { CONTINUE_PROMPT, MAX_CONTINUATIONS } from "./runRecovery.ts";
@@ -896,31 +895,30 @@ describe("ThreadRunner", () => {
     ),
   );
 
-  it.effect("refuses a Claude turn that could stop to ask for approval", () =>
+  it.effect("starts a Claude turn that can ask for approval", () =>
     withObject(freshDatabase(), (engine) =>
       Effect.gen(function* () {
-        const refused = yield* Effect.flip(
-          engine.launch(
-            owner,
-            {
-              commandId: CommandId.make("launch-approval"),
-              threadId,
-              projectId: ProjectId.make("scratch"),
-              title: "Ask first",
-              modelSelection: claude,
-              runtimeMode: "approval-required",
-              interactionMode: "default",
-              workspaceStrategy: { type: "root" },
-              initialMessage: {
-                messageId: MessageId.make("message-1"),
-                text: "Hi",
-                attachments: [],
-              },
+        const launched = yield* engine.launch(
+          owner,
+          {
+            commandId: CommandId.make("launch-approval"),
+            threadId,
+            projectId: ProjectId.make("scratch"),
+            title: "Ask first",
+            modelSelection: { ...claude, model: "claude-opus-5-5" },
+            runtimeMode: "approval-required",
+            interactionMode: "default",
+            workspaceStrategy: { type: "root" },
+            initialMessage: {
+              messageId: MessageId.make("message-1"),
+              text: "Hi",
+              attachments: [],
             },
-            personal,
-          ),
+          },
+          personal,
         );
-        expect(refused).toMatchObject({ reason: HARNESS_MODES_UNSUPPORTED });
+        expect(launched.projection.thread.runtimeMode).toBe("approval-required");
+        expect(launched.projection.runs[0]?.status).toBe("starting");
       }),
     ),
   );

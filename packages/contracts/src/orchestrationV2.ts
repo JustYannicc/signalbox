@@ -1,4 +1,6 @@
+import { SignalboxAskCommands, SignalboxAskThreadFields } from "./signalboxAsks.ts";
 import { OrchestrationMessageContext } from "./composerContext.ts";
+import { NativeQuestionMetadata, NativeQuestionOptionPreview } from "./nativeQuestions.ts";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import * as SchemaAST from "effect/SchemaAST";
@@ -354,6 +356,7 @@ export const OrchestrationV2LimitRecoveryUpdate = Schema.Struct({
 export type OrchestrationV2LimitRecoveryUpdate = typeof OrchestrationV2LimitRecoveryUpdate.Type;
 
 export const OrchestrationV2AppThread = Schema.Struct({
+  ...SignalboxAskThreadFields,
   ...OrchestrationV2CreationFields,
   id: ThreadId,
   projectId: ProjectId,
@@ -1113,6 +1116,7 @@ export const OrchestrationV2PlanStep = Schema.Struct({
 export type OrchestrationV2PlanStep = typeof OrchestrationV2PlanStep.Type;
 
 export const OrchestrationV2UserInputQuestion = Schema.Struct({
+  native: Schema.optional(NativeQuestionMetadata),
   id: TrimmedNonEmptyString,
   header: TrimmedNonEmptyString,
   question: TrimmedNonEmptyString,
@@ -1121,6 +1125,7 @@ export const OrchestrationV2UserInputQuestion = Schema.Struct({
       label: TrimmedNonEmptyString,
       description: TrimmedNonEmptyString,
       value: Schema.optional(Schema.String),
+      preview: Schema.optional(NativeQuestionOptionPreview),
     }),
   ),
   multiSelect: Schema.optional(Schema.Boolean),
@@ -1794,6 +1799,7 @@ export type OrchestrationV2LatestVisibleMessageSummary =
   typeof OrchestrationV2LatestVisibleMessageSummary.Type;
 
 export const OrchestrationV2ThreadShell = Schema.Struct({
+  ...SignalboxAskThreadFields,
   ...OrchestrationV2CreationFields,
   id: ThreadId,
   projectId: ProjectId,
@@ -2548,6 +2554,7 @@ export const OrchestrationV2StoredEventJson = Schema.Struct({
 export type OrchestrationV2StoredEventJson = typeof OrchestrationV2StoredEventJson.Type;
 
 export const OrchestrationV2Command = Schema.Union([
+  ...SignalboxAskCommands,
   Schema.Struct({
     type: Schema.Literal("thread.create"),
     ...OrchestrationV2CreationFields,

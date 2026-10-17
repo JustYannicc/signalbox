@@ -1,3 +1,5 @@
+import { decideAsk } from "./threadAsks.ts";
+import { runtimeResponseEvents } from "./runtimeResponses.ts";
 import {
   MessageId,
   type OrchestrationV2AppThread,
@@ -11,7 +13,6 @@ import {
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 
-import { isHarnessInstance } from "./providerCatalog.ts";
 import { pullRequestLinkEvents } from "./pullRequests/pullRequestLinks.ts";
 import {
   activeRun,
@@ -48,9 +49,6 @@ type CommandOf<T extends OrchestrationV2Command["type"]> = Extract<
   { readonly type: T }
 >;
 
-export const HARNESS_MODES_UNSUPPORTED =
-  "Claude and Codex in the cloud run with full access and without plan mode for now: approvals can't reach cloud machines yet.";
-
 /** A thread's own branch, and the path clients address its working tree by. */
 export interface ThreadWorktree {
   readonly branch: string;
@@ -63,6 +61,11 @@ export const unsupported = (commandType: string) =>
 
 const CLOUD_COMMAND_TYPES = [
   "thread.create",
+  "thread.ask.raise",
+  "thread.ask.answer",
+  "thread.ask.withdraw",
+  "thread.ask.sync",
+  "runtime-request.respond",
   "message.dispatch",
   "run.interrupt",
   "queue.resume",
@@ -158,15 +161,6 @@ function dispatchMessage(
     updates.push(threadEvent(ctx, "thread.model-selection-updated", current));
   }
 
-  // Cloud machines have no way to answer an approval or a question yet, so a
-  // harness turn that could stop to ask would wait until someone pressed Stop.
-  if (
-    isHarnessInstance(current.providerInstanceId) &&
-    (current.runtimeMode !== "full-access" || current.interactionMode === "plan")
-  ) {
-    return reject(HARNESS_MODES_UNSUPPORTED);
-  }
-
   const ordinal = projection.runs.length + 1;
   const runId = ids.run(thread.id, ordinal);
   const live = activeRun(projection);
@@ -237,7 +231,7 @@ export function decide(
   command: OrchestrationV2Command,
   ctx: DecisionContext,
   /** `idleSinceMs`: archive only a thread unchanged since then (the idle-chat sweep's). */
-  expected: { readonly idleSinceMs?: number } = {},
+  expected: { readonly idleSinceMs?: number; readonly personId?: string } = {},
 ): Decision {
   if (!isCloudCommand(command)) return reject(unsupported(command.type));
   if (command.type === "thread.create") {
@@ -246,6 +240,18 @@ export function decide(
   if (projection === null) return reject("This thread does not exist.");
   if (projection.thread.deletedAt !== null) return reject("This thread was deleted.");
   switch (command.type) {
+    case "thread.ask.raise":
+    case "thread.ask.answer":
+    case "thread.ask.withdraw":
+    case "thread.ask.sync":
+      return decideAsk(projection, command, ctx, dispatchMessage, (state, response, at) =>
+        runtimeResponseEvents(state, response, at, dispatchMessage),
+      );
+    case "runtime-request.respond":
+      return runtimeResponseEvents(projection, command, ctx, dispatchMessage, {
+        kind: "person",
+        personId: expected.personId ?? "thread-owner",
+      });
     case "message.dispatch":
       return dispatchMessage(projection, command, ctx);
     case "run.interrupt": {

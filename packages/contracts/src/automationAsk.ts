@@ -56,6 +56,26 @@ export interface AutomationAskAnswerInput {
   readonly values?: { readonly [name: string]: unknown };
 }
 
+/** A common ask carries the same value the workflow returns, including form values. */
+export function automationAskAnswerFromValue(value: unknown): AutomationAskAnswerInput {
+  if (typeof value === "string") return { choice: value };
+  if (Array.isArray(value)) {
+    return value.every((item): item is string => typeof item === "string")
+      ? { choices: value }
+      : {};
+  }
+  const input = record(value);
+  if (!input) return {};
+  const choice = input.choice;
+  return {
+    ...(typeof choice === "string" ? { choice } : {}),
+    ...(Array.isArray(choice) && choice.every((item): item is string => typeof item === "string")
+      ? { choices: choice }
+      : {}),
+    ...(record(input.values) ? { values: record(input.values)! } : {}),
+  };
+}
+
 const FIELD_TYPES = new Set<string>(AutomationAskFieldType.literals);
 const FIELD_KEYS = new Set(["type", "label", "default", "options", "required"]);
 

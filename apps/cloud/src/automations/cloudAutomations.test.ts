@@ -263,6 +263,64 @@ export default workflow(async (w) => {
     }),
   );
 
+  it.effect("a common ask answer resumes the same cloud workflow with its form intact", () =>
+    Effect.gen(function* () {
+      const { cloud, thread, save, rpc, engine, start } = yield* setup;
+      const writer = yield* thread("thread-common-ask", "Prepare a decision");
+      yield* save(
+        writer,
+        `export const meta = { name: "Pick supplies" } as const;
+export default workflow(async (w) => w.ask("Bring what?", {
+  options: ["tea", "cake"], multi: true,
+  fields: { count: { type: "number", required: true } },
+}));`,
+      );
+      const runId = yield* start(writer, "Pick supplies");
+      const pending = (yield* engine((engine) => engine.getRun(runId))).steps[0]!.commonAsk!;
+      expect(pending.source).toMatchObject({ kind: "automation", runId });
+      expect(pending.questions[0].surface).toMatchObject({
+        kind: "kit",
+        component: "automation",
+        props: { fields: [{ name: "count", required: true }] },
+      });
+      const projected = yield* rpc[ORCHESTRATION_V2_WS_METHODS.getThreadProjection]({
+        threadId: writer,
+      });
+      const ask = projected.thread.asks!.find(
+        (entry) => entry.source.kind === "automation" && entry.source.runId === runId,
+      )!;
+      const command = {
+        type: "thread.ask.answer" as const,
+        commandId: CommandId.make("common-automation-answer"),
+        threadId: writer,
+        askId: ask.id,
+        round: 1,
+        answers: [
+          {
+            questionId: ask.questions[0].id,
+            value: { choice: ["cake", "tea"], values: { count: 2 } },
+          },
+        ],
+        deferredQuestionIds: [],
+        answeredBy: { kind: "person" as const, personId: userId },
+      };
+      yield* rpc[ORCHESTRATION_V2_WS_METHODS.dispatchCommand](command);
+      yield* rpc[ORCHESTRATION_V2_WS_METHODS.dispatchCommand](command);
+      yield* cloud.settle;
+      const done = yield* engine((engine) => engine.getRun(runId));
+      expect(done).toMatchObject({
+        run: { status: "succeeded" },
+        output: { choice: ["tea", "cake"], values: { count: 2 } },
+      });
+      const latest = yield* rpc[ORCHESTRATION_V2_WS_METHODS.getThreadProjection]({
+        threadId: writer,
+      });
+      expect(latest.thread.asks!.find((entry) => entry.id === ask.id)).toEqual(
+        done.steps[0]!.commonAsk,
+      );
+    }),
+  );
+
   it.effect("a run finishes on the version it started on after a new one is saved", () =>
     Effect.gen(function* () {
       const { cloud, thread, save, rpc, engine, start } = yield* setup;

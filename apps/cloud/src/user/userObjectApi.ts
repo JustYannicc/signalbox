@@ -1,3 +1,6 @@
+import { askTool, isAskTool } from "../thread/askTools.ts";
+import type * as Crypto from "effect/Crypto";
+import type * as CloudThreadService from "../thread/CloudThreadService.ts";
 import { AutomationError } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
@@ -45,6 +48,8 @@ export const makeUserObjectApi = (
     effect: Effect.Effect<
       A,
       E,
+      | Crypto.Crypto
+      | CloudThreadService.CloudThreadService
       | UserStore.UserStore
       | UserShell.UserShell
       | UserContexts.UserContexts
@@ -165,7 +170,8 @@ export const makeUserObjectApi = (
         }),
       ),
     publishBranch: (input) => run(publishBranch(input)),
-    automationTool: (threadId, name, input) => run(automationTool(threadId, name, input)),
+    automationTool: (threadId, name, input) =>
+      run(isAskTool(name) ? askTool(threadId, name, input) : automationTool(threadId, name, input)),
     browserSession: (input) =>
       run(PersonBrowsers.PersonBrowsers.use((browsers) => browsers.open(input))),
     browserSignIn: (input) => run(LoginService.LoginService.use((logins) => logins.signIn(input))),

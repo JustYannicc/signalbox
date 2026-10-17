@@ -75,6 +75,7 @@ export function fakeThreads() {
     deleted: new Set<string>(),
     /** Make reading threads fail, like a broken projection. */
     broken: false,
+    failAskSync: false,
     dispatched: [] as string[],
     /** Follow-ups sent to existing threads, and which of their runs have finished. */
     sends: [] as Array<{
@@ -164,8 +165,14 @@ export function fakeThreads() {
   });
   const management = Layer.mock(ThreadManagementService)({
     streamDomainEvents: domainEvents as never,
-    dispatch: ((command: { type: string }) => {
+    dispatch: ((command: { type: string; threadId?: string; ask?: unknown }) => {
       state.dispatched.push(command.type);
+      if (command.type === "thread.ask.sync" && state.failAskSync)
+        return Effect.fail(new AutomationError({ message: "Thread temporarily unavailable" }));
+      if (command.type === "thread.ask.sync" && command.threadId && command.ask) {
+        const shell = state.shells[command.threadId] ?? {};
+        state.shells[command.threadId] = { ...shell, asks: [command.ask] };
+      }
       return Effect.succeed({ sequence: 1 });
     }) as never,
     getThreadShell: ((threadId: string) =>

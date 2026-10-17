@@ -9,6 +9,8 @@ import type {
 import { ProviderInstanceId, RuntimeRequestId } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 
+import type { SignalboxAsk } from "@t3tools/contracts/signalboxAsks";
+
 import { projectThreadAwarenessV2 } from "./agentAwareness.ts";
 
 const NOW = "2026-05-22T12:00:00.000Z";
@@ -23,6 +25,7 @@ describe("projectThreadAwarenessV2", () => {
     overrides: Partial<
       Pick<
         OrchestrationV2ThreadShell,
+        | "asks"
         | "activityRunStatus"
         | "status"
         | "pendingBackgroundTasks"
@@ -44,6 +47,70 @@ describe("projectThreadAwarenessV2", () => {
     updatedAt,
     ...overrides,
   });
+
+  const pendingAsk: SignalboxAsk = {
+    id: "blocker",
+    kind: "blocker",
+    status: "pending",
+    source: { kind: "agent" },
+    createdAt: NOW,
+    updatedAt: NOW,
+    questions: [
+      {
+        id: "decision",
+        question: "Proceed?",
+        why: "Need your decision",
+        unblocks: "Delivery",
+        recommendation: "Yes",
+        options: [],
+        blocking: true,
+        decisionOwner: "You",
+        surface: { kind: "kit", component: "choice" },
+      },
+    ],
+    rounds: [
+      {
+        number: 1,
+        questionIds: ["decision"],
+        answers: [],
+        deferredQuestionIds: [],
+        openedAt: NOW,
+        closedAt: null,
+      },
+    ],
+  };
+
+  it.each(["completed", "idle", "failed"] as const)(
+    "keeps a durable blocker waiting after the turn is %s",
+    (status) => {
+      expect(
+        projectThreadAwarenessV2({
+          environmentId: "env-1" as EnvironmentId,
+          project,
+          thread: v2Thread({ status, asks: [pendingAsk] }),
+        })?.phase,
+      ).toBe("waiting_for_input");
+    },
+  );
+
+  it.each([
+    { ...pendingAsk, kind: "ready" },
+    { ...pendingAsk, kind: "considering" },
+    { ...pendingAsk, status: "answered" },
+    { ...pendingAsk, status: "withdrawn" },
+    { ...pendingAsk, questions: [{ ...pendingAsk.questions[0], blocking: false }] },
+  ] satisfies SignalboxAsk[])(
+    "does not request attention for $kind/$status without a pending blocking question",
+    (ask) => {
+      expect(
+        projectThreadAwarenessV2({
+          environmentId: "env-1" as EnvironmentId,
+          project,
+          thread: v2Thread({ status: "completed", asks: [ask] }),
+        })?.phase,
+      ).toBe("completed");
+    },
+  );
 
   it("projects V2 run state", () => {
     expect(

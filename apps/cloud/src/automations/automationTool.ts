@@ -1,4 +1,3 @@
-import type { ToolResult } from "@signalbox/runner-protocol/AutomationProtocol";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 
@@ -10,10 +9,10 @@ import { CloudAutomations } from "./CloudAutomations.ts";
  * an answer, so the agent reads the engine's own words.
  */
 export const automationTool = (threadId: string, name: string, input: unknown) =>
-  Effect.gen(function* (): Effect.fn.Return<ToolResult> {
+  Effect.gen(function* () {
     const automations = yield* Effect.serviceOption(CloudAutomations);
     if (Option.isNone(automations)) {
-      return { _tag: "failed", message: "Automations aren't running in this cloud yet." };
+      return { _tag: "failed" as const, message: "Automations aren't running in this cloud yet." };
     }
     return yield* automations.value.tool({ threadId }, name, input).pipe(
       Effect.map((result) => ({ _tag: "ok" as const, result })),

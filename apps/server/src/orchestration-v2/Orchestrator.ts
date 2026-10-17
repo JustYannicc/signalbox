@@ -1,3 +1,4 @@
+import { planAskCommand } from "./SignalboxAskCommands.ts";
 import type {
   OrchestrationV2SearchThreadInput,
   OrchestrationV2SearchThreadResult,
@@ -454,6 +455,10 @@ function commandThreadId(command: OrchestrationV2ServerCommand): ThreadId {
     case "thread.interaction-mode.set":
     case "thread.model-selection.set":
     case "provider-session.detach":
+    case "thread.ask.raise":
+    case "thread.ask.answer":
+    case "thread.ask.withdraw":
+    case "thread.ask.sync":
     case "message.dispatch":
     case "notification.delivery.accept":
     case "prepared-run.release":
@@ -10647,6 +10652,51 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         }
       | undefined;
     switch (command.type) {
+      case "thread.ask.raise":
+      case "thread.ask.answer":
+      case "thread.ask.withdraw":
+      case "thread.ask.sync": {
+        const projection = yield* projectionStore
+          .getThreadRecords(
+            command.threadId,
+            ["runtimeRequests", "providerSessions", "turnItems"],
+            { turnItemTypes: ["user_input_request"] },
+          )
+          .pipe(mapDispatchError(command));
+        const now = yield* DateTime.now;
+        const plan = planAskCommand(command, projection, DateTime.formatIso(now));
+        if (!plan.ok)
+          return yield* new OrchestratorDispatchError({
+            commandId: command.commandId,
+            commandType: command.type,
+            cause: plan.error,
+          });
+        for (const delivery of plan.deliveries) {
+          if (delivery.type === "message.dispatch")
+            yield* dispatchMessage(delivery, events, effects);
+          else yield* dispatchRuntimeRequestRespond(delivery, events, effects);
+        }
+        let thread = projection.thread;
+        for (const event of yield* Ref.get(events)) {
+          if (
+            event.threadId === command.threadId &&
+            "archivedAt" in event.payload &&
+            "modelSelection" in event.payload
+          )
+            thread = event.payload;
+        }
+        if (plan.asks !== projection.thread.asks)
+          yield* emit(
+            events,
+            command,
+          )({
+            type: "thread.metadata-updated",
+            threadId: command.threadId,
+            occurredAt: now,
+            payload: { ...thread, asks: plan.asks, updatedAt: now },
+          });
+        break;
+      }
       case "thread.create":
         yield* dispatchThreadCreate(command, events);
         break;

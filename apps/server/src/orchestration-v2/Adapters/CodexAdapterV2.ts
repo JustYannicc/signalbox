@@ -59,6 +59,7 @@ import type {
   OrchestrationV2RuntimeRequest,
   OrchestrationV2Subagent,
   OrchestrationV2TurnItem,
+  OrchestrationV2UserInputQuestion,
   ProviderUserInputAnswers,
   ProviderApprovalDecision,
   ProviderApprovalOption,
@@ -101,9 +102,10 @@ import {
   buildCodexDeveloperInstructions,
 } from "../../provider/CodexDeveloperInstructions.ts";
 import {
-  describeMcpElicitation,
-  toMcpElicitationResponse,
+  codexMcpElicitationForm,
+  codexMcpElicitationResponse,
 } from "../../provider/CodexMcpElicitation.ts";
+import { nativeCodexQuestions } from "../../provider/nativeCodexQuestions.ts";
 import {
   materializeCodexShadowHome,
   resolveCodexHomeLayout,
@@ -4119,7 +4121,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           readonly context: ActiveCodexTurnContext;
           readonly nativeItemId: string;
           readonly nativeRequestId: string;
-          readonly questions: ReadonlyArray<CodexSchema.ToolRequestUserInputParams__ToolRequestUserInputQuestion>;
+          readonly questions: ReadonlyArray<OrchestrationV2UserInputQuestion>;
           readonly responseMode?: "message";
         }) =>
           Effect.gen(function* () {
@@ -4135,16 +4137,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                 `Provider thread ${input.context.providerThread.id} is missing a provider session id.`,
               );
             }
-            const questions = input.questions.map((question, index) => ({
-              id: nonEmptyText(question.id, `question-${index + 1}`),
-              header: nonEmptyText(question.header, "Question"),
-              question: nonEmptyText(question.question, "Choose an answer."),
-              options:
-                question.options?.map((option, optionIndex) => ({
-                  label: nonEmptyText(option.label, `Option ${optionIndex + 1}`),
-                  description: nonEmptyText(option.description, option.label),
-                })) ?? [],
-            }));
+            const questions = input.questions;
             const nodeId = idAllocator.derive.nodeFromProviderItem({
               driver: CODEX_PROVIDER,
               nativeItemId: input.nativeItemId,
@@ -4950,7 +4943,8 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                   id: String(index),
                   header: "Question",
                   question: question.title,
-                  options: (question.options ?? []).map((label) => ({ label, description: "" })),
+                  options: (question.options ?? []).map((label) => ({ label, description: label })),
+                  native: { isBlocking: false },
                 })),
               });
               yield* emitProviderEvent({
@@ -5234,14 +5228,16 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
 
         yield* client.handleServerRequest("mcpServer/elicitation/request", (payload) =>
           Effect.gen(function* () {
-            if (toMcpElicitationResponse(payload, "accept").action !== "accept") {
-              yield* Effect.logWarning("Declined an unsupported MCP elicitation.", {
-                serverName: payload.serverName,
-                mode: payload.mode,
-              });
-              return {
-                action: "decline",
-              } satisfies CodexSchema.McpServerElicitationRequestResponse;
+            const form = codexMcpElicitationForm(payload);
+            if (form === null) {
+              yield* Effect.logWarning(
+                "Declined an unsupported MCP form. Secrets must use request_secret or URL elicitation.",
+                {
+                  serverName: payload.serverName,
+                  mode: payload.mode,
+                },
+              );
+              return codexMcpElicitationResponse(payload, {});
             }
             const context =
               payload.turnId === undefined || payload.turnId === null
@@ -5257,28 +5253,20 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               } satisfies CodexSchema.McpServerElicitationRequestResponse;
             }
 
-            const nativeRequestId =
-              payload.mode === "url"
-                ? payload.elicitationId
-                : `mcp-elicitation:${payload.serverName}`;
-            const described = describeMcpElicitation(payload);
-            const artifacts = yield* buildApprovalRequestArtifacts({
+            const nativeRequestId = `mcp-elicitation:${payload.serverName}:${yield* crypto.randomUUIDv4()}`;
+            const artifacts = yield* buildUserInputRequestArtifacts({
               context,
               nativeItemId: nativeRequestId,
               nativeRequestId,
-              requestKind: "mcp-elicitation",
-              prompt: payload.message,
-              appName: described.appName,
-              options: described.options,
+              questions: form.questions,
             });
-            const decision = yield* Deferred.make<ProviderApprovalDecision, never>();
+            const answers = yield* Deferred.make<ProviderUserInputAnswers, never>();
             yield* Ref.update(pendingRuntimeRequests, (current) => {
               const updated = new Map(current);
               updated.set(String(artifacts.request.id), {
-                type: "approval",
+                type: "user_input",
                 requestId: artifacts.request.id,
-                requestKind: "mcp-elicitation",
-                decision,
+                answers,
               });
               return updated;
             });
@@ -5299,7 +5287,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               runtimeRequest: artifacts.request,
             });
 
-            const resolved = yield* Deferred.await(decision).pipe(
+            const resolved = yield* Deferred.await(answers).pipe(
               Effect.ensuring(
                 Ref.update(pendingRuntimeRequests, (current) => {
                   const updated = new Map(current);
@@ -5308,7 +5296,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                 }),
               ),
             );
-            return toMcpElicitationResponse(payload, resolved);
+            return codexMcpElicitationResponse(payload, resolved);
           }).pipe(Effect.orDie),
         );
 
@@ -5452,64 +5440,70 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
         );
 
         yield* client.handleServerRequest("item/tool/requestUserInput", (payload) =>
-          Effect.gen(function* () {
-            const context = yield* awaitActiveTurn(payload.turnId);
-            if (context === undefined) {
-              return yield* toProtocolError(
-                `No active Codex turn context for user input request turn ${payload.turnId}.`,
-                payload,
-              );
-            }
+          payload.questions.some((question) => question.isSecret === true)
+            ? Effect.fail(
+                CodexErrors.CodexAppServerRequestError.invalidParams(
+                  "Secret questions must use request_secret or URL elicitation. No question was published.",
+                ),
+              )
+            : Effect.gen(function* () {
+                const context = yield* awaitActiveTurn(payload.turnId);
+                if (context === undefined) {
+                  return yield* toProtocolError(
+                    `No active Codex turn context for user input request turn ${payload.turnId}.`,
+                    payload,
+                  );
+                }
 
-            const artifacts = yield* buildUserInputRequestArtifacts({
-              context,
-              nativeItemId: payload.itemId,
-              nativeRequestId: payload.itemId,
-              questions: payload.questions,
-            });
-            const answers = yield* Deferred.make<ProviderUserInputAnswers, never>();
-            yield* Ref.update(pendingRuntimeRequests, (current) => {
-              const updated = new Map(current);
-              updated.set(String(artifacts.request.id), {
-                type: "user_input",
-                requestId: artifacts.request.id,
-                answers,
-              });
-              return updated;
-            });
-            yield* emitProviderEvent({
-              type: "node.updated",
-              driver: CODEX_PROVIDER,
-              node: artifacts.node,
-            });
-            yield* emitProviderEvent({
-              type: "turn_item.updated",
-              driver: CODEX_PROVIDER,
-              turnItem: artifacts.turnItem,
-            });
-            yield* emitProviderEvent({
-              type: "runtime_request.updated",
-              driver: CODEX_PROVIDER,
-              threadId: artifacts.node.threadId,
-              runtimeRequest: artifacts.request,
-            });
-
-            const resolved = yield* Deferred.await(answers).pipe(
-              Effect.ensuring(
-                Ref.update(pendingRuntimeRequests, (current) => {
+                const artifacts = yield* buildUserInputRequestArtifacts({
+                  context,
+                  nativeItemId: payload.itemId,
+                  nativeRequestId: payload.itemId,
+                  questions: nativeCodexQuestions(payload.questions, payload.isBlocking),
+                });
+                const answers = yield* Deferred.make<ProviderUserInputAnswers, never>();
+                yield* Ref.update(pendingRuntimeRequests, (current) => {
                   const updated = new Map(current);
-                  updated.delete(String(artifacts.request.id));
+                  updated.set(String(artifacts.request.id), {
+                    type: "user_input",
+                    requestId: artifacts.request.id,
+                    answers,
+                  });
                   return updated;
-                }),
-              ),
-            );
-            return {
-              answers: toCodexUserInputAnswers(
-                resolved,
-                new Set(payload.questions.map((question) => question.id)),
-              ),
-            } satisfies CodexSchema.ToolRequestUserInputResponse;
-          }).pipe(Effect.orDie),
+                });
+                yield* emitProviderEvent({
+                  type: "node.updated",
+                  driver: CODEX_PROVIDER,
+                  node: artifacts.node,
+                });
+                yield* emitProviderEvent({
+                  type: "turn_item.updated",
+                  driver: CODEX_PROVIDER,
+                  turnItem: artifacts.turnItem,
+                });
+                yield* emitProviderEvent({
+                  type: "runtime_request.updated",
+                  driver: CODEX_PROVIDER,
+                  threadId: artifacts.node.threadId,
+                  runtimeRequest: artifacts.request,
+                });
+
+                const resolved = yield* Deferred.await(answers).pipe(
+                  Effect.ensuring(
+                    Ref.update(pendingRuntimeRequests, (current) => {
+                      const updated = new Map(current);
+                      updated.delete(String(artifacts.request.id));
+                      return updated;
+                    }),
+                  ),
+                );
+                return {
+                  answers: toCodexUserInputAnswers(
+                    resolved,
+                    new Set(payload.questions.map((question) => question.id)),
+                  ),
+                } satisfies CodexSchema.ToolRequestUserInputResponse;
+              }).pipe(Effect.orDie),
         );
 
         const makeRootTerminalEvent = Effect.fn("CodexAdapterV2.makeRootTerminalEvent")(
