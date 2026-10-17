@@ -7,7 +7,7 @@ export const ExecutorTokenIdentifier = Schema.String.check(
   Schema.isPattern(/^[^\u0000-\u0020\u007f]+$/u),
 );
 
-const Identity = Schema.Struct({
+export const ExecutorTokenIdentitySchema = Schema.Struct({
   owner: ExecutorTokenIdentifier,
   level: ExecutorTokenIdentifier,
   person: Schema.optionalKey(ExecutorTokenIdentifier),
@@ -17,16 +17,16 @@ const Identity = Schema.Struct({
 });
 
 export const AuthorizationClaims = Schema.Struct({
-  ...Identity.fields,
+  ...ExecutorTokenIdentitySchema.fields,
   iat: Schema.Number,
   exp: Schema.Number,
   jti: ExecutorTokenIdentifier,
 });
 
-const decodeIdentity = Schema.decodeUnknownOption(Identity);
+const decodeIdentity = Schema.decodeUnknownOption(ExecutorTokenIdentitySchema);
 const decodeAuthorizationClaims = Schema.decodeUnknownOption(AuthorizationClaims);
 
-export type ExecutorTokenIdentity = typeof Identity.Type;
+export type ExecutorTokenIdentity = typeof ExecutorTokenIdentitySchema.Type;
 export type ExecutorAuthorizationClaims = typeof AuthorizationClaims.Type;
 export type ExecutorTokenRole = "person" | "turn" | "automation";
 

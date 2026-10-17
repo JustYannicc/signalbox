@@ -127,13 +127,6 @@ const stringVars = (env: UserObjectEnv): Record<string, string> =>
  * it's built once.
  */
 const layerDrives = (env: UserObjectEnv) => {
-  if (env.DRIVES === undefined || env.DRIVE_PACKS === undefined) {
-    return { store: Layer.empty, services: Layer.empty };
-  }
-  const store = Layer.mergeAll(
-    DriveDirectory.layerDurableObjects(env.DRIVES, { localWorkerd: env.LOCAL_WORKERD === "1" }),
-    DrivePacks.layerBucket(env.DRIVE_PACKS, env.DRIVE_PACKS_PREFIX),
-  );
   // The Worker's own account settings, read the same way.
   const people = Layer.unwrap(
     AccountConfig.read.pipe(
@@ -142,8 +135,16 @@ const layerDrives = (env: UserObjectEnv) => {
       Effect.map((accounts) => DrivePeople.layerWorkOS(accounts?.workos)),
     ),
   ).pipe(Layer.provide(ConfigProvider.layer(ConfigProvider.fromEnv({ env: stringVars(env) }))));
+  if (env.DRIVES === undefined || env.DRIVE_PACKS === undefined) {
+    return { store: Layer.empty, services: Layer.empty, people };
+  }
+  const store = Layer.mergeAll(
+    DriveDirectory.layerDurableObjects(env.DRIVES, { localWorkerd: env.LOCAL_WORKERD === "1" }),
+    DrivePacks.layerBucket(env.DRIVE_PACKS, env.DRIVE_PACKS_PREFIX),
+  );
   return {
     store,
+    people,
     services: Layer.mergeAll(DriveSharing.layer, DriveShortcuts.layer, DriveFiles.layer).pipe(
       Layer.provide(Layer.mergeAll(store, people)),
     ),
@@ -275,7 +276,7 @@ const makeRuntime = (storage: DurableObjectStorage, env: UserObjectEnv) => {
               OnePasswordAccount.layer,
             ),
           ),
-          Layer.provideMerge(drives.store),
+          Layer.provideMerge(Layer.mergeAll(drives.store, drives.people)),
           Layer.provideMerge(
             Layer.mergeAll(
               ThreadDirectory.layerDurableObjects(env.THREADS, {

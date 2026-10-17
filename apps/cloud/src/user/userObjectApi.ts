@@ -29,6 +29,7 @@ import { wire } from "../thread/threadWire.ts";
 import { shellSnapshotWire, type UserObjectApi } from "./UserDirectory.ts";
 import * as UserContexts from "./UserContexts.ts";
 import * as UserFolders from "./UserFolders.ts";
+import * as DrivePeople from "./DrivePeople.ts";
 import * as OnePasswordAccount from "./OnePasswordAccount.ts";
 import * as UserDriveIndex from "./UserDriveIndex.ts";
 import * as UserDrives from "./UserDrives.ts";
@@ -70,6 +71,7 @@ export const makeUserObjectApi = (
       | LoginService.LoginService
       | ThreadDirectory.ThreadDirectory
       | UserFolders.UserFolders
+      | DrivePeople.DrivePeople
       | CloudAutomations.CloudAutomations
     >,
   ) => Promise<A>,

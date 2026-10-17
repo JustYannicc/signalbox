@@ -6,6 +6,7 @@ import {
   SignJWT,
   type JWK,
 } from "jose";
+import * as Schema from "effect/Schema";
 
 import {
   decodeExecutorAuthorizationClaims,
@@ -74,6 +75,15 @@ export interface ExecutorTokenRuntime {
   readonly newJti: () => string | Promise<string>;
 }
 
+const PrivateJwk = Schema.Struct({
+  kty: Schema.Literal("EC"),
+  crv: Schema.Literal("P-256"),
+  d: Schema.NonEmptyString,
+  x: Schema.NonEmptyString,
+  y: Schema.NonEmptyString,
+});
+const decodePrivateJwk = Schema.decodeUnknownOption(PrivateJwk);
+
 const privateJwkFrom = (env: ExecutorTokenEnv): JWK => {
   const serialized = env.EXECUTOR_TOKEN_PRIVATE_JWK?.trim();
   if (!serialized) throw new Error("Executor token signing is not configured.");
@@ -83,18 +93,11 @@ const privateJwkFrom = (env: ExecutorTokenEnv): JWK => {
   } catch {
     throw new Error("Executor token signing is not configured.");
   }
-  if (
-    typeof parsed !== "object" ||
-    parsed === null ||
-    (parsed as Record<string, unknown>).kty !== "EC" ||
-    (parsed as Record<string, unknown>).crv !== "P-256" ||
-    typeof (parsed as Record<string, unknown>).d !== "string" ||
-    typeof (parsed as Record<string, unknown>).x !== "string" ||
-    typeof (parsed as Record<string, unknown>).y !== "string"
-  ) {
+  const jwk = decodePrivateJwk(parsed);
+  if (jwk._tag === "None") {
     throw new Error("Executor token signing is not configured.");
   }
-  return parsed as JWK;
+  return jwk.value;
 };
 
 const bindingMatchesIdentity = (

@@ -7,6 +7,7 @@ import * as SignInGrants from "../signIn/SignInGrants.ts";
 import { activeRun } from "../thread/runLifecycle.ts";
 import * as ThreadDirectory from "../thread/ThreadDirectory.ts";
 import * as UserFolders from "../user/UserFolders.ts";
+import * as DrivePeople from "../user/DrivePeople.ts";
 import * as UserStore from "../user/UserStore.ts";
 import {
   decodeExecutorAuthorizationClaims,
@@ -43,7 +44,7 @@ export const executorTurnIsCurrent = (
   current.level === claims.level &&
   current.activeRunId === claims.turn;
 
-/** Reads the source and authority state again for every Executor request. */
+/** Checks Signalbox authority; the credential service resolves its current source separately. */
 export const authorizeExecutorToken = (claimsValue: unknown, binding: ExecutorTokenBinding) =>
   Effect.gen(function* () {
     const claims = decodeExecutorAuthorizationClaims(claimsValue);
@@ -59,6 +60,10 @@ export const authorizeExecutorToken = (claimsValue: unknown, binding: ExecutorTo
       (context) => context.id === claims.owner && context.kind === "organization",
     );
     if (owner === undefined) return false;
+    const currentOrganizations = yield* DrivePeople.DrivePeople.use((people) =>
+      people.organizationsOf(profile.id),
+    );
+    if (!currentOrganizations.includes(claims.owner)) return false;
 
     // Top-level personal access needs the real WorkOS mapping from #235. The
     // current `personal` context id is only a UI sentinel, never a vault id.
@@ -143,7 +148,11 @@ export const authorizeExecutorToken = (claimsValue: unknown, binding: ExecutorTo
         const service = yield* Effect.serviceOption(CloudAutomations.CloudAutomations);
         if (service._tag === "None") return false;
         return yield* service.value
-          .executorRunActive(claims.automation)
+          .executorRunActive({
+            runId: claims.automation,
+            ownerId: claims.owner,
+            level: claims.level,
+          })
           .pipe(Effect.catchCause(() => Effect.succeed(false)));
       }
     }

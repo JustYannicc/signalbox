@@ -3,22 +3,14 @@ import * as Schema from "effect/Schema";
 
 import {
   ExecutorTokenIdentifier,
+  ExecutorTokenIdentitySchema,
   ExecutorTokenPurpose,
   type ExecutorTokenIdentity,
 } from "./ExecutorTokenClaims.ts";
 
-const Identity = Schema.Struct({
-  owner: ExecutorTokenIdentifier,
-  level: ExecutorTokenIdentifier,
-  person: Schema.optionalKey(ExecutorTokenIdentifier),
-  thread: Schema.optionalKey(ExecutorTokenIdentifier),
-  turn: Schema.optionalKey(ExecutorTokenIdentifier),
-  automation: Schema.optionalKey(ExecutorTokenIdentifier),
-});
-
 export const ExecutorTokenBinding = Schema.Struct({
   jti: ExecutorTokenIdentifier,
-  identity: Identity,
+  identity: ExecutorTokenIdentitySchema,
   issuedAt: Schema.Number,
   ownerUserId: ExecutorTokenIdentifier,
   requester: ExecutorTokenIdentifier,
