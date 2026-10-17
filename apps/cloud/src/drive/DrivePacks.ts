@@ -43,6 +43,13 @@ export class DrivePacks extends Context.Service<
       offset: number,
       length: number,
     ) => Effect.Effect<Bytes, DrivePackError>;
+    /** The same bytes as `range`, streamed rather than held. */
+    readonly stream: (
+      driveId: string,
+      name: string,
+      offset: number,
+      length: number,
+    ) => Effect.Effect<ReadableStream<Bytes>, DrivePackError>;
   }
 >()("@signalbox/cloud/drive/DrivePacks") {}
 
@@ -107,8 +114,25 @@ export const layerBucket = (bucket: PackBucket, prefixValue?: string) => {
           if (object === null) throw new Error(`Pack ${name} is missing.`);
           return new Uint8Array(await object.arrayBuffer());
         }),
+      stream: (driveId, name, offset, length) =>
+        attempt("stream", async () => {
+          const object = await read(driveId, name, "pack", { range: { offset, length } });
+          if (object === null) throw new Error(`Pack ${name} is missing.`);
+          return object.body;
+        }),
     }),
   );
+};
+
+/** `bytes` read 64 KiB at a time as they're asked for, as R2 streams a body. */
+const piecewise = (bytes: Bytes) => {
+  let at = 0;
+  return new ReadableStream<Bytes>({
+    pull: (controller) => {
+      if (at >= bytes.length) return controller.close();
+      controller.enqueue(bytes.subarray(at, (at += 64 * 1024)));
+    },
+  });
 };
 
 /** Packs in memory, for tests. */
@@ -131,7 +155,7 @@ export const makeMemoryBucket = (): PackBucket & { readonly keys: () => Readonly
           : file.subarray(options.range.offset, options.range.offset + options.range.length);
       return {
         size: file.length,
-        body: new Blob([bytes]).stream(),
+        body: piecewise(bytes),
         arrayBuffer: async () => bytes.slice().buffer,
       };
     },

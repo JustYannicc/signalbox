@@ -20,13 +20,17 @@ import {
 
 const encoder = new TextEncoder();
 
-const fromHex = (oid: Oid) => Result.getOrThrow(Hex.decode(oid));
+/** An object id as its 20 raw bytes. */
+export const fromHex = (oid: Oid) => Result.getOrThrow(Hex.decode(oid));
 
 const u32 = (value: number) => {
   const out = new Uint8Array(4);
   new DataView(out.buffer).setUint32(0, value);
   return out;
 };
+
+/** A version 2 pack's first 12 bytes, for `count` objects. */
+export const packHeader = (count: number) => concat([encoder.encode("PACK"), u32(2), u32(count)]);
 
 /** A tree's content. Entries keep the order given: callers edit trees git already sorted. */
 export const encodeTree = (entries: ReadonlyArray<TreeEntry>): Bytes =>
@@ -77,10 +81,16 @@ async function deflate(bytes: Bytes): Promise<Bytes> {
   return new Uint8Array(await new Response(stream).arrayBuffer());
 }
 
-const TYPE_CODES: Readonly<Record<ObjectType, number>> = { commit: 1, tree: 2, blob: 3, tag: 4 };
+const TYPE_CODES: Readonly<Record<ObjectType | "ref_delta", number>> = {
+  commit: 1,
+  tree: 2,
+  blob: 3,
+  tag: 4,
+  ref_delta: 7,
+};
 
 /** An entry's header: type and inflated size, as a little-endian base-128 varint. */
-const entryHeader = (type: ObjectType, size: number) => {
+export const entryHeader = (type: ObjectType | "ref_delta", size: number) => {
   const bytes = [(TYPE_CODES[type] << 4) | (size & 0x0f)];
   let rest = Math.floor(size / 16);
   while (rest > 0) {
@@ -122,7 +132,7 @@ export async function writePack(objects: ReadonlyArray<WrittenObject>) {
     entries.push(entry);
     offset += entry.length;
   }
-  const body = concat([encoder.encode("PACK"), u32(2), u32(unique.length), ...entries]);
+  const body = concat([packHeader(unique.length), ...entries]);
   const checksum = await sha1(body);
   const pack = concat([body, fromHex(checksum)]);
 
