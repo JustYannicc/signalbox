@@ -12,6 +12,7 @@ describe("composer submission recovery", () => {
 
   it.each([
     { _tag: "RpcClientError", message: "SocketCloseError" },
+    { _tag: "OrchestrationV2ThreadLaunchError", message: "Failed to launch thread" },
     new Error("Socket is not connected"),
   ])("keeps a possibly accepted prompt out of the draft after %o", (error) => {
     const result = AsyncResult.failure(Cause.fail(error));

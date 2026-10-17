@@ -35,6 +35,7 @@ export function isComposerSubmissionUncertain(
       case "EnvironmentNotRegisteredError":
         return false;
       case "RpcClientError":
+      case "OrchestrationV2ThreadLaunchError":
         return true;
     }
   }

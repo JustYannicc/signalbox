@@ -401,9 +401,13 @@ describe("composerDraftStore clearComposerContent", () => {
     },
   );
 
-  it.each([false, true])(
-    "keeps an accepted prompt cleared after a lost response and reload (newer draft: %s)",
-    async (newerDraft) => {
+  it.each([
+    { newerDraft: false, errorTag: "RpcClientError" },
+    { newerDraft: true, errorTag: "RpcClientError" },
+    { newerDraft: false, errorTag: "OrchestrationV2ThreadLaunchError" },
+  ])(
+    "keeps an accepted prompt cleared after an uncertain response and reload (%o)",
+    async ({ newerDraft, errorTag }) => {
       vi.useFakeTimers();
       try {
         const store = useComposerDraftStore.getState();
@@ -413,7 +417,7 @@ describe("composerDraftStore clearComposerContent", () => {
         store.clearComposerContent(threadRef);
         if (newerDraft) store.setPrompt(threadRef, "A new unsent thought");
         const result = AsyncResult.failure(
-          Cause.fail({ _tag: "RpcClientError", message: "SocketCloseError" }),
+          Cause.fail({ _tag: errorTag, message: "Failed to launch thread" }),
         );
         recoverComposerSubmission({ target: threadRef, result, requestStarted: true, content });
         await vi.advanceTimersByTimeAsync(300);
