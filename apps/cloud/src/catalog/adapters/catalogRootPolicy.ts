@@ -39,6 +39,7 @@ export const resolveCatalogAccess = (
     readonly state: Row<typeof catalogRootTables.state>;
     readonly root: Row<typeof catalogRootTables.root>;
     readonly role: CatalogRole;
+    readonly ancestry: ReadonlyArray<GrantScope>;
   },
   CatalogPolicyFailure | TableReadError
 > =>
@@ -96,7 +97,7 @@ export const resolveCatalogAccess = (
     }
 
     if (boundHome.owner.id === ctx.actor.userId) {
-      return { state, root, role: "Owner" };
+      return { state, root, role: "Owner", ancestry: chain };
     }
 
     let role: CatalogRole | null = null;
@@ -115,5 +116,5 @@ export const resolveCatalogAccess = (
     }
 
     if (role === null) return yield* denied();
-    return { state, root, role };
+    return { state, root, role, ancestry: chain };
   });

@@ -10,7 +10,7 @@ import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
-import type { ModelGatewayRecord } from "../../modelGateway/modelGatewayRecord.ts";
+import type { ModelGatewayRecord } from "../../models/ModelRecords.ts";
 import { MachineBackend, type MachineStatus } from "../runner/MachineBackend.ts";
 import {
   type DiagnosedRun,
