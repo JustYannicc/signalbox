@@ -133,7 +133,8 @@ const make = Effect.gen(function* () {
       yield* runtime?.endRunners(operation.generation) ?? Effect.void;
       // Undo retains the drive's saved refs; unflushed machine files are outside that recovery boundary.
       for (const backend of MachineBackend.distinctBackends(backends)) {
-        const stopped = yield* Effect.orDie(backend.stop(operation.threadId));
+        yield* Effect.orDie(backend.stop(operation.threadId));
+        const stopped = yield* Effect.orDie(backend.inspect(operation.threadId));
         if (stopped.actual !== "none" && stopped.actual !== "stopped") {
           return yield* Effect.die("Undo is waiting for the old machine to stop.");
         }
@@ -168,7 +169,8 @@ const make = Effect.gen(function* () {
       yield* Effect.orDie(drive.advanceThreadFence(operation.threadId, operation.generation));
       const result = yield* Effect.orDie(drive.restoreCheckpoint(operation.userId, request));
       if (result._tag === "ok") return;
-      // A delayed first request may have committed between the status check and this refusal.
+      // Fence delayed requests before deciding whether this operation ever committed.
+      yield* retireLease;
       const status = yield* Effect.orDie(drive.restoreCheckpointStatus(operation.userId, request));
       if (status === "committed") return;
       if (status === "unverified") {
@@ -176,7 +178,6 @@ const make = Effect.gen(function* () {
           "The restore's original requester could not be verified; recovery remains pending.",
         );
       }
-      yield* retireLease;
       return yield* new RollbackRestoreRejectedError({ category: result._tag });
     },
   );

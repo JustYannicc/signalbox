@@ -90,9 +90,11 @@ describe("cloud rollback recovery", () => {
             (yield* Effect.exit(undo(engine, first.turn.runId, "stop-machine", true)))._tag,
           ).toBe("Failure");
           expect(f.calls).toHaveLength(0);
+          expect((yield* Effect.exit(engine.step))._tag).toBe("Failure");
+          expect(f.calls).toHaveLength(0);
           f.state.stopping = false;
           yield* engine.step;
-          expect(f.order).toEqual(["stop", "stop", "restore"]);
+          expect(f.order).toEqual(["stop", "stop", "stop", "restore"]);
         }),
       f.options,
     );

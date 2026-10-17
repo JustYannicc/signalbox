@@ -100,9 +100,9 @@ describe("rollback recovery with enforcing Drive storage", () => {
     ),
   );
 
-  it.effect(
-    "checks a refused response against a restore committed after its first status lookup",
-    () =>
+  it.effect.each(["returnRefusalAfterCommit", "commitBeforeRetire"] as const)(
+    "resolves a refused retry with %s before recording failure",
+    (interleaving) =>
       Effect.scoped(
         Effect.gen(function* () {
           const drive = yield* realDrive;
@@ -115,7 +115,7 @@ describe("rollback recovery with enforcing Drive storage", () => {
                 const first = yield* drive.finish(runner, machine.generation, 1, drive.first, null);
                 yield* send(engine, 2, "Second");
                 yield* drive.finish(runner, machine.generation, 2, drive.second, drive.first);
-                drive.state.returnRefusalAfterCommit = true;
+                drive.state[interleaving] = true;
                 yield* undo(engine, first.runId, "late-commit");
                 expect(
                   (yield* Context.get(context, ThreadStore.ThreadStore).receipt(

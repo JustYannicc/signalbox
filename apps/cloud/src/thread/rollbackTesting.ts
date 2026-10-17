@@ -91,15 +91,24 @@ export const fixture = () => {
     ensure: () => Effect.succeed({ desired: "running", actual: "running", machineId: "test" }),
     stop: () =>
       Effect.sync(() => {
+        const repeated = order.includes("stop");
         order.push("stop");
         return {
           desired: "stopped",
-          actual: state.stopping ? "stopping" : "stopped",
+          actual: state.stopping && !repeated ? "stopping" : "stopped",
           machineId: "test",
         } as const;
       }),
     destroy: () => Effect.succeed({ desired: "destroyed", actual: "none", machineId: null }),
-    inspect: () => Effect.succeed({ desired: "stopped", actual: "stopped", machineId: "test" }),
+    inspect: () =>
+      Effect.sync(
+        () =>
+          ({
+            desired: "stopped",
+            actual: state.stopping ? "stopping" : "stopped",
+            machineId: "test",
+          }) as const,
+      ),
     refresh: () => Effect.void,
     refreshEveryMs: null,
     pending: Effect.succeed(false),

@@ -71,9 +71,11 @@ export const realDrive = Effect.gen(function* () {
   const state = {
     loseResponse: false,
     returnRefusalAfterCommit: false,
+    commitBeforeRetire: false,
     revokeBeforeRestore: false,
     conflictBeforeRestore: false,
   };
+  let delayedRestore: { userId: string; request: RestoreCheckpointRequest } | null = null;
   const writer = (generation: number) => ({
     threadId,
     userId: owner.userId,
@@ -83,8 +85,24 @@ export const realDrive = Effect.gen(function* () {
   });
   const api: DriveDirectory.DriveObjectApi = {
     ...base,
+    advanceThreadFence: async (threadId, generation) => {
+      if (delayedRestore !== null && generation === delayedRestore.request.generation + 1) {
+        const delayed = delayedRestore;
+        delayedRestore = null;
+        expect((await base.restoreCheckpoint(delayed.userId, delayed.request))._tag).toBe("ok");
+      }
+      return base.advanceThreadFence(threadId, generation);
+    },
     restoreCheckpoint: async (userId, request) => {
       calls.push(request);
+      if (state.commitBeforeRetire) {
+        state.commitBeforeRetire = false;
+        delayedRestore = { userId, request };
+        return {
+          _tag: "refused",
+          reason: "Restore retry refused while the original is in flight.",
+        };
+      }
       if (state.revokeBeforeRestore) {
         state.revokeBeforeRestore = false;
         expect((await base.unshare(manager, owner.userId))._tag).toBe("ok");
