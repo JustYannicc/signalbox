@@ -37,7 +37,8 @@ and pull request news with every app closed, and their questions reach your phon
 a cloud thread to write one. When an agent there schedules recurring work for itself ("every 5
 minutes, post the time"), that's an automation in the thread's folder too: pause or delete it like
 any other, or ask the agent to stop it. Webhooks and callback links work with every app closed.
-Model steps use the model saved with the automation and the folder's pool.
+Model steps use the model saved with the automation and the folder's pool. They interpret only the
+text supplied to the step, without tools or access to your files. Use an agent step for work that needs them.
 
 For GitHub events, connect GitHub in Settings and ask the agent to add a repository trigger.
 Signalbox installs the webhook when your account has permission to manage that repository's hooks.

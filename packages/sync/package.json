@@ -8,7 +8,7 @@
   },
   "scripts": {
     "test": "node ./codegen-proof/run.mjs && vp test run --dir . --maxWorkers=2",
-    "typecheck": "tsc --noEmit -p tsconfig.json"
+    "typecheck": "tsc-rs --noEmit -p tsconfig.json"
   },
   "dependencies": {
     "effect": "catalog:",

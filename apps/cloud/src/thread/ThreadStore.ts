@@ -26,6 +26,12 @@ import * as SqlClient from "effect/sql/SqlClient";
 import type { SqlError } from "effect/sql/SqlError";
 
 import * as Migrations from "../storage/migrations.ts";
+import {
+  migrateCurrentItemExpansion,
+  migrateCurrentItemHistory,
+  backfillCurrentItemState,
+  recordCurrentItemState,
+} from "./currentItemHistory.ts";
 import { migrateDiagnostics } from "./diagnostics/DiagnosticsStore.ts";
 import { migrateBrowsing } from "./browsing/browsingTables.ts";
 import { migratePullRequestPolls } from "./pullRequests/PullRequestPolls.ts";
@@ -381,6 +387,7 @@ const migrations = Migrator.fromRecord({
   "0010_browsing": migrateBrowsing,
   // The thread's status note and the runtime's cursor through ended runs (#670, `statusLine/`).
   "0011_status_note": migrateStatusNote,
+  "0012_current_item_history": migrateCurrentItemHistory,
   "0012_search_outbox": Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
     yield* sql`CREATE TABLE search_outbox_state (
@@ -417,6 +424,7 @@ const migrations = Migrator.fromRecord({
     )`;
     yield* sql`CREATE INDEX search_outbox_pending ON search_outbox (revision, page)`;
   }),
+  "0013_current_item_expansion": migrateCurrentItemExpansion,
   "0013_search_outbox_parts": Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
     yield* sql`ALTER TABLE search_outbox_state ADD COLUMN cursor_offset INTEGER`;
@@ -758,6 +766,9 @@ const make = Effect.gen(function* () {
       sequence += 1;
       yield* sql`INSERT INTO events (sequence, command_id, format, event)
           VALUES (${sequence}, ${input.command?.id ?? null}, ${EVENT_FORMAT}, ${encodeEvent(event)})`;
+      yield* recordCurrentItemState(sequence, event).pipe(
+        Effect.provideService(SqlClient.SqlClient, sql),
+      );
     }
     if (input.command) {
       yield* sql`INSERT INTO receipts
@@ -1523,7 +1534,11 @@ const make = Effect.gen(function* () {
 
   return ThreadStore.of({
     initialized,
-    initialize: Effect.asVoid(migrate.pipe(Effect.provideService(SqlClient.SqlClient, sql))),
+    initialize: migrate.pipe(
+      Effect.andThen(backfillCurrentItemState),
+      Effect.provideService(SqlClient.SqlClient, sql),
+      Effect.asVoid,
+    ),
     owner,
     events,
     receipt,

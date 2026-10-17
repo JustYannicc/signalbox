@@ -307,6 +307,10 @@
       "types": "./src/state/signalboxSignIn.ts",
       "default": "./src/state/signalboxSignIn.ts"
     },
+    "./state/signalboxPersonBrowser": {
+      "types": "./src/state/signalboxPersonBrowser.ts",
+      "default": "./src/state/signalboxPersonBrowser.ts"
+    },
     "./state/signalboxPreviews": {
       "types": "./src/state/signalboxPreviews.ts",
       "default": "./src/state/signalboxPreviews.ts"

@@ -58,6 +58,40 @@ export function useEnvironmentsWithScope(
   return useAtomValue(permitted);
 }
 
+export type EnvironmentScopeResolution = "granted" | "denied" | "unresolved";
+
+function resolveEnvironmentScope(
+  result: AsyncResult.AsyncResult<AuthSessionState, unknown>,
+  scope: AuthEnvironmentScope,
+): EnvironmentScopeResolution {
+  if (result._tag === "Failure") return "unresolved";
+  const session = Option.getOrNull(AsyncResult.value(result));
+  if (session === null) return "unresolved";
+  return sessionGrantsScope(session, scope) ? "granted" : "denied";
+}
+
+/** Permissions whose session has not arrived stay unresolved instead of looking denied. */
+export function useEnvironmentsWithScopeResolution(
+  environments: ReadonlyArray<{ readonly environmentId: EnvironmentId }>,
+  scope: AuthEnvironmentScope,
+): ReadonlyMap<EnvironmentId, EnvironmentScopeResolution> {
+  const resolutions = useMemo(
+    () =>
+      Atom.make((get) => {
+        const byId = new Map<EnvironmentId, EnvironmentScopeResolution>();
+        for (const { environmentId } of environments) {
+          byId.set(
+            environmentId,
+            resolveEnvironmentScope(get(environmentSession.sessionStateAtom(environmentId)), scope),
+          );
+        }
+        return byId;
+      }),
+    [environments, scope],
+  );
+  return useAtomValue(resolutions);
+}
+
 export function readEnvironmentScope(
   environmentId: EnvironmentId,
   scope: AuthEnvironmentScope,
