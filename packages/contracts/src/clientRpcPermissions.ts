@@ -19,7 +19,7 @@ import {
   SIGNALBOX_PREVIEWS_WS_METHODS,
 } from "./signalboxPreviews.ts"; // signalbox: previews
 import { SIGNALBOX_THREAD_KINDS_WS_METHODS } from "./signalboxThreadKinds.ts"; // signalbox: thread kinds
-import { SIGNALBOX_COLLABORATION_OPERATE_SCOPES } from "./signalboxCollaboration.ts";
+import { SIGNALBOX_COLLABORATION_OPERATE_SCOPES } from "./signalboxCollaboration.ts"; // signalbox: cloud collaboration
 
 /** Incremental client enforcement; the server still authorizes every request. */
 export const CLIENT_GUARDED_RPC_SCOPES = {
