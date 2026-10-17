@@ -106,7 +106,7 @@ export function scrubTraceAttributes(
 }
 
 /** Scrubs credential-bearing URLs embedded in exported exception text. */
-export function redactUrlsInText(value: string): string {
+function redactUrlsInText(value: string): string {
   return value.replace(URL_IN_TEXT, scrubTraceUrl);
 }
 
