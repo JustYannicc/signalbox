@@ -241,6 +241,7 @@ import {
 } from "../previewStateStore";
 import { BrowserSettingsReadError, openUrlInPreview } from "../browser/openFileInPreview";
 import { resolveDiscoveredServerUrl } from "../browser/browserTargetResolver";
+import { browserLauncher } from "../browser/browserLauncher";
 import { previewRuntimeTabId } from "../browser/previewRuntimeTabId";
 import { addBrowserSurface } from "./preview/addBrowserSurface";
 import { ThreadPreviewMiniPlayer } from "./preview/ThreadPreviewMiniPlayer";
@@ -1693,10 +1694,6 @@ export default function ChatView(props: ChatViewProps) {
   const activeEnvironmentAgentBrowser = useEnvironmentSupportsSignalboxPreviews(
     activeThreadRef?.environmentId ?? null,
   );
-  const browserAvailable =
-    isPreviewSupportedInRuntime() ||
-    activeEnvironmentServerBrowser ||
-    activeEnvironmentAgentBrowser;
   const threadBrowser = useThreadBrowserAvailability(
     activeThreadRef,
     activeEnvironmentServerBrowser,
@@ -3893,13 +3890,20 @@ export default function ChatView(props: ChatViewProps) {
     activeThreadRef?.environmentId ?? null,
     AuthOrchestrationReadScope,
   );
-  const canLaunchBrowser = activeEnvironmentAgentBrowser ? canReadAgentBrowser : canOperatePreview;
+  const launcher = browserLauncher({
+    desktop: isPreviewSupportedInRuntime(),
+    serverBrowser: activeEnvironmentServerBrowser,
+    agentBrowser: activeEnvironmentAgentBrowser,
+    canOperatePreview,
+    canReadAgentBrowser,
+  });
+  const canLaunchBrowser = launcher.permitted;
   const createBrowserSurface = (profileId?: string) => {
     if (!activeThreadRef || !canLaunchBrowser) return;
     void addBrowserSurface({
       threadRef: activeThreadRef,
       openPreview,
-      target: activeEnvironmentAgentBrowser ? "agent-browser" : "preview",
+      target: launcher.target,
       ...(profileId === undefined ? {} : { profileId }),
     }).then((result) => {
       if (result._tag !== "Failure" || isAtomCommandInterrupted(result)) return;
@@ -4041,7 +4045,7 @@ export default function ChatView(props: ChatViewProps) {
       return;
     }
     if (!canLaunchBrowser) return;
-    if (activeEnvironmentAgentBrowser) {
+    if (launcher.target === "agent-browser") {
       createBrowserSurface();
       return;
     }
@@ -9092,8 +9096,8 @@ export default function ChatView(props: ChatViewProps) {
           onAddPullRequest={addPullRequestSurfaceStable}
           onAddPullRequests={addPullRequestsSurfaceStable}
           onAddDevice={addDeviceSurfaceStable}
-          browserAvailable={canLaunchBrowser && browserAvailable}
-          browserProfilesAvailable={!activeEnvironmentAgentBrowser}
+          browserAvailable={canLaunchBrowser && launcher.available}
+          browserProfilesAvailable={launcher.profilesAvailable}
           terminalAvailable={activeProject !== null && canOperateTerminal}
           terminalSupported={terminalSupported}
           devicesSupported={devicesSupported}
@@ -9150,8 +9154,8 @@ export default function ChatView(props: ChatViewProps) {
             onAddPullRequest={addPullRequestSurfaceStable}
             onAddPullRequests={addPullRequestsSurfaceStable}
             onAddDevice={addDeviceSurfaceStable}
-            browserAvailable={canLaunchBrowser && browserAvailable}
-            browserProfilesAvailable={!activeEnvironmentAgentBrowser}
+            browserAvailable={canLaunchBrowser && launcher.available}
+            browserProfilesAvailable={launcher.profilesAvailable}
             terminalAvailable={activeProject !== null && canOperateTerminal}
             terminalSupported={terminalSupported}
             devicesSupported={devicesSupported}
