@@ -5,6 +5,7 @@ import { ScopedSwitch } from "./ScopedSwitch";
 import { DeviceHostsSettings } from "./DeviceHostsSettings";
 import { ConnectedServicesSettings } from "./ConnectedServicesSettings"; // signalbox: automations
 import {
+  AuthPreviewOperateScope,
   AuthSettingsWriteScope,
   BrowserImportFailureReason,
   BROWSER_PROFILE_MAX_COUNT,
@@ -44,7 +45,11 @@ import { previewBridge } from "~/components/preview/previewBridge";
 import { cn, randomUUID } from "~/lib/utils";
 import { useEnvironments, usePrimaryEnvironment } from "~/state/environments";
 import { deviceEnvironment, useDeviceState } from "~/state/device";
-import { readEnvironmentScope, useEnvironmentScope } from "~/state/session";
+import {
+  readEnvironmentScope,
+  useEnvironmentScope,
+  useEnvironmentsWithScope,
+} from "~/state/session";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { previewEnvironment } from "~/state/preview";
 import { useServerConfigs } from "~/state/entities";
@@ -158,6 +163,22 @@ export function browserProfileRemovalAvailable(
   serverBrowserCount = 0,
 ): boolean {
   return (bridgeAvailable || serverBrowserCount > 0) && environmentsReady && environmentCount > 0;
+}
+
+export function browserSettingsAvailability(input: {
+  readonly isElectron: boolean;
+  readonly serverBrowser: boolean;
+  readonly devices: boolean;
+}) {
+  const interactiveBrowser = input.isElectron || input.serverBrowser;
+  return {
+    browserProfiles: interactiveBrowser,
+    viewport: interactiveBrowser,
+    desktopViewDefaults: input.isElectron,
+    recording: input.isElectron,
+    appLinkTarget: interactiveBrowser,
+    floatingPreview: interactiveBrowser || input.devices,
+  };
 }
 
 const RESPONSIVE_SEED_SIZE = { width: 1280, height: 800 } as const;
@@ -561,16 +582,28 @@ const LINK_TARGET_LABELS: Readonly<Record<BrowserLinkTarget, string>> = {
   app: "Signalbox",
 };
 
-function BrowserLinkTargetSetting({ disabled }: { readonly disabled: boolean }) {
+function BrowserLinkTargetSetting({
+  appTargetAvailable,
+  checking,
+}: {
+  readonly appTargetAvailable: boolean;
+  readonly checking: boolean;
+}) {
   const linkTarget = useClientSettings((settings) => settings.browserLinkTarget);
   const updateSettings = useUpdatePrimarySettings();
 
   return (
     <SettingsRow
       {...searchableSetting("browser-link-target")}
-      description="Where links in the chat and terminal open. Hold ⌘ or Ctrl while clicking a link to open it in your default browser either way."
+      description={
+        appTargetAvailable
+          ? "Where links in the chat and terminal open. Hold ⌘ or Ctrl while clicking a link to open it in your default browser either way."
+          : checking
+            ? "Checking whether Signalbox can open pages in this environment."
+            : "Your default browser works here. Signalbox needs the desktop app or preview access to a server browser."
+      }
       resetAction={
-        !disabled && linkTarget !== DEFAULT_BROWSER_LINK_TARGET ? (
+        linkTarget !== DEFAULT_BROWSER_LINK_TARGET ? (
           <SettingResetButton
             label="link target"
             onClick={() => updateSettings({ browserLinkTarget: DEFAULT_BROWSER_LINK_TARGET })}
@@ -579,7 +612,6 @@ function BrowserLinkTargetSetting({ disabled }: { readonly disabled: boolean }) 
       }
       control={
         <Select
-          disabled={disabled}
           value={linkTarget}
           onValueChange={(value) => {
             if (value === "system" || value === "app") {
@@ -592,7 +624,12 @@ function BrowserLinkTargetSetting({ disabled }: { readonly disabled: boolean }) 
           </SelectTrigger>
           <SelectPopup align="end" alignItemWithTrigger={false}>
             {(Object.keys(LINK_TARGET_LABELS) as ReadonlyArray<BrowserLinkTarget>).map((target) => (
-              <SelectItem hideIndicator key={target} value={target}>
+              <SelectItem
+                hideIndicator
+                key={target}
+                value={target}
+                disabled={target === "app" && !appTargetAvailable}
+              >
                 {LINK_TARGET_LABELS[target]}
               </SelectItem>
             ))}
@@ -940,7 +977,13 @@ function BrowserAutoShowFloatingPreviewSetting({ disabled }: { readonly disabled
   );
 }
 
-function BrowserProfilesSetting({ disabled }: { readonly disabled: boolean }) {
+function BrowserProfilesSetting({
+  disabled,
+  serverBrowserEnvironmentIds,
+}: {
+  readonly disabled: boolean;
+  readonly serverBrowserEnvironmentIds: ReadonlyArray<EnvironmentId>;
+}) {
   const userProfiles = useClientSettings((settings) => settings.browserProfiles);
   const defaultProfileId = useClientSettings((settings) => settings.browserDefaultProfileId);
   const settingsHydrated = useClientSettingsHydrated();
@@ -957,17 +1000,11 @@ function BrowserProfilesSetting({ disabled }: { readonly disabled: boolean }) {
   const [profilePendingClear, setProfilePendingClear] = useState<BrowserProfile | null>(null);
   const [profileRemovalError, setProfileRemovalError] = useState<string | null>(null);
   const [profileRemovalInFlight, setProfileRemovalInFlight] = useState(false);
-  const serverConfigs = useServerConfigs();
   const runClearServerProfile = useAtomCommand(previewEnvironment.clearProfile, {
     reportFailure: false,
   });
   const serverProfileData: ServerProfileData = {
-    environmentIds: environments
-      .map((environment) => environment.environmentId)
-      .filter(
-        (environmentId) =>
-          serverConfigs.get(environmentId)?.environment.capabilities.serverBrowser === true,
-      ),
+    environmentIds: serverBrowserEnvironmentIds,
     clear: async (environmentId, profileId) => {
       const result = await runClearServerProfile({ environmentId, input: { profileId } });
       if (result._tag === "Failure") throw squashAtomCommandFailure(result);
@@ -1224,41 +1261,45 @@ function BrowserProfilesSetting({ disabled }: { readonly disabled: boolean }) {
             {atProfileLimit ? (
               <MenuItem disabled>You&rsquo;ve reached the profile limit</MenuItem>
             ) : null}
-            <MenuSeparator />
-            <MenuGroup>
-              <MenuGroupLabel>Import from</MenuGroupLabel>
-              {sources === null ? (
-                <MenuItem disabled>Looking for browsers…</MenuItem>
-              ) : importableSources.length === 0 ? (
-                <MenuItem disabled>No supported browsers found</MenuItem>
-              ) : (
-                <>
-                  {importableSources.map((source) => (
-                    <MenuItem
-                      key={source.id}
-                      disabled={!settingsHydrated || primaryEnvironment == null}
-                      onClick={() => {
-                        if (!settingsHydrated || primaryEnvironment == null) return;
-                        setImportSession({
-                          source,
-                          environmentId: primaryEnvironment.environmentId,
-                          environmentName: resolveEnvironmentOptionLabel({
-                            isPrimary: true,
-                            environmentId: primaryEnvironment.environmentId,
-                            runtimeLabel: primaryEnvironment.label,
-                          }),
-                        });
-                      }}
-                    >
-                      {source.name}
-                    </MenuItem>
-                  ))}
-                  {primaryEnvironment == null ? (
-                    <MenuItem disabled>Connect to an environment to import cookies</MenuItem>
-                  ) : null}
-                </>
-              )}
-            </MenuGroup>
+            {previewBridge !== null ? (
+              <>
+                <MenuSeparator />
+                <MenuGroup>
+                  <MenuGroupLabel>Import from</MenuGroupLabel>
+                  {sources === null ? (
+                    <MenuItem disabled>Looking for browsers…</MenuItem>
+                  ) : importableSources.length === 0 ? (
+                    <MenuItem disabled>No supported browsers found</MenuItem>
+                  ) : (
+                    <>
+                      {importableSources.map((source) => (
+                        <MenuItem
+                          key={source.id}
+                          disabled={!settingsHydrated || primaryEnvironment == null}
+                          onClick={() => {
+                            if (!settingsHydrated || primaryEnvironment == null) return;
+                            setImportSession({
+                              source,
+                              environmentId: primaryEnvironment.environmentId,
+                              environmentName: resolveEnvironmentOptionLabel({
+                                isPrimary: true,
+                                environmentId: primaryEnvironment.environmentId,
+                                runtimeLabel: primaryEnvironment.label,
+                              }),
+                            });
+                          }}
+                        >
+                          {source.name}
+                        </MenuItem>
+                      ))}
+                      {primaryEnvironment == null ? (
+                        <MenuItem disabled>Connect to an environment to import cookies</MenuItem>
+                      ) : null}
+                    </>
+                  )}
+                </MenuGroup>
+              </>
+            ) : null}
           </MenuPopup>
         </Menu>
       }
@@ -1476,19 +1517,7 @@ function BrowserProfilesSetting({ disabled }: { readonly disabled: boolean }) {
 }
 
 export function IntegrationsSettingsPanel() {
-  const previewDefaultsDisabled = !isElectron;
-  const previewDefaults = (
-    <>
-      <BrowserProfilesSetting disabled={previewDefaultsDisabled} />
-      <BrowserViewportSetting disabled={previewDefaultsDisabled} />
-      <BrowserZoomSetting disabled={previewDefaultsDisabled} />
-      <BrowserAppearanceSetting disabled={previewDefaultsDisabled} />
-      <BrowserRecordingFrameRateSetting disabled={previewDefaultsDisabled} />
-      <BrowserRecordingInputSettings disabled={previewDefaultsDisabled} />
-      <BrowserLinkTargetSetting disabled={previewDefaultsDisabled} />
-      <BrowserAutoShowFloatingPreviewSetting disabled={previewDefaultsDisabled} />
-    </>
-  );
+  const browserSettings = useBrowserSettingsAvailability();
 
   return (
     <SettingsPageContainer>
@@ -1496,16 +1525,89 @@ export function IntegrationsSettingsPanel() {
       {/* signalbox: automations */}
       <ConnectedServicesSettings />
       <SettingsSection id="browser" title="Browser">
-        {previewDefaultsDisabled ? (
-          <SettingsUnavailableGroup message="Only available in the desktop app.">
-            {previewDefaults}
-          </SettingsUnavailableGroup>
-        ) : (
-          previewDefaults
-        )}
+        <SettingsUnavailableGroup
+          message={
+            browserSettings.checking
+              ? "Checking connected environments for browser support."
+              : browserSettings.browserProfiles
+                ? undefined
+                : "Profiles and viewport defaults need the desktop app or preview access to a server browser."
+          }
+        >
+          <BrowserProfilesSetting
+            disabled={!browserSettings.browserProfiles}
+            serverBrowserEnvironmentIds={browserSettings.serverBrowserEnvironmentIds}
+          />
+          <BrowserViewportSetting disabled={!browserSettings.viewport} />
+        </SettingsUnavailableGroup>
+        <SettingsUnavailableGroup
+          message={
+            browserSettings.desktopViewDefaults
+              ? undefined
+              : "Zoom, appearance, and recording settings apply only to desktop browser tabs."
+          }
+        >
+          <BrowserZoomSetting disabled={!browserSettings.desktopViewDefaults} />
+          <BrowserAppearanceSetting disabled={!browserSettings.desktopViewDefaults} />
+          <BrowserRecordingFrameRateSetting disabled={!browserSettings.recording} />
+          <BrowserRecordingInputSettings disabled={!browserSettings.recording} />
+        </SettingsUnavailableGroup>
+        <BrowserLinkTargetSetting
+          appTargetAvailable={browserSettings.appLinkTarget}
+          checking={browserSettings.checking}
+        />
+        <SettingsUnavailableGroup
+          message={
+            browserSettings.checking
+              ? "Checking connected environments for browser or device support."
+              : browserSettings.floatingPreview
+                ? undefined
+                : "Floating previews need a server browser or device support."
+          }
+        >
+          <BrowserAutoShowFloatingPreviewSetting disabled={!browserSettings.floatingPreview} />
+        </SettingsUnavailableGroup>
         <PullRequestLinksOpenInAppSetting />
       </SettingsSection>
       <DeviceIntegrationSettings />
     </SettingsPageContainer>
   );
+}
+
+function useBrowserSettingsAvailability() {
+  const { environments, isReady } = useEnvironments();
+  const serverConfigs = useServerConfigs();
+  const canOperatePreviews = useEnvironmentsWithScope(environments, AuthPreviewOperateScope);
+  const serverBrowserEnvironmentIds = environments.flatMap(({ environmentId, connection }) =>
+    connection.phase === "connected" &&
+    serverConfigs.get(environmentId)?.environment.capabilities.serverBrowser === true &&
+    canOperatePreviews.has(environmentId)
+      ? [environmentId]
+      : [],
+  );
+  const devices = environments.some(
+    ({ environmentId, connection }) =>
+      connection.phase === "connected" &&
+      serverConfigs.get(environmentId)?.environment.capabilities.devices === true,
+  );
+  const checking =
+    !isElectron &&
+    serverBrowserEnvironmentIds.length === 0 &&
+    (!isReady ||
+      environments.some(
+        ({ environmentId, connection }) =>
+          connection.phase === "connecting" ||
+          connection.phase === "reconnecting" ||
+          (connection.phase === "connected" && !serverConfigs.has(environmentId)),
+      ));
+
+  return {
+    ...browserSettingsAvailability({
+      isElectron,
+      serverBrowser: serverBrowserEnvironmentIds.length > 0,
+      devices,
+    }),
+    checking,
+    serverBrowserEnvironmentIds,
+  };
 }

@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vite-plus/test";
 import type { EnvironmentId } from "@t3tools/contracts";
 
 import {
+  browserSettingsAvailability,
   browserProfileRemovalAvailable,
   clearBrowserProfileData,
   importFailureReason,
@@ -9,6 +10,66 @@ import {
 
 const environmentId = "environment-a" as EnvironmentId;
 const secondEnvironmentId = "environment-b" as EnvironmentId;
+
+describe("browserSettingsAvailability", () => {
+  it("does not treat Cloud's thread browser mirror as an interactive browser", () => {
+    const cloudCapabilities = {
+      signalboxPreviews: true,
+      threadBrowsing: true,
+      serverBrowser: false,
+      devices: false,
+    };
+
+    expect(
+      browserSettingsAvailability({
+        isElectron: false,
+        serverBrowser: cloudCapabilities.serverBrowser,
+        devices: cloudCapabilities.devices,
+      }),
+    ).toEqual({
+      browserProfiles: false,
+      viewport: false,
+      desktopViewDefaults: false,
+      recording: false,
+      appLinkTarget: false,
+      floatingPreview: false,
+    });
+  });
+
+  it("enables server-backed profiles and viewport in web without desktop-only controls", () => {
+    expect(
+      browserSettingsAvailability({
+        isElectron: false,
+        serverBrowser: true,
+        devices: false,
+      }),
+    ).toEqual({
+      browserProfiles: true,
+      viewport: true,
+      desktopViewDefaults: false,
+      recording: false,
+      appLinkTarget: true,
+      floatingPreview: true,
+    });
+  });
+
+  it("keeps device previews available without claiming browser profiles", () => {
+    expect(
+      browserSettingsAvailability({
+        isElectron: false,
+        serverBrowser: false,
+        devices: true,
+      }),
+    ).toEqual({
+      browserProfiles: false,
+      viewport: false,
+      desktopViewDefaults: false,
+      recording: false,
+      appLinkTarget: false,
+      floatingPreview: true,
+    });
+  });
+});
 
 describe("clearBrowserProfileData", () => {
   it("waits for cookie and cache cleanup", async () => {
