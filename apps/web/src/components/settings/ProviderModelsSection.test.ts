@@ -1,5 +1,6 @@
-import { createElement } from "react";
-import { act, create, type ReactTestRenderer } from "react-test-renderer";
+// @vitest-environment jsdom
+import { act, createElement } from "react";
+import { createRoot } from "react-dom/client";
 import { describe, expect, it, vi } from "vite-plus/test";
 import {
   ProviderDriverKind,
@@ -7,7 +8,6 @@ import {
   type ServerProviderModel,
 } from "@t3tools/contracts";
 
-import { Button } from "../ui/button";
 import {
   groupModelsForDisplay,
   nextHiddenModelsForBulkToggle,
@@ -52,9 +52,12 @@ describe("nextHiddenModelsForBulkToggle", () => {
 describe("ProviderModelsSection write capability", () => {
   it("keeps model rows visible while removing controls that cannot save", async () => {
     vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
-    let renderer: ReactTestRenderer | undefined;
+    const container = document.createElement("div");
+    document.body.append(container);
+    const renderer = createRoot(container);
+    const onHiddenModelsChange = vi.fn();
     await act(async () => {
-      renderer = create(
+      renderer.render(
         createElement(ProviderModelsSection, {
           instanceId: ProviderInstanceId.make("codex_hub"),
           driverKind: ProviderDriverKind.make("codex"),
@@ -66,7 +69,7 @@ describe("ProviderModelsSection write capability", () => {
           favoriteModels: [],
           modelOrder: [],
           onChange: vi.fn(),
-          onHiddenModelsChange: vi.fn(),
+          onHiddenModelsChange,
           onFavoriteModelsChange: vi.fn(),
           onToggleFavorite: vi.fn(),
           onModelOrderChange: vi.fn(),
@@ -75,22 +78,18 @@ describe("ProviderModelsSection write capability", () => {
     });
 
     try {
-      expect(renderer!.root.findAllByProps({ "data-model-slug": "pool-model" })).toHaveLength(1);
-      expect(
-        renderer!.root
-          .findAllByType(Button)
-          .some(
-            (button) =>
-              Array.isArray(button.props.children) &&
-              button.props.children.includes("Add custom model"),
-          ),
-      ).toBe(false);
-      const bulkToggle = renderer!.root
-        .findAllByType(Button)
-        .find((button) => button.props.children === "Disable all");
-      expect(bulkToggle?.props.disabled).toBe(true);
+      expect(container.querySelector('[data-model-slug="pool-model"]')).not.toBeNull();
+      const buttons = [...container.querySelectorAll("button")];
+      expect(buttons.some((button) => button.textContent?.includes("Add custom model"))).toBe(
+        false,
+      );
+      const bulkToggle = buttons.find((button) => button.textContent === "Disable all");
+      expect(bulkToggle?.disabled).toBe(true);
+      await act(async () => bulkToggle?.click());
+      expect(onHiddenModelsChange).not.toHaveBeenCalled();
     } finally {
-      await act(async () => renderer?.unmount());
+      await act(async () => renderer.unmount());
+      container.remove();
       vi.unstubAllGlobals();
     }
   });

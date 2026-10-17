@@ -1,6 +1,7 @@
-import { createElement } from "react";
+// @vitest-environment jsdom
+import { act, createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { act, create, type ReactTestRenderer } from "react-test-renderer";
+import { createRoot } from "react-dom/client";
 import { describe, expect, it, vi } from "vite-plus/test";
 import {
   ProviderDriverKind,
@@ -12,13 +13,10 @@ import {
 import {
   deriveProviderModelsForDisplay,
   nextProviderEnvironmentWithFieldValue,
-  ProviderEnvironmentSection,
   providerEnvironmentWithoutNames,
   ProviderInstanceCard,
   readProviderEnvironmentVariable,
 } from "./ProviderInstanceCard";
-import { ProviderModelsSection } from "./ProviderModelsSection";
-import { ProviderSettingsForm } from "./ProviderSettingsForm";
 import { providerClients } from "./providerDriverMeta";
 
 // signalbox: rendered without a browser, so environment UI reads as shown.
@@ -183,9 +181,13 @@ describe("deriveProviderModelsForDisplay", () => {
     vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
     const instanceId = ProviderInstanceId.make("codex_hub");
     const driver = ProviderDriverKind.make("codex");
-    let renderer: ReactTestRenderer | undefined;
+    const container = document.createElement("div");
+    document.body.append(container);
+    const renderer = createRoot(container);
+    const onHiddenModelsChange = vi.fn();
+    const onToggleFavorite = vi.fn();
     await act(async () => {
-      renderer = create(
+      renderer.render(
         createElement(ProviderInstanceCard, {
           instanceId,
           instance: {
@@ -220,28 +222,36 @@ describe("deriveProviderModelsForDisplay", () => {
           hiddenModels: [],
           favoriteModels: [],
           modelOrder: [],
-          onHiddenModelsChange: () => undefined,
+          onHiddenModelsChange,
           onFavoriteModelsChange: () => undefined,
-          onToggleFavorite: () => undefined,
+          onToggleFavorite,
           onModelOrderChange: () => undefined,
         }),
       );
     });
 
     try {
-      expect(renderer!.root.findAllByType(ProviderSettingsForm)).toHaveLength(0);
-      expect(renderer!.root.findAllByType(ProviderEnvironmentSection)).toHaveLength(0);
-      expect(renderer!.root.findAllByType(ProviderModelsSection)).toHaveLength(1);
-      expect(renderer!.root.findAllByProps({ "data-model-slug": "pool-model" })).toHaveLength(1);
-      expect(
-        renderer!.root.findByProps({ "aria-label": "Show Pool model in the model picker" }).props
-          .disabled,
-      ).toBe(true);
-      expect(
-        renderer!.root.findByProps({ "aria-label": "Add Pool model to favorites" }).props.disabled,
-      ).toBe(true);
+      expect(container.querySelector('[data-model-slug="pool-model"]')).not.toBeNull();
+      expect(container.textContent).not.toContain("Runtime");
+      expect(container.textContent).not.toContain("Variables");
+      expect(container.querySelector('input[value="/host/bin/codex"]')).toBeNull();
+      const picker = container.querySelector<HTMLElement>(
+        '[aria-label="Show Pool model in the model picker"]',
+      );
+      const favorite = container.querySelector<HTMLButtonElement>(
+        '[aria-label="Add Pool model to favorites"]',
+      );
+      expect(picker).not.toBeNull();
+      expect(favorite?.disabled).toBe(true);
+      await act(async () => {
+        picker?.click();
+        favorite?.click();
+      });
+      expect(onHiddenModelsChange).not.toHaveBeenCalled();
+      expect(onToggleFavorite).not.toHaveBeenCalled();
     } finally {
-      await act(async () => renderer?.unmount());
+      await act(async () => renderer.unmount());
+      container.remove();
       vi.unstubAllGlobals();
     }
   });

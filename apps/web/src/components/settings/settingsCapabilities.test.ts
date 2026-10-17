@@ -45,14 +45,18 @@ describe("settings capability requirements", () => {
       "cursor-keychain-usage",
       "provider-health-check-interval",
       "github-accounts",
-      "source-control-host-gitlab",
-      "source-control-host-bitbucket",
-      "source-control-host-forgejo",
-      "source-control-host-azure-devops",
       "project-actions",
     ]) {
       expect(filterAvailableSettingsSearchItems(availability).map((item) => item.id)).toContain(id);
       expect(ids).not.toContain(id);
+    }
+    const hostItems = SETTINGS_SEARCH_ITEMS.filter((item) =>
+      item.id.startsWith("source-control-host-"),
+    );
+    expect(hostItems.map((item) => item.id)).toContain("source-control-host-bitbucket");
+    for (const item of hostItems) {
+      expect(filterAvailableSettingsSearchItems(availability)).toContainEqual(item);
+      expect(ids).not.toContain(item.id);
     }
   });
 
