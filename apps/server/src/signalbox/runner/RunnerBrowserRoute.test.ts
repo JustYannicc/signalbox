@@ -44,6 +44,24 @@ describe("browserFor", () => {
     }
   });
 
+  it("keeps only the thread's exact public preview hosts on the machine", () => {
+    const hosts = ["thread-preview.example.test"];
+    for (const url of [
+      "https://thread-preview.example.test/",
+      "https://THREAD-PREVIEW.EXAMPLE.TEST/debug?env=secret",
+      "https://thread-preview.example.test.:443/assets/app.js",
+    ]) {
+      expect(browserFor(url, hosts), url).toBe("machine");
+    }
+    for (const url of [
+      "https://other-preview.example.test/",
+      "https://thread-preview.example.test.evil.test/",
+      "https://thread-preview.example.test@evil.test/",
+    ]) {
+      expect(browserFor(url, hosts), url).toBe("person");
+    }
+  });
+
   it("treats an unparsable URL as the machine's, so it never reaches the person's browser", () => {
     expect(browserFor("not a url")).toBe("machine");
   });

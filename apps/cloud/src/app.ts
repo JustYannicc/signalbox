@@ -26,6 +26,11 @@ import * as ClientTraceLimits from "./observability/ClientTraceLimits.ts";
 import * as ClientTraceIntake from "./observability/ClientTraceIntake.ts";
 import * as ClientTraceRoutes from "./observability/clientTraceRoutes.ts";
 import * as CloudAccounts from "./account/CloudAccounts.ts";
+import * as IdentityProvider from "./account/IdentityProvider.ts";
+import * as TestIdentities from "./testSignIn/TestIdentities.ts";
+import * as TestSignIn from "./testSignIn/TestSignIn.ts";
+import * as TestSignInPolicy from "./testSignIn/TestSignInPolicy.ts";
+import * as TestSignInRoutes from "./http/testSignInRoutes.ts";
 import * as AssetRoutes from "./assets/assetRoutes.ts";
 import * as CloudAssets from "./assets/CloudAssets.ts";
 import * as AttachmentRoutes from "./attachments/attachmentRoutes.ts";
@@ -58,7 +63,8 @@ import {
   protectedResourceMetadata,
 } from "./api/mcpRoutes.ts";
 import * as CloudThreadService from "./thread/CloudThreadService.ts";
-import type { LocalKeyVerifier } from "./thread/runner/modelGrants.ts";
+import * as ThreadsLive from "./thread/ThreadsLive.ts";
+import type { LocalKeyVerifier } from "./models/ModelProtocol.ts";
 import * as ThreadDirectory from "./thread/ThreadDirectory.ts";
 import * as ThreadKindTurns from "./thread/ThreadKindTurns.ts";
 import * as ThreadContexts from "./user/threadContexts.ts";
@@ -114,10 +120,12 @@ export const layerServices = (input: {
         ),
       ),
     ),
+    Layer.provideMerge(TestSignIn.layer),
+    Layer.provideMerge(Layer.mergeAll(TestIdentities.layer, TestSignInPolicy.layer)),
     Layer.provideMerge(
       Layer.mergeAll(
         CloudAccounts.layer,
-        CloudThreadService.layer,
+        CloudThreadService.layer.pipe(Layer.provideMerge(ThreadsLive.layer)),
         PreviewSetup.layer,
         ThreadKindRoutes.layerTestClock,
       ),
@@ -127,10 +135,9 @@ export const layerServices = (input: {
     // The Worker only reads threads; they are created in their user's object.
     Layer.provideMerge(Layer.mergeAll(ThreadContexts.layerWorker, ThreadKindTurns.layerNone)),
     Layer.provideMerge(CloudSessions.layer),
-    Layer.provideMerge(
-      GitHub.layer(GitHub.gitHubPipesConfig(input.vars), GitHub.gitHubEndpoints(input.vars)),
-    ),
+    Layer.provideMerge(GitHub.layerForUsers(GitHub.gitHubEndpoints(input.vars))),
     Layer.provideMerge(CloudTokens.layer),
+    Layer.provideMerge(IdentityProvider.layer),
     Layer.provideMerge(Layer.mergeAll(CloudConfig.layer, PreviewSetup.layerConfig)),
     Layer.provideMerge(
       Layer.mergeAll(
@@ -153,6 +160,7 @@ const routes = Layer.mergeAll(
   ClientTraceRoutes.layer,
   EnvironmentApi.layer,
   AccountRoutes.layer,
+  TestSignInRoutes.layer,
   HookRoutes.layer,
   PreviewOpenRoutes.layer,
   DiagnosticsRoutes.layer,

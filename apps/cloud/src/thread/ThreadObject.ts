@@ -30,7 +30,7 @@ import type { PackBucket } from "../drive/DrivePacks.ts";
 import * as Evlog from "../observability/Evlog.ts";
 import * as Platform from "../platform.ts";
 import * as PoolDirectory from "../pool/PoolDirectory.ts";
-import * as PreviewState from "./preview/PreviewState.ts";
+import * as PreviewState from "./PreviewState.ts";
 import * as BrowserTrail from "./preview/BrowserTrail.ts";
 import { PreviewGateway } from "./preview/PreviewGateway.ts";
 import { type PreviewEnv, previewSettings } from "./preview/previewHost.ts";
@@ -343,6 +343,10 @@ export class ThreadObject extends DurableObject<ThreadObjectEnv> implements Thre
     return this.api.diagnostics(...args);
   }
 
+  requestPullRequestSync(...args: Parameters<ThreadObjectApi["requestPullRequestSync"]>) {
+    return this.api.requestPullRequestSync(...args);
+  }
+
   /** The thread's container stopped on its own: its lease is over (see `ThreadRunner.machineExited`). */
   private async machineExited(exit: MachineBackend.MachineExit, generation: number) {
     await this.runtime.runPromise(
@@ -375,7 +379,7 @@ export class ThreadObject extends DurableObject<ThreadObjectEnv> implements Thre
     return this.api.browsingRecord(...args);
   }
 
-  /** The ModelGateway reporting a request it served for this thread (see `modelGrants.ts`). */
+  /** The ModelGateway reporting a request it served for this thread (see `models/ModelAccess.ts`). */
   async recordModelRequest(record: ModelGatewayRecord) {
     await this.runtime.runPromise(
       recordUnderLock((diagnostics) =>
@@ -389,7 +393,7 @@ export class ThreadObject extends DurableObject<ThreadObjectEnv> implements Thre
     );
   }
 
-  /** The ModelGateway asking whether a harness's token is good right now (see `modelGrants.ts`). */
+  /** The ModelGateway asking whether a harness's token is good right now (see `models/ModelAccess.ts`). */
   authorizeModel(token: string, provider: ModelGatewayProvider) {
     return this.runtime.runPromise(
       ThreadRunner.ThreadRunner.use((runner) => runner.authorizeModel(token, provider)),

@@ -146,7 +146,7 @@ overrides:
   vite-plus: 1.0.0
   yaml: ^2.9.0
 
-packageExtensionsChecksum: sha256-q4wKVP/HCv4tXbZ40q9ybOeN153ZCI+LdV2CSHcvG6U=
+packageExtensionsChecksum: sha256-Vss7tnUsW4KK4DvbZQyjJ1Shu98d05IJfRJvJx2qXME=
 
 pnpmfileChecksum: sha256-F2nnRBrWvcEUVdK/58ZL6W5ygAC316wA2G9A5J+XwHo=
 
@@ -228,6 +228,9 @@ importers:
 
   apps/cloud:
     dependencies:
+      '@boxd-sh/sdk':
+        specifier: 0.2.17
+        version: 0.2.17
       '@cloudflare/dynamic-workflows':
         specifier: 0.1.1
         version: 0.1.1
@@ -246,6 +249,9 @@ importers:
       '@signalbox/runner-protocol':
         specifier: workspace:*
         version: link:../../packages/runner-protocol
+      '@signalbox/sync':
+        specifier: workspace:*
+        version: link:../../packages/sync
       '@t3tools/client-runtime':
         specifier: workspace:*
         version: link:../../packages/client-runtime
@@ -2962,6 +2968,10 @@ packages:
       commander:
         optional: true
 
+  '@boxd-sh/sdk@0.2.17':
+    resolution: {integrity: sha512-Ap9DSCvkCgw9P/+7NOdaauLBO7V5Gbr91XnW+u3bQW4w37MLqeAmZFvIJ/EnAd94xDZjX2bqPnWoTRBNXhJlQw==}
+    engines: {node: '>=20'}
+
   '@braintree/sanitize-url@7.1.2':
     resolution: {integrity: sha512-jigsZK+sMF/cuiB7sERuo9V7N9jx+dhmHHnQyDSVdpZwVutaBu7WvNYqMDLSgFgfB30n452TP3vjDAvFC973mA==}
 
@@ -3020,6 +3030,9 @@ packages:
 
   '@bufbuild/protobuf@1.10.0':
     resolution: {integrity: sha512-QDdVFLoN93Zjg36NoQPZfsVH9tZew7wKDKyV5qRdj8ntT4wQCOradQjRaTdwMhWUYsgKsvCINKKm87FdEk96Ag==}
+
+  '@bufbuild/protobuf@2.16.0':
+    resolution: {integrity: sha512-FWa0sPlqYGJgpTs6OxBRcL/AW4JT0OIO+W1ajerluoTVh8CV0B7XM1qsNCRgnkSCkRCgOICKHRQlY17jrsm0+Q==}
 
   '@capsizecss/unpack@4.0.1':
     resolution: {integrity: sha512-CuNiSqg7+e1cO/GjffyMOm5Tt2jUF9CWHHnvQ/UkqvtkGfHdgwEC0wpmq7fkN3gxwpRnrAN0WzO3vREKmNolMQ==}
@@ -8298,10 +8311,14 @@ packages:
       '@tanstack/solid-query': '>=5.100.9'
       '@tanstack/svelte-query': '>=6.1.28'
       '@tanstack/vue-query': '>=5.100.9'
+      '@types/react': '*'
       react: '>=19.2.6'
       solid-js: '>=1.9.12'
       svelte: '>=3.0.0'
       vue: '>=3.5.34'
+    peerDependenciesMeta:
+      '@types/react':
+        optional: true
 
   '@visulima/string@3.1.1':
     resolution: {integrity: sha512-gISoNcNSyh0y7MFSGZv2Umq/h9XAAuBREKoqqai3lVJaI8M1OcYVjrj2IhuXs6M7XDEPZNGKfsu5Ly7/uQpUng==}
@@ -8369,6 +8386,7 @@ packages:
     peerDependencies:
       '@shikijs/langs': ^4.4.3
       '@shikijs/themes': ^4.4.3
+      '@types/react': '*'
       '@visulima/tabular': 4.1.0
       '@visulima/tui': 4.0.29
       cfonts: ^3.3.1
@@ -8381,6 +8399,8 @@ packages:
       '@shikijs/langs':
         optional: true
       '@shikijs/themes':
+        optional: true
+      '@types/react':
         optional: true
       '@visulima/tabular':
         optional: true
@@ -8401,6 +8421,7 @@ packages:
     peerDependencies:
       '@shikijs/langs': ^4.4.3
       '@shikijs/themes': ^4.4.3
+      '@types/react': '*'
       react: ^19.2.6
       react-devtools-core: ^7.0.1
       react-reconciler: ^0.33.0
@@ -8409,6 +8430,8 @@ packages:
       '@shikijs/langs':
         optional: true
       '@shikijs/themes':
+        optional: true
+      '@types/react':
         optional: true
       react-devtools-core:
         optional: true
@@ -13470,7 +13493,11 @@ packages:
     resolution: {integrity: sha512-KetWRytFv1epdpJc3J4G75I4WrplZE5jOL7Yq0p34+OVOKF4Se7WrdIdVC45XsSSmUTlht2FM/fM1FZb1mfQeA==}
     engines: {node: '>=0.10.0'}
     peerDependencies:
+      '@types/react': '*'
       react: ^19.2.0
+    peerDependenciesMeta:
+      '@types/react':
+        optional: true
 
   react-refresh@0.14.2:
     resolution: {integrity: sha512-jCvmsr+1IUSMUyzOkRcvnVbX3ZYC6g9TDrDbFuFmRDq7PD4yaGbLKNQL6k2jnArV8hjYxh7hVhAZB6s9HDGpZA==}
@@ -16204,6 +16231,11 @@ snapshots:
     optionalDependencies:
       commander: 14.0.3
 
+  '@boxd-sh/sdk@0.2.17':
+    dependencies:
+      '@bufbuild/protobuf': 2.16.0
+      '@grpc/grpc-js': 1.14.6
+
   '@braintree/sanitize-url@7.1.2': {}
 
   '@bramus/specificity@2.4.2':
@@ -16242,6 +16274,8 @@ snapshots:
     optional: true
 
   '@bufbuild/protobuf@1.10.0': {}
+
+  '@bufbuild/protobuf@2.16.0': {}
 
   '@capsizecss/unpack@4.0.1':
     dependencies:
@@ -18377,7 +18411,7 @@ snapshots:
       '@lunora/container': 1.0.0-alpha.77
       '@lunora/d1': 1.0.0-alpha.182(@cloudflare/workers-types@4.20260604.1)(@electric-sql/pglite@0.3.15)(@libsql/client@0.17.3(bufferutil@4.1.0)(utf-8-validate@6.0.6))(bun-types@1.3.14)(expo-sqlite@58.0.13(@types/react@19.3.0)(expo@58.0.14)(react-native@0.88.0(@babel/core@7.29.7(supports-color@10.2.2))(@react-native/metro-config@0.88.0(@babel/core@7.29.7(supports-color@10.2.2))(bufferutil@4.1.0)(supports-color@10.2.2)(utf-8-validate@6.0.6))(@types/react@19.3.0)(bufferutil@4.1.0)(react@19.3.0)(supports-color@10.2.2)(utf-8-validate@6.0.6))(react@19.3.0))(pg@8.23.0)
       '@lunora/errors': 1.0.0-alpha.57
-      '@lunora/mcp': 1.0.0-alpha.242(@cloudflare/workers-types@4.20260604.1)(@electric-sql/pglite@0.3.15)(@libsql/client@0.17.3(bufferutil@4.1.0)(utf-8-validate@6.0.6))(@lunora/runtime@1.0.0-alpha.208(2b3bdd0942483e58a6d6076f6783e96d))(@tanstack/react-query@5.104.3(@types/react@19.3.0)(react@19.3.0))(@tanstack/solid-query@5.104.3(solid-js@1.9.17))(@tanstack/svelte-query@6.3.3(svelte@5.57.2))(@tanstack/vue-query@5.104.3(vue@3.5.44(typescript@7.0.2)))(bun-types@1.3.14)(expo-sqlite@58.0.13(@types/react@19.3.0)(expo@58.0.14)(react-native@0.88.0(@babel/core@7.29.7(supports-color@10.2.2))(@react-native/metro-config@0.88.0(@babel/core@7.29.7(supports-color@10.2.2))(bufferutil@4.1.0)(supports-color@10.2.2)(utf-8-validate@6.0.6))(@types/react@19.3.0)(bufferutil@4.1.0)(react@19.3.0)(supports-color@10.2.2)(utf-8-validate@6.0.6))(react@19.3.0))(pg@8.23.0)(react@19.3.0)(solid-js@1.9.17)(supports-color@10.2.2)(svelte@5.57.2)(vue@3.5.44(typescript@7.0.2))(zod@4.6.5)
+      '@lunora/mcp': 1.0.0-alpha.242(@cloudflare/workers-types@4.20260604.1)(@electric-sql/pglite@0.3.15)(@libsql/client@0.17.3(bufferutil@4.1.0)(utf-8-validate@6.0.6))(@lunora/runtime@1.0.0-alpha.208(2b3bdd0942483e58a6d6076f6783e96d))(@tanstack/react-query@5.104.3(@types/react@19.3.0)(react@19.3.0))(@tanstack/solid-query@5.104.3(solid-js@1.9.17))(@tanstack/svelte-query@6.3.3(svelte@5.57.2))(@tanstack/vue-query@5.104.3(vue@3.5.44(typescript@7.0.2)))(@types/react@19.3.0)(bun-types@1.3.14)(expo-sqlite@58.0.13(@types/react@19.3.0)(expo@58.0.14)(react-native@0.88.0(@babel/core@7.29.7(supports-color@10.2.2))(@react-native/metro-config@0.88.0(@babel/core@7.29.7(supports-color@10.2.2))(bufferutil@4.1.0)(supports-color@10.2.2)(utf-8-validate@6.0.6))(@types/react@19.3.0)(bufferutil@4.1.0)(react@19.3.0)(supports-color@10.2.2)(utf-8-validate@6.0.6))(react@19.3.0))(pg@8.23.0)(react@19.3.0)(solid-js@1.9.17)(supports-color@10.2.2)(svelte@5.57.2)(vue@3.5.44(typescript@7.0.2))(zod@4.6.5)
       '@lunora/runtime': 1.0.0-alpha.208(2b3bdd0942483e58a6d6076f6783e96d)
       '@lunora/seed': 1.0.0-alpha.228(@lunora/server@1.0.0-alpha.209(@cloudflare/workers-types@4.20260604.1)(@electric-sql/pglite@0.3.15)(@libsql/client@0.17.3(bufferutil@4.1.0)(utf-8-validate@6.0.6))(bun-types@1.3.14)(expo-sqlite@58.0.13(@types/react@19.3.0)(expo@58.0.14)(react-native@0.88.0(@babel/core@7.29.7(supports-color@10.2.2))(@react-native/metro-config@0.88.0(@babel/core@7.29.7(supports-color@10.2.2))(bufferutil@4.1.0)(supports-color@10.2.2)(utf-8-validate@6.0.6))(@types/react@19.3.0)(bufferutil@4.1.0)(react@19.3.0)(supports-color@10.2.2)(utf-8-validate@6.0.6))(react@19.3.0))(pg@8.23.0))(@lunora/testing@1.0.0-alpha.272(8e5258b3dae6af60b660e94d2d685460))(@lunora/values@1.0.0-alpha.67)
       '@visulima/cerebro': 3.1.2(@bomb.sh/tab@0.0.22(commander@14.0.3))(@visulima/pail@5.0.0(@visulima/redact@5.0.0)(express@5.2.1(supports-color@10.2.2))(hono@4.13.7))(github-slugger@2.0.0)
@@ -18386,15 +18420,15 @@ snapshots:
       '@visulima/pail': 5.0.0(@visulima/redact@5.0.0)(express@5.2.1(supports-color@10.2.2))(hono@4.13.7)
       '@visulima/path': 4.0.0
       '@visulima/spinner': 1.0.1
-      '@visulima/tui': 4.0.29(ai@7.0.127(zod@4.6.5))(react-reconciler@0.33.0(react@19.3.0))(react@19.3.0)
-      '@visulima/tui-kit': 1.0.32(@visulima/tabular@4.1.0)(@visulima/tui@4.0.29(ai@7.0.127(zod@4.6.5))(react-reconciler@0.33.0(react@19.3.0))(react@19.3.0))(diff@9.0.0)(react@19.3.0)
+      '@visulima/tui': 4.0.29(@types/react@19.3.0)(ai@7.0.127(zod@4.6.5))(react-reconciler@0.33.0(@types/react@19.3.0)(react@19.3.0))(react@19.3.0)
+      '@visulima/tui-kit': 1.0.32(@types/react@19.3.0)(@visulima/tabular@4.1.0)(@visulima/tui@4.0.29(@types/react@19.3.0)(ai@7.0.127(zod@4.6.5))(react-reconciler@0.33.0(@types/react@19.3.0)(react@19.3.0))(react@19.3.0))(diff@9.0.0)(react@19.3.0)
       adm-zip: 0.6.1
       csv-parse: 7.0.3
       giget: 3.3.1
       jsonc-parser: 3.3.1
       magic-string: 1.4.3
       react: 19.3.0
-      react-reconciler: 0.33.0(react@19.3.0)
+      react-reconciler: 0.33.0(@types/react@19.3.0)(react@19.3.0)
       smol-toml: 1.9.0
       ts-morph: 28.0.0
     optionalDependencies:
@@ -18498,33 +18532,35 @@ snapshots:
       - vue
       - zod
 
-  '@lunora/client@1.0.0-alpha.213(@lunora/runtime@1.0.0-alpha.208(2b3bdd0942483e58a6d6076f6783e96d))(@tanstack/react-query@5.104.3(@types/react@19.3.0)(react@19.3.0))(@tanstack/solid-query@5.104.3(solid-js@1.9.17))(@tanstack/svelte-query@6.3.3(svelte@5.57.2))(@tanstack/vue-query@5.104.3(vue@3.5.44(typescript@7.0.2)))(react@19.3.0)(solid-js@1.9.17)(svelte@5.57.2)(vue@3.5.44(typescript@7.0.2))':
+  '@lunora/client@1.0.0-alpha.213(@lunora/runtime@1.0.0-alpha.208(2b3bdd0942483e58a6d6076f6783e96d))(@tanstack/react-query@5.104.3(@types/react@19.3.0)(react@19.3.0))(@tanstack/solid-query@5.104.3(solid-js@1.9.17))(@tanstack/svelte-query@6.3.3(svelte@5.57.2))(@tanstack/vue-query@5.104.3(vue@3.5.44(typescript@7.0.2)))(@types/react@19.3.0)(react@19.3.0)(solid-js@1.9.17)(svelte@5.57.2)(vue@3.5.44(typescript@7.0.2))':
     dependencies:
       '@lunora/errors': 1.0.0-alpha.57
       '@lunora/runtime': 1.0.0-alpha.208(2b3bdd0942483e58a6d6076f6783e96d)
       '@lunora/wire': 1.0.0-alpha.1
-      '@visulima/storage-client': 1.0.9(@tanstack/react-query@5.104.3(@types/react@19.3.0)(react@19.3.0))(@tanstack/solid-query@5.104.3(solid-js@1.9.17))(@tanstack/svelte-query@6.3.3(svelte@5.57.2))(@tanstack/vue-query@5.104.3(vue@3.5.44(typescript@7.0.2)))(react@19.3.0)(solid-js@1.9.17)(svelte@5.57.2)(vue@3.5.44(typescript@7.0.2))
+      '@visulima/storage-client': 1.0.9(@tanstack/react-query@5.104.3(@types/react@19.3.0)(react@19.3.0))(@tanstack/solid-query@5.104.3(solid-js@1.9.17))(@tanstack/svelte-query@6.3.3(svelte@5.57.2))(@tanstack/vue-query@5.104.3(vue@3.5.44(typescript@7.0.2)))(@types/react@19.3.0)(react@19.3.0)(solid-js@1.9.17)(svelte@5.57.2)(vue@3.5.44(typescript@7.0.2))
     transitivePeerDependencies:
       - '@tanstack/react-query'
       - '@tanstack/solid-query'
       - '@tanstack/svelte-query'
       - '@tanstack/vue-query'
+      - '@types/react'
       - react
       - solid-js
       - svelte
       - vue
 
-  '@lunora/client@1.0.0-alpha.215(@lunora/runtime@1.0.0-alpha.208(2b3bdd0942483e58a6d6076f6783e96d))(@tanstack/react-query@5.104.3(@types/react@19.3.0)(react@19.3.0))(@tanstack/solid-query@5.104.3(solid-js@1.9.17))(@tanstack/svelte-query@6.3.3(svelte@5.57.2))(@tanstack/vue-query@5.104.3(vue@3.5.44(typescript@7.0.2)))(react@19.3.0)(solid-js@1.9.17)(svelte@5.57.2)(vue@3.5.44(typescript@7.0.2))':
+  '@lunora/client@1.0.0-alpha.215(@lunora/runtime@1.0.0-alpha.208(2b3bdd0942483e58a6d6076f6783e96d))(@tanstack/react-query@5.104.3(@types/react@19.3.0)(react@19.3.0))(@tanstack/solid-query@5.104.3(solid-js@1.9.17))(@tanstack/svelte-query@6.3.3(svelte@5.57.2))(@tanstack/vue-query@5.104.3(vue@3.5.44(typescript@7.0.2)))(@types/react@19.3.0)(react@19.3.0)(solid-js@1.9.17)(svelte@5.57.2)(vue@3.5.44(typescript@7.0.2))':
     dependencies:
       '@lunora/errors': 1.0.0-alpha.57
       '@lunora/runtime': 1.0.0-alpha.208(2b3bdd0942483e58a6d6076f6783e96d)
       '@lunora/wire': 1.0.0-alpha.1
-      '@visulima/storage-client': 1.0.9(@tanstack/react-query@5.104.3(@types/react@19.3.0)(react@19.3.0))(@tanstack/solid-query@5.104.3(solid-js@1.9.17))(@tanstack/svelte-query@6.3.3(svelte@5.57.2))(@tanstack/vue-query@5.104.3(vue@3.5.44(typescript@7.0.2)))(react@19.3.0)(solid-js@1.9.17)(svelte@5.57.2)(vue@3.5.44(typescript@7.0.2))
+      '@visulima/storage-client': 1.0.9(@tanstack/react-query@5.104.3(@types/react@19.3.0)(react@19.3.0))(@tanstack/solid-query@5.104.3(solid-js@1.9.17))(@tanstack/svelte-query@6.3.3(svelte@5.57.2))(@tanstack/vue-query@5.104.3(vue@3.5.44(typescript@7.0.2)))(@types/react@19.3.0)(react@19.3.0)(solid-js@1.9.17)(svelte@5.57.2)(vue@3.5.44(typescript@7.0.2))
     transitivePeerDependencies:
       - '@tanstack/react-query'
       - '@tanstack/solid-query'
       - '@tanstack/svelte-query'
       - '@tanstack/vue-query'
+      - '@types/react'
       - react
       - solid-js
       - svelte
@@ -18830,10 +18866,10 @@ snapshots:
       - rrule
       - unstorage
 
-  '@lunora/mcp@1.0.0-alpha.242(@cloudflare/workers-types@4.20260604.1)(@electric-sql/pglite@0.3.15)(@libsql/client@0.17.3(bufferutil@4.1.0)(utf-8-validate@6.0.6))(@lunora/runtime@1.0.0-alpha.208(2b3bdd0942483e58a6d6076f6783e96d))(@tanstack/react-query@5.104.3(@types/react@19.3.0)(react@19.3.0))(@tanstack/solid-query@5.104.3(solid-js@1.9.17))(@tanstack/svelte-query@6.3.3(svelte@5.57.2))(@tanstack/vue-query@5.104.3(vue@3.5.44(typescript@7.0.2)))(bun-types@1.3.14)(expo-sqlite@58.0.13(@types/react@19.3.0)(expo@58.0.14)(react-native@0.88.0(@babel/core@7.29.7(supports-color@10.2.2))(@react-native/metro-config@0.88.0(@babel/core@7.29.7(supports-color@10.2.2))(bufferutil@4.1.0)(supports-color@10.2.2)(utf-8-validate@6.0.6))(@types/react@19.3.0)(bufferutil@4.1.0)(react@19.3.0)(supports-color@10.2.2)(utf-8-validate@6.0.6))(react@19.3.0))(pg@8.23.0)(react@19.3.0)(solid-js@1.9.17)(supports-color@10.2.2)(svelte@5.57.2)(vue@3.5.44(typescript@7.0.2))(zod@4.6.5)':
+  '@lunora/mcp@1.0.0-alpha.242(@cloudflare/workers-types@4.20260604.1)(@electric-sql/pglite@0.3.15)(@libsql/client@0.17.3(bufferutil@4.1.0)(utf-8-validate@6.0.6))(@lunora/runtime@1.0.0-alpha.208(2b3bdd0942483e58a6d6076f6783e96d))(@tanstack/react-query@5.104.3(@types/react@19.3.0)(react@19.3.0))(@tanstack/solid-query@5.104.3(solid-js@1.9.17))(@tanstack/svelte-query@6.3.3(svelte@5.57.2))(@tanstack/vue-query@5.104.3(vue@3.5.44(typescript@7.0.2)))(@types/react@19.3.0)(bun-types@1.3.14)(expo-sqlite@58.0.13(@types/react@19.3.0)(expo@58.0.14)(react-native@0.88.0(@babel/core@7.29.7(supports-color@10.2.2))(@react-native/metro-config@0.88.0(@babel/core@7.29.7(supports-color@10.2.2))(bufferutil@4.1.0)(supports-color@10.2.2)(utf-8-validate@6.0.6))(@types/react@19.3.0)(bufferutil@4.1.0)(react@19.3.0)(supports-color@10.2.2)(utf-8-validate@6.0.6))(react@19.3.0))(pg@8.23.0)(react@19.3.0)(solid-js@1.9.17)(supports-color@10.2.2)(svelte@5.57.2)(vue@3.5.44(typescript@7.0.2))(zod@4.6.5)':
     dependencies:
       '@cfworker/json-schema': 4.1.1
-      '@lunora/client': 1.0.0-alpha.213(@lunora/runtime@1.0.0-alpha.208(2b3bdd0942483e58a6d6076f6783e96d))(@tanstack/react-query@5.104.3(@types/react@19.3.0)(react@19.3.0))(@tanstack/solid-query@5.104.3(solid-js@1.9.17))(@tanstack/svelte-query@6.3.3(svelte@5.57.2))(@tanstack/vue-query@5.104.3(vue@3.5.44(typescript@7.0.2)))(react@19.3.0)(solid-js@1.9.17)(svelte@5.57.2)(vue@3.5.44(typescript@7.0.2))
+      '@lunora/client': 1.0.0-alpha.213(@lunora/runtime@1.0.0-alpha.208(2b3bdd0942483e58a6d6076f6783e96d))(@tanstack/react-query@5.104.3(@types/react@19.3.0)(react@19.3.0))(@tanstack/solid-query@5.104.3(solid-js@1.9.17))(@tanstack/svelte-query@6.3.3(svelte@5.57.2))(@tanstack/vue-query@5.104.3(vue@3.5.44(typescript@7.0.2)))(@types/react@19.3.0)(react@19.3.0)(solid-js@1.9.17)(svelte@5.57.2)(vue@3.5.44(typescript@7.0.2))
       '@lunora/errors': 1.0.0-alpha.57
       '@lunora/shard-engine': 1.0.0-alpha.131(@cloudflare/workers-types@4.20260604.1)(@electric-sql/pglite@0.3.15)(@libsql/client@0.17.3(bufferutil@4.1.0)(utf-8-validate@6.0.6))(bun-types@1.3.14)(expo-sqlite@58.0.13(@types/react@19.3.0)(expo@58.0.14)(react-native@0.88.0(@babel/core@7.29.7(supports-color@10.2.2))(@react-native/metro-config@0.88.0(@babel/core@7.29.7(supports-color@10.2.2))(bufferutil@4.1.0)(supports-color@10.2.2)(utf-8-validate@6.0.6))(@types/react@19.3.0)(bufferutil@4.1.0)(react@19.3.0)(supports-color@10.2.2)(utf-8-validate@6.0.6))(react@19.3.0))(pg@8.23.0)
       '@lunora/wire': 1.0.0-alpha.1
@@ -18858,6 +18894,7 @@ snapshots:
       - '@tidbcloud/serverless'
       - '@types/better-sqlite3'
       - '@types/pg'
+      - '@types/react'
       - '@types/sql.js'
       - '@upstash/redis'
       - '@vercel/postgres'
@@ -21811,7 +21848,7 @@ snapshots:
     dependencies:
       '@visulima/interactive-manager': 1.0.1
 
-  '@visulima/storage-client@1.0.9(@tanstack/react-query@5.104.3(@types/react@19.3.0)(react@19.3.0))(@tanstack/solid-query@5.104.3(solid-js@1.9.17))(@tanstack/svelte-query@6.3.3(svelte@5.57.2))(@tanstack/vue-query@5.104.3(vue@3.5.44(typescript@7.0.2)))(react@19.3.0)(solid-js@1.9.17)(svelte@5.57.2)(vue@3.5.44(typescript@7.0.2))':
+  '@visulima/storage-client@1.0.9(@tanstack/react-query@5.104.3(@types/react@19.3.0)(react@19.3.0))(@tanstack/solid-query@5.104.3(solid-js@1.9.17))(@tanstack/svelte-query@6.3.3(svelte@5.57.2))(@tanstack/vue-query@5.104.3(vue@3.5.44(typescript@7.0.2)))(@types/react@19.3.0)(react@19.3.0)(solid-js@1.9.17)(svelte@5.57.2)(vue@3.5.44(typescript@7.0.2))':
     dependencies:
       '@tanstack/react-query': 5.104.3(@types/react@19.3.0)(react@19.3.0)
       '@tanstack/solid-query': 5.104.3(solid-js@1.9.17)
@@ -21821,6 +21858,8 @@ snapshots:
       solid-js: 1.9.17
       svelte: 5.57.2
       vue: 3.5.44(typescript@7.0.2)
+    optionalDependencies:
+      '@types/react': 19.3.0
 
   '@visulima/string@3.1.1': {}
 
@@ -21850,29 +21889,31 @@ snapshots:
   '@visulima/tui-binding-win32-x64-msvc@4.0.29':
     optional: true
 
-  '@visulima/tui-kit@1.0.32(@visulima/tabular@4.1.0)(@visulima/tui@4.0.29(ai@7.0.127(zod@4.6.5))(react-reconciler@0.33.0(react@19.3.0))(react@19.3.0))(diff@9.0.0)(react@19.3.0)':
+  '@visulima/tui-kit@1.0.32(@types/react@19.3.0)(@visulima/tabular@4.1.0)(@visulima/tui@4.0.29(@types/react@19.3.0)(ai@7.0.127(zod@4.6.5))(react-reconciler@0.33.0(@types/react@19.3.0)(react@19.3.0))(react@19.3.0))(diff@9.0.0)(react@19.3.0)':
     dependencies:
       '@visulima/ansi': 4.2.0
       '@visulima/colorize': 2.1.1
       '@visulima/spinner': 1.0.1
-      '@visulima/tui': 4.0.29(ai@7.0.127(zod@4.6.5))(react-reconciler@0.33.0(react@19.3.0))(react@19.3.0)
+      '@visulima/tui': 4.0.29(@types/react@19.3.0)(ai@7.0.127(zod@4.6.5))(react-reconciler@0.33.0(@types/react@19.3.0)(react@19.3.0))(react@19.3.0)
       react: 19.3.0
       type-fest: 5.8.0
     optionalDependencies:
+      '@types/react': 19.3.0
       '@visulima/tabular': 4.1.0
       diff: 9.0.0
 
-  '@visulima/tui@4.0.29(ai@7.0.127(zod@4.6.5))(react-reconciler@0.33.0(react@19.3.0))(react@19.3.0)':
+  '@visulima/tui@4.0.29(@types/react@19.3.0)(ai@7.0.127(zod@4.6.5))(react-reconciler@0.33.0(@types/react@19.3.0)(react@19.3.0))(react@19.3.0)':
     dependencies:
       '@visulima/ansi': 4.2.0
       '@visulima/colorize': 2.1.1
       '@visulima/error': 6.1.0(ai@7.0.127(zod@4.6.5))
       '@visulima/string': 3.1.1
       react: 19.3.0
-      react-reconciler: 0.33.0(react@19.3.0)
+      react-reconciler: 0.33.0(@types/react@19.3.0)(react@19.3.0)
       scheduler: 0.27.0
       yoga-layout: 3.2.1
     optionalDependencies:
+      '@types/react': 19.3.0
       '@visulima/tui-binding-darwin-arm64': 4.0.29
       '@visulima/tui-binding-darwin-x64': 4.0.29
       '@visulima/tui-binding-linux-arm64-gnu': 4.0.29
@@ -24608,10 +24649,12 @@ snapshots:
   expo-widgets@58.0.20(patch_hash=8623cb034b720c5ef2da8012c765805a7298909bd92eaf8381f64dbde41b77dd)(5d5d4e7800c4874056d3b5e0f78aab04):
     dependencies:
       '@expo/plist': 0.10.1
+      '@expo/spawn-async': 1.8.0
       '@expo/ui': 58.0.20(patch_hash=5a26480373850c1a7943919aa21f904151b335a0cb01042109e0746def37923e)(5d5d4e7800c4874056d3b5e0f78aab04)
       expo: 58.0.14(842967fe38509c44776be211a58e7d49)
       react: 19.3.0
       react-native: 0.88.0(@babel/core@7.29.7(supports-color@10.2.2))(@react-native/metro-config@0.88.0(@babel/core@7.29.7(supports-color@10.2.2))(bufferutil@4.1.0)(supports-color@10.2.2)(utf-8-validate@6.0.6))(@types/react@19.3.0)(bufferutil@4.1.0)(react@19.3.0)(supports-color@10.2.2)(utf-8-validate@6.0.6)
+      resolve-workspace-root: 2.0.1
     optionalDependencies:
       '@types/react': 19.3.0
     transitivePeerDependencies:
@@ -25706,7 +25749,7 @@ snapshots:
   lunorash@1.0.0-alpha.398(bc1a66e98bc774d9601914d1940e19ea):
     dependencies:
       '@lunora/cli': 1.0.0-alpha.399(3870395dd2583366aedee0899256eea0)
-      '@lunora/client': 1.0.0-alpha.215(@lunora/runtime@1.0.0-alpha.208(2b3bdd0942483e58a6d6076f6783e96d))(@tanstack/react-query@5.104.3(@types/react@19.3.0)(react@19.3.0))(@tanstack/solid-query@5.104.3(solid-js@1.9.17))(@tanstack/svelte-query@6.3.3(svelte@5.57.2))(@tanstack/vue-query@5.104.3(vue@3.5.44(typescript@7.0.2)))(react@19.3.0)(solid-js@1.9.17)(svelte@5.57.2)(vue@3.5.44(typescript@7.0.2))
+      '@lunora/client': 1.0.0-alpha.215(@lunora/runtime@1.0.0-alpha.208(2b3bdd0942483e58a6d6076f6783e96d))(@tanstack/react-query@5.104.3(@types/react@19.3.0)(react@19.3.0))(@tanstack/solid-query@5.104.3(solid-js@1.9.17))(@tanstack/svelte-query@6.3.3(svelte@5.57.2))(@tanstack/vue-query@5.104.3(vue@3.5.44(typescript@7.0.2)))(@types/react@19.3.0)(react@19.3.0)(solid-js@1.9.17)(svelte@5.57.2)(vue@3.5.44(typescript@7.0.2))
       '@lunora/do': 1.0.0-alpha.218(@cloudflare/workers-types@4.20260604.1)(@electric-sql/pglite@0.3.15)(@libsql/client@0.17.3(bufferutil@4.1.0)(utf-8-validate@6.0.6))(bun-types@1.3.14)(expo-sqlite@58.0.13(@types/react@19.3.0)(expo@58.0.14)(react-native@0.88.0(@babel/core@7.29.7(supports-color@10.2.2))(@react-native/metro-config@0.88.0(@babel/core@7.29.7(supports-color@10.2.2))(bufferutil@4.1.0)(supports-color@10.2.2)(utf-8-validate@6.0.6))(@types/react@19.3.0)(bufferutil@4.1.0)(react@19.3.0)(supports-color@10.2.2)(utf-8-validate@6.0.6))(react@19.3.0))(pg@8.23.0)
       '@lunora/errors': 1.0.0-alpha.57
       '@lunora/flags': 1.0.0-alpha.71(@openfeature/core@1.12.0)
@@ -27731,10 +27774,12 @@ snapshots:
       - supports-color
       - utf-8-validate
 
-  react-reconciler@0.33.0(react@19.3.0):
+  react-reconciler@0.33.0(@types/react@19.3.0)(react@19.3.0):
     dependencies:
       react: 19.3.0
       scheduler: 0.27.0
+    optionalDependencies:
+      '@types/react': 19.3.0
 
   react-refresh@0.14.2: {}
 

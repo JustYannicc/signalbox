@@ -3,18 +3,20 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
 import * as CloudTokens from "../auth/CloudTokens.ts";
-import type { ModelForwardReply, PoolObjectNamespace } from "../pool/PoolDirectory.ts";
+import { makeModelAccess } from "../models/testing.ts";
+import type {
+  LocalModelAuthorization,
+  ModelForwardReply,
+  ModelPoolRoute,
+} from "../models/ModelProtocol.ts";
 import { layerConfig, makeMemoryCloud } from "../testing.ts";
-import { serveModel } from "../thread/runner/modelGrants.ts";
-import type { ThreadObjectNamespace } from "../thread/ThreadDirectory.ts";
 import * as ResourceBindings from "../user/ResourceBindings.ts";
-import type { UserObjectNamespace } from "../user/UserDirectory.ts";
 import * as UserPools from "../user/UserPools.ts";
 import { MAX_KEYS, signLocalKey, verifyLocalKey } from "./LocalKeys.ts";
-import type { LocalModelAuthorization } from "./localModelAccess.ts";
 
 const userId = "user_1";
 const layerTokens = CloudTokens.layer.pipe(Layer.provide(layerConfig()));
+type VerifiedLocalKey = Effect.Success<ReturnType<typeof verifyLocalKey>>;
 
 const created = (key: { readonly _tag: string; readonly secret?: string }) => {
   if (key._tag !== "created" || key.secret === undefined) throw new Error("no key created");
@@ -22,60 +24,52 @@ const created = (key: { readonly _tag: string; readonly secret?: string }) => {
 };
 
 /**
- * `serveModel` as the `ModelGrants` entrypoint runs it, with user objects that
- * answer `authorize` and a pool that records what it got.
+ * ModelAccess serves a signed key through the injected verifier, owner, and pool.
  */
-const makeGrants = (authorize: (userId: string, secret: string) => LocalModelAuthorization) => {
+const makeGrants = (
+  verifiedKeys: ReadonlyMap<string, VerifiedLocalKey>,
+  authorize: (userId: string, secret: string) => LocalModelAuthorization,
+) => {
   const asked: Array<string> = [];
   const forwarded: Array<{
     readonly objectName: string;
     readonly userId: string;
     readonly path: string;
   }> = [];
-  const byName = <A>(get: (name: string) => A) => ({
-    idFromName: (name: string) => name as unknown as DurableObjectId,
-    jurisdiction: () => ({ idFromName: (name: string) => name as unknown as DurableObjectId }),
-    get: (id: DurableObjectId) => get(id as unknown as string),
-  });
-  const users = byName((name) => ({
-    authorizeLocalModel: async (secret: string) => {
-      asked.push(name);
-      return authorize(name, secret);
-    },
-  })) as unknown as UserObjectNamespace;
-  const pools = byName((objectName) => ({
-    forwardModel: async (actor: { readonly userId: string }, path: string) => {
-      forwarded.push({ objectName, userId: actor.userId, path });
-      return {
-        _tag: "forwarded",
-        response: new Response("ok"),
-        upstreamMs: 1,
-      } satisfies ModelForwardReply;
-    },
-  })) as unknown as PoolObjectNamespace;
-  const threads = byName(() => {
-    throw new Error("a local key never asks a thread");
-  }) as unknown as ThreadObjectNamespace;
-  const serve = (
-    token: string,
-    verified: { readonly userId: string; readonly secret: string } | null,
-  ) =>
-    Effect.promise(() =>
-      serveModel(
-        {
-          threads,
-          users,
-          pools,
-          verifyLocalKey: async () => verified,
-          token,
-          provider: "anthropic",
-          path: "/v1/messages",
-          request: new Request("http://gateway.test/anthropic/v1/messages", { method: "POST" }),
-        },
-        { localWorkerd: true },
-      ),
-    );
-  return { serve, asked, forwarded };
+  return Effect.map(
+    makeModelAccess({
+      authorizeThread: async () => ({ _tag: "denied", reason: "a local key never asks a thread" }),
+      authorizeLocal: async (token) => {
+        const verified = verifiedKeys.get(token) ?? null;
+        if (verified === null) return { _tag: "denied", reason: "Not a Signalbox key." };
+        asked.push(verified.userId);
+        return authorize(verified.userId, verified.secret);
+      },
+      forward: async (pool: ModelPoolRoute, path: string) => {
+        forwarded.push({ objectName: pool.objectName, userId: pool.userId, path });
+        return {
+          _tag: "forwarded",
+          response: new Response("ok"),
+          upstreamMs: 1,
+        } satisfies ModelForwardReply;
+      },
+      recordThread: async () => undefined,
+      recordLocal: async () => undefined,
+    }),
+    (modelAccess) => ({
+      serve: (token: string) =>
+        Effect.promise(() =>
+          modelAccess.serve({
+            token,
+            provider: "anthropic",
+            path: "/v1/messages",
+            request: new Request("http://gateway.test/anthropic/v1/messages", { method: "POST" }),
+          }),
+        ),
+      asked,
+      forwarded,
+    }),
+  );
 };
 
 describe("local keys", () => {
@@ -145,46 +139,58 @@ describe("local keys", () => {
   it.effect(
     "reach the gateway's pool as the key's user, and only once their object grants it",
     () => {
-      const grants = makeGrants((name, secret) =>
-        secret === "live"
-          ? {
-              _tag: "granted",
-              keyId: "key-1",
-              pool: { objectName: `${name}:personal`, userId: name },
-            }
-          : { _tag: "denied", reason: "This Signalbox key was revoked." },
-      );
       return Effect.gen(function* () {
-        expect(yield* grants.serve("sbk_live", { userId, secret: "live" })).toMatchObject({
+        const token = yield* signLocalKey(userId, "live");
+        const verified = yield* verifyLocalKey(token);
+        const oldToken = yield* signLocalKey(userId, "old");
+        const oldVerified = yield* verifyLocalKey(oldToken);
+        const { serve, forwarded } = yield* makeGrants(
+          new Map<string, VerifiedLocalKey>([
+            [token, verified],
+            [oldToken, oldVerified],
+          ]),
+          (name, secret) =>
+            secret === "live"
+              ? {
+                  _tag: "granted",
+                  keyId: "key-1",
+                  pool: { objectName: `${name}:personal`, userId: name },
+                }
+              : { _tag: "denied", reason: "This Signalbox key was revoked." },
+        );
+        expect(yield* serve(token)).toMatchObject({
           _tag: "granted-local",
           userId,
           keyId: "key-1",
           reply: { _tag: "forwarded" },
         });
-        expect(grants.forwarded).toEqual([
+        expect(forwarded).toEqual([
           { objectName: `${userId}:personal`, userId, path: "/v1/messages" },
         ]);
-        expect(yield* grants.serve("sbk_old", { userId, secret: "old" })).toMatchObject({
+        expect(yield* serve(oldToken)).toMatchObject({
           _tag: "denied",
           reason: "This Signalbox key was revoked.",
         });
-        expect(grants.forwarded).toHaveLength(1);
-      });
+        expect(forwarded).toHaveLength(1);
+      }).pipe(Effect.provide(layerTokens));
     },
   );
 
   it.effect("refuses a key this cloud didn't sign without asking anyone", () => {
-    const grants = makeGrants(() => {
-      throw new Error("an unsigned key never wakes a user's object");
-    });
     return Effect.gen(function* () {
-      expect(yield* grants.serve("sbk_forged", null)).toMatchObject({
+      const forged = "sbk_forged";
+      const verified = yield* verifyLocalKey(forged);
+      const grants = yield* makeGrants(new Map([[forged, verified]]), () => {
+        throw new Error("an unsigned key never wakes a user's object");
+      });
+      expect(verified).toBeNull();
+      expect(yield* grants.serve(forged)).toMatchObject({
         _tag: "denied",
         reason: "Not a Signalbox key.",
       });
       expect(grants.asked).toEqual([]);
       expect(grants.forwarded).toEqual([]);
-    });
+    }).pipe(Effect.provide(layerTokens));
   });
 
   it.effect("count what each key used, and how many a user may hold", () => {

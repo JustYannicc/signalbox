@@ -17,6 +17,7 @@ import * as Cloudflare from "alchemy/Cloudflare";
 import * as Config from "effect/Config";
 import * as Effect from "effect/Effect";
 import * as Redacted from "effect/Redacted";
+import { testSignInEnv } from "./infra/testSignInEnv.ts";
 
 import { nativeTraceExport } from "./infra/nativeTraceExport.ts";
 import {
@@ -175,7 +176,7 @@ function workerEnv(target: CloudStage) {
           RUNNER_IMAGE: yield* optional("RUNNER_IMAGE"),
         };
 
-    return { ...target.vars, ...shared, ...stageEnv };
+    return { ...target.vars, ...shared, ...stageEnv, ...(yield* testSignInEnv(target.production)) };
   });
 }
 
