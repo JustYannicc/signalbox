@@ -41,7 +41,6 @@ export async function runTrackedCommand(
       input.worktreePath,
       input.sessionId ?? process.env.SIGNALBOX_PROCESS_SESSION_ID,
       process.env.CODEX_THREAD_ID,
-      process.env.CODEX_SESSION_ID,
     ),
   );
   let cleanupInProgress: ReturnType<typeof stop> | undefined;

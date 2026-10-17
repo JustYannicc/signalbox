@@ -71,10 +71,9 @@ export async function ownedSessionId(
   worktreePath: string,
   explicit?: string,
   codexThreadId?: string,
-  codexSessionId?: string,
 ) {
   if (explicit !== undefined && explicit.length > 0) return explicit;
-  const runtimeId = codexThreadId || codexSessionId;
+  const runtimeId = codexThreadId;
   if (runtimeId === undefined || runtimeId.length === 0) return undefined;
   // Native Codex subagent hooks carry the parent session ID separately from the
   // child's runtime ID. Match that exact ID rather than another session in this checkout.
@@ -82,7 +81,8 @@ export async function ownedSessionId(
     (session) => (session.runtimeSessionId ?? session.sessionId) === runtimeId,
   );
   if (matches.length > 1) throw new Error("Multiple sessions claim the same Codex thread ID");
-  return matches[0]?.sessionId ?? (codexSessionId || runtimeId);
+  // CODEX_SESSION_ID can belong to a parent. An unbound child owns only its runtime ID.
+  return matches[0]?.sessionId ?? runtimeId;
 }
 
 export function processSessionId(explicit?: string) {

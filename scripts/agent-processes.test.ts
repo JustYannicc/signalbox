@@ -17,6 +17,7 @@ import {
   stop,
 } from "../packages/shared/src/agentProcesses/registry.ts";
 import { createNodeProcessOps } from "../packages/shared/src/agentProcesses/processOps.ts";
+import { recordSession } from "../packages/shared/src/agentProcessSessions.ts";
 
 const command = NodeURL.fileURLToPath(new URL("./agent-processes.ts", import.meta.url));
 const execute = NodeUtil.promisify(NodeChildProcess.execFile);
@@ -60,6 +61,25 @@ it.effect("stops only the selected session unless every registration is explicit
         ).rejects.toThrow("Stopping processes requires --session-id");
         expect((await processOps.inspect(agent!.child.pid!)).state).toBe("running");
         expect((await processOps.inspect(developer!.child.pid!)).state).toBe("running");
+
+        await recordSession(cwd, "agent-session", false, "agent-session");
+        const unboundChild = await execute(process.execPath, [command, "stop"], {
+          cwd,
+          env: {
+            ...environment,
+            CODEX_THREAD_ID: "unbound-child",
+            CODEX_SESSION_ID: "agent-session",
+          },
+        });
+        expect(JSON.parse(unboundChild.stdout).candidates).toEqual([]);
+        expect((await processOps.inspect(agent!.child.pid!)).state).toBe("running");
+        expect((await processOps.inspect(developer!.child.pid!)).state).toBe("running");
+        await expect(
+          execute(process.execPath, [command, "stop"], {
+            cwd,
+            env: { ...environment, CODEX_SESSION_ID: "agent-session" },
+          }),
+        ).rejects.toThrow("Stopping processes requires --session-id");
 
         await execute(process.execPath, [command, "stop"], {
           cwd,

@@ -38,8 +38,7 @@ describe("agent session ownership", () => {
       await recordSession(worktreePath, "other", false, "other");
       expect(await ownedSessionId(worktreePath, undefined, "parent")).toBe("parent");
       expect(await ownedSessionId(worktreePath, undefined, "child")).toBe("parent/child");
-      expect(await ownedSessionId(worktreePath, undefined, "child", "parent")).toBe("parent/child");
-      expect(await ownedSessionId(worktreePath, undefined, "fork", "parent")).toBe("parent");
+      expect(await ownedSessionId(worktreePath, undefined, "fork")).toBe("fork");
       expect(await ownedSessionId(worktreePath, undefined, "unregistered")).toBe("unregistered");
       expect(await ownedSessionId(worktreePath, "explicit", "child")).toBe("explicit");
       await recordSession(worktreePath, "parent/child", true, "child");

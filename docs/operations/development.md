@@ -22,7 +22,7 @@ Use `vp run dev` for server and web, or `vp run dev:desktop` for the Electron cl
 On macOS and Linux, dev and Metro scripts register their processes for cleanup. Use
 `vp run agents:run -- <command>` for another watcher or long-running command. Pass
 `--session-id <id>` before `--` to set an owner ID explicitly. Claude Code exports it
-automatically; Codex commands use the runtime's session and thread IDs. Commands without
+automatically; Codex commands use their exact runtime thread ID. Commands without
 an agent owner get a separate ID, so ending an agent session cannot stop a person's server.
 Review and trust the repository hooks when the harness prompts, so session cleanup can run.
 

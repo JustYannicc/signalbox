@@ -144,7 +144,6 @@ async function stopSessionId(worktreePath: string, explicit?: string) {
     worktreePath,
     explicit ?? process.env.SIGNALBOX_PROCESS_SESSION_ID,
     process.env.CODEX_THREAD_ID,
-    process.env.CODEX_SESSION_ID,
   );
   if (sessionId === undefined || sessionId.length === 0) {
     throw new Error(
