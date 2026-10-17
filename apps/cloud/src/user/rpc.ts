@@ -97,6 +97,7 @@ import * as DriveBrowsing from "./driveBrowsing.ts";
 import * as CloudThreadService from "../thread/CloudThreadService.ts";
 import * as Threads from "../thread/Threads.ts";
 import { deviceMember, makeBrowsingHandlers } from "../thread/browsing/browsingRpc.ts";
+import { makeTerminalHandlers, TERMINAL_METHODS, TERMINAL_SCOPES } from "./terminalRpc.ts";
 import { type Actor, ThreadNotFoundError } from "../thread/ThreadAccess.ts";
 import type { BrowserReply } from "../thread/threadWire.ts";
 import { DriveSharing } from "./DriveSharing.ts";
@@ -154,6 +155,7 @@ const SECTION_METHODS = [
 ] as const;
 
 const SERVED = [
+  ...TERMINAL_METHODS,
   WS_METHODS.subscribeServerConfig,
   WS_METHODS.serverGetConfig,
   WS_METHODS.serverUpdateSettings,
@@ -228,6 +230,7 @@ export const CloudRpcGroup = WsRpcGroup.omit(
 
 /** Same scopes the self-hosted server requires for these RPCs. */
 const REQUIRED_SCOPES = {
+  ...TERMINAL_SCOPES,
   [WS_METHODS.subscribeServerConfig]: AuthOrchestrationReadScope,
   [WS_METHODS.serverGetConfig]: AuthOrchestrationReadScope,
   [WS_METHODS.serverUpdateSettings]: AuthSettingsWriteScope,
@@ -462,6 +465,7 @@ export const layerHandlers = (input: {
             Stream.runHead,
           );
         }).pipe(Effect.andThen(Effect.fail(new ThreadNotFoundError())));
+      const terminals = yield* makeTerminalHandlers(actorNow, lostSight);
       /** Calls a drive service, which only a cloud that stores drives has. */
       const withDrives =
         <S>(service: Option.Option<S>) =>
@@ -506,6 +510,7 @@ export const layerHandlers = (input: {
       });
       const signIn = yield* makeSignInHandlers({ userId });
       return {
+        ...terminals,
         ...pools.handlers,
         ...pushes,
         ...automations,

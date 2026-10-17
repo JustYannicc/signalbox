@@ -21,6 +21,7 @@ import { jsonCodec as frameCodec } from "./jsonCodec.ts";
 import { DriveAccess, DriveFileChange, Oid, SkippedFolder } from "./DriveProtocol.ts";
 import { SecretsAccess } from "./SecretsProtocol.ts";
 import { SessionAccess } from "./SessionProtocol.ts";
+import { TerminalCommandMessage, TerminalReportMessage } from "./TerminalProtocol.ts";
 
 /**
  * The wire protocol between a thread's Durable Object and the Runner driving
@@ -68,7 +69,7 @@ import { SessionAccess } from "./SessionProtocol.ts";
  * frame it sends.
  */
 
-export const RUNNER_PROTOCOL_VERSION = 5;
+export const RUNNER_PROTOCOL_VERSION = 6;
 
 export const RUNNER_HEARTBEAT_PING = "ping";
 export const RUNNER_HEARTBEAT_PONG = "pong";
@@ -276,6 +277,8 @@ export const RunnerHello = Schema.Struct({
   machineId: Schema.String,
   threadId: ThreadId,
   generation: PositiveInt,
+  /** Fresh for each terminal host process, stable across its socket reconnects. */
+  terminalProcessId: Schema.optional(Schema.String.check(Schema.isNonEmpty())),
   token: Schema.String,
   lastAckedSequence: NonNegativeInt,
   /** Absent from Runners built before diagnostics. */
@@ -302,6 +305,7 @@ export const RunnerMessage = Schema.Union([
     sequence: PositiveInt,
     items: Schema.Array(RunnerItem),
   }),
+  TerminalReportMessage,
   Schema.Struct({ type: Schema.Literal("end"), reason: Schema.String }),
 ]);
 export type RunnerMessage = typeof RunnerMessage.Type;
@@ -330,6 +334,7 @@ export const ThreadMessage = Schema.Union([
     message: Schema.String,
   }),
   Schema.Struct({ type: Schema.Literal("ack"), sequence: PositiveInt }),
+  TerminalCommandMessage,
   Schema.Struct({
     type: Schema.Literal("turn.start"),
     turn: RunnerTurn,

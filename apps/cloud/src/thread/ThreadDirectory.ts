@@ -28,6 +28,11 @@ import type {
   BrowsingStreamItem,
 } from "@t3tools/contracts/signalboxBrowsing";
 import type { BrowsingDispatched } from "./browsing/ThreadBrowsing.ts";
+import {
+  terminalHandleFor,
+  type TerminalHandle,
+  type TerminalObjectApi,
+} from "./terminal/terminalDirectory.ts";
 import { browsingWire } from "./browsing/browsingWire.ts";
 import { ThreadObjectError } from "./ThreadAccess.ts";
 import type { PreviewLinkResult } from "./preview/PreviewGateway.ts";
@@ -84,7 +89,7 @@ export interface ThreadPreviews {
 const isBehind = Schema.is(BrowserWatchBehind);
 
 /** What a thread object answers. `ThreadObject` implements it method for method. */
-export interface ThreadObjectApi {
+export interface ThreadObjectApi extends TerminalObjectApi {
   readonly dispatch: (
     actor: Actor,
     command: unknown,
@@ -163,7 +168,7 @@ export interface ThreadObjectApi {
 
 type CommandFailure = ThreadNotFoundError | ThreadCommandRejectedError | ThreadObjectError;
 
-export interface ThreadHandle {
+export interface ThreadHandle extends TerminalHandle {
   readonly dispatch: (
     actor: Actor,
     command: OrchestrationV2Command,
@@ -321,6 +326,7 @@ const lines = <A>(
 /** Wraps any `ThreadObjectApi` (a Durable Object stub, or a test double) as Effects. */
 export function handleFor(api: ThreadObjectApi): ThreadHandle {
   return {
+    ...terminalHandleFor(api),
     dispatch: (actor, command, creation) =>
       call("dispatch", () => api.dispatch(actor, wire.command.encode(command), creation)).pipe(
         Effect.flatMap(fromReply),

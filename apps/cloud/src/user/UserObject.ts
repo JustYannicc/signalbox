@@ -41,6 +41,7 @@ import * as PoolDirectory from "../pool/PoolDirectory.ts";
 import * as UserPreviewSetup from "../previewSetup/UserPreviewSetup.ts";
 import * as PushNotifier from "../push/PushNotifier.ts";
 import * as CloudThreadService from "../thread/CloudThreadService.ts";
+import * as CloudTerminalsLayer from "../thread/CloudTerminalsLayer.ts";
 import * as ThreadsLive from "../thread/ThreadsLive.ts";
 import * as ModelManifest from "../thread/ModelManifest.ts";
 import { scriptedProviderEnabled } from "../thread/scriptedProvider.ts";
@@ -74,6 +75,7 @@ import * as UserShell from "./UserShell.ts";
 import * as UserStore from "./UserStore.ts";
 import * as UserThreadKinds from "./UserThreadKinds.ts";
 import * as UserThreadStatus from "./UserThreadStatus.ts";
+import * as UserTerminals from "./UserTerminals.ts";
 import * as UserModelSettings from "./UserModelSettings.ts";
 import * as ChatArchive from "./chatArchive.ts";
 
@@ -228,6 +230,8 @@ const makeRuntime = (storage: DurableObjectStorage, env: UserObjectEnv) => {
             Layer.mergeAll(
               UserShell.layer,
               UserThreadStatus.layer,
+              UserTerminals.layer,
+              CloudTerminalsLayer.layer,
               CloudThreadService.layer.pipe(Layer.provideMerge(ThreadsLive.layer)),
               PoolSignIns.layer,
               drives.services,
@@ -336,6 +340,7 @@ export class UserObject extends DurableObject<UserObjectEnv> implements UserObje
       previews: machineSettings(env) !== null && previewSettings(env) !== null,
       scripted: scriptedProviderEnabled(env),
       attachments: env.DRIVE_PACKS !== undefined,
+      drives: env.DRIVES !== undefined && env.DRIVE_PACKS !== undefined,
     };
     this.runtime = makeRuntime(ctx.storage, env);
     this.sockets = new ClientSockets({
@@ -421,6 +426,10 @@ export class UserObject extends DurableObject<UserObjectEnv> implements UserObje
 
   recordThreadSummary(summary: unknown) {
     return this.api.recordThreadSummary(summary);
+  }
+
+  recordTerminalEvents(encoded: unknown) {
+    return this.api.recordTerminalEvents(encoded);
   }
 
   rebuildThreadIndex() {

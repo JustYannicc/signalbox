@@ -66,6 +66,7 @@ const appFor = (env: CloudEnv) => {
       users: env.USERS,
       threads: env.THREADS,
       localWorkerd: env.LOCAL_WORKERD === "1",
+      drives: env.DRIVES !== undefined && env.DRIVE_PACKS !== undefined,
       attachments: attachmentStorage(env),
     }),
   );

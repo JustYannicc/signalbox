@@ -172,7 +172,10 @@ export const UPSTREAM_RPC_REACH = {
     "A live terminal view. Read output with terminal.observe and type with terminal.write.",
   ),
   "terminal.observe": read(),
-  "terminal.write": write(),
+  "terminal.write": write({
+    summary:
+      "Type into a terminal. Use its snapshot generation and reuse commandId when retrying input.",
+  }),
   "terminal.resize": write(),
   "terminal.clear": write(),
   "terminal.restart": write(),

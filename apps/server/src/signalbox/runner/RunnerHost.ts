@@ -56,6 +56,7 @@ import {
 import { makeRunnerAttachments } from "./RunnerAttachments.ts";
 import type { SecretMask } from "./secretMask.ts";
 import { makeRunnerTurns } from "./RunnerTurns.ts";
+import { makeRunnerTerminalHost } from "./RunnerTerminalHost.ts";
 import type { RunnerDrive } from "./RunnerDrive.ts";
 import { makePreviewServices } from "./RunnerPreviewServices.ts";
 import { makeRunnerUsage } from "./RunnerUsage.ts";
@@ -195,7 +196,9 @@ export const makeRunnerHost = Effect.fn("makeRunnerHost")(function* (config: Run
           const openingDrive = yield* Semaphore.make(1);
           let filesPrepared = false;
           let openedDrive: { readonly driveId: string; readonly drive: RunnerDrive } | null = null;
-          const openDrive = (access: DriveAccess) =>
+          const openDrive = (
+            access: DriveAccess,
+          ): Effect.Effect<RunnerDrive, Effect.Error<ReturnType<typeof makeRunnerDrive>>> =>
             openingDrive.withPermits(1)(
               Effect.gen(function* () {
                 if (openedDrive?.driveId === access.driveId) return openedDrive.drive;
@@ -256,6 +259,17 @@ export const makeRunnerHost = Effect.fn("makeRunnerHost")(function* (config: Run
                 );
               }),
             );
+          const makeTerminals = yield* makeRunnerTerminalHost({
+            threadId: request.threadId,
+            leaseGeneration: request.generation,
+            cwd,
+            logsDir: path.join(root, "terminal-logs"),
+            environment,
+            preparing,
+            filesPrepared: () => filesPrepared,
+            openDrive,
+            prepareDependencies: dependencies.prepare(() => Effect.void),
+          });
           const attachments = yield* makeRunnerAttachments({ cloudUrl, attachmentsDir }).pipe(
             Effect.provide(FetchHttpClient.layer),
             Effect.provide(driveServices),
@@ -275,6 +289,7 @@ export const makeRunnerHost = Effect.fn("makeRunnerHost")(function* (config: Run
               webSocketTransport(runnerConnectUrl(cloudUrl, request.threadId)),
               mask,
             ),
+            makeTerminals,
             makeTurns: (emit) =>
               makeRunnerTurns({
                 threadId: request.threadId,

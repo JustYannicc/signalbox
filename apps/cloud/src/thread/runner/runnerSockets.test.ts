@@ -121,6 +121,23 @@ const command = <T extends object>(type: string, fields: T) => ({
 });
 
 describe("runnerSockets", () => {
+  it.effect("ignores retirement from a socket replaced by a reconnect", () =>
+    withObject(freshDatabase(), (engine, runner) =>
+      Effect.gen(function* () {
+        const { host, socket, generation, token, turn } = yield* runningTurn(engine, runner, false);
+        const replacement = fakeSocket();
+        host.ctx.getWebSockets("runner").push(replacement.socket);
+        yield* say(host, replacement, {
+          ...hello(generation, token),
+          takenRunIds: [turn.runId],
+        });
+        yield* say(host, socket, { type: "end", reason: "old connection stopped" });
+        expect((yield* runner.work).activeRunId).toBe(turn.runId);
+        expect((yield* runner.reconcile).release).toBeNull();
+      }),
+    ),
+  );
+
   it.effect("holds a waiting turn back while its pull requests are being read (#495)", () =>
     withObject(freshDatabase(), (engine, runner) =>
       Effect.gen(function* () {
