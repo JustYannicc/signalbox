@@ -382,6 +382,7 @@ it.effect("fails the listing when every selected repository read fails", () => {
           expect(failure.failure.operation).toBe("list");
           expect(failure.failure.detail).toContain("rate limit");
           expect(failure.failure.detail).toContain("Retry after 2026-10-17T16:00:00");
+          expect(failure.failure.cause).toBeInstanceOf(GitHubError);
         }
       }
     }),

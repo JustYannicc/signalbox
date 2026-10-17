@@ -434,6 +434,7 @@ describe("CloudPullRequests", () => {
         .resolvePullRequest({ cwd: Environment.scratchProject.workspaceRoot, reference: "12" })
         .pipe(Effect.flip);
       expect(error._tag).toBe("GitManagerError");
+      expect(error.cause).toBeInstanceOf(SqlError);
     }).pipe(Effect.provide(fixture.layer));
   });
 });

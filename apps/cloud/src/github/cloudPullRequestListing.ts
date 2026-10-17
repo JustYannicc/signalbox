@@ -38,9 +38,6 @@ type ReadCache = ReturnType<typeof makeReadCache>;
 
 const cursorKey = (host: string, repository: string) => `${host} ${repository.toLowerCase()}`;
 
-const operationError = (operation: string, detail: string) =>
-  new PullRequestOperationError({ operation, detail });
-
 const cursorFingerprint = (
   target: ResolvedPullRequestRepository,
   input: Pick<PullRequestListInput, "state" | "involvement" | "query" | "filters">,
@@ -103,6 +100,7 @@ const unwrapCursor = (
 const githubReadError = (operation: string) => (cause: GitHubError) =>
   new PullRequestOperationError({
     operation,
+    cause,
     detail:
       cause.retryAt === undefined
         ? "GitHub could not provide pull request data. Try again."
@@ -332,7 +330,10 @@ export const makeListingReads = (cache: ReadCache) =>
           }
           const cursor = unwrapCursor(value, key, target, input);
           if (cursor === null) {
-            return yield* operationError("list", "The pull request list could not be continued.");
+            return yield* new PullRequestOperationError({
+              operation: "list",
+              detail: "The pull request list could not be continued.",
+            });
           }
           nativeCursors.set(key, cursor);
         }
@@ -430,7 +431,10 @@ export const makeListingReads = (cache: ReadCache) =>
         const nextCursors: Record<string, string> = {};
         for (const batch of batches) {
           if (batch.cursorError) {
-            return yield* operationError("list", "The pull request list could not be continued.");
+            return yield* new PullRequestOperationError({
+              operation: "list",
+              detail: "The pull request list could not be continued.",
+            });
           }
           if (batch.cursor !== null) nextCursors[batch.key] = batch.cursor;
         }

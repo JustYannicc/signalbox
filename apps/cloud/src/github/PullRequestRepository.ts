@@ -65,8 +65,6 @@ const noConnection = () =>
     reason: "cli-unauthenticated",
     provider: SourceControlProviderKind.make("github"),
   });
-const operationFailed = (operation: string, detail: string) =>
-  new PullRequestOperationError({ operation, detail });
 
 const MAX_CACHED_VIEWERS = 32;
 
@@ -83,15 +81,25 @@ const make = Effect.gen(function* () {
 
   const projects: PullRequestRepository["Service"]["projects"] = shell.snapshot.pipe(
     Effect.map((snapshot) => snapshot.projects),
-    Effect.mapError(() =>
-      operationFailed("listProjects", "Could not read the authorized projects."),
+    Effect.mapError(
+      (cause) =>
+        new PullRequestOperationError({
+          operation: "listProjects",
+          detail: "Could not read the authorized projects.",
+          cause,
+        }),
     ),
   );
 
   const tokenForCurrentConnection = Effect.gen(function* () {
     const token = yield* connection.accessToken.pipe(
-      Effect.mapError(() =>
-        operationFailed("routeIdentity", "Could not verify the GitHub account."),
+      Effect.mapError(
+        (cause) =>
+          new PullRequestOperationError({
+            operation: "routeIdentity",
+            detail: "Could not verify the GitHub account.",
+            cause,
+          }),
       ),
     );
     return token === null ? yield* noConnection() : token;
@@ -105,12 +113,20 @@ const make = Effect.gen(function* () {
       const viewer = yield* github.api
         .viewer(token)
         .pipe(
-          Effect.mapError(() =>
-            operationFailed("routeIdentity", "Could not verify the GitHub account."),
+          Effect.mapError(
+            (cause) =>
+              new PullRequestOperationError({
+                operation: "routeIdentity",
+                detail: "Could not verify the GitHub account.",
+                cause,
+              }),
           ),
         );
       if (viewer === null)
-        return yield* operationFailed("routeIdentity", "Could not verify the GitHub account.");
+        return yield* new PullRequestOperationError({
+          operation: "routeIdentity",
+          detail: "Could not verify the GitHub account.",
+        });
 
       const identity = { accountId: String(viewer.id), viewer: viewer.login };
       yield* Ref.update(viewers, (current) => {
@@ -129,41 +145,78 @@ const make = Effect.gen(function* () {
   ): Effect.Effect<AuthorizedProject, RepositoryError> =>
     Effect.gen(function* () {
       const shellSnapshot = yield* shell.snapshot.pipe(
-        Effect.mapError(() =>
-          operationFailed("routeIdentity", "Could not read the authorized projects."),
+        Effect.mapError(
+          (cause) =>
+            new PullRequestOperationError({
+              operation: "routeIdentity",
+              detail: "Could not read the authorized projects.",
+              cause,
+            }),
         ),
       );
       const project = shellSnapshot.projects.find((entry) => entry.id === projectId);
       if (project === undefined)
-        return yield* operationFailed("routeIdentity", "The project is no longer available.");
+        return yield* new PullRequestOperationError({
+          operation: "routeIdentity",
+          detail: "The project is no longer available.",
+        });
 
       const userId = yield* drives.userId.pipe(
-        Effect.mapError(() => operationFailed("routeIdentity", "Could not verify project access.")),
+        Effect.mapError(
+          (cause) =>
+            new PullRequestOperationError({
+              operation: "routeIdentity",
+              detail: "Could not verify project access.",
+              cause,
+            }),
+        ),
       );
       if (userId === null)
-        return yield* operationFailed("routeIdentity", "Could not verify project access.");
+        return yield* new PullRequestOperationError({
+          operation: "routeIdentity",
+          detail: "Could not verify project access.",
+        });
       const driveId = driveOfProject(projectId, userId);
       if (driveId === null)
-        return yield* operationFailed("routeIdentity", "Could not verify project access.");
+        return yield* new PullRequestOperationError({
+          operation: "routeIdentity",
+          detail: "Could not verify project access.",
+        });
       if (directory._tag === "None")
-        return yield* operationFailed("routeIdentity", "Could not read the project's repository.");
+        return yield* new PullRequestOperationError({
+          operation: "routeIdentity",
+          detail: "Could not read the project's repository.",
+        });
 
       const role = yield* drives
         .access(driveId)
         .pipe(
-          Effect.mapError(() =>
-            operationFailed("routeIdentity", "Could not verify project access."),
+          Effect.mapError(
+            (cause) =>
+              new PullRequestOperationError({
+                operation: "routeIdentity",
+                detail: "Could not verify project access.",
+                cause,
+              }),
           ),
         );
       if (role === null)
-        return yield* operationFailed("routeIdentity", "Could not verify project access.");
+        return yield* new PullRequestOperationError({
+          operation: "routeIdentity",
+          detail: "Could not verify project access.",
+        });
 
       const remote = yield* directory.value
         .forDrive(driveId)
         .remote()
         .pipe(
-          Effect.mapError(() =>
-            operationFailed("routeIdentity", "Could not read the authorized project's repository."),
+          Effect.mapError(
+            (cause) =>
+              new PullRequestOperationError({
+                operation: "routeIdentity",
+                detail: "Could not read the authorized project's repository.",
+                cause,
+              }),
           ),
         );
       if (remote === null) return yield* unsupported();
@@ -205,20 +258,23 @@ const make = Effect.gen(function* () {
     Effect.gen(function* () {
       const authorized = yield* authorizeProject(ref.projectId);
       if (ref.host !== undefined && ref.host.toLowerCase() !== authorized.host)
-        return yield* operationFailed(
-          "routeIdentity",
-          "The GitHub repository could not be verified.",
-        );
+        return yield* new PullRequestOperationError({
+          operation: "routeIdentity",
+          detail: "The GitHub repository could not be verified.",
+        });
       const repository = parseRepository(ref.repository);
       if (repository === null)
-        return yield* operationFailed(
-          "routeIdentity",
-          "The GitHub repository could not be verified.",
-        );
+        return yield* new PullRequestOperationError({
+          operation: "routeIdentity",
+          detail: "The GitHub repository could not be verified.",
+        });
 
       const resolved = yield* resolveCredential(authorized);
       if (ref.expectedAccountId !== undefined && ref.expectedAccountId !== resolved.accountId)
-        return yield* operationFailed("routeIdentity", "The GitHub account could not be verified.");
+        return yield* new PullRequestOperationError({
+          operation: "routeIdentity",
+          detail: "The GitHub account could not be verified.",
+        });
 
       return { ...resolved, repository };
     }).pipe(

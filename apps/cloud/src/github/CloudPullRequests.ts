@@ -66,6 +66,7 @@ const requireData = <A>(operation: string, value: A | null) =>
 const failed = (operation: string) => (error: GitHubError) =>
   new PullRequestOperationError({
     operation,
+    cause: error,
     detail:
       error.retryAt === undefined
         ? "GitHub could not provide complete pull request data. Try again."
@@ -251,10 +252,11 @@ const make = Effect.gen(function* () {
       const target = yield* repositories.resolve(input);
       const snapshot = yield* shell.snapshot.pipe(
         Effect.mapError(
-          () =>
+          (cause) =>
             new PullRequestOperationError({
               operation: "linkedThreads",
               detail: "Could not load linked threads.",
+              cause,
             }),
         ),
       );
@@ -263,10 +265,11 @@ const make = Effect.gen(function* () {
         contextIds: drives.contextIds,
       }).pipe(
         Effect.mapError(
-          () =>
+          (cause) =>
             new PullRequestOperationError({
               operation: "linkedThreads",
               detail: "Could not verify linked thread access.",
+              cause,
             }),
         ),
       );
@@ -378,11 +381,12 @@ const make = Effect.gen(function* () {
       };
     }).pipe(
       Effect.mapError(
-        () =>
+        (cause) =>
           new GitManagerError({
             operation: "resolvePullRequest",
             cwd: input.cwd,
             detail: "Could not resolve this pull request through the folder's GitHub connection.",
+            cause,
           }),
       ),
     );
