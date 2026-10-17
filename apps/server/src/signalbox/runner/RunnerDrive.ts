@@ -30,6 +30,8 @@ import type { DependencyTree, DependencyTreesError } from "./RunnerDependencies.
 import { makeMachineState, type OutsideFolder } from "./RunnerMachineState.ts";
 import { mergedPullRequestOf } from "./mergedPullRequest.ts";
 import { makeRunnerShortcuts } from "./RunnerShortcuts.ts";
+import { commitSummary, parseNameStatus } from "./commitSummary.ts";
+import type { SecretMask } from "./secretMask.ts";
 
 /**
  * The thread's working directory as a checkout of its drive (#131). The
@@ -158,9 +160,11 @@ export interface RunnerDrive {
    * were edited at. Only after `prepare` restored the thread on a new machine.
    */
   readonly restoreDependencyEdits: Effect.Effect<void>;
-  readonly finishTurn: (input: {
-    readonly message: string;
-  }) => Effect.Effect<
+  /**
+   * Commits the turn's files with a message describing the change (never the
+   * turn's prompt, which pushing would publish), then lands or saves the branch.
+   */
+  readonly finishTurn: () => Effect.Effect<
     { readonly checkpoint: DriveCheckpoint | null; readonly outcome: DriveOutcome },
     RunnerDriveError
   >;
@@ -172,10 +176,11 @@ export interface RunnerDrive {
   readonly takeInMain: Effect.Effect<DriveOutcome, RunnerDriveError>;
   readonly abandonMerge: Effect.Effect<DriveOutcome, RunnerDriveError>;
   /**
-   * Commits the worktree's changes with `message` and saves the thread's
-   * branch now, as `finishTurn` would. Only a drive backed by a remote.
+   * Commits the worktree's changes with `message`, or a description of the
+   * change when none is given, and saves the thread's branch now, as
+   * `finishTurn` would. Only a drive backed by a remote.
    */
-  readonly saveBranch: (message: string) => Effect.Effect<SavedBranch, RunnerDriveError>;
+  readonly saveBranch: (message?: string) => Effect.Effect<SavedBranch, RunnerDriveError>;
   /**
    * Records that GitHub's copy of the thread's branch is now `head`, as a
    * push does, so the next push's lease is that head rather than the last
@@ -197,9 +202,6 @@ const configFor = (author: CommitAuthor) =>
 const RECONCILE_ATTEMPTS = 5;
 const CONFLICT_MARKER = /^(<<<<<<<|>>>>>>>) /m;
 
-const commitTitle = (message: string) =>
-  message.trim().split("\n")[0]!.trim().slice(0, 72) || "Turn";
-
 export const makeRunnerDrive = Effect.fn("makeRunnerDrive")(function* (input: {
   /** The thread's working directory. */
   readonly cwd: string;
@@ -211,6 +213,8 @@ export const makeRunnerDrive = Effect.fn("makeRunnerDrive")(function* (input: {
     readonly outside: ReadonlyArray<OutsideFolder>;
     readonly trees: Effect.Effect<ReadonlyArray<DependencyTree>, DependencyTreesError>;
   };
+  /** Hides the folder's secrets in every commit message written here (#602). */
+  readonly secretMask?: SecretMask;
 }) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -256,6 +260,34 @@ export const makeRunnerDrive = Effect.fn("makeRunnerDrive")(function* (input: {
       else yield* git.run(head === null ? ["read-tree", "--empty"] : ["read-tree", head], { env });
       yield* git.run(["add", "-A"], { env });
       return (yield* git.run(["write-tree"], { env })).trim();
+    });
+
+  const mask = (text: string) =>
+    input.secretMask === undefined ? text : input.secretMask.text(text);
+
+  /**
+   * Stages everything and, when anything changed, commits it with `message`,
+   * or a description of the change when none is given (`commitSummary.ts`).
+   * Secrets are masked either way.
+   */
+  const commitAll = (message?: string) =>
+    Effect.gen(function* () {
+      yield* git.run(["add", "-A"]);
+      const staged = parseNameStatus(
+        yield* git.run(["diff", "--cached", "--name-status", "-M", "-z"]),
+      );
+      if (staged.length === 0) return;
+      const text =
+        message !== undefined && message.trim() !== ""
+          ? mask(message.trim())
+          : commitSummary(
+              staged.map(({ from, ...change }) => ({
+                ...change,
+                path: mask(change.path),
+                ...(from === undefined ? {} : { from: mask(from) }),
+              })),
+            );
+      yield* git.run(["commit", "-q", "--no-verify", "-m", text]);
     });
 
   const treeOf = (commit: string | null) =>
@@ -361,13 +393,6 @@ export const makeRunnerDrive = Effect.fn("makeRunnerDrive")(function* (input: {
   const flush = Effect.suspend(() => (saving === null ? Effect.void : Deferred.await(saving)));
 
   /** Commits everything in the worktree, when anything changed. */
-  const commitAll = (message: string) =>
-    Effect.gen(function* () {
-      if (!(yield* git.run(["status", "--porcelain", "--untracked-files=all"])).trim()) return;
-      yield* git.run(["add", "-A"]);
-      yield* git.run(["commit", "-q", "--no-verify", "-m", message]);
-    });
-
   /** Merges `ref` in, leaving a conflict in the worktree; any other failure is undone. */
   const mergeIn = (ref: string, message: string, options: ReadonlyArray<string> = []) =>
     Effect.gen(function* () {
@@ -591,7 +616,7 @@ export const makeRunnerDrive = Effect.fn("makeRunnerDrive")(function* (input: {
       const head = yield* git.resolve("HEAD");
       if (head === null || (yield* git.isAncestor(main, head))) return null;
       if ((yield* mergeInProgress) || (yield* rebasing)) return null;
-      yield* commitAll("Work in progress");
+      yield* commitAll();
       const message = `Merge ${from.defaultBranch} after #${number} merged`;
       const merged = yield* mergeIn(main, message, ["--no-verify"]);
       if (merged._tag === "merged") yield* saveSynced;
@@ -745,7 +770,7 @@ export const makeRunnerDrive = Effect.fn("makeRunnerDrive")(function* (input: {
         : { ...result, checkpoint: { ...result.checkpoint, skipped } };
     });
 
-  const finishTurn: RunnerDrive["finishTurn"] = ({ message }) =>
+  const finishTurn: RunnerDrive["finishTurn"] = () =>
     exclusive(
       withMachineState(
         Effect.gen(function* () {
@@ -764,7 +789,7 @@ export const makeRunnerDrive = Effect.fn("makeRunnerDrive")(function* (input: {
           if (yield* mergeInProgress) {
             unresolved = yield* concludeMerge;
           } else {
-            yield* commitAll(commitTitle(message));
+            yield* commitAll();
           }
           const head = yield* git.resolve("HEAD");
           const checkpoint =
@@ -845,7 +870,7 @@ export const makeRunnerDrive = Effect.fn("makeRunnerDrive")(function* (input: {
             reason: "A rebase is in progress here; finish or abort it before publishing.",
           } as const;
         }
-        yield* commitAll(commitTitle(message));
+        yield* commitAll(message);
         const head = yield* git.resolve("HEAD");
         if (head === null) return { _tag: "not_saved", reason: "Nothing to save yet." } as const;
         const refused = yield* drive.saveBranch(head);
