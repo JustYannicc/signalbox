@@ -1,5 +1,8 @@
 {
   "version": "8.0.32",
+  "source": {
+    "commit": "911f49cbd49f4fe2516979754a7488a3fd14fe64"
+  },
   "platforms": {
     "darwin-arm64": {
       "name": "CLIProxyAPI_8.0.32_darwin_aarch64.tar.gz",
