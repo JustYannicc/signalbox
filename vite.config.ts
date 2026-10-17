@@ -178,6 +178,16 @@ export default defineConfig({
     },
     overrides: [
       {
+        files: [
+          "apps/mobile/src/features/settings/{SettingsRouteScreen,SettingsAuthRouteScreen}.tsx",
+          "apps/mobile/src/features/settings/components/Settings*.tsx",
+          "apps/mobile/src/features/account/EnvironmentAccountSection.tsx",
+          "apps/mobile/src/features/{signIn/SignIn,automations/Automations,usage/Usage}SettingsRow*.tsx",
+          "apps/mobile/src/components/ui/List*.tsx",
+        ],
+        rules: { "t3code/no-native-raw-text": "error" },
+      },
+      {
         files: ["packages/client-runtime/src/state/**", "apps/{web,mobile,desktop}/src/**"],
         rules: { "t3code/no-rpc-permission-bypass": ["error", { allowRawClientAccess: false }] },
       },

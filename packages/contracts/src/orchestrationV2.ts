@@ -3102,6 +3102,8 @@ export type OrchestrationV2SubscribeCommandOutputInput =
  */
 export const OrchestrationV2CommandOutputFrame = Schema.Struct({
   kind: Schema.Literals(["replace", "append"]),
+  /** Retained cloud output revision, stable across reconnects. Older servers omit it. */
+  sequence: Schema.optionalKey(NonNegativeInt),
   text: Schema.String,
   /** Earlier output was dropped to keep the tail bounded. */
   truncated: Schema.Boolean,

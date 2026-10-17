@@ -1,7 +1,7 @@
 export const meta = {
   name: "Sync upstream T3 Code",
   description:
-    "Every 6 hours an agent merges T3 Code's main into a branch (never a rebase), resolves conflicts per the runbook, keeps the fork's hooks, and opens a PR. The automation sees it through CI and the merge gate merges it.",
+    "Every 6 hours an agent merges T3 Code's main into a branch (never a rebase), checks conflict cost against useful changes, resolves worthwhile merges per the runbook, keeps the fork's hooks, and opens a PR. The automation sees it through CI and the merge gate merges it.",
   intent:
     "upstream sync runs inside Signalbox every 6 hours: fetch the t3code remote, merge upstream/main into a sync branch, re-run the codemod and generators, check the hooks, open a PR, see it through CI and bots, and let the merge gate merge it",
   triggers: [{ cron: "41 */6 * * *", timezone: "UTC" }],
@@ -11,9 +11,13 @@ export const meta = {
 /** Opus 5.5, high effort (Yannic, #5). */
 const AGENT = { provider: "claude_hub", model: "claude-opus-5-5", effort: "high" } as const;
 
+const COST = "Cost check (#853): upstream is a source; it does not constrain Signalbox's design. Before resolving any conflict, inspect the full incoming compare diff, the upstream commit count/range, and the complete conflict list. Distinguish mechanical rename/hook conflicts from real conflicts in code we restructured or replaced. Weigh useful changes to code still shared (provider adapters, contracts, bug and performance fixes) against the real resolution work. Do not use commit count alone as a value estimate. Read prior sync conflict issues and PRs for recurring conflicts; repeated conflict in an area is evidence to recommend porting that area.\nIf real conflicts cost more than the useful shared-code changes, stop before resolving them or publishing a sync PR. Create or update the upstream-sync-conflict issue with the compare link, mechanical/real conflict classification, the reasoned verdict, areas to switch to porting, and the exact useful upstream commits to port with git cherry-pick -x. Abort the attempted merge without discarding unrelated work. Start your last message with RESULT: cost-blocked: <one line>. The automation will raise the decision as a Blocker. Recommend area-specific porting; never stop upstream merges altogether yourself. Otherwise resolve and continue the current sync. If evidence is insufficient, report exactly what is missing as RESULT: blocked rather than guessing.";
+
 const MERGE = `You keep JustYannicc/signalbox in sync with upstream T3 Code (pingdotgg/t3code). This run was started by the "Sync upstream T3 Code" automation (#5); nobody is watching, so finish on your own or say exactly why you can't.
 
-Read AGENTS.md ("Staying on T3 Code") and docs/operations/upstream-sync.md ("Merging upstream by hand") first. Merge, never rebase. Never squash.
+Read current AGENTS.md and docs/operations/upstream-sync.md first. Merge, never rebase. Never squash.
+
+${COST}
 
 1. Upstream: \`git remote add t3code https://github.com/pingdotgg/t3code.git\` (skip if it exists), \`git config remote.t3code.fetch '+refs/heads/*:refs/remotes/upstream/*'\`, \`git fetch --no-tags t3code main\`, \`git fetch origin main\`. Your branch must start at origin/main: \`git reset --hard origin/main\`.
 2. If \`git merge-base --is-ancestor upstream/main origin/main\` succeeds, there's nothing to sync: reply with the first line \`RESULT: up-to-date\` and stop.
@@ -27,10 +31,11 @@ Read AGENTS.md ("Staying on T3 Code") and docs/operations/upstream-sync.md ("Mer
 Your last message's first line is exactly one of:
 - \`RESULT: up-to-date\`
 - \`RESULT: pr-opened #<number>\`
-- \`RESULT: blocked: <one line>\` when a conflict needs a product decision or something outside the repo is broken; then explain the options and your recommendation.`;
+- RESULT: cost-blocked: <one line> when the conflict cost check says stop; explain the evidence and recommendation below it.
+- \`RESULT: blocked: <one line>\` when anything else needs a product decision or something outside the repo is broken; then explain the options and your recommendation.`;
 
-const FIX = (number: number, what: string) =>
-  `The upstream sync PR #${number} isn't ready: ${what}. Find the cause and fix it on this branch, the way the runbook says (never rebase, never drop a \`signalbox:\` hook). Reproduce a failing check locally with the job's own command rather than guessing; machines have no gh, so read the job from the workflow file. Then call \`push\`. Don't call merge_pull_request; the automation waits for CI again. If it can't be fixed without a product decision, start your last message with \`RESULT: blocked: <one line>\`.`;
+const FIX = (number: number, what: string, direction: string | null) =>
+  `The upstream sync PR #${number} isn't ready: ${what}. Apply the following cost check only to merge conflicts. If the conflict is with origin/main, inspect the PR\'s original upstream range together with the new main changes. ${COST}\n\n${direction ? `User direction overrides the workflow steps where they conflict. Direction for this reassessment: ${direction}\n\n` : ""}Find the cause and fix it on this branch, the way the runbook says (never rebase, never drop a \`signalbox:\` hook). Reproduce a failing check locally with the job's own command rather than guessing; machines have no gh, so read the job from the workflow file. Then call \`push\`. Don't call merge_pull_request; the automation waits for CI again. For any other problem that can't be fixed without a product decision, start your last message with \`RESULT: blocked: <one line>\`.`;
 
 
 type Check = { name: string; status: string };
@@ -54,10 +59,23 @@ export default workflow(async (w, input: { resume?: SyncPr } | null) => {
       open = null;
     }
   }
+  let direction: string | null = await w.recall("Find the merge-or-port decision", "sync-direction");
   if (!open) {
-    const synced = await w.agent("Merge upstream into a branch", { ...AGENT, prompt: MERGE, timeout: { hours: 3 } });
+    const synced = await w.agent("Merge upstream into a branch", { ...AGENT, prompt: direction ? `${MERGE}\n\nUser direction for this reassessment: ${direction}` : MERGE, timeout: { hours: 3 } });
+    if (direction) {
+      await w.remember("Consume the merge-or-port decision", "sync-direction", null);
+      direction = null;
+    }
     const verdict = verdictOf(synced.text);
     if (verdict.startsWith("RESULT: up-to-date")) return "Nothing new upstream";
+    if (!synced.pullRequest && verdict.startsWith("RESULT: cost-blocked:")) {
+      const decision = await w.ask("Decide merge or port", {
+        question: `${synced.text}\n\nThis sync is blocked on the merge-or-port decision. Review the agent's issue and porting recommendation. Give direction for the next scheduled run to reassess; this run will not merge or port anything. Stopping upstream merges altogether remains your decision.`,
+        fields: { direction: { type: "longText", label: "Direction for the next scheduled reassessment", required: true } },
+      });
+      await w.remember("Keep the merge-or-port decision", "sync-direction", String(decision.values.direction));
+      return verdict;
+    }
     if (!synced.pullRequest) {
       await w.notify("Upstream sync needs you", `${verdict}\n\nThe agent's thread has the details.`);
       return verdict || "No pull request";
@@ -76,7 +94,7 @@ export default workflow(async (w, input: { resume?: SyncPr } | null) => {
 
     const checks = pr.checks ?? [];
     const running = checks.filter((check) => check.status === "pending");
-    if (checks.length === 0 || running.length > 0) {
+    if ((checks.length === 0 || running.length > 0) && pr.mergeability !== "conflicting") {
       await w.waitFor("Wait for CI", {
         on: ["pr.checks.passed", "pr.checks.failed", "pr.conflicted", "pr.merged", "pr.closed"],
         where,
@@ -85,20 +103,33 @@ export default workflow(async (w, input: { resume?: SyncPr } | null) => {
       return;
     }
 
-    const failed = checks.filter((check) => !PASSED.includes(check.status));
+    const failed = checks.filter((check) => check.status !== "pending" && !PASSED.includes(check.status));
     const threads = pr.openThreads ?? 0;
-    if (failed.length > 0 || pr.mergeability === "conflicting" || threads > 0) {
+    if (direction || failed.length > 0 || pr.mergeability === "conflicting" || threads > 0) {
       const what = [
+        direction ? "apply the recorded merge-or-port decision" : "",
         failed.length > 0 ? `checks failed: ${failed.map((check) => check.name).join(", ")}` : "",
         pr.mergeability === "conflicting" ? "it conflicts with main; merge origin/main into it" : "",
         threads > 0 ? `${threads} review thread${threads === 1 ? " is" : "s are"} open; answer each, fix what's real, and resolve them` : "",
       ].filter(Boolean).join("; ");
       let fixed: { text: string };
       try {
-        fixed = await w.agent("Fix the pull request", { ...AGENT, thread: threadId, prompt: FIX(number, what), timeout: { hours: 2 } });
+        fixed = await w.agent("Fix the pull request", { ...AGENT, thread: threadId, prompt: FIX(number, what, direction), timeout: { hours: 2 } });
       } catch (error) {
         // The next run picks this PR up again.
         return w.done(`the fix turn failed (${String(error).slice(0, 200)})`);
+      }
+      if (direction) {
+        await w.remember("Consume the conflict decision", "sync-direction", null);
+        direction = null;
+      }
+      if (verdictOf(fixed.text).startsWith("RESULT: cost-blocked:")) {
+        const decision = await w.ask("Decide the sync PR's conflict cost", {
+          question: `${fixed.text}\n\nThe existing sync PR is held for your merge-or-port direction. The next scheduled run will reassess it. Stopping upstream merges altogether remains your decision.`,
+          fields: { direction: { type: "longText", label: "Direction for the next scheduled reassessment", required: true } },
+        });
+        await w.remember("Keep the conflict decision", "sync-direction", String(decision.values.direction));
+        return w.done(verdictOf(fixed.text));
       }
       if (verdictOf(fixed.text).startsWith("RESULT: blocked")) return w.done(verdictOf(fixed.text));
       return;
@@ -118,8 +149,12 @@ export default workflow(async (w, input: { resume?: SyncPr } | null) => {
   });
 
   const outcome = followed.done ? followed.value : "still open after 12 rounds";
-  if (outcome !== "merged") {
+  if (direction && (outcome === "merged" || outcome === "closed")) {
+    await w.remember("Clear the finished PR decision", "sync-direction", null);
+  }
+  if (outcome !== "merged" && !outcome.startsWith("RESULT: cost-blocked:")) {
     await w.notify("Upstream sync needs you", `#${number} (${url}): ${outcome}. Its thread has the details.`);
   }
   return `#${number}: ${outcome}`;
 });
+

@@ -25,6 +25,18 @@ import * as Migrator from "effect/sql/Migrator";
 import * as SqlClient from "effect/sql/SqlClient";
 import type { SqlError } from "effect/sql/SqlError";
 
+import {
+  advanceCommandOutputSequence,
+  readCommandOutputSequence,
+  migrateCommandOutput,
+  readCommandOutput,
+  writeCommandOutput,
+} from "./commandOutput/outputTables.ts";
+import type {
+  CommandOutputDelta,
+  CommandOutputKey,
+  RetainedCommandOutput,
+} from "./commandOutput/retainedOutput.ts";
 import * as Migrations from "../storage/migrations.ts";
 import { migrateDiagnostics } from "./diagnostics/DiagnosticsStore.ts";
 import { migrateBrowsing } from "./browsing/browsingTables.ts";
@@ -152,6 +164,10 @@ export class ThreadStore extends Context.Service<
       afterSequence: number,
       limit?: number,
     ) => Effect.Effect<ReadonlyArray<StoredEvent>, SqlError>;
+    readonly commandOutputSequence: Effect.Effect<number, SqlError>;
+    readonly commandOutput: (
+      key: CommandOutputKey,
+    ) => Effect.Effect<RetainedCommandOutput | null, SqlError>;
     readonly receipt: (commandId: CommandId) => Effect.Effect<CommandReceipt | null, SqlError>;
     /**
      * Appends events after `head`, the command's receipt, the owner (when the
@@ -172,6 +188,8 @@ export class ThreadStore extends Context.Service<
       readonly summaryChanged: boolean;
       /** The machine lease as of these events, such as a Runner batch's acknowledgement. */
       readonly machine?: MachineLease;
+      readonly commandOutputSeeds?: ReadonlyArray<CommandOutputKey>;
+      readonly commandOutput?: ReadonlyArray<CommandOutputDelta>;
       /** The instructions of the thread's chain, for the run these events start. */
       readonly instructions?: {
         readonly runId: string;
@@ -322,6 +340,7 @@ const migrations = Migrator.fromRecord({
   // The thread's status note and the runtime's cursor through ended runs (#670, `statusLine/`).
   "0011_status_note": migrateStatusNote,
   "0012_workflow_scripts": migrateWorkflowScripts,
+  "0012_command_output": migrateCommandOutput,
 });
 
 /** Applies every migration not recorded yet (`storage/migrations.ts`). Never edit or rename a merged one. */
@@ -507,6 +526,10 @@ const make = Effect.gen(function* () {
       yield* retainWorkflowScripts(input.scripts).pipe(
         Effect.provideService(SqlClient.SqlClient, sql),
       );
+    yield* advanceCommandOutputSequence.pipe(Effect.provideService(SqlClient.SqlClient, sql));
+    yield* writeCommandOutput(input.commandOutputSeeds ?? [], input.commandOutput ?? []).pipe(
+      Effect.provideService(SqlClient.SqlClient, sql),
+    );
     if (input.instructions) {
       yield* sql`INSERT INTO run_instructions (run_id, levels)
           VALUES (${input.instructions.runId}, ${encodeInstructions(input.instructions.levels)})
@@ -593,6 +616,11 @@ const make = Effect.gen(function* () {
     owner,
     events,
     receipt,
+    commandOutputSequence: readCommandOutputSequence.pipe(
+      Effect.provideService(SqlClient.SqlClient, sql),
+    ),
+    commandOutput: (key) =>
+      readCommandOutput(key).pipe(Effect.provideService(SqlClient.SqlClient, sql)),
     commit,
     recordRejection,
     outbox,

@@ -64,6 +64,7 @@ const setup = (
         getWorkflowScript: async () => ({ _tag: "not_found" }),
         stopWorkflow: async () => ({ _tag: "not_found" }),
         launch: async () => ({ _tag: "not_found" }),
+        commandOutput: async () => null,
         snapshot: async () => ({ _tag: "not_found" }),
         subscribe: async () => null,
         summary: async () => null,

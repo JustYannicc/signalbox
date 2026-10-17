@@ -7,6 +7,10 @@ import {
   OrchestrationGetWorkflowScriptError,
   OrchestrationV2StopWorkflowError,
   type CommandId,
+  isOrchestrationV2WorkActive,
+  type OrchestrationV2CommandOutputError,
+  type OrchestrationV2CommandOutputFrame,
+  type OrchestrationV2SubscribeCommandOutputInput,
   EventId,
   type OrchestrationV2Command,
   type OrchestrationV2DomainEvent,
@@ -16,6 +20,7 @@ import {
   type OrchestrationV2ThreadProjection,
   type OrchestrationV2ThreadStreamItem,
   type ThreadId,
+  type TurnItemId,
 } from "@t3tools/contracts";
 import type { SignalboxContextId } from "@t3tools/contracts/signalboxContexts";
 import type {
@@ -37,6 +42,12 @@ import * as Scope from "effect/Scope";
 import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 
+import {
+  commandFor,
+  commandOutputFrame,
+  type CommandOutputDelta,
+} from "./commandOutput/retainedOutput.ts";
+import { commandOutputStream } from "./commandOutput/outputStream.ts";
 import { traceIdOf } from "./diagnostics/traceId.ts";
 import { hasPendingTurnWork, scriptedStep } from "./scriptedTurn.ts";
 import { type Decision, decide, decideLaunch, type ThreadWorktree } from "./threadDecider.ts";
@@ -120,6 +131,7 @@ export interface EngineDecision<A> {
   readonly scripts?: ReadonlyArray<RetainedWorkflowScript>;
   readonly events: ReadonlyArray<OrchestrationV2DomainEvent>;
   readonly machine?: ThreadStore.MachineLease;
+  readonly commandOutput?: ReadonlyArray<CommandOutputDelta>;
   readonly result: A;
 }
 
@@ -159,6 +171,13 @@ export class ThreadEngine extends Context.Service<
       actor: Actor,
       input: OrchestrationV2StopWorkflowInput,
     ) => Effect.Effect<void, ThreadNotFoundError | OrchestrationV2StopWorkflowError>;
+    readonly commandOutput: (
+      actor: Actor,
+      input: OrchestrationV2SubscribeCommandOutputInput,
+    ) => Effect.Effect<
+      Stream.Stream<OrchestrationV2CommandOutputFrame>,
+      OrchestrationV2CommandOutputError | ThreadNotFoundError
+    >;
     readonly snapshot: (actor: Actor) => Effect.Effect<ThreadSnapshot, ThreadNotFoundError>;
     /**
      * `subscribeThread`: a snapshot or the events after the client's cursor,
@@ -314,6 +333,7 @@ const make = Effect.gen(function* () {
     summaryKey: summaryKey(initialProjection, initial.monitors, initial.statusNote),
   });
 
+  const outputInvalidations = yield* PubSub.sliding<void>(1);
   const serialized = lock.withPermits(1);
 
   const context = Effect.map(DateTime.now, (now): DecisionContext => ({ now }));
@@ -335,6 +355,7 @@ const make = Effect.gen(function* () {
     /** Set by the commit that creates the thread. */
     readonly owner?: ThreadStore.ThreadOwner;
     readonly machine?: ThreadStore.MachineLease;
+    readonly commandOutput?: ReadonlyArray<CommandOutputDelta>;
     /** The chain's instructions for the run this commit starts. */
     readonly instructions?: {
       readonly runId: string;
@@ -353,6 +374,22 @@ const make = Effect.gen(function* () {
     // The thread's first commit creates its storage.
     if (current.thread === null) yield* Effect.orDie(store.initialize);
     const nextKey = summaryKey(projection, current.monitors, current.statusNote);
+    const itemUpdates = events.filter((event) => event.type === "turn-item.updated");
+    const seenItems =
+      itemUpdates.length > 0
+        ? new Set(current.thread?.projection.turnItems.map((item) => item.id))
+        : new Set<TurnItemId>();
+    const commandOutputSeeds = itemUpdates.flatMap(({ payload: item }) => {
+      const existed = seenItems.has(item.id);
+      seenItems.add(item.id);
+      return !existed &&
+        item.type === "command_execution" &&
+        item.runId !== null &&
+        isOrchestrationV2WorkActive(item.status) &&
+        item.threadId === projection.thread.id
+        ? [{ itemId: item.id, runId: item.runId }]
+        : [];
+    });
     const head = yield* Effect.orDie(
       store.commit({
         head: current.head,
@@ -363,6 +400,8 @@ const make = Effect.gen(function* () {
         ...(input.secrets === undefined ? {} : { secrets: input.secrets }),
         ...(current.thread === null ? { owner } : {}),
         ...(input.machine ? { machine: input.machine } : {}),
+        commandOutputSeeds,
+        ...(input.commandOutput === undefined ? {} : { commandOutput: input.commandOutput }),
         summaryChanged: nextKey !== current.summaryKey,
       }),
     );
@@ -372,6 +411,9 @@ const make = Effect.gen(function* () {
         published,
         events.map((event, index) => ({ sequence: current.head + index + 1, event })),
       );
+    }
+    if (events.length > 0 || (input.commandOutput?.length ?? 0) > 0) {
+      yield* PubSub.publish(outputInvalidations, undefined);
     }
     return head;
   });
@@ -689,15 +731,48 @@ const make = Effect.gen(function* () {
       }),
     );
 
+  const commandOutput: ThreadEngine["Service"]["commandOutput"] = (actor, input) =>
+    serialized(
+      Effect.gen(function* () {
+        const { projection } = yield* readable(actor);
+        const target = commandFor(projection, input);
+        if ("_tag" in target) return yield* target;
+        const read = Effect.gen(function* () {
+          const current = yield* Ref.get(state);
+          const visible = visibleTo(current, actor);
+          const next = visible === null ? null : commandFor(visible.projection, input);
+          if (next === null || "_tag" in next) {
+            return { kind: "replace", text: "", truncated: true, running: false } as const;
+          }
+          const retained = yield* Effect.orDie(
+            store.commandOutput({ itemId: next.item.id, runId: next.run.id }),
+          );
+          return commandOutputFrame(
+            next,
+            retained,
+            yield* Effect.orDie(store.commandOutputSequence),
+          );
+        });
+        return yield* commandOutputStream(yield* read, outputInvalidations, serialized(read));
+      }),
+    );
+
   const apply: ThreadEngine["Service"]["apply"] = (decideWith) =>
     serialized(
       Effect.gen(function* () {
         const current = yield* Ref.get(state);
         const decision = yield* decideWith(current.thread?.projection ?? null, yield* context);
-        if (decision.events.length > 0 || (decision.scripts?.length ?? 0) > 0) {
+        if (
+          decision.events.length > 0 ||
+          (decision.scripts?.length ?? 0) > 0 ||
+          (decision.commandOutput?.length ?? 0) > 0
+        ) {
           yield* commit({
             events: decision.events,
             ...(decision.scripts === undefined ? {} : { scripts: decision.scripts }),
+            ...(decision.commandOutput === undefined
+              ? {}
+              : { commandOutput: decision.commandOutput }),
             ...(decision.machine ? { machine: decision.machine } : {}),
           });
         } else if (decision.machine) {
@@ -852,6 +927,7 @@ const make = Effect.gen(function* () {
     dispatch,
     launch,
     snapshot,
+    commandOutput,
     subscribe,
     apply,
     projection,

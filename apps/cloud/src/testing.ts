@@ -584,6 +584,19 @@ export const makeMemoryCloud = (
       userId: string,
       effect: Effect.Effect<A, E, Layer.Success<typeof CloudEngine.layer>>,
     ) => Effect.promise(() => userFor(userId).runtime.runPromise(effect)),
+    inThread: <A, E>(
+      threadId: string,
+      effect: Effect.Effect<
+        A,
+        E,
+        | ThreadEngine.ThreadEngine
+        | ThreadStore.ThreadStore
+        | UserDirectory.UserDirectory
+        | ThreadBrowsing.ThreadBrowsing
+        | PullRequestSync.PullRequestSync
+        | PullRequestPolls.PullRequestPolls
+      >,
+    ) => Effect.promise(() => threadFor(threadId).run(effect)),
     /** The runs' Workflow instances: `idle` lets them run until they block, `advance` moves time. */
     workflows,
     /** When a user object's alarm would fire next; what fired clears it. */
