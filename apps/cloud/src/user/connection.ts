@@ -79,7 +79,7 @@ export const openConnection = (input: {
         };
       });
     });
-    yield* RpcServer.make(CloudRpc.CloudRpcGroup, { disableTracing: true }).pipe(
+    yield* RpcServer.make(CloudRpc.CloudRpcGroup).pipe(
       Effect.provideService(RpcServer.Protocol, protocol),
       Effect.provide(
         Layer.mergeAll(

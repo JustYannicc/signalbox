@@ -11,6 +11,7 @@ import {
   type OrchestrationV2TurnItem,
 } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
+import * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -23,7 +24,10 @@ import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 import * as TestClock from "effect/testing/TestClock";
+import * as Tracer from "effect/Tracer";
+import * as Schema from "effect/Schema";
 import { HttpClient, HttpClientResponse } from "effect/http";
+import { RpcClientError } from "effect/rpc";
 
 import type { WsRpcProtocolClient } from "../rpc/protocol.ts";
 import {
@@ -75,7 +79,17 @@ class TestStreamDefect {
   }
 }
 
-type TestThreadInput = OrchestrationV2ThreadStreamItem | Error | TestStreamDefect;
+class TestStreamInterrupted {
+  readonly _tag = "TestStreamInterrupted";
+}
+const isRpcClientError = Schema.is(RpcClientError.RpcClientError);
+
+type TestThreadInput =
+  | OrchestrationV2ThreadStreamItem
+  | Error
+  | TestStreamDefect
+  | TestStreamInterrupted
+  | RpcClientError.RpcClientError;
 
 function testSession(
   client: WsRpcProtocolClient,
@@ -107,6 +121,9 @@ function awaitThreadState(
 }
 
 const makeHarness = Effect.fn("TestEnvironmentThreads.makeHarness")(function* (options?: {
+  readonly tracer?: Tracer.Tracer;
+  readonly initialClient?: WsRpcProtocolClient;
+  readonly replacementClient?: WsRpcProtocolClient;
   readonly cached?: OrchestrationV2ThreadProjection;
   readonly cachedHistory?: {
     readonly historyCursor: string | null;
@@ -122,6 +139,7 @@ const makeHarness = Effect.fn("TestEnvironmentThreads.makeHarness")(function* (o
   readonly historyHttpClient?: HttpClient.HttpClient;
 }) {
   const inputs = yield* Queue.unbounded<TestThreadInput>();
+  const subscribed = yield* Queue.unbounded<{ readonly afterSequence?: number }>();
   const observed = yield* Queue.unbounded<EnvironmentThreadState>();
   const latest = yield* Ref.make<EnvironmentThreadState>(EMPTY_ENVIRONMENT_THREAD_STATE);
   const retryCount = yield* Ref.make(0);
@@ -140,14 +158,16 @@ const makeHarness = Effect.fn("TestEnvironmentThreads.makeHarness")(function* (o
   const streamFrom = (queue: Queue.Queue<TestThreadInput>) =>
     Stream.fromQueue(queue).pipe(
       Stream.mapEffect((input) =>
-        input instanceof Error
+        input instanceof Error || isRpcClientError(input)
           ? Effect.fail(input)
           : input instanceof TestStreamDefect
             ? Effect.die(new Error(input.message))
-            : Effect.succeed(input),
+            : input instanceof TestStreamInterrupted
+              ? Effect.failCause(Cause.interrupt(9999))
+              : Effect.succeed(input),
       ),
     );
-  const client = {
+  const defaultClient = {
     [ORCHESTRATION_V2_WS_METHODS.subscribeThread]: (input: {
       readonly afterSequence?: number;
       readonly requestCompletionMarker?: true;
@@ -157,6 +177,7 @@ const makeHarness = Effect.fn("TestEnvironmentThreads.makeHarness")(function* (o
       Stream.unwrap(
         Ref.updateAndGet(subscriptionCount, (count) => count + 1).pipe(
           Effect.andThen(Ref.set(lastSubscribeAfterSequence, input.afterSequence)),
+          Effect.andThen(Queue.offer(subscribed, input)),
           Effect.andThen(
             Ref.set(lastRequestCompletionMarker, input.requestCompletionMarker === true),
           ),
@@ -166,6 +187,8 @@ const makeHarness = Effect.fn("TestEnvironmentThreads.makeHarness")(function* (o
         ),
       ),
   } as unknown as WsRpcProtocolClient;
+  const client = options?.initialClient ?? defaultClient;
+  const replacementClient = options?.replacementClient ?? client;
   const supervisorSession = yield* SubscriptionRef.make<Option.Option<RpcSession.RpcSession>>(
     Option.some(testSession(client, options)),
   );
@@ -256,10 +279,17 @@ const makeHarness = Effect.fn("TestEnvironmentThreads.makeHarness")(function* (o
       Effect.provideService(ThreadHistoryController.ThreadHistoryController, historyController),
     );
   }
+  if (options?.tracer !== undefined) {
+    makeThreadState = makeThreadState.pipe(Effect.provideService(Tracer.Tracer, options.tracer));
+  }
   const threadState = yield* makeThreadState;
+  const observedStates = yield* Ref.make<ReadonlyArray<EnvironmentThreadState>>([]);
   yield* SubscriptionRef.changes(threadState).pipe(
     Stream.runForEach((state) =>
-      Ref.set(latest, state).pipe(Effect.andThen(Queue.offer(observed, state))),
+      Ref.set(latest, state).pipe(
+        Effect.andThen(Ref.update(observedStates, (states) => [...states, state])),
+        Effect.andThen(Queue.offer(observed, state)),
+      ),
     ),
     Effect.forkScoped,
   );
@@ -269,7 +299,9 @@ const makeHarness = Effect.fn("TestEnvironmentThreads.makeHarness")(function* (o
     loadEarlier: (throughEntryId?: string) =>
       historyController.loadEarlier(TARGET.environmentId, THREAD_ID, throughEntryId),
     inputs,
+    subscribed,
     observed,
+    observedStates,
     latest,
     retryCount,
     subscriptionCount,
@@ -285,7 +317,7 @@ const makeHarness = Effect.fn("TestEnvironmentThreads.makeHarness")(function* (o
     wakeups,
     replaceSession: SubscriptionRef.set(
       supervisorSession,
-      Option.some(testSession(client, options)),
+      Option.some(testSession(replacementClient, options)),
     ),
   };
 });
@@ -1957,7 +1989,7 @@ describe("EnvironmentThreads", () => {
         harness.observed,
         (value) => value.status === "synchronizing" && Option.isSome(value.data),
       );
-      expect(yield* Ref.get(harness.lastSubscribeAfterSequence)).toBe(CACHED_SNAPSHOT_SEQUENCE);
+      expect((yield* Queue.take(harness.subscribed)).afterSequence).toBe(CACHED_SNAPSHOT_SEQUENCE);
 
       yield* Queue.offer(harness.inputs, new TestStreamDefect("Replayed event did not decode"));
       for (let attempt = 0; attempt < 100; attempt += 1) {
@@ -2043,6 +2075,223 @@ describe("EnvironmentThreads", () => {
     }),
   );
 
+  it.effect("stops after the snapshot retry also misses its marker", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({ cached: BASE_PROJECTION, completionMarker: true });
+      yield* Queue.take(harness.subscribed);
+      yield* TestClock.adjust("15 seconds");
+      expect((yield* Queue.take(harness.subscribed)).afterSequence).toBeUndefined();
+      yield* TestClock.adjust("15 seconds");
+      const failed = yield* awaitThreadState(harness.observed, (value) =>
+        Option.isSome(value.error),
+      );
+      expect(Option.getOrThrow(failed.data)).toEqual(BASE_PROJECTION);
+      yield* TestClock.adjust("10 minutes");
+      expect(yield* Ref.get(harness.subscriptionCount)).toBe(2);
+    }),
+  );
+
+  it.effect("does not loop after a typed failure on the fallback snapshot", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({ cached: BASE_PROJECTION, completionMarker: true });
+      yield* Queue.take(harness.subscribed);
+      yield* TestClock.adjust("15 seconds");
+      yield* Queue.take(harness.subscribed);
+      yield* Queue.offer(harness.inputs, new Error("snapshot could not load"));
+      yield* awaitThreadState(harness.observed, (state) => Option.isSome(state.error));
+      yield* TestClock.adjust("1 minute");
+      expect(yield* Ref.get(harness.subscriptionCount)).toBe(2);
+    }),
+  );
+
+  it.effect("does not extend the marker deadline when replay events keep arriving", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({ cached: BASE_PROJECTION, completionMarker: true });
+      yield* Queue.take(harness.subscribed);
+      yield* TestClock.adjust("14 seconds");
+      yield* Queue.offer(harness.inputs, titleUpdated("Still replaying", 8));
+      yield* awaitThreadState(
+        harness.observed,
+        (state) => Option.isSome(state.data) && state.data.value.thread.title === "Still replaying",
+      );
+      yield* TestClock.adjust("1 second");
+      expect((yield* Queue.take(harness.subscribed)).afterSequence).toBeUndefined();
+      expect(yield* Ref.get(harness.subscriptionCount)).toBe(2);
+    }),
+  );
+
+  it.effect("does not retry a canceled thread scope after its marker deadline", () =>
+    Effect.gen(function* () {
+      const scope = yield* Scope.make();
+      const harness = yield* makeHarness({ cached: BASE_PROJECTION, completionMarker: true }).pipe(
+        Scope.provide(scope),
+      );
+      yield* Queue.take(harness.subscribed);
+      yield* Scope.close(scope, Exit.void);
+      yield* TestClock.adjust("1 minute");
+      expect(yield* Ref.get(harness.subscriptionCount)).toBe(1);
+    }),
+  );
+
+  it.effect("recovers when only the remote resumed request is interrupted", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({ cached: BASE_PROJECTION, completionMarker: true });
+      yield* Queue.take(harness.subscribed);
+      yield* Queue.offer(harness.inputs, new TestStreamInterrupted());
+      yield* TestClock.adjust("15 seconds");
+      expect(yield* Ref.get(harness.subscriptionCount)).toBe(2);
+      expect(yield* Ref.get(harness.lastSubscribeAfterSequence)).toBeUndefined();
+      yield* Queue.offerAll(harness.inputs, [snapshot(BASE_PROJECTION, 12), synchronized()]);
+      yield* awaitThreadState(harness.observed, (state) => state.status === "live");
+    }),
+  );
+
+  it.effect("retries a remote RPC defect without waiting for a replacement socket", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({ cached: BASE_PROJECTION, completionMarker: true });
+      yield* Queue.take(harness.subscribed);
+      yield* Queue.offer(
+        harness.inputs,
+        new RpcClientError.RpcClientError({
+          reason: new RpcClientError.RpcClientDefect({
+            message: "Replay encode failed",
+            cause: new Error("bad replay"),
+          }),
+        }),
+      );
+      expect((yield* Queue.take(harness.subscribed)).afterSequence).toBeUndefined();
+      yield* Queue.offerAll(harness.inputs, [snapshot(BASE_PROJECTION, 12), synchronized()]);
+      yield* awaitThreadState(harness.observed, (state) => state.status === "live");
+      expect(yield* Ref.get(harness.subscriptionCount)).toBe(2);
+    }),
+  );
+
+  it.effect("retries a typed resume failure once with a snapshot", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({ cached: BASE_PROJECTION, completionMarker: true });
+      yield* Queue.take(harness.subscribed);
+      yield* Queue.offer(harness.inputs, new Error("Replay could not decode"));
+
+      const snapshotRetry = yield* Queue.take(harness.subscribed);
+      expect(snapshotRetry.afterSequence).toBeUndefined();
+      yield* Queue.offerAll(harness.inputs, [snapshot(BASE_PROJECTION, 12), synchronized()]);
+      yield* awaitThreadState(harness.observed, (state) => state.status === "live");
+
+      expect(yield* Ref.get(harness.subscriptionCount)).toBe(2);
+    }),
+  );
+
+  it.effect("drops frames produced by a replaced session", () =>
+    Effect.gen(function* () {
+      const oldSessionStarted = yield* Deferred.make<void>();
+      const releaseOldSession = yield* Deferred.make<void>();
+      const newSessionStarted = yield* Deferred.make<void>();
+      const releaseNewMarker = yield* Deferred.make<void>();
+      const staleProjection = {
+        ...BASE_PROJECTION,
+        thread: { ...BASE_PROJECTION.thread, title: "Stale session" },
+      };
+      const currentProjection = {
+        ...BASE_PROJECTION,
+        thread: { ...BASE_PROJECTION.thread, title: "Current session" },
+      };
+      const method = ORCHESTRATION_V2_WS_METHODS.subscribeThread;
+      const oldClient = {
+        [method]: () =>
+          Stream.fromEffect(
+            Effect.uninterruptible(
+              Deferred.succeed(oldSessionStarted, undefined).pipe(
+                Effect.andThen(Deferred.await(releaseOldSession)),
+                Effect.as([snapshot(staleProjection, 2), synchronized()] as const),
+              ),
+            ),
+          ).pipe(Stream.flatMap(Stream.fromIterable)),
+      } as unknown as WsRpcProtocolClient;
+      const currentClient = {
+        [method]: () =>
+          Stream.fromEffect(
+            Deferred.succeed(newSessionStarted, undefined).pipe(
+              Effect.as(snapshot(currentProjection, 12)),
+            ),
+          ).pipe(
+            Stream.concat(
+              Stream.fromEffect(Deferred.await(releaseNewMarker).pipe(Effect.as(synchronized()))),
+            ),
+          ),
+      } as unknown as WsRpcProtocolClient;
+      const harness = yield* makeHarness({
+        cached: BASE_PROJECTION,
+        completionMarker: true,
+        initialClient: oldClient,
+        replacementClient: currentClient,
+      });
+      yield* Deferred.await(oldSessionStarted);
+      yield* awaitThreadState(harness.observed, (state) => state.status === "synchronizing");
+      yield* Ref.set(harness.observedStates, []);
+
+      yield* harness.replaceSession;
+      yield* Deferred.succeed(releaseOldSession, undefined);
+      yield* Deferred.await(newSessionStarted);
+      yield* awaitThreadState(
+        harness.observed,
+        (state) =>
+          state.status === "synchronizing" &&
+          Option.isSome(state.data) &&
+          state.data.value.thread.title === "Current session",
+      );
+
+      const observed = yield* Ref.get(harness.observedStates);
+      expect(observed.some((state) => state.status === "live")).toBe(false);
+      expect(Option.getOrThrow((yield* Ref.get(harness.latest)).data).thread.title).toBe(
+        "Current session",
+      );
+
+      yield* Deferred.succeed(releaseNewMarker, undefined);
+      yield* awaitThreadState(harness.observed, (state) => state.status === "live");
+    }),
+  );
+
+  it.effect("retries a resume once with a snapshot when its completion marker never arrives", () =>
+    Effect.gen(function* () {
+      const spans: Array<Tracer.NativeSpan> = [];
+      const tracer = Tracer.make({
+        span(options) {
+          const span = new Tracer.NativeSpan(options);
+          spans.push(span);
+          return span;
+        },
+      });
+      const harness = yield* makeHarness({
+        cached: BASE_PROJECTION,
+        completionMarker: true,
+        tracer,
+      });
+      yield* awaitThreadState(harness.observed, (value) => value.status === "synchronizing");
+      yield* TestClock.adjust("15 seconds");
+      expect(yield* Ref.get(harness.subscriptionCount)).toBe(2);
+      expect(yield* Ref.get(harness.lastSubscribeAfterSequence)).toBeUndefined();
+      yield* Queue.offerAll(harness.inputs, [snapshot(BASE_PROJECTION, 12), synchronized()]);
+      yield* awaitThreadState(harness.observed, (value) => value.status === "live");
+      yield* TestClock.adjust("1 minute");
+      const transitions = spans.filter((span) => span.name.startsWith("orchestration.sync."));
+      expect(transitions.map((span) => span.attributes.get("sync.transition"))).toContain(
+        "timeout",
+      );
+      expect(transitions.map((span) => span.attributes.get("sync.transition"))).toContain(
+        "snapshot_retry",
+      );
+      expect(transitions.map((span) => span.attributes.get("sync.transition"))).toContain(
+        "synchronized",
+      );
+      expect(new Set(transitions.map((span) => span.traceId)).size).toBe(1);
+      expect(transitions.every((span) => span.status._tag === "Ended")).toBe(true);
+      expect(yield* Ref.get(harness.subscriptionCount)).toBe(2);
+      yield* harness.replaceSession;
+      yield* TestClock.adjust(0);
+      expect(yield* Ref.get(harness.lastSubscribeAfterSequence)).toBe(12);
+    }),
+  );
+
   it.effect("keeps replayed updates synchronizing until the completion marker arrives", () =>
     Effect.gen(function* () {
       const harness = yield* makeHarness({ cached: BASE_PROJECTION, completionMarker: true });
@@ -2050,6 +2299,7 @@ describe("EnvironmentThreads", () => {
         harness.observed,
         (value) => value.status === "synchronizing" && Option.isSome(value.data),
       );
+      yield* Queue.take(harness.subscribed);
       expect(yield* Ref.get(harness.lastRequestCompletionMarker)).toBe(true);
 
       yield* Queue.offer(
