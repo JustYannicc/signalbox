@@ -5,7 +5,7 @@ import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
-import { isHarnessInstance } from "../providerCatalog.ts";
+import { isHarnessInstance } from "../../models/ModelRouting.ts";
 import { isLiveRun } from "../runState.ts";
 import * as ThreadStore from "../ThreadStore.ts";
 import { CloudAnalytics } from "./CloudAnalytics.ts";

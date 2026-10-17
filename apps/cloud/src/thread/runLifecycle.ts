@@ -7,7 +7,7 @@ import type {
   OrchestrationV2UserMessageInputIntent,
 } from "@t3tools/contracts";
 
-import { driverFor, runnerInstanceFor } from "./providerCatalog.ts";
+import { driverFor, runnerInstanceFor } from "../models/ModelRouting.ts";
 import { expireRuntimeRequests } from "./runtimeRequests.ts";
 import { isLiveRun } from "./runState.ts";
 import {
