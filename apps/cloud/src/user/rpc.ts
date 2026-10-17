@@ -434,7 +434,10 @@ const kindsCall = <A>(effect: Effect.Effect<A, SqlError>) =>
     }),
   );
 
-const personBrowserCall = <A>(effect: Effect.Effect<A, unknown>, message: string) =>
+const personBrowserCall = <A, E>(
+  effect: Effect.Effect<A, E>,
+  message: string,
+): Effect.Effect<A, SignalboxPersonBrowserError> =>
   effect.pipe(
     Effect.tapError((cause) =>
       Effect.logError("cloud browser profile operation failed", { cause }),
