@@ -112,19 +112,25 @@ export function QuickCaptureDialog(props: { readonly open: boolean }) {
     requestAnimationFrame(() => textareaRef.current?.setSelectionRange(next.caret, next.caret));
   };
 
+  // Counted synchronously, so a drop and a paste in one tick are capped and reported against the same total.
+  const fileCountRef = useRef(files.length);
   const addFiles = (incoming: ReadonlyArray<File>) => {
     if (incoming.length === 0) return;
-    if (files.length + incoming.length > PROVIDER_SEND_TURN_MAX_ATTACHMENTS) {
+    const room = Math.max(PROVIDER_SEND_TURN_MAX_ATTACHMENTS - fileCountRef.current, 0);
+    const kept = incoming.slice(0, room).map((file) => ({ id: randomUUID(), file }));
+    fileCountRef.current += kept.length;
+    if (kept.length < incoming.length) {
       toastManager.add({
         type: "warning",
         title: `You can attach up to ${PROVIDER_SEND_TURN_MAX_ATTACHMENTS} files`,
       });
     }
-    // The cap is applied in the updater, so a drop and a paste in one tick can't pass it together.
-    setFiles((current) => {
-      const room = Math.max(PROVIDER_SEND_TURN_MAX_ATTACHMENTS - current.length, 0);
-      return [...current, ...incoming.slice(0, room).map((file) => ({ id: randomUUID(), file }))];
-    });
+    if (kept.length > 0) setFiles((current) => [...current, ...kept]);
+  };
+
+  const removeFile = (id: string) => {
+    fileCountRef.current -= 1;
+    setFiles((current) => current.filter((file) => file.id !== id));
   };
 
   const handleKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
@@ -252,9 +258,7 @@ export function QuickCaptureDialog(props: { readonly open: boolean }) {
                 picked={picked}
                 files={files}
                 onUnpick={() => setPicked(null)}
-                onRemoveFile={(id) =>
-                  setFiles((current) => current.filter((file) => file.id !== id))
-                }
+                onRemoveFile={removeFile}
               />
             )}
           </div>

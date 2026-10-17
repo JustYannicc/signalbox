@@ -3,7 +3,7 @@
  * opens it on `capture.open` (default mod+shift+space).
  */
 import { useAtomValue } from "@effect/atom-react";
-import { useParams } from "@tanstack/react-router";
+import { useLocation, useParams } from "@tanstack/react-router";
 import { useEffect } from "react";
 
 import { isCommandPaletteOpen } from "../../commandPaletteBus";
@@ -24,10 +24,15 @@ export function QuickCaptureHost() {
   const open = useQuickCaptureStore((state) => state.open);
   const openCount = useQuickCaptureStore((state) => state.openCount);
   const routeThreadRef = useParams({ strict: false, select: resolveThreadRouteRef });
+  const usagePageOpen = useLocation({ select: (location) => location.pathname === "/usage" });
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
       if (isCommandPaletteOpen()) return;
+      // Recording a shortcut in Settings gets the keys, not quick capture.
+      if (event.target instanceof Element && event.target.closest("[data-keybinding-capture]")) {
+        return;
+      }
       // The same context the chat route's shortcuts see, so a custom `when` means the same here.
       const command = resolveShortcutCommand(event, keybindings, {
         context: {
@@ -45,6 +50,7 @@ export function QuickCaptureHost() {
             : false,
           editableFocus: isEditableFocused(event.target),
           modelPickerOpen: isModelPickerOpen(),
+          usagePageOpen,
         },
       });
       if (command !== "capture.open") return;
@@ -54,7 +60,7 @@ export function QuickCaptureHost() {
     };
     window.addEventListener("keydown", handleKeyDown, { capture: true });
     return () => window.removeEventListener("keydown", handleKeyDown, { capture: true });
-  }, [keybindings, routeThreadRef]);
+  }, [keybindings, routeThreadRef, usagePageOpen]);
 
   // Nothing mounts until the first opening.
   return openCount > 0 ? <QuickCaptureDialog key={openCount} open={open} /> : null;

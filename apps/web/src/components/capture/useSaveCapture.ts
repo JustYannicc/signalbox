@@ -28,13 +28,11 @@ export interface Capture {
 }
 
 /**
- * Writes the capture into the draft the moment it exists, so it never sits
- * empty (an empty draft can be replaced and dropped) and the draft page opens
- * already filled. Returns the names the draft didn't take.
+ * Adds prepared attachments to the draft. Returns the names it didn't take,
+ * for example over the limit or because the draft is gone.
  */
-function seedDraft(draftId: DraftId, text: string, prepared: PreparedCaptureAttachments) {
+function attachToDraft(draftId: DraftId, prepared: PreparedCaptureAttachments) {
   const store = useComposerDraftStore.getState();
-  if (text.length > 0) store.setPrompt(draftId, text);
   const images = prepared.images.map((entry) => entry.image);
   const acceptedImages = new Set(images.length > 0 ? store.addImages(draftId, images) : []);
   const acceptedFiles = new Set(
@@ -74,12 +72,17 @@ export function useSaveCapture() {
     async (capture: Capture, options: { readonly open: boolean }): Promise<boolean> => {
       const text = capture.text.trim();
       const { destination } = capture;
-      const prepared = await prepareCaptureAttachments(capture.files);
+      // Text is written the instant the draft exists, before any image work, so a reload
+      // mid-save never loses it; attachments follow once prepared. With no text, the draft
+      // waits for them instead, so it never sits empty (an empty draft can be replaced).
+      const preparing = prepareCaptureAttachments(capture.files);
+      const prepared = text.length > 0 ? null : await preparing;
       let rejected: string[] = [];
       let seeded: DraftId | null = null;
       const seed = (draftId: DraftId) => {
         seeded = draftId;
-        rejected = seedDraft(draftId, text, prepared);
+        if (text.length > 0) useComposerDraftStore.getState().setPrompt(draftId, text);
+        if (prepared) rejected = attachToDraft(draftId, prepared);
       };
       const opened = destination
         ? await startInFolder({
@@ -100,15 +103,17 @@ export function useSaveCapture() {
           : null;
       // Filled before a later step failed (opening it, filing it): it's saved, don't duplicate it.
       const saved = opened ?? (seeded === null ? null : { draftId: seeded, filed: false });
+      const attachments = prepared ?? (await preparing);
       if (saved === null) {
-        for (const { image } of prepared.images) URL.revokeObjectURL(image.previewUrl);
+        for (const { image } of attachments.images) URL.revokeObjectURL(image.previewUrl);
         toastManager.add({ type: "error", title: "Couldn't save the draft" });
         // Nothing is lost: it reopens with what was written, files included.
         restoreQuickCapture({ text: capture.text, files: capture.files, destination });
         return false;
       }
 
-      const notAttached = [...prepared.skipped, ...rejected];
+      if (prepared === null) rejected = attachToDraft(saved.draftId, attachments);
+      const notAttached = [...attachments.skipped, ...rejected];
       if (notAttached.length > 0) {
         toastManager.add({
           type: "warning",
