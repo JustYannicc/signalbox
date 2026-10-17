@@ -22,6 +22,7 @@ import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
+import type { ModelAuthorization } from "../models/ModelProtocol.ts";
 import type { ModelGatewayRecord } from "../modelGateway/modelGatewayRecord.ts";
 import type { ThreadContextTurns, ThreadMatch } from "../context/threadContext.ts";
 import type {
@@ -38,12 +39,9 @@ import {
   type NativeChildBatchInput,
   type NativeChildBatchResult,
 } from "./runner/nativeChildBatch.ts";
+import { ThreadObjectError } from "./ThreadAccess.ts";
 import type { PreviewLinkResult } from "./preview/PreviewGateway.ts";
-import type {
-  DriveAuthorization,
-  ModelAuthorization,
-  RemoteAuthorization,
-} from "./runner/ThreadRunner.ts";
+import type { DriveAuthorization, RemoteAuthorization } from "./ThreadAuthorization.ts";
 import {
   type Actor,
   ThreadCommandRejectedError,
@@ -71,14 +69,7 @@ import {
 
 export const THREAD_OBJECT_JURISDICTION = "eu";
 
-export class ThreadObjectError extends Schema.TaggedError<ThreadObjectError>()(
-  "ThreadObjectError",
-  { operation: Schema.String, cause: Schema.Defect() },
-) {
-  override get message(): string {
-    return `Thread object call failed (${this.operation}).`;
-  }
-}
+export { ThreadObjectError } from "./ThreadAccess.ts";
 
 /** A watcher fell behind the agent's browser; its stream ended for good (see `preview/BrowserMirror.ts`). */
 export class BrowserWatchBehindError extends Schema.TaggedError<BrowserWatchBehindError>()(

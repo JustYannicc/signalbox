@@ -439,7 +439,7 @@ export class ThreadObject extends DurableObject<ThreadObjectEnv> implements Thre
     return this.api.browsingRecord(...args);
   }
 
-  /** The ModelGateway reporting a request it served for this thread (see `modelGrants.ts`). */
+  /** The ModelGateway reporting a request it served for this thread (see `models/ModelAccess.ts`). */
   async recordModelRequest(record: ModelGatewayRecord) {
     await this.runtime.runPromise(
       recordUnderLock((diagnostics) =>
@@ -453,7 +453,7 @@ export class ThreadObject extends DurableObject<ThreadObjectEnv> implements Thre
     );
   }
 
-  /** The ModelGateway asking whether a harness's token is good right now (see `modelGrants.ts`). */
+  /** The ModelGateway asking whether a harness's token is good right now (see `models/ModelAccess.ts`). */
   authorizeModel(token: string, provider: ModelGatewayProvider) {
     return this.runtime.runPromise(
       ThreadRunner.ThreadRunner.use((runner) => runner.authorizeModel(token, provider)),

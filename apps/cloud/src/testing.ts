@@ -45,6 +45,7 @@ import { makeMemoryPools } from "./pool/testing.ts";
 import * as CloudCollaboration from "./collaboration/CloudCollaboration.ts";
 import * as CloudThreadService from "./thread/CloudThreadService.ts";
 import * as ThreadInbox from "./thread/ThreadInbox.ts";
+import * as ThreadsLive from "./thread/ThreadsLive.ts";
 import * as CloudAnalytics from "./thread/diagnostics/CloudAnalytics.ts";
 import * as DiagnosticsStore from "./thread/diagnostics/DiagnosticsStore.ts";
 import * as TurnDiagnostics from "./thread/diagnostics/TurnDiagnostics.ts";
@@ -331,7 +332,11 @@ const makeUserRuntime = (
               LocalKeys.layer,
               SignInGrants.layer,
               PoolSignIns.layer,
-              ThreadInbox.layer.pipe(Layer.provideMerge(CloudThreadService.layer)),
+              ThreadInbox.layer.pipe(
+                Layer.provideMerge(
+                  CloudThreadService.layer.pipe(Layer.provideMerge(ThreadsLive.layer)),
+                ),
+              ),
               ThreadSearch.layer.pipe(
                 Layer.provide(Layer.mergeAll(SearchAuthority.layerUser, SearchCursors.layerSql)),
                 Layer.provide(
@@ -355,7 +360,14 @@ const makeUserRuntime = (
           ),
           // No push credentials, so phones are recorded and every push is skipped.
           Layer.provideMerge(
-            PushNotifier.layerWithDevices(EnvironmentId.make(CLOUD_TEST_ENV.ENVIRONMENT_ID)).pipe(
+            Layer.unwrap(
+              Effect.map(UserStore.UserStore, (store) =>
+                PushNotifier.layerWithDevices(
+                  EnvironmentId.make(CLOUD_TEST_ENV.ENVIRONMENT_ID),
+                  (sid) => Effect.map(store.findSession(sid), (session) => session !== null),
+                ),
+              ),
+            ).pipe(
               Layer.provide(
                 Layer.mergeAll(
                   FetchHttpClient.layer,
@@ -586,6 +598,7 @@ export const makeMemoryCloud = (
   const userObject = (userId: string) =>
     Layer.effectContext(Effect.orDie(userFor(userId).runtime.contextEffect));
   const threadService = CloudThreadService.layer.pipe(
+    Layer.provideMerge(ThreadsLive.layer),
     Layer.provideMerge(
       Layer.mergeAll(
         Layer.succeed(UserDirectory.UserDirectory, userDirectory),
