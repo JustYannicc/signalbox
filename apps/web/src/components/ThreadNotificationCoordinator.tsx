@@ -25,15 +25,12 @@ import {
   setNotificationBadge,
   unlockNotificationAudio,
 } from "../threadNotifications";
-import {
-  closeNeedsYouToastsOnUnmount,
-  completionEarnsSignal,
-  createNeedsYouToasts,
-  needsYouToastTimeout,
-} from "../needsYouSignals"; // signalbox: #43
+import { completionEarnsSignal, needsYouToastTimeout, useNeedsYouToasts } from "../needsYouSignals"; // signalbox: #43
 import { resolveSidebarThreadStatus } from "./Sidebar.logic";
 import { AutomationNotices } from "./automations/AutomationNotices"; // signalbox: automations
 import { toastManager } from "./ui/toast";
+
+const closeToast = (toastId: string) => toastManager.close(toastId); // signalbox
 
 export function ThreadNotificationCoordinator() {
   const environmentIds = useEnvironmentIds();
@@ -125,8 +122,7 @@ function EnvironmentNotifications({
     strict: false,
   });
   const previous = useRef(new Map<ThreadId, NotificationState>());
-  const needsYouToasts = useRef(createNeedsYouToasts((id) => toastManager.close(id))); // signalbox
-  useEffect(() => closeNeedsYouToastsOnUnmount(needsYouToasts.current), []); // signalbox
+  const needsYouToasts = useNeedsYouToasts(closeToast, inAppNotificationsEnabled); // signalbox
 
   useEffect(() => {
     if (threads === null) {
@@ -136,7 +132,7 @@ function EnvironmentNotifications({
     const next = new Map<ThreadId, NotificationState>();
     const subagentRequests = pendingSubagentRequestsByThread(threads);
     const syncNeedsYouToast = (raw: OrchestrationV2ThreadShell, attention: string | null) =>
-      needsYouToasts.current.sync(
+      needsYouToasts.sync(
         raw.id,
         raw.archivedAt === null ? attention : null,
         activeEnvironmentId === environmentId && activeThreadId === raw.id,
@@ -226,8 +222,7 @@ function EnvironmentNotifications({
             },
           },
         });
-        if (kind === "input" && attention)
-          needsYouToasts.current.add(thread.id, attention, toastId); // signalbox
+        if (kind === "input" && attention) needsYouToasts.add(thread.id, attention, toastId); // signalbox
         continue;
       }
       if (
@@ -256,7 +251,7 @@ function EnvironmentNotifications({
         // Some browsers expose Notification but reject desktop presentation.
       }
     }
-    needsYouToasts.current.retain(new Set(next.keys())); // signalbox
+    needsYouToasts.retain(new Set(next.keys())); // signalbox
     previous.current = next;
   }, [
     activeEnvironmentId,
@@ -265,6 +260,7 @@ function EnvironmentNotifications({
     inAppNotificationsEnabled,
     mode,
     navigate,
+    needsYouToasts, // signalbox
     onNotification,
     threads,
   ]);

@@ -7,6 +7,7 @@
  */
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/models";
 import type { ClientSettings } from "@t3tools/contracts/settings";
+import { useEffect, useState } from "react";
 
 /** Matches `LONG_TURN_MS` in apps/cloud/src/push/pushRules.ts. */
 const LONG_TURN_MS = 60_000;
@@ -72,12 +73,38 @@ export function createNeedsYouToasts(close: (toastId: string) => void) {
 
 type NeedsYouToasts = ReturnType<typeof createNeedsYouToasts>;
 
-/** An effect that closes the tracker's toasts when its notifications unmount (turned off, environment gone). */
-export function closeNeedsYouToastsOnUnmount(toasts: NeedsYouToasts) {
-  return () => toasts.closeAll();
+/**
+ * One environment's toast tracker. Its zero-timeout toasts close when in-app
+ * notifications are turned off (desktop alerts can keep the component mounted)
+ * and when it unmounts (all notifications off, environment gone).
+ */
+export function useNeedsYouToasts(
+  close: (toastId: string) => void,
+  inAppNotificationsEnabled: boolean,
+): NeedsYouToasts {
+  const [toasts] = useState(() => createNeedsYouToasts(close));
+  useEffect(() => {
+    if (!inAppNotificationsEnabled) toasts.closeAll();
+  }, [inAppNotificationsEnabled, toasts]);
+  useEffect(() => () => toasts.closeAll(), [toasts]);
+  return toasts;
 }
 
 const ADOPTED_KEY = "signalbox:needs-you-defaults:v1";
+
+/**
+ * Any successful settings write holds the person's choice from then on, so a
+ * migration that couldn't write earlier must not flip it on the next load.
+ */
+export function markNeedsYouDefaultsAdopted(
+  storage: Pick<Storage, "setItem"> | undefined = globalThis.localStorage,
+): void {
+  try {
+    storage?.setItem(ADOPTED_KEY, "1");
+  } catch {
+    // Unwritable storage retries next load; flipping an unsaved default again is harmless.
+  }
+}
 
 /**
  * In-app notifications became the default with #43. Settings saved before then
@@ -93,13 +120,7 @@ export async function adoptNeedsYouDefaults(
   storage: Pick<Storage, "getItem" | "setItem"> | undefined = globalThis.localStorage,
 ): Promise<ClientSettings | null> {
   if (storage === undefined) return settings;
-  const markAdopted = () => {
-    try {
-      storage.setItem(ADOPTED_KEY, "1");
-    } catch {
-      // Unwritable storage retries next load; flipping an unsaved default again is harmless.
-    }
-  };
+  const markAdopted = () => markNeedsYouDefaultsAdopted(storage);
   try {
     if (storage.getItem(ADOPTED_KEY) !== null) return settings;
   } catch {

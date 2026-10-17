@@ -36,6 +36,9 @@ describe("threadNeedsYou", () => {
     const seen = { latestRun: failedRun, lastVisitedAt: "2026-10-17T09:06:00.000Z" };
     expect(threadNeedsYou(thread("a", "2026-10-17T09:00:00.000Z", unseen))).toBe(true);
     expect(threadNeedsYou(thread("b", "2026-10-17T09:00:00.000Z", seen))).toBe(false);
+    // An automation's thread nobody has opened still waits on someone.
+    const neverOpened = { latestRun: failedRun, lastVisitedAt: null };
+    expect(threadNeedsYou(thread("c", "2026-10-17T09:00:00.000Z", neverOpened))).toBe(true);
   });
 
   it("doesn't count a thread that is only working or done", () => {

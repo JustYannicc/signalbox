@@ -8,15 +8,15 @@ import type { SidebarThreadSortOrder } from "@t3tools/contracts/settings";
 
 import { sortThreads } from "../../lib/threadSort";
 import type { SidebarThreadSummary } from "../../types";
-import { hasUnseenCompletion } from "../Sidebar.logic";
+import { hasUnseenFailure } from "../Sidebar.logic";
 
-/** Waiting on the person: a question or approval (its own or a subagent's), or a failure not yet seen. */
+/** Waiting on the person: a question or approval (its own or a subagent's), or a failure not yet seen, including one in a thread nobody has opened. */
 export function threadNeedsYou(thread: SidebarThreadSummary): boolean {
   return (
     thread.hasPendingApprovals ||
     thread.hasPendingUserInput ||
     thread.pendingSubagentRequest != null ||
-    (thread.latestRun?.status === "failed" && hasUnseenCompletion(thread))
+    hasUnseenFailure(thread)
   );
 }
 

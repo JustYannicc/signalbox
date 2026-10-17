@@ -5,6 +5,7 @@ import {
   adoptNeedsYouDefaults,
   completionEarnsSignal,
   createNeedsYouToasts,
+  markNeedsYouDefaultsAdopted,
   needsYouToastTimeout,
 } from "./needsYouSignals";
 
@@ -138,6 +139,20 @@ describe("adoptNeedsYouDefaults", () => {
     expect(await adoptNeedsYouDefaults(null, vi.fn(), storage)).toBeNull();
     expect(DEFAULT_CLIENT_SETTINGS.inAppNotificationsEnabled).toBe(true);
     // The person turns them off; the next load keeps that choice.
+    const persist = vi.fn();
+    expect(await adoptNeedsYouDefaults(off, persist, storage)).toBe(off);
+    expect(persist).not.toHaveBeenCalled();
+  });
+
+  it("keeps an opt-out saved after a failed migration write", async () => {
+    const storage = memoryStorage();
+    await adoptNeedsYouDefaults(
+      off,
+      () => Promise.reject(new Error("bridge unavailable")),
+      storage,
+    );
+    // The person then turns them off and that write succeeds.
+    markNeedsYouDefaultsAdopted(storage);
     const persist = vi.fn();
     expect(await adoptNeedsYouDefaults(off, persist, storage)).toBe(off);
     expect(persist).not.toHaveBeenCalled();

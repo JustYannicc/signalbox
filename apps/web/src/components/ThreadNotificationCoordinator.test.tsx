@@ -354,6 +354,17 @@ describe("thread notifications", () => {
     expect(state.close).toHaveBeenCalledWith("toast-1");
   });
 
+  it("closes waiting toasts when only in-app notifications are turned off", async () => {
+    state.mode = "notifications";
+    await render();
+    state.turnError = true;
+    await render();
+    expect(state.add).toHaveBeenCalledTimes(1);
+    state.inApp = false;
+    await render();
+    expect(state.close).toHaveBeenCalledWith("toast-1");
+  });
+
   it("closes a failure's toast when the person opens the thread", async () => {
     await render();
     state.turnError = true;
