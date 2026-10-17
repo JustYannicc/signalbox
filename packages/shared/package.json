@@ -7,6 +7,10 @@
       "types": "./src/keywordSearch.ts",
       "import": "./src/keywordSearch.ts"
     },
+    "./synchronization": {
+      "types": "./src/synchronization.ts",
+      "import": "./src/synchronization.ts"
+    },
     "./signalboxAppUrl": {
       "types": "./src/signalboxAppUrl.ts",
       "import": "./src/signalboxAppUrl.ts"
