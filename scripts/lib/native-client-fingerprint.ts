@@ -1,7 +1,6 @@
 import * as Schema from "effect/Schema";
 
 const ExpoSourceFields = {
-  reasons: Schema.Array(Schema.String),
   hash: Schema.NullOr(Schema.String),
 };
 
@@ -11,18 +10,22 @@ export const ExpoFingerprintSource = Schema.Union([
     type: Schema.Literal("file"),
     filePath: Schema.String,
     ...ExpoSourceFields,
+    reasons: Schema.Array(Schema.String),
     overrideHashKey: Schema.optional(Schema.String),
   }),
   Schema.Struct({
     type: Schema.Literal("dir"),
     filePath: Schema.String,
     ...ExpoSourceFields,
+    reasons: Schema.Array(Schema.String),
     overrideHashKey: Schema.optional(Schema.String),
   }),
   Schema.Struct({
     type: Schema.Literal("contents"),
     id: Schema.String,
     ...ExpoSourceFields,
+    // The app-major-version extra source omits Expo's diagnostic reason field.
+    reasons: Schema.optional(Schema.Array(Schema.String)),
   }),
   Schema.Struct({
     type: Schema.Literal("package"),
@@ -30,6 +33,7 @@ export const ExpoFingerprintSource = Schema.Union([
     version: Schema.String,
     filePath: Schema.String,
     ...ExpoSourceFields,
+    reasons: Schema.Array(Schema.String),
     overrideHashKey: Schema.optional(Schema.String),
   }),
 ]);
@@ -50,16 +54,31 @@ export type ExpoFingerprintSnapshot = typeof ExpoFingerprint.Type;
 export const projectExpoFingerprintSource: (
   source: ExpoFingerprintSource,
 ) => ExpoFingerprintSource = function projectExpoFingerprintSource(source) {
-  const common = { type: source.type, reasons: source.reasons, hash: source.hash };
+  const common = { hash: source.hash };
   switch (source.type) {
     case "contents":
-      return { ...common, type: source.type, id: source.id };
+      return {
+        ...common,
+        type: source.type,
+        id: source.id,
+        ...(source.reasons === undefined ? {} : { reasons: source.reasons }),
+      };
     case "file":
+      return {
+        ...common,
+        type: source.type,
+        filePath: source.filePath,
+        reasons: source.reasons,
+        ...(source.overrideHashKey === undefined
+          ? {}
+          : { overrideHashKey: source.overrideHashKey }),
+      };
     case "dir":
       return {
         ...common,
         type: source.type,
         filePath: source.filePath,
+        reasons: source.reasons,
         ...(source.overrideHashKey === undefined
           ? {}
           : { overrideHashKey: source.overrideHashKey }),
@@ -71,6 +90,7 @@ export const projectExpoFingerprintSource: (
         name: source.name,
         version: source.version,
         filePath: source.filePath,
+        reasons: source.reasons,
         ...(source.overrideHashKey === undefined
           ? {}
           : { overrideHashKey: source.overrideHashKey }),

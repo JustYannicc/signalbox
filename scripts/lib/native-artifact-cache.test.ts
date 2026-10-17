@@ -113,6 +113,11 @@ it.layer(NodeServices.layer)("native artifact cache", (it) => {
           sources: [
             {
               type: "contents",
+              id: "appMajorVersion",
+              hash: "da4b9237bacccdf19c0760cab7aec4a8359010b0",
+            },
+            {
+              type: "contents",
               id: "expo-config",
               contents: "must stay out of the cache manifest",
               reasons: ["expoConfig"],
@@ -142,6 +147,15 @@ it.layer(NodeServices.layer)("native artifact cache", (it) => {
           ],
         }),
       );
+      const fileWithoutReasons = yield* Effect.exit(
+        NativeClientBuildIdentity.decodeExpoFingerprint(
+          JSON.stringify({
+            hash: "b".repeat(40),
+            sources: [{ type: "file", filePath: "app.json", hash: "c".repeat(40) }],
+          }),
+        ),
+      );
+      assert.isTrue(Exit.isFailure(fileWithoutReasons));
       const sources = snapshot.sources.map(NativeClientFingerprint.projectExpoFingerprintSource);
       const buildIdentity = identity({ fingerprint: snapshot.hash, sources });
       const request = yield* makeClient({
@@ -158,6 +172,12 @@ it.layer(NodeServices.layer)("native artifact cache", (it) => {
       const manifest = JSON.parse(manifestText);
 
       assert.deepEqual(manifest.manifest.identity.sources, sources);
+      const appMajorVersionSource = manifest.manifest.identity.sources.find(
+        (source: NativeClientFingerprint.ExpoFingerprintSource) =>
+          source.type === "contents" && source.id === "appMajorVersion",
+      );
+      assert.isDefined(appMajorVersionSource);
+      assert.isFalse(Object.hasOwn(appMajorVersionSource, "reasons"));
       assert.isFalse(manifestText.includes("must stay out of the cache manifest"));
     }),
   );
