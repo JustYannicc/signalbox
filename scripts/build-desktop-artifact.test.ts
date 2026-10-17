@@ -750,7 +750,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       assert.propertyVal(
         (mac.mac as Record<string, unknown>).extendInfo as Record<string, unknown>,
         "NSLocalNetworkUsageDescription",
-        "Signalbox connects to devices on your local network for remote environments and commands run by terminals and coding agents.",
+        "Signalbox connects to devices on your local network when you open them in its browser.",
       );
       for (const config of [linux, win]) {
         assert.deepStrictEqual(config.electronLanguages, DESKTOP_ELECTRON_LANGUAGES);

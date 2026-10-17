@@ -84,6 +84,7 @@ import { useProjects, useServerConfigs } from "~/state/entities";
 import { useEnvironments } from "~/state/environments";
 import { useEnvironmentQuery } from "~/state/query";
 import { readEnvironmentScope, useEnvironmentScope } from "~/state/session";
+import { useEnvironmentSupports } from "~/state/environmentCapabilities"; // signalbox
 import { useLiveRefresh } from "~/hooks/useLiveRefresh";
 import {
   pullRequestEnvironment,
@@ -881,6 +882,9 @@ export function PullRequestDetailPanel({
   const acting =
     pickableEnvironments.find((entry) => entry.environmentId === chosenEnvironmentId) ?? null;
   const actingEnvironmentId = acting?.environmentId ?? environmentId;
+  // signalbox: an environment without worktrees gives each thread its own branch, so there is
+  // no checkout of a pull request into one.
+  const canCheckOut = useEnvironmentSupports(actingEnvironmentId, "worktrees");
   const checkoutRoot =
     acting?.workspaceRoot ?? detail?.workspaceRoot ?? project?.workspaceRoot ?? null;
   const canOperateThread = useEnvironmentScope(actingEnvironmentId, AuthOrchestrationOperateScope);
@@ -1496,7 +1500,7 @@ export function PullRequestDetailPanel({
       : 0;
 
   const checkoutControl =
-    context === "page" ? (
+    context === "page" && canCheckOut ? (
       <Menu>
         <Tooltip>
           <TooltipTrigger

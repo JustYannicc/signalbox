@@ -1,7 +1,8 @@
 import * as Schema from "effect/Schema";
 
-import { AutomationAskField, AutomationAskImportance } from "./automationAsk.ts";
+import { AutomationAskField, AutomationAskImportance, AutomationAskOpen } from "./automationAsk.ts";
 import { IsoDateTime, ProjectId, ThreadId, TrimmedNonEmptyString } from "./baseSchemas.ts";
+import { ExternalRun } from "./externalRun.ts";
 import { ModelSelection } from "./modelSelection.ts";
 import { ProviderInteractionMode, RuntimeMode } from "./providerPolicy.ts";
 import { ScheduledTaskWebhookEndpoint } from "./scheduledTask.ts";
@@ -13,6 +14,7 @@ import {
 } from "./workflow.ts";
 
 export * from "./automationAsk.ts";
+export * from "./externalRun.ts";
 
 /**
  * Automations as users and agents see them: saved workflow files, their runs,
@@ -92,6 +94,8 @@ export const AutomationWaitingQuestion = Schema.Struct({
   fields: Schema.Array(AutomationAskField),
   /** Defaults to high when reading questions created before this field existed. */
   importance: Schema.optional(AutomationAskImportance),
+  /** What to open beside it: a thread, or its agent's live browser. */
+  open: Schema.optionalKey(Schema.NullOr(AutomationAskOpen)),
   since: IsoDateTime,
 });
 export type AutomationWaitingQuestion = typeof AutomationWaitingQuestion.Type;
@@ -142,6 +146,8 @@ export const AutomationStep = Schema.Struct({
   attempt: Schema.Int,
   startedAt: IsoDateTime,
   finishedAt: Schema.NullOr(IsoDateTime),
+  /** The run in another system this step started, e.g. on GitHub Actions, as last read. */
+  external: Schema.optional(Schema.NullOr(ExternalRun)),
 });
 export type AutomationStep = typeof AutomationStep.Type;
 

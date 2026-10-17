@@ -16,7 +16,7 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
 import type { SnapshotFields } from "../thread/pullRequests/pullRequestLinks.ts";
-import { type GitHubApi, GitHubError } from "./GitHubApi.ts";
+import { type GitHubApi, unreadable } from "./GitHubApi.ts";
 
 /**
  * A pull request as the cloud reads it from GitHub, with the user's token:
@@ -30,13 +30,6 @@ import { type GitHubApi, GitHubError } from "./GitHubApi.ts";
 /** Pages read of one list before giving up on its tail. */
 const PAGE_LIMIT = 10;
 const PER_PAGE = 100;
-
-const unreadable = (operation: string) =>
-  new GitHubError({
-    operation,
-    status: 200,
-    message: "GitHub sent an answer Signalbox does not understand.",
-  });
 
 export const ownerAndName = (repository: string) => {
   const [owner, name] = repository.split("/");

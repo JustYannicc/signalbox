@@ -138,6 +138,7 @@ export const callOperation = Effect.fn("api.call")(function* (input: ApiCallInpu
           userId: caller.userId,
           sid: caller.credentialId,
           scopes: caller.scopes,
+          via: "api",
         }),
         CloudRpc.layerScopeAuthorization(caller.scopes),
       ),

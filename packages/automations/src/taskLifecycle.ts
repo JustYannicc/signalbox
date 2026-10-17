@@ -156,17 +156,19 @@ export const makeTaskRecords = Effect.gen(function* () {
           new AutomationError({ message: `Task lifecycle storage failed (${operation}).`, cause }),
       ),
     );
-  const transaction = <A, E>(operation: string, effect: Effect.Effect<A, E>) =>
+  const transaction = <A>(
+    operation: string,
+    effect: Effect.Effect<A, AutomationError | SqlError>,
+  ) =>
     sql.withTransaction(effect).pipe(
-      Effect.catchTags({
-        SqlError: (cause) =>
-          Effect.fail(
-            new AutomationError({
+      Effect.mapError((cause) =>
+        cause._tag === "AutomationError"
+          ? cause
+          : new AutomationError({
               message: `Task lifecycle storage failed (${operation}).`,
               cause,
             }),
-          ),
-      }),
+      ),
     );
 
   yield* run(

@@ -79,10 +79,11 @@ export const AUTOMATION_TOOLS = {
   automation_reference: declare({
     title: "Automation reference",
     description:
-      "The signalbox-automations skill, for harnesses that don't load skills: how to write, save, run and fix an automation. Read it before writing or changing one. No topic returns the main page; topics: steps, control-flow, triggers, runs, patterns, or an example file name such as work-through-tickets.",
+      "The signalbox-automations skill, for harnesses that don't load skills: how to write, save, run and fix an automation. Read it before writing or changing one. No topic returns the main page; topics: steps, control-flow, triggers, runs, patterns, github-actions, or an example file name such as work-through-tickets.",
     parameters: Schema.Struct({
       topic: Schema.optional(Schema.String).annotate({
-        description: "steps, control-flow, triggers, runs, patterns, or an example's file name.",
+        description:
+          "steps, control-flow, triggers, runs, patterns, github-actions, or an example's file name.",
       }),
     }),
     success: Schema.Struct({ reference: Schema.String }),

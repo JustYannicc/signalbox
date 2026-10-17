@@ -12,6 +12,7 @@ import { ORCHESTRATION_V2_WS_METHODS } from "./orchestrationV2.ts";
 import { WS_METHODS } from "./rpc.ts";
 import { SIGNALBOX_DRIVES_WS_METHODS } from "./signalboxDrives.ts"; // signalbox: drives
 import { SIGNALBOX_FOLDERS_WS_METHODS } from "./signalboxFolders.ts"; // signalbox: folders
+import { SIGNALBOX_NOTES_WS_METHODS } from "./signalboxNotes.ts"; // signalbox: notes
 import { SIGNALBOX_SIGN_IN_WS_METHODS } from "./signalboxSignIn.ts"; // signalbox: sign-in grants
 import { SIGNALBOX_BROWSING_WS_METHODS } from "./signalboxBrowsing.ts"; // signalbox: browsing
 import {
@@ -78,6 +79,13 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   [AUTOMATION_WS_METHODS.automationsTaskLifecycle]: AuthOrchestrationOperateScope, // signalbox: automations
   [SIGNALBOX_FOLDERS_WS_METHODS.setSecrets]: AuthOrchestrationOperateScope, // signalbox: folders
   [SIGNALBOX_FOLDERS_WS_METHODS.setOnePassword]: AuthOrchestrationOperateScope, // signalbox: folders
+  [SIGNALBOX_FOLDERS_WS_METHODS.setGitHubLend]: AuthOrchestrationOperateScope, // signalbox: folders
+  [SIGNALBOX_NOTES_WS_METHODS.create]: AuthOrchestrationOperateScope, // signalbox: notes
+  [SIGNALBOX_NOTES_WS_METHODS.update]: AuthOrchestrationOperateScope, // signalbox: notes
+  [SIGNALBOX_NOTES_WS_METHODS.delete]: AuthOrchestrationOperateScope, // signalbox: notes
+  [SIGNALBOX_NOTES_WS_METHODS.readAgain]: AuthOrchestrationOperateScope, // signalbox: notes
+  [SIGNALBOX_NOTES_WS_METHODS.dismissReading]: AuthOrchestrationOperateScope, // signalbox: notes
+  [SIGNALBOX_NOTES_WS_METHODS.accept]: AuthOrchestrationOperateScope, // signalbox: notes
   [SIGNALBOX_SIGN_IN_WS_METHODS.grant]: AuthSettingsWriteScope, // signalbox: sign-in grants
   [SIGNALBOX_SIGN_IN_WS_METHODS.revoke]: AuthSettingsWriteScope, // signalbox: sign-in grants
 } as const;

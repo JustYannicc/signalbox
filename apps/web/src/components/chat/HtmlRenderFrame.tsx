@@ -20,6 +20,7 @@ import { toastManager } from "../ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { HtmlRenderDialog } from "./HtmlRenderDialog";
 import { observeResize } from "~/lib/observeResize";
+import { environmentCopy } from "~/state/oneEnvironmentCopy"; // signalbox
 
 const MIN_URL_LIFE_MS = 5 * 60_000;
 
@@ -143,7 +144,9 @@ export function HtmlRenderFrame(props: {
                         toastManager.add({
                           type: "error",
                           title: "Page unavailable",
-                          description: "Reconnect to the environment and try again.",
+                          description: environmentCopy(
+                            "Reconnect to the environment and try again.",
+                          ),
                         });
                     }}
                   />

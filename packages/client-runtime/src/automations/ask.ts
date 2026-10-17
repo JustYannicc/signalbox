@@ -30,6 +30,7 @@ export function askFromQuestion(question: AutomationWaitingQuestion): Automation
     fields: question.fields,
     importance: question.importance ?? "high",
     onTimeout: null,
+    open: question.open ?? null,
   };
 }
 
@@ -52,6 +53,7 @@ export function questionFromStep(
     multi: ask.multi,
     fields: ask.fields,
     importance: ask.importance,
+    open: ask.open,
     since: step.startedAt,
   };
 }

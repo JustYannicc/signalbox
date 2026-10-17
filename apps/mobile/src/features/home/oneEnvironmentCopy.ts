@@ -5,6 +5,10 @@
  */
 const ONE_ENVIRONMENT_COPY: Readonly<Record<string, string>> = {
   "Loading environments": "Loading",
+  "No environments connected": "Not signed in",
+  "Add an environment to load projects and start coding sessions.":
+    "Sign in to Signalbox to see your threads.",
+  "Add an environment before creating a task.": "Sign in to Signalbox to start a task.",
   "Checking saved environments on this device.": "Getting your threads ready.",
   "Environment unavailable": "Can't reach Signalbox",
   "The saved environment is offline. Check the URL or start the environment, then retry.":
@@ -41,14 +45,33 @@ const ONE_ENVIRONMENT_COPY: Readonly<Record<string, string>> = {
     "Offline cache records will appear here once you use Signalbox on this device.",
   "Clearing caches never removes environment connections, credentials, account data, or appearance preferences.":
     "Clearing caches never removes your account, your threads in Signalbox, or appearance preferences.",
+  // Model picker: the cloud's provider accounts live in pools.
+  "Set up this provider on web or desktop, or select another model.":
+    "Add an account for this provider in Usage → Limits, or pick another model.",
   // Filters.
   "Try another search or environment.": "Try another search.",
   "Filter settings environments and projects": "Filter settings projects",
+  // Connection errors (`@t3tools/client-runtime` connection and shell state).
+  "The environment credential is invalid.": "Your Signalbox sign-in expired. Sign in again.",
+  "The environment credential does not grant the required access.":
+    "Your Signalbox sign-in doesn't allow this. Sign in again.",
+  "The environment rejected the authentication request.": "Signalbox rejected the sign-in.",
+  "The environment endpoint could not be found.": "Can't reach Signalbox.",
+  "The environment could not authorize the connection.": "Signalbox couldn't sign you in.",
+  "Could not synchronize environment data.": "Couldn't sync your threads.",
+  // Prompt links.
+  "No connected environment offers threads without a project.":
+    "Signalbox isn't connected yet. Try again in a moment.",
+  "Connect an environment first.": "Signalbox isn't connected yet. Try again in a moment.",
 };
+
+/** The cloud's environment label, which previews suffix with their PR. */
+const CLOUD_ENVIRONMENT_LABEL = /Signalbox Cloud(?: \(PR #\d+\))?/g;
 
 /**
  * Phrases inside templated or composed text: connection notices name what's loading, and
- * relay errors append their cause. Replaced wherever they appear.
+ * relay errors append their cause. Replaced wherever they appear, as is the cloud's label
+ * ("Reconnecting to Signalbox Cloud…"): with one environment it is just Signalbox.
  */
 const ONE_ENVIRONMENT_PHRASES: ReadonlyArray<readonly [string, string]> = [
   ["as soon as the environment is ready", "as soon as Signalbox is ready"],
@@ -69,7 +92,7 @@ export function oneEnvironmentCopy(text: string): string {
   if (exact !== undefined) return exact;
   let reworded = text;
   for (const [from, to] of ONE_ENVIRONMENT_PHRASES) reworded = reworded.replaceAll(from, to);
-  return reworded;
+  return reworded.replace(CLOUD_ENVIRONMENT_LABEL, "Signalbox");
 }
 
 /** An empty state with its copy reworded for the one environment. */

@@ -278,9 +278,9 @@ const RunContextSelector = memo(function RunContextSelector({
     </>
   );
 
-  // signalbox: with one possible workspace the composer only shows the environment.
-  // The details panel keeps the row for its path.
-  if (!isPanel && !worktreesSupported && !showEnvironmentIndicator) return null;
+  // signalbox: with one possible workspace there is no run context to show, only the
+  // environment when there is a choice of them. The thread's branch has its own row.
+  if (!worktreesSupported && !showEnvironmentIndicator) return null;
 
   if (isLocked) {
     return (

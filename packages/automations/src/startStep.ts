@@ -14,6 +14,7 @@ import { automationDefaults, stepArgs } from "./columns.ts";
 import type { makeConnections } from "./connections.ts";
 import type { EngineServices } from "./engineTypes.ts";
 import { fail } from "./errors.ts";
+import { isExternalRunSystem, type ExternalRuns } from "./external.ts";
 import { asRecord, fromJson, toJson } from "./json.ts";
 import { modelPrompt } from "./modelSteps.ts";
 import type { AutomationFunctions, CallbackLink } from "./host.ts";
@@ -41,6 +42,8 @@ export interface StartStepDependencies {
   readonly store: WorkflowStore;
   readonly services: Context.Context<EngineServices>;
   readonly functions: AutomationFunctions["Service"];
+  /** `w.run` on another system's runners. */
+  readonly external: Pick<ExternalRuns, "start">;
   readonly connections: Effect.Success<typeof makeConnections>;
   /** `signalbox.<tool>` calls. */
   readonly builtinTools: BuiltinTools;
@@ -196,6 +199,19 @@ export const makeStartStep =
           }
           const run = yield* store.getRun(step.run_id);
           const version = run ? yield* store.getVersion(run.automation_id, run.version) : undefined;
+          // `w.run(label, { on }, fn, …args)` sends the function to another system's runner.
+          const options = typeof first === "object" && first !== null ? asRecord(first) : null;
+          if (options) {
+            if (!isExternalRunSystem(options.on))
+              return yield* fail(`w.run can't run on ${String(options.on)}.`);
+            return yield* deps.external.start(automation, step, {
+              on: options.on,
+              options,
+              module: version?.run_module ?? null,
+              name: String(args[1]),
+              args: args.slice(2),
+            });
+          }
           const value = yield* deps.functions.run({
             automationId: automation.automation_id,
             projectId: automation.project_id,

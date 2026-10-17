@@ -57,12 +57,12 @@ export function TerminalAppearancePreview(props: { readonly fontSize: number }) 
     <View className="p-4">
       <Text style={span(theme.foreground)}>
         <Text style={span(theme.palette[2])}>→ </Text>
-        <Text style={span(theme.palette[6])}>t3code </Text>
+        <Text style={span(theme.palette[6])}>project </Text>
         <Text style={span(theme.palette[4])}>git:(</Text>
         <Text style={span(theme.palette[1])}>main</Text>
         <Text style={span(theme.palette[4])}>)</Text>
         <Text style={span(theme.palette[3])}> ✗</Text>
-        <Text style={span(theme.foreground)}> vpr dev</Text>
+        <Text style={span(theme.foreground)}> npm run dev</Text>
       </Text>
       <Text style={span(theme.foreground)}>
         <Text style={span(theme.palette[2])}>VITE v7.1.1</Text>

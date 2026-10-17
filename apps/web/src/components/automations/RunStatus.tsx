@@ -40,7 +40,7 @@ export function StatusIcon(props: { status: AutomationDisplayStatus; className?:
 
 /**
  * A row's status marker, read without hovering: icon and word in the status
- * hue, like a Pipeline row. Done shows nothing; there is nothing to see.
+ * hue, like a sidebar thread row. Done shows nothing; there is nothing to see.
  */
 export function RunStatusMarker(props: { status: AutomationDisplayStatus | null }) {
   if (!props.status || props.status === "done") return null;

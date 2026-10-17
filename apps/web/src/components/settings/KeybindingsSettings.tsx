@@ -30,6 +30,7 @@ import {
   type ServerRemoveKeybindingInput,
   type ServerUpsertKeybindingInput,
 } from "@t3tools/contracts";
+import { environmentSupports } from "@t3tools/contracts"; // signalbox
 import { mergeWithDefaultKeybindings } from "@t3tools/shared/keybindings";
 import {
   isAtomCommandInterrupted,
@@ -76,6 +77,7 @@ import { SettingsPageContainer, SettingsRow, SettingsSection } from "./settingsL
 import { keybindingSearchAnchorId, searchableSetting } from "./settingsSearch";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { useAtomCommand } from "../../state/use-atom-command";
+import { keybindingCapability } from "./keybindingCapabilities"; // signalbox
 import { useShowsEnvironmentUi } from "../../state/environmentCapabilities";
 
 function KeybindingPill({ value }: { value: string }) {
@@ -1279,6 +1281,11 @@ export function KeybindingsSettingsPanel() {
     [serverKeybindings],
   );
   const keybindingsConfigPath = primaryEnvironment?.serverConfig?.keybindingsConfigPath ?? null;
+  // signalbox: keybindings.json only opens in an editor on a machine the user reaches.
+  const canOpenKeybindingsJson = environmentSupports(
+    primaryEnvironment?.serverConfig?.environment?.capabilities,
+    "localFilesystem",
+  );
   const availableEditors = primaryEnvironment?.serverConfig?.availableEditors ?? [];
   const upsertKeybinding = useAtomCommand(serverEnvironment.upsertKeybinding, {
     reportFailure: false,
@@ -1294,12 +1301,22 @@ export function KeybindingsSettingsPanel() {
   const searchInputRef = useRef<HTMLInputElement>(null);
   const [savingCommand, setSavingCommand] = useState<KeybindingCommand | null>(null);
   const [isAddingBinding, setIsAddingBinding] = useState(false);
-  // signalbox: one environment, so there's no host to pick or cycle.
+  // signalbox: no host to pick on the one environment, and no terminal, worktree or editor
+  // commands where no connected environment can run them.
   const showsEnvironmentUi = useShowsEnvironmentUi();
   const isShownCommand = useCallback(
-    (command: KeybindingCommand) =>
-      showsEnvironmentUi || (command !== "composer.host" && command !== "composer.cycleHost"),
-    [showsEnvironmentUi],
+    (command: KeybindingCommand) => {
+      const capability = keybindingCapability(command);
+      if (capability === undefined) return true;
+      if (capability === "otherEnvironments") return showsEnvironmentUi;
+      return (
+        connectedEnvironments.length === 0 ||
+        connectedEnvironments.some((environment) =>
+          environmentSupports(environment.serverConfig?.environment?.capabilities, capability),
+        )
+      );
+    },
+    [connectedEnvironments, showsEnvironmentUi],
   );
   const rows = useMemo(
     () => buildKeybindingRows(keybindings, query).filter((row) => isShownCommand(row.command)),
@@ -1470,23 +1487,25 @@ export function KeybindingsSettingsPanel() {
             <PlusIcon aria-hidden className="size-4" />
             Add keybinding
           </Button>
-          <Tooltip>
-            <TooltipTrigger
-              render={
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="icon"
-                  disabled={!keybindingsConfigPath || !canOpenKeybindingsFile}
-                  onClick={openKeybindingsFile}
-                  aria-label="Open keybindings.json"
-                >
-                  <FileJsonIcon aria-hidden className="size-4" />
-                </Button>
-              }
-            />
-            <TooltipPopup side="top">Open keybindings.json</TooltipPopup>
-          </Tooltip>
+          {canOpenKeybindingsJson ? (
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="icon"
+                    disabled={!keybindingsConfigPath || !canOpenKeybindingsFile}
+                    onClick={openKeybindingsFile}
+                    aria-label="Open keybindings.json"
+                  >
+                    <FileJsonIcon aria-hidden className="size-4" />
+                  </Button>
+                }
+              />
+              <TooltipPopup side="top">Open keybindings.json</TooltipPopup>
+            </Tooltip>
+          ) : null}
         </div>
       </SettingsSection>
 

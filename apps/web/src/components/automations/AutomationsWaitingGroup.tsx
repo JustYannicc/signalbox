@@ -1,6 +1,6 @@
 /**
  * Automations with a run waiting on the user, each with its question
- * and answer buttons inline. Shown on top of Pipeline, so approving or
+ * and answer buttons inline. Shown on top of Home, so approving or
  * rejecting never needs the diagram.
  */
 import {
@@ -13,7 +13,7 @@ import { memo, type ReactNode } from "react";
 
 import { AskAnswer } from "./AskAnswer";
 import { StatusIcon } from "./RunStatus";
-import { useAllAutomations } from "./useAutomations";
+import { useAllAutomations, useWaitingAutomationCount } from "./useAutomations";
 import { useOpenAutomation } from "./useOpenAutomation";
 
 function RailSectionHeader(props: { children: ReactNode }) {
@@ -63,8 +63,13 @@ function WaitingAutomationList(props: { entries: ReadonlyArray<AutomationEntry> 
   );
 }
 
-/** Pipeline's top group. Renders nothing until an automation waits on the user. */
+/** Home's top group. Renders nothing until an automation waits on the user. */
 export function AutomationsWaitingGroup() {
+  // The count redraws only when it changes, so idle list updates skip the merge below.
+  return useWaitingAutomationCount() > 0 ? <WaitingAutomationsSection /> : null;
+}
+
+function WaitingAutomationsSection() {
   const { entries } = useAllAutomations();
   const waiting = entries.filter((entry) => waitsOnYou(entry.automation));
   if (waiting.length === 0) return null;

@@ -1,6 +1,7 @@
 import type {
   AutomationRunSummary,
   AutomationStepStatus,
+  ExternalRunStatus,
   WorkflowStepVerb,
 } from "@t3tools/contracts";
 
@@ -69,5 +70,21 @@ export function stepDisplayStatus(step: {
       return "failed";
     case "succeeded":
       return "done";
+  }
+}
+
+/** A job or step of a run in another system (e.g. GitHub Actions): skipped reads like cancelled. */
+export function externalDisplayStatus(status: ExternalRunStatus): AutomationDisplayStatus {
+  switch (status) {
+    case "queued":
+      return "waiting";
+    case "running":
+      return "working";
+    case "succeeded":
+      return "done";
+    case "skipped":
+      return "cancelled";
+    default:
+      return status;
   }
 }
