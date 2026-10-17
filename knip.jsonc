@@ -29,7 +29,10 @@
         "boundaries/tests.mjs", // signalbox: module boundaries
       ],
       // The `t3` npm package's files: copied into the package, never imported.
-      "ignore": ["npm-launcher/**"],
+      "ignore": [
+        "npm-launcher/**",
+        "upstream-sync/automations/**", // signalbox: prod automation sources, run by the cloud, never imported
+      ],
     },
     "apps/server": {
       // Vite+ pack entries and the launcher used by installed background services.

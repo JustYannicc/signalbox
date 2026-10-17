@@ -109,6 +109,13 @@ const DOC_RULES = [
   PROSE_CLI_RULE,
   SHORT_NAME_RULE,
   { pattern: /(~|\$HOME)\/\.t3\b/g, replace: "$1/.signalbox" },
+  // Our builds' app ids (apps/mobile/app.config.ts, DESKTOP_APP_ID), and the Clerk callbacks and keychain groups built on them.
+  { pattern: /\bcom\.t3tools\.t3code\b/g, replace: "com.justyannicc.signalbox" },
+  // Scheme names without `://`, as in "the `t3code-dev` / `t3code` navigation schemes".
+  {
+    pattern: /`t3code(-dev|-preview)?`(?=(?: \/ `t3code(?:-dev|-preview)?`)* navigation schemes?\b)/g,
+    replace: "`signalbox$1`",
+  },
 ];
 const USER_DOC_RULES = [...DOC_RULES, HOME_RULE];
 /** Table-driven test case names say "t3" for other things (env var families, fixtures). */

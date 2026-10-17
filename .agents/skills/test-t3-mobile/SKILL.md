@@ -15,6 +15,42 @@ on every operation. Use `device_screenshot` to inspect the screen.
 If T3 device tools or the selected device are unavailable, report the blocker
 and stop verification. Do not install or switch to another automation system.
 
+## Walk both platforms
+
+A change that touches the mobile app is walked on iOS **and** Android, with
+evidence from each.
+
+- **Android** uses T3's device tools as they are. Open the shared
+  `signalbox-pixel` AVD rather than creating an AVD per thread.
+- **iOS** builds, opens and screenshots through T3's device tools too. Taps,
+  fills and alerts need the workaround below while #470 is open.
+
+### iOS taps (#470)
+
+The default Xcode's `DTServiceHub` can be refused by a newer macOS, so the
+XCUITest runner never starts and every tap times out after about 90 s, while
+`open`, `snapshot` and screenshots still work. T3's device daemon resolves
+Xcode through `xcode-select` and drops `DEVELOPER_DIR`, so `device_open` can't
+tap. Run T3's installed agent-device binary directly instead, under Xcode 27
+for these commands only, with its own daemon state and an explicit `--udid`:
+
+```bash
+# T3 Code installs agent-device under its home's tools directory (normally ~/.t3).
+ad=$(ls -d ~/.t3/tools/agent-device/*/node_modules/.bin/agent-device | sort -V | tail -n 1)
+xcode27=<Xcode 27 app>/Contents/Developer
+state=$(mktemp -d)
+ios() { DEVELOPER_DIR="$xcode27" AGENT_DEVICE_STATE_DIR="$state" "$ad" "$@" --platform ios --udid <udid> --session <name>; }
+ios open com.justyannicc.signalbox.dev
+ios press "label=…"
+ios screenshot <file>.png
+ios close
+```
+
+Builds keep the default Xcode, since `DEVELOPER_DIR` is set per command. Keep
+`device_open` off that simulator meanwhile, since two sessions fight over the
+device claim; `device_screenshot` is fine alongside. Delete `$state` after
+`close`.
+
 ## Use an isolated backend
 
 Reuse this task's healthy backend. Otherwise run `vp run dev` from the
@@ -26,7 +62,7 @@ Test with meaningful project and thread data. Read the shared
 [SQLite fixture reference](../test-t3-app/references/sqlite-fixtures.md) only
 when inspecting or seeding SQLite. Stop the test server before fixture writes.
 
-## Launch T3 Code Dev
+## Launch Signalbox Dev
 
 From the checkout being tested on the selected device host, run:
 
@@ -39,7 +75,7 @@ mobile verification includes that build step unless the user prohibits it.
 
 Start `vp run dev:client` from `apps/mobile`, or reuse a healthy Metro belonging
 to this checkout. Open its printed development-client URL with AgentDevice
-`open com.t3tools.t3code.dev <url>` and all returned target arguments.
+`open com.justyannicc.signalbox.dev <url>` and all returned target arguments.
 The device must be able to reach both Metro and the isolated backend.
 Append `&disableAutoLaunch=1&disableFab=1` to the development-client URL query
 when developer chrome would obscure screenshots or taps; the SDK 58 dev client
@@ -57,7 +93,8 @@ arguments stored in `agent_device_command` and the Bash array
   "$agent_device_command" "${agent_device_target_args[@]}"
 ```
 
-It issues a fresh credential and opens T3 Code Dev's existing pairing route
+It issues a fresh credential and opens Signalbox Dev's existing pairing route
+(`signalbox-dev://connections/new`)
 through AgentDevice. For a backend on the device host, use
 `http://127.0.0.1:<server-port>` on iOS or `http://10.0.2.2:<server-port>`
 on Android. For a remote backend, use its reachable origin.
