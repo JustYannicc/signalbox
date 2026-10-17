@@ -1376,6 +1376,28 @@ describe("resolveComposerProviderSelection", () => {
     });
   }
 
+  it("finds a custom pool's cached provider after composer policy extraction", () => {
+    const poolEntry = entry("codex", "codex_hub_work", {
+      status: "error",
+      auth: { status: "unknown" },
+      unavailableReason: "The pool snapshot did not refresh in time.",
+      models: [{ slug: "gpt-6-luna", name: "Luna", isCustom: false, capabilities: null }],
+    });
+    const providerInstances = {
+      codex_hub_work: { driver: ProviderDriverKind.make("codex"), config: { setupMode: "hub" } },
+    };
+    const input = {
+      entries: [poolEntry],
+      candidateInstanceIds: [],
+      lockedProvider: null,
+      lockedInstanceId: null,
+    };
+    expect(resolveComposerProviderSelection(input).selectedProviderEntry).toBeUndefined();
+    expect(
+      resolveComposerProviderSelection({ ...input, providerInstances }).selectedProviderEntry,
+    ).toBe(poolEntry);
+  });
+
   it.each([
     ["claudeAgent", "claude_work"],
     ["codex", "codex_work"],
