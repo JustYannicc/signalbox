@@ -303,6 +303,10 @@
       "types": "./src/state/signalboxSignIn.ts",
       "default": "./src/state/signalboxSignIn.ts"
     },
+    "./state/signalboxPersonBrowser": {
+      "types": "./src/state/signalboxPersonBrowser.ts",
+      "default": "./src/state/signalboxPersonBrowser.ts"
+    },
     "./state/signalboxTrash": {
       "types": "./src/state/signalboxTrash.ts",
       "default": "./src/state/signalboxTrash.ts"
