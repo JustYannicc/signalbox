@@ -139,8 +139,8 @@ export interface RunnerDrive {
    * the checkout until the next turn start is by `author`, `DRIVE_COMMIT_AUTHOR`
    * when not given. `folders` is the `AGENTS.md` of the thread's chain, top
    * level first. `pullRequests` are the thread's links: once its own merged,
-   * the remote's default branch is merged into the thread's branch. Fails
-   * when the instructions are too big to load.
+   * the remote's default branch is merged into the thread's branch unless this
+   * is a pinned continuation. Fails when the instructions are too big to load.
    */
   readonly prepare: (
     remoteToken: string | null,
@@ -176,6 +176,7 @@ export interface RunnerDrive {
   /**
    * Commits the turn's files with a message describing the change (never the
    * turn's prompt, which pushing would publish), then lands or saves the branch.
+   * A pinned continuation saves its selected branch without taking in main.
    */
   readonly finishTurn: () => Effect.Effect<
     { readonly checkpoint: DriveCheckpoint | null; readonly outcome: DriveOutcome },
