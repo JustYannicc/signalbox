@@ -113,6 +113,7 @@ export const makeUserObjectApi = (
         ),
       );
     },
+    // An object without automations yet takes the events and drops them.
     threadEvents: ({ threadId, events }) =>
       run(
         Effect.flatMap(Effect.serviceOption(CloudAutomations.CloudAutomations), (automations) =>
@@ -120,6 +121,7 @@ export const makeUserObjectApi = (
             ? Effect.void
             : automations.value.threadEvents({ threadId, events: wire.events.decode(events) }),
         ).pipe(
+          // Ids only, never what happened (#284).
           Effect.withSpan("UserObject.threadEvents", { attributes: { "thread.id": threadId } }),
         ),
       ),

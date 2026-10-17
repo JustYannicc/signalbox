@@ -58,6 +58,8 @@ export const createTables = (sql: SqlClient.SqlClient): Effect.Effect<void, SqlE
     )`;
     yield* sql`CREATE INDEX IF NOT EXISTS sbx_level_learner_668_precedent_scope
       ON sbx_level_learner_668_precedents (scope, created_at)`;
+    yield* sql`CREATE INDEX IF NOT EXISTS sbx_level_learner_668_precedent_action
+      ON sbx_level_learner_668_precedents (action_event_id)`;
     yield* sql`CREATE TABLE IF NOT EXISTS sbx_level_learner_668_lenses (
       id TEXT PRIMARY KEY,
       scope TEXT NOT NULL,
