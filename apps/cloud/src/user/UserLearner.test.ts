@@ -159,10 +159,12 @@ describe("user learner", () => {
         content: "Company decision",
       };
       for (const attempt of [
-        learner.log(company, event),
-        learner.statement(company, { text: "Company rule", reason: "Owner statement" }),
-        learner.query(company, "Company decision"),
-        learner.lenses(company, {}),
+        learner.log(company, event).pipe(Effect.asVoid),
+        learner
+          .statement(company, { text: "Company rule", reason: "Owner statement" })
+          .pipe(Effect.asVoid),
+        learner.query(company, "Company decision").pipe(Effect.asVoid),
+        learner.lenses(company, {}).pipe(Effect.asVoid),
       ]) {
         const failure = yield* Effect.flip(attempt);
         expect(failure._tag).toBe("LearnerAccessError");
