@@ -20,6 +20,7 @@ import {
 import { readEnvironmentScope } from "../../state/session";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { useThreadShell } from "../../state/entities";
+import { useArchivedThreadShell } from "../../lib/archivedThreadsState";
 import { useThreadKind } from "../../state/signalboxThreadKinds";
 import { serverEnvironment } from "../../state/server";
 import { useEnvironmentQuery } from "../../state/query";
@@ -98,7 +99,11 @@ export function TaskLifecycleControl(props: {
   const { environmentId, threadId } = props;
   const threadRef = useMemo(() => ({ environmentId, threadId }), [environmentId, threadId]);
   const liveShell = useThreadShell(threadRef);
-  const shell = props.shell ?? liveShell;
+  // A settled task is archived, so the live shell drops it; its page still shows Reopen.
+  const archivedShell = useArchivedThreadShell(
+    props.shell === undefined && liveShell === null ? threadRef : null,
+  );
+  const shell = props.shell ?? liveShell ?? archivedShell;
   if (shell === null) return null;
   return <TaskLifecycleTaskRow {...props} shell={shell} />;
 }
