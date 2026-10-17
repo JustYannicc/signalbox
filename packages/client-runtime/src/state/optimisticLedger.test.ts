@@ -172,6 +172,67 @@ describe("optimistic ledger", () => {
     expect(read().pinned).toBe(false);
   });
 
+  it("retries a rejected command as a fresh intent in begin order", () => {
+    const { ledger, registry, source, entries, read } = setup();
+    const original = ledger.begin(registry, {
+      key: { ...scope, commandId: "save" },
+      actionId: "save.original",
+      startedAt: 10,
+      project: (state) => ({ ...state, title: `${state.title} original` }),
+      confirm: (state) => state.applied.includes("save"),
+    });
+    original.reject("Try again");
+
+    ledger.begin(registry, {
+      key: { ...scope, commandId: "later" },
+      project: (state) => ({ ...state, title: `${state.title} later` }),
+      confirm: (state) => state.applied.includes("later"),
+    });
+    const retry = ledger.begin(registry, {
+      key: { ...scope, commandId: "save" },
+      actionId: "save.retry",
+      startedAt: 20,
+      project: (state) => ({ ...state, title: `[${state.title}]` }),
+      confirm: (state) => state.applied.includes("save"),
+    });
+
+    expect(read().title).toBe("[before later]");
+    expect(entries().map((entry) => [entry.key.commandId, entry.status])).toEqual([
+      ["later", "pending"],
+      ["save", "pending"],
+    ]);
+    expect(registry.get(ledger.entriesAtom(scope, "rejected"))).toEqual([]);
+    expect(entries()[1]).toMatchObject({
+      actionId: "save.retry",
+      startedAt: 20,
+      acknowledgment: { status: "pending" },
+    });
+
+    original.acknowledge(99);
+    original.markUnknown();
+    original.reject("Late failure from original attempt");
+    original.cancel();
+
+    expect(entries()[1]).toMatchObject({
+      actionId: "save.retry",
+      startedAt: 20,
+      status: "pending",
+      acknowledgment: { status: "pending" },
+    });
+    expect(entries()).toHaveLength(2);
+    expect(registry.get(ledger.entriesAtom(scope, "rejected"))).toEqual([]);
+    expect(read().title).toBe("[before later]");
+
+    retry.acknowledge(21);
+    expect(entries()[1]).toMatchObject({ status: "confirming", startedAt: 20 });
+    registry.set(source, {
+      ...initial,
+      title: "[before later]",
+      applied: ["save", "later"],
+    });
+    expect(entries()).toEqual([]);
+  });
+
   it("bounds rejected retention without evicting active work and lets callers dismiss errors", () => {
     const { begin, entries, read } = setup(2);
     begin("active", true);

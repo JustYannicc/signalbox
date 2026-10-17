@@ -84,22 +84,80 @@ describe("shared optimistic pin commands", () => {
       }),
   );
 
-  it.effect("does not compare a cloud thread receipt with the user index", () =>
+  it.effect.each(["event-first", "ack-first"] as const)(
+    "confirms cloud pin from its own summary revision with %s ordering",
+    (order) =>
+      Effect.gen(function* () {
+        const h = yield* makeHarness();
+        h.registry.update(testConfigAtoms(ENVIRONMENT_ID), (config) => ({
+          ...config,
+          environment: {
+            capabilities: { ...config.environment.capabilities, signalboxCloud: true },
+          },
+        }));
+        const result = h.commands.pin.run(h.registry, target);
+        const request = yield* Queue.take(h.requests);
+        const entries = h.commands.optimistic.entriesAtom(ENVIRONMENT_ID, THREAD_ID);
+        h.registry.set(h.snapshotAtom(ENVIRONMENT_ID), {
+          ...SNAPSHOT,
+          snapshotSequence: 10_000,
+          threads: [{ ...SNAPSHOT.threads[0]!, summaryRevision: 8 }],
+        });
+        const confirmed = {
+          ...SNAPSHOT,
+          snapshotSequence: 10_001,
+          threads: [
+            {
+              ...SNAPSHOT.threads[0]!,
+              pinnedAt: NOW,
+              pinOrderKey: "normalized",
+              summaryRevision: 12,
+            },
+          ],
+        };
+        if (order === "event-first") h.registry.set(h.snapshotAtom(ENVIRONMENT_ID), confirmed);
+        yield* Deferred.succeed(request.reply, { sequence: 2, summaryRevision: 12 });
+        yield* Effect.promise(() => result);
+        if (order === "ack-first") {
+          expect(h.registry.get(entries)[0]?.status).toBe("confirming");
+          h.registry.set(h.snapshotAtom(ENVIRONMENT_ID), confirmed);
+        }
+        expect(h.registry.get(entries)).toEqual([]);
+        expect(h.registry.get(h.visibleAtom)).toBe(confirmed);
+      }),
+  );
+
+  it.effect("rebases rapid cloud inverse actions until their own summary includes both", () =>
     Effect.gen(function* () {
       const h = yield* makeHarness();
       h.registry.update(testConfigAtoms(ENVIRONMENT_ID), (config) => ({
         ...config,
         environment: { capabilities: { ...config.environment.capabilities, signalboxCloud: true } },
       }));
-      const result = h.commands.pin.run(h.registry, target);
-      const request = yield* Queue.take(h.requests);
-      yield* Deferred.succeed(request.reply, { sequence: 2 });
-      yield* Effect.promise(() => result);
-      h.registry.set(h.snapshotAtom(ENVIRONMENT_ID), { ...SNAPSHOT, snapshotSequence: 10_000 });
-      expect(h.registry.get(h.visibleAtom)?.threads[0]?.pinnedAt).toBeDefined();
-      expect(
-        h.registry.get(h.commands.optimistic.entriesAtom(ENVIRONMENT_ID, THREAD_ID))[0]?.status,
-      ).toBe("confirming");
+      const pin = h.commands.pin.run(h.registry, target);
+      const first = yield* Queue.take(h.requests);
+      const unpin = h.commands.unpin.run(h.registry, target);
+      yield* Deferred.succeed(first.reply, { sequence: 2, summaryRevision: 12 });
+      yield* Effect.promise(() => pin);
+      const second = yield* Queue.take(h.requests);
+      h.registry.set(h.snapshotAtom(ENVIRONMENT_ID), {
+        ...SNAPSHOT,
+        snapshotSequence: 10_000,
+        threads: [{ ...SNAPSHOT.threads[0]!, pinnedAt: NOW, summaryRevision: 12 }],
+      });
+      expect(h.registry.get(h.visibleAtom)?.threads[0]?.pinnedAt).toBeNull();
+      yield* Deferred.succeed(second.reply, { sequence: 3, summaryRevision: 14 });
+      yield* Effect.promise(() => unpin);
+      const entries = h.commands.optimistic.entriesAtom(ENVIRONMENT_ID, THREAD_ID);
+      expect(h.registry.get(entries).map((entry) => entry.status)).toEqual(["confirming"]);
+      const confirmed = {
+        ...SNAPSHOT,
+        snapshotSequence: 10_001,
+        threads: [{ ...SNAPSHOT.threads[0]!, pinnedAt: null, summaryRevision: 14 }],
+      };
+      h.registry.set(h.snapshotAtom(ENVIRONMENT_ID), confirmed);
+      expect(h.registry.get(entries)).toEqual([]);
+      expect(h.registry.get(h.visibleAtom)).toBe(confirmed);
     }),
   );
 
@@ -159,6 +217,27 @@ describe("shared optimistic pin commands", () => {
         ).toEqual([]);
         expect(yield* Queue.size(h.requests)).toBe(0);
       }),
+  );
+
+  it.effect("shows intent before session hydration and rolls back a later permission refusal", () =>
+    Effect.gen(function* () {
+      const h = yield* makeHarness();
+      const allowed = h.registry.get(testSessionAtoms(ENVIRONMENT_ID))!;
+      h.registry.set(testSessionAtoms(ENVIRONMENT_ID), null);
+      expect(h.commands.pin.requiredScopes()).toEqual(["orchestration:operate"]);
+      expect(h.registry.get(h.commands.pin.permissionAtom(ENVIRONMENT_ID))).toBe(false);
+      const result = h.commands.pin.run(h.registry, target);
+      expect(h.registry.get(h.visibleAtom)?.threads[0]?.pinnedAt).toBeDefined();
+      h.registry.set(testSessionAtoms(ENVIRONMENT_ID), { ...allowed, scopes: [], permissions: [] });
+      expect((yield* Effect.promise(() => result))._tag).toBe("Failure");
+      expect(h.registry.get(h.visibleAtom)).toBe(SNAPSHOT);
+      expect(
+        h.registry.get(h.commands.optimistic.entriesAtom(ENVIRONMENT_ID, THREAD_ID))[0]?.status,
+      ).toBe("rejected");
+      expect(yield* Queue.size(h.requests)).toBe(0);
+      h.registry.set(testSessionAtoms(ENVIRONMENT_ID), allowed);
+      expect(h.registry.get(h.commands.pin.permissionAtom(ENVIRONMENT_ID))).toBe(true);
+    }),
   );
 
   it.effect("does not bring an old account's intent back after its late acknowledgement", () =>

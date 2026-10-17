@@ -1,5 +1,6 @@
 import type { QueryPersistence } from "./queryPersistence.ts";
 import { createCommandPermissions } from "./commandPermissions.ts";
+import { withEnvironmentCommandPermissions } from "../rpc/commandPermissions.ts";
 import { followStreamInEnvironment } from "./environmentStreams.ts";
 export { runStreamInEnvironment, followStreamInEnvironment } from "./environmentStreams.ts";
 import {
@@ -697,7 +698,7 @@ export function createEnvironmentCommand<R, ER, Input, A, E>(
       runInEnvironment(
         target.environmentId,
         options.execute(target.input, registry, target.environmentId),
-      ),
+      ).pipe(withEnvironmentCommandPermissions(runtime, registry)),
   });
 }
 

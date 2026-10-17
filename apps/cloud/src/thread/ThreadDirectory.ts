@@ -3,6 +3,7 @@ import type { ModelGatewayProvider } from "@signalbox/runner-protocol/RunnerProt
 import type { StatusNoteView } from "@signalbox/runner-protocol/StatusLineProtocol";
 import type {
   OrchestrationV2Command,
+  OrchestrationV2DispatchCommandResult,
   OrchestrationV2SubscribeThreadInput,
   OrchestrationV2ThreadLaunchResult,
   OrchestrationV2ThreadStreamItem,
@@ -95,7 +96,7 @@ export interface ThreadObjectApi {
     actor: Actor,
     command: unknown,
     creation: ThreadCreation,
-  ) => Promise<ThreadObjectReply<{ readonly sequence: number }>>;
+  ) => Promise<ThreadObjectReply<OrchestrationV2DispatchCommandResult>>;
   readonly launch: (
     actor: Actor,
     input: unknown,
@@ -174,7 +175,7 @@ export interface ThreadHandle {
     actor: Actor,
     command: OrchestrationV2Command,
     creation: ThreadCreation,
-  ) => Effect.Effect<{ readonly sequence: number }, CommandFailure>;
+  ) => Effect.Effect<OrchestrationV2DispatchCommandResult, CommandFailure>;
   readonly launch: (
     actor: Actor,
     input: typeof LaunchInputWire.Type,

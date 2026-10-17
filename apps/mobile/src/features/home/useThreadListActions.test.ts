@@ -27,6 +27,7 @@ const state = vi.hoisted(() => ({
     buttons?: { text: string; onPress?: () => void }[];
   }[],
   afterRequest: undefined as (() => void) | undefined,
+  gate: undefined as Promise<void> | undefined,
 }));
 
 vi.mock("react", () => ({
@@ -130,6 +131,7 @@ vi.mock("../../state/threads", () => ({
         input: { threadId: string; orderKey?: string };
       }) => {
         state.requests.push({ action, ...request });
+        await state.gate;
         if (!state.scopes.get(request.environmentId)?.has(AuthOrchestrationOperateScope)) {
           return AsyncResult.failure(Cause.fail(new Error("Thread operation denied")));
         }
@@ -179,6 +181,7 @@ beforeEach(() => {
   state.dialogs = [];
   state.alerts = [];
   state.afterRequest = undefined;
+  state.gate = undefined;
 });
 
 afterEach(() => vi.unstubAllEnvs());
@@ -299,7 +302,7 @@ describe("pinned thread operation permissions", () => {
     ]);
   });
 
-  it("rechecks permission between materialization writes", async () => {
+  it("begins every key write before any settles and reports one failure", async () => {
     const moved = makeThread({ pinnedAt: "2026-09-02T00:00:00.000Z" });
     state.shells = [
       moved,
@@ -309,9 +312,19 @@ describe("pinned thread operation permissions", () => {
         createdAt: "2026-09-02T00:00:00.000Z",
       }),
     ];
-    state.afterRequest = () => state.scopes.get(primaryEnvironmentId)!.clear();
+    let release!: () => void;
+    state.gate = new Promise((resolve) => {
+      release = resolve;
+    });
 
-    expect(await useThreadListActions().moveThread(moved, "up")).toBe(false);
-    expect(state.requests).toHaveLength(1);
+    const moving = useThreadListActions().moveThread(moved, "up");
+    expect(state.requests.map(({ action }) => action)).toEqual(["reorderPin", "reorderPin"]);
+    expect(state.dropBusy).toBe(false);
+    expect(state.pendingOrder).toBeNull();
+
+    state.scopes.get(primaryEnvironmentId)!.clear();
+    release();
+    expect(await moving).toBe(false);
+    expect(state.alerts.map(({ title }) => title)).toEqual(["Could not move thread"]);
   });
 });

@@ -1,5 +1,6 @@
 import {
   RuntimeRequestId,
+  AuthOrchestrationOperateScope,
   EnvironmentId,
   ORCHESTRATION_V2_WS_METHODS,
   ProjectId,
@@ -7,6 +8,7 @@ import {
   ThreadId,
   type AuthSessionState,
   type OrchestrationV2Command,
+  type OrchestrationV2DispatchCommandResult,
   type OrchestrationV2ShellSnapshot,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
@@ -17,7 +19,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as SubscriptionRef from "effect/SubscriptionRef";
-import { Atom, AtomRegistry } from "effect/reactivity";
+import { AsyncResult, Atom, AtomRegistry } from "effect/reactivity";
 import { vi } from "vite-plus/test";
 
 import * as EnvironmentRegistry from "../connection/registry.ts";
@@ -33,12 +35,31 @@ export const testConfigAtoms = Atom.family((_id: EnvironmentId) =>
   }),
 );
 export const testSessionAtoms = Atom.family((_id: EnvironmentId) =>
-  Atom.make<AuthSessionState | null>(null),
+  Atom.make<AuthSessionState | null>({
+    authenticated: true,
+    auth: {
+      policy: "remote-reachable",
+      bootstrapMethods: [],
+      sessionMethods: [],
+      sessionCookieName: "test",
+    },
+    scopes: [AuthOrchestrationOperateScope],
+    permissions: [AuthOrchestrationOperateScope],
+  }),
+);
+const sessionResults = Atom.family((id: EnvironmentId) =>
+  Atom.make((get) => {
+    const session = get(testSessionAtoms(id));
+    return session === null
+      ? AsyncResult.initial<AuthSessionState, never>()
+      : AsyncResult.success(session);
+  }),
 );
 vi.mock("./session.ts", () => ({
   createEnvironmentSessionAtoms: () => ({
     initialConfigValueAtom: testConfigAtoms,
     sessionStateValueAtom: testSessionAtoms,
+    sessionStateAtom: sessionResults,
   }),
 }));
 
@@ -100,7 +121,7 @@ export const SNAPSHOT: OrchestrationV2ShellSnapshot = {
 export const makeHarness = Effect.fn("TestThreadCommands.makeHarness")(function* () {
   const requests = yield* Queue.unbounded<{
     command: OrchestrationV2Command;
-    reply: Deferred.Deferred<{ sequence: number }, Error>;
+    reply: Deferred.Deferred<OrchestrationV2DispatchCommandResult, Error>;
   }>();
   const supervisor = EnvironmentSupervisor.EnvironmentSupervisor.of({
     target: { environmentId: ENVIRONMENT_ID },
@@ -109,7 +130,7 @@ export const makeHarness = Effect.fn("TestThreadCommands.makeHarness")(function*
         client: {
           [ORCHESTRATION_V2_WS_METHODS.dispatchCommand]: (command: OrchestrationV2Command) =>
             Effect.gen(function* () {
-              const reply = yield* Deferred.make<{ sequence: number }, Error>();
+              const reply = yield* Deferred.make<OrchestrationV2DispatchCommandResult, Error>();
               yield* Queue.offer(requests, { command, reply });
               return yield* Deferred.await(reply);
             }),

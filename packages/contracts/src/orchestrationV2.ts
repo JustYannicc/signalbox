@@ -1796,6 +1796,7 @@ export type OrchestrationV2LatestVisibleMessageSummary =
 export const OrchestrationV2ThreadShell = Schema.Struct({
   ...OrchestrationV2CreationFields,
   id: ThreadId,
+  summaryRevision: Schema.optionalKey(NonNegativeInt),
   projectId: ProjectId,
   title: Schema.String,
   providerInstanceId: ProviderInstanceId,
@@ -3164,6 +3165,7 @@ export type OrchestrationV2ThreadLaunchResult = typeof OrchestrationV2ThreadLaun
 
 export const OrchestrationV2DispatchCommandResult = Schema.Struct({
   sequence: NonNegativeInt,
+  summaryRevision: Schema.optionalKey(NonNegativeInt),
 });
 export type OrchestrationV2DispatchCommandResult = typeof OrchestrationV2DispatchCommandResult.Type;
 

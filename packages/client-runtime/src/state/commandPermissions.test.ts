@@ -12,6 +12,7 @@ import {
   AuthSourceControlWriteScope,
   ThreadId,
   EnvironmentId,
+  ORCHESTRATION_V2_WS_METHODS,
   ScheduledTaskId,
   WS_METHODS,
   type AuthSessionState,
@@ -59,6 +60,35 @@ const setup = Effect.gen(function* () {
 });
 
 describe("command permissions", () => {
+  it.effect("guards dispatch commands with the target orchestration grant", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const registry = yield* setup;
+        const dispatch = createCommandPermissions(
+          runtime,
+          ORCHESTRATION_V2_WS_METHODS.dispatchCommand,
+        );
+        expect(dispatch.requiredScopes()).toEqual([AuthOrchestrationOperateScope]);
+
+        registry.set(sessions(env), AsyncResult.success(grant(true)));
+        const permissionChanges: boolean[] = [];
+        const unsubscribe = registry.subscribe(
+          dispatch.permissionAtom(env),
+          (allowed) => permissionChanges.push(allowed),
+          { immediate: true },
+        );
+        yield* Effect.addFinalizer(() => Effect.sync(unsubscribe));
+        expect(permissionChanges).toEqual([true]);
+        yield* dispatch.authorize(registry, env);
+
+        registry.set(sessions(env), AsyncResult.success(grant(false)));
+        expect(permissionChanges).toEqual([true, false]);
+        const denied = yield* dispatch.authorize(registry, env).pipe(Effect.flip);
+        expect(denied._tag).toBe("EnvironmentAuthorizationError");
+      }),
+    ),
+  );
+
   it.effect("requires the destination settings grant to run storage cleanup", () =>
     Effect.scoped(
       Effect.gen(function* () {

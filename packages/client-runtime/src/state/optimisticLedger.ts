@@ -126,17 +126,22 @@ export function createOptimisticLedger<State, Receipt = void, Rejection = unknow
     const existing = registry
       .get(target.entries)
       .find((entry) => entry.key.commandId === intent.key.commandId);
-    const token = existing?.token ?? Symbol(intent.key.commandId);
-    if (existing === undefined) {
+    const existingToken = existing?.token;
+    const token =
+      existing !== undefined && existing.status !== "rejected"
+        ? existing.token
+        : Symbol(intent.key.commandId);
+    if (existing === undefined || existing.status === "rejected") {
+      const fresh: ActiveEntry = {
+        ...intent,
+        key: { ...intent.key },
+        token,
+        status: "pending",
+        acknowledgment: { status: "pending" },
+      };
       registry.update(target.entries, (entries) => [
-        ...entries,
-        {
-          ...intent,
-          key: { ...intent.key },
-          token,
-          status: "pending",
-          acknowledgment: { status: "pending" },
-        } satisfies ActiveEntry,
+        ...entries.filter((entry) => entry.token !== existingToken),
+        fresh,
       ]);
       observe(registry, target);
     }

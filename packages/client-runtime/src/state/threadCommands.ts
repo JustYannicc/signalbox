@@ -9,8 +9,7 @@ import {
   type OrchestrationV2ShellSnapshot,
 } from "@t3tools/contracts";
 
-import { createOptimisticThreadLifecycle } from "./threadLifecycle.ts";
-import { createEnvironmentSessionAtoms } from "./session.ts";
+import { createOptimisticThreadLifecycle } from "./optimisticThreadLifecycle.ts";
 import * as DateTime from "effect/DateTime";
 
 import {
@@ -408,11 +407,7 @@ export function createThreadEnvironmentAtoms<R, E>(
       concurrency,
     }),
   };
-  const sessions = createEnvironmentSessionAtoms(runtime);
-  const optimistic = createOptimisticThreadLifecycle(snapshotAtom, {
-    configAtom: sessions.initialConfigValueAtom,
-    sessionAtom: sessions.sessionStateValueAtom,
-  });
+  const optimistic = createOptimisticThreadLifecycle(runtime, snapshotAtom);
   return {
     ...commands,
     snapshotAtom: optimistic.snapshotAtom,
