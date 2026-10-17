@@ -51,6 +51,7 @@ import { getTerminalLabel } from "@t3tools/shared/terminalLabels";
 import * as Schema from "effect/Schema";
 import {
   AuthOrchestrationOperateScope,
+  AuthOrchestrationReadScope,
   AuthSourceControlWriteScope,
   AuthPreviewOperateScope,
   AuthTerminalReadScope,
@@ -370,6 +371,7 @@ import { selectThreadTerminalUiState, useTerminalUiStateStore } from "../termina
 import { useKnownTerminalSessions, useThreadRunningTerminalIds } from "../state/terminalSessions";
 import { useEnvironmentQuery } from "../state/query";
 import { useEnvironmentScope } from "~/state/session";
+import { useEnvironmentSupportsSignalboxPreviews } from "~/state/signalboxPreviews";
 import {
   readEnvironmentSupports,
   useEnvironmentSupports,
@@ -1688,7 +1690,13 @@ export default function ChatView(props: ChatViewProps) {
   const activeEnvironmentServerBrowser = useEnvironmentSupportsServerBrowser(
     activeThreadRef?.environmentId ?? null,
   );
-  const browserAvailable = isPreviewSupportedInRuntime() || activeEnvironmentServerBrowser;
+  const activeEnvironmentAgentBrowser = useEnvironmentSupportsSignalboxPreviews(
+    activeThreadRef?.environmentId ?? null,
+  );
+  const browserAvailable =
+    isPreviewSupportedInRuntime() ||
+    activeEnvironmentServerBrowser ||
+    activeEnvironmentAgentBrowser;
   const threadBrowser = useThreadBrowserAvailability(
     activeThreadRef,
     activeEnvironmentServerBrowser,
@@ -1777,7 +1785,9 @@ export default function ChatView(props: ChatViewProps) {
     [rightPanelState.surfaces],
   );
   const canReuseTerminal = activeThreadKnownSessionsRaw !== null;
-  const previewPanelOpen = activeRightPanelKind === "preview" && threadBrowser.viewable;
+  const previewPanelOpen =
+    (activeRightPanelKind === "preview" && threadBrowser.viewable) ||
+    (activeRightPanelKind === "agent-browser" && activeEnvironmentAgentBrowser);
   const rightPanelOpen = rightPanelState.isOpen;
   const { active: panelAnimationsActive, durationMs: panelAnimationDurationMs } =
     usePanelAnimationSettings();
@@ -3879,11 +3889,17 @@ export default function ChatView(props: ChatViewProps) {
     activeThreadRef?.environmentId ?? null,
     AuthPreviewOperateScope,
   );
+  const canReadAgentBrowser = useEnvironmentScope(
+    activeThreadRef?.environmentId ?? null,
+    AuthOrchestrationReadScope,
+  );
+  const canLaunchBrowser = activeEnvironmentAgentBrowser ? canReadAgentBrowser : canOperatePreview;
   const createBrowserSurface = (profileId?: string) => {
-    if (!activeThreadRef || !canOperatePreview) return;
+    if (!activeThreadRef || !canLaunchBrowser) return;
     void addBrowserSurface({
       threadRef: activeThreadRef,
       openPreview,
+      target: activeEnvironmentAgentBrowser ? "agent-browser" : "preview",
       ...(profileId === undefined ? {} : { profileId }),
     }).then((result) => {
       if (result._tag !== "Failure" || isAtomCommandInterrupted(result)) return;
@@ -4019,12 +4035,16 @@ export default function ChatView(props: ChatViewProps) {
   };
   const closePreviewPanelStable = useStableCallback(closePreviewPanel);
   const togglePreviewPanel = () => {
-    if (!activeThreadRef || !threadBrowser.viewable) return;
+    if (!activeThreadRef || (!threadBrowser.viewable && !activeEnvironmentAgentBrowser)) return;
     if (previewPanelOpen) {
       closePreviewPanel();
       return;
     }
-    if (!canOperatePreview) return;
+    if (!canLaunchBrowser) return;
+    if (activeEnvironmentAgentBrowser) {
+      createBrowserSurface();
+      return;
+    }
     const activeTabId = activePreviewState.activeTabId;
     if (activeTabId) {
       useRightPanelStore.getState().openBrowser(activeThreadRef, activeTabId);
@@ -9072,7 +9092,8 @@ export default function ChatView(props: ChatViewProps) {
           onAddPullRequest={addPullRequestSurfaceStable}
           onAddPullRequests={addPullRequestsSurfaceStable}
           onAddDevice={addDeviceSurfaceStable}
-          browserAvailable={canOperatePreview && browserAvailable}
+          browserAvailable={canLaunchBrowser && browserAvailable}
+          browserProfilesAvailable={!activeEnvironmentAgentBrowser}
           terminalAvailable={activeProject !== null && canOperateTerminal}
           terminalSupported={terminalSupported}
           devicesSupported={devicesSupported}
@@ -9129,7 +9150,8 @@ export default function ChatView(props: ChatViewProps) {
             onAddPullRequest={addPullRequestSurfaceStable}
             onAddPullRequests={addPullRequestsSurfaceStable}
             onAddDevice={addDeviceSurfaceStable}
-            browserAvailable={canOperatePreview && browserAvailable}
+            browserAvailable={canLaunchBrowser && browserAvailable}
+            browserProfilesAvailable={!activeEnvironmentAgentBrowser}
             terminalAvailable={activeProject !== null && canOperateTerminal}
             terminalSupported={terminalSupported}
             devicesSupported={devicesSupported}
