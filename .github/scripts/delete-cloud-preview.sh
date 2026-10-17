@@ -13,6 +13,11 @@ set -euo pipefail
 : "${CLOUDFLARE_API_TOKEN:?CLOUDFLARE_API_TOKEN is required}"
 : "${GH_TOKEN:?GH_TOKEN is required}"
 pr_number="${PR_NUMBER:?PR_NUMBER is required}"
+current_state="$(gh api "repos/${GITHUB_REPOSITORY:?GITHUB_REPOSITORY is required}/pulls/$pr_number" --jq '.state')"
+if [[ "$current_state" != "closed" ]]; then
+  echo "PR #$pr_number is $current_state; skipping preview cleanup."
+  exit 0
+fi
 failed=0
 
 # The shared preview bucket is retained, so this only drops it from the stage.
@@ -22,6 +27,22 @@ if ! (cd apps/cloud && ALCHEMY_TELEMETRY_DISABLED=1 T3CODE_WORKOS_CLIENT_ID=dest
   SESSION_SECRET=destroy-only T3CODE_WORKOS_API_KEY=destroy-only \
   ./node_modules/.bin/alchemy destroy --stage "pr-$pr_number" --yes --no-input); then
   echo "::error::Could not destroy the Alchemy stage pr-$pr_number."
+  failed=1
+fi
+
+# A close job can overlap with a reopen. Recheck after the stage teardown,
+# before detaching the preview's custom domains.
+current_state="$(gh api "repos/${GITHUB_REPOSITORY}/pulls/$pr_number" --jq '.state')"
+if [[ "$current_state" != "closed" ]]; then
+  echo "PR #$pr_number is $current_state; stopping the remaining preview cleanup."
+  exit 0
+fi
+
+# Alchemy owns the current domains, but older stages and failed destroys can
+# leave their Cloudflare records behind. Match the exact PR bindings, not the
+# deprecated `environment` field (Cloudflare reports `production` for previews).
+if ! node .github/scripts/cloudflare-preview-domains.cjs delete; then
+  echo "::error::Could not detach Worker domains for the #$pr_number preview."
   failed=1
 fi
 

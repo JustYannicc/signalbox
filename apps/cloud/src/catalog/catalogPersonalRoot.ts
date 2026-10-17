@@ -4,6 +4,12 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
 import { resolveCatalogAccess } from "./adapters/catalogRootPolicy.ts";
+import {
+  CatalogRenameFolder,
+  CatalogMoveFolder,
+  renameCatalogFolder,
+  moveCatalogFolder,
+} from "./adapters/catalogTopology.ts";
 import { CatalogPersonId, catalogHomeKey } from "./catalogHome.ts";
 import { catalogRootTables } from "./catalogHomeTables.ts";
 import {
@@ -28,6 +34,18 @@ export const catalogPersonalRoot = defineHome(
       }),
     },
     changes: {
+      renameFolder: change({
+        input: CatalogRenameFolder,
+        output: Schema.Struct({ changed: Schema.Boolean }),
+        failure: CatalogPolicyFailure,
+        run: renameCatalogFolder,
+      }),
+      moveFolder: change({
+        input: CatalogMoveFolder,
+        output: Schema.Struct({ changed: Schema.Boolean }),
+        failure: CatalogPolicyFailure,
+        run: moveCatalogFolder,
+      }),
       setGrant: change({
         input: Schema.Struct({
           target: CatalogPolicyTarget,
