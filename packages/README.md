@@ -6,7 +6,7 @@ Relative imports across workspace directories bypass that interface and fail
 `vp run lint:boundaries`. Files inside one workspace can use relative imports.
 
 Tests in packages with exports exercise those exports, even when the test sits
-next to the implementation. Test fixtures stay private to tests. Expose several
+next to the implementation. Expose several
 small entry points when needed; avoid a barrel that re-exports the whole subtree.
 Apps without exports keep their internal test conventions.
 
