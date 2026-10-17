@@ -3,6 +3,18 @@ import { describe, expect, it } from "@effect/vitest";
 import { REDACTED, redactContent } from "./content.ts";
 
 describe("redactContent", () => {
+  it("keeps ordinary request paths", () => {
+    const event = { path: "/api/auth/session", method: "GET", status: 200 };
+    redactContent(event);
+    expect(event).toEqual({ path: "/api/auth/session", method: "GET", status: 200 });
+  });
+
+  it("drops an undecodable path without losing request status", () => {
+    const event: Record<string, unknown> = { path: "/api/%ZZ/hooks/canary", status: 400 };
+    redactContent(event);
+    expect(event).toEqual({ status: 400, redactionFailed: true });
+  });
+
   it("replaces text under content-shaped keys at any depth and keeps their numbers", () => {
     const event = {
       action: "turn",

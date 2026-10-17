@@ -87,9 +87,12 @@ export const redactContent = (event: Record<string, unknown>): void => {
     return node;
   };
   try {
-    // Hook credentials are path segments, including on rejected requests.
-    if (typeof event.path === "string" && event.path.startsWith("/api/hooks/")) {
-      event.path = "/api/hooks/:userId/:hookId/[REDACTED]";
+    // Match the router's decoding, duplicate slashes and case-insensitive paths.
+    if (typeof event.path === "string") {
+      const path = decodeURI(event.path).replace(/\/+/g, "/");
+      if (/^\/api\/hooks(?:\/|$)/i.test(path)) {
+        event.path = "/api/hooks/:userId/:hookId/[REDACTED]";
+      }
     }
     visit(event, false);
     const turn = event.turn;

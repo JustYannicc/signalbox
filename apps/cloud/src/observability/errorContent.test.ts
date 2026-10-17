@@ -14,9 +14,13 @@ class RejectedInput extends Schema.TaggedError<RejectedInput>()("RejectedInput",
 }) {}
 
 describe("error content at the drain", () => {
-  it.each([false, true])(
-    "keeps hook credentials out of request events (failure: %s)",
-    async (fails) => {
+  it.each(
+    ["/api/hooks", "/api//hooks", "/api/Hooks", "/api/%68ooks"].flatMap((prefix) =>
+      [false, true].map((fails) => ({ prefix, fails })),
+    ),
+  )(
+    "keeps hook credentials out of $prefix request events (failure: $fails)",
+    async ({ prefix, fails }) => {
       const events: Array<WideEvent> = [];
       const pending: Array<Promise<unknown>> = [];
       const canary = "hook_canary_private_trigger";
@@ -35,7 +39,7 @@ describe("error content at the drain", () => {
       );
       await worker
         .fetch(
-          new Request(`https://example.com/api/hooks/user_1/hook_1/${canary}`),
+          new Request(`https://example.com${prefix}/user_1/hook_1/${canary}`),
           {},
           {
             waitUntil: (promise) => {
