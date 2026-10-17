@@ -331,6 +331,10 @@
       "types": "./src/state/threadStatusLine.ts",
       "default": "./src/state/threadStatusLine.ts"
     },
+    "./state/signalboxAsks": {
+      "types": "./src/state/signalboxAsks.ts",
+      "default": "./src/state/signalboxAsks.ts"
+    },
     "./state/signalboxThreadKinds": {
       "types": "./src/state/signalboxThreadKinds.ts",
       "default": "./src/state/signalboxThreadKinds.ts"
@@ -578,10 +582,6 @@
     "./pull-request-markdown": {
       "types": "./src/pullRequestMarkdown.ts",
       "default": "./src/pullRequestMarkdown.ts"
-    },
-    "./state/signalboxAsks": {
-      "types": "./src/state/signalboxAsks.ts",
-      "default": "./src/state/signalboxAsks.ts"
     }
   },
   "scripts": {

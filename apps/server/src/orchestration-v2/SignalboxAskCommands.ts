@@ -25,7 +25,7 @@ type AnswerDelivery = Extract<
   { type: "message.dispatch" | "runtime-request.respond" }
 >;
 
-export function planAskCommand(
+function planAskCommand(
   command: SignalboxAskCommand,
   projection: Pick<
     OrchestrationV2ThreadProjection,

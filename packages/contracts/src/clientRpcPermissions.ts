@@ -95,6 +95,15 @@ export function clientRpcRequiredScopes(
   method: string,
   input: unknown,
 ): readonly AuthEnvironmentScope[] {
+  if (method === ORCHESTRATION_V2_WS_METHODS.dispatchCommand) {
+    return input !== null &&
+      typeof input === "object" &&
+      "type" in input &&
+      typeof input.type === "string" &&
+      input.type.startsWith("thread.ask.")
+      ? [AuthOrchestrationOperateScope]
+      : [];
+  }
   if (method === WS_METHODS.gitPreparePullRequestThread && input !== undefined) {
     const payload = decodePrepareThread(input);
     if (payload.mode === "worktree" && payload.threadId !== undefined)

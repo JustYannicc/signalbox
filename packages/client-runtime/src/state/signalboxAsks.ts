@@ -9,7 +9,7 @@ import { createEnvironmentRpcCommand } from "./runtime.ts";
 export function createSignalboxAskCommand<R, E>(
   runtime: Atom.AtomRuntime<EnvironmentRegistry | R, E>,
 ) {
-  return createEnvironmentRpcCommand<
+  const command = createEnvironmentRpcCommand<
     R,
     E,
     typeof ORCHESTRATION_V2_WS_METHODS.dispatchCommand,
@@ -18,6 +18,11 @@ export function createSignalboxAskCommand<R, E>(
     label: "signalbox-asks:dispatch",
     tag: ORCHESTRATION_V2_WS_METHODS.dispatchCommand,
   });
+  return {
+    ...command,
+    permissionAtom: (environmentId: Parameters<typeof command.permissionAtom>[0]) =>
+      command.permissionAtom(environmentId, { type: "thread.ask.answer" }),
+  };
 }
 
 export interface AskDraftAnswer {
