@@ -16,7 +16,7 @@ import {
   owner,
   threadId,
   turnReport,
-} from "../runner/runnerTestKit.ts";
+} from "../runnerTesting.ts";
 
 export const itemId = TurnItemId.make("command-1");
 export const target = { threadId, itemId };
