@@ -67,6 +67,10 @@ const layerTestFor = (
   );
 
 const layerTest = layerTestFor(layerMetadata);
+// Pin the shared suite clock before SQLite starts its maintenance fiber.
+const layerTestAtNow = Layer.unwrap(
+  TestClock.setTime(Date.parse("2026-06-20T10:00:00.000Z")).pipe(Effect.as(layerTest)),
+);
 
 const layerProjectServiceDependencies = Layer.mergeAll(
   RuntimeLayer.layerEventSink,
@@ -98,7 +102,7 @@ const waitForProject = Effect.fn("ProjectServiceTest.waitForProject")(function* 
   return yield* Effect.die(`Project ${projectId} was not enriched in time.`);
 });
 
-it.layer(layerTest)("ProjectService", (it) => {
+it.layer(layerTestAtNow)("ProjectService", (it) => {
   it.effect("creates, updates, resolves, snapshots, and soft-deletes projects", () =>
     Effect.gen(function* () {
       const service = yield* ProjectService.ProjectService;
@@ -107,8 +111,6 @@ it.layer(layerTest)("ProjectService", (it) => {
         instanceId: ProviderInstanceId.make("codex_custom"),
         model: "gpt-5.1-codex",
       } as const;
-      yield* TestClock.setTime(Date.parse("2026-06-20T10:00:00.000Z"));
-
       const created = yield* service.create({
         commandId: CommandId.make("command:project:create"),
         projectId,
@@ -205,7 +207,6 @@ it.layer(layerTest)("ProjectService", (it) => {
   it.effect("rejects active workspace collisions", () =>
     Effect.gen(function* () {
       const service = yield* ProjectService.ProjectService;
-      yield* TestClock.setTime(Date.parse("2026-06-20T10:00:00.000Z"));
       yield* service.create({
         commandId: CommandId.make("command:collision:first"),
         projectId: ProjectId.make("project:collision:first"),
@@ -227,7 +228,6 @@ it.layer(layerTest)("ProjectService", (it) => {
   it.effect("auto-bootstraps a workspace exactly once", () =>
     Effect.gen(function* () {
       const service = yield* ProjectService.ProjectService;
-      yield* TestClock.setTime(Date.parse("2026-06-20T10:00:00.000Z"));
       const input = {
         commandId: CommandId.make("command:bootstrap:first"),
         projectId: ProjectId.make("project:bootstrap"),
