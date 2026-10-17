@@ -905,13 +905,7 @@ export const makeRunnerTurns = Effect.fn("makeRunnerTurns")(function* (input: {
       if (goOn && merged && input.dependencies !== undefined) {
         const dependencies = input.dependencies;
         yield* preparing.withPermits(1)(
-          dependencies.prepare((message, level) =>
-            input.emit(
-              level === "info"
-                ? log(runId, "info", message)
-                : { kind: "drive.notice", runId, message },
-            ),
-          ),
+          dependencies.prepare((message) => input.emit({ kind: "drive.notice", runId, message })),
         );
       }
       return goOn;
@@ -971,13 +965,8 @@ export const makeRunnerTurns = Effect.fn("makeRunnerTurns")(function* (input: {
                   )
               : null;
           if (input.dependencies !== undefined) {
-            // Routine setup goes to the trace; the thread says "Setting up the machine…".
-            yield* input.dependencies.prepare((message, level) =>
-              input.emit(
-                level === "info"
-                  ? log(turn.runId, "info", message)
-                  : { kind: "drive.notice", runId: turn.runId, message },
-              ),
+            yield* input.dependencies.prepare((message) =>
+              input.emit({ kind: "drive.notice", runId: turn.runId, message }),
             );
           }
           // Edits the thread made inside dependency trees, once the trees are rebuilt (#490).

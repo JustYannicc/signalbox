@@ -230,6 +230,7 @@ import {
   type TimelineLatestRun,
   type WorkGroupScrollAnchor,
 } from "./MessagesTimeline.logic";
+import { SettingUpMachineContext } from "./runtimeIsSettingUp"; // signalbox
 import { type ThreadFindMatch } from "./threadFind";
 import { useThreadFindNavigation } from "./useThreadFindNavigation";
 import { readThreadFindPosition } from "./threadFindPosition";
@@ -358,7 +359,6 @@ interface TimelineRowActivityState {
   activeTurnInProgress: boolean;
   awaitingUser: boolean;
   isPreparingWorktree: boolean;
-  isSettingUpMachine: boolean;
   latestRunId: RunId | null;
   backgroundWorktreeSetup: WorktreeSetupSnapshot | null;
 }
@@ -437,8 +437,6 @@ interface MessagesTimelineProps {
   onWorktreeSetupWorkLocally?: () => void;
   onOpenWorktreeSetupTerminal?: (terminalId: string) => void;
   isPreparingWorktree?: boolean;
-  /** signalbox: the turn's machine is still being set up. */
-  isSettingUpMachine?: boolean;
   isCompacting?: boolean;
   awaitingUser?: boolean;
   footer?: ReactNode;
@@ -541,7 +539,6 @@ const ConversationTimeline = memo(function ConversationTimeline({
   onWorktreeSetupWorkLocally,
   onOpenWorktreeSetupTerminal,
   isPreparingWorktree = false,
-  isSettingUpMachine = false,
   isCompacting = false,
   awaitingUser = false,
   listRef,
@@ -1374,7 +1371,6 @@ const ConversationTimeline = memo(function ConversationTimeline({
       activeTurnInProgress,
       awaitingUser,
       isPreparingWorktree,
-      isSettingUpMachine,
       latestRunId: latestRun?.runId ?? null,
     }),
     [
@@ -1384,7 +1380,6 @@ const ConversationTimeline = memo(function ConversationTimeline({
       activeTurnInProgress,
       isPreparingWorktree,
       isRevertingCheckpoint,
-      isSettingUpMachine,
       isWorking,
       latestRun?.runId,
     ],
@@ -3703,8 +3698,9 @@ function toolIconAcceptsTint(toolIcon: ToolActivityIcon | undefined): boolean {
 }
 
 function WorkingTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "working" }> }) {
-  const { isCompacting, isPreparingWorktree, isSettingUpMachine, backgroundWorktreeSetup } =
+  const { isCompacting, isPreparingWorktree, backgroundWorktreeSetup } =
     use(TimelineRowActivityCtx);
+  const isSettingUpMachine = use(SettingUpMachineContext); // signalbox
   const shimmer = isPreparingWorktree || isSettingUpMachine || isCompacting;
   const label = isPreparingWorktree ? (
     "Setting up worktree…"
@@ -3785,7 +3781,8 @@ function CompactingLabel() {
 
 function ThinkingTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "thinking" }> }) {
   const ctx = use(TimelineRowCtx);
-  const { isCompacting, isPreparingWorktree, isSettingUpMachine } = use(TimelineRowActivityCtx);
+  const { isCompacting, isPreparingWorktree } = use(TimelineRowActivityCtx);
+  const isSettingUpMachine = use(SettingUpMachineContext); // signalbox
   if (isPreparingWorktree || isSettingUpMachine || isCompacting) return <WorkLogRow label="" />;
   const activity = <LiveActivityRow label="Thinking" iconName="brain" active shimmer />;
   const { groupId } = row;

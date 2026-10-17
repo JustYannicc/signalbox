@@ -1,4 +1,5 @@
 import type { ThreadRuntimeSummary } from "@t3tools/client-runtime/state/models";
+import { createContext } from "react";
 
 /**
  * signalbox: a turn whose run hasn't started working yet is still setting up
@@ -8,3 +9,6 @@ import type { ThreadRuntimeSummary } from "@t3tools/client-runtime/state/models"
 export function runtimeIsSettingUp(status: ThreadRuntimeSummary["status"] | undefined): boolean {
   return status === "preparing" || status === "starting" || status === "queued";
 }
+
+/** Whether the open thread's turn is setting up; ChatView provides it around the timeline. */
+export const SettingUpMachineContext = createContext(false);

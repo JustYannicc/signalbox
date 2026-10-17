@@ -799,7 +799,8 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
               <PullRequestGlyph.pullRequest className="size-3" />
             </a>
           ) : null}
-          {threadStatus && <ThreadStatusLabel status={threadStatus} />}
+          {/* signalbox: a dot, label on hover, so the thread's name stays readable */}
+          {threadStatus && <ThreadStatusLabel status={threadStatus} compact />}
           {canOperateThread && renamingThreadKey === threadKey ? (
             <input
               ref={handleRenameInputRef}

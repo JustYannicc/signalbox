@@ -160,16 +160,10 @@ type DependencyOutcome =
   | { readonly _tag: "installed"; readonly reason: InstallReason; readonly durationMs: number }
   | { readonly _tag: "failed"; readonly message: string; readonly durationMs: number };
 
-export type DependencyNoticeLevel = "info" | "warning";
-
 export interface RunnerDependencies {
-  /**
-   * Brings every root in the checkout in step. `notify` hears what happens:
-   * `info` for routine setup, which belongs in the turn's trace, and `warning`
-   * for a failure the thread should say.
-   */
+  /** Brings every root in the checkout in step; `notify` hears what the user should. */
   readonly prepare: (
-    notify: (message: string, level: DependencyNoticeLevel) => Effect.Effect<void>,
+    notify: (message: string) => Effect.Effect<void>,
   ) => Effect.Effect<
     ReadonlyArray<{ readonly root: DependencyRoot; readonly outcome: DependencyOutcome }>
   >;
@@ -180,7 +174,7 @@ export interface RunnerDependencies {
 const where = (root: DependencyRoot) =>
   root.relative === "" ? "this folder" : `${root.relative}/`;
 
-/** What the trace says before an install; adopting a tree the agent made is quiet. */
+/** What the user hears before an install; adopting a tree the agent made is quiet. */
 const NOTICES: Record<Exclude<InstallReason, "adopted">, (root: DependencyRoot) => string> = {
   new: (root) => `Installing dependencies in ${where(root)} from ${root.lockfile}.`,
   lockfile: (root) =>
@@ -369,7 +363,7 @@ export const makeRunnerDependencies = Effect.fn("makeRunnerDependencies")(functi
   const prepareRoot = (
     root: DependencyRoot,
     others: ReadonlySet<string>,
-    notify: (message: string, level: DependencyNoticeLevel) => Effect.Effect<void>,
+    notify: (message: string) => Effect.Effect<void>,
   ) =>
     Effect.gen(function* () {
       const tree = path.join(root.directory, "node_modules");
@@ -403,7 +397,7 @@ export const makeRunnerDependencies = Effect.fn("makeRunnerDependencies")(functi
       }
       const started = yield* Clock.currentTimeMillis;
       if (plan !== "adopted") {
-        yield* notify(NOTICES[plan](root), "info");
+        yield* notify(NOTICES[plan](root));
         for (const stale of yield* treesOf(root, others)) yield* input.caches.discard(stale);
       }
       // Marks the tree, so an install cut short is never taken for a finished one.
@@ -421,7 +415,7 @@ export const makeRunnerDependencies = Effect.fn("makeRunnerDependencies")(functi
           output: result.output,
         });
         const message = `Installing dependencies in ${where(root)} failed${last === "" ? "." : `: ${last}`}`;
-        yield* notify(message, "warning");
+        yield* notify(message);
         return { _tag: "failed", message, durationMs } as const;
       }
       yield* record("installed");
@@ -447,7 +441,7 @@ export const makeRunnerDependencies = Effect.fn("makeRunnerDependencies")(functi
               Effect.gen(function* () {
                 yield* Effect.logWarning("preparing dependencies failed", Cause.pretty(cause));
                 const message = `Preparing dependencies in ${where(root)} failed.`;
-                yield* notify(message, "warning");
+                yield* notify(message);
                 return { _tag: "failed", message, durationMs: 0 } as const;
               }),
             ),

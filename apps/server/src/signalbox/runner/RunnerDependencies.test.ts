@@ -68,15 +68,13 @@ const prepare = (
 ) =>
   Effect.gen(function* () {
     const { dependencies, caches } = yield* dependenciesOf(machine, options);
-    // Routine setup goes to the trace; only failures reach the thread as notices.
-    const trace: Array<string> = [];
     const notices: Array<string> = [];
-    const results = yield* dependencies.prepare((message, level) =>
+    const results = yield* dependencies.prepare((message) =>
       Effect.sync(() => {
-        (level === "info" ? trace : notices).push(message);
+        notices.push(message);
       }),
     );
-    return { results, trace, notices, caches };
+    return { results, notices, caches };
   }).pipe(Effect.scoped);
 
 const run = <A, E>(effect: Effect.Effect<A, E, NodeServices.NodeServices>) =>
@@ -94,8 +92,7 @@ describe("RunnerDependencies", () => {
         expect(first.results.map((result) => [result.root.relative, result.outcome._tag])).toEqual([
           ["app", "installed"],
         ]);
-        expect(first.trace).toEqual(["Installing dependencies in app/ from pnpm-lock.yaml."]);
-        expect(first.notices).toEqual([]);
+        expect(first.notices).toEqual(["Installing dependencies in app/ from pnpm-lock.yaml."]);
         // Installs use the machine's store, outside the checkout.
         expect(machine.installs()).toEqual([
           `pnpm ${NodePath.join(machine.cwd, "app")} ${first.caches.environment.pnpm_config_store_dir}`,
@@ -113,7 +110,7 @@ describe("RunnerDependencies", () => {
 
         const second = yield* prepare(machine);
         expect(second.results.map((result) => result.outcome._tag)).toEqual(["reused"]);
-        expect(second.trace).toEqual([]);
+        expect(second.notices).toEqual([]);
         expect(machine.installs()).toHaveLength(1);
         expect(exists(machine.cwd, "app/node_modules/.vite/task-cache/entry")).toBe(true);
       }),
@@ -134,7 +131,7 @@ describe("RunnerDependencies", () => {
         expect(changed.results.map((result) => result.outcome)).toMatchObject([
           { _tag: "installed", reason: "lockfile" },
         ]);
-        expect(changed.trace).toEqual([
+        expect(changed.notices).toEqual([
           "pnpm-lock.yaml changed, so dependencies in this folder are reinstalled.",
         ]);
         expect(machine.installs()).toHaveLength(2);
@@ -160,7 +157,7 @@ describe("RunnerDependencies", () => {
         expect(moved.results.map((result) => result.outcome)).toMatchObject([
           { _tag: "installed", reason: "toolchain" },
         ]);
-        expect(moved.trace).toEqual([
+        expect(moved.notices).toEqual([
           "This machine's toolchain changed, so dependencies in this folder are reinstalled.",
         ]);
         expect(machine.installs().map((line) => line.split(" ")[0])).toEqual(["npm", "npm"]);
@@ -179,7 +176,7 @@ describe("RunnerDependencies", () => {
         expect(adopted.results.map((result) => result.outcome)).toMatchObject([
           { _tag: "installed", reason: "adopted" },
         ]);
-        expect(adopted.trace).toEqual([]);
+        expect(adopted.notices).toEqual([]);
         expect(exists(machine.cwd, "repo/node_modules/.vite/task-cache/entry")).toBe(true);
 
         const next = yield* prepare(machine);
@@ -195,15 +192,12 @@ describe("RunnerDependencies", () => {
         write(machine.cwd, "pnpm-lock.yaml", "FAIL\n");
         const failed = yield* prepare(machine);
         expect(failed.results.map((result) => result.outcome._tag)).toEqual(["failed"]);
-        expect(failed.trace).toEqual([
-          "Installing dependencies in this folder from pnpm-lock.yaml.",
-        ]);
         expect(failed.notices).toEqual([
+          "Installing dependencies in this folder from pnpm-lock.yaml.",
           "Installing dependencies in this folder failed: ERR_PNPM_BROKEN_LOCKFILE The lockfile is broken",
         ]);
         const again = yield* prepare(machine);
         expect(again.results.map((result) => result.outcome._tag)).toEqual(["skipped"]);
-        expect(again.trace).toEqual([]);
         expect(again.notices).toEqual([]);
         expect(machine.installs()).toHaveLength(1);
 
@@ -236,7 +230,7 @@ describe("RunnerDependencies", () => {
         expect(resumed.results.map((result) => result.outcome)).toMatchObject([
           { _tag: "installed", reason: "unfinished" },
         ]);
-        expect(resumed.trace).toEqual([
+        expect(resumed.notices).toEqual([
           "The last install in this folder did not finish, so dependencies are reinstalled.",
         ]);
         expect(exists(machine.cwd, "node_modules/half-written")).toBe(false);
