@@ -25,6 +25,7 @@ import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 
 import type { AutomationHostCall } from "../automations/CloudAutomations.ts";
+import type { HookAnswer, HookRequest } from "../automations/webhookRequest.ts";
 import type { ConnectionLink, CreatedLink } from "../connections/ConnectionLinks.ts";
 import type {
   LinkedConnections,
@@ -88,6 +89,7 @@ export interface UserObjectApi {
     threadId: Parameters<ThreadSearch.ThreadSearch["Service"]["readItem"]>[1],
     itemId: string,
   ) => Promise<Effect.Success<ReturnType<ThreadSearch.ThreadSearch["Service"]["readItem"]>>>;
+  readonly receiveHook: (request: HookRequest) => Promise<HookAnswer>;
   readonly recordSignIn: (profile: AccountProfile) => Promise<void>;
   readonly profile: () => Promise<AccountProfile | null>;
   readonly createSession: (input: {
@@ -334,6 +336,7 @@ const METHODS = Object.keys({
   copyThreadHome: true,
   threadEvents: true,
   driveEvents: true,
+  receiveHook: true,
   rebuildThreadIndex: true,
   beginGitHubConnect: true,
   completeGitHubConnect: true,

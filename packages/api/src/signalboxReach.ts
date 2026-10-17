@@ -58,6 +58,9 @@ export const SIGNALBOX_RPC_REACH = {
   "automations.delete": write({ destructive: true }),
   "automations.rotateWebhook": write(),
   "automations.setWebhookSecret": write(),
+  "automations.githubSubscriptions": read({
+    summary: "GitHub event subscriptions and connection errors for your folders.",
+  }),
   "automations.runNow": write({ name: "automations.run", summary: "Run an automation now." }),
   "automations.customize": write(),
   "automations.stopAttached": write(),

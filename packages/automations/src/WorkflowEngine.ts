@@ -150,7 +150,7 @@ export interface WorkflowEngineShape extends CatalogShape {
    * starts the automations it triggers and wakes runs waiting on it, as a
    * domain event would.
    */
-  readonly deliverEvent: (event: ExternalEvent) => Effect.Effect<void>;
+  readonly deliverEvent: (event: ExternalEvent) => Effect.Effect<void, AutomationError>;
   /** Every automation, now and after each batch of changes. */
   readonly subscribeList: () => Stream.Stream<ReadonlyArray<Automation>, AutomationError>;
   /** One automation with its recent runs, now and after each batch of changes to it. */
@@ -257,9 +257,9 @@ export const makeEngine = <R>(
       // Called only once requests arrive, after launchRun below exists.
       launchRun: (launch) => launchRun(launch),
       deliverTo: (runId, envelope) =>
-        runWaits
-          .deliver(envelope, [{ runId, projectId: envelope.projectId, patterns: ["hook.called"] }])
-          .pipe(logFailure("Automation callback delivery failed")),
+        runWaits.deliver(envelope, [
+          { runId, projectId: envelope.projectId, patterns: ["hook.called"] },
+        ]),
     });
 
     const sourceStore = yield* SourceStore.make;

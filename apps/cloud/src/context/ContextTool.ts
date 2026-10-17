@@ -200,7 +200,44 @@ const make = Effect.gen(function* () {
 
   const view: ContextTool["Service"]["view"] = (reader) =>
     Effect.gen(function* () {
-      const { contexts, drives } = yield* users.forUser(reader.userId).readableDrives();
+      const user = users.forUser(reader.userId);
+      const { contexts, drives } = yield* user.readableDrives();
+      const saved = (yield* directory
+        .forDrive(reader.driveId)
+        .refs(reader.threadId, Number.MAX_SAFE_INTEGER)).pinnedViews;
+      if (saved != null) {
+        if (saved.context === null) return { driveId: reader.driveId, contexts: [] };
+        const listed = new Set(drives.map((drive) => drive.id as string));
+        const candidates = [
+          ...new Set(
+            saved.context.contexts.flatMap((context) =>
+              context.drives.map((drive) => drive.driveId),
+            ),
+          ),
+        ].filter((id) => listed.has(id));
+        const allowed = new Set(
+          yield* Effect.forEach(
+            candidates,
+            (id) => Effect.map(user.driveAccess(id), (role) => (role === null ? null : id)),
+            { concurrency: 8 },
+          ),
+        );
+        const contextIds = new Set(contexts.map((context) => context.id as string));
+        return {
+          driveId: reader.driveId,
+          contexts: saved.context.contexts
+            .filter((context) => contextIds.has(context.contextId))
+            .map((context) => ({
+              ...context,
+              drives: context.drives
+                .filter((drive) => allowed.has(drive.driveId))
+                .map((drive) => ({
+                  ...drive,
+                  shortcuts: drive.shortcuts.filter((shortcut) => allowed.has(shortcut.target)),
+                })),
+            })),
+        };
+      }
       // Every context at once: this runs before each turn's harness starts.
       return {
         driveId: reader.driveId,

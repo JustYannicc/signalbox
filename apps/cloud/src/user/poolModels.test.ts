@@ -58,7 +58,9 @@ const client = (identity = production) =>
       Effect.gen(function* () {
         const pool = cloud.pools.directory.forPool(`${userId}:personal`);
         const login = yield* pool.startLogin(actor, provider);
-        yield* pool.completeLogin(actor, `http://localhost/callback?code=c&state=${login.state}`);
+        if (login.user_code) personal.cliProxyApi.authorizeDevice(login.user_code);
+        else
+          yield* pool.completeLogin(actor, `http://localhost/callback?code=c&state=${login.state}`);
         yield* pool.loginStatus(actor, login.state);
         yield* rpc[WS_METHODS.serverRefreshProviders]({});
       });

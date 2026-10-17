@@ -56,10 +56,14 @@ def read_checksums(path: Path) -> dict[str, str]:
 
 
 def main() -> None:
-    if len(sys.argv) != 4:
-        fail("usage: update.py release.json checksums.txt shared-release.json")
+    if len(sys.argv) != 5:
+        fail("usage: update.py release.json checksums.txt source-commit shared-release.json")
 
-    release_path, checksums_path, manifest_path = map(Path, sys.argv[1:])
+    release_path, checksums_path = map(Path, sys.argv[1:3])
+    source_commit = sys.argv[3].lower()
+    manifest_path = Path(sys.argv[4])
+    if not re.fullmatch(r"[a-f0-9]{40}", source_commit):
+        fail(f"Expected a full upstream source commit hash, got {source_commit!r}.")
     release = read_json(release_path)
     tag = release.get("tag_name", "")
     match = re.fullmatch(r"v(\d+\.\d+\.\d+)", tag)
@@ -98,10 +102,15 @@ def main() -> None:
         for platform, arch in PLATFORMS.items()
     }
     container = asset(CONTAINER_ARCHIVE.format(version=version))
-    updated = {"version": version, "platforms": platforms, "container": container}
+    updated = {
+        "version": version,
+        "source": {"commit": source_commit},
+        "platforms": platforms,
+        "container": container,
+    }
     manifest_path.write_text(f"{json.dumps(updated, indent=2)}\n", encoding="utf-8")
 
-    output = f"version={version}\nprevious_version={previous}\n"
+    output = f"version={version}\nsource_commit={source_commit}\nprevious_version={previous}\n"
     output_path = os.environ.get("GITHUB_OUTPUT")
     if output_path:
         with open(output_path, "a", encoding="utf-8") as output_file:
