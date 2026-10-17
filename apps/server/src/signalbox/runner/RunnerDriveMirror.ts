@@ -96,7 +96,7 @@ export const storePacks = Effect.fn("storePacks")(function* (input: {
     const absent = new Set<string>();
     for (const oid of new Set(parents.flatMap((commit) => commit.parents))) {
       const found = yield* input.git.exec(["rev-list", "--no-walk", "--missing=print", oid]);
-      if (found.code !== 0) absent.add(oid);
+      if (found.code !== 0 || input.git.lines(found.stdout).includes(`?${oid}`)) absent.add(oid);
     }
     yield* appendLines(
       path.join(input.gitDir, "shallow"),
