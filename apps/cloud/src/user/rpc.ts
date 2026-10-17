@@ -1,4 +1,5 @@
 import {
+  type ProjectId,
   type AuthEnvironmentScope,
   AuthFilesystemReadScope,
   AuthOrchestrationOperateScope,
@@ -111,7 +112,8 @@ import type { BrowserReply } from "../thread/threadWire.ts";
 import { DriveSharing } from "./DriveSharing.ts";
 import { makePoolHandlers, POOL_METHODS, POOL_REQUIRED_SCOPES } from "./poolRpc.ts";
 import { AUTOMATION_METHODS, makeAutomationHandlers } from "../automations/automationRpc.ts";
-import { poolFallbackModelSelection } from "../pool/poolViews.ts";
+import { ThreadContexts } from "./threadContexts.ts";
+import { scriptedModelSelection } from "../thread/scriptedProvider.ts";
 import { AUTOMATION_RPC_SCOPES } from "@signalbox/automations/rpcScopes";
 import { makePushHandlers } from "../push/pushRpc.ts";
 import { makeKeysHandlers } from "./keysRpc.ts";
@@ -441,7 +443,10 @@ const kindsCall = <A>(effect: Effect.Effect<A, SqlError>) =>
     }),
   );
 
-const personBrowserCall = <A>(effect: Effect.Effect<A, unknown>, message: string) =>
+const personBrowserCall = <A, E>(
+  effect: Effect.Effect<A, E>,
+  message: string,
+): Effect.Effect<A, SignalboxPersonBrowserError> =>
   effect.pipe(
     Effect.tapError((cause) =>
       Effect.logError("cloud browser profile operation failed", { cause }),
@@ -560,12 +565,15 @@ export const layerHandlers = (input: {
       const shortcutsCall = withDrives(shortcuts);
       const pools = yield* makePoolHandlers({ identity, actor: { userId } });
       const pushes = yield* makePushHandlers(input.sid);
-      const newThreadModel = pools.configNow.pipe(
-        Effect.map(
-          (config) =>
-            config.settings.defaultModelSelection ?? poolFallbackModelSelection(config.providers),
-        ),
-      );
+      const threadContexts = yield* ThreadContexts;
+      const newThreadModel = (projectId?: ProjectId) =>
+        threadContexts
+          .initialModelSelection(projectId ?? null)
+          .pipe(
+            Effect.map(
+              (selection) => selection ?? (identity.scripted ? scriptedModelSelection : null),
+            ),
+          );
       const automations = yield* makeAutomationHandlers({
         personReviews: input.via === "client",
         newThreadModel,

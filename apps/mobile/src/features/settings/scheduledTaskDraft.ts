@@ -1,6 +1,5 @@
 import type {
   ModelSelection,
-  ServerConfig,
   ProjectId,
   RuntimeMode,
   ScheduledTask,
@@ -8,39 +7,15 @@ import type {
   ScheduledTaskWebhookSignature,
 } from "@t3tools/contracts";
 
-import { DEFAULT_SERVER_SETTINGS } from "@t3tools/contracts";
 import { parseMaxDeliveryAge } from "@t3tools/client-runtime/scheduled-task-webhook";
-import {
-  resolveProjectSettings,
-  type LegacyProjectSettingsFields,
-} from "@t3tools/shared/projectSettings";
-import {
-  buildModelOptions,
-  resolveDefaultableModelSelection,
-  resolveNewTaskModelSelection,
-} from "../../lib/modelOptions";
+import { resolveScheduledTaskDefaultModelSelection } from "../threads/new-task-model-selection-policy"; // signalbox: share model precedence with new-task drafts.
 
 export function scheduledTaskDefaultModel(
-  config: ServerConfig | null,
-  project: (LegacyProjectSettingsFields & { readonly id: ProjectId }) | null,
+  config: Parameters<typeof resolveScheduledTaskDefaultModelSelection>[0],
+  project: Parameters<typeof resolveScheduledTaskDefaultModelSelection>[1],
 ): ModelSelection | null {
-  const settings = config?.settings ?? DEFAULT_SERVER_SETTINGS;
-  const configured = resolveProjectSettings(settings, project?.id ?? null, project).settings
-    .defaultModelSelection;
-  const projectDefaultSelection =
-    resolveDefaultableModelSelection(config, configured, project?.id ?? null) ??
-    resolveDefaultableModelSelection(config, settings.defaultModelSelection, project?.id ?? null);
-  return resolveNewTaskModelSelection({
-    draftSelection: null,
-    projectDefaultSelection,
-    stickySelection: null,
-    modelOptions: buildModelOptions(
-      config,
-      projectDefaultSelection,
-      undefined,
-      project?.id ?? null,
-    ),
-  });
+  // signalbox: scheduled tasks use the same folder, person, and catalog defaults as new tasks.
+  return resolveScheduledTaskDefaultModelSelection(config, project);
 }
 
 export type ScheduleDraft = {
