@@ -1,6 +1,7 @@
 import {
   type DriveState,
   MAX_REMOTE_COMMITS,
+  type CheckpointViews,
   type ThreadRefName,
 } from "@signalbox/runner-protocol/DriveProtocol";
 import * as Effect from "effect/Effect";
@@ -109,7 +110,13 @@ export const storePacks = Effect.fn("storePacks")(function* (input: {
   return Math.max(...input.packs.map((pack) => pack.seq));
 });
 
-export type DriveRefs = Readonly<Record<"main" | ThreadRefName, string | null>>;
+export type DriveRefs = Readonly<Record<"main" | ThreadRefName, string | null>> & {
+  readonly notes: string | null;
+  readonly pinnedViews: CheckpointViews | null;
+  readonly revision: string | null;
+};
+
+export const CHECKPOINT_NOTES_REF = "refs/notes/signalbox/checkpoints";
 
 export const makeDriveMirror = Effect.fn("makeDriveMirror")(function* (input: {
   readonly gitDir: string;
@@ -120,7 +127,16 @@ export const makeDriveMirror = Effect.fn("makeDriveMirror")(function* (input: {
   const path = yield* Path.Path;
   const { git, client, gitDir } = input;
   const packDir = path.join(gitDir, "objects", "pack");
-  let known: DriveRefs = { main: null, thread: null, wip: null, machine: null };
+  let known: DriveRefs = {
+    main: null,
+    thread: null,
+    wip: null,
+    machine: null,
+    notes: null,
+    pinnedViews: null,
+    revision: null,
+  };
+  let knownNotes: string | null = null;
   /** Whether the drive is backed by a remote, as last seen. */
   let remoteBacked = false;
   /** Whether the cloud keeps machine state (#490): only then is a pack ever private. */
@@ -145,11 +161,18 @@ export const makeDriveMirror = Effect.fn("makeDriveMirror")(function* (input: {
       for (const ref of ["main", "thread", "wip", "machine"] as const) {
         yield* git.setRef(`refs/drive/${ref}`, refs[ref]);
       }
+      if (state.notes !== undefined) {
+        knownNotes = state.notes;
+        yield* git.setRef(CHECKPOINT_NOTES_REF, state.notes);
+      }
       known = {
         main: state.main,
         thread: state.thread,
         wip: state.wip,
         machine: state.machine ?? null,
+        notes: state.notes ?? knownNotes,
+        pinnedViews: state.pinnedViews ?? null,
+        revision: state.revision ?? null,
       };
       remoteBacked = state.remote !== null;
       keepsMachine = state.machine !== undefined;
@@ -203,7 +226,11 @@ export const makeDriveMirror = Effect.fn("makeDriveMirror")(function* (input: {
    */
   const upload = (
     commit: string,
-    options: { readonly remoteHead?: boolean; readonly private?: boolean } = {},
+    options: {
+      readonly remoteHead?: boolean;
+      readonly private?: boolean;
+      readonly bases?: ReadonlyArray<string>;
+    } = {},
   ) =>
     Effect.gen(function* () {
       if (!(yield* fs.exists(driveShallow))) yield* fs.writeFileString(driveShallow, "");
@@ -211,6 +238,7 @@ export const makeDriveMirror = Effect.fn("makeDriveMirror")(function* (input: {
         known.main,
         known.thread,
         known.wip,
+        ...(options.bases ?? []),
         ...(options.private === true ? [known.machine] : []),
       ].filter((oid) => oid !== null);
       const remote = yield* remoteBase(commit, have);
@@ -348,5 +376,7 @@ export const makeDriveMirror = Effect.fn("makeDriveMirror")(function* (input: {
           ]),
         ),
       ),
+    /** Uploads the updated notes ref without exposing it as a branch or pushing it to a remote. */
+    saveNotes: (head: string) => upload(head, { bases: knownNotes === null ? [] : [knownNotes] }),
   };
 });

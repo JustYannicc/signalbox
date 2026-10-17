@@ -9,10 +9,10 @@ import { gitAuthorization } from "../github/GitHubApi.ts";
 import { type ThreadObjectNamespace, threadObjectStub } from "../thread/ThreadDirectory.ts";
 import { UserDirectory } from "../user/UserDirectory.ts";
 import { DriveDirectory } from "./DriveDirectory.ts";
+import * as DriveShortcuts from "./DriveShortcuts.ts";
 import type { Oid } from "./git/gitObjects.ts";
 import { threadOfRemoteToken } from "./remoteToken.ts";
 import { decodeBody, text } from "./routeResponses.ts";
-import { readsShortcut } from "./shortcutRoutes.ts";
 
 /**
  * A remote-backed drive's remote, as the drive API reaches it (#135). The
@@ -167,8 +167,9 @@ export const proxyRemote = (
       const target = decodeBody(decodeURIComponent, shortcut[1]!);
       if (target === null) return text("Unknown path.", 404);
       driveId = target;
-      const reader = { userId: verdict.userId, driveId: verdict.driveId };
-      if (!(yield* readsShortcut(reader, driveId))) {
+      const reader = { userId: verdict.userId, driveId: verdict.driveId, threadId: threadId.value };
+      const shortcuts = yield* DriveShortcuts.DriveShortcuts;
+      if (!(yield* shortcuts.reads(reader, driveId))) {
         return text("This drive has no shortcut to that drive you can open.", 403);
       }
     }
