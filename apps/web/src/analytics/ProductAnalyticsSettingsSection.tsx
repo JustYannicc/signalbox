@@ -13,13 +13,14 @@ import { productAnalyticsSettings, setProductAnalyticsEnabled } from "./productA
 import { useShowsEnvironmentUi } from "../state/environmentCapabilities";
 
 const DESCRIPTION =
-  "Anonymous usage events go to T3 Code's and Signalbox's PostHog projects. No prompts, responses, or file contents. Turning this off stops both.";
+  "Lets T3 Code and Signalbox collect anonymous usage events in their PostHog projects. Never prompts, responses, or file contents.";
 
 interface EnvironmentAnalytics {
   readonly environmentId: EnvironmentId;
   /** Null while loading, or when the server can't answer (an older server). */
   readonly settings: ProductAnalyticsSettings | null;
   readonly waiting: boolean;
+  readonly canChange: boolean;
 }
 
 /** Each selected environment's setting; a server sends its own events. */
@@ -34,6 +35,7 @@ function useEnvironmentAnalytics(environmentIds: readonly EnvironmentId[]) {
               environmentId,
               settings: Option.getOrNull(AsyncResult.value(result)),
               waiting: result.waiting,
+              canChange: get(setProductAnalyticsEnabled.permissionAtom(environmentId)),
             };
           }),
         ),
@@ -53,6 +55,11 @@ function describe(
   }
   if (environments.every((entry) => entry.settings?.disabledByServer)) {
     return "Turned off on this server by T3CODE_TELEMETRY_ENABLED=false.";
+  }
+  if (
+    environments.every((entry) => entry.settings !== null && !entry.waiting && !entry.canChange)
+  ) {
+    return "This connection can't change settings.";
   }
   return DESCRIPTION;
 }
@@ -74,8 +81,9 @@ export function ProductAnalyticsSettingsSection() {
   if (environments.length === 0) return null;
 
   // The server's environment variable wins; those servers can't be changed here.
-  const editable = environments.filter((entry) => entry.settings?.disabledByServer === false);
-  const values = new Set(editable.map((entry) => entry.settings?.enabled));
+  const changeable = environments.filter((entry) => entry.settings?.disabledByServer === false);
+  const editable = changeable.filter((entry) => entry.canChange);
+  const values = new Set(changeable.map((entry) => entry.settings?.enabled));
   const loading = environments.some((entry) => entry.settings === null && entry.waiting);
 
   const change = (enabled: boolean) => {

@@ -30,7 +30,7 @@ import * as ContextTool from "../context/ContextTool.ts";
 import * as GitHub from "../github/GitHub.ts";
 import * as Platform from "../platform.ts";
 import * as ThreadDirectory from "../thread/ThreadDirectory.ts";
-import type { DriveAuthorization } from "../thread/runner/ThreadRunner.ts";
+import type { DriveAuthorization } from "../thread/ThreadAuthorization.ts";
 import * as UserDirectory from "../user/UserDirectory.ts";
 import * as DriveDirectory from "./DriveDirectory.ts";
 import * as DriveShortcuts from "./DriveShortcuts.ts";

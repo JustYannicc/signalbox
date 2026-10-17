@@ -15,7 +15,9 @@ import {
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
@@ -336,6 +338,15 @@ const MANAGED_CONFIG_RETRY_MS = 5 * 60_000;
 /** How old the account list may get before a read asks the CLIProxyAPI again. */
 export const ACCOUNTS_FRESH_MS = 30_000;
 
+/** A passive account snapshot never waits on an unbounded pool or provider read. */
+export const ACCOUNTS_READ_TIMEOUT_MS = 750;
+
+/** A stuck upstream request must release the shared refresh so polling can retry. */
+export const ACCOUNTS_REFRESH_TIMEOUT_MS = 120_000;
+
+const ACCOUNTS_READ_TIMEOUT_MESSAGE =
+  "The pool did not refresh its account snapshot in time. Try again shortly.";
+
 /** CLIProxyAPI refreshes its model registry every three hours. */
 export const MODELS_REFRESH_MS = 3 * 60 * 60_000;
 
@@ -585,6 +596,8 @@ const make = Effect.gen(function* () {
   });
 
   const readingLimits = yield* Semaphore.make(1);
+  const accountSnapshotReadLock = yield* Semaphore.make(1);
+  let accountSnapshotReadFiber: Fiber.Fiber<void, never> | null = null;
 
   /**
    * Reads the accounts' windows after their list (`poolLimits.ts`), one read
@@ -696,6 +709,8 @@ const make = Effect.gen(function* () {
       const mode: PoolLimits.ReadMode =
         options?.passive === true || options?.probe === true ? "probe" : "free";
       if (changed.length === 0 && removed.length === 0 && cached.error === null) {
+        // Account-list freshness is independent of the usage probes below.
+        yield* sql`UPDATE accounts_state SET checked_at = ${now}, error = NULL WHERE id = 1`;
         yield* refreshLimits(endpoint, live, now, mode);
         return live;
       }
@@ -857,6 +872,62 @@ const make = Effect.gen(function* () {
       );
     });
 
+  /** A read refresh outlives a caller that only waits for its deadline. */
+  const refreshAccountSnapshot = (row: PoolRow) =>
+    Effect.gen(function* () {
+      yield* firstModelsRead(row).pipe(
+        Effect.catch((cause) =>
+          Effect.logWarning("pool initial account snapshot refresh failed", { cause }),
+        ),
+      );
+      const afterModels = yield* cachedAccounts;
+      if ((yield* Clock.currentTimeMillis) - afterModels.checkedAt < ACCOUNTS_FRESH_MS) return;
+      if (row.backing !== "external" && !(yield* container.running)) return;
+      yield* refreshAccounts(row, undefined, { passive: true });
+    }).pipe(
+      Effect.timeoutOrElse({
+        duration: ACCOUNTS_REFRESH_TIMEOUT_MS,
+        orElse: () => Effect.logWarning("pool account snapshot refresh timed out"),
+      }),
+      Effect.catch((cause) => Effect.logWarning("pool account snapshot refresh failed", { cause })),
+    );
+
+  /** Starts or joins the one background read shared by accounts and linkInfo. */
+  const accountSnapshotRead = (row: PoolRow) =>
+    accountSnapshotReadLock.withPermits(1)(
+      Effect.gen(function* () {
+        const cached = yield* cachedAccounts;
+        const models = yield* cachedModels;
+        const now = yield* Clock.currentTimeMillis;
+        const firstModelsReadDue =
+          cached.accounts.length > 0 &&
+          models.checkedAt === 0 &&
+          (models.attemptedAt === 0 || now - models.attemptedAt >= MODELS_REFRESH_RETRY_MS);
+        const canReadStaleAccounts = row.backing === "external" ? true : yield* container.running;
+        const staleReadDue = now - cached.checkedAt >= ACCOUNTS_FRESH_MS && canReadStaleAccounts;
+        if (!firstModelsReadDue && !staleReadDue) return null;
+        if (accountSnapshotReadFiber !== null) return accountSnapshotReadFiber;
+
+        // Publish the fiber before releasing the gate so concurrent RPCs can join it.
+        const start = yield* Deferred.make<void>();
+        const fiber = yield* Effect.forkDetach(
+          Deferred.await(start).pipe(
+            Effect.andThen(refreshAccountSnapshot(row)),
+            Effect.ensuring(
+              accountSnapshotReadLock.withPermits(1)(
+                Effect.sync(() => {
+                  accountSnapshotReadFiber = null;
+                }),
+              ),
+            ),
+          ),
+        );
+        accountSnapshotReadFiber = fiber;
+        yield* Deferred.succeed(start, undefined);
+        return fiber;
+      }),
+    );
+
   /**
    * The cached accounts, read again once stale. Reading never wakes a sleeping
    * container or keeps one awake: an asleep pool's accounts are what it last
@@ -864,13 +935,24 @@ const make = Effect.gen(function* () {
    */
   const cachedOrRead = (row: PoolRow) =>
     Effect.gen(function* () {
-      // A failed first read leaves the cached accounts as they were.
-      yield* firstModelsRead(row).pipe(Effect.ignore);
       const cached = yield* cachedAccounts;
-      if ((yield* Clock.currentTimeMillis) - cached.checkedAt < ACCOUNTS_FRESH_MS) return cached;
-      if (row.backing !== "external" && !(yield* container.running)) return cached;
-      const read = yield* refreshAccounts(row, undefined, { passive: true }).pipe(Effect.result);
-      return read._tag === "Success" ? yield* cachedAccounts : cached;
+      const fiber = yield* accountSnapshotRead(row);
+      if (fiber === null) return yield* cachedAccounts.pipe(Effect.orElseSucceed(() => cached));
+      const completed = yield* Fiber.join(fiber).pipe(
+        Effect.as(true),
+        Effect.timeoutOrElse({
+          duration: ACCOUNTS_READ_TIMEOUT_MS,
+          orElse: () => Effect.succeed(false),
+        }),
+      );
+      if (completed) return yield* cachedAccounts.pipe(Effect.orElseSucceed(() => cached));
+      // The account list may already have committed while its usage probes were slow.
+      const after = yield* cachedAccounts;
+      if (after.checkedAt > cached.checkedAt) return after;
+      const now = yield* Clock.currentTimeMillis;
+      yield* sql`UPDATE accounts_state SET checked_at = ${now},
+        error = ${ACCOUNTS_READ_TIMEOUT_MESSAGE} WHERE id = 1`;
+      return yield* cachedAccounts;
     });
 
   /** Whether a catalog can be refreshed without starting this pool's container. */

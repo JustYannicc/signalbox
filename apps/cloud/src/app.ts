@@ -54,7 +54,7 @@ import {
 } from "./api/mcpRoutes.ts";
 import * as CloudThreadService from "./thread/CloudThreadService.ts";
 import * as ThreadsLive from "./thread/ThreadsLive.ts";
-import type { LocalKeyVerifier } from "./thread/runner/modelGrants.ts";
+import type { LocalKeyVerifier } from "./models/ModelProtocol.ts";
 import * as ThreadDirectory from "./thread/ThreadDirectory.ts";
 import * as ThreadKindTurns from "./thread/ThreadKindTurns.ts";
 import * as ThreadContextLayers from "./user/threadContextLayers.ts";

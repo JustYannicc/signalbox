@@ -7,7 +7,7 @@ import * as Layer from "effect/Layer";
 import { automationTool } from "../automations/automationTool.ts";
 import { CloudAutomations } from "../automations/CloudAutomations.ts";
 import { makeMemoryCloud } from "../testing.ts";
-import type { DriveAuthorization } from "../thread/runner/ThreadRunner.ts";
+import type { DriveAuthorization } from "../thread/ThreadAuthorization.ts";
 import type { DriveRouteEnv } from "./driveRoutes.ts";
 import { handleDriveRequest } from "./driveRoutes.ts";
 import { driveToken } from "./driveToken.ts";
