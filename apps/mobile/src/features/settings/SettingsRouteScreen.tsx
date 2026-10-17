@@ -23,7 +23,7 @@ import {
   targetsSupporting,
   targetsWithProviderAccounts,
   targetsWithRepositoryIdentity,
-} from "./signalboxSettingsTargets"; // signalbox
+} from "./signalboxSettingsTargets"; // signalbox: settings targets by capability
 import { AutomationsSettingsRows } from "../automations/AutomationsSettingsRows"; // signalbox: automations
 import { SignInSettingsRow } from "../signIn/SignInSettingsRow"; // signalbox: sign-in grants
 import { OnlyEnvironmentAccountSections } from "../account/EnvironmentAccountSection"; // signalbox

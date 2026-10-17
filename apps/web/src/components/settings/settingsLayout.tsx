@@ -177,7 +177,7 @@ export function SettingsSection({
   headerAction,
   variant = "grouped",
   serverScoped = false,
-  serverCapability = "serverSettingsWrite", // signalbox
+  serverCapability = "serverSettingsWrite", // signalbox: section gate capability
   children,
   className,
   ...sectionProps
@@ -190,12 +190,12 @@ export function SettingsSection({
   variant?: "grouped" | "plain";
   /** Every row is server-scoped, so the section hides with them. */
   serverScoped?: boolean;
-  /** signalbox: the most permissive capability any row needs, so the section outlives none of them. */
+  // signalbox: the most permissive capability any row needs, so no row outlives its section.
   serverCapability?: SignalboxEnvironmentCapability;
   children: ReactNode;
 }) {
   const targetRef = useSettingsSearchTarget<HTMLElement>(sectionProps.id);
-  const serverSettingsWritable = useServerSettingsWritable(serverCapability); // signalbox
+  const serverSettingsWritable = useServerSettingsWritable(serverCapability); // signalbox: section gate capability
   if (serverScoped && !serverSettingsWritable) return null;
 
   return (
