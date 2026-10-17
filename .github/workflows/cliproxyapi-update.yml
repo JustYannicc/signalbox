@@ -123,11 +123,13 @@ jobs:
 
       - name: Update the shared release manifest
         if: steps.branch.outputs.update == 'true'
+        env:
+          SOURCE_COMMIT: ${{ steps.source.outputs.commit }}
         run: >-
           python3 scripts/cliproxyapi/update.py
           "$RUNNER_TEMP/cliproxyapi-release.json"
           "$RUNNER_TEMP/cliproxyapi-release/checksums.txt"
-          "${{ steps.source.outputs.commit }}"
+          "$SOURCE_COMMIT"
           apps/cloud/containers/cliproxyapi/release.json
 
       - name: Prepare pull request labels and description

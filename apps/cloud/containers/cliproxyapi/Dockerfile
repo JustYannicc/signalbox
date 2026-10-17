@@ -22,12 +22,23 @@ RUN VERSION="$(jq -er '.version' /release.json)" \
 WORKDIR /src
 RUN go mod download
 
-# CI enables focused fake-auth tests for the actual management endpoints.
+# CI enables focused fake-auth tests for the carried login flows.
 # Normal image builds skip tests but still fail if a carry patch stops applying.
 ARG CLIPROXYAPI_TEST_CARRIED_FLOWS=0
 RUN if [ "$CLIPROXYAPI_TEST_CARRIED_FLOWS" = "1" ]; then \
-      GOMAXPROCS=2 go test -p 2 -count=1 -run 'CodexDevice|ManualClaude|ClaudeManualFlow' \
-        ./sdk/auth ./internal/api/handlers/management ./internal/auth/claude; \
+      test_output=/tmp/cliproxyapi-carried-tests.json; \
+      if ! GOMAXPROCS=2 go test -p 2 -count=1 -json \
+        -run 'CodexDevice|ManualClaude|ClaudeManualFlow|TestGenerateAuthURLKeepsTheLocalCallback' \
+        ./sdk/auth ./internal/api/handlers/management ./internal/auth/claude \
+        > "$test_output"; then \
+        cat "$test_output"; \
+        exit 1; \
+      fi; \
+      if ! jq -s -e '[.[] | select(.Action == "pass" and .Test != null) | .Test] as $passed | ["TestCodexDeviceLoginReportsCodeBeforePollingAndHonorsCancellation", "TestStartOAuthV8ClaudeManualFlowUsesHostedCallbackWithoutForwarder", "TestManualClaudeGenerateAuthURLUsesHostedCallback", "TestManualClaudeCodeExchangeUsesTheSameHostedRedirect", "TestGenerateAuthURLKeepsTheLocalCallback"] as $expected | ($expected - $passed) == []' "$test_output" > /dev/null; then \
+        cat "$test_output"; \
+        echo "CLIProxyAPI carried-flow test filter did not pass all expected tests." >&2; \
+        exit 1; \
+      fi; \
     fi
 
 # Managed-pool diagnostics need to identify both carried upstream changes.

@@ -16,6 +16,21 @@ esac
 script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 version=$(git -C "$source_dir" describe --tags --exact-match 2>/dev/null || echo unknown)
 
+report_patch_failure() {
+  patch_name=$1
+  if [ "$mode" = "--check" ]; then
+    if GIT_INDEX_FILE=$index_file git -C "$source_dir" apply --cached --reverse --check "$patch_file"; then
+      echo "CLIProxyAPI carry patch $patch_name is already included in $version; remove the carry patch." >&2
+      exit 1
+    fi
+  elif git -C "$source_dir" apply --reverse --check "$patch_file"; then
+    echo "CLIProxyAPI carry patch $patch_name is already included in $version; remove the carry patch." >&2
+    exit 1
+  fi
+  echo "CLIProxyAPI carry patch $patch_name conflicts with $version; update or remove the carry patch." >&2
+  exit 1
+}
+
 if [ "$mode" = "--check" ]; then
   index_file=$(mktemp)
   rm -f "$index_file"
@@ -30,14 +45,12 @@ for patch_file in "$script_dir"/cliproxyapi-*.patch; do
   patch_name=$(basename "$patch_file")
   if [ "$mode" = "--check" ]; then
     if ! GIT_INDEX_FILE=$index_file git -C "$source_dir" apply --cached --check "$patch_file"; then
-      echo "CLIProxyAPI carry patch $patch_name no longer applies to $version; review whether upstream has included it, then update or remove the carry patch." >&2
-      exit 1
+      report_patch_failure "$patch_name"
     fi
     GIT_INDEX_FILE=$index_file git -C "$source_dir" apply --cached "$patch_file"
   else
     if ! git -C "$source_dir" apply --check "$patch_file"; then
-      echo "CLIProxyAPI carry patch $patch_name no longer applies to $version; review whether upstream has included it, then update or remove the carry patch." >&2
-      exit 1
+      report_patch_failure "$patch_name"
     fi
     git -C "$source_dir" apply "$patch_file"
   fi

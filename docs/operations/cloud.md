@@ -306,13 +306,14 @@ own MCP sign-in (`/mcp` in Claude Code, `codex mcp login signalbox`), and
 
 The `CLIProxyAPI release sync` workflow checks upstream daily. The shared
 manifest at `apps/cloud/containers/cliproxyapi/release.json` holds the version,
-the exact upstream source commit, the six self-hosted assets and their sizes
-and SHA-256 checksums, plus the managed-pool image asset. The Docker build
-checks the cloned release tag against that source commit before applying the
-managed-pool patch. The account-hub installer imports the same manifest for its
-official binary. The updater verifies every asset against the release metadata
-and `checksums.txt`, resolves the source commit from the release tag, then
-edits only this manifest.
+the exact upstream source commit, and six self-hosted binary assets with their
+sizes and SHA-256 checksums. It also retains the upstream no-plugin container
+archive record for a future binary restore. The active managed-pool image builds
+from source and does not use that archive. Docker checks the cloned release tag
+against the source commit before applying the managed-pool carry patches. The
+account-hub installer imports the same manifest for its official binary. The
+updater verifies each asset against the release metadata and `checksums.txt`,
+resolves the source commit from the release tag, then edits only this manifest.
 
 Each release gets one pull request with a link to the release notes. GitHub
 auto-merges it after the container smoke test, Cloud preview deploy, and all
@@ -323,24 +324,28 @@ that issue. The updater uses the existing `UPSTREAM_SYNC_TOKEN`, so GitHub runs
 the PR checks and preview as `JustYannicc`.
 
 The managed-pool image builds the pinned source commit and applies two checked-in
-patches: CLIProxyAPI#6715 adds Codex device login, and a local patch adds Claude's
-manual OAuth flow to the v8 management API. Release sync requires both patches to
-apply before preparing an update. The smoke build runs fake-auth tests for both
-flows; it does not start a real login. The account-hub installer on a self-hosted
-server still downloads the checksummed upstream binary, so these login changes
-apply to managed cloud pools only.
+patches. CLIProxyAPI#6715 adds Codex device login. The local Claude patch carries
+the approach proposed in [upstream PR #4830](https://github.com/router-for-me/CLIProxyAPI/pull/4830)
+for the [closed headless-host issue #6553](https://github.com/router-for-me/CLIProxyAPI/issues/6553).
+Release sync requires both patches to apply before preparing an update. The
+smoke build runs fake-auth tests for the device login, Claude manual flow, and
+Claude's local callback, plus v8 management API and `/v1/models` checks. It does
+not start a real login. While both patches apply, the binary's `main.Commit`
+ends in `-signalbox-6715-723`. The account-hub installer on a self-hosted server
+still downloads the checksummed upstream binary, so these login changes apply
+to managed cloud pools only.
 
-When an upstream release includes CLIProxyAPI#6715, remove only
-`apps/cloud/containers/cliproxyapi/cliproxyapi-6715.patch` and remove its
-`CodexDevice` test filter. The shared patch check and apply helper stay in place
-while any other carry patch remains. Keep the Claude manual-flow patch until
-upstream ships an equivalent or we deliberately remove that support. Remove
-each patch's test filter when removing that patch. Once no carry patches remain,
-remove the source clone and patch check from release sync, remove the
-source-commit field and updater input, remove the source-build test flag, and
-restore the managed image's checksummed no-plugin archive build. Until a patch
-applies or is deliberately removed, release sync must fail for maintainer
-review.
+When an upstream release includes CLIProxyAPI#6715, remove
+`apps/cloud/containers/cliproxyapi/cliproxyapi-6715.patch`, its Go test filter
+and assertion, and `6715` from the `main.Commit` suffix. Keep the Claude patch
+and its tests until upstream ships an equivalent or we remove that support.
+Update the suffix and smoke success text to name only the patches and checks
+that remain. The shared patch check and apply helper stay while any carry patch
+remains. Once no carry patches remain, remove the source clone and patch check
+from release sync, remove the source-commit field and updater input, remove the
+source-build test flag, and restore the managed image's checksummed no-plugin
+archive build. Until a patch applies or is deliberately removed, release sync
+must fail for maintainer review.
 
 To roll back a merged update, revert its sync commit and let the normal main
 deployment rebuild the prior pins. This restores the previous executable; it
