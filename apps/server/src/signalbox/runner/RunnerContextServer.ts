@@ -3,6 +3,7 @@ import * as NodeHttp from "node:http";
 
 import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
 import type { DriveAccess } from "@signalbox/runner-protocol/DriveProtocol";
+import type { PreviewService } from "@signalbox/runner-protocol/PreviewServices";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
@@ -44,7 +45,11 @@ import { makeDrivesView } from "./RunnerDrivesView.ts";
 import { MCP_TOOL_TIMEOUT_SEC, type RunnerMcpServers } from "./RunnerModelAccess.ts";
 import { layerThreadTools } from "./RunnerThreadTools.ts";
 import { layerScheduledTaskTools } from "./RunnerScheduledTaskTools.ts";
+import { layerPreviewServiceTools } from "./RunnerPreviewServiceTools.ts";
+import * as RunnerPreviewServiceCommands from "./RunnerPreviewServiceCommands.ts";
+import * as RunnerPreviewServices from "./RunnerPreviewServices.ts";
 import { layerStatusLineTools } from "./RunnerStatusLineTools.ts";
+import type { RunnerConnectionError } from "./RunnerSession.ts";
 
 /**
  * One Runner's context server (#141), on a loopback port of its own: the
@@ -100,6 +105,14 @@ export interface ContextServer {
 export const startContextServer = Effect.fn("startContextServer")(function* (input: {
   /** Where to mount `/drives`; null serves the tools only (a development host). */
   readonly mountPoint: string | null;
+  /** Explicit dev servers the thread wants restored on a new machine. */
+  readonly previewServices?: RunnerPreviewServices.RunnerPreviewServices["Service"];
+  /** Saves the declaration list in the thread before a tool replies. */
+  readonly persistPreviewServices?: (
+    services: ReadonlyArray<PreviewService>,
+  ) => Effect.Effect<void, RunnerConnectionError>;
+  /** Waits for the first tunnel welcome to restore saved services before exposing their tools. */
+  readonly previewServicesReady?: Effect.Effect<void, RunnerConnectionError>;
   /** The browser behind the `preview_*` tools; the machine's and the person's by default. */
   readonly browser?: BrowserBackend;
   /** The thread this machine runs, which scheduled tasks wake. */
@@ -152,12 +165,27 @@ export const startContextServer = Effect.fn("startContextServer")(function* (inp
       ),
     ),
   );
+  const previewServiceTools =
+    input.previewServices !== undefined && input.persistPreviewServices !== undefined
+      ? layerPreviewServiceTools.pipe(
+          Layer.provide(
+            RunnerPreviewServiceCommands.layer({
+              persist: input.persistPreviewServices,
+              ready: input.previewServicesReady ?? Effect.void,
+            }),
+          ),
+          Layer.provide(
+            Layer.succeed(RunnerPreviewServices.RunnerPreviewServices, input.previewServices),
+          ),
+        )
+      : Layer.empty;
   const mcp = Layer.mergeAll(
     layerContextTools(view),
     layerThreadTools(view),
     layerBranchTools(view, () => drive),
     layerAutomationTools(view),
     layerScheduledTaskTools(view, input.threadId ?? null),
+    previewServiceTools,
     layerStatusLineTools(view),
   ).pipe(
     Layer.provideMerge(
