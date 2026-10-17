@@ -30,7 +30,7 @@ import {
   turnItemEvent,
 } from "../threadEvents.ts";
 import { applyEvents } from "../threadProjection.ts";
-import { checkpointEvents, noticeEvents } from "./driveItems.ts";
+import { checkpointEvents, dependencyProgressEvents, noticeEvents } from "./driveItems.ts";
 import {
   ERROR_ITEM_BAND_POSITION,
   type Json,
@@ -266,6 +266,8 @@ function itemEvents(
       return checkpointEvents(projection, run, item, ctx);
     case "drive.notice":
       return noticeEvents(projection, run, item, ctx);
+    case "dependencies.progress":
+      return dependencyProgressEvents(projection, run, item, ctx);
     // Why the Runner stopped the turn.
     case "session.notice":
       return systemNoticeEvents(

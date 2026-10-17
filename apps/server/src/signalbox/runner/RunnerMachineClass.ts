@@ -14,7 +14,7 @@ import type { ProviderAdapterV2Event } from "@t3tools/provider-core/server/Provi
  * never a lost turn, since running out of memory moves the turn up anyway.
  */
 
-/** Tools whose every run is heavy work. */
+/** Tools whose runs can need project dependencies or more resources. */
 const HEAVY_TOOLS: ReadonlySet<string> = new Set([
   "tsc",
   "webpack",
@@ -38,16 +38,32 @@ const HEAVY_TOOLS: ReadonlySet<string> = new Set([
   "g++",
   "clang",
   "clang++",
+  // A script may load dependencies without naming them in the command.
+  "node",
+  "nodejs",
 ]);
 
 /** Tools whose run is heavy with one of these subcommands, within the next few words. */
 const HEAVY_SUBCOMMANDS: ReadonlyMap<string, ReadonlySet<string>> = new Map(
   Object.entries({
-    npm: ["install", "i", "ci", "add", "build", "test", "dev", "start", "serve", "preview"],
-    pnpm: ["install", "i", "add", "build", "test", "dev", "start", "serve", "preview"],
-    yarn: ["install", "add", "build", "test", "dev", "start", "serve", "preview"],
-    bun: ["install", "i", "add", "build", "test", "dev", "start", "preview"],
-    vp: ["install", "i", "build", "test", "dev", "check", "preview"],
+    npm: ["install", "i", "ci", "add", "exec", "build", "test", "dev", "start", "serve", "preview"],
+    pnpm: [
+      "install",
+      "i",
+      "add",
+      "exec",
+      "dlx",
+      "x",
+      "build",
+      "test",
+      "dev",
+      "start",
+      "serve",
+      "preview",
+    ],
+    yarn: ["install", "add", "exec", "dlx", "build", "test", "dev", "start", "serve", "preview"],
+    bun: ["install", "i", "add", "exec", "x", "build", "test", "dev", "start", "preview"],
+    vp: ["install", "i", "run", "exec", "build", "test", "dev", "check", "preview"],
     deno: ["install", "test", "compile", "serve"],
     vite: ["build", "dev", "serve", "preview"],
     next: ["build", "dev", "start"],
@@ -70,6 +86,7 @@ const SUBCOMMAND_REACH = 4;
 /** Words that run the command after them. */
 const WRAPPERS: ReadonlySet<string> = new Set([
   "sudo",
+  "corepack",
   "env",
   "time",
   "nohup",
@@ -77,7 +94,6 @@ const WRAPPERS: ReadonlySet<string> = new Set([
   "command",
   "nice",
   "timeout",
-  "npx",
 ]);
 
 /** Shells whose `-c` script is itself a command line. */
@@ -178,18 +194,25 @@ const heavyTool = (words: ReadonlyArray<string>): string | null => {
   }
   const tool = words[start] === undefined ? undefined : baseName(words[start]!);
   if (tool === undefined) return null;
+  const nodeModulesBin = /(?:^|\/)node_modules\/\.bin\/([^/]+)$/u.exec(words[start]!);
+  if (nodeModulesBin !== null) return nodeModulesBin[1]!;
   if (SHELLS.has(tool)) {
     const flag = words.findIndex((word, index) => index > start && /^-\w*c\w*$/.test(word));
     const script = flag === -1 ? undefined : words[flag + 1];
     return script === undefined ? null : heavyCommand(script);
   }
+  if (tool === "npx" || tool === "bunx") return heavyTool(words.slice(start + 1)) ?? tool;
   if (HEAVY_TOOLS.has(tool)) return tool;
   const subcommands = HEAVY_SUBCOMMANDS.get(tool);
+  const args = words.slice(start + 1, start + 1 + SUBCOMMAND_REACH);
   // `npm run build`: the script's name decides, as `npm build` would.
-  const found = words
-    .slice(start + 1, start + 1 + SUBCOMMAND_REACH)
-    .find((word) => subcommands?.has(word) === true);
-  return found === undefined ? null : `${tool} ${found}`;
+  const found = args.find((word) => subcommands?.has(word) === true);
+  if (found !== undefined) return `${tool} ${found}`;
+  if (!["npm", "pnpm", "yarn", "bun", "vp"].includes(tool)) return null;
+  const generic = args.find(
+    (word) => word === "run" || word === "exec" || word === "dlx" || word === "x",
+  );
+  return generic === undefined ? null : `${tool} ${generic}`;
 };
 
 /** The heavy tool `command` runs, if any: `npm build`, `cargo test`, `tsc`. */

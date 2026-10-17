@@ -5,6 +5,7 @@ import type { OnePasswordEnvironmentId } from "@t3tools/contracts/signalboxFolde
 import {
   type MachineClass,
   type ModelGatewayProvider,
+  MIN_RUNNER_PROTOCOL_VERSION,
   RUNNER_PROTOCOL_VERSION,
   type RunnerHello,
   type RunnerItem,
@@ -491,7 +492,10 @@ const make = Effect.gen(function* () {
           }),
           keep<HelloResult>({ _tag: "refused", reason, message }),
         );
-      if (hello.protocolVersion !== RUNNER_PROTOCOL_VERSION) {
+      if (
+        hello.protocolVersion < MIN_RUNNER_PROTOCOL_VERSION ||
+        hello.protocolVersion > RUNNER_PROTOCOL_VERSION
+      ) {
         return refuse(
           "protocol_version",
           `This thread speaks Runner protocol ${RUNNER_PROTOCOL_VERSION}.`,

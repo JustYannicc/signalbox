@@ -260,7 +260,7 @@ export const makeRunnerTurns = Effect.fn("makeRunnerTurns")(function* (input: {
   /** What the harness CLIs wrote to stderr, quoted in failure lines (`harnessStderr.ts`). */
   readonly stderr?: Pick<HarnessStderr, "mark" | "since">;
   readonly emit: (item: RunnerItem) => Effect.Effect<void>;
-  /** Installs or reuses the dependencies in `cwd` before each turn. */
+  /** Installs dependencies before a heavy turn; light turns move up when they need them. */
   readonly dependencies?: RunnerDependencies;
   /** Preview restoration shares the checkout preparation lock with turns. */
   readonly preparing?: Semaphore.Semaphore;
@@ -367,6 +367,15 @@ export const makeRunnerTurns = Effect.fn("makeRunnerTurns")(function* (input: {
       heldNotices = message === SAVED_AGAIN_NOTICE ? [] : [...heldNotices, message];
       return Effect.logWarning(message);
     });
+
+  /** Installs only on a machine that can keep the turn; a light machine moves up on demand. */
+  const prepareDependencies = (runId: RunId) => {
+    if (input.dependencies === undefined || input.machineClass === "light") return Effect.void;
+    return input.dependencies.prepare(
+      () => Effect.void,
+      (update) => input.emit({ kind: "dependencies.progress", runId, ...update }),
+    );
+  };
 
   const drain: RunnerTurns["drain"] = Effect.gen(function* () {
     const unsaved: Array<string> = [];
@@ -901,13 +910,8 @@ export const makeRunnerTurns = Effect.fn("makeRunnerTurns")(function* (input: {
           return true;
         }),
       );
-      // A lockfile main brought in is installed before the turn.
-      if (goOn && merged && input.dependencies !== undefined) {
-        const dependencies = input.dependencies;
-        yield* preparing.withPermits(1)(
-          dependencies.prepare((message) => input.emit({ kind: "drive.notice", runId, message })),
-        );
-      }
+      // A merged lockfile is installed on heavy; light runs move up when they use a package.
+      if (goOn && merged) yield* preparing.withPermits(1)(prepareDependencies(runId));
       return goOn;
     });
 
@@ -964,13 +968,11 @@ export const makeRunnerTurns = Effect.fn("makeRunnerTurns")(function* (input: {
                     ),
                   )
               : null;
-          if (input.dependencies !== undefined) {
-            yield* input.dependencies.prepare((message) =>
-              input.emit({ kind: "drive.notice", runId: turn.runId, message }),
-            );
-          }
+          yield* prepareDependencies(turn.runId);
           // Edits the thread made inside dependency trees, once the trees are rebuilt (#490).
-          if (opened !== null) yield* opened.restoreDependencyEdits;
+          if (opened !== null && input.machineClass !== "light") {
+            yield* opened.restoreDependencyEdits;
+          }
           // From the first turn on, changes stream into the drive as they happen (#493).
           if (opened !== null && watching !== opened) {
             watching = opened;

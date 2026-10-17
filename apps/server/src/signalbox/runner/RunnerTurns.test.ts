@@ -1,4 +1,5 @@
 import type {
+  DependencyProgress,
   MachineUsage,
   RunnerItem,
   RunnerTurn,
@@ -38,6 +39,7 @@ import { RunnerGitError } from "./RunnerGit.ts";
 import { RunnerInstructionsError } from "./RunnerInstructions.ts";
 import type { RunnerSessions } from "./RunnerSessions.ts";
 import { DriveTooLargeError } from "./RunnerDriveClient.ts";
+import type { RunnerDependencies } from "./RunnerDependencies.ts";
 import { makeRunnerTurns } from "./RunnerTurns.ts";
 
 const threadId = ThreadId.make("thread-1");
@@ -180,7 +182,155 @@ const makeFakeAdapter = Effect.gen(function* () {
   return { adapter, events, loaded, calls, started, opened };
 });
 
+const startWithDependencies = (input: {
+  readonly machineClass: "light" | "heavy";
+  readonly resume?: boolean;
+}) =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const fake = yield* makeFakeAdapter;
+      const order: Array<string> = [];
+      const emitted: Array<RunnerItem> = [];
+      const drive = {
+        prepare: () =>
+          Effect.sync(() => {
+            order.push("drive prepare");
+            return { instructions: "", notices: [] } satisfies PreparedDrive;
+          }),
+        autosave: Effect.void,
+        flush: Effect.void,
+        restoreDependencyEdits: Effect.sync(() => void order.push("restore dependency edits")),
+        saveNow: Effect.void,
+        changed: Effect.succeed(false),
+      } as unknown as RunnerDrive;
+      const dependencies: RunnerDependencies = {
+        prepare: (_notify, progress) =>
+          Effect.gen(function* () {
+            order.push("dependencies prepare");
+            if (progress !== undefined) {
+              const updates: ReadonlyArray<DependencyProgress> = [
+                {
+                  root: "",
+                  status: "installing",
+                  reason: "new",
+                  message: "Installing dependencies in this folder from package-lock.json.",
+                },
+                {
+                  root: "",
+                  status: "installed",
+                  reason: "new",
+                  durationMs: 5,
+                  message: "Dependencies in this folder are ready.",
+                },
+              ];
+              for (const update of updates) yield* progress(update);
+            }
+            return [];
+          }),
+        trees: Effect.succeed([]),
+      };
+      const adapter: ProviderAdapterV2["Service"] = {
+        ...fake.adapter,
+        openSession: (openInput) =>
+          fake.adapter.openSession(openInput).pipe(
+            Effect.map((session) => ({
+              ...session,
+              ...(input.resume === true
+                ? {
+                    resumeThread: (resumeInput) =>
+                      Effect.sync(() => void order.push("resume thread")).pipe(
+                        Effect.as(resumeInput.providerThread),
+                      ),
+                  }
+                : {}),
+            })),
+            Effect.tap(() => Effect.sync(() => void order.push("open session"))),
+          ),
+      };
+      const turns = yield* makeRunnerTurns({
+        threadId,
+        adapters: new Map([[instanceId, adapter]]),
+        cwd: "/tmp",
+        useModelToken: () => Effect.void,
+        usage: Effect.succeed(unmeasured),
+        emit: (item) => Effect.sync(() => void emitted.push(item)),
+        openDrive: () => Effect.succeed(drive),
+        dependencies,
+        machineClass: input.machineClass,
+      });
+      yield* Deferred.succeed(fake.loaded, undefined);
+      yield* turns.start({
+        turn: turnFor(
+          1,
+          input.resume === true
+            ? ({
+                ...providerThread,
+                nativeThreadRef: { nativeId: "native-1" },
+              } as typeof providerThread)
+            : providerThread,
+        ),
+        modelToken: "token-1",
+        drive: { driveId: "my/personal/user_1", token: "sbd1.x.y", remoteToken: null },
+      });
+      yield* settle;
+      return { fake, order, emitted };
+    }),
+  );
+
 describe("RunnerTurns", () => {
+  it.effect(
+    "starts on a light machine without preparing dependencies or restoring node_modules edits",
+    () =>
+      Effect.gen(function* () {
+        const { fake, order, emitted } = yield* startWithDependencies({
+          machineClass: "light",
+        });
+
+        expect(order).toEqual(["drive prepare", "open session"]);
+        expect(fake.calls).toContain("start run-1");
+        expect(emitted.some((item) => item.kind === "dependencies.progress")).toBe(false);
+      }),
+  );
+
+  it.effect(
+    "prepares dependencies and restores node_modules edits before native resume on heavy",
+    () =>
+      Effect.gen(function* () {
+        const { fake, order, emitted } = yield* startWithDependencies({
+          machineClass: "heavy",
+          resume: true,
+        });
+
+        expect(order).toEqual([
+          "drive prepare",
+          "dependencies prepare",
+          "restore dependency edits",
+          "open session",
+          "resume thread",
+        ]);
+        expect(fake.calls).toContain("start run-1");
+        expect(emitted.filter((item) => item.kind === "dependencies.progress")).toEqual([
+          {
+            kind: "dependencies.progress",
+            runId: RunId.make("run-1"),
+            root: "",
+            status: "installing",
+            reason: "new",
+            message: "Installing dependencies in this folder from package-lock.json.",
+          },
+          {
+            kind: "dependencies.progress",
+            runId: RunId.make("run-1"),
+            root: "",
+            status: "installed",
+            reason: "new",
+            durationMs: 5,
+            message: "Dependencies in this folder are ready.",
+          },
+        ]);
+      }),
+  );
+
   it.effect(
     "interrupts a stopped turn once the harness names it, even after the next one starts",
     () =>

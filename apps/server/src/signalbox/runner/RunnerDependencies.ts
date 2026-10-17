@@ -1,3 +1,4 @@
+import type { DependencyProgress } from "@signalbox/runner-protocol/RunnerProtocol";
 import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
 import * as Crypto from "effect/Crypto";
@@ -15,9 +16,8 @@ import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import type { MachineCaches } from "./RunnerCaches.ts";
 
 /**
- * Keeps every dependency tree in a thread's checkout in step with its
- * lockfile, before each turn starts (#133), so the agent finds dependencies
- * installed and never builds against stale ones.
+ * Brings a heavy turn's dependency trees in step with their lockfiles (#133).
+ * Read-only turns on light machines do not run this preparation.
  *
  * A dependency root is a directory, at most two levels into the checkout and
  * outside dot directories, symlinks and other repositories (a drive's
@@ -164,6 +164,7 @@ export interface RunnerDependencies {
   /** Brings every root in the checkout in step; `notify` hears what the user should. */
   readonly prepare: (
     notify: (message: string) => Effect.Effect<void>,
+    progress?: (update: DependencyProgress) => Effect.Effect<void>,
   ) => Effect.Effect<
     ReadonlyArray<{ readonly root: DependencyRoot; readonly outcome: DependencyOutcome }>
   >;
@@ -364,6 +365,7 @@ export const makeRunnerDependencies = Effect.fn("makeRunnerDependencies")(functi
     root: DependencyRoot,
     others: ReadonlySet<string>,
     notify: (message: string) => Effect.Effect<void>,
+    progress: (update: DependencyProgress) => Effect.Effect<void>,
   ) =>
     Effect.gen(function* () {
       const tree = path.join(root.directory, "node_modules");
@@ -387,15 +389,32 @@ export const makeRunnerDependencies = Effect.fn("makeRunnerDependencies")(functi
       const plan = planFor(hasTree, recorded, inputs, input.caches.toolchain);
       if (plan === "reuse") {
         yield* Effect.logInfo("dependencies reused", { root: root.relative });
+        yield* progress({
+          root: root.relative,
+          status: "reused",
+          message: `Dependencies in ${where(root)} are already installed.`,
+        });
         return { _tag: "reused" } as const;
       }
       if (plan === "skip") {
         yield* Effect.logInfo("dependencies failed at this key before; not retried", {
           root: root.relative,
         });
+        yield* progress({
+          root: root.relative,
+          status: "failed",
+          message: `The last automatic dependency install in ${where(root)} failed. It has not been retried.`,
+        });
         return { _tag: "skipped" } as const;
       }
       const started = yield* Clock.currentTimeMillis;
+      yield* progress({
+        root: root.relative,
+        status: "installing",
+        reason: plan,
+        message:
+          plan === "adopted" ? `Checking dependencies in ${where(root)}.` : NOTICES[plan](root),
+      });
       if (plan !== "adopted") {
         yield* notify(NOTICES[plan](root));
         for (const stale of yield* treesOf(root, others)) yield* input.caches.discard(stale);
@@ -416,6 +435,7 @@ export const makeRunnerDependencies = Effect.fn("makeRunnerDependencies")(functi
         });
         const message = `Installing dependencies in ${where(root)} failed${last === "" ? "." : `: ${last}`}`;
         yield* notify(message);
+        yield* progress({ root: root.relative, status: "failed", message, durationMs });
         return { _tag: "failed", message, durationMs } as const;
       }
       yield* record("installed");
@@ -425,23 +445,31 @@ export const makeRunnerDependencies = Effect.fn("makeRunnerDependencies")(functi
         reason: plan,
         durationMs,
       });
+      yield* progress({
+        root: root.relative,
+        status: "installed",
+        reason: plan,
+        message: `Dependencies in ${where(root)} are ready.`,
+        durationMs,
+      });
       return { _tag: "installed", reason: plan, durationMs } as const;
     });
 
-  const prepare: RunnerDependencies["prepare"] = (notify) =>
+  const prepare: RunnerDependencies["prepare"] = (notify, progress = () => Effect.void) =>
     Effect.gen(function* () {
       const roots = yield* findRoots;
       const directories = new Set(roots.map((root) => root.directory));
       const results: Array<{ root: DependencyRoot; outcome: DependencyOutcome }> = [];
       for (const root of roots) {
         const others = new Set([...directories].filter((other) => other !== root.directory));
-        const outcome = yield* prepareRoot(root, others, notify).pipe(
+        const outcome = yield* prepareRoot(root, others, notify, progress).pipe(
           Effect.catchCause(
             unlessInterrupted((cause) =>
               Effect.gen(function* () {
                 yield* Effect.logWarning("preparing dependencies failed", Cause.pretty(cause));
                 const message = `Preparing dependencies in ${where(root)} failed.`;
                 yield* notify(message);
+                yield* progress({ root: root.relative, status: "failed", message });
                 return { _tag: "failed", message, durationMs: 0 } as const;
               }),
             ),

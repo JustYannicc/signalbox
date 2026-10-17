@@ -122,6 +122,7 @@ export function startRunEvents(
   const started: Run = {
     ...run,
     status: "starting",
+    workStartedAt: run.workStartedAt ?? ctx.now,
     providerThreadId,
     rootNodeId,
     activeAttemptId: attemptId,

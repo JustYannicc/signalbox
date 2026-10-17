@@ -68,7 +68,7 @@ const outgrown = (runId: RunId) =>
   }) as const;
 
 describe("machine classes", () => {
-  it.effect("runs a thread in its context's own project light, one on a remote repo heavy", () =>
+  it.effect("starts remote repo threads light until a command needs a heavy machine", () =>
     Effect.gen(function* () {
       const light = yield* withObject(
         freshDatabase(),
@@ -81,7 +81,7 @@ describe("machine classes", () => {
         (engine, runner) => Effect.andThen(launch(engine, "launch-1", onRemote), runner.reconcile),
         options,
       );
-      expect(heavy).toMatchObject({ ensure: { generation: 1 }, machineClass: "heavy" });
+      expect(heavy).toMatchObject({ ensure: { generation: 1 }, machineClass: "light" });
     }),
   );
 

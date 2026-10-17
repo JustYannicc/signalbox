@@ -34,13 +34,29 @@ describe("heavyCommand", () => {
     expect(heavyCommand(`/bin/zsh -lc "sed -n 1,20p README.md"`)).toBeNull();
   });
 
-  it("leaves file work, arguments and heredoc bodies light", () => {
-    expect(heavyCommand("npm run lint")).toBeNull();
+  it("moves package scripts to heavy while keeping file work and shell data light", () => {
+    expect(heavyCommand("npm run lint")).toBe("npm run");
     expect(heavyCommand('echo "run npm install first" >> notes.md')).toBeNull();
+    expect(heavyCommand("printf '%s\\n' run exec dlx x")).toBeNull();
     expect(heavyCommand('git commit -m "make the build pass"')).toBeNull();
     expect(
       heavyCommand("cat > docs/setup.md <<'EOF'\nnpm install\nmake\nEOF\nwc -l docs/setup.md"),
     ).toBeNull();
     expect(heavyCommand("ls -la notes && wc -l notes/*.md")).toBeNull();
+  });
+
+  it("moves package scripts, package executors and Node commands to a heavy machine", () => {
+    expect(heavyCommand("pnpm --filter web exec eslint .")).toBe("pnpm exec");
+    expect(heavyCommand("corepack pnpm --filter web exec eslint .")).toBe("pnpm exec");
+    expect(heavyCommand("yarn workspace web run typecheck")).toBe("yarn run");
+    expect(heavyCommand("bun x vite build")).toBe("bun x");
+    expect(heavyCommand("bunx tsx scripts/check-config.ts")).toBe("bunx");
+    expect(heavyCommand("./apps/web/node_modules/.bin/eslint .")).toBe("eslint");
+    expect(heavyCommand("node scripts/check-config.js")).toBe("node");
+  });
+
+  it("does not classify package or Node commands written as shell data", () => {
+    expect(heavyCommand('echo "npm run build" && git status --short')).toBeNull();
+    expect(heavyCommand("cat <<'EOF'\nnode app.js\nnpm run build\nEOF\nls")).toBeNull();
   });
 });

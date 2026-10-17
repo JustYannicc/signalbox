@@ -4,6 +4,7 @@ import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import type { DependencyProgress } from "@signalbox/runner-protocol/RunnerProtocol";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 
@@ -69,18 +70,45 @@ const prepare = (
   Effect.gen(function* () {
     const { dependencies, caches } = yield* dependenciesOf(machine, options);
     const notices: Array<string> = [];
-    const results = yield* dependencies.prepare((message) =>
-      Effect.sync(() => {
-        notices.push(message);
-      }),
+    const progress: Array<DependencyProgress> = [];
+    const results = yield* dependencies.prepare(
+      (message) =>
+        Effect.sync(() => {
+          notices.push(message);
+        }),
+      (update) =>
+        Effect.sync(() => {
+          progress.push(update);
+        }),
     );
-    return { results, notices, caches };
+    return { results, notices, progress, caches };
   }).pipe(Effect.scoped);
 
 const run = <A, E>(effect: Effect.Effect<A, E, NodeServices.NodeServices>) =>
   effect.pipe(Effect.provide(NodeServices.layer));
 
 describe("RunnerDependencies", () => {
+  it.effect("reports setup starting, completing, reuse and failure with a relative root", () =>
+    run(
+      Effect.gen(function* () {
+        const machine = makeMachine();
+        write(machine.cwd, "app/pnpm-lock.yaml", "lockfileVersion: '9.0'\n");
+        const first = yield* prepare(machine);
+        expect(first.progress).toMatchObject([
+          { root: "app", status: "installing", reason: "new" },
+          { root: "app", status: "installed", reason: "new", durationMs: expect.any(Number) },
+        ]);
+        const warm = yield* prepare(machine);
+        expect(warm.progress).toMatchObject([{ root: "app", status: "reused" }]);
+        write(machine.cwd, "app/pnpm-lock.yaml", "FAIL\n");
+        const failed = yield* prepare(machine);
+        expect(failed.progress.map((update) => update.status)).toEqual(["installing", "failed"]);
+        const again = yield* prepare(machine);
+        expect(again.progress).toMatchObject([{ root: "app", status: "failed" }]);
+        expect(machine.installs()).toHaveLength(2);
+      }),
+    ),
+  );
   it.effect("installs a new root once, then reuses its tree and the caches built into it", () =>
     run(
       Effect.gen(function* () {
