@@ -82,7 +82,8 @@ export interface PreviewTunnel {
   readonly ended: Effect.Effect<string>;
   /** Completes after this Runner's declarations were reconciled with the first welcome. */
   readonly ready: Effect.Effect<void, RunnerConnectionError>;
-  readonly previewHosts: Effect.Effect<ReadonlyArray<string>, RunnerConnectionError>;
+  /** Null until routing is known: public URLs must stay on the machine meanwhile. */
+  readonly previewHosts: Effect.Effect<ReadonlyArray<string> | null, RunnerConnectionError>;
   /** Persists the current declarations and completes after the thread acknowledges them. */
   readonly persistServices: (
     services: ReadonlyArray<PreviewService>,
@@ -399,6 +400,7 @@ export const runPreviewTunnel = Effect.fn("runPreviewTunnel")(function* (
   }).pipe(Effect.forkScoped);
 
   const previewHosts = Effect.gen(function* () {
+    if (!(yield* Deferred.isDone(ready))) return null;
     yield* Deferred.await(ready);
     const suffix = previewHostSuffix;
     if (suffix === null) return [];

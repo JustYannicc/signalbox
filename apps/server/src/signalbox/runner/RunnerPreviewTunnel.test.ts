@@ -290,6 +290,15 @@ const devServer =
   };
 
 describe("RunnerPreviewTunnel", () => {
+  it.live("answers immediately before the tunnel's first welcome", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const { tunnel } = yield* startTunnel([5173]);
+        expect(yield* tunnel.previewHosts).toBeNull();
+      }),
+    ),
+  );
+
   it.live("identifies this thread's declared and discovered public preview hosts", () =>
     Effect.scoped(
       Effect.gen(function* () {

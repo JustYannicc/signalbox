@@ -169,9 +169,11 @@ export const makeRunnerHost = Effect.fn("makeRunnerHost")(function* (config: Run
             previewServicesReady: Deferred.await(previewServicesPublisher).pipe(
               Effect.flatMap((tunnel) => tunnel.ready),
             ),
-            previewHosts: Deferred.await(previewServicesPublisher).pipe(
-              Effect.flatMap((tunnel) => tunnel.previewHosts),
-            ),
+            previewHosts: Effect.gen(function* () {
+              if (!(yield* Deferred.isDone(previewServicesPublisher))) return null;
+              const tunnel = yield* Deferred.await(previewServicesPublisher);
+              return yield* tunnel.previewHosts;
+            }),
           });
           // What the harness environment sets itself; known once the adapters are made.
           let harnessVariables: ReadonlySet<string> = new Set();

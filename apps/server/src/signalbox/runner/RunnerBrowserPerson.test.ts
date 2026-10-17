@@ -133,6 +133,21 @@ const cookieOn = async (browser: BrowserBackend, tabId: string) =>
   /cookie: (.*)/.exec((await browser.snapshot({ tabId })).visibleText)?.[1];
 
 describe("the thread's browser with the person's", () => {
+  it("browses on the machine while preview routing is not ready", async () => {
+    const { session, calls } = sessions(ready);
+    const browser = makeRunnerBrowser(
+      { machine: await machineTabs(), person: personTabs(session) },
+      { previewHosts: async () => null },
+    );
+    try {
+      const page = await browser.open({ url: `http://site.test:${port}/before-welcome` });
+      expect(await cookieOn(browser, page.tabId!)).toBe("none");
+      expect(calls.open).toBe(0);
+    } finally {
+      await browser.close();
+    }
+  });
+
   it("never opens the person's session for the thread's public preview", async () => {
     const { session, calls } = sessions(ready);
     const browser = makeRunnerBrowser(

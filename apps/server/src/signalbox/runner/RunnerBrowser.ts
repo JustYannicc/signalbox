@@ -243,7 +243,7 @@ export const makeRunnerBrowser = (
   options: {
     readonly timer?: Timer;
     readonly guard?: PageGuard;
-    readonly previewHosts?: () => Promise<ReadonlyArray<string>>;
+    readonly previewHosts?: () => Promise<ReadonlyArray<string> | null>;
   } = {},
 ): BrowserBackend => {
   const tabs = new Map<string, Tab>();
@@ -285,7 +285,8 @@ export const makeRunnerBrowser = (
 
   const routeOf = async (url: string): Promise<BrowserRoute> => {
     if (sources.person === null || browserFor(url) === "machine") return "machine";
-    return browserFor(url, await options.previewHosts?.());
+    const previewHosts = await options.previewHosts?.();
+    return previewHosts === null ? "machine" : browserFor(url, previewHosts);
   };
   const sourceOf = (route: BrowserRoute) =>
     route === "person" && sources.person !== null ? sources.person : sources.machine;
