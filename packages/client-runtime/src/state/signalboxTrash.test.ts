@@ -3,12 +3,14 @@ import { type TrashEntry, TrashEntryId } from "@t3tools/contracts/signalboxTrash
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  serverConfigSupportsSignalboxTrash,
   trashEmptyConfirmation,
   trashEntriesShown,
   trashEntryState,
   trashEntryRestorable,
   trashEntrySummary,
   trashHasPendingWork,
+  threadDeleteConfirmationMessage,
 } from "./signalboxTrash.ts";
 
 const DAY = 24 * 60 * 60 * 1000;
@@ -35,6 +37,30 @@ const folder = (id: string, threads: number) =>
   });
 
 describe("signalboxTrash", () => {
+  it("uses the folders capability to identify cloud Trash", () => {
+    expect(serverConfigSupportsSignalboxTrash(null)).toBe(false);
+    expect(
+      serverConfigSupportsSignalboxTrash({ environment: { capabilities: { folders: true } } }),
+    ).toBe(true);
+    expect(
+      serverConfigSupportsSignalboxTrash({ environment: { capabilities: { folders: false } } }),
+    ).toBe(false);
+  });
+
+  it("uses Trash copy for cloud deletion and explains mixed bulk deletion", () => {
+    expect(
+      threadDeleteConfirmationMessage({ cloud: true, other: false, scope: "thread" }),
+    ).toBe("This thread will move to Trash and can be restored for 30 days.");
+    expect(
+      threadDeleteConfirmationMessage({ cloud: true, other: true, scope: "threads" }),
+    ).toBe(
+      "Cloud threads will move to Trash and can be restored for 30 days. Threads in other environments will be permanently deleted.",
+    );
+    expect(
+      threadDeleteConfirmationMessage({ cloud: false, other: true, scope: "thread" }),
+    ).toBe("This permanently clears conversation history for this thread.");
+  });
+
   it("shows what's still in Trash, newest first", () => {
     const shown = trashEntriesShown({
       purgeEnabled: true,

@@ -8,6 +8,10 @@ import { settlePromise, squashAtomCommandFailure } from "@t3tools/client-runtime
 import { canSnooze, threadWokeAt } from "@t3tools/client-runtime/state/thread-settled";
 import { threadRuntimeCanArchive } from "@t3tools/client-runtime/state/models";
 import {
+  serverConfigSupportsSignalboxTrash,
+  threadDeleteConfirmationMessage,
+} from "@t3tools/client-runtime/state/signalboxTrash";
+import {
   AuthOrchestrationOperateScope,
   AuthSourceControlWriteScope,
   EnvironmentAuthorizationError,
@@ -459,16 +463,16 @@ export function useThreadActions() {
         deletedIds && deletedIds.size > 0
           ? threads.filter((entry) => entry.id === threadRef.threadId || !deletedIds.has(entry.id))
           : threads;
-      const orphanedWorktreePath = getOrphanedWorktreePathForThread(
-        survivingThreads,
-        threadRef.threadId,
-      );
-      const displayWorktreePath = orphanedWorktreePath
-        ? formatWorktreePathForDisplay(orphanedWorktreePath)
-        : null;
       const environmentConfig = appAtomRegistry
         .get(environmentServerConfigsAtom)
         .get(threadRef.environmentId);
+      const usesSignalboxTrash = serverConfigSupportsSignalboxTrash(environmentConfig);
+      const orphanedWorktreePath = usesSignalboxTrash
+        ? null
+        : getOrphanedWorktreePathForThread(survivingThreads, threadRef.threadId);
+      const displayWorktreePath = orphanedWorktreePath
+        ? formatWorktreePathForDisplay(orphanedWorktreePath)
+        : null;
       const localApi = readLocalApi();
       let canDeleteWorktree = false;
       if (
@@ -507,7 +511,7 @@ export function useThreadActions() {
         shouldDeleteWorktree = confirmationResult.value;
       }
 
-      if (thread.runtime !== null) {
+      if (!usesSignalboxTrash && thread.runtime !== null) {
         await stopThreadSession({
           environmentId: threadRef.environmentId,
           input: { threadId: threadRef.threadId },
@@ -533,7 +537,7 @@ export function useThreadActions() {
         return deleteResult;
       }
       refreshArchivedThreadsForEnvironment(threadRef.environmentId);
-      releaseComposerDraftUploads(threadRef);
+      if (!usesSignalboxTrash) releaseComposerDraftUploads(threadRef);
       clearComposerDraftForThread(threadRef);
       clearProjectDraftThreadById(
         scopeProjectRef(threadRef.environmentId, thread.projectId),
@@ -949,6 +953,9 @@ export function useThreadActions() {
       if (permissionFailure) return permissionFailure;
       const localApi = readLocalApi();
       const resolved = resolveThreadTarget(target);
+      const usesSignalboxTrash = serverConfigSupportsSignalboxTrash(
+        appAtomRegistry.get(environmentServerConfigsAtom).get(target.environmentId),
+      );
 
       if (confirmThreadDelete && localApi) {
         const title = resolved?.thread.title ?? "this thread";
@@ -956,7 +963,11 @@ export function useThreadActions() {
           localApi.dialogs.confirm(
             [
               `Delete thread "${title}"?`,
-              "This permanently clears conversation history for this thread.",
+              threadDeleteConfirmationMessage({
+                cloud: usesSignalboxTrash,
+                other: !usesSignalboxTrash,
+                scope: "thread",
+              }),
             ].join("\n"),
             { variant: "destructive" },
           ),

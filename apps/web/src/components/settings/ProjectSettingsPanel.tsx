@@ -10,6 +10,10 @@ import {
   type AtomCommandResult,
 } from "@t3tools/client-runtime/state/runtime";
 import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
+import {
+  serverConfigSupportsSignalboxTrash,
+  threadDeleteConfirmationMessage,
+} from "@t3tools/client-runtime/state/signalboxTrash";
 import { AsyncResult } from "effect/reactivity";
 import { type EnvironmentId, type ProjectIconOverride } from "@t3tools/contracts";
 import { useLocation, useNavigate } from "@tanstack/react-router";
@@ -337,6 +341,16 @@ function ProjectDetail({
       const targetKind = hasOtherMembers || !isWholeGroup ? "checkout" : "project";
       const singleMember = members.length === 1 ? members[0]! : null;
       const targetLabel = singleMember?.title ?? group.displayName;
+      const threadEnvironmentIds =
+        projectThreads.length > 0
+          ? projectThreads.map((thread) => thread.environmentId)
+          : members.map((member) => member.environmentId);
+      const cloud = threadEnvironmentIds.some((id) =>
+        serverConfigSupportsSignalboxTrash(environmentById.get(id)?.serverConfig),
+      );
+      const other = threadEnvironmentIds.some(
+        (id) => !serverConfigSupportsSignalboxTrash(environmentById.get(id)?.serverConfig),
+      );
       const confirmed = await settlePromise(() =>
         api.dialogs.confirm(
           [
@@ -353,9 +367,13 @@ function ProjectDetail({
               : [`This removes ${members.length} grouped project entries.`]),
             ...(projectThreads.length > 0
               ? [
-                  "This permanently clears conversation history for those threads and any archived threads.",
+                  threadDeleteConfirmationMessage({
+                    cloud,
+                    other,
+                    scope: "threads-and-archived",
+                  }),
                 ]
-              : ["This permanently clears any archived conversation history."]),
+              : [threadDeleteConfirmationMessage({ cloud, other, scope: "archived" })]),
             isWholeGroup && !hasOtherMembers
               ? "This removes only the project entries, not the files on disk."
               : "Other entries in this grouped project are unaffected.",

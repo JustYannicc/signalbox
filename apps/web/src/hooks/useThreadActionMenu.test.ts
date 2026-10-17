@@ -27,6 +27,8 @@ const state = vi.hoisted(() => ({
       position: { x: number; y: number },
     ) => Promise<ThreadActionMenuId | null>
   >(),
+  cloudEnvironments: new Set<string>(),
+  confirmations: [] as string[],
 }));
 
 function recordEffect(action: string) {
@@ -64,7 +66,17 @@ vi.mock("../state/entities", () => ({
   }),
   useProjects: () => [{ id: "project", environmentId: "secondary" }],
 }));
-vi.mock("../state/environments", () => ({ usePrimaryEnvironmentId: () => "primary" }));
+vi.mock("../state/environments", () => ({
+  usePrimaryEnvironmentId: () => "primary",
+  useEnvironments: () => ({
+    environments: [...state.cloudEnvironments, "secondary"].map((environmentId) => ({
+      environmentId,
+      serverConfig: {
+        environment: { capabilities: { folders: state.cloudEnvironments.has(environmentId) } },
+      },
+    })),
+  }),
+}));
 vi.mock("../components/workspacePathLocation", () => ({ readWorkspacePathLocation: () => null }));
 vi.mock("../components/sidebar/folders/useFolderCopy", () => ({
   readProjectSettingsLabel: () => "Project settings",
@@ -85,7 +97,8 @@ vi.mock("../localApi", () => ({
   readLocalApi: () => ({
     contextMenu: { show: state.show, close: () => {} },
     dialogs: {
-      confirm: async () => {
+      confirm: async (message: string) => {
+        state.confirmations.push(message);
         recordEffect("confirm");
         return false;
       },
@@ -172,9 +185,23 @@ beforeEach(() => {
   state.effects = [];
   state.completed = deferred<void>();
   state.show.mockReset().mockResolvedValue(null);
+  state.cloudEnvironments = new Set();
+  state.confirmations = [];
 });
 
 describe("thread menu permissions", () => {
+  it("uses restorable Trash copy for cloud thread deletion", async () => {
+    state.granted.add("secondary");
+    state.cloudEnvironments.add("secondary");
+    state.show.mockResolvedValue("delete");
+
+    createMenu().openMenu(position);
+    await state.completed.promise;
+
+    expect(state.confirmations[0]).toContain("move to Trash");
+    expect(state.confirmations[0]).toContain("30 days");
+  });
+
   it("disables mutations for a denied secondary environment", () => {
     createMenu().openMenu(position);
     const items = state.show.mock.calls[0]![0];

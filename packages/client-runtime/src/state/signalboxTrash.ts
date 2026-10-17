@@ -5,12 +5,15 @@ import {
   type TrashSnapshot,
 } from "@t3tools/contracts/signalboxTrash";
 import type { EnvironmentId } from "@t3tools/contracts";
+import type * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import type { Atom, AtomRegistry } from "effect/reactivity";
 
 import type { EnvironmentRegistry } from "../connection/registry.ts";
+import { trashThread } from "../operations/commands.ts";
 import {
   type AtomCommandResult,
+  createAtomCommandScheduler,
   createEnvironmentRpcCommand,
   createEnvironmentRpcQueryAtomFamily,
   isAtomCommandInterrupted,
@@ -19,14 +22,66 @@ import {
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
+/** Cloud environments expose Signalbox folders, threads, and Trash together. */
+export function serverConfigSupportsSignalboxTrash(
+  config:
+    | { readonly environment: { readonly capabilities: { readonly folders?: boolean } } }
+    | null
+    | undefined,
+): boolean {
+  return config?.environment.capabilities.folders === true;
+}
+
+export type ThreadDeleteConfirmationScope =
+  | "thread"
+  | "threads"
+  | "threads-and-archived"
+  | "archived";
+
+/** Keep thread-delete warnings aligned with the destination's actual recovery path. */
+export function threadDeleteConfirmationMessage(input: {
+  readonly cloud: boolean;
+  readonly other: boolean;
+  readonly scope: ThreadDeleteConfirmationScope;
+}): string {
+  const { cloud, other, scope } = input;
+  if (cloud && other) {
+    const archived = scope === "threads-and-archived" ? " and archived threads" : "";
+    return `Cloud threads${archived} will move to Trash and can be restored for ${TRASH_RETENTION_DAYS} days. Threads in other environments will be permanently deleted.`;
+  }
+  if (cloud) {
+    switch (scope) {
+      case "thread":
+        return `This thread will move to Trash and can be restored for ${TRASH_RETENTION_DAYS} days.`;
+      case "threads":
+        return `These threads will move to Trash and can be restored for ${TRASH_RETENTION_DAYS} days.`;
+      case "threads-and-archived":
+        return `Those threads and any archived threads will move to Trash and can be restored for ${TRASH_RETENTION_DAYS} days.`;
+      case "archived":
+        return `Archived threads will move to Trash and can be restored for ${TRASH_RETENTION_DAYS} days.`;
+    }
+  }
+  switch (scope) {
+    case "thread":
+      return "This permanently clears conversation history for this thread.";
+    case "threads":
+      return "This permanently clears conversation history for these threads.";
+    case "threads-and-archived":
+      return "This permanently clears conversation history for those threads and any archived threads.";
+    case "archived":
+      return "This permanently clears any archived conversation history.";
+  }
+}
+
 /**
  * Signalbox Cloud's Trash (#474): recently deleted threads and folders, kept
  * restorable for 30 days. Every change answers the whole Trash; `list` is
  * fetched again after each one so every view of it agrees.
  */
 export function createSignalboxTrashAtoms<R, E>(
-  runtime: Atom.AtomRuntime<EnvironmentRegistry | R, E>,
+  runtime: Atom.AtomRuntime<EnvironmentRegistry | Crypto.Crypto | R, E>,
 ) {
+  const threadScheduler = createAtomCommandScheduler();
   const list = createEnvironmentRpcQueryAtomFamily(runtime, {
     label: "environment-data:signalbox-trash:list",
     tag: SIGNALBOX_TRASH_WS_METHODS.list,
@@ -55,6 +110,12 @@ export function createSignalboxTrashAtoms<R, E>(
     thread: createEnvironmentRpcCommand(runtime, {
       label: "signalbox-trash:thread",
       tag: SIGNALBOX_TRASH_WS_METHODS.thread,
+      execute: (input) => trashThread(input),
+      scheduler: threadScheduler,
+      concurrency: {
+        mode: "serial",
+        key: ({ environmentId, input }) => JSON.stringify([environmentId, input.threadId]),
+      },
       onSettled: refreshList,
     }),
     folder: createEnvironmentRpcCommand(runtime, {

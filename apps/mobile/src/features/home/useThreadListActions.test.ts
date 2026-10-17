@@ -15,13 +15,14 @@ const state = vi.hoisted(() => ({
   pendingOrder: null as object | null,
   dropBusy: false,
   scopes: new Map<string, Set<string>>(),
+  cloudEnvironments: new Set<string>(),
   shells: [] as EnvironmentThreadShell[],
   requests: [] as {
     action: string;
     environmentId: string;
     input: { threadId: string; orderKey?: string };
   }[],
-  dialogs: [] as { onConfirm: () => void }[],
+  dialogs: [] as { onConfirm: () => void; message?: string }[],
   alerts: [] as {
     title: string;
     buttons?: { text: string; onPress?: () => void }[];
@@ -46,7 +47,7 @@ vi.mock("expo-haptics", () => ({
 vi.mock("../../components/ui/Dialog", () => ({
   alert: (title: string, _message: string, buttons?: { text: string; onPress?: () => void }[]) =>
     state.alerts.push({ title, buttons }),
-  confirm: (dialog: { onConfirm: () => void }) => state.dialogs.push(dialog),
+  confirm: (dialog: { onConfirm: () => void; message?: string }) => state.dialogs.push(dialog),
 }));
 vi.mock("../archive/useArchivedThreadSnapshots", () => ({
   refreshArchivedThreadsForEnvironment: () => {},
@@ -81,6 +82,7 @@ vi.mock("../../state/atom-registry", () => ({
                         threadPinning: true,
                         threadPinReorder: true,
                         threadTitleRegeneration: true,
+                        folders: state.cloudEnvironments.has(environmentId),
                       },
                     },
                   },
@@ -174,6 +176,7 @@ beforeEach(() => {
     [primaryEnvironmentId, new Set([AuthOrchestrationOperateScope])],
     [otherEnvironmentId, new Set<string>()],
   ]);
+  state.cloudEnvironments = new Set();
   state.requests = [];
   state.shells = [];
   state.dialogs = [];
@@ -240,6 +243,16 @@ describe("thread list operation permissions", () => {
     await confirm!();
 
     expect(state.requests).toEqual([]);
+  });
+
+  it("explains that cloud deletion is restorable from Trash", () => {
+    vi.stubEnv("EXPO_OS", "android");
+    state.cloudEnvironments.add(primaryEnvironmentId);
+
+    useThreadListActions().confirmDeleteThread(makeThread());
+
+    expect(state.dialogs[0]?.message).toContain("move to Trash");
+    expect(state.dialogs[0]?.message).toContain("30 days");
   });
 
   it("unarchives with only task permission and blocks a later revoked callback", async () => {
