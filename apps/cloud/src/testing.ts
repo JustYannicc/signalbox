@@ -54,6 +54,7 @@ import { deliverPendingEvents } from "./thread/eventOutbox.ts";
 import { deliverPendingSummary } from "./thread/summaryOutbox.ts";
 import * as ThreadDirectory from "./thread/ThreadDirectory.ts";
 import * as ThreadBrowsing from "./thread/browsing/ThreadBrowsing.ts";
+import * as PreviewState from "./thread/PreviewState.ts";
 import * as ThreadEngine from "./thread/ThreadEngine.ts";
 import * as StatusNoteModel from "./thread/statusLine/StatusNoteModel.ts";
 import * as ThreadStatusNotes from "./thread/statusLine/ThreadStatusNotes.ts";
@@ -245,7 +246,7 @@ export const layerThreadObject = (
     Layer.provideMerge(options.analytics ?? CloudAnalytics.layerOff),
     Layer.provideMerge(machines),
     Layer.provideMerge(DiagnosticsStore.layer),
-    Layer.provideMerge(Layer.mergeAll(ThreadStore.layer, SessionRows.layer)),
+    Layer.provideMerge(Layer.mergeAll(ThreadStore.layer, SessionRows.layer, PreviewState.layer)),
     Layer.provideMerge(Layer.mergeAll(NodeSqliteClient.layer({ filename }), Platform.layerCrypto)),
   );
 
