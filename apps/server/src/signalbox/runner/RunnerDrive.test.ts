@@ -3,7 +3,11 @@ import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { DRIVE_COMMIT_AUTHOR, threadRemoteBranch } from "@signalbox/runner-protocol/DriveProtocol";
+import {
+  DRIVE_COMMIT_AUTHOR,
+  type CheckpointViews,
+  threadRemoteBranch,
+} from "@signalbox/runner-protocol/DriveProtocol";
 import type { ThreadPullRequestLink } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
@@ -26,6 +30,16 @@ import { makeSecretMask } from "./secretMask.ts";
 const fakeSecret = () => `sk-fake-${crypto.randomUUID()}`;
 
 describe("RunnerDrive", () => {
+  it.effect("does not capture a checkpoint before preparing the drive", () =>
+    scopedTest((root) =>
+      Effect.gen(function* () {
+        const drive = makeFakeDrive(root);
+        const { runner } = yield* machine(drive, root, "vm-1", "t1");
+        expect(yield* runner.captureCheckpoint).toBeNull();
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+    ),
+  );
+
   it.effect(
     "auto-saves the worktree to wip on an empty drive without touching HEAD or the index",
     () =>
@@ -60,19 +74,109 @@ describe("RunnerDrive", () => {
       ),
   );
 
-  it.effect("has nothing to land when a thread has never saved a file", () =>
+  it.effect("creates a revision for an empty first turn", () =>
     scopedTest((root) =>
       Effect.gen(function* () {
         const drive = makeFakeDrive(root);
         const { runner } = yield* machine(drive, root, "vm-1", "t1");
         yield* runner.prepare("remote-token");
-        expect(yield* runner.finishTurn()).toEqual({
-          checkpoint: null,
-          outcome: { _tag: "nothing_saved" },
+        const turn = yield* runner.finishTurn();
+        expect(turn.checkpoint?.files).toEqual([]);
+        expect(turn.checkpoint?.commit).not.toBeNull();
+        expect(turn.outcome._tag).toBe("landed");
+        expect(drive.refs("t1")).toMatchObject({
+          main: turn.checkpoint?.commit,
+          thread: turn.checkpoint?.commit,
         });
-        expect(drive.refs("t1")).toMatchObject({ main: null, thread: null });
       }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
     ),
+  );
+
+  it.effect(
+    "keeps every run and exact read pins in a durable notes ref, including unchanged turns",
+    () =>
+      scopedTest((root) =>
+        Effect.gen(function* () {
+          const drive = makeFakeDrive(root);
+          const first = yield* machine(drive, root, "vm-1", "t1");
+          yield* first.runner.prepare("remote-token");
+          const firstTurn = yield* first.runner.finishTurn();
+          const firstCheckpoint = firstTurn.checkpoint!;
+          const views: CheckpointViews = {
+            shortcuts: [{ path: "spec", target: "drive-spec", commit: "a".repeat(40) }],
+            context: {
+              driveId: "drive-home",
+              contexts: [
+                {
+                  contextId: "private-context",
+                  name: "Personal",
+                  drives: [
+                    {
+                      driveId: "drive-personal",
+                      path: "My Drive",
+                      commit: "b".repeat(40),
+                      time: 123,
+                      shortcuts: [],
+                    },
+                  ],
+                },
+              ],
+            },
+          };
+          yield* first.runner.recordCheckpoint({
+            threadId: "t1",
+            runId: "run-1",
+            turnId: "provider-turn-1",
+            commit: firstCheckpoint.commit,
+            start: firstCheckpoint.start,
+            views,
+          });
+
+          yield* first.runner.prepare("remote-token");
+          const secondTurn = yield* first.runner.finishTurn();
+          expect(secondTurn.checkpoint?.commit).toBe(firstCheckpoint.commit);
+          expect(secondTurn.checkpoint?.files).toEqual([]);
+          yield* first.runner.recordCheckpoint({
+            threadId: "t1",
+            runId: "run-2",
+            turnId: "provider-turn-2",
+            commit: secondTurn.checkpoint!.commit,
+            start: secondTurn.checkpoint!.start,
+            views,
+          });
+
+          const note = git(first.cwd, "notes", "show", firstCheckpoint.commit);
+          const records = note
+            .split("\n")
+            .filter(Boolean)
+            .map((line) => JSON.parse(line) as Record<string, unknown>);
+          expect(records).toEqual([
+            expect.objectContaining({
+              threadId: "t1",
+              turnId: "provider-turn-1",
+              runId: "run-1",
+              commit: firstCheckpoint.commit,
+              views: {
+                shortcuts: [{ path: "spec", target: "drive-spec", commit: "a".repeat(40) }],
+                context: [{ driveId: "drive-personal", commit: "b".repeat(40) }],
+              },
+            }),
+            expect.objectContaining({
+              threadId: "t1",
+              turnId: "provider-turn-2",
+              runId: "run-2",
+              commit: firstCheckpoint.commit,
+            }),
+          ]);
+          expect(note).not.toContain("Personal");
+          expect(note).not.toContain("My Drive");
+          expect(drive.checkpoints("t1").at(-1)?.views).toEqual(views);
+
+          const restored = yield* machine(drive, root, "vm-2", "t1");
+          yield* restored.runner.prepare("remote-token");
+          expect(git(restored.cwd, "notes", "show", firstCheckpoint.commit)).toBe(note);
+        }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+      ),
   );
 
   it.effect("restores the thread's branch and its auto-save on a brand new machine", () =>
@@ -760,6 +864,41 @@ describe("RunnerDrive", () => {
           state: "open" | "merged",
           threadId = "t1",
         ) => runner.prepare("remote-token", undefined, [], [pullRequest(threadId, state)]);
+
+        it.effect(
+          "keeps a restored checkpoint pinned while main advances and its PR is merged",
+          () =>
+            scopedTest((root) =>
+              Effect.gen(function* () {
+                const upstream = makeUpstream(root);
+                const drive = makeFakeDrive(root, { upstream: upstream.dir });
+                const { runner, cwd } = yield* machine(drive, root, "vm-1", "t1");
+                yield* runner.prepare("remote-token");
+                write(cwd, "feature.ts", "export const f = 1;\n");
+                const firstTurn = yield* runner.finishTurn();
+                const selected = firstTurn.checkpoint!.commit;
+
+                upstream.commit("feature.ts", "export const f = 1;\n", "Feature (#7)");
+                upstream.commit("main-only.ts", "export const m = 1;\n", "Other main work");
+                const latestMain = git(upstream.dir, "rev-parse", "HEAD");
+                drive.pinToCheckpoint("t1", selected, { shortcuts: [], context: null });
+
+                const prepared = yield* prepareWith(runner, "merged");
+                expect(prepared.notices).toEqual([]);
+                expect(git(cwd, "rev-parse", "HEAD")).toBe(selected);
+                expect(NodeFS.existsSync(NodePath.join(cwd, "main-only.ts"))).toBe(false);
+
+                write(cwd, "followup.ts", "export const next = 1;\n");
+                const followup = yield* runner.finishTurn();
+                expect(followup.outcome._tag).toBe("saved");
+                expect(followup.checkpoint?.start).toBe(selected);
+                expect(git(cwd, "rev-parse", "HEAD^1")).toBe(selected);
+                expect(NodeFS.existsSync(NodePath.join(cwd, "main-only.ts"))).toBe(false);
+                expect(drive.refs("t1").main).toBe(latestMain);
+                expect(drive.refs("t1").thread).toBe(followup.checkpoint?.commit);
+              }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+            ),
+        );
 
         it.effect(
           "takes in main before the next turn, so the next pull request carries only new work",
