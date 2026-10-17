@@ -233,6 +233,10 @@ function deploy(
       env: {
         ...env,
         ...telemetry,
+        CLIENT_TRACE_LIMITER: Cloudflare.Workers.RateLimit("ClientTraceLimiter", {
+          namespaceId: 866,
+          simple: { limit: 300, period: 60 },
+        }),
         ...(traceExport !== null && {
           TRACE_EXPORT: traceExport.worker,
           TRACE_EXPORT_TOKEN: traceExport.token,
