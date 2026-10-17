@@ -2008,7 +2008,7 @@
       "rpc": "orchestration.dispatchCommand",
       "command": "prepared-run.retry",
       "access": "write",
-      "input": "4bef536a",
+      "input": "ab97a76c",
       "output": "aebf4e45"
     },
     {
@@ -2243,7 +2243,7 @@
       "name": "worktreeSetup.cancel",
       "rpc": "worktreeSetup.cancel",
       "access": "write",
-      "input": "1276a316",
+      "input": "5e336207",
       "output": "178978ad"
     },
     {
@@ -2252,7 +2252,7 @@
       "access": "read",
       "stream": "snapshot",
       "input": "1276a316",
-      "output": "80548c84"
+      "output": "2b1ff2d8"
     }
   ],
   "exemptions": [

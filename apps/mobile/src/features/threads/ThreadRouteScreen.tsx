@@ -859,6 +859,7 @@ function ThreadRouteContent(
   const {
     snapshot: worktreeSetupSnapshot,
     visible: worktreeSetup,
+    awaitingSnapshot: awaitingWorktreeSetupSnapshot,
     cancelStatus: worktreeSetupCancelStatus,
     retryStatus: worktreeSetupRetryStatus,
     cancel: cancelWorktreeSetup,
@@ -872,6 +873,7 @@ function ThreadRouteContent(
       selectedThread?.worktreePath != null ||
       (selectedThreadCreation?.message.creation?.workspaceMode === "worktree" &&
         selectedThreadCreation.outcome == null),
+    run: composer.selectedThreadActivityRun,
     turnStarted: setupTurnStartedAt !== null,
     followUpSent:
       composer.selectedThreadFeed.filter(
@@ -884,8 +886,14 @@ function ThreadRouteContent(
     worktreeSetup !== null
       ? worktreeSetup.phase === "running" && !worktreeSetupAgentStarted(worktreeSetup)
       : (selectedThreadDetail?.runs.some((run) => run.status === "preparing") ?? false);
+  // Stop belongs to setup until the handoff, including before its first
+  // snapshot; a null or failed stream hands it back to the run.
+  const setupHoldsStop =
+    worktreeSetup !== null
+      ? worktreeSetup.phase === "running" && !worktreeSetupAgentStarted(worktreeSetup)
+      : awaitingWorktreeSetupSnapshot;
   const composerStop = resolveComposerStop({
-    awaitingSetup: awaitingBootstrapTurn,
+    awaitingSetup: setupHoldsStop,
     setupCancel: worktreeSetupCancelStatus,
     interruptible: composer.interruptibleRunId !== null,
   });
@@ -900,7 +908,9 @@ function ThreadRouteContent(
       return;
     localResendBusy.current = true;
     try {
-      if (!(await cancelWorktreeSetup())) return;
+      // Resend locally only once the server confirms setup stopped; an error or
+      // timeout leaves the thread with the setup that may still be running.
+      if ((await cancelWorktreeSetup()) !== "stopped") return;
       // V2 accepts the launch before setup runs, so cancellation never rejects
       // the original outbox delivery. Reuse the server-owned prompt and uploads.
       const metadata = makeTurnCommandMetadata();

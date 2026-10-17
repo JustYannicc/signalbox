@@ -789,7 +789,13 @@ const make = Effect.gen(function* () {
       const untraced = projection === null ? null : yield* turnFor(projection);
       let preparation = yield* engine.preparation;
       const previous = preparation;
-      if (projection !== null && untraced !== null && lease.status === "connected") {
+      const stoppingPrevious = preparation?.status === "cancelling";
+      if (
+        projection !== null &&
+        untraced !== null &&
+        lease.status === "connected" &&
+        !stoppingPrevious
+      ) {
         if (preparation === null || preparation.runId !== untraced.runId) {
           preparation = beginPreparation(
             projection,
@@ -809,8 +815,8 @@ const make = Effect.gen(function* () {
       }
       const eligible =
         preparation === null ||
-        preparation.status === "preparing" ||
-        preparation.status === "handoff";
+        (preparation.runId === untraced?.runId &&
+          (preparation.status === "preparing" || preparation.status === "handoff"));
       const turn =
         untraced === null || !eligible
           ? null

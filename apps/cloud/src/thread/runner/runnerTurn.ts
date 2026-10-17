@@ -125,6 +125,7 @@ export function failRunEvents(
   failure: OrchestrationV2ProviderFailure,
   ctx: DecisionContext,
   providerTurnId: ProviderTurnId | null = null,
+  options: { readonly queue?: "advance" | "hold" | "keep" } = {},
 ): ReadonlyArray<OrchestrationV2DomainEvent> {
   const errorItem: OrchestrationV2TurnItem = {
     id: TurnItemId.make(`turn-item:${run.id}:failure`),
@@ -145,6 +146,7 @@ export function failRunEvents(
     failure,
   };
   return finishRunEvents(projection, run, "failed", ctx, {
+    ...options,
     leading: [turnItemEvent(ctx, errorItem)],
   });
 }

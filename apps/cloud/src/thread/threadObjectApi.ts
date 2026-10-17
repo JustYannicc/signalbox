@@ -82,10 +82,10 @@ export const makeThreadObjectApi = (
           ),
         ),
       ),
-    cancelPreparation: async (actor, input) => {
-      const result = await reply(
+    cancelPreparation: (actor, input) =>
+      reply(
         engine.use((service) =>
-          service.cancelPreparation(actor, input).pipe(
+          service.cancelPreparation(actor, input, Effect.promise(afterChange)).pipe(
             Effect.catchTags({
               WorktreeSetupError: (error) =>
                 Effect.fail(
@@ -100,10 +100,7 @@ export const makeThreadObjectApi = (
             }),
           ),
         ),
-      );
-      await afterChange();
-      return result;
-    },
+      ),
     dispatch: async (actor, command, creation) => {
       const result = await reply(
         engine.use((service) => service.dispatch(actor, wire.command.decode(command), creation)),

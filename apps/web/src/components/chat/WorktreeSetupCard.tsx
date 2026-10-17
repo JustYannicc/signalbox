@@ -3,6 +3,7 @@ import {
   type WorktreeSetupSnapshot,
   type WorktreeSetupStage,
 } from "@t3tools/contracts";
+import { isThreadPreparation } from "@t3tools/client-runtime/worktree-setup";
 import { formatDuration } from "@t3tools/shared/orchestrationTiming";
 import {
   CheckIcon,
@@ -99,17 +100,23 @@ function ShimmerOverlay({ children }: { children: ReactNode }) {
 }
 
 function headerLabel(snapshot: WorktreeSetupSnapshot): string {
+  // Cloud prepares every thread, with or without a worktree.
+  const thread = isThreadPreparation(snapshot);
   switch (snapshot.phase) {
     case "running":
-      return "Setting up worktree…";
+      return thread ? "Preparing thread…" : "Setting up worktree…";
     case "done":
       return snapshot.stages.some((stage) => stage.status === "failed")
-        ? "Worktree ready, setup script failed"
-        : "Worktree ready";
+        ? thread
+          ? "Thread ready, setup script failed"
+          : "Worktree ready, setup script failed"
+        : thread
+          ? "Thread ready"
+          : "Worktree ready";
     case "failed":
-      return "Worktree setup failed";
+      return thread ? "Thread preparation failed" : "Worktree setup failed";
     case "cancelled":
-      return "Worktree setup cancelled";
+      return thread ? "Thread preparation cancelled" : "Worktree setup cancelled";
   }
 }
 
@@ -337,7 +344,10 @@ export function WorktreeSetupCard({
       (setupStage.status === "running" && setupStage.tail.length > 0));
 
   return (
-    <section aria-label="Worktree setup" data-worktree-setup-phase={snapshot.phase}>
+    <section
+      aria-label={isThreadPreparation(snapshot) ? "Thread preparation" : "Worktree setup"}
+      data-worktree-setup-phase={snapshot.phase}
+    >
       {showHeader ? <SetupHeaderRow snapshot={snapshot} totalElapsed={totalElapsed} /> : null}
       {collapsed ? (
         <CollapsedSummaryRow snapshot={snapshot} totalElapsed={totalElapsed} />

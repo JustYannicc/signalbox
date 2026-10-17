@@ -7,6 +7,7 @@ import * as DateTime from "effect/DateTime";
 
 import type { DecisionContext } from "../threadEvents.ts";
 import { applyEvents } from "../threadProjection.ts";
+import { failRunEvents, unknownFailure } from "../runner/runnerTurn.ts";
 import {
   changePreparation,
   preparationEvents,
@@ -78,8 +79,22 @@ export const preparationBatch = (
             : "failed",
           ctx,
         );
+        const after = applyEvents(projection, events) ?? projection;
+        const runId = preparation.runId;
+        const run = after.runs.find((candidate) => candidate.id === runId);
         events.push(
-          ...preparationEvents(applyEvents(projection, events) ?? projection, preparation, ctx),
+          ...(preparation.status === "failed" &&
+          item.kind === "preparation.failed" &&
+          run !== undefined
+            ? failRunEvents(
+                after,
+                run,
+                unknownFailure(item.message ?? "Preparing this thread failed."),
+                ctx,
+                null,
+                { queue: "hold" },
+              )
+            : preparationEvents(after, preparation, ctx)),
         );
       } else {
         if (item.kind === "turn.started") preparation = changePreparation(preparation, "done", ctx);

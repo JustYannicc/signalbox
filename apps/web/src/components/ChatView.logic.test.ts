@@ -34,11 +34,14 @@ import type { CodexArtifactTemplate } from "@t3tools/shared/codexArtifactTemplat
 import * as DateTime from "effect/DateTime";
 import * as Option from "effect/Option";
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
-import { Atom, AsyncResult } from "effect/reactivity";
+import { Atom } from "effect/reactivity";
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import { environmentThreadDetails } from "../state/threads";
 
-import { resolveWorktreeSetupActions } from "@t3tools/client-runtime/worktree-setup";
+import {
+  resolveWorktreeSetupActions,
+  runAwaitsSetup,
+} from "@t3tools/client-runtime/worktree-setup";
 import type { Thread, TurnDiffSummary } from "../types";
 import { makeThreadFixture, makeThreadProjectionFixture } from "../test-fixtures";
 import {
@@ -2085,6 +2088,31 @@ describe("worktree setup visibility", () => {
       expect(stop({ snapshot: { ...cloud, phase: "cancelled" } })).toBe("interrupt");
       expect(stop({ snapshot: null })).toBe("interrupt");
       expect(stop({ snapshot: null, canInterrupt: false })).toBeNull();
+    });
+  });
+
+  describe("setup on a device that did not send the message", () => {
+    const cloudStarting = { status: "starting", startedAt: null };
+
+    it("holds stop for a reloaded cloud thread until its first snapshot answers", () => {
+      const awaiting = runAwaitsSetup(cloudStarting, true);
+      expect(
+        resolveComposerStop({
+          setupSnapshot: null,
+          awaitingSetupSnapshot: awaiting,
+          setupCancel: null,
+          canInterrupt: true,
+        }),
+      ).toBeNull();
+      // A null answer: no setup on this run, so stop is the provider's again.
+      expect(
+        resolveComposerStop({
+          setupSnapshot: null,
+          awaitingSetupSnapshot: false,
+          setupCancel: null,
+          canInterrupt: true,
+        }),
+      ).toBe("interrupt");
     });
   });
 

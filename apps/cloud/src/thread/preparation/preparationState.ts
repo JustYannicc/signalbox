@@ -85,7 +85,12 @@ export const changePreparation = (
       turnStarted: state.snapshot.turnStarted === true || status === "handoff" || status === "done",
       cancellationRequested: status === "cancelling",
       endedAt: terminal ? DateTime.formatIso(ctx.now) : null,
-      error: status === "failed" ? "Preparing this thread failed. You can try again." : null,
+      error:
+        status !== "failed"
+          ? null
+          : state.snapshot.turnStarted === true
+            ? "The agent failed to start. Check the thread for details."
+            : "Preparing this thread failed. Check the thread for details.",
       sequence: state.snapshot.sequence + 1,
       stages: state.snapshot.stages.map((stage) => ({
         ...stage,
@@ -103,6 +108,36 @@ export const changePreparation = (
       })),
     },
   };
+};
+
+/** Run endings must stop the checkout before another preparation can replace it. */
+export const settleStoppedPreparation = (
+  state: PreparationState,
+  projection: OrchestrationV2ThreadProjection,
+  lease: {
+    readonly generation: number;
+    readonly status: "none" | "requested" | "connected";
+    readonly preparations?: boolean | undefined;
+  },
+  ctx: DecisionContext,
+): PreparationState => {
+  if (state.status !== "preparing" && state.status !== "cancelling" && state.status !== "handoff")
+    return state;
+  const run = projection.runs.find((candidate) => candidate.id === state.runId);
+  if (run !== undefined && isLiveRun(run)) return state;
+  if (state.status === "handoff")
+    return changePreparation(state, run?.status === "failed" ? "failed" : "done", ctx);
+  const stopped =
+    state.machineGeneration === 0 ||
+    lease.status === "none" ||
+    lease.generation !== state.machineGeneration;
+  if (stopped)
+    return changePreparation(
+      state,
+      state.status === "preparing" && run?.status === "failed" ? "failed" : "cancelled",
+      ctx,
+    );
+  return state.status === "cancelling" ? state : changePreparation(state, "cancelling", ctx);
 };
 
 /** Only the current attempt may report before handoff. No runner text reaches the snapshot. */

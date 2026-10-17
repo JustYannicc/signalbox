@@ -1842,7 +1842,8 @@ export function deriveMessagesTimelineRows(input: {
       snapshot: input.worktreeSetup,
       embedded: setupHandedOff,
     } as const;
-    const firstUserRowIndex = nextRows.findIndex(
+    // The setup belongs to the latest message: a cloud thread prepares every run.
+    const setupUserRowIndex = nextRows.findLastIndex(
       (row) => row.kind === "message" && row.message.role === "user",
     );
     const workingRowIndex = setupOwnsWorkingSlot
@@ -1851,7 +1852,7 @@ export function deriveMessagesTimelineRows(input: {
     if (workingRowIndex >= 0) {
       nextRows.splice(workingRowIndex + 1, 0, setupRow);
     } else {
-      const insertAt = firstUserRowIndex >= 0 ? firstUserRowIndex + 1 : nextRows.length;
+      const insertAt = setupUserRowIndex >= 0 ? setupUserRowIndex + 1 : nextRows.length;
       nextRows.splice(
         insertAt,
         0,

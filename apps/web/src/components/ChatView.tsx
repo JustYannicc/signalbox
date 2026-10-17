@@ -7931,8 +7931,10 @@ export default function ChatView(props: ChatViewProps) {
     if (!worktreeSetup || worktreeSetup.phase !== "running" || !draftId) {
       return;
     }
-    void cancelWorktreeSetup().then((cancelled) => {
-      if (cancelled) setWorkLocallyResendDraftId(draftId);
+    // Resend locally only once the server confirms setup stopped; an error or
+    // timeout leaves the draft with the setup that may still be running.
+    void cancelWorktreeSetup().then((outcome) => {
+      if (outcome === "stopped") setWorkLocallyResendDraftId(draftId);
     });
   };
   const onWorktreeSetupWorkLocallyStable = useStableCallback(onWorktreeSetupWorkLocally);

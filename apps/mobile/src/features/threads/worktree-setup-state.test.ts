@@ -1,5 +1,8 @@
 import { RunId, ThreadId, type WorktreeSetupSnapshot } from "@t3tools/contracts";
-import { resolveVisibleWorktreeSetup } from "@t3tools/client-runtime/worktree-setup";
+import {
+  resolveVisibleWorktreeSetup,
+  runAwaitsSetup,
+} from "@t3tools/client-runtime/worktree-setup";
 import { describe, expect, it } from "vite-plus/test";
 import { resolveComposerStop, resolveWorktreeSetupSnapshot } from "./worktree-setup-state";
 
@@ -118,6 +121,19 @@ describe("mobile composer stop during setup", () => {
     ).toBe("interrupt");
     expect(
       resolveComposerStop({ awaitingSetup: false, setupCancel: null, interruptible: false }),
+    ).toBeNull();
+  });
+});
+
+describe("mobile setup on a device that did not send the message", () => {
+  it("recognises cloud setup from the run, so stop waits for the first snapshot", () => {
+    const run = { status: "starting", startedAt: null };
+    expect(
+      resolveComposerStop({
+        awaitingSetup: runAwaitsSetup(run, true),
+        setupCancel: null,
+        interruptible: true,
+      }),
     ).toBeNull();
   });
 });

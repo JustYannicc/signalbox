@@ -1,9 +1,21 @@
-import { RunId, ThreadId, type WorktreeSetupSnapshot } from "@t3tools/contracts";
+import {
+  RunId,
+  ThreadId,
+  WorktreeSetupError,
+  type WorktreeSetupSnapshot,
+} from "@t3tools/contracts";
+import * as Cause from "effect/Cause";
+import { AsyncResult } from "effect/reactivity";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  grantedWorktreeSetupActions,
+  isThreadPreparation,
+  pendingWorktreeSetupAction,
   resolveVisibleWorktreeSetup,
   resolveWorktreeSetupActions,
+  runAwaitsSetup,
+  worktreeSetupCancelOutcome,
   worktreeSetupAttemptKey,
   worktreeSetupAgentStarted,
   worktreeSetupCancelInput,
@@ -201,5 +213,70 @@ describe("worktree preparation pending state", () => {
       resolveWorktreeSetupActions({ ...legacy, startedAt: "2026-10-17T13:00:00.000Z" }, pending)
         .cancel,
     ).toBe("available");
+  });
+});
+
+describe("setup on a device that did not send the message", () => {
+  it("tells a cloud thread's preparation from a self-hosted worktree setup", () => {
+    const { runId: _runId, preparationGeneration: _generation, ...legacy } = snapshot;
+    expect(isThreadPreparation(snapshot)).toBe(true);
+    expect(isThreadPreparation(legacy)).toBe(false);
+  });
+
+  it("recognises cloud setup from the run alone, and not self-hosted starting runs", () => {
+    const cloudStarting = { status: "starting", startedAt: null };
+    expect(runAwaitsSetup(cloudStarting, true)).toBe(true);
+    expect(runAwaitsSetup(cloudStarting, false)).toBe(false);
+    expect(runAwaitsSetup({ status: "starting", startedAt: snapshot.startedAt }, true)).toBe(false);
+    expect(runAwaitsSetup({ status: "preparing", startedAt: null }, false)).toBe(true);
+    expect(runAwaitsSetup(null, true)).toBe(false);
+  });
+
+  it("hides controls the viewer has no grant for, keeping someone else's stop visible", () => {
+    const failed = resolveWorktreeSetupActions({ ...snapshot, phase: "failed" }, null);
+    expect(grantedWorktreeSetupActions(failed, { cancel: true, retry: false })).toEqual({
+      cancel: null,
+      retry: null,
+    });
+    expect(grantedWorktreeSetupActions(failed, { cancel: false, retry: true })).toEqual({
+      cancel: null,
+      retry: "available",
+    });
+    expect(
+      grantedWorktreeSetupActions(
+        { cancel: "pending", retry: null },
+        { cancel: false, retry: false },
+      ),
+    ).toEqual({ cancel: "pending", retry: null });
+  });
+});
+
+describe("cancel outcome", () => {
+  it("counts only a confirmed stop as stopped, so Work locally never resends early", () => {
+    expect(worktreeSetupCancelOutcome(AsyncResult.success({ cancelled: true }))).toBe("stopped");
+    expect(worktreeSetupCancelOutcome(AsyncResult.success({ cancelled: false }))).toBe(
+      "not-stopped",
+    );
+    // The server's bounded wait timing out, or a refusal, is a typed error.
+    expect(
+      worktreeSetupCancelOutcome(
+        AsyncResult.failure(Cause.fail(new WorktreeSetupError({ message: "Still stopping" }))),
+      ),
+    ).toBe("not-stopped");
+    expect(worktreeSetupCancelOutcome(AsyncResult.failure(Cause.die(new Error("socket"))))).toBe(
+      "unknown",
+    );
+    expect(worktreeSetupCancelOutcome(AsyncResult.failure(Cause.interrupt()))).toBe("unknown");
+  });
+
+  it("keeps a sent request pending until a snapshot after its response says otherwise", () => {
+    const action = { kind: "cancel", attempt: "attempt-1" } as const;
+    const sent = { action, sentWith: snapshot, settled: false };
+    expect(pendingWorktreeSetupAction(sent, snapshot)).toBe(action);
+    const settled = { ...sent, settled: true };
+    expect(pendingWorktreeSetupAction(settled, snapshot)).toBe(action);
+    // A progress update, the terminal state or a reconnect's replay is a new snapshot.
+    expect(pendingWorktreeSetupAction(settled, { ...snapshot })).toBeNull();
+    expect(pendingWorktreeSetupAction(null, snapshot)).toBeNull();
   });
 });

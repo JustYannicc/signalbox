@@ -240,6 +240,7 @@ import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
 import { Spinner } from "../ui/spinner";
 import { Tooltip, TooltipPopup, TooltipTrigger, TooltipScrollDismissArea } from "../ui/tooltip";
 import { WorktreeSetupCard } from "./WorktreeSetupCard";
+import { isThreadPreparation } from "@t3tools/client-runtime/worktree-setup";
 import type { WorktreeSetupActions } from "./useWorktreeSetup";
 import {
   ContextChipPopover as UserMessageContextPopover,
@@ -360,6 +361,8 @@ interface TimelineRowActivityState {
   activeTurnInProgress: boolean;
   awaitingUser: boolean;
   isPreparingWorktree: boolean;
+  // Cloud prepares every thread, with or without a worktree.
+  preparingThread: boolean;
   latestRunId: RunId | null;
   backgroundWorktreeSetup: WorktreeSetupSnapshot | null;
 }
@@ -1367,6 +1370,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
     latestRun?.startedAt != null
       ? worktreeSetup
       : null;
+  const preparingThread = worktreeSetup !== null && isThreadPreparation(worktreeSetup);
   const activityState = useMemo<TimelineRowActivityState>(
     () => ({
       isWorking,
@@ -1376,6 +1380,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
       activeTurnInProgress,
       awaitingUser,
       isPreparingWorktree,
+      preparingThread,
       latestRunId: latestRun?.runId ?? null,
     }),
     [
@@ -1384,6 +1389,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
       backgroundWorktreeSetup,
       activeTurnInProgress,
       isPreparingWorktree,
+      preparingThread,
       isRevertingCheckpoint,
       isWorking,
       latestRun?.runId,
@@ -3708,12 +3714,16 @@ function toolIconAcceptsTint(toolIcon: ToolActivityIcon | undefined): boolean {
 }
 
 function WorkingTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "working" }> }) {
-  const { isCompacting, isPreparingWorktree, backgroundWorktreeSetup } =
+  const { isCompacting, isPreparingWorktree, preparingThread, backgroundWorktreeSetup } =
     use(TimelineRowActivityCtx);
   const isSettingUpMachine = use(SettingUpMachineContext); // signalbox
   const shimmer = isPreparingWorktree || isSettingUpMachine || isCompacting;
   const label = isPreparingWorktree ? (
-    "Setting up worktree…"
+    preparingThread ? (
+      "Preparing thread…"
+    ) : (
+      "Setting up worktree…"
+    )
   ) : isSettingUpMachine ? (
     "Setting up the machine…"
   ) : isCompacting ? (

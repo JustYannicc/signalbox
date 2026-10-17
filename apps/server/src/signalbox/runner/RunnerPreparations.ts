@@ -24,6 +24,35 @@ export const makeRunnerPreparations = <T extends RunnerPreparationState>(input: 
   const cancelled = new Map<RunId, number>();
   const handedOff = new Map<RunId, number>();
 
+  const launch = (state: T, run: Effect.Effect<void>) =>
+    Effect.gen(function* () {
+      if (state.status === "stopped") return;
+      // The child cannot touch the checkout before cancellation can join its fiber.
+      const registered = yield* Deferred.make<void>();
+      state.preparationFiber = yield* Deferred.await(registered).pipe(
+        Effect.andThen(Effect.suspend(() => (state.status === "stopped" ? Effect.void : run))),
+        Effect.forkIn(input.scope),
+      );
+      yield* Deferred.succeed(registered, undefined);
+    });
+
+  const stop = (state: T) => {
+    state.status = "stopped";
+    return Effect.gen(function* () {
+      if (state.preparationFiber !== null) yield* Fiber.interrupt(state.preparationFiber);
+      input.forget(state.turn.runId, state);
+      const generation = state.turn.preparationGeneration;
+      if (generation !== undefined) {
+        cancelled.set(state.turn.runId, generation);
+        yield* input.emit({
+          kind: "preparation.cancelled",
+          runId: state.turn.runId,
+          preparationGeneration: generation,
+        });
+      }
+    }).pipe(Effect.forkIn(input.scope), Effect.asVoid);
+  };
+
   const take = (turn: RunnerTurn) => {
     const previous = generations.get(turn.runId);
     if (
@@ -74,19 +103,16 @@ export const makeRunnerPreparations = <T extends RunnerPreparationState>(input: 
         state.handedOff
       )
         return Effect.void;
-      state.status = "stopped";
-      return Effect.gen(function* () {
-        if (state.preparationFiber !== null) yield* Fiber.interrupt(state.preparationFiber);
-        cancelled.set(runId, generation);
-        input.forget(runId, state);
-        yield* report;
-      }).pipe(Effect.forkIn(input.scope), Effect.asVoid);
+      return stop(state);
     });
 
   return {
     take,
+    launch,
     handoff,
     cancel,
+    interrupt: (state: T) => stop(state),
+    isCurrent: (runId: RunId, generation: number) => generations.get(runId) === generation,
     taken: Effect.sync(() =>
       [...generations].map(([runId, preparationGeneration]) => ({ runId, preparationGeneration })),
     ),

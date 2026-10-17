@@ -19,6 +19,7 @@ import {
   turnReport,
   withObject,
 } from "./runnerTesting.ts";
+import { requestCancellation } from "./preparationTesting.ts";
 import type * as ThreadEngine from "./ThreadEngine.ts";
 import * as ThreadStore from "./ThreadStore.ts";
 import type * as ThreadRunner from "./runner/ThreadRunner.ts";
@@ -80,7 +81,7 @@ describe("durable thread preparation", () => {
                 .cancelPreparation(owner, { ...target, preparationGeneration: 99 })
                 .pipe(Effect.flip),
             ).toMatchObject({ _tag: "WorktreeSetupError" });
-            yield* engine.cancelPreparation(owner, target);
+            const cancelled = yield* requestCancellation(engine, target);
             const cancelling = yield* snapshot(engine);
             expect(cancelling).toMatchObject({
               phase: "running",
@@ -103,6 +104,7 @@ describe("durable thread preparation", () => {
             expect(yield* snapshot(engine)).toEqual(cancelling);
             expect((yield* engine.snapshot(owner)).projection.runs[0]?.status).toBe("starting");
             yield* batch({ kind: "preparation.cancelled", ...target });
+            expect(yield* Fiber.join(cancelled)).toEqual({ cancelled: true });
             expect(yield* snapshot(engine)).toMatchObject({
               phase: "cancelled",
               cancellationRequested: false,
@@ -223,7 +225,9 @@ describe("durable thread preparation", () => {
             const failed = yield* snapshot(engine);
             expect(failed.worktreePath).toBeNull();
             expect(failed.setupScript).toBeNull();
-            expect(failed.error).toBe("Preparing this thread failed. You can try again.");
+            expect(failed.error).toBe(
+              "Preparing this thread failed. Check the thread for details.",
+            );
             return { failed, target };
           }),
         );
@@ -268,8 +272,9 @@ describe("durable thread preparation", () => {
       withObject(freshDatabase(), (engine, runner) =>
         Effect.gen(function* () {
           const { target, generation } = yield* preparing(engine, runner);
-          yield* engine.cancelPreparation(owner, target);
+          const stopped = yield* requestCancellation(engine, target);
           yield* runner.ended(generation, "gone");
+          expect(yield* Fiber.join(stopped)).toEqual({ cancelled: true });
           const cancelled = yield* snapshot(engine);
           expect(cancelled.phase).toBe("cancelled");
           expect((yield* engine.snapshot(owner)).projection.runs).toHaveLength(1);
@@ -290,12 +295,13 @@ describe("durable thread preparation", () => {
       withObject(freshDatabase(), (engine, runner) =>
         Effect.gen(function* () {
           const { target, generation } = yield* preparing(engine, runner);
-          yield* engine.cancelPreparation(owner, target);
+          const stopped = yield* requestCancellation(engine, target);
           yield* runner.batch({
             generation,
             sequence: 1,
             items: [{ kind: "preparation.failed", ...target }],
           });
+          expect(yield* Fiber.join(stopped)).toEqual({ cancelled: true });
           expect(yield* snapshot(engine)).toMatchObject({
             phase: "cancelled",
             cancellationRequested: false,

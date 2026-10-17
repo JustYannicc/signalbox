@@ -199,7 +199,7 @@ export const makeRunnerSession = Effect.fn("makeRunnerSession")(function* (
       case "preparation.handoff":
         return turns.handoffPreparation(message.runId, message.preparationGeneration);
       case "interrupt":
-        return turns.interrupt(message.runId);
+        return turns.interrupt(message.runId, message.preparationGeneration);
       case "steer":
         return turns.steer(message.runId, message.message);
       case "drain":

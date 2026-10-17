@@ -207,6 +207,7 @@ export const RunnerItem = Schema.Union([
     kind: Schema.Literal("preparation.failed"),
     runId: RunId,
     preparationGeneration: PositiveInt,
+    message: Schema.optional(Schema.String.check(Schema.isMaxLength(4096))),
   }),
   /** The harness has the turn: its session and provider thread as loaded. */
   Schema.Struct({
@@ -404,7 +405,11 @@ export const ThreadMessage = Schema.Union([
     runId: RunId,
     preparationGeneration: PositiveInt,
   }),
-  Schema.Struct({ type: Schema.Literal("interrupt"), runId: RunId }),
+  Schema.Struct({
+    type: Schema.Literal("interrupt"),
+    runId: RunId,
+    preparationGeneration: Schema.optional(PositiveInt),
+  }),
   /**
    * A message the person sent into `runId` while it runs (#562). Sent again on
    * each reconnect while the run is live; the Runner takes each message once.

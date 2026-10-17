@@ -2342,6 +2342,81 @@ const preparationDrive = (prepare: RunnerDrive["prepare"]): RunnerDrive => ({
 });
 
 describe("addressed runner preparation", () => {
+  it.effect.each([1, 99])(
+    "guards interrupt generation %s while a completed run's files are landing",
+    (generation) =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const fake = yield* makeFakeAdapter;
+          const ready = yield* Deferred.make<void>();
+          const landing = yield* Deferred.make<void>();
+          const release = yield* Deferred.make<void>();
+          const resolved = yield* Deferred.make<boolean>();
+          const session = yield* fake.adapter.openSession({} as never);
+          const start = session.startTurn;
+          let starts = 0;
+          Object.assign(session, {
+            startTurn: (input: Parameters<typeof start>[0]) =>
+              start(input).pipe(
+                Effect.tap(() => (++starts > 1 ? Deferred.succeed(resolved, false) : Effect.void)),
+              ),
+          });
+          const drive: RunnerDrive = {
+            ...preparationDrive(() => Effect.succeed({ instructions: "", notices: [] })),
+            finishTurn: () =>
+              Effect.gen(function* () {
+                yield* Deferred.succeed(landing, undefined);
+                yield* Deferred.await(release);
+                return { checkpoint: null, outcome: { _tag: "conflict", files: ["notes.md"] } };
+              }),
+            abandonMerge: Deferred.succeed(resolved, true).pipe(
+              Effect.as({ _tag: "not_landed", reason: "stopped" }),
+            ),
+          };
+          const turns = yield* makeRunnerTurns({
+            threadId,
+            cwd: "/tmp",
+            adapters: new Map([[instanceId, fake.adapter]]),
+            useModelToken: () => Effect.void,
+            usage: Effect.succeed(unmeasured),
+            openDrive: () => Effect.succeed(drive),
+            emit: (item) =>
+              item.kind === "preparation.ready"
+                ? Effect.asVoid(Deferred.succeed(ready, undefined))
+                : Effect.void,
+          });
+          yield* Deferred.succeed(fake.loaded, undefined);
+          yield* turns.start({
+            turn: {
+              ...turnFor(1),
+              preparationGeneration: 1,
+              runOrdinal: 1,
+              providerTurnOrdinal: 1,
+              message: {
+                messageId: MessageId.make("finish-v7"),
+                text: "Write notes",
+                attachments: [],
+                createdBy: "user",
+                creationSource: "web",
+              },
+            },
+            modelToken: "token",
+            drive: { driveId: "saved-drive", token: "drive-token", remoteToken: null },
+          });
+          yield* Deferred.await(ready);
+          yield* turns.handoffPreparation(RunId.make("run-1"), 1);
+          yield* Deferred.await(fake.firstStarted);
+          yield* Queue.offer(fake.events, providerTurnStarted(1));
+          yield* Queue.offer(fake.events, turnEnded(1));
+          yield* Deferred.await(landing);
+          yield* turns.interrupt(RunId.make("run-1"), generation);
+          yield* Deferred.succeed(release, undefined);
+          expect(yield* Deferred.await(resolved)).toBe(generation === 1);
+          expect(starts).toBe(generation === 1 ? 1 : 2);
+        }),
+      ),
+  );
+
   it.effect(
     "waits for an in-flight checkout to stop, drops its late progress, and starts a new attempt once",
     () =>
@@ -2447,7 +2522,7 @@ describe("addressed runner preparation", () => {
               return attempts === 1
                 ? Effect.fail(
                     new RunnerGitError({
-                      message: "stderr in /arbitrary/host/path with private data",
+                      message: "git checkout failed (128): token=top-secret /arbitrary/host/path",
                     }),
                   )
                 : Effect.succeed({ instructions: "", notices: [] });
@@ -2475,14 +2550,15 @@ describe("addressed runner preparation", () => {
             });
           yield* start(1);
           yield* Deferred.await(failed);
-          expect(emitted.find((item) => item.kind === "preparation.failed")).toEqual({
+          expect(emitted.find((item) => item.kind === "preparation.failed")).toMatchObject({
             kind: "preparation.failed",
             runId: RunId.make("run-1"),
             preparationGeneration: 1,
+            message: expect.stringContaining("git checkout failed (128)"),
           });
           expect(emitted.some((item) => item.kind === "turn.failed")).toBe(false);
           expect(JSON.stringify(emitted)).not.toContain("/arbitrary/host/path");
-          expect(JSON.stringify(emitted)).not.toContain("stderr");
+          expect(JSON.stringify(emitted)).not.toContain("top-secret");
           yield* turns.cancelPreparation(RunId.make("run-1"), 1);
           expect(
             emitted.some(
@@ -2533,6 +2609,109 @@ describe("addressed runner preparation", () => {
           yield* turns.handoffPreparation(RunId.make("run-1"), 2);
           yield* Deferred.await(fake.firstStarted);
           expect(fake.calls).toEqual(["start run-1"]);
+        }),
+      ),
+  );
+  it.effect.each([false, true])(
+    "interrupts v7 loading before turn.started, handoff granted=%s, and permits a newer attempt",
+    (afterHandoff) =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const fake = yield* makeFakeAdapter;
+          const ready = yield* Queue.unbounded<number>();
+          const stopped = yield* Deferred.make<void>();
+          const opening = yield* Deferred.make<void>();
+          const turns = yield* makeRunnerTurns({
+            threadId,
+            cwd: "/tmp",
+            useModelToken: () => Effect.void,
+            usage: Effect.succeed(unmeasured),
+            adapters: new Map([
+              [
+                instanceId,
+                {
+                  ...fake.adapter,
+                  openSession: (input) =>
+                    fake.adapter
+                      .openSession(input)
+                      .pipe(Effect.tap(() => Deferred.succeed(opening, undefined))),
+                },
+              ],
+            ]),
+            emit: (item) =>
+              item.kind === "preparation.ready"
+                ? Effect.asVoid(Queue.offer(ready, item.preparationGeneration))
+                : item.kind === "preparation.cancelled"
+                  ? Effect.asVoid(Deferred.succeed(stopped, undefined))
+                  : Effect.void,
+          });
+          const start = (preparationGeneration: number) =>
+            turns.start({ turn: { ...turnFor(1), preparationGeneration }, modelToken: "token" });
+          yield* start(1);
+          expect(yield* Queue.take(ready)).toBe(1);
+          if (afterHandoff) {
+            yield* turns.handoffPreparation(RunId.make("run-1"), 1);
+            yield* Deferred.await(opening);
+          }
+          yield* turns.interrupt(RunId.make("run-1"), 99);
+          expect(yield* Deferred.isDone(stopped)).toBe(false);
+          yield* turns.interrupt(RunId.make("run-1"), 1);
+          yield* Deferred.await(stopped);
+          yield* turns.handoffPreparation(RunId.make("run-1"), 1);
+          expect(fake.calls).toEqual([]);
+          yield* Deferred.succeed(fake.loaded, undefined);
+          yield* start(2);
+          expect(yield* Queue.take(ready)).toBe(2);
+          yield* turns.interrupt(RunId.make("run-1"), 1);
+          yield* turns.handoffPreparation(RunId.make("run-1"), 2);
+          yield* Deferred.await(fake.firstStarted);
+          expect(fake.calls).toEqual(["start run-1"]);
+        }),
+      ),
+  );
+
+  it.effect(
+    "reports the actionable oversized-instructions cause over protocol 7 and in the masked thread trace",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const fake = yield* makeFakeAdapter;
+          const failed = yield* Deferred.make<void>();
+          const emitted: Array<RunnerItem> = [];
+          const message =
+            "This thread's instructions come to 80.0 KiB, over the 64.0 KiB agents can load: code/AGENTS.md 80.0 KiB. Shorten a folder's instructions or remove a shortcut, then send the message again.";
+          const turns = yield* makeRunnerTurns({
+            threadId,
+            cwd: "/tmp",
+            adapters: new Map([[instanceId, fake.adapter]]),
+            useModelToken: () => Effect.void,
+            usage: Effect.succeed(unmeasured),
+            openDrive: () =>
+              Effect.succeed(
+                preparationDrive(() => Effect.fail(new RunnerInstructionsError({ message }))),
+              ),
+            emit: (item) =>
+              Effect.gen(function* () {
+                emitted.push(item);
+                if (item.kind === "preparation.failed") yield* Deferred.succeed(failed, undefined);
+              }),
+          });
+          yield* turns.start({
+            turn: { ...turnFor(1), preparationGeneration: 1 },
+            modelToken: "token",
+            drive: { driveId: "saved-drive", token: "drive-token", remoteToken: null },
+          });
+          yield* Deferred.await(failed);
+          expect(emitted.find((item) => item.kind === "preparation.failed")).toEqual({
+            kind: "preparation.failed",
+            runId: RunId.make("run-1"),
+            preparationGeneration: 1,
+            message,
+          });
+          expect(emitted.find((item) => item.kind === "log")).toMatchObject({
+            message: expect.stringContaining(message),
+          });
+          expect(fake.calls).toEqual([]);
         }),
       ),
   );

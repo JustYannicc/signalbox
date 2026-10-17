@@ -4,6 +4,7 @@ import {
   type WorktreeSetupStage,
 } from "@t3tools/contracts";
 import {
+  isThreadPreparation,
   worktreeSetupAgentStarted,
   type WorktreeSetupActionStatus,
 } from "@t3tools/client-runtime/worktree-setup";
@@ -55,6 +56,8 @@ export function WorktreeSetupCard(props: WorktreeSetupCardProps) {
   const now = useVisibleSecondClock(running || working);
   const failed =
     snapshot.phase === "failed" || snapshot.stages.some((stage) => stage.status === "failed");
+  // Cloud prepares every thread, with or without a worktree.
+  const thread = isThreadPreparation(snapshot);
   const label =
     handedOff && working
       ? `Working for ${elapsed(turnStartedAt, null, now) ?? "0s"}`
@@ -63,17 +66,26 @@ export function WorktreeSetupCard(props: WorktreeSetupCardProps) {
           ? "Setup continues…"
           : props.cancel === "pending"
             ? "Cancelling setup…"
-            : "Setting up worktree…"
+            : thread
+              ? "Preparing thread…"
+              : "Setting up worktree…"
         : snapshot.phase === "cancelled"
-          ? "Worktree setup cancelled"
+          ? thread
+            ? "Thread preparation cancelled"
+            : "Worktree setup cancelled"
           : snapshot.phase === "failed"
-            ? "Worktree setup failed"
+            ? thread
+              ? "Thread preparation failed"
+              : "Worktree setup failed"
             : failed
               ? "Setup script failed"
-              : "Worktree ready";
+              : thread
+                ? "Thread ready"
+                : "Worktree ready";
+  const subject = thread ? "thread preparation" : "worktree setup";
 
   return (
-    <View accessibilityLabel="Worktree setup" className="py-1">
+    <View accessibilityLabel={thread ? "Thread preparation" : "Worktree setup"} className="py-1">
       <View className="min-h-11 flex-row items-center gap-2 border-b border-border px-1">
         <HeaderLabel
           label={label}
@@ -91,7 +103,7 @@ export function WorktreeSetupCard(props: WorktreeSetupCardProps) {
         {retry ? (
           <Pressable
             accessibilityRole="button"
-            accessibilityLabel="Retry worktree setup"
+            accessibilityLabel={`Retry ${subject}`}
             accessibilityState={{ disabled: retry === "pending", busy: retry === "pending" }}
             disabled={retry === "pending"}
             onPress={onRetry}
@@ -109,7 +121,7 @@ export function WorktreeSetupCard(props: WorktreeSetupCardProps) {
           accessibilityLabel={
             backgroundSetup
               ? `${scriptName} is still running. Show setup progress.`
-              : "Worktree setup details"
+              : `${thread ? "Thread preparation" : "Worktree setup"} details`
           }
           accessibilityState={{ expanded: detailsOpen }}
           onPress={() => setDetailsOpen(true)}
@@ -226,7 +238,11 @@ function SetupDetailsSheet({
   const [bodyHeight, setBodyHeight] = useState(0);
   const cancelStatus = snapshot.phase === "running" && !turnStarted ? cancel : null;
   return (
-    <WorktreeSetupSheet height={bodyHeight} onClose={onClose}>
+    <WorktreeSetupSheet
+      title={isThreadPreparation(snapshot) ? "Thread preparation" : "Worktree setup"}
+      height={bodyHeight}
+      onClose={onClose}
+    >
       <ScrollView
         contentInsetAdjustmentBehavior="automatic"
         bounces={false}
@@ -257,7 +273,11 @@ function SetupDetailsSheet({
           <View className="mt-3 flex-row items-center justify-end gap-4 border-t border-border pt-1">
             <Pressable
               accessibilityRole="button"
-              accessibilityLabel="Cancel worktree setup"
+              accessibilityLabel={
+                isThreadPreparation(snapshot)
+                  ? "Cancel thread preparation"
+                  : "Cancel worktree setup"
+              }
               accessibilityState={{
                 disabled: cancelStatus === "pending",
                 busy: cancelStatus === "pending",

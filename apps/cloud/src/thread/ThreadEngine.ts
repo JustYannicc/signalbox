@@ -27,6 +27,7 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as PubSub from "effect/PubSub";
 import * as Ref from "effect/Ref";
 import * as Scope from "effect/Scope";
@@ -38,6 +39,7 @@ import {
   beginPreparation,
   changePreparation,
   preparationEvents,
+  settleStoppedPreparation,
   type PreparationState,
 } from "./preparation/preparationState.ts";
 
@@ -159,6 +161,7 @@ export class ThreadEngine extends Context.Service<
     readonly cancelPreparation: (
       actor: Actor,
       input: WorktreeSetupCancelInput,
+      afterRequest?: Effect.Effect<void>,
     ) => Effect.Effect<{ readonly cancelled: boolean }, ThreadNotFoundError | WorktreeSetupError>;
     readonly snapshot: (actor: Actor) => Effect.Effect<ThreadSnapshot, ThreadNotFoundError>;
     /**
@@ -363,11 +366,26 @@ const make = Effect.gen(function* () {
         (run.status === "starting" || run.status === "preparing") &&
         isHarnessInstance(run.providerInstanceId),
     );
+    const ctx = yield* context;
+    const previous = input.preparation ?? current.preparation;
+    const settled =
+      previous === null
+        ? null
+        : settleStoppedPreparation(
+            previous,
+            projection,
+            input.machine ?? (yield* Effect.orDie(store.machine)),
+            ctx,
+          );
     const preparation =
-      input.preparation ??
-      (startingRun !== undefined && current.preparation?.runId !== startingRun.id
-        ? beginPreparation(projection, startingRun.id, 0, current.preparation, yield* context)
-        : current.preparation);
+      input.preparation === undefined &&
+      settled === previous &&
+      startingRun !== undefined &&
+      settled?.runId !== startingRun.id &&
+      settled?.status !== "preparing" &&
+      settled?.status !== "cancelling"
+        ? beginPreparation(projection, startingRun.id, 0, settled, ctx)
+        : settled;
     const head = yield* Effect.orDie(
       store.commit({
         head: current.head,
@@ -619,48 +637,103 @@ const make = Effect.gen(function* () {
       }),
     );
 
-  const cancelPreparation: ThreadEngine["Service"]["cancelPreparation"] = (actor, input) =>
-    serialized(
+  const cancelPreparation: ThreadEngine["Service"]["cancelPreparation"] = (
+    actor,
+    input,
+    afterRequest = Effect.void,
+  ) =>
+    Effect.scoped(
       Effect.gen(function* () {
-        const { projection } = yield* readable(actor);
-        const current = yield* preparation;
-        if (
-          input.threadId !== projection.thread.id ||
-          input.runId === undefined ||
-          input.preparationGeneration === undefined ||
-          current === null ||
-          input.runId !== current.runId ||
-          input.preparationGeneration !== current.generation
-        ) {
-          return yield* new WorktreeSetupError({
-            message: "This preparation attempt is missing or out of date.",
-          });
-        }
-        if (current.status !== "preparing" && current.status !== "cancelling") {
-          return yield* new WorktreeSetupError({
-            message: "This preparation can no longer be cancelled.",
-          });
-        }
-        const run = projection.runs.find((candidate) => candidate.id === current.runId);
-        if (
-          run === undefined ||
-          run.startedAt !== null ||
-          (run.status !== "starting" && run.status !== "preparing")
-        ) {
-          return yield* new WorktreeSetupError({
-            message: "This preparation can no longer be cancelled.",
-          });
-        }
-        if (current.status === "preparing") {
-          const lease = yield* Effect.orDie(store.machine);
-          const stopped =
-            current.machineGeneration === 0 ||
-            lease.status === "none" ||
-            lease.generation !== current.machineGeneration;
-          const ctx = yield* context;
-          const next = changePreparation(current, stopped ? "cancelled" : "cancelling", ctx);
-          yield* commit({ events: preparationEvents(projection, next, ctx), preparation: next });
-        }
+        const changes = yield* serialized(
+          Effect.gen(function* () {
+            const { projection } = yield* readable(actor);
+            const current = yield* preparation;
+            if (
+              input.threadId !== projection.thread.id ||
+              input.runId === undefined ||
+              input.preparationGeneration === undefined ||
+              current === null ||
+              input.runId !== current.runId ||
+              input.preparationGeneration !== current.generation
+            ) {
+              return yield* new WorktreeSetupError({
+                message: "This preparation attempt is missing or out of date.",
+              });
+            }
+            if (current.status === "cancelled") return Stream.make(current.snapshot);
+            if (
+              (current.status !== "preparing" && current.status !== "cancelling") ||
+              current.snapshot.turnStarted === true
+            ) {
+              return yield* new WorktreeSetupError({
+                message: "This preparation can no longer be cancelled.",
+              });
+            }
+            const run = projection.runs.find((candidate) => candidate.id === current.runId);
+            if (
+              run === undefined ||
+              run.startedAt !== null ||
+              (current.status !== "cancelling" &&
+                run.status !== "starting" &&
+                run.status !== "preparing")
+            ) {
+              return yield* new WorktreeSetupError({
+                message: "This preparation can no longer be cancelled.",
+              });
+            }
+            const subscription = yield* PubSub.subscribe(preparationPublished);
+            let next = current;
+            if (current.status === "preparing") {
+              const lease = yield* Effect.orDie(store.machine);
+              const stopped =
+                current.machineGeneration === 0 ||
+                lease.status === "none" ||
+                lease.generation !== current.machineGeneration;
+              const ctx = yield* context;
+              next = changePreparation(current, stopped ? "cancelled" : "cancelling", ctx);
+              yield* commit({
+                events: preparationEvents(projection, next, ctx),
+                preparation: next,
+              });
+            }
+            return Stream.concat(Stream.make(next.snapshot), Stream.fromSubscription(subscription));
+          }),
+        );
+        // The object must send the stop before waiting for the Runner's answer.
+        // Waiting under the engine lock would block that answer's commit.
+        yield* afterRequest.pipe(
+          Effect.andThen(
+            changes.pipe(
+              Stream.filter(
+                (snapshot) =>
+                  snapshot !== null &&
+                  snapshot.runId === input.runId &&
+                  snapshot.preparationGeneration === input.preparationGeneration &&
+                  snapshot.phase === "cancelled",
+              ),
+              Stream.runHead,
+              Effect.flatMap((stopped) =>
+                Option.isSome(stopped)
+                  ? Effect.void
+                  : Effect.fail(
+                      new WorktreeSetupError({
+                        message: "This preparation's stop could not be confirmed.",
+                      }),
+                    ),
+              ),
+            ),
+          ),
+          Effect.timeoutOrElse({
+            duration: "30 seconds",
+            orElse: () =>
+              Effect.fail(
+                new WorktreeSetupError({
+                  message:
+                    "This preparation has not stopped yet. Check its status before trying again.",
+                }),
+              ),
+          }),
+        );
         return { cancelled: true };
       }),
     );

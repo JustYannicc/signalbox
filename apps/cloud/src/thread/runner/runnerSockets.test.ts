@@ -2,6 +2,8 @@ import { CommandId, MessageId, type RunId } from "@t3tools/contracts";
 import { RUNNER_PROTOCOL_VERSION } from "@signalbox/runner-protocol/RunnerProtocol";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
+import { requestCancellation } from "../preparationTesting.ts";
 
 import type * as ThreadRunner from "./ThreadRunner.ts";
 import {
@@ -148,7 +150,7 @@ describe("runnerSockets", () => {
             preparationGeneration: start.turn.preparationGeneration,
           };
           socket.sent.length = 0;
-          yield* engine.cancelPreparation(owner, target);
+          const cancelled = yield* requestCancellation(engine, target);
           yield* Effect.promise(() => pushRunnerWork(host));
           expect(socket.sent).toEqual([
             {
@@ -163,6 +165,7 @@ describe("runnerSockets", () => {
             sequence: 1,
             items: [{ kind: "preparation.cancelled", ...target }],
           });
+          expect(yield* Fiber.join(cancelled)).toEqual({ cancelled: true });
           expect(
             socket.sent.some((frame) => frame.type === "interrupt" || frame.type === "end"),
           ).toBe(false);

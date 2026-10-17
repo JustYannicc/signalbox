@@ -128,7 +128,7 @@ export interface RunnerTurns {
     readonly secrets?: SecretsAccess;
   }) => Effect.Effect<void>;
   /** Stops `runId`, wherever it is: loading, or running on the harness. */
-  readonly interrupt: (runId: RunId) => Effect.Effect<void>;
+  readonly interrupt: (runId: RunId, preparationGeneration?: number) => Effect.Effect<void>;
   readonly cancelPreparation: (runId: RunId, generation: number) => Effect.Effect<void>;
   readonly handoffPreparation: (runId: RunId, generation: number) => Effect.Effect<void>;
   readonly preparationsTaken: Effect.Effect<
@@ -329,6 +329,13 @@ export const makeRunnerTurns = Effect.fn("makeRunnerTurns")(function* (input: {
     const head = text.length > CAUSE_CHARS ? `${text.slice(0, CAUSE_CHARS)}…` : text;
     return `${what}: ${head}\nThe CLI's stderr:\n${tail}`;
   };
+  const preparationFailureText = (text: string) =>
+    makeProviderFailure({
+      message: mask(text).replace(
+        /(^|[\s("'`:=])(?:[A-Za-z]:[\\/]|\/(?!\/))[^\s"'`<>]+/gu,
+        "$1[host path]",
+      ),
+    }).message;
   /** The run on the harness, from its `turn.started` until its end is reported. */
   let runningRunId: RunId | null = null;
   // A run's usage and the items it brackets go out under one lock, so a
@@ -1041,6 +1048,7 @@ export const makeRunnerTurns = Effect.fn("makeRunnerTurns")(function* (input: {
     const stderrMark = input.stderr?.mark() ?? 0;
     latestStderr = stderrMark;
     return Effect.gen(function* () {
+      if (isStopped(state)) return yield* Effect.interrupt;
       const adapter = input.adapters.get(turn.modelSelection.instanceId);
       if (adapter === undefined) {
         return yield* new RunnerTurnError({
@@ -1065,6 +1073,7 @@ export const makeRunnerTurns = Effect.fn("makeRunnerTurns")(function* (input: {
       const opened = access === null ? null : yield* driveFor(access);
       const prepared = yield* preparing.withPermits(1)(
         Effect.gen(function* () {
+          if (isStopped(state)) return yield* Effect.interrupt;
           const drive =
             opened !== null && access !== null
               ? yield* opened
@@ -1244,7 +1253,7 @@ export const makeRunnerTurns = Effect.fn("makeRunnerTurns")(function* (input: {
                 turn.runId,
                 "error",
                 turn.preparationGeneration !== undefined && !state.handedOff
-                  ? "Preparing this thread failed. You can try again."
+                  ? preparationFailureText(failureLine("turn failed to start", cause, stderrMark))
                   : failureLine("turn failed to start", cause, stderrMark),
               ),
             );
@@ -1253,6 +1262,7 @@ export const makeRunnerTurns = Effect.fn("makeRunnerTurns")(function* (input: {
                 kind: "preparation.failed",
                 runId: turn.runId,
                 preparationGeneration: turn.preparationGeneration,
+                message: preparationFailureText(failureMessage(cause)),
               });
             } else {
               yield* input.emit({
@@ -1301,27 +1311,29 @@ export const makeRunnerTurns = Effect.fn("makeRunnerTurns")(function* (input: {
       return keepOnly(turn.runId).pipe(
         Effect.andThen(Effect.sync(() => turns.set(turn.runId, state))),
         Effect.andThen(
-          run(turn, modelToken, access, sessionAccess, secretsAccess, state).pipe(
-            Effect.forkIn(scope),
-            Effect.tap((fiber) =>
-              Effect.sync(() => {
-                state.preparationFiber = fiber;
-              }),
-            ),
+          preparations.launch(
+            state,
+            run(turn, modelToken, access, sessionAccess, secretsAccess, state),
           ),
         ),
         Effect.asVoid,
       );
     });
 
-  const interrupt: RunnerTurns["interrupt"] = (runId) =>
+  const interrupt: RunnerTurns["interrupt"] = (runId, preparationGeneration) =>
     Effect.suspend(() => {
+      const turn = turns.get(runId);
+      if (
+        preparationGeneration !== undefined &&
+        !preparations.isCurrent(runId, preparationGeneration)
+      )
+        return Effect.void;
       // A merge the agent was resolving ends with the run; its files stay saved.
       const held = finishing.get(runId);
       if (held !== undefined) held.stopped = true;
       if (held?.waiting != null) Deferred.doneUnsafe(held.waiting, Effect.succeed(false));
-      const turn = turns.get(runId);
       if (turn === undefined || turn.status === "stopped") return Effect.void;
+      if (turn.status === "loading") return preparations.interrupt(turn);
       const wasRunning = turn.status === "running";
       turn.status = "stopped";
       // Before the harness names its turn, `track` interrupts once it does. The
@@ -1347,7 +1359,7 @@ export const makeRunnerTurns = Effect.fn("makeRunnerTurns")(function* (input: {
   const keepOnly: RunnerTurns["keepOnly"] = (runId) =>
     Effect.forEach(
       [...turns.keys()].filter((candidate) => candidate !== runId),
-      interrupt,
+      (candidate) => interrupt(candidate),
       {
         discard: true,
       },

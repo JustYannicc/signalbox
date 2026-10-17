@@ -141,7 +141,13 @@ export async function pushRunnerWork(host: RunnerSocketHost): Promise<ThreadRunn
     let sentSteers = attachment.sentSteers ?? 0;
     if (sentRunId !== null && sentRunId !== work.activeRunId) {
       if (work.preparation?.runId !== sentRunId || work.preparation.snapshot.turnStarted === true) {
-        send(socket, { type: "interrupt", runId: sentRunId });
+        send(socket, {
+          type: "interrupt",
+          runId: sentRunId,
+          ...(sentPreparationGeneration === undefined
+            ? {}
+            : { preparationGeneration: sentPreparationGeneration }),
+        });
       }
       sentRunId = null;
       sentPreparationGeneration = undefined;
