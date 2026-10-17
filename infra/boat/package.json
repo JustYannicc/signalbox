@@ -10,7 +10,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@distilled.cloud/boat-dev": "1.0.0-rc.15",
+    "@distilled.cloud/boat-dev": "1.0.0-rc.13",
     "alchemy": "2.0.0-beta.80",
     "effect": "catalog:"
   },

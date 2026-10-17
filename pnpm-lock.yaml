@@ -291,15 +291,15 @@ importers:
       '@effect/vitest':
         specifier: 4.0.5
         version: 4.0.5(patch_hash=2731c9c3761c595f25ddc625a7d61ca376b389d5b3049ecb837c8940f21cfa02)(@types/node@24.12.4)(@vitest/ui@5.0.1)(bufferutil@4.1.0)(effect@4.0.5)(esbuild@0.28.2)(jiti@2.7.0)(jsdom@30.1.0(@noble/hashes@1.8.0))(msw@2.12.11(@types/node@24.12.4)(typescript@7.0.2))(terser@5.48.0)(typescript@7.0.2)(unrun@0.2.39)(utf-8-validate@6.0.6)(yaml@2.9.0)
+      '@signalbox/alchemy-boat':
+        specifier: workspace:*
+        version: link:../../infra/boat
       '@signalbox/automation-compiler':
         specifier: workspace:*
         version: link:../../packages/automation-compiler
       '@types/node':
         specifier: 24.12.4
         version: 24.12.4
-      '@signalbox/alchemy-boat':
-        specifier: workspace:*
-        version: link:../../infra/boat
       alchemy:
         specifier: 2.0.0-beta.80
         version: 2.0.0-beta.80(patch_hash=0e3e0a80b1a06032e5093f70c7fa71969756b71dd3319af6bc9cc9537155f6a1)(0dfa2a822eb88f535a2702794f5c8c17)
@@ -1161,8 +1161,8 @@ importers:
   infra/boat:
     dependencies:
       '@distilled.cloud/boat-dev':
-        specifier: 1.0.0-rc.15
-        version: 1.0.0-rc.15(effect@4.0.5)
+        specifier: 1.0.0-rc.13
+        version: 1.0.0-rc.13(effect@4.0.5)
       alchemy:
         specifier: 2.0.0-beta.80
         version: 2.0.0-beta.80(patch_hash=0e3e0a80b1a06032e5093f70c7fa71969756b71dd3319af6bc9cc9537155f6a1)(0dfa2a822eb88f535a2702794f5c8c17)
@@ -2182,16 +2182,6 @@ importers:
         version: 1.0.0(@types/node@24.12.4)(@vitest/ui@5.0.1(vitest@5.0.1))(bufferutil@4.1.0)(esbuild@0.28.2)(jiti@2.7.0)(jsdom@30.1.0(@noble/hashes@1.8.0))(msw@2.12.11(@types/node@24.12.4)(typescript@7.0.2))(terser@5.48.0)(typescript@7.0.2)(unrun@0.2.39)(utf-8-validate@6.0.6)(yaml@2.9.0)
 
 packages:
-  '@distilled.cloud/boat-dev@1.0.0-rc.15':
-    resolution: {integrity: sha512-cSnotlpIaB66Ovsmy3wOvzWNimOxurpBdQchLVyb0eUZXu4BJMEnwTpRu3YS0W9SXWHspERt8Hnd5mpRAt/9hw==}
-    peerDependencies:
-      effect: 4.0.5
-
-  '@distilled.cloud/core@1.0.0-rc.15':
-    resolution: {integrity: sha512-TPXxuwcxQ85Pvm0g7ZQSLTQkPc1Wmcb6p6KOk+Be2fP14Xpj5a+7HOSUyPNwbqOP+vPK5Sj0ZLN7M6spKnO2LA==}
-    peerDependencies:
-      effect: 4.0.5
-
 
   2g@1.0.1:
     resolution: {integrity: sha512-+uViadKOS/wwR4pFu5g8TPn3QHpKqoX19JHCnp8k/3cLpImdcXozwvZA6Q/5PeW3AcU8neL8faaMidBcv7o8CA==}
@@ -3356,6 +3346,11 @@ packages:
 
   '@distilled.cloud/axiom@1.0.0-rc.13':
     resolution: {integrity: sha512-aRoJtvfXgWi5dtfjuJvDwnArRKvv2MPYHCxYeZcxZbqe62IaQA5yu/khft7TJvxeDyJoSDnVXZu3RyJjNmBA4g==}
+    peerDependencies:
+      effect: 4.0.5
+
+  '@distilled.cloud/boat-dev@1.0.0-rc.13':
+    resolution: {integrity: sha512-Y3v3gHaDZx+N9se7gJ9Wy7TTXibIhXZxTHIlDFvFqUZMFGIteStlQf4WVRhR+UAbjaxoOTQJqkgocPxkyReckA==}
     peerDependencies:
       effect: 4.0.5
 
@@ -13554,15 +13549,6 @@ packages:
       '@types/emscripten': '>=1.39.6'
 
 snapshots:
-  '@distilled.cloud/boat-dev@1.0.0-rc.15(effect@4.0.5)':
-    dependencies:
-      '@distilled.cloud/core': 1.0.0-rc.15(effect@4.0.5)
-      effect: 4.0.5
-
-  '@distilled.cloud/core@1.0.0-rc.15(effect@4.0.5)':
-    dependencies:
-      effect: 4.0.5
-
 
   2g@1.0.1(typescript@7.0.2):
     optionalDependencies:
@@ -14939,6 +14925,11 @@ snapshots:
       effect: 4.0.5
 
   '@distilled.cloud/axiom@1.0.0-rc.13(effect@4.0.5)':
+    dependencies:
+      '@distilled.cloud/core': 1.0.0-rc.13(effect@4.0.5)
+      effect: 4.0.5
+
+  '@distilled.cloud/boat-dev@1.0.0-rc.13(effect@4.0.5)':
     dependencies:
       '@distilled.cloud/core': 1.0.0-rc.13(effect@4.0.5)
       effect: 4.0.5

@@ -163,7 +163,8 @@ const toAttrs = (env: boat.SandboxEnvironment): EnvironmentAttributes => ({
   name: env.name,
   isDefault: env.isDefault,
   latestVersionId: env.latestVersionId ?? undefined,
-  latestVersionNumber: env.latestVersionNumber ?? 0,
+  latestVersionNumber:
+    env.versions.find((version) => version.id === env.latestVersionId)?.versionNumber ?? 0,
   safeForThirdParties: env.safeForThirdParties,
   passGithub: env.passGithub,
   passSecrets: env.passSecrets,

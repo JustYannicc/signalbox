@@ -180,7 +180,7 @@ const awaitBuilder = (sandboxId: string, setupScriptExpected: boolean) =>
             : `in state ${sandbox.state}`;
       return Effect.fail(
         new NamedSnapshotBuildFailed({
-          message: `Build sandbox ${sandboxId} ended ${reason}: ${sandbox.setupError ?? sandbox.error ?? "no detail"}`,
+          message: `Build sandbox ${sandboxId} ended ${reason}: ${sandbox.setupError ?? "no detail"}`,
         }),
       );
     }),

@@ -67,21 +67,23 @@ const snapshot = (name: string, status: string) => ({
   createdAt: now,
 });
 
-const environment = (name: string, isDefault: boolean) => ({
-  id: nextId("env"),
-  name,
-  isDefault,
-  latestVersionId: null,
-  latestVersionNumber: 1,
-  safeForThirdParties: false,
-  passGithub: true,
-  passSecrets: true,
-  passSandboxCredentials: true,
-  passAgentsCredentials: true,
-  envContents: "",
-  secretFiles: [],
-  versions: [],
-});
+const environment = (name: string, isDefault: boolean) => {
+  const versionId = nextId("env_version");
+  return {
+    id: nextId("env"),
+    name,
+    isDefault,
+    latestVersionId: versionId,
+    safeForThirdParties: false,
+    passGithub: true,
+    passSecrets: true,
+    passSandboxCredentials: true,
+    passAgentsCredentials: true,
+    envContents: "",
+    secretFiles: [],
+    versions: [{ id: versionId, versionNumber: 1, sandboxCount: 0, createdAt: now }],
+  };
+};
 
 const notFound = {
   status: 404,
@@ -232,7 +234,15 @@ const route = (method: string, path: string, body: unknown): { status: number; b
     case "PUT /environments": {
       const env = fake.environments.get(seg[1]!);
       if (!env) return notFound;
-      Object.assign(env, request, { latestVersionNumber: (env.latestVersionNumber as number) + 1 });
+      const versions = Array.isArray(env.versions) ? env.versions : [];
+      const versionId = nextId("env_version");
+      versions.push({
+        id: versionId,
+        versionNumber: versions.length + 1,
+        sandboxCount: 0,
+        createdAt: now,
+      });
+      Object.assign(env, request, { latestVersionId: versionId, versions });
       return ok({ success: true, environment: env });
     }
     case "DELETE /environments":
@@ -460,6 +470,7 @@ describe("Boat adoption", () => {
           }),
         );
         expect(runner.safeForThirdParties).toBe(true);
+        expect(runner.latestVersionNumber).toBe(2);
         expect(fake.calls).toEqual([
           "POST /environments",
           `PUT /environments/${runner.environmentId}`,
