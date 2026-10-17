@@ -69,6 +69,7 @@ interface ToolSpec<S extends Schema.Top> {
 
 export class ToolError extends Schema.TaggedError<ToolError>()("ToolError", {
   message: Schema.String,
+  cause: Schema.optional(Schema.Defect()),
 }) {}
 
 export const fail = (message: string) => Effect.fail(new ToolError({ message }));

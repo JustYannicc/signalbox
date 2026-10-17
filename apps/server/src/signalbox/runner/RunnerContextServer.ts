@@ -47,6 +47,7 @@ import { layerScheduledTaskTools } from "./RunnerScheduledTaskTools.ts";
 import { layerPreviewServiceTools } from "./RunnerPreviewServiceTools.ts";
 import type { RunnerPreviewServices } from "./RunnerPreviewServices.ts";
 import { layerStatusLineTools } from "./RunnerStatusLineTools.ts";
+import type { RunnerConnectionError } from "./RunnerSession.ts";
 
 /**
  * One Runner's context server (#141), on a loopback port of its own: the
@@ -107,7 +108,9 @@ export const startContextServer = Effect.fn("startContextServer")(function* (inp
   /** Saves the declaration list in the thread before a tool replies. */
   readonly persistPreviewServices?: (
     services: ReadonlyArray<PreviewService>,
-  ) => Effect.Effect<void>;
+  ) => Effect.Effect<void, RunnerConnectionError>;
+  /** Waits for the first tunnel welcome to restore saved services before exposing their tools. */
+  readonly previewServicesReady?: Effect.Effect<void, RunnerConnectionError>;
   /** The browser behind the `preview_*` tools; the machine's and the person's by default. */
   readonly browser?: BrowserBackend;
   /** The thread this machine runs, which scheduled tasks wake. */
@@ -162,7 +165,11 @@ export const startContextServer = Effect.fn("startContextServer")(function* (inp
   );
   const previewServiceTools =
     input.previewServices !== undefined && input.persistPreviewServices !== undefined
-      ? layerPreviewServiceTools(input.previewServices, input.persistPreviewServices)
+      ? layerPreviewServiceTools(
+          input.previewServices,
+          input.persistPreviewServices,
+          input.previewServicesReady,
+        )
       : Layer.empty;
   const mcp = Layer.mergeAll(
     layerContextTools(view),

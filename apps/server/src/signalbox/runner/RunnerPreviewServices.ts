@@ -11,7 +11,18 @@ import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
 export class PreviewServiceError extends Schema.TaggedError<PreviewServiceError>()(
   "PreviewServiceError",
-  { message: Schema.String },
+  {
+    operation: Schema.Literals([
+      "prepare_drive",
+      "resolve_directory",
+      "inspect_directory",
+      "inspect_process",
+      "start_process",
+    ]),
+    port: Schema.optional(Schema.Number),
+    message: Schema.String,
+    cause: Schema.optional(Schema.Defect()),
+  },
 ) {}
 
 interface ActiveService {
@@ -50,9 +61,16 @@ export const makePreviewServices = Effect.fn("makePreviewServices")(function* (i
   const path = yield* Path.Path;
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const parentScope = yield* Effect.scope;
-  const drive = yield* fs
-    .realPath(input.cwd)
-    .pipe(Effect.mapError(() => new PreviewServiceError({ message: "The drive is unavailable." })));
+  const drive = yield* fs.realPath(input.cwd).pipe(
+    Effect.mapError(
+      (cause) =>
+        new PreviewServiceError({
+          operation: "prepare_drive",
+          message: "The drive is unavailable.",
+          cause,
+        }),
+    ),
+  );
   const declarations = new Map<number, PreviewService>();
   const active = new Map<number, ActiveService>();
   const lock = yield* Semaphore.make(1);
@@ -62,30 +80,46 @@ export const makePreviewServices = Effect.fn("makePreviewServices")(function* (i
       const resolved = path.resolve(drive, service.cwd);
       if (!within(path, drive, resolved)) {
         return yield* new PreviewServiceError({
+          operation: "resolve_directory",
+          port: service.port,
           message: "The working directory must be inside the drive.",
         });
       }
-      const real = yield* fs
-        .realPath(resolved)
-        .pipe(
-          Effect.mapError(
-            () => new PreviewServiceError({ message: "The working directory is unavailable." }),
-          ),
-        );
+      const real = yield* fs.realPath(resolved).pipe(
+        Effect.mapError(
+          (cause) =>
+            new PreviewServiceError({
+              operation: "resolve_directory",
+              port: service.port,
+              message: "The working directory is unavailable.",
+              cause,
+            }),
+        ),
+      );
       if (!within(path, drive, real)) {
         return yield* new PreviewServiceError({
+          operation: "resolve_directory",
+          port: service.port,
           message: "The working directory must be inside the drive.",
         });
       }
-      const stat = yield* fs
-        .stat(real)
-        .pipe(
-          Effect.mapError(
-            () => new PreviewServiceError({ message: "The working directory is unavailable." }),
-          ),
-        );
+      const stat = yield* fs.stat(real).pipe(
+        Effect.mapError(
+          (cause) =>
+            new PreviewServiceError({
+              operation: "inspect_directory",
+              port: service.port,
+              message: "The working directory is unavailable.",
+              cause,
+            }),
+        ),
+      );
       if (stat.type !== "Directory") {
-        return yield* new PreviewServiceError({ message: "The working directory is unavailable." });
+        return yield* new PreviewServiceError({
+          operation: "inspect_directory",
+          port: service.port,
+          message: "The working directory is unavailable.",
+        });
       }
       return real;
     });
@@ -105,9 +139,12 @@ export const makePreviewServices = Effect.fn("makePreviewServices")(function* (i
       if (current !== undefined && sameService(current.service, service)) {
         const running = yield* current.process.isRunning.pipe(
           Effect.mapError(
-            () =>
+            (cause) =>
               new PreviewServiceError({
+                operation: "inspect_process",
+                port: service.port,
                 message: `Could not inspect the service on port ${service.port}.`,
+                cause,
               }),
           ),
         );
@@ -131,9 +168,12 @@ export const makePreviewServices = Effect.fn("makePreviewServices")(function* (i
         ),
       ).pipe(
         Effect.mapError(
-          () =>
+          (cause) =>
             new PreviewServiceError({
+              operation: "start_process",
+              port: service.port,
               message: `Could not start the service on port ${service.port}.`,
+              cause,
             }),
         ),
         Effect.onError(() => Scope.close(scope, Exit.void)),

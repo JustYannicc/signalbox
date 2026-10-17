@@ -4,6 +4,7 @@ import type * as NodeNet from "node:net";
 
 import { NodeWS } from "@effect/platform-node-shared/NodeSocket";
 import { describe, expect, it } from "@effect/vitest";
+import * as Cause from "effect/Cause";
 import {
   DATA_KIND,
   type DataFrame,
@@ -29,6 +30,7 @@ import type {
   AgentBrowserUpdate,
 } from "@t3tools/contracts/signalboxPreviews";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Queue from "effect/Queue";
 import * as TestClock from "effect/testing/TestClock";
@@ -749,10 +751,28 @@ describe("RunnerPreviewTunnel", () => {
     Effect.scoped(
       Effect.gen(function* () {
         const { thread, tunnel } = yield* startTunnel([]);
+        const saving = yield* Effect.forkChild(
+          tunnel.persistServices([{ port: 4173, command: "pnpm dev", cwd: "." }]),
+        );
+        yield* Effect.yieldNow;
         const socket = yield* Queue.take(thread.sockets);
         expect(yield* nextControl(socket)).toMatchObject({ type: "hello" });
         yield* socket.toRunner({ type: "refused", message: "A newer generation holds the lease." });
         expect(yield* tunnel.ended).toBe("refused: A newer generation holds the lease.");
+        const savingExit = yield* Effect.exit(Fiber.join(saving));
+        const readyExit = yield* Effect.exit(tunnel.ready);
+        const laterSaveExit = yield* Effect.exit(
+          tunnel.persistServices([{ port: 4173, command: "pnpm dev", cwd: "." }]),
+        );
+        expect(Exit.isFailure(savingExit)).toBe(true);
+        expect(Exit.isFailure(readyExit)).toBe(true);
+        expect(Exit.isFailure(laterSaveExit)).toBe(true);
+        if (Exit.isFailure(savingExit)) {
+          expect(Cause.squash(savingExit.cause)).toBeInstanceOf(RunnerConnectionError);
+        }
+        if (Exit.isFailure(laterSaveExit)) {
+          expect(Cause.squash(laterSaveExit.cause)).toBeInstanceOf(RunnerConnectionError);
+        }
         yield* TestClock.adjust("10 minutes");
         expect(yield* Queue.size(thread.sockets)).toBe(0);
       }),

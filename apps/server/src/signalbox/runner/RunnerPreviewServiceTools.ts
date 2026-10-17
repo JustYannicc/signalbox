@@ -6,11 +6,13 @@ import * as Schema from "effect/Schema";
 
 import { fail, register, ToolError } from "./RunnerContextTools.ts";
 import type { RunnerPreviewServices } from "./RunnerPreviewServices.ts";
+import type { RunnerConnectionError } from "./RunnerSession.ts";
 
 /** The agent's explicit way to make its dev server survive a new Runner. */
 export const layerPreviewServiceTools = (
   services: RunnerPreviewServices,
-  persist: (services: ReadonlyArray<PreviewService>) => Effect.Effect<void>,
+  persist: (services: ReadonlyArray<PreviewService>) => Effect.Effect<void, RunnerConnectionError>,
+  ready: Effect.Effect<void, RunnerConnectionError> = Effect.void,
 ) =>
   Layer.effectDiscard(
     Effect.all([
@@ -26,10 +28,17 @@ export const layerPreviewServiceTools = (
         writes: { destructive: false, openWorld: true },
         handle: ({ port, command, cwd }) =>
           Effect.gen(function* () {
+            yield* ready.pipe(
+              Effect.mapError((error) => new ToolError({ message: error.message, cause: error })),
+            );
             yield* services
               .start({ port, command, cwd: cwd ?? "." })
-              .pipe(Effect.mapError((error) => new ToolError({ message: error.message })));
-            yield* persist(yield* services.list);
+              .pipe(
+                Effect.mapError((error) => new ToolError({ message: error.message, cause: error })),
+              );
+            yield* persist(yield* services.list).pipe(
+              Effect.mapError((error) => new ToolError({ message: error.message, cause: error })),
+            );
             return `Preview service declared on port ${port}.`;
           }),
       }),
@@ -41,11 +50,16 @@ export const layerPreviewServiceTools = (
         writes: { destructive: true, openWorld: true },
         handle: ({ port }) =>
           Effect.gen(function* () {
+            yield* ready.pipe(
+              Effect.mapError((error) => new ToolError({ message: error.message, cause: error })),
+            );
             if (!(yield* services.list).some((service) => service.port === port)) {
               return yield* fail(`No preview service is declared on port ${port}.`);
             }
             yield* services.stop(port);
-            yield* persist(yield* services.list);
+            yield* persist(yield* services.list).pipe(
+              Effect.mapError((error) => new ToolError({ message: error.message, cause: error })),
+            );
             return `Preview service stopped on port ${port}.`;
           }),
       }),

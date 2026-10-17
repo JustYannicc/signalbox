@@ -7,7 +7,9 @@ import type {
   TreeResult,
 } from "@signalbox/runner-protocol/ContextProtocol";
 import { describe, expect, it } from "@effect/vitest";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 
 import { RUNNER_AUTOMATION_TOOLS, RUNNER_NOTE_TOOLS } from "./RunnerAutomationTools.ts";
 import { RUNNER_SCHEDULED_TASK_TOOLS } from "./RunnerScheduledTaskTools.ts";
@@ -208,6 +210,7 @@ const fakeClient = (calls: Calls): ContextClient => ({
 const serve = (
   previewServices?: RunnerPreviewServices,
   persistPreviewServices?: (services: ReadonlyArray<PreviewService>) => Effect.Effect<void>,
+  previewServicesReady?: Effect.Effect<void>,
 ) =>
   Effect.gen(function* () {
     const calls: Calls = { searches: [], log: [], published: [], answer: PUBLISHED, notes: [] };
@@ -215,6 +218,7 @@ const serve = (
       mountPoint: null,
       ...(previewServices === undefined ? {} : { previewServices }),
       ...(persistPreviewServices === undefined ? {} : { persistPreviewServices }),
+      ...(previewServicesReady === undefined ? {} : { previewServicesReady }),
     });
     yield* server.pin(fakeClient(calls));
     yield* server.attachDrive(fakeDrive(calls));
@@ -429,6 +433,57 @@ describe("context server (#141)", () => {
         expect(stopResult.content[0]?.text).toBe("Preview service stopped on port 4173.");
         expect(persisted).toEqual([[started], []]);
       }),
+  );
+
+  it.effect("waits for saved services to restore before starting another service", () =>
+    Effect.gen(function* () {
+      const saved = { port: 3000, command: "pnpm dev", cwd: "apps/web" };
+      const added = { port: 4173, command: "pnpm preview", cwd: "apps/web" };
+      const declarations: Array<PreviewService> = [];
+      const persisted: Array<ReadonlyArray<PreviewService>> = [];
+      const entered = yield* Deferred.make<void>();
+      const release = yield* Deferred.make<void>();
+      const services: RunnerPreviewServices = {
+        start: (service) =>
+          Effect.sync(() => {
+            const index = declarations.findIndex((entry) => entry.port === service.port);
+            if (index >= 0) declarations.splice(index, 1);
+            declarations.push(service);
+          }),
+        stop: (port) =>
+          Effect.sync(
+            () =>
+              void declarations.splice(
+                0,
+                declarations.length,
+                ...declarations.filter((service) => service.port !== port),
+              ),
+          ),
+        restore: (next) =>
+          Effect.sync(() => void declarations.splice(0, declarations.length, ...next)),
+        list: Effect.sync(() => [...declarations]),
+      };
+      const ready = Deferred.succeed(entered, undefined).pipe(
+        Effect.andThen(Deferred.await(release)),
+      );
+      const { call } = yield* serve(
+        services,
+        (next) => Effect.sync(() => persisted.push([...next])),
+        ready,
+      );
+
+      const starting = yield* Effect.forkChild(call("preview_service_start", added));
+      yield* Deferred.await(entered);
+      yield* services.restore([saved]);
+      expect(declarations).toEqual([saved]);
+      expect(persisted).toEqual([]);
+
+      yield* Deferred.succeed(release, undefined);
+      const result = yield* Fiber.join(starting);
+      expect(result.isError).toBeUndefined();
+      expect(declarations).toEqual([saved, added]);
+      expect(persisted).toEqual([[saved, added]]);
+    }),
   );
 
   it.effect("publishes the thread's branch: saves it first, then asks the cloud", () =>

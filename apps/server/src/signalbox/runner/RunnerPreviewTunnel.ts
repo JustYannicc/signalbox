@@ -79,8 +79,12 @@ export interface PreviewTunnelInput {
 export interface PreviewTunnel {
   /** Why the tunnel stopped: the thread refused it, or its scope closed. */
   readonly ended: Effect.Effect<string>;
+  /** Completes after this Runner's declarations were reconciled with the first welcome. */
+  readonly ready: Effect.Effect<void, RunnerConnectionError>;
   /** Persists the current declarations and completes after the thread acknowledges them. */
-  readonly persistServices: (services: ReadonlyArray<PreviewService>) => Effect.Effect<void>;
+  readonly persistServices: (
+    services: ReadonlyArray<PreviewService>,
+  ) => Effect.Effect<void, RunnerConnectionError>;
 }
 
 const encoder = new TextEncoder();
@@ -126,24 +130,43 @@ export const runPreviewTunnel = Effect.fn("runPreviewTunnel")(function* (
 ): Effect.fn.Return<PreviewTunnel, never, Scope.Scope> {
   const ended = yield* Deferred.make<string>();
   yield* Effect.addFinalizer(() => Deferred.succeed(ended, "stopped"));
+  const ready = yield* Deferred.make<void, RunnerConnectionError>();
+  let terminalError: RunnerConnectionError | null = null;
   const log = { threadId: input.threadId, generation: input.generation };
   const servicesLock = yield* Semaphore.make(1);
   let servicesRevision = 0;
   let savedServicesRevision = 0;
   let desiredServices: ReadonlyArray<PreviewService> = [];
   let notifyServiceChange: ((revision: number) => void) | null = null;
-  const serviceWaiters = new Map<number, Deferred.Deferred<void>>();
+  const serviceWaiters = new Map<number, Deferred.Deferred<void, RunnerConnectionError>>();
+  const failPending = (error: RunnerConnectionError) =>
+    Effect.gen(function* () {
+      const first = yield* Effect.sync(() => {
+        if (terminalError !== null) return false;
+        terminalError = error;
+        return true;
+      });
+      if (!first) return;
+      yield* Deferred.fail(ready, error);
+      for (const waiter of serviceWaiters.values()) yield* Deferred.fail(waiter, error);
+      yield* Effect.sync(() => serviceWaiters.clear());
+    });
+  yield* Effect.addFinalizer(() =>
+    failPending(new RunnerConnectionError({ message: "The preview tunnel stopped." })),
+  );
   const persistServices = (services: ReadonlyArray<PreviewService>) =>
     servicesLock.withPermits(1)(
       Effect.gen(function* () {
-        const ack = yield* Deferred.make<void>();
-        const revision = yield* Effect.sync(() => {
+        const ack = yield* Deferred.make<void, RunnerConnectionError>();
+        const registration = yield* Effect.sync(() => {
+          if (terminalError !== null) return { _tag: "Stopped" as const, error: terminalError };
           servicesRevision++;
           desiredServices = services;
           serviceWaiters.set(servicesRevision, ack);
-          return servicesRevision;
+          return { _tag: "Pending" as const, revision: servicesRevision };
         });
-        if (notifyServiceChange !== null) notifyServiceChange(revision);
+        if (registration._tag === "Stopped") return yield* registration.error;
+        if (notifyServiceChange !== null) notifyServiceChange(registration.revision);
         yield* Deferred.await(ack);
       }),
     );
@@ -195,6 +218,9 @@ export const runPreviewTunnel = Effect.fn("runPreviewTunnel")(function* (
       });
       const answer = yield* connection.receive;
       if ("type" in answer && answer.type === "refused") {
+        yield* failPending(
+          new RunnerConnectionError({ message: "The preview tunnel was refused." }),
+        );
         yield* Deferred.succeed(ended, `refused: ${answer.message}`);
         return;
       }
@@ -215,14 +241,14 @@ export const runPreviewTunnel = Effect.fn("runPreviewTunnel")(function* (
           }
           if (!servicesRestored) {
             const restored = yield* Effect.exit(input.services.restore(savedServices));
-            if (restored._tag === "Success") {
-              servicesRestored = true;
-            } else {
+            servicesRestored = true;
+            if (restored._tag === "Failure") {
               yield* Effect.logWarning("could not restore preview services", log);
             }
           }
         }
       }
+      yield* Deferred.succeed(ready, undefined);
       welcomed = true;
       yield* Effect.logInfo("preview tunnel connected", log);
 
@@ -363,5 +389,5 @@ export const runPreviewTunnel = Effect.fn("runPreviewTunnel")(function* (
     }
   }).pipe(Effect.forkScoped);
 
-  return { ended: Deferred.await(ended), persistServices };
+  return { ended: Deferred.await(ended), ready: Deferred.await(ready), persistServices };
 });
