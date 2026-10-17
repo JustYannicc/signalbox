@@ -1,7 +1,7 @@
 import { Navigate, useLocation } from "@tanstack/react-router";
 import type { ReactNode } from "react";
 
-import { useEnvironmentUiState } from "~/state/environmentCapabilities";
+import { useEnvironmentCapabilitiesKnown } from "~/state/environmentCapabilities";
 import { useOptionalSettingsScope } from "./SettingsScopeContext";
 import { settingsItemGate, settingsPathGate } from "./settingsCapabilities";
 import { useUnsupportedSettingsCapabilities } from "./useAvailableSettingsSearchItems";
@@ -14,7 +14,7 @@ export function SettingsCapability({ id, children }: { id: string; children: Rea
       ? { machine: scope.environment.environmentId }
       : scope?.search,
   );
-  const configKnown = useEnvironmentUiState() !== "unknown";
+  const configKnown = useEnvironmentCapabilitiesKnown();
   return settingsItemGate(id, unsupported, configKnown) === "show" ? children : null;
 }
 
@@ -27,7 +27,7 @@ export function SettingsCapabilityBoundary({ children }: { children: ReactNode }
       ? { machine: scope.environment.environmentId }
       : scope?.search,
   );
-  const gate = settingsPathGate(pathname, unsupported, useEnvironmentUiState() !== "unknown");
+  const gate = settingsPathGate(pathname, unsupported, useEnvironmentCapabilitiesKnown());
   if (gate === "wait") return null;
   return gate === "show" ? children : <Navigate to="/settings/general" replace />;
 }

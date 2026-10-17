@@ -52,7 +52,7 @@ vi.mock("./useAvailableSettingsSearchItems", () => ({
 }));
 vi.mock("../../state/environmentCapabilities", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../state/environmentCapabilities")>()),
-  useEnvironmentUiState: () => "shown",
+  useEnvironmentCapabilitiesKnown: () => true,
 }));
 vi.mock("../../state/environments", () => ({ useEnvironments: () => ({ environments: [] }) }));
 vi.mock("../ui/sidebar", () => ({
