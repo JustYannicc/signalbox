@@ -154,7 +154,7 @@ export function useProjectScriptEditing(input: {
           new EnvironmentAuthorizationError({
             requiredScope: AuthSettingsWriteScope,
             message: saved
-              ? "The script was saved, but this connection can no longer change keyboard shortcuts."
+              ? `The script was ${isDeletingScript ? "deleted" : "saved"}, but this connection can no longer change keyboard shortcuts.`
               : "This connection cannot change keyboard shortcuts.",
           }),
         ),
