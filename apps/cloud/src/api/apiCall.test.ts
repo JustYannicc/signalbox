@@ -3,6 +3,7 @@ import {
   AuthOrchestrationOperateScope,
   AuthOrchestrationReadScope,
   AuthStandardClientScopes,
+  AuthSettingsWriteScope,
   type AuthEnvironmentScope,
   EnvironmentId,
 } from "@t3tools/contracts";
@@ -14,6 +15,7 @@ import * as Environment from "../environment.ts";
 import { makeMemoryCloud } from "../testing.ts";
 import { scriptedModelSelection } from "../thread/scriptedProvider.ts";
 import { type ApiCaller, callOperation } from "./apiCall.ts";
+import { DEFAULT_RESOLVED_KEYBINDINGS } from "@t3tools/shared/keybindings";
 
 const identity = { environmentId: EnvironmentId.make("cloud-test"), label: "Cloud" };
 const userId = "user_1";
@@ -49,6 +51,38 @@ const json = (answer: Effect.Success<ReturnType<typeof callOperation>>) => {
 };
 
 describe("public API calls", () => {
+  it.effect("saves and removes a keybinding through the public reach map", () =>
+    Effect.gen(function* () {
+      const { call } = yield* setup;
+      const binding = {
+        key: "mod+shift+k",
+        command: "commandPalette.toggle",
+        when: "!terminalFocus",
+      };
+      expect(json(yield* call("keybindings.upsert", binding)).status).toBe(403);
+      const writer = person([AuthOrchestrationReadScope, AuthSettingsWriteScope]);
+      expect(json(yield* call("keybindings.upsert", binding, writer))).toMatchObject({
+        status: 200,
+        body: { issues: [] },
+      });
+      expect(json(yield* call("server.config", {}))).toMatchObject({
+        status: 200,
+        body: {
+          keybindings: expect.arrayContaining([
+            expect.objectContaining({
+              command: binding.command,
+              shortcut: expect.objectContaining({ shiftKey: true }),
+            }),
+          ]),
+        },
+      });
+      expect(json(yield* call("keybindings.remove", binding, writer))).toMatchObject({
+        status: 200,
+        body: { keybindings: DEFAULT_RESOLVED_KEYBINDINGS, issues: [] },
+      });
+    }),
+  );
+
   it.effect("creates a folder and lists it, through the same handlers as the app", () =>
     Effect.gen(function* () {
       const { call } = yield* setup;

@@ -1,5 +1,6 @@
-import { useEnvironmentScope } from "../../state/session";
-import { useEnvironmentsWithScope, readEnvironmentScope } from "../../state/session";
+import { useEnvironmentScope, readEnvironmentScope } from "../../state/session";
+import { useAtomValue } from "@effect/atom-react";
+import { Atom } from "effect/reactivity";
 import {
   ChevronDownIcon,
   CircleXIcon,
@@ -24,13 +25,12 @@ import {
 } from "react";
 import {
   AuthOrchestrationOperateScope,
-  AuthSettingsWriteScope,
   type KeybindingCommand,
   type KeybindingWhenNode,
   type ServerRemoveKeybindingInput,
   type ServerUpsertKeybindingInput,
 } from "@t3tools/contracts";
-import { environmentSupports } from "@t3tools/contracts"; // signalbox
+import { environmentCanWriteKeybindings, environmentSupports } from "@t3tools/contracts"; // signalbox
 import { mergeWithDefaultKeybindings } from "@t3tools/shared/keybindings";
 import {
   isAtomCommandInterrupted,
@@ -1271,10 +1271,22 @@ export function KeybindingsSettingsPanel() {
     primaryEnvironment?.environmentId ?? null,
     AuthOrchestrationOperateScope,
   );
-  const writableIds = useEnvironmentsWithScope(connectedEnvironments, AuthSettingsWriteScope);
-  const canWriteSettings =
-    connectedEnvironments.length > 0 &&
-    connectedEnvironments.every((target) => writableIds.has(target.environmentId));
+  const canWriteSettings = useAtomValue(
+    useMemo(
+      () =>
+        Atom.make(
+          (get) =>
+            connectedEnvironments.length > 0 &&
+            connectedEnvironments.every(
+              (target) =>
+                environmentCanWriteKeybindings(target.serverConfig?.environment?.capabilities) &&
+                get(serverEnvironment.upsertKeybinding.permissionAtom(target.environmentId)) &&
+                get(serverEnvironment.removeKeybinding.permissionAtom(target.environmentId)),
+            ),
+        ),
+      [connectedEnvironments],
+    ),
+  );
   const serverKeybindings = primaryEnvironment?.serverConfig?.keybindings;
   const keybindings = useMemo(
     () => mergeWithDefaultKeybindings(serverKeybindings ?? []),
@@ -1370,13 +1382,7 @@ export function KeybindingsSettingsPanel() {
 
   const saveKeybinding = useCallback(
     (input: ServerUpsertKeybindingInput) => {
-      if (
-        !primaryEnvironment ||
-        !connectedEnvironments.every((target) =>
-          readEnvironmentScope(target.environmentId, AuthSettingsWriteScope),
-        )
-      )
-        return;
+      if (!primaryEnvironment || !canWriteSettings) return;
       setSavingCommand(input.command);
       const payload: ServerUpsertKeybindingInput = {
         command: input.command,
@@ -1406,18 +1412,12 @@ export function KeybindingsSettingsPanel() {
         }
       })();
     },
-    [connectedEnvironments, primaryEnvironment, upsertKeybinding],
+    [canWriteSettings, connectedEnvironments, primaryEnvironment, upsertKeybinding],
   );
 
   const removeKeybinding = useCallback(
     (row: KeybindingRow) => {
-      if (
-        !primaryEnvironment ||
-        !connectedEnvironments.every((target) =>
-          readEnvironmentScope(target.environmentId, AuthSettingsWriteScope),
-        )
-      )
-        return;
+      if (!primaryEnvironment || !canWriteSettings) return;
       setSavingCommand(row.command);
       void (async () => {
         const results = await Promise.all(
@@ -1440,7 +1440,7 @@ export function KeybindingsSettingsPanel() {
         }
       })();
     },
-    [connectedEnvironments, primaryEnvironment, removeKeybindingMutation],
+    [canWriteSettings, connectedEnvironments, primaryEnvironment, removeKeybindingMutation],
   );
 
   const resetKeybinding = useCallback(

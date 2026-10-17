@@ -4,6 +4,17 @@ import { describe, expect, it } from "vite-plus/test";
 import { CLOUD_UNSERVED, cloudServes, cloudUnserved, coverageKeyMatches } from "./cloudCoverage.ts";
 
 describe("cloud API coverage", () => {
+  it("serves both keybinding edits rather than leaving the editor with unknown RPCs", () => {
+    const keybindings = operations.filter((operation) => operation.name.startsWith("keybindings."));
+    expect(keybindings.map((operation) => operation.name).sort()).toEqual([
+      "keybindings.remove",
+      "keybindings.upsert",
+    ]);
+    expect(
+      keybindings.filter((operation) => !cloudServes(operation)).map((operation) => operation.name),
+    ).toEqual([]);
+  });
+
   it("reports deferred cloud terminals as tracked gaps", () => {
     const terminals = operations.filter((operation) =>
       /^(terminal\.|terminalEvents\.|terminalMetadata\.)/.test(operation.name),
