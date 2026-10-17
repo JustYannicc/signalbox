@@ -6,7 +6,7 @@
   "main": "dist-electron/boot.cjs",
   "scripts": {
     "ensure:electron": "node scripts/ensure-electron-runtime.mjs",
-    "start": "node scripts/start-electron.mjs",
+    "start": "node ../../packages/shared/src/agentProcesses/cli.ts run -- node scripts/start-electron.mjs",
     "typecheck": "tsc-rs --noEmit",
     "test": "vp test run --passWithNoTests",
     "smoke-test": "node scripts/smoke-test.mjs"
