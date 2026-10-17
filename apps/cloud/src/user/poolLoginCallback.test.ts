@@ -17,7 +17,11 @@ describe("pool login callback input", () => {
   });
 
   it("preserves matching success and denial callbacks", () => {
-    for (const response of ["code=code_abc", "error=access_denied&error_description=Cancelled"]) {
+    for (const response of [
+      "code=code_abc",
+      "error=access_denied&error_description=Cancelled",
+      "error_description=Cancelled",
+    ]) {
       const callback = `${redirect}?state=active-state&${response}`;
       expect(poolLoginCallback(authorization, state, callback)).toBe(callback);
     }

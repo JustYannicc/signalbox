@@ -24,6 +24,11 @@ export const poolLoginCallback = (authorizationUrl: string, state: string, input
       const callback = new URL(value);
       const codes = callback.searchParams.getAll("code");
       const errors = callback.searchParams.getAll("error");
+      const descriptions = callback.searchParams.getAll("error_description");
+      const denial =
+        descriptions.length <= 1 &&
+        ((errors.length === 1 && errors[0]) ||
+          (errors.length === 0 && descriptions.length === 1 && descriptions[0]));
       if (
         callback.origin !== redirect.origin ||
         callback.pathname !== redirect.pathname ||
@@ -32,8 +37,8 @@ export const poolLoginCallback = (authorizationUrl: string, state: string, input
         callback.hash ||
         single(callback, "state") !== state ||
         !(
-          (codes.length === 1 && codes[0] && errors.length === 0) ||
-          (errors.length === 1 && errors[0] && codes.length === 0)
+          (codes.length === 1 && codes[0] && errors.length === 0 && descriptions.length === 0) ||
+          (codes.length === 0 && denial)
         )
       )
         return null;
