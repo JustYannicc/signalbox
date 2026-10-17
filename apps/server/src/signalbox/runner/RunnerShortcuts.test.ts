@@ -99,6 +99,49 @@ describe("RunnerShortcuts", () => {
       ),
   );
 
+  it.effect("drops the stale mount when a pinned remote commit is missing", () =>
+    scopedTest((root) =>
+      Effect.gen(function* () {
+        const upstream = NodePath.join(root, "code-remote");
+        NodeFS.mkdirSync(upstream, { recursive: true });
+        git(upstream, "init", "-q", "--initial-branch=main");
+        git(upstream, "config", "user.name", "Remote");
+        git(upstream, "config", "user.email", "remote@example.com");
+        write(upstream, "AGENTS.md", "REMOTE RULES\n");
+        write(upstream, "stale.txt", "stale\n");
+        git(upstream, "add", "-A");
+        git(upstream, "commit", "-q", "-m", "Initial");
+
+        const home = makeFakeDrive(root, { id: "home" });
+        const code = makeFakeDrive(root, { id: "code", upstream });
+        home.shortcuts.push({ path: "code", target: code, readable: true });
+        const { runner, cwd } = yield* machine(home, root, "vm-1", "t1");
+        const first = yield* runner.prepare("remote-token");
+        expect(first.notices).toEqual([]);
+        expect(read(cwd, "code/stale.txt")).toBe("stale\n");
+        const saved = yield* runner.finishTurn();
+
+        write(upstream, "later.txt", "later\n");
+        git(upstream, "add", "-A");
+        git(upstream, "commit", "-q", "-m", "Later");
+        const missingCommit = "f".repeat(40);
+        home.pinToCheckpoint("t1", saved.checkpoint!.commit, {
+          shortcuts: [{ path: "code", target: "code", commit: missingCommit }],
+          context: null,
+        });
+        home.shortcuts[0]!.pinnedCommit = missingCommit;
+
+        const restored = yield* runner.prepare("remote-token");
+        expect(restored.notices).toEqual(["code couldn't be brought up to date this turn."]);
+        expect(restored.instructions).toBe("");
+        expect(NodeFS.existsSync(NodePath.join(cwd, "code"))).toBe(false);
+        expect(NodeFS.existsSync(NodePath.join(cwd, "code/stale.txt"))).toBe(false);
+        expect(NodeFS.existsSync(NodePath.join(cwd, "code/later.txt"))).toBe(false);
+        expect(bundle(cwd)).toBeNull();
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+    ),
+  );
+
   it.effect("follows the target's latest version and drops what is gone at the next turn", () =>
     scopedTest((root) =>
       Effect.gen(function* () {
