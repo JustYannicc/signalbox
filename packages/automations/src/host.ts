@@ -186,7 +186,7 @@ export interface IngressDependencies {
   readonly newId: (prefix: string) => Effect.Effect<string, AutomationError>;
   readonly launchRun: LaunchRun;
   /** Delivers an event to one run's waiting steps. */
-  readonly deliverTo: (runId: string, envelope: Envelope) => Effect.Effect<void>;
+  readonly deliverTo: (runId: string, envelope: Envelope) => Effect.Effect<void, AutomationError>;
 }
 
 /** Automation webhooks and `w.hook` callback links, as the engine drives them. */

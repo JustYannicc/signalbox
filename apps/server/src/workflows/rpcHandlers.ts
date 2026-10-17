@@ -130,6 +130,9 @@ export const automationRpcHandlers = (engine: WorkflowEngine.WorkflowEngine["Ser
   [METHODS.automationsConnectionStatus]: (
     _input: Payload<typeof METHODS.automationsConnectionStatus>,
   ) => ConnectionSettings.AutomationConnections.use((connections) => connections.status),
+  [METHODS.automationsGitHubSubscriptions]: (
+    _input: Payload<typeof METHODS.automationsGitHubSubscriptions>,
+  ) => Effect.succeed({ subscriptions: [] }),
   [METHODS.automationsConnect]: (input: Payload<typeof METHODS.automationsConnect>) =>
     ConnectionSettings.AutomationConnections.use((connections) => connections.connect(input)),
   [METHODS.automationsDisconnect]: (_input: Payload<typeof METHODS.automationsDisconnect>) =>

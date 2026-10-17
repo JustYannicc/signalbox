@@ -15,6 +15,7 @@ import * as Context from "effect/Context";
 import type * as Effect from "effect/Effect";
 
 import type { DriveRefEvent } from "../drive/DriveEvents.ts";
+import type { HookAnswer, HookRequest } from "./webhookRequest.ts";
 
 /** One `AutomationRunHost` method and its arguments, as a run's instance calls it. */
 export type AutomationHostRequest = {
@@ -60,6 +61,8 @@ export const hostOver = (
  * work it started here is done.
  */
 export interface CloudAutomationsShape {
+  /** Verifies and durably accepts a request before the Worker acknowledges it. */
+  readonly receiveHook: (request: HookRequest) => Effect.Effect<HookAnswer, AutomationError>;
   readonly save: (
     input: Omit<AutomationSaveInput, "defaults"> & { readonly compiled?: unknown },
     newThreadModel: (projectId?: ProjectId) => Effect.Effect<ModelSelection | null>,

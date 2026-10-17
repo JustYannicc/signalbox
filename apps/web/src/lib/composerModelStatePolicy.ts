@@ -56,7 +56,7 @@ export function useSignalboxEffectiveComposerModelState(input: {
     () =>
       deriveSignalboxComposerModelState({
         legacyState,
-        composerDraft: { modelSelectionExplicit },
+        composerDraft: modelSelectionExplicit === undefined ? {} : { modelSelectionExplicit },
         isNewThreadDraft,
         initialModelSelection,
         selectedInstanceId,
