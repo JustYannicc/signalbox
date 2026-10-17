@@ -1,4 +1,5 @@
 import * as NodeAssert from "node:assert/strict";
+import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
@@ -7,6 +8,7 @@ import { cruise } from "dependency-cruiser";
 
 import config from "../../.dependency-cruiser.cjs";
 import { checkBaseline, violationKey } from "./baseline.mjs";
+import { readUpstreamSource } from "./upstream.mjs";
 import { workspaceAliases, workspaceTarget, workspaceViolations } from "./workspaces.mjs";
 
 NodeTest.test(
@@ -117,18 +119,108 @@ NodeTest.test(
   },
 );
 
-NodeTest.test("the baseline can shrink, cannot grow, and cannot hide an extended cycle", () => {
+NodeTest.test("the baseline must shrink after fixes and cannot grow", () => {
   NodeAssert.deepEqual(checkBaseline(["old"], ["old", "older"]), []);
   NodeAssert.match(checkBaseline(["new"], ["old"])[0], /can only shrink/);
   NodeAssert.match(checkBaseline(["old", "old"], ["old"])[0], /duplicate/);
-  const cycle = {
-    rule: { name: "no-circular" },
-    from: "a.ts",
-    to: "b.ts",
-    cycle: [{ name: "a.ts" }, { name: "b.ts" }],
+  NodeAssert.match(checkBaseline(["old"], ["old"], [])[0], /stale baseline/);
+  NodeAssert.deepEqual(checkBaseline([], ["old"], []), []);
+});
+
+NodeTest.test("removing cyclic edges passes while adding cyclic edges fails", async () => {
+  const previous = process.cwd();
+  const roots = [];
+  const scan = async (sources) => {
+    const root = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "signalbox-cycle-"));
+    roots.push(root);
+    process.chdir(root);
+    for (const [file, text] of Object.entries(sources)) NodeFS.writeFileSync(file, text);
+    const { output } = await cruise(Object.keys(sources), {
+      ...config.options,
+      validate: true,
+      ruleSet: { forbidden: config.forbidden },
+      outputType: "json",
+    });
+    return JSON.parse(output).summary.violations.filter((item) => item.rule.name === "no-circular");
   };
-  NodeAssert.notEqual(
-    violationKey(cycle),
-    violationKey({ ...cycle, cycle: [...cycle.cycle, { name: "new.ts" }] }),
-  );
+  try {
+    const sources = {
+      "a.ts": 'import "./b.ts";',
+      "b.ts": 'import "./a.ts"; import "./c.ts";',
+      "c.ts": 'import "./a.ts";',
+    };
+    const initial = await scan(sources);
+    const baseline = initial.map(violationKey);
+    const fixed = await scan({ ...sources, "b.ts": 'import "./c.ts";' });
+    const current = fixed.map(violationKey);
+    NodeAssert.ok(current.length > 0);
+    NodeAssert.notDeepEqual(
+      initial.find((item) => item.from === "a.ts").cycle,
+      fixed.find((item) => item.from === "a.ts").cycle,
+    );
+    NodeAssert.deepEqual(checkBaseline(current, baseline, current), []);
+    NodeAssert.ok(
+      checkBaseline(baseline, baseline, current).some((message) => /stale/.test(message)),
+    );
+    const extended = await scan({
+      ...sources,
+      "c.ts": 'import "./a.ts"; import "./d.ts";',
+      "d.ts": 'import "./a.ts";',
+    });
+    NodeAssert.ok(
+      checkBaseline(extended.map(violationKey), baseline).some((message) =>
+        /can only shrink/.test(message),
+      ),
+    );
+  } finally {
+    process.chdir(previous);
+    for (const root of roots) NodeFS.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+NodeTest.test("upstream deletions cannot reclassify files before the candidate merges them", () => {
+  const root = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "signalbox-upstream-"));
+  const git = (args) =>
+    NodeChildProcess.execFileSync(
+      "git",
+      [
+        "-c",
+        "user.name=Boundary test",
+        "-c",
+        "user.email=test@example.invalid",
+        "-c",
+        "commit.gpgsign=false",
+        ...args,
+      ],
+      {
+        cwd: root,
+        encoding: "utf8",
+        stdio: "pipe",
+      },
+    ).trimEnd();
+  try {
+    git(["init", "--initial-branch=main"]);
+    NodeFS.writeFileSync(NodePath.join(root, "upstream.ts"), "export const original = 1;");
+    git(["add", "."]);
+    git(["commit", "-qm", "upstream base"]);
+    const base = git(["rev-parse", "HEAD"]);
+    git(["update-ref", "refs/remotes/upstream/main", base]);
+    NodeFS.writeFileSync(NodePath.join(root, "fork.ts"), "export const fork = 1;");
+    git(["add", "."]);
+    git(["commit", "-qm", "fork changes"]);
+    const before = readUpstreamSource(git, "upstream/main");
+    git(["checkout", "-b", "upstream-next", base]);
+    git(["rm", "upstream.ts"]);
+    git(["commit", "-qm", "upstream deletion"]);
+    git(["update-ref", "refs/remotes/upstream/main", "HEAD"]);
+    git(["checkout", "main"]);
+    const after = readUpstreamSource(git, "upstream/main");
+    NodeAssert.deepEqual(after, before);
+    NodeAssert.equal(after.commit, base);
+    NodeAssert.ok(after.files.has("upstream.ts"));
+    NodeAssert.ok(!after.files.has("fork.ts"));
+    NodeAssert.throws(() => readUpstreamSource(git, "missing-ref"));
+  } finally {
+    NodeFS.rmSync(root, { recursive: true, force: true });
+  }
 });

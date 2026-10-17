@@ -7,6 +7,7 @@ import { cruise, getAvailableTranspilers } from "dependency-cruiser";
 
 import config from "../../.dependency-cruiser.cjs";
 import { checkBaseline, violationKey } from "./baseline.mjs";
+import { readUpstreamSource } from "./upstream.mjs";
 import { readWorkspaces, workspaceAliases, workspaceViolations } from "./workspaces.mjs";
 
 const ROOT = NodeURL.fileURLToPath(new URL("../../", import.meta.url));
@@ -27,9 +28,8 @@ async function main() {
       "write-baseline": { type: "boolean", default: false },
     },
   });
-  // The merge check uses this ref too. Missing upstream is a setup error, never a downgrade.
-  const upstream = git(["rev-parse", "--verify", values.upstream]);
-  const upstreamFiles = new Set(git(["ls-tree", "-r", "--name-only", upstream]).split("\n"));
+  // Missing upstream is a setup error, never a downgrade.
+  const upstream = readUpstreamSource(git, values.upstream);
   const files = [...new Set(git(["ls-files", "-c", "-o", "--exclude-standard"]).split("\n"))];
   const workspaces = readWorkspaces(files);
   const inputs = files.filter(
@@ -72,11 +72,7 @@ async function main() {
     ...workspaceViolations(graph.modules, workspaces),
   ].map((violation) => ({
     ...violation,
-    severity: [violation.from, ...(violation.cycle ?? []).map((item) => item.name)].every((file) =>
-      upstreamFiles.has(file),
-    )
-      ? "warn"
-      : "error",
+    severity: upstream.files.has(violation.from) ? "warn" : "error",
   }));
   const errors = violations.filter((violation) => violation.severity === "error");
   const base = git(["merge-base", "HEAD", values.base]);
@@ -101,7 +97,7 @@ async function main() {
     );
   }
   const baseline = JSON.parse(NodeFS.readFileSync(BASELINE, "utf8")).violations;
-  const baselineErrors = checkBaseline(baseline, previous);
+  const baselineErrors = checkBaseline(baseline, previous, errors.map(violationKey));
   const known = new Set(baseline);
   let errorCount = baselineErrors.length;
   let warningCount = 0;
@@ -119,7 +115,7 @@ async function main() {
   }
   for (const message of baselineErrors) console.error(`error ${message}`);
   console.log(
-    `Boundaries: ${errorCount} errors, ${warningCount} upstream warnings, ${knownCount} baselined fork violations; ${graph.modules.length} modules scanned. Upstream ${upstream.slice(0, 12)}.`,
+    `Boundaries: ${errorCount} errors, ${warningCount} upstream warnings, ${knownCount} baselined fork violations; ${graph.modules.length} modules scanned. Upstream ${upstream.commit.slice(0, 12)}.`,
   );
   process.exitCode = errorCount ? 1 : 0;
 }
