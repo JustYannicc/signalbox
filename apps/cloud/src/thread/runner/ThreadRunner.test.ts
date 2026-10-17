@@ -29,7 +29,7 @@ import {
   threadId,
   turnReport,
   withObject,
-} from "./runnerTestKit.ts";
+} from "../runnerTesting.ts";
 
 const POOL_CLAUDE = {
   instanceId: ProviderInstanceId.make("claude_hub"),

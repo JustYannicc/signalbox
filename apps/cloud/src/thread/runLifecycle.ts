@@ -9,6 +9,7 @@ import type {
 
 import { driverFor, runnerInstanceFor } from "./providerCatalog.ts";
 import { expireRuntimeRequests } from "./runtimeRequests.ts";
+import { isLiveRun } from "./runState.ts";
 import {
   attemptEvent,
   type DecisionContext,
@@ -30,15 +31,6 @@ import {
 
 type Projection = OrchestrationV2ThreadProjection;
 type Run = OrchestrationV2Run;
-
-type LiveRun = Run & { readonly status: "preparing" | "starting" | "running" | "waiting" };
-
-/** A run the provider is (or is about to be) working on. */
-export const isLiveRun = (run: Run): run is LiveRun =>
-  run.status === "preparing" ||
-  run.status === "starting" ||
-  run.status === "running" ||
-  run.status === "waiting";
 
 /** The run the provider is working on, if any. */
 export const activeRun = (projection: Projection): Run | undefined =>

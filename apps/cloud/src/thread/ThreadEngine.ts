@@ -33,8 +33,8 @@ import * as Stream from "effect/Stream";
 
 import { traceIdOf } from "./diagnostics/traceId.ts";
 import { hasPendingTurnWork, scriptedStep } from "./scriptedTurn.ts";
-import { type Decision, decide, decideLaunch, type ThreadWorktree } from "./threadDecider.ts";
-import type { DecisionContext } from "./threadEvents.ts";
+import { decide, decideLaunch, type ThreadWorktree } from "./threadDecider.ts";
+import type { Decision, DecisionContext } from "./threadEvents.ts";
 import { expireEndedRuntimeRequests } from "./runtimeRequests.ts";
 import { applyEvents, threadShellFromProjection, workStartedAt } from "./threadProjection.ts";
 import { noteKey, noteRunId, supersedes } from "./statusLine/statusNotePolicy.ts";

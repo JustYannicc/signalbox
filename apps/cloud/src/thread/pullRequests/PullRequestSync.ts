@@ -21,7 +21,7 @@ import * as Metric from "effect/Metric";
 import { GitHub } from "../../github/GitHub.ts";
 import { pullRequestSnapshot } from "../../github/GitHubPullRequests.ts";
 import { UserDirectory } from "../../user/UserDirectory.ts";
-import { isLiveRun } from "../runLifecycle.ts";
+import { isLiveRun } from "../runState.ts";
 import { awaitsHandoff, harnessRun } from "../runner/runnerTurn.ts";
 import { type Actor, ThreadEngine } from "../ThreadEngine.ts";
 import { ThreadStore } from "../ThreadStore.ts";

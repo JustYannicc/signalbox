@@ -12,7 +12,7 @@ import { latestUnheldRun } from "@t3tools/shared/orchestrationV2ThreadError";
 import { threadPullRequestsOf } from "@t3tools/shared/threadPullRequests";
 import * as DateTime from "effect/DateTime";
 
-import { isLiveRun } from "./runLifecycle.ts";
+import { isLiveRun } from "./runState.ts";
 import type { ThreadMonitor } from "./threadWire.ts";
 
 /**

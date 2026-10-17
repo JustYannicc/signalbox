@@ -14,6 +14,10 @@ import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
 import {
+  onRunnerMessage,
+  pushRunnerWork,
+  type RunnerSocketHost,
+  type ThreadRunner,
   fakeSocket,
   freshDatabase,
   hello,
@@ -25,9 +29,7 @@ import {
   threadId,
   turnReport,
   withObject,
-} from "./runnerTestKit.ts";
-import type { ThreadRunner } from "./ThreadRunner.ts";
-import { onRunnerMessage, pushRunnerWork, type RunnerSocketHost } from "./runnerSockets.ts";
+} from "../runnerTesting.ts";
 
 const encodeNode = Schema.encodeSync(Schema.toCodecJson(OrchestrationV2ExecutionNode));
 const encodeRuntimeRequest = Schema.encodeSync(Schema.toCodecJson(OrchestrationV2RuntimeRequest));

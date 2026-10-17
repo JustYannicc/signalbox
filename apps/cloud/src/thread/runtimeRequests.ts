@@ -7,9 +7,9 @@ import type {
 import type { ThreadMessage } from "@signalbox/runner-protocol/RunnerProtocol";
 import { isRunAttemptOrContinuation } from "@signalbox/runner-protocol/RunAttemptIdentity";
 
-import { isLiveRun } from "./runLifecycle.ts";
-import type { Decision } from "./threadDecider.ts";
+import { isLiveRun } from "./runState.ts";
 import {
+  type Decision,
   type DecisionContext,
   nodeEvent,
   runEvent,

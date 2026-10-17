@@ -35,11 +35,11 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 
-import { layerThreadObject } from "../../testing.ts";
-import * as SessionRows from "../session/SessionRows.ts";
-import * as ThreadEngine from "../ThreadEngine.ts";
-import type { RunnerSocketHost } from "./runnerSockets.ts";
-import * as ThreadRunner from "./ThreadRunner.ts";
+import { layerThreadObject } from "../testing.ts";
+import * as SessionRows from "./session/SessionRows.ts";
+import * as ThreadEngine from "./ThreadEngine.ts";
+import type { RunnerSocketHost } from "./runner/runnerSockets.ts";
+import * as ThreadRunner from "./runner/ThreadRunner.ts";
 
 /** A Claude thread's object with its Runner, and what a Runner reports, for tests. */
 
@@ -409,3 +409,6 @@ export const hostFor = (
     holdsTurn: () => Promise.resolve(holds()),
     afterChange: () => Promise.resolve(),
   }));
+
+export { onRunnerMessage, pushRunnerWork, type RunnerSocketHost } from "./runner/runnerSockets.ts";
+export type { ThreadRunner } from "./runner/ThreadRunner.ts";
