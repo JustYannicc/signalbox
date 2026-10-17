@@ -107,10 +107,31 @@ const decodeViewportSetting = Schema.decodeUnknownSync(PreviewViewportSettingSch
 const AGENT_CURSOR_MOVE_MS = 160;
 const AGENT_CURSOR_CLICK_LEAD_MS = 40;
 
+type PageNavigationState = {
+  current: number;
+  requests: WeakMap<object, number>;
+};
+
+const makePageNavigationState = (): PageNavigationState => ({
+  current: 0,
+  requests: new WeakMap(),
+});
+
+const isMainNavigationRequest = (page: Page, request: Request) => {
+  if (!request.isNavigationRequest()) return false;
+  try {
+    return request.frame() === page.mainFrame();
+  } catch {
+    return false;
+  }
+};
+
 const sleepUntil = (deadline: number) =>
   new Promise<void>((resolve) => setTimeout(resolve, Math.max(0, deadline - Date.now())));
 
 const trackPopupInitialLoad = (page: Page) => {
+  const navigation = makePageNavigationState();
+  let initialNavigationGeneration: number | null = null;
   let settled = false;
   let releaseGuard: (() => void) | undefined;
   let onSettled: (() => void) | undefined;
@@ -119,6 +140,7 @@ const trackPopupInitialLoad = (page: Page) => {
     resolveSettled = resolve;
   });
   const removeListeners = () => {
+    page.off("request", onRequest);
     page.off("load", finish);
     page.off("requestfailed", onRequestFailed);
     page.off("close", finish);
@@ -133,14 +155,19 @@ const trackPopupInitialLoad = (page: Page) => {
     resolveSettled();
   };
   const onRequestFailed = (request: Request) => {
-    if (!request.isNavigationRequest()) return;
-    try {
-      if (request.frame() === page.mainFrame()) finish();
-    } catch {
-      // A closing page settles through its close event.
-    }
+    if (!isMainNavigationRequest(page, request)) return;
+    const generation = navigation.requests.get(request) ?? 0;
+    if (generation !== navigation.current) return;
+    finish();
+  };
+  const onRequest = (request: Request) => {
+    if (!isMainNavigationRequest(page, request)) return;
+    const generation = ++navigation.current;
+    initialNavigationGeneration ??= generation;
+    navigation.requests.set(request, generation);
   };
 
+  page.on("request", onRequest);
   page.on("load", finish);
   page.on("requestfailed", onRequestFailed);
   page.on("close", finish);
@@ -149,7 +176,9 @@ const trackPopupInitialLoad = (page: Page) => {
 
   const boundedWait = page.waitForLoadState("load", { timeout: NAVIGATION_TIMEOUT_MS }).then(
     () => {
-      if (page.url() !== "about:blank") finish();
+      // A completed blank popup has no request or load event left to observe.
+      // If navigation started after the popup event, wait for its own load/failure.
+      if (navigation.current === 0) finish();
     },
     (cause: unknown) => {
       if (!(cause instanceof Error && cause.name === "TimeoutError")) finish();
@@ -157,6 +186,8 @@ const trackPopupInitialLoad = (page: Page) => {
   );
 
   return {
+    navigation,
+    isInitialNavigationCurrent: () => navigation.current === (initialNavigationGeneration ?? 0),
     wait: Promise.race([settledPromise, boundedWait]),
     isSettled: () => settled,
     onSettled: (callback: () => void) => {
@@ -373,7 +404,7 @@ interface ServerTab {
   closing: boolean;
   recording: Recording | null;
   initialNavigation: Promise<void> | null;
-  navigationGeneration: number;
+  navigation: PageNavigationState;
 
   abortedNavigation: {
     readonly url: string;
@@ -881,7 +912,7 @@ const make = Effect.gen(function* () {
       recording: null,
       recordingStart: null,
       initialNavigation: null,
-      navigationGeneration: 0,
+      navigation: adopted?.initialLoad.navigation ?? makePageNavigationState(),
       abortedNavigation: null,
       captureLock: Promise.resolve(),
       capturing: 0,
@@ -890,12 +921,11 @@ const make = Effect.gen(function* () {
       await page.setViewportSize(fixedViewportSize(tab.setting) ?? UNATTACHED_FILL_VIEWPORT);
     }
     await applyRendering(tab, snapshot);
-    const isMainNavigation = (request: { isNavigationRequest(): boolean; frame(): unknown }) =>
-      request.isNavigationRequest() && request.frame() === page.mainFrame();
-    const navigationGenerations = new WeakMap<object, number>();
     page.on("request", (request) => {
-      if (!isMainNavigation(request)) return;
-      navigationGenerations.set(request, ++tab.navigationGeneration);
+      if (!isMainNavigationRequest(page, request)) return;
+      if (!tab.navigation.requests.has(request)) {
+        tab.navigation.requests.set(request, ++tab.navigation.current);
+      }
       clearAbortedNavigation(tab);
       tab.loading = true;
       report(tab, { _tag: "Loading", url: request.url().slice(0, 2048), title: "" });
@@ -921,16 +951,16 @@ const make = Effect.gen(function* () {
         errorText,
         timestamp: new Date().toISOString(),
       });
-      if (!isMainNavigation(request)) return;
+      if (!isMainNavigationRequest(page, request)) return;
       // A navigation a newer one replaced leaves the status to the newer one. A
       // popup's first request can predate the listener, so it is untracked and
       // superseded by any tracked one.
-      const generation = navigationGenerations.get(request) ?? 0;
-      if (generation !== tab.navigationGeneration) return;
+      const generation = tab.navigation.requests.get(request) ?? 0;
+      if (generation !== tab.navigation.current) return;
       // An aborted navigation is usually a download; its `download` event settles the status.
       if (errorText.includes("ERR_ABORTED")) {
         const url = request.url();
-        const navigationGeneration = tab.navigationGeneration;
+        const navigationGeneration = tab.navigation.current;
         clearAbortedNavigation(tab);
         tab.abortedNavigation = {
           url,
@@ -990,7 +1020,7 @@ const make = Effect.gen(function* () {
     page.on("crash", () => dropTab(tab, true));
     tabs.set(key, tab);
     adopted?.initialLoad.onSettled(() => {
-      tab.loading = false;
+      if (adopted.initialLoad.isInitialNavigationCurrent()) tab.loading = false;
     });
     reportLiveTabs();
     // A popup is already loading its own URL, and the desktop loads its tab's.
@@ -1023,7 +1053,7 @@ const make = Effect.gen(function* () {
     url: string,
     offered: { readonly id: string; readonly fileName: string } | undefined,
   ) => {
-    if (tab.navigationGeneration !== generation) return;
+    if (tab.navigation.current !== generation) return;
     tab.loading = false;
     if (tab.page.url() !== "about:blank") {
       void reportLoaded(tab);
@@ -1068,8 +1098,7 @@ const make = Effect.gen(function* () {
         await NodeFSP.rm(evicted.path, { force: true }).catch(constVoid);
       }
       offered = { id, fileName: saved.fileName };
-      const shownInTab =
-        navigation === tab.navigationGeneration && tab.page.url() === "about:blank";
+      const shownInTab = navigation === tab.navigation.current && tab.page.url() === "about:blank";
       if (shownInTab) return;
       const controller = [...tab.viewers].find((viewer) => viewer.id === tab.control.controller);
       controller?.push({

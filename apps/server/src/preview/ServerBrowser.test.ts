@@ -1141,6 +1141,223 @@ it.live.each(["load", "failure", "close"] as const)(
     ).pipe(Effect.provide(layer)),
 );
 
+it.live.each(["load", "failure", "close"] as const)(
+  "keeps a newer popup navigation protected when the initial request later fails, until $0",
+  (terminal) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const { broker, tabId: openerTabId } = yield* ready;
+        const manager = yield* Manager.PreviewManager;
+        const popupContext = makeContext();
+        const timeout = new Error("popup load wait timed out");
+        timeout.name = "TimeoutError";
+        popupContext.page.waitForLoadState.mockRejectedValueOnce(timeout);
+        const popupPrepared = Promise.withResolvers<void>();
+        popupContext.page.setDefaultTimeout.mockImplementationOnce(() => {
+          popupPrepared.resolve();
+        });
+        const events = yield* manager.subscribeEvents;
+        const popupOpened = yield* Effect.gen(function* () {
+          while (true) {
+            const event = yield* PubSub.take(events);
+            if (
+              event.type === "opened" &&
+              event.snapshot.threadId === scope.thread.threadId &&
+              event.snapshot.tabId !== openerTabId
+            )
+              return event.snapshot;
+          }
+        }).pipe(Effect.forkScoped);
+        contexts[0]!.page.emit("popup", popupContext.page);
+        const snapshot = yield* Fiber.join(popupOpened);
+        yield* Effect.promise(() => popupPrepared.promise);
+
+        const navigation = (url: string) => ({
+          url: () => url,
+          method: () => "GET",
+          isNavigationRequest: () => true,
+          frame: () => popupContext.page,
+          failure: () => ({ errorText: "net::ERR_CONNECTION_REFUSED" }),
+        });
+        const initial = navigation("https://example.test/initial");
+        const current = navigation("https://example.test/current");
+        popupContext.page.emit("request", initial);
+        popupContext.page.emit("request", current);
+        popupContext.page.emit("requestfailed", initial);
+
+        threadShells.set(
+          scope.thread.threadId,
+          threadShell(scope.thread.threadId, { settledOverride: "settled" }),
+        );
+        const beforeCleanup = yield* broker.invoke<PreviewAutomationStatus>({
+          scope,
+          tabId: snapshot.tabId,
+          operation: "status",
+          input: {},
+        });
+        expect(beforeCleanup).toMatchObject({ available: true, loading: true });
+        const whileCurrentNavigationLoads = yield* broker.invoke<PreviewAutomationStatus>({
+          scope,
+          operation: "open",
+          input: { reuseExistingTab: false, show: false },
+        });
+        expect(whileCurrentNavigationLoads.serverTabCapacity?.lastCleanupBlocked).toMatchObject({
+          activeOperation: 1,
+        });
+        expect(popupContext.page.isClosed()).toBe(false);
+
+        if (terminal === "load") {
+          popupContext.page.emit("load");
+        } else if (terminal === "failure") {
+          popupContext.page.emit("requestfailed", current);
+        } else {
+          yield* Effect.promise(() => popupContext.page.close());
+        }
+
+        const afterTerminal = yield* broker.invoke<PreviewAutomationStatus>({
+          scope,
+          tabId: snapshot.tabId,
+          operation: "status",
+          input: {},
+        });
+        if (terminal === "close") {
+          expect(afterTerminal.available).toBe(false);
+        } else {
+          expect(afterTerminal).toMatchObject({ available: true, loading: false });
+        }
+
+        const afterTerminalCleanup = yield* broker.invoke<PreviewAutomationStatus>({
+          scope,
+          operation: "open",
+          input: { reuseExistingTab: false, show: false },
+        });
+        expect(afterTerminalCleanup.serverTabCapacity?.lastCleanupBlocked).toMatchObject({
+          activeOperation: 0,
+          loading: 0,
+        });
+      }),
+    ).pipe(Effect.provide(layer)),
+);
+
+it.live("reclaims an already-loaded about:blank popup that never navigates", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { broker, tabId: openerTabId } = yield* ready;
+      const manager = yield* Manager.PreviewManager;
+      const popupContext = makeContext();
+      const popupPrepared = Promise.withResolvers<void>();
+      popupContext.page.setDefaultTimeout.mockImplementationOnce(() => {
+        popupPrepared.resolve();
+      });
+      const events = yield* manager.subscribeEvents;
+      const popupOpened = yield* Effect.gen(function* () {
+        while (true) {
+          const event = yield* PubSub.take(events);
+          if (
+            event.type === "opened" &&
+            event.snapshot.threadId === scope.thread.threadId &&
+            event.snapshot.tabId !== openerTabId
+          )
+            return event.snapshot;
+        }
+      }).pipe(Effect.forkScoped);
+      contexts[0]!.page.emit("popup", popupContext.page);
+      const snapshot = yield* Fiber.join(popupOpened);
+      yield* Effect.promise(() => popupPrepared.promise);
+
+      const loaded = yield* broker.invoke<PreviewAutomationStatus>({
+        scope,
+        tabId: snapshot.tabId,
+        operation: "status",
+        input: {},
+      });
+      expect(loaded).toMatchObject({ available: true, loading: false });
+
+      threadShells.set(
+        scope.thread.threadId,
+        threadShell(scope.thread.threadId, { settledOverride: "settled" }),
+      );
+      const afterCleanup = yield* broker.invoke<PreviewAutomationStatus>({
+        scope,
+        operation: "open",
+        input: { reuseExistingTab: false, show: false },
+      });
+      expect(afterCleanup.serverTabCapacity?.lastCleanupBlocked).toMatchObject({
+        activeOperation: 0,
+        loading: 0,
+      });
+    }),
+  ).pipe(Effect.provide(layer)),
+);
+
+it.live("keeps an about:blank popup protected while a navigation request is pending", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { broker, tabId: openerTabId } = yield* ready;
+      const manager = yield* Manager.PreviewManager;
+      const popupContext = makeContext();
+      const loadedBlank = Promise.withResolvers<void>();
+      popupContext.page.waitForLoadState.mockImplementationOnce(() => loadedBlank.promise);
+      const popupPrepared = Promise.withResolvers<void>();
+      popupContext.page.setDefaultTimeout.mockImplementationOnce(() => {
+        popupPrepared.resolve();
+      });
+      const events = yield* manager.subscribeEvents;
+      const popupOpened = yield* Effect.gen(function* () {
+        while (true) {
+          const event = yield* PubSub.take(events);
+          if (
+            event.type === "opened" &&
+            event.snapshot.threadId === scope.thread.threadId &&
+            event.snapshot.tabId !== openerTabId
+          )
+            return event.snapshot;
+        }
+      }).pipe(Effect.forkScoped);
+      contexts[0]!.page.emit("popup", popupContext.page);
+      const snapshot = yield* Fiber.join(popupOpened);
+      yield* Effect.promise(() => popupPrepared.promise);
+
+      popupContext.page.emit("request", {
+        url: () => "https://example.test/pending",
+        method: () => "GET",
+        isNavigationRequest: () => true,
+        frame: () => popupContext.page,
+      });
+      // The blank document's load wait can resolve while this navigation is still pending.
+      loadedBlank.resolve();
+      threadShells.set(
+        scope.thread.threadId,
+        threadShell(scope.thread.threadId, { settledOverride: "settled" }),
+      );
+
+      const pending = yield* broker.invoke<PreviewAutomationStatus>({
+        scope,
+        tabId: snapshot.tabId,
+        operation: "status",
+        input: {},
+      });
+      expect(pending).toMatchObject({ available: true, loading: true });
+      const cleanupWhilePending = yield* broker.invoke<PreviewAutomationStatus>({
+        scope,
+        operation: "open",
+        input: { reuseExistingTab: false, show: false },
+      });
+      expect(cleanupWhilePending.serverTabCapacity?.lastCleanupBlocked.activeOperation).toBe(1);
+      expect(popupContext.page.isClosed()).toBe(false);
+
+      popupContext.page.emit("load");
+      const loaded = yield* broker.invoke<PreviewAutomationStatus>({
+        scope,
+        tabId: snapshot.tabId,
+        operation: "status",
+        input: {},
+      });
+      expect(loaded).toMatchObject({ available: true, loading: false });
+    }),
+  ).pipe(Effect.provide(layer)),
+);
+
 it.live("preview_open preserves host setup instructions when the browser cannot start", () =>
   Effect.scoped(
     Effect.gen(function* () {
