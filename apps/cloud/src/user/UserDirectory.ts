@@ -30,7 +30,8 @@ import type {
 import type { ConnectResult, ConnectStart } from "../github/GitHubConnection.ts";
 import { API_HEADER, type ApiCredential, encodeApiCredential } from "../api/apiObject.ts";
 import type { CreatedKey, KeyOptions } from "../localKeys/LocalKeys.ts";
-import type { LocalKeysView, LocalModelAuthorization } from "../localKeys/localModelAccess.ts";
+import type { LocalKeysView } from "../localKeys/localModelAccess.ts";
+import type { LocalModelAuthorization } from "../models/ModelProtocol.ts";
 import type { ModelUsage } from "../modelGateway/modelGatewayRecord.ts";
 import type { PreviewSetup } from "../previewSetup/previewSetupWire.ts";
 import type { SignInCheck } from "../signIn/SignInGrants.ts";

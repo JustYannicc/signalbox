@@ -1,7 +1,8 @@
 import * as Effect from "effect/Effect";
 
 import type { ModelUsage } from "../modelGateway/modelGatewayRecord.ts";
-import { type ModelPoolRoute, poolObjectName } from "../pool/PoolDirectory.ts";
+import { poolObjectName } from "../pool/PoolDirectory.ts";
+import type { LocalModelAuthorization } from "../models/ModelProtocol.ts";
 import { resolvePool } from "../user/poolChain.ts";
 import { ResourceBindings } from "../user/ResourceBindings.ts";
 import { UserStore } from "../user/UserStore.ts";
@@ -13,10 +14,6 @@ import { type LocalKey, LocalKeys } from "./LocalKeys.ts";
  * the same pool a thread at the top level runs on. Binding a key to a folder
  * would resolve from that folder instead.
  */
-
-export type LocalModelAuthorization =
-  | { readonly _tag: "denied"; readonly reason: string }
-  | { readonly _tag: "granted"; readonly keyId: string; readonly pool: ModelPoolRoute };
 
 /** The user's keys, and the pool they run on now; null when the top level has none. */
 export interface LocalKeysView {

@@ -5,6 +5,7 @@ import * as Schema from "effect/Schema";
 import type { AccountPoolSetRoutingInput } from "@t3tools/contracts/accountHub";
 
 import type { LoginStart, LoginStatus, PoolLoginProvider } from "./cliProxyApi.ts";
+import type { ModelForwardReply } from "../models/ModelProtocol.ts";
 import type { PoolLinkTarget } from "./poolLink.ts";
 import type { PoolModels } from "./poolModels.ts";
 import type { PreviewLinkCleanupTarget } from "./PreviewLinkRegistry.ts";
@@ -84,27 +85,6 @@ export interface PoolObjectApi {
     preview?: { readonly origin: string },
   ) => Promise<PoolReply<string>>;
 }
-
-/** Where a turn's model requests go: a pool's object, for the user the turn runs for. */
-export interface ModelPoolRoute {
-  readonly objectName: string;
-  readonly userId: string;
-}
-
-/** How a pool object answered a model request. */
-export type ModelForwardReply =
-  | {
-      readonly _tag: "forwarded";
-      readonly response: Response;
-      /** From handing the request to the pool's CLIProxyAPI to its response headers. */
-      readonly upstreamMs: number;
-      /** What the thread should say: it had to leave its account (`threadAccounts.ts`). */
-      readonly accountMoved?: string;
-    }
-  /** The user may not use the pool, or it is gone. */
-  | { readonly _tag: "denied"; readonly reason: string }
-  /** The pool's CLIProxyAPI could not be reached. */
-  | { readonly _tag: "failed"; readonly reason: string };
 
 /**
  * What the ModelGateway asks of a pool object, through the cloud's
