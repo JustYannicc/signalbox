@@ -5,11 +5,8 @@ import type {
   ProjectListEntriesInput,
   ProjectReadFileInput,
   ProjectSearchEntriesInput,
-  ReviewDiffPreviewInput,
   ReviewDiffFileContentsInput,
 } from "@t3tools/contracts";
-import * as Clock from "effect/Clock";
-import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 
 import { GitHub } from "../github/GitHub.ts";
@@ -223,14 +220,6 @@ export const makeDriveBrowsing = Effect.fn("makeDriveBrowsing")(function* (
       };
     });
 
-  /** A drive has no uncommitted changes to preview: every turn's work is in its diff. */
-  const reviewPreview = (request: ReviewDiffPreviewInput) =>
-    Effect.map(Clock.currentTimeMillis, (now) => ({
-      cwd: request.cwd,
-      generatedAt: DateTime.makeUnsafe(now),
-      sources: [],
-    }));
-
   const turnDiff = (request: OrchestrationGetTurnDiffInput) =>
     Effect.gen(function* () {
       const snapshot = yield* threads
@@ -264,5 +253,5 @@ export const makeDriveBrowsing = Effect.fn("makeDriveBrowsing")(function* (
       };
     });
 
-  return { listEntries, readFile, diffFileContents, searchEntries, reviewPreview, turnDiff };
+  return { listEntries, readFile, diffFileContents, searchEntries, turnDiff };
 });

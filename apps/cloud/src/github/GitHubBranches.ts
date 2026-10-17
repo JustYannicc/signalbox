@@ -4,12 +4,14 @@ import {
 } from "@signalbox/runner-protocol/BranchProtocol";
 import {
   CommandId,
-  type GitCommandError,
+  GitCommandError,
   type GitActionProgressEvent,
   GitManagerError,
   type GitRunStackedActionInput,
   type GitRunStackedActionResult,
   type GitStackedAction,
+  type ReviewDiffPreviewInput,
+  type ReviewDiffPreviewResult,
   SourceControlProviderKind,
   type ThreadId,
   type VcsListRefsInput,
@@ -18,8 +20,10 @@ import {
   type VcsStatusRemoteResult,
   type VcsStatusStreamEvent,
 } from "@t3tools/contracts";
+import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as PubSub from "effect/PubSub";
@@ -28,6 +32,7 @@ import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
 import { DriveDirectory, type DriveHandle } from "../drive/DriveDirectory.ts";
+import { DriveFiles } from "../drive/DriveFiles.ts";
 import { DrivePacks } from "../drive/DrivePacks.ts";
 import {
   commitsSince,
@@ -40,12 +45,19 @@ import type { Oid } from "../drive/git/gitObjects.ts";
 import * as CloudThreadService from "../thread/CloudThreadService.ts";
 import type { Actor } from "../thread/ThreadEngine.ts";
 import { canWrite } from "../drive/driveAccess.ts";
-import { driveOfRoot, remoteThreadWorktree, threadWorktreeAt } from "../user/contextProjects.ts";
+import {
+  driveOfProject,
+  driveOfRoot,
+  remoteThreadWorktree,
+  threadWorktreeAt,
+} from "../user/contextProjects.ts";
 import * as UserDrives from "../user/UserDrives.ts";
 import { GitHub } from "./GitHub.ts";
 import type { GitHubError, GitHubPullRequest } from "./GitHubApi.ts";
 import { GitHubConnection } from "./GitHubConnection.ts";
 import { makeGitHubRefs } from "./GitHubRefs.ts";
+import { BranchComparisonError } from "./branchComparison.ts";
+import { makeBranchReview, type ReviewTarget } from "./branchReview.ts";
 
 /**
  * A thread's own branch in an imported repository, as the git panel sees it
@@ -62,6 +74,10 @@ import { makeGitHubRefs } from "./GitHubRefs.ts";
  * `publish` is the push and pull request themselves, for the git panel
  * (`runAction`) and the thread's own agent (`drive/branchRoutes.ts`) alike,
  * failing with why in words for both.
+ *
+ * `review` is the diff panel's view of the branch (`branchReview.ts`), and
+ * status counts the same committed changes against the branch's pull request
+ * base, so the details card's totals and the panel agree.
  *
  * The pull request `publish` opens or finds is linked to the thread as
  * upstream links the one a git action opened (`source: "created"`), so the
@@ -196,6 +212,11 @@ export class GitHubBranches extends Context.Service<
       actor: Actor,
       input: GitRunStackedActionInput,
     ) => Stream.Stream<GitActionProgressEvent, GitManagerError>;
+    /** The diff panel's sources for a thread's working tree: its committed and unsaved changes. */
+    readonly review: (
+      actor: Actor,
+      input: ReviewDiffPreviewInput,
+    ) => Effect.Effect<ReviewDiffPreviewResult, GitCommandError>;
     /** Pushes a thread's branch, and opens its pull request when asked. */
     readonly publish: (
       actor: Actor,
@@ -219,6 +240,11 @@ const make = Effect.gen(function* () {
   const drives =
     directory._tag === "Some" && packs._tag === "Some"
       ? { directory: directory.value, packs: packs.value }
+      : null;
+  const driveFiles = yield* Effect.serviceOption(DriveFiles);
+  const branchReview =
+    driveFiles._tag === "Some"
+      ? makeBranchReview({ api: github.api, files: driveFiles.value })
       : null;
   // Working trees whose branch just moved, so every watcher recomputes at once.
   const moved = yield* PubSub.unbounded<string>();
@@ -256,6 +282,15 @@ const make = Effect.gen(function* () {
     );
 
   const driveUnavailable = () => refusal("unavailable", "The drive is unavailable right now.");
+
+  const driveReadFailed = (cwd: string, cause: unknown) =>
+    Effect.logError("drive read failed", { cause }).pipe(
+      Effect.andThen(
+        Effect.fail(
+          failure(cwd, "review.getDiffPreview", "The drive is unavailable right now. Try again."),
+        ),
+      ),
+    );
 
   const notARepository = refusal("not_a_repository", "This folder is not a git repository.");
 
@@ -313,6 +348,27 @@ const make = Effect.gen(function* () {
 
   type Target = Effect.Success<ReturnType<typeof resolve>>;
 
+  /** A thread's branch reads only for someone who can see the thread: a private one stays invisible. */
+  const visible = (actor: Actor, target: Target) =>
+    target.thread === null
+      ? Effect.void
+      : threads.threadSnapshot(actor, target.thread.id).pipe(
+          Effect.mapError(() => refusal("no_permission", "This thread is unavailable.")),
+          Effect.flatMap(({ projection }) =>
+            driveOfProject(projection.thread.projectId, actor.userId) === target.driveId
+              ? Effect.void
+              : Effect.fail(refusal("no_permission", "This thread is unavailable.")),
+          ),
+        );
+
+  const reviewTargetOf = (target: Target, thread: NonNullable<Target["thread"]>): ReviewTarget => ({
+    driveId: target.driveId,
+    drive: target.drive,
+    repository: target.remote.repository,
+    defaultBranch: target.remote.defaultBranch,
+    thread,
+  });
+
   /** A resolved working tree's status: the drive's branch, and GitHub's side when asked. */
   const statusOf = (target: Target, cwd: string, includeRemote: boolean) =>
     Effect.gen(function* () {
@@ -348,6 +404,21 @@ const make = Effect.gen(function* () {
       ).pipe(Effect.option);
       if (remote._tag === "None") return { local: branchLocal, remote: null };
       const [remoteHead, pr] = remote.value;
+      // What the branch would merge: its committed work against its pull request's base.
+      const branchChanges =
+        branchReview === null
+          ? null
+          : yield* branchReview
+              .totals(
+                reviewTargetOf(target, target.thread),
+                userToken,
+                pr?.baseRef ?? target.remote.defaultBranch,
+              )
+              .pipe(
+                Effect.catch((cause) =>
+                  Effect.as(Effect.logWarning("branch changes unavailable", { cause }), null),
+                ),
+              );
       let aheadCount = state.ahead;
       let behindCount = 0;
       if (remoteHead !== null && state.head !== null && remoteHead !== state.head) {
@@ -365,7 +436,7 @@ const make = Effect.gen(function* () {
         aheadCount = 0;
       }
       return {
-        local: branchLocal,
+        local: branchChanges === null ? branchLocal : { ...branchLocal, branchChanges },
         remote: {
           hasUpstream: remoteHead !== null,
           aheadCount,
@@ -383,6 +454,7 @@ const make = Effect.gen(function* () {
    */
   const resolveRepository = (actor: Actor, cwd: string) =>
     resolve(actor, cwd).pipe(
+      Effect.tap((target) => visible(actor, target)),
       Effect.catchIf(
         (error) => error.reason === "not_a_repository",
         () => Effect.succeed(null),
@@ -429,6 +501,59 @@ const make = Effect.gen(function* () {
           Stream.map(snapshotOf),
         );
       }),
+    );
+
+  const review: GitHubBranches["Service"]["review"] = (actor, input) =>
+    Effect.gen(function* () {
+      const generatedAt = DateTime.makeUnsafe(yield* Clock.currentTimeMillis);
+      const target = yield* resolveRepository(actor, input.cwd);
+      // A folder, or a drive's own root: nothing of a branch to compare.
+      if (target === null || target.thread === null || branchReview === null) {
+        return { cwd: input.cwd, generatedAt, sources: [] };
+      }
+      const fail = (detail: string) =>
+        Effect.fail(failure(input.cwd, "review.getDiffPreview", detail));
+      const userToken = yield* token;
+      if (userToken === null)
+        return yield* fail("Connect GitHub first: Settings › Source Control.");
+      // Cached merge bases and files still need the reader's current repository access.
+      const { repository, defaultBranch } = target.remote;
+      const readable = yield* github.api
+        .repository(userToken, repository)
+        .pipe(
+          Effect.mapError((error) => failure(input.cwd, "review.getDiffPreview", error.message)),
+        );
+      if (readable === null) return yield* fail("You can't open this repository on GitHub.");
+      const thread = target.thread;
+      const pullRequestBase = github.api.pullForBranch(userToken, repository, thread.branch).pipe(
+        Effect.map((pr) => pr?.baseRef ?? defaultBranch),
+        Effect.mapError((error) => new BranchComparisonError({ message: error.message })),
+      );
+      const sources = yield* branchReview.sources(
+        reviewTargetOf(target, thread),
+        userToken,
+        input,
+        pullRequestBase,
+      );
+      return { cwd: input.cwd, generatedAt, sources };
+    }).pipe(
+      Effect.catchTags({
+        BranchComparisonError: (error) =>
+          Effect.fail(failure(input.cwd, "review.getDiffPreview", error.message)),
+        DriveReadError: (error) =>
+          Effect.fail(failure(input.cwd, "review.getDiffPreview", error.message)),
+        DriveObjectError: (cause) => driveReadFailed(input.cwd, cause),
+        DrivePackError: (cause) => driveReadFailed(input.cwd, cause),
+      }),
+      Effect.mapError(
+        (error) =>
+          new GitCommandError({
+            operation: "review.getDiffPreview",
+            command: "drive compare",
+            cwd: input.cwd,
+            detail: error.detail,
+          }),
+      ),
     );
 
   /** Pushes the thread's branch from the drive. Answers whether anything moved and if the branch is new. */
@@ -669,7 +794,7 @@ const make = Effect.gen(function* () {
     );
   };
 
-  return GitHubBranches.of({ listRefs, status, watch, runAction, publish });
+  return GitHubBranches.of({ listRefs, status, watch, runAction, review, publish });
 });
 
 export const layer = Layer.effect(GitHubBranches, make);

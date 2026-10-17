@@ -13,6 +13,7 @@ import {
   useState,
 } from "react";
 import { getRenderablePatch, resolveFileDiffPath, type RenderablePatch } from "~/lib/diffRendering";
+import { reviewFilePatchRequest } from "@t3tools/client-runtime/state/review";
 import { reviewEnvironment } from "~/state/review";
 
 const filePathCollator = new Intl.Collator(undefined, {
@@ -71,16 +72,13 @@ export function useReviewFilePatches({
                   environmentId,
                   input: {
                     cacheKey: scope,
-                    request: {
+                    request: reviewFilePatchRequest({
                       cwd,
-                      ...(baseRef ? { baseRef } : {}),
+                      source,
+                      file,
+                      fallbackBaseRef: baseRef,
                       ignoreWhitespace,
-                      file: {
-                        path: file.path,
-                        previousPath: file.previousPath,
-                        sourceKind: source.kind,
-                      },
-                    },
+                    }),
                   },
                 }),
               };

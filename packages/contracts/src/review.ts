@@ -3,6 +3,18 @@ import { TrimmedNonEmptyString } from "./baseSchemas.ts";
 import { GitCommandError } from "./git.ts";
 import { VcsError } from "./vcs.ts";
 
+/**
+ * The exact commits a source compares, when its refs are names that can move:
+ * a branch range's merge base and head, or the committed head and the latest
+ * save. Clients pin follow-up reads to it so stats, patches and file contents
+ * all describe the same comparison.
+ */
+export const ReviewDiffRevision = Schema.Struct({
+  baseSha: Schema.String.check(Schema.isPattern(/^[0-9a-f]{40}(?:[0-9a-f]{24})?$/i)),
+  headSha: Schema.String.check(Schema.isPattern(/^[0-9a-f]{40}(?:[0-9a-f]{24})?$/i)),
+});
+export type ReviewDiffRevision = typeof ReviewDiffRevision.Type;
+
 export const ReviewDiffPreviewInput = Schema.Struct({
   cwd: TrimmedNonEmptyString,
   baseRef: Schema.optional(TrimmedNonEmptyString),
@@ -12,6 +24,8 @@ export const ReviewDiffPreviewInput = Schema.Struct({
       path: Schema.NonEmptyString,
       previousPath: Schema.NullOr(Schema.NonEmptyString),
       sourceKind: Schema.Literals(["working-tree", "branch-range"]),
+      /** The source's `revision`, so one file's patch matches the preview it came from. */
+      revision: Schema.optionalKey(ReviewDiffRevision),
     }),
   ),
 });
@@ -38,6 +52,7 @@ export const ReviewDiffPreviewSource = Schema.Struct({
   diffHash: TrimmedNonEmptyString,
   truncated: Schema.Boolean,
   files: Schema.optionalKey(Schema.Array(ReviewDiffFileStat)),
+  revision: Schema.optionalKey(ReviewDiffRevision),
 });
 export type ReviewDiffPreviewSource = typeof ReviewDiffPreviewSource.Type;
 

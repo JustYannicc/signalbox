@@ -7,6 +7,7 @@ import {
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
 import { safeErrorLogAttributes } from "@t3tools/client-runtime/errors";
+import { reviewSourceContentRefs } from "@t3tools/client-runtime/state/review";
 import type { ScopedThreadRef, RunId } from "@t3tools/contracts";
 import {
   ArrowRightIcon,
@@ -374,8 +375,7 @@ export default function DiffPanel({
       environmentId: activeThread.environmentId,
       cwd: preview.cwd,
       sourceKind: selectedGitSource.kind,
-      baseRef: selectedGitSource.baseRef,
-      headRef: selectedGitSource.headRef,
+      ...reviewSourceContentRefs(selectedGitSource),
       cacheKey: selectedGitSource.diffHash,
     });
   }, [
@@ -1089,7 +1089,13 @@ export default function DiffPanel({
                 <div className="flex h-full items-center justify-center px-3 py-2 text-xs text-muted-foreground/70">
                   <p>
                     {hasNoNetChanges
-                      ? "No net changes in this selection."
+                      ? selectedTurn
+                        ? "No net changes in this selection."
+                        : selectedGitScope === "unstaged"
+                          ? "No uncommitted changes."
+                          : selectedGitSource?.baseRef
+                            ? `No changes against ${selectedGitSource.baseRef}.`
+                            : "No net changes in this selection."
                       : "No patch available for this selection."}
                   </p>
                 </div>
