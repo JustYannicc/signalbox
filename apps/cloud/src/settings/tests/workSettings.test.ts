@@ -179,6 +179,16 @@ describe("work settings policy", () => {
     ).toEqual({ ...local, defaultModelSelection: null });
   });
 
+  it("reports invalid-edit when a partial patch cannot complete valid local settings", () => {
+    const local = Object.freeze({ defaultAutoPull: false });
+    const result = applyWorkSettingsEdit(local, {
+      patch: { defaultAutoPull: true, defaultModelSelection: { model: "partial" } },
+    });
+    expectFailure(result);
+    if (Result.isFailure(result)) expect(result.failure.reason).toBe("invalid-edit");
+    expect(local).toEqual({ defaultAutoPull: false });
+  });
+
   it("replaces script and option arrays rather than merging their elements", () => {
     const local = {
       defaultProjectScripts: [
@@ -268,7 +278,33 @@ describe("work settings policy", () => {
       );
       const edit = applyWorkSettingsEdit(invalid, {});
       expectFailure(edit);
-      if (Result.isFailure(edit)) expect(edit.failure.reason).toBe("invalid-edit");
+      if (Result.isFailure(edit)) expect(edit.failure.reason).toBe("invalid-stored-settings");
+    }
+  });
+
+  it("repairs corrupt stored keys by clear or replacement without dropping future fields", () => {
+    for (const { key, corrupt, replacement } of [
+      { key: "defaultAutoPull", corrupt: null, replacement: true },
+      { key: "defaultRuntimeMode", corrupt: "broken", replacement: "full-access" },
+      { key: "defaultModelSelection", corrupt: { options: [] }, replacement: null },
+      { key: "defaultProjectScripts", corrupt: [{ id: "broken" }], replacement: [script] },
+    ]) {
+      const local = { [key]: corrupt, future: { keep: true } };
+      const before = JSON.stringify(local);
+      const failed = applyWorkSettingsEdit(local, {
+        patch: { defaultModelSelection: { model: "partial" } },
+      });
+      expectFailure(failed);
+      if (Result.isFailure(failed)) expect(failed.failure.reason).toBe("invalid-stored-settings");
+      expect(success(applyWorkSettingsEdit(local, { clear: [key] }))).toEqual({
+        rawLocal: { future: { keep: true } },
+        changed: true,
+      });
+      expect(success(applyWorkSettingsEdit(local, { patch: { [key]: replacement } }))).toEqual({
+        rawLocal: { [key]: replacement, future: { keep: true } },
+        changed: true,
+      });
+      expect(JSON.stringify(local)).toBe(before);
     }
   });
 
@@ -373,6 +409,58 @@ describe("work settings policy", () => {
     });
   });
 
+  it("rejects untrimmed option ids and values, including normalization collisions, atomically", () => {
+    const local = {
+      defaultAutoPull: false,
+      defaultModelSelection: { ...model, options: { fast: false } },
+    };
+    const before = JSON.stringify(local);
+    for (const options of [
+      [{ id: " fast", value: true }],
+      [{ id: "fast ", value: true }],
+      [{ id: "\tfast\n", value: true }],
+      [{ id: "", value: true }],
+      [{ id: "   ", value: true }],
+      [{ id: "effort", value: " high" }],
+      [{ id: "effort", value: "high " }],
+      [{ id: "effort", value: "" }],
+      [{ id: "effort", value: " \t" }],
+      [
+        { id: "fast", value: true },
+        { id: " fast ", value: false },
+      ],
+      { " fast": true },
+      { "fast ": true },
+      { "\tfast\n": true },
+      { effort: " high" },
+      { effort: "high " },
+      { effort: "" },
+      { effort: " \t" },
+      { fast: true, " fast ": false },
+      { " fast ": false, fast: true },
+    ]) {
+      const patch = { defaultAutoPull: true, defaultModelSelection: { options } };
+      expect(Result.isFailure(decodeWorkSettingsEditPatch(patch))).toBe(true);
+      const result = applyWorkSettingsEdit(local, { patch });
+      expectFailure(result);
+      if (Result.isFailure(result)) expect(result.failure.reason).toBe("invalid-edit");
+      expect(JSON.stringify(local)).toBe(before);
+    }
+  });
+
+  it("keeps permissive whitespace normalization on stored option reads and unrelated edits", () => {
+    for (const options of [[{ id: " effort ", value: " high " }], { " effort ": " high " }]) {
+      const local = { defaultModelSelection: { ...model, options } };
+      const declared = { ...model, options: [{ id: "effort", value: "high" }] };
+      expect(success(readDeclaredWorkPatch(local)).defaultModelSelection).toEqual(declared);
+      const result = success(applyWorkSettingsEdit(local, { patch: { defaultAutoPull: true } }));
+      expect(result.rawLocal).toEqual({ ...local, defaultAutoPull: true });
+      expect(success(readDeclaredWorkPatch(result.rawLocal)).defaultModelSelection).toEqual(
+        declared,
+      );
+    }
+  });
+
   it("rejects inherited properties, accessors, cycles and non-JSON values without invoking getters", () => {
     let reads = 0;
     const accessor = Object.defineProperty({}, "defaultAutoPull", {
@@ -389,6 +477,9 @@ describe("work settings policy", () => {
     for (const input of [
       Object.create({ defaultAutoPull: true }),
       accessor,
+      { defaultProjectScripts: sparse },
+      { defaultProjectScripts: Object.assign([script], { extra: true }) },
+      { defaultAutoPull: NaN },
       { future: undefined },
       { future: NaN },
       { future: Infinity },

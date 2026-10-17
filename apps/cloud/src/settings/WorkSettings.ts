@@ -2,8 +2,6 @@ import {
   ModelSelection,
   ProjectScript,
   ProviderInstanceId,
-  ProviderOptionSelections,
-  ProviderOptionSelectionValue,
   RuntimeMode,
   TrimmedNonEmptyString,
 } from "@t3tools/contracts";
@@ -52,10 +50,13 @@ export const DeclaredWorkPatch = OwnJson.pipe(
 );
 export type DeclaredWorkPatch = typeof DeclaredWorkPatch.Type;
 
-// Arrays replace; legacy option records merge by option id without accepting ignored invalid values.
+const OptionStringEdit = Schema.String.check(Schema.isTrimmed(), Schema.isNonEmpty());
+const OptionValueEdit = Schema.Union([OptionStringEdit, Schema.Boolean]);
+
+// Only record-to-record options merge by id; arrays and array/record crossings replace whole values.
 const OptionsEdit = Schema.Union([
-  Schema.toType(ProviderOptionSelections),
-  Schema.Record(TrimmedNonEmptyString, ProviderOptionSelectionValue),
+  Schema.Array(Schema.Struct({ id: OptionStringEdit, value: OptionValueEdit })),
+  Schema.Record(OptionStringEdit, OptionValueEdit),
 ]);
 const ModelEdit = Schema.Struct({
   instanceId: Schema.optionalKey(ProviderInstanceId),
@@ -150,7 +151,14 @@ export const applyWorkSettingsEdit = (rawLocal: unknown, input: unknown) =>
       }
     }
     yield* readDeclaredWorkPatch(next).pipe(
-      Result.mapError(() => new WorkSettingsPolicyError({ reason: "invalid-edit" })),
+      Result.mapError(
+        () =>
+          new WorkSettingsPolicyError({
+            reason: Result.isFailure(readDeclaredWorkPatch(rawLocal))
+              ? "invalid-stored-settings"
+              : "invalid-edit",
+          }),
+      ),
     );
     const changed = !equalJson(rawLocal, next);
     return { rawLocal: changed ? next : rawLocal, changed };
