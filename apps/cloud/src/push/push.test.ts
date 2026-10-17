@@ -222,11 +222,17 @@ const registration = {
   },
 };
 
-const layerPushes = (http: Layer.Layer<HttpClient.HttpClient>, env: Record<string, string>) =>
+const layerPushes = (
+  http: Layer.Layer<HttpClient.HttpClient>,
+  env: Record<string, string>,
+  isSessionActive?: Parameters<typeof PushNotifier.layerWithDevices>[1],
+) =>
   Layer.unwrap(
     Effect.map(UserStore.UserStore, (store) =>
-      PushNotifier.layerWithDevices(environmentId, (sid) =>
-        Effect.map(store.findSession(sid), (session) => session !== null),
+      PushNotifier.layerWithDevices(
+        environmentId,
+        isSessionActive ??
+          ((sid) => Effect.map(store.findSession(sid), (session) => session !== null)),
       ),
     ),
   ).pipe(
@@ -376,34 +382,28 @@ describe("PushNotifier", () => {
     Effect.gen(function* () {
       const key = yield* apnsKey;
       const apple = fakeApple(200);
+      const checked: Array<string> = [];
       const left = yield* Effect.gen(function* () {
-        const { notifier, devices } = yield* withPhone;
+        const { notifier, devices, session } = yield* withPhone;
         yield* notifier.threadChanged({ previous: running, next: waiting("user_input") });
+        expect(checked).toEqual([session.sid]);
         return yield* devices.list;
       }).pipe(
         Effect.provide(
-          PushNotifier.layerWithDevices(environmentId, () =>
-            Effect.fail(
-              new SqlError({
-                reason: new ConnectionError({ cause: new Error("session unavailable") }),
+          layerPushes(
+            apple.layer,
+            {
+              APNS_TEAM_ID: "TEAM123456",
+              APNS_KEY_ID: "KEY1234567",
+              APNS_PRIVATE_KEY: key.pem,
+            },
+            (sid) =>
+              Effect.gen(function* () {
+                checked.push(sid);
+                return yield* new SqlError({
+                  reason: new ConnectionError({ cause: new Error("session unavailable") }),
+                });
               }),
-            ),
-          ).pipe(
-            Layer.provide(
-              Layer.mergeAll(
-                apple.layer,
-                ConfigProvider.layer(
-                  ConfigProvider.fromEnv({
-                    env: {
-                      APNS_TEAM_ID: "TEAM123456",
-                      APNS_KEY_ID: "KEY1234567",
-                      APNS_PRIVATE_KEY: key.pem,
-                    },
-                  }),
-                ),
-              ),
-            ),
-            Layer.provideMerge(layerMemoryStore),
           ),
         ),
       );
