@@ -24,15 +24,17 @@ Hands real work to an agent in a normal Signalbox thread the user can open and s
 
 ### \`w.llm(label, { prompt, input?, timeout?, retry? })\` → string
 
-Writes or summarizes text. Runs as a short read-only model thread.
+Writes or summarizes the supplied text. In the cloud, model steps call the folder's pool directly without an agent, tools or workspace. Use \`w.agent\` when work needs tools.
 
 ### \`w.judge(label, { input, outcomes, question?, timeout?, retry? })\` → one of \`outcomes\`
 
 Makes a decision. \`outcomes\` must be a literal array; each becomes a path in the diagram when you branch on the answer.
 
+Without \`outcomes\`, \`w.judge(label, { input, question? })\` returns \`{ verdict: boolean, reason: string }\`.
+
 ### \`w.extract(label, { input, schema, timeout?, retry? })\` → object
 
-Pulls structured data out of text. \`schema\` describes the shape: \`{ total: "number", vendor: "string", lines: [{ item: "string", amount: "number" }] }\`.
+Pulls structured data out of text and checks the result against \`schema\`: \`{ total: "number", vendor: "string", lines: [{ item: "string", amount: "number" }] }\`. Shapes support \`"string"\`, \`"number"\`, \`"boolean"\`, \`"null"\`, nested objects and single-item array shapes. Missing fields and wrong types fail the step.
 
 ## People
 

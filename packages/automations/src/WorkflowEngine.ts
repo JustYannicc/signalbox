@@ -64,6 +64,7 @@ import {
   AutomationFunctions,
   AutomationIngress,
   AutomationModels,
+  AutomationModelSteps,
   AutomationThreads,
   forkRoot,
 } from "./host.ts";
@@ -221,6 +222,7 @@ export const makeEngine = <R>(
     const required = yield* Effect.context<EngineServices>();
     // The host's models, when it has a catalog, tell agent steps each model's option names.
     const models = yield* Effect.serviceOption(AutomationModels);
+    const modelSteps = yield* Effect.serviceOption(AutomationModelSteps);
     const services = Option.isSome(models)
       ? Context.add(required, AutomationModels, models.value)
       : required;
@@ -410,6 +412,7 @@ export const makeEngine = <R>(
       store,
       services,
       functions,
+      models: Option.getOrUndefined(modelSteps),
       external,
       connections,
       builtinTools,

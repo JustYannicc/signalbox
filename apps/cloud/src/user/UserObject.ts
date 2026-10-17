@@ -18,6 +18,7 @@ import * as CloudConfig from "../CloudConfig.ts";
 import { AutomationAlarm, CloudAutomations } from "../automations/CloudAutomations.ts";
 import * as PersonBrowsers from "../browser/PersonBrowsers.ts";
 import * as CloudEngine from "../automations/cloudEngine.ts";
+import { layerModelCompletion } from "../models/cloudflare.ts";
 import { HookOrigin } from "../automations/cloudIngress.ts";
 import { layerWorkflows } from "../automations/workflowRunner.ts";
 import { type AttachmentObjects, attachmentStorage } from "../attachments/attachmentObjects.ts";
@@ -225,6 +226,7 @@ const makeRuntime = (ctx: DurableObjectState, env: UserObjectEnv) => {
         Layer.mergeAll(
           layerWorkflows(env.AUTOMATION_RUNS),
           layerAutomationAlarm(storage),
+          layerModelCompletion({ pools: env.POOLS }, { localWorkerd: env.LOCAL_WORKERD === "1" }),
           Layer.succeed(HookOrigin, env.AUTOMATION_HOOK_ORIGIN ?? ""),
         ),
       ),

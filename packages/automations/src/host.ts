@@ -265,6 +265,18 @@ export class AutomationModels extends Context.Service<
   }
 >()("@signalbox/automations/host/AutomationModels") {}
 
+/** Text-only model calls, when the host has a gateway instead of a harness. */
+export class AutomationModelSteps extends Context.Service<
+  AutomationModelSteps,
+  {
+    readonly complete: (input: {
+      readonly projectId: string;
+      readonly modelSelection: ModelSelection;
+      readonly prompt: string;
+    }) => Effect.Effect<string, AutomationError>;
+  }
+>()("@signalbox/automations/host/AutomationModelSteps") {}
+
 /**
  * Held until the host is ready to run work, when it has such a moment (a
  * server activates after startup commits). Long-lived engine fibers start
