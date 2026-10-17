@@ -6,6 +6,7 @@ import * as Stream from "effect/Stream";
 import { matchThread, threadTurns } from "../context/threadContext.ts";
 import { browsingWire, encodeBrowsingLine } from "./browsing/browsingWire.ts";
 import { ThreadBrowsing } from "./browsing/ThreadBrowsing.ts";
+import { ThreadSecretRequests } from "./secrets/ThreadSecretRequests.ts";
 import { TurnReports } from "./diagnostics/TurnReports.ts";
 import type { ThreadObjectApi } from "./ThreadDirectory.ts";
 import * as ThreadEngine from "./ThreadEngine.ts";
@@ -23,7 +24,11 @@ const encodeRecord = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
  */
 export const makeThreadObjectApi = (
   run: <A, E>(
-    effect: Effect.Effect<A, E, ThreadEngine.ThreadEngine | TurnReports | ThreadBrowsing>,
+    effect: Effect.Effect<
+      A,
+      E,
+      ThreadEngine.ThreadEngine | TurnReports | ThreadBrowsing | ThreadSecretRequests
+    >,
   ) => Promise<A>,
   afterChange: () => Promise<void>,
   wakeAt: (at: number) => Promise<void>,
@@ -55,6 +60,18 @@ export const makeThreadObjectApi = (
     );
   const engine = ThreadEngine.ThreadEngine;
   return {
+    answerSecret: async (actor, input) => {
+      const result = await run(
+        ThreadSecretRequests.use((service) =>
+          service.answer(actor, wire.secretAnswer.decode(input)),
+        ).pipe(
+          Effect.as(null),
+          Effect.catchTags({ SecretRequestError: (error) => Effect.succeed(error.reason) }),
+        ),
+      );
+      await afterChange();
+      return result;
+    },
     dispatch: async (actor, command, creation) => {
       const result = await reply(
         engine.use((service) => service.dispatch(actor, wire.command.decode(command), creation)),

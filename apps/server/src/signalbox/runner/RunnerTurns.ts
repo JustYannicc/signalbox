@@ -59,6 +59,7 @@ import { type RunnerSecrets, SecretsRegisterError } from "./RunnerSecrets.ts";
 import type { RunnerSessions } from "./RunnerSessions.ts";
 import { causeText, runnerLog } from "./runnerLog.ts";
 import { outgrownBy } from "./RunnerMachineClass.ts";
+import type { RunnerSecretRequests } from "./RunnerSecretTools.ts";
 import {
   FILE_CHANGING_ITEMS,
   finishDriveTurn,
@@ -184,6 +185,8 @@ interface Turn {
   readonly ended: Deferred.Deferred<void>;
   /** The turn's session token, to bring a steer's attachments. */
   readonly sessionToken: string | null;
+  /** The cloud session token used to bind request_secret to this attempt. */
+  readonly sessionAccess: SessionAccess | null;
   /** Messages steered in, by id, and the ones waiting for the harness to name its turn. */
   readonly steered: Set<string>;
   readonly steers: Array<RunnerMessageInput>;
@@ -287,6 +290,8 @@ export const makeRunnerTurns = Effect.fn("makeRunnerTurns")(function* (input: {
     token: string,
     secrets: ReadonlyArray<SecretValue>,
   ) => Effect.Effect<void, SecretsRegisterError>;
+  /** Routes request_secret through the cloud, bound to the active run attempt. */
+  readonly secretRequests?: RunnerSecretRequests;
 }) {
   const scope = yield* Effect.scope;
   const logAnnotations = yield* References.CurrentLogAnnotations;
@@ -313,12 +318,29 @@ export const makeRunnerTurns = Effect.fn("makeRunnerTurns")(function* (input: {
       }
     }
   };
+  const pinSecretRequestTurn = (
+    runId: RunId,
+    attemptId: RunAttemptId,
+    sessions: SessionAccess | null,
+  ) => {
+    if (sessions !== null) input.secretRequests?.pin({ runId, attemptId, sessions });
+  };
+  const clearSecretRequestTurn = (runId: RunId, attemptId: RunAttemptId) =>
+    input.secretRequests?.clear({ runId, attemptId });
   /** `turn` is off this machine: whatever waits for it to wind down goes on. */
   const forget = (runId: RunId, turn: Turn) => {
     if (turns.get(runId) === turn) turns.delete(runId);
     clearRuntimeRequests(runId, turn.attemptId);
+    clearSecretRequestTurn(runId, turn.attemptId);
     Deferred.doneUnsafe(turn.ended, Exit.void);
   };
+  yield* Effect.addFinalizer(() =>
+    Effect.sync(() => {
+      for (const turn of turns.values()) {
+        clearSecretRequestTurn(turn.turn.runId, turn.attemptId);
+      }
+    }),
+  );
   /** The run adapter events belong to: the latest one started. */
   let latestRunId: RunId | null = null;
   let latestTraceId: string | null = null;
@@ -611,6 +633,7 @@ export const makeRunnerTurns = Effect.fn("makeRunnerTurns")(function* (input: {
       held.waiting = ended;
       mergeAttempts.add(attemptId);
       turns.set(runId, continuation);
+      yield* Effect.sync(() => pinSecretRequestTurn(runId, attemptId, state.sessionAccess));
       yield* state.session
         .startTurn({
           appThread: turn.appThread,
@@ -1181,6 +1204,7 @@ export const makeRunnerTurns = Effect.fn("makeRunnerTurns")(function* (input: {
     Effect.suspend(() => {
       if (taken.has(turn.runId)) return Effect.void;
       taken.add(turn.runId);
+      pinSecretRequestTurn(turn.runId, turn.attemptId, sessionAccess);
       const state: Turn = {
         turn,
         attemptId: turn.attemptId,
@@ -1191,6 +1215,7 @@ export const makeRunnerTurns = Effect.fn("makeRunnerTurns")(function* (input: {
         providerTurnIds: new Set(),
         ended: Deferred.makeUnsafe<void>(),
         sessionToken: sessionAccess?.token ?? null,
+        sessionAccess,
         steered: new Set(),
         steers: [],
       };
@@ -1218,6 +1243,7 @@ export const makeRunnerTurns = Effect.fn("makeRunnerTurns")(function* (input: {
       const wasRunning = turn.status === "running";
       turn.status = "stopped";
       clearRuntimeRequests(runId, turn.attemptId);
+      clearSecretRequestTurn(runId, turn.attemptId);
       // Before the harness names its turn, `track` interrupts once it does. The
       // harness may take seconds to stop; the socket meanwhile reads on.
       return wasRunning ? Effect.asVoid(Effect.forkIn(interruptNow(turn), scope)) : Effect.void;

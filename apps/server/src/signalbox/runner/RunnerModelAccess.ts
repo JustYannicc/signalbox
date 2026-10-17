@@ -86,8 +86,8 @@ export function harnessEnvironment(
   return { ...environment, ...caches, HOME: layout.home, ...claudeGateway(gatewayUrl) };
 }
 
-/** Longer than the login service's 4-minute budget for one sign-in. */
-export const MCP_TOOL_TIMEOUT_SEC = 300;
+/** Secret cards allow an hour; browser sign-in keeps its four-minute service budget. */
+export const mcpToolTimeoutSec = (serverName: string) => (serverName === "signalbox" ? 3605 : 300);
 
 /** The Runner's loopback MCP servers, by the name the harnesses know each as. */
 export type RunnerMcpServers = Readonly<Record<string, string>>;
@@ -105,8 +105,7 @@ const codexConfig = (layout: MachineLayout, gatewayUrl: string, mcpServers: Runn
     ...Object.entries(mcpServers).flatMap(([name, url]) => [
       `[mcp_servers.${tomlString(name)}]`,
       `url = ${tomlString(url)}`,
-      // Codex gives a tool call 60 seconds; a sign-in (#576) can take minutes.
-      `tool_timeout_sec = ${MCP_TOOL_TIMEOUT_SEC}`,
+      `tool_timeout_sec = ${mcpToolTimeoutSec(name)}`,
       "",
     ]),
   ].join("\n");

@@ -56,6 +56,7 @@ import { deliverPendingSummary } from "./summaryOutbox.ts";
 import { THREAD_OBJECT_JURISDICTION, type ThreadObjectApi } from "./ThreadDirectory.ts";
 import * as ThreadBrowsing from "./browsing/ThreadBrowsing.ts";
 import * as ThreadEngine from "./ThreadEngine.ts";
+import * as ThreadSecretRequests from "./secrets/ThreadSecretRequests.ts";
 import { makeThreadObjectApi } from "./threadObjectApi.ts";
 import { type BrowserReply, wire } from "./threadWire.ts";
 import * as ThreadStore from "./ThreadStore.ts";
@@ -181,6 +182,7 @@ const makeRuntime = (
   previews: PreviewGateway,
   machine: MachineBackend.MachineHost,
   threadId: () => ThreadId,
+  secretChanged: () => Promise<void>,
 ) =>
   ManagedRuntime.make(
     ThreadRunner.layer.pipe(
@@ -202,6 +204,13 @@ const makeRuntime = (
         ThreadStatusNotes.layer.pipe(
           Layer.provide(
             StatusNoteModel.layerPools(env.POOLS, { localWorkerd: env.LOCAL_WORKERD === "1" }),
+          ),
+        ),
+      ),
+      Layer.provideMerge(
+        ThreadSecretRequests.layer.pipe(
+          Layer.provide(
+            Layer.succeed(ThreadSecretRequests.SecretRequestChanged, Effect.promise(secretChanged)),
           ),
         ),
       ),
@@ -283,6 +292,7 @@ export class ThreadObject extends DurableObject<ThreadObjectEnv> implements Thre
           ),
       },
       () => this.threadId(),
+      () => this.armAlarm(),
     );
     this.runnerHost = {
       ctx,
@@ -306,6 +316,9 @@ export class ThreadObject extends DurableObject<ThreadObjectEnv> implements Thre
   }
 
   // Durable Object RPC dispatches to prototype methods, so each one is spelled out.
+  answerSecret(...args: Parameters<ThreadObjectApi["answerSecret"]>) {
+    return this.api.answerSecret(...args);
+  }
   dispatch(...args: Parameters<ThreadObjectApi["dispatch"]>) {
     return this.api.dispatch(...args);
   }

@@ -9,6 +9,8 @@ import {
   type OrchestrationV2ThreadStreamItem,
   type ProjectId,
   ThreadId,
+  SecretRequestError,
+  type SecretRequestAnswerInput,
 } from "@t3tools/contracts";
 import type { PreviewPort } from "@signalbox/runner-protocol/PreviewTunnel";
 import type {
@@ -121,6 +123,10 @@ const resuming = <A, E>(input: {
 export class CloudThreadService extends Context.Service<
   CloudThreadService,
   {
+    readonly answerSecret: (
+      actor: Actor,
+      input: SecretRequestAnswerInput,
+    ) => Effect.Effect<void, SecretRequestError>;
     readonly dispatchCommand: (
       actor: Actor,
       command: OrchestrationV2Command,
@@ -536,6 +542,15 @@ const make = Effect.gen(function* () {
     );
 
   return CloudThreadService.of({
+    answerSecret: (actor, input) =>
+      directory
+        .forThread(input.threadId)
+        .answerSecret(actor, input)
+        .pipe(
+          Effect.catchTags({
+            ThreadObjectError: () => Effect.fail(new SecretRequestError({ reason: "load_failed" })),
+          }),
+        ),
     canSee,
     previews,
     browsing,

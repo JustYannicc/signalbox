@@ -41,9 +41,10 @@ import {
 import { DAV_PATH, serveDav } from "./RunnerDrivesDav.ts";
 import { mountDrives } from "./RunnerDrivesMount.ts";
 import { makeDrivesView } from "./RunnerDrivesView.ts";
-import { MCP_TOOL_TIMEOUT_SEC, type RunnerMcpServers } from "./RunnerModelAccess.ts";
+import { mcpToolTimeoutSec, type RunnerMcpServers } from "./RunnerModelAccess.ts";
 import { layerScheduledTaskTools } from "./RunnerScheduledTaskTools.ts";
 import { layerStatusLineTools } from "./RunnerStatusLineTools.ts";
+import { layerSecretTools, type RunnerSecretRequests } from "./RunnerSecretTools.ts";
 
 /**
  * One Runner's context server (#141), on a loopback port of its own: the
@@ -103,6 +104,7 @@ export const startContextServer = Effect.fn("startContextServer")(function* (inp
   readonly browser?: BrowserBackend;
   /** The thread this machine runs, which scheduled tasks wake. */
   readonly threadId?: string;
+  readonly secretRequests?: RunnerSecretRequests;
 }) {
   const view = makeDrivesView();
   let drive: BranchDrive | null = null;
@@ -157,6 +159,7 @@ export const startContextServer = Effect.fn("startContextServer")(function* (inp
     layerAutomationTools(view),
     layerScheduledTaskTools(view, input.threadId ?? null),
     layerStatusLineTools(view),
+    input.secretRequests === undefined ? Layer.empty : layerSecretTools(input.secretRequests),
   ).pipe(
     Layer.provideMerge(
       McpServer.layerHttp({
@@ -247,8 +250,7 @@ export const withContextServer = (
           ...Object.fromEntries(
             Object.entries(mcpServers).map(
               ([name, url]) =>
-                // Claude gives an HTTP server's request 60 seconds; a sign-in (#576) can take minutes.
-                [name, { type: "http", url, timeout: MCP_TOOL_TIMEOUT_SEC * 1000 }] as const,
+                [name, { type: "http", url, timeout: mcpToolTimeoutSec(name) * 1000 }] as const,
             ),
           ),
         },

@@ -2,6 +2,7 @@
 import * as NodeHttp from "node:http";
 
 import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
+import * as NodeHttpClient from "@effect/platform-node/NodeHttpClient";
 import { threadRemoteBranch } from "@signalbox/runner-protocol/DriveProtocol";
 import { PREVIEW_TUNNEL_PATH } from "@signalbox/runner-protocol/PreviewTunnel";
 import {
@@ -38,6 +39,7 @@ import { makeDiscoveredPorts } from "./RunnerPreviewPorts.ts";
 import { previewTunnelTransport, runPreviewTunnel } from "./RunnerPreviewTunnel.ts";
 import { onePasswordSdk, type OnePassword } from "./RunnerOnePassword.ts";
 import { makeRunnerSecrets, makeSecretsRegistrar } from "./RunnerSecrets.ts";
+import { makeRunnerSecretRequests } from "./RunnerSecretTools.ts";
 import { makeRunnerSession, type RunnerSession } from "./RunnerSession.ts";
 import { makeRunnerSessions } from "./RunnerSessions.ts";
 import {
@@ -146,9 +148,14 @@ export const makeRunnerHost = Effect.fn("makeRunnerHost")(function* (config: Run
             mask,
           }).pipe(Effect.provide(FetchHttpClient.layer), Effect.provide(driveServices));
           // Every drive the user can read, for the harnesses (#141).
+          // Native HTTP has no fetch headers timeout while a person answers the card.
+          const secretRequests = yield* makeRunnerSecretRequests(cloudUrl).pipe(
+            Effect.provide(NodeHttpClient.layerNodeHttp),
+          );
           const context = yield* startContextServer({
             mountPoint: config.drivesMountPoint ?? null,
             threadId: request.threadId,
+            secretRequests,
           });
           // What the harness environment sets itself; known once the adapters are made.
           let harnessVariables: ReadonlySet<string> = new Set();
@@ -205,6 +212,7 @@ export const makeRunnerHost = Effect.fn("makeRunnerHost")(function* (config: Run
                 dependencies,
                 secrets,
                 registerSecrets,
+                secretRequests,
                 openDrive: (access) =>
                   Effect.flatMap(makeDriveClient({ cloudUrl, access }), (client) =>
                     makeRunnerDrive({
