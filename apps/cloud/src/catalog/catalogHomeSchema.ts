@@ -8,8 +8,6 @@ const Revision = NonNegativeInt.check(Schema.isLessThanOrEqualTo(Number.MAX_SAFE
 const Incarnation = Revision.check(Schema.isGreaterThan(0));
 const LevelId = Schema.toType(FolderId).check(Schema.isTrimmed());
 
-export const CatalogRole = Schema.Literals(["Owner", "Admin", "Member", "Viewer"]);
-
 export const CatalogLevelRef = Schema.Struct({ home: CatalogHome, incarnation: Incarnation });
 
 export const CatalogRootHome = CatalogHome.check(
@@ -25,12 +23,21 @@ export const catalogRootHome = (input: CatalogHome) => {
   return decodeRootHome({ ...home, level: { _tag: "top" } });
 };
 
-export const CatalogHomeState = Schema.Struct({
+const storageFields = {
   key: Schema.Literal("state"),
-  level: CatalogLevelRef,
   revision: Revision,
   // Local storage retirement never substitutes for the root's access policy.
   storageState: Schema.Literals(["open", "retired"]),
+};
+
+export const CatalogRootHomeState = Schema.Struct({
+  ...storageFields,
+  level: Schema.Struct({ home: CatalogRootHome, incarnation: Incarnation }),
+});
+
+export const CatalogFolderHomeState = Schema.Struct({
+  ...storageFields,
+  level: CatalogLevelRef.check(Schema.makeFilter((level) => level.home.level._tag === "folder")),
 });
 
 export const CatalogRootState = Schema.Struct({
@@ -46,7 +53,7 @@ export const CatalogFolderRow = Schema.Struct({
   // Recreating a parent must not adopt children from its previous incarnation.
   parentIncarnation: Incarnation,
   incarnation: Incarnation,
-  name: Folder.fields.name,
+  name: Schema.toType(Folder.fields.name).check(Schema.isTrimmed()),
   position: Revision,
   state: Schema.Literals(["active", "deleted"]),
 }).check(Schema.makeFilter((folder) => folder.parentId !== folder.id));

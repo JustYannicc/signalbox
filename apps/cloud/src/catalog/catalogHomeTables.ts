@@ -2,18 +2,19 @@ import { table } from "@signalbox/sync/table";
 
 import {
   CatalogFolderRow,
+  CatalogFolderHomeState,
   CatalogGrantRow,
-  CatalogHomeState,
+  CatalogRootHomeState,
   CatalogRootState,
 } from "./catalogHomeSchema.ts";
 
-export const catalogLevelTables = {
-  state: table({ row: CatalogHomeState, key: ["key"], indexes: {} }),
+export const catalogFolderTables = {
+  state: table({ row: CatalogFolderHomeState, key: ["key"], indexes: {} }),
 };
 
 /** Topology and grants have one authority: the owner's bound top home. */
 export const catalogRootTables = {
-  ...catalogLevelTables,
+  state: table({ row: CatalogRootHomeState, key: ["key"], indexes: {} }),
   root: table({ row: CatalogRootState, key: ["key"], indexes: {} }),
   folders: table({
     row: CatalogFolderRow,

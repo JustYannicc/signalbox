@@ -10,7 +10,7 @@ import {
   CatalogRootState,
   catalogRootHome,
 } from "./catalogHomeSchema.ts";
-import { catalogRootTables } from "./catalogHomeTables.ts";
+import { catalogFolderTables, catalogRootTables } from "./catalogHomeTables.ts";
 
 const ORG = SignalboxContextId.make("org_one");
 const sourceFolder = (personId: string) =>
@@ -59,6 +59,24 @@ describe("catalog home schema", () => {
     }
   });
 
+  it("requires root and child storage rows to match their table authority", () => {
+    const decodeRoot = Schema.decodeUnknownSync(catalogRootTables.state.row);
+    const decodeChild = Schema.decodeUnknownSync(catalogFolderTables.state.row);
+    const child = sourceFolder("person_one");
+    const rootRow = {
+      key: "state",
+      level: { home: catalogRootHome(child), incarnation: 1 },
+      revision: 0,
+      storageState: "open",
+    };
+    const childRow = { ...rootRow, level: { home: child, incarnation: 1 } };
+
+    expect(decodeRoot(rootRow)).toEqual(rootRow);
+    expect(decodeChild(childRow)).toEqual(childRow);
+    expect(() => decodeRoot(childRow)).toThrow();
+    expect(() => decodeChild(rootRow)).toThrow();
+  });
+
   it("keeps grantable roles separate from ownership and rejects identity normalization", () => {
     const decodeGrant = Schema.decodeUnknownSync(catalogRootTables.grants.row);
     expect(
@@ -78,6 +96,17 @@ describe("catalog home schema", () => {
       expect(() => decodeGrant(invalid)).toThrow();
 
     const decodeFolder = Schema.decodeUnknownSync(catalogRootTables.folders.row);
+    expect(() =>
+      decodeFolder({
+        id: "folder",
+        parentId: null,
+        parentIncarnation: 1,
+        incarnation: 1,
+        name: " Padded name ",
+        position: 0,
+        state: "active",
+      }),
+    ).toThrow();
     expect(() =>
       decodeFolder({
         id: "self",
