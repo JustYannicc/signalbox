@@ -727,6 +727,21 @@
       "output": "aae409c1"
     },
     {
+      "name": "personBrowser.clearProfile",
+      "rpc": "signalbox.personBrowser.clearProfile",
+      "access": "write",
+      "destructive": true,
+      "input": "03c2b661",
+      "output": "794c92c1"
+    },
+    {
+      "name": "personBrowser.profileStatus",
+      "rpc": "signalbox.personBrowser.profileStatus",
+      "access": "read",
+      "input": "03c2b661",
+      "output": "52714e01"
+    },
+    {
       "name": "pools.addApiKey",
       "rpc": "accountPool.addApiKey",
       "access": "write",
