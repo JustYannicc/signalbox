@@ -15,6 +15,10 @@ const CLAUDE_USAGE = JSON.stringify({
   five_hour: { utilization: 30, resets_at: "2026-10-17T12:00:00.000Z" },
   seven_day: { utilization: 40, resets_at: "2026-10-20T00:00:00.000Z" },
 });
+const CLAUDE_USAGE_REFRESHED = JSON.stringify({
+  five_hour: { utilization: 60, resets_at: "2026-10-17T12:00:00.000Z" },
+  seven_day: { utilization: 70, resets_at: "2026-10-20T00:00:00.000Z" },
+});
 
 describe("PoolEngine account snapshots", () => {
   it.effect(
@@ -72,6 +76,7 @@ describe("PoolEngine account snapshots", () => {
         expect(initial.accounts.map((account) => account.name)).toEqual([accountName]);
         expect(initial.models.map((model) => model.id)).toContain("claude-opus-5-5");
         expect(initial.error).toBeNull();
+        fakeAccount.usage = { status: 200, body: CLAUDE_USAGE_REFRESHED };
         const probesBeforeStall = probeCalls;
 
         const staleAt = T0 + PoolLimits.PROBE_INTERVAL_MS + 1;
@@ -90,25 +95,30 @@ describe("PoolEngine account snapshots", () => {
         expect(timedOut.error).toBeNull();
         expect(probeCalls).toBe(probesBeforeStall + 1);
 
-        // The account-list read committed its freshness before the slower probe.
-        const stillFresh = yield* pool.accounts(alice);
-        expect(stillFresh.accounts.map((account) => account.name)).toEqual([accountName]);
-        expect(stillFresh.error).toBeNull();
+        // linkInfo shares the same in-flight refresh while the probe is still blocked.
+        const linkRead = yield* Effect.forkChild(
+          Effect.promise(() =>
+            object.runtime.runPromise(
+              PoolEngine.PoolEngine.use((engine) => engine.linkInfo(alice)),
+            ),
+          ),
+        );
+        vi.setSystemTime(staleAt + 2 * (PoolEngine.ACCOUNTS_READ_TIMEOUT_MS + 1));
+        yield* TestClock.adjust(PoolEngine.ACCOUNTS_READ_TIMEOUT_MS + 1);
+        const linked = yield* Fiber.join(linkRead);
+        expect(linked.accounts.map((account) => account.name)).toEqual([accountName]);
         expect(probeCalls).toBe(probesBeforeStall + 1);
 
         blocked = false;
         for (const release of pendingProbes) release();
-        const retryAt =
-          staleAt + PoolEngine.ACCOUNTS_READ_TIMEOUT_MS + 1 + PoolEngine.ACCOUNTS_FRESH_MS + 1;
-        vi.setSystemTime(retryAt);
-        yield* TestClock.setTime(retryAt);
+        yield* Effect.yieldNow;
 
         const recovered = yield* pool.accounts(alice);
-        expect(probeCalls).toBe(probesBeforeStall + 2);
+        expect(probeCalls).toBe(probesBeforeStall + 1);
         expect(recovered.error).toBeNull();
         expect(
           recovered.accounts[0]?.usageLimits?.windows.map((window) => window.usedPercent),
-        ).toEqual([30, 40]);
+        ).toEqual([60, 70]);
       }).pipe(
         Effect.ensuring(
           Effect.sync(() => {
