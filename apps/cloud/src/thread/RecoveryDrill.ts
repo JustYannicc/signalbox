@@ -1,7 +1,7 @@
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
-import type { RecoveryEvidence } from "./RecoveryEvidence.ts";
+import type { RecoveryEvidence, RecoveryInspection } from "./RecoveryEvidence.ts";
 
 export interface RecoveryDrillEnv {
   readonly SIGNALBOX_STAGE?: string;
@@ -57,7 +57,9 @@ interface RecoveryDrillHost {
   readonly inspect: (
     userId: string,
     commandIds: ReadonlyArray<string>,
-  ) => Promise<RecoveryEvidence | null>;
+  ) => Promise<RecoveryInspection>;
+  readonly exclusive: <A>(work: () => Promise<A>) => Promise<A>;
+  readonly rearm: () => Promise<void>;
   readonly reset: () => void;
   readonly arm: () => Promise<void>;
 }
@@ -78,18 +80,9 @@ export const makeRecoveryDrill = (env: RecoveryDrillEnv, host: RecoveryDrillHost
       const decoded = decodeCommand(input);
       if (Option.isNone(decoded)) return rejection("invalid_command");
       const command = decoded.value;
-      const evidence = await host.inspect(userId, command.commandIds);
-      if (evidence === null) return rejection("not_found");
       const stored = await host.load();
-      if (command.action === "enroll") {
-        const state = stored ?? { enabled: true, userId, faults: [] };
-        await host.save({ ...state, enabled: true });
-        return { incarnation: await incarnationOf(), evidence, state: { ...state, enabled: true } };
-      }
-      if (stored === undefined || stored.userId !== userId) return rejection("not_enrolled");
-      if (command.action === "inspect")
-        return { incarnation: await incarnationOf(), evidence, state: stored };
       if (command.action === "disable") {
+        if (stored === undefined || stored.userId !== userId) return rejection("not_enrolled");
         const state = {
           ...stored,
           enabled: false,
@@ -98,8 +91,20 @@ export const makeRecoveryDrill = (env: RecoveryDrillEnv, host: RecoveryDrillHost
           ),
         };
         await host.save(state);
-        return { incarnation: await incarnationOf(), evidence, state };
+        await host.rearm();
+        return { incarnation: await incarnationOf(), state };
       }
+      const evidence = await host.inspect(userId, command.commandIds);
+      if (evidence === null) return rejection("not_found");
+      if ("error" in evidence) return evidence;
+      if (command.action === "enroll") {
+        const state = stored ?? { enabled: true, userId, faults: [] };
+        await host.save({ ...state, enabled: true });
+        return { incarnation: await incarnationOf(), evidence, state: { ...state, enabled: true } };
+      }
+      if (stored === undefined || stored.userId !== userId) return rejection("not_enrolled");
+      if (command.action === "inspect")
+        return { incarnation: await incarnationOf(), evidence, state: stored };
       if (!stored.enabled) return rejection("not_enrolled");
       const previous = stored.faults.find((fault) => fault.id === command.id);
       if (previous !== undefined) {
@@ -141,55 +146,73 @@ export const makeRecoveryDrill = (env: RecoveryDrillEnv, host: RecoveryDrillHost
         ? before.faults.find((fault) => fault.action === "retry-alarm" && !fault.complete)
         : undefined;
       if (before === undefined || pending === undefined) return tick();
-      if (pending.deliveries.length === 0) {
-        const current = await host.inspect(before.userId, []);
-        if (
-          current === null ||
-          !matches(
-            {
-              generation: pending.before.lease.generation,
-              runId: pending.before.activeRunId,
-              machineId: pending.before.machine.machineId,
-            },
-            current,
-          )
-        ) {
-          await host.save({
-            ...before,
-            faults: before.faults.map((fault) =>
-              fault.id === pending.id
-                ? { ...fault, complete: true, cancelled: "stale_target" }
-                : fault,
-            ),
-          });
-          return tick();
-        }
-      }
       await tick();
-      if (info === undefined) throw new Error("Recovery drill requires platform alarm metadata.");
-      const first = pending.deliveries.length === 0;
-      const retried = !first && info.isRetry && info.retryCount > pending.deliveries[0]!.retryCount;
-      const deliveries = [
-        ...pending.deliveries,
-        { isRetry: info.isRetry, retryCount: info.retryCount },
-      ];
-      const state = await host.load();
-      if (state === undefined || !state.enabled) return;
-      await host.save({
-        ...state,
-        faults: state.faults.map((fault) =>
-          fault.id === pending.id
-            ? {
-                ...fault,
-                deliveries,
-                complete: !first,
-                ...(!first && !retried ? { cancelled: "not_redelivered" } : {}),
-              }
-            : fault,
-        ),
+      await host.exclusive(async () => {
+        const state = await host.load();
+        const currentFault = state?.faults.find((fault) => fault.id === pending.id);
+        if (
+          state === undefined ||
+          !state.enabled ||
+          currentFault === undefined ||
+          currentFault.complete
+        ) {
+          return;
+        }
+        const first = currentFault.deliveries.length === 0;
+        let cancelled: string | undefined;
+        if (first) {
+          const current = await host.inspect(state.userId, []);
+          if (current !== null && "error" in current) cancelled = current.error;
+          else if (
+            current === null ||
+            !matches(
+              {
+                generation: pending.before.lease.generation,
+                runId: pending.before.activeRunId,
+                machineId: pending.before.machine.machineId,
+              },
+              current,
+            )
+          )
+            cancelled = "stale_target";
+        }
+        const retried =
+          !first &&
+          info !== undefined &&
+          info.isRetry &&
+          info.retryCount > currentFault.deliveries[0]!.retryCount;
+        if (cancelled === undefined && info === undefined) cancelled = "missing_alarm_metadata";
+        if (cancelled === undefined && !first && !retried) cancelled = "not_redelivered";
+        const deliveries =
+          info === undefined
+            ? currentFault.deliveries
+            : [...currentFault.deliveries, { isRetry: info.isRetry, retryCount: info.retryCount }];
+        await host.save({
+          ...state,
+          faults: state.faults.map((fault) =>
+            fault.id === pending.id
+              ? {
+                  ...fault,
+                  deliveries,
+                  complete: !first || cancelled !== undefined,
+                  ...(cancelled === undefined ? {} : { cancelled }),
+                }
+              : fault,
+          ),
+        });
+        // Do not replace this alarm: Cloudflare must retry the failed invocation itself.
+        if (first && cancelled === undefined) host.reset();
+        await host.rearm();
       });
-      // A real Cloudflare retry follows a completed tick. Calling tick twice is insufficient proof.
-      if (first) host.reset();
+    },
+
+    async preservesAlarm() {
+      if (!recoveryDrillsEnabled(env)) return false;
+      const state = await host.load();
+      return (
+        state?.enabled === true &&
+        state.faults.some((fault) => fault.action === "retry-alarm" && !fault.complete)
+      );
     },
   };
 };

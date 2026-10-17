@@ -322,11 +322,21 @@ export class ThreadObject extends DurableObject<ThreadObjectEnv> implements Thre
       incarnation: () =>
         this.runtime.runPromise(Effect.flatMap(Crypto.Crypto, (crypto) => crypto.randomUUIDv4())),
       load: () => ctx.storage.get<RecoveryDrillState>("recovery-drill-v1"),
-      save: (state) => ctx.storage.put("recovery-drill-v1", state),
+      save: async (state) => {
+        await ctx.storage.put("recovery-drill-v1", state);
+        await ctx.storage.sync();
+      },
       inspect: (userId, commandIds) =>
         this.runtime.runPromise(recoveryEvidence(userId, commandIds)),
       reset: () => ctx.abort("recovery-drill: intentional object reset"),
-      arm: async () => this.setAlarmNoLaterThan(await this.now()),
+      arm: async () => ctx.storage.setAlarm(await this.now()),
+      exclusive: (work) => ctx.blockConcurrencyWhile(work),
+      rearm: async () => {
+        const deferred = this.deferredAlarmAt;
+        this.deferredAlarmAt = null;
+        if (deferred !== null) await this.setAlarmNoLaterThan(deferred);
+        await this.armAlarm();
+      },
     });
     // Runner heartbeats are answered without waking a hibernating object.
     ctx.setWebSocketAutoResponse(
@@ -589,8 +599,14 @@ export class ThreadObject extends DurableObject<ThreadObjectEnv> implements Thre
     return this.runtime.runPromise(Clock.currentTimeMillis);
   }
 
+  private deferredAlarmAt: number | null = null;
+
   /** Sets the alarm for `at` unless one is already due sooner. */
   private async setAlarmNoLaterThan(at: number) {
+    if (await this.recovery.preservesAlarm()) {
+      this.deferredAlarmAt = Math.min(this.deferredAlarmAt ?? at, at);
+      return;
+    }
     const current = await this.ctx.storage.getAlarm();
     if (current === null || current > at) await this.ctx.storage.setAlarm(at);
   }

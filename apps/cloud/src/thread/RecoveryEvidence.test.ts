@@ -4,6 +4,7 @@ import * as Effect from "effect/Effect";
 
 import { recoveryEvidence } from "./RecoveryEvidence.ts";
 import {
+  appendSession,
   connect,
   freshDatabase,
   launch,
@@ -12,7 +13,6 @@ import {
   threadId,
   withObject,
 } from "./runnerTesting.ts";
-import { SessionRows } from "./session/SessionRows.ts";
 
 describe("recovery drill evidence", () => {
   it.effect(
@@ -34,14 +34,14 @@ describe("recovery drill evidence", () => {
               personal,
             );
             const machine = yield* connect(runner);
-            const sessions = yield* SessionRows;
-            yield* sessions.append({
+            yield* appendSession(context, {
               stream: "claude/session-1",
               offset: 0,
               rows: ['{"type":"thinking","signature":"opaque-signed-reasoning"}'],
             });
             const evidence = yield* recoveryEvidence(owner.userId, ["launch-1"]);
-            if (evidence === null) throw new Error("Missing recovery evidence.");
+            if (evidence === null || "error" in evidence)
+              throw new Error("Missing recovery evidence.");
             expect(evidence.receipts[0]?.receipt?._tag).toBe("accepted");
             expect(evidence.lease.generation).toBe(machine.generation);
             expect(evidence.sessions[0]).toMatchObject({ stream: "claude/session-1", count: 1 });
@@ -54,13 +54,14 @@ describe("recovery drill evidence", () => {
         );
         yield* withObject(database, (_engine, _runner, context) =>
           Effect.gen(function* () {
-            yield* (yield* SessionRows).append({
+            yield* appendSession(context, {
               stream: "claude/session-1",
               offset: 1,
               rows: ['{"type":"assistant","text":"after recovery"}'],
             });
             const after = yield* recoveryEvidence(owner.userId, ["launch-1"]);
-            if (after === null) throw new Error("Missing reconstructed evidence.");
+            if (after === null || "error" in after)
+              throw new Error("Missing reconstructed evidence.");
             expect(after.events).toEqual(first.events);
             expect(after.receipts).toEqual(first.receipts);
             expect(after.lease).toEqual(first.lease);
@@ -89,6 +90,43 @@ describe("recovery drill evidence", () => {
         );
         expect(yield* recoveryEvidence("another-owner", [])).toBeNull();
         expect(yield* recoveryEvidence(owner.userId, [])).not.toBeNull();
+      }).pipe(Effect.provide(context)),
+    ),
+  );
+
+  it.effect("rejects oversized native evidence as data and leaves the engine usable", () =>
+    withObject(freshDatabase(), (engine, _runner, context) =>
+      Effect.gen(function* () {
+        yield* launch(engine);
+        yield* engine.dispatch(
+          owner,
+          {
+            type: "thread.metadata.update",
+            commandId: CommandId.make("disposable-title"),
+            threadId,
+            title: "recovery-drill/oversized",
+          },
+          personal,
+        );
+        yield* appendSession(context, {
+          stream: "claude/large",
+          offset: 0,
+          rows: ["x".repeat(8_000_001)],
+        });
+        expect(yield* recoveryEvidence(owner.userId, [])).toEqual({ error: "evidence_limit" });
+        yield* engine.dispatch(
+          owner,
+          {
+            type: "thread.metadata.update",
+            commandId: CommandId.make("still-usable"),
+            threadId,
+            title: "recovery-drill/still-usable",
+          },
+          personal,
+        );
+        expect((yield* engine.snapshot(owner)).projection.thread.title).toBe(
+          "recovery-drill/still-usable",
+        );
       }).pipe(Effect.provide(context)),
     ),
   );

@@ -22,7 +22,7 @@ const sessionEvidence = Effect.gen(function* () {
   const streams = yield* Effect.orDie(sessions.streams(""));
   let chars = 0;
   let rows = 0;
-  return yield* Effect.forEach(streams, (stream) =>
+  const results = yield* Effect.forEach(streams, (stream) =>
     Effect.gen(function* () {
       const hashes: Array<string> = [];
       let offset = 0;
@@ -33,7 +33,7 @@ const sessionEvidence = Effect.gen(function* () {
           chars += row.length;
           rows += 1;
           if (chars > MAX_SESSION_CHARS || rows > MAX_SESSION_ROWS) {
-            throw new Error("Recovery drill session evidence limit exceeded.");
+            return null;
           }
           hashes.push(yield* digest(row));
           offset += 1;
@@ -42,6 +42,9 @@ const sessionEvidence = Effect.gen(function* () {
       return { stream: stream.stream, count: stream.count, hashes };
     }),
   );
+  return results.some((stream) => stream === null)
+    ? null
+    : results.filter((stream) => stream !== null);
 });
 
 /** A coherent pre-fault boundary. Tokens, message bodies and native transcript rows stay private. */
@@ -59,10 +62,18 @@ export const recoveryEvidence = (userId: string, commandIds: ReadonlyArray<strin
           owner?.userId !== userId ||
           !projection.thread.title.startsWith("recovery-drill/")
         ) {
-          return { events: [], result: null };
+          return null;
         }
         const events = yield* Effect.orDie(store.events(0, MAX_EVENTS + 1));
-        if (events.length > MAX_EVENTS) throw new Error("Recovery drill event limit exceeded.");
+        if (events.length > MAX_EVENTS) {
+          return { error: "evidence_limit" as const };
+        }
+        const sessionRows = yield* sessionEvidence.pipe(
+          Effect.provideService(SessionRows, sessions),
+        );
+        if (sessionRows === null) {
+          return { error: "evidence_limit" as const };
+        }
         const { token: _token, ...lease } = yield* Effect.orDie(store.machine);
         const machine = yield* Effect.orDie(store.machineRecord);
         const receipts = yield* Effect.forEach(commandIds, (id) =>
@@ -85,26 +96,24 @@ export const recoveryEvidence = (userId: string, commandIds: ReadonlyArray<strin
             })),
         );
         return {
-          events: [],
-          result: {
-            threadId: projection.thread.id,
-            sequence: events.at(-1)?.sequence ?? 0,
-            activeRunId: activeRun(projection)?.id ?? null,
-            lease,
-            machine,
-            receipts,
-            events: eventHashes,
-            sessions: yield* sessionEvidence.pipe(Effect.provideService(SessionRows, sessions)),
-            runs: projection.runs.map((run) => ({
-              id: run.id,
-              status: run.status,
-              restartContinuationOfRunId: run.restartContinuationOfRunId ?? null,
-            })),
-            reasoning,
-          },
+          threadId: projection.thread.id,
+          sequence: events.at(-1)?.sequence ?? 0,
+          activeRunId: activeRun(projection)?.id ?? null,
+          lease,
+          machine,
+          receipts,
+          events: eventHashes,
+          sessions: sessionRows,
+          runs: projection.runs.map((run) => ({
+            id: run.id,
+            status: run.status,
+            restartContinuationOfRunId: run.restartContinuationOfRunId ?? null,
+          })),
+          reasoning,
         };
-      }),
+      }).pipe(Effect.map((result) => ({ events: [], result }))),
     );
   });
 
-export type RecoveryEvidence = NonNullable<Effect.Success<ReturnType<typeof recoveryEvidence>>>;
+export type RecoveryInspection = Effect.Success<ReturnType<typeof recoveryEvidence>>;
+export type RecoveryEvidence = Exclude<NonNullable<RecoveryInspection>, { readonly error: string }>;

@@ -6,9 +6,8 @@ import {
   type RecoveryDrillEnv,
   type RecoveryDrillState,
 } from "./RecoveryDrill.ts";
-import { NO_MACHINE_RECORD } from "./runner/MachineBackend.ts";
 import { NO_MACHINE } from "./ThreadStore.ts";
-import type { RecoveryEvidence } from "./RecoveryEvidence.ts";
+import type { RecoveryEvidence, RecoveryInspection } from "./RecoveryEvidence.ts";
 
 const preview = {
   SIGNALBOX_STAGE: "pr-123",
@@ -21,7 +20,7 @@ const initial: RecoveryEvidence = {
   sequence: 1,
   activeRunId: null,
   lease,
-  machine: NO_MACHINE_RECORD,
+  machine: { machineId: null, createKey: null, desired: "stopped", settled: true },
   events: [],
   receipts: [],
   sessions: [],
@@ -33,7 +32,7 @@ const command = (action: string, id = "fault-1") => ({ action, id, commandIds: [
 
 const fixture = (env: RecoveryDrillEnv = preview) => {
   let state: RecoveryDrillState | undefined;
-  let evidence: RecoveryEvidence | null = initial;
+  let evidence: RecoveryInspection = initial;
   let resets = 0;
   let arms = 0;
   let inspected = 0;
@@ -53,6 +52,8 @@ const fixture = (env: RecoveryDrillEnv = preview) => {
         resets += 1;
         throw new Error("object reset");
       },
+      exclusive: (work) => work(),
+      rearm: async () => {},
       arm: async () => {
         arms += 1;
       },
@@ -71,7 +72,7 @@ const fixture = (env: RecoveryDrillEnv = preview) => {
     get inspected() {
       return inspected;
     },
-    change: (value: RecoveryEvidence | null) => {
+    change: (value: RecoveryInspection) => {
       evidence = value;
     },
   };
@@ -174,5 +175,68 @@ describe("preview recovery drills", () => {
     await test.drill().alarm({ isRetry: false, retryCount: 0 }, async () => {});
     expect(test.resets).toBe(0);
     expect(test.state?.faults[0]).toMatchObject({ complete: true, cancelled: "disabled" });
+  });
+
+  it("does not revive a fault disabled and re-enrolled during the real tick", async () => {
+    const test = fixture();
+    const drill = test.drill();
+    await drill.command("owner", command("enroll"));
+    await drill.command("owner", command("retry-alarm"));
+    await drill.alarm({ isRetry: false, retryCount: 0 }, async () => {
+      await drill.command("owner", command("disable"));
+      await drill.command("owner", command("enroll"));
+    });
+    expect(test.resets).toBe(0);
+    expect(test.state?.faults[0]).toMatchObject({
+      complete: true,
+      cancelled: "disabled",
+      deliveries: [],
+    });
+  });
+
+  it("cancels rather than resetting a target changed by the real tick", async () => {
+    const test = fixture();
+    const drill = test.drill();
+    await drill.command("owner", command("enroll"));
+    await drill.command("owner", command("retry-alarm"));
+    await drill.alarm({ isRetry: false, retryCount: 0 }, async () => {
+      test.change({ ...initial, lease: { ...initial.lease, generation: 1 } });
+    });
+    expect(test.resets).toBe(0);
+    expect(test.state?.faults[0]).toMatchObject({ complete: true, cancelled: "stale_target" });
+  });
+
+  it("preserves the platform alarm through reconstruction until its retry completes", async () => {
+    const test = fixture();
+    await test.drill().command("owner", command("enroll"));
+    expect(await test.drill().preservesAlarm()).toBe(false);
+    await test.drill().command("owner", command("retry-alarm"));
+    expect(await test.drill().preservesAlarm()).toBe(true);
+    await expect(
+      test.drill().alarm({ isRetry: false, retryCount: 0 }, async () => {
+        expect(await test.drill().preservesAlarm()).toBe(true);
+      }),
+    ).rejects.toThrow("object reset");
+    expect(await test.drill().preservesAlarm()).toBe(true);
+    await test.drill().alarm({ isRetry: true, retryCount: 1 }, async () => {});
+    expect(await test.drill().preservesAlarm()).toBe(false);
+  });
+
+  it("rejects over-limit evidence without resetting and still allows disabling", async () => {
+    const test = fixture();
+    await test.drill().command("owner", command("enroll"));
+    await test.drill().command("owner", command("retry-alarm"));
+    test.change({ error: "evidence_limit" });
+    for (const action of ["inspect", "enroll", "reset"]) {
+      expect(await test.drill().command("owner", command(action))).toEqual({
+        error: "evidence_limit",
+      });
+    }
+    const inspected = test.inspected;
+    expect(await test.drill().command("owner", command("disable"))).toMatchObject({
+      state: { enabled: false },
+    });
+    expect(test.inspected).toBe(inspected);
+    expect(test.resets).toBe(0);
   });
 });
