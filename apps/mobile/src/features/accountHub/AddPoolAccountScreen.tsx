@@ -268,9 +268,16 @@ export function AddPoolAccountScreen({ route }: Props) {
               const flowId = startedFlow;
               cancelling.current = flowId;
               void run(() => cancelFlow(flowId)).then((state) => {
-                if (state) return navigation.goBack();
+                // Already gone: a back swipe closed the screen, so `goBack` would pop the one
+                // below. A cancel that failed is sent again, since nothing else ends it now.
+                if (left.current || !navigation.isFocused()) {
+                  if (!state) void cancelFlow(flowId);
+                  return;
+                }
+                if (state?.flowId === flowId && state.phase === "cancelled") {
+                  return navigation.goBack();
+                }
                 cancelling.current = null;
-                setError(null);
               });
             }}
           />
