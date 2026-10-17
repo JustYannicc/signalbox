@@ -166,6 +166,7 @@ const make = Effect.gen(function* () {
     Effect.andThen(githubHooks.reconcile(engine)),
     Effect.andThen(nextAlarmAt),
     Effect.flatMap(alarm.arm),
+    Effect.tapCause((cause) => Effect.logError("Cloud automations flush failed", cause)),
   );
 
   /** Who the spans are about: the owner, never anything they wrote. The id never changes, so it's read once. */
