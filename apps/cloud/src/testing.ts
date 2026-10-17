@@ -31,7 +31,7 @@ import * as CloudSessions from "./auth/CloudSessions.ts";
 import * as CloudTokens from "./auth/CloudTokens.ts";
 import * as CloudConfig from "./CloudConfig.ts";
 import { canWrite, myDriveId } from "./drive/driveAccess.ts";
-import type * as DriveDirectory from "./drive/DriveDirectory.ts";
+import * as DriveDirectory from "./drive/DriveDirectory.ts";
 import * as DriveFiles from "./drive/DriveFiles.ts";
 import type { DrivePerson } from "./drive/DriveMembers.ts";
 import type * as DrivePacks from "./drive/DrivePacks.ts";
@@ -56,6 +56,7 @@ import { deliverPendingSummary } from "./thread/summaryOutbox.ts";
 import * as ThreadDirectory from "./thread/ThreadDirectory.ts";
 import * as ThreadBrowsing from "./thread/browsing/ThreadBrowsing.ts";
 import * as PreviewState from "./thread/PreviewState.ts";
+import * as CheckpointRollback from "./thread/CheckpointRollback.ts";
 import * as ThreadEngine from "./thread/ThreadEngine.ts";
 import * as StatusNoteModel from "./thread/statusLine/StatusNoteModel.ts";
 import * as ThreadStatusNotes from "./thread/statusLine/ThreadStatusNotes.ts";
@@ -209,6 +210,7 @@ export const layerThreadObject = (
   machines: Layer.Layer<MachineBackend.MachineBackend> = MachineBackends.layerNone,
   options: {
     readonly drives?: boolean;
+    readonly rollbackDrives?: Layer.Layer<DriveDirectory.DriveDirectory>;
     /** Whether a thread's owner may change files in its drive; yes unless given. */
     readonly writes?: (
       userId: string,
@@ -249,6 +251,9 @@ export const layerThreadObject = (
       ),
     ),
     Layer.provideMerge(ThreadEngine.layer),
+    Layer.provideMerge(
+      CheckpointRollback.layer.pipe(Layer.provide(options.rollbackDrives ?? Layer.empty)),
+    ),
     Layer.provideMerge(options.models ?? TurnModels.layerUnchecked),
     Layer.provideMerge(Layer.mergeAll(TurnDiagnostics.layer, TurnReports.layer)),
     Layer.provideMerge(options.analytics ?? CloudAnalytics.layerOff),
@@ -507,6 +512,7 @@ export const makeMemoryCloud = (
   const layerThreadObjectInMemory = () =>
     layerThreadObject(":memory:", MachineBackends.layerNone, {
       drives: true,
+      rollbackDrives: drives.layer,
       writes: (userId, driveId) =>
         Effect.map(userDirectory.forUser(userId).driveAccess(driveId), canWrite),
       secretsToken: (userId) => userDirectory.forUser(userId).onePasswordToken(),

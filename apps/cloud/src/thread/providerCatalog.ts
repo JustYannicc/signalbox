@@ -212,7 +212,7 @@ export const poolServerProvider = (input: {
     displayName: input.displayName,
     badgeLabel: "Preview",
     showInteractionModeToggle: false,
-    supportsConversationRollback: false,
+    supportsConversationRollback: true,
     supportsTextGeneration: false,
     enabled: true,
     installed: true,

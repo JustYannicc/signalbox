@@ -561,7 +561,9 @@ export const makeRunnerDrive = Effect.fn("makeRunnerDrive")(function* (input: {
       yield* git.run(["symbolic-ref", "HEAD", BRANCH]);
       const target = state.wip ?? state.thread;
       // Overwrites tracked and untracked files in the way; files the drive lacks stay.
-      if (target !== null) yield* git.run(["read-tree", "-u", "--reset", target]);
+      // A restore to the empty start must remove the previous checkout's tracked files too.
+      const tree = target ?? (yield* git.run(["mktree"], { stdin: "" })).trim();
+      yield* git.run(["read-tree", "-u", "--reset", tree]);
       // The auto-save shows as uncommitted changes on top of the branch.
       yield* git.run(state.thread === null ? ["read-tree", "--empty"] : ["reset", "-q"]);
     });

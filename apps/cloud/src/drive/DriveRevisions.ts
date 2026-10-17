@@ -65,6 +65,7 @@ const RestoreRequestJson = Schema.fromJsonString(
     expectedThread: Schema.NullOr(Schema.String),
     expectedWip: Schema.NullOr(Schema.String),
     generation: Schema.Number,
+    boundary: Schema.optional(Schema.Literals(["start", "end"])),
   }),
 );
 export const encodeRestoreRequest = Schema.encodeSync(RestoreRequestJson);

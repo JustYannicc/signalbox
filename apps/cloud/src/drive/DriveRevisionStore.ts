@@ -267,6 +267,9 @@ export const makeOperations = (input: RevisionOperationsInput) => {
       if (
         request.operationId === "" ||
         request.runId === "" ||
+        (request.boundary !== undefined &&
+          request.boundary !== "start" &&
+          request.boundary !== "end") ||
         !Number.isSafeInteger(request.generation)
       ) {
         return refuseOperation("A restore needs an operation id and current generation.");
@@ -277,6 +280,8 @@ export const makeOperations = (input: RevisionOperationsInput) => {
         expectedThread: request.expectedThread,
         expectedWip: request.expectedWip,
         generation: request.generation,
+        // Keep end restores compatible with receipts written before boundary selection.
+        ...(request.boundary === "start" ? { boundary: request.boundary } : {}),
       });
       const replay = yield* replayOperation(
         request.threadId,
@@ -299,7 +304,8 @@ export const makeOperations = (input: RevisionOperationsInput) => {
       if (selected === null) {
         return refuseOperation("That checkpoint is no longer available.", currentRow.generation);
       }
-      if (!(yield* input.publicCommit(selected.commit_oid))) {
+      const target = request.boundary === "start" ? selected.start_oid : selected.commit_oid;
+      if (target !== null && !(yield* input.publicCommit(target))) {
         return refuseOperation(
           "That checkpoint's commit is no longer public.",
           currentRow.generation,
@@ -333,10 +339,14 @@ export const makeOperations = (input: RevisionOperationsInput) => {
         VALUES (${request.threadId}, ${request.operationId}, ${currentThread}, ${currentWip},
           ${currentRow.pinned_views}, ${currentRow.revision}, ${selected.views_json},
           ${request.operationId}, ${generation})`;
-      yield* input.land(input.threadRef(request.threadId), currentThread, selected.commit_oid, {
+      yield* input.land(input.threadRef(request.threadId), currentThread, target, {
         userId,
       });
-      yield* input.setRef(input.wipRef(request.threadId), selected.commit_oid, userId);
+      if (target === null) {
+        yield* input.removeRef(input.wipRef(request.threadId));
+      } else {
+        yield* input.setRef(input.wipRef(request.threadId), target, userId);
+      }
       yield* sql`UPDATE threads SET generation = ${generation},
         pinned_views = ${selected.views_json}, revision = ${request.operationId}
         WHERE thread_id = ${request.threadId}`;

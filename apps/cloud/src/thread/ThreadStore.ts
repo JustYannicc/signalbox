@@ -18,6 +18,12 @@ import * as Migrator from "effect/sql/Migrator";
 import * as SqlClient from "effect/sql/SqlClient";
 import type { SqlError } from "effect/sql/SqlError";
 
+import {
+  migrateRollback,
+  pendingRollback,
+  saveRollback,
+  type RollbackOperation,
+} from "./rollbackState.ts";
 import * as Migrations from "../storage/migrations.ts";
 import {
   migrateCurrentItemExpansion,
@@ -146,6 +152,7 @@ export class ThreadStore extends Context.Service<
       afterSequence: number,
       limit?: number,
     ) => Effect.Effect<ReadonlyArray<StoredEvent>, SqlError>;
+    readonly pendingRollback: Effect.Effect<RollbackOperation | null, SqlError>;
     readonly receipt: (commandId: CommandId) => Effect.Effect<CommandReceipt | null, SqlError>;
     /**
      * Appends events after `head`, the command's receipt, the owner (when the
@@ -154,12 +161,14 @@ export class ThreadStore extends Context.Service<
      */
     readonly commit: (input: {
       readonly head: number;
+      readonly rollback?: RollbackOperation;
       readonly events: ReadonlyArray<OrchestrationV2DomainEvent>;
       /** `traceId`: the turn the command started, if it started one. */
       readonly command?: {
         readonly id: CommandId;
         readonly type: string;
         readonly traceId?: string | undefined;
+        readonly rejection?: string;
       };
       readonly owner?: ThreadOwner;
       readonly summaryChanged: boolean;
@@ -316,6 +325,7 @@ const migrations = Migrator.fromRecord({
   "0011_status_note": migrateStatusNote,
   "0012_current_item_history": migrateCurrentItemHistory,
   "0013_current_item_expansion": migrateCurrentItemExpansion,
+  "0014_checkpoint_rollback": migrateRollback,
 });
 
 /** Applies every migration not recorded yet (`storage/migrations.ts`). Never edit or rename a merged one. */
@@ -486,9 +496,9 @@ const make = Effect.gen(function* () {
     }
     if (input.command) {
       yield* sql`INSERT INTO receipts
-          (command_id, command_type, status, result_sequence, decided_at, trace_id)
-          VALUES (${input.command.id}, ${input.command.type}, 'accepted', ${sequence}, ${now},
-            ${input.command.traceId ?? null})`;
+          (command_id, command_type, status, result_sequence, decided_at, trace_id, message)
+          VALUES (${input.command.id}, ${input.command.type}, ${input.command.rejection === undefined ? "accepted" : "rejected"}, ${sequence}, ${now},
+            ${input.command.traceId ?? null}, ${input.command.rejection ?? null})`;
     }
     if (input.owner) {
       yield* sql`INSERT INTO owner (id, user_id, context_id, drive_id)
@@ -499,6 +509,8 @@ const make = Effect.gen(function* () {
       yield* sql`UPDATE outbox SET revision = MAX(${sequence}, revision + 1) WHERE id = 1`;
     }
     if (input.machine) yield* saveMachine(input.machine);
+    if (input.rollback)
+      yield* saveRollback(input.rollback).pipe(Effect.provideService(SqlClient.SqlClient, sql));
     if (input.instructions) {
       yield* sql`INSERT INTO run_instructions (run_id, levels)
           VALUES (${input.instructions.runId}, ${encodeInstructions(input.instructions.levels)})
@@ -585,6 +597,7 @@ const make = Effect.gen(function* () {
     owner,
     events,
     receipt,
+    pendingRollback: pendingRollback.pipe(Effect.provideService(SqlClient.SqlClient, sql)),
     commit,
     recordRejection,
     outbox,

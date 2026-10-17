@@ -34,10 +34,13 @@ import * as Stream from "effect/Stream";
 import { traceIdOf } from "./diagnostics/traceId.ts";
 import { hasPendingTurnWork, scriptedStep } from "./scriptedTurn.ts";
 import { type Decision, decide, decideLaunch, type ThreadWorktree } from "./threadDecider.ts";
-import type { DecisionContext } from "./threadEvents.ts";
+import { threadEvent, type DecisionContext } from "./threadEvents.ts";
 import { applyEvents, threadShellFromProjection, workStartedAt } from "./threadProjection.ts";
 import { noteKey, noteRunId, supersedes } from "./statusLine/statusNotePolicy.ts";
 import { type Actor, ThreadNotFoundError, ThreadCommandRejectedError } from "./ThreadAccess.ts";
+import * as CheckpointRollback from "./CheckpointRollback.ts";
+import { baselineEvents, rollbackEvents } from "./rollbackEvents.ts";
+import type { RollbackOperation } from "./rollbackState.ts";
 import * as ThreadStore from "./ThreadStore.ts";
 import * as TurnModels from "./TurnModels.ts";
 import {
@@ -113,6 +116,7 @@ export type ThreadSnapshot = typeof ThreadSnapshotWire.Type;
 export interface EngineDecision<A> {
   readonly events: ReadonlyArray<OrchestrationV2DomainEvent>;
   readonly machine?: ThreadStore.MachineLease;
+  readonly command?: { readonly id: CommandId; readonly type: string };
   readonly result: A;
 }
 
@@ -128,6 +132,13 @@ export class ThreadEngine extends Context.Service<
       actor: Actor,
       command: OrchestrationV2Command,
       creation: ThreadCreation,
+    ) => Effect.Effect<
+      { readonly sequence: number },
+      ThreadNotFoundError | ThreadCommandRejectedError
+    >;
+    readonly rollback: (
+      actor: Actor,
+      command: Extract<OrchestrationV2Command, { readonly type: "checkpoint.rollback" }>,
     ) => Effect.Effect<
       { readonly sequence: number },
       ThreadNotFoundError | ThreadCommandRejectedError
@@ -265,6 +276,7 @@ const make = Effect.gen(function* () {
   const store = yield* ThreadStore.ThreadStore;
   const crypto = yield* Crypto.Crypto;
   const turnModels = yield* TurnModels.TurnModels;
+  const rollbackService = yield* CheckpointRollback.CheckpointRollback;
   const lock = yield* Semaphore.make(1);
   const published = yield* PubSub.unbounded<Batch>();
 
@@ -311,10 +323,12 @@ const make = Effect.gen(function* () {
   /** Commits decided events and publishes them. Callers hold the lock. */
   const commit = Effect.fnUntraced(function* (input: {
     readonly events: ReadonlyArray<OrchestrationV2DomainEvent>;
+    readonly rollback?: RollbackOperation;
     readonly command?: {
       readonly id: CommandId;
       readonly type: string;
       readonly traceId?: string | undefined;
+      readonly rejection?: string;
     };
     /** Set by the commit that creates the thread. */
     readonly owner?: ThreadStore.ThreadOwner;
@@ -341,6 +355,7 @@ const make = Effect.gen(function* () {
       store.commit({
         head: current.head,
         events,
+        ...(input.rollback ? { rollback: input.rollback } : {}),
         ...(input.command ? { command: input.command } : {}),
         ...(input.instructions === undefined ? {} : { instructions: input.instructions }),
         ...(input.secrets === undefined ? {} : { secrets: input.secrets }),
@@ -416,6 +431,12 @@ const make = Effect.gen(function* () {
         if (receipt?._tag === "accepted") return { sequence: receipt.sequence, replayed: true };
         if (receipt?._tag === "rejected") {
           return yield* ThreadCommandRejectedError.forCommand(command, receipt.message);
+        }
+        if (current.thread !== null && (yield* Effect.orDie(store.pendingRollback)) !== null) {
+          return yield* ThreadCommandRejectedError.forCommand(
+            command,
+            "Undo recovery is still pending. Try again shortly.",
+          );
         }
         const { place } = creation;
         if (current.thread === null && place === null) {
@@ -495,33 +516,152 @@ const make = Effect.gen(function* () {
       }),
     );
 
-  const dispatch: ThreadEngine["Service"]["dispatch"] = (actor, command, creation) =>
-    runCommand(
-      actor,
-      creation,
-      {
-        id: command.commandId,
-        type: command.type,
-        createsThread: command.type === "thread.create",
-        ...(command.type === "thread.create" ? { projectId: command.projectId } : {}),
-      },
-      (projection, ctx, pool) => {
-        const onItsPool =
-          typeof pool === "string" ? commandOnPool(command, projection, pool) : command;
-        return decide(
-          projection,
-          onItsPool.type === "thread.create" && creation.worktree
-            ? {
-                ...onItsPool,
-                branch: creation.worktree.branch,
-                worktreePath: creation.worktree.path,
-              }
-            : onItsPool,
-          ctx,
-          creation.idleSinceMs === undefined ? {} : { idleSinceMs: creation.idleSinceMs },
+  // Callers hold the engine lock. Each stage commits before the next external effect.
+  const recoverRollback = Effect.fnUntraced(function* () {
+    let operation = yield* Effect.orDie(store.pendingRollback);
+    if (operation === null) return null;
+    if (operation.stage === "prepared") {
+      const restoring = operation;
+      const failure = yield* rollbackService
+        .restore(restoring)
+        .pipe(
+          Effect.as(null),
+          Effect.catchTags({ RollbackRestoreRejectedError: (error) => Effect.succeed(error) }),
         );
-      },
-    ).pipe(Effect.map(({ sequence }) => ({ sequence })));
+      if (failure !== null) {
+        const current = yield* Ref.get(state);
+        if (current.thread === null) return yield* Effect.die("Undo recovery lost its thread.");
+        yield* rollbackService.arm;
+        yield* commit({
+          events: [
+            threadEvent(yield* context, "thread.metadata-updated", {
+              ...current.thread.projection.thread,
+              rollbackRequestId: operation.commandId,
+              rollbackFailure: { requestId: operation.commandId, message: failure.message },
+            }),
+          ],
+          rollback: {
+            ...operation,
+            stage: "failed",
+            failure: { category: failure.category, message: failure.message },
+          },
+          command: {
+            id: operation.commandId,
+            type: "checkpoint.rollback",
+            rejection: failure.message,
+          },
+        });
+        return yield* ThreadCommandRejectedError.forCommand(
+          { id: operation.commandId, type: "checkpoint.rollback" },
+          failure.message,
+        );
+      }
+      operation = { ...operation, stage: "files-restored" };
+      yield* commit({ events: [], rollback: operation });
+    }
+    if (operation.stage === "files-restored") {
+      const current = yield* Ref.get(state);
+      if (current.thread === null) return yield* Effect.die("Undo recovery lost its thread.");
+      yield* commit({
+        events: rollbackEvents(current.thread.projection, operation, yield* context),
+        rollback: { ...operation, stage: "conversation-updated" },
+      });
+      operation = { ...operation, stage: "conversation-updated" };
+    }
+    return yield* commit({
+      events: [],
+      rollback: { ...operation, stage: "completed" },
+      command: { id: operation.commandId, type: "checkpoint.rollback" },
+    });
+  });
+
+  const rollback: ThreadEngine["Service"]["rollback"] = (actor, command) =>
+    serialized(
+      Effect.gen(function* () {
+        const current = yield* Ref.get(state);
+        const thread = visibleTo(current, actor);
+        if (thread === null) return yield* new ThreadNotFoundError();
+        const receipt = yield* Effect.orDie(store.receipt(command.commandId));
+        if (receipt?._tag === "accepted") return { sequence: receipt.sequence };
+        if (receipt?._tag === "rejected")
+          return yield* ThreadCommandRejectedError.forCommand(
+            { id: command.commandId, type: command.type },
+            receipt.message,
+          );
+        const pending = yield* Effect.orDie(store.pendingRollback);
+        if (pending !== null && pending.commandId !== command.commandId) {
+          return yield* ThreadCommandRejectedError.forCommand(
+            { id: command.commandId, type: command.type },
+            "Undo recovery is still pending. Try again shortly.",
+          );
+        }
+        if (pending === null) {
+          const machine = yield* Effect.orDie(store.machine);
+          const operation = yield* rollbackService
+            .prepare(thread.projection, thread.owner, command, machine.generation)
+            .pipe(
+              Effect.tapError((error) =>
+                Effect.orDie(
+                  store.recordRejection({
+                    command: { id: command.commandId, type: command.type },
+                    message: error.reason,
+                  }),
+                ),
+              ),
+            );
+          yield* rollbackService.arm;
+          yield* commit({
+            events: [
+              threadEvent(yield* context, "thread.metadata-updated", {
+                ...thread.projection.thread,
+                rollbackRequestId: operation.commandId,
+                rollbackFailure: null,
+              }),
+            ],
+            rollback: operation,
+            machine: {
+              ...ThreadStore.NO_MACHINE,
+              generation: machine.generation + 1,
+              machineClass: machine.machineClass,
+              movedUp: machine.movedUp,
+            },
+          });
+        }
+        yield* rollbackService.arm;
+        const sequence = yield* recoverRollback();
+        return { sequence: sequence ?? current.head };
+      }),
+    );
+
+  const dispatch: ThreadEngine["Service"]["dispatch"] = (actor, command, creation) =>
+    command.type === "checkpoint.rollback"
+      ? rollback(actor, command)
+      : runCommand(
+          actor,
+          creation,
+          {
+            id: command.commandId,
+            type: command.type,
+            createsThread: command.type === "thread.create",
+            ...(command.type === "thread.create" ? { projectId: command.projectId } : {}),
+          },
+          (projection, ctx, pool) => {
+            const onItsPool =
+              typeof pool === "string" ? commandOnPool(command, projection, pool) : command;
+            return decide(
+              projection,
+              onItsPool.type === "thread.create" && creation.worktree
+                ? {
+                    ...onItsPool,
+                    branch: creation.worktree.branch,
+                    worktreePath: creation.worktree.path,
+                  }
+                : onItsPool,
+              ctx,
+              creation.idleSinceMs === undefined ? {} : { idleSinceMs: creation.idleSinceMs },
+            );
+          },
+        ).pipe(Effect.map(({ sequence }) => ({ sequence })));
 
   const launch: ThreadEngine["Service"]["launch"] = (actor, input, creation) =>
     Effect.gen(function* () {
@@ -582,9 +722,19 @@ const make = Effect.gen(function* () {
       Effect.gen(function* () {
         const current = yield* Ref.get(state);
         const decision = yield* decideWith(current.thread?.projection ?? null, yield* context);
-        if (decision.events.length > 0) {
+        if (
+          current.thread !== null &&
+          (yield* Effect.orDie(store.pendingRollback)) !== null &&
+          (decision.events.length > 0 ||
+            decision.machine !== undefined ||
+            decision.command !== undefined)
+        ) {
+          return yield* Effect.die("Undo recovery blocks thread writes.");
+        }
+        if (decision.events.length > 0 || decision.command !== undefined) {
           yield* commit({
             events: decision.events,
+            ...(decision.command ? { command: decision.command } : {}),
             ...(decision.machine ? { machine: decision.machine } : {}),
           });
         } else if (decision.machine) {
@@ -598,6 +748,9 @@ const make = Effect.gen(function* () {
     Effect.gen(function* () {
       const current = yield* Ref.get(state);
       if (current.thread === null) return false;
+      yield* recoverRollback().pipe(
+        Effect.catchTags({ ThreadCommandRejectedError: () => Effect.succeed(null) }),
+      );
       const events = scriptedStep(current.thread.projection, yield* context);
       if (events.length > 0) yield* commit({ events });
       const after = yield* Ref.get(state);
@@ -610,10 +763,14 @@ const make = Effect.gen(function* () {
     (current) => current.thread?.projection ?? null,
   );
 
-  const hasTurnWork: ThreadEngine["Service"]["hasTurnWork"] = Effect.map(
-    Ref.get(state),
-    (current) => current.thread !== null && hasPendingTurnWork(current.thread.projection),
-  );
+  const hasTurnWork: ThreadEngine["Service"]["hasTurnWork"] = Effect.gen(function* () {
+    const current = yield* Ref.get(state);
+    return (
+      current.thread !== null &&
+      ((yield* Effect.orDie(store.pendingRollback)) !== null ||
+        hasPendingTurnWork(current.thread.projection))
+    );
+  });
 
   const summaryOf = (
     thread: Thread,
@@ -732,9 +889,15 @@ const make = Effect.gen(function* () {
   const canSee: ThreadEngine["Service"]["canSee"] = (actor) =>
     Effect.map(Ref.get(state), (current) => visibleTo(current, actor) !== null);
 
+  if (initialProjection !== null) {
+    const baseline = baselineEvents(initialProjection, yield* context);
+    if (baseline.length > 0) yield* commit({ events: baseline });
+  }
+
   return ThreadEngine.of({
     canSee,
     dispatch,
+    rollback,
     launch,
     snapshot,
     subscribe,

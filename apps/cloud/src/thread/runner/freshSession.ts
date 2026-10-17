@@ -29,11 +29,15 @@ const MESSAGE_CHARS = 16_000;
 export function transcriptBefore(projection: OrchestrationV2ThreadProjection, turn: Turn): string {
   // The main agent's side of it: each run's root node (or none named), not its subagents'.
   const rootNodes = new Set([null, ...projection.runs.map((run) => run.rootNodeId)]);
+  const rolledBack = new Set(
+    projection.runs.filter((run) => run.status === "rolled_back").map((run) => run.id),
+  );
   const messages = projection.turnItems
     .flatMap((item) =>
       (item.type === "user_message" || item.type === "assistant_message") &&
       item.text !== "" &&
       item.runId !== turn.runId &&
+      (item.runId === null || !rolledBack.has(item.runId)) &&
       rootNodes.has(item.nodeId)
         ? [{ ordinal: item.ordinal, role: item.type, text: cut(item.text, MESSAGE_CHARS).text }]
         : [],

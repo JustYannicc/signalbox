@@ -74,6 +74,35 @@ describe("RunnerDrive", () => {
       ),
   );
 
+  it.effect("restores an empty start on reused and fresh machines without taking in main", () =>
+    scopedTest((root) =>
+      Effect.gen(function* () {
+        const drive = makeFakeDrive(root);
+        const first = yield* machine(drive, root, "vm-1", "t1");
+        yield* first.runner.prepare("remote-token");
+        write(first.cwd, "removed.txt", "discard this turn\n");
+        const saved = yield* first.runner.finishTurn();
+        const main = drive.refs("t1").main;
+        expect(saved.checkpoint?.start).toBeNull();
+        drive.pinToCheckpoint("t1", null, { shortcuts: [], context: null });
+
+        for (const current of [first, yield* machine(drive, root, "vm-2", "t1")]) {
+          yield* current.runner.prepare("remote-token");
+          expect(NodeFS.existsSync(NodePath.join(current.cwd, "removed.txt"))).toBe(false);
+          expect(gitOk(current.cwd, "rev-parse", "--verify", "HEAD")).toBe(false);
+          expect(status(current.cwd)).toEqual([]);
+        }
+        expect(drive.refs("t1").main).toBe(main);
+        write(first.cwd, "next.txt", "after undo\n");
+        const next = yield* first.runner.finishTurn();
+        expect(next.checkpoint?.start).toBeNull();
+        expect(next.checkpoint?.files.map((file) => file.path)).toEqual(["next.txt"]);
+        expect(next.outcome._tag).toBe("saved");
+        expect(drive.refs("t1").main).toBe(main);
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+    ),
+  );
+
   it.effect("creates a revision for an empty first turn", () =>
     scopedTest((root) =>
       Effect.gen(function* () {

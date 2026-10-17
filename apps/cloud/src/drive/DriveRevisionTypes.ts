@@ -55,6 +55,8 @@ export interface ForkCheckpointRequest {
 export interface RestoreCheckpointRequest {
   readonly threadId: string;
   readonly runId: string;
+  /** Restore the turn's start or end. Omitted means end. */
+  readonly boundary?: "start" | "end";
   readonly operationId: string;
   readonly expectedThread: Oid | null;
   readonly expectedWip: Oid | null;
