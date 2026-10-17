@@ -7,5 +7,5 @@ export const REQUEST_HEAVY_MACHINE_INSTRUCTIONS: FolderInstructions = {
   text:
     "If the work needs more compute than this light machine can provide, request a heavy machine by running this exact shell command: " +
     REQUEST_HEAVY_MACHINE_COMMAND +
-    ". Signalbox saves and resumes the current turn there. Keep the move out of the conversation; it is recorded in thread details.",
+    ". Signalbox saves and resumes the current turn there. Run this command by itself, and do not narrate the request or machine move.",
 };

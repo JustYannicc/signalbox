@@ -119,7 +119,10 @@ describe("machine classes", () => {
     ),
   );
 
-  it.effect("moves an explicit light-machine request to a heavy machine, then resumes it", () =>
+  it.effect.each([
+    { cause: "an explicit request", reason: REQUEST_HEAVY_MACHINE_REASON },
+    { cause: "a build", reason: "It runs `npm build`, which needs a bigger machine." },
+  ] as const)("moves a light run outgrown by $cause to heavy, then resumes it", ({ reason }) =>
     withObject(
       freshDatabase(),
       (engine, runner, context) =>
@@ -137,11 +140,7 @@ describe("machine classes", () => {
             yield* runner.batch({
               generation: machine.generation,
               sequence: 1,
-              items: [
-                report.started,
-                report.partial,
-                outgrown(RunId.make("stale-run"), REQUEST_HEAVY_MACHINE_REASON),
-              ],
+              items: [report.started, report.partial, outgrown(RunId.make("stale-run"), reason)],
             }),
           ).toEqual({ _tag: "ack", sequence: 1 });
           expect((yield* snapshot(engine)).projection.runs.map((run) => run.status)).toEqual([
@@ -151,7 +150,7 @@ describe("machine classes", () => {
             yield* runner.batch({
               generation: machine.generation,
               sequence: 2,
-              items: [outgrown(turn.runId, REQUEST_HEAVY_MACHINE_REASON), report.full],
+              items: [outgrown(turn.runId, reason), report.full],
             }),
           ).toEqual({ _tag: "ack", sequence: 2 });
 
@@ -184,7 +183,7 @@ describe("machine classes", () => {
             expect.objectContaining({
               generation: machine.generation,
               stopReason: "outgrown",
-              stopDetail: REQUEST_HEAVY_MACHINE_REASON,
+              stopDetail: reason,
             }),
           );
 

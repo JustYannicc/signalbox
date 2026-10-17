@@ -56,7 +56,7 @@ import { RunnerInstructionsError } from "./RunnerInstructions.ts";
 import { type RunnerSecrets, SecretsRegisterError } from "./RunnerSecrets.ts";
 import type { RunnerSessions } from "./RunnerSessions.ts";
 import { causeText, runnerLog } from "./runnerLog.ts";
-import { outgrownCommandDecision } from "./RunnerMachineClass.ts";
+import { type OutgrownCommandDecision, outgrownCommandDecision } from "./RunnerMachineClass.ts";
 import {
   FILE_CHANGING_ITEMS,
   finishDriveTurn,
@@ -340,22 +340,31 @@ export const makeRunnerTurns = Effect.fn("makeRunnerTurns")(function* (input: {
   const outgrown = new Set<RunId>();
   /** Commands already checked, by item and phase: a running one repeats as its output grows. */
   const classified = new Set<string>();
-  /** Why `event` moves its run up, checking each command once as it starts and once as it ends. */
+  /** Moves an eligible current-session command once in each execution phase. */
   const outgrownByOnce = (
     event: ProviderAdapterV2Event,
     runId: RunId | null,
-    decision: ReturnType<typeof outgrownCommandDecision>,
+    runtime: ProviderAdapterV2SessionRuntime,
+    decision: OutgrownCommandDecision,
   ) => {
-    if (event.type !== "turn_item.updated" || event.turnItem.type !== "command_execution") {
+    if (
+      input.machineClass !== "light" ||
+      decision.reason === null ||
+      event.type !== "turn_item.updated" ||
+      event.turnItem.type !== "command_execution" ||
+      runId === null ||
+      runId !== latestRunId ||
+      runId !== runningRunId
+    ) {
       return null;
     }
+    const owner = turns.get(runId);
+    if (owner === undefined || owner.status !== "running" || owner.session !== runtime) return null;
     const { id, status } = event.turnItem;
-    if (runId === null || runId !== latestRunId || runId !== runningRunId) return null;
     const key = `${id}:${status === "running" || status === "pending" ? "start" : "end"}`;
     if (classified.has(key)) return null;
     classified.add(key);
-    const reason = decision.reason;
-    return reason === null ? null : { runId, reason };
+    return { runId, reason: decision.reason };
   };
 
   /**
@@ -721,14 +730,7 @@ export const makeRunnerTurns = Effect.fn("makeRunnerTurns")(function* (input: {
           const commandDecision = outgrownCommandDecision(event);
           yield* track(event);
           yield* deliver(event, latestRunId, commandDecision.suppressTranscript);
-          const owner = originatingRunId === null ? undefined : turns.get(originatingRunId);
-          const mayMove =
-            input.machineClass === "light" &&
-            originatingRunId !== null &&
-            originatingRunId === latestRunId &&
-            owner?.status === "running" &&
-            owner.session === runtime;
-          const upgrade = mayMove ? outgrownByOnce(event, originatingRunId, commandDecision) : null;
+          const upgrade = outgrownByOnce(event, originatingRunId, runtime, commandDecision);
           if (upgrade !== null) yield* moveUp(upgrade.runId, upgrade.reason);
         }),
       ),

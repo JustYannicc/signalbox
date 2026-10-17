@@ -208,13 +208,15 @@ const executedCommandsOf = (text: string): ReadonlyArray<ReadonlyArray<string>> 
 interface MachineCommandNeed {
   readonly heavyTool: string | null;
   readonly requestsHeavyMachine: boolean;
+  readonly pureHeavyMachineRequest: boolean;
 }
 
 /** Classifies one shell item in one traversal so its two machine rules agree. */
 const machineCommandNeed = (text: string): MachineCommandNeed => {
   let heavy: string | null = null;
   let requestsHeavy = false;
-  for (const words of executedCommandsOf(text)) {
+  const commands = executedCommandsOf(text);
+  for (const words of commands) {
     if (!requestsHeavy && words.join(" ") === REQUEST_HEAVY_MACHINE_COMMAND) {
       requestsHeavy = true;
     }
@@ -233,7 +235,14 @@ const machineCommandNeed = (text: string): MachineCommandNeed => {
     }
     if (requestsHeavy && heavy !== null) break;
   }
-  return { heavyTool: heavy, requestsHeavyMachine: requestsHeavy };
+  return {
+    heavyTool: heavy,
+    requestsHeavyMachine: requestsHeavy,
+    pureHeavyMachineRequest:
+      requestsHeavy &&
+      commands.length === 1 &&
+      commands[0]?.join(" ") === REQUEST_HEAVY_MACHINE_COMMAND,
+  };
 };
 
 /** The heavy tool `command` runs, if any: `npm build`, `cargo test`, `tsc`. */
@@ -255,7 +264,10 @@ export const outgrownCommandDecision = (event: ProviderAdapterV2Event): Outgrown
   const need = machineCommandNeed(item.input);
   if (item.status === "pending" || item.status === "running" || item.status === "completed") {
     if (need.requestsHeavyMachine) {
-      return { reason: REQUEST_HEAVY_MACHINE_REASON, suppressTranscript: true };
+      return {
+        reason: REQUEST_HEAVY_MACHINE_REASON,
+        suppressTranscript: need.pureHeavyMachineRequest,
+      };
     }
   }
   if (item.status === "running" || item.status === "pending") {
@@ -274,10 +286,6 @@ export const outgrownCommandDecision = (event: ProviderAdapterV2Event): Outgrown
       /\bexit code 137\b/i.test(item.output ?? ""));
   return {
     reason: killed ? "A command ran out of memory." : null,
-    suppressTranscript: need.requestsHeavyMachine,
+    suppressTranscript: need.pureHeavyMachineRequest,
   };
 };
-
-/** Why `event` moves its turn to a heavy machine, or null. */
-export const outgrownBy = (event: ProviderAdapterV2Event): string | null =>
-  outgrownCommandDecision(event).reason;

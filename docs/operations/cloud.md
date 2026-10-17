@@ -195,12 +195,12 @@ test, install or dev server that belongs there, a command killed for memory
 (exit 137), or the agent's explicit `: request-heavy-machine` request. The
 Runner saves the turn's files and session rows, reports `machine.outgrown`, and
 the thread continues the run on a heavy machine the same way it continues one
-whose machine was lost (below). The move reason appears in thread details; the
-conversation transcript contains neither a move notice nor the explicit request
-command. A light container that runs out of memory mid-turn (exit 137) moves
-its run up too. Any
-other exit, including Cloudflare restarting the container for a deploy's
-rollout, is a lost machine: the run continues on a new light one.
+whose machine was lost (below). Machine diagnostics record the move reason. The
+conversation transcript contains neither a move notice nor the explicit
+request command. A light container that runs out of memory mid-turn (exit 137)
+moves its run up too. Any other exit, including Cloudflare restarting the
+container during a deploy rollout, is a lost machine. The run continues on a
+new light one.
 
 Each preview gets its own container application,
 `signalbox-cloud-pr-<number>-threads`, deleted with the preview. Containers

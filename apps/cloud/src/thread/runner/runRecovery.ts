@@ -121,7 +121,6 @@ export function recoverRunEvents(
     queue: "keep",
     leading: [
       ...aborted,
-      // Outgrown reasons are already in the turn's machine diagnostic record.
       ...(!outgrown
         ? systemNoticeEvents(
             projection,
