@@ -456,6 +456,8 @@ export interface ThreadObjectNamespace {
     readonly statusLine: () => Promise<string | null>;
     /** The agent's note (`statusLineJson.writeRequest`); the stored note, null when the thread is gone. */
     readonly writeStatusNote: (input: string) => Promise<StatusNoteView | null>;
+    /** Private preview operator binding; absent on old builds and ordinary test doubles. */
+    readonly recoveryDrill?: (userId: string, input: unknown) => Promise<unknown>;
   };
 }
 

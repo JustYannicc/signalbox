@@ -53,20 +53,16 @@ import type { SecretMask } from "./secretMask.ts";
  *   fast-forwards `main` to it. A merge conflict stays in the worktree for the
  *   agent; `continueAfterResolution` or `abandonMerge` carries on from there.
  *
- * A drive backed by a remote repository (#135) keeps the remote as its home.
- * `prepare` first fetches the remote's default branch through the cloud, one
- * commit deep, with the turn's remote token (the machine holds no credential
- * for the remote) and mirrors the drive's `main` to it, so a new thread
- * starts from the remote's latest. `finishTurn` saves the branch and stops
- * there: the user pushes it or opens a pull request, and merging that on the
- * remote is what lands the work. Auto-saves never leave the drive.
- * `saveBranch` does the same mid-turn, so the thread's agent can publish its
- * work before the turn ends (`BranchProtocol.ts`). Once the thread's pull
- * request merged, `prepare` merges the remote's default branch into the
- * thread's branch before the turn (#495), so the next pull request carries
- * only new work. A merge that conflicts is undone there and reported;
- * `takeInMain` redoes it once the agent is there to resolve it, and
- * `continueAfterResolution` or `abandonMerge` carries on from there.
+ * A remote-backed drive without a mode mirrors the remote's default branch:
+ * `prepare` fetches its full history through the cloud and advances the
+ * drive's `main` to it. Turns save their branch for the user to publish, and
+ * a merged pull request can bring the remote's latest default branch into
+ * the thread (#495).
+ *
+ * A drive with `mode: "source"` keeps its own `main` while using the remote
+ * for history and promised files. Its threads never take in later source
+ * commits automatically. They land their own work on the drive; `saveBranch`
+ * remains available for an explicit publish through `BranchProtocol.ts`.
  *
  * `prepare` also mounts the drive's shortcuts (`RunnerShortcuts.ts`) and
  * writes the instructions they bring (`RunnerInstructions.ts`), answering
@@ -531,8 +527,8 @@ export const makeRunnerDrive = Effect.fn("makeRunnerDrive")(function* (input: {
         ? ({ _tag: "saved", head } as const)
         : ({ _tag: "not_landed", reason: refused } as const);
     }
-    // Only a drive without a remote lands on its own main.
-    return syncing === null && (remote === null || remote === undefined)
+    // A source remote supplies history and files; the drive still owns main.
+    return syncing === null && (remote === null || remote === undefined || remote.mode === "source")
       ? yield* land
       : yield* saveSynced;
   });
@@ -611,7 +607,7 @@ export const makeRunnerDrive = Effect.fn("makeRunnerDrive")(function* (input: {
         : ({ _tag: "fetched", head } as const);
     });
 
-  /** Brings a remote-backed drive's `main` to the remote's head. Fails only when the drive has nothing at all. */
+  /** Brings a mirror drive's `main` to the remote's head. Fails only when the drive has nothing at all. */
   const syncRemote = (fetched: Effect.Success<ReturnType<typeof fetchHistory>>) =>
     Effect.gen(function* () {
       if (fetched._tag === "failed") {
@@ -692,8 +688,8 @@ export const makeRunnerDrive = Effect.fn("makeRunnerDrive")(function* (input: {
         syncing = null;
         /** The remote's default branch, when this turn start fetched it: only then is it current. */
         let fetchedMain: string | null = null;
-        // A drive backed by a remote brings `main` up to it before opening pins the branch's base.
-        // Unknown until read once; a drive with none never gets one.
+        // Read once on the first turn and again for remote-backed drives. Only mirror mode
+        // advances `main`; a source still needs the history for promised files and git operations.
         if (remote !== null && remoteToken !== null) {
           const current = yield* input.client.state;
           remote = current.remote;
@@ -712,7 +708,7 @@ export const makeRunnerDrive = Effect.fn("makeRunnerDrive")(function* (input: {
             fetched = yield* fetchHistory(remote);
           }
           yield* drive.adopt(current);
-          if (fetched !== null) yield* syncRemote(fetched);
+          if (fetched !== null && remote?.mode !== "source") yield* syncRemote(fetched);
           if (fetched?._tag === "fetched") fetchedMain = fetched.head;
         }
         const state = yield* drive.open;
@@ -766,6 +762,7 @@ export const makeRunnerDrive = Effect.fn("makeRunnerDrive")(function* (input: {
           fetchedMain === null ||
           remote === null ||
           remote === undefined ||
+          remote.mode === "source" ||
           input.branch === undefined
             ? null
             : mergedPullRequestOf(pullRequests, {
@@ -777,6 +774,7 @@ export const makeRunnerDrive = Effect.fn("makeRunnerDrive")(function* (input: {
           fetchedMain !== null &&
           remote !== null &&
           remote !== undefined &&
+          remote.mode !== "source" &&
           !pinnedContinuation
         ) {
           const main = remote.defaultBranch;
@@ -870,7 +868,10 @@ export const makeRunnerDrive = Effect.fn("makeRunnerDrive")(function* (input: {
             commit: head,
             files: yield* git.changedFiles(turnStart ?? EMPTY_TREE, head),
           };
-          if ((remote !== null && remote !== undefined) || pinnedContinuation) {
+          if (
+            (remote !== null && remote !== undefined && remote.mode !== "source") ||
+            pinnedContinuation
+          ) {
             const refused = yield* drive.saveBranch(head);
             return {
               checkpoint,
