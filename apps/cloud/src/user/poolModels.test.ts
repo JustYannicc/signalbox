@@ -144,6 +144,8 @@ describe("cloud pool models", () => {
           clientRequestId: "empty-catalog",
         },
       }).pipe(Effect.flip);
+      expect(refused._tag).toBe("OrchestratorMcpFailure");
+      if (refused._tag !== "OrchestratorMcpFailure") return;
       expect(refused.code).toBe("provider_unavailable");
       expect(refused.message).toContain("no models");
     }).pipe(Effect.scoped),

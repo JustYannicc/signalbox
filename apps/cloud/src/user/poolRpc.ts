@@ -25,7 +25,7 @@ import {
   poolProviderInstances,
 } from "../pool/poolViews.ts";
 import type { PoolActor } from "../pool/PoolEngine.ts";
-import { poolModelCatalog } from "../pool/poolModelCatalog.ts";
+import { makePoolModelCatalog, type PoolModelCatalog } from "../pool/poolModelCatalog.ts";
 import * as PoolSignIns from "./PoolSignIns.ts";
 import * as UserPools from "./UserPools.ts";
 import * as UserModelSettings from "./UserModelSettings.ts";
@@ -93,7 +93,7 @@ const notYet = (what: string) =>
 const configOf = (
   identity: Environment.CloudEnvironmentIdentity,
   state: UserPools.PoolsState,
-  { checkedAt, providers }: Effect.Success<ReturnType<typeof poolModelCatalog>>,
+  { checkedAt, providers }: Effect.Success<ReturnType<PoolModelCatalog>>,
 ) => {
   return Environment.serverConfig(identity, checkedAt, {
     providers,
@@ -170,6 +170,7 @@ export const makePoolHandlers = (input: {
   Effect.gen(function* () {
     const pools = yield* UserPools.UserPools;
     const signIns = yield* PoolSignIns.PoolSignIns;
+    const poolModelCatalog = yield* makePoolModelCatalog;
     const modelSettings = yield* UserModelSettings.UserModelSettings;
     const { actor, identity } = input;
     const configNowOf = (state: UserPools.PoolsState) =>

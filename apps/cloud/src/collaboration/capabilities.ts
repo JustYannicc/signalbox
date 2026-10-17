@@ -2,7 +2,7 @@ import type { CollaborationInput } from "@t3tools/contracts/signalboxCollaborati
 import { providerChildTasks } from "@t3tools/shared/providerChildTasks";
 import * as Effect from "effect/Effect";
 
-import { poolModelCatalog } from "../pool/poolModelCatalog.ts";
+import { makePoolModelCatalog } from "../pool/poolModelCatalog.ts";
 import { forThread } from "../thread/turnPool.ts";
 import { UserPools } from "../user/UserPools.ts";
 import { collaborationFailure, type CollaborationAccess } from "./access.ts";
@@ -11,6 +11,7 @@ import type { CollaborationService } from "./CloudCollaboration.ts";
 export const makeCapabilities = (access: CollaborationAccess) =>
   Effect.gen(function* () {
     const pools = yield* UserPools;
+    const poolModelCatalog = yield* makePoolModelCatalog;
     const capabilities: CollaborationService["capabilities"] = (
       source,
       _input: CollaborationInput<"capabilities">,
