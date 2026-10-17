@@ -153,6 +153,7 @@ it.effect("keeps bounded, sanitized diagnostics for unreadable GraphQL answers",
       tail: "x".repeat(500),
     },
     200,
+    { "content-type": "application/json; charset=utf-8", "content-length": "843" },
   );
 
   return Effect.gen(function* () {
@@ -164,6 +165,8 @@ it.effect("keeps bounded, sanitized diagnostics for unreadable GraphQL answers",
       status: 200,
       requestKind: "graphql",
       message: "GitHub sent an answer Signalbox does not understand.",
+      responseContentType: "application/json; charset=utf-8",
+      responseContentLength: "843",
     });
     expect(error.responseExcerpt).toContain("defaultBranchRef");
     expect(error.responseExcerpt).toContain("[redacted]");
@@ -174,6 +177,8 @@ it.effect("keeps bounded, sanitized diagnostics for unreadable GraphQL answers",
     expect(logs).toContain('"requestKind":"graphql"');
     expect(logs).toContain('"status":200');
     expect(logs).toContain("defaultBranchRef");
+    expect(logs).toContain('"responseContentType":"application/json; charset=utf-8"');
+    expect(logs).toContain('"responseContentLength":"843"');
     expect(logs).not.toContain(token);
   }).pipe(
     Effect.provide(Logger.layer([Logger.map(Logger.formatJson, (line) => void lines.push(line))])),
@@ -183,7 +188,10 @@ it.effect("keeps bounded, sanitized diagnostics for unreadable GraphQL answers",
 it.effect("keeps status and sanitized body diagnostics for failed REST answers", () => {
   const token = "github-rest-secret-canary";
   const lines: Array<string> = [];
-  const client = responseClient({ message: `Bearer ${token}` }, 502);
+  const client = responseClient({ message: `Bearer ${token}` }, 502, {
+    "content-type": `application/problem+json; token=${token}; ${"x".repeat(500)}`,
+    "content-length": `${token}${"7".repeat(500)}`,
+  });
 
   return Effect.gen(function* () {
     const error = yield* makeGitHubApi(client).viewer(token).pipe(Effect.flip);
@@ -194,12 +202,100 @@ it.effect("keeps status and sanitized body diagnostics for failed REST answers",
     });
     expect(error.message).toBe("Bearer [redacted]");
     expect(error.responseExcerpt).toContain("[redacted]");
-    expect(error.responseExcerpt).not.toContain(token);
-    expect(lines.join("\n")).not.toContain(token);
+    expect(error.responseContentType).toContain("[redacted]");
+    expect(error.responseContentType?.length).toBeLessThanOrEqual(121);
+    expect(error.responseContentLength).toContain("[redacted]");
+    expect(error.responseContentLength?.length).toBeLessThanOrEqual(121);
+    const diagnostic = JSON.stringify(error) + lines.join("\n");
+    expect(diagnostic).not.toContain(token);
   }).pipe(
     Effect.provide(Logger.layer([Logger.map(Logger.formatJson, (line) => void lines.push(line))])),
   );
 });
+
+it.effect("omits missing response headers from diagnostics", () => {
+  const lines: Array<string> = [];
+  const client = HttpClient.make((request) =>
+    Effect.succeed(
+      HttpClientResponse.fromWeb(
+        request,
+        new Response(
+          new TextEncoder().encode(JSON.stringify({ message: "not a viewer response" })),
+          {
+            status: 200,
+          },
+        ),
+      ),
+    ),
+  );
+
+  return Effect.gen(function* () {
+    const error = yield* makeGitHubApi(client).viewer("supplied-token").pipe(Effect.flip);
+    expect(error.responseContentType).toBeUndefined();
+    expect(error.responseContentLength).toBeUndefined();
+    expect(lines.join("\n")).not.toContain("responseContentType");
+    expect(lines.join("\n")).not.toContain("responseContentLength");
+  }).pipe(
+    Effect.provide(Logger.layer([Logger.map(Logger.formatJson, (line) => void lines.push(line))])),
+  );
+});
+
+it.effect(
+  "keeps response headers and rate-limit backoff when the response body cannot be read",
+  () => {
+    const token = "github-read-failure-secret";
+    const lines: Array<string> = [];
+    const client = HttpClient.make((request) =>
+      Effect.succeed(
+        HttpClientResponse.fromWeb(
+          request,
+          new Response(
+            new ReadableStream<Uint8Array>({
+              start(controller) {
+                controller.error(new Error(token));
+              },
+            }),
+            {
+              status: 429,
+              headers: {
+                "content-type": "application/problem+json",
+                "content-length": "42",
+                "retry-after": "120",
+              },
+            },
+          ),
+        ),
+      ),
+    );
+
+    return Effect.gen(function* () {
+      const now = yield* Clock.currentTimeMillis;
+      const api = makeGitHubApi(client);
+      for (const read of [
+        Effect.asVoid(api.viewer(token)),
+        Effect.asVoid(api.rest("viewer", token, "/user")),
+      ]) {
+        const error = yield* read.pipe(Effect.flip);
+        expect(error).toMatchObject({
+          operation: "viewer",
+          status: 429,
+          responseContentType: "application/problem+json",
+          responseContentLength: "42",
+          retryAt: now + 120_000,
+        });
+        expect(error.responseExcerpt).toBeUndefined();
+        const diagnostic = JSON.stringify(error) + lines.join("\n");
+        expect(lines.join("\n")).toContain('"responseContentType":"application/problem+json"');
+        expect(lines.join("\n")).toContain('"responseContentLength":"42"');
+        expect(diagnostic).not.toContain(token);
+      }
+    }).pipe(
+      Effect.provide(
+        Logger.layer([Logger.map(Logger.formatJson, (line) => void lines.push(line))]),
+      ),
+    );
+  },
+);
 
 it.effect("redacts quoted opaque credentials and the bare git credential", () => {
   const token = "supplied-credential-canary";

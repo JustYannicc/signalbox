@@ -1,5 +1,6 @@
 import type { RunId } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
+import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as TestClock from "effect/testing/TestClock";
@@ -25,6 +26,8 @@ import {
 } from "../runnerTesting.ts";
 import { remoteThreadWorktree } from "../../user/contextProjects.ts";
 import { DRAIN_TIMEOUT_MS } from "./ThreadRunner.ts";
+import * as ThreadStore from "../ThreadStore.ts";
+import * as PreviewState from "../PreviewState.ts";
 
 /** A backend that does nothing, with its class's idle tail. */
 const fakeBackend = (kind: "cloudflare" | "boat", idleTailMs: number): MachineBackendShape => {
@@ -68,7 +71,71 @@ const outgrown = (runId: RunId) =>
   }) as const;
 
 describe("machine classes", () => {
-  it.effect("runs a thread in its context's own project light, one on a remote repo heavy", () =>
+  it.effect("restores an old light thread's saved preview on heavy without a live turn", () =>
+    Effect.gen(function* () {
+      const filename = freshDatabase();
+      yield* withObject(
+        filename,
+        (engine, runner, context) =>
+          Effect.gen(function* () {
+            yield* launch(engine);
+            const machine = yield* connect(runner);
+            const turn = yield* liveTurn(runner);
+            const report = turnReport(turn.runId, turn.runOrdinal, turn.providerThread);
+            yield* runner.batch({
+              generation: machine.generation,
+              sequence: 1,
+              items: [report.started, report.full, report.terminal],
+            });
+            yield* Context.get(context, PreviewState.PreviewState).saveServices([
+              { port: 5173, command: "npm run dev", cwd: "." },
+            ]);
+            yield* Context.get(context, ThreadStore.ThreadStore).saveMachine({
+              ...ThreadStore.NO_MACHINE,
+              generation: machine.generation,
+              machineClass: "light",
+            });
+          }),
+        options,
+      );
+      yield* withObject(
+        filename,
+        (_engine, runner) =>
+          Effect.gen(function* () {
+            expect(yield* runner.reconcile).toMatchObject({
+              ensure: { generation: 2 },
+              machineClass: "heavy",
+            });
+            expect((yield* runner.work).turn).toBeNull();
+          }),
+        { ...options, previews: { held: true, lastActiveAt: null } },
+      );
+    }),
+  );
+
+  it.effect("keeps a pre-upgrade heavy repo thread heavy after an eviction", () =>
+    Effect.gen(function* () {
+      const filename = freshDatabase();
+      yield* withObject(
+        filename,
+        (engine, _runner, context) =>
+          Effect.gen(function* () {
+            yield* launch(engine, "launch-1", onRemote);
+            // Repo threads used to be heavy without ever setting movedUp.
+            yield* Context.get(context, ThreadStore.ThreadStore).saveMachine({
+              ...ThreadStore.NO_MACHINE,
+              generation: 3,
+              machineClass: "heavy",
+            });
+          }),
+        options,
+      );
+      const next = yield* withObject(filename, (_engine, runner) => runner.reconcile, options);
+      expect(next).toMatchObject({ ensure: { generation: 4 }, machineClass: "heavy" });
+    }),
+  );
+
+  it.effect("starts remote repo threads light until a command needs a heavy machine", () =>
     Effect.gen(function* () {
       const light = yield* withObject(
         freshDatabase(),
@@ -81,7 +148,7 @@ describe("machine classes", () => {
         (engine, runner) => Effect.andThen(launch(engine, "launch-1", onRemote), runner.reconcile),
         options,
       );
-      expect(heavy).toMatchObject({ ensure: { generation: 1 }, machineClass: "heavy" });
+      expect(heavy).toMatchObject({ ensure: { generation: 1 }, machineClass: "light" });
     }),
   );
 
