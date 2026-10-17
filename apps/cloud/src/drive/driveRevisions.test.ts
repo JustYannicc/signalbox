@@ -679,6 +679,7 @@ describe("drive checkpoints and revisions", () => {
         [8, "drive_restore_snapshots"],
         [9, "ref_deletions"],
         [10, "shared_history_packs"],
+        [11, "shared_history_transfers"],
       ]);
     }).pipe(Effect.provide(layer));
   });

@@ -68,9 +68,9 @@ export type {
  * Every move of `main` or a thread's branch is also recorded for the drive's
  * people's automations (`DriveEvents`), in the same transaction.
  *
- * A drive backed by a remote repository records it here. Its `main` mirrors
- * the remote's default branch instead (`mirror`), and is never reconciled:
- * the remote is where work lands.
+ * A drive backed by a remote repository normally mirrors its default branch
+ * (`mirror`), where work lands. A source-only remote supplies historical
+ * objects while the drive reconciles new work onto its own `main`.
  */
 
 export const MAIN_REF = "main";
@@ -176,6 +176,9 @@ export class DriveStore extends Context.Service<
     >;
     readonly packStorage: (name: string) => Effect.Effect<string | null, SqlError>;
     readonly history: (userId: string) => Effect.Effect<DriveHistory.HistoryResult, SqlError>;
+    readonly historyOrigin: (
+      userId: string,
+    ) => Effect.Effect<DriveHistory.HistoryOrigin | null, SqlError>;
     readonly startFromHistory: (
       userId: string,
       history: DriveHistory.HistorySnapshot,
@@ -414,6 +417,7 @@ const migrations = Migrator.fromRecord({
   "0008_drive_restore_snapshots": DriveRevisions.createRestoreTables,
   "0009_ref_deletions": DriveEvents.allowDeletedRefs,
   "0010_shared_history_packs": DriveHistory.createTables,
+  "0011_shared_history_transfers": DriveHistory.createTransferTables,
 });
 
 /** Applies every migration not recorded yet (`storage/migrations.ts`). Never edit or rename a merged one. */
@@ -1095,6 +1099,7 @@ const make = Effect.fn("DriveStore.make")(function* (driveId: string) {
     registerPack,
     packStorage: historyOperations.packStorage,
     history: historyOperations.history,
+    historyOrigin: historyOperations.historyOrigin,
     startFromHistory: historyOperations.startFromHistory,
     updateRefs,
     reconcile,

@@ -6,7 +6,12 @@ import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 
 import type { Oid } from "./git/gitObjects.ts";
-import type { HistoryResult, HistorySnapshot, HistoryStartResult } from "./DriveHistory.ts";
+import type {
+  HistoryOrigin,
+  HistoryResult,
+  HistorySnapshot,
+  HistoryStartResult,
+} from "./DriveHistory.ts";
 import type { AccessDelivery, DrivePerson, MembershipChange } from "./DriveMembers.ts";
 import type {
   DriveWriter,
@@ -41,6 +46,7 @@ export const DRIVE_OBJECT_JURISDICTION = "eu";
 export interface DriveObjectApi {
   readonly packStorage: (name: string) => Promise<string | null>;
   readonly history: (userId: string) => Promise<HistoryResult>;
+  readonly historyOrigin: (userId: string) => Promise<HistoryOrigin | null>;
   readonly startFromHistory: (
     userId: string,
     history: HistorySnapshot,
@@ -162,6 +168,7 @@ export function handleFor(api: DriveObjectApi): DriveHandle {
   return {
     packStorage: wrap("packStorage"),
     history: wrap("history"),
+    historyOrigin: wrap("historyOrigin"),
     startFromHistory: wrap("startFromHistory"),
     open: wrap("open"),
     refs: wrap("refs"),

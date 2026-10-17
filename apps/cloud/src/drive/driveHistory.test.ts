@@ -7,10 +7,9 @@ import * as Stream from "effect/Stream";
 import { DriveDirectory } from "./DriveDirectory.ts";
 import { makeDriveReader } from "./DriveReader.ts";
 import { threadRef } from "./DriveStore.ts";
-import { makeMemoryDrives, makeRepo } from "./driveTesting.ts";
+import { concatBytes, makeMemoryDrives, makeRepo } from "./driveTesting.ts";
 import { uploadPack } from "./DriveUploads.ts";
 import { GITHUB_LIMITS, packForPush } from "./gitPush.ts";
-import { concatBytes } from "./git/gitObjects.ts";
 import { packResponse } from "./routeResponses.ts";
 
 const SOURCE = "folder/org_test/source";
@@ -63,6 +62,8 @@ describe("shared drive history", () => {
       expect(yield* target.packStorage("incomplete")).toBeNull();
       expect((yield* target.refs(null)).packs).toEqual([]);
       expect((yield* target.startFromHistory(reader.userId, history.history))._tag).toBe("ok");
+      expect(yield* target.packStorage("incomplete")).toBeNull();
+      expect((yield* target.refs(null)).packs.map(({ name }) => name)).not.toContain("incomplete");
     }).pipe(Effect.provide(drives.layer));
   });
 
@@ -239,6 +240,11 @@ describe("shared drive history", () => {
       // A replay cannot rewind the destination after new work has landed.
       expect((yield* target.startFromHistory(reader.userId, history.history))._tag).toBe("ok");
       expect(yield* target.ref("main")).toBe(third);
+      expect(yield* target.historyOrigin(reader.userId)).toEqual({
+        sourceDriveId: SOURCE,
+        head: second,
+      });
+      expect(yield* target.historyOrigin("stranger")).toBeNull();
       const next = directory.forDrive("folder/org_test/next");
       yield* next.setup({ name: "Next", members: [{ ...reader, role: "owner" }] });
       const nextHistory = yield* target.history(reader.userId);

@@ -55,6 +55,9 @@ export class DriveObject extends DurableObject<DriveObjectEnv> implements DriveO
   history(...args: Parameters<DriveObjectApi["history"]>) {
     return this.api.history(...args);
   }
+  historyOrigin(...args: Parameters<DriveObjectApi["historyOrigin"]>) {
+    return this.api.historyOrigin(...args);
+  }
   startFromHistory(...args: Parameters<DriveObjectApi["startFromHistory"]>) {
     return this.api.startFromHistory(...args);
   }

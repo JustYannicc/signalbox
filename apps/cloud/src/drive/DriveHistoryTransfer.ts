@@ -1,3 +1,4 @@
+import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
@@ -39,7 +40,8 @@ const Record = Schema.Union([
   Schema.TaggedStruct("end", {}),
 ]);
 const encodeRecord = Schema.encodeSync(Schema.fromJsonString(Record));
-const decodeRecord = Schema.decodeUnknownEffect(Schema.fromJsonString(Record));
+export type HistoryRecord = typeof Record.Type;
+export const decodeHistoryRecord = Schema.decodeUnknownEffect(Schema.fromJsonString(Record));
 const decodePacks = Schema.decodeUnknownSync(Schema.Array(Pack));
 const decodeEntries = Schema.decodeUnknownSync(Schema.Array(Entry));
 const decodePromises = Schema.decodeUnknownSync(Schema.Array(PromiseRow));
@@ -52,6 +54,7 @@ export class HistoryTransferError extends Schema.TaggedError<HistoryTransferErro
 /** Each record travels as a stream chunk, outside the RPC's 32 MiB message limit. */
 export const historyData = Effect.fn("DriveHistory.historyData")(function* (
   driveId: string,
+  exportId: string,
   maxPackSeq: number,
   maxPromiseRow: number,
 ) {
@@ -68,15 +71,22 @@ export const historyData = Effect.fn("DriveHistory.historyData")(function* (
           { readonly phase: number; readonly after: number },
         ]
       | undefined,
-      SqlError
+      SqlError | HistoryTransferError
     > =>
       Effect.gen(function* () {
+        const now = yield* Clock.currentTimeMillis;
+        const active = yield* sql`UPDATE drive_history_exports SET last_activity = ${now}
+          WHERE id = ${exportId} RETURNING id`;
+        if (active.length === 0)
+          return yield* new HistoryTransferError({ cause: "History snapshot expired. Try again." });
         if (cursor.phase === 0) {
           const rows = decodePacks(
-            yield* sql`SELECT seq, name, size, object_count,
-        coalesce(storage_drive_id, ${driveId}) AS storage_drive_id FROM packs
-        WHERE seq > ${cursor.after} AND seq <= ${maxPackSeq} AND private_to IS NULL
-        ORDER BY seq LIMIT ${pageSize}`,
+            yield* sql`SELECT p.seq, p.name, p.size, p.object_count,
+        coalesce(p.storage_drive_id, ${driveId}) AS storage_drive_id
+        FROM packs p JOIN drive_history_export_packs exported
+          ON exported.pack_seq = p.seq AND exported.export_id = ${exportId}
+        WHERE p.seq > ${cursor.after} AND p.seq <= ${maxPackSeq}
+        ORDER BY p.seq LIMIT ${pageSize}`,
           );
           return [
             rows.map((row) => ({ _tag: "pack" as const, row })),
@@ -92,8 +102,10 @@ export const historyData = Effect.fn("DriveHistory.historyData")(function* (
         (SELECT group_concat(parent, ',') FROM
           (SELECT parent FROM commit_parents WHERE oid = c.oid ORDER BY position)) AS parents
         FROM pack_entries e JOIN packs p ON p.seq = e.pack_seq
+        JOIN drive_history_export_packs exported
+          ON exported.pack_seq = p.seq AND exported.export_id = ${exportId}
         LEFT JOIN commits c ON c.oid = e.oid AND e.type = 'commit'
-        WHERE e.rowid > ${cursor.after} AND p.seq <= ${maxPackSeq} AND p.private_to IS NULL
+        WHERE e.rowid > ${cursor.after} AND p.seq <= ${maxPackSeq}
         ORDER BY e.rowid LIMIT ${pageSize}`,
           );
           return [
@@ -119,68 +131,12 @@ export const historyData = Effect.fn("DriveHistory.historyData")(function* (
     Stream.flatMap(Stream.fromArray),
     Stream.map((record) => `${encodeRecord(record)}\n`),
     Stream.encodeText,
+    Stream.ensuring(
+      Effect.gen(function* () {
+        yield* sql`DELETE FROM drive_history_export_packs WHERE export_id = ${exportId}`;
+        yield* sql`DELETE FROM drive_history_exports WHERE id = ${exportId}`;
+      }).pipe(sql.withTransaction, Effect.ignore),
+    ),
   );
   return yield* Stream.toReadableStreamEffect(pages);
-});
-
-/** The caller's transaction publishes no refs until the complete stream is indexed. */
-export const importHistoryData = Effect.fn("DriveHistory.importHistoryData")(function* (
-  data: ReadableStream<Uint8Array>,
-) {
-  const sql = yield* SqlClient.SqlClient;
-  let ended = false;
-  yield* Stream.fromReadableStream({
-    evaluate: () => data,
-    onError: (cause) => new HistoryTransferError({ cause }),
-  }).pipe(
-    Stream.decodeText,
-    Stream.splitLines,
-    Stream.filter((line) => line !== ""),
-    Stream.mapEffect((line) =>
-      decodeRecord(line).pipe(Effect.mapError((cause) => new HistoryTransferError({ cause }))),
-    ),
-    Stream.runForEach((record) =>
-      Effect.gen(function* () {
-        if (ended)
-          return yield* new HistoryTransferError({ cause: "Records after the history end." });
-        if (record._tag === "end") {
-          ended = true;
-          return;
-        }
-        if (record._tag === "pack") {
-          const pack = record.row;
-          yield* sql`INSERT INTO packs (name, size, object_count, thread_id, created_at, private_to, storage_drive_id)
-          VALUES (${pack.name}, ${pack.size}, ${pack.object_count}, 'history', 0, NULL, ${pack.storage_drive_id})`;
-        } else if (record._tag === "promised") {
-          const row = record.row;
-          yield* sql`INSERT OR IGNORE INTO promised (oid, size) VALUES (${row.oid}, ${row.size})`;
-        } else {
-          const entry = record.row;
-          const rows = yield* sql<{
-            readonly seq: number;
-          }>`SELECT seq FROM packs WHERE name = ${entry.pack}`;
-          if (rows[0] === undefined)
-            return yield* new HistoryTransferError({ cause: "Missing history pack." });
-          const seq = rows[0].seq;
-          yield* sql`INSERT OR IGNORE INTO objects (oid, pack_seq, offset, length, type, size)
-          VALUES (${entry.oid}, ${seq}, ${entry.offset}, ${entry.length}, ${entry.type}, ${entry.size})`;
-          yield* sql`INSERT INTO pack_entries (pack_seq, offset, oid, length, type, size)
-          VALUES (${seq}, ${entry.offset}, ${entry.oid}, ${entry.length}, ${entry.type}, ${entry.size})`;
-          if (entry.shallow !== 0)
-            yield* sql`INSERT OR IGNORE INTO shallow (oid, pack_seq) VALUES (${entry.oid}, ${seq})`;
-          if (entry.type === "commit") {
-            yield* sql`INSERT OR IGNORE INTO commits (oid, tree, author_name, author_email, time, message)
-            VALUES (${entry.oid}, ${entry.tree}, ${entry.author_name}, ${entry.author_email}, ${entry.time}, ${entry.message})`;
-            for (const [position, parent] of (entry.parents == null || entry.parents === ""
-              ? []
-              : entry.parents.split(",")
-            ).entries()) {
-              yield* sql`INSERT OR IGNORE INTO commit_parents (oid, position, parent) VALUES (${entry.oid}, ${position}, ${parent})`;
-            }
-          }
-        }
-      }),
-    ),
-  );
-  if (!ended) return yield* new HistoryTransferError({ cause: "History transfer was incomplete." });
 });
