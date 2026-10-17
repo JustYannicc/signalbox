@@ -8,9 +8,14 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
+import * as NetAddress from "effect/net/NetAddress";
 import { ensureAgentDeviceShim } from "./AgentDeviceShim.ts";
 import type { AgentDeviceSession } from "./AgentDeviceSession.ts";
-import { agentDeviceConfigPath, writeAgentDeviceConfig } from "./AgentDeviceTarget.ts";
+import {
+  agentDeviceConfigPath,
+  agentDeviceProxyBaseUrl,
+  writeAgentDeviceConfig,
+} from "./AgentDeviceTarget.ts";
 
 const exec = NodeUtil.promisify(NodeChildProcess.execFile);
 
@@ -26,6 +31,40 @@ const agentSession = (hostId: string, sessionId: string): AgentDeviceSession => 
 });
 
 describe("host-bound agent commands", () => {
+  it.effect("builds session proxy URLs from the bound HTTP address", () =>
+    Effect.gen(function* () {
+      const sessionId = "session/with space";
+      const wildcardV4 = yield* agentDeviceProxyBaseUrl(
+        NetAddress.inetAddressFromIpStringUnsafe("0.0.0.0", 43123),
+        sessionId,
+      );
+      const wildcardV6 = yield* agentDeviceProxyBaseUrl(
+        NetAddress.inetAddressFromIpStringUnsafe("::", 43124),
+        sessionId,
+      );
+      const specificV4 = yield* agentDeviceProxyBaseUrl(
+        NetAddress.inetAddressFromIpStringUnsafe("192.0.2.44", 43125),
+        sessionId,
+      );
+      const specificV6 = yield* agentDeviceProxyBaseUrl(
+        NetAddress.inetAddressFromIpStringUnsafe("2001:db8::44", 43126),
+        sessionId,
+      );
+
+      expect(wildcardV4).toBe("http://127.0.0.1:43123/api/agent-device/session%2Fwith%20space/");
+      expect(wildcardV6).toBe("http://127.0.0.1:43124/api/agent-device/session%2Fwith%20space/");
+      expect(specificV4).toBe("http://192.0.2.44:43125/api/agent-device/session%2Fwith%20space/");
+      expect(specificV6).toBe(
+        "http://[2001:db8::44]:43126/api/agent-device/session%2Fwith%20space/",
+      );
+
+      const unixFailure = yield* Effect.flip(
+        agentDeviceProxyBaseUrl(NetAddress.unixPathAddress("/tmp/signalbox.sock"), sessionId),
+      );
+      expect(unixFailure.message).toContain("requires an HTTP server bound to an IP address");
+    }),
+  );
+
   it.effect("runs two hosts concurrently and only updates the reconnected host", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;

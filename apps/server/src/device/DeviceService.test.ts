@@ -1,6 +1,7 @@
 import { describe, expect, it } from "@effect/vitest";
 import {
   DEFAULT_SERVER_SETTINGS,
+  DeviceHostId,
   DeviceId,
   DeviceOperationError,
   LOCAL_DEVICE_HOST_ID,
@@ -22,6 +23,7 @@ import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
+import * as NetAddress from "effect/net/NetAddress";
 import * as PubSub from "effect/PubSub";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
@@ -30,7 +32,8 @@ import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
-import { HttpClient, HttpClientResponse } from "effect/http";
+import { HttpClient, HttpClientResponse, HttpServer } from "effect/http";
+import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
 import * as ServerConfig from "../config.ts";
 import * as ProcessRunner from "../processRunner.ts";
 import * as ServerSettings from "../serverSettings.ts";
@@ -40,6 +43,7 @@ import { NodeRuntimeUnavailableError } from "@t3tools/shared/nodeRuntime";
 import * as DeviceService from "./DeviceService.ts";
 import * as DeviceAgentLiveness from "./DeviceAgentLiveness.ts";
 import * as AgentDeviceProxyRegistry from "./AgentDeviceProxyRegistry.ts";
+import { agentDeviceProxyBaseUrl } from "./AgentDeviceTarget.ts";
 import {
   deviceLeaseDirectory,
   makeFileDeviceLeaseStore,
@@ -60,6 +64,11 @@ const baseState: DeviceServiceState = {
   hubBasePath: "/api/device-hub",
   revision: 0,
 };
+
+const fixtureHttpServer = HttpServer.HttpServer.of({
+  address: NetAddress.inetAddressFromIpStringUnsafe("127.0.0.1", 43123),
+  serve: (() => Effect.void) as HttpServer.HttpServer["Service"]["serve"],
+});
 
 describe("DeviceService.stateStream", () => {
   it.effect("emits the current snapshot and then every published change", () =>
@@ -102,6 +111,7 @@ const makeFixture = Effect.fn("fixture")(function* (
   hostHomeDirectory?: string,
   onShutdown: Effect.Effect<void> = Effect.void,
   onDeviceHostReady: Effect.Effect<void> = Effect.void,
+  httpServer: HttpServer.HttpServer["Service"] = fixtureHttpServer,
 ) {
   const agentDeviceProxyRegistry = yield* AgentDeviceProxyRegistry.AgentDeviceProxyRegistry;
   const settings = yield* Ref.make(DEFAULT_SERVER_SETTINGS);
@@ -274,6 +284,7 @@ const makeFixture = Effect.fn("fixture")(function* (
         AgentDeviceProxyRegistry.AgentDeviceProxyRegistry,
         agentDeviceProxyRegistry,
       ),
+      Effect.provideService(HttpServer.HttpServer, httpServer),
     );
   }
   return { service, starts, agentStarts, agentStops, requests, settings, agentDeviceProxyRegistry };
@@ -287,6 +298,7 @@ describe("agent device targets", () => {
     Effect.scoped(
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
+        const httpServer = yield* HttpServer.HttpServer;
         const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-agent-target-service-" });
         const { service, agentDeviceProxyRegistry: registry } = yield* fixture(
           Effect.void,
@@ -299,6 +311,9 @@ describe("agent device targets", () => {
           true,
           baseDir,
           baseDir,
+          Effect.void,
+          Effect.void,
+          httpServer,
         );
         yield* service.configure({ enabled: true, agentAccessEnabled: true });
         yield* service.list;
@@ -347,10 +362,8 @@ describe("agent device targets", () => {
           readonly daemonBaseUrl: string;
           readonly daemonAuthToken: string;
         };
-        expect(firstConfig.daemonBaseUrl).toMatch(
-          new RegExp(
-            `^http://127\\.0\\.0\\.1:\\d+/api/agent-device/${encodeURIComponent(firstSession.sessionId)}/$`,
-          ),
+        expect(firstConfig.daemonBaseUrl).toBe(
+          yield* agentDeviceProxyBaseUrl(httpServer.address, firstSession.sessionId),
         );
         expect(firstConfig.daemonAuthToken).toBe(firstRegistration!.proxyToken);
         expect(firstRegistration!.proxyToken).not.toBe(firstRegistration!.endpoint.token);
@@ -435,8 +448,338 @@ describe("agent device targets", () => {
           },
           nextOwner,
         );
-      }).pipe(Effect.provide(NodeServices.layer)),
+      }).pipe(Effect.provide(NodeHttpServer.layerTest)),
     ),
+  );
+
+  it.effect(
+    "SSH readiness without sessions succeeds and reconnect refreshes exact host registrations",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-ssh-agent-refresh-" });
+          const remoteHostId = DeviceHostId.make("remote-ssh");
+          const remoteHost: SshDeviceHostConfig = {
+            id: remoteHostId,
+            label: "Remote SSH fixture",
+            target: "remote-fixture",
+          };
+          const forwardExits: Array<Deferred.Deferred<ChildProcessSpawner.ExitCode>> = [];
+          let nextDaemonToken = 0;
+          const localHost: DeviceHost.DeviceHost["Service"] = {
+            id: LOCAL_DEVICE_HOST_ID,
+            summary: Effect.succeed({
+              id: LOCAL_DEVICE_HOST_ID,
+              label: "Local",
+              kind: "local",
+              platforms: [],
+              hubInstalled: false,
+              agentDeviceInstalled: false,
+            }),
+            platformAvailability: (platform) => Effect.succeed({ platform, available: false }),
+            current: Effect.succeed(null),
+            ensureReady: () => Effect.die("Unexpected local host launch"),
+            ensureAgentReady: () => Effect.die("Unexpected local agent launch"),
+            stop: Effect.void,
+            stopAgent: Effect.void,
+          };
+          const proxyHttp = HttpClient.make((request) =>
+            Effect.succeed(
+              HttpClientResponse.fromWeb(
+                request,
+                Response.json({
+                  emulators: [
+                    {
+                      id: "emulator-one",
+                      name: "Emulator one",
+                      platform: "android",
+                      version: "15",
+                      booted: true,
+                      physical: false,
+                    },
+                    {
+                      id: "emulator-two",
+                      name: "Emulator two",
+                      platform: "android",
+                      version: "15",
+                      booted: true,
+                      physical: false,
+                    },
+                  ],
+                  simulators: [],
+                }),
+              ),
+            ),
+          );
+          const childProcessSpawner = ChildProcessSpawner.make((command) =>
+            Effect.gen(function* () {
+              if (command._tag !== "StandardCommand")
+                return yield* Effect.die("Unexpected command");
+              const forwarding = command.args.includes("-N");
+              let output = "";
+              let forwardExit: Deferred.Deferred<ChildProcessSpawner.ExitCode> | undefined;
+              if (forwarding) {
+                forwardExit = yield* Deferred.make<ChildProcessSpawner.ExitCode>();
+                forwardExits.push(forwardExit);
+              } else if (command.args.includes("-G")) {
+                output = "hostname 192.0.2.44\nport 22\nproxycommand none\nproxyjump none\n";
+              } else {
+                const stdin = command.options.stdin;
+                if (
+                  !stdin ||
+                  typeof stdin !== "object" ||
+                  !("stream" in stdin) ||
+                  !Stream.isStream(stdin.stream)
+                )
+                  return yield* Effect.die("Missing SSH bootstrap script");
+                const script = yield* stdin.stream.pipe(
+                  Stream.decodeText(),
+                  Stream.runFold(
+                    () => "",
+                    (value, chunk) => value + chunk,
+                  ),
+                );
+                const mode = /const mode = "([^"]+)"/.exec(script)?.[1];
+                output = JSON.stringify({
+                  nodePath: "/remote/node",
+                  platforms: [{ platform: "android", available: true }],
+                  hubPort: 1234,
+                  helpers: { serveSimAxSettings: null, serveSimCli: null },
+                  ...(mode === "agent-start"
+                    ? {
+                        daemonPort: 1235,
+                        token: `daemon-token-${++nextDaemonToken}`,
+                        entryPath: "/remote/agent-device.mjs",
+                      }
+                    : {}),
+                });
+              }
+              return ChildProcessSpawner.makeHandle({
+                pid: ChildProcessSpawner.ProcessId(123),
+                stdout:
+                  output.length === 0
+                    ? Stream.empty
+                    : Stream.make(new TextEncoder().encode(output)),
+                stderr: Stream.empty,
+                all: Stream.empty,
+                exitCode: forwardExit
+                  ? Deferred.await(forwardExit)
+                  : Effect.succeed(ChildProcessSpawner.ExitCode(0)),
+                isRunning: Effect.succeed(forwarding),
+                kill: () =>
+                  forwardExit
+                    ? Deferred.succeed(forwardExit, ChildProcessSpawner.ExitCode(0)).pipe(
+                        Effect.asVoid,
+                      )
+                    : Effect.void,
+                stdin: Sink.drain,
+                getInputFd: () => Sink.drain,
+                getOutputFd: () => Stream.empty,
+                unref: Effect.succeed(Effect.void),
+              });
+            }),
+          );
+          const nextPort = yield* Ref.make(45100);
+          const net = NetService.NetService.of({
+            canListenOnHost: () => Effect.succeed(true),
+            isPortAvailableOnLoopback: () => Effect.succeed(true),
+            hasListenerOnHost: () => Effect.succeed(false),
+            reserveLoopbackPort: () => Ref.updateAndGet(nextPort, (port) => port + 1),
+            findAvailablePort: (preferred) => Effect.succeed(preferred),
+          });
+          const nodeRuntimeLayer = Layer.mergeAll(
+            NodeCrypto.layer,
+            Layer.succeed(DeviceHost.DeviceHost, localHost),
+            ServerSettings.layerTest({
+              enableDeviceSupport: true,
+              enableAgentDeviceAccess: true,
+              deviceHosts: [remoteHost],
+            }),
+            Layer.succeed(ProcessRunner.ProcessRunner, {
+              run: () => Effect.die("Unexpected process"),
+            }),
+            Layer.succeed(HttpClient.HttpClient, proxyHttp),
+            ServerConfig.layerTest(baseDir, baseDir),
+            Layer.succeed(NetService.NetService, net),
+            Layer.succeed(HostProcess.HomeDirectory, baseDir),
+            Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, childProcessSpawner),
+            Layer.succeed(
+              DeviceAgentLiveness.DeviceAgentLiveness,
+              DeviceAgentLiveness.DeviceAgentLiveness.of({
+                bind: () => Effect.void,
+                isLive: () => Effect.succeed(true),
+              }),
+            ),
+            AgentDeviceProxyRegistry.layer,
+          ).pipe(Layer.provideMerge(NodeServices.layer));
+          const runtimeLayer = Layer.provideMerge(nodeRuntimeLayer, NodeHttpServer.layerTest);
+          const { service, registry, httpServer, registerCalls } = yield* Effect.gen(function* () {
+            const registry = yield* AgentDeviceProxyRegistry.AgentDeviceProxyRegistry;
+            const registerCalls = { count: 0 };
+            const trackedRegistry = AgentDeviceProxyRegistry.AgentDeviceProxyRegistry.of({
+              register: (input) =>
+                registry
+                  .register(input)
+                  .pipe(Effect.tap(() => Effect.sync(() => registerCalls.count++))),
+              get: registry.get,
+              isCurrent: registry.isCurrent,
+              pruneSessions: registry.pruneSessions,
+            });
+            const service = yield* DeviceService.make({ automaticCleanup: false }).pipe(
+              Effect.provideService(
+                AgentDeviceProxyRegistry.AgentDeviceProxyRegistry,
+                trackedRegistry,
+              ),
+            );
+            const httpServer = yield* HttpServer.HttpServer;
+            return { service, registry, httpServer, registerCalls };
+          }).pipe(Effect.provide(runtimeLayer));
+
+          const beforeSession = yield* service.agentReadinessIfSupported(remoteHostId);
+          expect(beforeSession?.agentDevice).toBeDefined();
+          expect((yield* service.state).sessions).toEqual([]);
+          expect(registerCalls.count).toBe(0);
+
+          const openAgentSession = Effect.fnUntraced(function* (deviceId: string, thread: string) {
+            const threadId = ThreadId.make(thread);
+            const providerSessionId = ProviderSessionId.make(`provider-${thread}`);
+            const owner = { kind: "agent" as const, providerSessionId };
+            const session = yield* service.open(
+              {
+                threadId,
+                hostId: remoteHostId,
+                deviceId: DeviceId.make(deviceId),
+                platform: "android",
+              },
+              owner,
+            );
+            yield* service.agentTarget({
+              threadId,
+              hostId: session.hostId,
+              deviceId: session.deviceId,
+              sessionId: session.sessionId,
+              leaseId: session.leaseId,
+              providerSessionId,
+            });
+            return { session, owner };
+          });
+          const exactSession = yield* openAgentSession("emulator-one", "ssh-refresh-one");
+          const staleSession = yield* openAgentSession("emulator-two", "ssh-refresh-two");
+          const exactBefore = yield* registry.get(exactSession.session.sessionId);
+          const staleBefore = yield* registry.get(staleSession.session.sessionId);
+          expect(registerCalls.count).toBe(2);
+          expect(exactBefore).not.toBeNull();
+          expect(staleBefore).not.toBeNull();
+
+          const exactConfigBefore = yield* fs.readFileString(exactBefore!.configPath);
+          const exactConfig = JSON.parse(exactConfigBefore) as {
+            readonly daemonBaseUrl: string;
+            readonly daemonAuthToken: string;
+          };
+          expect(exactConfig.daemonBaseUrl).toBe(
+            yield* agentDeviceProxyBaseUrl(httpServer.address, exactSession.session.sessionId),
+          );
+          const staleRegistration = yield* registry.register({
+            session: {
+              ...staleBefore!.session,
+              leaseId: `${staleBefore!.session.leaseId}-old`,
+              providerSessionId: ProviderSessionId.make("provider-replaced"),
+            },
+            configPath: staleBefore!.configPath,
+            proxyToken: staleBefore!.proxyToken,
+            endpoint: {
+              ...staleBefore!.endpoint,
+              baseUrl: "http://stale-registration.example",
+              token: "stale-daemon-token",
+            },
+          });
+          const otherHostRegistration = yield* registry.register({
+            session: {
+              ...exactBefore!.session,
+              sessionId: "other-host-session",
+              leaseId: "other-host-lease",
+              providerSessionId: ProviderSessionId.make("other-host-provider"),
+              threadId: ThreadId.make("other-host-thread"),
+              hostId: DeviceHostId.make("other-ssh"),
+              deviceId: DeviceId.make("other-device"),
+            },
+            configPath: "/other-host/config.json",
+            proxyToken: "other-host-proxy-token",
+            endpoint: {
+              baseUrl: "http://other-host.example",
+              token: "other-host-daemon-token",
+              entryPath: "/other-host/agent-device.mjs",
+            },
+          });
+          expect(exactConfig.daemonAuthToken).toBe(exactBefore!.proxyToken);
+          expect(forwardExits).toHaveLength(2);
+
+          const sawReconnectStart = yield* Deferred.make<void>();
+          const reconnected = yield* Deferred.make<void>();
+          let reconnecting = false;
+          yield* DeviceService.stateStream(service).pipe(
+            Stream.runForEach((state) => {
+              const status = state.hostStatuses[remoteHostId]?.status;
+              if (status === "starting") reconnecting = true;
+              if (status === "starting")
+                return Deferred.succeed(sawReconnectStart, undefined).pipe(Effect.asVoid);
+              if (status === "ready" && reconnecting)
+                return Deferred.succeed(reconnected, undefined).pipe(Effect.asVoid);
+              return Effect.void;
+            }),
+            Effect.forkScoped,
+          );
+          yield* Deferred.succeed(forwardExits[1]!, ChildProcessSpawner.ExitCode(0));
+          yield* Deferred.await(sawReconnectStart);
+          yield* Effect.yieldNow;
+          yield* TestClock.adjust("1 second");
+          yield* Deferred.await(reconnected);
+
+          const exactAfter = yield* registry.get(exactSession.session.sessionId);
+          expect(exactAfter).not.toBeNull();
+          expect(exactAfter!.session).toMatchObject({
+            sessionId: exactSession.session.sessionId,
+            leaseId: exactSession.session.leaseId,
+            ownerKind: "agent",
+            providerSessionId: exactSession.session.providerSessionId,
+            threadId: exactSession.session.threadId,
+            hostId: exactSession.session.hostId,
+            deviceId: exactSession.session.deviceId,
+          });
+          expect(exactAfter!.configPath).toBe(exactBefore!.configPath);
+          expect(exactAfter!.proxyToken).toBe(exactBefore!.proxyToken);
+          expect(exactAfter!.endpoint.baseUrl).not.toBe(exactBefore!.endpoint.baseUrl);
+          expect(exactAfter!.endpoint.token).toBe("daemon-token-2");
+          expect(yield* fs.readFileString(exactAfter!.configPath)).toBe(exactConfigBefore);
+          expect(yield* registry.get(staleSession.session.sessionId)).toEqual(staleRegistration);
+          expect(yield* registry.get("other-host-session")).toEqual(otherHostRegistration);
+          expect(registerCalls.count).toBe(3);
+
+          yield* service.close(
+            {
+              threadId: exactSession.session.threadId,
+              hostId: exactSession.session.hostId,
+              deviceId: exactSession.session.deviceId,
+              sessionId: exactSession.session.sessionId,
+              leaseId: exactSession.session.leaseId,
+            },
+            exactSession.owner,
+          );
+          yield* service.close(
+            {
+              threadId: staleSession.session.threadId,
+              hostId: staleSession.session.hostId,
+              deviceId: staleSession.session.deviceId,
+              sessionId: staleSession.session.sessionId,
+              leaseId: staleSession.session.leaseId,
+            },
+            staleSession.owner,
+          );
+        }),
+      ).pipe(
+        Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, TestClock.layer())),
+      ),
   );
 });
 
@@ -2010,6 +2353,7 @@ it.effect("reconciles SSH host settings without publishing no-op changes", () =>
       Layer.mergeAll(
         ServerSettings.layerTest(),
         NodeServices.layer,
+        NodeHttpServer.layerTest,
         AgentDeviceProxyRegistry.layer,
       ),
     ),

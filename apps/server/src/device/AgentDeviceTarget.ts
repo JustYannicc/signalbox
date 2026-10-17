@@ -1,9 +1,11 @@
 import * as Crypto from "effect/Crypto";
+import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import * as Hex from "effect/encoding/Hex";
 import * as Schema from "effect/Schema";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
+import * as NetAddress from "effect/net/NetAddress";
 
 import type { AgentDeviceEndpoint } from "./DeviceHost.ts";
 import { AGENT_DEVICE_PROXY_ROUTE_PREFIX } from "./AgentDeviceProxyProtocol.ts";
@@ -15,6 +17,10 @@ const encodeEndpoint = Schema.encodeEffect(
     Schema.Struct({ daemonBaseUrl: Schema.String, daemonAuthToken: Schema.String }),
   ),
 );
+
+class AgentDeviceAddressError extends Data.TaggedError("AgentDeviceAddressError")<{
+  readonly message: string;
+}> {}
 
 const key = Effect.fn("AgentDeviceTarget.key")(function* (value: string) {
   const crypto = yield* Crypto.Crypto;
@@ -49,8 +55,20 @@ export const agentDeviceConfigPath = (
     key(sessionIdentity(session)),
   ]).pipe(Effect.map(([directory, hash]) => path.join(directory, `${hash}.json`)));
 
-export const agentDeviceProxyBaseUrl = (port: number, sessionId: string) =>
-  `http://127.0.0.1:${port}${AGENT_DEVICE_PROXY_ROUTE_PREFIX}/${encodeURIComponent(sessionId)}/`;
+export const agentDeviceProxyBaseUrl = Effect.fn("AgentDeviceTarget.proxyBaseUrl")(function* (
+  address: NetAddress.SocketAddress,
+  sessionId: string,
+) {
+  if (NetAddress.isUnixPathAddress(address)) {
+    return yield* new AgentDeviceAddressError({
+      message: "Agent device access requires an HTTP server bound to an IP address.",
+    });
+  }
+  const host = NetAddress.isUnspecified(address.address)
+    ? "127.0.0.1"
+    : NetAddress.formatUrlHostString(NetAddress.formatIp(address.address));
+  return `http://${host}:${address.port}${AGENT_DEVICE_PROXY_ROUTE_PREFIX}/${encodeURIComponent(sessionId)}/`;
+});
 
 export const writeAgentDeviceConfig = Effect.fn("AgentDeviceTarget.writeConfig")(function* (
   file: string,
@@ -75,7 +93,7 @@ export const writeAgentDeviceConfig = Effect.fn("AgentDeviceTarget.writeConfig")
 export const configureAgentDeviceSession = Effect.fn("AgentDeviceTarget.configureSession")(
   function* (input: {
     readonly stateDir: string;
-    readonly serverPort: number;
+    readonly serverAddress: NetAddress.SocketAddress;
     readonly session: AgentDeviceSession;
     readonly endpoint: AgentDeviceEndpoint;
   }) {
@@ -90,9 +108,10 @@ export const configureAgentDeviceSession = Effect.fn("AgentDeviceTarget.configur
       sameAgentDeviceSession(existing.session, input.session)
         ? existing.proxyToken
         : yield* crypto.randomUUIDv4().pipe(Effect.orDie);
+    const baseUrl = yield* agentDeviceProxyBaseUrl(input.serverAddress, input.session.sessionId);
     yield* writeAgentDeviceConfig(configPath, {
       ...input.endpoint,
-      baseUrl: agentDeviceProxyBaseUrl(input.serverPort, input.session.sessionId),
+      baseUrl,
       token: proxyToken,
     });
     yield* registry.register({
@@ -102,5 +121,32 @@ export const configureAgentDeviceSession = Effect.fn("AgentDeviceTarget.configur
       endpoint: input.endpoint,
     });
     return configPath;
+  },
+);
+
+/** Refresh an existing exact lease after its host reconnects; readiness never creates a session. */
+export const refreshAgentDeviceSession = Effect.fn("AgentDeviceTarget.refreshSession")(
+  function* (input: {
+    readonly serverAddress: NetAddress.SocketAddress;
+    readonly session: AgentDeviceSession;
+    readonly endpoint: AgentDeviceEndpoint;
+  }) {
+    const registry = yield* AgentDeviceProxyRegistry.AgentDeviceProxyRegistry;
+    const existing = yield* registry.get(input.session.sessionId);
+    if (existing === null || !sameAgentDeviceSession(existing.session, input.session)) return false;
+
+    const baseUrl = yield* agentDeviceProxyBaseUrl(input.serverAddress, input.session.sessionId);
+    yield* writeAgentDeviceConfig(existing.configPath, {
+      ...input.endpoint,
+      baseUrl,
+      token: existing.proxyToken,
+    });
+    yield* registry.register({
+      session: input.session,
+      configPath: existing.configPath,
+      proxyToken: existing.proxyToken,
+      endpoint: input.endpoint,
+    });
+    return true;
   },
 );

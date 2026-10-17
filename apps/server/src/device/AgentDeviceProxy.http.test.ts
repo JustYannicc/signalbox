@@ -100,7 +100,10 @@ const readBody = async (request: NodeHttp.IncomingMessage) => {
 };
 
 const listen = async (handler: (request: Request) => Promise<Response>) => {
-  const responseHeaders: Array<Readonly<Record<string, string>>> = [];
+  const responseHeaders: Array<{
+    readonly requestId: string | undefined;
+    readonly headers: Readonly<Record<string, string>>;
+  }> = [];
   const server = NodeHttp.createServer((incoming, outgoing) => {
     void (async () => {
       const headers = new Headers();
@@ -117,7 +120,11 @@ const listen = async (handler: (request: Request) => Promise<Response>) => {
         },
       );
       const response = await handler(request);
-      responseHeaders.push(Object.fromEntries(response.headers.entries()));
+      const requestId = incoming.headers["x-request-id"];
+      responseHeaders.push({
+        requestId: typeof requestId === "string" ? requestId : undefined,
+        headers: Object.fromEntries(response.headers.entries()),
+      });
       outgoing.statusCode = response.status;
       response.headers.forEach((value, name) => outgoing.setHeader(name, value));
       if (response.body === null) {
@@ -433,6 +440,12 @@ it.effect("observes authenticated daemon failures across the real HTTP proxy bou
         expect(yield* response.text).toBe(testCase.body);
         expect(yield* diagnostics.snapshot).toEqual(typedDiagnostics);
       }
+      // The global compression middleware compresses JSON while leaving NDJSON untouched.
+      expect(
+        proxyServer.responseHeaders.find(
+          (entry) => entry.requestId === "from-client-oversized-json",
+        )?.headers["content-encoding"],
+      ).toBe("gzip");
 
       for (const testCase of [
         { command: "progress-only", body: progressOnlyBody },
@@ -476,8 +489,9 @@ it.effect("observes authenticated daemon failures across the real HTTP proxy bou
       yield* Deferred.await(progressDecoded);
       expect(decodedRecordTypes).toEqual(["progress"]);
       expect(
-        proxyServer.responseHeaders.some((headers) => headers["content-encoding"] === "gzip"),
-      ).toBe(true);
+        proxyServer.responseHeaders.find((entry) => entry.requestId === "from-client-incremental")
+          ?.headers["content-encoding"],
+      ).toBeUndefined();
       yield* Deferred.succeed(releaseIncrementalResponse, undefined);
       yield* Fiber.join(readIncrementalBody);
       yield* Deferred.await(terminalDecoded);

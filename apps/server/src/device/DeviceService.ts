@@ -30,7 +30,11 @@ import { resolveNodeExecutable, nodeRuntimeUnavailableMessage } from "@t3tools/s
 import * as Path from "effect/Path";
 import { ensureAgentDevice, ensureDeviceHub } from "./DeviceToolchain.ts";
 import * as ServerConfig from "../config.ts";
-import { agentDeviceConfigDir, configureAgentDeviceSession } from "./AgentDeviceTarget.ts";
+import {
+  agentDeviceConfigDir,
+  configureAgentDeviceSession,
+  refreshAgentDeviceSession,
+} from "./AgentDeviceTarget.ts";
 import * as Context from "effect/Context";
 import * as Clock from "effect/Clock";
 import * as Crypto from "effect/Crypto";
@@ -44,13 +48,13 @@ import * as Scope from "effect/Scope";
 import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 import * as SynchronizedRef from "effect/SynchronizedRef";
-import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http";
+import { HttpClient, HttpClientRequest, HttpClientResponse, HttpServer } from "effect/http";
 
 import * as ServerSettings from "../serverSettings.ts";
 import { isLocalSshDeviceHost, remoteSshDeviceHosts } from "./localSshDeviceHost.ts";
 import * as DeviceAgentLiveness from "./DeviceAgentLiveness.ts";
 import * as AgentDeviceProxyRegistry from "./AgentDeviceProxyRegistry.ts";
-import type { AgentDeviceSession } from "./AgentDeviceSession.ts";
+import { listAgentDeviceSessions, type AgentDeviceSession } from "./AgentDeviceSession.ts";
 
 import { readDeviceDetail, runDeviceAction } from "./DeviceActions.ts";
 import * as ProcessRunner from "../processRunner.ts";
@@ -275,7 +279,7 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
   configureAgent: (
     hostId: DeviceHostId,
     ready: DeviceHost.DeviceHostAgentReady,
-    session?: AgentDeviceSession,
+    session: AgentDeviceSession,
   ) => Effect.Effect<string, DeviceError> = (hostId) =>
     Effect.fail(
       new DeviceHostUnavailableError({
@@ -285,6 +289,11 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
     ),
   installTool?: (tool: "hub" | "agent") => Effect.Effect<unknown, DeviceError>,
   leaseRuntime: DeviceLeaseRuntime = {},
+  refreshAgent: (
+    hostId: DeviceHostId,
+    ready: DeviceHost.DeviceHostAgentReady,
+    session: AgentDeviceSession,
+  ) => Effect.Effect<void, DeviceError> = () => Effect.void,
 ) {
   const settings = yield* ServerSettings.ServerSettingsService;
   const crypto = yield* Crypto.Crypto;
@@ -404,6 +413,15 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
       revision: 0,
     },
   });
+
+  const refreshAgentEndpoints = (hostId: DeviceHostId, ready: DeviceHost.DeviceHostAgentReady) =>
+    SynchronizedRef.modifyEffect(stateRef, ({ state }) =>
+      Effect.forEach(
+        listAgentDeviceSessions(state).filter((session) => session.hostId === hostId),
+        (session) => refreshAgent(hostId, ready, session),
+        { discard: true },
+      ).pipe(Effect.as([undefined, { state }] as const)),
+    );
 
   const publish = (update: (state: DeviceServiceState) => DeviceServiceState) =>
     SynchronizedRef.updateAndGetEffect(stateRef, ({ state }) => {
@@ -1767,6 +1785,7 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
     }),
     setHostStatus,
     withLifecycleLock: lifecycleLock.withPermit,
+    refreshAgentEndpoints,
     refreshHosts: Effect.gen(function* () {
       const summaries = yield* Effect.forEach(hosts.values(), (host) => host.summary);
       const unchanged = (id: DeviceHostId) =>
@@ -1802,6 +1821,7 @@ export const make = (
     const settings = yield* ServerSettings.ServerSettingsService;
     const agentLiveness = yield* DeviceAgentLiveness.DeviceAgentLiveness;
     const agentDeviceProxyRegistry = yield* AgentDeviceProxyRegistry.AgentDeviceProxyRegistry;
+    const httpServer = yield* HttpServer.HttpServer;
     const scope = yield* Scope.Scope;
     const hosts = new Map<DeviceHostId, DeviceHost.DeviceHost["Service"]>([
       [localHost.id, localHost],
@@ -1814,13 +1834,12 @@ export const make = (
     const configureAgent = (
       hostId: DeviceHostId,
       ready: DeviceHost.DeviceHostAgentReady,
-      session?: AgentDeviceSession,
+      session: AgentDeviceSession,
     ) => {
-      if (session === undefined) return Effect.fail(staleAgentTarget());
       if (session.hostId !== hostId) return Effect.fail(staleAgentTarget());
       return configureAgentDeviceSession({
         stateDir: config.stateDir,
-        serverPort: config.port,
+        serverAddress: httpServer.address,
         session,
         endpoint: ready.agentDevice,
       }).pipe(
@@ -1841,11 +1860,39 @@ export const make = (
         ),
       );
     };
+    const refreshAgent = (
+      hostId: DeviceHostId,
+      ready: DeviceHost.DeviceHostAgentReady,
+      session: AgentDeviceSession,
+    ) => {
+      if (session.hostId !== hostId) return Effect.void;
+      return refreshAgentDeviceSession({
+        serverAddress: httpServer.address,
+        session,
+        endpoint: ready.agentDevice,
+      }).pipe(
+        Effect.asVoid,
+        Effect.provideService(
+          AgentDeviceProxyRegistry.AgentDeviceProxyRegistry,
+          agentDeviceProxyRegistry,
+        ),
+        Effect.provideService(FileSystem.FileSystem, fs),
+        Effect.provideService(Path.Path, path),
+        Effect.mapError(
+          (cause) =>
+            new DeviceOperationError({
+              operation: "refresh agent endpoint",
+              reason: "settings_failed",
+              cause,
+            }),
+        ),
+      );
+    };
     const probeContext =
       yield* Effect.context<Effect.Services<ReturnType<typeof SshDeviceHost.probe>>>();
     const localTargetContext =
       yield* Effect.context<Effect.Services<ReturnType<typeof isLocalSshDeviceHost>>>();
-    const service = yield* makeWithHosts(
+    const serviceWithAgentRefresh = yield* makeWithHosts(
       hosts,
       (host) =>
         Effect.gen(function* () {
@@ -1888,7 +1935,9 @@ export const make = (
           ? {}
           : { waitForLeaseRetry: options.waitForLeaseRetry }),
       },
+      refreshAgent,
     );
+    const { refreshAgentEndpoints, ...service } = serviceWithAgentRefresh;
     const hostContext =
       yield* Effect.context<Effect.Services<ReturnType<typeof SshDeviceHost.make>>>();
     const configured = new Map<string, { config: SshDeviceHostConfig; scope: Scope.Closeable }>();
@@ -1942,7 +1991,7 @@ export const make = (
               const instance = yield* SshDeviceHost.make(
                 host,
                 (ready) =>
-                  configureAgent(host.id, ready).pipe(
+                  refreshAgentEndpoints(host.id, ready).pipe(
                     Effect.asVoid,
                     Effect.mapError(
                       (error) =>
