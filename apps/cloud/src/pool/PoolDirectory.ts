@@ -4,8 +4,14 @@ import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import type { AccountPoolSetRoutingInput } from "@t3tools/contracts/accountHub";
 
-import type { LoginStart, LoginStatus, PoolLoginProvider } from "./cliProxyApi.ts";
 import type { ModelForwardReply } from "../models/ModelProtocol.ts";
+import type {
+  LoginCallback,
+  LoginStart,
+  LoginStatus,
+  PoolLoginFlow,
+  PoolLoginProvider,
+} from "./cliProxyApi.ts";
 import type { PoolLinkTarget } from "./poolLink.ts";
 import type { PoolModels } from "./poolModels.ts";
 import type { PreviewLinkCleanupTarget } from "./PreviewLinkRegistry.ts";
@@ -67,10 +73,11 @@ export interface PoolObjectApi {
   readonly startLogin: (
     actor: PoolActor,
     provider: PoolLoginProvider,
+    flow?: PoolLoginFlow,
   ) => Promise<PoolReply<LoginStart>>;
   readonly loginStatus: (actor: PoolActor, state: string) => Promise<PoolReply<LoginStatus>>;
-  readonly completeLogin: (actor: PoolActor, redirectUrl: string) => Promise<PoolReply<null>>;
-  readonly cancelLogin: (actor: PoolActor, state: string) => Promise<PoolReply<null>>;
+  readonly completeLogin: (actor: PoolActor, callback: LoginCallback) => Promise<PoolReply<null>>;
+  readonly cancelLogin: (actor: PoolActor, state: string) => Promise<PoolReply<boolean>>;
   readonly updateAccount: (
     actor: PoolActor,
     name: string,

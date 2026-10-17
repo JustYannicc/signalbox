@@ -52,10 +52,12 @@ export const makePoolObjectApi = (
     },
     accounts: (actor) => reply((engine) => engine.accounts(actor)),
     models: (actor) => reply((engine) => engine.models(actor)),
-    startLogin: (actor, provider) => reply((engine) => engine.startLogin(actor, provider)),
+    startLogin: (actor, provider, flow) =>
+      reply((engine) => engine.startLogin(actor, provider, flow)),
     loginStatus: (actor, state) => reply((engine) => engine.loginStatus(actor, state)),
-    completeLogin: (actor, url) => reply((engine) => done(engine.completeLogin(actor, url))),
-    cancelLogin: (actor, state) => reply((engine) => done(engine.cancelLogin(actor, state))),
+    completeLogin: (actor, callback) =>
+      reply((engine) => done(engine.completeLogin(actor, callback))),
+    cancelLogin: (actor, state) => reply((engine) => engine.cancelLogin(actor, state)),
     updateAccount: (actor, name, action) =>
       reply((engine) => done(engine.updateAccount(actor, name, action))),
     openLink: (actor, preview) => reply((engine) => engine.openLink(actor, preview)),
