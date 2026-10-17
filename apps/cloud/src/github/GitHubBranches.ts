@@ -28,6 +28,7 @@ import { DriveDirectory, type DriveHandle } from "../drive/DriveDirectory.ts";
 import { DrivePacks } from "../drive/DrivePacks.ts";
 import {
   commitsSince,
+  GITHUB_LIMITS,
   packForPush,
   receivePackRequest,
   receivePackResult,
@@ -130,6 +131,25 @@ type Status = {
   readonly local: VcsStatusLocalResult;
   readonly remote: VcsStatusRemoteResult | null;
 };
+
+/** A folder that isn't a repository: no branch, nothing to commit, push or open. */
+const NOT_A_REPOSITORY: Status = {
+  local: {
+    isRepo: false,
+    hasPrimaryRemote: false,
+    isDefaultRef: false,
+    refName: null,
+    hasWorkingTreeChanges: false,
+    workingTree: { files: [], insertions: 0, deletions: 0 },
+  },
+  remote: null,
+};
+
+const snapshotOf = (status: Status): VcsStatusStreamEvent => ({
+  _tag: "snapshot",
+  local: status.local,
+  remote: status.remote,
+});
 
 const toChangeRequest = (pr: GitHubPullRequest): VcsStatusRemoteResult["pr"] => ({
   number: pr.number,
@@ -344,19 +364,34 @@ const make = Effect.gen(function* () {
       };
     });
 
+  /**
+   * `cwd`'s working tree, or null when it isn't a repository (Scratch, a context, a drive
+   * without a remote). The git panel reads that as a status, the way a self-hosted server
+   * answers a plain folder, so clients hide version control there instead of failing.
+   */
+  const resolveRepository = (actor: Actor, cwd: string) =>
+    resolve(actor, cwd).pipe(
+      Effect.catchIf(
+        (error) => error.reason === "not_a_repository",
+        () => Effect.succeed(null),
+      ),
+      Effect.mapError(asManagerError(cwd, "status")),
+    );
+
   const status: GitHubBranches["Service"]["status"] = (actor, cwd, includeRemote) =>
-    Effect.flatMap(
-      resolve(actor, cwd).pipe(Effect.mapError(asManagerError(cwd, "status"))),
-      (target) => statusOf(target, cwd, includeRemote),
+    Effect.flatMap(resolveRepository(actor, cwd), (target) =>
+      target === null ? Effect.succeed(NOT_A_REPOSITORY) : statusOf(target, cwd, includeRemote),
     );
 
   const watch: GitHubBranches["Service"]["watch"] = (actor, cwd, includeRemote) =>
     Stream.unwrap(
       Effect.gen(function* () {
         // The thread and its branch never change, so they are looked up once.
-        const target = yield* resolve(actor, cwd).pipe(
-          Effect.mapError(asManagerError(cwd, "status")),
-        );
+        const target = yield* resolveRepository(actor, cwd);
+        if (target === null) {
+          // Nothing turns a folder into a repository here, so the answer holds.
+          return Stream.concat(Stream.make(snapshotOf(NOT_A_REPOSITORY)), Stream.never);
+        }
         const first = yield* statusOf(target, cwd, includeRemote);
         const subscription = yield* PubSub.subscribe(moved);
         const later = Stream.merge(
@@ -379,11 +414,7 @@ const make = Effect.gen(function* () {
         return Stream.concat(Stream.make(first), later).pipe(
           // Unchanged recomputations send nothing.
           Stream.changesWith((a, b) => JSON.stringify(a) === JSON.stringify(b)),
-          Stream.map((current): VcsStatusStreamEvent => ({
-            _tag: "snapshot",
-            local: current.local,
-            remote: current.remote,
-          })),
+          Stream.map(snapshotOf),
         );
       }),
     );
@@ -419,6 +450,7 @@ const make = Effect.gen(function* () {
         remoteHas: [refs.base, refs.main, ...refs.shallow].filter(
           (oid): oid is Oid => oid !== null,
         ),
+        limits: GITHUB_LIMITS,
         // GitHub still checks `old` as it moves the branch, so a lease never races a push.
         force: old !== null && old === lease,
       }).pipe(
@@ -431,13 +463,22 @@ const make = Effect.gen(function* () {
         ),
       );
       const ref = `refs/heads/${branch}`;
-      const answer = yield* github.api
-        .receivePack(
-          userToken,
-          repository,
-          receivePackRequest({ ref, old, next: head, pack: packed.pack }),
-        )
-        .pipe(Effect.mapError(gitHubRefusal("push")));
+      // The pack streams from the drive as it goes: a read failing cuts the push, which isn't GitHub's doing.
+      let unreadable = false;
+      let sent = 0;
+      const pack = packed.pack.pipe(
+        Stream.tap((bytes) => Effect.sync(() => (sent += bytes.length))),
+        Stream.tapError(() => Effect.sync(() => (unreadable = true))),
+      );
+      const request = receivePackRequest({ ref, old, next: head, pack, size: packed.size });
+      const answer = yield* github.api.receivePack(userToken, repository, request.body).pipe(
+        Effect.tapError(() =>
+          Effect.logWarning("push cut off", { sent, size: packed.size, unreadable }),
+        ),
+        Effect.mapError((error) =>
+          unreadable ? driveUnavailable() : gitHubRefusal("push")(error),
+        ),
+      );
       if (answer.status !== 200) {
         const reason = reasonForStatus(answer.status);
         return yield* refusal(

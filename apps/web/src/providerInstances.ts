@@ -11,6 +11,7 @@ import {
   type ServerSettings,
   type ServerProviderState,
 } from "@t3tools/contracts";
+import { hubInstancePoolId } from "@t3tools/contracts/accountHub";
 import {
   normalizeProviderAccentColor,
   resolveProviderInstanceDisplayName,
@@ -205,14 +206,16 @@ export function getProviderInstanceEntry(
 export function getDefaultProviderInstanceModel(
   providers: ReadonlyArray<ServerProvider>,
   instanceId: ProviderInstanceId,
+  providerInstances?: ServerSettings["providerInstances"],
 ): string | undefined {
   const entry = getProviderInstanceEntry(providers, instanceId);
   if (!entry) return undefined;
+  const isHubInstance = hubInstancePoolId(providerInstances?.[instanceId]?.config) !== null;
   return (
-    entry.models.find((model) => model.isDefault && !model.isCustom)?.slug ??
-    entry.models.find((model) => !model.isCustom)?.slug ??
-    entry.models[0]?.slug ??
-    DEFAULT_MODEL_BY_PROVIDER[entry.driverKind]
+    entry.models.find((model) => model.isDefault && (isHubInstance || !model.isCustom))?.slug ??
+    entry.models.find((model) => isHubInstance || !model.isCustom)?.slug ??
+    (isHubInstance ? undefined : entry.models[0]?.slug) ??
+    (isHubInstance ? undefined : DEFAULT_MODEL_BY_PROVIDER[entry.driverKind])
   );
 }
 
@@ -246,10 +249,11 @@ export function resolveSelectableProviderInstance(
 export function resolveDefaultProviderModelSelection(
   providers: ReadonlyArray<ServerProvider>,
   selection: ModelSelection | null | undefined,
+  providerInstances?: ServerSettings["providerInstances"],
 ): ModelSelection | null {
   const instanceId = resolveSelectableProviderInstance(providers, selection?.instanceId);
   if (instanceId === undefined) return null;
   if (selection?.instanceId === instanceId) return selection;
-  const model = getDefaultProviderInstanceModel(providers, instanceId);
+  const model = getDefaultProviderInstanceModel(providers, instanceId, providerInstances);
   return model ? { instanceId, model } : null;
 }

@@ -27,12 +27,18 @@ export function agentBrowserMirrorPageUrl(httpBaseUrl: string | null): string | 
   }
 }
 
+// Cloudflare's asset handling redirects `/agent-browser.html` to `/agent-browser`.
+const withoutHtmlExtension = (pathname: string) => pathname.replace(/\.html$/, "");
+
 /** Whether a WebView navigation is the mirror page itself (the page never leaves it). */
 export function isAgentBrowserMirrorPage(url: string, pageUrl: string): boolean {
   try {
     const target = new URL(url);
     const page = new URL(pageUrl);
-    return target.origin === page.origin && target.pathname === page.pathname;
+    return (
+      target.origin === page.origin &&
+      withoutHtmlExtension(target.pathname) === withoutHtmlExtension(page.pathname)
+    );
   } catch {
     return false;
   }

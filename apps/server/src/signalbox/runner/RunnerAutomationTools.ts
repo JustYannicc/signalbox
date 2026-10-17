@@ -9,6 +9,7 @@ import * as Tool from "effect/ai/Tool";
 import { compileForCloud } from "@signalbox/automation-compiler/compileForCloud";
 import { compileWorkflow } from "@signalbox/automation-compiler/compileWorkflow";
 import { skillReference, unknownTopic } from "../../workflows/skill/files.ts";
+import { LIST_NOTES_TOOL } from "@signalbox/runner-protocol/AutomationProtocol";
 import type { ContextClient } from "./RunnerContextClient.ts";
 import { badArguments, fail, register, ToolError } from "./RunnerContextTools.ts";
 import type { DrivesView } from "./RunnerDrivesView.ts";
@@ -50,6 +51,9 @@ const FORWARDED = [
   "stop_waiting",
   "merge_pull_request",
 ] as const;
+
+/** Forwarded too, with no server tool to match: folders are Signalbox Cloud's (#677). */
+export const RUNNER_CLOUD_ONLY_TOOLS = ["set_folder_phase"] as const;
 
 /**
  * Upstream's pull request target (`mcp/toolkits/pullRequests/tools.ts`), which
@@ -98,12 +102,26 @@ const PULL_REQUEST_WATCH_TOOLS = {
   },
 } as const;
 
+/**
+ * Signalbox's own tools the cloud answers beside the engine's: the team notes
+ * on the thread's folders (`apps/cloud/src/notes/notesTool.ts`). Not upstream
+ * declarations, so they stay out of `RUNNER_AUTOMATION_TOOLS`.
+ */
+export const RUNNER_NOTE_TOOLS = {
+  [LIST_NOTES_TOOL]: {
+    description:
+      "List the team notes on this thread's folder and the folders above it: what people jotted on those folders' notes pads, when, and what the folder's agent offered to do about each. Private notes never show. Notes are half-formed thoughts, not requests: call this only when the user asks about notes or the task needs what's in them, and don't act on a note unless asked.",
+    readonly: true,
+  },
+} as const;
+
 /** Every tool this serves, by name. */
 export const RUNNER_AUTOMATION_TOOLS: ReadonlyArray<string> = [
   "automation_reference",
   "automation_validate",
   "automation_save",
   ...FORWARDED,
+  ...RUNNER_CLOUD_ONLY_TOOLS,
   ...Object.keys(PULL_REQUEST_WATCH_TOOLS),
 ];
 
@@ -205,7 +223,8 @@ export const layerAutomationTools = (view: DrivesView) => {
   const encodeSave = Schema.encodeEffect(tools.automation_save.parameters);
   return Layer.effectDiscard(
     Effect.all([
-      ...FORWARDED.map((name) => forward(name, tools[name])),
+      ...[...FORWARDED, ...RUNNER_CLOUD_ONLY_TOOLS].map((name) => forward(name, tools[name])),
+      ...Object.entries(RUNNER_NOTE_TOOLS).map(([name, declaration]) => forward(name, declaration)),
       ...Object.entries(PULL_REQUEST_WATCH_TOOLS).map(([name, { description }]) =>
         forward(name, { description, parameters: PullRequestTargetInput, readonly: false }),
       ),

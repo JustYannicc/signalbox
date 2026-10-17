@@ -6,6 +6,7 @@ import * as Effect from "effect/Effect";
 import * as Base64 from "effect/encoding/Base64";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
+import type * as Stream from "effect/Stream";
 import { type HttpClient, HttpClientRequest, type HttpClientResponse } from "effect/http";
 
 /**
@@ -22,6 +23,14 @@ export class GitHubError extends Schema.TaggedError<GitHubError>()("GitHubError"
   /** When GitHub's rate limit lets the caller ask again (epoch ms), when it said. */
   retryAt: Schema.optional(Schema.Number),
 }) {}
+
+/** An answer GitHub sent that doesn't decode as expected. */
+export const unreadable = (operation: string) =>
+  new GitHubError({
+    operation,
+    status: 200,
+    message: "GitHub sent an answer Signalbox does not understand.",
+  });
 
 /**
  * When a refused request may be retried: `retry-after` (secondary limits), or
@@ -151,7 +160,13 @@ export const makeGitHubApi = (
 
   const send = (operation: string, request: HttpClientRequest.HttpClientRequest) =>
     client.execute(request.pipe(HttpClientRequest.setHeader("user-agent", "signalbox-cloud"))).pipe(
-      // The request (with tokens or the App's secret) stays out of the error, which gets logged.
+      // Requests and underlying errors can contain credentials; log only the failure category.
+      Effect.tapError((error) =>
+        Effect.logWarning("GitHub request failed", {
+          operation,
+          reason: error.reason._tag,
+        }),
+      ),
       Effect.mapError(
         () => new GitHubError({ operation, status: 0, message: "GitHub did not answer." }),
       ),
@@ -407,8 +422,8 @@ export const makeGitHubApi = (
         ),
         token,
       ),
-    /** One `git-receive-pack` request (`gitPush.ts` builds it); answers the raw result. */
-    receivePack: (token: string, repository: string, body: Uint8Array) =>
+    /** One `git-receive-pack` request, streamed as `gitPush.ts` builds it; answers the raw result. */
+    receivePack: (token: string, repository: string, body: Stream.Stream<Uint8Array, unknown>) =>
       send(
         "receivePack",
         HttpClientRequest.post(`${web}/${repository}.git/git-receive-pack`).pipe(
@@ -416,7 +431,10 @@ export const makeGitHubApi = (
             authorization: gitAuthorization(token),
             accept: "application/x-git-receive-pack-result",
           }),
-          HttpClientRequest.bodyUint8Array(body, "application/x-git-receive-pack-request"),
+          // Sent chunked, as `git push` sends a big one.
+          HttpClientRequest.bodyStream(body, {
+            contentType: "application/x-git-receive-pack-request",
+          }),
         ),
       ).pipe(
         Effect.flatMap((response) =>
@@ -487,6 +505,16 @@ export const makeGitHubApi = (
         HttpClientRequest.get(`${api}${path}`).pipe(HttpClientRequest.setUrlParams(params)),
         token,
       ),
+    /** A REST write with a JSON body; its answer as JSON text, null on 404. `path` starts with `/`. */
+    post: (operation: string, token: string, path: string, body: unknown) =>
+      raw(
+        operation,
+        HttpClientRequest.post(`${api}${path}`).pipe(HttpClientRequest.bodyJsonUnsafe(body)),
+        token,
+      ),
+    /** A download GitHub redirects to storage (logs, artifacts), as bytes; null on 404. */
+    download: (operation: string, token: string, path: string) =>
+      rawBytes(operation, HttpClientRequest.get(`${api}${path}`), token),
     /** The host links to this GitHub's pull requests name, e.g. `github.com`. */
     host: new URL(web).host.toLowerCase(),
     /** Where git's smart HTTP for `repository` lives, for the drive's fetch proxy. */

@@ -476,7 +476,7 @@ describe("settings search targets", () => {
     const streaming = getSettingsSearchTargetScope("response-streaming")!;
     expect(streaming.scope).toBe("project-defaults");
     expect(isSettingsSearchScopeAvailable(streaming.scope, "project")).toBe(true);
-    for (const id of ["legacy-plan-mode", "legacy-context-window-indicator", "legacy-sidebar"]) {
+    for (const id of ["legacy-plan-mode", "legacy-context-window-indicator"]) {
       expect(getSettingsSearchTargetScope(id)!.scope).toBeNull();
     }
   });
@@ -594,6 +594,7 @@ describe("environment capability gates", () => {
       environment: {
         capabilities: {
           serverSettingsWrite: false,
+          modelSettingsWrite: false,
           devices: false,
           scheduledTasks: false,
           remoteAccess: false,
@@ -610,6 +611,7 @@ describe("environment capability gates", () => {
     expect([...unsupportedSettingsCapabilities([cloud], cloud)]).toEqual(
       expect.arrayContaining([
         "serverSettingsWrite",
+        "modelSettingsWrite",
         "devices",
         "scheduledTasks",
         "remoteAccess",
@@ -624,6 +626,23 @@ describe("environment capability gates", () => {
     expect(unsupportedSettingsCapabilities([selfHosted], selfHosted).size).toBe(0);
     expect(unsupportedSettingsCapabilities([loading], loading).size).toBe(0);
     expect(unsupportedSettingsCapabilities([], null).size).toBe(0);
+  });
+
+  it("keeps model settings available when only the restricted model capability is enabled", () => {
+    const modelOnlyCloud = {
+      serverConfig: {
+        environment: {
+          capabilities: { serverSettingsWrite: false, modelSettingsWrite: true },
+        },
+      },
+    };
+
+    expect([...unsupportedSettingsCapabilities([modelOnlyCloud], modelOnlyCloud)]).toContain(
+      "serverSettingsWrite",
+    );
+    expect([...unsupportedSettingsCapabilities([modelOnlyCloud], modelOnlyCloud)]).not.toContain(
+      "modelSettingsWrite",
+    );
   });
 
   it("drops search results and pages for unsupported capabilities", () => {

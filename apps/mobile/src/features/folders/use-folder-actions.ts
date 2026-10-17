@@ -1,5 +1,8 @@
 // signalbox: what the folder menus do: dialogs, confirmations, and the folder commands.
-import { folderDeleteMessage } from "@t3tools/client-runtime/state/signalboxFolders";
+import {
+  folderDeleteMessage,
+  ownerLevelName,
+} from "@t3tools/client-runtime/state/signalboxFolders";
 import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
@@ -11,6 +14,7 @@ import type {
   Folder,
   FolderId,
   FolderLevel,
+  FolderSetPhaseInput,
   SignalboxFoldersSnapshot,
 } from "@t3tools/contracts/signalboxFolders";
 import { useCallback, useState } from "react";
@@ -19,6 +23,7 @@ import { Alert } from "react-native";
 import * as Dialog from "../../components/ui/Dialog";
 import { signalboxFolders } from "../../state/signalboxFolders";
 import { useAtomCommand } from "../../state/use-atom-command";
+import type { NotesOpen } from "../notes/note-menus";
 import { parseFolderMenuEvent, type PoolChoice } from "./folder-menus";
 
 /** A level whose instructions are open in the editor. */
@@ -26,6 +31,12 @@ export interface InstructionsEditing {
   readonly level: FolderLevel;
   readonly name: string;
   readonly instructions: string;
+}
+
+/** A folder whose phases are open in the editor, and the template its tree starts from. */
+export interface PhasesEditing {
+  readonly folder: Folder;
+  readonly ownerKind: SignalboxContext["kind"];
 }
 
 /** Runs a folder command and tells the user, in its own words, when it fails. */
@@ -53,15 +64,21 @@ export function useFolderActions(input: {
   readonly environmentId: EnvironmentId;
   readonly snapshot: SignalboxFoldersSnapshot | null;
   readonly pools: ReadonlyArray<PoolChoice>;
+  /** Whose trees the folders are in, for the phases template a folder starts from. */
+  readonly owners: ReadonlyArray<SignalboxContext>;
 }) {
-  const { environmentId, snapshot, pools } = input;
+  const { environmentId, snapshot, pools, owners } = input;
   const run = useFolderCommandRunner();
   const createFolder = useAtomCommand(signalboxFolders.createFolder, QUIET);
   const updateFolder = useAtomCommand(signalboxFolders.updateFolder, QUIET);
   const moveFolder = useAtomCommand(signalboxFolders.moveFolder, QUIET);
   const deleteFolder = useAtomCommand(signalboxFolders.deleteFolder, QUIET);
   const setInstructions = useAtomCommand(signalboxFolders.setInstructions, QUIET);
+  const setPhase = useAtomCommand(signalboxFolders.setPhase, QUIET);
+  const setGitHubLend = useAtomCommand(signalboxFolders.setGitHubLend, QUIET);
   const [editing, setEditing] = useState<InstructionsEditing | null>(null);
+  const [editingPhases, setEditingPhases] = useState<PhasesEditing | null>(null);
+  const [notes, setNotes] = useState<NotesOpen | null>(null);
 
   const requestCreateFolder = useCallback(
     (parentId: FolderId | null, ownerId: SignalboxContextId) => {
@@ -115,12 +132,33 @@ export function useFolderActions(input: {
             updateFolder({ environmentId, input: { id: folder.id, poolId: choice.poolId } }),
           );
           return;
+        case "phase":
+          void run(
+            "Couldn’t change this folder’s phase",
+            setPhase({ environmentId, input: { id: folder.id, current: choice.current } }),
+          );
+          return;
+        case "phases":
+          setEditingPhases({
+            folder,
+            ownerKind: owners.find((owner) => owner.id === folder.ownerId)?.kind ?? "personal",
+          });
+          return;
+        case "githubLend":
+          void run(
+            choice.lent ? "Couldn’t lend your GitHub" : "Couldn’t stop lending your GitHub",
+            setGitHubLend({ environmentId, input: { id: folder.id, lent: choice.lent } }),
+          );
+          return;
         case "instructions":
           setEditing({
             level: { _tag: "folder", folderId: folder.id },
             name: folder.name,
             instructions: folder.instructions ?? "",
           });
+          return;
+        case "notes":
+          setNotes({ environmentId, level: { _tag: "folder", folderId: folder.id } });
           return;
         case "delete":
           Dialog.confirm({
@@ -141,9 +179,12 @@ export function useFolderActions(input: {
       deleteFolder,
       environmentId,
       moveFolder,
+      owners,
       pools,
       requestCreateFolder,
       run,
+      setPhase,
+      setGitHubLend,
       snapshot,
       updateFolder,
     ],
@@ -152,15 +193,16 @@ export function useFolderActions(input: {
   const onTopLevelAction = useCallback(
     (owner: SignalboxContext, event: string) => {
       if (event === "top:new-folder") requestCreateFolder(null, owner.id);
+      if (event === "top:notes") setNotes({ environmentId, level: { _tag: "top" } });
       if (event === "top:instructions" && snapshot !== null) {
         setEditing({
           level: { _tag: "top" },
-          name: owner.name,
+          name: ownerLevelName(owner),
           instructions: snapshot.top.instructions ?? "",
         });
       }
     },
-    [requestCreateFolder, snapshot],
+    [environmentId, requestCreateFolder, snapshot],
   );
 
   /** Saves the open editor's text; resolves whether it was saved. */
@@ -175,11 +217,28 @@ export function useFolderActions(input: {
     [editing, environmentId, run, setInstructions],
   );
 
+  /** Saves the open phases editor's change; resolves whether it was saved. */
+  const savePhases = useCallback(
+    (change: Omit<FolderSetPhaseInput, "id">) =>
+      editingPhases === null
+        ? Promise.resolve(true)
+        : run(
+            "Couldn’t save the phases",
+            setPhase({ environmentId, input: { id: editingPhases.folder.id, ...change } }),
+          ),
+    [editingPhases, environmentId, run, setPhase],
+  );
+
   return {
     onFolderAction,
     onTopLevelAction,
     editing,
     closeEditor: useCallback(() => setEditing(null), []),
+    notes,
+    closeNotes: useCallback(() => setNotes(null), []),
     saveInstructions,
+    editingPhases,
+    closePhasesEditor: useCallback(() => setEditingPhases(null), []),
+    savePhases,
   };
 }

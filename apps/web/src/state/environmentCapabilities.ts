@@ -7,6 +7,7 @@ import { useAtomValue } from "@effect/atom-react";
 import {
   type EnvironmentId,
   type SignalboxEnvironmentCapability,
+  environmentCanWriteModelSettings,
   environmentSupports,
   showsEnvironmentUi,
 } from "@t3tools/contracts";
@@ -19,12 +20,14 @@ import { isHostedStaticApp } from "../hostedPairing";
 import { isLocalEnvironmentDisabled } from "../localEnvironment";
 import { environmentServerConfigsAtom, primaryServerConfigAtom, serverEnvironment } from "./server";
 
-/** Supported until the environment says otherwise, including while its config loads. */
+/** Supported until the environment says otherwise, unless the caller waits for config. */
 export function useEnvironmentSupports(
   environmentId: EnvironmentId | null | undefined,
   capability: SignalboxEnvironmentCapability,
+  options: { readonly waitForConfig?: boolean } = {},
 ): boolean {
   const config = useAtomValue(serverEnvironment.configValueAtom(environmentId ?? null));
+  if (options.waitForConfig && config === null) return false;
   return environmentSupports(config?.environment.capabilities, capability);
 }
 
@@ -37,6 +40,13 @@ export function readEnvironmentSupports(
     appAtomRegistry.get(environmentServerConfigsAtom).get(environmentId)?.environment.capabilities,
     capability,
   );
+}
+
+export function useEnvironmentCanWriteModelSettings(
+  environmentId: EnvironmentId | null | undefined,
+): boolean {
+  const config = useAtomValue(serverEnvironment.configValueAtom(environmentId ?? null));
+  return environmentCanWriteModelSettings(config?.environment.capabilities);
 }
 
 /**
@@ -69,7 +79,9 @@ export function resolveEnvironmentUiState(input: {
 let cachedServedByAnEnvironment: boolean | undefined;
 function servedByAnEnvironment(): boolean {
   cachedServedByAnEnvironment ??=
-    !isLocalEnvironmentDisabled() && !isHostedStaticApp(new URL(window.location.href));
+    typeof window !== "undefined" &&
+    !isLocalEnvironmentDisabled() &&
+    !isHostedStaticApp(new URL(window.location.href));
   return cachedServedByAnEnvironment;
 }
 
@@ -86,6 +98,11 @@ const environmentUiStateAtom = Atom.make((get): EnvironmentUiState => {
 /** For routes that redirect away: wait while `unknown` rather than bounce a self-hosted link. */
 export function useEnvironmentUiState(): EnvironmentUiState {
   return useAtomValue(environmentUiStateAtom);
+}
+
+/** `useShowsEnvironmentUi` outside React, for toasts and thrown errors. */
+export function readShowsEnvironmentUi(): boolean {
+  return appAtomRegistry.get(environmentUiStateAtom) === "shown";
 }
 
 export function useShowsEnvironmentUi(): boolean {

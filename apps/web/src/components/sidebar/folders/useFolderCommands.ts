@@ -16,6 +16,7 @@ import type {
   FolderId,
   FolderLevel,
   FolderMoveInput,
+  FolderSetPhaseInput,
   OnePasswordEnvironmentId,
   SignalboxFoldersSnapshot,
 } from "@t3tools/contracts/signalboxFolders";
@@ -27,10 +28,11 @@ import { stackedThreadToast, toastManager } from "../../ui/toast";
 
 type Change = Promise<SignalboxFoldersSnapshot | null>;
 
-async function reported<E>(
+/** The command's value, or null after toasting why it failed (`title` says what didn't happen). */
+export async function reported<A, E>(
   title: string,
-  command: Promise<AtomCommandResult<SignalboxFoldersSnapshot, E>>,
-): Change {
+  command: Promise<AtomCommandResult<A, E>>,
+): Promise<A | null> {
   const result = await command;
   if (result._tag === "Success") return result.value;
   if (!isAtomCommandInterrupted(result)) {
@@ -68,7 +70,9 @@ export function useFolderCommands() {
   const setInstructions = useAtomCommand(signalboxFolders.setInstructions, {
     reportFailure: false,
   });
+  const setPhase = useAtomCommand(signalboxFolders.setPhase, { reportFailure: false });
   const setSecrets = useAtomCommand(signalboxFolders.setSecrets, { reportFailure: false });
+  const setGitHubLend = useAtomCommand(signalboxFolders.setGitHubLend, { reportFailure: false });
   const setOnePassword = useAtomCommand(signalboxFolders.setOnePassword, {
     reportFailure: false,
   });
@@ -90,6 +94,12 @@ export function useFolderCommands() {
         reported(
           "Could not change this folder's files",
           update({ environmentId, input: { id, files } }),
+        ),
+      /** Lends the user's GitHub to the folder's CI steps (#641), or stops lending it. */
+      setGitHubLend: (environmentId: EnvironmentId, id: FolderId, lent: boolean): Change =>
+        reported(
+          lent ? "Could not lend your GitHub" : "Could not stop lending your GitHub",
+          setGitHubLend({ environmentId, input: { id, lent } }),
         ),
       move: (environmentId: EnvironmentId, input: FolderMoveInput): Change =>
         reported("Could not move folder", move({ environmentId, input })),
@@ -113,6 +123,9 @@ export function useFolderCommands() {
           "Could not save instructions",
           setInstructions({ environmentId, input: { level, instructions } }),
         ),
+      /** Moves it to another phase, replaces its phases, or (`phases: null`) clears them. */
+      setPhase: (environmentId: EnvironmentId, input: FolderSetPhaseInput): Change =>
+        reported("Could not change this folder's phase", setPhase({ environmentId, input })),
       /** Null stops loading secrets at this level. */
       setSecrets: (
         environmentId: EnvironmentId,
@@ -133,7 +146,18 @@ export function useFolderCommands() {
       setOnePassword: (environmentId: EnvironmentId, token: string | null): Attempt =>
         attempted(setOnePassword({ environmentId, input: { token } })),
     }),
-    [create, move, moveThread, remove, setInstructions, setOnePassword, setSecrets, update],
+    [
+      create,
+      move,
+      moveThread,
+      remove,
+      setGitHubLend,
+      setInstructions,
+      setOnePassword,
+      setPhase,
+      setSecrets,
+      update,
+    ],
   );
 }
 

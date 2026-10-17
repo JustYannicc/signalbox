@@ -60,10 +60,11 @@ export const AUTOMATION_TOOLS = {
   automation_reference: declare({
     title: "Automation reference",
     description:
-      "The signalbox-automations skill, for harnesses that don't load skills: how to write, save, run and fix an automation. Read it before writing or changing one. No topic returns the main page; topics: steps, control-flow, triggers, runs, patterns, or an example file name such as work-through-tickets.",
+      "The signalbox-automations skill, for harnesses that don't load skills: how to write, save, run and fix an automation. Read it before writing or changing one. No topic returns the main page; topics: steps, control-flow, triggers, runs, patterns, github-actions, or an example file name such as work-through-tickets.",
     parameters: Schema.Struct({
       topic: Schema.optional(Schema.String).annotate({
-        description: "steps, control-flow, triggers, runs, patterns, or an example's file name.",
+        description:
+          "steps, control-flow, triggers, runs, patterns, github-actions, or an example's file name.",
       }),
     }),
     success: Schema.Struct({ reference: Schema.String }),
@@ -304,6 +305,34 @@ export const AUTOMATION_TOOLS = {
       alreadyRequested: Schema.Boolean.annotate({
         description: "A merge request for it was already waiting; this one changed nothing.",
       }),
+    }),
+    readonly: false,
+  }),
+  // Folders are Signalbox Cloud's, so only a cloud thread's machine serves this (#677).
+  set_folder_phase: declare({
+    title: "Set folder phase",
+    description:
+      "Move a folder to another of its phases, edit its phases, or clear them. A phase says where a folder is in its life, like Proposal, Implementation or Production; it's separate from threads' states. Pass current alone to move it (skipping phases is fine, names match ignoring case). Pass phases to replace the list, in order; the current phase stays when it's still in the list, else it starts at the first. Pass phases: null to take the phase away. Without folderId it's the folder of this thread, or of threadId in an automation.",
+    parameters: Schema.Struct({
+      folderId: Schema.optional(Schema.String).annotate({
+        description: "The folder. Omit for the folder this thread is in.",
+      }),
+      threadId: Schema.optional(Schema.String).annotate({
+        description:
+          "In an automation, which has no thread of its own: the thread whose folder to change, when folderId is omitted.",
+      }),
+      current: Schema.optional(Schema.String).annotate({
+        description: "The phase to move it to, one of its phases.",
+      }),
+      phases: Schema.optional(Schema.NullOr(Schema.Array(Schema.String))).annotate({
+        description: "Its phases in order, replacing the list; null clears its phase.",
+      }),
+    }),
+    success: Schema.Struct({
+      folderId: Schema.String,
+      phase: Schema.NullOr(
+        Schema.Struct({ phases: Schema.Array(Schema.String), current: Schema.String }),
+      ).annotate({ description: "Its phase now; null when it has none." }),
     }),
     readonly: false,
   }),

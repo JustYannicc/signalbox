@@ -100,10 +100,14 @@ export const descriptor = (identity: CloudEnvironmentIdentity): ExecutionEnviron
     // Folders live in each user's object (`user/UserFolders.ts`); older clients read them as sections.
     sections: true,
     folders: true,
+    // Notes on each level's pad, read by its assistant or agent (`notes/UserNotes.ts`).
+    notes: true,
     // Standing sign-in grants, in each user's object (`signIn/SignInGrants.ts`).
     signInGrants: true,
     // Chats and tasks, and idle chats archiving themselves (`user/UserThreadKinds.ts`).
     threadKinds: true,
+    // Threads' status notes, written by their agents or the runtime (`user/UserThreadStatus.ts`).
+    threadStatusNotes: true,
     // The thread object picks start or queue itself, so clients skip reading the projection first.
     serverResolvedCommandContext: true,
     // Each account pool reports its accounts as a source (`pool/poolViews.ts`).
@@ -128,6 +132,7 @@ export const descriptor = (identity: CloudEnvironmentIdentity): ExecutionEnviron
     terminal: false,
     worktrees: false,
     serverSettingsWrite: false,
+    modelSettingsWrite: true,
     devices: false,
     scheduledTasks: false,
     localFilesystem: false,

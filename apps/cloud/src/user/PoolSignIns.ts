@@ -23,6 +23,7 @@ import * as SubscriptionRef from "effect/SubscriptionRef";
 import * as SignInBrowsers from "../browser/SignInBrowsers.ts";
 import type { PoolActor, PoolRejectedError } from "../pool/PoolEngine.ts";
 import * as PoolDirectory from "../pool/PoolDirectory.ts";
+import { poolLoginCallback } from "./poolLoginCallback.ts";
 import * as UserPools from "./UserPools.ts";
 
 /**
@@ -53,6 +54,7 @@ interface Login {
   readonly flowId: string;
   readonly objectName: string;
   readonly state: string;
+  readonly authorizationUrl: string;
   /** Done once the redirect was handed back: the poll wakes and speeds up. */
   readonly handedBack: Deferred.Deferred<void>;
   readonly fiber: Fiber.Fiber<void>;
@@ -315,6 +317,7 @@ const make = Effect.gen(function* () {
                       url: login.url,
                       requiresConsent: false,
                       acceptsCallback: true,
+                      acceptsCode: true,
                     },
             });
             const handedBack = yield* Deferred.make<void>();
@@ -343,6 +346,7 @@ const make = Effect.gen(function* () {
               flowId,
               objectName: target.pool.objectName,
               state: login.state,
+              authorizationUrl: login.url,
               handedBack,
               fiber,
               browserScope,
@@ -376,12 +380,19 @@ const make = Effect.gen(function* () {
       if (!login || login.flowId !== flowId || !ref) {
         return yield* setupError(instanceId, "complete")("This sign-in has ended. Start again.");
       }
+      const callbackUrl = poolLoginCallback(login.authorizationUrl, login.state, input.callbackUrl);
+      if (callbackUrl === null) {
+        return yield* setupError(
+          instanceId,
+          "complete",
+        )("Enter the authorization code or the full callback URL from this sign-in.");
+      }
       if (!(yield* advance(ref, flowId, "waiting", { phase: "verifying", message: null }))) {
         return yield* SubscriptionRef.get(ref);
       }
       const done = yield* directory
         .forPool(login.objectName)
-        .completeLogin(actor, input.callbackUrl)
+        .completeLogin(actor, callbackUrl)
         .pipe(Effect.result);
       if (done._tag === "Success") {
         yield* Deferred.succeed(login.handedBack, undefined);

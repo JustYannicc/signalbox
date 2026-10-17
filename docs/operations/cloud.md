@@ -94,12 +94,14 @@ connections.
 
 Each thread and port gets its own origin, under `PREVIEW_DOMAIN`, because
 dev servers expect to own one (absolute paths, HMR sockets, cookies). Clients
-ask for a link (`signalbox.previews.open`); the link carries a ticket that the
-origin trades for an HttpOnly cookie. Tickets and cookies are signed with the
-machine's lease token, so a new generation voids all of them, and every request
-is checked against the thread's members. An open preview WebSocket (Vite's
-HMR) holds the machine's lease; the idle tail starts when the last one closes
-or the last request ends.
+ask for a stable app link (`signalbox.previews.open`), which authenticates the
+browser before issuing a ticket that the preview origin trades for an HttpOnly
+cookie. A persisted thread key signs these credentials; machine generations
+only fence the tunnel. Every request checks thread membership. Opening a stopped
+preview starts the machine and restores the dev server declared with
+`preview_service_start`. Each open tab holds the machine's lease, including
+servers without HMR; the idle tail starts when the last tab closes or the last
+request ends. `preview_service_stop` removes the declaration.
 
 Locally, add `PREVIEW_DOMAIN=localhost:8787` to `.dev.vars`: preview origins
 are `http://<label>.localhost:8787`, which browsers resolve to loopback. With
@@ -155,7 +157,7 @@ TTL, so only an abandoned VM reaches it.
 
 The boat key needs the actions `sandbox.create`, `sandbox.read`,
 `sandbox.update`, `sandbox.stop`, `sandbox.resume`, `sandbox.delete` and
-`file.write`.
+`file.write` and `exec` (to update the Runner launcher on existing VMs).
 
 To try it locally, the machine must reach your `wrangler dev` and the gateway,
 for example through `cloudflared tunnel --url http://127.0.0.1:8787
@@ -277,11 +279,14 @@ own SQLite through a host only that container can reach. A pool connected to
 an admin's own CLIProxyAPI never starts a container.
 
 The model picker offers what each pool's CLIProxyAPI serves (`GET /v1/models`,
-which lists only what its enabled accounts can run), read and cached with the
-pool's accounts. The model manifest the self-hosted server uses names them and
-gives them their options; the Worker fetches it from upstream hourly and falls
-back to its bundled copy. So a CLIProxyAPI bump is what brings new models; the
-manifest only names them, and a model it doesn't know yet shows under its slug.
+which lists only what its enabled accounts can run). Its v8 management catalog
+supplies display names and reasoning levels. CLIProxyAPI updates that catalog
+itself; new served models do not need a Signalbox deploy. Signalbox keeps a
+small fallback for labels, defaults, and established fast-mode support. Account
+changes refresh the cache immediately. Alarms refresh pools every three hours,
+with a five-minute retry after failures. A managed pool with accounts wakes for
+that read and follows the normal idle timeout afterwards.
+
 A turn on a model its pool doesn't serve is refused at turn start
 (`thread/TurnModels.ts`). The scripted provider, a reply without a model, is
 offered only where `SCRIPTED_PROVIDER=1`: `wrangler dev` and tests, never

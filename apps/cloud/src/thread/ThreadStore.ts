@@ -7,6 +7,7 @@ import {
 } from "@t3tools/contracts";
 import { SignalboxContextId } from "@t3tools/contracts/signalboxContexts";
 import { OnePasswordEnvironmentId } from "@t3tools/contracts/signalboxFolders";
+import type { ThreadStatusNote } from "@t3tools/contracts/signalboxStatusLine";
 import type { SecretValue } from "@signalbox/runner-protocol/SecretScrubber";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
@@ -21,6 +22,7 @@ import * as Migrations from "../storage/migrations.ts";
 import { migrateDiagnostics } from "./diagnostics/DiagnosticsStore.ts";
 import { migrateBrowsing } from "./browsing/browsingTables.ts";
 import { migratePullRequestPolls } from "./pullRequests/PullRequestPolls.ts";
+import { migrateStatusNote, readNote, writeNote } from "./statusLine/statusNoteTables.ts";
 import { type MachineRecord, MachineRecords, NO_MACHINE_RECORD } from "./runner/MachineBackend.ts";
 import {
   migrateSecretValues,
@@ -184,6 +186,13 @@ export class ThreadStore extends Context.Service<
       readonly monitors: ReadonlyArray<ThreadMonitor>;
       readonly summaryChanged: boolean;
     }) => Effect.Effect<void, SqlError>;
+    /** The thread's status note (#670, `statusLine/`); null until one was written. */
+    readonly statusNote: Effect.Effect<ThreadStatusNote | null, SqlError>;
+    /** Replaces the note; `summaryChanged` gives the sidebar row a new revision with it. */
+    readonly saveStatusNote: (input: {
+      readonly note: ThreadStatusNote;
+      readonly summaryChanged: boolean;
+    }) => Effect.Effect<void, SqlError>;
     readonly machine: Effect.Effect<MachineLease, SqlError>;
     readonly saveMachine: (machine: MachineLease) => Effect.Effect<void, SqlError>;
     /** The machine backend's record of the thread's machine (`MachineBackend.ts`). */
@@ -297,6 +306,8 @@ const migrations = Migrator.fromRecord({
   // The thread's browser tabs and their recent changes (#585, `browsing/browsingTables.ts`).
   // Same id as the one above on purpose: the runner keys by id and name (`storage/migrations.ts`).
   "0010_browsing": migrateBrowsing,
+  // The thread's status note and the runtime's cursor through ended runs (#670, `statusLine/`).
+  "0011_status_note": migrateStatusNote,
 });
 
 /** Applies every migration not recorded yet (`storage/migrations.ts`). Never edit or rename a merged one. */
@@ -384,6 +395,7 @@ const MachineRecordJson = Schema.fromJsonString(
   Schema.Struct({
     machineId: Schema.NullOr(Schema.String),
     createKey: Schema.NullOr(Schema.String),
+    setupKey: Schema.optionalKey(Schema.String),
     desired: Schema.Literals(["running", "stopped", "destroyed"]),
     settled: Schema.Boolean,
   }),
@@ -540,6 +552,13 @@ const make = Effect.gen(function* () {
     if (input.summaryChanged) yield* sql`UPDATE outbox SET revision = revision + 1 WHERE id = 1`;
   }, sql.withTransaction);
 
+  const saveStatusNote = Effect.fn("ThreadStore.saveStatusNote")(function* (
+    input: Parameters<ThreadStore["Service"]["saveStatusNote"]>[0],
+  ) {
+    yield* writeNote(input.note);
+    if (input.summaryChanged) yield* sql`UPDATE outbox SET revision = revision + 1 WHERE id = 1`;
+  }, sql.withTransaction);
+
   const initialized: ThreadStore["Service"]["initialized"] =
     sql`SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'events'`.pipe(
       Effect.map((rows) => rows.length > 0),
@@ -559,6 +578,9 @@ const make = Effect.gen(function* () {
     acknowledgeEvents,
     monitors,
     saveMonitors,
+    statusNote: readNote.pipe(Effect.provideService(SqlClient.SqlClient, sql)),
+    saveStatusNote: (input) =>
+      saveStatusNote(input).pipe(Effect.provideService(SqlClient.SqlClient, sql)),
     machine,
     saveMachine,
     machineRecord,

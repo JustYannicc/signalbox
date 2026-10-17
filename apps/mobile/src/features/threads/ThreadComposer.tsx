@@ -66,6 +66,7 @@ import {
 import { appAtomRegistry } from "../../state/atom-registry";
 import type { ComposerDocumentAttachment } from "../../lib/composerContext";
 import { useProject, useThreadShells } from "../../state/entities";
+import { useEnvironmentFolders, useFolderOwners } from "../../state/signalboxFolders"; // signalbox: folders
 import { scopeProjectRef } from "@t3tools/client-runtime/environment";
 import { NEEDS_A_POOL } from "@t3tools/client-runtime/state/sections"; // signalbox
 import { NeedsPoolNotice } from "../accountHub/NeedsPoolNotice"; // signalbox
@@ -133,6 +134,7 @@ import {
   useThreadSettingsSheetPresentation,
   type NavigationWithFinishTransitioning,
 } from "./use-thread-settings-sheet-presentation";
+import { liveActivityFolderLabel } from "./liveActivityFolderLabel"; // signalbox: folders
 
 export const COMPOSER_COLLAPSED_CHROME = 60;
 
@@ -337,6 +339,25 @@ export function ComposerSurface(props: {
 
 export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposerProps) {
   const project = useProject(scopeProjectRef(props.environmentId, props.selectedThread.projectId));
+  const folders = useEnvironmentFolders(props.environmentId);
+  const folderOwners = useFolderOwners(props.environmentId);
+  const liveActivityProjectTitle = useMemo(() => {
+    if (!folders.supported) return props.environmentLabel ?? "Signalbox";
+    if (folders.data == null || folderOwners == null) return "Signalbox";
+    return (
+      liveActivityFolderLabel(folders.data, folderOwners, {
+        id: props.selectedThread.id,
+        projectId: props.selectedThread.projectId,
+      }) ?? "Signalbox"
+    );
+  }, [
+    folders.data,
+    folders.supported,
+    folderOwners,
+    props.environmentLabel,
+    props.selectedThread.id,
+    props.selectedThread.projectId,
+  ]);
   const { themeVariables: materialTheme } = useAppearancePreferences();
   const composerPanel = materialTheme["--color-composer-panel"];
   const navigation = useNavigation();
@@ -587,7 +608,7 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
         armAgentAwarenessLiveActivityForLocalWork({
           environmentId: props.environmentId,
           threadTitle: props.selectedThread.title,
-          projectTitle: props.environmentLabel ?? "Signalbox",
+          projectTitle: liveActivityProjectTitle,
         });
       } finally {
         inFlightThreadIdsRef.current.delete(threadKey);
@@ -601,7 +622,7 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
       usageLimitsOffered,
       onSendMessage,
       props.environmentId,
-      props.environmentLabel,
+      liveActivityProjectTitle,
       props.selectedThread.id,
       props.selectedThread.title,
       voiceInput.blocksSubmission,
@@ -648,6 +669,7 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
       environmentId: props.environmentId,
       projectId: props.selectedThread.projectId,
       poolHome: { threadId: props.selectedThread.id }, // signalbox
+      threadId: props.selectedThread.id, // signalbox: status line
       providerInstanceId: currentModelSelection.instanceId,
       ...(lockedProviderInstanceId ? { lockedProviderInstanceId } : {}),
       providerGroups: threadProviderGroups,

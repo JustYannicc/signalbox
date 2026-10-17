@@ -1,16 +1,12 @@
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
+import * as Stream from "effect/Stream";
 
 import { DriveDirectory, type DriveHandle } from "./DriveDirectory.ts";
 import type { StoredCommit } from "./DriveStore.ts";
-import { DriveReadError, makeDriveReader } from "./DriveReader.ts";
-import {
-  type Bytes,
-  concatBytes as concat,
-  deflate,
-  type ObjectType,
-  type Oid,
-} from "./git/gitObjects.ts";
+import { makeDriveReader } from "./DriveReader.ts";
+import { concatBytes as concat, type ObjectType, type Oid } from "./git/gitObjects.ts";
+import { packSize, planEntries, type PushEntry, streamPack } from "./pushPack.ts";
 
 /**
  * Pushing one branch of a drive to its remote over git's smart HTTP, with no
@@ -19,10 +15,14 @@ import {
  * branch's base, or what was pushed before) or one the drive does not hold
  * (a remote-backed drive keeps the remote's history one commit deep). Their
  * objects are read from the drive's packs, diffing each commit's tree against
- * its first parent's, and written as one undeltified pack.
+ * its first parent's, and streamed to the remote as the drive's packs store
+ * them (`pushPack.ts`), so a push of any size holds no more in memory than a
+ * small one.
  *
  * Only the branch named is pushed, so nothing else in the drive, such as its
- * auto-saves, ever reaches the remote.
+ * auto-saves, ever reaches the remote. What the host would refuse, a file or a
+ * whole push too big for it, is refused here first, saying which, and nothing
+ * is sent.
  */
 
 export class PushRefused extends Schema.TaggedError<PushRefused>()("PushRefused", {
@@ -31,69 +31,72 @@ export class PushRefused extends Schema.TaggedError<PushRefused>()("PushRefused"
   diverged: Schema.optional(Schema.Boolean),
 }) {}
 
+/** What one push to a git host may hold. */
+export interface HostLimits {
+  /** The host, as people know it. */
+  readonly host: string;
+  /** The biggest file it takes. */
+  readonly maxFileBytes: number;
+  /** The biggest push, the pack as sent. */
+  readonly maxPushBytes: number;
+  /** Why pushes stop at `maxPushBytes` when that's below what the host itself takes. */
+  readonly pushLimitReason?: string;
+}
+
+/**
+ * GitHub refuses files over 100 MB and pushes over 2 GB (docs: "Repository
+ * limits"). A push leaves from a Worker, though, and on the current
+ * Cloudflare plan the connection drops once a request's body passes 100 MiB,
+ * its plan's body limit (measured in #660: cut off at 104,869,457 bytes of a
+ * 566 MB push). So a push stops below it, and says why, until the plan
+ * changes (#684).
+ */
+export const GITHUB_LIMITS: HostLimits = {
+  host: "GitHub",
+  maxFileBytes: 100 * 1024 * 1024,
+  maxPushBytes: 95 * 1024 * 1024,
+  pushLimitReason: "on the current Cloudflare plan, which cuts a request off past 100 MB",
+};
+
 const ZERO_OID: Oid = "0".repeat(40);
-
-const TYPE_CODES: Record<ObjectType, number> = { commit: 1, tree: 2, blob: 3, tag: 4 };
-
-/** Most object bytes one push reads: it is built in memory, in the user's object. */
-const MAX_PUSH_BYTES = 16 * 1024 * 1024;
 
 const encoder = new TextEncoder();
 const decoder = new TextDecoder();
 
-/** An object's header in a pack: its type and inflated size, 4 then 7 bits at a time. */
-const entryHeader = (type: ObjectType, size: number) => {
-  const bytes: Array<number> = [];
-  let byte = (TYPE_CODES[type] << 4) | (size & 0x0f);
-  let rest = Math.floor(size / 16);
-  while (rest > 0) {
-    bytes.push(byte | 0x80);
-    byte = rest & 0x7f;
-    rest = Math.floor(rest / 128);
-  }
-  bytes.push(byte);
-  return Uint8Array.from(bytes);
-};
-
-const u32 = (value: number) =>
-  Uint8Array.from([
-    (value >>> 24) & 0xff,
-    (value >>> 16) & 0xff,
-    (value >>> 8) & 0xff,
-    value & 0xff,
-  ]);
-
-/** A version 2 pack of whole objects. */
-async function writePack(
-  objects: ReadonlyArray<{ readonly type: ObjectType; readonly content: Bytes }>,
-): Promise<Bytes> {
-  const parts: Array<Uint8Array> = [encoder.encode("PACK"), u32(2), u32(objects.length)];
-  for (const object of objects) {
-    parts.push(entryHeader(object.type, object.content.length), await deflate(object.content));
-  }
-  const body = concat(parts);
-  return concat([body, new Uint8Array(await crypto.subtle.digest("SHA-1", body))]);
-}
+const MB = 1024 * 1024;
+/** Rounded up, so a size just over a limit never reads as the limit. */
+const formatSize = (bytes: number) =>
+  bytes >= 1024 * MB
+    ? `${Math.ceil((bytes / (1024 * MB)) * 10) / 10} GB`
+    : `${Math.ceil(bytes / MB)} MB`;
 
 const pktLine = (line: string) => {
   const bytes = encoder.encode(line);
   return concat([encoder.encode((bytes.length + 4).toString(16).padStart(4, "0")), bytes]);
 };
 
-/** The body of a `git-receive-pack` request that moves `ref` from `old` to `next`. */
-export const receivePackRequest = (input: {
+/**
+ * The body of a `git-receive-pack` request that moves `ref` from `old` to
+ * `next`, streaming `pack` of `size` bytes, and its length.
+ */
+export const receivePackRequest = <E>(input: {
   readonly ref: string;
   readonly old: Oid | null;
   readonly next: Oid;
-  readonly pack: Bytes;
-}) =>
-  concat([
+  readonly pack: Stream.Stream<Uint8Array, E>;
+  readonly size: number;
+}) => {
+  const commands = concat([
     pktLine(
       `${input.old ?? ZERO_OID} ${input.next} ${input.ref}\0report-status object-format=sha1 agent=signalbox\n`,
     ),
     encoder.encode("0000"),
-    input.pack,
   ]);
+  return {
+    body: Stream.concat(Stream.make(commands), input.pack),
+    length: commands.length + input.size,
+  };
+};
 
 /** Reads `report-status`: whether the remote unpacked the pack and moved `ref`, or why not. */
 export function receivePackResult(
@@ -158,12 +161,14 @@ export const commitsSince = (drive: DriveHandle, head: Oid, stop: ReadonlySet<Oi
  * current commit, must be on `head`'s history, so a push never drops commits
  * someone else added to the branch, unless `force`: the thread took exactly
  * `old` in and rewrote its branch (a lease, #394), and the push replaces it.
+ * Of the files, only each one's header is read until the pack streams.
  */
 export const packForPush = Effect.fn("gitPush.packForPush")(function* (input: {
   readonly driveId: string;
   readonly head: Oid;
   readonly old: Oid | null;
   readonly remoteHas: ReadonlyArray<Oid>;
+  readonly limits: HostLimits;
   readonly force?: boolean;
 }) {
   const reader = yield* makeDriveReader(input.driveId);
@@ -191,10 +196,19 @@ export const packForPush = Effect.fn("gitPush.packForPush")(function* (input: {
   const parents = commits.flatMap((commit) => (commit.parent === null ? [] : [commit.parent]));
   for (const commit of yield* drive.commits(parents)) parentTrees.set(commit.oid, commit.tree);
 
-  // Trees and blobs each commit adds over its first parent.
+  // Trees and blobs each commit adds over its first parent, and where each file first shows.
   const objects = new Map<Oid, ObjectType>(commits.map((commit) => [commit.oid, "commit"]));
+  const paths = new Map<Oid, string>();
+  // What those replace in a parent the remote has: the bases deltas likely lean on.
+  const onRemote = new Set<Oid>();
+  const pushed = new Set(commits.map((commit) => commit.oid));
   type ReadFailure = Effect.Error<ReturnType<typeof reader.tree>>;
-  const collect = (after: Oid, before: Oid | null): Effect.Effect<void, ReadFailure> =>
+  const collect = (
+    after: Oid,
+    before: Oid | null,
+    remoteHasBefore: boolean,
+    prefix = "",
+  ): Effect.Effect<void, ReadFailure> =>
     Effect.gen(function* () {
       if (after === before || objects.has(after)) return;
       objects.set(after, "tree");
@@ -204,44 +218,73 @@ export const packForPush = Effect.fn("gitPush.packForPush")(function* (input: {
       for (const entry of yield* reader.tree(after)) {
         const old = previous.get(entry.name);
         if (old?.oid === entry.oid) continue;
+        if (old !== undefined && remoteHasBefore) onRemote.add(old.oid);
+        const path = `${prefix}${entry.name}`;
         if (entry.kind === "directory") {
-          yield* collect(entry.oid, old?.kind === "directory" ? old.oid : null);
+          const inside = old?.kind === "directory" ? old.oid : null;
+          yield* collect(entry.oid, inside, remoteHasBefore, `${path}/`);
         } else if (entry.kind !== "submodule") {
           objects.set(entry.oid, "blob");
+          if (!paths.has(entry.oid)) paths.set(entry.oid, path);
         }
       }
     });
   for (const commit of commits) {
+    const parent = commit.parent;
     yield* collect(
       commit.tree,
-      commit.parent === null ? null : (parentTrees.get(commit.parent) ?? null),
+      parent === null ? null : (parentTrees.get(parent) ?? null),
+      parent !== null && !pushed.has(parent),
     );
   }
 
-  const located = yield* drive.locate([...objects.keys()]);
-  // Files the remote keeps for the drive (#406) are on the remote already: they never travel.
-  const stored = new Set(located.map((found) => found.oid));
-  for (const file of yield* drive.promised([...objects.keys()].filter((oid) => !stored.has(oid)))) {
-    objects.delete(file.oid);
-  }
-  const total = located.reduce((sum, location) => sum + location.size, 0);
-  if (total > MAX_PUSH_BYTES) {
-    return yield* new PushRefused({
-      message: `This branch adds ${Math.ceil(total / 1024 / 1024)} MB, more than Signalbox pushes at once yet.`,
-    });
-  }
-  const contents = yield* Effect.forEach(
-    [...objects],
-    ([oid, type]) =>
-      Effect.flatMap(reader.object(oid), (object) =>
-        object.type === type
-          ? Effect.succeed({ type, content: object.content })
-          : Effect.fail(
-              new DriveReadError({ message: `${oid} is a ${object.type}, not a ${type}.` }),
-            ),
-      ),
-    { concurrency: 8 },
-  );
-  const pack = yield* Effect.promise(() => writePack(contents));
-  return { pack, commits: commits.length, objects: contents.length };
+  const entries = yield* planEntries(input.driveId, objects, onRemote);
+  const size = yield* checkLimits(entries, paths, input.limits);
+  return {
+    pack: yield* streamPack(input.driveId, entries),
+    size,
+    commits: commits.length,
+    objects: entries.length,
+  };
 });
+
+/** The pack's size, or what the host would refuse in it, before any of it is sent. */
+const checkLimits = (
+  entries: ReadonlyArray<PushEntry>,
+  paths: ReadonlyMap<Oid, string>,
+  limits: HostLimits,
+) =>
+  Effect.gen(function* () {
+    const big = entries.filter(
+      (entry) => entry.type === "blob" && entry.size > limits.maxFileBytes,
+    );
+    if (big.length > 0) {
+      const named = big
+        .slice(0, 3)
+        .map(
+          (entry) =>
+            `${paths.get(entry.oid) ?? `a file (${entry.oid.slice(0, 7)})`} (${formatSize(entry.size)})`,
+        );
+      const more = big.length > 3 ? ` and ${big.length - 3} more` : "";
+      const [is, them] = big.length === 1 ? ["is", "it"] : ["are", "them"];
+      return yield* new PushRefused({
+        message:
+          `${named.join(", ")}${more} ${is} too big: ${limits.host} takes files up to ` +
+          `${formatSize(limits.maxFileBytes)}. Nothing was pushed. Take ${them} out of the ` +
+          `branch's commits (deleting ${them} in a later commit leaves ${them} in its history), then push again.`,
+      });
+    }
+    const size = packSize(entries);
+    if (size > limits.maxPushBytes) {
+      const limit = formatSize(limits.maxPushBytes);
+      return yield* new PushRefused({
+        message:
+          `This push is ${formatSize(size)}: ` +
+          (limits.pushLimitReason === undefined
+            ? `${limits.host} takes pushes up to ${limit}. `
+            : `Signalbox sends ${limits.host} pushes of up to ${limit} ${limits.pushLimitReason}. `) +
+          "Nothing was pushed. Keep large generated files out of the branch, or push the work in smaller commits one push at a time.",
+      });
+    }
+    return size;
+  });

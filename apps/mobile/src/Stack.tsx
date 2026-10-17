@@ -237,22 +237,22 @@ const SettingsContentStack = createV5SheetStackNavigator({
       },
     }),
     SettingsEnvironmentDetail: createNativeStackScreen({
-      screen: SettingsEnvironmentDetailRouteScreen,
+      screen: environmentUiOnly(SettingsEnvironmentDetailRouteScreen), // signalbox
       linking: "environments/:environmentId",
       options: { title: "Environment" },
     }),
     SettingsEnvironmentNewThreads: createNativeStackScreen({
-      screen: SettingsEnvironmentNewThreadsRouteScreen,
+      screen: environmentUiOnly(SettingsEnvironmentNewThreadsRouteScreen), // signalbox
       linking: "new-threads",
       options: { title: "New threads" },
     }),
     SettingsEnvironmentSourceControl: createNativeStackScreen({
-      screen: SettingsEnvironmentSourceControlRouteScreen,
+      screen: environmentUiOnly(SettingsEnvironmentSourceControlRouteScreen), // signalbox
       linking: "source-control",
       options: { title: "Source control" },
     }),
     SettingsEnvironmentAgentBehavior: createNativeStackScreen({
-      screen: SettingsEnvironmentAgentBehaviorRouteScreen,
+      screen: environmentUiOnly(SettingsEnvironmentAgentBehaviorRouteScreen), // signalbox
       linking: "agent-behavior",
       options: { title: "Agent behavior" },
     }),
@@ -262,7 +262,7 @@ const SettingsContentStack = createV5SheetStackNavigator({
       options: { title: "Provider accounts" },
     }),
     SettingsEnvironmentMaintenance: createNativeStackScreen({
-      screen: SettingsEnvironmentMaintenanceRouteScreen,
+      screen: environmentUiOnly(SettingsEnvironmentMaintenanceRouteScreen), // signalbox
       linking: "maintenance",
       options: { title: "Maintenance" },
     }),
@@ -303,14 +303,14 @@ const SettingsContentStack = createV5SheetStackNavigator({
       },
     }),
     SettingsProjectGrouping: createNativeStackScreen({
-      screen: SettingsProjectGroupingRouteScreen,
+      screen: environmentUiOnly(SettingsProjectGroupingRouteScreen), // signalbox
       linking: "project-grouping",
       options: {
         title: "Organization",
       },
     }),
     SettingsOrganization: createNativeStackScreen({
-      screen: SettingsProjectGroupingRouteScreen,
+      screen: environmentUiOnly(SettingsProjectGroupingRouteScreen), // signalbox
       linking: "organization",
       options: {
         title: "Organization",
@@ -448,11 +448,11 @@ const SettingsSheetStack = createV5SheetStackNavigator({
       ),
     }),
     SettingsAuth: createNativeStackScreen({
-      screen: SettingsAuthRouteScreen,
+      screen: environmentUiOnly(SettingsAuthRouteScreen), // signalbox
       linking: "auth",
     }),
     SettingsWaitlist: createNativeStackScreen({
-      screen: SettingsAuthRouteScreen,
+      screen: environmentUiOnly(SettingsAuthRouteScreen), // signalbox
       linking: "waitlist",
     }),
   },
@@ -782,7 +782,7 @@ const RootStackConfig = createWorkspaceStackNavigator({
       options: GLASS_HEADER_OPTIONS,
     }),
     ThreadTerminal: createNativeStackScreen({
-      screen: ThreadTerminalRouteScreen,
+      screen: environmentUiOnly(ThreadTerminalRouteScreen), // signalbox
       linking: `${THREAD_LINKING_PREFIX}/terminal`,
       options: SOLID_HEADER_OPTIONS,
     }),

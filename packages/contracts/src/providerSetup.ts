@@ -49,6 +49,7 @@ export const ProviderAuthInteraction = Schema.Union([
     url: TrimmedNonEmptyString.check(Schema.isMaxLength(16_384)),
     requiresConsent: Schema.Boolean,
     acceptsCallback: Schema.optionalKey(Schema.Boolean),
+    acceptsCode: Schema.optionalKey(Schema.Boolean),
   }),
   Schema.Struct({
     type: Schema.Literal("deviceCode"),

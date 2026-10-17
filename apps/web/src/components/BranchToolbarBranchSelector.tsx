@@ -38,6 +38,7 @@ import { usePaginatedBranches } from "../state/queries";
 import { useProject, useThreadShell } from "../state/entities";
 import { useEnvironmentQuery } from "../state/query";
 import { readEnvironmentScope, useEnvironmentScope } from "~/state/session";
+import { useEnvironmentSupports } from "../state/environmentCapabilities"; // signalbox
 import { threadEnvironment } from "../state/threads";
 import { useAtomCommand } from "../state/use-atom-command";
 import { vcsEnvironment } from "../state/vcs";
@@ -70,6 +71,7 @@ import { ComposerControl } from "./chat/ComposerControl";
 import { MiddleTruncate } from "./ui/middle-truncate";
 import { BranchPicker, BranchPickerRefItem } from "./BranchPicker";
 import { stackedThreadToast, toastManager } from "./ui/toast";
+import { OwnBranchLabel, ownBranchLabel } from "./threadBranch/OwnBranchLabel"; // signalbox
 
 export interface BranchToolbarBranchSelectorHandle {
   open: () => void;
@@ -115,6 +117,11 @@ export function BranchToolbarBranchSelector({
   onComposerFocusRequest,
 }: BranchToolbarBranchSelectorProps) {
   const composerFloatingLayerProps = useComposerMenuProps();
+  // signalbox: without worktrees each thread has its own branch; it shows read-only.
+  const ownBranch = !useEnvironmentSupports(environmentId, "worktrees");
+  const canQueryBranchRefs = useEnvironmentSupports(environmentId, "worktrees", {
+    waitForConfig: true,
+  });
   const canWriteSourceControl = useEnvironmentScope(environmentId, AuthSourceControlWriteScope);
   const canOperateThread = useEnvironmentScope(environmentId, AuthOrchestrationOperateScope);
   const stopThreadSession = useAtomCommand(threadEnvironment.stopSession, "thread session stop");
@@ -252,14 +259,15 @@ export function BranchToolbarBranchSelector({
   const branchRefQuery = sanitizeNewRefName(deferredTrimmedBranchQuery);
   const branchRefState = usePaginatedBranches({
     environmentId,
-    cwd: branchCwd,
+    cwd: canQueryBranchRefs ? branchCwd : null, // signalbox: wait until config confirms worktree support
     query: branchRefQuery,
   });
   const refs = branchRefState.refs;
   const hasNextPage =
     branchRefState.data?.nextCursor !== null && branchRefState.data?.nextCursor !== undefined;
   const isFetchingNextPage = branchRefState.isFetchingNextPage;
-  const isInitialBranchesLoadPending = branchRefState.isPending && branchRefState.data === null;
+  const isInitialBranchesLoadPending =
+    !canQueryBranchRefs || (branchRefState.isPending && branchRefState.data === null);
   const currentGitBranch =
     branchStatusQuery.data?.refName ?? refs.find((refName) => refName.current)?.name ?? null;
   const sourceControlPresentation = useMemo(
@@ -329,7 +337,7 @@ export function BranchToolbarBranchSelector({
   const listedActiveBranch =
     resolvedActiveBranch === null ? null : (branchByName.get(resolvedActiveBranch) ?? null);
   const activeBranchRefQuery = useEnvironmentQuery(
-    branchCwd !== null && resolvedActiveBranch !== null
+    canQueryBranchRefs && branchCwd !== null && resolvedActiveBranch !== null // signalbox
       ? vcsEnvironment.listRefs({
           environmentId,
           input: {
@@ -560,11 +568,11 @@ export function BranchToolbarBranchSelector({
     ref,
     () => ({
       open: () => {
-        if (isInitialBranchesLoadPending || isBranchActionPending) return;
+        if (ownBranch || isInitialBranchesLoadPending || isBranchActionPending) return; // signalbox
         handleOpenChange(true);
       },
     }),
-    [handleOpenChange, isBranchActionPending, isInitialBranchesLoadPending],
+    [handleOpenChange, isBranchActionPending, isInitialBranchesLoadPending, ownBranch],
   );
 
   const triggerLabel = resolveBranchTriggerLabel({
@@ -574,6 +582,8 @@ export function BranchToolbarBranchSelector({
     resolvedActiveBranchIsRemote,
     startFromOrigin,
   });
+
+  const ownBranchRowLabel = ownBranchLabel(resolvedActiveBranch, !hasServerThread); // signalbox
 
   const branchPrBranch = resolveBranchToolbarPrBranch({
     activeThreadBranch,
@@ -750,6 +760,9 @@ export function BranchToolbarBranchSelector({
           }}
           onContextMenu={(event) => handleBranchContextMenu(event, resolvedActiveBranch)}
         >
+          {ownBranch && ownBranchRowLabel !== null ? ( // signalbox: no picker to open
+            <OwnBranchLabel displayMode={displayMode} label={ownBranchRowLabel} />
+          ) : null}
           <ComboboxTrigger
             render={
               displayMode === "panel" ? (
@@ -759,7 +772,8 @@ export function BranchToolbarBranchSelector({
               )
             }
             className="min-w-0 max-w-full active:scale-100"
-            disabled={isInitialBranchesLoadPending || isBranchActionPending}
+            hidden={ownBranch} // signalbox
+            disabled={ownBranch || isInitialBranchesLoadPending || isBranchActionPending}
           >
             <GitBranchIcon
               className={cn(

@@ -3,6 +3,7 @@ import {
   AuthFilesystemReadScope,
   AuthOrchestrationOperateScope,
   AuthOrchestrationReadScope,
+  AuthSettingsWriteScope,
   AuthPreviewOperateScope,
   AuthSourceControlWriteScope,
   AuthStandardClientScopes,
@@ -39,6 +40,7 @@ import {
   SIGNALBOX_FOLDERS_WS_METHODS,
   SignalboxFolderError,
 } from "@t3tools/contracts/signalboxFolders";
+import { SIGNALBOX_NOTES_REQUIRED_SCOPES } from "@t3tools/contracts/signalboxNotes";
 import {
   SIGNALBOX_BROWSING_REQUIRED_SCOPES,
   SIGNALBOX_BROWSING_WS_METHODS,
@@ -71,6 +73,11 @@ import {
   SIGNALBOX_THREAD_KINDS_WS_METHODS,
   SignalboxThreadKindsError,
 } from "@t3tools/contracts/signalboxThreadKinds";
+import {
+  SIGNALBOX_THREAD_STATUS_REQUIRED_SCOPES,
+  SIGNALBOX_THREAD_STATUS_WS_METHODS,
+  SignalboxThreadStatusUnavailableError,
+} from "@t3tools/contracts/signalboxStatusLine";
 import * as Clock from "effect/Clock";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -83,6 +90,7 @@ import type { SqlError } from "effect/sql/SqlError";
 import * as CloudAssets from "../assets/CloudAssets.ts";
 import { CloudAttachments } from "../attachments/CloudAttachments.ts";
 import * as Environment from "../environment.ts";
+import * as GitHubActions from "../github/GitHubActions.ts";
 import * as GitHubBranches from "../github/GitHubBranches.ts";
 import { makeGitHubImport } from "../github/GitHubImport.ts";
 import * as DriveBrowsing from "./driveBrowsing.ts";
@@ -98,6 +106,7 @@ import { AUTOMATION_RPC_SCOPES } from "@signalbox/automations/rpcScopes";
 import { makePushHandlers } from "../push/pushRpc.ts";
 import { makeKeysHandlers } from "./keysRpc.ts";
 import { makeSignInHandlers } from "../signIn/signInRpc.ts";
+import { makeNotesHandlers, NOTES_METHODS } from "../notes/notesRpc.ts";
 import { DriveShortcuts } from "./DriveShortcuts.ts";
 import * as UserContexts from "./UserContexts.ts";
 import * as UserDrives from "./UserDrives.ts";
@@ -105,6 +114,7 @@ import * as LegacySections from "./legacySections.ts";
 import * as UserFolders from "./UserFolders.ts";
 import * as UserShell from "./UserShell.ts";
 import * as UserThreadKinds from "./UserThreadKinds.ts";
+import * as UserThreadStatus from "./UserThreadStatus.ts";
 
 /**
  * The slice of the environment RPC protocol a user's object serves: enough
@@ -145,6 +155,7 @@ const SECTION_METHODS = [
 const SERVED = [
   WS_METHODS.subscribeServerConfig,
   WS_METHODS.serverGetConfig,
+  WS_METHODS.serverUpdateSettings,
   WS_METHODS.serverProbe,
   WS_METHODS.serverReportClientActivity,
   WS_METHODS.subscribeServerLifecycle,
@@ -181,6 +192,8 @@ const SERVED = [
   ...Object.values(SIGNALBOX_CONTEXTS_WS_METHODS),
   ...Object.values(SIGNALBOX_DRIVES_WS_METHODS),
   ...Object.values(SIGNALBOX_FOLDERS_WS_METHODS),
+  // Notes on each level's pad (`notes/`).
+  ...NOTES_METHODS,
   ...Object.values(SIGNALBOX_PREVIEWS_WS_METHODS),
   // A thread's synced browser tabs (`thread/browsing/`), and the browser panel's own RPCs on them.
   ...Object.values(SIGNALBOX_BROWSING_WS_METHODS),
@@ -189,6 +202,8 @@ const SERVED = [
   ...Object.values(SIGNALBOX_PUSH_WS_METHODS),
   ...Object.values(SIGNALBOX_REPOSITORIES_WS_METHODS),
   ...Object.values(SIGNALBOX_THREAD_KINDS_WS_METHODS),
+  // Threads' status notes (#670, `UserThreadStatus`).
+  ...Object.values(SIGNALBOX_THREAD_STATUS_WS_METHODS),
   ...Object.values(SIGNALBOX_KEYS_WS_METHODS),
   ...Object.values(SIGNALBOX_SIGN_IN_WS_METHODS),
   ...SECTION_METHODS,
@@ -214,6 +229,7 @@ export const CloudRpcGroup = WsRpcGroup.omit(
 const REQUIRED_SCOPES = {
   [WS_METHODS.subscribeServerConfig]: AuthOrchestrationReadScope,
   [WS_METHODS.serverGetConfig]: AuthOrchestrationReadScope,
+  [WS_METHODS.serverUpdateSettings]: AuthSettingsWriteScope,
   [WS_METHODS.serverProbe]: AuthOrchestrationReadScope,
   [WS_METHODS.serverReportClientActivity]: AuthOrchestrationReadScope,
   [WS_METHODS.subscribeServerLifecycle]: AuthOrchestrationReadScope,
@@ -247,6 +263,7 @@ const REQUIRED_SCOPES = {
   ...SIGNALBOX_CONTEXTS_REQUIRED_SCOPES,
   ...SIGNALBOX_DRIVES_REQUIRED_SCOPES,
   ...SIGNALBOX_FOLDERS_REQUIRED_SCOPES,
+  ...SIGNALBOX_NOTES_REQUIRED_SCOPES,
   ...SIGNALBOX_PREVIEWS_REQUIRED_SCOPES,
   ...SIGNALBOX_BROWSING_REQUIRED_SCOPES,
   // The same scopes a self-hosted server requires for its browser panel.
@@ -264,6 +281,7 @@ const REQUIRED_SCOPES = {
   ...SIGNALBOX_PUSH_REQUIRED_SCOPES,
   ...SIGNALBOX_REPOSITORIES_REQUIRED_SCOPES,
   ...SIGNALBOX_THREAD_KINDS_REQUIRED_SCOPES,
+  ...SIGNALBOX_THREAD_STATUS_REQUIRED_SCOPES,
   ...SIGNALBOX_KEYS_REQUIRED_SCOPES,
   ...SIGNALBOX_SIGN_IN_REQUIRED_SCOPES,
   // The same scopes a self-hosted server requires (`apps/server/src/sections/rpcScopes.ts`).
@@ -382,6 +400,12 @@ export const layerHandlers = (input: {
   readonly sid: string;
   /** What the connection's credential holds; new keys get no more. Defaults to an app's. */
   readonly scopes?: ReadonlyArray<AuthEnvironmentScope>;
+  /**
+   * `client`: a person's app socket. `api`: the public API (keys, CLI, MCP),
+   * which may be an agent holding the person's credential, so it can't vouch
+   * for what it publishes. Defaults to `api`.
+   */
+  readonly via?: "client" | "api";
 }) =>
   CloudRpcGroup.toLayer(
     Effect.gen(function* () {
@@ -392,6 +416,7 @@ export const layerHandlers = (input: {
       const sections = yield* LegacySections.LegacySections;
       const folders = yield* UserFolders.UserFolders;
       const kinds = yield* UserThreadKinds.UserThreadKinds;
+      const statusNotes = yield* UserThreadStatus.UserThreadStatus;
       const userDrives = yield* UserDrives.UserDrives;
       const sharing = yield* Effect.serviceOption(DriveSharing);
       const shortcuts = yield* Effect.serviceOption(DriveShortcuts);
@@ -407,6 +432,7 @@ export const layerHandlers = (input: {
         you: yield* deviceMember(userId, input.sid),
       });
       const branches = yield* GitHubBranches.GitHubBranches;
+      const githubActions = yield* GitHubActions.GitHubActions;
       const attachments = yield* CloudAttachments;
       /**
        * Fails with not-found once the user leaves a context and so can't see
@@ -461,14 +487,17 @@ export const layerHandlers = (input: {
       const shortcutsCall = withDrives(shortcuts);
       const pools = yield* makePoolHandlers({ identity, actor: { userId } });
       const pushes = yield* makePushHandlers(input.sid);
-      const automations = yield* makeAutomationHandlers({
-        newThreadModel: pools.configNow.pipe(
-          Effect.map(
-            (config) =>
-              config.settings.defaultModelSelection ?? poolFallbackModelSelection(config.providers),
-          ),
+      const newThreadModel = pools.configNow.pipe(
+        Effect.map(
+          (config) =>
+            config.settings.defaultModelSelection ?? poolFallbackModelSelection(config.providers),
         ),
+      );
+      const automations = yield* makeAutomationHandlers({
+        personReviews: input.via === "client",
+        newThreadModel,
       });
+      const notes = yield* makeNotesHandlers({ newThreadModel });
       const keys = yield* makeKeysHandlers({
         userId,
         scopes: input.scopes ?? AuthStandardClientScopes,
@@ -478,6 +507,7 @@ export const layerHandlers = (input: {
         ...pools.handlers,
         ...pushes,
         ...automations,
+        ...notes,
         ...keys,
         ...signIn,
         [WS_METHODS.subscribeServerConfig]: (request) => pools.configStream(request),
@@ -769,6 +799,9 @@ export const layerHandlers = (input: {
           folderCall(folders.moveThread(request)),
         [SIGNALBOX_FOLDERS_WS_METHODS.setInstructions]: (request) =>
           folderCall(folders.setInstructions(request)),
+        [SIGNALBOX_FOLDERS_WS_METHODS.setPhase]: (request) => folderCall(folders.setPhase(request)),
+        [SIGNALBOX_FOLDERS_WS_METHODS.setGitHubLend]: (request) =>
+          folderCall(githubActions.setLend(request)),
         [SIGNALBOX_THREAD_KINDS_WS_METHODS.subscribe]: () =>
           kinds.changes.pipe(
             Stream.tapError((cause) =>
@@ -778,6 +811,14 @@ export const layerHandlers = (input: {
               () =>
                 new SignalboxThreadKindsError({ message: "Could not load chat and task kinds." }),
             ),
+          ),
+        // A snapshot, then one small item per changed note; held open like the sidebar.
+        [SIGNALBOX_THREAD_STATUS_WS_METHODS.subscribe]: () =>
+          Stream.concat(statusNotes.changes, Stream.never).pipe(
+            Stream.tapError((cause) =>
+              Effect.logError("cloud thread status stream failed", { cause }),
+            ),
+            Stream.mapError(() => new SignalboxThreadStatusUnavailableError()),
           ),
         [SIGNALBOX_THREAD_KINDS_WS_METHODS.setKind]: (request) => kindsCall(kinds.setKind(request)),
         [SIGNALBOX_THREAD_KINDS_WS_METHODS.setArchiveChatsAfterDays]: (request) =>

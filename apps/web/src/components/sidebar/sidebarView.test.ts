@@ -8,10 +8,10 @@ const decode = Schema.decodeUnknownSync(StoredSidebarView);
 describe("StoredSidebarView", () => {
   it("keeps the views that still exist", () => {
     expect(decode("home")).toBe("home");
-    expect(decode("pipeline")).toBe("pipeline");
   });
 
   it("opens Home for a saved view that was removed from the rail", () => {
+    expect(decode("pipeline")).toBe("home");
     expect(decode("automations")).toBe("home");
     expect(decode("spaces")).toBe("home");
   });

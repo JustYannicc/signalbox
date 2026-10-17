@@ -28,6 +28,14 @@ import {
   type TreeResult,
 } from "@signalbox/runner-protocol/ContextProtocol";
 import type { DriveAccess } from "@signalbox/runner-protocol/DriveProtocol";
+import {
+  type FolderStatusAnswer,
+  type SetThreadStatusAnswer,
+  STATUS_LINE_PATHS,
+  statusLineJson,
+  type ThreadStatusAnswer,
+} from "@signalbox/runner-protocol/StatusLineProtocol";
+import type { ThreadStatusNoteInput } from "@t3tools/contracts/signalboxStatusLine";
 import * as Effect from "effect/Effect";
 import { constVoid } from "effect/Function";
 import * as Schedule from "effect/Schedule";
@@ -50,6 +58,10 @@ import { HttpClient, HttpClientRequest } from "effect/http";
  * `automationTool` forwards an automation tool call (`AutomationProtocol.ts`).
  * Only a read is retried: a write the cloud may have done already would
  * happen twice.
+ *
+ * `threadStatus`, `setThreadStatus` and `folderStatus` read and write the
+ * thread's status line (`StatusLineProtocol.ts`). Writing one note twice
+ * leaves the same note, so all three are retried.
  *
  * `browserSession` gets the thread's session in the person's browser
  * (`BrowserProtocol.ts`), and `endBrowser` deletes it. Both are safe to
@@ -96,6 +108,11 @@ export interface ContextClient {
     request: ToolRequest,
     options: { readonly retry: boolean },
   ) => Effect.Effect<ToolResult, ContextClientError>;
+  readonly threadStatus: Effect.Effect<ThreadStatusAnswer, ContextClientError>;
+  readonly setThreadStatus: (
+    input: ThreadStatusNoteInput,
+  ) => Effect.Effect<SetThreadStatusAnswer, ContextClientError>;
+  readonly folderStatus: Effect.Effect<FolderStatusAnswer, ContextClientError>;
   readonly browserSession: Effect.Effect<BrowserSessionAnswer, ContextClientError>;
   readonly endBrowser: (request: BrowserEndRequest) => Effect.Effect<void, ContextClientError>;
   readonly browserSignIn: (
@@ -207,6 +224,17 @@ export const makeContextClient = Effect.fn("makeContextClient")(function* (input
       branchJson.publish.decode,
     ),
     automationTool: (request, { retry }) => (retry ? automationRead : automationWrite)(request),
+    threadStatus: json(STATUS_LINE_PATHS.read, () => "{}", statusLineJson.read.decode)(undefined),
+    setThreadStatus: json(
+      STATUS_LINE_PATHS.write,
+      statusLineJson.writeRequest.encode,
+      statusLineJson.write.decode,
+    ),
+    folderStatus: json(
+      STATUS_LINE_PATHS.folder,
+      () => "{}",
+      statusLineJson.folder.decode,
+    )(undefined),
     browserSession: json(BROWSER_PATHS.session, () => "{}", browserJson.session.decode)(undefined),
     endBrowser: json(BROWSER_PATHS.end, browserJson.endRequest.encode, constVoid),
     browserSignIn: json(

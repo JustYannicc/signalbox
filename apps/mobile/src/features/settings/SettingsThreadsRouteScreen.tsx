@@ -271,15 +271,15 @@ function BetaSettingsSection() {
       <SettingsSection title="Beta">
         <SettingsSwitchRow
           icon="bolt.circle"
-          label="Working section"
+          label="Fold working threads" // signalbox: no "section" in the UI (#686)
           value={workingShelfEnabled}
           onValueChange={(value) => savePreferences({ workingShelfEnabled: value })}
         />
       </SettingsSection>
       <Text className="px-2 text-sm text-foreground-muted">
-        Fold working and monitoring threads into a Working section. They return to the top of the
-        list when they need you. While this is on, active threads are ordered by time and cannot be
-        moved.
+        Fold working and monitoring threads into a collapsed Working group. They return to the top
+        of the list when they need you. While this is on, active threads are ordered by time and
+        cannot be moved.
       </Text>
     </View>
   );

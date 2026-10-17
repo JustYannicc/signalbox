@@ -14,6 +14,7 @@ import * as Semaphore from "effect/Semaphore";
 
 import { automationTriggers, stepArgs } from "./columns.ts";
 import type { EndRun, EngineServices, LaunchRun, Settlement } from "./engineTypes.ts";
+import type { ExternalRuns } from "./external.ts";
 import type { AutomationFunctions, AutomationThreads } from "./host.ts";
 import { asRecord } from "./json.ts";
 import type { Change } from "./liveFeed.ts";
@@ -53,6 +54,7 @@ export interface EngineCore {
   readonly threads: AutomationThreads["Service"];
   readonly services: Context.Context<EngineServices>;
   readonly functions: AutomationFunctions["Service"];
+  readonly external: Pick<ExternalRuns, "timeOut">;
   readonly runLogs: RunLogs;
   readonly changed: (change: Change) => Effect.Effect<void>;
   readonly runChanged: (runId: string, summary: boolean) => Effect.Effect<void, AutomationError>;
@@ -192,6 +194,8 @@ export const makeTimedWork = (core: EngineCore) =>
     /** A waiting step whose timer, timeout or retry is due. */
     const wakeStep = (step: StepRow) =>
       Effect.gen(function* () {
+        // Its run is read on its own schedule; waking means it ran out of time.
+        if (step.external_json) return yield* core.external.timeOut(step);
         if (step.thread_id !== null) {
           if (!(yield* settleThreadStep(step))) yield* timeOutThreadStep(step);
           return;

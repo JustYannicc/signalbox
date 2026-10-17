@@ -46,9 +46,10 @@ export function SettingsClientStorageRouteScreen() {
   );
 
   const confirmClearEnvironment = (environment: EnvironmentClientCacheSummary) => {
-    const label =
+    const label = environmentCopy(
       savedConnectionsById[environment.environmentId]?.environmentLabel ??
-      environment.environmentId;
+        environment.environmentId,
+    );
     Dialog.confirm({
       title: `Clear cache for ${label}?`,
       message: environmentCopy(
@@ -109,10 +110,10 @@ export function SettingsClientStorageRouteScreen() {
               <CacheEnvironmentRow
                 key={environment.environmentId}
                 environment={environment}
-                environmentLabel={
+                environmentLabel={environmentCopy(
                   savedConnectionsById[environment.environmentId]?.environmentLabel ??
-                  environment.environmentId
-                }
+                    environment.environmentId,
+                )}
                 machine={resolveEnvironmentMachineKind(
                   serverConfigs.get(environment.environmentId) ?? null,
                 )}

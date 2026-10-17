@@ -11,6 +11,10 @@
       "types": "./src/PreviewTunnel.ts",
       "import": "./src/PreviewTunnel.ts"
     },
+    "./PreviewServices": {
+      "types": "./src/PreviewServices.ts",
+      "import": "./src/PreviewServices.ts"
+    },
     "./DriveProtocol": {
       "types": "./src/DriveProtocol.ts",
       "import": "./src/DriveProtocol.ts"
@@ -30,6 +34,10 @@
     "./AutomationProtocol": {
       "types": "./src/AutomationProtocol.ts",
       "import": "./src/AutomationProtocol.ts"
+    },
+    "./StatusLineProtocol": {
+      "types": "./src/StatusLineProtocol.ts",
+      "import": "./src/StatusLineProtocol.ts"
     },
     "./drivePaths": {
       "types": "./src/drivePaths.ts",

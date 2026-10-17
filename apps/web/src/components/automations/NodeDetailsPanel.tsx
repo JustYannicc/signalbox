@@ -28,7 +28,8 @@ import { ScrollArea } from "../ui/scroll-area";
 import { detailText, stepArgs } from "./automationFormat";
 import { LoopPassList } from "./LoopPassList";
 import { StepTile } from "./nodeVisuals";
-import { CodeBlock, StepRunList } from "./StepRunList";
+import { CodeBlock } from "./CodeBlock";
+import { StepRunList } from "./StepRunList";
 
 function Section(props: { title: string; children: ReactNode }) {
   return (

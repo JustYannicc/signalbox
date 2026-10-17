@@ -1,5 +1,6 @@
 import type { PreviewPort } from "@signalbox/runner-protocol/PreviewTunnel";
 import type { ModelGatewayProvider } from "@signalbox/runner-protocol/RunnerProtocol";
+import type { StatusNoteView } from "@signalbox/runner-protocol/StatusLineProtocol";
 import type {
   OrchestrationV2Command,
   OrchestrationV2SubscribeThreadInput,
@@ -113,7 +114,11 @@ export interface ThreadObjectApi {
   readonly diagnostics: (actor: Actor, key: string | null) => Promise<string | null>;
   /** Newline-delimited `{ ports }` snapshots, or null when the actor cannot see the thread. */
   readonly previews: (actor: Actor) => Promise<ReadableStream<Uint8Array> | null>;
-  readonly previewLink: (actor: Actor, port: number) => Promise<PreviewLinkResult>;
+  readonly previewLink: (
+    actor: Actor,
+    port: number,
+    handoff?: boolean,
+  ) => Promise<PreviewLinkResult>;
   /**
    * The agent's browser, mirrored: newline-delimited `AgentBrowserUpdate`s in
    * their JSON encoding (`wire.browserUpdate`) while read, following `tabId`
@@ -199,6 +204,7 @@ export interface ThreadHandle {
   readonly previewLink: (
     actor: Actor,
     port: number,
+    handoff?: boolean,
   ) => Effect.Effect<PreviewLinkResult, ThreadObjectError>;
   /**
    * See `ThreadObjectApi.browserWatch`. Ends when the object goes away, or
@@ -353,7 +359,8 @@ export function handleFor(api: ThreadObjectApi): ThreadHandle {
           return { ports, browsed: browsed === true };
         },
       ),
-    previewLink: (actor, port) => call("previewLink", () => api.previewLink(actor, port)),
+    previewLink: (actor, port, handoff) =>
+      call("previewLink", () => api.previewLink(actor, port, handoff)),
     browserWatch: (actor, tabId) =>
       lines(
         "browserWatch",
@@ -443,6 +450,10 @@ export interface ThreadObjectNamespace {
     readonly recordModelRequest: (record: ModelGatewayRecord) => Promise<void>;
     readonly authorizeDrive: (token: string) => Promise<DriveAuthorization>;
     readonly authorizeRemote: (token: string) => Promise<RemoteAuthorization>;
+    /** The thread's status line for its agent (`statusLineJson.read`); null before it exists. */
+    readonly statusLine: () => Promise<string | null>;
+    /** The agent's note (`statusLineJson.writeRequest`); the stored note, null when the thread is gone. */
+    readonly writeStatusNote: (input: string) => Promise<StatusNoteView | null>;
   };
 }
 

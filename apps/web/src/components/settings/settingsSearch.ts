@@ -3,6 +3,7 @@ import { isElectron } from "~/env";
 import { isMacPlatform, isWindowsPlatform, normalizeSearchText } from "~/lib/utils";
 import { STATIC_KEYBINDING_COMMANDS, type KeybindingCommand } from "@t3tools/contracts";
 import {
+  environmentCanWriteModelSettings,
   environmentSupports,
   SignalboxEnvironmentCapabilityFields,
   type EnvironmentId,
@@ -12,6 +13,7 @@ import type { EnvironmentConnectionPhase } from "@t3tools/client-runtime/connect
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 import { DEFAULT_KEYBINDINGS } from "@t3tools/shared/keybindings";
 import { commandLabel } from "./KeybindingsSettings.logic";
+import { keybindingCapability } from "./keybindingCapabilities"; // signalbox
 import {
   validateSettingsScopeSearch,
   type ResolvedSettingsScope,
@@ -62,6 +64,7 @@ export interface SettingsSearchItem {
   readonly localEnvironmentOnly?: boolean;
   readonly wslAvailableOnly?: boolean;
   readonly managedTunnelOnly?: boolean;
+  readonly hidden?: boolean; // signalbox: no row renders for it
   // signalbox: its row only renders where the environment it acts on can do this.
   readonly capability?: SignalboxEnvironmentCapability;
   readonly secondary?: boolean;
@@ -110,12 +113,14 @@ const KEYBINDING_SEARCH_ITEMS = STATIC_KEYBINDING_COMMANDS.toSorted((left, right
   const defaultKeys = DEFAULT_KEYBINDINGS.filter((binding) => binding.command === command).map(
     (binding) => binding.key,
   );
+  const capability = keybindingCapability(command); // signalbox
   return {
     id: keybindingSearchAnchorId(command),
     title: commandLabel(command),
     to: "/settings/keybindings" as const,
     searchTerms: [command, ...defaultKeys],
     secondary: true,
+    ...(capability ? { capability } : {}), // signalbox
     ...(defaultKeys.length === 0 ? { targetId: "keybindings" } : {}),
   };
 });
@@ -211,7 +216,7 @@ export const SETTINGS_SEARCH_ITEMS = [
   },
   {
     id: "default-model",
-    capability: "serverSettingsWrite",
+    capability: "modelSettingsWrite",
     title: "Default model",
     to: "/settings/general",
     scope: "project-defaults",
@@ -302,6 +307,7 @@ export const SETTINGS_SEARCH_ITEMS = [
     title: "Terminal font",
     to: "/settings/appearance",
     searchTerms: ["typography family size monospace output"],
+    capability: "terminal", // signalbox
   },
   {
     id: "font-smoothing",
@@ -347,12 +353,6 @@ export const SETTINGS_SEARCH_ITEMS = [
     title: "Auto-resume limited threads",
     to: "/settings/general",
     searchTerms: ["usage quota rate limit reset recover continue"],
-  },
-  {
-    id: "working-shelf",
-    title: "Working section (beta)",
-    to: "/settings/general",
-    searchTerms: ["hide fold running monitoring threads inbox sidebar shelf"],
   },
   {
     id: "auto-settle-inactive-threads",
@@ -526,7 +526,7 @@ export const SETTINGS_SEARCH_ITEMS = [
     id: "unpin-confirmation",
     title: "Unpin confirmation",
     to: "/settings/general",
-    searchTerms: ["ask before thread pinned section"],
+    searchTerms: ["ask before thread pinned unpin"],
   },
   {
     id: "archive-confirmation",
@@ -574,6 +574,14 @@ export const SETTINGS_SEARCH_ITEMS = [
     to: "/settings/general",
     searchTerms: ["cli terminal shell path install command line"],
     desktopOnly: true,
+    localEnvironmentOnly: true, // signalbox: the thin build bundles no CLI
+  },
+  {
+    id: "mobile-app",
+    title: "Mobile app",
+    to: "/settings/general",
+    searchTerms: ["phone tablet iPhone iPad iOS Android App Store Google Play QR"],
+    hidden: true, // signalbox: no Signalbox app in the stores yet
   },
   {
     id: "privacy-policy",
@@ -611,12 +619,6 @@ export const SETTINGS_SEARCH_ITEMS = [
     title: "Context window indicator (legacy)",
     to: "/settings/general",
     searchTerms: ["composer meter usage tokens circle old"],
-  },
-  {
-    id: "legacy-sidebar",
-    title: "Sidebar (legacy)",
-    to: "/settings/general",
-    searchTerms: ["project thread tree old flat list"],
   },
   {
     id: "keybindings",
@@ -1175,6 +1177,7 @@ export function filterAvailableSettingsSearchItems(
   const items: ReadonlyArray<SettingsSearchItem> = SETTINGS_SEARCH_ITEMS;
   return items.filter(
     (item) =>
+      !item.hidden && // signalbox
       (!item.cloudOnly || availability.hasCloudPublicConfig) &&
       (!item.environmentOnly || availability.hasEnvironment) &&
       (!item.providerSettingsOnly || availability.hasProviderSettingsEnvironment) &&
@@ -1226,7 +1229,9 @@ export function unsupportedSettingsCapabilities(
       return (
         candidates.length > 0 &&
         !candidates.some((environment) =>
-          environmentSupports(environment.serverConfig?.environment.capabilities, capability),
+          capability === "modelSettingsWrite"
+            ? environmentCanWriteModelSettings(environment.serverConfig?.environment.capabilities)
+            : environmentSupports(environment.serverConfig?.environment.capabilities, capability),
         )
       );
     }),

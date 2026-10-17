@@ -1,5 +1,6 @@
 import * as SqliteClient from "@effect/sql-sqlite-do/SqliteClient";
 import { PREVIEW_TUNNEL_PATH } from "@signalbox/runner-protocol/PreviewTunnel";
+import { statusLineJson } from "@signalbox/runner-protocol/StatusLineProtocol";
 import {
   type ModelGatewayProvider,
   RUNNER_HEARTBEAT_PING,
@@ -28,6 +29,7 @@ import * as GitHub from "../github/GitHub.ts";
 import type { PackBucket } from "../drive/DrivePacks.ts";
 import * as Platform from "../platform.ts";
 import * as PoolDirectory from "../pool/PoolDirectory.ts";
+import * as PreviewState from "./preview/PreviewState.ts";
 import * as BrowserTrail from "./preview/BrowserTrail.ts";
 import { PreviewGateway } from "./preview/PreviewGateway.ts";
 import { type PreviewEnv, previewSettings } from "./preview/previewHost.ts";
@@ -60,7 +62,10 @@ import { type BrowserReply, wire } from "./threadWire.ts";
 import * as ThreadStore from "./ThreadStore.ts";
 import * as TurnModels from "./TurnModels.ts";
 import { scriptedProviderEnabled } from "./scriptedProvider.ts";
+import { noteView } from "./statusLine/statusNotePolicy.ts";
 import * as PullRequestSync from "./pullRequests/PullRequestSync.ts";
+import * as StatusNoteModel from "./statusLine/StatusNoteModel.ts";
+import * as ThreadStatusNotes from "./statusLine/ThreadStatusNotes.ts";
 
 /**
  * One per thread, named by its thread id, always in the EU jurisdiction. It
@@ -193,6 +198,14 @@ const makeRuntime = (
       ),
       // The thread's browser tabs (#585), beside its conversation.
       Layer.provideMerge(ThreadBrowsing.layer),
+      // Its status note (#670), written by the runtime through the owner's pool when the agent didn't.
+      Layer.provideMerge(
+        ThreadStatusNotes.layer.pipe(
+          Layer.provide(
+            StatusNoteModel.layerPools(env.POOLS, { localWorkerd: env.LOCAL_WORKERD === "1" }),
+          ),
+        ),
+      ),
       Layer.provideMerge(ThreadEngine.layer),
       Layer.provideMerge(
         TurnModels.layer({ scripted: scriptedProviderEnabled(env) }).pipe(
@@ -212,6 +225,7 @@ const makeRuntime = (
         Layer.mergeAll(
           ThreadStore.layer,
           SessionRows.layer,
+          PreviewState.layer,
           BrowserTrail.layer(attachmentStorage(env), threadId),
         ),
       ),
@@ -244,6 +258,15 @@ export class ThreadObject extends DurableObject<ThreadObjectEnv> implements Thre
       ctx,
       settings: previewSettings(env),
       threadId: () => this.threadId(),
+      appOrigin: env.CLOUD_URL ?? "http://localhost:8787",
+      configuration: () =>
+        this.runtime.runPromise(PreviewState.PreviewState.use((state) => state.configuration)),
+      saveServices: (services) =>
+        this.runtime.runPromise(
+          PreviewState.PreviewState.use((state) => state.saveServices(services)),
+        ),
+      drive: () =>
+        this.runtime.runPromise(ThreadRunner.ThreadRunner.use((runner) => runner.previewDrive)),
       leaseToken: (generation, token) =>
         this.runtime.runPromise(
           ThreadRunner.ThreadRunner.use((runner) => runner.leaseToken(generation, token)),
@@ -385,12 +408,33 @@ export class ThreadObject extends DurableObject<ThreadObjectEnv> implements Thre
     );
   }
 
+  /** The thread's status line for its agent, from the drive API, which checked its token (#670). */
+  statusLine() {
+    return this.runtime.runPromise(
+      ThreadStatusNotes.ThreadStatusNotes.use((notes) => notes.line).pipe(
+        Effect.map((line) => (line === null ? null : statusLineJson.read.encode(line))),
+      ),
+    );
+  }
+
+  /** The agent's status note (`statusLineJson.writeRequest`); answers the stored note's view. */
+  async writeStatusNote(input: string) {
+    const note = await this.runtime.runPromise(
+      ThreadStatusNotes.ThreadStatusNotes.use((notes) =>
+        notes.write(statusLineJson.writeRequest.decode(input)),
+      ).pipe(Effect.catchTags({ ThreadNotFoundError: () => Effect.succeed(null) })),
+    );
+    // The new summary revision goes out on the alarm.
+    await this.armAlarm();
+    return note === null ? null : noteView(note);
+  }
+
   previews(...[actor]: Parameters<ThreadObjectApi["previews"]>) {
     return this.gateway.subscribe(actor.userId);
   }
 
-  previewLink(...[actor, port]: Parameters<ThreadObjectApi["previewLink"]>) {
-    return this.gateway.link(actor.userId, port);
+  previewLink(...[actor, port, handoff]: Parameters<ThreadObjectApi["previewLink"]>) {
+    return this.gateway.link(actor.userId, port, handoff);
   }
 
   browserWatch(...[actor, tabId]: Parameters<ThreadObjectApi["browserWatch"]>) {
@@ -561,6 +605,11 @@ export class ThreadObject extends DurableObject<ThreadObjectEnv> implements Thre
       PullRequestSync.PullRequestSync.use((sync) => sync.dueAt),
     );
     if (pullRequestsAt !== null) await this.setAlarmNoLaterThan(pullRequestsAt);
+    const now = await this.now();
+    const statusNoteAt = await this.runtime.runPromise(
+      ThreadStatusNotes.ThreadStatusNotes.use((notes) => notes.dueAt(now)),
+    );
+    if (statusNoteAt !== null) await this.setAlarmNoLaterThan(statusNoteAt);
     const sharingEndsAt = await this.runtime.runPromise(
       ThreadBrowsing.ThreadBrowsing.use((browsing) => browsing.sharingEndsAt),
     );
@@ -820,6 +869,16 @@ export class ThreadObject extends DurableObject<ThreadObjectEnv> implements Thre
       return now + retryDelay(1);
     });
     const diagnosticsWakeAt = await this.tendDiagnostics(now);
+    // A turn that ended without its status note gets one written (#670).
+    const statusNoteWakeAt = await this.runtime.runPromise(
+      ThreadStatusNotes.ThreadStatusNotes.use((notes) => notes.tend(now)).pipe(
+        Effect.catchCause((cause) =>
+          Effect.logError("runtime status note failed", Cause.pretty(cause)).pipe(
+            Effect.as(now + retryDelay(1)),
+          ),
+        ),
+      ),
+    );
     const sharing = await this.runtime.runPromise(
       ThreadBrowsing.ThreadBrowsing.use((browsing) => browsing.expire).pipe(
         Effect.map((at) => ({ ok: true, at })),
@@ -841,14 +900,24 @@ export class ThreadObject extends DurableObject<ThreadObjectEnv> implements Thre
             ))
           ? now
           : null;
+    // A runtime status note gave the summary a new revision after it went out.
+    const summaryAt =
+      this.nextDeliveryAt > 0
+        ? this.nextDeliveryAt
+        : (await this.runtime.runPromise(
+              ThreadEngine.ThreadEngine.use((engine) => engine.hasPendingSummary),
+            ))
+          ? now
+          : null;
     const due = [
       step.more ? now + (step.ok ? STEP_INTERVAL_MS : retryDelay(this.stepFailures)) : null,
-      this.nextDeliveryAt > 0 ? this.nextDeliveryAt : null,
+      summaryAt,
       eventsAt,
       machineWakeAt,
       diagnosticsWakeAt,
       pullRequestsWakeAt,
       sharingWakeAt,
+      statusNoteWakeAt,
     ].filter((at) => at !== null);
     if (due.length > 0) await this.setAlarmNoLaterThan(Math.min(...due));
   }

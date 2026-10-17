@@ -16,8 +16,22 @@ Click **Take over** to drive the page yourself, for example to fill in something
 
 Taking over works while the agent is working on the thread. After the turn ends, the thread's machine and your cloud browser close shortly after.
 
+## Payments
+
+Agents never pay for you. They fill in a checkout up to the point of paying, then hand the tab to you and wait: when they ask, when they're about to submit a page with card fields, or when they land on a bank's 3-D Secure check. Sign-ins, codes and CAPTCHAs never come to you this way.
+
+You get a **Finish the payment** request on your phone and in the app. **Open the browser** shows the agent's tab: take over, pay, then answer **Done** or **Failed** right there. The agent reads nothing from the tab while it's yours, and carries on once you answer. When the cart lives in your account, you can also pay in your own browser and answer the same way.
+
+The agent keeps its browser open only while it waits, for up to 30 minutes. To change what happens, for example to decline payments over a limit, customize the **Payment** automation.
+
 ## Steps
 
-Every step the agent takes in the browser, and every stretch you drove, is kept with the thread. Pick a step in the panel to see the page as it was when that step finished, even after the machine has stopped. Pages are rebuilt from what was recorded, so images and styles that a site has since changed may look different.
+Every step the agent takes in the browser, and every stretch you drove, is kept with the thread. Card numbers and passwords are masked in it. Pick a step in the panel to see the page as it was when that step finished, even after the machine has stopped. Pages are rebuilt from what was recorded, so images and styles that a site has since changed may look different.
 
 Steps stay in the browser panel. They're never added to the conversation, so the agent only sees what it looked at itself.
+
+## Open a dev server
+
+Choose a dev server from **Previews** to open it in your browser. If the thread's machine has stopped, opening the preview starts it and the dev server again. You do not need to send another message. Keep the tab open while you use it; after the last preview closes, the machine stops after its normal idle period.
+
+You must be signed in as someone who can see the thread. A shared preview link asks for your own sign-in.

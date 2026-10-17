@@ -160,10 +160,14 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
   sections: Schema.optionalKey(Schema.Boolean),
   /** signalbox: Server keeps the user's folders and thread homes (`signalboxFolders.ts`). */
   folders: Schema.optionalKey(Schema.Boolean),
+  /** signalbox: Server keeps the user's notes and reads them (`signalboxNotes.ts`). */
+  notes: Schema.optionalKey(Schema.Boolean),
   /** signalbox: Server keeps standing sign-in grants (`signalboxSignIn.ts`). */
   signInGrants: Schema.optionalKey(Schema.Boolean),
   /** signalbox: Server keeps threads' chat and task kinds (`signalboxThreadKinds.ts`). */
   threadKinds: Schema.optionalKey(Schema.Boolean),
+  /** signalbox: Server keeps threads' status notes (`signalboxStatusLine.ts`). */
+  threadStatusNotes: Schema.optionalKey(Schema.Boolean),
   /** signalbox: Signalbox Cloud opens threads' dev servers through its PreviewGateway (`signalboxPreviews.ts`). */
   signalboxPreviews: Schema.optionalKey(Schema.Boolean),
   /** signalbox: Server keeps each thread's browser tabs in sync across devices (`signalboxBrowsing.ts`). */

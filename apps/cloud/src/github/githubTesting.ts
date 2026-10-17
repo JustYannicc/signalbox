@@ -4,8 +4,10 @@ import * as NodeChildProcess from "node:child_process";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Redacted from "effect/Redacted";
+import * as Stream from "effect/Stream";
 import { HttpClient, HttpClientResponse } from "effect/http";
 
+import { concatBytes } from "../drive/git/gitObjects.ts";
 import * as GitHub from "./GitHub.ts";
 
 /**
@@ -26,6 +28,8 @@ export const makeFakeGitHub = (options: {
   readonly bare: string;
   readonly repository: string;
   readonly defaultBranch: string;
+  /** More of GitHub's API (e.g. `actionsTesting.ts`): an answer, or null to fall through. */
+  readonly more?: (method: string, url: URL, body: Uint8Array) => Response | null;
 }) => {
   const env = { ...process.env, GIT_CONFIG_GLOBAL: "/dev/null", GIT_CONFIG_NOSYSTEM: "1" };
   const git = (args: ReadonlyArray<string>, input?: Uint8Array) =>
@@ -71,6 +75,8 @@ export const makeFakeGitHub = (options: {
     openThreads?: number;
     /** The head commit when it merged, as GitHub keeps it after the branch moves or goes. */
     headOid?: string;
+    /** The head branch's repository when it isn't this one: a fork. */
+    headRepository?: string;
   }> = [];
   const calls: Array<string> = [];
   /** Changes made through `update`, so each moves `updatedAt` a minute on. */
@@ -168,7 +174,8 @@ export const makeFakeGitHub = (options: {
               reviewDecision: null,
               headRefOid: head(pull.head) ?? "0".repeat(40),
               headRefName: pull.head,
-              headRepository: { nameWithOwner: options.repository },
+              baseRefName: pull.base,
+              headRepository: { nameWithOwner: pull.headRepository ?? options.repository },
               reviewThreads: {
                 nodes: Array.from({ length: pull.openThreads ?? 0 }, () => ({ isResolved: false })),
                 pageInfo: { hasNextPage: false },
@@ -457,12 +464,20 @@ export const makeFakeGitHub = (options: {
   };
 
   const client = HttpClient.make((request) =>
-    Effect.sync(() => {
+    Effect.gen(function* () {
       const url = new URL(request.url);
       const host = url.origin === WORKOS ? "workos" : url.origin === ENDPOINTS.web ? "web" : "api";
       calls.push(`${request.method} ${host}${url.pathname}`);
-      const body = request.body._tag === "Uint8Array" ? request.body.body : new Uint8Array();
-      return HttpClientResponse.fromWeb(request, answer(request.method, url, body));
+      const body =
+        request.body._tag === "Uint8Array"
+          ? request.body.body
+          : request.body._tag === "Stream"
+            ? concatBytes(yield* Stream.runCollect(Stream.orDie(request.body.stream)))
+            : new Uint8Array();
+      return HttpClientResponse.fromWeb(
+        request,
+        options.more?.(request.method, url, body) ?? answer(request.method, url, body),
+      );
     }),
   );
 

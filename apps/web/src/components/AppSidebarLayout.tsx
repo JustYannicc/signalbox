@@ -33,7 +33,6 @@ import {
 } from "../panelAnimations";
 import LegacyThreadSidebar from "./LegacySidebar";
 import { useThreadVisitedMigration } from "../hooks/useThreadVisitedMigration";
-import ThreadSidebar from "./Sidebar";
 import { SettingsSidebarNav } from "./settings/SettingsSidebarNav";
 import { SidebarBrandWidthProbe, SidebarChromeHeader } from "./sidebar/SidebarChrome";
 import { MainAppLocationTracker } from "./sidebar/mainAppLocation";
@@ -60,7 +59,9 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 import { useIsMobile } from "../hooks/useMediaQuery";
 import { SidebarViews } from "./sidebar/SidebarViews";
 import { TITLEBAR_HISTORY_WIDTH, TitlebarHistoryButtons } from "./sidebar/TitlebarHistoryButtons";
+import { resolveCollapsedRailWidth } from "../workspaceTitlebar";
 import { FolderDialogs } from "./sidebar/folders/FolderDialogs"; // signalbox: folders
+import { NotesSheet } from "./notes/NotesSheet"; // signalbox: notes
 
 const MACOS_TRAFFIC_LIGHTS_LEFT_INSET = "var(--desktop-window-controls-inset, 90px)";
 
@@ -277,6 +278,10 @@ export function AppSidebarLayout({ children }: { children: ReactNode }) {
       : {
           "--workspace-titlebar-content-left": `calc(var(--workspace-controls-left) + ${TITLEBAR_HISTORY_WIDTH} + var(--workspace-titlebar-control-size) + var(--workspace-titlebar-control-gap))`,
         }),
+    "--workspace-collapsed-rail-width": resolveCollapsedRailWidth({
+      isMobile,
+      railLayout: !legacySidebarEnabled,
+    }),
   } as CSSProperties;
 
   useEffect(() => {
@@ -344,11 +349,10 @@ export function AppSidebarLayout({ children }: { children: ReactNode }) {
           }}
           style={windowControlsInsetStyle}
         >
-          {/* signalbox: view rail, unless the legacy sidebar setting is on */}
+          {/* signalbox: view rail; the legacy sidebar setting is retired (#683) */}
           {!legacySidebarEnabled ? (
             <SidebarViews
               home={<LegacyThreadSidebar />}
-              pipeline={<ThreadSidebar />}
               panelOverride={isOnSettings ? <SettingsSidebarNav pathname={pathname} /> : undefined}
             />
           ) : isOnSettings ? (
@@ -366,6 +370,7 @@ export function AppSidebarLayout({ children }: { children: ReactNode }) {
         <NavigationHistoryShortcuts />
         <MainAppLocationTracker />
         <FolderDialogs />
+        <NotesSheet />
       </SidebarProvider>
     </PanelAnimationSuppressionProvider>
   );

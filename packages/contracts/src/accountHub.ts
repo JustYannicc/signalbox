@@ -298,8 +298,9 @@ export type AccountPoolMoveToCloudResult = typeof AccountPoolMoveToCloudResult.T
 
 /**
  * The pool link's HTTP API on the cloud, under `POOL_LINK_PATH` with the link
- * token as bearer: `GET` reads the pool, `POST /accounts` moves accounts in
- * (only right after the link was made), and `/v1/*` is the pool's model API.
+ * token as bearer: `GET` reads the pool, `GET /models` reads its cached model
+ * metadata, `POST /accounts` moves accounts in (only right after the link was
+ * made), and `/v1/*` is the pool's model API.
  */
 export const POOL_LINK_PATH = "/api/pool-link";
 
@@ -320,6 +321,23 @@ export const PoolLinkInfo = Schema.Struct({
   accounts: Schema.Array(PoolLinkAccount),
 });
 export type PoolLinkInfo = typeof PoolLinkInfo.Type;
+
+/** A model a pool serves, with metadata the cloud's model picker can use. */
+export const PoolLinkModel = Schema.Struct({
+  id: Schema.String,
+  ownedBy: Schema.String,
+  created: Schema.NullOr(Schema.Number),
+  displayName: Schema.optional(Schema.String),
+  provider: Schema.optional(Schema.Literals(["claude", "codex"])),
+  reasoningEfforts: Schema.optional(Schema.Array(Schema.String)),
+});
+export type PoolLinkModel = typeof PoolLinkModel.Type;
+
+/** Cached served models shared with a linked cloud, such as a preview. */
+export const PoolLinkModels = Schema.Struct({
+  models: Schema.Array(PoolLinkModel),
+});
+export type PoolLinkModels = typeof PoolLinkModels.Type;
 
 /** The most accounts one move takes. */
 export const POOL_LINK_MOVE_LIMIT = 200;
