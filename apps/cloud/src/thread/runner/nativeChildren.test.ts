@@ -49,18 +49,23 @@ describe("provider-native child history", () => {
         const relayed: Array<NativeChildBatchInput> = [];
         const relay = {
           save: (input: NativeChildBatchInput) =>
-            Effect.andThen(
+            Effect.flatMap(
               Effect.sync(() => relayed.push(input)),
-              Effect.andThen(
-                withObject(childDatabase, (engine) => engine.recordNativeChildBatch(input)).pipe(
-                  Effect.orDie,
+              () =>
+                Effect.flatMap(
+                  withObject(childDatabase, (engine) => engine.recordNativeChildBatch(input)).pipe(
+                    Effect.orDie,
+                  ),
+                  (result) =>
+                    Effect.as(
+                      Effect.suspend(() => {
+                        if (!failAfterSave) return Effect.void;
+                        failAfterSave = false;
+                        return Effect.die("relay disconnected after saving child");
+                      }),
+                      result,
+                    ),
                 ),
-                Effect.suspend(() => {
-                  if (!failAfterSave) return Effect.void;
-                  failAfterSave = false;
-                  return Effect.die("relay disconnected after saving child");
-                }),
-              ),
             ),
         };
         const options = { nativeChildRelay: relay };
@@ -351,16 +356,12 @@ describe("provider-native child history", () => {
               ]);
               const lastBatch = relayed.at(-1)!;
               expect(
-                Exit.isFailure(
-                  yield* Effect.exit(
-                    engine.recordNativeChildBatch({
-                      ...lastBatch,
-                      sequence: lastBatch.sequence + 100,
-                      owner: { ...lastBatch.owner, userId: "another-user" },
-                    }),
-                  ),
-                ),
-              ).toBe(true);
+                yield* engine.recordNativeChildBatch({
+                  ...lastBatch,
+                  sequence: lastBatch.sequence + 100,
+                  owner: { ...lastBatch.owner, userId: "another-user" },
+                }),
+              ).toEqual({ _tag: "child_mismatch" });
               const mismatched = {
                 ...lastBatch,
                 sequence: lastBatch.sequence + 101,
@@ -377,9 +378,9 @@ describe("provider-native child history", () => {
                   },
                 },
               };
-              expect(
-                Exit.isFailure(yield* Effect.exit(engine.recordNativeChildBatch(mismatched))),
-              ).toBe(true);
+              expect(yield* engine.recordNativeChildBatch(mismatched)).toEqual({
+                _tag: "child_mismatch",
+              });
               expect((yield* snapshot(engine)).head).toBe(child.head);
               expect(yield* engine.hasTurnWork).toBe(false);
               const result = yield* Effect.exit(

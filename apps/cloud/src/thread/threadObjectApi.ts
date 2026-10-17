@@ -10,7 +10,7 @@ import { TurnReports } from "./diagnostics/TurnReports.ts";
 import type { ThreadObjectApi } from "./ThreadDirectory.ts";
 import * as ThreadEngine from "./ThreadEngine.ts";
 import { encodeBatchLine, type ThreadObjectReply, wire } from "./threadWire.ts";
-import { nativeChildBatchWire } from "./runner/nativeChildBatch.ts";
+import { nativeChildBatchWire, type NativeChildBatchResult } from "./runner/nativeChildBatch.ts";
 
 // Diagnostic records are plain JSON values already (ISO times, no class instances).
 const encodeRecord = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
@@ -50,6 +50,7 @@ export const makeThreadObjectApi = (
               commandId: error.commandId,
               commandType: error.commandType,
               reason: error.reason,
+              ...(error.code === undefined ? {} : { code: error.code }),
             } as const),
         }),
       ),
@@ -76,10 +77,11 @@ export const makeThreadObjectApi = (
       return result;
     },
     recordNativeChildBatch: async (input) => {
-      await run(
+      const result: NativeChildBatchResult = await run(
         engine.use((service) => service.recordNativeChildBatch(nativeChildBatchWire.decode(input))),
       );
       await afterChange();
+      return result;
     },
     snapshot: (actor) =>
       reply(engine.use((service) => Effect.map(service.snapshot(actor), wire.snapshot.encode))),

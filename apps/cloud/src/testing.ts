@@ -42,8 +42,9 @@ import * as PreviewSetup from "./previewSetup/PreviewSetup.ts";
 import * as PushNotifier from "./push/PushNotifier.ts";
 import * as UserPreviewSetup from "./previewSetup/UserPreviewSetup.ts";
 import { makeMemoryPools } from "./pool/testing.ts";
-import { layer as layerCollaboration } from "./collaboration/CloudCollaboration.ts";
+import * as CloudCollaboration from "./collaboration/CloudCollaboration.ts";
 import * as CloudThreadService from "./thread/CloudThreadService.ts";
+import * as ThreadInbox from "./thread/ThreadInbox.ts";
 import * as CloudAnalytics from "./thread/diagnostics/CloudAnalytics.ts";
 import * as DiagnosticsStore from "./thread/diagnostics/DiagnosticsStore.ts";
 import * as TurnDiagnostics from "./thread/diagnostics/TurnDiagnostics.ts";
@@ -66,7 +67,10 @@ import { browserUpdateLine, previewsLine } from "./thread/threadWire.ts";
 import * as MachineBackends from "./thread/runner/machineBackends.ts";
 import type * as MachineBackend from "./thread/runner/MachineBackend.ts";
 import * as ThreadRunner from "./thread/runner/ThreadRunner.ts";
-import type { NativeChildBatchInput } from "./thread/runner/nativeChildBatch.ts";
+import type {
+  NativeChildBatchInput,
+  NativeChildBatchResult,
+} from "./thread/runner/nativeChildBatch.ts";
 import * as SessionRows from "./thread/session/SessionRows.ts";
 import * as PullRequestPolls from "./thread/pullRequests/PullRequestPolls.ts";
 import * as PullRequestSync from "./thread/pullRequests/PullRequestSync.ts";
@@ -305,7 +309,7 @@ const makeUserRuntime = (
       Layer.provideMerge(
         // The same branches the socket's RPC uses, so the git panel sees what the agent pushed.
         Layer.mergeAll(
-          layerCollaboration,
+          CloudCollaboration.layer,
           GitHubBranches.layer,
           GitHubActions.layer,
           UserPreviewSetup.layer,
@@ -327,7 +331,7 @@ const makeUserRuntime = (
               LocalKeys.layer,
               SignInGrants.layer,
               PoolSignIns.layer,
-              CloudThreadService.layer,
+              ThreadInbox.layer.pipe(Layer.provideMerge(CloudThreadService.layer)),
               ThreadSearch.layer.pipe(
                 Layer.provide(Layer.mergeAll(SearchAuthority.layerUser, SearchCursors.layerSql)),
                 Layer.provide(
@@ -509,18 +513,24 @@ export const makeMemoryCloud = (
       ),
       nativeChildRelay: {
         save: (input: NativeChildBatchInput) =>
-          Effect.andThen(
+          Effect.flatMap(
             Effect.orDie(
               threadDirectory.forThread(input.childThreadId).recordNativeChildBatch(input),
             ),
-            Effect.orDie(
-              userDirectory.forUser(input.owner.userId).copyThreadHome({
-                parentThreadId: input.parentThreadId,
-                childThreadId: input.childThreadId,
-                projectId: input.appThread.projectId,
-                ownerId: input.owner.contextId,
-              }),
-            ),
+            (result): Effect.Effect<NativeChildBatchResult> =>
+              result._tag === "child_mismatch"
+                ? Effect.succeed(result)
+                : Effect.as(
+                    Effect.orDie(
+                      userDirectory.forUser(input.owner.userId).copyThreadHome({
+                        parentThreadId: input.parentThreadId,
+                        childThreadId: input.childThreadId,
+                        projectId: input.appThread.projectId,
+                        ownerId: input.owner.contextId,
+                      }),
+                    ),
+                    result,
+                  ),
           ),
       },
     });

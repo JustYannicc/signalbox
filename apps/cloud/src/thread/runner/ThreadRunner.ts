@@ -40,7 +40,7 @@ import { sessionToken } from "../session/sessionToken.ts";
 import * as ThreadEngine from "../ThreadEngine.ts";
 import { applyEvents } from "../threadProjection.ts";
 import * as ThreadStore from "../ThreadStore.ts";
-import type { NativeChildBatchInput } from "./nativeChildBatch.ts";
+import type { NativeChildBatchInput, NativeChildBatchResult } from "./nativeChildBatch.ts";
 import type { StopReason } from "../diagnostics/DiagnosticsStore.ts";
 import { isLeaseToken } from "./leaseToken.ts";
 import { MachineBackend, type MachineExit } from "./MachineBackend.ts";
@@ -132,7 +132,7 @@ export const PreviewHold = Context.Reference<{
 });
 
 export interface NativeChildRelayService {
-  readonly save: (input: NativeChildBatchInput) => Effect.Effect<void>;
+  readonly save: (input: NativeChildBatchInput) => Effect.Effect<NativeChildBatchResult>;
 }
 
 export const NativeChildRelay = Context.Reference<NativeChildRelayService>(
@@ -588,10 +588,12 @@ const make = Effect.gen(function* () {
           drained,
         } = runnerBatchEvents(projection, input.items, ctx, lease.steers === true, pendingChildren);
         const childRelay = Effect.gen(function* () {
-          if (nativeChildren.length === 0) return;
+          if (nativeChildren.length === 0) {
+            return { refusedChildThreadIds: [] as ReadonlyArray<ThreadId>, warnings: [] as const };
+          }
           const owner = yield* Effect.orDie(store.owner);
           if (owner === null) return yield* Effect.die("A running thread has no owner.");
-          yield* Effect.forEach(nativeChildren, (child) =>
+          const results = yield* Effect.forEach(nativeChildren, (child) =>
             nativeChildRelay.save({
               ...child,
               parentThreadId: projection.thread.id,
@@ -601,51 +603,76 @@ const make = Effect.gen(function* () {
               owner,
             }),
           );
+          const refusedChildThreadIds = new Set<ThreadId>();
+          const warningCounts = new Map<RunId, number>();
+          for (let index = 0; index < results.length; index += 1) {
+            if (results[index]?._tag !== "child_mismatch") continue;
+            const child = nativeChildren[index]!;
+            refusedChildThreadIds.add(child.childThreadId);
+            warningCounts.set(child.parentRunId, (warningCounts.get(child.parentRunId) ?? 0) + 1);
+          }
+          return {
+            refusedChildThreadIds: [...refusedChildThreadIds],
+            warnings: [...warningCounts].map(([runId, count]) => ({ runId, count })),
+          };
         });
-        const recorded = Effect.andThen(
-          childRelay,
-          Effect.andThen(
-            diagnostics.batch({
-              ...input,
-              items: [
-                ...input.items,
-                ...nativeChildDiagnostics.map(({ runId, reason, count }): RunnerItem => ({
-                  kind: "log",
-                  runId,
-                  level: "warning",
-                  message: `Native child capture: count=${count}; reason=${reason}.`,
-                })),
-              ],
-              liveRunId: harnessRun(projection)?.id ?? null,
-              runs: projection.runs,
-              now,
-            }),
-            undecodable.length === 0
-              ? Effect.void
-              : Effect.logWarning("dropped Runner events this build cannot read", { undecodable }),
+        const recorded = Effect.flatMap(childRelay, ({ refusedChildThreadIds, warnings }) =>
+          Effect.as(
+            Effect.andThen(
+              diagnostics.batch({
+                ...input,
+                items: [
+                  ...input.items,
+                  ...nativeChildDiagnostics.map(({ runId, reason, count }): RunnerItem => ({
+                    kind: "log",
+                    runId,
+                    level: "warning",
+                    message: `Native child capture: count=${count}; reason=${reason}.`,
+                  })),
+                  ...warnings.map(({ runId, count }): RunnerItem => ({
+                    kind: "log",
+                    runId,
+                    level: "warning",
+                    message: `Native child capture: count=${count}; reason=child_mismatch.`,
+                  })),
+                ],
+                liveRunId: harnessRun(projection)?.id ?? null,
+                runs: projection.runs,
+                now,
+              }),
+              undecodable.length === 0
+                ? Effect.void
+                : Effect.logWarning("dropped Runner events this build cannot read", {
+                    undecodable,
+                  }),
+            ),
+            { refusedChildThreadIds },
           ),
         );
+        const pendingChanges = (refusedChildThreadIds: ReadonlyArray<ThreadId>) => {
+          const refused = new Set(refusedChildThreadIds);
+          return {
+            upsert: pendingNativeChildren.filter((child) => !refused.has(child.childThreadId)),
+            removeChildThreadIds: refusedChildThreadIds,
+            clearRunIds: [],
+          };
+        };
         const acked = { _tag: "ack", sequence: input.sequence } as const;
         // The Runner saved everything and stopped reporting: its machine is done
         // either way, and only a light one's run moves up.
         if (outgrown !== null) {
-          return Effect.andThen(
-            recorded,
+          return Effect.flatMap(recorded, ({ refusedChildThreadIds }) =>
             Effect.map(
               machineGone({ projection, lease, now, ctx, detail: outgrown, moveUp: true, events }),
               (gone) => ({
                 ...gone,
-                nativeChildPending: {
-                  upsert: pendingNativeChildren,
-                  removeChildThreadIds: [],
-                  clearRunIds: [],
-                },
+                nativeChildPending: pendingChanges(refusedChildThreadIds),
                 result: acked,
               }),
             ),
           );
         }
-        return Effect.as(recorded, {
+        return Effect.map(recorded, ({ refusedChildThreadIds }) => ({
           events,
           machine: {
             ...lease,
@@ -655,13 +682,9 @@ const make = Effect.gen(function* () {
               ? { drain: { _tag: "answered", id: drained.id, unsaved: drained.unsaved } as const }
               : {}),
           },
-          nativeChildPending: {
-            upsert: pendingNativeChildren,
-            removeChildThreadIds: [],
-            clearRunIds: [],
-          },
+          nativeChildPending: pendingChanges(refusedChildThreadIds),
           result: acked,
-        });
+        }));
       });
     });
 

@@ -12,12 +12,14 @@ import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
+import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 
 import { makeMemoryCloud } from "../testing.ts";
 import { SCRATCH_PROJECT_ID } from "../environment.ts";
 import { CloudThreadService } from "../thread/CloudThreadService.ts";
+import * as ThreadInbox from "../thread/ThreadInbox.ts";
 import { ThreadCommandRejectedError } from "../thread/ThreadEngine.ts";
 import { ThreadObjectError } from "../thread/ThreadDirectory.ts";
 import { applyEvents } from "../thread/threadProjection.ts";
@@ -39,7 +41,9 @@ const setup = Effect.gen(function* () {
   const user = cloud.userDirectory.forUser(userId);
   yield* user.recordSignIn({ id: userId, email: "a@b.c" });
   const threads = yield* CloudThreadService.pipe(Effect.provide(cloud.layerFor(userId)));
-  const service = yield* make.pipe(Effect.provide(cloud.layerFor(userId)));
+  const service = yield* make.pipe(
+    Effect.provide(ThreadInbox.layer.pipe(Layer.provideMerge(cloud.layerFor(userId)))),
+  );
   const launch = (id: ThreadId, owner = userId, projectId: ProjectId = SCRATCH_PROJECT_ID) =>
     Effect.gen(function* () {
       const contextIds = yield* cloud.userDirectory.forUser(owner).contextIds();
@@ -240,6 +244,7 @@ describe("cloud thread collaboration", () => {
       const started = yield* service.send(source, { threadId: target, message: "Still running" });
       const subscribed = yield* Deferred.make<void>();
       const watched = yield* make.pipe(
+        Effect.provide(ThreadInbox.layer),
         Effect.provideService(CloudThreadService, {
           ...threads,
           subscribeThread: (actor, input) =>
@@ -260,6 +265,7 @@ describe("cloud thread collaboration", () => {
       );
       const again = yield* Deferred.make<void>();
       const live = yield* make.pipe(
+        Effect.provide(ThreadInbox.layer),
         Effect.provideService(CloudThreadService, {
           ...threads,
           subscribeThread: (actor, input) =>
@@ -421,6 +427,7 @@ describe("cloud thread collaboration", () => {
           }),
       };
       const collaboration = yield* make.pipe(
+        Effect.provide(ThreadInbox.layer),
         Effect.provideService(CloudThreadService, eventThreads),
         Effect.provide(cloud.layerFor(userId)),
       );
@@ -429,6 +436,7 @@ describe("cloud thread collaboration", () => {
         events: ReadonlyArray<{ readonly event: (typeof recoveryEvents)[number] }>,
       ) =>
         deliverCompletion(threadId, events).pipe(
+          Effect.provide(ThreadInbox.layer),
           Effect.provideService(CloudThreadService, eventThreads),
           Effect.provideService(CloudCollaboration, collaboration),
           Effect.provide(cloud.layerFor(userId)),
@@ -550,6 +558,7 @@ describe("cloud thread collaboration", () => {
         });
         let raced = false;
         const racing = yield* make.pipe(
+          Effect.provide(ThreadInbox.layer),
           Effect.provideService(CloudThreadService, {
             ...threads,
             dispatchCommand: (actor, command, expectedRun) =>
@@ -598,6 +607,7 @@ describe("cloud thread collaboration", () => {
       const second = children[1]!;
       let failed = false;
       const flaky = yield* make.pipe(
+        Effect.provide(ThreadInbox.layer),
         Effect.provideService(CloudThreadService, {
           ...threads,
           dispatchCommand: (actor, command, expectedRun) => {
@@ -621,7 +631,11 @@ describe("cloud thread collaboration", () => {
       );
       expect(yield* Effect.result(flaky.stopDescendants(source, 1))).toMatchObject({
         _tag: "Failure",
-        failure: { code: "orchestration_error" },
+        failure: {
+          _tag: "CollaborationError",
+          code: "orchestration_error",
+          cause: { _tag: "ThreadObjectError", operation: "dispatch", cause: expect.any(Error) },
+        },
       });
       expect((yield* service.status(source, { taskId: first.taskId })).status).toBe("running");
       expect((yield* service.status(source, { taskId: second.taskId })).status).toBe("interrupted");
@@ -771,6 +785,7 @@ describe("cloud thread collaboration", () => {
         const { cloud, service, threads } = yield* setup;
         const child = yield* service.delegate(source, { task: "Child work" });
         const unavailable = yield* make.pipe(
+          Effect.provide(ThreadInbox.layer),
           Effect.provideService(CloudThreadService, {
             ...threads,
             launchThread: () =>
@@ -793,7 +808,9 @@ describe("cloud thread collaboration", () => {
         });
         const grandchild = yield* service.delegate(child.childThreadId, { task: "Nested work" });
         // Rebuild the service to prove the task graph is durable, not a sidebar cache.
-        const restarted = yield* make.pipe(Effect.provide(cloud.layerFor(userId)));
+        const restarted = yield* make.pipe(
+          Effect.provide(ThreadInbox.layer.pipe(Layer.provideMerge(cloud.layerFor(userId)))),
+        );
         yield* restarted.cancel(source, { taskId: child.taskId });
         expect(
           yield* Effect.result(restarted.delegate(child.childThreadId, { task: "Too late" })),
@@ -870,6 +887,7 @@ describe("cloud thread collaboration", () => {
       });
       const subscribed = yield* Deferred.make<void>();
       const watched = yield* make.pipe(
+        Effect.provide(ThreadInbox.layer),
         Effect.provideService(CloudThreadService, {
           ...threads,
           subscribeThread: (actor, input) =>

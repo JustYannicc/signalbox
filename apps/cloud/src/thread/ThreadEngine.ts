@@ -42,7 +42,7 @@ import { hasPendingTurnWork, scriptedStep } from "./scriptedTurn.ts";
 import { type Decision, decide, decideLaunch, type ThreadWorktree } from "./threadDecider.ts";
 import { type DecisionContext, threadEvent } from "./threadEvents.ts";
 import { providerEventThreadId, recordedNativeChildEvents } from "./runner/runnerEvents.ts";
-import type { NativeChildBatchInput } from "./runner/nativeChildBatch.ts";
+import type { NativeChildBatchInput, NativeChildBatchResult } from "./runner/nativeChildBatch.ts";
 import { applyEvents, threadShellFromProjection, workStartedAt } from "./threadProjection.ts";
 import { noteKey, noteRunId, supersedes } from "./statusLine/statusNotePolicy.ts";
 import * as ThreadStore from "./ThreadStore.ts";
@@ -92,7 +92,12 @@ export class ThreadNotFoundError extends Schema.TaggedError<ThreadNotFoundError>
 
 export class ThreadCommandRejectedError extends Schema.TaggedError<ThreadCommandRejectedError>()(
   "ThreadCommandRejectedError",
-  { commandId: Schema.String, commandType: Schema.String, reason: Schema.String },
+  {
+    commandId: Schema.String,
+    commandType: Schema.String,
+    reason: Schema.String,
+    code: Schema.optionalKey(Schema.Literals(["run_changed", "unavailable"])),
+  },
 ) {
   override get message(): string {
     return this.reason;
@@ -101,11 +106,13 @@ export class ThreadCommandRejectedError extends Schema.TaggedError<ThreadCommand
   static forCommand(
     command: { readonly id: string; readonly type: string },
     reason: string,
+    code?: "run_changed" | "unavailable",
   ): ThreadCommandRejectedError {
     return new ThreadCommandRejectedError({
       commandId: command.id,
       commandType: command.type,
       reason,
+      ...(code === undefined ? {} : { code }),
     });
   }
 }
@@ -244,7 +251,9 @@ export class ThreadEngine extends Context.Service<
       ) => Effect.Effect<EngineDecision<A>>,
     ) => Effect.Effect<A>;
     /** Saves an authenticated native-child batch before its parent Runner is acknowledged. */
-    readonly recordNativeChildBatch: (input: NativeChildBatchInput) => Effect.Effect<void>;
+    readonly recordNativeChildBatch: (
+      input: NativeChildBatchInput,
+    ) => Effect.Effect<NativeChildBatchResult>;
     /** The committed projection, read without the lock, for checks that decide nothing. */
     readonly projection: Effect.Effect<OrchestrationV2ThreadProjection | null>;
     /** Runs one scripted provider step. True while turn work remains. */
@@ -653,18 +662,28 @@ const make = Effect.gen(function* () {
             ? undefined
             : forThread(creation.pools, projectId);
         const decision = decideWith(current.thread?.projection ?? null, yield* context, pool);
-        const refuse = (message: string, options: { readonly record: boolean }) =>
+        const refuse = (
+          message: string,
+          options: { readonly record: boolean; readonly code?: "run_changed" },
+        ) =>
           Effect.gen(function* () {
             // Only a thread that exists keeps receipts; an unknown id leaves no trace.
             if (options.record && current.thread !== null) {
               yield* Effect.orDie(store.recordRejection({ command, message }));
             }
-            return yield* ThreadCommandRejectedError.forCommand(command, message);
+            return yield* ThreadCommandRejectedError.forCommand(
+              command,
+              message,
+              options.code ?? (options.record ? undefined : "unavailable"),
+            );
           });
         const refusePool = (error: Parameters<typeof poolErrorMessage>[0]) =>
           Effect.flatMap(poolErrorMessage(error), (message) => refuse(message, { record: false }));
         if (decision._tag === "rejected") {
-          return yield* refuse(decision.message, { record: decision.record !== false });
+          return yield* refuse(decision.message, {
+            record: decision.record !== false,
+            ...(decision.code === undefined ? {} : { code: decision.code }),
+          });
         }
         // The receipt names the turn this command started, so a client's retry finds its trace.
         const started = decision.events.find((event) => event.type === "run.created");
@@ -856,7 +875,7 @@ const make = Effect.gen(function* () {
         );
         const receipt =
           childProjection === null ? null : yield* Effect.orDie(store.receipt(receiptId));
-        if (receipt?._tag === "accepted") return;
+        if (receipt?._tag === "accepted") return { _tag: "saved" } as const;
         if (receipt?._tag === "rejected") {
           return yield* Effect.die("A native child batch receipt was rejected.");
         }
@@ -904,9 +923,7 @@ const make = Effect.gen(function* () {
             childProjection.thread.activeProviderThreadId !== appThread.activeProviderThreadId ||
             childProjection.runs.length > 0
           ) {
-            return yield* Effect.die(
-              "The stored native child no longer matches its owner or home.",
-            );
+            return { _tag: "child_mismatch" } as const;
           }
         }
 
@@ -932,6 +949,7 @@ const make = Effect.gen(function* () {
           command: { id: receiptId, type: "native-child.batch" },
           ...(childProjection === null ? { owner: input.owner } : {}),
         });
+        return { _tag: "saved" } as const;
       }),
     );
 

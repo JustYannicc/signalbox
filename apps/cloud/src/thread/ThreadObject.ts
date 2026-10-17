@@ -52,7 +52,7 @@ import {
   type RunnerSocketHost,
 } from "./runner/runnerSockets.ts";
 import * as ThreadRunner from "./runner/ThreadRunner.ts";
-import type { NativeChildBatchInput } from "./runner/nativeChildBatch.ts";
+import type { NativeChildBatchInput, NativeChildBatchResult } from "./runner/nativeChildBatch.ts";
 import * as SessionRows from "./session/SessionRows.ts";
 import { handleSessionRequest, isSessionApiPath } from "./session/sessionRoutes.ts";
 import { deliverPendingEvents } from "./eventOutbox.ts";
@@ -191,16 +191,22 @@ const layerNativeChildRelay = (parentThreadId: () => ThreadId) =>
           if (input.parentThreadId !== parentThreadId()) {
             return Effect.die("A native child relay was sent to the wrong parent thread.");
           }
-          return Effect.andThen(
+          return Effect.flatMap(
             Effect.orDie(threads.forThread(input.childThreadId).recordNativeChildBatch(input)),
-            Effect.orDie(
-              users.forUser(input.owner.userId).copyThreadHome({
-                parentThreadId: input.parentThreadId,
-                childThreadId: input.childThreadId,
-                projectId: input.appThread.projectId,
-                ownerId: input.owner.contextId,
-              }),
-            ),
+            (result): Effect.Effect<NativeChildBatchResult> =>
+              result._tag === "child_mismatch"
+                ? Effect.succeed(result)
+                : Effect.as(
+                    Effect.orDie(
+                      users.forUser(input.owner.userId).copyThreadHome({
+                        parentThreadId: input.parentThreadId,
+                        childThreadId: input.childThreadId,
+                        projectId: input.appThread.projectId,
+                        ownerId: input.owner.contextId,
+                      }),
+                    ),
+                    result,
+                  ),
           );
         },
       };

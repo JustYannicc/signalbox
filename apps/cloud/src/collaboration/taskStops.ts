@@ -1,9 +1,4 @@
-import {
-  CommandId,
-  type OrchestrationV2Run,
-  type OrchestratorMcpFailure,
-  type ThreadId,
-} from "@t3tools/contracts";
+import { CommandId, type OrchestrationV2Run, type ThreadId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import type { SqlError } from "effect/sql/SqlError";
@@ -11,6 +6,9 @@ import type { SqlError } from "effect/sql/SqlError";
 import { isLiveRun } from "../thread/runLifecycle.ts";
 import { collaborationFailure, type CollaborationAccess } from "./access.ts";
 import type { TaskRecords } from "./taskRecords.ts";
+import type { CollaborationError } from "./errors.ts";
+import { stopRunCommand } from "./stopCommand.ts";
+import { runContinuationChain } from "../thread/runContinuations.ts";
 
 export const makeTaskStops = (deps: {
   readonly access: CollaborationAccess;
@@ -25,7 +23,7 @@ export const makeTaskStops = (deps: {
       readonly clientRequestId?: string | undefined;
       readonly ownerStop?: boolean;
     } = {},
-  ): Effect.Effect<void, OrchestratorMcpFailure | SqlError> =>
+  ): Effect.Effect<void, CollaborationError | SqlError> =>
     Effect.gen(function* () {
       const found = yield* deps.access.read(parent, child).pipe(
         Effect.catchIf(
@@ -49,7 +47,7 @@ export const makeTaskStops = (deps: {
           stopRunTree(child, descendant.childThreadId, descendant.throughOrdinal, options),
         ),
       );
-      const stopRun = (run: OrchestrationV2Run): Effect.Effect<void, OrchestratorMcpFailure> => {
+      const stopRun = (run: OrchestrationV2Run): Effect.Effect<void, CollaborationError> => {
         const kind = run.status === "queued" ? "cancel" : "interrupt";
         const requestId =
           options.clientRequestId === undefined
@@ -59,20 +57,7 @@ export const makeTaskStops = (deps: {
         return deps.access.threads
           .dispatchCommand(
             found.caller.actor,
-            run.status === "queued"
-              ? {
-                  type: "queued-run.cancel",
-                  commandId: CommandId.make(requestId),
-                  threadId: child,
-                  runId: run.id,
-                }
-              : {
-                  type: "run.interrupt",
-                  commandId: CommandId.make(requestId),
-                  threadId: child,
-                  runId: run.id,
-                  ...(options.reason === undefined ? {} : { reason: options.reason }),
-                },
+            stopRunCommand(CommandId.make(requestId), run, options.reason),
           )
           .pipe(
             Effect.asVoid,
@@ -83,6 +68,15 @@ export const makeTaskStops = (deps: {
                   const current = updated.projection.runs.find(
                     (candidate) => candidate.id === run.id,
                   );
+                  const continuation = runContinuationChain(updated.projection.runs, current).at(
+                    -1,
+                  );
+                  if (
+                    continuation !== undefined &&
+                    continuation.id !== run.id &&
+                    (isLiveRun(continuation) || continuation.status === "queued")
+                  )
+                    return yield* stopRun(continuation);
                   if (current === undefined || (!isLiveRun(current) && current.status !== "queued"))
                     return;
                   // A queued run may start after the snapshot. Its interrupt needs a fresh receipt.
@@ -99,8 +93,12 @@ export const makeTaskStops = (deps: {
       };
       // Queued runs go first so interrupting the active run cannot start one of them.
       const runs = found.projection.runs
+        .filter((run) => run.ordinal <= throughOrdinal)
+        .flatMap((run) => runContinuationChain(found.projection.runs, run))
         .filter(
-          (run) => run.ordinal <= throughOrdinal && (run.status === "queued" || isLiveRun(run)),
+          (run, index, all) =>
+            (run.status === "queued" || isLiveRun(run)) &&
+            all.findIndex((candidate) => candidate.id === run.id) === index,
         )
         .toSorted(
           (a, b) =>

@@ -117,6 +117,7 @@ export type ThreadObjectReply<A> =
       readonly commandId: string;
       readonly commandType: string;
       readonly reason: string;
+      readonly code?: "run_changed" | "unavailable";
     };
 
 /** The thread's previews travel as newline-delimited JSON too, one snapshot per line. */

@@ -1,4 +1,4 @@
-import { ThreadId, OrchestratorMcpFailure } from "@t3tools/contracts";
+import { ThreadId } from "@t3tools/contracts";
 import {
   COLLABORATION_TOOLS,
   type CollaborationTool,
@@ -9,6 +9,7 @@ import * as Schema from "effect/Schema";
 import * as Option from "effect/Option";
 
 import { CloudCollaboration } from "./CloudCollaboration.ts";
+import { CollaborationError } from "./errors.ts";
 
 export const isCollaborationTool = (name: string): name is CollaborationTool =>
   Object.hasOwn(COLLABORATION_TOOLS, name);
@@ -19,7 +20,7 @@ export const collaborationTool = (threadId: string, name: CollaborationTool, inp
     const available = yield* Effect.serviceOption(CloudCollaboration);
     if (Option.isNone(available))
       return yield* Effect.fail(
-        new OrchestratorMcpFailure({
+        new CollaborationError({
           code: "capability_denied",
           message: "Cloud thread collaboration is unavailable.",
         }),
@@ -33,31 +34,39 @@ export const collaborationTool = (threadId: string, name: CollaborationTool, inp
     switch (name) {
       case "orchestrator_capabilities":
         return yield* call(COLLABORATION_TOOLS[name].input, (value) =>
-          service.capabilities(source, value),
+          service[COLLABORATION_TOOLS[name].method](source, value),
         );
       case "t3_thread_list":
-        return yield* call(COLLABORATION_TOOLS[name].input, (value) => service.list(source, value));
+        return yield* call(COLLABORATION_TOOLS[name].input, (value) =>
+          service[COLLABORATION_TOOLS[name].method](source, value),
+        );
       case "t3_thread_read":
-        return yield* call(COLLABORATION_TOOLS[name].input, (value) => service.read(source, value));
+        return yield* call(COLLABORATION_TOOLS[name].input, (value) =>
+          service[COLLABORATION_TOOLS[name].method](source, value),
+        );
       case "t3_thread_send":
-        return yield* call(COLLABORATION_TOOLS[name].input, (value) => service.send(source, value));
+        return yield* call(COLLABORATION_TOOLS[name].input, (value) =>
+          service[COLLABORATION_TOOLS[name].method](source, value),
+        );
       case "t3_thread_wait":
-        return yield* call(COLLABORATION_TOOLS[name].input, (value) => service.wait(source, value));
+        return yield* call(COLLABORATION_TOOLS[name].input, (value) =>
+          service[COLLABORATION_TOOLS[name].method](source, value),
+        );
       case "delegate_task":
         return yield* call(COLLABORATION_TOOLS[name].input, (value) =>
-          service.delegate(source, value),
+          service[COLLABORATION_TOOLS[name].method](source, value),
         );
       case "task_status":
         return yield* call(COLLABORATION_TOOLS[name].input, (value) =>
-          service.status(source, value),
+          service[COLLABORATION_TOOLS[name].method](source, value),
         );
       case "task_cancel":
         return yield* call(COLLABORATION_TOOLS[name].input, (value) =>
-          service.cancel(source, value),
+          service[COLLABORATION_TOOLS[name].method](source, value),
         );
       case "t3_thread_interrupt":
         return yield* call(COLLABORATION_TOOLS[name].input, (value) =>
-          service.interrupt(source, value),
+          service[COLLABORATION_TOOLS[name].method](source, value),
         );
     }
   }).pipe(
@@ -68,7 +77,7 @@ export const collaborationTool = (threadId: string, name: CollaborationTool, inp
           _tag: "failed",
           message: "Unreadable collaboration arguments.",
         }),
-      OrchestratorMcpFailure: (error) =>
+      CollaborationError: (error) =>
         Effect.succeed<ToolResult>({ _tag: "failed", message: error.message }),
     }),
   );

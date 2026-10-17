@@ -59,13 +59,13 @@ import { SIGNALBOX_COLLABORATION_SCOPES } from "@t3tools/contracts/signalboxColl
 type WsRpcMethod = RpcGroup.Rpcs<typeof WsRpcGroup>["_tag"];
 
 export const RPC_REQUIRED_SCOPES = {
-  ...SIGNALBOX_COLLABORATION_SCOPES,
+  ...SIGNALBOX_COLLABORATION_SCOPES, // signalbox: cloud collaboration
   ...SIGNALBOX_ANALYTICS_RPC_REQUIRED_SCOPES, // signalbox: analytics
   ...SIGNALBOX_CONTEXTS_REQUIRED_SCOPES, // signalbox: contexts
   ...SIGNALBOX_DRIVES_REQUIRED_SCOPES, // signalbox: drives
   ...SIGNALBOX_FOLDERS_REQUIRED_SCOPES, // signalbox: folders
   ...SIGNALBOX_NOTES_REQUIRED_SCOPES, // signalbox: notes
-  ...SIGNALBOX_SEARCH_REQUIRED_SCOPES,
+  ...SIGNALBOX_SEARCH_REQUIRED_SCOPES, // signalbox: thread search
   ...SIGNALBOX_THREAD_KINDS_REQUIRED_SCOPES, // signalbox: thread kinds
   ...SIGNALBOX_THREAD_STATUS_REQUIRED_SCOPES, // signalbox: status lines
   ...SIGNALBOX_PREVIEWS_REQUIRED_SCOPES, // signalbox: previews

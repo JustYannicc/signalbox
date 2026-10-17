@@ -59,6 +59,11 @@ export interface NativeChildBatchInput {
   readonly items: ReadonlyArray<ProviderRunnerItem>;
 }
 
+/** A refusal crosses the Durable Object boundary as data; storage failures still reject the RPC. */
+export type NativeChildBatchResult =
+  | { readonly _tag: "saved" }
+  | { readonly _tag: "child_mismatch" };
+
 export type NativeChildPending = typeof NativeChildPending.Type;
 
 export type NativeChildBatchInputAppThread = typeof OrchestrationV2AppThread.Type;

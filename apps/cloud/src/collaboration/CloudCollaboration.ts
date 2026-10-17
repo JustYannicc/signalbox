@@ -1,7 +1,6 @@
 import {
   CommandId,
   MessageId,
-  type OrchestratorMcpFailure,
   type OrchestrationV2ThreadProjection,
   type ThreadId,
 } from "@t3tools/contracts";
@@ -23,51 +22,53 @@ import * as Stream from "effect/Stream";
 import { threadShellFromProjection as threadShell } from "../thread/threadProjection.ts";
 import * as ThreadInbox from "../thread/ThreadInbox.ts";
 import { UserShell } from "../user/UserShell.ts";
-import { activeRun, isLiveRun } from "../thread/runLifecycle.ts";
+import {
+  activeRun,
+  isLiveRun,
+  isTerminalRunStatus,
+  isRunWaitBoundary,
+} from "../thread/runLifecycle.ts";
 import { makeAccess, collaborationFailure, refuse } from "./access.ts";
 import { listItem, readPage } from "./threadReads.ts";
 import { makeCapabilities } from "./capabilities.ts";
 import { makeTasks } from "./tasks.ts";
+import { stopRunCommand } from "./stopCommand.ts";
 import { makeTaskRecords } from "./taskRecords.ts";
-
-export type CollaborationService = {
-  readonly [M in CollaborationMethod]: (
-    sourceThreadId: ThreadId,
-    input: CollaborationInput<M>,
-  ) => Effect.Effect<CollaborationOutput<M>, OrchestratorMcpFailure>;
-};
-
-export type CollaborationLifecycle = {
-  readonly stopDescendants: (
-    parentThreadId: ThreadId,
-    parentOrdinal: number,
-  ) => Effect.Effect<void, OrchestratorMcpFailure>;
-  readonly completion: <A, E, R>(
-    childThreadId: ThreadId,
-    childOrdinal: number,
-    deliver: (disposition: {
-      readonly allowed: boolean;
-      readonly parentOrdinal: number | null;
-    }) => Effect.Effect<A, E, R>,
-  ) => Effect.Effect<A, E | SqlError, R>;
-};
+import type { CollaborationError } from "./errors.ts";
+import { runContinuationChain, runOrigin } from "../thread/runContinuations.ts";
 
 export class CloudCollaboration extends Context.Service<
   CloudCollaboration,
-  CollaborationService & CollaborationLifecycle
+  {
+    readonly [M in CollaborationMethod]: (
+      sourceThreadId: ThreadId,
+      input: CollaborationInput<M>,
+    ) => Effect.Effect<CollaborationOutput<M>, CollaborationError>;
+  } & {
+    readonly stopDescendants: (
+      parentThreadId: ThreadId,
+      parentOrdinal: number,
+    ) => Effect.Effect<void, CollaborationError>;
+    readonly completion: <A, E, R>(
+      childThreadId: ThreadId,
+      childOrdinal: number,
+      deliver: (disposition: {
+        readonly allowed: boolean;
+        readonly parentOrdinal: number | null;
+      }) => Effect.Effect<A, E, R>,
+    ) => Effect.Effect<A, E | SqlError, R>;
+  }
 >()("@signalbox/cloud/collaboration/CloudCollaboration") {}
 
 const latestRun = (projection: OrchestrationV2ThreadProjection) =>
   projection.runs.toSorted((a, b) => b.ordinal - a.ordinal)[0];
-const finished = (status: string) =>
-  !["queued", "preparing", "starting", "running"].includes(status);
 const encodeKey = Schema.encodeSync(Schema.fromJsonString(Schema.Array(Schema.String)));
 
 export const make = Effect.gen(function* () {
   const access = yield* makeAccess;
   const crypto = yield* Crypto.Crypto;
   const shellService = yield* UserShell;
-  const inbox = yield* ThreadInbox.make;
+  const inbox = yield* ThreadInbox.ThreadInbox;
   const records = yield* makeTaskRecords;
 
   /** A retry keeps its command and message ids, including after its first run finishes. */
@@ -84,9 +85,11 @@ export const make = Effect.gen(function* () {
       );
     });
 
-  const read: CollaborationService["read"] = (source, input) =>
+  const read: CloudCollaboration["Service"]["read"] = (source, input) =>
     Effect.gen(function* () {
       const { projection } = yield* access.read(source, input.threadId);
+      if (projection.thread.deletedAt !== null)
+        return yield* refuse("Thread not found.", "thread_not_found");
       if (
         input.itemId !== undefined &&
         !projection.turnItems.some((item) => item.id === input.itemId)
@@ -95,7 +98,7 @@ export const make = Effect.gen(function* () {
       return readPage(projection, input, yield* Clock.currentTimeMillis);
     });
 
-  const list: CollaborationService["list"] = (source, input) =>
+  const list: CloudCollaboration["Service"]["list"] = (source, input) =>
     Effect.gen(function* () {
       const caller = yield* access.source(source);
       const projectId = input.projectId ?? caller.projection.thread.projectId;
@@ -144,16 +147,17 @@ export const make = Effect.gen(function* () {
       };
     }).pipe(Effect.mapError(collaborationFailure));
 
-  const send: CollaborationService["send"] = (source, input) =>
+  const send: CloudCollaboration["Service"]["send"] = (source, input) =>
     Effect.gen(function* () {
       const { caller, projection } = yield* access.read(source, input.threadId);
       yield* access.writable(caller.projection, projection);
       const parentRun = activeRun(caller.projection) ?? latestRun(caller.projection);
+      const parentOrdinal = runOrigin(caller.projection.runs, parentRun)?.ordinal ?? 0;
       const ownedChild =
         projection.thread.lineage.relationshipToParent === "subagent" &&
         projection.thread.lineage.parentThreadId === source;
       if (
-        !(yield* records.canDelegate(source, parentRun?.ordinal ?? 0)) ||
+        !(yield* records.canDelegate(source, parentOrdinal)) ||
         (ownedChild && parentRun?.status === "interrupted")
       )
         return yield* refuse("This task was stopped. Start a new turn before sending work.");
@@ -181,21 +185,25 @@ export const make = Effect.gen(function* () {
         const updated = yield* access.read(source, input.threadId);
         const childRun = updated.projection.runs.find((run) => run.id === receipt.runId);
         if (childRun !== undefined)
-          yield* records.recordRun(source, parentRun.ordinal, input.threadId, childRun.ordinal);
+          yield* records.recordRun(source, parentOrdinal, input.threadId, childRun.ordinal);
       }
       return receipt;
     }).pipe(records.lock.withPermits(1), Effect.mapError(collaborationFailure));
 
-  const wait: CollaborationService["wait"] = (source, input) =>
+  const wait: CloudCollaboration["Service"]["wait"] = (source, input) =>
     Effect.gen(function* () {
       const first = yield* access.read(source, input.threadId);
+      if (first.projection.thread.deletedAt !== null)
+        return yield* refuse("Thread not found.", "thread_not_found");
       const runId = input.runId ?? latestRun(first.projection)?.id;
       if (input.runId !== undefined && !first.projection.runs.some((run) => run.id === input.runId))
-        return yield* refuse("Run not found.", "thread_not_found");
+        return yield* refuse("Run not found.", "run_not_found");
+      const observedRun = runContinuationChain(first.projection.runs, runId).at(-1);
       if (
         source === input.threadId &&
         runId !== undefined &&
-        !finished(first.projection.runs.find((run) => run.id === runId)!.status)
+        observedRun !== undefined &&
+        !isRunWaitBoundary(observedRun.status)
       )
         return yield* refuse("A thread can't wait for its own active tool call to finish.");
       const revoked = access.drives.changed.pipe(
@@ -207,14 +215,17 @@ export const make = Effect.gen(function* () {
           threadId: input.threadId,
           ...(runId === undefined ? {} : { runId }),
           ...(input.timeoutMs === undefined ? {} : { timeoutMs: input.timeoutMs }),
+          followRecovery: true,
         }),
         revoked,
       );
-      yield* access.read(source, input.threadId);
+      const after = yield* access.read(source, input.threadId);
+      if (after.projection.thread.deletedAt !== null)
+        return yield* refuse("Thread not found.", "thread_not_found");
       return result;
     }).pipe(Effect.mapError(collaborationFailure));
 
-  const interrupt: CollaborationService["interrupt"] = (source, input) =>
+  const interrupt: CloudCollaboration["Service"]["interrupt"] = (source, input) =>
     Effect.gen(function* () {
       const { caller, projection } = yield* access.read(source, input.threadId);
       yield* access.writable(caller.projection, projection);
@@ -223,13 +234,7 @@ export const make = Effect.gen(function* () {
           ? projection.runs.find(isLiveRun)
           : projection.runs.find((candidate) => candidate.id === input.runId);
       if (!run) return { threadId: input.threadId, runId: null, status: "no_active_run" as const };
-      if (
-        run.status === "completed" ||
-        run.status === "failed" ||
-        run.status === "interrupted" ||
-        run.status === "cancelled" ||
-        run.status === "rolled_back"
-      )
+      if (isTerminalRunStatus(run.status))
         return { threadId: input.threadId, runId: run.id, status: run.status };
       const operation = yield* key(
         source,
@@ -238,20 +243,7 @@ export const make = Effect.gen(function* () {
       );
       yield* access.threads.dispatchCommand(
         caller.actor,
-        run.status === "queued"
-          ? {
-              type: "queued-run.cancel",
-              commandId: CommandId.make(operation),
-              threadId: input.threadId,
-              runId: run.id,
-            }
-          : {
-              type: "run.interrupt",
-              commandId: CommandId.make(operation),
-              threadId: input.threadId,
-              runId: run.id,
-              ...(input.reason === undefined ? {} : { reason: input.reason }),
-            },
+        stopRunCommand(CommandId.make(operation), run, input.reason),
       );
       return { threadId: input.threadId, runId: run.id, status: "interrupt_requested" as const };
     }).pipe(Effect.mapError(collaborationFailure));

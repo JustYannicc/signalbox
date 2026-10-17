@@ -657,12 +657,11 @@ export const layerHandlers = (input: {
           ),
         [ORCHESTRATION_V2_WS_METHODS.getTurnItem]: (request) =>
           threadCall(
-            Effect.flatMap(actorNow, (actor) =>
-              threads.threadSnapshot(actor, request.threadId),
-            ).pipe(
-              Effect.map(({ projection }) => ({
-                item: projection.turnItems.find((item) => item.id === request.itemId) ?? null,
-              })),
+            Effect.map(
+              Effect.flatMap(actorNow, (actor) =>
+                threads.getTurnItem(actor, request.threadId, request.itemId),
+              ),
+              (item) => ({ item }),
             ),
             (message) =>
               new OrchestrationV2GetThreadProjectionError({ threadId: request.threadId, message }),

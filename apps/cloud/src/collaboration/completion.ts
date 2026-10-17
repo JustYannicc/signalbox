@@ -7,12 +7,13 @@ import {
   ThreadId,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
-import * as Option from "effect/Option";
 
 import * as ThreadInbox from "../thread/ThreadInbox.ts";
 import { CloudThreadService } from "../thread/CloudThreadService.ts";
 import { UserDrives } from "../user/UserDrives.ts";
 import { CloudCollaboration } from "./CloudCollaboration.ts";
+import { runContinuationChain } from "../thread/runContinuations.ts";
+import { isTerminalRunStatus } from "../thread/runLifecycle.ts";
 
 const wasStopped = (
   projection: OrchestrationV2ThreadProjection,
@@ -34,38 +35,35 @@ export const deliverCompletion = (
       event.type === "run.updated" && event.payload.status === "interrupted" ? [event.payload] : [],
     );
     const terminal = events.some(
-      ({ event }) =>
-        event.type === "run.updated" &&
-        event.payload.ordinal === 1 &&
-        ["completed", "failed", "cancelled", "interrupted"].includes(event.payload.status),
+      ({ event }) => event.type === "run.updated" && isTerminalRunStatus(event.payload.status),
     );
     if (!terminal && stopEvents.length === 0) return;
-    const threads = yield* Effect.serviceOption(CloudThreadService);
-    const drives = yield* Effect.serviceOption(UserDrives);
-    if (Option.isNone(threads) || Option.isNone(drives)) return;
-    const userId = yield* drives.value.userId;
+    const threads = yield* CloudThreadService;
+    const drives = yield* UserDrives;
+    const userId = yield* drives.userId;
     if (userId === null) return;
-    const actor = { userId, contextIds: yield* drives.value.contextIds };
+    const actor = { userId, contextIds: yield* drives.contextIds };
     const childId = ThreadId.make(threadId);
-    const { projection } = yield* threads.value.threadSnapshot(actor, childId);
-    const collaboration = yield* Effect.serviceOption(CloudCollaboration);
-    if (Option.isSome(collaboration))
-      for (const run of stopEvents)
-        if (wasStopped(projection, run))
-          yield* collaboration.value.stopDescendants(childId, run.ordinal);
+    const { projection } = yield* threads.threadSnapshot(actor, childId);
+    const collaboration = yield* CloudCollaboration;
+    for (const run of stopEvents)
+      if (wasStopped(projection, run)) yield* collaboration.stopDescendants(childId, run.ordinal);
     if (!terminal) return;
     const { lineage } = projection.thread;
     const parentThreadId = lineage.parentThreadId;
     if (lineage.relationshipToParent !== "subagent" || parentThreadId === null) return;
-    const run = projection.runs.find((candidate) => candidate.ordinal === 1);
-    if (run === undefined) return;
+    const original = projection.runs.find((candidate) => candidate.ordinal === 1);
+    const run = runContinuationChain(projection.runs, original).at(-1);
+    if (original === undefined || run === undefined || !isTerminalRunStatus(run.status)) return;
+    if (!events.some(({ event }) => event.type === "run.updated" && event.payload.id === run.id))
+      return;
     const deliver = (disposition: {
       readonly allowed: boolean;
       readonly parentOrdinal: number | null;
     }) =>
       Effect.gen(function* () {
         if (!disposition.allowed) return;
-        const parent = yield* threads.value.threadSnapshot(actor, parentThreadId);
+        const parent = yield* threads.threadSnapshot(actor, parentThreadId);
         if (
           parent.projection.thread.archivedAt !== null ||
           parent.projection.thread.deletedAt !== null
@@ -87,8 +85,8 @@ export const deliverCompletion = (
         const summary =
           messages.at(-1)?.text ??
           `The child ended with status ${run.status}. Read its activity for details.`;
-        const id = `cloud-task-result:${childId}:${run.id}`;
-        const inbox = yield* ThreadInbox.make;
+        const id = `cloud-task-result:${childId}:${original.id}`;
+        const inbox = yield* ThreadInbox.ThreadInbox;
         yield* inbox.post(
           actor,
           {
@@ -106,13 +104,16 @@ export const deliverCompletion = (
           parentRun === undefined ? null : { id: parentRun.id, status: parentRun.status },
         );
       });
-    if (Option.isSome(collaboration))
-      yield* collaboration.value.completion(childId, run.ordinal, deliver);
-    else yield* deliver({ allowed: true, parentOrdinal: null });
+    yield* collaboration.completion(childId, original.ordinal, deliver);
   }).pipe(
     // Losing access must not keep a child's outbox retrying a private result forever.
     Effect.catchTags({
       ThreadNotFoundError: () => Effect.void,
-      ThreadInboxError: (error) => (error.code === "not_found" ? Effect.void : Effect.fail(error)),
+      ThreadInboxError: (error) =>
+        error.code === "not_found"
+          ? Effect.void
+          : error.code === "rejected"
+            ? Effect.logWarning("Child result delivery was permanently refused.", { cause: error })
+            : Effect.fail(error),
     }),
   );

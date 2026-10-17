@@ -62,7 +62,7 @@ const setup = (
           return { _tag: "ok", value: { sequence: 1 } };
         },
         launch: async () => ({ _tag: "not_found" }),
-        recordNativeChildBatch: async () => {},
+        recordNativeChildBatch: async () => ({ _tag: "saved" }),
         snapshot: async () => ({ _tag: "not_found" }),
         subscribe: async () => null,
         summary: async () => null,

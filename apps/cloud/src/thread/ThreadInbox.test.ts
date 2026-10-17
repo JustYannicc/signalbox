@@ -2,6 +2,8 @@ import { describe, expect, it } from "@effect/vitest";
 import { CommandId, MessageId, ThreadId } from "@t3tools/contracts";
 import { PERSONAL_CONTEXT_ID } from "@t3tools/contracts/signalboxContexts";
 import * as Deferred from "effect/Deferred";
+import * as Clock from "effect/Clock";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Stream from "effect/Stream";
@@ -12,6 +14,9 @@ import { CloudThreadService } from "./CloudThreadService.ts";
 import { ThreadCommandRejectedError } from "./ThreadEngine.ts";
 import * as ThreadInbox from "./ThreadInbox.ts";
 import { scriptedModelSelection } from "./scriptedProvider.ts";
+import { scriptedStep } from "./scriptedTurn.ts";
+import { recoverRunEvents } from "./runner/runRecovery.ts";
+import { applyEvents } from "./threadProjection.ts";
 
 const actor = { userId: "inbox-user", contextIds: [PERSONAL_CONTEXT_ID] };
 const threadId = ThreadId.make("inbox-thread");
@@ -48,6 +53,60 @@ const setup = Effect.gen(function* () {
 });
 
 describe("thread inbox", () => {
+  it.effect("waits through recovery and returns the continuation's committed result", () =>
+    Effect.gen(function* () {
+      const { cloud, threads, inbox } = yield* setup;
+      const receipt = yield* inbox.post(actor, message);
+      const before = yield* threads.threadSnapshot(actor, threadId);
+      const context = { now: DateTime.makeUnsafe(yield* Clock.currentTimeMillis) };
+      const started = applyEvents(before.projection, scriptedStep(before.projection, context))!;
+      const original = started.runs.find((run) => run.id === receipt.runId)!;
+      const recovered = applyEvents(started, recoverRunEvents(started, original, context))!;
+      let finished = recovered;
+      for (let step = 0; step < 20 && finished.runs.at(-1)?.status !== "completed"; step++)
+        finished = applyEvents(finished, scriptedStep(finished, context))!;
+      expect(finished.runs.at(-1)?.status).toBe("completed");
+      const controlled = yield* ThreadInbox.make.pipe(
+        Effect.provideService(CloudThreadService, {
+          ...threads,
+          threadSnapshot: () => Effect.succeed({ ...before, projection: started }),
+          subscribeThread: () =>
+            Stream.make(
+              [{ kind: "snapshot" as const, snapshotSequence: 100, projection: recovered }],
+              [{ kind: "snapshot" as const, snapshotSequence: 200, projection: finished }],
+            ),
+        }),
+        Effect.provide(cloud.layerFor(actor.userId)),
+      );
+      const answer = yield* controlled.wait(actor, {
+        threadId,
+        runId: original.id,
+        followRecovery: true,
+      });
+      expect(answer).toMatchObject({
+        runId: finished.runs.at(-1)?.id,
+        status: "completed",
+        timedOut: false,
+        sequence: 200,
+        result: { text: expect.stringContaining("Continue where you left off.") },
+      });
+    }),
+  );
+
+  it.effect("distinguishes a run race from a saved refusal and retries the same message", () =>
+    Effect.gen(function* () {
+      const { inbox } = yield* setup;
+      yield* inbox.post(actor, message);
+      const next = { ...message, messageId: MessageId.make("next-message"), text: "NEXT_RESULT" };
+      const failure = yield* Effect.flip(inbox.post(actor, next, null));
+      expect(failure.code).toBe("run_changed");
+      const current = (yield* inbox.read(actor, threadId)).runs[0]!;
+      const accepted = yield* inbox.post(actor, next, { id: current.id, status: current.status });
+      expect(accepted.delivery).toBe("queued");
+      expect((yield* inbox.read(actor, threadId)).runs).toHaveLength(2);
+    }),
+  );
+
   it.effect("deduplicates delivery by message id across command ids and service recreation", () =>
     Effect.gen(function* () {
       const { cloud, threads, inbox } = yield* setup;

@@ -35,7 +35,12 @@ import { applyEvents } from "./threadProjection.ts";
 
 export type Decision =
   | { readonly _tag: "accepted"; readonly events: ReadonlyArray<OrchestrationV2DomainEvent> }
-  | { readonly _tag: "rejected"; readonly message: string; readonly record?: boolean };
+  | {
+      readonly _tag: "rejected";
+      readonly message: string;
+      readonly record?: boolean;
+      readonly code?: "run_changed";
+    };
 
 const accept = (events: ReadonlyArray<OrchestrationV2DomainEvent>): Decision => ({
   _tag: "accepted",
@@ -258,10 +263,12 @@ export function decide(
   if (expected.run !== undefined) {
     const latest = projection.runs.toSorted((a, b) => b.ordinal - a.ordinal)[0];
     if (latest?.id !== expected.run?.id || latest?.status !== expected.run?.status)
-      return reject(
-        "The thread's run changed before delivery. Retry with its current state.",
-        false,
-      );
+      return {
+        _tag: "rejected",
+        message: "The thread's run changed before delivery. Retry with its current state.",
+        record: false,
+        code: "run_changed",
+      };
   }
   switch (command.type) {
     case "message.dispatch":

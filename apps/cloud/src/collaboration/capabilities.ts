@@ -6,13 +6,13 @@ import { makePoolModelCatalog } from "../pool/poolModelCatalog.ts";
 import { forThread } from "../thread/turnPool.ts";
 import { UserPools } from "../user/UserPools.ts";
 import { collaborationFailure, type CollaborationAccess } from "./access.ts";
-import type { CollaborationService } from "./CloudCollaboration.ts";
+import type { CloudCollaboration } from "./CloudCollaboration.ts";
 
 export const makeCapabilities = (access: CollaborationAccess) =>
   Effect.gen(function* () {
     const pools = yield* UserPools;
     const poolModelCatalog = yield* makePoolModelCatalog;
-    const capabilities: CollaborationService["capabilities"] = (
+    const capabilities: CloudCollaboration["Service"]["capabilities"] = (
       source,
       _input: CollaborationInput<"capabilities">,
     ) =>

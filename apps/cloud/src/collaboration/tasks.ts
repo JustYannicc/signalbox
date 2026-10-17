@@ -1,81 +1,19 @@
-import {
-  CommandId,
-  MessageId,
-  NodeId,
-  ThreadId,
-  type OrchestrationV2ThreadProjection,
-  type OrchestrationV2Run,
-  type OrchestratorMcpDelegateTaskResult,
-} from "@t3tools/contracts";
+import { CommandId, MessageId, NodeId, ThreadId } from "@t3tools/contracts";
 import { runtimeModeWithin } from "@signalbox/automations/access";
 import type { CollaborationInput } from "@t3tools/contracts/signalboxCollaboration";
 import * as Effect from "effect/Effect";
 
 import type * as ThreadInbox from "../thread/ThreadInbox.ts";
 import { poolKindOfInstance } from "../thread/providerCatalog.ts";
-import { activeRun, isLiveRun } from "../thread/runLifecycle.ts";
+import { activeRun, isTerminalRunStatus } from "../thread/runLifecycle.ts";
+import { runOrigin } from "../thread/runContinuations.ts";
 import type { TaskRecords } from "./taskRecords.ts";
 import { makeTaskStops } from "./taskStops.ts";
 import { collaborationFailure, refuse, type CollaborationAccess } from "./access.ts";
-import type { CollaborationLifecycle, CollaborationService } from "./CloudCollaboration.ts";
+import type { CloudCollaboration } from "./CloudCollaboration.ts";
+import { taskResult } from "./taskRuns.ts";
 
 const TASK_PREFIX = "cloud-task:";
-
-const taskResult = (
-  projection: OrchestrationV2ThreadProjection,
-): OrchestratorMcpDelegateTaskResult => {
-  const { thread } = projection;
-  const run = projection.runs.toSorted((a, b) => a.ordinal - b.ordinal)[0];
-  const latest = projection.runs
-    .toSorted((a, b) => b.ordinal - a.ordinal)
-    .find((candidate) => !isLiveRun(candidate) && candidate.status !== "queued");
-  const summaryOf = (runId: string | undefined) => {
-    const messages = projection.messages.filter(
-      (message) => message.runId === runId && message.role === "assistant" && !message.streaming,
-    );
-    const error = projection.turnItems.find(
-      (item) => item.runId === runId && item.type === "error",
-    );
-    return messages.at(-1)?.text ?? (error?.type === "error" ? error.failure.message : null);
-  };
-  const statusOf = (status: OrchestrationV2Run["status"]) =>
-    status === "preparing" || status === "starting"
-      ? ("running" as const)
-      : status === "rolled_back"
-        ? ("interrupted" as const)
-        : status;
-  const status = run === undefined ? "queued" : statusOf(run.status);
-  const terminal =
-    status === "completed" ||
-    status === "failed" ||
-    status === "cancelled" ||
-    status === "interrupted";
-  return {
-    taskId: NodeId.make(`${TASK_PREFIX}${thread.id}`),
-    childThreadId: thread.id,
-    childRunId: run?.id ?? null,
-    childNodeId: run?.rootNodeId ?? NodeId.make(`node:${thread.id}:pending`),
-    status,
-    workState: terminal ? "result_available" : "working",
-    hasPendingChildRuns: projection.runs.some(
-      (candidate) =>
-        candidate.id !== run?.id && (isLiveRun(candidate) || candidate.status === "queued"),
-    ),
-    latestTerminalRunId: latest?.id ?? null,
-    latestTerminalStatus:
-      latest === undefined
-        ? null
-        : (statusOf(latest.status) as OrchestratorMcpDelegateTaskResult["latestTerminalStatus"]),
-    latestTerminalSummary: latest === undefined ? null : summaryOf(latest.id),
-    latestTerminalResultContextTransferId: null,
-    providerInstanceId: run?.providerInstanceId ?? thread.providerInstanceId,
-    model: run?.modelSelection.model ?? thread.modelSelection.model,
-    summary: terminal ? summaryOf(run?.id) : null,
-    resultContextTransferId: null,
-    hasPendingQuestion: projection.runtimeRequests.some((request) => request.status === "pending"),
-    waitTimedOut: false,
-  };
-};
 
 export const makeTasks = (deps: {
   readonly access: CollaborationAccess;
@@ -85,8 +23,8 @@ export const makeTasks = (deps: {
     operation: string,
     request: string | undefined,
   ) => Effect.Effect<string>;
-  readonly wait: CollaborationService["wait"];
-  readonly capabilities: CollaborationService["capabilities"];
+  readonly wait: CloudCollaboration["Service"]["wait"];
+  readonly capabilities: CloudCollaboration["Service"]["capabilities"];
   readonly records: TaskRecords;
 }) => {
   const ownedTask = (source: ThreadId, taskId: string) =>
@@ -103,15 +41,21 @@ export const makeTasks = (deps: {
       return found;
     });
 
-  const status: CollaborationService["status"] = (source, input) =>
-    ownedTask(source, input.taskId).pipe(Effect.map(({ projection }) => taskResult(projection)));
+  const status: CloudCollaboration["Service"]["status"] = (source, input) =>
+    Effect.gen(function* () {
+      const { projection } = yield* ownedTask(source, input.taskId);
+      if (projection.thread.deletedAt !== null)
+        return yield* refuse("Task not found.", "task_not_found");
+      return taskResult(projection);
+    });
 
-  const delegate: CollaborationService["delegate"] = (source, input) =>
+  const delegate: CloudCollaboration["Service"]["delegate"] = (source, input) =>
     Effect.gen(function* () {
       const caller = yield* deps.access.source(source);
       const active = activeRun(caller.projection);
       const latest = caller.projection.runs.toSorted((a, b) => b.ordinal - a.ordinal)[0];
-      const ordinal = active?.ordinal ?? latest?.ordinal ?? 0;
+      const sourceRun = runOrigin(caller.projection.runs, active ?? latest);
+      const ordinal = sourceRun?.ordinal ?? 0;
       if (input.isolation === "shared")
         return yield* refuse(
           "Cloud child threads have their own branch. Omit isolation or use worktree.",
@@ -127,6 +71,8 @@ export const makeTasks = (deps: {
       if (existing !== null) {
         if (existing.projection.thread.lineage.parentThreadId !== source)
           return yield* refuse("Task not found.", "task_not_found");
+        if (existing.projection.thread.deletedAt !== null)
+          return yield* status(source, { taskId: NodeId.make(`${TASK_PREFIX}${childId}`) });
         if (!(yield* deps.records.canDelegate(childId, 1)))
           return yield* status(source, { taskId: NodeId.make(`${TASK_PREFIX}${childId}`) });
         if (
@@ -245,7 +191,7 @@ export const makeTasks = (deps: {
       return yield* status(source, { taskId });
     }).pipe(deps.records.lock.withPermits(1), Effect.mapError(collaborationFailure));
 
-  const delegateAndWait: CollaborationService["delegate"] = (source, input) =>
+  const delegateAndWait: CloudCollaboration["Service"]["delegate"] = (source, input) =>
     Effect.gen(function* () {
       const initial = yield* delegate(source, input);
       if (input.mode !== "wait" || initial.workState === "result_available") return initial;
@@ -262,13 +208,13 @@ export const makeTasks = (deps: {
 
   const { stopRunTree, stopDescendants } = makeTaskStops(deps);
 
-  const completion: CollaborationLifecycle["completion"] = (child, childOrdinal, deliver) =>
+  const completion: CloudCollaboration["Service"]["completion"] = (child, childOrdinal, deliver) =>
     Effect.gen(function* () {
       const disposition = yield* deps.records.completion(child, childOrdinal);
       return yield* deliver(disposition);
     }).pipe(deps.records.lock.withPermits(1));
 
-  const cancel: CollaborationService["cancel"] = (source, input) =>
+  const cancel: CloudCollaboration["Service"]["cancel"] = (source, input) =>
     Effect.gen(function* () {
       const { projection } = yield* ownedTask(source, input.taskId);
       yield* stopRunTree(
@@ -277,17 +223,11 @@ export const makeTasks = (deps: {
         Math.max(0, ...projection.runs.map((run) => run.ordinal)),
         input,
       );
-      const after = yield* status(source, { taskId: input.taskId });
-      const state = after.status;
+      const after = yield* ownedTask(source, input.taskId);
+      const state = taskResult(after.projection).status;
       return {
         taskId: input.taskId,
-        status:
-          state === "completed" ||
-          state === "failed" ||
-          state === "cancelled" ||
-          state === "interrupted"
-            ? state
-            : ("cancel_requested" as const),
+        status: isTerminalRunStatus(state) ? state : ("cancel_requested" as const),
       };
     }).pipe(Effect.mapError(collaborationFailure));
   return {

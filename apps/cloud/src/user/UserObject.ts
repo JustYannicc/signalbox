@@ -39,13 +39,14 @@ import * as Platform from "../platform.ts";
 import * as PoolDirectory from "../pool/PoolDirectory.ts";
 import * as UserPreviewSetup from "../previewSetup/UserPreviewSetup.ts";
 import * as PushNotifier from "../push/PushNotifier.ts";
-import { layer as layerCollaboration } from "../collaboration/CloudCollaboration.ts";
+import * as CloudCollaboration from "../collaboration/CloudCollaboration.ts";
 import * as ThreadSearch from "../search/ThreadSearch.ts";
 import * as SearchCursors from "../search/SearchCursors.ts";
 import * as SearchAuthority from "../search/SearchAuthority.ts";
 import * as SearchBackfill from "../search/SearchBackfill.ts";
 import * as CloudflareSearchIndex from "../search/CloudflareSearchIndex.ts";
 import * as CloudThreadService from "../thread/CloudThreadService.ts";
+import * as ThreadInbox from "../thread/ThreadInbox.ts";
 import * as ModelManifest from "../thread/ModelManifest.ts";
 import { scriptedProviderEnabled } from "../thread/scriptedProvider.ts";
 import type { MachineBackendEnv } from "../thread/runner/MachineBackend.ts";
@@ -206,7 +207,7 @@ const makeRuntime = (storage: DurableObjectStorage, env: UserObjectEnv) => {
       Layer.orDie,
       Layer.provideMerge(
         Layer.mergeAll(
-          layerCollaboration,
+          CloudCollaboration.layer,
           GitHubBranches.layer,
           GitHubActions.layer,
           UserPreviewSetup.layer,
@@ -228,7 +229,7 @@ const makeRuntime = (storage: DurableObjectStorage, env: UserObjectEnv) => {
             Layer.mergeAll(
               UserShell.layer,
               UserThreadStatus.layer,
-              CloudThreadService.layer,
+              ThreadInbox.layer.pipe(Layer.provideMerge(CloudThreadService.layer)),
               ThreadSearch.layer.pipe(
                 Layer.provide(Layer.mergeAll(SearchAuthority.layerUser, SearchCursors.layerSql)),
               ),

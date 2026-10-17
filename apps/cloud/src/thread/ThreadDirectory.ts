@@ -33,7 +33,11 @@ import type {
 import type { BrowsingDispatched } from "./browsing/ThreadBrowsing.ts";
 import type { SearchBackfillProgress, SearchThreadDocuments } from "./ThreadEngine.ts";
 import { browsingWire } from "./browsing/browsingWire.ts";
-import { nativeChildBatchWire, type NativeChildBatchInput } from "./runner/nativeChildBatch.ts";
+import {
+  nativeChildBatchWire,
+  type NativeChildBatchInput,
+  type NativeChildBatchResult,
+} from "./runner/nativeChildBatch.ts";
 import type { PreviewLinkResult } from "./preview/PreviewGateway.ts";
 import type {
   DriveAuthorization,
@@ -107,7 +111,7 @@ export interface ThreadObjectApi {
     creation: ThreadCreation,
   ) => Promise<ThreadObjectReply<unknown>>;
   /** Internal Runner relay; it does not create or start a provider turn. */
-  readonly recordNativeChildBatch: (input: unknown) => Promise<void>;
+  readonly recordNativeChildBatch: (input: unknown) => Promise<NativeChildBatchResult>;
   readonly snapshot: (actor: Actor) => Promise<ThreadObjectReply<unknown>>;
   /** Newline-delimited JSON batches, or null when the actor cannot see the thread. */
   readonly subscribe: (actor: Actor, input: unknown) => Promise<ReadableStream<Uint8Array> | null>;
@@ -202,7 +206,7 @@ export interface ThreadHandle {
   /** Saves a provider-native child transcript batch on the child's own object. */
   readonly recordNativeChildBatch: (
     input: NativeChildBatchInput,
-  ) => Effect.Effect<void, ThreadObjectError>;
+  ) => Effect.Effect<NativeChildBatchResult, ThreadObjectError>;
   readonly snapshot: (
     actor: Actor,
   ) => Effect.Effect<ThreadSnapshot, ThreadNotFoundError | ThreadObjectError>;
@@ -325,6 +329,7 @@ const fromReply = <A>(
         ThreadCommandRejectedError.forCommand(
           { id: reply.commandId, type: reply.commandType },
           reply.reason,
+          reply.code,
         ),
       );
   }
