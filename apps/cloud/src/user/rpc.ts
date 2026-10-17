@@ -609,13 +609,14 @@ export const layerHandlers = (input: {
             Effect.map(actorNow, (actor) => coreThreads.commandOutput(actor, request)),
           ).pipe(
             Stream.interruptWhen(lostSight(request.threadId)),
-            Stream.mapError(
-              (cause) =>
-                new OrchestrationV2CommandOutputError({
-                  threadId: request.threadId,
-                  message: "Couldn't read this command's output. It may no longer be available.",
-                  cause,
-                }),
+            Stream.mapError((cause) =>
+              cause._tag === "OrchestrationV2CommandOutputError"
+                ? cause
+                : new OrchestrationV2CommandOutputError({
+                    threadId: request.threadId,
+                    message: "Couldn't read this command's output. It may no longer be available.",
+                    cause,
+                  }),
             ),
           ),
         [ORCHESTRATION_V2_WS_METHODS.getThreadProjection]: (request) =>

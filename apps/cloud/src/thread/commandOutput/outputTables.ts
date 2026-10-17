@@ -74,6 +74,22 @@ export const writeCommandOutput = (
   Effect.gen(function* () {
     if (seeds.length === 0 && deltas.length === 0) return;
     const sql = yield* SqlClient.SqlClient;
+    const pending = new Map<
+      string,
+      { readonly key: CommandOutputKey; readonly seeded: boolean; readonly chunks: Array<string> }
+    >();
+    const keyOf = (key: CommandOutputKey) => JSON.stringify([key.itemId, key.runId]);
+    for (const key of seeds) {
+      pending.set(keyOf(key), { key, seeded: true, chunks: [] });
+    }
+    for (const delta of deltas) {
+      const id = keyOf(delta);
+      const group = pending.get(id) ?? { key: delta, seeded: false, chunks: [] };
+      group.chunks.push(delta.chunk);
+      // Writes follow the last use of each command, preserving eviction order.
+      pending.delete(id);
+      pending.set(id, group);
+    }
     const write = (key: CommandOutputKey, output: RetainedCommandOutput) =>
       sql`INSERT INTO command_output (item_id, run_id, resume_text, truncated, has_chunks, revision)
         SELECT ${key.itemId}, ${key.runId}, ${output.text}, ${output.truncated ? 1 : 0}, ${output.hasChunks ? 1 : 0},
@@ -81,10 +97,12 @@ export const writeCommandOutput = (
         ON CONFLICT (item_id) DO UPDATE SET run_id = excluded.run_id,
           resume_text = excluded.resume_text, truncated = excluded.truncated, has_chunks = excluded.has_chunks,
           revision = excluded.revision`;
-    for (const key of seeds) yield* write(key, { text: "", truncated: false });
-    for (const delta of deltas) {
-      const previous = yield* readCommandOutput(delta);
-      yield* write(delta, appendRetainedOutput(previous, delta.chunk));
+    for (const { key, seeded, chunks } of pending.values()) {
+      const previous = seeded
+        ? { text: "", truncated: false, hasChunks: false }
+        : yield* readCommandOutput(key);
+      const output = chunks.length > 0 ? appendRetainedOutput(previous, chunks) : previous;
+      if (output !== null) yield* write(key, output);
     }
     yield* sql`DELETE FROM command_output WHERE item_id NOT IN (
       SELECT item_id FROM command_output ORDER BY revision DESC LIMIT ${MAX_COMMAND_OUTPUT_TAILS}

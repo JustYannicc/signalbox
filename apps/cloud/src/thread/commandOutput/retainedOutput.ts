@@ -75,12 +75,12 @@ function legacyOutput(output: string) {
 
 export function appendRetainedOutput(
   previous: RetainedCommandOutput | null,
-  chunk: string,
+  chunks: ReadonlyArray<string>,
 ): RetainedCommandOutput {
   // Resume text includes the cursor and unfinished escape. Do not normalize it
   // before appending, or a restart changes what the next raw chunk means.
-  const restored = appendTerminalOutput(EMPTY_TERMINAL_OUTPUT, previous?.text ?? "");
-  const next = appendTerminalOutput(restored, chunk);
+  let next = appendTerminalOutput(EMPTY_TERMINAL_OUTPUT, previous?.text ?? "");
+  for (const chunk of chunks) next = appendTerminalOutput(next, chunk);
   return {
     text: terminalOutputResumeText(next),
     hasChunks: true,

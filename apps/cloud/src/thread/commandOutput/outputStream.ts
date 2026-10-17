@@ -35,12 +35,12 @@ export const commandOutputStream = (
           const before = previous;
           previous = frame;
           const suffix = frame.text.slice(before.text.length);
+          // Resume snapshots are replayable terminal input, including split escapes.
+          // Extending their shared prefix preserves the client's terminal state.
           return frame.running &&
             !frame.truncated &&
             !before.truncated &&
             frame.text.startsWith(before.text) &&
-            !frame.text.includes("\u001b") &&
-            !before.text.includes("\u001b") &&
             suffix.length > 0 &&
             suffix.length <= 16 * 1024
             ? { ...frame, kind: "append" as const, text: suffix }

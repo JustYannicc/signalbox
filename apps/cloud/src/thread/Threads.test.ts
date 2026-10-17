@@ -82,7 +82,10 @@ describe("Threads", () => {
         expect(Exit.isFailure(result)).toBe(running);
         if (Exit.isFailure(result)) {
           expect(Exit.findErrorOption(result)).toMatchObject({
-            value: { _tag: "OrchestrationV2CommandOutputError" },
+            value: {
+              _tag: "OrchestrationV2CommandOutputError",
+              message: "Lost the command output stream. Reopen it to read the retained output.",
+            },
           });
         }
       }

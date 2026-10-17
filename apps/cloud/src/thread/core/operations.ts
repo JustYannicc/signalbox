@@ -296,6 +296,14 @@ export const makeThreads = Effect.gen(function* () {
         .forThread(input.threadId)
         .commandOutput(actor, input)
         .pipe(
+          Stream.mapError(
+            (cause) =>
+              new OrchestrationV2CommandOutputError({
+                threadId: input.threadId,
+                message: "Couldn't read this command's output. It may no longer be available.",
+                cause,
+              }),
+          ),
           Stream.concat(
             Stream.fail(
               new OrchestrationV2CommandOutputError({
@@ -305,14 +313,6 @@ export const makeThreads = Effect.gen(function* () {
             ),
           ),
           Stream.takeUntil((frame) => !frame.running),
-          Stream.mapError(
-            (cause) =>
-              new OrchestrationV2CommandOutputError({
-                threadId: input.threadId,
-                message: "Couldn't read this command's output. It may no longer be available.",
-                cause,
-              }),
-          ),
         ),
   });
 });
