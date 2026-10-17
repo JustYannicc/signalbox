@@ -26,10 +26,11 @@ automatically; Codex commands use their exact runtime thread ID. Commands withou
 an agent owner get a separate ID, so ending an agent session cannot stop a person's server.
 Review and trust the repository hooks when the harness prompts, so session cleanup can run.
 Claude native subagents inherit their parent's environment. While children are active,
-both `agents:run` and `agents:stop` require the explicit `--session-id` from the hook context.
+`agents:run` requires the explicit `--session-id` from the hook context.
 
-`vp run agents:stop` stops your session's registrations, using the harness environment
-or an explicit `--session-id <id>`. It refuses to stop without a session ID. Pass `--all`
+`vp run agents:stop` stops your session's registrations using Codex's exact runtime
+thread ID or an explicit `--session-id <id>`. Claude stops always need the explicit ID
+from the hook context, because an inherited environment cannot prove ownership. Pass `--all`
 only when you intend to stop every registration in the checkout, including other sessions.
 `vp run agents:reap` retries stale registrations across the repository, and `vp run agents:status --all` shows
 registered PIDs, ports, memory and CPU. These commands check process identity and cwd before

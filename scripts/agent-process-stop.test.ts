@@ -57,6 +57,14 @@ it.effect("stops only the selected session unless every registration is explicit
         expect((await processOps.inspect(developer!.child.pid!)).state).toBe("running");
 
         await recordSession(cwd, "agent-session", false, "agent-session");
+        await expect(
+          execute(process.execPath, [command, "stop"], {
+            cwd,
+            env: { ...environment, SIGNALBOX_PROCESS_SESSION_ID: "agent-session" },
+          }),
+        ).rejects.toThrow("Stopping processes requires --session-id");
+        expect((await processOps.inspect(agent!.child.pid!)).state).toBe("running");
+        expect((await processOps.inspect(developer!.child.pid!)).state).toBe("running");
         const unboundChild = await execute(process.execPath, [command, "stop"], {
           cwd,
           env: {
@@ -79,7 +87,7 @@ it.effect("stops only the selected session unless every registration is explicit
         const inherited = { ...environment, SIGNALBOX_PROCESS_SESSION_ID: "agent-session" };
         await expect(
           execute(process.execPath, [command, "stop"], { cwd, env: inherited }),
-        ).rejects.toThrow("Inherited session ownership is ambiguous");
+        ).rejects.toThrow("Stopping processes requires --session-id");
         const marker = NodePath.join(cwd, "ambiguous-command-started");
         await expect(
           execute(
@@ -103,7 +111,7 @@ it.effect("stops only the selected session unless every registration is explicit
         expect((await processOps.inspect(developer!.child.pid!)).state).toBe("running");
         await recordSession(cwd, "agent-session/claude-child", true, "claude-child");
 
-        await execute(process.execPath, [command, "stop"], {
+        await execute(process.execPath, [command, "stop", "--session-id", "agent-session"], {
           cwd,
           env: { ...environment, SIGNALBOX_PROCESS_SESSION_ID: "agent-session" },
         });

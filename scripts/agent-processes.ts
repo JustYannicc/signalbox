@@ -56,7 +56,7 @@ async function harnessHook() {
       JSON.stringify({
         hookSpecificOutput: {
           hookEventName: payload.hook_event_name,
-          additionalContext: `For background commands, use node scripts/agent-processes.ts run --session-id ${shellValue} -- <command>. Stop owned commands before reporting done.`,
+          additionalContext: `For background commands, use node scripts/agent-processes.ts run --session-id ${shellValue} -- <command>. Before reporting done, stop owned commands with node scripts/agent-processes.ts stop --session-id ${shellValue}.`,
         },
       }),
     );
@@ -142,12 +142,11 @@ async function main() {
 async function stopSessionId(worktreePath: string, explicit?: string) {
   const sessionId = await ownedSessionId(worktreePath, {
     explicit,
-    environmentSessionId: process.env.SIGNALBOX_PROCESS_SESSION_ID,
     codexThreadId: process.env.CODEX_THREAD_ID,
   });
   if (sessionId === undefined || sessionId.length === 0) {
     throw new Error(
-      "Stopping processes requires --session-id ID or a harness session environment; use --all to stop every registration in this checkout",
+      "Stopping processes requires --session-id ID or CODEX_THREAD_ID; use --all to stop every registration in this checkout",
     );
   }
   return sessionId;
