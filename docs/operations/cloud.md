@@ -107,6 +107,8 @@ retain their representation headers; decoding, text rewriting or a scrubbed
 representation header removes them. Standard HTTP content encodings are decoded
 before checking; archive formats are not unpacked. Unsupported encodings or
 malformed streams fail closed.
+Before charset decoding, text responses also scan raw UTF-8 bytes of hidden
+values that the declared decoder would change, with the same eight-byte minimum.
 The guarded fetch requests raw response encoding with `encodeResponseBody: "manual"`;
 otherwise Workers can decompress while the broker reads, causing a second decode.
 
@@ -158,6 +160,11 @@ deployed after the cloud Worker. Each pull request preview gets its own,
 `signalbox-model-gateway-pr-<number>` at
 `gateway-preview-<number>.signalbox.run`, bound to the preview's Worker and
 deleted with it. Previews set their `MODEL_GATEWAY_URL` themselves.
+
+To enable the synthetic secret source for one preview, set the `cloud-preview`
+Actions environment variable `PREVIEW_SYNTHETIC_SECRET_SOURCE=pr-N` before its
+deployment. Remove the variable after verification. The runtime also requires
+matching preview bindings; production always disables the source.
 
 `POST http://127.0.0.1:8790/machines/drop-sockets` cuts every Runner's socket,
 to watch one reconnect mid-turn and resend what the thread has not acknowledged.

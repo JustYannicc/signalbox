@@ -1,4 +1,19 @@
-import type { SecretScrubber } from "@signalbox/runner-protocol/SecretScrubber";
+import type { SecretScrubber, SecretValue } from "@signalbox/runner-protocol/SecretScrubber";
+
+const utf8 = new TextEncoder();
+
+/** Select raw UTF-8 values the declared decoder would change before text scrubbing. */
+export const egressRawTextSecrets = (secrets: ReadonlyArray<SecretValue>, decoder: TextDecoder) =>
+  secrets.filter(({ value }) => {
+    try {
+      // A separate decoder leaves the response's streaming state untouched.
+      return (
+        new TextDecoder(decoder.encoding, { fatal: true }).decode(utf8.encode(value)) !== value
+      );
+    } catch {
+      return true;
+    }
+  });
 
 /** Resolves the declared charset before any response bytes can be delivered. */
 export const egressTextDecoder = (contentType: string) => {

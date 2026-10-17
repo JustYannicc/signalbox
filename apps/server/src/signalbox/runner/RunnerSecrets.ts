@@ -175,7 +175,10 @@ export const makeRunnerSecrets = (input: {
         clear(guarded);
         return yield* new SecretsRegisterError({ message: SYNTHETIC_CAPABILITY_REQUIRED });
       }
-      if (synthetic && environments.length !== 1) {
+      if (
+        synthetic &&
+        environments.some((environmentId) => environmentId !== syntheticEnvironmentId)
+      ) {
         clear(guarded);
         return yield* new SecretsRegisterError({ message: SYNTHETIC_SOURCE_MIXED });
       }
@@ -235,7 +238,7 @@ export const makeRunnerSecrets = (input: {
         activeClient === null
           ? []
           : yield* Effect.forEach(
-              environments,
+              synthetic ? [syntheticEnvironmentId] : environments,
               (environmentId) => {
                 const variables = activeClient
                   .variables(environmentId)

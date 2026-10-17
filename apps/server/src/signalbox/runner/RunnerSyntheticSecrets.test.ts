@@ -58,6 +58,37 @@ const variable = (name: string, value: string): EnvironmentVariable => ({
 });
 
 describe("RunnerSyntheticSecrets", () => {
+  it.effect(
+    "loads repeated synthetic assignments once and generates exactly three fresh values",
+    () =>
+      Effect.gen(function* () {
+        let onePasswordCalls = 0;
+        const secrets = makeRunnerSecrets({
+          onePassword: () => {
+            onePasswordCalls += 1;
+            return Effect.fail(new OnePasswordError({ message: "must not sign in" }));
+          },
+          mask: makeSecretMask(),
+          reserved: () => new Set(),
+        });
+        const access = { ...ACCESS, environments: [syntheticId, syntheticId] };
+        const first = makeReport({ secrets });
+        yield* secrets.load(access, first.report);
+        const second = makeReport({ secrets });
+        yield* secrets.load(access, second.report);
+        const firstValues = first.registrations[0]!.secrets.map(({ value }) => value);
+        const secondValues = second.registrations[0]!.secrets.map(({ value }) => value);
+        expect(onePasswordCalls).toBe(0);
+        expect(firstValues.length).toBe(3);
+        expect(secondValues.length).toBe(3);
+        expect(new Set([...firstValues, ...secondValues]).size).toBe(6);
+        expect(first.registrations[0]!.sources?.length).toBe(3);
+        expect(second.registrations[0]!.sources?.length).toBe(3);
+        expect(first.infos).toEqual(["loaded 3 secrets from synthetic preview"]);
+        expect(second.infos).toEqual(first.infos);
+      }),
+  );
+
   it.effect("registers generated values before exposing them and masks every output surface", () =>
     Effect.gen(function* () {
       let onePasswordCalls = 0;
@@ -193,7 +224,11 @@ describe("RunnerSyntheticSecrets", () => {
       const mixed = makeReport({ secrets });
       const mixedSource = yield* Effect.flip(
         secrets.load(
-          { token: "opaque-test-token", environments: [syntheticId, otherId], synthetic: true },
+          {
+            token: "opaque-test-token",
+            environments: [syntheticId, syntheticId, otherId],
+            synthetic: true,
+          },
           mixed.report,
         ),
       );

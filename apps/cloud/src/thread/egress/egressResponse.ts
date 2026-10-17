@@ -3,7 +3,7 @@ import * as NodeStream from "node:stream";
 import * as NodeZlib from "node:zlib";
 
 import { makeSecretScrubber, type SecretValue } from "@signalbox/runner-protocol/SecretScrubber";
-import { egressTextDecoder, scrubEgressText } from "./egressText.ts";
+import { egressRawTextSecrets, egressTextDecoder, scrubEgressText } from "./egressText.ts";
 import { scanSecretBytes } from "./secretByteScan.ts";
 
 const UNKNOWN_TYPE_SNIFF_BYTES = 64 * 1024;
@@ -264,7 +264,12 @@ export async function redactEgressResponse(
     for (const encoding of encodings.toReversed()) {
       body = body.pipeThrough(makeContentDecoder(encoding));
     }
-    if (textDecoder !== null) return body.pipeThrough(scrubEgressText(scrubber, textDecoder));
+    if (textDecoder !== null) {
+      const rawSecrets = egressRawTextSecrets(secrets, textDecoder);
+      const inspected =
+        rawSecrets.length > 0 ? body.pipeThrough(scanSecretBytes(rawSecrets)) : body;
+      return inspected.pipeThrough(scrubEgressText(scrubber, textDecoder));
+    }
     if (kind === "binary") return body.pipeThrough(scanSecretBytes(secrets));
     return sniffUnknownBody(body, scrubber, secrets);
   });
