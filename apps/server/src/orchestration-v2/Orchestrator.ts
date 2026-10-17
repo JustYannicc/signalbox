@@ -1,7 +1,7 @@
 import {
   dispatchSignalboxAskCommand,
   dispatchSignalboxNativeAnswer,
-} from "./SignalboxAskCommands.ts";
+} from "./SignalboxAskCommands.ts"; // signalbox: handle durable and native ask answers
 import type {
   OrchestrationV2SearchThreadInput,
   OrchestrationV2SearchThreadResult,
@@ -451,7 +451,7 @@ function commandThreadId(command: OrchestrationV2ServerCommand): ThreadId {
     case "thread.interaction-mode.set":
     case "thread.model-selection.set":
     case "provider-session.detach":
-    case "thread.ask.raise":
+    case "thread.ask.raise": // signalbox: scope durable ask commands to their thread
     case "thread.ask.answer":
     case "thread.ask.withdraw":
     case "thread.ask.sync":
@@ -10649,11 +10649,12 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         }
       | undefined;
     switch (command.type) {
-      case "thread.ask.raise":
+      case "thread.ask.raise": // signalbox: scope durable ask commands to their thread
       case "thread.ask.answer":
       case "thread.ask.withdraw":
       case "thread.ask.sync": {
         yield* dispatchSignalboxAskCommand({
+          // signalbox: commit ask answers and message delivery together
           command,
           loadProjection: () =>
             projectionStore

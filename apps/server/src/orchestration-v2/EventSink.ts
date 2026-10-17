@@ -33,7 +33,7 @@ import * as EventStore from "./EventStore.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ProjectStore from "./ProjectStore.ts";
 import * as TurnItemPositionStore from "./TurnItemPositionStore.ts";
-import { mirrorSignalboxAskEvents } from "./SignalboxAskEventMirror.ts";
+import { mirrorSignalboxAskEvents } from "./SignalboxAskEventMirror.ts"; // signalbox: native asks outlive provider turns
 
 export class EventSinkWriteError extends Schema.TaggedError<EventSinkWriteError>()(
   "EventSinkWriteError",
@@ -328,6 +328,7 @@ const layerBase: Layer.Layer<
         { concurrency: 1 },
       ).pipe(
         Effect.flatMap((normalized) =>
+          // signalbox: commit native question mirrors with provider events
           mirrorSignalboxAskEvents(normalized, (threadId) =>
             projectionStore.getThreadRecords(threadId, ["runtimeRequests", "turnItems"], {
               turnItemTypes: ["user_input_request"],

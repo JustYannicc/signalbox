@@ -1,4 +1,4 @@
-import { clientAskCommand } from "@t3tools/shared/signalboxAsks";
+import { clientAskCommand } from "@t3tools/shared/signalboxAsks"; // signalbox: derive ask provenance from the caller
 import * as PoolAccess from "./accountHub/poolAccess.ts"; // signalbox: pool views per caller
 import * as SignalboxWsRpc from "./signalbox/wsRpc.ts"; // signalbox: analytics, pool and automation RPCs
 
@@ -1859,7 +1859,7 @@ const layerWsRpc = (
                     ? threadLaunch.retryPreparation(command)
                     : ThreadMessageIntake.dispatchCommand(
                         ThreadManagementService.withCreationProvenance(
-                          clientAskCommand(command, "local-user"),
+                          clientAskCommand(command, "local-user"), // signalbox: clients cannot forge ask provenance
                           {
                             createdBy: "user",
                             creationSource:
