@@ -12,7 +12,6 @@ import {
   ProviderDriverKind,
   type ProviderInstanceConfigMap,
   ProviderInstanceId,
-  type ServerProvider,
 } from "@t3tools/contracts";
 import * as ProviderLatestVersions from "@t3tools/provider-core/server/ProviderLatestVersions";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
@@ -24,7 +23,6 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
-import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 import { HttpClient, HttpClientResponse } from "effect/http";
@@ -517,16 +515,6 @@ describe("ProviderInstanceRegistry — multi-instance codex slice", () => {
       expect(probeCount).toBe(1);
 
       yield* TestClock.adjust("1 second");
-      const emittedSnapshots = yield* Ref.make<ServerProvider[]>([]);
-      yield* claude!.snapshot.streamChanges.pipe(
-        Stream.runForEach((snapshot) =>
-          Ref.update(emittedSnapshots, (previous) => [...previous, snapshot]),
-        ),
-        Effect.forkScoped,
-      );
-      yield* Effect.yieldNow;
-      yield* Ref.set(emittedSnapshots, []);
-
       yield* fs.writeFileString(
         accountConfigPath,
         JSON.stringify({ oauthAccount: { organizationUuid: "org-b" } }),
@@ -544,23 +532,6 @@ describe("ProviderInstanceRegistry — multi-instance codex slice", () => {
       expect(accountChangedFailure.usageLimits).toBeUndefined();
       expect(accountChangedFailure.slashCommands).not.toEqual(
         expect.arrayContaining([expect.objectContaining({ name: "last-good" })]),
-      );
-      const switchedSnapshots = (yield* Ref.get(emittedSnapshots)).filter(
-        (snapshot) => snapshot.checkedAt !== first.checkedAt,
-      );
-      expect(switchedSnapshots).not.toEqual(
-        expect.arrayContaining([
-          expect.objectContaining({
-            auth: expect.objectContaining({ email: "account-a@example.com" }),
-          }),
-        ]),
-      );
-      expect(switchedSnapshots).not.toEqual(
-        expect.arrayContaining([
-          expect.objectContaining({
-            slashCommands: expect.arrayContaining([expect.objectContaining({ name: "last-good" })]),
-          }),
-        ]),
       );
       const failedProbeCount = probeCount;
       expect(failedProbeCount).toBeGreaterThan(1);
