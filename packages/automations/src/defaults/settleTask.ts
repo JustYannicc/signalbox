@@ -77,7 +77,7 @@ export default workflow(async (w, input: { threadId?: string }) => {
     return "The parent automation owns this helper thread.";
   if (before.kind !== "task" || !isSettled(before.thread)) return "This is not a settled task.";
   if (before.record && before.record.outcome !== null) return "The task already has an outcome.";
-  // Reading why needs a model step; where none can run (#971) the settle stands without a reason.
+  // Reading why needs a model step; where none can run the settle stands without a reason.
   if (before.modelSteps === false) return "Settled; the reason isn't recorded because model steps can't run here yet.";
   const expectedGeneration = before.record?.generation ?? 0;
 

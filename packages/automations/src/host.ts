@@ -140,10 +140,7 @@ export interface AutomationThreadsShape {
   ) => Effect.Effect<void, AutomationError>;
   /** Cloud kinds exclude chats from task defaults; servers without kinds treat threads as tasks. */
   readonly getTaskKind?: (threadId: ThreadId) => Effect.Effect<"chat" | "task", AutomationError>;
-  /**
-   * False where `w.llm`/`judge`/`extract` can't run. Cloud harnesses refuse the
-   * read-only plan mode those steps launch in (#971), so built-ins skip them there.
-   */
+  /** False where `w.llm`/`judge`/`extract` can't run; built-ins then skip their model steps. */
   readonly modelSteps?: boolean;
   /** Every domain event of the host's threads, live from when it's run. */
   readonly domainEvents: Stream.Stream<OrchestrationV2DomainEvent, AutomationError>;

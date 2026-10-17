@@ -338,7 +338,7 @@ async function waitForCondition(
     if (leaves.length !== 1) throw new Error("Source watches work as one condition on their own.");
     const source = sourceLeaves[0]!;
     if (!source.watch) throw new Error("A source condition needs a watch.");
-    // Judging a change needs a model step (#971); don't wait on a source this host can't judge.
+    // Judging a change needs a model step; don't wait on a source this host can't judge.
     if (source.condition && state.modelSteps === false) return "no-model-steps";
     for (;;) {
       const change = await w.waitFor("Wait for the source change", {
@@ -451,7 +451,7 @@ export default workflow(async (w, input: Input, event: Event & { at?: string }) 
     const upgradesDefault = triggerType === "pr.updated" && priorInput?.defaultProposal === true && priorInput.type === "outcome";
     if (state.record?.condition && !upgradesDefault) return "The task already has a done-condition.";
     if (currentLinks(state).length === 0) {
-      // Proposing needs a model step; where none can run (#971) the task simply has no condition yet.
+      // Proposing needs a model step; where none can run the task simply has no condition yet.
       if (state.modelSteps === false) return "No done-condition proposed: model steps can't run here yet.";
       state = await read(w, threadId, true);
       const proposal = parseProposal(await w.llm("Propose when this task is done", {

@@ -70,7 +70,7 @@ export const TaskLifecycleResult = Schema.Struct({
   messages: Schema.Array(OrchestrationV2ConversationMessage),
   runs: Schema.Array(OrchestrationV2Run),
   kind: Schema.Literals(["chat", "task"]),
-  // False where the host can't run model steps yet (#971).
+  // False where the host can't run model steps.
   modelSteps: Schema.optional(Schema.Boolean),
 });
 
