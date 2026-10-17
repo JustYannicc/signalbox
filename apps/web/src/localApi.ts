@@ -64,9 +64,9 @@ function createBrowserLocalApi(): LocalApi {
         // signalbox: needs-you signals on by default (#43)
         if (window.desktopBridge) {
           const bridge = window.desktopBridge;
-          return adoptNeedsYouDefaults(await bridge.getClientSettings(), (settings) => {
-            void bridge.setClientSettings(settings);
-          });
+          return adoptNeedsYouDefaults(await bridge.getClientSettings(), (settings) =>
+            bridge.setClientSettings(settings),
+          );
         }
         return adoptNeedsYouDefaults(readBrowserClientSettings(), writeBrowserClientSettings);
       },

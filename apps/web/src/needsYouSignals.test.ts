@@ -84,6 +84,18 @@ describe("createNeedsYouToasts", () => {
     expect(close).toHaveBeenCalledWith("toast-1");
   });
 
+  it("closes toasts of threads that left the snapshot, and all of them on teardown", () => {
+    const close = vi.fn();
+    const toasts = createNeedsYouToasts(close);
+    toasts.add("thread-1", "run-1:input", "toast-1");
+    toasts.add("thread-2", "run-2:failed", "toast-2");
+    toasts.add("thread-3", "run-3:approval", "toast-3");
+    toasts.retain(new Set(["thread-1", "thread-3"]));
+    expect(close.mock.calls).toEqual([["toast-2"]]);
+    toasts.closeAll();
+    expect(close.mock.calls).toEqual([["toast-2"], ["toast-1"], ["toast-3"]]);
+  });
+
   it("replaces a thread's earlier toast with its newer one", () => {
     const close = vi.fn();
     const toasts = createNeedsYouToasts(close);
@@ -102,25 +114,45 @@ describe("adoptNeedsYouDefaults", () => {
     };
   };
 
-  it("turns in-app notifications on once for settings saved under the old default", () => {
+  const off = { ...DEFAULT_CLIENT_SETTINGS, inAppNotificationsEnabled: false };
+
+  it("turns in-app notifications on once for settings saved under the old default", async () => {
     const storage = memoryStorage();
     const persist = vi.fn();
-    const saved = { ...DEFAULT_CLIENT_SETTINGS, inAppNotificationsEnabled: false };
-    expect(adoptNeedsYouDefaults(saved, persist, storage)?.inAppNotificationsEnabled).toBe(true);
-    expect(persist).toHaveBeenCalledWith({ ...saved, inAppNotificationsEnabled: true });
+    expect((await adoptNeedsYouDefaults(off, persist, storage))?.inAppNotificationsEnabled).toBe(
+      true,
+    );
+    expect(persist).toHaveBeenCalledWith({ ...off, inAppNotificationsEnabled: true });
   });
 
-  it("keeps them off when the person turns them off afterwards", () => {
+  it("keeps them off when the person turns them off afterwards", async () => {
     const storage = memoryStorage();
-    const off = { ...DEFAULT_CLIENT_SETTINGS, inAppNotificationsEnabled: false };
-    adoptNeedsYouDefaults(off, vi.fn(), storage);
+    await adoptNeedsYouDefaults(off, vi.fn(), storage);
     const persist = vi.fn();
-    expect(adoptNeedsYouDefaults(off, persist, storage)).toBe(off);
+    expect(await adoptNeedsYouDefaults(off, persist, storage)).toBe(off);
     expect(persist).not.toHaveBeenCalled();
   });
 
-  it("leaves a device without saved settings on the schema default", () => {
-    expect(adoptNeedsYouDefaults(null, vi.fn(), memoryStorage())).toBeNull();
+  it("records the adoption on a fresh device, so a later opt-out sticks", async () => {
+    const storage = memoryStorage();
+    expect(await adoptNeedsYouDefaults(null, vi.fn(), storage)).toBeNull();
     expect(DEFAULT_CLIENT_SETTINGS.inAppNotificationsEnabled).toBe(true);
+    // The person turns them off; the next load keeps that choice.
+    const persist = vi.fn();
+    expect(await adoptNeedsYouDefaults(off, persist, storage)).toBe(off);
+    expect(persist).not.toHaveBeenCalled();
+  });
+
+  it("retries on the next load when writing the adopted settings fails", async () => {
+    const storage = memoryStorage();
+    const failing = vi.fn(() => Promise.reject(new Error("bridge unavailable")));
+    expect((await adoptNeedsYouDefaults(off, failing, storage))?.inAppNotificationsEnabled).toBe(
+      true,
+    );
+    expect(storage.getItem("signalbox:needs-you-defaults:v1")).toBeNull();
+    const persist = vi.fn(() => Promise.resolve());
+    await adoptNeedsYouDefaults(off, persist, storage);
+    expect(persist).toHaveBeenCalledWith({ ...off, inAppNotificationsEnabled: true });
+    expect(storage.getItem("signalbox:needs-you-defaults:v1")).toBe("1");
   });
 });

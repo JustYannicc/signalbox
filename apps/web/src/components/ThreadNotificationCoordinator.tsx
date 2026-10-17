@@ -26,6 +26,7 @@ import {
   unlockNotificationAudio,
 } from "../threadNotifications";
 import {
+  closeNeedsYouToastsOnUnmount,
   completionEarnsSignal,
   createNeedsYouToasts,
   needsYouToastTimeout,
@@ -125,6 +126,7 @@ function EnvironmentNotifications({
   });
   const previous = useRef(new Map<ThreadId, NotificationState>());
   const needsYouToasts = useRef(createNeedsYouToasts((id) => toastManager.close(id))); // signalbox
+  useEffect(() => closeNeedsYouToastsOnUnmount(needsYouToasts.current), []); // signalbox
 
   useEffect(() => {
     if (threads === null) {
@@ -133,12 +135,19 @@ function EnvironmentNotifications({
     }
     const next = new Map<ThreadId, NotificationState>();
     const subagentRequests = pendingSubagentRequestsByThread(threads);
+    const syncNeedsYouToast = (raw: OrchestrationV2ThreadShell, attention: string | null) =>
+      needsYouToasts.current.sync(
+        raw.id,
+        raw.archivedAt === null ? attention : null,
+        activeEnvironmentId === environmentId && activeThreadId === raw.id,
+      ); // signalbox: opening a thread closes its toast, even with an unchanged shell
     for (const rawThread of threads) {
       if (rawThread.lineage.relationshipToParent === "subagent") continue;
       const prior = previous.current.get(rawThread.id);
       const subagentRequest = subagentRequests.get(rawThread.id) ?? null;
       if (prior?.raw === rawThread && prior.subagentRequest === subagentRequest) {
         next.set(rawThread.id, prior);
+        syncNeedsYouToast(rawThread, prior.attention); // signalbox
         continue;
       }
       const thread = presentThreadShell(environmentId, rawThread, subagentRequest);
@@ -156,11 +165,7 @@ function EnvironmentNotifications({
           ? completedAt
           : (prior?.completion ?? null);
       next.set(thread.id, { raw: rawThread, subagentRequest, attention, completion });
-      needsYouToasts.current.sync(
-        thread.id,
-        thread.archivedAt === null ? attention : null,
-        activeEnvironmentId === environmentId && activeThreadId === thread.id,
-      ); // signalbox
+      syncNeedsYouToast(rawThread, attention); // signalbox
       if (!prior || thread.archivedAt !== null) continue;
       const kind =
         attention && attention !== prior.attention
@@ -251,6 +256,7 @@ function EnvironmentNotifications({
         // Some browsers expose Notification but reject desktop presentation.
       }
     }
+    needsYouToasts.current.retain(new Set(next.keys())); // signalbox
     previous.current = next;
   }, [
     activeEnvironmentId,

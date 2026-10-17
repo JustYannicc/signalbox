@@ -54,7 +54,27 @@ export function createNeedsYouToasts(close: (toastId: string) => void) {
       close(entry.toastId);
       open.delete(threadKey);
     },
+    /** Closes the toasts of threads that left the snapshot (deleted, moved away). */
+    retain(threadKeys: ReadonlySet<string>) {
+      for (const [threadKey, entry] of open) {
+        if (threadKeys.has(threadKey)) continue;
+        close(entry.toastId);
+        open.delete(threadKey);
+      }
+    },
+    /** A zero-timeout toast must not outlive the tracker that can close it. */
+    closeAll() {
+      for (const entry of open.values()) close(entry.toastId);
+      open.clear();
+    },
   };
+}
+
+type NeedsYouToasts = ReturnType<typeof createNeedsYouToasts>;
+
+/** An effect that closes the tracker's toasts when its notifications unmount (turned off, environment gone). */
+export function closeNeedsYouToastsOnUnmount(toasts: NeedsYouToasts) {
+  return () => toasts.closeAll();
 }
 
 const ADOPTED_KEY = "signalbox:needs-you-defaults:v1";
@@ -62,22 +82,39 @@ const ADOPTED_KEY = "signalbox:needs-you-defaults:v1";
 /**
  * In-app notifications became the default with #43. Settings saved before then
  * hold the old default, not a choice, so they're turned on once; turning them
- * off afterwards sticks. `persist` writes the adopted settings back.
+ * off afterwards sticks. A device with nothing saved already has the new
+ * default, so it only records the adoption. The adoption is recorded only once
+ * `persist` has written the settings back, so a failed write retries on the
+ * next load.
  */
-export function adoptNeedsYouDefaults(
+export async function adoptNeedsYouDefaults(
   settings: ClientSettings | null,
-  persist: (settings: ClientSettings) => void,
+  persist: (settings: ClientSettings) => void | Promise<void>,
   storage: Pick<Storage, "getItem" | "setItem"> | undefined = globalThis.localStorage,
-): ClientSettings | null {
-  if (settings === null || storage === undefined) return settings;
+): Promise<ClientSettings | null> {
+  if (storage === undefined) return settings;
+  const markAdopted = () => {
+    try {
+      storage.setItem(ADOPTED_KEY, "1");
+    } catch {
+      // Unwritable storage retries next load; flipping an unsaved default again is harmless.
+    }
+  };
   try {
     if (storage.getItem(ADOPTED_KEY) !== null) return settings;
-    storage.setItem(ADOPTED_KEY, "1");
   } catch {
     return settings;
   }
-  if (settings.inAppNotificationsEnabled) return settings;
+  if (settings === null || settings.inAppNotificationsEnabled) {
+    markAdopted();
+    return settings;
+  }
   const adopted = { ...settings, inAppNotificationsEnabled: true };
-  persist(adopted);
+  try {
+    await persist(adopted);
+  } catch {
+    return adopted;
+  }
+  markAdopted();
   return adopted;
 }
