@@ -300,9 +300,8 @@ export function resolveThreadProviderStack(
 }
 
 /**
- * Both shell and detail timers count from the activity-owning run's work
- * start, never last activity. A wake keeps the start of the work it continues.
- * Detail runs retain that durable start when cached runtime timing is absent.
+ * Shell and detail timers use the run's stable work start. A wake keeps the
+ * start it continues.
  */
 export function resolveThreadWorkingStartedAt(input: {
   readonly latestRun: Pick<

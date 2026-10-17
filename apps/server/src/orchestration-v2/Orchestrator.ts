@@ -1618,17 +1618,18 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         ),
         updatedAt: now,
       };
+      const inheritedWorkStartedAt = wakeWorkStartedAt(projection.runs, {
+        notification: queuedMessage.notification,
+        delegatedCompletion: queuedMessage.delegatedCompletion,
+        restartContinuationOfRunId: queuedRun.restartContinuationOfRunId,
+      }).workStartedAt;
       const startingRun: OrchestrationV2Run = {
         ...queuedRun,
         status: "starting",
         queuePosition: null,
         startedAt: null,
+        workStartedAt: queuedRun.workStartedAt ?? inheritedWorkStartedAt ?? now,
         contextHandoffId: activeHandoff?.id ?? null,
-        ...wakeWorkStartedAt(projection.runs, {
-          notification: queuedMessage.notification,
-          delegatedCompletion: queuedMessage.delegatedCompletion,
-          restartContinuationOfRunId: queuedRun.restartContinuationOfRunId,
-        }),
       };
       const userTurnItem: OrchestrationV2TurnItem = {
         ...(legacyQueuedTurnItem ?? {
@@ -4308,6 +4309,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             }),
         ),
       );
+      const workStartedAt = targetRun.workStartedAt ?? targetRun.startedAt ?? targetRun.requestedAt;
       const restartedRun: OrchestrationV2Run = {
         ...targetRun,
         providerInstanceId: input.modelSelection.instanceId,
@@ -4317,6 +4319,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         activeAttemptId: nextAttemptId,
         userMessageId: input.messageId,
         status: "starting",
+        workStartedAt,
         contextHandoffId: restartHandoff?.id ?? targetRun.contextHandoffId,
       };
       const nextAttempt: OrchestrationV2RunAttempt = {
@@ -5347,6 +5350,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                   ),
                   mapDispatchError(command),
                 );
+        const inheritedWorkStartedAt = wakeWorkStartedAt(projection.runs, command).workStartedAt;
         const run: OrchestrationV2Run = {
           id: runId,
           threadId: command.threadId,
@@ -5361,6 +5365,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           queuePosition: null,
           requestedAt: now,
           startedAt: null,
+          workStartedAt: inheritedWorkStartedAt ?? now,
           completedAt: null,
           checkpointId: null,
           contextHandoffId: legacyImportHandoff?.id ?? null,
@@ -5372,7 +5377,6 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             ? { workspacePreparation: dispatchMode.workspaceStrategy }
             : {}),
           ...(continuedTaskId === undefined ? {} : { delegatedTaskId: continuedTaskId }),
-          ...wakeWorkStartedAt(projection.runs, command),
         };
         const attempt: OrchestrationV2RunAttempt = {
           id: attemptId,
@@ -6039,6 +6043,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
               }),
           ),
         );
+      const inheritedWorkStartedAt = wakeWorkStartedAt(projection.runs, command).workStartedAt;
       const run: OrchestrationV2Run = {
         id: runId,
         threadId: command.threadId,
@@ -6053,6 +6058,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         queuePosition: null,
         requestedAt: now,
         startedAt: null,
+        workStartedAt: inheritedWorkStartedAt ?? now,
         completedAt: null,
         checkpointId: null,
         contextHandoffId:
@@ -6066,7 +6072,6 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           ? {}
           : { restartContinuationOfRunId: command.restartContinuationOfRunId }),
         ...(continuedTaskId === undefined ? {} : { delegatedTaskId: continuedTaskId }),
-        ...wakeWorkStartedAt(projection.runs, command),
       };
       const attempt: OrchestrationV2RunAttempt = {
         id: attemptId,

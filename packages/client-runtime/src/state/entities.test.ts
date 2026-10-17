@@ -484,43 +484,63 @@ describe("V2 client presentation", () => {
     }
   });
 
-  it("keeps a wake run's timer on its durable work start across reload", () => {
-    const runId = RunId.make("run-wake-timer");
-    const workStartedAt = DateTime.makeUnsafe("2026-06-20T00:20:00.000Z");
-    const startedAt = DateTime.makeUnsafe("2026-06-20T01:00:00.000Z");
-    const projection = {
-      ...v2Projection,
-      runs: [
-        {
-          id: runId,
-          threadId: v2Projection.thread.id,
-          ordinal: 2,
-          providerInstanceId: v2Projection.thread.providerInstanceId,
-          modelSelection: v2Projection.thread.modelSelection,
-          providerThreadId: null,
-          userMessageId: MessageId.make("message-wake-timer"),
-          rootNodeId: null,
-          activeAttemptId: null,
-          status: "running" as const,
-          requestedAt: startedAt,
-          startedAt,
-          workStartedAt,
-          completedAt: null,
-          checkpointId: null,
-          contextHandoffId: null,
-        },
-      ],
+  it("uses durable work starts for normal and wake run projections", () => {
+    const requestedAt = DateTime.makeUnsafe("2026-06-20T00:00:00.000Z");
+    const activatedAt = DateTime.add(requestedAt, { minutes: 10 });
+    const startedAt = DateTime.add(activatedAt, { seconds: 35 });
+    const run = (
+      status: "starting" | "running",
+      requested: DateTime.Utc,
+      started: DateTime.Utc | null,
+      workStarted: DateTime.Utc,
+      runId: string,
+    ) => ({
+      ...v2Projection.runs[0]!,
+      id: RunId.make(runId),
+      ordinal: 2,
+      status,
+      requestedAt: requested,
+      startedAt: started,
+      workStartedAt: workStarted,
+      completedAt: null,
+    });
+    const runtimeStart = (projection: typeof v2Projection) => {
+      const latestRun = deriveThreadActivityRun(projection);
+      const runtime = deriveThreadRuntime(projection);
+      return {
+        activityStartedAt: runtime?.activityStartedAt,
+        resolved: resolveThreadWorkingStartedAt({ latestRun, runtime }),
+      };
     };
-    const latestRun = deriveThreadActivityRun(projection);
-    const runtime = deriveThreadRuntime(projection);
-    const beforeReload = resolveThreadWorkingStartedAt({ latestRun, runtime });
-    const afterReload = resolveThreadWorkingStartedAt({
-      latestRun,
-      runtime: runtime === null ? null : { ...runtime, activityStartedAt: null },
+
+    const preparing = runtimeStart({
+      ...v2Projection,
+      runs: [run("starting", requestedAt, null, activatedAt, "run-normal-starting")],
+    });
+    const running = runtimeStart({
+      ...v2Projection,
+      runs: [run("running", requestedAt, startedAt, activatedAt, "run-normal-running")],
     });
 
-    expect(beforeReload).toBe(DateTime.formatIso(workStartedAt));
-    expect(afterReload).toBe(beforeReload);
+    expect(preparing.activityStartedAt).toBe(DateTime.formatIso(activatedAt));
+    expect(running.activityStartedAt).toBe(preparing.activityStartedAt);
+    expect(running.resolved).toBe(preparing.resolved);
+
+    const wakeStart = DateTime.makeUnsafe("2026-06-19T23:00:00.000Z");
+    const wakeRequestedAt = DateTime.add(activatedAt, { minutes: 1 });
+    const wake = runtimeStart({
+      ...v2Projection,
+      runs: [
+        run(
+          "running",
+          wakeRequestedAt,
+          DateTime.add(wakeRequestedAt, { seconds: 35 }),
+          wakeStart,
+          "run-wake-start",
+        ),
+      ],
+    });
+    expect(wake.activityStartedAt).toBe(DateTime.formatIso(wakeStart));
   });
 
   it("parks waiting runtime for a post-settlement roster without hiding active running work", () => {

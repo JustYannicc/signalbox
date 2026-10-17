@@ -469,7 +469,7 @@ export interface TimelineDurationMessage {
 
 export type TimelineLatestRun = Pick<
   ThreadRunSummary,
-  "runId" | "status" | "startedAt" | "completedAt"
+  "runId" | "status" | "startedAt" | "workStartedAt" | "completedAt"
 >;
 
 const LIVE_ACTIVITY_ROW_ID = "live-activity-row";
@@ -1110,9 +1110,10 @@ function deriveTurnFolds(input: {
     // terminal message — take whichever ended last.
     const lastEntryEnd =
       lastEntry.kind === "message" ? lastEntry.message.updatedAt : lastEntry.createdAt;
+    const latestWorkStartedAt = input.latestRun?.workStartedAt ?? input.latestRun?.startedAt;
     const elapsedMs =
-      input.latestRun?.runId === runId && input.latestRun.startedAt && input.latestRun.completedAt
-        ? computeElapsedMs(input.latestRun.startedAt, input.latestRun.completedAt)
+      input.latestRun?.runId === runId && latestWorkStartedAt && input.latestRun.completedAt
+        ? computeElapsedMs(latestWorkStartedAt, input.latestRun.completedAt)
         : computeElapsedMs(
             group.startBoundary ?? firstEntry.createdAt,
             maxIsoTimestamp(group.terminalEntry?.message.updatedAt ?? null, lastEntryEnd) ??

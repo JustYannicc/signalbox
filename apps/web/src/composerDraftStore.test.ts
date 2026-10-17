@@ -1,3 +1,6 @@
+import { recoverComposerSubmission } from "./composerSubmissionRecovery";
+import * as Cause from "effect/Cause";
+import { AsyncResult } from "effect/reactivity";
 import {
   scopedProjectKey,
   scopedThreadKey,
@@ -395,6 +398,53 @@ describe("composerDraftStore clearComposerContent", () => {
         await useComposerDraftStore.persist.clearStorage();
         vi.useRealTimers();
       }
+    },
+  );
+
+  it.each([false, true])(
+    "keeps an accepted prompt cleared after a lost response and reload (newer draft: %s)",
+    async (newerDraft) => {
+      vi.useFakeTimers();
+      try {
+        const store = useComposerDraftStore.getState();
+        store.setPrompt(threadRef, "Already accepted by the server");
+        const content = store.getComposerDraft(threadRef)!;
+        await vi.advanceTimersByTimeAsync(300);
+        store.clearComposerContent(threadRef);
+        if (newerDraft) store.setPrompt(threadRef, "A new unsent thought");
+        const result = AsyncResult.failure(
+          Cause.fail({ _tag: "RpcClientError", message: "SocketCloseError" }),
+        );
+        recoverComposerSubmission({ target: threadRef, result, requestStarted: true, content });
+        await vi.advanceTimersByTimeAsync(300);
+        await useComposerDraftStore.persist.rehydrate();
+        expect(useComposerDraftStore.getState().getComposerDraft(threadRef)?.prompt ?? "").toBe(
+          newerDraft ? "A new unsent thought" : "",
+        );
+      } finally {
+        await useComposerDraftStore.persist.clearStorage();
+        vi.useRealTimers();
+      }
+    },
+  );
+
+  it.each([false, true])(
+    "restores a rejected prompt without overwriting newer work (%s)",
+    (newerDraft) => {
+      const store = useComposerDraftStore.getState();
+      store.setPrompt(threadRef, "Rejected by the server");
+      const content = store.getComposerDraft(threadRef)!;
+      store.clearComposerContent(threadRef);
+      if (newerDraft) store.setPrompt(threadRef, "Keep this new draft");
+      recoverComposerSubmission({
+        target: threadRef,
+        result: AsyncResult.failure(Cause.fail({ _tag: "OrchestrationDispatchCommandError" })),
+        requestStarted: true,
+        content,
+      });
+      expect(useComposerDraftStore.getState().getComposerDraft(threadRef)?.prompt).toBe(
+        newerDraft ? "Keep this new draft" : "Rejected by the server",
+      );
     },
   );
 
