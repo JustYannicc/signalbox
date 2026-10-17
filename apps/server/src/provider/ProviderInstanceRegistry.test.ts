@@ -1,7 +1,9 @@
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as CodexInstallation from "./CodexInstallation.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
+import * as ClaudeSdk from "@anthropic-ai/claude-agent-sdk";
 import { describe, expect, it } from "@effect/vitest";
+import { vi } from "vite-plus/test";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
   EnvironmentId,
@@ -42,6 +44,8 @@ import * as ProviderEventLoggers from "@t3tools/provider-core/server/ProviderEve
 import { makeProviderInstanceRegistry } from "./ProviderInstanceRegistry.ts";
 import * as ProviderOrchestrationAdapterInfrastructure from "./ProviderOrchestrationAdapterInfrastructure.ts";
 import * as ProviderHostLive from "./ProviderHostLive.ts";
+
+vi.mock("@anthropic-ai/claude-agent-sdk", { spy: true });
 
 const layerTestHttpClient = Layer.succeed(
   HttpClient.HttpClient,
@@ -431,6 +435,107 @@ describe("ProviderInstanceRegistry — multi-instance codex slice", () => {
         version: "2.1.219",
         auth: { status: "authenticated" },
       });
+    }).pipe(Effect.provide(layerTest)),
+  );
+
+  it.effect("recovers Claude capabilities after one failed probe", () =>
+    Effect.gen(function* () {
+      if (yield* HostProcess.isWindows) return;
+
+      const fixtures = yield* makeTildeProviderFixtures();
+      const claudeId = ProviderInstanceId.make("claude_probe_recovery");
+      let probeCount = 0;
+      let successfulProbeCount = 0;
+      let failProbe = false;
+      const query = vi.spyOn(ClaudeSdk, "query").mockImplementation(
+        () =>
+          ({
+            initializationResult: () => {
+              probeCount++;
+              if (failProbe) return Promise.reject(new Error("initialization failed"));
+              successfulProbeCount++;
+              return Promise.resolve({
+                commands: [
+                  {
+                    name: successfulProbeCount === 1 ? "last-good" : "recovered",
+                    description: "",
+                    argumentHint: "",
+                  },
+                ],
+                account: {
+                  email: "test@example.com",
+                  subscriptionType: "pro",
+                  tokenSource: "oauth",
+                },
+              });
+            },
+            usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET: async () => ({
+              rate_limits_available: true,
+              rate_limits: {
+                five_hour: { utilization: 12, resets_at: "2026-07-18T14:39:00Z" },
+              },
+            }),
+          }) as ReturnType<typeof ClaudeSdk.query>,
+      );
+      yield* Effect.addFinalizer(() => Effect.sync(() => query.mockRestore()));
+
+      const { registry } = yield* makeProviderInstanceRegistry<ClaudeDriverEnv>({
+        drivers: [ClaudeDriver],
+        configMap: {
+          [claudeId]: {
+            driver: ProviderDriverKind.make("claudeAgent"),
+            enabled: true,
+            config: makeClaudeConfig({
+              enabled: true,
+              binaryPath: fixtures.claudeBinaryPath,
+              homePath: fixtures.claudeHomePath,
+            }),
+          },
+        },
+      });
+      const claude = yield* registry.getInstance(claudeId);
+      expect(claude).toBeDefined();
+
+      const first = yield* claude!.snapshot.refresh;
+      expect(first).toMatchObject({
+        status: "ready",
+        auth: { status: "authenticated", email: "test@example.com" },
+        slashCommands: expect.arrayContaining([expect.objectContaining({ name: "last-good" })]),
+      });
+      expect(first.usageLimits?.unavailable).toBeUndefined();
+      expect(probeCount).toBe(1);
+
+      yield* claude!.invalidateCaches ?? Effect.void;
+      failProbe = true;
+      const afterFailure = yield* claude!.snapshot.refresh;
+
+      expect(afterFailure).toMatchObject({
+        status: "ready",
+        auth: { status: "authenticated", email: "test@example.com" },
+        slashCommands: expect.arrayContaining([expect.objectContaining({ name: "last-good" })]),
+      });
+      expect(afterFailure.usageLimits?.checkedAt).toBe(first.usageLimits?.checkedAt);
+      expect(afterFailure.usageLimits?.windows).toEqual(first.usageLimits?.windows);
+      const failedProbeCount = probeCount;
+      expect(failedProbeCount).toBe(2);
+
+      const repeatedFailure = yield* claude!.snapshot.refresh;
+      expect(repeatedFailure).toMatchObject({
+        status: "warning",
+        auth: { status: "unknown" },
+        message: "Claude Agent CLI failed while checking account status.",
+      });
+      expect(probeCount).toBe(3);
+
+      failProbe = false;
+      const recovered = yield* claude!.snapshot.refresh;
+      expect(recovered).toMatchObject({
+        status: "ready",
+        auth: { status: "authenticated", email: "test@example.com" },
+        slashCommands: expect.arrayContaining([expect.objectContaining({ name: "recovered" })]),
+      });
+      expect(recovered.usageLimits?.unavailable).toBeUndefined();
+      expect(probeCount).toBe(failedProbeCount + 2);
     }).pipe(Effect.provide(layerTest)),
   );
 
