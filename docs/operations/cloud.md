@@ -536,9 +536,10 @@ Pasted screenshots and files share the drives bucket, under
 attachments go with its prefix. A client uploads to a signed URL and gets a
 `pending-…` id, stored under `attachments/pending/`; sending the message copies
 each upload under an id of the thread, derived from the command so a retry
-rewrites the same copy. Uploads nobody sent are swept after a day, beside the
-next upload; an R2 lifecycle rule on `attachments/pending/` would do the same
-without the sweep. Clients load a sent attachment through the same signed
+rewrites the same copy. The uploader's next upload sweeps their pending bytes
+after a day. Production also expires pending objects through R2 after two days;
+previews keep them until that uploader returns or the preview is deleted.
+Clients load a sent attachment through the same signed
 `/api/assets` URLs as tools' images (`apps/cloud/src/assets/`), issued only to
 its uploader and to people who can see its thread. Limits are the contract's (`chatAttachment.ts`): 10 MiB
 per image, 50 MiB per file, 80 MiB of images and 100 attachments per message.
