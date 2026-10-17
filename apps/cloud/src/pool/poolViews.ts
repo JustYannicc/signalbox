@@ -1,3 +1,4 @@
+import { resolveInitialModelSelection } from "@t3tools/shared/defaultModelSelection";
 import {
   type AccountHubConnection,
   type AccountPool,
@@ -23,7 +24,12 @@ import { makeUnavailableUsageLimits } from "@t3tools/provider-core/server/usageL
 import { hasQuota, pooledUsage, takesTurns } from "@t3tools/shared/poolUsage";
 import * as DateTime from "effect/DateTime";
 
-import { CLOUD_POOL_KINDS, harnessModels, poolServerProvider } from "../thread/providerCatalog.ts";
+import {
+  CLOUD_POOL_KINDS,
+  harnessModels,
+  poolServerProvider,
+  servesModel,
+} from "../thread/providerCatalog.ts";
 import type { ServedModel } from "./cliProxyApi.ts";
 import type { PoolAccounts, PoolRole } from "./PoolEngine.ts";
 import { READS_LIMITS } from "./poolLimits.ts";
@@ -53,6 +59,8 @@ export interface PoolEntry {
   readonly role: PoolRole | null;
   /** How it spreads turns, when the user may change it. */
   readonly routing: PoolRouting | null;
+  /** Member-safe quota information held across a failed account read. */
+  readonly lastKnownOverview?: AccountPoolOverview;
 }
 
 /** A pool as the user's clients list it, with its routing when they may change it. */
@@ -146,6 +154,18 @@ const running = (source: UsageLimitSourceSnapshot, driver: ProviderDriverKind) =
 const canRun = (source: UsageLimitSourceSnapshot, driver: ProviderDriverKind) =>
   running(source, driver).length > 0;
 
+/** Stale reads must not revive providers whose accounts were signed out or paused. */
+export const modelsForSnapshot = (entry: PoolEntry): ReadonlyArray<ServedModel> =>
+  entry.lastKnownOverview !== undefined
+    ? entry.models
+    : entry.models.filter((model) =>
+        CLOUD_POOL_KINDS.some(
+          (kind) =>
+            canRun(entry.source, POOL_INSTANCE_KINDS[kind].driver) &&
+            servesModel(kind, [model], model.id),
+        ),
+      );
+
 const instanceOf = (kind: (typeof CLOUD_POOL_KINDS)[number], pool: UserPool) =>
   poolInstanceEntry(kind, { id: pool.id, name: pool.personal ? undefined : pool.name });
 
@@ -161,6 +181,8 @@ export const overview = (
 ): AccountPoolOverview => ({
   id: pool.id,
   name: pool.name,
+  checkedAt: source.checkedAt,
+  ...(source.error ? { error: source.error } : {}),
   providers: CLOUD_POOL_KINDS.map((kind): AccountPoolProvider => {
     const [providerInstanceId] = instanceOf(kind, pool);
     const { driver, displayName } = POOL_INSTANCE_KINDS[kind];
@@ -190,43 +212,41 @@ export const poolProviders = (
         instanceId,
         displayName: config.displayName ?? POOL_INSTANCE_KINDS[kind].displayName,
         signedIn,
-        ...(source.error ? { unavailableReason: source.error } : {}),
+        ...(source.error && (signedIn || source.accounts.length === 0)
+          ? { unavailableReason: source.error }
+          : {}),
         models: harnessModels(kind, models, manifest),
         checkedAt,
       });
     }),
   );
 
-/**
- * What a new thread starts on unless something closer picks (the project, its
- * section's pool, the user's last choice): the first pool, Personal first,
- * with a provider ready to run, on that provider's default model. Null when
- * no pool can run anything; clients then say to add an account.
- */
+/** The economical initial selection from pools ready to run. */
 export const poolDefaultModelSelection = (
   providers: ReadonlyArray<ServerProvider>,
 ): ModelSelection | null => {
-  for (const provider of providers) {
-    if (provider.status !== "ready") continue;
-    const model = provider.models.find((candidate) => candidate.isDefault) ?? provider.models[0];
-    if (model) return { instanceId: provider.instanceId, model: model.slug };
-  }
-  return null;
+  const eligible = providers.filter(
+    (provider) =>
+      provider.enabled &&
+      provider.installed &&
+      provider.availability !== "unavailable" &&
+      provider.auth.status !== "unauthenticated" &&
+      (provider.status !== "error" ||
+        (provider.auth.status === "unknown" &&
+          provider.unavailableReason !== undefined &&
+          provider.models.length > 0)),
+  );
+  return (
+    resolveInitialModelSelection({
+      providers: eligible.filter((provider) => provider.status === "ready"),
+    }) ?? resolveInitialModelSelection({ providers: eligible })
+  );
 };
 
-/**
- * An automation may use an unavailable provider's cached model, but a default
- * must still be one that the pool lists.
- */
+/** An automation may use an unavailable provider's cached economical model. */
 export const poolFallbackModelSelection = (
   providers: ReadonlyArray<ServerProvider>,
-): ModelSelection | null => {
-  for (const provider of providers) {
-    const model = provider.models.find((candidate) => candidate.isDefault) ?? provider.models[0];
-    if (model) return { instanceId: provider.instanceId, model: model.slug };
-  }
-  return null;
-};
+): ModelSelection | null => resolveInitialModelSelection({ providers });
 
 /** Settings list each instance with its pool, which is how clients group instances by pool. */
 export const poolProviderInstances = (

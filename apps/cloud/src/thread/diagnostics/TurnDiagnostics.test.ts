@@ -21,7 +21,7 @@ import {
   threadId,
   turnReport,
   withObject,
-} from "../runner/runnerTestKit.ts";
+} from "../runnerTesting.ts";
 import type * as ThreadEngine from "../ThreadEngine.ts";
 import * as CloudAnalytics from "./CloudAnalytics.ts";
 import { TurnDiagnostics } from "./TurnDiagnostics.ts";

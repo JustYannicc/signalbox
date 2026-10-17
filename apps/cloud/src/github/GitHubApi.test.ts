@@ -153,6 +153,7 @@ it.effect("keeps bounded, sanitized diagnostics for unreadable GraphQL answers",
       tail: "x".repeat(500),
     },
     200,
+    { "content-type": "application/json; charset=utf-8", "content-length": "843" },
   );
 
   return Effect.gen(function* () {
@@ -164,6 +165,8 @@ it.effect("keeps bounded, sanitized diagnostics for unreadable GraphQL answers",
       status: 200,
       requestKind: "graphql",
       message: "GitHub sent an answer Signalbox does not understand.",
+      responseContentType: "application/json; charset=utf-8",
+      responseContentLength: "843",
     });
     expect(error.responseExcerpt).toContain("defaultBranchRef");
     expect(error.responseExcerpt).toContain("[redacted]");
@@ -174,6 +177,8 @@ it.effect("keeps bounded, sanitized diagnostics for unreadable GraphQL answers",
     expect(logs).toContain('"requestKind":"graphql"');
     expect(logs).toContain('"status":200');
     expect(logs).toContain("defaultBranchRef");
+    expect(logs).toContain('"responseContentType":"application/json; charset=utf-8"');
+    expect(logs).toContain('"responseContentLength":"843"');
     expect(logs).not.toContain(token);
   }).pipe(
     Effect.provide(Logger.layer([Logger.map(Logger.formatJson, (line) => void lines.push(line))])),
@@ -183,7 +188,10 @@ it.effect("keeps bounded, sanitized diagnostics for unreadable GraphQL answers",
 it.effect("keeps status and sanitized body diagnostics for failed REST answers", () => {
   const token = "github-rest-secret-canary";
   const lines: Array<string> = [];
-  const client = responseClient({ message: `Bearer ${token}` }, 502);
+  const client = responseClient({ message: `Bearer ${token}` }, 502, {
+    "content-type": `application/problem+json; token=${token}; ${"x".repeat(500)}`,
+    "content-length": `${token}${"7".repeat(500)}`,
+  });
 
   return Effect.gen(function* () {
     const error = yield* makeGitHubApi(client).viewer(token).pipe(Effect.flip);
@@ -194,12 +202,159 @@ it.effect("keeps status and sanitized body diagnostics for failed REST answers",
     });
     expect(error.message).toBe("Bearer [redacted]");
     expect(error.responseExcerpt).toContain("[redacted]");
-    expect(error.responseExcerpt).not.toContain(token);
-    expect(lines.join("\n")).not.toContain(token);
+    expect(error.responseContentType).toContain("[redacted]");
+    expect(error.responseContentType?.length).toBeLessThanOrEqual(121);
+    expect(error.responseContentLength).toContain("[redacted]");
+    expect(error.responseContentLength?.length).toBeLessThanOrEqual(121);
+    const diagnostic = JSON.stringify(error) + lines.join("\n");
+    expect(diagnostic).not.toContain(token);
   }).pipe(
     Effect.provide(Logger.layer([Logger.map(Logger.formatJson, (line) => void lines.push(line))])),
   );
 });
+
+it.effect("omits missing response headers from diagnostics", () => {
+  const lines: Array<string> = [];
+  const client = HttpClient.make((request) =>
+    Effect.succeed(
+      HttpClientResponse.fromWeb(
+        request,
+        new Response(
+          new TextEncoder().encode(JSON.stringify({ message: "not a viewer response" })),
+          {
+            status: 200,
+          },
+        ),
+      ),
+    ),
+  );
+
+  return Effect.gen(function* () {
+    const error = yield* makeGitHubApi(client).viewer("supplied-token").pipe(Effect.flip);
+    expect(error.responseContentType).toBeUndefined();
+    expect(error.responseContentLength).toBeUndefined();
+    expect(error.responseRateLimits).toBeUndefined();
+    expect(lines.join("\n")).not.toContain("responseContentType");
+    expect(lines.join("\n")).not.toContain("responseContentLength");
+    expect(lines.join("\n")).not.toContain("responseRateLimits");
+  }).pipe(
+    Effect.provide(Logger.layer([Logger.map(Logger.formatJson, (line) => void lines.push(line))])),
+  );
+});
+
+it.effect("keeps bounded rate-limit headers on HTTP 200 GraphQL failures", () => {
+  const lines: Array<string> = [];
+  const used = "8".repeat(130);
+  const client = responseClient(
+    {
+      data: null,
+      errors: [
+        {
+          type: "RATE_LIMIT",
+          message: "API rate limit exceeded",
+          extensions: { code: "graphql_rate_limit" },
+        },
+      ],
+    },
+    200,
+    {
+      "x-ratelimit-remaining": "0",
+      "x-ratelimit-reset": "1792251000",
+      "x-ratelimit-resource": "graphql",
+      "x-ratelimit-used": used,
+      "retry-after": "17",
+    },
+  );
+
+  return Effect.gen(function* () {
+    const error = yield* makeGitHubApi(client)
+      .defaultHead("github-rate-limit-token", "octocat/Hello-World")
+      .pipe(Effect.flip);
+    expect(error).toMatchObject({
+      operation: "defaultHead",
+      status: 200,
+      requestKind: "graphql",
+      message: "GitHub sent an answer Signalbox does not understand.",
+      responseRateLimits: {
+        remaining: "0",
+        reset: "1792251000",
+        resource: "graphql",
+        used: `${used.slice(0, 120)}…`,
+        retryAfter: "17",
+      },
+    });
+    expect(error.responseRateLimits?.used?.length).toBe(121);
+
+    const logs = lines.join("\n");
+    expect(logs).toContain('"requestKind":"graphql"');
+    expect(logs).toContain('"status":200');
+    expect(logs).toContain('"responseRateLimits"');
+    expect(logs).toContain('"remaining":"0"');
+    expect(logs).toContain('"reset":"1792251000"');
+    expect(logs).toContain('"resource":"graphql"');
+    expect(logs).toContain(`"used":"${used.slice(0, 120)}…"`);
+    expect(logs).toContain('"retryAfter":"17"');
+  }).pipe(
+    Effect.provide(Logger.layer([Logger.map(Logger.formatJson, (line) => void lines.push(line))])),
+  );
+});
+
+it.effect(
+  "keeps response headers and rate-limit backoff when the response body cannot be read",
+  () => {
+    const token = "github-read-failure-secret";
+    const lines: Array<string> = [];
+    const client = HttpClient.make((request) =>
+      Effect.succeed(
+        HttpClientResponse.fromWeb(
+          request,
+          new Response(
+            new ReadableStream<Uint8Array>({
+              start(controller) {
+                controller.error(new Error(token));
+              },
+            }),
+            {
+              status: 429,
+              headers: {
+                "content-type": "application/problem+json",
+                "content-length": "42",
+                "retry-after": "120",
+              },
+            },
+          ),
+        ),
+      ),
+    );
+
+    return Effect.gen(function* () {
+      const now = yield* Clock.currentTimeMillis;
+      const api = makeGitHubApi(client);
+      for (const read of [
+        Effect.asVoid(api.viewer(token)),
+        Effect.asVoid(api.rest("viewer", token, "/user")),
+      ]) {
+        const error = yield* read.pipe(Effect.flip);
+        expect(error).toMatchObject({
+          operation: "viewer",
+          status: 429,
+          responseContentType: "application/problem+json",
+          responseContentLength: "42",
+          retryAt: now + 120_000,
+        });
+        expect(error.responseExcerpt).toBeUndefined();
+        const diagnostic = JSON.stringify(error) + lines.join("\n");
+        expect(lines.join("\n")).toContain('"responseContentType":"application/problem+json"');
+        expect(lines.join("\n")).toContain('"responseContentLength":"42"');
+        expect(diagnostic).not.toContain(token);
+      }
+    }).pipe(
+      Effect.provide(
+        Logger.layer([Logger.map(Logger.formatJson, (line) => void lines.push(line))]),
+      ),
+    );
+  },
+);
 
 it.effect("redacts quoted opaque credentials and the bare git credential", () => {
   const token = "supplied-credential-canary";
@@ -245,3 +400,65 @@ it.effect("preserves ordinary authentication advice", () => {
     expect(error.responseExcerpt).toContain(message);
   });
 });
+
+it.effect("reads the whole heads namespace from GitHub refs with the acting token", () => {
+  const body = [
+    { ref: "refs/heads/main", object: { sha: "a".repeat(40) } },
+    { ref: "refs/heads/feature/日本語", object: { sha: "b".repeat(40) } },
+  ];
+  const requests: Array<string> = [];
+  const client = HttpClient.make((request) => {
+    requests.push(request.url);
+    expect(request.headers.authorization).toBe("Bearer refs-token");
+    return Effect.succeed(HttpClientResponse.fromWeb(request, Response.json(body)));
+  });
+  return Effect.gen(function* () {
+    const refs = yield* makeGitHubApi(client).listRefs("refs-token", "owner/repository");
+    expect(refs).toEqual(body);
+    expect(requests).toEqual([
+      "https://api.github.com/repos/owner/repository/git/matching-refs/heads/",
+    ]);
+  });
+});
+
+it.effect("distinguishes an empty heads namespace from inaccessible refs", () =>
+  Effect.gen(function* () {
+    expect(yield* makeGitHubApi(responseClient([])).listRefs("token", "owner/repository")).toEqual(
+      [],
+    );
+    expect(
+      yield* makeGitHubApi(responseClient({}, 404)).listRefs("token", "owner/repository"),
+    ).toBe(null);
+  }),
+);
+
+it.effect("fails unreadable refs instead of silently omitting branches", () =>
+  Effect.gen(function* () {
+    for (const body of [
+      { ref: "refs/heads/main", object: { sha: "a".repeat(40) } },
+      [{ ref: "refs/heads/main", object: { sha: 17 } }],
+    ]) {
+      const error = yield* makeGitHubApi(responseClient(body))
+        .listRefs("token", "owner/repository")
+        .pipe(Effect.flip);
+      expect(error).toMatchObject({ operation: "listRefs", status: 200 });
+      expect(error.message).toBe("GitHub sent an answer Signalbox does not understand.");
+    }
+  }),
+);
+
+it.effect("lists no refs for an empty GitHub repository but retains unrelated conflicts", () =>
+  Effect.gen(function* () {
+    expect(
+      yield* makeGitHubApi(responseClient({ message: "Git Repository is empty." }, 409)).listRefs(
+        "token",
+        "owner/empty",
+      ),
+    ).toEqual([]);
+    const error = yield* makeGitHubApi(responseClient({ message: "A different conflict." }, 409))
+      .listRefs("token", "owner/repository")
+      .pipe(Effect.flip);
+    expect(error.status).toBe(409);
+    expect(error.message).toBe("A different conflict.");
+  }),
+);

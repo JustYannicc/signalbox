@@ -28,6 +28,29 @@ To use the real web UI against it, build the web app once
 (`vp run --filter @t3tools/web build`) and open `http://localhost:8787`, or run
 web dev with `T3CODE_PORT=8787` so the Vite proxy forwards to the Worker.
 
+### Unattended test sign-in
+
+UI testing uses a dedicated WorkOS sandbox with fictional users. Give each
+user the external ID `signalbox-test:<alias>` from
+[`TestIdentities`](../../apps/cloud/src/testSignIn/TestIdentities.ts). Keep
+this sandbox separate from the environment used by real people.
+
+Set `E2E_WORKOS_CLIENT_ID`, `E2E_WORKOS_API_KEY` and a separate random
+`E2E_SIGN_IN_SECRET` of at least 32 characters in the `cloud-preview` GitHub
+environment as secrets, or in the ignored cloud dev vars for local tests.
+Normal account sign-in keeps its own
+WorkOS configuration. Production receives none of these test bindings.
+
+Trusted testing tools call `POST /api/testing/sign-in` using the signed
+request format in
+[`TestSignInPolicy`](../../apps/cloud/src/testSignIn/TestSignInPolicy.ts).
+The response supplies a normal browser cookie, bearer session, or a one-time
+`signalbox-dev://` pairing link. The stage and deployment identity must agree;
+production and unknown stages return 404 even with test secrets present.
+Signed requests are credentials and can be replayed until their expiry, at
+most 60 seconds. Mint them immediately before use and keep their bodies and
+responses out of traces, logs, and uploaded artifacts.
+
 ### Real Claude and Codex turns
 
 Claude and Codex turns run in a Runner on a machine, never in the Worker, on
@@ -167,9 +190,9 @@ happy), with `CLOUD_URL` and `MODEL_GATEWAY_URL` set to the tunnels.
 ### Light and heavy machines
 
 A thread runs on one of two machine classes (#113,
-`apps/cloud/src/thread/runner/machineClass.ts`). A thread in a drive backed by
-a remote repo is heavy; every other thread (a chat, or a task in My Drive) is
-light.
+`apps/cloud/src/thread/runner/machineClass.ts`). Every new thread starts light,
+including one backed by a remote repo. Light turns skip dependency setup, so
+read-only questions do not wait for an install.
 
 - **Light:** a Cloudflare Container bound to the thread's own object
   (`THREADS` in `apps/cloud/alchemy.run.ts`, `basic`: ¼ vCPU, 1 GiB, 4 GB disk),
@@ -191,12 +214,16 @@ Runner host. The light class needs `CLOUD_URL` and `MODEL_GATEWAY_URL` like
 boat does.
 
 A light thread moves to the heavy class for good when its Runner sees a
-command it should not run there: a build, test, install or dev server
+command it should not run there: a build, test, install, dev server, package
+script/executor or Node command
 (`apps/server/src/signalbox/runner/RunnerMachineClass.ts`), or one killed for
 memory (exit 137). The Runner saves the turn's files and session rows, reports
 `machine.outgrown`, and the thread continues the run on a heavy machine the
 same way it continues one whose machine was lost (below): the command shows as
-interrupted and the agent runs it again there. A light container that runs out
+interrupted and the agent runs it again there. This command-start classifier is
+best effort; commands hidden behind an unrecognized wrapper can stay light.
+If files or session rows cannot be saved, the turn fails with that cause instead
+of continuing from stale state. A light container that runs out
 of memory mid-turn (exit 137) moves its run up too. Any other exit, including
 Cloudflare restarting the container for a deploy's rollout, is a lost machine:
 the run continues on a new light one.
@@ -244,8 +271,9 @@ request deletes the image, and the weekly preview sweep deletes leftovers
 Machines pull the image anonymously, so the package must be public: after its
 first publish, set its visibility once under the package's settings on GitHub.
 A machine follows `RUNNER_IMAGE` at its next wake. Bump the Runner protocol
-only together with a published image, since a machine on an older image is
-refused.
+only together with a published image. The cloud accepts versions between
+`MIN_RUNNER_PROTOCOL_VERSION` and `RUNNER_PROTOCOL_VERSION`; older images are
+refused, and a newer Runner needs a cloud deployment that understands it.
 
 ### Direct pack uploads
 
@@ -699,13 +727,52 @@ tokens, CPU and memory, and the harness's session refs.
   `GET /api/cloud/threads/<thread id>/diagnostics` lists recent turns with
   their trace ids and failures, and `.../diagnostics/<trace, run or command id>` returns
   one record.
-- In Workers Logs, search for the trace id. When a turn ends, its object logs
-  the whole record as `cloud turn diagnostic`.
+- Search the wide events (below) for the trace id: the turn's own event
+  (`action: turn`) carries it as `turn.traceId`, and so does each of its model
+  requests' events from the ModelGateway.
+
+### Wide events
+
+Both Workers log through [evlog](https://www.evlog.dev) (#285), configured in
+`apps/cloud/evlog.config.ts`: one wide event per request, per Durable Object
+alarm, per turn, per model request through the ModelGateway, and per Executor
+call. `Effect.log*` inside one of these lands on its event instead of a line
+of its own. Every event names its unit (`action`) and its person, thread,
+turn, provider, model or pool by id, with `environment` set to the stage and
+`version` to the deployed commit. They never carry text anyone wrote: the
+config redacts every string under a content-shaped key before any drain
+sees it, and `src/observability/wideEvents.test.ts` fails if a turn's prompt or
+reply reaches one. Lint fails on `console.*` or another logger in
+`apps/cloud/src`.
+
+Where they go depends on the deploy environment's secrets (`cloud-preview`
+and `cloud-production`), passed through `alchemy.run.ts`. Each is optional:
+
+- `SENTRY_DSN`: every event as a Sentry log, every error event as a Sentry
+  issue, and both Workers' own traces through an allowlist-filtering Worker
+  before Sentry's OTLP endpoint (all of a preview's requests, a tenth of
+  production's). Native exports must never point directly at Sentry: they
+  include SQL statements, full URLs and storage keys outside evlog's redactor.
+  Unfiltered trace persistence in Cloudflare is disabled. Each stage has its
+  own destination and receiver at `traces-<app-origin>/v1/traces`, accepting
+  OTLP JSON, plain or gzip, with bearer auth using the DSN's public ingest
+  key. Cloud intake uses the `TRACE_EXPORT` service binding and
+  `TRACE_EXPORT_TOKEN` with that same protocol. The receiver keeps trace IDs,
+  approved enums, counts and timings; unknown fields, events and content
+  are dropped. It has no tracing of its own, preventing export loops.
+- `POSTHOG_API_KEY` with the `POSTHOG_HOST` variable, both required (no
+  default host): every event as a PostHog log. Both this drain and usage
+  analytics also require `SIGNALBOX_POSTHOG_ENABLED=true`. Leave that switch
+  unset until #358 lands, then set it with the EU project credentials.
+  Credentials alone never enable PostHog.
+
+After each deploy, CI sends one `release` event naming the stage and commit
+(`apps/cloud/infra/release-event.ts`).
 
 ### Usage analytics
 
-With `SIGNALBOX_POSTHOG_KEY` set (and `SIGNALBOX_POSTHOG_HOST` for a non-US
-project), thread objects send `cloud.turn.completed` per turn and
+With `SIGNALBOX_POSTHOG_ENABLED=true` and both `SIGNALBOX_POSTHOG_KEY` and
+`SIGNALBOX_POSTHOG_HOST` set to the EU project, thread objects send `cloud.turn.completed` per turn and
 `cloud.machine.session` per machine wake to Signalbox's PostHog. These are the
 #116 events the cost replay reads. Ids are hashed and nothing carries content,
 paths or command text. `T3CODE_TELEMETRY_ENABLED=false` turns them off. The
