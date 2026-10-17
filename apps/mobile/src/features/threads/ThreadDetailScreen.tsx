@@ -155,6 +155,7 @@ import { useThreadQueuedCount } from "./ThreadQueueControl";
 import type { ThreadContentPresentation } from "./threadContentPresentation";
 import { resolveThreadFeedSubmissionAnchor } from "./thread-feed-live-follow";
 import { useGlobalVoiceInput } from "../voice-input/VoiceInputProvider";
+import type { ThreadFindRevealRequest } from "./find/thread-find-model";
 
 export interface ThreadDetailScreenProps {
   readonly worktreeSetup?: WorktreeSetupCardProps | null;
@@ -409,6 +410,11 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
   const controlInsets = deriveBottomControlInsets(nativeMetrics);
   const agentLabel = `${props.selectedThread.modelSelection.instanceId} agent`;
   const selectedThreadKey = scopedThreadKey(props.environmentId, props.selectedThread.id);
+  const [findRevealRequest, setFindRevealRequest] = useState<ThreadFindRevealRequest | null>(null);
+  const handleFindRevealRequestChange = useCallback(
+    (request: ThreadFindRevealRequest | null) => setFindRevealRequest(request),
+    [],
+  );
   const childThreadInputs = useChildThreadInputs({
     environmentId: props.environmentId,
     threadId: props.selectedThread.id,
@@ -1087,6 +1093,7 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
               threadId={props.selectedThread.id}
               workspaceRoot={props.threadCwd}
               feed={props.selectedThreadFeed}
+              findRevealRequest={findRevealRequest}
               pendingHandoff={props.pendingHandoff}
               worktreeSetup={props.worktreeSetup}
               setupWorkingStartedAt={props.setupWorkingStartedAt}
@@ -1129,11 +1136,10 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
 
       {showContent ? ( // signalbox: thread find (#792)
         <ThreadFindBar
-          key={selectedThreadKey}
+          key={`find:${selectedThreadKey}`}
           environmentId={props.environmentId}
           threadId={props.selectedThread.id}
-          listRef={listRef}
-          feed={props.selectedThreadFeed}
+          onRevealRequestChange={handleFindRevealRequestChange}
           top={navigationHeaderHeight}
         />
       ) : null}

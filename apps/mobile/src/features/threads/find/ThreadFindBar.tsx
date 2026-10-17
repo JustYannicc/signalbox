@@ -4,10 +4,9 @@
  * server counts and walks matches (`orchestration.searchThread`), the same
  * call web's Find makes.
  */
-import type { LegendListRef } from "@legendapp/list/react-native";
 import { useIsFocused } from "@react-navigation/native";
 import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
-import { useCallback, useEffect, useMemo, useRef, useState, type RefObject } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Pressable, type TextInputInstance } from "react-native";
 import Animated, { FadeIn, FadeOut, ReduceMotion } from "react-native-reanimated";
 
@@ -21,8 +20,8 @@ import { useDebouncedValue } from "../../../state/queries";
 import { useEnvironmentQuery } from "../../../state/query";
 import { useHardwareKeyboardCommand } from "../../keyboard/hardwareKeyboardCommands";
 import {
-  feedIndexForFindTarget,
   formatThreadFindCount,
+  type ThreadFindRevealRequest,
   type ThreadFindStart,
 } from "./thread-find-model";
 import { usePendingThreadFindRequest } from "./thread-find-request";
@@ -86,9 +85,7 @@ function useThreadFindResults(environmentId: EnvironmentId, threadId: ThreadId, 
 export function ThreadFindBar(props: {
   readonly environmentId: EnvironmentId;
   readonly threadId: ThreadId;
-  readonly listRef: RefObject<LegendListRef | null>;
-  /** Changes whenever the feed does, so a match that wasn't rendered yet gets another try. */
-  readonly feed: ReadonlyArray<unknown>;
+  readonly onRevealRequestChange: (request: ThreadFindRevealRequest | null) => void;
   readonly top: number;
 }) {
   const enabled = useEnvironmentServerConfig(props.environmentId)?.threadFind === true;
@@ -134,27 +131,26 @@ export function ThreadFindBar(props: {
   const total = results.data?.totalMatches ?? 0;
   const counting = results.data?.complete === false;
 
-  const scrolledRef = useRef<string | null>(null);
-  // A reopened bar or a new query scrolls again even onto the same match.
   const matchKey =
     match === null
       ? null
       : `${find.focusRequest}:${find.query.trim()}:${match.entryId}:${match.occurrence}`;
+  const matchEntryId = match?.entryId ?? null;
+  const matchRunId = match?.runId ?? null;
+  const revealRequest = useMemo<ThreadFindRevealRequest | null>(
+    () =>
+      matchEntryId === null || matchKey === null
+        ? null
+        : {
+            key: matchKey,
+            threadKey,
+            target: { entryId: matchEntryId, runId: matchRunId },
+          },
+    [matchEntryId, matchKey, matchRunId, threadKey],
+  );
   useEffect(() => {
-    if (
-      props.feed.length === 0 ||
-      match === null ||
-      matchKey === null ||
-      scrolledRef.current === matchKey
-    )
-      return;
-    const list = props.listRef.current;
-    if (list === null) return;
-    const index = feedIndexForFindTarget(list.getState().data, match);
-    if (index === -1) return;
-    scrolledRef.current = matchKey;
-    list.scrollToIndex({ index, animated: true, viewPosition: 0.25 });
-  }, [match, matchKey, props.feed, props.listRef]);
+    props.onRevealRequestChange(revealRequest);
+  }, [props.onRevealRequestChange, revealRequest]);
 
   const step = (delta: number) => {
     if (match === null || total === 0 || counting) return;

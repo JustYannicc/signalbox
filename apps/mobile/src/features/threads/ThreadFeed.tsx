@@ -28,7 +28,7 @@ import {
   type EnvironmentId,
   type MessageId,
   type OrchestrationV2ProjectedTurnItem,
-  type RunId,
+  RunId,
 } from "@t3tools/contracts";
 import { renderAssistantCitationsAsText } from "@t3tools/shared/assistantCitations";
 import { encodeComposerContextFragment } from "@t3tools/shared/composerContextClipboard";
@@ -198,6 +198,11 @@ import {
 } from "./thread-work-log";
 import { appendPendingThreadMessages, type PendingThreadFeedEntry } from "./pending-thread-feed";
 import type { QueuedThreadMessage } from "../../state/thread-outbox-model";
+import {
+  feedIndexForFindTarget,
+  threadFindRevealAction,
+  type ThreadFindRevealRequest,
+} from "./find/thread-find-model";
 import { resolveThreadFeedFixedItemSize } from "./thread-feed-item-size";
 import { htmlRenderFrameHeight } from "@t3tools/shared/htmlRender";
 import { htmlRenderRowHeight, ThreadHtmlRender } from "./HtmlRenderWebView";
@@ -294,6 +299,7 @@ export interface ThreadFeedProps {
   readonly contentPresentation: ThreadContentPresentation;
   readonly agentLabel: string;
   readonly latestRun: ThreadFeedLatestRun | null;
+  readonly findRevealRequest?: ThreadFindRevealRequest | null;
   readonly activeWorkStartedAt: string | null;
   readonly runlessWorkActive?: boolean;
   readonly listRef: RefObject<LegendListRef | null>;
@@ -1732,6 +1738,9 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
     expandedTurnIds: new Set(),
   });
   const { copiedRowId, expandedWorkGroups, expandedWorkRows, expandedTurnIds } = interactionState;
+  const appliedFindRevealStepRef = useRef<string | null>(null);
+  const lastFindRevealRequestKeyRef = useRef<string | null>(null);
+  const scrolledFindRevealRequestKeyRef = useRef<string | null>(null);
   const [expandedFile, setExpandedFile] = useState<FilePreviewSource | null>(null);
   const [expandedVideo, setExpandedVideo] = useState<VideoPreviewSource | null>(null);
   const fileShareSourceIdentifier = useId();
@@ -2360,6 +2369,88 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
     },
     [suspendEndScrollMaintenanceForDisclosure],
   );
+
+  useEffect(() => {
+    const request = props.findRevealRequest;
+    if (request === null || request === undefined || request.threadKey !== feedThreadKey) {
+      if (request === null || request === undefined) {
+        lastFindRevealRequestKeyRef.current = null;
+        appliedFindRevealStepRef.current = null;
+        scrolledFindRevealRequestKeyRef.current = null;
+      }
+      return;
+    }
+    if (lastFindRevealRequestKeyRef.current !== request.key) {
+      lastFindRevealRequestKeyRef.current = request.key;
+      appliedFindRevealStepRef.current = null;
+    }
+    if (scrolledFindRevealRequestKeyRef.current === request.key) return;
+
+    const action = threadFindRevealAction(
+      presentedFeed,
+      props.feed,
+      request.target,
+      expandedWorkRows,
+    );
+    if (action.type === "expand-run") {
+      const actionKey = `${request.key}:run:${action.runId}`;
+      if (appliedFindRevealStepRef.current === actionKey) return;
+      appliedFindRevealStepRef.current = actionKey;
+      suspendEndScrollMaintenanceForDisclosure(`run-fold:${action.runId}`);
+      const runId = RunId.make(action.runId);
+      setInteractionState((current) => {
+        if (current.expandedTurnIds.has(runId)) return current;
+        return {
+          ...current,
+          expandedTurnIds: new Set(current.expandedTurnIds).add(runId),
+        };
+      });
+      return;
+    }
+    if (action.type === "expand-work-group") {
+      const actionKey = `${request.key}:work-group:${action.groupId}`;
+      if (appliedFindRevealStepRef.current === actionKey) return;
+      appliedFindRevealStepRef.current = actionKey;
+      suspendEndScrollMaintenanceForDisclosure(action.anchorKey);
+      setInteractionState((current) => {
+        if (current.expandedWorkGroups[action.groupId]) return current;
+        return {
+          ...current,
+          expandedWorkGroups: { ...current.expandedWorkGroups, [action.groupId]: true },
+        };
+      });
+      return;
+    }
+    if (action.type === "expand-work-row") {
+      const actionKey = `${request.key}:work-row:${action.rowId}`;
+      if (appliedFindRevealStepRef.current === actionKey) return;
+      appliedFindRevealStepRef.current = actionKey;
+      suspendEndScrollMaintenanceForDisclosure(action.anchorKey);
+      setInteractionState((current) => ({
+        ...current,
+        expandedWorkRows: { ...current.expandedWorkRows, [action.rowId]: true },
+      }));
+      return;
+    }
+    if (action.type !== "scroll") return;
+
+    const list = props.listRef.current;
+    if (list === null) return;
+    const index = feedIndexForFindTarget(list.getState().data, request.target);
+    if (index === -1) return;
+    scrolledFindRevealRequestKeyRef.current = request.key;
+    setEndFollow(false);
+    list.scrollToIndex({ index, animated: true, viewPosition: 0.25 });
+  }, [
+    expandedWorkRows,
+    feedThreadKey,
+    presentedFeed,
+    props.feed,
+    props.findRevealRequest,
+    props.listRef,
+    setEndFollow,
+    suspendEndScrollMaintenanceForDisclosure,
+  ]);
 
   const onPressPreview = useCallback((source: FilePreviewSource) => {
     setExpandedFile((current) => current ?? source);
