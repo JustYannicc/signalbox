@@ -48,8 +48,8 @@ export function conflictingFiles(cwd: string, ours: string, theirs: string): str
 
 /**
  * Conflicts with `upstream` that `head` introduces: files that conflict for
- * head but not for `base`. A sync conflict already pending on the base branch
- * is the sync's problem, not every PR's.
+ * head but not for its merge base or current `base`. The merge base still has
+ * inherited conflicts that the base branch may have resolved since branching.
  */
 export function introducedConflicts(
   cwd: string,
@@ -57,7 +57,11 @@ export function introducedConflicts(
 ): { readonly introduced: string[]; readonly preexisting: string[] } {
   const head = conflictingFiles(cwd, refs.head, refs.upstream);
   if (head.length === 0) return { introduced: [], preexisting: [] };
-  const base = new Set(conflictingFiles(cwd, refs.base, refs.upstream));
+  const mergeBase = git(cwd, ["merge-base", refs.base, refs.head]);
+  const base = new Set([
+    ...conflictingFiles(cwd, mergeBase, refs.upstream),
+    ...conflictingFiles(cwd, refs.base, refs.upstream),
+  ]);
   return {
     introduced: head.filter((file) => !base.has(file)),
     preexisting: head.filter((file) => base.has(file)),

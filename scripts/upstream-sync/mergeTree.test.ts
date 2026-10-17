@@ -104,4 +104,57 @@ describe("introducedConflicts", () => {
       preexisting: [],
     });
   });
+
+  it("passes edits to a when main has an unrelated conflict in b after the PR branched", () => {
+    const root = git(repo, ["rev-parse", "HEAD"]);
+    const upstream = commit({ "b.ts": "upstream\n" }, "upstream edits b");
+    branch("main", root);
+    const base = commit({ "b.ts": "main\n" }, "main conflicts in b");
+    branch("pr", root);
+    const head = commit({ "a.ts": "pr\n" }, "pr edits a");
+
+    expect(introducedConflicts(repo, { base, head, upstream }).introduced).toEqual([]);
+    const conflictingHead = commit({ "b.ts": "pr\n" }, "pr conflicts in b too");
+    expect(introducedConflicts(repo, { base, head: conflictingHead, upstream })).toEqual({
+      introduced: [],
+      preexisting: ["b.ts"],
+    });
+  });
+
+  it("still fails a PR's own conflict in a while main already conflicts in b", () => {
+    const root = git(repo, ["rev-parse", "HEAD"]);
+    const upstream = commit({ "a.ts": "upstream\n", "b.ts": "upstream\n" }, "upstream");
+    branch("main", root);
+    const base = commit({ "b.ts": "main\n" }, "main conflicts in b");
+    branch("pr", root);
+    const head = commit({ "a.ts": "pr\n" }, "pr conflicts in a");
+
+    expect(introducedConflicts(repo, { base, head, upstream })).toEqual({
+      introduced: ["a.ts"],
+      preexisting: [],
+    });
+  });
+
+  it("does not blame a stale PR for a conflict main resolved since it branched", () => {
+    const root = git(repo, ["rev-parse", "HEAD"]);
+    const upstream = commit({ "a.ts": "upstream\n", "b.ts": "upstream\n" }, "upstream");
+    branch("main", root);
+    const forkPoint = commit({ "b.ts": "fork\n" }, "inherited conflict in b");
+    const base = commit({ "b.ts": "upstream\n" }, "main resolves b");
+    branch("pr", forkPoint);
+    const head = commit({ "fork/feature.ts": "new\n" }, "unrelated PR edit");
+
+    expect(conflictingFiles(repo, head, upstream)).toEqual(["b.ts"]);
+    expect(conflictingFiles(repo, base, upstream)).toEqual([]);
+    expect(introducedConflicts(repo, { base, head, upstream })).toEqual({
+      introduced: [],
+      preexisting: ["b.ts"],
+    });
+
+    const conflictingHead = commit({ "a.ts": "pr\n" }, "pr adds its own conflict");
+    expect(introducedConflicts(repo, { base, head: conflictingHead, upstream })).toEqual({
+      introduced: ["a.ts"],
+      preexisting: ["b.ts"],
+    });
+  });
 });

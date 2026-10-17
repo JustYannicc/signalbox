@@ -299,6 +299,12 @@ jobs:
       - name: Fetch upstream
         run: git fetch --no-tags https://github.com/pingdotgg/t3code.git main:refs/remotes/upstream/main
 
+      - name: Fetch current PR base
+        if: github.event_name == 'pull_request'
+        env:
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
+        run: git fetch --no-tags --filter=blob:none origin "+refs/heads/$BASE_REF:refs/remotes/origin/$BASE_REF"
+
       - name: Setup Vite+
         uses: voidzero-dev/setup-vp@v1
         with:
@@ -308,11 +314,11 @@ jobs:
       - name: Check merge with upstream
         env:
           EVENT_NAME: ${{ github.event_name }}
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
           case "$EVENT_NAME" in
-            pull_request) set -- --base "$BASE_SHA" --head "$HEAD_SHA" ;;
+            pull_request) set -- --base "refs/remotes/origin/$BASE_REF" --head "$HEAD_SHA" ;;
             push) set -- --base HEAD --report ;;
             *) set -- --base origin/main ;;
           esac
