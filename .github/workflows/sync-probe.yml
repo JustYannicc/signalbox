@@ -72,7 +72,7 @@ jobs:
           node --experimental-strip-types generate-schema.ts
           ../../node_modules/.bin/vp fmt lunora/schema.ts lunora/counter.ts
           ../../node_modules/.bin/lunora info --bindings --format json --out binding-manifest.json
-          ../../node_modules/.bin/lunora codegen --lazy-functions
+          node prepare.mjs
           git diff --exit-code -- lunora/schema.ts lunora/counter.ts
 
       - name: Test the Alchemy binding adapter
