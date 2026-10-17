@@ -18,7 +18,7 @@ import {
   snapshot,
   threadId,
   withObject,
-} from "../runner/runnerTestKit.ts";
+} from "../runnerTesting.ts";
 
 /** Node SQLite allows more bindings than DO SQLite. Enforce the production limit before execution. */
 const capped = <A, E, R>(effect: Effect.Effect<A, E, R>, retirements: Array<number>) =>

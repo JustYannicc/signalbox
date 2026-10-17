@@ -24,7 +24,7 @@ import {
   threadId,
   turnReport,
   withObject,
-} from "../runner/runnerTestKit.ts";
+} from "../runnerTesting.ts";
 import type { ThreadRunner } from "../runner/ThreadRunner.ts";
 import type { ThreadEngine } from "../ThreadEngine.ts";
 import { runEvent, turnItemEvent } from "../threadEvents.ts";

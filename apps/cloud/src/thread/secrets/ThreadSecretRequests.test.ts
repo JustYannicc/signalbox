@@ -26,7 +26,7 @@ import * as TestClock from "effect/testing/TestClock";
 import { layerThreadObject } from "../../testing.ts";
 import { ThreadEngine } from "../ThreadEngine.ts";
 import { ThreadRunner } from "../runner/ThreadRunner.ts";
-import { turnReport } from "../runner/runnerTestKit.ts";
+import { turnReport } from "../runnerTesting.ts";
 import * as ThreadSecretRequests from "./ThreadSecretRequests.ts";
 import { secretRequestJson } from "@signalbox/runner-protocol/SecretRequestProtocol";
 import { serveSecretRequest } from "./secretRequestRoutes.ts";
