@@ -88,6 +88,7 @@
     "no-circular | apps/cloud/src/thread/ThreadDirectory.ts | apps/cloud/src/thread/runner/ThreadRunner.ts",
     "no-circular | apps/cloud/src/thread/ThreadEngine.ts | apps/cloud/src/pool/PoolDirectory.ts",
     "no-circular | apps/cloud/src/thread/ThreadEngine.ts | apps/cloud/src/thread/TurnModels.ts",
+    "no-circular | apps/cloud/src/thread/browsing/ThreadBrowsing.ts | apps/cloud/src/thread/ThreadEngine.ts",
     "no-circular | apps/cloud/src/thread/browsing/browsingRpc.ts | apps/cloud/src/thread/CloudThreadService.ts",
     "no-circular | apps/cloud/src/thread/browsing/browsingRpc.ts | apps/cloud/src/thread/ThreadEngine.ts",
     "no-circular | apps/cloud/src/thread/poolModelCapabilities.ts | apps/cloud/src/thread/providerCatalog.ts",
