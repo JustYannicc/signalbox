@@ -40,6 +40,28 @@ const allFieldNames = (value: unknown): Array<string> => {
 };
 
 describe("cloud model steps", () => {
+  it.effect("fails model steps without a selection before requesting the gateway", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeModelStepHarness();
+      const { gateway } = yield* connectModelPool(harness.cloud, ["claude"], () => ({
+        text: "Unexpected request",
+      }));
+      for (const verb of ["llm", "judge", "extract"]) {
+        const automation = yield* harness.save(
+          `export const meta = { name: "No model ${verb}" } as const;
+export default workflow(async (w) => await w.${verb}("Ready?", { prompt: "Checks passed", input: "Checks passed" }));`,
+          SCRATCH_PROJECT_ID,
+          null,
+        );
+        const done = yield* harness.startAndWait(automation.id);
+        expect(done.run.status).toBe("failed");
+        expect(done.steps[0]?.error).toContain("Choose a default model");
+      }
+      expect(gateway.requests).toHaveLength(0);
+      expect(yield* harness.threadProjectionIds()).toEqual([]);
+    }),
+  );
+
   it.effect("passes the pool's Retry-After to the model retry policy", () =>
     Effect.gen(function* () {
       const harness = yield* makeModelStepHarness();
