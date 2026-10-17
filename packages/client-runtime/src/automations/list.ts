@@ -149,6 +149,26 @@ export function runActions(
   };
 }
 
+/**
+ * An automation's runs (newest first) split for its run list: the ones that
+ * need you on top, waiting on an answer or failed with no later run that got
+ * through, then the rest. Each part keeps the given order.
+ */
+export function runsByAttention<Run extends Pick<AutomationRunSummary, "status" | "waitingOnYou">>(
+  runs: ReadonlyArray<Run>,
+): { readonly needsYou: Run[]; readonly rest: Run[] } {
+  const needsYou: Run[] = [];
+  const rest: Run[] = [];
+  let laterSucceeded = false;
+  for (const run of runs) {
+    const failedUnresolved = run.status === "failed" && !laterSucceeded;
+    if ((run.status === "running" && run.waitingOnYou) || failedUnresolved) needsYou.push(run);
+    else rest.push(run);
+    laterSucceeded ||= run.status === "succeeded";
+  }
+  return { needsYou, rest };
+}
+
 /** Failed and cancelled runs can run again as a new run that reuses the steps that went well. */
 export function canRetryRun(run: Pick<AutomationRunSummary, "status">): boolean {
   return run.status === "failed" || run.status === "cancelled";
