@@ -52,7 +52,10 @@ const githubLayer = (
           );
     },
   } as unknown as GitHubApi;
-  return Layer.succeed(GitHub.GitHub, GitHub.GitHub.of({ pipes, api }));
+  return Layer.succeed(
+    GitHub.GitHub,
+    GitHub.GitHub.of({ pipesForUser: () => Effect.succeed(pipes), api }),
+  );
 };
 
 describe("CloudThreadService.requestPullRequestSync", () => {
