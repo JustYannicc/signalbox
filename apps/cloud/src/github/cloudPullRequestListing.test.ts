@@ -145,7 +145,7 @@ const fixture = (options: {
       Effect.fail(new PullRequestUnavailableError({ reason: "provider-unsupported" })),
   });
   const layer = Layer.mergeAll(
-    Layer.succeed(GitHub, GitHub.of({ pipes: null, api })),
+    Layer.succeed(GitHub, GitHub.of({ pipesForUser: () => Effect.succeed(null), api })),
     Layer.succeed(PullRequestRepository.PullRequestRepository, service),
   );
   const run = <A, E>(

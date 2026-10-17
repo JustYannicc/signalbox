@@ -18,6 +18,7 @@ import * as Config from "effect/Config";
 import { searchSettings } from "./src/search/searchSettings.ts";
 import * as Effect from "effect/Effect";
 import * as Redacted from "effect/Redacted";
+import { testSignInEnv } from "./infra/testSignInEnv.ts";
 
 import {
   AUTOMATION_BINDINGS as AUTOMATION,
@@ -161,7 +162,7 @@ function workerEnv(target: CloudStage) {
           RUNNER_IMAGE: yield* optional("RUNNER_IMAGE"),
         };
 
-    return { ...target.vars, ...shared, ...stageEnv };
+    return { ...target.vars, ...shared, ...stageEnv, ...(yield* testSignInEnv(target.production)) };
   });
 }
 

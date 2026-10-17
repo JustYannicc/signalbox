@@ -30,7 +30,7 @@ import type { PackBucket } from "../drive/DrivePacks.ts";
 import * as Platform from "../platform.ts";
 import * as CloudflareSearchIndex from "../search/CloudflareSearchIndex.ts";
 import * as PoolDirectory from "../pool/PoolDirectory.ts";
-import * as PreviewState from "./preview/PreviewState.ts";
+import * as PreviewState from "./PreviewState.ts";
 import * as BrowserTrail from "./preview/BrowserTrail.ts";
 import { PreviewGateway } from "./preview/PreviewGateway.ts";
 import { type PreviewEnv, previewSettings } from "./preview/previewHost.ts";

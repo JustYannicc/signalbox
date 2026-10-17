@@ -5,6 +5,8 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
 import * as ThreadSearch from "../search/ThreadSearch.ts";
+import { learnerTool } from "./learnerTool.ts";
+import * as UserLearner from "./UserLearner.ts";
 import { automationTool } from "../automations/automationTool.ts";
 import * as PersonBrowsers from "../browser/PersonBrowsers.ts";
 import * as CloudAutomations from "../automations/CloudAutomations.ts";
@@ -54,6 +56,7 @@ export const makeUserObjectApi = (
       A,
       E,
       | ThreadSearch.ThreadSearch
+      | UserLearner.UserLearner
       | UserStore.UserStore
       | UserShell.UserShell
       | CloudPullRequests.CloudPullRequests
@@ -219,6 +222,7 @@ export const makeUserObjectApi = (
           status.folderStatus(ThreadId.make(threadId)),
         ).pipe(Effect.map(statusLineJson.folder.encode)),
       ),
+    learnerTool: (threadId, name, input) => run(learnerTool(threadId, name, input)),
     browserSession: (input) =>
       run(PersonBrowsers.PersonBrowsers.use((browsers) => browsers.open(input))),
     browserSignIn: (input) => run(LoginService.LoginService.use((logins) => logins.signIn(input))),

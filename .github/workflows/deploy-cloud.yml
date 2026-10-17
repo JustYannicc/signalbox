@@ -341,6 +341,9 @@ jobs:
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
       PR_NUMBER: ${{ github.event.pull_request.number }}
       STAGE: pr-${{ github.event.pull_request.number }}
+      E2E_SIGN_IN_SECRET: ${{ secrets.E2E_SIGN_IN_SECRET }}
+      E2E_WORKOS_CLIENT_ID: ${{ secrets.E2E_WORKOS_CLIENT_ID }}
+      E2E_WORKOS_API_KEY: ${{ secrets.E2E_WORKOS_API_KEY }}
       T3CODE_WORKOS_CLIENT_ID: ${{ vars.T3CODE_WORKOS_CLIENT_ID }}
       # The MCP authorization server (`apps/cloud/src/api/mcpRoutes.ts`); unset, MCP takes keys only.
       WORKOS_AUTHKIT_DOMAIN: ${{ vars.WORKOS_AUTHKIT_DOMAIN }}

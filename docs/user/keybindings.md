@@ -154,6 +154,9 @@ terminals so native undo keeps working there.
 `navigation.back` (`mod+[` by default) and `navigation.forward` (`mod+]`) move
 through the pages you have visited, like a browser's back and forward buttons.
 
+`capture.open` (`mod+shift+space`) opens [quick capture](./thread-sidebar.md#quick-capture)
+from anywhere in the app, terminals excepted.
+
 `chat.new` may ask you to choose a project when there is more than one.
 `chat.newLocal` skips that chooser. Both use your
 [new-thread defaults](./thread-sidebar.md#start-a-thread). `chat.newWithoutProject`

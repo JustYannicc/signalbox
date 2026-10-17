@@ -68,7 +68,7 @@ const fixture = (options?: {
       } as unknown as UserDrives.UserDrives["Service"]),
     ),
     Layer.succeed(DriveDirectory, DriveDirectory.of({ forDrive: () => drive })),
-    Layer.succeed(GitHub, GitHub.of({ pipes: null, api })),
+    Layer.succeed(GitHub, GitHub.of({ pipesForUser: () => Effect.succeed(null), api })),
     Layer.succeed(
       GitHubConnection.GitHubConnection,
       GitHubConnection.GitHubConnection.of({

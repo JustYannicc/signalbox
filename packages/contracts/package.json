@@ -90,6 +90,10 @@
     "./signalboxSearch": {
       "types": "./src/signalboxSearch.ts",
       "import": "./src/signalboxSearch.ts"
+    },
+    "./signalboxLearner": {
+      "types": "./src/signalboxLearner.ts",
+      "import": "./src/signalboxLearner.ts"
     }
   },
   "scripts": {
