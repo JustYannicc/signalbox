@@ -6,7 +6,7 @@ Compose `ThreadsLive.layer` with the transport, home/turn context, attachment an
 crypto layers. Tests use that same interface with the in-memory cloud transport.
 
 `core/` owns turn preparation, attachment claims and reconnect recovery. A stream
-resumes after its last delivered event sequence; its batches keep T3 Code's
+resumes after its last delivered event sequence; its batches keep the existing
 snapshot, event and synchronization-marker contract. Command receipts and events
 still commit together before publication.
 
