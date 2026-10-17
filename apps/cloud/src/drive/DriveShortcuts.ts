@@ -55,8 +55,13 @@ const make = Effect.gen(function* () {
         shortcuts,
         (shortcut) =>
           Effect.gen(function* () {
+            const identity = {
+              path: shortcut.path,
+              target: shortcut.target,
+              ...(shortcut.pinned ? { pinned: true } : {}),
+            };
             const unreadable: DriveShortcut = {
-              ...shortcut,
+              ...identity,
               readable: false,
               main: null,
               packs: [],
@@ -68,7 +73,7 @@ const make = Effect.gen(function* () {
               .forDrive(shortcut.target)
               .refs(null, have[shortcut.target] ?? 0);
             return {
-              ...shortcut,
+              ...identity,
               readable: true,
               main: shortcut.pinned ? shortcut.commit : refs.main,
               packs: refs.packs,

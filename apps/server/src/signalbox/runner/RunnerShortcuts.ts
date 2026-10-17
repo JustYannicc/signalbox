@@ -8,7 +8,12 @@ import type * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
 import type { DriveClient } from "./RunnerDriveClient.ts";
 import { storePacks } from "./RunnerDriveMirror.ts";
-import { makeRunnerGit, remoteCredentialFile, type RunnerGit } from "./RunnerGit.ts";
+import {
+  makeRunnerGit,
+  remoteCredentialFile,
+  type RunnerGit,
+  RunnerGitError,
+} from "./RunnerGit.ts";
 import { escapeGitignore, makeExcludes, SHORTCUTS_BLOCK } from "./RunnerExcludes.ts";
 
 /**
