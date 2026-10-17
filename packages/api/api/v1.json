@@ -205,6 +205,13 @@
       "output": "6973b524"
     },
     {
+      "name": "automations.githubSubscriptions",
+      "rpc": "automations.githubSubscriptions",
+      "access": "read",
+      "input": "03c2b661",
+      "output": "285a6028"
+    },
+    {
       "name": "automations.list",
       "rpc": "automations.subscribe",
       "access": "read",
