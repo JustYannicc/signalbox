@@ -229,6 +229,38 @@ afterEach(() => {
 });
 
 describe("thread outbox attachment preparation", () => {
+  it.each(["", "A newer unsent message"])(
+    "does not restore the sent draft after a reload (next draft: %s)",
+    async (nextDraft) => {
+      vi.useFakeTimers();
+      const draftKey = "environment-1:thread-1";
+      const message = queuedMessage({ messageId: "reload-after-send", text: "Sent prompt" });
+      try {
+        composerDrafts.setComposerDraftText(draftKey, message.text);
+        await composerDrafts.flushComposerDrafts();
+        await harness.manager.enqueue(message);
+        composerDrafts.clearComposerDraftContent(draftKey, { deferAttachmentCleanup: true });
+        if (nextDraft) composerDrafts.setComposerDraftText(draftKey, nextDraft);
+        harness.prepareTurnAttachments.mockResolvedValueOnce({
+          status: "ready",
+          attachments: [],
+          draftAttachments: [],
+          pendingAttachmentIds: [],
+        });
+
+        expect(await prepareQueuedMessageAttachments(message)).toMatchObject({ status: "ready" });
+        appAtomRegistry.set(composerDrafts.composerDraftsAtom, {});
+        composerDrafts.resetComposerDraftsLoadState();
+        await composerDrafts.waitForComposerDraftsLoaded();
+
+        expect(composerDrafts.getComposerDraftSnapshot(draftKey).text).toBe(nextDraft);
+      } finally {
+        await composerDrafts.flushComposerDrafts();
+        vi.useRealTimers();
+      }
+    },
+  );
+
   it("keeps a denied message queued without starting its attachment upload", async () => {
     const message = queuedMessage({
       messageId: "denied-queued-message",

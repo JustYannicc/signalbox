@@ -378,6 +378,26 @@ describe("composerDraftStore clearComposerContent", () => {
     URL.revokeObjectURL = originalRevokeObjectUrl;
   });
 
+  it.each(["clearComposerContent", "clearComposerPromptAndImages"] as const)(
+    "%s does not restore a sent prompt when reloaded before the persistence debounce",
+    async (clear) => {
+      vi.useFakeTimers();
+      try {
+        const store = useComposerDraftStore.getState();
+        store.setPrompt(threadRef, "This message has already been sent.");
+        await vi.advanceTimersByTimeAsync(300);
+
+        store[clear](threadRef);
+        await useComposerDraftStore.persist.rehydrate();
+
+        expect(useComposerDraftStore.getState().getComposerDraft(threadRef)?.prompt ?? "").toBe("");
+      } finally {
+        await useComposerDraftStore.persist.clearStorage();
+        vi.useRealTimers();
+      }
+    },
+  );
+
   it("does not revoke blob preview URLs when clearing composer content", () => {
     const first = makeImage({
       id: "img-optimistic",

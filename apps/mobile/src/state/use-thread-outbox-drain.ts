@@ -201,6 +201,8 @@ export async function prepareQueuedMessageAttachments(
   if (!(await confirmThreadOutboxMessageQueued(queuedMessage))) {
     return { status: "abandoned" };
   }
+  // Persist the cleared composer before the queued message reaches the server.
+  await flushComposerDrafts();
   if (!readEnvironmentScope(queuedMessage.environmentId, AuthOrchestrationOperateScope)) {
     return { status: "abandoned" };
   }

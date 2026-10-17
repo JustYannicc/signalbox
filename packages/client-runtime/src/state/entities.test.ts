@@ -25,7 +25,11 @@ import {
   resolveThreadWorkingStartedAt,
 } from "./models.ts";
 import { v2Projection, v2ThreadShell } from "./orchestrationV2TestFixtures.ts";
-import { deriveLatestThreadRun, deriveThreadRuntime } from "./threadExecution.ts";
+import {
+  deriveLatestThreadRun,
+  deriveThreadActivityRun,
+  deriveThreadRuntime,
+} from "./threadExecution.ts";
 import { derivePendingThreadRequests } from "./threadRequests.ts";
 
 const environmentId = EnvironmentId.make("environment-v2");
@@ -478,6 +482,45 @@ describe("V2 client presentation", () => {
         }),
       ).toBeNull();
     }
+  });
+
+  it("keeps a wake run's timer on its durable work start across reload", () => {
+    const runId = RunId.make("run-wake-timer");
+    const workStartedAt = DateTime.makeUnsafe("2026-06-20T00:20:00.000Z");
+    const startedAt = DateTime.makeUnsafe("2026-06-20T01:00:00.000Z");
+    const projection = {
+      ...v2Projection,
+      runs: [
+        {
+          id: runId,
+          threadId: v2Projection.thread.id,
+          ordinal: 2,
+          providerInstanceId: v2Projection.thread.providerInstanceId,
+          modelSelection: v2Projection.thread.modelSelection,
+          providerThreadId: null,
+          userMessageId: MessageId.make("message-wake-timer"),
+          rootNodeId: null,
+          activeAttemptId: null,
+          status: "running" as const,
+          requestedAt: startedAt,
+          startedAt,
+          workStartedAt,
+          completedAt: null,
+          checkpointId: null,
+          contextHandoffId: null,
+        },
+      ],
+    };
+    const latestRun = deriveThreadActivityRun(projection);
+    const runtime = deriveThreadRuntime(projection);
+    const beforeReload = resolveThreadWorkingStartedAt({ latestRun, runtime });
+    const afterReload = resolveThreadWorkingStartedAt({
+      latestRun,
+      runtime: runtime === null ? null : { ...runtime, activityStartedAt: null },
+    });
+
+    expect(beforeReload).toBe(DateTime.formatIso(workStartedAt));
+    expect(afterReload).toBe(beforeReload);
   });
 
   it("parks waiting runtime for a post-settlement roster without hiding active running work", () => {

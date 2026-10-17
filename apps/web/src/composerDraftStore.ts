@@ -3957,6 +3957,8 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
             }
             return { draftsByThreadKey: nextDraftsByThreadKey };
           });
+          // A reload must not hydrate the last unsent snapshot after a send.
+          composerDebouncedStorage.flush();
         },
         clearComposerPromptAndImages: (threadRef) => {
           const threadKey = resolveComposerDraftKey(get(), threadRef) ?? "";
@@ -3992,6 +3994,7 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
             }
             return { draftsByThreadKey: nextDraftsByThreadKey };
           });
+          composerDebouncedStorage.flush();
         },
         moveComposerPromptAndImages: (from, to) => {
           const fromKey = resolveComposerDraftKey(get(), from) ?? "";
