@@ -4,12 +4,17 @@ import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
 import { matchThread, threadTurns } from "../context/threadContext.ts";
+import {
+  threadPullRequestKeyOf,
+  visibleThreadPullRequests,
+} from "@t3tools/shared/threadPullRequests";
 import { browsingWire, encodeBrowsingLine } from "./browsing/browsingWire.ts";
 import { ThreadBrowsing } from "./browsing/ThreadBrowsing.ts";
 import { ThreadSecretRequests } from "./secrets/ThreadSecretRequests.ts";
 import { TurnReports } from "./diagnostics/TurnReports.ts";
 import type { ThreadObjectApi } from "./ThreadDirectory.ts";
 import * as ThreadEngine from "./ThreadEngine.ts";
+import * as PullRequestSync from "./pullRequests/PullRequestSync.ts";
 import { encodeBatchLine, type ThreadObjectReply, wire } from "./threadWire.ts";
 
 // Diagnostic records are plain JSON values already (ISO times, no class instances).
@@ -27,7 +32,11 @@ export const makeThreadObjectApi = (
     effect: Effect.Effect<
       A,
       E,
-      ThreadEngine.ThreadEngine | TurnReports | ThreadBrowsing | ThreadSecretRequests
+      | ThreadEngine.ThreadEngine
+      | TurnReports
+      | ThreadBrowsing
+      | ThreadSecretRequests
+      | PullRequestSync.PullRequestSync
     >,
   ) => Promise<A>,
   afterChange: () => Promise<void>,
@@ -40,7 +49,7 @@ export const makeThreadObjectApi = (
     effect: Effect.Effect<
       A,
       ThreadEngine.ThreadNotFoundError | ThreadEngine.ThreadCommandRejectedError,
-      ThreadEngine.ThreadEngine | ThreadBrowsing
+      ThreadEngine.ThreadEngine | ThreadBrowsing | PullRequestSync.PullRequestSync
     >,
   ): Promise<ThreadObjectReply<A>> =>
     run(
@@ -115,6 +124,31 @@ export const makeThreadObjectApi = (
               : yield* reports.turn(projection, key);
           return found === null ? null : encodeRecord(found);
         }).pipe(Effect.catchTags({ ThreadNotFoundError: () => Effect.succeed(null) })),
+      ),
+    requestPullRequestSync: (actor, key) =>
+      reply(
+        engine.use((service) =>
+          service.snapshot(actor).pipe(
+            Effect.flatMap(({ projection }) => {
+              const linked = visibleThreadPullRequests(projection.thread.pullRequests ?? []).some(
+                (link) => threadPullRequestKeyOf(link) === key,
+              );
+              if (!linked) return Effect.fail(new ThreadEngine.ThreadNotFoundError());
+              return PullRequestSync.PullRequestSync.use((sync) => sync.requestSync(key)).pipe(
+                Effect.tap((at) =>
+                  at === null
+                    ? Effect.void
+                    : Effect.tryPromise(() => wakeAt(at)).pipe(
+                        Effect.catch((cause) =>
+                          Effect.logError("arming a pull request refresh failed", { cause }),
+                        ),
+                      ),
+                ),
+                Effect.asVoid,
+              );
+            }),
+          ),
+        ),
       ),
     contextMatch: (actor, terms) =>
       run(
