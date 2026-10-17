@@ -637,9 +637,11 @@ export const makeEngine = <R>(
             : undefined,
         );
         if (input.authorize) yield* input.authorize(automationDefaults(automation));
-        const attached = input.attach ? yield* attachments.launchFor(automation, input.attach) : {};
+        const attached = input.attach
+          ? yield* attachments.launchFor(automation, input.attach)
+          : undefined;
         const withEventPatterns =
-          input.eventPatterns === undefined || attached.link === undefined
+          input.eventPatterns === undefined || attached?.link === undefined
             ? attached
             : {
                 ...attached,
