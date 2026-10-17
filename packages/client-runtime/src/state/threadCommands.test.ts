@@ -182,6 +182,31 @@ describe("remote thread lifecycle commands", () => {
       }),
   );
 
+  it.effect(
+    "ends a settle preview once the task leaves the live shell, so a cloud reopen shows as active",
+    () =>
+      Effect.gen(function* () {
+        const h = yield* makeHarness();
+        const result = h.commands.settle.run(h.registry, {
+          environmentId: ENVIRONMENT_ID,
+          input: { threadId: THREAD_ID },
+        });
+        const request = yield* Queue.take(h.requests);
+        // Cloud commands answer with the thread's own sequence, far above the shell's.
+        yield* Deferred.succeed(request.reply, { sequence: 1_000 });
+        expect((yield* Effect.promise(() => result))._tag).toBe("Success");
+        expect(h.registry.get(h.visibleAtom)?.threads[0]?.settledOverride).toBe("settled");
+        // Settling archives the task, so it leaves the live shell; reopening brings it back.
+        h.registry.set(h.snapshotAtom(ENVIRONMENT_ID), { ...SNAPSHOT, threads: [] });
+        h.registry.set(h.snapshotAtom(ENVIRONMENT_ID), {
+          ...SNAPSHOT,
+          snapshotSequence: 2,
+          threads: [{ ...SNAPSHOT.threads[0]!, settledOverride: "active" as const }],
+        });
+        expect(h.registry.get(h.visibleAtom)?.threads[0]?.settledOverride).toBe("active");
+      }),
+  );
+
   it.effect("keeps the preview after acknowledgement until the matching shell update arrives", () =>
     Effect.gen(function* () {
       const h = yield* makeHarness();
