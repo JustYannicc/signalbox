@@ -10,6 +10,7 @@ import * as TestClock from "effect/testing/TestClock";
 import { makeMemoryCloud } from "../testing.ts";
 import { SCRATCH_PROJECT_ID } from "../environment.ts";
 import { CloudThreadService } from "../thread/CloudThreadService.ts";
+import { ThreadCommandRejectedError } from "../thread/ThreadEngine.ts";
 import { scriptedModelSelection } from "../thread/scriptedProvider.ts";
 import { projectIdForContext } from "../user/contextProjects.ts";
 import { UserFolders } from "../user/UserFolders.ts";
@@ -279,8 +280,29 @@ describe("cloud thread collaboration", () => {
     "cancels nested children and rejects a late result that would revive their parent",
     () =>
       Effect.gen(function* () {
-        const { cloud, service } = yield* setup;
+        const { cloud, service, threads } = yield* setup;
         const child = yield* service.delegate(source, { task: "Child work" });
+        const unavailable = yield* make.pipe(
+          Effect.provideService(CloudThreadService, {
+            ...threads,
+            launchThread: () =>
+              Effect.fail(
+                new ThreadCommandRejectedError({
+                  commandId: "failed-launch",
+                  commandType: "thread.launch",
+                  reason: "Pool unavailable",
+                }),
+              ),
+          }),
+          Effect.provide(cloud.layerFor(userId)),
+        );
+        expect(
+          yield* Effect.result(
+            unavailable.delegate(child.childThreadId, { task: "Failed launch" }),
+          ),
+        ).toMatchObject({
+          _tag: "Failure",
+        });
         const grandchild = yield* service.delegate(child.childThreadId, { task: "Nested work" });
         // Rebuild the service to prove the task graph is durable, not a sidebar cache.
         const restarted = yield* make.pipe(Effect.provide(cloud.layerFor(userId)));

@@ -252,7 +252,14 @@ export const makeTasks = (deps: {
           ...(input.clientRequestId === undefined
             ? {}
             : { clientRequestId: input.clientRequestId }),
-        });
+        }).pipe(
+          Effect.asVoid,
+          // A launch can fail after its link was recorded. It must not hide the other children.
+          Effect.catchIf(
+            (error) => error.code === "thread_not_found",
+            () => Effect.void,
+          ),
+        );
       const after = yield* status(source, { taskId: input.taskId });
       const state = after.status;
       return {
