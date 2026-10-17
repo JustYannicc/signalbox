@@ -10,6 +10,49 @@ import * as NodeURL from "node:url";
 
 import { assert, it } from "@effect/vitest";
 
+it("keeps a rejected inbound response at the failing cursor", () => {
+  const directory = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "acp-replay-rejected-"));
+  const statusPath = NodePath.join(directory, "status.json");
+  const entry = {
+    type: "emit_inbound",
+    frame: { kind: "response", method: "missing-request", result: {} },
+  };
+  try {
+    const child = NodeChildProcess.spawnSync(
+      process.execPath,
+      [
+        "--experimental-strip-types",
+        NodeURL.fileURLToPath(new URL("./acp-replay-agent.ts", import.meta.url)),
+      ],
+      {
+        env: {
+          ...process.env,
+          T3_ACP_REPLAY_TRANSCRIPT: Buffer.from(
+            JSON.stringify({ scenario: "rejected-response", entries: [entry] }),
+          ).toString("base64"),
+          T3_ACP_REPLAY_STATUS_PATH: statusPath,
+        },
+        input: "",
+        encoding: "utf8",
+      },
+    );
+    assert.equal(child.status, 1);
+    assert.deepEqual(JSON.parse(NodeFS.readFileSync(statusPath, "utf8")), {
+      scenario: "rejected-response",
+      cursor: 0,
+      total: 1,
+      failure: {
+        detail: "No pending client request for missing-request",
+        cursor: 0,
+        expected: entry,
+        actual: entry.frame,
+      },
+    });
+  } finally {
+    NodeFS.rmSync(directory, { recursive: true, force: true });
+  }
+});
+
 it("publishes complete replay status before a reply lets the parent stop the agent", async () => {
   const directory = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "acp-replay-status-"));
   const statusPath = NodePath.join(directory, "status.json");
