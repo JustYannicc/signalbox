@@ -15,8 +15,10 @@ export const SignalboxEnvironmentCapabilityFields = {
   terminal: Schema.optionalKey(Schema.Boolean),
   /** Starts threads in new or existing git worktrees, not only the project checkout. */
   worktrees: Schema.optionalKey(Schema.Boolean),
-  /** Serves `server.updateSettings`. Client-only settings stay either way. */
+  /** Allows settings updates beyond model preferences through `server.updateSettings`. */
   serverSettingsWrite: Schema.optionalKey(Schema.Boolean),
+  /** Allows model preferences and the default model through a restricted settings patch. */
+  modelSettingsWrite: Schema.optionalKey(Schema.Boolean),
   /** Serves `device.*`: the iOS Simulators and Android Emulators on its device hosts. */
   devices: Schema.optionalKey(Schema.Boolean),
   /** Serves scheduled tasks (`scheduledTasks.*`, `subscribeScheduledTasks`). */
@@ -53,6 +55,19 @@ export function environmentSupports(
   capability: SignalboxEnvironmentCapability,
 ): boolean {
   return capabilities?.[capability] !== false;
+}
+
+/** Full settings writers can write model settings too; restricted servers opt in separately. */
+export function environmentCanWriteModelSettings(
+  capabilities:
+    | { readonly serverSettingsWrite?: boolean; readonly modelSettingsWrite?: boolean }
+    | null
+    | undefined,
+): boolean {
+  return (
+    environmentSupports(capabilities, "serverSettingsWrite") ||
+    capabilities?.modelSettingsWrite === true
+  );
 }
 
 /**

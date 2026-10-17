@@ -7,6 +7,7 @@ import { useAtomValue } from "@effect/atom-react";
 import {
   type EnvironmentId,
   type SignalboxEnvironmentCapability,
+  environmentCanWriteModelSettings,
   environmentSupports,
   showsEnvironmentUi,
 } from "@t3tools/contracts";
@@ -39,6 +40,13 @@ export function readEnvironmentSupports(
     appAtomRegistry.get(environmentServerConfigsAtom).get(environmentId)?.environment.capabilities,
     capability,
   );
+}
+
+export function useEnvironmentCanWriteModelSettings(
+  environmentId: EnvironmentId | null | undefined,
+): boolean {
+  const config = useAtomValue(serverEnvironment.configValueAtom(environmentId ?? null));
+  return environmentCanWriteModelSettings(config?.environment.capabilities);
 }
 
 /**

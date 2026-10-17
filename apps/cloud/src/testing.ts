@@ -98,6 +98,7 @@ import * as UserPools from "./user/UserPools.ts";
 import * as UserShell from "./user/UserShell.ts";
 import * as UserThreadStatus from "./user/UserThreadStatus.ts";
 import * as UserStore from "./user/UserStore.ts";
+import * as UserModelSettings from "./user/UserModelSettings.ts";
 import * as UserThreadKinds from "./user/UserThreadKinds.ts";
 import * as ChatArchive from "./user/chatArchive.ts";
 
@@ -132,6 +133,7 @@ export const layerMemoryStore = LegacySections.layer.pipe(
   Layer.provideMerge(
     Layer.mergeAll(
       UserStore.layer,
+      UserModelSettings.layer,
       UserContexts.layerWithDrives,
       ResourceBindings.layer,
       OnePasswordAccount.layer,

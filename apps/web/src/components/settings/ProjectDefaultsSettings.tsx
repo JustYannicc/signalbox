@@ -57,7 +57,11 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
     ? environments.find((environment) => environment.environmentId === target.environmentId)
     : undefined;
   const providers = representative?.serverConfig?.providers ?? EMPTY_SERVER_PROVIDERS;
-  const selection = resolveDefaultProviderModelSelection(providers, settings.defaultModelSelection);
+  const selection = resolveDefaultProviderModelSelection(
+    providers,
+    settings.defaultModelSelection,
+    settings.providerInstances,
+  );
   const entries = sortProviderInstanceEntries(
     applyProviderInstanceSettings(
       deriveProviderInstanceEntries(providers),
@@ -129,6 +133,7 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
   const modelRow = (
     <SettingsRow
       serverScoped
+      serverCapability="modelSettingsWrite"
       settingKeys={["defaultModelSelection"]}
       mixed={mixedModel}
       id="default-model"

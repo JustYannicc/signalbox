@@ -3,6 +3,7 @@ import {
   AuthFilesystemReadScope,
   AuthOrchestrationOperateScope,
   AuthOrchestrationReadScope,
+  AuthSettingsWriteScope,
   AuthPreviewOperateScope,
   AuthSourceControlWriteScope,
   AuthStandardClientScopes,
@@ -154,6 +155,7 @@ const SECTION_METHODS = [
 const SERVED = [
   WS_METHODS.subscribeServerConfig,
   WS_METHODS.serverGetConfig,
+  WS_METHODS.serverUpdateSettings,
   WS_METHODS.serverProbe,
   WS_METHODS.secretsAnswerRequest,
   WS_METHODS.serverReportClientActivity,
@@ -228,6 +230,7 @@ export const CloudRpcGroup = WsRpcGroup.omit(
 const REQUIRED_SCOPES = {
   [WS_METHODS.subscribeServerConfig]: AuthOrchestrationReadScope,
   [WS_METHODS.serverGetConfig]: AuthOrchestrationReadScope,
+  [WS_METHODS.serverUpdateSettings]: AuthSettingsWriteScope,
   [WS_METHODS.serverProbe]: AuthOrchestrationReadScope,
   [WS_METHODS.secretsAnswerRequest]: AuthOrchestrationOperateScope,
   [WS_METHODS.serverReportClientActivity]: AuthOrchestrationReadScope,

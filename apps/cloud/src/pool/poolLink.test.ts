@@ -17,6 +17,7 @@ import * as RpcTest from "effect/rpc/RpcTest";
 import * as Platform from "../platform.ts";
 import { makeMemoryCloud } from "../testing.ts";
 import * as CloudRpc from "../user/rpc.ts";
+import * as PoolContainer from "./PoolContainer.ts";
 import { decodeLinkToken } from "./poolLink.ts";
 import * as PoolLinks from "./PoolLinks.ts";
 
@@ -116,6 +117,27 @@ describe("pool link", () => {
       // Moved accounts show windows once the pool next reads them, not during the move.
       expect(info.body.accounts[0].usageLimits).toBeUndefined();
 
+      const decoded = decodeLinkToken(received.token)!;
+      const object = cloud.pools.objectFor(decoded.objectName);
+      const pool = cloud.pools.directory.forPool(decoded.objectName);
+      const cached = yield* pool.models({ userId });
+      expect(cached.models.find((model) => model.id === "claude-opus-5-5")).toMatchObject({
+        displayName: "Claude Opus 5.5",
+        provider: "claude",
+        reasoningEfforts: ["low", "medium", "high"],
+      });
+
+      // The link read is cache-only, so a stopped managed pool stays asleep.
+      yield* Effect.promise(() =>
+        object.runtime.runPromise(PoolContainer.PoolContainer.use((container) => container.stop)),
+      );
+      const starts = object.container.starts;
+      expect(yield* onLink(received.token, "/models")).toEqual({
+        status: 200,
+        body: { models: cached.models },
+      });
+      expect(object.container.starts).toBe(starts);
+
       // Model requests reach the pool's CLIProxyAPI with the pool's own key, never the link's.
       const answer = yield* onLink(received.token, "/v1/messages?beta=true", {
         method: "POST",
@@ -128,7 +150,6 @@ describe("pool link", () => {
       expect(answer.body.authorization).toMatch(/^Bearer [0-9a-f]{64}$/u);
       expect(answer.body.authorization).not.toContain(received.token);
 
-      const object = cloud.pools.objectFor(decodeLinkToken(received.token)!.objectName);
       expect([...object.cliProxyApi.accounts.keys()]).toEqual([
         "claude-a@x.test.json",
         "codex-b@x.test.json",
