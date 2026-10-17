@@ -143,6 +143,10 @@
       // These workspace packages are private to this monorepo.
       "includeEntryExports": true,
     },
+    "packages/client-runtime": {
+      // signalbox: retain upstream's lifecycle adapter so its patches merge cleanly.
+      "ignore": ["src/state/threadLifecycle.ts"],
+    },
     "packages/sync": {
       "entry": [
         "codegen-proof/lunora/{schema,counters}.ts",

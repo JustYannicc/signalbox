@@ -1,5 +1,6 @@
 import type {
   OrchestrationV2Command,
+  OrchestrationV2DispatchCommandResult,
   OrchestrationV2SubscribeThreadInput,
   OrchestrationV2ThreadBoundedSnapshot,
   OrchestrationV2ThreadHistoryPage,
@@ -34,7 +35,7 @@ export class Threads extends Context.Service<
     readonly dispatch: (
       actor: Actor,
       command: OrchestrationV2Command,
-    ) => Effect.Effect<{ readonly sequence: number }, ThreadError>;
+    ) => Effect.Effect<OrchestrationV2DispatchCommandResult, ThreadError>;
     readonly snapshot: (
       actor: Actor,
       threadId: ThreadId,

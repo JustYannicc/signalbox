@@ -1750,7 +1750,7 @@
       "command": "thread.active.reorder",
       "access": "write",
       "input": "75326e0c",
-      "output": "aebf4e45"
+      "output": "c5e5cd7a"
     },
     {
       "name": "threads.archive",
@@ -1758,7 +1758,7 @@
       "command": "thread.archive",
       "access": "write",
       "input": "1236b61d",
-      "output": "aebf4e45"
+      "output": "c5e5cd7a"
     },
     {
       "name": "threads.autoSettle.set",
@@ -1766,7 +1766,7 @@
       "command": "thread.auto-settle.set",
       "access": "write",
       "input": "dc0204b5",
-      "output": "aebf4e45"
+      "output": "c5e5cd7a"
     },
     {
       "name": "threads.commandOutput",
@@ -1790,7 +1790,7 @@
       "access": "write",
       "destructive": true,
       "input": "1236b61d",
-      "output": "aebf4e45"
+      "output": "c5e5cd7a"
     },
     {
       "name": "threads.dismissQuestion",
@@ -1799,7 +1799,7 @@
       "access": "write",
       "humanOnly": true,
       "input": "8acbe7aa",
-      "output": "aebf4e45"
+      "output": "c5e5cd7a"
     },
     {
       "name": "threads.fork",
@@ -1807,7 +1807,7 @@
       "command": "thread.fork",
       "access": "write",
       "input": "20c2ed70",
-      "output": "aebf4e45"
+      "output": "c5e5cd7a"
     },
     {
       "name": "threads.get",
@@ -1850,7 +1850,7 @@
       "command": "thread.interaction-mode.set",
       "access": "write",
       "input": "2a6a79b3",
-      "output": "aebf4e45"
+      "output": "c5e5cd7a"
     },
     {
       "name": "threads.interrupt",
@@ -1858,7 +1858,7 @@
       "command": "run.interrupt",
       "access": "write",
       "input": "9f6fd019",
-      "output": "aebf4e45"
+      "output": "c5e5cd7a"
     },
     {
       "name": "threads.list",
@@ -1866,14 +1866,14 @@
       "access": "read",
       "stream": "snapshot",
       "input": "9b1960e6",
-      "output": "96399a4c"
+      "output": "7e42dbcb"
     },
     {
       "name": "threads.listArchived",
       "rpc": "orchestration.getArchivedShellSnapshot",
       "access": "read",
       "input": "03c2b661",
-      "output": "99b6eac5"
+      "output": "0179f1a2"
     },
     {
       "name": "threads.markRead",
@@ -1881,7 +1881,7 @@
       "command": "thread.visit",
       "access": "write",
       "input": "0c4c5ada",
-      "output": "aebf4e45"
+      "output": "c5e5cd7a"
     },
     {
       "name": "threads.markUnread",
@@ -1889,7 +1889,7 @@
       "command": "thread.mark-unread",
       "access": "write",
       "input": "1236b61d",
-      "output": "aebf4e45"
+      "output": "c5e5cd7a"
     },
     {
       "name": "threads.mergeBack",
@@ -1897,7 +1897,7 @@
       "command": "thread.merge_back",
       "access": "write",
       "input": "5db1e3d1",
-      "output": "aebf4e45"
+      "output": "c5e5cd7a"
     },
     {
       "name": "threads.modelSelection.set",
@@ -1905,7 +1905,7 @@
       "command": "thread.model-selection.set",
       "access": "write",
       "input": "13cdbe93",
-      "output": "aebf4e45"
+      "output": "c5e5cd7a"
     },
     {
       "name": "threads.move",
@@ -1920,7 +1920,7 @@
       "command": "thread.pin",
       "access": "write",
       "input": "55fea70d",
-      "output": "aebf4e45"
+      "output": "c5e5cd7a"
     },
     {
       "name": "threads.pin.reorder",
@@ -1928,7 +1928,7 @@
       "command": "thread.pin.reorder",
       "access": "write",
       "input": "75326e0c",
-      "output": "aebf4e45"
+      "output": "c5e5cd7a"
     },
     {
       "name": "threads.pullRequest.link",
@@ -1936,7 +1936,7 @@
       "command": "thread.pull-request.link",
       "access": "write",
       "input": "9de6b4c4",
-      "output": "aebf4e45"
+      "output": "c5e5cd7a"
     },
     {
       "name": "threads.pullRequest.unlink",
@@ -1944,7 +1944,7 @@
       "command": "thread.pull-request.unlink",
       "access": "write",
       "input": "f885b0e6",
-      "output": "aebf4e45"
+      "output": "c5e5cd7a"
     },
     {
       "name": "threads.pullRequest.watch",
@@ -1952,7 +1952,7 @@
       "command": "thread.pull-request.watch",
       "access": "write",
       "input": "ff5d14ef",
-      "output": "aebf4e45"
+      "output": "c5e5cd7a"
     },
     {
       "name": "threads.queue.resume",
@@ -1960,7 +1960,7 @@
       "command": "queue.resume",
       "access": "write",
       "input": "1236b61d",
-      "output": "aebf4e45"
+      "output": "c5e5cd7a"
     },
     {
       "name": "threads.queuedMessage.promoteToSteer",
@@ -1968,7 +1968,7 @@
       "command": "queued-message.promote-to-steer",
       "access": "write",
       "input": "02259395",
-      "output": "aebf4e45"
+      "output": "c5e5cd7a"
     },
     {
       "name": "threads.queuedRun.cancel",
@@ -1976,7 +1976,7 @@
       "command": "queued-run.cancel",
       "access": "write",
       "input": "4bef536a",
-      "output": "aebf4e45"
+      "output": "c5e5cd7a"
     },
     {
       "name": "threads.queuedRun.edit",
@@ -1984,7 +1984,7 @@
       "command": "queued-run.edit",
       "access": "write",
       "input": "102c04b4",
-      "output": "aebf4e45"
+      "output": "c5e5cd7a"
     },
     {
       "name": "threads.queuedRun.reorder",
@@ -1992,7 +1992,7 @@
       "command": "queued-run.reorder",
       "access": "write",
       "input": "03c0b5f9",
-      "output": "aebf4e45"
+      "output": "c5e5cd7a"
     },
     {
       "name": "threads.respond",
@@ -2001,7 +2001,7 @@
       "access": "write",
       "humanOnly": true,
       "input": "3bc54e36",
-      "output": "aebf4e45"
+      "output": "c5e5cd7a"
     },
     {
       "name": "threads.retryPreparation",
@@ -2009,7 +2009,7 @@
       "command": "prepared-run.retry",
       "access": "write",
       "input": "4bef536a",
-      "output": "aebf4e45"
+      "output": "c5e5cd7a"
     },
     {
       "name": "threads.rollback",
@@ -2018,7 +2018,7 @@
       "access": "write",
       "destructive": true,
       "input": "8f3a9b28",
-      "output": "aebf4e45"
+      "output": "c5e5cd7a"
     },
     {
       "name": "threads.runtimeMode.set",
@@ -2026,7 +2026,7 @@
       "command": "thread.runtime-mode.set",
       "access": "write",
       "input": "2f2f6a9d",
-      "output": "aebf4e45"
+      "output": "c5e5cd7a"
     },
     {
       "name": "threads.search",
@@ -2048,7 +2048,7 @@
       "command": "message.dispatch",
       "access": "write",
       "input": "1fac6d00",
-      "output": "aebf4e45"
+      "output": "c5e5cd7a"
     },
     {
       "name": "threads.setKind",
@@ -2063,7 +2063,7 @@
       "command": "thread.settle",
       "access": "write",
       "input": "b1be93e6",
-      "output": "aebf4e45"
+      "output": "c5e5cd7a"
     },
     {
       "name": "threads.snooze",
@@ -2071,7 +2071,7 @@
       "command": "thread.snooze",
       "access": "write",
       "input": "33a37ef6",
-      "output": "aebf4e45"
+      "output": "c5e5cd7a"
     },
     {
       "name": "threads.stopSubagent",
@@ -2079,7 +2079,7 @@
       "command": "subagent.stop",
       "access": "write",
       "input": "f6964201",
-      "output": "aebf4e45"
+      "output": "c5e5cd7a"
     },
     {
       "name": "threads.stopWorkflow",
@@ -2102,7 +2102,7 @@
       "access": "read",
       "stream": "snapshot",
       "input": "03c2b661",
-      "output": "118e49b8"
+      "output": "ce6c853a"
     },
     {
       "name": "threads.switchProvider",
@@ -2110,7 +2110,7 @@
       "command": "provider.switch",
       "access": "write",
       "input": "13cdbe93",
-      "output": "aebf4e45"
+      "output": "c5e5cd7a"
     },
     {
       "name": "threads.unarchive",
@@ -2118,7 +2118,7 @@
       "command": "thread.unarchive",
       "access": "write",
       "input": "1236b61d",
-      "output": "aebf4e45"
+      "output": "c5e5cd7a"
     },
     {
       "name": "threads.unpin",
@@ -2126,7 +2126,7 @@
       "command": "thread.unpin",
       "access": "write",
       "input": "1236b61d",
-      "output": "aebf4e45"
+      "output": "c5e5cd7a"
     },
     {
       "name": "threads.unsettle",
@@ -2134,7 +2134,7 @@
       "command": "thread.unsettle",
       "access": "write",
       "input": "693f5db2",
-      "output": "aebf4e45"
+      "output": "c5e5cd7a"
     },
     {
       "name": "threads.unsnooze",
@@ -2142,7 +2142,7 @@
       "command": "thread.unsnooze",
       "access": "write",
       "input": "693f5db2",
-      "output": "aebf4e45"
+      "output": "c5e5cd7a"
     },
     {
       "name": "threads.update",
@@ -2150,7 +2150,7 @@
       "command": "thread.metadata.update",
       "access": "write",
       "input": "7068e784",
-      "output": "aebf4e45"
+      "output": "c5e5cd7a"
     },
     {
       "name": "threadStatus.list",

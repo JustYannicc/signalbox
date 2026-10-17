@@ -292,6 +292,7 @@ import {
 import { readThreadKind, useThreadKind } from "../state/signalboxThreadKinds"; // signalbox: thread kinds
 import { ThreadKindAge, ThreadKindButton } from "./threadKind/ThreadKindIcon"; // signalbox: thread kinds
 import { selectThreadKindMenuItem } from "./threadKind/threadKindMenu"; // signalbox: thread kinds
+import { beginLedgerThreadDrop } from "./sidebar/ledgerThreadDrop"; // signalbox: optimistic ledger
 import { useShowsEnvironmentUi } from "../state/environmentCapabilities";
 
 const EMPTY_PROVIDER_ENTRIES: ReadonlyMap<string, ProviderInstanceEntry> = new Map();
@@ -3637,6 +3638,22 @@ export default function Sidebar() {
       )
     )
       return;
+    if (
+      beginLedgerThreadDrop({
+        plan,
+        threadRef,
+        threadByKey,
+        actions: {
+          pinThread,
+          unpinThread,
+          unsettleThread,
+          unsnoozeThread,
+          reorderPinnedThread,
+          reorderActiveThread,
+        },
+      })
+    )
+      return; // signalbox: the optimistic ledger owns pin drops
     const drop = {
       key: activeKey,
       sourceSection: activeSection,
