@@ -140,7 +140,13 @@ describe("thread search documents", () => {
           id: "destination",
           header: "Destination",
           question: "Which folder should receive the output?",
-          options: [{ label: "Search", description: "The search folder", value: "search" }],
+          options: [
+            {
+              label: "Search",
+              description: "The search folder",
+              value: "internal-destination-id",
+            },
+          ],
         },
       ],
       status: "pending",
@@ -156,6 +162,8 @@ describe("thread search documents", () => {
     const userMessage = {
       ...base("user-message-row", 6),
       type: "user_message",
+      createdBy: "user",
+      creationSource: "web",
       messageId: MessageId.make("user-message-entry"),
       inputIntent: "turn_start",
       text: userText,
@@ -204,16 +212,15 @@ describe("thread search documents", () => {
     }
     for (const actual of [
       "pnpm vp test run searchDocuments.test.ts",
-      "failed exit 17",
+      "failed 17",
       "real command output",
       "list_files",
-      "path: src/search",
-      "depth: 2",
+      "src/search",
+      "2",
       "completed",
       "beginning-token",
       "ending-token",
       "Run the database migration?",
-      "accept",
       "Run once",
       "Changes the local database",
       "Which folder should receive the output?",
@@ -222,6 +229,16 @@ describe("thread search documents", () => {
       "42 Search rows use source text https://github.com/signalbox/search-documents/pull/42",
     ]) {
       expect(content).toContain(actual);
+    }
+    for (const internal of [
+      "exit",
+      "path",
+      "depth",
+      "password",
+      "accept",
+      "internal-destination-id",
+    ]) {
+      expect(content).not.toContain(internal);
     }
     expect(content).not.toContain("must-not-index");
 
@@ -275,5 +292,189 @@ describe("thread search documents", () => {
     expect(find("list_files").match?.entryId).toBe(String(dynamicTool.id));
     expect(find("Run the database migration").match?.entryId).toBe(String(approval.id));
     expect(find("Keep the source wording").match?.entryId).toBe(String(plan.id));
+  });
+
+  it("indexes visible work state with its existing item identity and source text", () => {
+    const sourceThreadId = ThreadId.make("source-thread-search-documents");
+    const todo = {
+      ...base("state-todo", 8),
+      threadId: sourceThreadId,
+      type: "todo_list",
+      planId: PlanId.make("state-plan"),
+      explanation: "Review the release checklist.",
+      steps: [
+        { id: "step-changelog", text: "Review the changelog", status: "pending" },
+        { id: "step-tests", text: "Run targeted tests", status: "pending" },
+        { id: "step-note", text: "Publish the note", status: "pending" },
+      ],
+    } satisfies Extract<OrchestrationV2TurnItem, { type: "todo_list" }>;
+    const updatedTodo = {
+      ...todo,
+      explanation: "Review the release checklist.",
+      steps: [
+        { id: "step-changelog", text: "Review the updated changelog", status: "completed" },
+        { id: "step-tests", text: "Run targeted tests", status: "running" },
+        { id: "step-note", text: "Publish the note", status: "pending" },
+      ],
+    } satisfies Extract<OrchestrationV2TurnItem, { type: "todo_list" }>;
+    const interruption = {
+      ...base("state-interruption", 9),
+      threadId: sourceThreadId,
+      type: "run_interrupt_result",
+      message: "Run interrupted after the connection closed.",
+      status: "interrupted",
+    } satisfies OrchestrationV2TurnItem;
+    const notice = {
+      ...base("state-notice", 10),
+      type: "system_notice",
+      message: "The workspace copy is ready.",
+    } satisfies OrchestrationV2TurnItem;
+    const interruptRequest = {
+      ...base("unindexed-interrupt-request", 11),
+      type: "run_interrupt_request",
+      message: "Do not index interruption requests.",
+      status: "interrupted",
+    } satisfies OrchestrationV2TurnItem;
+    const inheritedRow = (item: OrchestrationV2TurnItem, position: number) => ({
+      position,
+      visibility: "inherited" as const,
+      sourceThreadId,
+      sourceItemId: item.id,
+      item,
+    });
+    const originalProjection = {
+      ...createdProjection(),
+      visibleTurnItems: [inheritedRow(todo, 88)],
+    };
+    const projection = {
+      ...createdProjection(),
+      visibleTurnItems: [
+        inheritedRow(updatedTodo, 88),
+        inheritedRow(interruption, 99),
+        row(notice, 100),
+        row(interruptRequest, 110),
+      ],
+    };
+    expect(updatedTodo.id).toBe(todo.id);
+    expect(projection.visibleTurnItems[0]).toMatchObject({
+      visibility: "inherited",
+      sourceThreadId,
+      sourceItemId: updatedTodo.id,
+      item: { id: updatedTodo.id, threadId: sourceThreadId },
+    });
+
+    const originalTodoFind = findProjectedThreadItems(
+      originalProjection,
+      { threadId, query: "Review" },
+      91,
+    );
+    expect(originalTodoFind.totalMatches).toBe(2);
+    expect(originalTodoFind.navigation).toEqual([
+      { entryId: String(todo.id), runId: String(runId), count: 2, startIndex: 0 },
+    ]);
+
+    const documents = documentsForProjection(projection);
+    const states = documents.filter((document) => document.kind === "state");
+    expect(states).toEqual([
+      {
+        threadId: String(threadId),
+        itemId: String(updatedTodo.id),
+        entryId: String(updatedTodo.id),
+        runId: String(runId),
+        position: 88,
+        kind: "state",
+        text: "Review the release checklist.\nReview the updated changelog\ncompleted\nRun targeted tests\nrunning\nPublish the note\npending",
+        createdAt: "2026-10-17T10:00:00.000Z",
+      },
+      {
+        threadId: String(threadId),
+        itemId: String(interruption.id),
+        entryId: String(interruption.id),
+        runId: String(runId),
+        position: 99,
+        kind: "state",
+        text: "Run interrupted after the connection closed.",
+        createdAt: "2026-10-17T10:00:00.000Z",
+      },
+      {
+        threadId: String(threadId),
+        itemId: String(notice.id),
+        entryId: String(notice.id),
+        runId: String(runId),
+        position: 100,
+        kind: "state",
+        text: "The workspace copy is ready.",
+        createdAt: "2026-10-17T10:00:00.000Z",
+      },
+    ]);
+    const stateText = states.map((document) => document.text).join("\n");
+    for (const invented of [
+      "Todo:",
+      "Step:",
+      "Status:",
+      "System notice:",
+      "Run interruption:",
+      "state-todo",
+      "state-interruption",
+      "state-notice",
+      "state-plan",
+      "step-changelog",
+      "unindexed-interrupt-request",
+      "Do not index interruption requests.",
+    ]) {
+      expect(stateText).not.toContain(invented);
+    }
+
+    const updatedTodoFind = findProjectedThreadItems(projection, { threadId, query: "Review" }, 92);
+    expect(updatedTodoFind.totalMatches).toBe(2);
+    expect(updatedTodoFind.navigation).toEqual([
+      { entryId: String(updatedTodo.id), runId: String(runId), count: 2, startIndex: 0 },
+    ]);
+    expect(updatedTodoFind.match).toEqual({
+      entryId: String(updatedTodo.id),
+      runId: String(runId),
+      occurrence: 0,
+    });
+
+    const interruptionFind = findProjectedThreadItems(
+      projection,
+      { threadId, query: "connection closed" },
+      93,
+    );
+    expect(interruptionFind.totalMatches).toBe(1);
+    expect(interruptionFind.match).toEqual({
+      entryId: String(interruption.id),
+      runId: String(runId),
+      occurrence: 0,
+    });
+  });
+
+  it("omits visible state items without searchable text", () => {
+    const emptyTodo = {
+      ...base("empty-state-todo", 8),
+      type: "todo_list",
+      planId: PlanId.make("empty-state-plan"),
+      explanation: " \n ",
+      steps: [],
+    } satisfies Extract<OrchestrationV2TurnItem, { type: "todo_list" }>;
+    const emptyInterruption = {
+      ...base("empty-state-interruption", 9),
+      type: "run_interrupt_result",
+      message: "  ",
+    } satisfies OrchestrationV2TurnItem;
+    const emptyNotice = {
+      ...base("empty-state-notice", 10),
+      type: "system_notice",
+      message: "",
+    } satisfies OrchestrationV2TurnItem;
+    const projection = {
+      ...createdProjection(),
+      turnItems: [emptyTodo, emptyInterruption, emptyNotice],
+      visibleTurnItems: [row(emptyTodo, 88), row(emptyInterruption, 99), row(emptyNotice, 100)],
+    };
+
+    expect(
+      documentsForProjection(projection).filter((document) => document.kind === "state"),
+    ).toEqual([]);
   });
 });

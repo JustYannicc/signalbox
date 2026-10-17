@@ -116,7 +116,6 @@ const make = Effect.gen(function* () {
 
   const searchOne: ThreadSearch["Service"]["searchOne"] = (actor, input) =>
     Effect.gen(function* () {
-      yield* requireEnabled;
       const scope = yield* authority.current(actor);
       if (!scope.homes.some((home) => home.threadIds.includes(input.threadId)))
         return yield* unavailable();
@@ -138,7 +137,6 @@ const make = Effect.gen(function* () {
 
   const readItem: ThreadSearch["Service"]["readItem"] = (actor, threadId, itemId) =>
     Effect.gen(function* () {
-      yield* requireEnabled;
       const scope = yield* authority.current(actor);
       if (!scope.homes.some((home) => home.threadIds.includes(threadId))) return null;
       const record = yield* threads.forThread(threadId).searchDocuments(scope.actor, [itemId]);

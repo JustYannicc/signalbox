@@ -141,7 +141,9 @@ const queryCandidates = (
 const makeHarness = (options: {
   readonly generation?: () => string;
   readonly disabled?: boolean;
+  readonly indexUnavailable?: boolean;
   readonly backfillReady?: () => boolean;
+  readonly backfillActivation?: () => string | null;
   readonly scope?: SearchAuthority.SearchScope;
   readonly scopeAt?: (call: number, actor: SearchActor) => SearchAuthority.SearchScope;
   readonly progress?: SearchIndexService["progress"];
@@ -156,10 +158,12 @@ const makeHarness = (options: {
 }) => {
   let authorityCalls = 0;
   const queries: Array<SearchQuery> = [];
+  const indexCalls: Array<"query" | "progress"> = [];
   const authorityActors: Array<SearchActor> = [];
   const reads: Array<{ readonly threadId: string; readonly itemIds: ReadonlyArray<string> }> = [];
   const finds: Array<string> = [];
   const readyChecks: Array<boolean> = [];
+  const activationChecks: Array<string | null> = [];
   const storedCursors = new Map<string, SearchCursor>();
   let nextCursor = 0;
   const seenThreads = new Map<string, Map<string, number>>();
@@ -180,12 +184,30 @@ const makeHarness = (options: {
     },
     disabled: options.disabled ?? false,
     deliver: () => Effect.void,
-    progress:
-      options.progress ??
-      ((_home, threadIds) =>
-        Effect.succeed(threadIds.map((threadId) => ({ threadId, revision: 4, complete: true })))),
+    progress: (currentHome, threadIds) => {
+      indexCalls.push("progress");
+      if (options.indexUnavailable)
+        return Effect.fail(
+          new SearchIndex.SearchIndexError({
+            operation: "progress",
+            cause: new Error("index offline"),
+          }),
+        );
+      return (
+        options.progress?.(currentHome, threadIds) ??
+        Effect.succeed(threadIds.map((threadId) => ({ threadId, revision: 4, complete: true })))
+      );
+    },
     query: (input) => {
       queries.push(input);
+      indexCalls.push("query");
+      if (options.indexUnavailable)
+        return Effect.fail(
+          new SearchIndex.SearchIndexError({
+            operation: "query",
+            cause: new Error("index offline"),
+          }),
+        );
       return options.query?.(input) ?? page([]);
     },
   };
@@ -268,6 +290,12 @@ const makeHarness = (options: {
               readyChecks.push(ready);
               return ready;
             }),
+            activation: Effect.sync(() => {
+              const activation = options.backfillActivation?.() ?? null;
+              activationChecks.push(activation);
+              return activation;
+            }),
+            observeThread: () => Effect.void,
             step: Effect.void,
           }),
         );
@@ -276,9 +304,11 @@ const makeHarness = (options: {
   return {
     layer,
     queries,
+    indexCalls,
     reads,
     finds,
     readyChecks,
+    activationChecks,
     authorityActors,
     cursorFor: (token: string) => storedCursors.get(token),
   };
@@ -342,7 +372,7 @@ describe("ThreadSearch", () => {
       return withSearch(harness, (search) =>
         Effect.gen(function* () {
           const result = yield* Effect.result(search.query(actor, { query: "needle" }));
-          expect(Result.isFailure(result)).toBe(true);
+          expect(result._tag).toBe("Failure");
           if (Result.isFailure(result)) expect(result.failure.reason).toBe("cursor_expired");
           expect(harness.reads).toEqual([]);
           expect(harness.queries).toHaveLength(1);
@@ -354,10 +384,11 @@ describe("ThreadSearch", () => {
   it.effect("rejects a cursor after an authoritative drive grant changes", () => {
     let current = scope(["thread-1"], 1);
     const hit = candidate(document("thread-1", "item-1", "needle"));
+    const second = candidate(document("thread-1", "item-2", "needle again"));
     const harness = makeHarness({
       scopeAt: () => current,
-      records: new Map([["thread-1", record("thread-1", [hit])]]),
-      query: () => page([hit], true),
+      records: new Map([["thread-1", record("thread-1", [hit, second])]]),
+      query: (input) => queryCandidates([hit, second], input),
     });
 
     return withSearch(harness, (search) =>
@@ -373,7 +404,7 @@ describe("ThreadSearch", () => {
             cursor: first.nextCursor,
           }),
         );
-        expect(Result.isFailure(result)).toBe(true);
+        expect(result._tag).toBe("Failure");
         if (Result.isFailure(result)) expect(result.failure.reason).toBe("cursor_expired");
         expect(harness.queries).toHaveLength(1);
       }),
@@ -414,6 +445,92 @@ describe("ThreadSearch", () => {
     );
   });
 
+  it.effect("does not count preexisting live progress without the new scan activation", () => {
+    const harness = makeHarness({
+      scope: scope(["thread-1"]),
+      backfillReady: () => true,
+      backfillActivation: () => "generation-2-activation",
+      progress: (_home, threadIds) =>
+        Effect.succeed([{ threadId: threadIds[0]!, revision: 4, complete: true }]),
+    });
+
+    return withSearch(harness, (search) => search.query(actor, { query: "needle" })).pipe(
+      Effect.tap((result) =>
+        Effect.sync(() => {
+          expect(result.coverage).toEqual({
+            complete: false,
+            indexedThreads: 0,
+            pendingThreads: 1,
+            available: true,
+          });
+          expect(harness.activationChecks).toEqual(["generation-2-activation"]);
+        }),
+      ),
+    );
+  });
+
+  it.effect("does not count a complete row from a previous backfill activation", () => {
+    const harness = makeHarness({
+      scope: scope(["thread-1"]),
+      backfillReady: () => true,
+      backfillActivation: () => "generation-2-activation",
+      progress: (_home, threadIds) =>
+        Effect.succeed([
+          {
+            threadId: threadIds[0]!,
+            revision: 4,
+            complete: true,
+            activation: "generation-1-activation",
+          },
+        ]),
+    });
+
+    return withSearch(harness, (search) => search.query(actor, { query: "needle" })).pipe(
+      Effect.tap((result) =>
+        Effect.sync(() => {
+          expect(result.coverage).toEqual({
+            complete: false,
+            indexedThreads: 0,
+            pendingThreads: 1,
+            available: true,
+          });
+          expect(harness.activationChecks).toEqual(["generation-2-activation"]);
+        }),
+      ),
+    );
+  });
+
+  it.effect("counts progress completed by the current backfill activation", () => {
+    const harness = makeHarness({
+      scope: scope(["thread-1"]),
+      backfillReady: () => true,
+      backfillActivation: () => "generation-2-activation",
+      progress: (_home, threadIds) =>
+        Effect.succeed([
+          {
+            threadId: threadIds[0]!,
+            revision: 4,
+            complete: true,
+            activation: "generation-2-activation",
+          },
+        ]),
+    });
+
+    return withSearch(harness, (search) => search.query(actor, { query: "needle" })).pipe(
+      Effect.tap((result) =>
+        Effect.sync(() => {
+          expect(result.coverage).toEqual({
+            complete: true,
+            indexedThreads: 1,
+            pendingThreads: 0,
+            available: true,
+          });
+          expect(harness.activationChecks).toEqual(["generation-2-activation"]);
+        }),
+      ),
+    );
+  });
+
   it.effect(
     "reports unavailable index coverage and counts affected authorized threads as pending",
     () => {
@@ -443,33 +560,36 @@ describe("ThreadSearch", () => {
     },
   );
 
-  it.effect("keeps every search entry point unavailable when search is disabled", () => {
-    const harness = makeHarness({ disabled: true, scope: scope(["thread-1"]) });
+  it.effect("keeps index-backed search unavailable when search is disabled", () => {
+    const harness = makeHarness({
+      disabled: true,
+      indexUnavailable: true,
+      scope: scope(["thread-1"]),
+    });
 
     return withSearch(harness, (search) =>
       Effect.gen(function* () {
         const results = [
           yield* Effect.result(search.query(actor, { query: "needle" })),
           yield* Effect.result(search.search(actor, { query: "needle" })),
-          yield* Effect.result(
-            search.searchOne(actor, { threadId: ThreadId.make("thread-1"), query: "needle" }),
-          ),
-          yield* Effect.result(search.readItem(actor, ThreadId.make("thread-1"), "item-1")),
         ];
         for (const result of results) {
-          expect(Result.isFailure(result)).toBe(true);
-          if (Result.isFailure(result)) expect(result.failure.reason).toBe("unavailable");
+          expect(result._tag).toBe("Failure");
+          if (result._tag === "Failure") expect(result.failure.reason).toBe("unavailable");
         }
         expect(harness.queries).toEqual([]);
+        expect(harness.indexCalls).toEqual([]);
         expect(harness.reads).toEqual([]);
         expect(harness.finds).toEqual([]);
         expect(harness.authorityActors).toEqual([]);
+        expect(harness.readyChecks).toEqual([]);
       }),
     );
   });
 
-  it.effect("gates every entry point on the optional backfill-ready service", () => {
+  it.effect("gates index-backed search on the optional backfill-ready service", () => {
     const harness = makeHarness({
+      indexUnavailable: true,
       scope: scope(["thread-1"]),
       backfillReady: () => false,
     });
@@ -479,20 +599,85 @@ describe("ThreadSearch", () => {
         const results = [
           yield* Effect.result(search.query(actor, { query: "needle" })),
           yield* Effect.result(search.search(actor, { query: "needle" })),
-          yield* Effect.result(
-            search.searchOne(actor, { threadId: ThreadId.make("thread-1"), query: "needle" }),
-          ),
-          yield* Effect.result(search.readItem(actor, ThreadId.make("thread-1"), "item-1")),
         ];
         for (const result of results) {
-          expect(Result.isFailure(result)).toBe(true);
-          if (Result.isFailure(result)) expect(result.failure.reason).toBe("unavailable");
+          expect(result._tag).toBe("Failure");
+          if (result._tag === "Failure") expect(result.failure.reason).toBe("unavailable");
         }
-        expect(harness.readyChecks).toEqual([false, false, false, false]);
+        expect(harness.readyChecks).toEqual([false, false]);
         expect(harness.queries).toEqual([]);
+        expect(harness.indexCalls).toEqual([]);
         expect(harness.reads).toEqual([]);
         expect(harness.finds).toEqual([]);
         expect(harness.authorityActors).toEqual([]);
+      }),
+    );
+  });
+
+  it.effect("keeps source-only Find and item reads available without an index", () => {
+    const requested = document("thread-1", "item-1", "needle in current content");
+    const harness = makeHarness({
+      disabled: true,
+      indexUnavailable: true,
+      backfillReady: () => false,
+      scope: scope(["thread-1"]),
+      records: new Map([["thread-1", record("thread-1", [requested])]]),
+      find: () =>
+        Effect.succeed({
+          snapshotSequence: 9,
+          totalMatches: 1,
+          activeIndex: 0,
+          navigation: [],
+          match: { entryId: "entry-item-1", runId: null, occurrence: 0 },
+        }),
+    });
+
+    return withSearch(harness, (search) =>
+      Effect.gen(function* () {
+        const found = yield* search.searchOne(actor, {
+          threadId: ThreadId.make("thread-1"),
+          query: "needle",
+        });
+        const read = yield* search.readItem(actor, ThreadId.make("thread-1"), "item-1");
+
+        expect(found).toMatchObject({
+          complete: true,
+          totalMatches: 1,
+          match: { entryId: "entry-item-1" },
+        });
+        expect(read?.item).toEqual(requested);
+        expect(harness.finds).toEqual(["thread-1"]);
+        expect(harness.reads).toEqual([{ threadId: "thread-1", itemIds: ["item-1"] }]);
+        expect(harness.authorityActors).toHaveLength(4);
+        expect(harness.readyChecks).toEqual([]);
+        expect(harness.indexCalls).toEqual([]);
+      }),
+    );
+  });
+
+  it.effect("refuses unauthorized source-only reads before touching their thread", () => {
+    const harness = makeHarness({
+      disabled: true,
+      indexUnavailable: true,
+      backfillReady: () => false,
+      scope: scope([]),
+    });
+
+    return withSearch(harness, (search) =>
+      Effect.gen(function* () {
+        const found = yield* Effect.result(
+          search.searchOne(actor, { threadId: ThreadId.make("thread-denied"), query: "needle" }),
+        );
+        const read = yield* search.readItem(actor, ThreadId.make("thread-denied"), "item-1");
+
+        expect(Result.isFailure(found)).toBe(true);
+        if (Result.isFailure(found)) expect(found.failure.reason).toBe("unavailable");
+        expect(read).toBeNull();
+        expect(harness.authorityActors).toHaveLength(2);
+        expect(harness.finds).toEqual([]);
+        expect(harness.reads).toEqual([]);
+        expect(harness.readyChecks).toEqual([]);
+        expect(harness.indexCalls).toEqual([]);
       }),
     );
   });
@@ -555,19 +740,17 @@ describe("ThreadSearch", () => {
 
   it.effect("keeps a cursor when unrelated thread-index rows change inside the same grant", () => {
     let currentThreadIds = ["thread-1", "thread-2"];
-    let queryCall = 0;
     const first = candidate(document("thread-1", "item-1", "needle first"));
+    const removed = candidate(document("thread-2", "item-2", "needle removed"));
     const next = candidate(document("thread-3", "item-3", "needle next"));
+    const candidates = [first, removed, next];
     const harness = makeHarness({
       scopeAt: (_call, currentActor) => scope(currentThreadIds, 1, currentActor, [home]),
       records: new Map([
         ["thread-1", record("thread-1", [first])],
         ["thread-3", record("thread-3", [next])],
       ]),
-      query: () => {
-        const value = queryCall++ === 0 ? first : next;
-        return page([value], queryCall === 1);
-      },
+      query: (input) => queryCandidates(candidates, input),
     });
 
     return withSearch(harness, (search) =>
@@ -639,7 +822,7 @@ describe("ThreadSearch", () => {
             cursor: initial.nextCursor!,
           }),
         );
-        expect(Result.isFailure(result)).toBe(true);
+        expect(result._tag).toBe("Failure");
         if (Result.isFailure(result)) expect(result.failure.reason).toBe("cursor_expired");
         expect(harness.queries).toHaveLength(1);
         expect(harness.authorityActors.at(-1)?.projectIds).toEqual([secondHome.projectId]);
@@ -670,12 +853,47 @@ describe("ThreadSearch", () => {
             cursor: initial.nextCursor!,
           }),
         );
-        expect(Result.isFailure(result)).toBe(true);
+        expect(result._tag).toBe("Failure");
         if (Result.isFailure(result)) expect(result.failure.reason).toBe("cursor_expired");
         expect(harness.queries).toHaveLength(1);
       }),
     );
   });
+
+  it.effect(
+    "expires a cursor when the backfill activation changes within one index generation",
+    () => {
+      let activation = "activation-old";
+      const first = candidate(document("thread-1", "item-1", "needle first"));
+      const second = candidate(document("thread-1", "item-2", "needle second"));
+      const harness = makeHarness({
+        scope: scope(["thread-1"]),
+        backfillReady: () => true,
+        backfillActivation: () => activation,
+        records: new Map([["thread-1", record("thread-1", [first, second])]]),
+        query: (input) => queryCandidates([first, second], input),
+      });
+
+      return withSearch(harness, (search) =>
+        Effect.gen(function* () {
+          const initial = yield* search.query(actor, { query: "needle", limit: 1 });
+          expect(initial.nextCursor).not.toBeNull();
+          activation = "activation-new";
+          const result = yield* Effect.result(
+            search.query(actor, {
+              query: "needle",
+              limit: 1,
+              cursor: initial.nextCursor!,
+            }),
+          );
+          expect(result._tag).toBe("Failure");
+          if (Result.isFailure(result)) expect(result.failure.reason).toBe("cursor_expired");
+          expect(harness.queries).toHaveLength(1);
+          expect(harness.activationChecks).toEqual(["activation-old", "activation-new"]);
+        }),
+      );
+    },
+  );
 
   it.effect("expires a cursor when query options change", () => {
     const first = candidate(document("thread-1", "item-1", "needle first"));
@@ -697,7 +915,7 @@ describe("ThreadSearch", () => {
             cursor: initial.nextCursor!,
           }),
         );
-        expect(Result.isFailure(result)).toBe(true);
+        expect(result._tag).toBe("Failure");
         if (Result.isFailure(result)) expect(result.failure.reason).toBe("cursor_expired");
         expect(harness.queries).toHaveLength(1);
       }),
@@ -878,6 +1096,57 @@ describe("ThreadSearch", () => {
     },
   );
 
+  it.effect("filters state items and preserves their exact source anchor on read", () => {
+    const state = {
+      ...document("thread-1", "item-a-state", "needle in current state", "state"),
+      entryId: "entry-state",
+      runId: "run-state",
+      position: 12,
+      createdAt: "2026-10-17T10:30:00.000Z",
+    };
+    const message = document("thread-1", "item-z-message", "needle in a message", "user");
+    const stateCandidate = candidate(state, 4, { matchRank: 6 });
+    const messageCandidate = candidate(message, 4, { matchRank: 1 });
+    const harness = makeHarness({
+      scope: scope(["thread-1"]),
+      records: new Map([["thread-1", record("thread-1", [state, message])]]),
+      query: (input) => queryCandidates([messageCandidate, stateCandidate], input),
+    });
+
+    return withSearch(harness, (search) =>
+      Effect.gen(function* () {
+        const result = yield* search.query(actor, {
+          query: "needle",
+          kinds: ["state"],
+          limit: 5,
+        });
+        expect(harness.queries[0]?.kinds).toEqual(["state"]);
+        expect(result.hits.map(({ itemId, kind }) => ({ itemId, kind }))).toEqual([
+          { itemId: "item-a-state", kind: "state" },
+        ]);
+        expect(result.hits[0]).toMatchObject({
+          itemId: "item-a-state",
+          entryId: "entry-state",
+          runId: "run-state",
+          position: 12,
+        });
+
+        const read = yield* search.readItem(actor, ThreadId.make("thread-1"), "item-a-state");
+        expect(read?.item).toEqual(state);
+        expect(read?.item).toMatchObject({
+          itemId: "item-a-state",
+          entryId: "entry-state",
+          runId: "run-state",
+          position: 12,
+        });
+        expect(harness.reads.at(-1)).toEqual({
+          threadId: "thread-1",
+          itemIds: ["item-a-state"],
+        });
+      }),
+    );
+  });
+
   it.effect("retains legacy user-first ordering and updated-time tie breaks", () => {
     const userRecent = candidate(
       document("thread-user-recent", "item-user-recent", "needle user recent", "user"),
@@ -919,10 +1188,13 @@ describe("ThreadSearch", () => {
 
   it.effect("preserves cursor_expired from its own in-thread Find recheck", () => {
     const harness = makeHarness({
+      disabled: true,
+      indexUnavailable: true,
+      backfillReady: () => false,
       scopeAt: (call, requestActor) =>
         call === 1
           ? scope(["thread-1"], 1, requestActor, [home])
-          : scope(["thread-1"], 2, { ...requestActor, contextIds: [] }, [home]),
+          : scopeForHomes([], requestActor, 2, []),
     });
 
     return withSearch(harness, (search) =>
@@ -930,8 +1202,37 @@ describe("ThreadSearch", () => {
         const result = yield* Effect.result(
           search.searchOne(actor, { threadId: ThreadId.make("thread-1"), query: "needle" }),
         );
-        expect(Result.isFailure(result)).toBe(true);
+        expect(result._tag).toBe("Failure");
         if (Result.isFailure(result)) expect(result.failure.reason).toBe("cursor_expired");
+        expect(harness.finds).toEqual(["thread-1"]);
+        expect(harness.authorityActors).toHaveLength(2);
+        expect(harness.readyChecks).toEqual([]);
+        expect(harness.indexCalls).toEqual([]);
+      }),
+    );
+  });
+
+  it.effect("rechecks current grant after a source-only item read", () => {
+    const requested = document("thread-1", "item-1", "current source item");
+    const harness = makeHarness({
+      disabled: true,
+      indexUnavailable: true,
+      backfillReady: () => false,
+      scopeAt: (call, requestActor) =>
+        call === 1
+          ? scope(["thread-1"], 1, requestActor, [home])
+          : scopeForHomes([], requestActor, 2, []),
+      records: new Map([["thread-1", record("thread-1", [requested])]]),
+    });
+
+    return withSearch(harness, (search) =>
+      Effect.gen(function* () {
+        const result = yield* search.readItem(actor, ThreadId.make("thread-1"), requested.itemId);
+        expect(result).toBeNull();
+        expect(harness.reads).toEqual([{ threadId: "thread-1", itemIds: [requested.itemId] }]);
+        expect(harness.authorityActors).toHaveLength(2);
+        expect(harness.readyChecks).toEqual([]);
+        expect(harness.indexCalls).toEqual([]);
       }),
     );
   });

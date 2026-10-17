@@ -3,6 +3,10 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./keywordSearch": {
+      "types": "./src/keywordSearch.ts",
+      "import": "./src/keywordSearch.ts"
+    },
     "./signalboxAppUrl": {
       "types": "./src/signalboxAppUrl.ts",
       "import": "./src/signalboxAppUrl.ts"

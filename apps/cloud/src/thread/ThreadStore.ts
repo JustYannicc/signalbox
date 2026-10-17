@@ -40,6 +40,7 @@ import {
 import { type ThreadMonitor, ThreadMonitorWire } from "./threadWire.ts";
 import {
   SEARCH_DELIVERY_MAX_BYTES,
+  boundSearchThreadMetadata,
   boundedSearchDocumentParts,
   searchDeliveryBaseSize,
   searchDeliveryBytes,
@@ -233,6 +234,8 @@ export class ThreadStore extends Context.Service<
     readonly eventsDelivered: Effect.Effect<number, SqlError>;
     readonly acknowledgeEvents: (through: number) => Effect.Effect<void, SqlError>;
     readonly searchOutbox: Effect.Effect<SearchOutboxState, SqlError>;
+    /** A durable packaging failure remains visible without keeping the alarm hot. */
+    readonly hasUnpackageableSearch: Effect.Effect<boolean, SqlError>;
     readonly hasPendingSearchDelivery: Effect.Effect<boolean, SqlError>;
     readonly pendingSearchDelivery: Effect.Effect<SearchDelivery | null, SqlError>;
     readonly acknowledgeSearchDelivery: (
@@ -443,6 +446,10 @@ const migrations = Migrator.fromRecord({
       next_page INTEGER NOT NULL,
       PRIMARY KEY (revision, delivery_id)
     )`;
+    yield* sql`CREATE TABLE search_outbox_unpackageable (
+      revision INTEGER PRIMARY KEY,
+      reason TEXT NOT NULL
+    )`;
     yield* sql`CREATE TABLE search_backfill_legacy_conversion (
       position INTEGER NOT NULL,
       item_id TEXT NOT NULL,
@@ -502,11 +509,27 @@ const SearchDeliveryJson = Schema.fromJsonString(
     parts: Schema.optionalKey(Schema.Array(SearchDocumentPartSchema)),
     removed: Schema.Array(Schema.String),
     complete: Schema.Boolean,
+    snapshot: Schema.optionalKey(
+      Schema.Struct({
+        activation: Schema.String,
+        page: Schema.Number,
+        final: Schema.Boolean,
+      }),
+    ),
   }),
 );
 const encodeSearchDelivery = Schema.encodeSync(SearchDeliveryJson);
 const SearchThreadJson = Schema.fromJsonString(SearchThreadMetadata);
 const encodeSearchThread = Schema.encodeSync(SearchThreadJson);
+const encodeSearchBackfillActivation = Schema.encodeSync(
+  Schema.fromJsonString(
+    Schema.Struct({
+      requestKey: Schema.String,
+      revision: Schema.Number,
+      generation: Schema.Number,
+    }),
+  ),
+);
 const decodeSearchThread = Schema.decodeUnknownSync(SearchThreadJson);
 const decodeSearchDeliveryRows = Schema.decodeUnknownSync(
   Schema.Array(
@@ -671,6 +694,25 @@ const make = Effect.gen(function* () {
     sql`INSERT INTO machine_record (id, record) VALUES (1, ${encodeMachineRecord(record)})
       ON CONFLICT (id) DO UPDATE SET record = excluded.record`.pipe(Effect.asVoid);
 
+  const markSearchUnpackageable = (revision: number, backfill = false) =>
+    Effect.gen(function* () {
+      const existing = yield* sql`SELECT revision FROM search_outbox_unpackageable
+        WHERE revision = ${revision}`;
+      if (existing.length > 0) return;
+      yield* sql`INSERT INTO search_outbox_unpackageable (revision, reason)
+        VALUES (${revision}, 'identity_metadata_exceeds_delivery_limit')`;
+      yield* Effect.logWarning(
+        "Search delivery cannot fit its outbox; source state is retained and search stays pending.",
+        {
+          revision,
+        },
+      );
+      if (backfill) {
+        yield* sql`UPDATE search_outbox_state SET backfill_requested = 0, backfill_complete = 0
+          WHERE id = 1 AND backfill_revision = ${revision}`;
+      }
+    });
+
   const commit: ThreadStore["Service"]["commit"] = Effect.fn("ThreadStore.commit")(function* (
     input,
   ) {
@@ -696,6 +738,8 @@ const make = Effect.gen(function* () {
       (searchStateRow?.revision ?? 0) + (input.searchDeliveries?.length ? 1 : 0);
     let page = 0;
     for (const draft of input.searchDeliveries ?? []) {
+      // The full title is in the thread search document; this copy is repeated in every row.
+      const cachedThread = boundSearchThreadMetadata(draft.thread);
       const parts = [
         ...(draft.parts ?? []),
         ...draft.documents.flatMap((document) => splitSearchDocument(document)),
@@ -709,7 +753,7 @@ const make = Effect.gen(function* () {
       let baseSize = { envelope: 0, row: 0 };
       const makeDelivery = (complete: boolean): SearchDelivery => ({
         home: draft.home,
-        thread: draft.thread,
+        thread: cachedThread,
         revision: searchRevision,
         sourceSequence: sequence,
         deliveryId: `${draft.thread.threadId}:${searchRevision}:source:${page}`,
@@ -723,7 +767,7 @@ const make = Effect.gen(function* () {
         baseSize = searchDeliveryBaseSize(
           {
             home: draft.home,
-            thread: draft.thread,
+            thread: cachedThread,
             revision: searchRevision,
             sourceSequence: sequence,
             deliveryId: `${draft.thread.threadId}:${searchRevision}:source:${page}`,
@@ -733,6 +777,10 @@ const make = Effect.gen(function* () {
         );
       };
       recalculateBase();
+      if (!searchDeliveryWithinLimit(baseSize)) {
+        yield* markSearchUnpackageable(searchRevision);
+        continue;
+      }
       const emit = Effect.fnUntraced(function* (complete: boolean) {
         const delivery = makeDelivery(complete);
         const encoded = encodeSearchDelivery(delivery);
@@ -755,6 +803,7 @@ const make = Effect.gen(function* () {
         escapedRemovedBytes = 0;
         recalculateBase();
       });
+      let unpackageable = false;
       let partIndex = 0;
       while (partIndex < parts.length) {
         const part = parts[partIndex]!;
@@ -775,9 +824,9 @@ const make = Effect.gen(function* () {
           }
           const split = splitSearchDocumentPart(part);
           if (split === null) {
-            return yield* Effect.die(
-              new Error("A search document part exceeds the delivery byte limit."),
-            );
+            yield* markSearchUnpackageable(searchRevision);
+            unpackageable = true;
+            break;
           }
           parts.splice(partIndex, 1, ...split);
           continue;
@@ -787,6 +836,7 @@ const make = Effect.gen(function* () {
         escapedPartsBytes += searchPartEscapedBytes(part);
         partIndex += 1;
       }
+      if (unpackageable) continue;
       for (const itemId of draft.removed) {
         const itemBytes = searchRemovedItemBytes(itemId);
         const candidateBytes = searchDeliveryBytes(
@@ -811,20 +861,21 @@ const make = Effect.gen(function* () {
               searchRemovedItemEscapedBytes(itemId),
             );
             if (!searchDeliveryWithinLimit(bytesAlone)) {
-              return yield* Effect.die(
-                new Error("A removed item id exceeds the delivery byte limit."),
-              );
+              yield* markSearchUnpackageable(searchRevision);
+              unpackageable = true;
+              break;
             }
           } else {
-            return yield* Effect.die(
-              new Error("A removed item id exceeds the delivery byte limit."),
-            );
+            yield* markSearchUnpackageable(searchRevision);
+            unpackageable = true;
+            break;
           }
         }
         removed.push(itemId);
         removedBytes += itemBytes;
         escapedRemovedBytes += searchRemovedItemEscapedBytes(itemId);
       }
+      if (unpackageable) continue;
       if (hasContent() || (parts.length === 0 && draft.removed.length === 0)) {
         yield* emit(draft.complete);
       }
@@ -947,6 +998,15 @@ const make = Effect.gen(function* () {
       return row !== undefined && (row.has_delivery === 1 || row.has_conversion === 1);
     }),
   );
+  const hasUnpackageableSearch: ThreadStore["Service"]["hasUnpackageableSearch"] =
+    sql`SELECT EXISTS (SELECT 1 FROM search_outbox_unpackageable) AS blocked`.pipe(
+      Effect.map((rows) => {
+        const [row] = Schema.decodeUnknownSync(
+          Schema.Array(Schema.Struct({ blocked: Schema.Number })),
+        )(rows);
+        return row?.blocked === 1;
+      }),
+    );
   const pendingSearchDelivery: ThreadStore["Service"]["pendingSearchDelivery"] = Effect.gen(
     function* () {
       const state = decodeSearchOutboxState(yield* readSearchOutboxState);
@@ -1112,6 +1172,10 @@ const make = Effect.gen(function* () {
             legacyConversion.next_offset,
             SEARCH_DELIVERY_MAX_BYTES / 2,
           );
+          if (converted.blocked) {
+            yield* markSearchUnpackageable(state.backfillRevision, true);
+            return null;
+          }
           let finished = document.text.length === 0 || converted.nextOffset >= document.text.length;
           for (const part of converted.parts) {
             const encoded = encodeSearchBackfillPart(part);
@@ -1149,14 +1213,29 @@ const make = Effect.gen(function* () {
       const parts: Array<SearchDocumentPart> = [];
       const page = state.nextBackfillPage;
       const deliveryId = `${state.backfillThread.threadId}:${state.backfillRevision}:backfill:${state.backfillGeneration}:${page}`;
+      const activationRows = yield* sql<{ readonly request_key: string }>`SELECT request_key
+        FROM search_backfill_activations
+        WHERE generation = ${state.backfillGeneration} AND revision = ${state.backfillRevision}`;
+      const snapshot = {
+        activation:
+          activationRows[0]?.request_key ??
+          `search-backfill:${state.backfillThread.threadId}:${state.backfillGeneration}`,
+        page,
+        final: false,
+      } as const;
       const base = {
         home: state.backfillHome,
         thread: state.backfillThread,
         revision: state.backfillRevision,
         sourceSequence: state.backfillSourceSequence,
         deliveryId,
+        snapshot,
       };
       const baseSize = searchDeliveryBaseSize(base, encodeSearchDelivery, page);
+      if (!searchDeliveryWithinLimit(baseSize)) {
+        yield* markSearchUnpackageable(state.backfillRevision, true);
+        return null;
+      }
       let partsBytes = 0;
       let escapedPartsBytes = 0;
       for (const row of rows) {
@@ -1172,7 +1251,20 @@ const make = Effect.gen(function* () {
         );
         if (!searchDeliveryWithinLimit(nextSize)) {
           if (parts.length === 0) {
-            return yield* Effect.die(new Error("A backfill part exceeds the delivery byte limit."));
+            const split = splitSearchDocumentPart(part);
+            if (split === null) {
+              yield* markSearchUnpackageable(state.backfillRevision, true);
+              return null;
+            }
+            yield* sql`DELETE FROM search_backfill_document_parts
+              WHERE position = ${part.position} AND item_id = ${part.itemId} AND offset = ${part.offset}`;
+            for (const piece of split) {
+              const encoded = encodeSearchBackfillPart(piece);
+              yield* sql`INSERT INTO search_backfill_document_parts (position, item_id, offset, part)
+                VALUES (${piece.position}, ${piece.itemId}, ${piece.offset}, ${encoded})
+                ON CONFLICT (position, item_id, offset) DO NOTHING`;
+            }
+            return null;
           }
           break;
         }
@@ -1207,6 +1299,7 @@ const make = Effect.gen(function* () {
         parts,
         removed: [],
         complete,
+        snapshot: { ...snapshot, final: complete },
       };
       const encoded = encodeSearchDelivery(delivery);
       if (
@@ -1240,6 +1333,7 @@ const make = Effect.gen(function* () {
       yield* sql`UPDATE search_outbox_state SET delivered = MAX(delivered, ${revision}) WHERE id = 1`;
       if (
         row.delivery.complete &&
+        row.delivery.snapshot?.final === true &&
         revision === decodeSearchOutboxState(yield* readSearchOutboxState).backfillRevision
       ) {
         yield* sql`UPDATE search_outbox_state SET backfill_requested = 0, backfill_complete = 1,
@@ -1248,6 +1342,7 @@ const make = Effect.gen(function* () {
         yield* sql`DELETE FROM search_backfill_documents`;
         yield* sql`DELETE FROM search_backfill_document_parts`;
         yield* sql`DELETE FROM search_backfill_legacy_conversion`;
+        yield* sql`DELETE FROM search_outbox_unpackageable WHERE revision <= ${revision}`;
       }
     }).pipe(sql.withTransaction);
 
@@ -1263,9 +1358,36 @@ const make = Effect.gen(function* () {
       }
       const generation = state.backfillGeneration + 1;
       const revision = state.revision + 1;
+      const cachedThread = boundSearchThreadMetadata(input.thread);
       yield* sql`DELETE FROM search_backfill_documents`;
       yield* sql`DELETE FROM search_backfill_document_parts`;
       yield* sql`DELETE FROM search_backfill_legacy_conversion`;
+      const blockBackfill = Effect.gen(function* () {
+        yield* sql`UPDATE search_outbox_state SET revision = ${revision}, backfill_requested = 1,
+        backfill_complete = 0, backfill_revision = ${revision}, backfill_generation = ${generation},
+        next_backfill_page = 0, cursor_position = NULL, cursor_item_id = NULL, cursor_offset = NULL,
+        backfill_source_sequence = ${input.sourceSequence}, backfill_home_owner = ${input.home.ownerId},
+        backfill_home_project = ${input.home.projectId}, backfill_thread = ${encodeSearchThread(cachedThread)}
+        WHERE id = 1`;
+        if (input.requestKey !== undefined) {
+          yield* sql`INSERT INTO search_backfill_activations (request_key, revision, generation)
+          VALUES (${input.requestKey}, ${revision}, ${generation})`;
+        }
+        yield* markSearchUnpackageable(revision, true);
+        return {
+          revision,
+          delivered: state.delivered,
+          backfillRequested: false,
+          backfillComplete: false,
+          backfillRevision: revision,
+          backfillGeneration: generation,
+          nextBackfillPage: 0,
+          backfillSourceSequence: input.sourceSequence,
+          backfillHome: input.home,
+          backfillThread: cachedThread,
+          cursor: null,
+        } satisfies SearchOutboxState;
+      });
       for (const document of input.documents) {
         let offset = 0;
         do {
@@ -1274,20 +1396,14 @@ const make = Effect.gen(function* () {
             offset,
             SEARCH_DELIVERY_MAX_BYTES / 2,
           );
-          if (converted.parts.length === 0 && document.text.length > offset) {
-            return yield* Effect.die(
-              new Error("A backfill document could not be split into bounded rows."),
-            );
-          }
+          if (converted.blocked) return yield* blockBackfill;
           for (const part of converted.parts) {
             const encoded = encodeSearchBackfillPart(part);
             if (
               searchPartRowBytes(part.position, part.itemId, part.offset, encoded) >
               SEARCH_DELIVERY_MAX_BYTES
             ) {
-              return yield* Effect.die(
-                new Error("A backfill part exceeds its storage byte limit."),
-              );
+              return yield* blockBackfill;
             }
             yield* sql`INSERT INTO search_backfill_document_parts (position, item_id, offset, part)
             VALUES (${part.position}, ${part.itemId}, ${part.offset}, ${encoded})`;
@@ -1298,8 +1414,9 @@ const make = Effect.gen(function* () {
       }
       if (input.requestKey !== undefined) {
         if (
-          utf8Bytes(JSON.stringify({ requestKey: input.requestKey, revision, generation })) >
-          SEARCH_DELIVERY_MAX_BYTES
+          utf8Bytes(
+            encodeSearchBackfillActivation({ requestKey: input.requestKey, revision, generation }),
+          ) > SEARCH_DELIVERY_MAX_BYTES
         ) {
           return yield* Effect.die(
             new Error("A backfill request key exceeds its storage byte limit."),
@@ -1312,7 +1429,7 @@ const make = Effect.gen(function* () {
         backfill_complete = 0, backfill_revision = ${revision}, backfill_generation = ${generation},
         next_backfill_page = 0, cursor_position = NULL, cursor_item_id = NULL, cursor_offset = NULL,
         backfill_source_sequence = ${input.sourceSequence}, backfill_home_owner = ${input.home.ownerId},
-        backfill_home_project = ${input.home.projectId}, backfill_thread = ${encodeSearchThread(input.thread)}
+        backfill_home_project = ${input.home.projectId}, backfill_thread = ${encodeSearchThread(cachedThread)}
         WHERE id = 1`;
       return {
         revision,
@@ -1324,7 +1441,7 @@ const make = Effect.gen(function* () {
         nextBackfillPage: 0,
         backfillSourceSequence: input.sourceSequence,
         backfillHome: input.home,
-        backfillThread: input.thread,
+        backfillThread: cachedThread,
         cursor: null,
       } satisfies SearchOutboxState;
     }).pipe(sql.withTransaction);
@@ -1367,6 +1484,7 @@ const make = Effect.gen(function* () {
     eventsDelivered,
     acknowledgeEvents,
     searchOutbox,
+    hasUnpackageableSearch,
     hasPendingSearchDelivery,
     pendingSearchDelivery,
     acknowledgeSearchDelivery,

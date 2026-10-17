@@ -1,10 +1,13 @@
 import { describe, expect, it } from "@effect/vitest";
-import { vi } from "vitest";
+import { vi } from "vite-plus/test";
 import * as Effect from "effect/Effect";
 
 vi.mock("cloudflare:workers", () => ({
   DurableObject: class {
-    constructor(readonly ctx: unknown) {}
+    readonly ctx: unknown;
+    constructor(ctx: unknown) {
+      this.ctx = ctx;
+    }
   },
 }));
 vi.mock("./adapters/SqliteSearchIndex.ts", () => ({

@@ -36,6 +36,7 @@ const delivery = (input: {
   readonly removed?: ReadonlyArray<string>;
   readonly complete?: boolean;
   readonly updatedAt?: string;
+  readonly snapshot?: NonNullable<SearchIndex.SearchDelivery["snapshot"]>;
 }): SearchIndex.SearchDelivery => ({
   home,
   thread: {
@@ -52,6 +53,7 @@ const delivery = (input: {
   ...(input.parts === undefined ? {} : { parts: input.parts }),
   removed: input.removed ?? [],
   complete: input.complete ?? false,
+  ...(input.snapshot === undefined ? {} : { snapshot: input.snapshot }),
 });
 
 const layerForTest = () =>
@@ -885,5 +887,273 @@ describe("SQLite search index", () => {
         });
         expect(restored.candidates.map((candidate) => candidate.itemId)).toEqual(["item-2"]);
       }).pipe(Effect.provide(layerForTest())),
+  );
+
+  it.effect("sweeps each activated snapshot only after full replay coverage", () =>
+    Effect.gen(function* () {
+      yield* SqliteSearchIndex.initialize(home);
+      const obsoleteText = "obsolete generation one text";
+      yield* deliver(
+        delivery({
+          id: "gen-1-initial",
+          threadId: "thread-snapshot",
+          revision: 1,
+          complete: true,
+          documents: [
+            document("thread-snapshot", "shared", "first generation shared text"),
+            document("thread-snapshot", "old-only", obsoleteText),
+          ],
+        }),
+      );
+      const sql = yield* SqlClient.SqlClient;
+      const [obsolete] = yield* sql<{ readonly id: number }>`SELECT id FROM search_documents
+        WHERE thread_id = 'thread-snapshot' AND item_id = 'old-only'`;
+      if (obsolete === undefined) throw new Error("Expected the obsolete snapshot row.");
+      const [obsoletePart] = yield* sql<{
+        readonly id: number;
+      }>`SELECT id FROM search_document_parts
+        WHERE document_id = ${obsolete.id}`;
+      if (obsoletePart === undefined) throw new Error("Expected the obsolete indexed part.");
+      yield* sql`INSERT INTO search_document_conversion
+        (document_id, char_offset, unit_offset, total_chars, total_length, stage,
+          next_part_index, next_index_part)
+        VALUES (${obsolete.id}, 0, 0, ${obsoleteText.length}, ${obsoleteText.length}, 'reading', 0, 0)`;
+
+      const first = delivery({
+        id: "gen-1-snapshot",
+        threadId: "thread-snapshot",
+        revision: 2,
+        complete: true,
+        documents: [document("thread-snapshot", "shared", "first replay current text")],
+        snapshot: { activation: "opaque-generation-one-a", page: 0, final: true },
+      });
+      yield* deliver(first);
+      expect(
+        (yield* query({
+          threadIds: ["thread-snapshot"],
+          query: "obsolete generation one",
+          mode: "keyword",
+        })).candidates,
+      ).toEqual([]);
+      const [cleaned] = yield* sql<{
+        readonly document: number;
+        readonly parts: number;
+        readonly conversion: number;
+        readonly documentFts: number;
+        readonly partFts: number;
+      }>`SELECT
+        (SELECT COUNT(*) FROM search_documents WHERE id = ${obsolete.id}) AS document,
+        (SELECT COUNT(*) FROM search_document_parts WHERE document_id = ${obsolete.id}) AS parts,
+        (SELECT COUNT(*) FROM search_document_conversion WHERE document_id = ${obsolete.id}) AS conversion,
+        (SELECT COUNT(*) FROM search_documents_fts WHERE rowid = ${obsolete.id}) AS documentFts,
+        (SELECT COUNT(*) FROM search_document_parts_fts WHERE rowid = ${obsoletePart.id}) AS partFts`;
+      expect(cleaned).toEqual({
+        document: 0,
+        parts: 0,
+        conversion: 0,
+        documentFts: 0,
+        partFts: 0,
+      });
+
+      yield* deliver(
+        delivery({
+          id: "gen-2-snapshot",
+          threadId: "thread-snapshot",
+          revision: 3,
+          complete: true,
+          documents: [
+            document("thread-snapshot", "shared", "generation two shared text"),
+            document("thread-snapshot", "gen-2-only", "generation two only text"),
+          ],
+          snapshot: { activation: "opaque-generation-two-a", page: 0, final: true },
+        }),
+      );
+      yield* deliver(
+        delivery({
+          id: "gen-1-return-snapshot",
+          threadId: "thread-snapshot",
+          revision: 4,
+          complete: true,
+          documents: [
+            document("thread-snapshot", "shared", "generation one restored text"),
+            document("thread-snapshot", "gen-1-current", "generation one current text"),
+          ],
+          snapshot: { activation: "opaque-generation-one-b", page: 0, final: true },
+        }),
+      );
+
+      const staleGeneration = yield* query({
+        threadIds: ["thread-snapshot"],
+        query: "generation two only",
+        mode: "keyword",
+      });
+      const restoredGeneration = yield* query({
+        threadIds: ["thread-snapshot"],
+        query: "generation one current",
+        mode: "keyword",
+      });
+      const progress = yield* SearchIndex.SearchIndex.use((index) =>
+        index.progress(home, ["thread-snapshot"]),
+      );
+      expect(staleGeneration.candidates).toEqual([]);
+      expect(restoredGeneration.candidates.map(({ itemId }) => itemId)).toEqual(["gen-1-current"]);
+      expect(progress).toEqual([
+        {
+          threadId: "thread-snapshot",
+          revision: 4,
+          complete: true,
+          activation: "opaque-generation-one-b",
+        },
+      ]);
+    }).pipe(Effect.provide(layerForTest())),
+  );
+
+  it.effect("retains published rows until contiguous snapshot pages and all item parts land", () =>
+    Effect.gen(function* () {
+      yield* SqliteSearchIndex.initialize(home);
+      yield* deliver(
+        delivery({
+          id: "before-snapshot",
+          threadId: "thread-partial-snapshot",
+          revision: 8,
+          complete: true,
+          documents: [document("thread-partial-snapshot", "old", "old published snapshot text")],
+        }),
+      );
+
+      yield* deliver(
+        delivery({
+          id: "snapshot-page-zero",
+          threadId: "thread-partial-snapshot",
+          revision: 9,
+          parts: [
+            {
+              ...document("thread-partial-snapshot", "new", "newneedle"),
+              text: "new",
+              offset: 0,
+              totalLength: 9,
+            },
+          ],
+          snapshot: { activation: "snapshot-partial", page: 0, final: false },
+        }),
+      );
+
+      const whilePartial = yield* query({
+        threadIds: ["thread-partial-snapshot"],
+        query: "old published snapshot",
+        mode: "keyword",
+      });
+      const partialProgress = yield* SearchIndex.SearchIndex.use((index) =>
+        index.progress(home, ["thread-partial-snapshot"]),
+      );
+      expect(whilePartial.candidates.map(({ itemId }) => itemId)).toEqual(["old"]);
+      expect(partialProgress).toEqual([
+        {
+          threadId: "thread-partial-snapshot",
+          revision: 9,
+          complete: false,
+          activation: "snapshot-partial",
+        },
+      ]);
+
+      yield* deliver(
+        delivery({
+          id: "snapshot-page-one-final",
+          threadId: "thread-partial-snapshot",
+          revision: 9,
+          complete: true,
+          parts: [
+            {
+              ...document("thread-partial-snapshot", "new", "newneedle"),
+              text: "needle",
+              offset: 3,
+              totalLength: 9,
+            },
+          ],
+          snapshot: { activation: "snapshot-partial", page: 1, final: true },
+        }),
+      );
+
+      const afterSnapshot = yield* query({
+        threadIds: ["thread-partial-snapshot"],
+        query: "old published snapshot",
+        mode: "keyword",
+      });
+      const landedParts = yield* query({
+        threadIds: ["thread-partial-snapshot"],
+        query: "newneedle",
+        mode: "keyword",
+      });
+      expect(afterSnapshot.candidates).toEqual([]);
+      expect(landedParts.candidates.map(({ itemId }) => itemId)).toEqual(["new"]);
+    }).pipe(Effect.provide(layerForTest())),
+  );
+
+  it.effect("accepts an older snapshot after newer live writes without rolling them back", () =>
+    Effect.gen(function* () {
+      yield* SqliteSearchIndex.initialize(home);
+      yield* deliver(
+        delivery({
+          id: "old-published-before-snapshot",
+          threadId: "thread-late-snapshot",
+          revision: 2,
+          complete: true,
+          documents: [
+            document("thread-late-snapshot", "stale", "stale published row text"),
+            document("thread-late-snapshot", "snapshot-item", "snapshot current item"),
+          ],
+        }),
+      );
+      yield* deliver(
+        delivery({
+          id: "snapshot-page-before-live",
+          threadId: "thread-late-snapshot",
+          revision: 4,
+          documents: [document("thread-late-snapshot", "snapshot-item", "snapshot current item")],
+          snapshot: { activation: "snapshot-before-live", page: 0, final: false },
+        }),
+      );
+      yield* deliver(
+        delivery({
+          id: "newer-live-after-snapshot-start",
+          threadId: "thread-late-snapshot",
+          revision: 5,
+          complete: true,
+          documents: [document("thread-late-snapshot", "live", "newer live item")],
+        }),
+      );
+      yield* deliver(
+        delivery({
+          id: "snapshot-final-after-live",
+          threadId: "thread-late-snapshot",
+          revision: 4,
+          complete: true,
+          snapshot: { activation: "snapshot-before-live", page: 1, final: true },
+        }),
+      );
+      yield* deliver(
+        delivery({
+          id: "late-old-snapshot-page",
+          threadId: "thread-late-snapshot",
+          revision: 3,
+          complete: true,
+          documents: [document("thread-late-snapshot", "stale", "stale published row text")],
+          snapshot: { activation: "older-activation", page: 0, final: true },
+        }),
+      );
+
+      const stale = yield* query({
+        threadIds: ["thread-late-snapshot"],
+        query: "stale published row",
+        mode: "keyword",
+      });
+      const current = yield* query({
+        threadIds: ["thread-late-snapshot"],
+        query: "newer live item",
+        mode: "keyword",
+      });
+      expect(stale.candidates).toEqual([]);
+      expect(current.candidates.map(({ itemId }) => itemId)).toEqual(["live"]);
+    }).pipe(Effect.provide(layerForTest())),
   );
 });

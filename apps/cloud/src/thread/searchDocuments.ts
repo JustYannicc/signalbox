@@ -67,13 +67,13 @@ function safeInputText(value: unknown, depth = 0): string {
       .join(" ");
   return Object.entries(value)
     .filter(([key]) => !SECRET_KEY.test(key))
-    .map(([key, item]) => {
-      const text = safeInputText(item, depth + 1);
-      return text.length === 0 ? "" : `${key}: ${text}`;
-    })
+    .map(([, item]) => safeInputText(item, depth + 1))
     .filter(Boolean)
     .join("\n");
 }
+
+const nonEmptyText = (parts: ReadonlyArray<string>) =>
+  parts.filter((part) => part.trim().length > 0).join("\n");
 
 const outputExcerpt = (output: string) => {
   const text = output.trim();
@@ -119,6 +119,22 @@ export function documentForProjectedItem(
         ? null
         : document(projection, { ...common, entryId: String(item.id), kind: "summary", text });
     }
+    case "todo_list": {
+      const text = nonEmptyText([
+        item.explanation ?? "",
+        ...item.steps.flatMap((step) => [step.text, step.status]),
+      ]);
+      return text.length === 0
+        ? null
+        : document(projection, { ...common, entryId: String(item.id), kind: "state", text });
+    }
+    case "run_interrupt_result":
+    case "system_notice": {
+      const text = nonEmptyText([item.message]);
+      return text.length === 0
+        ? null
+        : document(projection, { ...common, entryId: String(item.id), kind: "state", text });
+    }
     case "compaction":
     case "handoff": {
       if (item.status !== "completed") return null;
@@ -137,8 +153,7 @@ export function documentForProjectedItem(
         return null;
       }
       const excerpt = outputExcerpt(item.output ?? "");
-      const status =
-        item.exitCode === undefined ? item.status : `${item.status} exit ${item.exitCode}`;
+      const status = item.exitCode === undefined ? item.status : `${item.status} ${item.exitCode}`;
       return document(projection, {
         ...common,
         entryId: String(item.id),
@@ -181,11 +196,7 @@ export function documentForProjectedItem(
               item.status,
               item.prompt ?? "",
               item.appName ?? "",
-              ...(item.options ?? []).flatMap((option) => [
-                option.decision,
-                option.label,
-                option.warning ?? "",
-              ]),
+              ...(item.options ?? []).flatMap((option) => [option.label, option.warning ?? ""]),
             ]
           : [
               item.status,
@@ -193,11 +204,7 @@ export function documentForProjectedItem(
                 question.header,
                 question.question,
                 question.initialAnswer ?? "",
-                ...question.options.flatMap((option) => [
-                  option.label,
-                  option.description,
-                  option.value ?? "",
-                ]),
+                ...question.options.flatMap((option) => [option.label, option.description]),
               ]),
             ];
       const text = detail.filter((part) => part.trim().length > 0).join("\n");

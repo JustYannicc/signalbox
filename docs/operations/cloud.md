@@ -930,6 +930,9 @@ together, in foreign-key order, preserving `search_home` and migration records:
 DELETE FROM search_document_parts_fts;
 DELETE FROM search_documents_fts;
 DELETE FROM search_document_conversion;
+DELETE FROM search_snapshot_pages;
+DELETE FROM search_snapshot_items;
+DELETE FROM search_thread_snapshots;
 DELETE FROM search_document_staging_parts;
 DELETE FROM search_document_staging;
 DELETE FROM search_document_parts;

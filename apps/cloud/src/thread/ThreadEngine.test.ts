@@ -135,21 +135,28 @@ describe("ThreadEngine", () => {
         expect((yield* store.searchOutbox).revision).toBe(beforeChunk);
         yield* runToIdle(engine);
         const documents = [];
+        const parts = [];
         for (
           let delivery = yield* engine.pendingSearchDelivery;
           delivery !== null;
           delivery = yield* engine.pendingSearchDelivery
         ) {
           documents.push(...delivery.documents.filter((item) => item.kind === "assistant"));
+          parts.push(...(delivery.parts ?? []).filter((item) => item.kind === "assistant"));
           yield* engine.acknowledgeSearchDelivery(delivery.revision, delivery.deliveryId);
         }
-        expect(documents.map((item) => item.text)).toEqual([scriptedReply("Hello cloud")]);
+        expect(documents.length).toBe(0);
+        expect(parts.map((item) => item.text).join("")).toBe(scriptedReply("Hello cloud"));
         const found = yield* engine.find(owner, { threadId, query: "Hello cloud" });
         expect(found.totalMatches).toBeGreaterThanOrEqual(2);
         expect(found.match?.entryId).toBe("message-1");
-        expect((yield* engine.searchDocuments(owner, [documents[0]!.itemId]))?.documents).toEqual(
-          documents,
-        );
+        const exact = yield* engine.searchDocuments(owner, [parts[0]!.itemId]);
+        expect(exact?.documents).toHaveLength(1);
+        expect(exact?.documents[0]).toMatchObject({
+          itemId: parts[0]!.itemId,
+          entryId: parts[0]!.entryId,
+          text: scriptedReply("Hello cloud"),
+        });
       }),
     ),
   );

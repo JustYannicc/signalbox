@@ -232,7 +232,7 @@ const makeRuntime = (storage: DurableObjectStorage, env: UserObjectEnv) => {
         ).pipe(
           Layer.provideMerge(
             Layer.mergeAll(
-              UserShell.layer,
+              UserShell.layer.pipe(Layer.provide(searchBackfill)),
               UserThreadStatus.layer,
               CloudThreadService.layer,
               ThreadSearch.layer.pipe(

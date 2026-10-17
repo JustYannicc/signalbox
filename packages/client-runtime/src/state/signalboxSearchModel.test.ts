@@ -179,6 +179,14 @@ describe("findQueryForHit", () => {
     expect(findQueryForHit("ΟΔΟΣ", hit("a", { snippet: "μια οδος εδώ" }))).toBe("ΟΔΟΣ");
   });
 
+  it("hands accent-folded keyword matches to literal Find using their source spelling", () => {
+    for (const token of ["résumé", "re\u0301sume\u0301"]) {
+      expect(findQueryForHit("resume deployment", hit("a", { snippet: `🙂 ${token} ready` }))).toBe(
+        token,
+      );
+    }
+  });
+
   it("doesn't open Find for a title hit or a snippet without the terms", () => {
     expect(findQueryForHit("deploy", hit("a", { kind: "thread" }))).toBeNull();
     expect(findQueryForHit("rollback", hit("a"))).toBeNull();

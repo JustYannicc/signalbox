@@ -12,6 +12,7 @@ import type {
   ThreadSearchResult,
 } from "@t3tools/contracts/signalboxSearch";
 import { countThreadSearchOccurrences } from "@t3tools/shared/threadSearch";
+import { findKeywordSearchToken } from "@t3tools/shared/keywordSearch";
 import * as Schema from "effect/Schema";
 
 import { folderPath, homeOfThread } from "./foldersModel.ts";
@@ -227,7 +228,8 @@ export function searchResultPlace(input: {
  * What in-thread Find should look for so opening a hit lands on it. Find is
  * literal while keyword search matches separated terms, so: the whole query
  * where the hit's snippet holds it, else the first query term the snippet
- * holds (folded the way Find folds). Null when Find can't anchor the hit: a
+ * holds. Accent-folded keyword matches use the source token's actual spelling
+ * so Find remains literal. Null when Find can't anchor the hit: a
  * title match, or a snippet with none of the terms.
  */
 export function findQueryForHit(
@@ -240,6 +242,7 @@ export function findQueryForHit(
   if (countThreadSearchOccurrences(hit.snippet, trimmed) > 0) return trimmed;
   return (
     trimmed.split(/\s+/u).find((term) => countThreadSearchOccurrences(hit.snippet, term) > 0) ??
+    findKeywordSearchToken(hit.snippet, trimmed)?.text ??
     null
   );
 }

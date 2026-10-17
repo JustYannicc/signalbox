@@ -33,6 +33,17 @@ const document = (itemId: string, position: number, text: string): SearchIndex.S
   createdAt: null,
 });
 
+const threadTitleDocument = (text: string): SearchIndex.SearchDocument => ({
+  threadId: thread.threadId,
+  itemId: "thread",
+  entryId: "thread",
+  runId: null,
+  position: 0,
+  kind: "thread",
+  text,
+  createdAt: thread.updatedAt,
+});
+
 type Store = ThreadStore.ThreadStore["Service"];
 
 /** Rebuild the store service over one real SQLite connection, as a DO wake-up does. */
@@ -140,6 +151,11 @@ describe("ThreadStore search outbox", () => {
 
         const firstPage = yield* store.pendingSearchDelivery;
         expect(firstPage?.thread.updatedAt).toBe(thread.updatedAt);
+        expect(firstPage?.snapshot).toEqual({
+          activation: "search-backfill:thread-1:1",
+          page: 0,
+          final: false,
+        });
         expect(firstPage?.documents).toHaveLength(0);
         expect(firstPage?.parts).toHaveLength(64);
         expect(firstPage?.complete).toBe(false);
@@ -174,6 +190,11 @@ describe("ThreadStore search outbox", () => {
           historical.slice(64).map(({ itemId }) => itemId),
         );
         expect(secondPage?.complete).toBe(true);
+        expect(secondPage?.snapshot).toEqual({
+          activation: "search-backfill:thread-1:1",
+          page: 1,
+          final: true,
+        });
         yield* store.acknowledgeSearchDelivery(secondPage!.revision, secondPage!.deliveryId);
 
         const liveUpdate = yield* store.pendingSearchDelivery;
@@ -181,6 +202,7 @@ describe("ThreadStore search outbox", () => {
         expect(liveUpdate?.sourceSequence).toBe(10);
         expect(liveUpdate?.parts?.map(({ itemId }) => itemId)).toEqual(["live-item"]);
         expect(liveUpdate?.complete).toBe(false);
+        expect(liveUpdate?.snapshot).toBeUndefined();
       }),
     ),
   );
@@ -214,6 +236,166 @@ describe("ThreadStore search outbox", () => {
         expect(firstDelivery?.complete).toBe(true);
       }),
     ),
+  );
+
+  it.effect("keeps full escaped titles searchable while a moved-thread outbox stays bounded", () =>
+    withStore((store, _restart, sql) =>
+      Effect.gen(function* () {
+        const title = "\u0001".repeat(50_000);
+        expect(new TextEncoder().encode(JSON.stringify(title)).byteLength).toBeGreaterThan(
+          SEARCH_DELIVERY_MAX_BYTES,
+        );
+        const moved = { ...thread, title };
+        const destination = { ...home, projectId: "project-2" };
+        yield* store.commit({
+          head: 0,
+          events: [],
+          summaryChanged: false,
+          searchDeliveries: [
+            {
+              home,
+              thread: { ...moved, deleted: true },
+              documents: [],
+              removed: ["thread"],
+              complete: false,
+              sourceSequence: 1,
+            },
+            {
+              home: destination,
+              thread: moved,
+              documents: [threadTitleDocument(title)],
+              removed: [],
+              complete: false,
+              sourceSequence: 1,
+            },
+          ],
+        });
+
+        const rows = yield* sql<{
+          readonly revision: number;
+          readonly page: number;
+          readonly delivery_id: string;
+          readonly delivery: string;
+        }>`SELECT revision, page, delivery_id, delivery FROM search_outbox ORDER BY page`;
+        expect(rows.length).toBeGreaterThan(1);
+        const titleParts: Array<SearchIndex.SearchDocumentPart> = [];
+        for (const row of rows) {
+          expect(new TextEncoder().encode(row.delivery).byteLength).toBeLessThanOrEqual(
+            SEARCH_DELIVERY_MAX_BYTES,
+          );
+          expect(deliveryRowSize(row)).toBeLessThanOrEqual(SEARCH_DELIVERY_MAX_BYTES);
+          const delivery = JSON.parse(row.delivery) as SearchIndex.SearchDelivery;
+          expect(
+            new TextEncoder().encode(JSON.stringify(delivery.thread.title)).byteLength,
+          ).toBeLessThanOrEqual(1_026);
+          if (delivery.home.projectId === destination.projectId) {
+            titleParts.push(...(delivery.parts ?? []).filter(({ itemId }) => itemId === "thread"));
+          }
+        }
+        titleParts.sort((left, right) => left.offset - right.offset);
+        expect(titleParts.map(({ text }) => text).join("")).toBe(title);
+      }),
+    ),
+  );
+
+  it.effect("bounds cached backfill title and keeps the exact activation marker", () =>
+    withStore((store) =>
+      Effect.gen(function* () {
+        const title = "\\\n🙂\u0001".repeat(30_000);
+        const requestKey = "search-backfill:user_1:4:2";
+        yield* store.requestSearchBackfill({
+          home,
+          thread: { ...thread, title },
+          documents: [threadTitleDocument(title)],
+          sourceSequence: 7,
+          requestKey,
+        });
+
+        const parts: Array<SearchIndex.SearchDocumentPart> = [];
+        let page = 0;
+        let final = false;
+        for (
+          let delivery = yield* store.pendingSearchDelivery;
+          delivery !== null;
+          delivery = yield* store.pendingSearchDelivery
+        ) {
+          expect(final).toBe(false);
+          expect(delivery.thread.title).not.toBe(title);
+          expect(
+            new TextEncoder().encode(JSON.stringify(delivery.thread.title)).byteLength,
+          ).toBeLessThanOrEqual(1_026);
+          expect(delivery.snapshot).toEqual({
+            activation: requestKey,
+            page: page++,
+            final: delivery.complete,
+          });
+          final = delivery.complete;
+          parts.push(...(delivery.parts ?? []));
+          yield* store.acknowledgeSearchDelivery(delivery.revision, delivery.deliveryId);
+        }
+        expect(final).toBe(true);
+        expect(page).toBeGreaterThan(1);
+        expect(parts.map(({ text }) => text).join("")).toBe(title);
+      }),
+    ),
+  );
+
+  it.effect(
+    "retains impossible identity work without holding the alarm hot, then clears it on a full replay",
+    () =>
+      withStore((store, _restart, sql) =>
+        Effect.gen(function* () {
+          const oversizedItemId = "item".repeat(70_000);
+          yield* store.commit({
+            head: 0,
+            events: [],
+            summaryChanged: false,
+            searchDeliveries: [
+              {
+                home,
+                thread,
+                documents: [
+                  { ...document(oversizedItemId, 1, "content"), entryId: oversizedItemId },
+                ],
+                removed: [],
+                complete: true,
+                sourceSequence: 1,
+              },
+            ],
+          });
+          expect(yield* store.hasUnpackageableSearch).toBe(true);
+          expect(yield* store.hasPendingSearchDelivery).toBe(false);
+          expect(yield* store.pendingSearchDelivery).toBeNull();
+          expect(yield* sql`SELECT reason FROM search_outbox_unpackageable`).toHaveLength(1);
+
+          const blockedBackfill = yield* store.requestSearchBackfill({
+            home,
+            thread,
+            documents: [
+              { ...document(oversizedItemId, 1, "backfill content"), entryId: oversizedItemId },
+            ],
+            sourceSequence: 1,
+            requestKey: "search-backfill:user_1:5:1",
+          });
+          expect(blockedBackfill.backfillRequested).toBe(false);
+          expect(yield* store.hasPendingSearchDelivery).toBe(false);
+          expect(yield* store.hasUnpackageableSearch).toBe(true);
+
+          const replay = yield* store.requestSearchBackfill({
+            home,
+            thread,
+            documents: [document("recovered-item", 1, "recover the missing text")],
+            sourceSequence: 2,
+            requestKey: "search-backfill:user_1:5:2",
+          });
+          const final = yield* store.pendingSearchDelivery;
+          expect(final?.snapshot?.final).toBe(true);
+          expect(final?.revision).toBe(replay.backfillRevision);
+          yield* store.acknowledgeSearchDelivery(final!.revision, final!.deliveryId);
+          expect(yield* store.hasUnpackageableSearch).toBe(false);
+          expect((yield* store.searchOutbox).backfillComplete).toBe(true);
+        }),
+      ),
   );
 
   it.effect("stores large live updates as bounded delivery envelopes and rows", () =>

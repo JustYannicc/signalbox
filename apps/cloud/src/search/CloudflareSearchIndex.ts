@@ -1,6 +1,7 @@
 import * as SqliteClient from "@effect/sql-sqlite-do/SqliteClient";
 import { DurableObject } from "cloudflare:workers";
 import * as Effect from "effect/Effect";
+import * as Clock from "effect/Clock";
 import * as Layer from "effect/Layer";
 import * as ManagedRuntime from "effect/ManagedRuntime";
 import * as Schema from "effect/Schema";
@@ -25,6 +26,7 @@ export interface SearchIndexObjectApi {
       readonly threadId: string;
       readonly revision: number;
       readonly complete: boolean;
+      readonly activation?: string;
     }>
   >;
 }
@@ -106,13 +108,15 @@ export class SearchIndexObject
       this.ready = Promise.resolve();
       return;
     }
-    this.runtime = makeRuntime(ctx, home);
-    this.ready = this.runtime.runPromise(SqliteSearchIndex.initialize(home));
+    const runtime = makeRuntime(ctx, home);
+    this.runtime = runtime;
+    this.ready = runtime.runPromise(SqliteSearchIndex.initialize(home));
     // Only selecting this object wakes its conversion. Inactive generations stay untouched.
     void ctx.blockConcurrencyWhile(async () => {
       await this.ready;
       const alarm = await ctx.storage.getAlarm();
-      if (alarm === null) await ctx.storage.setAlarm(Date.now() + 1_000);
+      if (alarm === null)
+        await ctx.storage.setAlarm((await runtime.runPromise(Clock.currentTimeMillis)) + 1_000);
     });
   }
 
@@ -135,10 +139,15 @@ export class SearchIndexObject
     await this.ready;
     try {
       const more = await runtime.runPromise(SqliteSearchIndex.advanceLegacyConversion);
-      if (more) await this.state.storage.setAlarm(Date.now() + 1_000);
+      if (more)
+        await this.state.storage.setAlarm(
+          (await runtime.runPromise(Clock.currentTimeMillis)) + 1_000,
+        );
     } catch (cause) {
       await runtime.runPromise(Effect.logWarning("search index conversion will retry", { cause }));
-      await this.state.storage.setAlarm(Date.now() + 30_000);
+      await this.state.storage.setAlarm(
+        (await runtime.runPromise(Clock.currentTimeMillis)) + 30_000,
+      );
     }
   }
 

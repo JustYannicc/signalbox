@@ -9,11 +9,13 @@ import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as Hex from "effect/encoding/Hex";
 import * as Schema from "effect/Schema";
+import * as Option from "effect/Option";
 import * as ThreadDirectory from "../thread/ThreadDirectory.ts";
 import { type SearchActor } from "./SearchAuthority.ts";
 import * as SearchAuthority from "./SearchAuthority.ts";
 import * as SearchIndex from "./SearchIndex.ts";
 import * as SearchCursors from "./SearchCursors.ts";
+import * as SearchBackfill from "./SearchBackfill.ts";
 import { compareSearchKeys, searchKey } from "./searchOrdering.ts";
 import { matchesSearchText, searchSnippet } from "./searchText.ts";
 
@@ -42,12 +44,14 @@ export const make = Effect.gen(function* () {
   const threads = yield* ThreadDirectory.ThreadDirectory;
   const crypto = yield* Crypto.Crypto;
   const cursors = yield* SearchCursors.SearchCursors;
+  const backfill = yield* Effect.serviceOption(SearchBackfill.SearchBackfill);
 
   const fingerprintFor = (
     actor: SearchActor,
     scope: SearchAuthority.SearchScope,
     input: ThreadSearchInput,
     legacy: boolean,
+    activation: string | null | undefined,
   ) =>
     crypto
       .digest(
@@ -69,6 +73,7 @@ export const make = Effect.gen(function* () {
             order: legacy ? "legacy" : "rich",
             limit: input.limit ?? 20,
             generation: index.generation,
+            activation: activation ?? null,
           }),
         ),
       )
@@ -81,8 +86,11 @@ export const make = Effect.gen(function* () {
   ): Effect.Effect<ThreadSearchResult, ThreadSearchError> =>
     Effect.gen(function* () {
       if (index.disabled) return yield* unavailable();
+      const activation = Option.isSome(backfill)
+        ? yield* backfill.value.activation.pipe(Effect.mapError(unavailable))
+        : undefined;
       const scope = yield* authority.current(actor);
-      const fingerprint = yield* fingerprintFor(actor, scope, input, legacy);
+      const fingerprint = yield* fingerprintFor(actor, scope, input, legacy, activation);
       const cursor = input.cursor === undefined ? null : yield* cursors.read(input.cursor);
       if (input.cursor !== undefined && (cursor === null || cursor.fingerprint !== fingerprint))
         return yield* expired();
@@ -224,7 +232,7 @@ export const make = Effect.gen(function* () {
       }
       const more = unconsumed || partitions.some((p) => p.buffer.length > 0 || p.more);
       const finalScope = yield* authority.current(actor);
-      if ((yield* fingerprintFor(actor, finalScope, input, legacy)) !== fingerprint)
+      if ((yield* fingerprintFor(actor, finalScope, input, legacy, activation)) !== fingerprint)
         return yield* expired();
       const finalHomes = scopeFor(finalScope, input);
       const finalAllowed = new Map(finalHomes.map((p) => [homeKey(p.home), new Set(p.threadIds)]));
@@ -248,14 +256,20 @@ export const make = Effect.gen(function* () {
         const allowedIds = new Set(threadIds);
         const complete = new Set(
           progress
-            .filter((row) => row.complete && allowedIds.has(row.threadId))
+            .filter(
+              (row) =>
+                row.complete &&
+                allowedIds.has(row.threadId) &&
+                (activation === undefined ||
+                  (activation !== null && row.activation === activation)),
+            )
             .map((row) => row.threadId),
         );
         completedByHome.set(homeKey(home), complete);
       }
       // Progress reads also cross object boundaries, so recheck grants after those reads.
       const checkedScope = yield* authority.current(actor);
-      if ((yield* fingerprintFor(actor, checkedScope, input, legacy)) !== fingerprint)
+      if ((yield* fingerprintFor(actor, checkedScope, input, legacy, activation)) !== fingerprint)
         return yield* expired();
       const checkedHomes = scopeFor(checkedScope, input);
       const checkedIds = new Set(checkedHomes.flatMap((p) => p.threadIds));

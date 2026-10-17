@@ -9,6 +9,7 @@ import * as Migrations from "../../storage/migrations.ts";
 import * as SearchIndex from "../SearchIndex.ts";
 import * as SqliteSearchParts from "./SqliteSearchParts.ts";
 import * as SqliteSearchQueries from "./SqliteSearchQueries.ts";
+import * as SqliteSearchSnapshots from "./SqliteSearchSnapshots.ts";
 
 const encodeStrings = Schema.encodeSync(Schema.fromJsonString(Schema.Array(Schema.String)));
 const isSearchIndexError = Schema.is(SearchIndex.SearchIndexError);
@@ -122,6 +123,31 @@ const migrations = Migrator.fromRecord({
       next_index_part INTEGER NOT NULL
     )`;
   }),
+  "0004_authoritative_search_snapshots": Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    yield* sql`CREATE TABLE search_thread_snapshots (
+      thread_id TEXT PRIMARY KEY,
+      activation TEXT NOT NULL,
+      revision INTEGER NOT NULL,
+      final_page INTEGER,
+      complete INTEGER NOT NULL DEFAULT 0
+    )`;
+    yield* sql`CREATE TABLE search_snapshot_pages (
+      thread_id TEXT NOT NULL,
+      activation TEXT NOT NULL,
+      revision INTEGER NOT NULL,
+      page INTEGER NOT NULL,
+      final INTEGER NOT NULL,
+      PRIMARY KEY (thread_id, activation, revision, page)
+    )`;
+    yield* sql`CREATE TABLE search_snapshot_items (
+      thread_id TEXT NOT NULL,
+      activation TEXT NOT NULL,
+      revision INTEGER NOT NULL,
+      item_id TEXT NOT NULL,
+      PRIMARY KEY (thread_id, activation, revision, item_id)
+    )`;
+  }),
 });
 const matchesHome = (expected: SearchIndex.SearchHome, actual: SearchIndex.SearchHome) =>
   expected.ownerId === actual.ownerId && expected.projectId === actual.projectId;
@@ -168,16 +194,33 @@ const make = (home: SearchIndex.SearchHome) =>
             FROM search_threads WHERE thread_id = ${delivery.thread.threadId}`;
             const currentRevision = current[0]?.revision;
             const stale = currentRevision !== undefined && delivery.revision < currentRevision;
+            const snapshot =
+              delivery.snapshot === undefined
+                ? undefined
+                : { ...delivery.snapshot, revision: delivery.revision };
+            const acceptedSnapshot =
+              snapshot === undefined
+                ? false
+                : yield* SqliteSearchSnapshots.acceptActivation(
+                    sql,
+                    delivery.thread.threadId,
+                    snapshot,
+                  );
+            const shouldProcess = snapshot === undefined ? !stale : acceptedSnapshot;
 
-            if (!stale) {
-              yield* sql`INSERT INTO search_threads
+            if (shouldProcess) {
+              // An older but valid snapshot still contributes membership and coverage after
+              // newer live updates arrive. Its metadata must never roll those updates back.
+              if (!stale) {
+                const complete = snapshot === undefined && delivery.complete;
+                yield* sql`INSERT INTO search_threads
               (thread_id, title, archived, deleted, revision, source_sequence, complete,
                 updated_at, complete_requested)
               VALUES (
                 ${delivery.thread.threadId}, ${delivery.thread.title},
                 ${delivery.thread.archived ? 1 : 0}, ${delivery.thread.deleted ? 1 : 0},
                 ${delivery.revision}, ${delivery.sourceSequence}, 0,
-                ${delivery.thread.updatedAt ?? ""}, ${delivery.complete ? 1 : 0}
+                ${delivery.thread.updatedAt ?? ""}, ${complete ? 1 : 0}
               )
               ON CONFLICT(thread_id) DO UPDATE SET
                 title = excluded.title,
@@ -188,6 +231,7 @@ const make = (home: SearchIndex.SearchHome) =>
                 updated_at = excluded.updated_at,
                 complete = MAX(search_threads.complete, excluded.complete),
                 complete_requested = MAX(search_threads.complete_requested, excluded.complete_requested)`;
+              }
 
               const incomingParts: Array<SearchIndex.SearchDocumentPart> = [
                 ...delivery.documents.flatMap((document) =>
@@ -207,30 +251,52 @@ const make = (home: SearchIndex.SearchHome) =>
                 );
               }
 
-              for (const itemId of delivery.removed) {
-                const previous = yield* sql<{ readonly id: number }>`SELECT id FROM search_documents
-                WHERE thread_id = ${delivery.thread.threadId} AND item_id = ${itemId}`;
-                const documentId = previous[0]?.id;
-                if (documentId !== undefined) {
-                  yield* clearIndexedParts(documentId);
-                  yield* sql`DELETE FROM search_documents
+              if (snapshot !== undefined) {
+                const itemIds = [
+                  ...new Set([
+                    ...delivery.documents.map((document) => document.itemId),
+                    ...(delivery.parts ?? []).map((part) => part.itemId),
+                  ]),
+                ];
+                yield* SqliteSearchSnapshots.recordItems(
+                  sql,
+                  delivery.thread.threadId,
+                  snapshot,
+                  itemIds,
+                );
+                yield* SqliteSearchSnapshots.commitIfCovered(
+                  sql,
+                  delivery.thread.threadId,
+                  snapshot,
+                );
+              } else {
+                for (const itemId of delivery.removed) {
+                  const previous = yield* sql<{
+                    readonly id: number;
+                  }>`SELECT id FROM search_documents
                   WHERE thread_id = ${delivery.thread.threadId} AND item_id = ${itemId}`;
+                  const documentId = previous[0]?.id;
+                  if (documentId !== undefined) {
+                    yield* clearIndexedParts(documentId);
+                    yield* sql`DELETE FROM search_documents
+                    WHERE thread_id = ${delivery.thread.threadId} AND item_id = ${itemId}`;
+                  }
+                  yield* sql`DELETE FROM search_document_staging_parts
+                    WHERE thread_id = ${delivery.thread.threadId} AND item_id = ${itemId}`;
+                  yield* sql`DELETE FROM search_document_staging
+                    WHERE thread_id = ${delivery.thread.threadId} AND item_id = ${itemId}`;
+                  yield* sql`INSERT INTO search_tombstones (thread_id, item_id, revision)
+                  VALUES (${delivery.thread.threadId}, ${itemId}, ${delivery.revision})
+                  ON CONFLICT(thread_id, item_id) DO UPDATE SET
+                    revision = MAX(search_tombstones.revision, excluded.revision)`;
                 }
-                yield* sql`DELETE FROM search_document_staging_parts
-                  WHERE thread_id = ${delivery.thread.threadId} AND item_id = ${itemId}`;
-                yield* sql`DELETE FROM search_document_staging
-                  WHERE thread_id = ${delivery.thread.threadId} AND item_id = ${itemId}`;
-                yield* sql`INSERT INTO search_tombstones (thread_id, item_id, revision)
-                VALUES (${delivery.thread.threadId}, ${itemId}, ${delivery.revision})
-                ON CONFLICT(thread_id, item_id) DO UPDATE SET
-                  revision = MAX(search_tombstones.revision, excluded.revision)`;
-              }
 
-              const pending = yield* sql<{ readonly pending: number }>`SELECT 1 AS pending
+                const pending = yield* sql<{ readonly pending: number }>`SELECT 1 AS pending
                 FROM search_document_staging WHERE thread_id = ${delivery.thread.threadId} LIMIT 1`;
-              if (pending.length === 0) {
-                yield* sql`UPDATE search_threads SET complete = 1
-                  WHERE thread_id = ${delivery.thread.threadId} AND complete_requested = 1`;
+                if (pending.length === 0) {
+                  yield* sql`UPDATE search_threads SET complete = 1
+                    WHERE thread_id = ${delivery.thread.threadId} AND complete_requested = 1`;
+                }
               }
             }
 
@@ -261,11 +327,22 @@ const make = (home: SearchIndex.SearchHome) =>
         readonly threadId: string;
         readonly revision: number;
         readonly complete: number;
-      }>`SELECT thread_id AS threadId, revision, complete
-        FROM search_threads
-        WHERE thread_id IN (SELECT value FROM json_each(${encodeStrings(threadIds)}))
-        ORDER BY thread_id COLLATE BINARY`.pipe(
-        Effect.map((rows) => rows.map((row) => ({ ...row, complete: row.complete === 1 }))),
+        readonly snapshotComplete: number | null;
+        readonly activation: string | null;
+      }>`SELECT t.thread_id AS threadId, t.revision, t.complete,
+          s.complete AS snapshotComplete, s.activation
+        FROM search_threads t
+        LEFT JOIN search_thread_snapshots s ON s.thread_id = t.thread_id
+        WHERE t.thread_id IN (SELECT value FROM json_each(${encodeStrings(threadIds)}))
+        ORDER BY t.thread_id COLLATE BINARY`.pipe(
+        Effect.map((rows) =>
+          rows.map((row) => ({
+            threadId: row.threadId,
+            revision: row.revision,
+            complete: (row.snapshotComplete ?? row.complete) === 1,
+            ...(row.activation === null ? {} : { activation: row.activation }),
+          })),
+        ),
         Effect.mapError(
           (cause) => new SearchIndex.SearchIndexError({ operation: "progress", cause }),
         ),

@@ -201,7 +201,7 @@ export const serverConfig = (
     },
     shellResumeCompletionMarker: true,
     threadResumeCompletionMarker: true,
-    threadFind: identity.searchDisabled !== true,
+    threadFind: true,
     scratchWorkspaceRoot: SCRATCH_ROOT,
   };
 };

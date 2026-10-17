@@ -49,6 +49,12 @@ export interface SearchDelivery {
   readonly parts?: ReadonlyArray<SearchDocumentPart>;
   readonly removed: ReadonlyArray<string>;
   readonly complete: boolean;
+  /** Only a complete authoritative snapshot may settle its generation activation. */
+  readonly snapshot?: {
+    readonly activation: string;
+    readonly page: number;
+    readonly final: boolean;
+  };
 }
 
 export interface SearchCandidate extends Omit<SearchDocument, "text"> {
@@ -108,6 +114,7 @@ export class SearchIndex extends Context.Service<
         readonly threadId: string;
         readonly revision: number;
         readonly complete: boolean;
+        readonly activation?: string;
       }>,
       SearchIndexError
     >;

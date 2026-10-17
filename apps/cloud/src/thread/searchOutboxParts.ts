@@ -4,8 +4,27 @@ import * as Schema from "effect/Schema";
 
 const SEARCH_PART_MAX_CODE_UNITS = 16 * 1024;
 export const SEARCH_DELIVERY_MAX_BYTES = 256 * 1024;
+export const SEARCH_THREAD_TITLE_MAX_ENCODED_BYTES = 1024;
 const SearchDocumentPartJson = Schema.fromJsonString(SearchDocumentPartSchema);
 const encodePart = Schema.encodeSync(SearchDocumentPartJson);
+
+const jsonStringContentBytes = (value: string): number =>
+  new TextEncoder().encode(JSON.stringify(value)).byteLength - 2;
+
+/** Titles are cached in every outbox row; the full title stays in the thread search document. */
+export const boundSearchThreadMetadata = (
+  thread: SearchDelivery["thread"],
+): SearchDelivery["thread"] => {
+  let title = "";
+  let encodedBytes = 0;
+  for (const character of thread.title) {
+    const nextBytes = jsonStringContentBytes(character);
+    if (encodedBytes + nextBytes > SEARCH_THREAD_TITLE_MAX_ENCODED_BYTES) break;
+    title += character;
+    encodedBytes += nextBytes;
+  }
+  return title === thread.title ? thread : { ...thread, title };
+};
 
 /** Split by Unicode code point while keeping offsets in the protocol's UTF-16 units. */
 export const splitSearchDocument = (
@@ -75,7 +94,10 @@ export interface SearchDeliveryBaseSize {
 }
 
 export const searchDeliveryBaseSize = (
-  base: Pick<SearchDelivery, "home" | "thread" | "revision" | "sourceSequence" | "deliveryId">,
+  base: Pick<
+    SearchDelivery,
+    "home" | "thread" | "revision" | "sourceSequence" | "deliveryId" | "snapshot"
+  >,
   encodeDelivery: (delivery: SearchDelivery) => string,
   page: number,
 ): SearchDeliveryBaseSize => {
@@ -146,7 +168,11 @@ export const boundedSearchDocumentParts = (
   document: SearchDocument,
   offset: number,
   byteBudget: number,
-): { readonly parts: ReadonlyArray<SearchDocumentPart>; readonly nextOffset: number } => {
+): {
+  readonly parts: ReadonlyArray<SearchDocumentPart>;
+  readonly nextOffset: number;
+  readonly blocked: boolean;
+} => {
   const parts: Array<SearchDocumentPart> = [];
   let nextOffset = offset;
   let usedBytes = 0;
@@ -159,7 +185,10 @@ export const boundedSearchDocumentParts = (
     let bytes = searchPartRowBytes(part.position, part.itemId, part.offset, encodePart(part));
     while (bytes > SEARCH_DELIVERY_MAX_BYTES || (parts.length === 0 && bytes > byteBudget)) {
       const split = splitSearchDocumentPart(part);
-      if (split === null) throw new Error("A search document part exceeds its storage byte limit.");
+      if (split === null) {
+        if (bytes <= SEARCH_DELIVERY_MAX_BYTES) break;
+        return { parts: [], nextOffset: offset, blocked: true };
+      }
       part = split[0];
       bytes = searchPartRowBytes(part.position, part.itemId, part.offset, encodePart(part));
     }
@@ -169,7 +198,7 @@ export const boundedSearchDocumentParts = (
     nextOffset += part.text.length;
     if (document.text.length === 0) break;
   }
-  return { parts, nextOffset };
+  return { parts, nextOffset, blocked: false };
 };
 
 export interface LegacyDeliveryCursor {
@@ -196,12 +225,16 @@ export const takeLegacyDeliveryChunk = (
   readonly cursor: LegacyDeliveryCursor;
   readonly done: boolean;
 } => {
+  if (source.snapshot !== undefined && source.documents.length > 0) {
+    throw new Error("Snapshot deliveries must already use bounded parts.");
+  }
   if (source.parts !== undefined && source.parts.length > 0) {
     throw new Error("Legacy conversion does not accept an outbox row that already has parts.");
   }
+  const thread = boundSearchThreadMetadata(source.thread);
   const base = {
     home: source.home,
-    thread: source.thread,
+    thread,
     revision: source.revision,
     sourceSequence: source.sourceSequence,
     deliveryId,
@@ -289,6 +322,7 @@ export const takeLegacyDeliveryChunk = (
   const done = document >= source.documents.length && removedIndex >= source.removed.length;
   const delivery: SearchDelivery = {
     ...source,
+    thread,
     deliveryId,
     documents: [],
     parts,

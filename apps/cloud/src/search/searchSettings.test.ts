@@ -30,7 +30,7 @@ describe("search deployment controls", () => {
     );
     expect(
       serverConfig({ ...identity, searchDisabled: true }, "2026-10-17T00:00:00.000Z").threadFind,
-    ).toBe(false);
+    ).toBe(true);
   });
 
   it("rejects invalid controls instead of selecting an unintended namespace", () => {

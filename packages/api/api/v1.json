@@ -1951,7 +1951,7 @@
       "name": "threads.query",
       "rpc": "signalbox.search.query",
       "access": "read",
-      "input": "2f63ad84",
+      "input": "81f449d7",
       "output": "fdcbbe22"
     },
     {
