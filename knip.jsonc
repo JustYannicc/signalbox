@@ -77,6 +77,7 @@
         "src/boxdSpike/worker.ts!",
         "alchemy.run.ts!",
         "infra/boxd-spike.alchemy.ts!",
+        "infra/runner-images.alchemy.ts!",
         "infra/check-plan.ts",
       ],
       // `cloudflare:workers` is a Workers runtime module, not a package.

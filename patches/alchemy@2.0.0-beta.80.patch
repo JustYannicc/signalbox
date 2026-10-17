@@ -34,6 +34,43 @@ index 690f7a48..0ddc2529 100644
              if (!hasUnresolvedAttachment &&
                  hasDurableObjects !== hadDurableObjects) {
                  return { action: "replace" };
+diff --git a/lib/Docker/RemoteImage.js b/lib/Docker/RemoteImage.js
+--- a/lib/Docker/RemoteImage.js
++++ b/lib/Docker/RemoteImage.js
+@@ -89,12 +89,31 @@
+                 output.imageRef !== targetImageRef(news)) {
+                 return { action: "update" };
+             }
++            const source = yield* docker.image
++                .inspect(remoteImageRef(news), dockerContextName(news.context))
++                .pipe(Effect.catchReason("PlatformError", "NotFound", () => Effect.undefined));
++            if (!source || source.Id !== output.imageId)
++                return { action: "update" };
+         }),
+         reconcile: Effect.fn(function* ({ news, session }) {
+             const context = dockerContextName(news.context);
+             const sourceRef = remoteImageRef(news);
+-            yield* session.note(`Pulling Docker image: ${sourceRef}`);
+-            yield* docker.image.pull(sourceRef, news.platform, context);
++            if (news.alwaysPull === false) {
++                const source = yield* docker.image
++                    .inspect(sourceRef, context)
++                    .pipe(Effect.catchReason("PlatformError", "NotFound", () => Effect.undefined));
++                if (source) {
++                    yield* session.note(`Reusing local Docker image: ${sourceRef}`);
++                }
++                else {
++                    yield* session.note(`Pulling Docker image: ${sourceRef}`);
++                    yield* docker.image.pull(sourceRef, news.platform, context);
++                }
++            }
++            else {
++                yield* session.note(`Pulling Docker image: ${sourceRef}`);
++                yield* docker.image.pull(sourceRef, news.platform, context);
++            }
+             const finalRef = targetImageRef(news);
+             if (finalRef !== sourceRef) {
+                 yield* session.note(`Tagging Docker image: ${sourceRef} -> ${finalRef}`);
 diff --git a/lib/Drizzle/Postgres.d.ts b/lib/Drizzle/Postgres.d.ts
 index ddba2e1e..31335e20 100644
 --- a/lib/Drizzle/Postgres.d.ts
@@ -135,6 +172,40 @@ index 41dc9d18..29d16bd0 100644
              (yield* getDurableObjects(oldBindings)) !== undefined;
            if (
              !hasUnresolvedAttachment &&
+diff --git a/src/Docker/RemoteImage.ts b/src/Docker/RemoteImage.ts
+--- a/src/Docker/RemoteImage.ts
++++ b/src/Docker/RemoteImage.ts
+@@ -167,12 +167,28 @@
+           ) {
+             return { action: "update" };
+           }
++          const source = yield* docker.image
++            .inspect(remoteImageRef(news), dockerContextName(news.context))
++            .pipe(Effect.catchReason("PlatformError", "NotFound", () => Effect.undefined));
++          if (!source || source.Id !== output.imageId) return { action: "update" };
+         }),
+         reconcile: Effect.fn(function* ({ news, session }) {
+           const context = dockerContextName(news.context);
+           const sourceRef = remoteImageRef(news);
+-          yield* session.note(`Pulling Docker image: ${sourceRef}`);
+-          yield* docker.image.pull(sourceRef, news.platform, context);
++          if (news.alwaysPull === false) {
++            const source = yield* docker.image
++              .inspect(sourceRef, context)
++              .pipe(Effect.catchReason("PlatformError", "NotFound", () => Effect.undefined));
++            if (source) {
++              yield* session.note(`Reusing local Docker image: ${sourceRef}`);
++            } else {
++              yield* session.note(`Pulling Docker image: ${sourceRef}`);
++              yield* docker.image.pull(sourceRef, news.platform, context);
++            }
++          } else {
++            yield* session.note(`Pulling Docker image: ${sourceRef}`);
++            yield* docker.image.pull(sourceRef, news.platform, context);
++          }
+
+           const finalRef = targetImageRef(news);
+           if (finalRef !== sourceRef) {
 diff --git a/src/Drizzle/Postgres.ts b/src/Drizzle/Postgres.ts
 index 2d138914..61ae549d 100644
 --- a/src/Drizzle/Postgres.ts
