@@ -118,8 +118,7 @@ jobs:
       APNS_PRIVATE_KEY: ${{ secrets.APNS_PRIVATE_KEY }}
       FCM_SERVICE_ACCOUNT: ${{ secrets.FCM_SERVICE_ACCOUNT }}
     steps:
-      - &checkout
-        name: Checkout
+      - name: Checkout
         uses: actions/checkout@v6
         with:
           sparse-checkout: |
@@ -362,7 +361,28 @@ jobs:
       APNS_PRIVATE_KEY: ${{ secrets.APNS_PRIVATE_KEY }}
       FCM_SERVICE_ACCOUNT: ${{ secrets.FCM_SERVICE_ACCOUNT }}
     steps:
-      - *checkout
+      # Sparse checkout implicitly uses blob:none. A later merge can then need
+      # blobs through a PR merge ref GitHub has already replaced (#842).
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+      # Recreate the merge-ref tree for previews and their Runner image, using
+      # durable commits instead of GitHub's replaceable synthetic merge commit.
+      - name: Merge the PR base for the preview
+        env:
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          if ! git fetch --no-tags origin "$PR_BASE_SHA"; then
+            echo "::error title=Fetch PR base::Couldn't fetch the pinned PR base for the preview."
+            exit 1
+          fi
+          if ! git -c user.name=ci -c user.email=ci@localhost merge --no-edit --no-ff "$PR_BASE_SHA"; then
+            git merge --abort || true
+            echo "::error title=Merge PR base::This doesn't merge cleanly with its PR base. Merge the base branch into it."
+            exit 1
+          fi
       - *setup
       - *build
       - *bundle_runner
@@ -418,7 +438,10 @@ jobs:
       - name: Merge main for the production plan
         id: merge_main
         run: |
-          git fetch --no-tags --filter=blob:none --unshallow origin +refs/heads/main:refs/remotes/origin/main
+          if ! git fetch --no-tags origin +refs/heads/main:refs/remotes/origin/main; then
+            echo "::error title=Fetch main::Couldn't fetch current main for the production plan. This is a fetch failure, not a merge conflict."
+            exit 1
+          fi
           bash apps/cloud/infra/merge-main.sh origin/main
 
       - name: Rebuild with main for the production plan
