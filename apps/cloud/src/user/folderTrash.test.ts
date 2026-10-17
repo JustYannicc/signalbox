@@ -1,6 +1,6 @@
 import { ThreadId } from "@t3tools/contracts";
 import { PERSONAL_POOL_ID } from "@t3tools/contracts/accountHub";
-import { PERSONAL_CONTEXT_ID } from "@t3tools/contracts/signalboxContexts";
+import { PERSONAL_CONTEXT_ID, SignalboxContextId } from "@t3tools/contracts/signalboxContexts";
 import { OnePasswordEnvironmentId } from "@t3tools/contracts/signalboxFolders";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
@@ -16,6 +16,8 @@ import * as UserDriveIndex from "./UserDriveIndex.ts";
 const USER = "user_1";
 const DRIVE = "folder/personal/k1";
 const SCRATCH = "scratch";
+const ACME = SignalboxContextId.make("org_acme");
+const SHARED_DRIVE = "shared/org_acme/k2";
 
 const services = Effect.all({
   folders: UserFolders.UserFolders,
@@ -25,12 +27,17 @@ const services = Effect.all({
   sql: SqlClient.SqlClient,
 });
 
-const indexThread = (threadId: ThreadId, projectId: string, deletedAt: number | null = null) =>
+const indexThread = (
+  threadId: ThreadId,
+  projectId: string,
+  deletedAt: number | null = null,
+  contextId = PERSONAL_CONTEXT_ID,
+) =>
   Effect.flatMap(
     SqlClient.SqlClient,
     (sql) =>
       sql`INSERT INTO thread_index (thread_id, context_id, revision, shell, updated_at)
-      VALUES (${threadId}, ${PERSONAL_CONTEXT_ID}, 1,
+      VALUES (${threadId}, ${contextId}, 1,
         ${JSON.stringify({ id: threadId, projectId, deletedAt })}, 0)`,
   );
 
@@ -211,6 +218,43 @@ describe("folder trash", () => {
         (yield* folders.restoreTrash(childTrash.trash.trashId)).snapshot.folders,
       ).toContainEqual(expect.objectContaining({ id: child.id, parentId: parent.id }));
     }).pipe(Effect.provide(layerMemoryStore)),
+  );
+
+  it.effect(
+    "blocks an unfiled thread on a trashed shared drive but honors a filing elsewhere",
+    () =>
+      Effect.gen(function* () {
+        const { folders, contexts, drives, store } = yield* services;
+        yield* store.recordSignIn({ id: USER, email: "a@b.c" });
+        yield* contexts.syncOrganizations([{ id: ACME, name: "Acme" }]);
+        yield* drives.record({
+          driveId: SHARED_DRIVE,
+          name: "Acme files",
+          role: "editor",
+          sharedBy: null,
+          revision: 1,
+        });
+
+        const projectId = projectIdForDrive(SHARED_DRIVE);
+        let snapshot = yield* folders.snapshot;
+        const home = snapshot.folders.find((folder) => folder.files?.projectId === projectId)!;
+        snapshot = yield* folders.create({ name: "Elsewhere", ownerId: ACME, parentId: null });
+        const elsewhere = snapshot.folders.find((folder) => folder.name === "Elsewhere")!;
+        const unfiled = ThreadId.make("unfiled-shared-home");
+        const filedElsewhere = ThreadId.make("filed-shared-elsewhere");
+        yield* indexThread(unfiled, projectId, null, ACME);
+        yield* indexThread(filedElsewhere, projectId, null, ACME);
+        yield* folders.moveThread({ threadId: filedElsewhere, folderId: elsewhere.id });
+
+        const trashed = yield* folders.trash({ id: home.id });
+        expect(trashed.trash.driveIds).toEqual([SHARED_DRIVE]);
+        expect(
+          yield* folders.turn({ threadId: unfiled, projectId }).pipe(Effect.flip),
+        ).toMatchObject({ _tag: "ThreadHomeTrashedError", folderId: home.id });
+        expect(
+          (yield* folders.turn({ threadId: filedElsewhere, projectId })).instructions.thread,
+        ).toEqual([]);
+      }).pipe(Effect.provide(layerMemoryStore)),
   );
 
   it.effect("keeps trashed sections, placements and bindings out of legacy preview rows", () =>

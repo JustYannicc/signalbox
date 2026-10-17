@@ -87,7 +87,7 @@ const CallTool = Tool.make("signalbox_call", {
   failure: SignalboxApiCallError,
   failureMode: "return",
   dependencies: [SignalboxApi],
-}).annotate(Tool.Destructive, true);
+}).annotate(Tool.Destructive, false);
 
 export const SignalboxToolkit = Toolkit.make(SearchTool, CallTool);
 

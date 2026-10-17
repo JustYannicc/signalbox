@@ -19,7 +19,6 @@ describe("operation search", () => {
     ["list pools", "pools.list"],
     ["move a thread to a folder", "threads.move"],
     ["start a thread", "threads.create"],
-    ["empty trash", "trash.empty"],
   ])("finds %s", (query, expected) => {
     expect(top(query)).toContain(expected);
   });
@@ -27,6 +26,7 @@ describe("operation search", () => {
   it("leaves out what the caller may not use", () => {
     expect(top("delete a folder", 20)).not.toContain("folders.delete");
     expect(top("respond to an approval", 20)).not.toContain("threads.respond");
+    expect(top("empty trash", 20)).not.toContain("trash.empty");
   });
 
   it("finds nothing for nothing", () => {

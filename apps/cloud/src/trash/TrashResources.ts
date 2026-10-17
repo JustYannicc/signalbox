@@ -5,6 +5,7 @@ import type { Actor } from "../thread/ThreadEngine.ts";
 import * as Context from "effect/Context";
 import type * as Effect from "effect/Effect";
 
+import type { FolderTrashRestorePreflight } from "../user/UserFolders.ts";
 import type { Row, Target } from "./trashTables.ts";
 
 export interface FolderTrash {
@@ -42,6 +43,14 @@ export class TrashResources extends Context.Service<
     readonly folderTrashes: (
       actor: Actor,
     ) => Effect.Effect<ReadonlyArray<FolderTrash>, SignalboxTrashError>;
+    readonly folderRestorePreflight: (
+      actor: Actor,
+      folder: { readonly id: string; readonly context_id: string },
+    ) => Effect.Effect<FolderTrashRestorePreflight | null, SignalboxTrashError>;
+    readonly trashedHomeOfThread: (
+      actor: Actor,
+      thread: { readonly id: string; readonly context_id: string },
+    ) => Effect.Effect<FolderId | null, SignalboxTrashError>;
     readonly prepare: (actor: Actor, row: Row) => Effect.Effect<boolean, SignalboxTrashError>;
     readonly restore: (actor: Actor, row: Row) => Effect.Effect<void, SignalboxTrashError>;
   }

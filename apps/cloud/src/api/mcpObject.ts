@@ -1,4 +1,4 @@
-// oxlint-disable-next-line t3code/no-raw-mcp-registration -- the public MCP's access checks are the API's own (`callOperation`): agents get no human-only or destructive operation, and every call goes through the RPC scope check.
+// oxlint-disable-next-line t3code/no-raw-mcp-registration -- the public MCP uses per-operation API reach checks in `callOperation`, plus the RPC scope check.
 import { McpProtocol, McpServer } from "effect/ai";
 import {
   layerSignalboxTools,
@@ -101,7 +101,7 @@ export const makeMcpHandler = (input: {
     ),
   ).layer;
 
-  // oxlint-disable-next-line t3code/no-raw-mcp-registration -- the public MCP's access checks are the API's own (`callOperation`): agents get no human-only or destructive operation, and every call goes through the RPC scope check.
+  // oxlint-disable-next-line t3code/no-raw-mcp-registration -- the public MCP uses per-operation API reach checks in `callOperation`, plus the RPC scope check.
   const registration = McpServer.toolkit(SignalboxToolkit);
   // @effect-diagnostics-next-line unsafeEffectTypeAssertion:off - the middleware provides it per request.
   const registered = registration as Layer.Layer<

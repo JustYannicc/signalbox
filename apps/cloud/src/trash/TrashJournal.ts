@@ -81,6 +81,10 @@ export const makeJournal = Effect.gen(function* () {
       WHERE id = ${id} AND status = 'trashed' AND purge_after > ${now} RETURNING id`.pipe(
         Effect.map((rows) => rows.length > 0),
       ),
+    restoreBlocked: (id: string, restoreStartedAt: number, message: string) =>
+      sql`UPDATE trash_entries SET status = 'trashed', restore_started_at = NULL, error = ${message}
+      WHERE id = ${id} AND status = 'restoring' AND restore_started_at = ${restoreStartedAt}
+      RETURNING id`.pipe(Effect.map((rows) => rows.length > 0)),
     restored: (id: string) => sql`UPDATE trash_entries SET status = 'restored', error = NULL
       WHERE id = ${id} AND status = 'restoring'`,
   };

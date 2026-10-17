@@ -179,7 +179,7 @@ describe("Signalbox's MCP", () => {
     }),
   );
 
-  it.effect("offers Trash, restores through MCP and refuses disabled permanent cleanup", () =>
+  it.effect("offers recoverable Trash but keeps permanent cleanup out of agent tools", () =>
     Effect.gen(function* () {
       const { tool } = yield* connect;
       const call = (operation: string, input: object = {}) =>
@@ -187,7 +187,7 @@ describe("Signalbox's MCP", () => {
       const found = yield* tool("signalbox_search", { query: "empty trash", limit: 3 });
       expect(
         (yield* decodeSearch(found.content[0]!.text)).operations.map((row) => row.name),
-      ).toContain("trash.empty");
+      ).not.toContain("trash.empty");
       const created = yield* call("folders.create", { name: "MCP trash", parentId: null });
       const folder = decodeFolders(created.content[0]!.text).folders[0]!;
       const moved = yield* call("trash.folder", { folderId: folder.id });

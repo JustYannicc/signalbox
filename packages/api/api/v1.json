@@ -2158,7 +2158,6 @@
       "rpc": "signalbox.trash.empty",
       "access": "write",
       "destructive": true,
-      "agentCallable": true,
       "input": "6b3c9036",
       "output": "7b32ad46"
     },

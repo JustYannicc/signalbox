@@ -126,7 +126,7 @@ describe("default names", () => {
 describe("Trash API reach", () => {
   const byName = new Map(operations.map((operation) => [operation.name, operation]));
 
-  it("exposes Trash to agents with accurate destructive metadata", () => {
+  it("exposes recoverable Trash and gates permanent cleanup", () => {
     expect(byName.get("trash.list")).toMatchObject({
       access: "read",
       destructive: false,
@@ -141,7 +141,7 @@ describe("Trash API reach", () => {
       access: "write",
       destructive: true,
       humanOnly: false,
-      agentCallable: true,
+      agentCallable: false,
     });
   });
 

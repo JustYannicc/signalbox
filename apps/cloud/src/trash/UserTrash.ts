@@ -35,6 +35,8 @@ export class UserTrash extends Context.Service<
     readonly restore: (input: { readonly id: string }) => Result<TrashSnapshot>;
     readonly empty: (input: { readonly ids?: ReadonlyArray<string> }) => Result<TrashSnapshot>;
     readonly progress: (id: string) => Result<TrashProgress>;
+    /** Arms the object alarm for local recovery work without calling remote resources. */
+    readonly armRecovery: Result<void>;
     readonly recover: Result<void>;
   }
 >()("@signalbox/cloud/trash/UserTrash") {}
@@ -62,6 +64,8 @@ const make = Effect.gen(function* () {
     if (profile === null) return yield* refused("Sign in before changing Trash.");
     return { userId: profile.id, contextIds: yield* drives.contextIds } satisfies Actor;
   });
+  const needsRecovery = (row: Row) =>
+    row.status === "restoring" || (row.status === "trashed" && row.prepared === 0);
   const visible = (actor: Actor, row: Row) => actor.contextIds.some((id) => id === row.context_id);
   const requireRow = (actor: Actor, id: string) =>
     Effect.gen(function* () {
@@ -101,6 +105,35 @@ const make = Effect.gen(function* () {
         Effect.catch((error) => journal.error(id, error.message)),
       );
     });
+  const restoreGate = (actor: Actor, row: Row) =>
+    Effect.gen(function* () {
+      if (row.kind === "thread") {
+        const hiddenHome = yield* resources.trashedHomeOfThread(actor, {
+          id: row.target_id,
+          context_id: row.context_id,
+        });
+        if (hiddenHome === null) return "clear" as const;
+        yield* journal.error(row.id, "Restore the folder first.");
+        return "blocked" as const;
+      }
+      const preflight = yield* resources.folderRestorePreflight(actor, {
+        id: row.id,
+        context_id: row.context_id,
+      });
+      if (preflight === null || preflight.parentTrashedAt === null) return "clear" as const;
+      const message = "Restore the parent folder first.";
+      if (
+        row.status === "restoring" &&
+        preflight.status === "trashed" &&
+        row.restore_started_at !== null
+      ) {
+        if (yield* journal.restoreBlocked(row.id, row.restore_started_at, message)) {
+          return "reset" as const;
+        }
+      }
+      yield* journal.error(row.id, message);
+      return "blocked" as const;
+    });
   const process = (actor: Actor, id: string) =>
     Effect.gen(function* () {
       const row = yield* requireRow(actor, id);
@@ -113,6 +146,9 @@ const make = Effect.gen(function* () {
       const now = yield* Clock.currentTimeMillis;
       if (row.status === "restored") return { done: true, nextAt: now };
       if (row.status === "restoring") {
+        const gate = yield* restoreGate(actor, row);
+        if (gate === "reset") return { done: true, nextAt: now };
+        if (gate === "blocked") return { done: false, nextAt: now + RETRY_MS };
         yield* resources.restore(actor, row);
         yield* journal.restored(id);
         return { done: true, nextAt: now };
@@ -157,6 +193,9 @@ const make = Effect.gen(function* () {
           const existing = yield* journal.active("thread", threadId);
           if (existing !== null) {
             yield* requireRow(actor, existing.id);
+            if (existing.status === "restoring") {
+              return yield* refused("That thread is being restored. Try again after it finishes.");
+            }
             if (commandId !== undefined)
               yield* journal.rememberRequest(commandId, "thread", threadId, existing.id);
             yield* start(actor, existing.id);
@@ -193,6 +232,9 @@ const make = Effect.gen(function* () {
           const existing = yield* journal.active("folder", folderId);
           if (existing !== null) {
             yield* requireRow(actor, existing.id);
+            if (existing.status === "restoring") {
+              return yield* refused("That folder is being restored. Try again after it finishes.");
+            }
             yield* start(actor, existing.id);
           } else {
             yield* alarm.armBy((yield* Clock.currentTimeMillis) + RETRY_MS);
@@ -211,6 +253,13 @@ const make = Effect.gen(function* () {
           const actor = yield* actorNow;
           const row = yield* requireRow(actor, id);
           if (row.status === "restored") return yield* list;
+          const gate = yield* restoreGate(actor, row);
+          if (gate === "reset") return yield* list;
+          if (gate === "blocked") {
+            if (row.status === "restoring")
+              yield* alarm.armBy((yield* Clock.currentTimeMillis) + RETRY_MS);
+            return yield* list;
+          }
           if (
             row.status !== "restoring" &&
             !(yield* journal.restore(id, yield* Clock.currentTimeMillis))
@@ -225,6 +274,22 @@ const make = Effect.gen(function* () {
     );
   const empty: UserTrash["Service"]["empty"] = () =>
     call(Effect.fail(refused("Permanent cleanup is not available yet.")));
+  const armRecovery = call(
+    lock.withPermits(1)(
+      Effect.gen(function* () {
+        const profile = yield* users.profile;
+        if (profile === null) return;
+        const actor = { userId: profile.id, contextIds: yield* drives.contextIds } satisfies Actor;
+        const journalPending = (yield* journal.pending).some(
+          (row) => visible(actor, row) && needsRecovery(row),
+        );
+        const unjournaledFolders = yield* resources.folderTrashes(actor);
+        if (journalPending || unjournaledFolders.length > 0) {
+          yield* alarm.armBy((yield* Clock.currentTimeMillis) + RETRY_MS);
+        }
+      }),
+    ),
+  );
   const recover = call(
     lock.withPermits(1)(
       Effect.gen(function* () {
@@ -242,18 +307,16 @@ const make = Effect.gen(function* () {
         }
         const pending = (yield* journal.pending).filter((row) => visible(actor, row));
         for (const row of pending) {
-          if (row.status === "restoring" || (row.status === "trashed" && row.prepared === 0)) {
+          if (needsRecovery(row)) {
             // Preparation is idempotent; the user-object alarm retries a cut-off request.
             yield* schedule(actor, row.id);
             yield* attempt(actor, row.id);
           }
         }
-        const needsRecovery = (yield* journal.pending).some(
-          (row) =>
-            visible(actor, row) &&
-            (row.status === "restoring" || (row.status === "trashed" && row.prepared === 0)),
+        const hasRecovery = (yield* journal.pending).some(
+          (row) => visible(actor, row) && needsRecovery(row),
         );
-        if (needsRecovery) yield* alarm.armBy((yield* Clock.currentTimeMillis) + RETRY_MS);
+        if (hasRecovery) yield* alarm.armBy((yield* Clock.currentTimeMillis) + RETRY_MS);
       }),
     ),
   );
@@ -265,6 +328,7 @@ const make = Effect.gen(function* () {
       trashFolder(input).pipe(traced("UserTrash.trashFolder", { "folder.id": input.folderId })),
     restore: (input) => restore(input).pipe(traced("UserTrash.restore", { "trash.id": input.id })),
     empty: (input) => empty(input).pipe(traced("UserTrash.empty", {})),
+    armRecovery: armRecovery.pipe(traced("UserTrash.armRecovery", {})),
     recover: recover.pipe(traced("UserTrash.recover", {})),
     progress: (id) =>
       call(lock.withPermits(1)(Effect.flatMap(actorNow, (actor) => attempt(actor, id)))).pipe(

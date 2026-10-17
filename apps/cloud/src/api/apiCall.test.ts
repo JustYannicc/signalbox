@@ -16,6 +16,7 @@ import { TrashSnapshot } from "@t3tools/contracts/signalboxTrash";
 import * as Environment from "../environment.ts";
 import { makeMemoryCloud } from "../testing.ts";
 import { scriptedModelSelection } from "../thread/scriptedProvider.ts";
+import { projectIdForDrive } from "../user/contextProjects.ts";
 import { type ApiCaller, callOperation } from "./apiCall.ts";
 
 const decodeFolders = Schema.decodeUnknownSync(SignalboxFoldersSnapshot);
@@ -23,6 +24,8 @@ const decodeTrash = Schema.decodeUnknownSync(TrashSnapshot);
 
 const identity = { environmentId: EnvironmentId.make("cloud-test"), label: "Cloud" };
 const userId = "user_1";
+const projectDrive = "folder/personal/trash-restore";
+const projectId = projectIdForDrive(projectDrive);
 const standard = [AuthOrchestrationReadScope, AuthOrchestrationOperateScope];
 
 const person = (scopes: ReadonlyArray<AuthEnvironmentScope> = standard): ApiCaller => ({
@@ -93,7 +96,7 @@ describe("public API calls", () => {
       const waiting = decodeTrash(
         json(yield* call("trash.restore", { id: childTrash.id })).body,
       ).entries.find((entry) => entry.id === childTrash.id)!;
-      expect(waiting.status).toBe("restoring");
+      expect(waiting.status).toBe("trashed");
       expect(waiting.error).toBe("Restore the parent folder first.");
       expect(json(yield* call("trash.restore", { id: parentTrash.id })).status).toBe(200);
       const restored = decodeTrash(
@@ -102,6 +105,101 @@ describe("public API calls", () => {
       expect(restored.status).toBe("restored");
       expect(restored.error).toBeNull();
     }),
+  );
+
+  it.effect(
+    "keeps a project-home thread trashed until its folder is restored and honors another filing",
+    () =>
+      Effect.gen(function* () {
+        const { call, cloud } = yield* setup;
+        yield* Effect.promise(() =>
+          cloud.drives.apiFor(projectDrive).setup({
+            name: "Trash restore project",
+            members: [{ userId, email: "a@b.c", name: "Test", role: "owner" }],
+          }),
+        );
+        let folders = decodeFolders(
+          json(yield* call("folders.create", { name: "Project home", parentId: null })).body,
+        );
+        const projectHome = folders.folders.find((folder) => folder.name === "Project home")!;
+        folders = decodeFolders(
+          json(yield* call("folders.create", { name: "Elsewhere", parentId: null })).body,
+        );
+        const elsewhere = folders.folders.find((folder) => folder.name === "Elsewhere")!;
+        expect(
+          json(
+            yield* call("folders.update", {
+              id: projectHome.id,
+              files: projectId,
+            }),
+          ).status,
+        ).toBe(200);
+
+        for (const [threadId, title] of [
+          ["unfiled-project-home", "Unfiled project thread"],
+          ["filed-elsewhere", "Explicitly filed thread"],
+        ] as const) {
+          const created = json(
+            yield* call("threads.create", {
+              commandId: `launch-${threadId}`,
+              threadId,
+              projectId,
+              title,
+              modelSelection: scriptedModelSelection,
+              runtimeMode: "full-access",
+              interactionMode: "default",
+              workspaceStrategy: { type: "root" },
+            }),
+          );
+          expect(created.status, JSON.stringify(created.body)).toBe(200);
+        }
+        yield* cloud.settle;
+        expect(
+          json(
+            yield* call("threads.move", {
+              threadId: "filed-elsewhere",
+              folderId: elsewhere.id,
+            }),
+          ).status,
+        ).toBe(200);
+
+        const unfiled = decodeTrash(
+          json(yield* call("trash.thread", { threadId: "unfiled-project-home" })).body,
+        ).entries[0]!;
+        const filed = decodeTrash(
+          json(yield* call("trash.thread", { threadId: "filed-elsewhere" })).body,
+        ).entries[0]!;
+        yield* cloud.settle;
+        const projectHomeTrash = decodeTrash(
+          json(yield* call("trash.folder", { folderId: projectHome.id })).body,
+        ).entries.find((entry) => entry.targetId === projectHome.id)!;
+        expect(projectHomeTrash.status).toBe("trashed");
+
+        const filedRestore = decodeTrash(
+          json(yield* call("trash.restore", { id: filed.id })).body,
+        ).entries.find((entry) => entry.id === filed.id)!;
+        expect(filedRestore, JSON.stringify(filedRestore)).toMatchObject({ status: "restored" });
+
+        const blocked = decodeTrash(
+          json(yield* call("trash.restore", { id: unfiled.id })).body,
+        ).entries.find((entry) => entry.id === unfiled.id)!;
+        expect(blocked).toMatchObject({
+          status: "trashed",
+          error: "Restore the folder first.",
+        });
+
+        const restoredProjectHome = decodeTrash(
+          json(yield* call("trash.restore", { id: projectHomeTrash.id })).body,
+        ).entries.find((entry) => entry.id === projectHomeTrash.id)!;
+        expect(restoredProjectHome).toMatchObject({ status: "restored", error: null });
+        const restored = decodeTrash(
+          json(yield* call("trash.restore", { id: unfiled.id })).body,
+        ).entries.find((entry) => entry.id === unfiled.id)!;
+        expect(restored, JSON.stringify(restored)).toMatchObject({
+          status: "restored",
+          error: null,
+        });
+      }),
   );
 
   it.effect(
@@ -178,8 +276,15 @@ describe("public API calls", () => {
           json(yield* call("trash.folder", { folderId: folder.id }, agent)).body,
         ).entries.find((row) => row.status === "trashed")!;
         expect(second.id).not.toBe(entry.id);
-        const emptied = json(yield* call("trash.empty", { ids: [second.id] }, agent));
+        expect(json(yield* call("trash.empty", { ids: [second.id] }, agent)).status).toBe(403);
+        const emptied = json(yield* call("trash.empty", { ids: [second.id] }));
         expect(emptied.status).toBe(422);
+        expect(emptied.body).toMatchObject({
+          error: {
+            _tag: "SignalboxTrashError",
+            message: "Permanent cleanup is not available yet.",
+          },
+        });
         const retained = decodeTrash(json(yield* call("trash.list", {}, agent)).body).entries.find(
           (row) => row.id === second.id,
         )!;

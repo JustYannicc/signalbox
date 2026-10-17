@@ -366,10 +366,8 @@ export class UserObject extends DurableObject<UserObjectEnv> implements UserObje
         ),
       );
       await this.runtime.runPromise(
-        UserTrash.UserTrash.use((trash) => trash.recover).pipe(
-          Effect.catchCause((cause) =>
-            Effect.logError("recovering trash cleanup failed", { cause }),
-          ),
+        UserTrash.UserTrash.use((trash) => trash.armRecovery).pipe(
+          Effect.catchCause((cause) => Effect.logError("arming trash recovery failed", { cause })),
         ),
       );
     });

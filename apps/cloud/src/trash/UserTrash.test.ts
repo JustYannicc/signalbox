@@ -13,9 +13,10 @@ import * as SqlClient from "effect/sql/SqlClient";
 import { layerMemoryStore } from "../testing.ts";
 import { UserDrives } from "../user/UserDrives.ts";
 import { UserStore } from "../user/UserStore.ts";
-import { TrashResources } from "./TrashResources.ts";
+import type { FolderTrashRestorePreflight } from "../user/UserFolders.ts";
+import { TrashResources, type FolderTrash } from "./TrashResources.ts";
 import { TrashAlarm, TrashWorkflow } from "./TrashWorkflow.ts";
-import { RETENTION_MS } from "./trashTables.ts";
+import { RETENTION_MS, RETRY_MS } from "./trashTables.ts";
 import { UserTrash, layer } from "./UserTrash.ts";
 
 const INITIAL = 1_000_000;
@@ -23,6 +24,9 @@ const INITIAL = 1_000_000;
 const fixture = (enabled = true) => {
   const calls: string[] = [];
   const starts: string[] = [];
+  const alarms: Array<number> = [];
+  let unjournaledFolders: ReadonlyArray<FolderTrash> = [];
+  const restorePreflights = new Map<string, FolderTrashRestorePreflight>();
   let ready = true;
   let failRestore = false;
   let contextIds: ReadonlyArray<SignalboxContextId> = [PERSONAL_CONTEXT_ID];
@@ -88,7 +92,12 @@ const fixture = (enabled = true) => {
           { _tag: "drive", driveId: "folder-drive", onlyIfUnshared: true },
         ],
       }),
-    folderTrashes: () => Effect.succeed([]),
+    folderTrashes: () => Effect.sync(() => unjournaledFolders),
+    folderRestorePreflight: (_actor, folder) =>
+      Effect.succeed(
+        restorePreflights.get(folder.id) ?? { status: "trashed", parentTrashedAt: null },
+      ),
+    trashedHomeOfThread: () => Effect.succeed(null),
     prepare: (_actor, row) =>
       Effect.sync(() => {
         calls.push(`trash:${row.id}`);
@@ -110,7 +119,9 @@ const fixture = (enabled = true) => {
     Layer.provideMerge(
       Layer.mergeAll(
         resources,
-        Layer.succeed(TrashAlarm, { armBy: () => Effect.void }),
+        Layer.succeed(TrashAlarm, {
+          armBy: (at) => Effect.sync(() => void alarms.push(at)),
+        }),
         Layer.succeed(TrashWorkflow, {
           enabled,
           start: (_user, id) =>
@@ -142,6 +153,13 @@ const fixture = (enabled = true) => {
     initialize,
     calls,
     starts,
+    alarms,
+    setUnjournaledFolders: (folders: ReadonlyArray<FolderTrash>) => {
+      unjournaledFolders = folders;
+    },
+    setRestorePreflight: (id: string, preflight: FolderTrashRestorePreflight) => {
+      restorePreflights.set(id, preflight);
+    },
     setReady: (value: boolean) => {
       ready = value;
     },
@@ -200,6 +218,41 @@ describe("UserTrash", () => {
         expect((yield* trash.list).entries.find((row) => row.id === first.id)?.removals).toEqual(
           [],
         );
+      }).pipe(Effect.provide(f.services));
+    },
+  );
+
+  it.effect(
+    "refuses a new delete during restore but keeps the original command replay inert",
+    () => {
+      const f = fixture();
+      return Effect.gen(function* () {
+        const trash = yield* f.initialize;
+        const first = (yield* trash.trashThread({ threadId: "thread-1", commandId: "delete-1" }))
+          .entries[0]!;
+        f.failNextRestore();
+        expect((yield* trash.restore({ id: first.id })).entries[0]?.status).toBe("restoring");
+        const callsBeforeDelete = [...f.calls];
+
+        const refused = yield* Effect.flip(
+          trash.trashThread({ threadId: "thread-1", commandId: "delete-2" }),
+        );
+        expect(refused.message).toContain("being restored");
+        expect(f.calls).toEqual(callsBeforeDelete);
+
+        expect(
+          (yield* trash.trashThread({ threadId: "thread-1", commandId: "delete-1" })).entries[0]
+            ?.status,
+        ).toBe("restoring");
+        expect(f.calls).toEqual(callsBeforeDelete);
+
+        yield* trash.recover;
+        expect((yield* trash.list).entries[0]?.status).toBe("restored");
+        const next = (yield* trash.trashThread({
+          threadId: "thread-1",
+          commandId: "delete-2",
+        })).entries.find((entry) => entry.status === "trashed")!;
+        expect(next.id).not.toBe(first.id);
       }).pipe(Effect.provide(f.services));
     },
   );
@@ -300,4 +353,84 @@ describe("UserTrash", () => {
       expect((yield* trash.list).entries[0]?.removals).toEqual([]);
     }).pipe(Effect.provide(f.services));
   });
+
+  it.effect("startup only arms recovery for an unjournaled folder transaction", () => {
+    const f = fixture();
+    f.setUnjournaledFolders([
+      {
+        id: "orphan-folder-trash",
+        folderId: FolderId.make("folder-orphan"),
+        title: "Work",
+        contextId: "personal",
+        deletedAt: INITIAL,
+        purgeAfter: INITIAL + RETENTION_MS,
+        targets: [{ threadId: ThreadId.make("nested-thread"), driveId: "folder-drive" }],
+        driveIds: ["folder-drive"],
+        plannedRemovals: [],
+      },
+    ]);
+    return Effect.gen(function* () {
+      const trash = yield* f.initialize;
+      yield* trash.armRecovery;
+      expect(f.calls).toEqual([]);
+      expect(f.starts).toEqual([]);
+      expect(f.alarms).toEqual([INITIAL + RETRY_MS]);
+
+      yield* trash.recover;
+      expect(f.calls).toEqual(["trash:orphan-folder-trash"]);
+      expect(f.starts).toEqual(["orphan-folder-trash"]);
+      expect((yield* trash.list).entries[0]?.status).toBe("trashed");
+    }).pipe(Effect.provide(f.services));
+  });
+
+  it.effect(
+    "reopens a legacy restore blocked by a parent trashed in the same clock millisecond",
+    () => {
+      const f = fixture();
+      return Effect.gen(function* () {
+        const trash = yield* f.initialize;
+        const entry = (yield* trash.trashFolder({ folderId: FolderId.make("folder-1") }))
+          .entries[0]!;
+        const sql = yield* SqlClient.SqlClient;
+        f.setRestorePreflight(entry.id, { status: "trashed", parentTrashedAt: INITIAL });
+        yield* sql`UPDATE trash_entries SET status = 'restoring', restore_started_at = ${INITIAL}
+        WHERE id = ${entry.id}`;
+
+        const blocked = (yield* trash.restore({ id: entry.id })).entries[0]!;
+        expect(blocked).toMatchObject({
+          status: "trashed",
+          error: "Restore the parent folder first.",
+        });
+        expect(f.calls).toEqual([`trash:${entry.id}`]);
+
+        f.setRestorePreflight(entry.id, { status: "trashed", parentTrashedAt: null });
+        expect((yield* trash.restore({ id: entry.id })).entries[0]?.status).toBe("restored");
+      }).pipe(Effect.provide(f.services));
+    },
+  );
+
+  it.effect(
+    "keeps a partial restore in progress after its parent is trashed and the deadline passes",
+    () => {
+      const f = fixture();
+      return Effect.gen(function* () {
+        const trash = yield* f.initialize;
+        const entry = (yield* trash.trashFolder({ folderId: FolderId.make("folder-1") }))
+          .entries[0]!;
+        const sql = yield* SqlClient.SqlClient;
+        f.setRestorePreflight(entry.id, { status: "restored", parentTrashedAt: INITIAL + 20 });
+        yield* sql`UPDATE trash_entries SET status = 'restoring', restore_started_at = ${INITIAL + 10}
+          WHERE id = ${entry.id}`;
+        yield* TestClock.setTime(entry.purgeAfter + 1);
+
+        const waiting = (yield* trash.restore({ id: entry.id })).entries[0]!;
+        expect(waiting).toMatchObject({
+          status: "restoring",
+          error: "Restore the parent folder first.",
+        });
+        expect(f.calls).toEqual([`trash:${entry.id}`]);
+        expect(f.alarms).toContain(entry.purgeAfter + 1 + RETRY_MS);
+      }).pipe(Effect.provide(f.services));
+    },
+  );
 });

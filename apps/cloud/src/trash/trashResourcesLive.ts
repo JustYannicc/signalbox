@@ -190,6 +190,24 @@ const make = Effect.gen(function* () {
         ),
         "recover folder trash",
       ),
+    folderRestorePreflight: (actor, folder) =>
+      guarded(
+        Effect.gen(function* () {
+          if (!actor.contextIds.some((id) => id === folder.context_id))
+            return yield* failed("That folder is not available to you.");
+          return yield* folders.restorePreflight(folder.id);
+        }),
+        "check folder restore",
+      ),
+    trashedHomeOfThread: (actor, thread) =>
+      guarded(
+        Effect.gen(function* () {
+          if (!actor.contextIds.some((id) => id === thread.context_id))
+            return yield* failed("That thread is not available to you.");
+          return yield* folders.trashedHomeOfThread(ThreadId.make(thread.id));
+        }),
+        "check thread restore",
+      ),
   });
 });
 

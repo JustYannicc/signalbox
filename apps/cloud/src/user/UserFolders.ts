@@ -122,6 +122,11 @@ export interface FolderTrashRestoreOutcome extends FolderTrashOutcome {
   readonly restored: boolean;
 }
 
+export interface FolderTrashRestorePreflight {
+  readonly status: FolderTrashStore.Record["status"];
+  readonly parentTrashedAt: number | null;
+}
+
 /** Everything a change is decided from. */
 export interface FolderState {
   readonly contexts: ReadonlyArray<SignalboxContext>;
@@ -162,6 +167,10 @@ export class UserFolders extends Context.Service<
     readonly trashDetails: (
       trashId: string,
     ) => Effect.Effect<FolderTrashStore.Record | null, SqlError>;
+    /** The current local receipt and parent state for a restore decision. */
+    readonly restorePreflight: (
+      trashId: string,
+    ) => Effect.Effect<FolderTrashRestorePreflight | null, SqlError>;
     /** Receipts still awaiting restore or purge, for service recovery after a restart. */
     readonly activeTrashes: Effect.Effect<ReadonlyArray<FolderTrashStore.Record>, SqlError>;
     readonly moveThread: (
@@ -211,6 +220,8 @@ export class UserFolders extends Context.Service<
     >;
     /** Whether a drive is attached to a folder hidden in Trash. */
     readonly driveIsTrashed: (driveId: string) => Effect.Effect<boolean, SqlError>;
+    /** The thread's effective home, if that folder is currently hidden in Trash. */
+    readonly trashedHomeOfThread: (threadId: ThreadId) => Effect.Effect<FolderId | null, SqlError>;
     /** Active folders and bindings for previews; trashed rows stay in this user's store. */
     readonly rows: Effect.Effect<FolderRows, SqlError>;
     /** Adds rows another of this user's clouds holds, never over ones here. */
@@ -294,6 +305,15 @@ const make = Effect.gen(function* () {
       (rows) => FolderTrashStore.decodeRecords(rows)[0] ?? null,
     );
   const trashDetails: UserFolders["Service"]["trashDetails"] = readTrash;
+  const restorePreflight: UserFolders["Service"]["restorePreflight"] = (trashId) =>
+    Effect.gen(function* () {
+      const record = yield* readTrash(trashId);
+      if (record === null) return null;
+      if (record.parentId === null) return { status: record.status, parentTrashedAt: null };
+      const [parent] = yield* sql<{ readonly trashed_at: number | null }>`SELECT trashed_at
+        FROM folders WHERE id = ${record.parentId} AND trash_id IS NOT NULL`;
+      return { status: record.status, parentTrashedAt: parent?.trashed_at ?? null };
+    });
   const activeTrashes: UserFolders["Service"]["activeTrashes"] = Effect.map(
     sql`${selectTrashColumns} WHERE status = 'trashed' ORDER BY deleted_at, trash_id`,
     FolderTrashStore.decodeRecords,
@@ -903,23 +923,49 @@ const make = Effect.gen(function* () {
   const forgetPool: UserFolders["Service"]["forgetPool"] = (poolId) =>
     changedWith(bindings.forgetPool(poolId));
 
-  const driveIsTrashed: UserFolders["Service"]["driveIsTrashed"] = (driveId) =>
+  const trashedFolderForDrive = (driveId: string) =>
     Effect.map(
-      sql`SELECT 1 FROM folders WHERE drive_id = ${driveId} AND trash_id IS NOT NULL LIMIT 1`,
-      (rows) => rows.length > 0,
+      sql<{ readonly id: string }>`SELECT id FROM folders
+        WHERE drive_id = ${driveId} AND trash_id IS NOT NULL LIMIT 1`,
+      (rows) => (rows[0] === undefined ? null : FolderId.make(rows[0].id)),
     );
+
+  const driveIsTrashed: UserFolders["Service"]["driveIsTrashed"] = (driveId) =>
+    Effect.map(trashedFolderForDrive(driveId), (folderId) => folderId !== null);
+
+  const trashedHome = (tree: Tree, threadId: ThreadId, projectId: ProjectId | null) =>
+    Effect.gen(function* () {
+      if (tree.filed.has(threadId)) {
+        const filedHome = tree.filed.get(threadId);
+        if (filedHome == null || tree.folders.some((folder) => folder.id === filedHome))
+          return null;
+        const [hidden] = yield* sql<{ readonly trash_id: string | null }>`SELECT trash_id
+          FROM folders WHERE id = ${filedHome}`;
+        return hidden?.trash_id == null ? null : filedHome;
+      }
+      if (projectId === null) return null;
+      const driveId = tree.driveOfProject(projectId);
+      return driveId === null ? null : yield* trashedFolderForDrive(driveId);
+    });
+
+  const trashedHomeOfThread: UserFolders["Service"]["trashedHomeOfThread"] = (threadId) =>
+    Effect.gen(function* () {
+      const at = yield* owned;
+      const { tree } = yield* load(at, threadId);
+      const indexed = yield* indexedThread(threadId);
+      return yield* trashedHome(tree, threadId, indexed?.projectId ?? null);
+    }).pipe(traced("UserFolders.trashedHomeOfThread", { "thread.id": threadId }));
 
   const turn: UserFolders["Service"]["turn"] = (thread) =>
     Effect.gen(function* () {
       const at = yield* owned;
       const { tree } = yield* load(at, thread.threadId);
-      const hiddenHome = tree.filed.get(thread.threadId);
-      if (hiddenHome != null && !tree.folders.some((folder) => folder.id === hiddenHome)) {
-        const [hidden] = yield* sql<{ readonly trash_id: string | null }>`SELECT trash_id
-          FROM folders WHERE id = ${hiddenHome}`;
-        if (hidden?.trash_id != null) {
-          return yield* Effect.fail(new ThreadHomeTrashedError({ folderId: hiddenHome }));
-        }
+      const filed = tree.filed.has(thread.threadId);
+      const indexed = thread.projectId === null ? yield* indexedThread(thread.threadId) : null;
+      const projectId = thread.projectId ?? indexed?.projectId ?? null;
+      const hiddenHome = yield* trashedHome(tree, thread.threadId, projectId);
+      if (hiddenHome !== null) {
+        return yield* new ThreadHomeTrashedError({ folderId: hiddenHome });
       }
       const resolve = poolResolver(tree);
       const cascades = new Map<FolderId | null, TurnInstructions["top"]>();
@@ -935,11 +981,6 @@ const make = Effect.gen(function* () {
       const projectHomes = currentProjectIds(at.contexts).map(
         (projectId) => [projectId, folderOfProject(tree, projectId)] as const,
       );
-      // Only a filed thread differs from its project's home; it's the one to check.
-      const filed = tree.filed.has(thread.threadId);
-      const indexed =
-        filed && thread.projectId === null ? yield* indexedThread(thread.threadId) : null;
-      const projectId = thread.projectId ?? indexed?.projectId ?? null;
       const ownerId =
         indexed?.contextId ??
         (projectId === null ? null : contextOfProject(at.contexts, projectId));
@@ -1097,6 +1138,7 @@ const make = Effect.gen(function* () {
     trash,
     restoreTrash,
     trashDetails,
+    restorePreflight,
     activeTrashes,
     moveThread,
     setInstructions,
@@ -1107,6 +1149,7 @@ const make = Effect.gen(function* () {
     adoptOnePassword,
     forgetPool,
     driveIsTrashed,
+    trashedHomeOfThread,
     turn,
     rows,
     adopt,

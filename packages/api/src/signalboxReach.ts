@@ -135,7 +135,6 @@ export const SIGNALBOX_RPC_REACH = {
   "signalbox.trash.restore": write({ summary: "Restore a recently trashed thread or folder." }),
   "signalbox.trash.empty": write({
     destructive: true,
-    agentCallable: true,
     summary: "Permanently delete selected trashed items, or empty Trash.",
   }),
   "signalbox.trash.thread": write({
