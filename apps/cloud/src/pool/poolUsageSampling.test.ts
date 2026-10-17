@@ -11,6 +11,8 @@ import * as TestClock from "effect/testing/TestClock";
 
 import * as PoolContainer from "./PoolContainer.ts";
 import * as PoolEngine from "./PoolEngine.ts";
+import * as CliProxyApi from "./cliProxyApi.ts";
+import * as PoolLimits from "./poolLimits.ts";
 import * as History from "./poolUsageHistory.ts";
 import { makeFakeCliProxyApi, makeMemoryPoolObject } from "./testing.ts";
 
@@ -50,6 +52,100 @@ const storedUse = (object: ReturnType<typeof makeMemoryPoolObject>) =>
   );
 
 describe("pool usage sampling alarms", () => {
+  it.effect("samples the other account on time despite repeated partial held checks", () =>
+    Effect.gen(function* () {
+      const backend = makeFakeCliProxyApi();
+      backend.accounts.set("held.json", {
+        ...account(),
+        usage: {
+          status: 200,
+          body: JSON.stringify({
+            seven_day: { utilization: 100, resets_at: iso(reset) },
+          }),
+        },
+      });
+      backend.accounts.set("busy.json", account());
+      const object = makeMemoryPoolObject(backend.serve);
+      const engine = yield* engineOf(object);
+      yield* TestClock.setTime(START);
+      yield* engine.create(actor, { name: "Work", personal: false });
+      yield* engine.setBacking(actor, {
+        mode: "external",
+        url: "https://proxy.test",
+        managementKey: "management",
+        clientKey: "client",
+      });
+      const deadline = START + History.SAMPLE_EVERY_MS;
+      expect(yield* engine.nextUsageSampleAt()).toBe(deadline);
+      const endpoint: CliProxyApi.PoolEndpoint = {
+        fetch: backend.serve,
+        baseUrl: "https://proxy.test",
+        managementKey: "management",
+        clientKey: "client",
+        link: false,
+      };
+      const live = yield* CliProxyApi.listAccounts(endpoint);
+      for (const minutes of [5, 10, 14]) {
+        const now = START + minutes * 60_000;
+        yield* TestClock.setTime(now);
+        const held = live.map((account): CliProxyApi.ListedAccount =>
+          account.name === "held.json" && account.usage._tag === "observed"
+            ? { ...account, usage: { ...account.usage, observedAt: now, heldUntil: reset } }
+            : account,
+        );
+        yield* Effect.promise(() =>
+          object.runtime.runPromise(PoolLimits.refresh(endpoint, held, now, "held")),
+        );
+        expect(yield* engine.nextUsageSampleAt()).toBe(deadline);
+      }
+      expect(backend.accountRequests.map((request) => request.name)).toEqual([
+        "held.json",
+        "held.json",
+        "held.json",
+      ]);
+      // A free signals read also records newer quota without deferring the full-pool read.
+      const freeAt = deadline - 1;
+      yield* TestClock.setTime(freeAt);
+      const free = live.map((account): CliProxyApi.ListedAccount =>
+        account.name === "held.json" && account.usage._tag === "observed"
+          ? {
+              ...account,
+              usage: {
+                ...account.usage,
+                observedAt: freeAt,
+                signals: {
+                  ...account.usage.signals,
+                  "anthropic-ratelimit-unified-7d-utilization": "1",
+                },
+              },
+            }
+          : account,
+      );
+      yield* Effect.promise(() =>
+        object.runtime.runPromise(PoolLimits.refresh(endpoint, free, freeAt, "free")),
+      );
+      expect(yield* engine.nextUsageSampleAt()).toBe(deadline);
+      yield* TestClock.setTime(deadline);
+      yield* engine.refreshUsageAtAlarm();
+      expect(
+        backend.accountRequests.filter((request) => request.name === "busy.json"),
+      ).toHaveLength(1);
+      const observation = yield* Effect.promise(() =>
+        object.runtime.runPromise(
+          SqlClient.SqlClient.use(
+            (sql) =>
+              sql<{
+                observed_at: number;
+                used: number;
+              }>`SELECT observed_at, used FROM usage_accounts WHERE account_id = 'busy.json'`,
+          ),
+        ),
+      );
+      expect(observation).toEqual([{ observed_at: deadline, used: 25 }]);
+      expect(yield* engine.nextUsageSampleAt()).toBe(deadline + History.SAMPLE_EVERY_MS);
+    }),
+  );
+
   it.effect(
     "wakes a sleeping managed pool and records provider usage with no client or thread",
     () =>
@@ -162,6 +258,8 @@ describe("pool usage sampling alarms", () => {
         managementKey: "management",
         clientKey: "client",
       });
+      // PoolObject schedules this after setBacking; free reads no longer create a deadline.
+      expect(yield* engine.nextUsageSampleAt()).toBe(START + History.SAMPLE_EVERY_MS);
       yield* TestClock.setTime(START + History.SAMPLE_EVERY_MS);
       stuck = true;
       const sample = yield* Effect.forkChild(engine.refreshUsageAtAlarm());

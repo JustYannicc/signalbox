@@ -1097,7 +1097,15 @@ const make = Effect.gen(function* () {
   const nextUsageSampleAt: PoolEngine["Service"]["nextUsageSampleAt"] = () =>
     Effect.gen(function* () {
       const row = yield* poolRow;
-      if (row === null || !(yield* schedulesModels(row))) return null;
+      if (row === null) return null;
+      const { accounts } = yield* cachedAccounts;
+      if (
+        !accounts.some(
+          (account) =>
+            PoolLimits.READS_LIMITS.has(account.type) && !account.disabled && !account.signedOut,
+        )
+      )
+        return null;
       return yield* withSql(PoolUsageHistory.nextSampleAt(yield* Clock.currentTimeMillis));
     });
 

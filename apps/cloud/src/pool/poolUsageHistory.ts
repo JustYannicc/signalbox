@@ -102,6 +102,7 @@ export const record = (
   accounts: ReadonlyArray<UsageLimitSourceAccount>,
   now: number,
   liveAccountIds: ReadonlyArray<string> = accounts.map((account) => account.id),
+  options: { readonly fullProbe: boolean } = { fullProbe: false },
 ) =>
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
@@ -141,7 +142,8 @@ export const record = (
             ON CONFLICT (driver, window_id, hour) DO UPDATE SET
               consumed = consumed + excluded.consumed`;
         }
-        if (read.states.some((state) => state.observedAt >= now - KEEP_MS)) {
+        // One held account's newer observation says nothing about the rest of the pool.
+        if (options.fullProbe && read.states.some((state) => state.observedAt >= now - KEEP_MS)) {
           yield* sampledAt(now);
         }
       }),

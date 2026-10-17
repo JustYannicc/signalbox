@@ -555,6 +555,7 @@ export const refresh = (
       ),
       now,
       live.map((account) => account.name),
+      { fullProbe: mode === "probe" },
     );
     const count = (outcome: Outcome) => reads.filter((each) => each.outcome === outcome).length;
     yield* Effect.annotateCurrentSpan({

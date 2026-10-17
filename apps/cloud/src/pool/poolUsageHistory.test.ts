@@ -121,12 +121,12 @@ describe("durable pool usage history", () => {
       yield* Effect.gen(function* () {
         yield* History.createTables;
         yield* History.addSampling;
-        yield* History.record([account(2, START)], START);
+        yield* History.record([account(2, START)], START, ["claude-a.json"], { fullProbe: true });
       }).pipe(Effect.provide(open()));
       const now = START + 24 * HOUR_MS;
       yield* Effect.gen(function* () {
         expect(yield* History.nextSampleAt(now)).toBe(START + History.SAMPLE_EVERY_MS);
-        yield* History.record([account(50, now)], now);
+        yield* History.record([account(50, now)], now, ["claude-a.json"], { fullProbe: true });
         expect(yield* History.nextSampleAt(now)).toBe(now + History.SAMPLE_EVERY_MS);
         const expected = [
           {
@@ -142,7 +142,10 @@ describe("durable pool usage history", () => {
         ];
         expect(yield* History.advice([account(50, now)], now)).toEqual(expected);
         // Republishing the same quota after reopening cannot count its use twice.
-        yield* History.record([account(50, now)], now + HOUR_MS);
+        yield* History.record([account(50, now)], now + HOUR_MS, ["claude-a.json"], {
+          fullProbe: true,
+        });
+        expect(yield* History.nextSampleAt(now + HOUR_MS)).toBe(now + History.SAMPLE_EVERY_MS);
         const sql = yield* SqlClient.SqlClient;
         expect(
           yield* sql<{ total: number }>`SELECT sum(consumed) AS total FROM usage_hours`,
