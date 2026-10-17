@@ -3,8 +3,9 @@ import type { PullRequestDiffResult } from "@t3tools/contracts";
 import type { ReviewParsedDiff } from "../review/reviewModel";
 import { combinePullRequestDiffPages, retainPullRequestDiffPage } from "./pullRequestDiffPages";
 
-function diff(path: string): PullRequestDiffResult {
+function diff(path: string, revision?: PullRequestDiffResult["revision"]): PullRequestDiffResult {
   return {
+    ...(revision === undefined ? {} : { revision }),
     patch: `diff --git a/${path} b/${path}\n--- a/${path}\n+++ b/${path}\n@@ -1 +1 @@\n-old\n+new\n`,
     truncated: false,
     nextCursor: null,
@@ -43,5 +44,40 @@ describe("paged mobile pull request diffs", () => {
     const refreshed = retainPullRequestDiffPage(pages, null, diff("changed.ts"));
     expect(refreshed).toHaveLength(1);
     expect(refreshed[0]?.result.patch).toContain("changed.ts");
+  });
+
+  it("discards continuations from a different immutable comparison", () => {
+    const firstRevision = { baseSha: "a".repeat(40), headSha: "b".repeat(40) };
+    const movedRevision = { baseSha: "c".repeat(40), headSha: "d".repeat(40) };
+    const pages = retainPullRequestDiffPage(
+      retainPullRequestDiffPage([], null, {
+        ...diff("first.ts", firstRevision),
+        nextCursor: "second",
+      }),
+      "second",
+      diff("second.ts", firstRevision),
+    );
+
+    expect(retainPullRequestDiffPage(pages, "second", diff("moved.ts", movedRevision))).toEqual([]);
+  });
+
+  it("resets later pages when the first page's revision moves even if its patch is unchanged", () => {
+    const firstRevision = { baseSha: "a".repeat(40), headSha: "b".repeat(40) };
+    const movedRevision = { baseSha: "c".repeat(40), headSha: "d".repeat(40) };
+    const first = { ...diff("first.ts", firstRevision), nextCursor: "second" };
+    const pages = retainPullRequestDiffPage(
+      retainPullRequestDiffPage([], null, first),
+      "second",
+      diff("second.ts", firstRevision),
+    );
+
+    const refreshed = retainPullRequestDiffPage(pages, null, {
+      ...first,
+      revision: movedRevision,
+    });
+
+    expect(refreshed).toHaveLength(1);
+    expect(refreshed[0]?.result.patch).toBe(first.patch);
+    expect(refreshed[0]?.result.revision).toEqual(movedRevision);
   });
 });

@@ -4,6 +4,7 @@ import type {
   EnvironmentId,
   PullRequestDetailView,
   PullRequestDiffSide,
+  PullRequestDiffRevision,
   PullRequestOmittedFileStat,
   PullRequestRef,
   PullRequestReviewPosition,
@@ -121,6 +122,14 @@ interface DiffSlice {
   readonly truncated: boolean;
   readonly nextCursor: string | null;
   readonly omittedFileStats: ReadonlyArray<PullRequestOmittedFileStat>;
+  readonly revision?: PullRequestDiffRevision;
+}
+
+function sameDiffRevision(
+  left: PullRequestDiffRevision | undefined,
+  right: PullRequestDiffRevision | undefined,
+): boolean {
+  return left?.baseSha === right?.baseSha && left?.headSha === right?.headSha;
 }
 
 /**
@@ -260,7 +269,16 @@ function PullRequestCodeTab({
         truncated: data.truncated,
         nextCursor: data.nextCursor,
         omittedFileStats: data.omittedFileStats ?? [],
+        ...(data.revision === undefined ? {} : { revision: data.revision }),
       };
+      if (
+        cursor !== null &&
+        slices.some((slice) => !sameDiffRevision(slice.revision, next.revision))
+      ) {
+        // A continuation from another comparison cannot be combined with the pages already on
+        // screen. Restart at the first page, which establishes the snapshot for the new chain.
+        return { key: scopeKey, cursor: null, slices: NO_SLICES };
+      }
       const index = slices.findIndex((slice) => slice.cursor === cursor);
       if (index === -1) {
         return { key: scopeKey, cursor, slices: [...slices, next] };
@@ -269,6 +287,7 @@ function PullRequestCodeTab({
       if (
         existing !== undefined &&
         existing.patch === next.patch &&
+        sameDiffRevision(existing.revision, next.revision) &&
         existing.truncated === next.truncated &&
         existing.nextCursor === next.nextCursor &&
         existing.omittedFileStats.length === next.omittedFileStats.length &&
@@ -312,15 +331,25 @@ function PullRequestCodeTab({
     reportFailure: false,
   });
   const getDiffFileContents = useAtomCommand(pullRequestEnvironment.diffFileContents);
+  const displayedRevision = loadedSlices[0]?.revision;
   const loadDiffFiles = useMemo(
     () =>
       createPullRequestDiffFileContentsLoader(getDiffFileContents, {
         environmentId,
         reference,
+        ...(displayedRevision === undefined ? {} : { revision: displayedRevision }),
         commit,
         cacheKey: `pull-request:${referenceKey}:${detail.updatedAt}:${commit ?? "all"}`,
       }),
-    [commit, detail.updatedAt, environmentId, getDiffFileContents, reference, referenceKey],
+    [
+      commit,
+      detail.updatedAt,
+      displayedRevision,
+      environmentId,
+      getDiffFileContents,
+      reference,
+      referenceKey,
+    ],
   );
 
   const review = useMemo(() => {

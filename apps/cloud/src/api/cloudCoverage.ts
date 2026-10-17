@@ -67,11 +67,26 @@ export const CLOUD_UNSERVED: Readonly<Record<string, Unserved>> = {
   "threads.search": gap("#334"),
   "threads.searchOne": gap("#334"),
 
-  // Pull requests, linked and followed (`pr.*` for automations).
-  "pullRequests.*": gap("#397"),
-  "threads.pullRequest.watch": gap("#397"),
-  "git.preparePullRequestThread": gap("#397"),
-  "git.resolvePullRequest": gap("#397"),
+  // Pull-request reads are served by `github/CloudPullRequests.ts` (#814).
+  // The later slices own writes and personal review state.
+  "pullRequests.reviewGuide": gap("#815"),
+  "pullRequests.generateReviewGuide": gap("#815"),
+  "pullRequests.filesViewed": gap("#815"),
+  "pullRequests.setFilesViewed": gap("#815"),
+  "pullRequests.comment": gap("#816"),
+  "pullRequests.updateComment": gap("#816"),
+  "pullRequests.submitReview": gap("#816"),
+  "pullRequests.replyToThread": gap("#816"),
+  "pullRequests.setThreadResolution": gap("#816"),
+  "pullRequests.setReaction": gap("#816"),
+  "pullRequests.runAction": gap("#817"),
+  "pullRequests.update": gap("#817"),
+  "pullRequests.reviewerCandidates": gap("#817"),
+  "pullRequests.requestReviewers": gap("#817"),
+  "pullRequests.labelCandidates": gap("#817"),
+  "pullRequests.setLabels": gap("#817"),
+  "threads.pullRequest.watch": gap("#818"),
+  "git.preparePullRequestThread": gap("#818"),
 
   // Git beyond the thread's own branch.
   "vcs.listRefs": gap("#394"),

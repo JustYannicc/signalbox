@@ -78,6 +78,8 @@ import * as UserContexts from "./user/UserContexts.ts";
 import * as GitHub from "./github/GitHub.ts";
 import * as GitHubActions from "./github/GitHubActions.ts";
 import * as GitHubBranches from "./github/GitHubBranches.ts";
+import * as CloudPullRequests from "./github/CloudPullRequests.ts";
+import * as PullRequestRepository from "./github/PullRequestRepository.ts";
 import * as ConnectionLinks from "./connections/ConnectionLinks.ts";
 import * as GitHubConnection from "./github/GitHubConnection.ts";
 import * as LocalKeys from "./localKeys/LocalKeys.ts";
@@ -291,6 +293,7 @@ const makeUserRuntime = (
         Layer.mergeAll(
           GitHubBranches.layer,
           GitHubActions.layer,
+          CloudPullRequests.layer.pipe(Layer.provideMerge(PullRequestRepository.layer)),
           UserPreviewSetup.layer,
           CloudAssets.layer,
           LoginService.layer(logins),

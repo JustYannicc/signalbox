@@ -6,18 +6,33 @@ export interface PullRequestDiffPage {
   readonly result: PullRequestDiffResult;
 }
 
+function sameRevision(
+  left: PullRequestDiffResult["revision"],
+  right: PullRequestDiffResult["revision"],
+): boolean {
+  return left?.baseSha === right?.baseSha && left?.headSha === right?.headSha;
+}
+
 /** A changed page invalidates later cursors, which belong to the previous patch. */
 export function retainPullRequestDiffPage(
   pages: readonly PullRequestDiffPage[],
   cursor: string | null,
   result: PullRequestDiffResult,
 ): readonly PullRequestDiffPage[] {
+  if (
+    cursor !== null &&
+    pages.some((page) => !sameRevision(page.result.revision, result.revision))
+  ) {
+    // A continuation can only be combined with pages from the comparison that issued its cursor.
+    return [];
+  }
   const index = pages.findIndex((page) => page.cursor === cursor);
   if (index === -1) return [...pages, { cursor, result }];
   const previous = pages[index]?.result;
   if (
     previous === result ||
     (previous?.patch === result.patch &&
+      sameRevision(previous.revision, result.revision) &&
       previous.truncated === result.truncated &&
       previous.nextCursor === result.nextCursor &&
       JSON.stringify(previous.omittedFileStats ?? []) ===

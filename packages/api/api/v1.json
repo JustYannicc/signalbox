@@ -1155,7 +1155,7 @@
       "name": "pullRequests.diffFileContents",
       "rpc": "pullRequests.diffFileContents",
       "access": "read",
-      "input": "65023a5f",
+      "input": "fa31bf25",
       "output": "80061c35"
     },
     {
