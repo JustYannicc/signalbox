@@ -48,7 +48,7 @@ const setup = () => {
   );
   const identities = IdentityProvider.IdentityProviders.of({
     identityProviderForUser: (userId) => {
-      if (userId === "unknown-user") {
+      if (userId === "unknown-user" || userId === "known-test-user-without-config") {
         return Effect.fail(new IdentityProvider.IdentityProviderUnavailable({}));
       }
       if (userId === "missing-key-user") {
@@ -75,12 +75,17 @@ describe("GitHub Pipes realm routing", () => {
   it.effect("uses each user's WorkOS API key and base URL for every Pipes operation", () =>
     Effect.gen(function* () {
       const { requests, layer } = setup();
-      const pipes = yield* GitHub.GitHub.pipe(
-        Effect.map((github) => github.pipes!),
-        Effect.provide(layer),
-      );
 
       for (const userId of ["ordinary-user", "e2e-user"]) {
+        const pipes = yield* GitHub.GitHub.pipe(
+          Effect.flatMap((github) => github.pipesForUser(userId)),
+          Effect.flatMap((found) =>
+            found === null
+              ? Effect.die("the test identity has no Pipes key")
+              : Effect.succeed(found),
+          ),
+          Effect.provide(layer),
+        );
         expect(
           yield* pipes.authorizeUrl({ userId, returnTo: "https://signalbox.test/return" }),
         ).toBe("https://workos.test/authorize");
@@ -114,20 +119,17 @@ describe("GitHub Pipes realm routing", () => {
   );
 
   it.effect(
-    "maps unavailable or incomplete identity configuration without a fallback request",
+    "keeps users without a resolved key unavailable and never falls back after identity failure",
     () =>
       Effect.gen(function* () {
         const { requests, layer } = setup();
-        const pipes = yield* GitHub.GitHub.pipe(
-          Effect.map((github) => github.pipes!),
-          Effect.provide(layer),
-        );
-
-        for (const userId of ["unknown-user", "missing-key-user"]) {
-          const error = yield* pipes.accessToken(userId).pipe(Effect.flip);
-          expect(error._tag).toBe("WorkOSPipesError");
-          expect(error.status).toBe(0);
-        }
+        const github = yield* GitHub.GitHub.pipe(Effect.provide(layer));
+        const error = yield* github
+          .pipesForUser("known-test-user-without-config")
+          .pipe(Effect.flip);
+        expect(error._tag).toBe("WorkOSPipesError");
+        expect(error.status).toBe(0);
+        expect(yield* github.pipesForUser("missing-key-user")).toBeNull();
         expect(requests).toEqual([]);
       }),
   );
