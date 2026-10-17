@@ -17,6 +17,7 @@ import {
 } from "@t3tools/shared/model";
 import { getComposerProviderState } from "./components/chat/composerProviderState";
 import { UnifiedSettings } from "@t3tools/contracts/settings";
+import { hubInstancePoolId } from "@t3tools/contracts/accountHub";
 import * as Arr from "effect/Array";
 import * as Result from "effect/Result";
 import {
@@ -77,13 +78,20 @@ function appendUnavailableDynamicModelSelection(
   provider: ProviderDriverKind,
   selectedModel: string | null | undefined,
   hiddenModels: ReadonlyArray<string>,
+  exact = false,
 ): AppModelOption[] {
-  if (provider !== "opencode" && provider !== "antigravity") return options;
+  if (!exact && provider !== "opencode" && provider !== "antigravity") return options;
   const slug = normalizeCustomModelSlug(selectedModel);
   if (!slug) return options;
   if (provider === "antigravity" && slug === ANTIGRAVITY_DEFAULT_MODEL) return options;
 
-  if (resolveSelectableModel(provider, slug, rawModels) !== null) return options;
+  if (
+    exact
+      ? rawModels.some((model) => model.slug === slug)
+      : resolveSelectableModel(provider, slug, rawModels) !== null
+  ) {
+    return options;
+  }
   if (hiddenModels.includes(slug)) return options;
   if (options.some((option) => option.slug === slug)) return options;
 
@@ -164,21 +172,29 @@ function getAppModelOptions(
   selectedModel?: string | null,
 ): AppModelOption[] {
   const rawModels = getProviderModels(providers, provider);
+  const defaultInstanceId = defaultInstanceIdForDriver(provider);
+  const isHubInstance =
+    hubInstancePoolId(settings.providerInstances?.[defaultInstanceId]?.config) !== null;
   // Server-reported custom rows mirror settings and can lag a removal, so
   // only built-ins are taken from the snapshot; custom rows are rebuilt from
   // settings below.
   const options: AppModelOption[] = rawModels
-    .filter((model) => !model.isCustom)
-    .map(toAppModelOption);
+    .filter((model) => isHubInstance || !model.isCustom)
+    .map((model) =>
+      isHubInstance && model.isCustom
+        ? { ...toAppModelOption(model), isCustom: false }
+        : toAppModelOption(model),
+    );
   const seen = new Set(options.map((option) => option.slug));
   const builtInModelSlugs = new Set(
     Arr.filterMap(getProviderModels(providers, provider), (model) =>
-      model.isCustom ? Result.failVoid : Result.succeed(model.slug),
+      isHubInstance || !model.isCustom ? Result.succeed(model.slug) : Result.failVoid,
     ),
   );
 
-  const defaultInstanceId = defaultInstanceIdForDriver(provider);
-  const customModels = readInstanceCustomModels(settings, defaultInstanceId, provider);
+  const customModels = isHubInstance
+    ? []
+    : readInstanceCustomModels(settings, defaultInstanceId, provider);
   for (const entry of normalizeCustomModelEntries(customModels, builtInModelSlugs)) {
     if (seen.has(entry.slug)) {
       continue;
@@ -195,6 +211,7 @@ function getAppModelOptions(
     provider,
     selectedModel,
     preferences.hiddenModels,
+    isHubInstance,
   );
 }
 
@@ -203,17 +220,25 @@ export function getAppModelOptionsForInstance(
   entry: ProviderInstanceEntry,
   selectedModel?: string | null,
 ): AppModelOption[] {
+  const isHubInstance =
+    hubInstancePoolId(settings.providerInstances?.[entry.instanceId]?.config) !== null;
   const options: AppModelOption[] = entry.models
-    .filter((model) => !model.isCustom)
-    .map(toAppModelOption);
+    .filter((model) => isHubInstance || !model.isCustom)
+    .map((model) =>
+      isHubInstance && model.isCustom
+        ? { ...toAppModelOption(model), isCustom: false }
+        : toAppModelOption(model),
+    );
   const seen = new Set(options.map((option) => option.slug));
   const builtInModelSlugs = new Set(
     Arr.filterMap(entry.models, (model) =>
-      model.isCustom ? Result.failVoid : Result.succeed(model.slug),
+      isHubInstance || !model.isCustom ? Result.succeed(model.slug) : Result.failVoid,
     ),
   );
 
-  const customModels = readInstanceCustomModels(settings, entry.instanceId, entry.driverKind);
+  const customModels = isHubInstance
+    ? []
+    : readInstanceCustomModels(settings, entry.instanceId, entry.driverKind);
   for (const custom of normalizeCustomModelEntries(customModels, builtInModelSlugs)) {
     if (seen.has(custom.slug)) {
       continue;
@@ -230,6 +255,7 @@ export function getAppModelOptionsForInstance(
     entry.driverKind,
     selectedModel,
     preferences.hiddenModels,
+    isHubInstance,
   );
 }
 
@@ -263,7 +289,11 @@ export function resolveAppModelSelectionForInstance(
     entry,
     resolutionOptions?.preserveUnavailableSelection ? selectedModel : null,
   );
-  const resolvedSelection = resolveSelectableModel(entry.driverKind, selectedModel, options);
+  const isHubInstance =
+    hubInstancePoolId(settings.providerInstances?.[entry.instanceId]?.config) !== null;
+  const resolvedSelection = isHubInstance
+    ? (options.find((option) => option.slug === selectedModel)?.slug ?? null)
+    : resolveSelectableModel(entry.driverKind, selectedModel, options);
   if (resolvedSelection) {
     return resolvedSelection;
   }
@@ -276,7 +306,9 @@ export function resolveAppModelSelectionForInstance(
     if (
       unavailableSelection &&
       !hiddenModels.includes(unavailableSelection) &&
-      resolveSelectableModel(entry.driverKind, selectedModel, entry.models) === null &&
+      (isHubInstance
+        ? !entry.models.some((model) => model.slug === unavailableSelection)
+        : resolveSelectableModel(entry.driverKind, selectedModel, entry.models) === null) &&
       (entry.driverKind !== "antigravity" || unavailableSelection !== ANTIGRAVITY_DEFAULT_MODEL)
     ) {
       return unavailableSelection;
@@ -328,25 +360,36 @@ export function resolveAppModelSelectionState(
     selectedEntry ?? entries.find((candidate) => candidate.enabled && candidate.isAvailable);
   if (entry) {
     const selectedModel = selectedEntry ? selection.model : null;
+    const isHubInstance =
+      hubInstancePoolId(settings.providerInstances?.[entry.instanceId]?.config) !== null;
     // A saved model the catalog no longer lists, or a new fallback instance,
     // gets the driver's cheap text generation default. The catalog's own
     // default is the flagship chat model, which is too expensive here.
-    const options = getAppModelOptionsForInstance(settings, entry);
-    const model =
-      resolveSelectableModel(entry.driverKind, selectedModel, options) ??
-      resolveSelectableModel(
-        entry.driverKind,
-        DEFAULT_TEXT_GENERATION_MODEL_BY_PROVIDER[entry.driverKind],
-        options,
-      ) ??
-      resolveAppModelSelectionForInstance(
-        entry.instanceId,
-        settings,
-        supportedProviders,
-        selectedModel,
-      ) ??
-      entry.models[0]?.slug ??
-      DEFAULT_TEXT_GENERATION_MODEL_BY_PROVIDER[entry.driverKind];
+    const options = getAppModelOptionsForInstance(
+      settings,
+      entry,
+      isHubInstance && selectedEntry ? selectedModel : null,
+    );
+    const model = isHubInstance
+      ? ((selectedEntry
+          ? options.find((option) => option.slug === selectedModel)?.slug
+          : undefined) ??
+        options.find((option) => option.isDefault && !option.isUnavailable)?.slug ??
+        options.find((option) => !option.isUnavailable)?.slug)
+      : (resolveSelectableModel(entry.driverKind, selectedModel, options) ??
+        resolveSelectableModel(
+          entry.driverKind,
+          DEFAULT_TEXT_GENERATION_MODEL_BY_PROVIDER[entry.driverKind],
+          options,
+        ) ??
+        resolveAppModelSelectionForInstance(
+          entry.instanceId,
+          settings,
+          supportedProviders,
+          selectedModel,
+        ) ??
+        entry.models[0]?.slug ??
+        (isHubInstance ? undefined : DEFAULT_TEXT_GENERATION_MODEL_BY_PROVIDER[entry.driverKind]));
     if (!model) {
       return createModelSelection(entry.instanceId, "", []);
     }

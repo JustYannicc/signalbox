@@ -51,6 +51,7 @@ export function isPoolInstance(
 const usable = (provider: ServerProvider) =>
   provider.enabled &&
   provider.installed &&
+  provider.status !== "error" &&
   provider.availability !== "unavailable" &&
   provider.auth.status !== "unauthenticated";
 
@@ -129,9 +130,9 @@ export function poolModelSelection(input: {
 }
 
 /**
- * Why a project's threads can't run: no pool on its chain, or nobody signed
- * in to its pool for any harness (`instanceId` is where to sign in). Null
- * when they can, or the server doesn't resolve pools.
+ * Why a project's threads can't run: no pool, no signed-in account, no model
+ * in the pool catalog, or a failed pool read. Null when they can run or the
+ * server doesn't resolve pools.
  */
 export type PoolNeed =
   | { readonly _tag: "noPool" }
@@ -139,7 +140,9 @@ export type PoolNeed =
       readonly _tag: "signIn";
       readonly poolId: AccountPoolId;
       readonly instanceId: ProviderInstanceId | null;
-    };
+    }
+  | { readonly _tag: "noModels"; readonly poolId: AccountPoolId; readonly message: string }
+  | { readonly _tag: "unavailable"; readonly poolId: AccountPoolId; readonly message: string };
 
 /** What a composer's send button says while its project has a `PoolNeed`. */
 export const NEEDS_A_POOL = "Needs a pool";
@@ -156,5 +159,35 @@ export function poolNeed(input: {
     isPoolInstance(input.providerInstances, provider.instanceId, pool.poolId),
   );
   if (own.some((provider) => usable(provider) && provider.models.length > 0)) return null;
+  const unavailable = own.find(
+    (provider) =>
+      provider.unavailableReason !== undefined ||
+      (provider.status === "error" && provider.auth.status === "unknown"),
+  );
+  if (unavailable) {
+    return {
+      _tag: "unavailable",
+      poolId: pool.poolId,
+      message:
+        unavailable.message ??
+        unavailable.unavailableReason ??
+        "The pool is unavailable right now. Try again.",
+    };
+  }
+  const noModels = own.find(
+    (provider) =>
+      provider.models.length === 0 &&
+      provider.status === "warning" &&
+      provider.auth.status === "authenticated" &&
+      provider.unavailableReason === undefined,
+  );
+  if (noModels) {
+    return {
+      _tag: "noModels",
+      poolId: pool.poolId,
+      message:
+        noModels.message ?? "This pool's accounts serve no models right now. Try again shortly.",
+    };
+  }
   return { _tag: "signIn", poolId: pool.poolId, instanceId: own[0]?.instanceId ?? null };
 }

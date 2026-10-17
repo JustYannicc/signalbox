@@ -1,7 +1,7 @@
 import { Toolbar } from "../../components/ui/Toolbar";
 import * as Dialog from "../../components/ui/Dialog";
 import { createV5StackNavigator as createNativeStackNavigator } from "../../native/createV5StackNavigator";
-import { DEFAULT_SERVER_SETTINGS } from "@t3tools/contracts";
+import { DEFAULT_SERVER_SETTINGS, environmentCanWriteModelSettings } from "@t3tools/contracts";
 import {
   modelPreferencesMigrationPatch,
   resolveModelPreferences,
@@ -216,6 +216,7 @@ function SwitchRow(props: {
   readonly value: boolean;
   readonly onValueChange: (value: boolean) => void;
   readonly isLast?: boolean;
+  readonly disabled?: boolean;
 }) {
   return (
     <View
@@ -227,6 +228,7 @@ function SwitchRow(props: {
       <Text className="text-sm font-t3-medium text-foreground">{props.label}</Text>
       <ThemedSwitch
         accessibilityLabel={props.label}
+        disabled={props.disabled}
         onValueChange={props.onValueChange}
         value={props.value}
       />
@@ -304,6 +306,7 @@ type ThreadSettingsSessionValue = {
   readonly providerGroups: ReadonlyArray<ProviderGroup>;
   readonly favoriteKeys: ReadonlySet<string>;
   readonly favoritesLoaded: boolean;
+  readonly modelSettingsWritable: boolean;
   readonly toggleFavorite: (option: ModelOption) => void;
   readonly toggleHidden: (option: ModelOption) => void;
   readonly pendingHiddenKeys: ReadonlySet<string>;
@@ -342,6 +345,7 @@ function ThreadSettingsSessionProvider(
   const configs = useAtomValue(environmentServerConfigsAtom);
   const config = props.environmentId ? configs.get(props.environmentId) : undefined;
   const settings = config?.settings;
+  const modelSettingsWritable = environmentCanWriteModelSettings(config?.environment.capabilities);
   const [manageHidden, setManageHidden] = useState(false);
   const pendingHidden = useRef(new Set<string>());
   const pendingFavorites = useRef(
@@ -374,16 +378,31 @@ function ThreadSettingsSessionProvider(
     ? (preferences.value.modelFavorites ?? EMPTY_MODEL_FAVORITES)
     : EMPTY_MODEL_FAVORITES;
   const favoritesLoaded =
-    settings !== undefined && (settings.favorites !== null || AsyncResult.isSuccess(preferences));
+    modelSettingsWritable &&
+    settings !== undefined &&
+    (settings.favorites !== null || AsyncResult.isSuccess(preferences));
   const modelFavorites = resolveModelPreferences(settings ?? DEFAULT_SERVER_SETTINGS, {
     favorites: legacyFavorites,
   }).favorites;
   const saveSettings = useAtomCommand(serverEnvironment.updateSettings, "model favorites update");
   useEffect(() => {
-    if (!props.environmentId || !settings || !AsyncResult.isSuccess(preferences)) return;
+    if (
+      !modelSettingsWritable ||
+      !props.environmentId ||
+      !settings ||
+      !AsyncResult.isSuccess(preferences)
+    )
+      return;
     const patch = modelPreferencesMigrationPatch(settings, { favorites: legacyFavorites });
     if (patch) void saveSettings({ environmentId: props.environmentId, input: { patch } });
-  }, [legacyFavorites, preferences, props.environmentId, saveSettings, settings]);
+  }, [
+    legacyFavorites,
+    modelSettingsWritable,
+    preferences,
+    props.environmentId,
+    saveSettings,
+    settings,
+  ]);
   const favoriteKeys = useMemo(
     () =>
       new Set(
@@ -464,6 +483,7 @@ function ThreadSettingsSessionProvider(
     (option: ModelOption) => {
       if (
         !settings ||
+        !modelSettingsWritable ||
         !props.environmentId ||
         !option.canHide ||
         pendingHidden.current.has(option.key)
@@ -490,7 +510,13 @@ function ThreadSettingsSessionProvider(
         setPendingHiddenKeys(new Set(pendingHidden.current));
       });
     },
-    [props.environmentId, saveSettings, settings],
+    [modelSettingsWritable, props.environmentId, saveSettings, settings, setPendingHiddenKeys],
+  );
+  const updateManageHidden = useCallback(
+    (value: boolean) => {
+      if (modelSettingsWritable) setManageHidden(value);
+    },
+    [modelSettingsWritable, setManageHidden],
   );
   const [showLegacyToggle, setShowLegacyToggle] = useState(false);
   const [providerFilter, setProviderFilter] = useState<string | null>(null);
@@ -610,7 +636,8 @@ function ThreadSettingsSessionProvider(
       providerInstanceId: props.providerInstanceId,
       providerGroups,
       manageHidden,
-      setManageHidden,
+      setManageHidden: updateManageHidden,
+      modelSettingsWritable,
       toggleHidden,
       pendingHiddenKeys,
       runtimeMode: compatibleRuntimeMode,
@@ -659,6 +686,8 @@ function ThreadSettingsSessionProvider(
       props.onUpdateRuntimeMode,
       providerGroups,
       manageHidden,
+      modelSettingsWritable,
+      updateManageHidden,
       toggleHidden,
       pendingHiddenKeys,
       runtimeModeChoices,
@@ -745,7 +774,7 @@ function ThreadSettingsModelListRow(props: {
       favoritesLoaded={session.favoritesLoaded}
       onToggleFavorite={() => session.toggleFavorite(props.option)}
       onToggleHidden={
-        session.manageHidden && props.option.canHide
+        session.modelSettingsWritable && session.manageHidden && props.option.canHide
           ? () => session.toggleHidden(props.option)
           : undefined
       }
@@ -960,6 +989,7 @@ function ThreadSettingsOptionsItem(props: {
       <View className="mx-4 overflow-hidden rounded-2xl bg-grouped-card">
         <SwitchRow
           label="Manage hidden models"
+          disabled={!session.modelSettingsWritable}
           value={session.manageHidden}
           onValueChange={session.setManageHidden}
           isLast={Platform.OS === "ios" || !session.hasLegacyModels}
