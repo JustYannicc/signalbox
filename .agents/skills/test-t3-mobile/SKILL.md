@@ -77,14 +77,18 @@ On completion or failure, remove the disposable connection and close the
 AgentDevice session with its returned target arguments. Call `device_close`
 with the tracked host and `device.id` returned by `device_open`, not the
 pre-boot AVD name. A wrong ID can silently leave the device open. Set
-`shutdown=true` if this walk booted the device; preserve any device that was
-already booted when the walk started.
+`shutdown=true` if this walk booted the device or accepted shutdown ownership
+in a handoff; preserve other devices that were already booted at the start.
 
 If a named receiver accepts ownership, hand over the host and current device
 ID and responsibility for shutdown, then close your panel without shutdown.
-Record that handoff. Without an accepted handoff, shut down what you booted.
+The receiver must call `device_open` in their own thread before driving or
+closing it. Record that handoff. Without an accepted handoff, shut down what you booted.
 If `device_open` failed before returning an ID, call `device_list` and report
-any device the walk left booted; establish its identity before shutting it down.
+any device the walk left booted. Match Android entries by `name`, then open
+that exact host and booted ID to obtain a session before calling
+`device_close(shutdown=true)`. If reopening fails, report the unresolved
+cleanup with the exact identity instead of claiming it stopped.
 
 Stop backend and Metro through their captured terminal sessions or tracked
 PIDs, including their owned child processes. Preserve processes you reused.
@@ -92,6 +96,7 @@ Never kill processes or shut down devices by pattern, and leave T3's shared
 agent-device daemon and device hub alone.
 
 For a shutdown, call `device_list` and confirm the original device identity
-(the AVD name on Android) is no longer booted and your panel entry is gone.
+is no longer booted and your panel entry is gone. Match Android by its `name`
+field: any matching entry with `booted=true` means shutdown is incomplete.
 Confirm your spawned processes exited and your ports have no remaining
 listeners. Teardown is complete only after these checks or a recorded handoff.
