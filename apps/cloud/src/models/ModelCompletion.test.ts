@@ -2,6 +2,7 @@ import { ProviderInstanceId, type ModelSelection } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Clock from "effect/Clock";
+import * as DateTime from "effect/DateTime";
 
 import type { PoolModelApi } from "../pool/PoolDirectory.ts";
 import type { ModelForwardReply, ModelPoolRoute } from "./ModelProtocol.ts";
@@ -55,8 +56,8 @@ describe("ModelCompletion", () => {
       const now = yield* Clock.currentTimeMillis;
       for (const [header, expected] of [
         ["60", 60_000],
-        [new Date(now + 90_000).toUTCString(), 90_000],
-        [new Date(now - 1_000).toUTCString(), 0],
+        [DateTime.toDateUtc(DateTime.makeUnsafe(now + 90_000)).toUTCString(), 90_000],
+        [DateTime.toDateUtc(DateTime.makeUnsafe(now - 1_000)).toUTCString(), 0],
         ["garbage", undefined],
       ] as const) {
         const error = yield* Effect.flip(

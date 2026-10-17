@@ -4,12 +4,15 @@ import { isRetryableStatus } from "@signalbox/automations/steps";
 import { AutomationError, ProjectId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Schema from "effect/Schema";
 
 import { ModelCompletion } from "../models/ModelCompletion.ts";
 import { poolObjectName } from "../pool/PoolDirectory.ts";
 import { currentProjectIds, folderOfProject, poolResolver } from "../user/folderTree.ts";
 import { UserFolders } from "../user/UserFolders.ts";
 import { UserStore } from "../user/UserStore.ts";
+
+const isAutomationError = Schema.is(AutomationError);
 
 /** Model steps act as the automation owner on the project's current pool chain. */
 export const layer = Layer.effect(
@@ -46,7 +49,7 @@ export const layer = Layer.effect(
           });
         }).pipe(
           Effect.mapError((cause) => {
-            if (cause instanceof AutomationError) return cause;
+            if (isAutomationError(cause)) return cause;
             const retryable =
               cause._tag === "ModelCompletionError" &&
               (cause.code === "pool-unavailable" ||

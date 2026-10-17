@@ -76,6 +76,7 @@ const makeOwner = () => {
   const state = { down: false };
   const automations = CloudAutomations.CloudAutomations.of({
     receiveHook: () => Effect.die("not used"),
+    save: () => Effect.die("not used"),
     threadEvents: (input) =>
       state.down
         ? Effect.fail(new AutomationError({ message: "The engine is down." }))
@@ -557,7 +558,7 @@ describe("current cloud item history", () => {
                       `;
                       if (state?.cursor === 100) {
                         yield* Deferred.succeed(committed, undefined);
-                        yield* Effect.never;
+                        return yield* Effect.never;
                       }
                     }),
                   ),
