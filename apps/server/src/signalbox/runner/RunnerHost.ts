@@ -3,7 +3,9 @@ import * as NodeHttp from "node:http";
 
 import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
 import { threadRemoteBranch } from "@signalbox/runner-protocol/DriveProtocol";
+import type { DriveAccess } from "@signalbox/runner-protocol/DriveProtocol";
 import { PREVIEW_TUNNEL_PATH } from "@signalbox/runner-protocol/PreviewTunnel";
+import type { PreviewService } from "@signalbox/runner-protocol/PreviewServices";
 import {
   machineEnsureJson,
   type MachineEnsureRequest,
@@ -11,6 +13,7 @@ import {
 } from "@signalbox/runner-protocol/RunnerProtocol";
 import type { ThreadId } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
@@ -38,7 +41,7 @@ import { makeDiscoveredPorts } from "./RunnerPreviewPorts.ts";
 import { previewTunnelTransport, runPreviewTunnel } from "./RunnerPreviewTunnel.ts";
 import { onePasswordSdk, type OnePassword } from "./RunnerOnePassword.ts";
 import { makeRunnerSecrets, makeSecretsRegistrar } from "./RunnerSecrets.ts";
-import { makeRunnerSession, type RunnerSession } from "./RunnerSession.ts";
+import { makeRunnerSession, RunnerConnectionError, type RunnerSession } from "./RunnerSession.ts";
 import { makeRunnerSessions } from "./RunnerSessions.ts";
 import {
   maskingTransport,
@@ -49,6 +52,8 @@ import {
 import { makeRunnerAttachments } from "./RunnerAttachments.ts";
 import type { SecretMask } from "./secretMask.ts";
 import { makeRunnerTurns } from "./RunnerTurns.ts";
+import type { RunnerDrive } from "./RunnerDrive.ts";
+import { makePreviewServices } from "./RunnerPreviewServices.ts";
 import { makeRunnerUsage } from "./RunnerUsage.ts";
 
 /**
@@ -146,9 +151,20 @@ export const makeRunnerHost = Effect.fn("makeRunnerHost")(function* (config: Run
             mask,
           }).pipe(Effect.provide(FetchHttpClient.layer), Effect.provide(driveServices));
           // Every drive the user can read, for the harnesses (#141).
+          const previewServices = yield* makePreviewServices({ cwd });
+          const previewServicesPublisher =
+            yield* Deferred.make<
+              (services: ReadonlyArray<PreviewService>) => Effect.Effect<void>
+            >();
+          const persistPreviewServices = (services: ReadonlyArray<PreviewService>) =>
+            Deferred.await(previewServicesPublisher).pipe(
+              Effect.flatMap((publish) => publish(services)),
+            );
           const context = yield* startContextServer({
             mountPoint: config.drivesMountPoint ?? null,
             threadId: request.threadId,
+            previewServices,
+            persistPreviewServices,
           });
           // What the harness environment sets itself; known once the adapters are made.
           let harnessVariables: ReadonlySet<string> = new Set();
@@ -171,6 +187,50 @@ export const makeRunnerHost = Effect.fn("makeRunnerHost")(function* (config: Run
           const { adapters, layout, stderr, environment, attachmentsDir } = made;
           harnessVariables = made.harnessVariables;
           const dependencies = yield* makeRunnerDependencies({ cwd, caches, environment });
+          const preparing = yield* Semaphore.make(1);
+          const openingDrive = yield* Semaphore.make(1);
+          let openedDrive: { readonly driveId: string; readonly drive: RunnerDrive } | null = null;
+          const openDrive = (access: DriveAccess) =>
+            openingDrive.withPermits(1)(
+              Effect.gen(function* () {
+                if (openedDrive?.driveId === access.driveId) return openedDrive.drive;
+                const drive = yield* Effect.flatMap(
+                  makeDriveClient({ cloudUrl, access }),
+                  (client) =>
+                    makeRunnerDrive({
+                      cwd,
+                      client,
+                      branch: threadRemoteBranch(request.threadId),
+                      machine: { outside: outsideFolders(layout), trees: dependencies.trees },
+                    }),
+                ).pipe(
+                  Effect.provide(FetchHttpClient.layer),
+                  Effect.provide(driveServices),
+                  Scope.provide(scope),
+                );
+                openedDrive = { driveId: access.driveId, drive };
+                yield* context.attachDrive(drive);
+                return drive;
+              }),
+            );
+          const prepareServices = (access: DriveAccess) =>
+            preparing
+              .withPermits(1)(
+                Effect.gen(function* () {
+                  const drive = yield* openDrive(access);
+                  yield* drive.prepare(null, access.author, access.instructions);
+                  yield* dependencies.prepare(() => Effect.void);
+                  yield* drive.restoreDependencyEdits;
+                }),
+              )
+              .pipe(
+                Effect.mapError(
+                  () =>
+                    new RunnerConnectionError({
+                      message: "Could not restore the preview's files.",
+                    }),
+                ),
+              );
           const attachments = yield* makeRunnerAttachments({ cloudUrl, attachmentsDir }).pipe(
             Effect.provide(FetchHttpClient.layer),
             Effect.provide(driveServices),
@@ -203,22 +263,10 @@ export const makeRunnerHost = Effect.fn("makeRunnerHost")(function* (config: Run
                 usage: usage.sample,
                 emit,
                 dependencies,
+                preparing,
                 secrets,
                 registerSecrets,
-                openDrive: (access) =>
-                  Effect.flatMap(makeDriveClient({ cloudUrl, access }), (client) =>
-                    makeRunnerDrive({
-                      cwd,
-                      client,
-                      branch: threadRemoteBranch(request.threadId),
-                      machine: { outside: outsideFolders(layout), trees: dependencies.trees },
-                    }),
-                  ).pipe(
-                    // The agent's push and create_pr save the branch through it first.
-                    Effect.tap(context.attachDrive),
-                    Effect.provide(FetchHttpClient.layer),
-                    Effect.provide(driveServices),
-                  ),
+                openDrive,
                 sessions,
                 attachments,
                 // Each generation's class, as the thread asked for it.
@@ -230,7 +278,7 @@ export const makeRunnerHost = Effect.fn("makeRunnerHost")(function* (config: Run
                   ),
               }),
           });
-          yield* runPreviewTunnel({
+          const previewTunnel = yield* runPreviewTunnel({
             threadId: request.threadId,
             generation: request.generation,
             token: request.token,
@@ -238,9 +286,12 @@ export const makeRunnerHost = Effect.fn("makeRunnerHost")(function* (config: Run
               threadSocketUrl(cloudUrl, PREVIEW_TUNNEL_PATH, request.threadId),
             ),
             ports: previewPorts,
+            services: previewServices,
+            prepareServices,
             // Viewers watch the same browser the agent's `preview_*` tools drive.
             ...(context.mirror === null ? {} : { mirror: context.mirror }),
           });
+          yield* Deferred.succeed(previewServicesPublisher, previewTunnel.persistServices);
           return session;
         }).pipe(
           Scope.provide(scope),

@@ -4,8 +4,8 @@
  * A thread's machine runs the dev servers its agents start. Signalbox Cloud
  * lists the ones it finds on the machine and opens each at its own origin
  * through the PreviewGateway, for the thread's members only. A preview link
- * works while the machine that served it runs; the next machine (a new
- * generation) needs a new link. An open preview keeps the machine awake.
+ * belongs to the thread. Opening it starts a stopped machine and its declared
+ * dev server. An open preview keeps the machine awake.
  *
  * Only environments advertising `capabilities.signalboxPreviews` serve these.
  * A self-hosted server answers `SignalboxPreviewsUnavailableError`; its own
@@ -45,7 +45,7 @@ export const SIGNALBOX_PREVIEWS_REQUIRED_SCOPES = {
   [SIGNALBOX_AGENT_BROWSER_WS_METHODS.step]: AuthOrchestrationReadScope,
 } as const;
 
-/** A web server listening on the thread's machine. */
+/** A declared dev server or a web server listening on the thread's machine. */
 export const SignalboxPreviewPort = Schema.Struct({
   port: PositiveInt,
   /** The process listening, when the machine could tell. */
@@ -53,7 +53,7 @@ export const SignalboxPreviewPort = Schema.Struct({
 });
 export type SignalboxPreviewPort = typeof SignalboxPreviewPort.Type;
 
-/** What the thread's machine serves right now. Empty while no machine runs. */
+/** Declared previews stay available while the machine is stopped. */
 export const SignalboxThreadPreviews = Schema.Struct({
   threadId: ThreadId,
   ports: Schema.Array(SignalboxPreviewPort),
@@ -69,7 +69,7 @@ export const SignalboxPreviewOpenInput = Schema.Struct({
 export type SignalboxPreviewOpenInput = typeof SignalboxPreviewOpenInput.Type;
 
 export const SignalboxPreviewLink = Schema.Struct({
-  /** Opens the preview in any browser, for a couple of minutes. */
+  /** A stable app URL. The browser signs in before opening the isolated preview. */
   url: Schema.String,
 });
 export type SignalboxPreviewLink = typeof SignalboxPreviewLink.Type;
@@ -83,7 +83,7 @@ export class SignalboxPreviewsUnavailableError extends Schema.TaggedError<Signal
   }
 }
 
-/** The preview can't be opened now: no such thread, no machine, or nothing on that port. */
+/** The preview cannot be opened: no access or no server declared on that port. */
 export class SignalboxPreviewError extends Schema.TaggedError<SignalboxPreviewError>()(
   "SignalboxPreviewError",
   { message: Schema.String },

@@ -1,5 +1,6 @@
 // @effect-diagnostics globalFetchInEffect:off - speaks MCP and WebDAV to a real loopback server, as the harness and rclone do.
 import type { PublishRequest, PublishResult } from "@signalbox/runner-protocol/BranchProtocol";
+import type { PreviewService } from "@signalbox/runner-protocol/PreviewServices";
 import type {
   ContextView,
   SearchResult,
@@ -14,6 +15,7 @@ import type { BranchDrive } from "./RunnerBranchTools.ts";
 import type { ContextClient } from "./RunnerContextClient.ts";
 import { startContextServer } from "./RunnerContextServer.ts";
 import { CONTEXT_SERVER_NAME } from "./RunnerContextTools.ts";
+import type { RunnerPreviewServices } from "./RunnerPreviewServices.ts";
 
 /** Tools that answer from the cloud's automation engine, tested in their own files. */
 const AUTOMATION_SIDE = new Set<string>([
@@ -187,46 +189,55 @@ const fakeClient = (calls: Calls): ContextClient => ({
   browserSignIn: () => Effect.die("The person's browser isn't part of these tests."),
 });
 
-const serve = Effect.gen(function* () {
-  const calls: Calls = { searches: [], log: [], published: [], answer: PUBLISHED };
-  const server = yield* startContextServer({ mountPoint: null });
-  yield* server.pin(fakeClient(calls));
-  yield* server.attachDrive(fakeDrive(calls));
-  const origin = server.mcpServers[CONTEXT_SERVER_NAME]!.replace(/\/mcp$/, "");
-  const dav = (method: string, path: string, headers: Record<string, string> = {}) =>
-    Effect.promise(async () => {
-      const response = await fetch(`${origin}/dav${path}`, { method, headers });
-      return { status: response.status, headers: response.headers, text: await response.text() };
+const serve = (
+  previewServices?: RunnerPreviewServices,
+  persistPreviewServices?: (services: ReadonlyArray<PreviewService>) => Effect.Effect<void>,
+) =>
+  Effect.gen(function* () {
+    const calls: Calls = { searches: [], log: [], published: [], answer: PUBLISHED };
+    const server = yield* startContextServer({
+      mountPoint: null,
+      ...(previewServices === undefined ? {} : { previewServices }),
+      ...(persistPreviewServices === undefined ? {} : { persistPreviewServices }),
     });
-  let session: string | null = null;
-  let id = 0;
-  const mcp = (method: string, params: unknown) =>
-    Effect.promise(async () => {
-      const response = await fetch(server.mcpServers[CONTEXT_SERVER_NAME]!, {
-        method: "POST",
-        headers: {
-          "content-type": "application/json",
-          accept: "application/json, text/event-stream",
-          "mcp-protocol-version": "2025-06-18",
-          ...(session === null ? {} : { "mcp-session-id": session }),
-        },
-        body: JSON.stringify({ jsonrpc: "2.0", id: ++id, method, params }),
+    yield* server.pin(fakeClient(calls));
+    yield* server.attachDrive(fakeDrive(calls));
+    const origin = server.mcpServers[CONTEXT_SERVER_NAME]!.replace(/\/mcp$/, "");
+    const dav = (method: string, path: string, headers: Record<string, string> = {}) =>
+      Effect.promise(async () => {
+        const response = await fetch(`${origin}/dav${path}`, { method, headers });
+        return { status: response.status, headers: response.headers, text: await response.text() };
       });
-      session = response.headers.get("mcp-session-id") ?? session;
-      return (await response.json()) as { result?: any; error?: unknown };
+    let session: string | null = null;
+    let id = 0;
+    const mcp = (method: string, params: unknown) =>
+      Effect.promise(async () => {
+        const response = await fetch(server.mcpServers[CONTEXT_SERVER_NAME]!, {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            accept: "application/json, text/event-stream",
+            "mcp-protocol-version": "2025-06-18",
+            ...(session === null ? {} : { "mcp-session-id": session }),
+          },
+          body: JSON.stringify({ jsonrpc: "2.0", id: ++id, method, params }),
+        });
+        session = response.headers.get("mcp-session-id") ?? session;
+        return (await response.json()) as { result?: any; error?: unknown };
+      });
+    yield* mcp("initialize", {
+      protocolVersion: "2025-06-18",
+      capabilities: {},
+      clientInfo: { name: "test", version: "1" },
     });
-  yield* mcp("initialize", {
-    protocolVersion: "2025-06-18",
-    capabilities: {},
-    clientInfo: { name: "test", version: "1" },
+    const call = (name: string, args: Record<string, unknown>) =>
+      Effect.map(
+        mcp("tools/call", { name, arguments: args }),
+        (answer) =>
+          answer.result as { isError?: boolean; content: ReadonlyArray<{ text: string }> },
+      );
+    return { dav, mcp, call, searches: calls.searches, calls };
   });
-  const call = (name: string, args: Record<string, unknown>) =>
-    Effect.map(
-      mcp("tools/call", { name, arguments: args }),
-      (answer) => answer.result as { isError?: boolean; content: ReadonlyArray<{ text: string }> },
-    );
-  return { dav, mcp, call, searches: calls.searches, calls };
-});
 
 const hrefs = (xml: string) =>
   [...xml.matchAll(/<D:href>([^<]*)<\/D:href>/g)].map((match) => decodeURIComponent(match[1]!));
@@ -234,7 +245,7 @@ const hrefs = (xml: string) =>
 describe("context server (#141)", () => {
   it.effect("serves /drives as read-only WebDAV, by context, through shortcuts", () =>
     Effect.gen(function* () {
-      const { dav } = yield* serve;
+      const { dav } = yield* serve();
       expect(hrefs((yield* dav("PROPFIND", "/", { depth: "1" })).text)).toEqual([
         "/dav/",
         "/dav/Personal/",
@@ -284,7 +295,7 @@ describe("context server (#141)", () => {
 
   it.effect("serves the context tool over MCP", () =>
     Effect.gen(function* () {
-      const { mcp, call, searches } = yield* serve;
+      const { mcp, call, searches } = yield* serve();
       const tools = (yield* mcp("tools/list", {})).result.tools as ReadonlyArray<{
         name: string;
         annotations: { readOnlyHint: boolean };
@@ -355,9 +366,58 @@ describe("context server (#141)", () => {
     }),
   );
 
+  it.effect(
+    "starts and stops only declared preview services and waits for each declaration to save",
+    () =>
+      Effect.gen(function* () {
+        const declarations: Array<PreviewService> = [];
+        const persisted: Array<ReadonlyArray<PreviewService>> = [];
+        const services: RunnerPreviewServices = {
+          start: (service) =>
+            Effect.sync(() => {
+              const index = declarations.findIndex((entry) => entry.port === service.port);
+              if (index >= 0) declarations.splice(index, 1);
+              declarations.push(service);
+            }),
+          stop: (port) =>
+            Effect.sync(
+              () =>
+                void declarations.splice(
+                  0,
+                  declarations.length,
+                  ...declarations.filter((service) => service.port !== port),
+                ),
+            ),
+          restore: (next) =>
+            Effect.sync(() => void declarations.splice(0, declarations.length, ...next)),
+          list: Effect.sync(() => [...declarations]),
+        };
+        const { mcp, call } = yield* serve(services, (next) =>
+          Effect.sync(() => persisted.push([...next])),
+        );
+        const tools = (yield* mcp("tools/list", {})).result.tools as ReadonlyArray<{
+          name: string;
+          annotations: { readOnlyHint: boolean };
+        }>;
+        expect(
+          tools.filter((tool) => tool.name.startsWith("preview_service_")).map((tool) => tool.name),
+        ).toEqual(["preview_service_start", "preview_service_stop"]);
+
+        const started = { port: 4173, command: "pnpm dev", cwd: "apps/web" };
+        const startResult = yield* call("preview_service_start", started);
+        expect(startResult.isError).toBeUndefined();
+        expect(startResult.content[0]?.text).toBe("Preview service declared on port 4173.");
+        expect(persisted).toEqual([[started]]);
+        const stopResult = yield* call("preview_service_stop", { port: 4173 });
+        expect(stopResult.isError).toBeUndefined();
+        expect(stopResult.content[0]?.text).toBe("Preview service stopped on port 4173.");
+        expect(persisted).toEqual([[started], []]);
+      }),
+  );
+
   it.effect("publishes the thread's branch: saves it first, then asks the cloud", () =>
     Effect.gen(function* () {
-      const { mcp, call, calls } = yield* serve;
+      const { mcp, call, calls } = yield* serve();
       const tools = (yield* mcp("tools/list", {})).result.tools as ReadonlyArray<{
         name: string;
         annotations: { readOnlyHint: boolean };
