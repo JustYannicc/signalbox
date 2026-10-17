@@ -582,7 +582,7 @@ describe("durable thread pull", () => {
   );
 
   it.effect(
-    "sends one command per connection and sends it again after reconnect without changing target",
+    "sends one command per connection and counts replay after reconnect without changing target",
     () =>
       withFixture((f) =>
         withObject(
@@ -621,6 +621,121 @@ describe("durable thread pull", () => {
               expect(next.sent.find((message) => message.type === "git.pull")).toEqual(
                 socket.sent.find((message) => message.type === "git.pull"),
               );
+              expect((yield* Context.get(context, PullState.PullState).pending)?.attempts).toBe(1);
+            }),
+          { drives: true, driveDirectory: f.directory },
+        ),
+      ),
+  );
+
+  it.effect.each([false, true])(
+    "bounds same-generation restarts and arms terminal upkeep when a receipt exists: %s",
+    (saved) =>
+      withFixture((f) =>
+        withObject(
+          f.database,
+          (engine, runner, context) =>
+            Effect.gen(function* () {
+              const machine = yield* idle(engine, runner);
+              const pulls = Context.get(context, ThreadPulls.ThreadPulls);
+              const state = Context.get(context, PullState.PullState);
+              yield* pulls.begin(owner, {
+                driveId: DRIVE,
+                operationId: "restart",
+                target: f.target,
+                branch: worktree.branch,
+              });
+              const waiting = yield* Effect.forkChild(pulls.wait(owner, "restart"));
+              const socket = fakeSocket();
+              const sockets = [socket.socket];
+              const connections = [socket];
+              const upkeep: boolean[] = [];
+              const host = yield* hostFor(runner, sockets);
+              const observed = {
+                ...host,
+                afterChange: async (work?: Awaited<ReturnType<typeof pushRunnerWork>>) => {
+                  upkeep.push(work?.needsUpkeep ?? false);
+                },
+              };
+              const reconnect = (next: ReturnType<typeof fakeSocket>) =>
+                Effect.promise(() =>
+                  onRunnerMessage(
+                    observed,
+                    next.socket,
+                    JSON.stringify(hello(machine.generation, machine.token)),
+                  ),
+                );
+              yield* reconnect(socket);
+              const firstWork = yield* runner.work;
+              const operation = firstWork.pull!.operation;
+              const writer = {
+                threadId,
+                userId: owner.userId,
+                generation: machine.generation,
+                live: false,
+                packsAfter: 0,
+              };
+              const result: PullResult = {
+                id: operation.id,
+                target: f.target,
+                head: f.target,
+                wip: f.target,
+                outcome: "pulled",
+                reason: null,
+                hasWorkingTreeChanges: false,
+              };
+              expect((yield* state.pending)?.attempts).toBe(0);
+              for (let attempt = 1; attempt <= 3; attempt++) {
+                if (saved && attempt === 3) {
+                  expect(
+                    yield* Effect.promise(() => f.handle.savePull(writer, { operation, result })),
+                  ).toEqual(result);
+                }
+                const next = fakeSocket();
+                connections.push(next);
+                sockets.splice(0, sockets.length, next.socket);
+                yield* reconnect(next);
+                expect((yield* state.pending)?.attempts).toBe(attempt);
+                expect((yield* state.pending)?.operation).toEqual(operation);
+              }
+              expect(upkeep.at(-1)).toBe(true);
+              expect((yield* runner.work).pull).toBeNull();
+              expect((yield* runner.work).needsUpkeep).toBe(true);
+              const duplicate = fakeSocket();
+              connections.push(duplicate);
+              sockets.splice(0, sockets.length, duplicate.socket);
+              yield* reconnect(duplicate);
+              expect((yield* state.pending)?.attempts).toBe(3);
+              expect(
+                connections
+                  .flatMap((connection) => connection.sent)
+                  .filter((message) => message.type === "git.pull"),
+              ).toHaveLength(3);
+              const stopped = yield* runner.reconcile;
+              expect(stopped.release).toBe(machine.generation);
+              expect(stopped.ensure).toBeNull();
+              expect(stopped.busy).toBe(false);
+              expect(yield* state.pending).toBeNull();
+              expect(yield* Fiber.join(waiting)).toMatchObject(
+                saved
+                  ? result
+                  : {
+                      outcome: "refused",
+                      reason: "Pull stopped after three failed attempts. Try pulling again.",
+                    },
+              );
+              expect((yield* runner.authorizeDrive(firstWork.pull!.drive.token))._tag).toBe(
+                "denied",
+              );
+              yield* send(engine, 2, "continue after restarts");
+              expect(
+                (yield* Effect.promise(() => f.handle.savePull(writer, { operation, result })))
+                  .outcome,
+              ).toBe("refused");
+              expect((yield* Effect.promise(() => f.handle.refs(threadId))).thread).toBe(
+                saved ? f.target : f.first,
+              );
+              expect((yield* runner.reconcile).ensure).not.toBeNull();
             }),
           { drives: true, driveDirectory: f.directory },
         ),

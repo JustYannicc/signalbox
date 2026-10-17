@@ -14,6 +14,8 @@ import {
   type ThreadId,
   type VcsPullInput,
   type VcsPullResult,
+  type VcsListRefsInput,
+  type VcsListRefsResult,
   type VcsStatusLocalResult,
   type VcsStatusRemoteResult,
   type VcsStatusStreamEvent,
@@ -47,6 +49,7 @@ import * as UserDrives from "../user/UserDrives.ts";
 import { GitHub } from "./GitHub.ts";
 import type { GitHubError, GitHubPullRequest } from "./GitHubApi.ts";
 import { GitHubConnection } from "./GitHubConnection.ts";
+import { makeGitHubRefs } from "./GitHubRefs.ts";
 
 /**
  * A thread's own branch in an imported repository, as the git panel sees it
@@ -178,6 +181,10 @@ const OPENS_PR: ReadonlySet<GitStackedAction> = new Set(["create_pr", "commit_pu
 export class GitHubBranches extends Context.Service<
   GitHubBranches,
   {
+    readonly listRefs: (
+      actor: Actor,
+      input: VcsListRefsInput,
+    ) => Effect.Effect<VcsListRefsResult, GitCommandError>;
     readonly status: (
       actor: Actor,
       cwd: string,
@@ -211,6 +218,10 @@ const make = Effect.gen(function* () {
   const connection = yield* GitHubConnection;
   const userDrives = yield* UserDrives.UserDrives;
   const threads = yield* CloudThreadService.CloudThreadService;
+  const listRefs = yield* makeGitHubRefs({
+    drive: userDrives.access,
+    threadSnapshot: threads.threadSnapshot,
+  });
   const crypto = yield* Crypto.Crypto;
   const directory = yield* Effect.serviceOption(DriveDirectory);
   const packs = yield* Effect.serviceOption(DrivePacks);
@@ -858,7 +869,7 @@ const make = Effect.gen(function* () {
     );
   };
 
-  return GitHubBranches.of({ status, watch, runAction, publish, pull });
+  return GitHubBranches.of({ listRefs, status, watch, runAction, publish, pull });
 });
 
 export const layer = Layer.effect(GitHubBranches, make);

@@ -493,27 +493,38 @@ const make = Effect.gen(function* () {
           : hello.takenRunIds.includes(active.id))
           ? active.id
           : null;
-      return Effect.as(diagnostics.runnerConnected({ hello, connection, run, lost, now }), {
-        events,
-        machine: {
-          ...lease,
-          status: "connected",
-          connection,
-          ensuredAt: lease.ensuredAt ?? now,
-          disconnectedAt: null,
-          drains: hello.drains === true,
-          steers: hello.steers === true,
-          pulls: hello.pulls === true,
-        },
-        result: {
-          _tag: "welcome",
-          generation: lease.generation,
-          connection,
-          ackedSequence: lease.ackedSequence,
-          activeRunId: active?.id ?? null,
-          heldRunId,
-        },
-      } satisfies ThreadEngine.EngineDecision<HelloResult>);
+      const replay = Effect.gen(function* () {
+        if ((lease.connection ?? 0) === 0) return;
+        const pending = yield* Effect.orDie(pullState.pending);
+        // A process restart and a network reconnect both replay the unfinished attempt.
+        if (pending?.phase === "running" && pending.generation === lease.generation) {
+          yield* Effect.orDie(pullState.lost(pending.id, lease.generation));
+        }
+      });
+      return Effect.as(
+        Effect.andThen(replay, diagnostics.runnerConnected({ hello, connection, run, lost, now })),
+        {
+          events,
+          machine: {
+            ...lease,
+            status: "connected",
+            connection,
+            ensuredAt: lease.ensuredAt ?? now,
+            disconnectedAt: null,
+            drains: hello.drains === true,
+            steers: hello.steers === true,
+            pulls: hello.pulls === true,
+          },
+          result: {
+            _tag: "welcome",
+            generation: lease.generation,
+            connection,
+            ackedSequence: lease.ackedSequence,
+            activeRunId: active?.id ?? null,
+            heldRunId,
+          },
+        } satisfies ThreadEngine.EngineDecision<HelloResult>,
+      );
     });
 
   const batch: ThreadRunner["Service"]["batch"] = (input) =>
@@ -832,6 +843,7 @@ const make = Effect.gen(function* () {
         pull,
         needsUpkeep:
           pending?.retry_at != null ||
+          (pending !== null && pending.attempts >= PullState.MAX_PULL_FAILURES) ||
           needsUpkeep(lease, run !== undefined || pending !== null, yield* previews.held),
         drain: lease.drain?._tag === "asked" ? lease.drain.id : null,
         turn,
