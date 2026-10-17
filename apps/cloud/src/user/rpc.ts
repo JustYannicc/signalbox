@@ -118,6 +118,11 @@ import { makeKeysHandlers } from "./keysRpc.ts";
 import { makeSignInHandlers } from "../signIn/signInRpc.ts";
 import * as LoginService from "../signIn/LoginService.ts";
 import {
+  KEYBINDING_METHODS,
+  KEYBINDING_REQUIRED_SCOPES,
+  makeKeybindingHandlers,
+} from "./keybindingsRpc.ts";
+import {
   ANALYTICS_METHODS,
   ANALYTICS_REQUIRED_SCOPES,
   makeAnalyticsHandlers,
@@ -247,6 +252,7 @@ const SERVED = [
   ...POOL_METHODS,
   // The user's automations (`automations/`), run on this object.
   ...AUTOMATION_METHODS,
+  ...KEYBINDING_METHODS,
   ...ANALYTICS_METHODS,
 ] as const;
 type ServedTag = (typeof SERVED)[number];
@@ -269,6 +275,7 @@ const REQUIRED_SCOPES = {
   [WS_METHODS.subscribeServerConfig]: AuthOrchestrationReadScope,
   [WS_METHODS.serverGetConfig]: AuthOrchestrationReadScope,
   [WS_METHODS.serverUpdateSettings]: AuthSettingsWriteScope,
+  ...KEYBINDING_REQUIRED_SCOPES,
   ...ANALYTICS_REQUIRED_SCOPES,
   [WS_METHODS.serverProbe]: AuthOrchestrationReadScope,
   [WS_METHODS.serverReportClientActivity]: AuthOrchestrationReadScope,
@@ -578,6 +585,7 @@ export const layerHandlers = (input: {
         scopes: input.scopes ?? AuthStandardClientScopes,
       });
       const signIn = yield* makeSignInHandlers({ userId });
+      const keybindings = yield* makeKeybindingHandlers;
       const personBrowser = yield* LoginService.LoginService;
       const analytics = yield* makeAnalyticsHandlers;
       return {
@@ -596,6 +604,7 @@ export const layerHandlers = (input: {
         ...notes,
         ...keys,
         ...signIn,
+        ...keybindings,
         [SIGNALBOX_PERSON_BROWSER_WS_METHODS.profileStatus]: () =>
           personBrowserCall(
             personBrowser.profileStatus,

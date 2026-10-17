@@ -15,7 +15,7 @@ import * as SqlClient from "effect/sql/SqlClient";
 import type { Actor, ThreadNotFoundError } from "./ThreadAccess.ts";
 import * as ThreadEngine from "./ThreadEngine.ts";
 import * as ThreadStore from "./ThreadStore.ts";
-import { runnerInstanceFor } from "./providerCatalog.ts";
+import { runnerInstanceFor } from "../models/ModelRouting.ts";
 
 // Only the local transport can prove no frame was sent. Runner failures cannot release a receipt.
 export type FeedbackTransportResult = FeedbackOutcome | { readonly _tag: "not_sent" };
