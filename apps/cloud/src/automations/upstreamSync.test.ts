@@ -1,5 +1,10 @@
-import * as NodeFSP from "node:fs/promises";
+import * as NodeFileSystem from "@effect/platform-node/NodeFileSystem";
+import * as NodePath from "@effect/platform-node/NodePath";
 import { assert, it } from "@effect/vitest";
+import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
+import * as Layer from "effect/Layer";
+import * as Path from "effect/Path";
 
 import { compileForCloud } from "@signalbox/automation-compiler/compileForCloud";
 import {
@@ -9,6 +14,15 @@ import {
   type LoadAutomation,
 } from "@signalbox/automations/workflow/runtime";
 import { FakeHost, FakeWorkflows, payload } from "@signalbox/automations/workflow/testing";
+
+const readWorkflowSource = Effect.gen(function* () {
+  const fileSystem = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const sourcePath = yield* path.fromFileUrl(
+    new URL("../../../../scripts/upstream-sync/automations/sync-upstream.ts", import.meta.url),
+  );
+  return yield* fileSystem.readFileString(sourcePath);
+});
 
 type PullRequest = {
   readonly state: string;
@@ -30,11 +44,7 @@ class Entrypoint {
   }
 }
 
-it("uses a fresh PR event after four repairs and reaches the merge gate only with passing CI", async () => {
-  const source = await NodeFSP.readFile(
-    new URL("../../../../scripts/upstream-sync/automations/sync-upstream.ts", import.meta.url),
-    "utf8",
-  );
+const verifyCandidate = async (source: string) => {
   const compiled = compileForCloud(source);
   assert.isTrue(compiled.ok, JSON.stringify(compiled.ok ? [] : compiled.diagnostics));
   if (!compiled.ok) return;
@@ -191,4 +201,13 @@ it("uses a fresh PR event after four repairs and reaches the merge gate only wit
     waits.map((wait) => wait.after?.sequence),
     [8, 9],
   );
-});
+};
+
+it.effect(
+  "uses a fresh PR event after four repairs and reaches the merge gate only with passing CI",
+  () =>
+    readWorkflowSource.pipe(
+      Effect.flatMap((source) => Effect.promise(() => verifyCandidate(source))),
+      Effect.provide(Layer.mergeAll(NodeFileSystem.layer, NodePath.layer)),
+    ),
+);

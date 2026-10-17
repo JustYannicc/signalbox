@@ -53,7 +53,6 @@ export default workflow(async (w, input: { resume?: SyncPr } | null) => {
   let open: SyncPr | null = input?.resume ?? (await w.recall("Find the open sync PR", "sync-pr"));
   if (open) {
     try {
-      await w.eventCursor("Capture events before checking the open PR");
       const last: PullRequest = await w.call("Check it's still open", "signalbox.pull_request_read", { threadId: open.threadId, url: open.url });
       if (last.state !== "open") open = null;
     } catch {

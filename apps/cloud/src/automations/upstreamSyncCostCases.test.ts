@@ -1,6 +1,21 @@
+import * as NodeFileSystem from "@effect/platform-node/NodeFileSystem";
+import * as NodePath from "@effect/platform-node/NodePath";
 import { assert, expect, it } from "@effect/vitest";
+import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
+import * as Layer from "effect/Layer";
+import * as Path from "effect/Path";
 
-import { candidateWorkflow, makeHost } from "./tests/upstreamSyncCostHarness.ts";
+import { candidateWorkflow, makeHost, type CostWorkflow } from "./tests/upstreamSyncCostHarness.ts";
+
+const readWorkflowSource = Effect.gen(function* () {
+  const fileSystem = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const sourcePath = yield* path.fromFileUrl(
+    new URL("../../../../scripts/upstream-sync/automations/sync-upstream.ts", import.meta.url),
+  );
+  return yield* fileSystem.readFileString(sourcePath);
+});
 
 const argumentOf = (calls: ReadonlyArray<ReadonlyArray<unknown>>, kind: string, index: number) => {
   const call = calls.find((candidate) => candidate[0] === kind);
@@ -8,8 +23,7 @@ const argumentOf = (calls: ReadonlyArray<ReadonlyArray<unknown>>, kind: string, 
   return call[index];
 };
 
-it("keeps the ten cost and direction cases unchanged in the compiled candidate", async () => {
-  const run = await candidateWorkflow();
+const verifyCostCases = async (run: CostWorkflow) => {
   const cost = {
     text: "RESULT: cost-blocked: real conflicts outweigh adapter fix\nIssue #999 has the evidence.",
     pullRequest: null,
@@ -224,4 +238,12 @@ it("keeps the ten cost and direction cases unchanged in the compiled candidate",
   }
 
   assert.strictEqual(cases, 10);
-});
+};
+
+it.effect("keeps the ten cost and direction cases unchanged in the compiled candidate", () =>
+  Effect.gen(function* () {
+    const source = yield* readWorkflowSource;
+    const run = yield* Effect.promise(() => candidateWorkflow(source));
+    yield* Effect.promise(() => verifyCostCases(run));
+  }).pipe(Effect.provide(Layer.mergeAll(NodeFileSystem.layer, NodePath.layer))),
+);

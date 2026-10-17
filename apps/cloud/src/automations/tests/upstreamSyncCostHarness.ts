@@ -1,5 +1,3 @@
-import * as NodeFSP from "node:fs/promises";
-
 import { compileForCloud } from "@signalbox/automation-compiler/compileForCloud";
 
 type Done = { readonly done: true; readonly value: unknown };
@@ -26,11 +24,7 @@ export type MockWorkflow = {
 type CompiledBody = (w: MockWorkflow, input: unknown, trigger: unknown) => Promise<unknown>;
 export type CostWorkflow = (w: MockWorkflow, input: unknown, trigger: unknown) => Promise<unknown>;
 
-export const candidateWorkflow = async (): Promise<CostWorkflow> => {
-  const source = await NodeFSP.readFile(
-    new URL("../../../../../scripts/upstream-sync/automations/sync-upstream.ts", import.meta.url),
-    "utf8",
-  );
+export const candidateWorkflow = async (source: string): Promise<CostWorkflow> => {
   const compiled = compileForCloud(source);
   if (!compiled.ok) throw new Error(JSON.stringify(compiled.diagnostics));
   const workerModule = await import(
