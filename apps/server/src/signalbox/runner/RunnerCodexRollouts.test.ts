@@ -1,3 +1,7 @@
+// @effect-diagnostics nodeBuiltinImport:off - holds a real writer descriptor to catch inode swaps.
+import * as NodeFS from "node:fs";
+import * as NodePath from "node:path";
+
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
@@ -138,6 +142,37 @@ describe("RunnerCodexRollouts", () => {
           payload: { id: "session-1", cwd: to },
         });
         expect(restored[1]).toBe(message);
+      }),
+    ).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.live("keeps an open provider writer attached while live tailing a new rollout", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const from = "/home/user/signalbox/workspaces/thread:abc/drive";
+        const to = "/home/user/signalbox/workspaces/encoded/dGhyZWFkOmFiYw/drive";
+        const { fs, file, store, rollouts } = yield* setup({}, { from, to });
+        yield* rollouts.restore;
+
+        const sessionMeta = JSON.stringify({
+          type: "session_meta",
+          payload: { id: "session-2", cwd: from },
+        });
+        yield* fs.makeDirectory(NodePath.dirname(file), { recursive: true });
+        yield* fs.writeFileString(file, `${sessionMeta}\n`);
+        const writer = NodeFS.openSync(file, "a");
+        try {
+          const inode = NodeFS.statSync(file).ino;
+          yield* rollouts.settle(10_000);
+          expect(NodeFS.statSync(file).ino).toBe(inode);
+
+          const newRow = JSON.stringify({ type: "event_msg", payload: { text: "still attached" } });
+          NodeFS.writeSync(writer, `${newRow}\n`);
+          yield* rollouts.settle(10_000);
+          expect(store.streams.get(STREAM)).toEqual([sessionMeta, newRow]);
+        } finally {
+          NodeFS.closeSync(writer);
+        }
       }),
     ).pipe(Effect.provide(NodeServices.layer)),
   );

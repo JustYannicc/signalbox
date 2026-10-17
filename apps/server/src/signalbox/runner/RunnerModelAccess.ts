@@ -105,6 +105,22 @@ export const agentToolEnvironment = (
   };
 };
 
+/** The Runner environment split: installers get dependency caches; agent tools also get the drive bin. */
+export const runnerEnvironments = (
+  host: NodeJS.ProcessEnv,
+  layout: MachineLayout,
+  gatewayUrl: string,
+  caches: Readonly<Record<string, string>> = {},
+  cwd: string,
+  extra: Readonly<Record<string, string>> = {},
+) => {
+  const dependencyEnvironment = harnessEnvironment(host, layout, gatewayUrl, caches);
+  return {
+    dependencyEnvironment,
+    toolEnvironment: agentToolEnvironment({ ...dependencyEnvironment, ...extra }, cwd),
+  };
+};
+
 const shellQuote = (value: string) => `'${value.replaceAll("'", "'\\''")}'`;
 
 const agentToolBashEnvironment = (cwd: string) =>

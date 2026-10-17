@@ -12,12 +12,12 @@ import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 
 import {
-  agentToolEnvironment,
   claudeSettings,
   codexSettings,
   harnessEnvironment,
   machineLayout,
   prepareMachine,
+  runnerEnvironments,
   writeModelToken,
 } from "./RunnerModelAccess.ts";
 import { runnerPaths } from "./RunnerPaths.ts";
@@ -104,13 +104,14 @@ console.log(JSON.stringify({ cwd: process.cwd(), pwd: process.env.PWD, home: pro
           { mode: 0o755 },
         );
 
-        const base = harnessEnvironment(
+        const { dependencyEnvironment, toolEnvironment: environment } = runnerEnvironments(
           { PATH: process.env.PATH, HOME: "/host/home", OPENAI_API_KEY: "host-key" },
           layout,
           GATEWAY,
+          {},
+          thread.cwd,
         );
         yield* prepareMachine(layout, GATEWAY, {}, thread.cwd);
-        const environment = agentToolEnvironment(base, thread.cwd);
         NodeFS.writeFileSync(
           NodePath.join(layout.home, ".bash_profile"),
           `export PATH=${JSON.stringify(resetPath)}\n`,
@@ -153,6 +154,7 @@ console.log(JSON.stringify({ cwd: process.cwd(), pwd: process.env.PWD, home: pro
           NodeFS.realpathSync(NodeFS.readFileSync(NodePath.join(layout.home, "vp-ran"), "utf8")),
         ).toBe(NodeFS.realpathSync(thread.cwd));
         expect(environment.PATH?.split(NodePath.delimiter)[0]).toBe(bin);
+        expect(dependencyEnvironment.PATH?.split(NodePath.delimiter)[0]).not.toBe(bin);
         expect(environment.OPENAI_API_KEY).toBeUndefined();
       } finally {
         NodeFS.rmSync(root, { recursive: true, force: true });

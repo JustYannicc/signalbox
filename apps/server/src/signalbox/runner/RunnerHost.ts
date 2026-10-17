@@ -4,6 +4,7 @@ import * as NodeHttp from "node:http";
 import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
 import { threadRemoteBranch } from "@signalbox/runner-protocol/DriveProtocol";
 import type { DriveAccess } from "@signalbox/runner-protocol/DriveProtocol";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import { PREVIEW_TUNNEL_PATH } from "@signalbox/runner-protocol/PreviewTunnel";
 import type { PreviewService } from "@signalbox/runner-protocol/PreviewServices";
 import {
@@ -36,7 +37,7 @@ import { makeRunnerDrive } from "./RunnerDrive.ts";
 import { makeRunnerDependencies } from "./RunnerDependencies.ts";
 import { makeDriveClient } from "./RunnerDriveClient.ts";
 import { outsideFolders } from "./RunnerMachineFolders.ts";
-import { machineLayout, writeModelToken } from "./RunnerModelAccess.ts";
+import { machineLayout, runnerEnvironments, writeModelToken } from "./RunnerModelAccess.ts";
 import { makeDiscoveredPorts } from "./RunnerPreviewPorts.ts";
 import {
   previewTunnelTransport,
@@ -66,9 +67,10 @@ import { prepareRunnerPaths } from "./RunnerPaths.ts";
  * a generation and keeps it until the thread lets it go; asking again for the
  * same generation is a no-op, and a higher generation replaces the thread's
  * older Runner. Each thread gets a machine directory of its own
- * (`machines/<thread>`: home, harness config, model token) so no thread's
+ * (`machines/<thread-key>`: home, harness config, model token) so no thread's
  * harnesses see this machine's own logins or another thread's token, and a
- * working directory (`workspaces/<thread>/drive`).
+ * working directory (`workspaces/<thread-key>/drive`). Unsafe IDs use an
+ * encoded key, with a legacy symlink kept for saved absolute paths.
  *
  * Each Runner also runs the PreviewGateway's tunnel for its thread, which
  * starts and stops with that generation and mirrors the agent's browser.
@@ -158,8 +160,29 @@ export const makeRunnerHost = Effect.fn("makeRunnerHost")(function* (config: Run
               : { codexCwdMigration: { from: paths.legacyCwd, to: cwd } }),
             mask,
           }).pipe(Effect.provide(FetchHttpClient.layer), Effect.provide(driveServices));
-          // Every drive the user can read, for the harnesses (#141).
-          const previewServices = yield* makePreviewServices({ cwd });
+          // What the harness environment sets itself; known once the adapters are made.
+          let harnessVariables: ReadonlySet<string> = new Set();
+          const secrets = makeRunnerSecrets({
+            onePassword: config.onePassword ?? onePasswordSdk,
+            mask,
+            reserved: () => harnessVariables,
+          });
+          const runnerLayout = machineLayout(path, root);
+          const hostEnvironment = yield* HostProcess.Environment;
+          const previewEnvironment = () =>
+            runnerEnvironments(
+              hostEnvironment,
+              runnerLayout,
+              request.modelGatewayUrl,
+              caches.environment,
+              cwd,
+              secrets.environment(),
+            ).toolEnvironment;
+          // Preview commands use the same local tools and current folder secrets as agent shells.
+          const previewServices = yield* makePreviewServices({
+            cwd,
+            environment: previewEnvironment,
+          });
           const previewServicesPublisher = yield* Deferred.make<PreviewTunnel>();
           const persistPreviewServices = (services: ReadonlyArray<PreviewService>) =>
             Deferred.await(previewServicesPublisher).pipe(
@@ -173,13 +196,6 @@ export const makeRunnerHost = Effect.fn("makeRunnerHost")(function* (config: Run
             previewServicesReady: Deferred.await(previewServicesPublisher).pipe(
               Effect.flatMap((tunnel) => tunnel.ready),
             ),
-          });
-          // What the harness environment sets itself; known once the adapters are made.
-          let harnessVariables: ReadonlySet<string> = new Set();
-          const secrets = makeRunnerSecrets({
-            onePassword: config.onePassword ?? onePasswordSdk,
-            mask,
-            reserved: () => harnessVariables,
           });
           const made = yield* makeRunnerAdapters({
             root,

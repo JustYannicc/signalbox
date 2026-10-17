@@ -25,12 +25,11 @@ import type { ProviderAdapterV2 } from "@t3tools/provider-core/server/ProviderAd
 import { type HarnessStderr, makeHarnessStderr } from "./harnessStderr.ts";
 import { type ClaudeGatewaySettings, claudeGatewaySettings } from "./RunnerGatewayPins.ts";
 import {
-  agentToolEnvironment,
   claudeSettings,
   codexSettings,
-  harnessEnvironment,
   machineLayout,
   prepareMachine,
+  runnerEnvironments,
   type RunnerMcpServers,
 } from "./RunnerModelAccess.ts";
 
@@ -164,13 +163,13 @@ export const makeRunnerAdapters = Effect.fn("makeRunnerAdapters")(function* (mac
   const layout = machineLayout(yield* Path.Path, machine.root);
   const stderr = makeHarnessStderr(machine.mask);
   yield* prepareMachine(layout, machine.gatewayUrl, machine.mcpServers, machine.cwd);
-  const dependencyEnvironment = harnessEnvironment(
+  const { dependencyEnvironment, toolEnvironment: environment } = runnerEnvironments(
     yield* HostProcess.Environment,
     layout,
     machine.gatewayUrl,
     machine.caches,
+    machine.cwd,
   );
-  const environment = agentToolEnvironment(dependencyEnvironment, machine.cwd);
   const services = yield* Layer.build(
     layerAdapterServices(
       machine.root,

@@ -47,9 +47,10 @@ const makeServices = Effect.gen(function* () {
   });
   const fs = yield* FileSystem.FileSystem;
   const drive = yield* fs.makeTempDirectoryScoped({ prefix: "preview-service-commands-" });
-  const services = yield* RunnerPreviewServices.makePreviewServices({ cwd: drive }).pipe(
-    Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
-  );
+  const services = yield* RunnerPreviewServices.makePreviewServices({
+    cwd: drive,
+    environment: () => ({ PATH: process.env.PATH }),
+  }).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner));
   return { services, spawned, stopped };
 });
 
