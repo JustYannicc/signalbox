@@ -12,8 +12,10 @@ import { readUpstreamSource } from "./upstream.mjs";
 
 const ROOT = NodeURL.fileURLToPath(new URL("../../", import.meta.url));
 const BASELINE = "scripts/boundaries/baseline.json";
+// Never advance this migration source: doing so would forgive cycles introduced after #850.
+const LEGACY_CYCLE_BASE = "7eaa0c3a37b93ba2673899e3250cd3baaa2c8dc6";
 
-export async function checkBoundaries(root, values) {
+export async function checkBoundaries(root, values, legacyBase = LEGACY_CYCLE_BASE) {
   const git = (args) =>
     NodeChildProcess.execFileSync("git", args, {
       cwd: root,
@@ -38,10 +40,18 @@ export async function checkBoundaries(root, values) {
   const hasBaseline = git(["ls-tree", "--name-only", base, "--", BASELINE]).length > 0;
   const previousText = hasBaseline ? git(["show", `${base}:${BASELINE}`]) : undefined;
   const previous = previousText ? JSON.parse(previousText).violations : undefined;
-  const legacy = unrecordedBaseCycles(
-    previous ? (await scanBase(root, base)).violations : [],
-    previous,
-  );
+  let legacy = new Set();
+  if (previous) {
+    const baseGraph = await scanBase(root, base);
+    const legacyGraph = base === legacyBase ? baseGraph : await scanBase(root, legacyBase);
+    const legacyBaseline = JSON.parse(git(["show", `${legacyBase}:${BASELINE}`])).violations;
+    legacy = unrecordedBaseCycles(
+      baseGraph.violations,
+      previous,
+      legacyGraph.violations,
+      legacyBaseline,
+    );
+  }
   if (values["write-baseline"]) {
     const entries = [...new Set(errors.map(violationKey))].filter((key) => !legacy.has(key)).sort();
     const growth = checkBaseline(entries, previous);

@@ -88,7 +88,12 @@ NodeTest.test("deleting an edge cannot unmask a previously unreported cyclic edg
     NodeAssert.ok(!base.includes("no-circular | e.ts | d.ts"));
     NodeAssert.ok(after.summary.violations.map(violationKey).includes("no-circular | e.ts | d.ts"));
     const current = cyclicViolations(after.modules).map(violationKey);
-    const legacy = unrecordedBaseCycles(cyclicViolations(before.modules), base);
+    const legacy = unrecordedBaseCycles(
+      cyclicViolations(before.modules),
+      base,
+      cyclicViolations(before.modules),
+      base,
+    );
     NodeAssert.deepEqual(
       checkBaseline(
         current.filter((key) => !legacy.has(key)),
@@ -128,10 +133,11 @@ NodeTest.test(
       NodeFS.writeFileSync(target, text);
     };
     const baselineFile = NodePath.join(root, "scripts/boundaries/baseline.json");
+    let legacyBase;
     const writeBaseline = (keys) =>
       write("scripts/boundaries/baseline.json", JSON.stringify({ violations: keys }));
     const check = (update = false) => {
-      const code = `import { checkBoundaries } from ${JSON.stringify(new URL("./check.mjs", import.meta.url).href)}; process.exitCode = await checkBoundaries(${JSON.stringify(root)}, { upstream: "upstream/main", base: "origin/main", "write-baseline": ${update} });`;
+      const code = `import { checkBoundaries } from ${JSON.stringify(new URL("./check.mjs", import.meta.url).href)}; process.exitCode = await checkBoundaries(${JSON.stringify(root)}, { upstream: "upstream/main", base: "origin/main", "write-baseline": ${update} }, ${JSON.stringify(legacyBase)});`;
       return NodeChildProcess.spawnSync(process.execPath, ["--input-type=module", "-e", code], {
         cwd: root,
         encoding: "utf8",
@@ -154,6 +160,7 @@ NodeTest.test(
       git(["add", "."]);
       git(["commit", "-qm", "existing cycles with incomplete baseline"]);
       git(["update-ref", "refs/remotes/origin/main", "HEAD"]);
+      legacyBase = git(["rev-parse", "HEAD"]);
       write("apps/example/b.ts", 'import "./a.ts"; import "./c.ts";');
       const pruned = check(true);
       NodeAssert.equal(pruned.status, 0, pruned.stderr || pruned.stdout);
@@ -180,6 +187,17 @@ NodeTest.test(
         /Baseline can only shrink; added: no-circular \| apps\/example\/e.ts \| apps\/example\/a.ts/,
       );
       NodeAssert.equal(NodeFS.readFileSync(baselineFile, "utf8"), unchanged);
+
+      // A cycle that slipped into main must not become legacy debt on the next PR.
+      git(["add", "."]);
+      git(["commit", "-qm", "simulate an unchecked concurrent merge"]);
+      git(["update-ref", "refs/remotes/origin/main", "HEAD"]);
+      const escaped = check();
+      NodeAssert.equal(escaped.status, 1);
+      NodeAssert.match(
+        escaped.stdout,
+        /error no-circular: apps\/example\/e.ts -> apps\/example\/a.ts/,
+      );
 
       // Once an unrecorded cycle is fixed in the base, bringing it back is a new error.
       write("apps/example/e.ts", 'import "./c.ts";');

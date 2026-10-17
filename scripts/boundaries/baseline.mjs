@@ -4,14 +4,21 @@ export function violationKey(violation) {
 }
 
 // Older scans omitted cyclic edges. Recognize that existing debt without growing the file.
-export function unrecordedBaseCycles(violations, previous) {
+export function unrecordedBaseCycles(violations, previous, legacyViolations, legacyBaseline) {
   if (!previous) return new Set();
   const recorded = new Set(previous);
+  const legacyRecorded = new Set(legacyBaseline);
+  const legacy = new Set(
+    legacyViolations
+      .filter((violation) => violation.rule.name === "no-circular")
+      .map(violationKey)
+      .filter((key) => !legacyRecorded.has(key)),
+  );
   return new Set(
     violations
       .filter((violation) => violation.rule.name === "no-circular")
       .map(violationKey)
-      .filter((key) => !recorded.has(key)),
+      .filter((key) => !recorded.has(key) && legacy.has(key)),
   );
 }
 
