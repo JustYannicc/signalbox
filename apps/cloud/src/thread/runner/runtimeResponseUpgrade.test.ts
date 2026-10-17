@@ -68,7 +68,7 @@ describe("native answer Runner upgrades", () => {
               type: "system_notice",
               runId: (yield* snapshot(engine)).projection.runs[0]!.id,
               message:
-                "This machine couldn't update to support questions and approvals. Stop this turn before retrying.",
+                "This machine couldn't update to support questions and approvals. Stop this turn and wait for the machine to shut down before retrying.",
             }),
           );
           const blockedHead = (yield* snapshot(engine)).head;

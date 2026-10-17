@@ -1064,7 +1064,7 @@ const make = Effect.gen(function* () {
                   id,
                   title: "Machine",
                   message:
-                    "This machine couldn't update to support questions and approvals. Stop this turn before retrying.",
+                    "This machine couldn't update to support questions and approvals. Stop this turn and wait for the machine to shut down before retrying.",
                 },
                 ctx,
               ),

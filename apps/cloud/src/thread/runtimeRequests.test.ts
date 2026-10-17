@@ -186,7 +186,7 @@ describe("cloud native runtime requests", () => {
             _tag: "Failure",
             failure: {
               message: runtimeResponsesUpgrade
-                ? "This machine couldn't update to support questions and approvals. Stop this turn before retrying."
+                ? "This machine couldn't update to support questions and approvals. Stop this turn and wait for the machine to shut down before retrying."
                 : "This machine is updating. Try your answer again shortly.",
             },
           });
