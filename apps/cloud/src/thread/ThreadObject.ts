@@ -40,7 +40,8 @@ import * as CloudAnalytics from "./diagnostics/CloudAnalytics.ts";
 import * as DiagnosticsStore from "./diagnostics/DiagnosticsStore.ts";
 import * as TurnDiagnostics from "./diagnostics/TurnDiagnostics.ts";
 import * as TurnReports from "./diagnostics/TurnReports.ts";
-import { layerFromEnv as layerMachineBackend } from "./runner/machineBackends.ts";
+import { layerFromEnv as layerMachineBackend, machineSettings } from "./runner/machineBackends.ts";
+import * as BoatRecoveryControl from "./runner/boat/BoatRecoveryControl.ts";
 import * as MachineBackend from "./runner/MachineBackend.ts";
 import {
   acceptRunnerSocket,
@@ -191,8 +192,9 @@ const makeRuntime = (
   previews: PreviewGateway,
   machine: MachineBackend.MachineHost,
   threadId: () => ThreadId,
-) =>
-  ManagedRuntime.make(
+) => {
+  const settings = machineSettings(env);
+  return ManagedRuntime.make(
     ThreadRunner.layer.pipe(
       Layer.provide(
         Layer.succeed(ThreadRunner.PreviewHold, {
@@ -228,6 +230,7 @@ const makeRuntime = (
       Layer.provideMerge(Layer.mergeAll(TurnDiagnostics.layer, TurnReports.layer)),
       Layer.provideMerge(CloudAnalytics.layerFromEnv(env)),
       Layer.provideMerge(layerMachineBackend(env, machine)),
+      Layer.provideMerge(BoatRecoveryControl.layer(settings?.kind === "boat" ? settings : null)),
       Layer.provideMerge(DiagnosticsStore.layer),
       Layer.provideMerge(ThreadStore.layerMachineRecords),
       Layer.provideMerge(
@@ -251,6 +254,7 @@ const makeRuntime = (
       Layer.provideMerge(Layer.mergeAll(Evlog.layer, Evlog.layerWaitUntil({ waitUntil }))),
     ),
   );
+};
 
 export class ThreadObject extends DurableObject<ThreadObjectEnv> implements ThreadObjectApi {
   private readonly runtime: ReturnType<typeof makeRuntime>;
@@ -341,6 +345,17 @@ export class ThreadObject extends DurableObject<ThreadObjectEnv> implements Thre
             ),
           ),
         ),
+      boatControl: async () => {
+        const control = await this.runtime.runPromise(
+          Effect.map(BoatRecoveryControl.BoatRecoveryControl, (service) => service),
+        );
+        return control === null
+          ? null
+          : {
+              inspect: (machineId) => this.runtime.runPromise(control.inspect(machineId)),
+              remove: (machineId) => this.runtime.runPromise(control.remove(machineId)),
+            };
+      },
       rearm: async () => {
         const deferred = this.deferredAlarmAt;
         this.deferredAlarmAt = null;

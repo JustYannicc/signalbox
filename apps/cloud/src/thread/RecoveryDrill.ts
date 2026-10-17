@@ -2,6 +2,7 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
 import type { RecoveryEvidence, RecoveryInspection } from "./RecoveryEvidence.ts";
+import { makeRecoveryDrillMachineActions } from "./RecoveryDrillMachines.ts";
 
 export interface RecoveryDrillEnv {
   readonly SIGNALBOX_STAGE?: string;
@@ -27,27 +28,61 @@ const Expected = Schema.Struct({
   machineId: Schema.NullOr(Id),
 });
 const Command = Schema.Struct({
-  action: Schema.Literals(["inspect", "enroll", "disable", "reset", "retry-alarm"]),
+  action: Schema.Literals([
+    "inspect",
+    "inspect-machine",
+    "enroll",
+    "disable",
+    "reset",
+    "retry-alarm",
+    "kill-machine",
+  ]),
   id: Id,
+  machineId: Schema.optionalKey(Id),
   expected: Schema.optionalKey(Expected),
   commandIds: Schema.Array(Id).check(Schema.isMaxLength(20)),
 });
 const decodeCommand = Schema.decodeUnknownOption(Command);
+export type RecoveryDrillCommand = typeof Command.Type;
+export type RecoveryDrillExpected = typeof Expected.Type;
+type StandardRecoveryDrillCommand = Omit<RecoveryDrillCommand, "action"> & {
+  readonly action: Exclude<RecoveryDrillCommand["action"], "inspect-machine" | "kill-machine">;
+};
 
-interface Fault {
+export interface RecoveryDrillFault {
   readonly id: string;
-  readonly action: "reset" | "retry-alarm";
+  readonly action: "reset" | "retry-alarm" | "kill-machine";
   readonly incarnation: string;
   readonly before: RecoveryEvidence;
   readonly deliveries: ReadonlyArray<{ readonly isRetry: boolean; readonly retryCount: number }>;
   readonly complete: boolean;
   readonly cancelled?: string;
+  readonly machineOutcome?:
+    | "reserved"
+    | "unknown"
+    | "accepted"
+    | "absent"
+    | "rejected"
+    | "cancelled";
+  readonly providerStatus?: number;
 }
 
 export interface RecoveryDrillState {
   readonly enabled: boolean;
   readonly userId: string;
-  readonly faults: ReadonlyArray<Fault>;
+  readonly faults: ReadonlyArray<RecoveryDrillFault>;
+}
+
+export interface RecoveryDrillMachineSnapshot {
+  readonly machineId: string;
+  readonly exists: boolean;
+  readonly state: string | null;
+  readonly hydrated: boolean | null;
+}
+
+export interface RecoveryDrillMachineControl {
+  readonly inspect: (machineId: string) => Promise<RecoveryDrillMachineSnapshot>;
+  readonly remove: (machineId: string) => Promise<void>;
 }
 
 type RecoveryInspector = (
@@ -55,11 +90,12 @@ type RecoveryInspector = (
   commandIds: ReadonlyArray<string>,
 ) => Promise<RecoveryInspection>;
 
-interface RecoveryDrillHost {
+export interface RecoveryDrillHost {
   readonly incarnation: () => Promise<string>;
   readonly load: () => Promise<RecoveryDrillState | undefined>;
   readonly save: (state: RecoveryDrillState, arm?: boolean) => Promise<void>;
   readonly exclusive: <A>(work: (inspect: RecoveryInspector) => Promise<A>) => Promise<A>;
+  readonly boatControl: () => Promise<RecoveryDrillMachineControl | null>;
   readonly rearm: () => Promise<void>;
   readonly reset: () => void;
 }
@@ -74,19 +110,37 @@ const matches = (expected: typeof Expected.Type, evidence: RecoveryEvidence) =>
 export const makeRecoveryDrill = (env: RecoveryDrillEnv, host: RecoveryDrillHost) => {
   let incarnation: Promise<string> | undefined;
   const incarnationOf = () => (incarnation ??= host.incarnation());
-  const runCommand = async (userId: string, input: unknown, inspect: RecoveryInspector) => {
+  const machineActions = makeRecoveryDrillMachineActions({
+    host,
+    enabled: () => recoveryDrillsEnabled(env),
+    incarnation: incarnationOf,
+    matches,
+  });
+  const runCommand = async (
+    userId: string,
+    command: StandardRecoveryDrillCommand,
+    inspect: RecoveryInspector,
+  ) => {
     if (!recoveryDrillsEnabled(env)) return rejection("disabled");
-    const decoded = decodeCommand(input);
-    if (Option.isNone(decoded)) return rejection("invalid_command");
-    const command = decoded.value;
     const stored = await host.load();
     if (command.action === "disable") {
       if (stored === undefined || stored.userId !== userId) return rejection("not_enrolled");
-      const state = {
+      const state: RecoveryDrillState = {
         ...stored,
         enabled: false,
         faults: stored.faults.map((fault) =>
-          fault.complete ? fault : { ...fault, complete: true, cancelled: "disabled" },
+          fault.complete
+            ? fault
+            : fault.action === "kill-machine"
+              ? fault.machineOutcome === "reserved"
+                ? {
+                    ...fault,
+                    complete: true,
+                    cancelled: "disabled",
+                    machineOutcome: "cancelled",
+                  }
+                : fault
+              : { ...fault, complete: true, cancelled: "disabled" },
         ),
       };
       await host.save(state);
@@ -115,7 +169,7 @@ export const makeRecoveryDrill = (env: RecoveryDrillEnv, host: RecoveryDrillHost
     }
     if (stored.faults.length >= 20) return rejection("fault_limit");
     if (stored.faults.some((fault) => !fault.complete)) return rejection("fault_pending");
-    const fault: Fault = {
+    const fault: RecoveryDrillFault = {
       id: command.id,
       action: command.action,
       incarnation: await incarnationOf(),
@@ -135,9 +189,24 @@ export const makeRecoveryDrill = (env: RecoveryDrillEnv, host: RecoveryDrillHost
   return {
     async command(userId: string, input: unknown) {
       if (!recoveryDrillsEnabled(env)) return rejection("disabled");
-      const result = await host.exclusive((inspect) => runCommand(userId, input, inspect));
-      if ("state" in result && !result.state.enabled) await host.rearm();
-      return result;
+      const decoded = decodeCommand(input);
+      if (Option.isNone(decoded)) return rejection("invalid_command");
+      const command = decoded.value;
+      const action = command.action;
+      switch (action) {
+        case "inspect-machine":
+          return machineActions.inspect(userId, command);
+        case "kill-machine":
+          return machineActions.kill(userId, command);
+        default: {
+          const standardCommand: StandardRecoveryDrillCommand = { ...command, action };
+          const result = await host.exclusive((inspect) =>
+            runCommand(userId, standardCommand, inspect),
+          );
+          if ("state" in result && !result.state.enabled) await host.rearm();
+          return result;
+        }
+      }
     },
 
     async alarm(
