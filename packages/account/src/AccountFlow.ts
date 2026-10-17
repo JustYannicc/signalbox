@@ -25,6 +25,35 @@ const WORKOS_PROVIDERS = {
   email: "authkit",
 } as const satisfies Record<AccountProvider, string>;
 
+/** Email sends require a first-party action, never a cross-site embed or unfurler. */
+export function emailAuthorizeLanding(
+  params: AccountAuthorizeParams,
+  source: {
+    readonly fetchSite?: string | undefined;
+    readonly referer?: string | undefined;
+    readonly requestUrl?: URL | undefined;
+  },
+) {
+  const ownReferrer =
+    source.fetchSite === undefined &&
+    source.referer !== undefined &&
+    URL.canParse(source.referer) &&
+    new URL(source.referer).origin === source.requestUrl?.origin;
+  if (
+    params.provider !== "email" ||
+    source.fetchSite === "same-origin" ||
+    source.fetchSite === "none" ||
+    ownReferrer
+  ) {
+    return null;
+  }
+  const query = new URLSearchParams();
+  for (const [key, value] of Object.entries(params)) {
+    if (typeof value === "string") query.set(key, value);
+  }
+  return `${ACCOUNT_SIGN_IN_ROUTE}?${query}`;
+}
+
 export type AccountReturnTarget =
   | { readonly mode: "browser"; readonly returnTo: string }
   | ({ readonly mode: "native"; readonly challenge: string } & NativeReturn);
@@ -177,6 +206,7 @@ function accountCallbackUrl(origin: string): string {
 export function buildWorkOSAuthorizeUrl(input: {
   readonly apiBaseUrl: string;
   readonly clientId: string;
+  readonly organizationId?: string;
   readonly request: ValidatedAuthorizeRequest;
   readonly state: string;
   readonly codeChallenge: string;
@@ -192,6 +222,7 @@ export function buildWorkOSAuthorizeUrl(input: {
   url.searchParams.set("code_challenge", input.codeChallenge);
   url.searchParams.set("code_challenge_method", "S256");
   if (request.loginHint) url.searchParams.set("login_hint", request.loginHint);
+  if (input.organizationId) url.searchParams.set("organization_id", input.organizationId);
   if (request.screenHint) url.searchParams.set("screen_hint", request.screenHint);
   if (request.selectAccount) {
     // `max_age` only works for AuthKit; social providers take their own

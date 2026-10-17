@@ -17,6 +17,20 @@ const CODES: WorkOSCodes = {
     verify: { code: "123456", user: { id: "user_gh", email: "gh@example.com" } },
   },
   "code-mfa": { fail: "mfa_enrollment" },
+  "code-multi": {
+    select: {
+      user: { id: "user_multi", email: "multi@example.com" },
+      organizationId: "org_personal",
+    },
+  },
+  "code-multi-verify": {
+    select: {
+      user: { id: "user_multi", email: "multi@example.com" },
+      organizationId: "org_personal",
+      verifyCode: "123456",
+    },
+  },
+  "654321": { id: "user_magic", email: "magic@example.com" },
 };
 const ORIGIN = "https://cloud.example.com";
 
@@ -27,7 +41,7 @@ const browserParams: AccountAuthorizeParams = {
   returnTo: "/threads",
 };
 const nativeParams: AccountAuthorizeParams = {
-  provider: "email",
+  provider: "github",
   origin: ORIGIN,
   mode: "native",
   returnUrl: "signalbox://account-return",
@@ -57,6 +71,143 @@ const locationOf = (result: CloudAccounts.SignInResult) => new URL(result.locati
 const withKey = { ...CLOUD_TEST_ENV, T3CODE_WORKOS_API_KEY: "sk_test" };
 
 describe("CloudAccounts", () => {
+  const multiMemberships = {
+    user_multi: [
+      { id: "org_work", name: "Work" },
+      { id: "org_personal", name: "Personal" },
+    ],
+  };
+
+  it.effect(
+    "finishes social selection into the personal org without adding it to the sidebar",
+    () =>
+      Effect.gen(function* () {
+        const result = yield* signIn(browserParams, { code: "code-multi" });
+        expect(result._tag).toBe("BrowserSession");
+        const users = yield* UserDirectory.UserDirectory;
+        const shell = yield* users.forUser("user_multi").shellSnapshot();
+        expect(shell.projects.map((project) => `${project.id} ${project.title}`)).toEqual([
+          "scratch Scratch",
+          "context:org_work Work",
+        ]);
+        const accounts = yield* CloudAccounts.CloudAccounts;
+        yield* accounts.refreshContexts("user_multi");
+        expect((yield* users.forUser("user_multi").shellSnapshot()).projects).toEqual(
+          shell.projects,
+        );
+      }).pipe(Effect.provide(layerAccounts(CODES, withKey, multiMemberships))),
+  );
+
+  it.effect(
+    "finishes organization selection after GitHub email verification in the bound browser",
+    () =>
+      Effect.gen(function* () {
+        const accounts = yield* CloudAccounts.CloudAccounts;
+        const authorized = yield* accounts.authorize({ ...browserParams, provider: "github" });
+        const paused = locationOf(
+          yield* accounts.callback({
+            state: stateOf(authorized),
+            code: "code-multi-verify",
+            binding: authorized.binding ?? "",
+          }),
+        );
+        const verify = paused.searchParams.get("verify") ?? "";
+        expect(
+          (yield* accounts.verifyEmail({ verify, code: "123456" }, "wrong").pipe(Effect.flip))
+            .error,
+        ).toBe("failed");
+        expect(
+          (yield* accounts.verifyEmail({ verify, code: "123456" }, authorized.binding))._tag,
+        ).toBe("BrowserSession");
+      }).pipe(Effect.provide(layerAccounts(CODES, withKey, multiMemberships))),
+  );
+
+  it.effect("pins hosted email sign-in to the known personal organization", () =>
+    Effect.gen(function* () {
+      const accounts = yield* CloudAccounts.CloudAccounts;
+      const authorized = yield* accounts.authorize({
+        ...browserParams,
+        provider: "email",
+        loginHint: "multi@example.com",
+      });
+      expect(new URL(authorized.location).searchParams.get("organization_id")).toBe("org_personal");
+      const changedIdentity = yield* accounts.callback({
+        state: stateOf(authorized),
+        code: "code-ada",
+        binding: authorized.binding ?? "",
+      });
+      expect(changedIdentity.location).toBe("/sign-in?error=failed");
+    }).pipe(Effect.provide(layerAccounts(CODES, withKey, multiMemberships))),
+  );
+
+  it.effect("a returning browser pins native sign-in and can still choose another account", () =>
+    Effect.gen(function* () {
+      const result = yield* signIn(browserParams, { code: "code-multi" });
+      if (result._tag !== "BrowserSession") throw new Error("expected session");
+      const accounts = yield* CloudAccounts.CloudAccounts;
+      const params = { ...nativeParams, provider: "email" as const };
+      const returning = yield* accounts.authorize(params, { cookie: result.token });
+      expect(new URL(returning.location).searchParams.get("organization_id")).toBe("org_personal");
+      const another = yield* accounts.authorize(
+        { ...params, selectAccount: "1" },
+        { cookie: result.token },
+      );
+      expect(new URL(another.location, ORIGIN).origin).toBe(ORIGIN);
+    }).pipe(Effect.provide(layerAccounts(CODES, withKey, multiMemberships))),
+  );
+
+  it.effect("cold email sign-in stays in Signalbox and finishes with an emailed code", () =>
+    Effect.gen(function* () {
+      const accounts = yield* CloudAccounts.CloudAccounts;
+      const authorized = yield* accounts.authorize({
+        ...browserParams,
+        provider: "email",
+        loginHint: "magic@example.com",
+      });
+      const paused = new URL(authorized.location, ORIGIN);
+      expect(paused.origin).toBe(ORIGIN);
+      expect(paused.pathname).toBe("/sign-in");
+      const verify = paused.searchParams.get("verify") ?? "";
+      expect(
+        (yield* accounts
+          .verifyEmail({ verify, code: "000000" }, authorized.binding)
+          .pipe(Effect.flip)).error,
+      ).toBe("invalid-code");
+      expect(
+        (yield* accounts.verifyEmail({ verify, code: "654321" }, authorized.binding))._tag,
+      ).toBe("BrowserSession");
+    }).pipe(Effect.provide(layerAccounts(CODES, withKey))),
+  );
+
+  it.effect("native email sign-in collects an address without entering hosted AuthKit", () =>
+    Effect.gen(function* () {
+      const accounts = yield* CloudAccounts.CloudAccounts;
+      const location = new URL(
+        (yield* accounts.authorize({ ...nativeParams, provider: "email" })).location,
+        ORIGIN,
+      );
+      expect(location.origin).toBe(ORIGIN);
+      expect(location.pathname).toBe("/sign-in");
+      expect(location.searchParams.get("challenge")).toBe(nativeParams.challenge);
+      expect(location.searchParams.get("returnUrl")).toBe(nativeParams.returnUrl);
+    }).pipe(Effect.provide(layerAccounts(CODES, withKey))),
+  );
+  it.effect("Magic Auth native web returns stay relative despite a supplied origin", () =>
+    Effect.gen(function* () {
+      const accounts = yield* CloudAccounts.CloudAccounts;
+      const authorized = yield* accounts.authorize({
+        ...nativeParams,
+        provider: "email",
+        loginHint: "magic@example.com",
+        origin: "https://unregistered.example",
+        via: "web",
+      });
+      const verify = new URL(authorized.location, ORIGIN).searchParams.get("verify") ?? "";
+      const result = yield* accounts.verifyEmail({ verify, code: "654321" }, undefined);
+      expect(result.location.startsWith("/sign-in?")).toBe(true);
+      expect(new URL(result.location, ORIGIN).searchParams.get("handoff")).toBeTruthy();
+    }).pipe(Effect.provide(layerAccounts(CODES, withKey))),
+  );
   it.effect("browser sign-in sets a session the account routes recognize, until sign-out", () =>
     Effect.gen(function* () {
       const accounts = yield* CloudAccounts.CloudAccounts;

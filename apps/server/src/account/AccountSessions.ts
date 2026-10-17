@@ -30,8 +30,10 @@ const CREDENTIAL_TTL = Duration.minutes(2);
 /** A sign-in started by `authorize`, waiting for WorkOS to come back. */
 export interface PendingAttempt {
   readonly codeVerifier: string;
-  readonly origin: string;
+  readonly origin: string | undefined;
   readonly target: AccountFlow.AccountReturnTarget;
+  /** Pins an email sign-in when the server already knows the matching WorkOS user. */
+  readonly expectedUserId?: string;
 }
 
 /** What the callback route should answer with. Locations may be relative. */
