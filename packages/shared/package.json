@@ -552,6 +552,10 @@
       "types": "./src/poolUsage.ts",
       "import": "./src/poolUsage.ts"
     },
+    "./defaultModelSelection": {
+      "types": "./src/defaultModelSelection.ts",
+      "import": "./src/defaultModelSelection.ts"
+    },
     "./agentProcessInspection": {
       "types": "./src/agentProcesses/processOps.ts",
       "import": "./src/agentProcesses/processOps.ts"
