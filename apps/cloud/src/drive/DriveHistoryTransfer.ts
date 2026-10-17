@@ -94,6 +94,7 @@ export const historyData = Effect.fn("DriveHistory.historyData")(function* (
           ] as const;
         }
         if (cursor.phase === 1) {
+          // Keep entries first so SQLite advances by rowid instead of sorting every page.
           const rows = decodeEntries(
             yield* sql`SELECT e.rowid, p.name AS pack, e.oid, e.type,
         e.offset, e.length, e.size,
@@ -101,11 +102,11 @@ export const historyData = Effect.fn("DriveHistory.historyData")(function* (
         c.tree, c.author_name, c.author_email, c.time, c.message,
         (SELECT group_concat(parent, ',') FROM
           (SELECT parent FROM commit_parents WHERE oid = c.oid ORDER BY position)) AS parents
-        FROM pack_entries e JOIN packs p ON p.seq = e.pack_seq
-        JOIN drive_history_export_packs exported
-          ON exported.pack_seq = p.seq AND exported.export_id = ${exportId}
+        FROM pack_entries e CROSS JOIN packs p ON p.seq = e.pack_seq
         LEFT JOIN commits c ON c.oid = e.oid AND e.type = 'commit'
         WHERE e.rowid > ${cursor.after} AND p.seq <= ${maxPackSeq}
+          AND EXISTS (SELECT 1 FROM drive_history_export_packs exported
+            WHERE exported.export_id = ${exportId} AND exported.pack_seq = p.seq)
         ORDER BY e.rowid LIMIT ${pageSize}`,
           );
           return [
