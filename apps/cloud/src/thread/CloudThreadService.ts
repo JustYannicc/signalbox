@@ -325,6 +325,7 @@ const PICKS_A_POOL: ReadonlySet<OrchestrationV2Command["type"]> = new Set([
   "thread.create",
   "message.dispatch",
   "thread.model-selection.set",
+  "runtime-request.respond",
 ]);
 
 /** What a command sends, for the thread's kind (`ThreadKindTurns`). */
@@ -362,7 +363,7 @@ const make = Effect.gen(function* () {
       if (threadId === null) {
         return yield* ThreadCommandRejectedError.forCommand(
           { id: command.commandId, type: command.type },
-          unsupported(command.type),
+          unsupported(),
         );
       }
       // Only a create can make a thread, so only a create names its place. The

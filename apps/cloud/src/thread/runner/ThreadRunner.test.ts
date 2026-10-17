@@ -8,7 +8,6 @@ import * as Effect from "effect/Effect";
 import * as TestClock from "effect/testing/TestClock";
 
 import { UserObjectError } from "../../user/UserDirectory.ts";
-import { HARNESS_MODES_UNSUPPORTED } from "../threadDecider.ts";
 import { CONNECT_TIMEOUT_MS, IDLE_TAIL_MS } from "./MachineBackend.ts";
 import { DRAIN_TIMEOUT_MS } from "./ThreadRunner.ts";
 import { CONTINUE_PROMPT, MAX_CONTINUATIONS } from "./runRecovery.ts";
@@ -896,11 +895,12 @@ describe("ThreadRunner", () => {
     ),
   );
 
-  it.effect("refuses a Claude turn that could stop to ask for approval", () =>
-    withObject(freshDatabase(), (engine) =>
-      Effect.gen(function* () {
-        const refused = yield* Effect.flip(
-          engine.launch(
+  it.effect.each(["approval-required", "auto-accept-edits"] as const)(
+    "starts a Claude turn in %s mode",
+    (runtimeMode) =>
+      withObject(freshDatabase(), (engine) =>
+        Effect.gen(function* () {
+          const accepted = yield* engine.launch(
             owner,
             {
               commandId: CommandId.make("launch-approval"),
@@ -908,7 +908,7 @@ describe("ThreadRunner", () => {
               projectId: ProjectId.make("scratch"),
               title: "Ask first",
               modelSelection: claude,
-              runtimeMode: "approval-required",
+              runtimeMode,
               interactionMode: "default",
               workspaceStrategy: { type: "root" },
               initialMessage: {
@@ -918,11 +918,10 @@ describe("ThreadRunner", () => {
               },
             },
             personal,
-          ),
-        );
-        expect(refused).toMatchObject({ reason: HARNESS_MODES_UNSUPPORTED });
-      }),
-    ),
+          );
+          expect(accepted.threadId).toBe(threadId);
+        }),
+      ),
   );
 
   it.effect("stops a machine's drive calls once its owner can't change the thread's drive", () => {

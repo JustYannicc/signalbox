@@ -35,6 +35,7 @@ import { driveToken, isDriveToken } from "../../drive/driveToken.ts";
 import { gatewayProviderFor, poolIdOfInstance } from "../providerCatalog.ts";
 import { holdsNativeSession } from "../session/nativeSession.ts";
 import { steersOf } from "../steering.ts";
+import { runtimeResponses } from "../runtimeRequests.ts";
 import { SessionRows } from "../session/SessionRows.ts";
 import { sessionToken } from "../session/sessionToken.ts";
 import * as ThreadEngine from "../ThreadEngine.ts";
@@ -263,6 +264,7 @@ export interface RunnerWork {
   readonly activeRunId: RunId | null;
   /** The messages steered into the live run while its harness runs it, oldest first (#562). */
   readonly steers: ReadonlyArray<RunnerMessageInput>;
+  readonly runtimeResponses: ReturnType<typeof runtimeResponses>;
 }
 
 export class ThreadRunner extends Context.Service<
@@ -822,6 +824,7 @@ const make = Effect.gen(function* () {
             : { token: yield* sessionTokenOf(lease.token, projection.thread.id, lease.generation) },
         secrets: turn === null ? [] : yield* Effect.orDie(store.secrets),
         activeRunId: run?.id ?? null,
+        runtimeResponses: projection === null ? [] : runtimeResponses(projection),
         // Only a Runner that takes steers is handed them.
         steers:
           projection === null || run?.status !== "running" || lease.steers !== true

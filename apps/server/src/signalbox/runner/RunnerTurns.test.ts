@@ -13,6 +13,7 @@ import {
   ProviderSessionId,
   ProviderThreadId,
   ProviderTurnId,
+  RuntimeRequestId,
   RunAttemptId,
   RunId,
   ThreadId,
@@ -23,6 +24,7 @@ import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Queue from "effect/Queue";
+import * as Ref from "effect/Ref";
 import * as PlatformError from "effect/PlatformError";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
@@ -47,6 +49,7 @@ const providerThread = {
   id: ProviderThreadId.make("pt-1"),
   nativeThreadRef: null,
 } as unknown as OrchestrationV2ProviderThread;
+const providerSessionId = ProviderSessionId.make("session-1");
 
 const turnFor = (n: number, thread = providerThread): RunnerTurn =>
   ({
@@ -122,6 +125,23 @@ const providerTurnStarted = (n: number): ProviderAdapterV2Event =>
     },
   }) as unknown as ProviderAdapterV2Event;
 
+const runtimeRequestPending = (requestId: RuntimeRequestId): ProviderAdapterV2Event =>
+  ({
+    type: "runtime_request.updated",
+    driver,
+    runtimeRequest: {
+      id: requestId,
+      nodeId: NodeId.make(`node-${requestId}`),
+      providerTurnId: ProviderTurnId.make("native-1"),
+      nativeRequestRef: null,
+      kind: "permission",
+      status: "pending",
+      responseCapability: { type: "live", providerSessionId },
+      createdAt: DateTime.makeUnsafe(0),
+      resolvedAt: null,
+    },
+  }) as unknown as ProviderAdapterV2Event;
+
 /**
  * An adapter whose session the test drives: `ensureThread` waits until the
  * test lets it finish, and every call is recorded.
@@ -129,7 +149,9 @@ const providerTurnStarted = (n: number): ProviderAdapterV2Event =>
 const makeFakeAdapter = Effect.gen(function* () {
   const events = yield* Queue.unbounded<ProviderAdapterV2Event>();
   const loaded = yield* Deferred.make<void>();
+  const failNextResponse = yield* Ref.make(false);
   const calls: Array<string> = [];
+  const responses: Array<{ readonly requestId: string; readonly decision?: string }> = [];
   /** What each `startTurn` got, beyond what `calls` names. */
   const started: Array<{
     readonly providerTurnOrdinal: number;
@@ -171,16 +193,83 @@ const makeFakeAdapter = Effect.gen(function* () {
       Effect.sync(
         () => void calls.push(`steer ${input.providerTurnId} ${input.message.messageId}`),
       ),
+    respondToRuntimeRequest: (input: { readonly requestId: string; readonly decision?: string }) =>
+      Effect.gen(function* () {
+        if (yield* Ref.getAndSet(failNextResponse, false)) {
+          return yield* Effect.fail({ _tag: "ResponseFailed" as const });
+        }
+        responses.push(input);
+      }),
   } as unknown as ProviderAdapterV2SessionRuntime;
   const adapter = {
     instanceId,
     driver,
     openSession: () => Effect.sync(() => (opened.count++, session)),
   } as unknown as ProviderAdapterV2["Service"];
-  return { adapter, events, loaded, calls, started, opened };
+  return { adapter, events, loaded, calls, started, opened, responses, failNextResponse };
 });
 
 describe("RunnerTurns", () => {
+  it.effect("only answers a request observed on the matching live attempt and session", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fake = yield* makeFakeAdapter;
+        const turns = yield* makeRunnerTurns({
+          threadId,
+          adapters: new Map([[instanceId, fake.adapter]]),
+          cwd: "/tmp",
+          useModelToken: () => Effect.void,
+          usage: Effect.succeed(unmeasured),
+          emit: () => Effect.void,
+        });
+        yield* Deferred.succeed(fake.loaded, undefined);
+        yield* turns.start({ turn: turnFor(1), modelToken: "token-1" });
+        yield* settle;
+        yield* Queue.offer(fake.events, providerTurnStarted(1));
+        yield* settle;
+
+        const requestId = RuntimeRequestId.make("request-1");
+        const response = {
+          type: "runtime-request.respond",
+          runId: RunId.make("run-1"),
+          attemptId: RunAttemptId.make("attempt-1"),
+          providerSessionId,
+          requestId,
+          decision: "accept",
+        } as const;
+
+        // A response frame cannot create permission to answer a request the harness never raised.
+        yield* turns.respondRuntimeRequest(response);
+        expect(fake.responses).toEqual([]);
+
+        yield* Queue.offer(fake.events, runtimeRequestPending(requestId));
+        yield* settle;
+        yield* turns.respondRuntimeRequest({
+          ...response,
+          attemptId: RunAttemptId.make("attempt-2"),
+        });
+        yield* turns.respondRuntimeRequest({ ...response, runId: RunId.make("run-2") });
+        yield* turns.respondRuntimeRequest({
+          ...response,
+          providerSessionId: ProviderSessionId.make("another-session"),
+        });
+        expect(fake.responses).toEqual([]);
+
+        yield* Ref.set(fake.failNextResponse, true);
+        yield* turns.respondRuntimeRequest(response);
+        expect(fake.responses).toEqual([]);
+
+        // A failed adapter call remains eligible for the cloud's committed replay.
+        yield* turns.respondRuntimeRequest(response);
+        yield* turns.respondRuntimeRequest(response);
+        yield* Queue.offer(fake.events, runtimeRequestPending(requestId));
+        yield* settle;
+        yield* turns.respondRuntimeRequest(response);
+        expect(fake.responses).toEqual([{ requestId, decision: "accept" }]);
+      }),
+    ),
+  );
+
   it.effect(
     "interrupts a stopped turn once the harness names it, even after the next one starts",
     () =>

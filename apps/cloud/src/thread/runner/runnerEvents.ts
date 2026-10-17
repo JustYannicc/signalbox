@@ -18,6 +18,7 @@ import {
   turnItemEvent,
   unstampedEventId,
 } from "../threadEvents.ts";
+import { runtimeRequestEvents } from "../runtimeRequests.ts";
 
 /**
  * What a provider adapter's events become in a thread's log, following
@@ -171,6 +172,10 @@ export function recordedEvents(
   });
   if (Exit.isFailure(decoded)) return "undecodable";
   const domainEvent = decoded.value;
+  if (domainEvent.type === "runtime-request.updated") {
+    if (liveRunId !== item.runId) return [];
+    return runtimeRequestEvents(projection, domainEvent, ctx);
+  }
   return domainEvent.type === "turn-item.updated"
     ? [{ ...domainEvent, payload: positionTurnItem(projection, domainEvent.payload) }]
     : [domainEvent];
