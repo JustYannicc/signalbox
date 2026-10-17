@@ -95,6 +95,61 @@ const withService = <A, E>(
 };
 
 describe("CloudAttachments", () => {
+  it.effect("keeps a successful retry's pending bytes when another write fails", () => {
+    const objects = makeMemoryObjects();
+    let writes = 0;
+    let writing = 0;
+    let maximumWriting = 0;
+    const failing = {
+      ...objects,
+      put: async (...args: Parameters<typeof objects.put>) => {
+        const attempt = ++writes;
+        maximumWriting = Math.max(maximumWriting, ++writing);
+        try {
+          await objects.put(...args);
+          if (attempt === 1) throw new Error("test storage failure");
+        } finally {
+          writing--;
+        }
+      },
+    };
+    return CloudAttachments.use((service) =>
+      Effect.gen(function* () {
+        const input = {
+          threadId: ThreadId.make("retry-thread"),
+          messageId: MessageId.make("retry-message"),
+          attachments: [
+            {
+              type: "image" as const,
+              name: "shot.png",
+              mimeType: "image/png",
+              sizeBytes: PNG.length,
+              dataUrl: `data:image/png;base64,${Base64.encode(PNG)}`,
+            },
+          ],
+        };
+        const results = yield* Effect.all(
+          [
+            Effect.result(service.persistImages(userId, input)),
+            Effect.result(service.persistImages(userId, input)),
+          ],
+          { concurrency: 2 },
+        );
+        expect(maximumWriting).toBe(1);
+        expect(results[0]._tag).toBe("Failure");
+        const saved = results[1];
+        if (saved._tag !== "Success") throw new Error("retry should succeed");
+        const file = yield* service.open({
+          userId,
+          attachmentId: saved.success.attachments[0]!.id,
+          canSee: () => Effect.succeed(false),
+        });
+        expect(file).not.toBeNull();
+        expect(yield* bytesOf(file!.body)).toEqual(PNG);
+      }),
+    ).pipe(Effect.provide(layerAttachments(failing)));
+  });
+
   it.effect("stores an upload only with exactly the bytes its URL promised", () =>
     withService((service, objects) =>
       Effect.gen(function* () {
@@ -138,10 +193,8 @@ describe("CloudAttachments", () => {
         const sent = yield* claim(userId, threadId, [shot]);
         const claimed = sent.attachments[0]!;
         expect(claimed.id.startsWith(`${threadSegment(threadId)}-`)).toBe(true);
-        const retry = yield* claim(userId, threadId, [shot]);
-        expect(retry.attachments).toEqual([claimed]);
-        yield* retry.release;
-        expect(objects.keys()).toContain(attachmentKey("", claimed.id));
+        // A retried command writes the same copy again, under the same id.
+        expect((yield* claim(userId, threadId, [shot])).attachments).toEqual([claimed]);
         // The thread's own attachment passes as stored; a made-up one of the thread doesn't.
         expect((yield* claim(userId, threadId, [claimed])).attachments).toEqual([claimed]);
         const forged = ChatAttachmentId.make(

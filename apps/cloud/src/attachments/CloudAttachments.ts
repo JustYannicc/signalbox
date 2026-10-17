@@ -17,6 +17,7 @@ import * as Effect from "effect/Effect";
 import * as Hex from "effect/encoding/Hex";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
+import * as Semaphore from "effect/Semaphore";
 
 import * as CloudTokens from "../auth/CloudTokens.ts";
 import * as Ids from "./attachmentIds.ts";
@@ -208,6 +209,8 @@ export const layer = ({ objects, prefix }: AttachmentStorage) =>
     Effect.gen(function* () {
       const tokens = yield* CloudTokens.CloudTokens;
       const crypto = yield* Crypto.Crypto;
+      // Failed writes remove their pending key, so overlapping retries must not write that key.
+      const persisting = yield* Semaphore.make(1);
       const uuid = Effect.orDie(crypto.randomUUIDv4());
       const keyOf = (id: string) => attachmentKey(prefix, id);
       let lastSweep = Number.NEGATIVE_INFINITY;
@@ -413,21 +416,6 @@ export const layer = ({ objects, prefix }: AttachmentStorage) =>
             return yield* reject("it doesn't match its upload.");
           }
           const id = yield* sentId(input.threadId, input.commandId, attachment.id);
-          const existing = yield* storage("head", () => objects.head(keyOf(id)));
-          if (existing !== null) {
-            const saved = metaOf(existing);
-            if (
-              existing.size !== head.size ||
-              saved.thread !== input.threadId ||
-              saved.owner !== input.userId ||
-              saved.type !== attachment.type ||
-              saved.mime !== mime
-            ) {
-              return yield* reject("its stored copy doesn't match this upload.");
-            }
-            // A failed retry must never release bytes an earlier send already owns.
-            return { attachment: { ...attachment, id, mimeType: mime }, copy: null };
-          }
           const source = yield* storage("get", () => objects.get(keyOf(attachment.id)));
           if (source === null) return yield* reject("it is no longer available. Attach it again.");
           const sent: AttachmentMeta = {
@@ -552,7 +540,7 @@ export const layer = ({ objects, prefix }: AttachmentStorage) =>
             }),
           );
           return { attachments: pending };
-        });
+        }).pipe(persisting.withPermits(1));
 
       return CloudAttachments.of({
         persistImages,
