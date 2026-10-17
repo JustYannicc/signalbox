@@ -1,5 +1,6 @@
 import { AutomationModelSteps } from "@signalbox/automations/host";
 import { TransientFailure } from "@signalbox/automations/stepPolicy";
+import { isRetryableStatus } from "@signalbox/automations/steps";
 import { AutomationError, ProjectId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -51,10 +52,12 @@ export const layer = Layer.effect(
               (cause.code === "pool-unavailable" ||
                 (cause.code === "http-error" &&
                   cause.status !== undefined &&
-                  (cause.status === 429 || cause.status >= 500)));
+                  isRetryableStatus(cause.status)));
             return new AutomationError({
               message: cause.message,
-              cause: retryable ? new TransientFailure(cause.message, { cause }) : cause,
+              cause: retryable
+                ? new TransientFailure(cause.message, { cause, retryAfterMs: cause.retryAfterMs })
+                : cause,
             });
           }),
         ),

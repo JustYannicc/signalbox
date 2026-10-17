@@ -33,6 +33,7 @@ export class ModelCompletionError extends Schema.TaggedError<ModelCompletionErro
     ]),
     reason: Schema.String,
     status: Schema.optional(Schema.Number),
+    retryAfterMs: Schema.optional(Schema.Number),
   },
 ) {
   override get message() {
@@ -61,6 +62,14 @@ const providerOf = (instanceId: ModelSelection["instanceId"]): CompletionProvide
 };
 
 const requestBody = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
+
+const retryAfter = (header: string | null, now: number) => {
+  if (!header) return undefined;
+  const seconds = Number(header);
+  if (Number.isFinite(seconds) && seconds >= 0) return seconds * 1_000;
+  const at = Date.parse(header);
+  return Number.isNaN(at) ? undefined : Math.max(0, at - now);
+};
 
 const fail = (code: ModelCompletionError["code"], reason: string) =>
   Effect.fail(new ModelCompletionError({ code, reason }));
@@ -150,12 +159,17 @@ const completeWith =
         );
       }
       if (!forward.response.ok) {
+        const retryAfterMs = retryAfter(
+          forward.response.headers.get("retry-after"),
+          yield* Clock.currentTimeMillis,
+        );
         yield* cancelBody(forward.response);
         return yield* Effect.fail(
           new ModelCompletionError({
             code: "http-error",
             reason: `The model provider returned HTTP ${forward.response.status}.`,
             status: forward.response.status,
+            ...(retryAfterMs === undefined ? {} : { retryAfterMs }),
           }),
         );
       }

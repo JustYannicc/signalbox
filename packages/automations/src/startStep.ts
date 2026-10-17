@@ -88,9 +88,8 @@ export const makeStartStep =
       case "extract": {
         const verb = step.verb;
         const options = asRecord(first);
-        const prompt = modelPrompt(verb, step.label, options);
         const models = deps.models;
-        if (models === undefined) return thread(prompt);
+        if (models === undefined) return thread(modelPrompt(verb, step.label, options));
         return runModelStep({
           verb,
           label: step.label,

@@ -1,6 +1,7 @@
 import { ProviderInstanceId, type ModelSelection } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Clock from "effect/Clock";
 
 import type { PoolModelApi } from "../pool/PoolDirectory.ts";
 import type { ModelForwardReply, ModelPoolRoute } from "./ModelProtocol.ts";
@@ -49,6 +50,35 @@ const withCompletion = (
 };
 
 describe("ModelCompletion", () => {
+  it.effect("preserves Retry-After seconds and dates, ignoring malformed headers", () =>
+    Effect.gen(function* () {
+      const now = yield* Clock.currentTimeMillis;
+      for (const [header, expected] of [
+        ["60", 60_000],
+        [new Date(now + 90_000).toUTCString(), 90_000],
+        [new Date(now - 1_000).toUTCString(), 0],
+        ["garbage", undefined],
+      ] as const) {
+        const error = yield* Effect.flip(
+          withCompletion(
+            {
+              _tag: "forwarded",
+              response: new Response("", { status: 429, headers: { "retry-after": header } }),
+              upstreamMs: 2,
+            },
+            (service) =>
+              service.complete({
+                pool,
+                modelSelection: selection("codex", "gpt-6.1-sol"),
+                prompt: "Hello",
+              }),
+          ),
+        );
+        expect(error.retryAfterMs).toBe(expected);
+      }
+    }),
+  );
+
   it.effect("builds a text-only Anthropic request for a plain Claude instance", () =>
     Effect.gen(function* () {
       const { calls, value } = yield* withCompletion(

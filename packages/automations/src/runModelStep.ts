@@ -9,7 +9,7 @@ import { modelPrompt, modelResult, type ModelVerb } from "./modelSteps.ts";
 import { retryDelayMs, retryPolicy, stepTimeoutMs, transientCause } from "./stepPolicy.ts";
 import { modelFor } from "./steps.ts";
 
-/** Owns the retry budget so a hosted runner's transport retries cannot multiply model calls. */
+/** Owns model and output attempts within one host call; recovery can restart that budget. */
 export const runModelStep = (input: {
   readonly verb: ModelVerb;
   readonly label: string;

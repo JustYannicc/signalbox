@@ -1,6 +1,13 @@
 import { describe, expect, it } from "@effect/vitest";
 import { ProjectId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import { AutomationModelSteps } from "@signalbox/automations/host";
+import { transientCause } from "@signalbox/automations/stepPolicy";
+
+import * as CloudModelSteps from "./cloudModelSteps.ts";
+import { HOOK_USER } from "./hookTesting.ts";
+import { SCRATCH_PROJECT_ID } from "../environment.ts";
+import * as ModelCompletion from "../models/ModelCompletion.ts";
 
 import {
   claudeModelSelection,
@@ -33,6 +40,31 @@ const allFieldNames = (value: unknown): Array<string> => {
 };
 
 describe("cloud model steps", () => {
+  it.effect("passes the pool's Retry-After to the model retry policy", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeModelStepHarness();
+      const { gateway } = yield* connectModelPool(harness.cloud, ["claude"], () => ({
+        status: 429,
+        text: "Rate limited",
+        retryAfter: "60",
+      }));
+      const error = yield* AutomationModelSteps.use((models) =>
+        models.complete({
+          projectId: SCRATCH_PROJECT_ID,
+          modelSelection: claudeModelSelection,
+          prompt: "Hello",
+        }),
+      ).pipe(
+        Effect.provide(CloudModelSteps.layer),
+        Effect.provide(ModelCompletion.layer((name) => harness.cloud.pools.objectFor(name).api)),
+        Effect.provide(harness.cloud.userObject(HOOK_USER)),
+        Effect.flip,
+      );
+      expect(transientCause(error)?.retryAfterMs).toBe(60_000);
+      expect(gateway.requests).toHaveLength(1);
+    }),
+  );
+
   it.effect("retries a pool rate limit within the judge's default budget", () =>
     Effect.gen(function* () {
       const harness = yield* makeModelStepHarness();

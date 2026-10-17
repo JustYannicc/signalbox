@@ -61,10 +61,10 @@ export interface RetryPolicy {
 }
 
 /**
- * http and call retry network failures, 5xx and 429 three times; judge and
- * extract retry an answer they can't read once. `retry: { attempts: 1 }` turns
- * it off. Other verbs never retry: they either can't fail transiently or
- * shouldn't run twice.
+ * http and call retry network failures, 5xx and 429 three times. Cloud model
+ * steps share one budget across temporary pool failures and unreadable answers:
+ * judge and extract get two attempts, llm one. `retry: { attempts: 1 }` turns
+ * retries off. Other verbs never retry.
  */
 const DEFAULT_ATTEMPTS: Partial<Record<WorkflowStepVerb, number>> = {
   http: 3,

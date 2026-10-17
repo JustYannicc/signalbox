@@ -26,6 +26,7 @@ interface CapturedRequest {
 interface UpstreamReply {
   readonly text: string;
   readonly status?: number;
+  readonly retryAfter?: string;
 }
 
 type UpstreamResponder = (request: CapturedRequest) => UpstreamReply;
@@ -35,7 +36,13 @@ const actor = { userId: HOOK_USER };
 
 const completionResponse = (path: CapturedRequest["path"], reply: UpstreamReply) => {
   if (reply.status !== undefined && reply.status !== 200)
-    return Response.json({ error: "provider unavailable" }, { status: reply.status });
+    return Response.json(
+      { error: "provider unavailable" },
+      {
+        status: reply.status,
+        ...(reply.retryAfter === undefined ? {} : { headers: { "retry-after": reply.retryAfter } }),
+      },
+    );
   if (path === "/v1/messages")
     return Response.json({
       type: "message",
