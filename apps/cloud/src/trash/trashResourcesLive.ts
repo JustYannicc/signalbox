@@ -7,7 +7,7 @@ import * as SqlClient from "effect/sql/SqlClient";
 
 import { ThreadDirectory } from "../thread/ThreadDirectory.ts";
 import { driveOfProject } from "../user/contextProjects.ts";
-import { UserFolders } from "../user/UserFolders.ts";
+import { FolderRefusedError, UserFolders } from "../user/UserFolders.ts";
 import type * as FolderTrashStore from "../user/folderTrash.ts";
 import type { Actor } from "../thread/ThreadEngine.ts";
 import { TrashResources, type FolderTrash } from "./TrashResources.ts";
@@ -42,7 +42,11 @@ const make = Effect.gen(function* () {
   const guarded = <A, E>(effect: Effect.Effect<A, E>, operation: string) =>
     effect.pipe(
       Effect.tapError((cause) => Effect.logError(`trash ${operation} failed`, { cause })),
-      Effect.mapError(() => failed(`Could not ${operation}. Trash will retry.`)),
+      Effect.mapError((cause) =>
+        cause instanceof FolderRefusedError || cause instanceof SignalboxTrashError
+          ? failed(cause.message)
+          : failed(`Could not ${operation}. Trash will retry.`),
+      ),
     );
   const folderRecord = (actor: Actor, record: FolderTrashStore.Record) =>
     Effect.gen(function* () {

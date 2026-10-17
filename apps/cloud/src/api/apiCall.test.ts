@@ -55,6 +55,55 @@ const json = (answer: Effect.Success<ReturnType<typeof callOperation>>) => {
 };
 
 describe("public API calls", () => {
+  it.effect("explains when an independently trashed child needs its parent restored first", () =>
+    Effect.gen(function* () {
+      const { call } = yield* setup;
+      let folders = decodeFolders(
+        json(
+          yield* call("folders.create", {
+            name: "Parent",
+            parentId: null,
+          }),
+        ).body,
+      );
+      const parent = folders.folders.find((folder) => folder.name === "Parent")!;
+      folders = decodeFolders(
+        json(
+          yield* call("folders.create", {
+            name: "Child",
+            parentId: parent.id,
+          }),
+        ).body,
+      );
+      const child = folders.folders.find((folder) => folder.name === "Child")!;
+      const childTrash = decodeTrash(
+        json(
+          yield* call("trash.folder", {
+            folderId: child.id,
+          }),
+        ).body,
+      ).entries[0]!;
+      const parentTrash = decodeTrash(
+        json(
+          yield* call("trash.folder", {
+            folderId: parent.id,
+          }),
+        ).body,
+      ).entries.find((entry) => entry.targetId === parent.id)!;
+      const waiting = decodeTrash(
+        json(yield* call("trash.restore", { id: childTrash.id })).body,
+      ).entries.find((entry) => entry.id === childTrash.id)!;
+      expect(waiting.status).toBe("restoring");
+      expect(waiting.error).toBe("Restore the parent folder first.");
+      expect(json(yield* call("trash.restore", { id: parentTrash.id })).status).toBe(200);
+      const restored = decodeTrash(
+        json(yield* call("trash.restore", { id: childTrash.id })).body,
+      ).entries.find((entry) => entry.id === childTrash.id)!;
+      expect(restored.status).toBe("restored");
+      expect(restored.error).toBeNull();
+    }),
+  );
+
   it.effect(
     "restores a trashed thread and keeps an old delete command inert after restoration",
     () =>
