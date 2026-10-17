@@ -18,7 +18,7 @@ import { randomKey } from "../pool/PoolLinks.ts";
  * Local keys: how the harnesses on someone's own computer (Claude Code,
  * Codex) run on their pool. A key goes where a provider API key would, and
  * the ModelGateway takes it as it takes a turn's model token
- * (`thread/runner/modelGrants.ts`): the user's object checks it, resolves
+ * (`models/ModelAccess.ts`): the user's object checks it, resolves
  * which pool their top level runs on, and that pool checks they may still use
  * it. So a key follows the folder model and the pool's membership, and
  * revoking it stops the next request.

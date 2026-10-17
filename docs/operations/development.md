@@ -18,6 +18,32 @@ Prefer a container? See [Dev container](../internals/devcontainer.md) for VS Cod
 ## Choosing a dev process
 
 Use `vp run dev` for server and web, or `vp run dev:desktop` for the Electron client.
+
+On macOS and Linux, dev and Metro scripts register their processes for cleanup. Use
+`vp run agents:run -- <command>` for another watcher or long-running command. Pass
+`--session-id <id>` before `--` to set an owner ID explicitly. Claude Code exports it
+automatically; Codex commands use their exact runtime thread ID. Commands without
+an agent owner get a separate ID, so ending an agent session cannot stop a person's server.
+Review and trust the repository hooks when the harness prompts, so session cleanup can run.
+Claude native subagents inherit their parent's environment. While children are active,
+`agents:run` requires the explicit `--session-id` from the hook context.
+
+`vp run agents:stop` stops your session's registrations using Codex's exact runtime
+thread ID or an explicit `--session-id <id>`. Claude stops always need the explicit ID
+from the hook context, because an inherited environment cannot prove ownership. Pass `--all`
+only when you intend to stop every registration in the checkout, including other sessions.
+`vp run agents:reap` retries stale registrations across the repository, and `vp run agents:status --all` shows
+registered PIDs, ports, memory and CPU. These commands check process identity and cwd before
+signaling. Other processes remain untouched. A missing checkout or unverifiable cwd keeps
+the registration for inspection.
+
+macOS requires `/usr/bin/python3` to read the precise
+process start time from libproc; registration fails if it cannot verify that identity.
+Windows commands still run, but automatic process cleanup is unavailable there.
+Worktree removal follows the configured Storage rules.
+If interrupted lock recovery leaves a lock behind, the command reports its path. Inspect
+its recorded owner before removing that lock.
+
 `dev:server` and `dev:web` start those processes separately.
 See the [mobile README](../../apps/mobile/README.md) for native builds and Metro.
 

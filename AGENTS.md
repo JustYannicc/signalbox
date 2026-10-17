@@ -141,6 +141,7 @@ The most common defect in this repo is a change that works on the path you teste
 - Sharing over the tailnet is three steps: run `vp run dev --share` in the background, wait for the `pairingUrl:` line in its output, then give that full URL to an unpaired browser. Do not wire up `tailscale serve` by hand, open the URL yourself, or consume the user's pairing link. A browser with the reusable dev cookie can use the bare origin. If a normal one-time token was consumed, mint a fresh one with `node apps/server/src/bin.ts pair`. It carries standard scopes, while the startup URL carries admin scopes needed for Connections settings.
 - To reuse web dev auth across worktrees, configure one fixed `T3CODE_DEV_AUTH_TOKEN` in the main checkout's gitignored `.env`. The `t3.json` setup links that file into worktrees. Never commit or publish the token or a startup URL. See [Reusable dev credential](docs/operations/development.md#reusable-dev-credential).
 - Stop what you started, by the PID you tracked. See rule 1.
+- Dev and Metro scripts register processes in `.t3`. Use `vp run agents:run -- <command>` for other watchers and `vp run agents:status --all` to inspect registrations. `agents:stop` requires an explicit `--session-id <id>` from the hook context, or Codex's exact runtime thread ID. Claude native subagents share their parent's environment, so Claude stops always require the explicit ID, and `agents:run` requires it while children are active. `--all` explicitly stops every registration in the checkout, including other sessions. Harnesses that supply no session environment must pass the hook's `--session-id` to `agents:run` and `agents:stop`.
 
 ## Test data
 
@@ -207,6 +208,7 @@ For live people views or explicit location joins, read [presence](apps/cloud/src
 
 - `apps/server` - WebSocket, orchestration, providers, checkpointing. Effect-heavy: read [Effect services](docs/internals/effect-services.md) before adding server code, and `.repos/effect-smol/LLMS.md` for the Effect library itself.
 - `apps/cloud` - the hosted product on Cloudflare: Workers, Durable Objects, the model gateway, drives, pools and automations. Deploys through Alchemy.
+- For model authorization or gateway adapter changes, read [models](apps/cloud/src/models/README.md).
 - `apps/web` - React/Vite UI. `apps/desktop` wraps it, `apps/mobile` is React Native, `apps/marketing` is the site.
 - `packages/contracts` - Effect/Schema contracts plus small derived helpers. No heavy runtime logic.
 - `packages/shared` - shared runtime utils, subpath exports, no barrel.
