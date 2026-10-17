@@ -233,8 +233,67 @@ it.effect("omits missing response headers from diagnostics", () => {
     const error = yield* makeGitHubApi(client).viewer("supplied-token").pipe(Effect.flip);
     expect(error.responseContentType).toBeUndefined();
     expect(error.responseContentLength).toBeUndefined();
+    expect(error.responseRateLimits).toBeUndefined();
     expect(lines.join("\n")).not.toContain("responseContentType");
     expect(lines.join("\n")).not.toContain("responseContentLength");
+    expect(lines.join("\n")).not.toContain("responseRateLimits");
+  }).pipe(
+    Effect.provide(Logger.layer([Logger.map(Logger.formatJson, (line) => void lines.push(line))])),
+  );
+});
+
+it.effect("keeps bounded rate-limit headers on HTTP 200 GraphQL failures", () => {
+  const lines: Array<string> = [];
+  const used = "8".repeat(130);
+  const client = responseClient(
+    {
+      data: null,
+      errors: [
+        {
+          type: "RATE_LIMIT",
+          message: "API rate limit exceeded",
+          extensions: { code: "graphql_rate_limit" },
+        },
+      ],
+    },
+    200,
+    {
+      "x-ratelimit-remaining": "0",
+      "x-ratelimit-reset": "1792251000",
+      "x-ratelimit-resource": "graphql",
+      "x-ratelimit-used": used,
+      "retry-after": "17",
+    },
+  );
+
+  return Effect.gen(function* () {
+    const error = yield* makeGitHubApi(client)
+      .defaultHead("github-rate-limit-token", "octocat/Hello-World")
+      .pipe(Effect.flip);
+    expect(error).toMatchObject({
+      operation: "defaultHead",
+      status: 200,
+      requestKind: "graphql",
+      message: "GitHub sent an answer Signalbox does not understand.",
+      responseRateLimits: {
+        remaining: "0",
+        reset: "1792251000",
+        resource: "graphql",
+        used: `${used.slice(0, 120)}…`,
+        retryAfter: "17",
+      },
+    });
+    expect(error.responseRateLimits?.used?.length).toBe(121);
+
+    const logs = lines.join("\n");
+    expect(logs).toContain('"requestKind":"graphql"');
+    expect(logs).toContain('"status":200');
+    expect(logs).toContain('"responseRateLimits"');
+    expect(logs).toContain('"remaining":"0"');
+    expect(logs).toContain('"reset":"1792251000"');
+    expect(logs).toContain('"resource":"graphql"');
+    expect(logs).toContain(`"used":"${used.slice(0, 120)}…"`);
+    expect(logs).toContain('"retryAfter":"17"');
   }).pipe(
     Effect.provide(Logger.layer([Logger.map(Logger.formatJson, (line) => void lines.push(line))])),
   );

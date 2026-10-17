@@ -25,9 +25,12 @@ import {
   setNotificationBadge,
   unlockNotificationAudio,
 } from "../threadNotifications";
+import { completionEarnsSignal, needsYouToastTimeout, useNeedsYouToasts } from "../needsYouSignals"; // signalbox: #43
 import { resolveSidebarThreadStatus } from "./Sidebar.logic";
 import { AutomationNotices } from "./automations/AutomationNotices"; // signalbox: automations
 import { toastManager } from "./ui/toast";
+
+const closeToast = (toastId: string) => toastManager.close(toastId); // signalbox
 
 export function ThreadNotificationCoordinator() {
   const environmentIds = useEnvironmentIds();
@@ -119,6 +122,7 @@ function EnvironmentNotifications({
     strict: false,
   });
   const previous = useRef(new Map<ThreadId, NotificationState>());
+  const needsYouToasts = useNeedsYouToasts(closeToast, inAppNotificationsEnabled); // signalbox
 
   useEffect(() => {
     if (threads === null) {
@@ -127,12 +131,19 @@ function EnvironmentNotifications({
     }
     const next = new Map<ThreadId, NotificationState>();
     const subagentRequests = pendingSubagentRequestsByThread(threads);
+    const syncNeedsYouToast = (raw: OrchestrationV2ThreadShell, attention: string | null) =>
+      needsYouToasts.sync(
+        raw.id,
+        raw.archivedAt === null ? attention : null,
+        activeEnvironmentId === environmentId && activeThreadId === raw.id,
+      ); // signalbox: opening a thread closes its toast, even with an unchanged shell
     for (const rawThread of threads) {
       if (rawThread.lineage.relationshipToParent === "subagent") continue;
       const prior = previous.current.get(rawThread.id);
       const subagentRequest = subagentRequests.get(rawThread.id) ?? null;
       if (prior?.raw === rawThread && prior.subagentRequest === subagentRequest) {
         next.set(rawThread.id, prior);
+        syncNeedsYouToast(rawThread, prior.attention); // signalbox
         continue;
       }
       const thread = presentThreadShell(environmentId, rawThread, subagentRequest);
@@ -150,11 +161,14 @@ function EnvironmentNotifications({
           ? completedAt
           : (prior?.completion ?? null);
       next.set(thread.id, { raw: rawThread, subagentRequest, attention, completion });
+      syncNeedsYouToast(rawThread, attention); // signalbox
       if (!prior || thread.archivedAt !== null) continue;
       const kind =
         attention && attention !== prior.attention
           ? "input"
-          : completion !== null && (prior.completion === null || completion > prior.completion)
+          : completion !== null &&
+              (prior.completion === null || completion > prior.completion) &&
+              completionEarnsSignal(thread) // signalbox: #43
             ? "completion"
             : null;
       if (!kind) continue;
@@ -180,6 +194,7 @@ function EnvironmentNotifications({
         (activeEnvironmentId !== environmentId || activeThreadId !== thread.id)
       ) {
         const toastId = toastManager.add({
+          timeout: needsYouToastTimeout(kind), // signalbox
           type: kind === "completion" ? "success" : status === "failed" ? "error" : "warning",
           title,
           description: thread.title,
@@ -207,6 +222,7 @@ function EnvironmentNotifications({
             },
           },
         });
+        if (kind === "input" && attention) needsYouToasts.add(thread.id, attention, toastId); // signalbox
         continue;
       }
       if (
@@ -235,6 +251,7 @@ function EnvironmentNotifications({
         // Some browsers expose Notification but reject desktop presentation.
       }
     }
+    needsYouToasts.retain(new Set(next.keys())); // signalbox
     previous.current = next;
   }, [
     activeEnvironmentId,
@@ -243,6 +260,7 @@ function EnvironmentNotifications({
     inAppNotificationsEnabled,
     mode,
     navigate,
+    needsYouToasts, // signalbox
     onNotification,
     threads,
   ]);
