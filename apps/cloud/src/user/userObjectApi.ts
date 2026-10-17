@@ -6,7 +6,6 @@ import * as Schema from "effect/Schema";
 
 import { learnerTool } from "./learnerTool.ts";
 import * as UserLearner from "./UserLearner.ts";
-import * as UserThreadEvents from "./UserThreadEvents.ts";
 import { automationTool } from "../automations/automationTool.ts";
 import * as PersonBrowsers from "../browser/PersonBrowsers.ts";
 import * as CloudAutomations from "../automations/CloudAutomations.ts";
@@ -51,7 +50,6 @@ export const makeUserObjectApi = (
       A,
       E,
       | UserLearner.UserLearner
-      | UserThreadEvents.UserThreadEvents
       | UserStore.UserStore
       | UserShell.UserShell
       | UserContexts.UserContexts
@@ -117,8 +115,12 @@ export const makeUserObjectApi = (
     },
     threadEvents: ({ threadId, events }) =>
       run(
-        UserThreadEvents.UserThreadEvents.use((service) =>
-          service.publish({ threadId, events: wire.events.decode(events) }),
+        Effect.flatMap(Effect.serviceOption(CloudAutomations.CloudAutomations), (automations) =>
+          Option.isNone(automations)
+            ? Effect.void
+            : automations.value.threadEvents({ threadId, events: wire.events.decode(events) }),
+        ).pipe(
+          Effect.withSpan("UserObject.threadEvents", { attributes: { "thread.id": threadId } }),
         ),
       ),
     driveEvents: ({ driveId, events }) =>

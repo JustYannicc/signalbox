@@ -17,7 +17,7 @@ import type { DrivesView } from "./RunnerDrivesView.ts";
 const DECLARATIONS = {
   learner_log_event: {
     description:
-      "Record an observation, an agent draft, or a person's action for this learner. Reuse the same eventId when retrying the same source event. Pair a draft and a later action with the same objectId.",
+      "Record an observation, an agent draft, or a person's action for this learner. eventId is local to this thread; reuse it only when retrying the same source event. Pair a draft and a later action with the same objectId. objectId identifies a shared decision across threads in this level, so include the source and decision ID rather than a generic label.",
     parameters: LearnerLogEventInput,
     readonly: false,
   },

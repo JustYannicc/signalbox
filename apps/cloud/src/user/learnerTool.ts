@@ -16,6 +16,9 @@ const decodeEvent = Schema.decodeUnknownEffect(LearnerLogEventInput);
 const decodeQuery = Schema.decodeUnknownEffect(LearnerQueryInput);
 const decodeStatement = Schema.decodeUnknownEffect(LearnerAddStatementInput);
 const decodeLenses = Schema.decodeUnknownEffect(LearnerLensesInput);
+const toolEventId = Schema.encodeSync(
+  Schema.fromJsonString(Schema.Tuple([Schema.Literal("tool"), Schema.String, Schema.String])),
+);
 
 /** A tool acts for the thread its drive token named, never ids supplied in the tool input. */
 export const learnerTool = (threadId: string, name: string, input: unknown) =>
@@ -23,8 +26,14 @@ export const learnerTool = (threadId: string, name: string, input: unknown) =>
     const learner = yield* UserLearner.UserLearner;
     const id = ThreadId.make(threadId);
     switch (name) {
-      case "learner_log_event":
-        return yield* learner.log(id, yield* decodeEvent(input));
+      case "learner_log_event": {
+        const event = yield* decodeEvent(input);
+        const result = yield* learner.log(id, {
+          ...event,
+          eventId: toolEventId(["tool", threadId, event.eventId]),
+        });
+        return { ...result, eventId: event.eventId };
+      }
       case "learner_query": {
         const request = yield* decodeQuery(input);
         return yield* learner.query(id, request.task);

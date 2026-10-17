@@ -1,7 +1,6 @@
-import { EventId, MessageId, ThreadId } from "@t3tools/contracts";
+import { ThreadId } from "@t3tools/contracts";
 import { PERSONAL_CONTEXT_ID, SignalboxContextId } from "@t3tools/contracts/signalboxContexts";
 import { describe, expect, it } from "@effect/vitest";
-import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as SqlClient from "effect/sql/SqlClient";
@@ -16,10 +15,12 @@ import * as UserContexts from "./UserContexts.ts";
 import * as UserFolders from "./UserFolders.ts";
 import * as UserLearner from "./UserLearner.ts";
 import * as UserStore from "./UserStore.ts";
+import { learnerTool } from "./learnerTool.ts";
 
 const COMPANY = SignalboxContextId.make("org_acme");
 const root = ThreadId.make("root");
 const project = ThreadId.make("project");
+const sibling = ThreadId.make("sibling");
 const company = ThreadId.make("company");
 const layersWith = (judge: Layer.Layer<LearnerJev.LearnerJev>) =>
   UserLearner.layer.pipe(
@@ -29,6 +30,15 @@ const layersWith = (judge: Layer.Layer<LearnerJev.LearnerJev>) =>
     Layer.provideMerge(layerMemoryStore),
   );
 const layers = layersWith(LearnerJev.layerNone);
+const pairedLayers = layersWith(
+  Layer.effect(
+    LearnerJev.LearnerJev,
+    Effect.map(LearnerJev.LearnerJev, (judge) => ({
+      ...judge,
+      classifyPair: () => Effect.succeedSome("confirmed" as const),
+    })),
+  ).pipe(Layer.provide(LearnerJev.layerNone)),
+);
 
 const setup = Effect.gen(function* () {
   yield* (yield* UserStore.UserStore).recordSignIn({ id: "user_a", email: "a@example.com" });
@@ -37,6 +47,7 @@ const setup = Effect.gen(function* () {
   for (const [id, contextId] of [
     [root, PERSONAL_CONTEXT_ID],
     [project, PERSONAL_CONTEXT_ID],
+    [sibling, PERSONAL_CONTEXT_ID],
     [company, COMPANY],
   ] as const) {
     yield* sql`INSERT INTO thread_index (thread_id, context_id, revision, shell, updated_at)
@@ -54,54 +65,89 @@ const setup = Effect.gen(function* () {
 });
 
 describe("user learner", () => {
-  it.effect(
-    "takes committed thread events once at their home without teaching from conversation alone",
-    () =>
-      Effect.gen(function* () {
-        const { learner, homes } = yield* setup;
-        const eventId = EventId.make("thread-event-1");
-        const at = DateTime.makeUnsafe(0);
-        yield* learner.observe(project, [
-          {
-            sequence: 1,
-            event: {
-              id: eventId,
-              threadId: project,
-              type: "message.updated",
-              occurredAt: at,
-              payload: {
-                id: MessageId.make("message-1"),
-                threadId: project,
-                runId: null,
-                nodeId: null,
-                role: "user",
-                text: "Keep the deploy reversible.",
-                createdAt: at,
-                updatedAt: at,
-                createdBy: "user",
-                creationSource: "web",
-                streaming: false,
-                attachments: [],
-              },
-            },
-          },
-        ]);
-        const home = yield* homes.home(project);
-        const core = yield* LearnerService.LearnerService;
-        const retried = yield* core.logEvent({
-          scope: home.scope,
-          event: {
-            eventId: `thread:${project}:${eventId}`,
-            treeId: home.treeId,
-            source: "thread",
-            kind: "observation",
-            content: "Same delivery",
-          },
+  it.effect("pairs two threads' decisions independently when their local event IDs match", () =>
+    Effect.gen(function* () {
+      const { folderId } = yield* setup;
+      yield* (yield* UserFolders.UserFolders).moveThread({ threadId: sibling, folderId });
+      const precedentIds = new Set<string>();
+      for (const thread of [project, sibling]) {
+        yield* learnerTool(thread, "learner_log_event", {
+          eventId: "draft-1",
+          source: "review",
+          kind: "draft",
+          content: `Draft for ${thread}`,
+          objectId: `review:${thread}`,
         });
-        expect(retried.stored).toBe(false);
-        expect((yield* learner.query(project, "deploy")).precedents).toEqual([]);
-        expect((yield* learner.query(root, "deploy")).precedents).toEqual([]);
-      }).pipe(Effect.provide(layers)),
+        const action = {
+          eventId: "action-1",
+          source: "review",
+          kind: "human_action",
+          content: `Action for ${thread}`,
+          objectId: `review:${thread}`,
+        };
+        const result = yield* learnerTool(thread, "learner_log_event", action);
+        expect(result).toMatchObject({
+          _tag: "ok",
+          result: { eventId: action.eventId, stored: true, paired: true },
+        });
+        expect(yield* learnerTool(thread, "learner_log_event", action)).toMatchObject({
+          _tag: "ok",
+          result: { stored: false, paired: true },
+        });
+      }
+      const sql = yield* SqlClient.SqlClient;
+      const rows = yield* sql<{
+        id: string;
+        draft: string;
+        action: string;
+      }>`SELECT id, draft, action
+        FROM sbx_level_learner_668_precedents ORDER BY action`;
+      expect(rows.map(({ draft, action }) => ({ draft, action }))).toEqual([
+        { draft: `Draft for ${project}`, action: `Action for ${project}` },
+        { draft: `Draft for ${sibling}`, action: `Action for ${sibling}` },
+      ]);
+      for (const row of rows) precedentIds.add(row.id);
+      expect(precedentIds.size).toBe(2);
+    }).pipe(Effect.provide(pairedLayers)),
+  );
+
+  it.effect("keeps tool event IDs separate across threads and stable after a move", () =>
+    Effect.gen(function* () {
+      const { homes, folderId } = yield* setup;
+      const folders = yield* UserFolders.UserFolders;
+      yield* folders.moveThread({ threadId: sibling, folderId });
+      const original = yield* homes.home(project);
+      const event = {
+        eventId: "draft-1",
+        source: "review",
+        kind: "draft",
+        content: "Keep this decision.",
+      };
+      for (const thread of [project, sibling, root]) {
+        const result = yield* learnerTool(thread, "learner_log_event", event);
+        expect(result).toMatchObject({ _tag: "ok", result: { stored: true, paired: false } });
+      }
+      expect(yield* learnerTool(project, "learner_log_event", event)).toMatchObject({
+        _tag: "ok",
+        result: { stored: false, paired: false },
+      });
+      yield* folders.moveThread({ threadId: project, folderId: null });
+      expect(yield* learnerTool(project, "learner_log_event", event)).toMatchObject({
+        _tag: "ok",
+        result: { stored: false, paired: false },
+      });
+      const sql = yield* SqlClient.SqlClient;
+      const rows = yield* sql<{ event_id: string; scope: string }>`SELECT event_id, scope
+        FROM sbx_level_learner_668_events ORDER BY event_id`;
+      expect(rows).toEqual([
+        { event_id: JSON.stringify(["tool", project, event.eventId]), scope: original.scope },
+        {
+          event_id: JSON.stringify(["tool", root, event.eventId]),
+          scope: (yield* homes.home(root)).scope,
+        },
+        { event_id: JSON.stringify(["tool", sibling, event.eventId]), scope: original.scope },
+      ]);
+    }).pipe(Effect.provide(layers)),
   );
 
   it.effect("keeps an event at its original home when a moved thread retries delivery", () =>
@@ -149,7 +195,7 @@ describe("user learner", () => {
     }).pipe(Effect.provide(layers)),
   );
 
-  it.effect("refuses every company learner operation and skips company observations", () =>
+  it.effect("refuses every company learner operation", () =>
     Effect.gen(function* () {
       const { learner } = yield* setup;
       const event = {
@@ -172,32 +218,6 @@ describe("user learner", () => {
           expect(failure.reason).toBe("unsupported-company");
       }
       yield* learner.query(root, "No personal evidence");
-      const at = DateTime.makeUnsafe(0);
-      yield* learner.observe(company, [
-        {
-          sequence: 1,
-          event: {
-            id: EventId.make("company-event"),
-            threadId: company,
-            type: "message.updated",
-            occurredAt: at,
-            payload: {
-              id: MessageId.make("company-message"),
-              threadId: company,
-              runId: null,
-              nodeId: null,
-              role: "user",
-              text: "Keep company evidence out of personal stores.",
-              createdAt: at,
-              updatedAt: at,
-              createdBy: "user",
-              creationSource: "web",
-              streaming: false,
-              attachments: [],
-            },
-          },
-        },
-      ]);
       const sql = yield* SqlClient.SqlClient;
       const events = yield* sql`SELECT event_id FROM sbx_level_learner_668_events`;
       const lenses = yield* sql`SELECT id FROM sbx_level_learner_668_lenses`;

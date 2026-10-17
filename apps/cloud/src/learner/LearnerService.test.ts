@@ -4,6 +4,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as SqlClient from "effect/sql/SqlClient";
+import * as TestClock from "effect/testing/TestClock";
 
 import * as LearnerJev from "./LearnerJev.ts";
 import * as LearnerService from "./LearnerService.ts";
@@ -15,6 +16,10 @@ type JevOptions = {
   match?: (
     candidates: ReadonlyArray<LearnerJev.DraftCandidate>,
   ) => Option.Option<{ readonly eventId: string; readonly confidence: number }>;
+  onMatch?: (input: {
+    readonly action: string;
+    readonly candidates: ReadonlyArray<LearnerJev.DraftCandidate>;
+  }) => void;
   relevance?: (
     candidates: ReadonlyArray<LearnerJev.LensCandidate>,
   ) => ReadonlyArray<{ readonly lensId: string; readonly probability: number }>;
@@ -31,13 +36,21 @@ const fakeJev = (options: JevOptions = {}) => {
     summarySafe: () => Effect.succeed(false),
     classifyPair: (question: LearnerJev.PairQuestion) =>
       Effect.succeed(options.classify?.(question) ?? Option.some("confirmed")),
-    matchDraft: ({ candidates }: { candidates: ReadonlyArray<LearnerJev.DraftCandidate> }) =>
-      Effect.succeed(
+    matchDraft: ({
+      action,
+      candidates,
+    }: {
+      action: string;
+      candidates: ReadonlyArray<LearnerJev.DraftCandidate>;
+    }) => {
+      options.onMatch?.({ action, candidates });
+      return Effect.succeed(
         options.match?.(candidates) ??
           (candidates[0]
             ? Option.some({ eventId: candidates[0].eventId, confidence: 0.99 })
             : Option.none()),
-      ),
+      );
+    },
     relevance: (input: {
       readonly task: string;
       readonly candidates: ReadonlyArray<LearnerJev.LensCandidate>;
@@ -371,6 +384,12 @@ describe("level learner service", () => {
           });
         }
         classifyOlder = true;
+        yield* log(service, {
+          eventId: "older-action",
+          kind: "human_action",
+          content: "Earlier decision: wait for checks",
+          objectId: "older",
+        });
         const retried = yield* service.query({ scope: "person", task: "Release safely" });
         expect(retried.precedents).toHaveLength(2);
         expect(retried.lenses).toHaveLength(1);
@@ -467,6 +486,13 @@ describe("level learner service", () => {
         objectId: "retry-object",
       });
       expect(replay).toMatchObject({ stored: false, paired: true });
+      const replayAgain = yield* log(service, {
+        eventId: "retry-action",
+        kind: "human_action",
+        content: "Run checks",
+        objectId: "retry-object",
+      });
+      expect(replayAgain).toMatchObject({ stored: false, paired: true });
       expect(yield* counts).toMatchObject({ events: 2, precedents: 1 });
     }).pipe(
       Effect.provide(
@@ -481,6 +507,119 @@ describe("level learner service", () => {
       ),
     ),
   );
+
+  it.effect("a delayed object draft can pair past older generic pending actions", () =>
+    Effect.gen(function* () {
+      const service = yield* LearnerService.LearnerService;
+      for (let index = 0; index < 12; index++) {
+        yield* log(service, {
+          eventId: `generic-action-${index}`,
+          kind: "human_action",
+          content: `Old action ${index}`,
+        });
+      }
+      yield* log(service, {
+        eventId: "target-action",
+        kind: "human_action",
+        content: "Run the release checks",
+        objectId: "target-object",
+      });
+
+      const delayedDraft = yield* log(service, {
+        eventId: "target-draft",
+        kind: "draft",
+        input: "Prepare the release",
+        content: "Run the release checks",
+        objectId: "target-object",
+      });
+
+      expect(delayedDraft.paired).toBe(true);
+      expect(yield* counts).toMatchObject({ events: 14, precedents: 1 });
+    }).pipe(Effect.provide(layerFor(fakeJev({ match: () => Option.none() })))),
+  );
+
+  it.effect("retries a failed Jev pairing after its backoff", () => {
+    let attempts = 0;
+    return Effect.gen(function* () {
+      yield* TestClock.setTime(1_000_000);
+      const service = yield* LearnerService.LearnerService;
+      yield* log(service, {
+        eventId: "recover-draft",
+        kind: "draft",
+        content: "Run checks",
+        input: "Prepare release",
+        objectId: "recover-object",
+      });
+      const first = yield* log(service, {
+        eventId: "recover-action",
+        kind: "human_action",
+        content: "Run checks",
+        objectId: "recover-object",
+      });
+      expect(first.paired).toBe(false);
+
+      yield* TestClock.adjust(4_999);
+      yield* service.query({ scope: "person", task: "Prepare release" });
+      expect(attempts).toBe(1);
+      expect(yield* counts).toMatchObject({ precedents: 0 });
+
+      yield* TestClock.adjust(1);
+      const recovered = yield* service.query({ scope: "person", task: "Prepare release" });
+      expect(attempts).toBe(2);
+      expect(recovered.precedents).toHaveLength(1);
+      expect(yield* counts).toMatchObject({ events: 2, precedents: 1 });
+    }).pipe(
+      Effect.provide(
+        layerFor(
+          fakeJev({
+            classify: () => (++attempts === 1 ? Option.none() : Option.some("confirmed")),
+          }),
+        ),
+      ),
+    );
+  });
+
+  it.effect("gives each due action one retry before any failed action retries again", () => {
+    const retries = new Map<string, number>();
+    return Effect.gen(function* () {
+      yield* TestClock.setTime(2_000_000);
+      const service = yield* LearnerService.LearnerService;
+      yield* log(service, {
+        eventId: "fair-draft",
+        kind: "draft",
+        content: "Run checks",
+        input: "Prepare release",
+        objectId: "fair-object",
+      });
+      for (let index = 0; index < 12; index++) {
+        const action = `Fair action ${index}`;
+        yield* log(service, {
+          eventId: `fair-action-${index}`,
+          kind: "human_action",
+          content: action,
+        });
+      }
+      expect([...retries.values()]).toEqual(Array.from({ length: 12 }, () => 1));
+
+      yield* TestClock.adjust(5_000);
+      for (let index = 0; index < 12; index++) {
+        yield* service.query({ scope: "person", task: "Prepare release" });
+      }
+      expect([...retries.values()]).toEqual(Array.from({ length: 12 }, () => 2));
+
+      yield* service.query({ scope: "person", task: "Prepare release" });
+      expect([...retries.values()]).toEqual(Array.from({ length: 12 }, () => 2));
+    }).pipe(
+      Effect.provide(
+        layerFor(
+          fakeJev({
+            match: () => Option.none(),
+            onMatch: ({ action }) => retries.set(action, (retries.get(action) ?? 0) + 1),
+          }),
+        ),
+      ),
+    );
+  });
 
   it.effect("validates settings and revokes a tree's source and learned rows", () =>
     Effect.gen(function* () {

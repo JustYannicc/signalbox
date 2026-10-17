@@ -26,7 +26,8 @@ import * as LearnerStore from "./LearnerStore.ts";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const OWNER_PRIOR_SUPPORTS = 3;
-const PENDING_ACTION_LIMIT = 10;
+const DRAFT_CANDIDATE_LIMIT = 10;
+const PENDING_ACTION_RETRY_LIMIT = 1;
 
 const DEFAULT_SETTINGS: SignalboxLearnerSettings = {
   minLaterSupports: 1,
@@ -201,7 +202,10 @@ const make = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
   const jev = yield* LearnerJev.LearnerJev;
 
-  const ensureTables = LearnerStore.createTables(sql);
+  const [ensureTables] = yield* Effect.cachedInvalidateWithTTL(
+    LearnerStore.createTables(sql),
+    (exit) => (exit._tag === "Success" ? "Infinity" : 0),
+  );
   const evidenceFor = (lensId: string) =>
     Effect.map(
       sql`SELECT tree_id, outcome, occurred_at FROM sbx_level_learner_668_evidence
@@ -285,7 +289,7 @@ const make = Effect.gen(function* () {
             SELECT 1 FROM sbx_level_learner_668_precedents p
             WHERE p.draft_event_id = e.event_id
           )
-        ORDER BY e.occurred_at DESC LIMIT ${PENDING_ACTION_LIMIT}`,
+        ORDER BY e.occurred_at DESC LIMIT ${DRAFT_CANDIDATE_LIMIT}`,
       decodeEvents,
     );
 
@@ -417,29 +421,59 @@ const make = Effect.gen(function* () {
       );
     });
 
-  const pendingActions = (scope: string) =>
+  const pendingAction = (scope: string, now: number, preferredDraft?: EventRow) =>
     Effect.map(
       sql`SELECT e.event_id, e.scope, e.tree_id, e.source, e.kind, e.content, e.input,
           e.object_id, e.used_lens_id, e.occurred_at
         FROM sbx_level_learner_668_events e
+        LEFT JOIN sbx_level_learner_668_action_retries r ON r.action_event_id = e.event_id
         WHERE e.scope = ${scope} AND e.kind = 'human_action'
           AND NOT EXISTS (
             SELECT 1 FROM sbx_level_learner_668_precedents p
             WHERE p.action_event_id = e.event_id
           )
-        ORDER BY e.occurred_at LIMIT ${PENDING_ACTION_LIMIT}`,
-      decodeEvents,
+          AND (${preferredDraft === undefined ? 0 : 1} = 0 OR (
+            e.tree_id = ${preferredDraft?.tree_id ?? ""}
+            AND (e.object_id = ${preferredDraft?.object_id ?? null}
+              OR e.object_id IS NULL OR ${preferredDraft?.object_id ?? null} IS NULL)
+          ))
+          AND (r.action_event_id IS NULL OR r.next_attempt_at <= ${now}
+            OR ${preferredDraft === undefined ? 0 : 1})
+        ORDER BY
+          CASE WHEN ${preferredDraft === undefined ? 0 : 1} = 1
+              AND ${preferredDraft?.object_id ?? null} IS NOT NULL
+              AND e.object_id = ${preferredDraft?.object_id ?? null} THEN 0
+            WHEN ${preferredDraft === undefined ? 0 : 1} = 1 AND e.object_id IS NULL THEN 1
+            ELSE 2 END,
+          CASE WHEN r.attempted_at IS NULL THEN 0 ELSE 1 END,
+          r.attempted_at ASC, e.occurred_at ASC, e.event_id ASC
+        LIMIT ${PENDING_ACTION_RETRY_LIMIT}`,
+      (rows) => decodeEvents(rows)[0] ?? null,
     );
 
-  const retryPending = (scope: string) =>
+  const attemptAction = (scope: string, action: EventRow, now: number) =>
     Effect.gen(function* () {
-      const actions = yield* pendingActions(scope);
-      const ids: Array<string> = [];
-      for (const action of actions) {
-        const id = yield* processAction(scope, action);
-        if (id !== null) ids.push(id);
+      const id = yield* processAction(scope, action);
+      if (id !== null) {
+        yield* LearnerStore.clearActionRetry(sql, action.event_id);
+        return id;
       }
-      return ids;
+      const [paired] = yield* sql`SELECT id FROM sbx_level_learner_668_precedents
+        WHERE action_event_id = ${action.event_id} LIMIT 1`;
+      if (paired !== undefined || (yield* storedEvent(action.event_id)) === null) {
+        yield* LearnerStore.clearActionRetry(sql, action.event_id);
+      } else {
+        yield* LearnerStore.recordActionRetry(sql, action.event_id, now);
+      }
+      return null;
+    });
+
+  const retryPending = (scope: string, now: number, preferredDraft?: EventRow) =>
+    Effect.gen(function* () {
+      const action = yield* pendingAction(scope, now, preferredDraft);
+      if (action === null) return [];
+      const id = yield* attemptAction(scope, action, now);
+      return id === null ? [] : [id];
     });
 
   const readSettings = (scope: string) =>
@@ -478,10 +512,12 @@ const make = Effect.gen(function* () {
       if (existing === null || existing.scope !== input.scope) {
         return { eventId: input.event.eventId, stored: false, paired: false };
       }
-      // Replays retry pending work after a transient Jev failure, but event ids
-      // and precedent ids make successful learning idempotent.
-      if (existing.kind === "human_action") yield* processAction(input.scope, existing);
-      if (existing.kind === "draft") yield* retryPending(input.scope);
+      // Action replays retry immediately; other pending actions use a fair,
+      // persisted backoff, and a new draft wakes actions that could use it.
+      if (existing.kind === "human_action") {
+        yield* attemptAction(input.scope, existing, now);
+      }
+      if (existing.kind === "draft") yield* retryPending(input.scope, now, existing);
       if (existing.kind === "human_action") {
         const [precedent] = decodePrecedents(
           yield* sql`SELECT id, source, input, draft, action, classification, reason, created_at
@@ -528,8 +564,8 @@ const make = Effect.gen(function* () {
   const query: LearnerService["Service"]["query"] = (input) =>
     Effect.gen(function* () {
       yield* ensureTables;
-      yield* retryPending(input.scope);
       const now = yield* Clock.currentTimeMillis;
+      yield* retryPending(input.scope, now);
       const settings = yield* readSettings(input.scope);
       const rawPrecedents = decodePrecedents(
         yield* sql`SELECT id, source, input, draft, action, classification, reason, created_at

@@ -60,7 +60,6 @@ import * as LearnerJev from "./learner/LearnerJev.ts";
 import * as LearnerSummary from "./learner/LearnerSummary.ts";
 import * as LearnerHomes from "./user/LearnerHomes.ts";
 import * as UserLearner from "./user/UserLearner.ts";
-import * as UserThreadEvents from "./user/UserThreadEvents.ts";
 import * as KindClassifier from "./threadKinds/KindClassifier.ts";
 import { makeThreadObjectApi } from "./thread/threadObjectApi.ts";
 import { browserUpdateLine, previewsLine } from "./thread/threadWire.ts";
@@ -291,7 +290,6 @@ const makeUserRuntime = (
   ManagedRuntime.make(
     // The user's automations, on the same services the object gives them.
     CloudEngine.layer.pipe(
-      Layer.provideMerge(UserThreadEvents.layer),
       Layer.provide(Layer.mergeAll(runner, alarm)),
       Layer.provideMerge(
         // The same branches the socket's RPC uses, so the git panel sees what the agent pushed.

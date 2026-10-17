@@ -8,7 +8,6 @@ import type { SqlError } from "effect/sql/SqlError";
 
 import * as LearnerService from "../learner/LearnerService.ts";
 import * as LearnerSummary from "../learner/LearnerSummary.ts";
-import type { StoredEvent } from "../thread/ThreadStore.ts";
 import * as LearnerHomes from "./LearnerHomes.ts";
 
 type Core = LearnerService.LearnerService["Service"];
@@ -43,11 +42,6 @@ export class UserLearner extends Context.Service<
       threadId: ThreadId,
       input: { readonly folderId?: FolderId | undefined; readonly task?: string | undefined },
     ) => Effect.Effect<Effect.Success<ReturnType<Core["lenses"]>>, Failure>;
-    /** Committed conversation messages arrive through the thread's durable event outbox. */
-    readonly observe: (
-      threadId: ThreadId,
-      events: ReadonlyArray<StoredEvent>,
-    ) => Effect.Effect<void, Failure>;
   }
 >()("@signalbox/cloud/user/UserLearner") {}
 
@@ -102,35 +96,6 @@ const make = Effect.gen(function* () {
           return yield* new LearnerHomes.LearnerAccessError({ reason: "not-below" });
         return visible;
       }),
-    observe: (threadId, events) =>
-      Effect.forEach(
-        events,
-        ({ event }) => {
-          if (
-            event.threadId !== threadId ||
-            event.type !== "message.updated" ||
-            event.payload.streaming ||
-            event.payload.role === "system" ||
-            event.payload.text.trim() === ""
-          )
-            return Effect.void;
-          return log(threadId, {
-            eventId: `thread:${threadId}:${event.id}`,
-            source: "thread",
-            // A message isn't necessarily a decision. Asks and connectors identify actual actions.
-            kind: "observation",
-            content: `${event.payload.role}: ${event.payload.text}`,
-          });
-        },
-        { discard: true },
-      ).pipe(
-        Effect.catchTags({
-          LearnerAccessError: (error) =>
-            error.reason === "not-member" || error.reason === "unsupported-company"
-              ? Effect.void
-              : Effect.fail(error),
-        }),
-      ),
   });
 });
 

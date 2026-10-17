@@ -28,7 +28,6 @@ import { scriptedModelSelection } from "./scriptedProvider.ts";
 import * as ThreadEngine from "./ThreadEngine.ts";
 import * as ThreadStore from "./ThreadStore.ts";
 import * as UserDirectory from "../user/UserDirectory.ts";
-import { wire } from "./threadWire.ts";
 
 const owner = { userId: "user_1", contextIds: [PERSONAL_CONTEXT_ID] };
 const personal = {
@@ -106,16 +105,7 @@ const withObject = <A, E>(
           engine: Context.get(context, ThreadEngine.ThreadEngine),
           store: Context.get(context, ThreadStore.ThreadStore),
           sql: Context.get(context, SqlClient.SqlClient),
-          deliver: Effect.gen(function* () {
-            const user = users.forUser(owner.userId);
-            yield* Effect.orDie(
-              user.recordSignIn({ id: owner.userId, email: "owner@example.com" }),
-            );
-            const summary = yield* Context.get(context, ThreadEngine.ThreadEngine).summary(owner);
-            if (summary !== null)
-              yield* Effect.orDie(user.recordThreadSummary(wire.summary.encode(summary)));
-            return yield* Effect.provideContext(deliverPendingEvents, context);
-          }),
+          deliver: Effect.provideContext(deliverPendingEvents, context),
         }),
       ),
     ),

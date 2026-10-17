@@ -35,7 +35,6 @@ import * as LearnerJev from "../learner/LearnerJev.ts";
 import * as LearnerSummary from "../learner/LearnerSummary.ts";
 import * as LearnerHomes from "./LearnerHomes.ts";
 import * as UserLearner from "./UserLearner.ts";
-import * as UserThreadEvents from "./UserThreadEvents.ts";
 import * as LocalKeys from "../localKeys/LocalKeys.ts";
 import * as LoginService from "../signIn/LoginService.ts";
 import * as NoteReader from "../notes/NoteReader.ts";
@@ -199,7 +198,6 @@ const makeRuntime = (storage: DurableObjectStorage, env: UserObjectEnv) => {
   return ManagedRuntime.make(
     // The user's automations (#434), on the services below.
     CloudEngine.layer.pipe(
-      Layer.provideMerge(UserThreadEvents.layer),
       Layer.provide(
         Layer.mergeAll(layerWorkflows(env.AUTOMATION_RUNS), layerAutomationAlarm(storage)),
       ),

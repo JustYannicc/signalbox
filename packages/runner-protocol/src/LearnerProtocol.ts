@@ -16,7 +16,7 @@ export const LEARNER_TOOL_NAMES = [
 ] as const;
 
 export const LearnerLogEventInput = Schema.Struct({
-  /** Stable at the source so a retried delivery cannot teach twice. */
+  /** Stable within the authenticated thread so a retried delivery cannot teach twice. */
   eventId: Schema.String,
   source: Schema.String,
   kind: Schema.Literals(["observation", "draft", "human_action"]),

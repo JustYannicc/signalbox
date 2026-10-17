@@ -2,6 +2,13 @@ import * as Effect from "effect/Effect";
 import * as SqlClient from "effect/sql/SqlClient";
 import type { SqlError } from "effect/sql/SqlError";
 
+const ACTION_RETRY_BASE_MS = 5_000;
+const ACTION_RETRY_MAX_MS = 300_000;
+const MAX_ACTION_RETRY_ATTEMPTS = 7;
+
+const actionRetryDelay = (attempts: number) =>
+  Math.min(ACTION_RETRY_BASE_MS * 2 ** (attempts - 1), ACTION_RETRY_MAX_MS);
+
 /** Cloud user objects and their folders all keep independent SQLite learner rows. */
 export const createTables = (sql: SqlClient.SqlClient): Effect.Effect<void, SqlError> =>
   Effect.gen(function* () {
@@ -24,6 +31,14 @@ export const createTables = (sql: SqlClient.SqlClient): Effect.Effect<void, SqlE
       ON sbx_level_learner_668_events (scope, kind, occurred_at)`;
     yield* sql`CREATE INDEX IF NOT EXISTS sbx_level_learner_668_event_object
       ON sbx_level_learner_668_events (scope, object_id, kind)`;
+    yield* sql`CREATE TABLE IF NOT EXISTS sbx_level_learner_668_action_retries (
+      action_event_id TEXT PRIMARY KEY,
+      attempts INTEGER NOT NULL,
+      attempted_at INTEGER NOT NULL,
+      next_attempt_at INTEGER NOT NULL
+    )`;
+    yield* sql`CREATE INDEX IF NOT EXISTS sbx_level_learner_668_action_retry_due
+      ON sbx_level_learner_668_action_retries (next_attempt_at, attempted_at)`;
     yield* sql`CREATE TABLE IF NOT EXISTS sbx_level_learner_668_precedents (
       id TEXT PRIMARY KEY,
       scope TEXT NOT NULL,
@@ -76,6 +91,36 @@ export const createTables = (sql: SqlClient.SqlClient): Effect.Effect<void, SqlE
     )`;
   });
 
+/** Keep every unpaired action retryable, while spacing repeated Jev failures. */
+export const recordActionRetry = (
+  sql: SqlClient.SqlClient,
+  actionEventId: string,
+  attemptedAt: number,
+): Effect.Effect<void, SqlError> =>
+  sql.withTransaction(
+    Effect.gen(function* () {
+      const rows = yield* sql<{ attempts: number }>`SELECT attempts
+        FROM sbx_level_learner_668_action_retries WHERE action_event_id = ${actionEventId}`;
+      const attempts = Math.min((rows[0]?.attempts ?? 0) + 1, MAX_ACTION_RETRY_ATTEMPTS);
+      const nextAttemptAt = attemptedAt + actionRetryDelay(attempts);
+      yield* sql`INSERT INTO sbx_level_learner_668_action_retries
+        (action_event_id, attempts, attempted_at, next_attempt_at)
+        SELECT e.event_id, ${attempts}, ${attemptedAt}, ${nextAttemptAt}
+        FROM sbx_level_learner_668_events e WHERE e.event_id = ${actionEventId}
+          AND e.kind = 'human_action'
+          AND NOT EXISTS (SELECT 1 FROM sbx_level_learner_668_revoked_trees r
+            WHERE r.tree_id = e.tree_id)
+          AND NOT EXISTS (SELECT 1 FROM sbx_level_learner_668_precedents p
+            WHERE p.action_event_id = e.event_id)
+        ON CONFLICT(action_event_id) DO UPDATE SET attempts = excluded.attempts,
+          attempted_at = excluded.attempted_at, next_attempt_at = excluded.next_attempt_at`;
+    }),
+  );
+
+export const clearActionRetry = (sql: SqlClient.SqlClient, actionEventId: string) =>
+  sql`DELETE FROM sbx_level_learner_668_action_retries
+    WHERE action_event_id = ${actionEventId}`.pipe(Effect.asVoid);
+
 /**
  * Removes source rows and every derived contribution made by a tree. Stats are
  * projections over evidence rows, so deleting evidence also recomputes them.
@@ -102,6 +147,10 @@ export const deleteTreeContributions = (
       )`;
     yield* sql`DELETE FROM sbx_level_learner_668_precedents
       WHERE tree_id = ${treeId} OR draft_tree_id = ${treeId} OR action_tree_id = ${treeId}`;
+    yield* sql`DELETE FROM sbx_level_learner_668_action_retries
+      WHERE action_event_id IN (
+        SELECT event_id FROM sbx_level_learner_668_events WHERE tree_id = ${treeId}
+      )`;
     yield* sql`DELETE FROM sbx_level_learner_668_events WHERE tree_id = ${treeId}`;
     yield* sql`DELETE FROM sbx_level_learner_668_settings WHERE tree_id = ${treeId}`;
   });
