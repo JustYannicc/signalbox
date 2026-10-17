@@ -19,6 +19,7 @@ import { environmentContextsAtom } from "../../../state/signalboxContexts";
 import {
   environmentFoldersAtom,
   folderEditableEnvironmentsAtom,
+  folderStartableEnvironmentsAtom,
 } from "../../../state/signalboxFolders";
 import { resolveThreadRouteTarget } from "../../../threadRoutes";
 import {
@@ -45,6 +46,7 @@ export function useFolderPaletteItems(): Array<
   const folders = useAtomValue(environmentFoldersAtom);
   const contexts = useAtomValue(environmentContextsAtom);
   const editable = useAtomValue(folderEditableEnvironmentsAtom);
+  const startable = useAtomValue(folderStartableEnvironmentsAtom);
   const commands = useFolderCommands();
   const items: Array<CommandPaletteActionItem | CommandPaletteSubmenuItem> = [];
 
@@ -92,7 +94,7 @@ export function useFolderPaletteItems(): Array<
     }
   }
 
-  if (thread && snapshot && editable.has(thread.environmentId)) {
+  if (thread && snapshot && startable.has(thread.environmentId)) {
     const folderId = homeOfThread(snapshot, {
       id: thread.threadId,
       projectId: thread.projectId,

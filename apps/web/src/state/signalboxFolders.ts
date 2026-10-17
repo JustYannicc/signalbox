@@ -70,3 +70,11 @@ export const folderEditableEnvironmentsAtom = Atom.make((get) => {
   }
   return editable;
 }).pipe(Atom.withLabel("web-environment-folders:editable"));
+
+export const folderStartableEnvironmentsAtom = Atom.make((get) => {
+  const startable = new Set<EnvironmentId>();
+  for (const environmentId of get(environmentFoldersAtom).keys()) {
+    if (get(signalboxFolders.startFrom.permissionAtom(environmentId))) startable.add(environmentId);
+  }
+  return startable;
+}).pipe(Atom.withLabel("web-environment-folders:startable"));
