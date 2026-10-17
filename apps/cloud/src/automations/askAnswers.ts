@@ -7,7 +7,7 @@ import type {
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 
-import { ThreadCommandRejectedError } from "../thread/threadCommandErrors.ts";
+import { ThreadCommandRejectedError } from "../thread/ThreadAccess.ts";
 import { CloudAutomations } from "./CloudAutomations.ts";
 
 /** Read at the operation boundary: the engine itself depends on the thread service. */

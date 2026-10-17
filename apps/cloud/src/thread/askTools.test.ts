@@ -6,6 +6,7 @@ import * as Effect from "effect/Effect";
 import * as Environment from "../environment.ts";
 import { makeMemoryCloud } from "../testing.ts";
 import { CloudThreadService } from "./CloudThreadService.ts";
+import { Threads } from "./Threads.ts";
 import { scriptedModelSelection } from "./scriptedProvider.ts";
 
 it.effect(
@@ -90,7 +91,8 @@ it.effect(
         source: { kind: "automation", runId: "workflow-run" },
         status: "answered",
       });
-      yield* threads.dispatchCommand(actor, {
+      const coreThreads = yield* Threads.pipe(Effect.provide(cloud.layerFor(userId)));
+      yield* coreThreads.dispatch(actor, {
         type: "thread.ask.raise",
         commandId: CommandId.make("public-forged-source"),
         threadId,
@@ -106,7 +108,7 @@ it.effect(
           (ask) => ask.id === "public-ask",
         )?.source,
       ).toEqual({ kind: "agent" });
-      yield* threads.dispatchCommand(actor, {
+      yield* coreThreads.dispatch(actor, {
         type: "thread.ask.answer",
         commandId: CommandId.make("public-forged-answerer"),
         threadId,
