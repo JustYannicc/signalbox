@@ -5,7 +5,8 @@ import { accountSignOutPaletteItem } from "../account/accountPaletteItem"; // si
 import { useAutomationPaletteItems } from "./automations/automationPaletteItems"; // signalbox: automations
 import { useFolderPaletteItems } from "./sidebar/folders/folderPaletteItems"; // signalbox: folders
 import { useNotesPaletteItems } from "./notes/notesPaletteItems"; // signalbox: notes
-import { useThreadPinPaletteAction } from "./chat/threadPinPaletteAction";
+import { useThreadPinPaletteAction } from "./chat/threadPinPaletteAction"; // signalbox: cloud pin
+import { QUICK_CAPTURE_PALETTE_ITEM } from "./capture/capturePaletteItems"; // signalbox: quick capture
 import { useRepositoryPickerGroups } from "./addProject/repositoryPicker"; // signalbox: repositories
 import {
   addProjectCloneSources,
@@ -688,7 +689,7 @@ function OpenCommandPaletteDialog(props: {
     activeThread,
     activeThreadServerConfig?.environment.capabilities.threadPinning === true,
     setOpen,
-  );
+  ); // signalbox: cloud pin
   const activeThreadReferenceCopyTarget =
     referenceThreadRef === null || (pathname === "/pull-requests" && !openPanelPullRequestUrl)
       ? null
@@ -1905,6 +1906,7 @@ function OpenCommandPaletteDialog(props: {
   }, [clearOpenIntent, browseNavigation, openIntent, projectThreadItems, pushPaletteView]);
 
   const actionItems: Array<CommandPaletteActionItem | CommandPaletteSubmenuItem> = [];
+  actionItems.push(QUICK_CAPTURE_PALETTE_ITEM); // signalbox: quick capture
 
   if (projects.length > 0) {
     const activeProjectTitle =
@@ -1971,7 +1973,7 @@ function OpenCommandPaletteDialog(props: {
     });
   }
 
-  actionItems.push(...threadPinPalette.items);
+  actionItems.push(...threadPinPalette.items); // signalbox: cloud pin
 
   const promptLinkTarget = paletteRouteTarget
     ? paletteRouteTarget.kind === "server"
@@ -3287,7 +3289,7 @@ function OpenCommandPaletteDialog(props: {
       requestThreadFindOpen();
       return;
     }
-    if (threadPinPalette.handleKey(event, command)) return;
+    if (threadPinPalette.handleKey(event, command)) return; // signalbox: cloud pin
 
     if (
       addProjectCloneFlow?.step === "repository" &&

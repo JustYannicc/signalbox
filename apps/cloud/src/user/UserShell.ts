@@ -3,6 +3,7 @@ import type {
   OrchestrationV2ShellSnapshot,
   OrchestrationV2ShellStreamItem,
   OrchestrationV2SubscribeShellInput,
+  ThreadId,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -173,24 +174,41 @@ const make = Effect.gen(function* () {
     subscribe({}),
     (stream) =>
       stream.pipe(
-        Stream.map((item): OrchestrationV2ArchivedShellStreamItem | null => {
-          if (item.kind === "snapshot") {
-            return {
-              kind: "snapshot",
-              snapshot: {
-                schemaVersion: item.snapshot.schemaVersion,
-                snapshotSequence: item.snapshot.snapshotSequence,
-                projects: item.snapshot.projects,
-                threads: item.snapshot.archivedThreads,
-              },
-            };
-          }
-          if (item.kind !== "thread.updated") return null;
-          return item.location === "archive" && item.thread.deletedAt === null
-            ? { kind: "thread.updated", sequence: item.sequence, thread: item.thread }
-            : { kind: "thread.removed", sequence: item.sequence, threadId: item.thread.id };
-        }),
-        Stream.filter((item) => item !== null),
+        Stream.mapAccum(
+          () => new Set<ThreadId>(),
+          (archivedIds, item): [Set<ThreadId>, Array<OrchestrationV2ArchivedShellStreamItem>] => {
+            if (item.kind === "snapshot") {
+              return [
+                new Set(item.snapshot.archivedThreads.map((thread) => thread.id)),
+                [
+                  {
+                    kind: "snapshot",
+                    snapshot: {
+                      schemaVersion: item.snapshot.schemaVersion,
+                      snapshotSequence: item.snapshot.snapshotSequence,
+                      projects: item.snapshot.projects,
+                      threads: item.snapshot.archivedThreads,
+                    },
+                  },
+                ],
+              ];
+            }
+            if (item.kind !== "thread.updated") return [archivedIds, []];
+            if (item.location === "archive" && item.thread.deletedAt === null) {
+              archivedIds.add(item.thread.id);
+              return [
+                archivedIds,
+                [{ kind: "thread.updated", sequence: item.sequence, thread: item.thread }],
+              ];
+            }
+            return [
+              archivedIds,
+              archivedIds.delete(item.thread.id)
+                ? [{ kind: "thread.removed", sequence: item.sequence, threadId: item.thread.id }]
+                : [],
+            ];
+          },
+        ),
       ),
   );
 
