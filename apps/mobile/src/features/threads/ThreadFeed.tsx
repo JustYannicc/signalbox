@@ -2400,6 +2400,8 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
     if (lastFindRevealRequestKeyRef.current !== request.key) {
       lastFindRevealRequestKeyRef.current = request.key;
       appliedFindRevealStepRef.current = null;
+      scrolledFindRevealRequestKeyRef.current = null; // signalbox: revisiting a completed match starts a new reveal.
+      outerScrolledFindRevealRequestKeyRef.current = null;
       setFindWorkRowReveal(null); // signalbox: stale inner-list requests must not finish a new selection.
     }
     if (scrolledFindRevealRequestKeyRef.current === request.key) return;
