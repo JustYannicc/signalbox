@@ -910,8 +910,7 @@ switching back also requires replay and is not an instant rollback.
 For previews, set the variables in `cloud-preview` and use the PR's normal preview
 deploy. Those environment variables affect all subsequent preview deploys, so
 restore their intended values afterwards. Never point a preview at production's
-namespace. These commands are operator instructions; this change does not execute
-them or any remote SQL.
+namespace.
 
 For an FTS-only repair, first deploy the disable flag and confirm search writes
 have stopped. Use [Data Studio](https://developers.cloudflare.com/durable-objects/observability/data-studio/)
@@ -973,8 +972,7 @@ DELETE FROM search_threads;
 Do not resume after a partial clear. Verify each result, then rebuild through a
 fresh generation. After replay, check normal keyword and literal queries, a long
 item spanning parts, archived results, exact-item Find anchors, and current access
-revocation before relying on the replacement index. SQL repairs and production
-recovery remain unexecuted until an operator runs this procedure.
+revocation before relying on the replacement index.
 
 ### What a preview starts with
 

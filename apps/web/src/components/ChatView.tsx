@@ -1182,6 +1182,7 @@ export default function ChatView(props: ChatViewProps) {
   });
   const serverThreadProjection = useThreadProjection(routeThreadDetailRef);
   const serverProjection = serverThreadProjection?.projection ?? null;
+  // signalbox: present archived detail without adding it to the active shell.
   const serverThread = useMemo(() => {
     if (serverThreadShell !== null) {
       return serverThreadShell;

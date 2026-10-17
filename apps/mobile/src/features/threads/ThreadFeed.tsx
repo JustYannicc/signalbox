@@ -2370,6 +2370,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
     [suspendEndScrollMaintenanceForDisclosure],
   );
 
+  // signalbox: Find opens the disclosures hiding its target before scrolling.
   useEffect(() => {
     const request = props.findRevealRequest;
     if (request === null || request === undefined || request.threadKey !== feedThreadKey) {

@@ -463,6 +463,10 @@
       "types": "./src/state/threadDetailShell.ts",
       "default": "./src/state/threadDetailShell.ts"
     },
+    "./testing/orchestration-v2": {
+      "types": "./src/state/orchestrationV2TestFixtures.ts",
+      "default": "./src/state/orchestrationV2TestFixtures.ts"
+    },
     "./state/thread-requests": {
       "types": "./src/state/threadRequests.ts",
       "default": "./src/state/threadRequests.ts"

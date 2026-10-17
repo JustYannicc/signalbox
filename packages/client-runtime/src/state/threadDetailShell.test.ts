@@ -2,8 +2,8 @@ import { EnvironmentId } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import { describe, expect, it } from "vite-plus/test";
 
-import { v2Projection, v2Now } from "./orchestrationV2TestFixtures.ts";
-import { threadDetailToShell } from "./threadDetailShell.ts";
+import { v2Projection, v2Now } from "@t3tools/client-runtime/testing/orchestration-v2";
+import { threadDetailToShell } from "@t3tools/client-runtime/state/thread-detail-shell";
 
 describe("threadDetailToShell", () => {
   it("preserves archived state when presenting a detail projection as a shell", () => {

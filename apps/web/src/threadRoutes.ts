@@ -59,6 +59,7 @@ export function resolveThreadRouteRenderState(input: {
   return "loading";
 }
 
+// signalbox: archived deep links need detail without an active-shell row.
 export function resolveThreadRouteDetailRef(
   target: ThreadRouteTarget | null,
   input: { serverThreadExists: boolean; pendingDraftThreadExists: boolean },

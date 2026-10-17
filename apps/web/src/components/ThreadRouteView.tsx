@@ -82,6 +82,7 @@ export function ThreadRouteView({ target }: { target: ThreadRouteTarget }) {
   const draftThread = useComposerDraftStore((store) =>
     serverThreadRef ? store.getDraftThreadByRef(serverThreadRef) : null,
   );
+  // signalbox: archived threads are absent from the active shell, so resolve their detail.
   const routeDetailRef = resolveThreadRouteDetailRef(target, {
     serverThreadExists: serverThreadShell !== null,
     pendingDraftThreadExists: draftThread !== null,

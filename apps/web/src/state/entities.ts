@@ -136,6 +136,7 @@ export function useThreadStatus(ref: ScopedThreadRef | null): EnvironmentThreadS
   );
 }
 
+// signalbox: detail-only archived routes must expose failed loads for retry.
 export function useThreadError(ref: ScopedThreadRef | null): string | null {
   return useAtomValue(
     ref === null ? EMPTY_THREAD_ERROR_ATOM : environmentThreadDetails.errorAtom(ref),
