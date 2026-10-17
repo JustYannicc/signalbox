@@ -57,11 +57,22 @@ jobs:
 
       - name: Check module boundaries
         env:
-          BOUNDARIES_BASE: ${{ github.event.pull_request.base.sha || github.event.before || 'origin/main' }}
+          EVENT_NAME: ${{ github.event_name }}
+          PR_BASE_REF: ${{ github.event.pull_request.base.ref }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          BEFORE_SHA: ${{ github.event.before }}
         run: |
           git fetch --no-tags https://github.com/pingdotgg/t3code.git main:refs/remotes/upstream/main
+          case "$EVENT_NAME" in
+            pull_request)
+              git fetch --no-tags origin "+refs/heads/$PR_BASE_REF:refs/remotes/origin/$PR_BASE_REF"
+              set -- --base "refs/remotes/origin/$PR_BASE_REF" --head "$PR_HEAD_SHA"
+              ;;
+            push) set -- --base "$BEFORE_SHA" ;;
+            *) set -- --base origin/main ;;
+          esac
           node --test scripts/boundaries/tests.mjs
-          vp run lint:boundaries --base "$BOUNDARIES_BASE"
+          vp run lint:boundaries "$@"
 
       - name: Check unused code
         run: vp run knip:check
@@ -311,11 +322,9 @@ jobs:
       - name: Exercise release-only workflow steps
         run: node scripts/release-smoke.ts
 
-  # Reports, as warnings, the conflicts a PR adds with upstream T3 Code: files
-  # that conflict for the PR head but not for its base. Upstream doesn't
-  # constrain design (AGENTS.md), so they never fail the PR; they are the next
-  # sync's cost. A PR that merges upstream fails when it drops a `signalbox:`
-  # hook line.
+  # Warns about conflicts the PR's merge into its current base adds with upstream.
+  # Upstream conflicts are the next sync's cost, not a gate on Signalbox changes.
+  # A PR that merges upstream still fails if it drops a `signalbox:` hook line.
   upstream_merge:
     name: Upstream Merge
     runs-on: ubuntu-latest
@@ -336,6 +345,12 @@ jobs:
       - name: Fetch upstream
         run: git fetch --no-tags https://github.com/pingdotgg/t3code.git main:refs/remotes/upstream/main
 
+      - name: Fetch current PR base
+        if: github.event_name == 'pull_request'
+        env:
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
+        run: git fetch --no-tags --filter=blob:none origin "+refs/heads/$BASE_REF:refs/remotes/origin/$BASE_REF"
+
       - name: Setup Vite+
         uses: voidzero-dev/setup-vp@v1
         with:
@@ -345,11 +360,11 @@ jobs:
       - name: Check merge with upstream
         env:
           EVENT_NAME: ${{ github.event_name }}
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
           case "$EVENT_NAME" in
-            pull_request) set -- --base "$BASE_SHA" --head "$HEAD_SHA" --report ;;
+            pull_request) set -- --base "refs/remotes/origin/$BASE_REF" --head "$HEAD_SHA" --report ;;
             push) set -- --base HEAD --report ;;
             *) set -- --base origin/main ;;
           esac
@@ -359,9 +374,9 @@ jobs:
         id: hooks
         if: github.event_name == 'pull_request'
         env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-        run: node scripts/upstream-sync/check-hooks.ts --base "$BASE_SHA" --head "$HEAD_SHA"
+        run: node scripts/upstream-sync/check-hooks.ts --base "refs/remotes/origin/$BASE_REF" --head "$HEAD_SHA"
 
   # Passes only on a PR that merges upstream T3 Code with its Upstream Merge
   # job green, hooks included. The signalbox folder's Merge gate trusts it to
