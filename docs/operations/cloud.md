@@ -721,9 +721,17 @@ Where they go depends on the deploy environment's secrets (`cloud-preview`
 and `cloud-production`), passed through `alchemy.run.ts`. Each is optional:
 
 - `SENTRY_DSN`: every event as a Sentry log, every error event as a Sentry
-  issue, and both Workers' own traces through a Cloudflare observability
-  destination to Sentry's OTLP endpoint (all of a preview's requests, a tenth
-  of production's).
+  issue, and both Workers' own traces through an allowlist-filtering Worker
+  before Sentry's OTLP endpoint (all of a preview's requests, a tenth of
+  production's). Native exports must never point directly at Sentry: they
+  include SQL statements, full URLs and storage keys outside evlog's redactor.
+  Unfiltered trace persistence in Cloudflare is disabled. Each stage has its
+  own destination and receiver at `traces-<app-origin>/v1/traces`, accepting
+  OTLP JSON, plain or gzip, with bearer auth using the DSN's public ingest
+  key. Cloud intake uses the `TRACE_EXPORT` service binding and
+  `TRACE_EXPORT_TOKEN` with that same protocol. The receiver keeps trace IDs,
+  approved enums, counts and timings; unknown fields, events and content
+  are dropped. It has no tracing of its own, preventing export loops.
 - `POSTHOG_API_KEY` with the `POSTHOG_HOST` variable, both required (no
   default host): every event as a PostHog log. Both this drain and usage
   analytics also require `SIGNALBOX_POSTHOG_ENABLED=true`. Leave that switch
@@ -731,8 +739,7 @@ and `cloud-production`), passed through `alchemy.run.ts`. Each is optional:
   Credentials alone never enable PostHog.
 
 After each deploy, CI sends one `release` event naming the stage and commit
-(`apps/cloud/infra/release-event.ts`). Without either key the events still go
-to Workers Logs.
+(`apps/cloud/infra/release-event.ts`).
 
 ### Usage analytics
 

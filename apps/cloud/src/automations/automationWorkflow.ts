@@ -12,6 +12,7 @@ import {
 import { exports, WorkerEntrypoint } from "cloudflare:workers";
 import { log } from "evlog";
 
+import { drainsSettled } from "../observability/evlogWorkers.ts";
 import { userObjectStub, type UserObjectNamespace } from "../user/UserDirectory.ts";
 import { COMPATIBILITY_DATE } from "../../infra/stage.ts";
 import { hostOver } from "./CloudAutomations.ts";
@@ -60,7 +61,7 @@ const hostFor = (props: RunMetadata) =>
   ).AutomationHost({ props });
 
 export const AutomationWorkflow = createDynamicWorkflowEntrypoint<AutomationWorkflowEnv>(
-  ({ env, metadata }) => {
+  ({ env, metadata, ctx }) => {
     if (!isMetadata(metadata)) throw new Error("The run's instance has no automation metadata.");
     if (env.LOADER === undefined) throw new Error("This cloud has no Worker Loader binding.");
     const { userId, automationId, version } = metadata;
@@ -72,6 +73,7 @@ export const AutomationWorkflow = createDynamicWorkflowEntrypoint<AutomationWork
         person: { id: userId },
         automation: { id: automationId, version, workerId },
       });
+      ctx.waitUntil(drainsSettled());
       return {
         compatibilityDate: COMPATIBILITY_DATE,
         mainModule: RUNTIME_MAIN,

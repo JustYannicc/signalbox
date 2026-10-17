@@ -20,6 +20,24 @@ while true; do
 done
 
 failed=0
+trace_preview_numbers=''
+page=1
+while true; do
+  if ! result="$(curl --fail --silent --show-error --get \
+    --header "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+    --data-urlencode 'per_page=1000' \
+    --data-urlencode "page=$page" \
+    "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/workers/observability/destinations")"; then
+    echo "::error::Could not list preview trace destinations."
+    failed=1
+    break
+  fi
+  trace_preview_numbers+="$(jq -r '.result[]?.name | try capture("^signalbox-cloud-pr-(?<number>[1-9][0-9]*)-sentry-traces$").number catch empty' \
+    <<< "$result")"$'\n'
+  total_pages="$(jq -r '.result_info.total_pages // 1' <<< "$result")"
+  ((page >= total_pages)) && break
+  ((page += 1))
+done
 containers="$(apps/cloud/node_modules/.bin/wrangler containers list --json)"
 # Without production's list, Cloudflare resources still get swept.
 if ! assets="$(bash .github/scripts/call-preview-cleanup.sh list)"; then
@@ -44,7 +62,8 @@ else
 fi
 
 candidate_numbers="$(
-  sed -nE 's/^signalbox-(cloud|model-gateway)-pr-([1-9][0-9]*)$/\2/p' <<< "$worker_names"
+  sed -nE 's/^signalbox-(cloud|model-gateway)-pr-([1-9][0-9]*)(-traces)?$/\2/p' <<< "$worker_names"
+  printf '%s\n' "$trace_preview_numbers"
   printf '%s\n' "$image_numbers"
   jq -r '.[]?.name | try capture("^signalbox-cloud-pr-(?<number>[1-9][0-9]*)-(pools|threads)$").number catch empty' \
     <<< "$containers"

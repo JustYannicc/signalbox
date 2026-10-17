@@ -5,8 +5,9 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as TestClock from "effect/testing/TestClock";
 
-import { FINALIZE_GRACE_MS, TurnReports } from "../thread/diagnostics/TurnReports.ts";
 import {
+  FINALIZE_GRACE_MS,
+  TurnReports,
   claude,
   connect,
   freshDatabase,
@@ -18,7 +19,7 @@ import {
   threadId,
   turnReport,
   withObject,
-} from "../thread/runner/runnerTestKit.ts";
+} from "../thread/testing.ts";
 import * as Evlog from "./Evlog.ts";
 
 /**

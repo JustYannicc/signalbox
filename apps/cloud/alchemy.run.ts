@@ -18,6 +18,7 @@ import * as Config from "effect/Config";
 import * as Effect from "effect/Effect";
 import * as Redacted from "effect/Redacted";
 
+import { nativeTraceExport } from "./infra/nativeTraceExport.ts";
 import {
   AUTOMATION_BINDINGS as AUTOMATION,
   COMPATIBILITY_DATE,
@@ -131,27 +132,6 @@ function telemetryEnv(stage: string) {
   });
 }
 
-/**
- * Sentry's OTLP traces endpoint for the project a DSN names, where Workers
- * export their own traces (https://docs.sentry.io/product/drains/cloudflare/).
- * Null without a DSN.
- */
-const sentryTraces = (dsn: Redacted.Redacted<string>) => {
-  const value = Redacted.value(dsn).trim();
-  if (value === "") return null;
-  const url = new URL(value);
-  // `/<project>`, or `/<path>/<project>` for a Sentry served under a path.
-  const segments = url.pathname.split("/").filter((segment) => segment !== "");
-  const project = segments.pop();
-  if (project === undefined || url.username === "") throw new Error("SENTRY_DSN isn't a DSN.");
-  const base = segments.map((segment) => `/${segment}`).join("");
-  return {
-    url: `${url.protocol}//${url.host}${base}/api/${project}/integration/otlp/v1/traces`,
-    // The DSN's public key, which only lets one send to the project.
-    headers: { "x-sentry-auth": `sentry sentry_key=${url.username}` },
-  };
-};
-
 /** Vars and secrets from CI's environment, next to the stage's own vars. */
 function workerEnv(target: CloudStage) {
   return Effect.gen(function* () {
@@ -205,30 +185,10 @@ function deploy(
   telemetry: Effect.Success<ReturnType<typeof telemetryEnv>>,
 ) {
   return Effect.gen(function* () {
-    // Both Workers' own traces, exported to Sentry. One destination for
-    // production and one shared by every preview (each from its environment's
-    // DSN), kept like the preview wildcard: every stage declares it, none deletes it.
-    const traces = sentryTraces(telemetry.SENTRY_DSN);
-    const tracesDestination =
-      traces === null
-        ? null
-        : yield* Cloudflare.Workers.ObservabilityDestination("SentryTraces", {
-            name: target.production ? "signalbox-sentry-traces" : "signalbox-preview-sentry-traces",
-            ...traces,
-            logpushDataset: "opentelemetry-traces",
-            // Sentry may answer an empty probe with an error; real exports work regardless.
-            skipPreflightCheck: true,
-          }).pipe(Alchemy.RemovalPolicy.retain());
+    const traceExport = yield* nativeTraceExport(target, telemetry);
     const observability = {
       ...workerObservability,
-      ...(tracesDestination !== null && {
-        traces: {
-          enabled: true,
-          destinations: [tracesDestination.name],
-          // Every preview request; a tenth of production's.
-          headSamplingRate: target.production ? 0.1 : 1,
-        },
-      }),
+      ...(traceExport !== null && { traces: traceExport.traces }),
     };
 
     // The web app, built by CI before the deploy. Same origin as the API.
@@ -276,6 +236,10 @@ function deploy(
         CLIENT_TRACE_LIMITER: Cloudflare.Workers.RateLimit("ClientTraceLimiter", {
           namespaceId: 866,
           simple: { limit: 300, period: 60 },
+        }),
+        ...(traceExport !== null && {
+          TRACE_EXPORT: traceExport.worker,
+          TRACE_EXPORT_TOKEN: traceExport.token,
         }),
         AUTOMATION_HOOK_ORIGIN: `https://${target.cloudDomain}`,
         // Binding and class names are the Durable Objects' identity.

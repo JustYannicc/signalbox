@@ -3,6 +3,18 @@ import { describe, expect, it } from "@effect/vitest";
 import { REDACTED, redactContent } from "./content.ts";
 
 describe("redactContent", () => {
+  it("keeps ordinary request paths", () => {
+    const event = { path: "/api/auth/session", method: "GET", status: 200 };
+    redactContent(event);
+    expect(event).toEqual({ path: "/api/auth/session", method: "GET", status: 200 });
+  });
+
+  it("drops an undecodable path without losing request status", () => {
+    const event: Record<string, unknown> = { path: "/api/%ZZ/hooks/canary", status: 400 };
+    redactContent(event);
+    expect(event).toEqual({ status: 400, redactionFailed: true });
+  });
+
   it("replaces text under content-shaped keys at any depth and keeps their numbers", () => {
     const event = {
       action: "turn",
@@ -25,6 +37,40 @@ describe("redactContent", () => {
       },
       requestLogs: [{ level: "info", message: REDACTED, body: REDACTED }],
     });
+  });
+
+  it.each([
+    "code",
+    "state",
+    "access_token",
+    "refresh_token",
+    "id_token",
+    "token",
+    "ticket",
+    "api_key",
+    "client_secret",
+  ])("redacts %s and URL fields before any drain sees them", (key) => {
+    const event = {
+      action: "request",
+      state: "ready",
+      code: "redirect",
+      request: {
+        url: `https://example.com/oauth?${key}=canary-credential`,
+        query_string: `${key}=canary-credential`,
+        status: 302,
+      },
+      attributes: {
+        "url.full": `https://example.com/?${key}=canary-credential`,
+        "url.query": `${key}=canary-credential`,
+        "http.url": `https://example.com/?${key}=canary-credential`,
+      },
+    };
+    redactContent(event);
+    expect(JSON.stringify(event)).not.toContain("canary");
+    expect(event.request.status).toBe(302);
+    expect(event.state).toBe("ready");
+    expect(event.code).toBe("redirect");
+    expect(event.attributes["url.query"]).toBe(REDACTED);
   });
 
   it("handles cycles", () => {

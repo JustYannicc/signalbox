@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
-import { settingsFromEnv } from "../thread/diagnostics/CloudAnalytics.ts";
+import { settingsFromEnv } from "../thread/testing.ts";
 
 afterEach(() => {
   vi.unstubAllEnvs();

@@ -67,6 +67,7 @@ export default defineWorkerFetch<ModelGatewayEnv>(async (request, env, ctx, log)
       } = record;
       log.set({ ...fieldsOf(record), modelGateway: rest });
       log.emit({ status: record.status });
+      ctx.waitUntil(Evlog.drainsSettled());
       // In the background, so a slow thread never holds the response up. Only a
       // granted request is for a turn; a denied one names whatever thread its token claims.
       // A key counts what its pool served.
@@ -77,6 +78,9 @@ export default defineWorkerFetch<ModelGatewayEnv>(async (request, env, ctx, log)
     },
   });
   // Turned away before the token was checked: a wrong path or no token.
-  if (!checked) log.emit({ status: response.status, route: "model" });
+  if (!checked) {
+    log.emit({ status: response.status, route: "model" });
+    ctx.waitUntil(Evlog.drainsSettled());
+  }
   return response;
 }) satisfies ExportedHandler<ModelGatewayEnv>;
