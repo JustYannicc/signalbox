@@ -89,7 +89,7 @@ function reportBlocked(summary: string, details: string, upstreamSha: string) {
     "",
     details,
     "",
-    `Upstream has ${upstreamRange(upstreamSha)} since \`main\` last merged it. Weigh the conflicts against what those commits bring to code we still share ([merge or port](${RUNBOOK_URL}#merge-or-port)). Either merge it by hand on a branch off \`main\` following [the runbook](${RUNBOOK_URL}) and merge that PR with a merge commit, or port the commits worth having. The next sync closes this issue once \`main\` merges cleanly.`,
+    `Merge it by hand on a branch off \`main\` following [the runbook](${RUNBOOK_URL}), open a PR, and merge it with a merge commit. The next sync closes this issue once \`main\` merges cleanly.`,
     "",
     `Last checked by ${runLink()}.`,
   ].join("\n");
@@ -218,7 +218,11 @@ async function main() {
     console.log(`Merge conflicts in ${conflicts.length} file(s):\n${conflicts.join("\n")}`);
     reportBlocked(
       `merging it into \`main\` conflicts in ${conflicts.length} file(s).`,
-      conflicts.map((file) => `- \`${file}\``).join("\n"),
+      [
+        ...conflicts.map((file) => `- \`${file}\``),
+        "",
+        `Upstream has ${upstreamRange(upstreamSha)} since \`main\` last merged it. Weigh these conflicts against what those commits bring to code we still share ([merge or port](${RUNBOOK_URL}#merge-or-port)): merge by hand as below, or port only the commits worth having.`,
+      ].join("\n"),
       upstreamSha,
     );
     return;

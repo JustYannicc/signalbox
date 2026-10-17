@@ -27,8 +27,9 @@ than skipping syncs quietly.
 ## What renames what
 
 Internal names such as `@t3tools/*` packages, `T3CODE_*` env vars, symbol and file names, lint rule
-ids and the `t3.json` format are still upstream's. Rename one only as part of a real change. Upstream
-code arriving in a later sync still uses the old name, so extend the codemod in the same PR. Protocol
+ids and the `t3.json` format are still upstream's. Rename one only as part of a real change. Where code
+we still merge from upstream uses the old name, extend the codemod in the same PR so syncs keep
+renaming it. Protocol
 paths such as `/.well-known/t3/environment` and the `t3/<hex>` worktree branch format are wire
 contracts with other servers and clients, so they keep upstream's names.
 
@@ -53,9 +54,9 @@ upstream's history and turns the next sync into conflicts. The workflow force-pu
 `upstream-sync` on every clean run, so never push your own work to that branch.
 
 When the merge conflicts, or GitHub refuses the push, the workflow opens or updates one issue
-labelled `upstream-sync-conflict`. It lists the conflicting files next to the number of upstream
-commits and a link to their diff, which is what you need to decide between merging and porting
-above. The next clean sync closes the issue.
+labelled `upstream-sync-conflict`. For a conflict, it lists the conflicting files next to the number
+of upstream commits and a link to their diff, which is what you need to decide between merging and
+porting above. The next clean sync closes the issue.
 
 Every PR also runs the Upstream Merge job in Signalbox CI. It reports the files a PR makes conflict
 with `upstream/main`, as warnings that never fail the PR: they are the cost the next sync pays. On

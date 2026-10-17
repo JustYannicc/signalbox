@@ -80,7 +80,7 @@ Staying merge-compatible with T3 Code is not a goal. We're rebuilding the backen
 
 - Design for Signalbox. Restructure, replace or delete upstream code wherever that makes the better system. A conflict with upstream is a cost the next sync pays, never a reason to keep the worse design.
 - Syncs merge upstream into `main` while they stay cheap; never rebase shared history. Where conflicts cost more than the sync brings, port the upstream changes we want instead. [Upstream sync](docs/operations/upstream-sync.md) covers how to decide.
-- Rename internal names (`@t3tools/*`, `T3CODE_*`, `t3.json`) only as part of a real change, never in a rename-only sweep. Upstream code arriving in a sync still uses the old name, so extend the rebrand codemod in the same PR.
+- Rename internal names (`@t3tools/*`, `T3CODE_*`, `t3.json`) only as part of a real change, never in a rename-only sweep. Where code we still merge from upstream uses the old name, extend the rebrand codemod in the same PR so syncs keep renaming it.
 - Where fork code sits in a file we still merge from upstream, mark it `// signalbox: <why>`. Signalbox CI fails a sync that drops a marked line.
 - When upstream ships a workflow-shaped feature, adopt the primitive it implies, not the feature itself (principle 8), and make the primitive available to automations and agents.
 - Upstream PRs are welcome for generic fixes, with a demo. Ship ours first; never wait on or design around one.
