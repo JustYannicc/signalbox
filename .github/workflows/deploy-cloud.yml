@@ -38,6 +38,7 @@ on:
       - packages/automation-compiler/**
       - .github/workflows/runner-image.yml
       - pnpm-lock.yaml
+      - infra/boat/**
       - patches/alchemy@*.patch
       - .github/workflows/deploy-cloud.yml
       # Production's cleanup token is derived by this script. The other cleanup
@@ -53,6 +54,11 @@ on:
   # Redeploys main, e.g. after rotating a secret.
   workflow_dispatch:
     inputs:
+      inspect_boat:
+        description: "Read Boat limits and static-resource metadata without deploying"
+        required: false
+        default: false
+        type: boolean
       dry_run:
         description: "Deploy nothing: decide whether this ref changes the Runner (against main) and build its image without publishing"
         required: false
@@ -71,9 +77,25 @@ env:
   ALCHEMY_TELEMETRY_DISABLED: "1"
 
 jobs:
+  inspect_boat:
+    name: Inspect Boat infrastructure
+    if: github.event_name == 'workflow_dispatch' && inputs.inspect_boat
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    environment: cloud-preview
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version-file: package.json
+      - name: Read limits and static resources
+        run: node infra/boat/scripts/inventory.mjs --json
+        env:
+          BOAT_API_KEY: ${{ secrets.BOAT_API_KEY }}
+
   deploy_production:
     name: Deploy production cloud
-    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && !inputs.dry_run
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && !inputs.dry_run && !inputs.inspect_boat
     runs-on: ubuntu-latest
     timeout-minutes: 30
     concurrency:
@@ -177,7 +199,7 @@ jobs:
   runner_changes:
     name: Runner changes
     if: >-
-      github.event_name != 'pull_request' ||
+      (github.event_name != 'pull_request' && !inputs.inspect_boat) ||
       (github.event.action != 'closed' &&
       github.event.pull_request.user.login == 'JustYannicc' &&
       github.event.pull_request.head.repo.full_name == github.repository)
