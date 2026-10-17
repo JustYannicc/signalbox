@@ -165,8 +165,8 @@ describe("ThreadRunner task lifecycle", () => {
           });
           expect((yield* runner.work).needsUpkeep).toBe(true);
 
-          // Unsaved work keeps the machine: it is asked to drain again, not released.
-          yield* TestClock.adjust(1_000);
+          // Unsaved work keeps the machine: after the drain interval it is asked again, not released.
+          yield* TestClock.adjust(DRAIN_TIMEOUT_MS);
           const retry = yield* runner.reconcile;
           expect(retry).toMatchObject({ release: null, stop: false });
           expect(retry.drain?.id).toBeGreaterThan(firstId);
