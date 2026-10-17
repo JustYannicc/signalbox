@@ -12,6 +12,7 @@ import {
   ProviderDriverKind,
   type ProviderInstanceConfigMap,
   ProviderInstanceId,
+  type ServerProvider,
 } from "@t3tools/contracts";
 import * as ProviderLatestVersions from "@t3tools/provider-core/server/ProviderLatestVersions";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
@@ -23,7 +24,9 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
+import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
 import { HttpClient, HttpClientResponse } from "effect/http";
 
 import * as BackgroundPolicy from "../background/BackgroundPolicy.ts";
@@ -438,11 +441,18 @@ describe("ProviderInstanceRegistry — multi-instance codex slice", () => {
     }).pipe(Effect.provide(layerTest)),
   );
 
-  it.effect("recovers Claude capabilities after one failed probe", () =>
+  it.effect("scopes Claude's one-probe fallback to the logged-in organization", () =>
     Effect.gen(function* () {
       if (yield* HostProcess.isWindows) return;
 
       const fixtures = yield* makeTildeProviderFixtures();
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const accountConfigPath = path.join(fixtures.claudeHomePath, ".claude.json");
+      yield* fs.writeFileString(
+        accountConfigPath,
+        JSON.stringify({ oauthAccount: { organizationUuid: "org-a" } }),
+      );
       const claudeId = ProviderInstanceId.make("claude_probe_recovery");
       let probeCount = 0;
       let successfulProbeCount = 0;
@@ -463,7 +473,8 @@ describe("ProviderInstanceRegistry — multi-instance codex slice", () => {
                   },
                 ],
                 account: {
-                  email: "test@example.com",
+                  email:
+                    successfulProbeCount === 1 ? "account-a@example.com" : "account-b@example.com",
                   subscriptionType: "pro",
                   tokenSource: "oauth",
                 },
@@ -499,25 +510,84 @@ describe("ProviderInstanceRegistry — multi-instance codex slice", () => {
       const first = yield* claude!.snapshot.refresh;
       expect(first).toMatchObject({
         status: "ready",
-        auth: { status: "authenticated", email: "test@example.com" },
+        auth: { status: "authenticated", email: "account-a@example.com", workspaceId: "org-a" },
         slashCommands: expect.arrayContaining([expect.objectContaining({ name: "last-good" })]),
       });
       expect(first.usageLimits?.unavailable).toBeUndefined();
       expect(probeCount).toBe(1);
 
+      yield* TestClock.adjust("1 second");
+      const emittedSnapshots = yield* Ref.make<ServerProvider[]>([]);
+      yield* claude!.snapshot.streamChanges.pipe(
+        Stream.runForEach((snapshot) =>
+          Ref.update(emittedSnapshots, (previous) => [...previous, snapshot]),
+        ),
+        Effect.forkScoped,
+      );
+      yield* Effect.yieldNow;
+      yield* Ref.set(emittedSnapshots, []);
+
+      yield* fs.writeFileString(
+        accountConfigPath,
+        JSON.stringify({ oauthAccount: { organizationUuid: "org-b" } }),
+      );
       yield* claude!.invalidateCaches ?? Effect.void;
       failProbe = true;
-      const afterFailure = yield* claude!.snapshot.refresh;
+      const accountChangedFailure = yield* claude!.snapshot.refresh;
 
-      expect(afterFailure).toMatchObject({
-        status: "ready",
-        auth: { status: "authenticated", email: "test@example.com" },
-        slashCommands: expect.arrayContaining([expect.objectContaining({ name: "last-good" })]),
+      expect(accountChangedFailure).toMatchObject({
+        status: "warning",
+        auth: { status: "unknown" },
+        message: "Claude Agent CLI failed while checking account status.",
       });
-      expect(afterFailure.usageLimits?.checkedAt).toBe(first.usageLimits?.checkedAt);
-      expect(afterFailure.usageLimits?.windows).toEqual(first.usageLimits?.windows);
+      expect(accountChangedFailure.checkedAt).not.toBe(first.checkedAt);
+      expect(accountChangedFailure.usageLimits).toBeUndefined();
+      expect(accountChangedFailure.slashCommands).not.toEqual(
+        expect.arrayContaining([expect.objectContaining({ name: "last-good" })]),
+      );
+      const switchedSnapshots = (yield* Ref.get(emittedSnapshots)).filter(
+        (snapshot) => snapshot.checkedAt !== first.checkedAt,
+      );
+      expect(switchedSnapshots).not.toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            auth: expect.objectContaining({ email: "account-a@example.com" }),
+          }),
+        ]),
+      );
+      expect(switchedSnapshots).not.toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            slashCommands: expect.arrayContaining([expect.objectContaining({ name: "last-good" })]),
+          }),
+        ]),
+      );
       const failedProbeCount = probeCount;
-      expect(failedProbeCount).toBe(2);
+      expect(failedProbeCount).toBeGreaterThan(1);
+
+      failProbe = false;
+      const recovered = yield* claude!.snapshot.refresh;
+      expect(recovered).toMatchObject({
+        status: "ready",
+        auth: { status: "authenticated", email: "account-b@example.com", workspaceId: "org-b" },
+        slashCommands: expect.arrayContaining([expect.objectContaining({ name: "recovered" })]),
+      });
+      expect(recovered.usageLimits?.unavailable).toBeUndefined();
+      const recoveredProbeCount = probeCount;
+      expect(recoveredProbeCount).toBeGreaterThan(failedProbeCount);
+
+      yield* claude!.invalidateCaches ?? Effect.void;
+      failProbe = true;
+      const sameAccountFailure = yield* claude!.snapshot.refresh;
+      expect(sameAccountFailure).toMatchObject({
+        status: "ready",
+        auth: { status: "authenticated", email: "account-b@example.com", workspaceId: "org-b" },
+        slashCommands: expect.arrayContaining([expect.objectContaining({ name: "recovered" })]),
+      });
+      expect(sameAccountFailure.usageLimits?.checkedAt).toBe(recovered.usageLimits?.checkedAt);
+      expect(sameAccountFailure.usageLimits?.windows).toEqual(recovered.usageLimits?.windows);
+      const sameAccountFailureProbeCount = probeCount;
+      expect(sameAccountFailureProbeCount).toBeGreaterThan(recoveredProbeCount);
 
       const repeatedFailure = yield* claude!.snapshot.refresh;
       expect(repeatedFailure).toMatchObject({
@@ -525,17 +595,10 @@ describe("ProviderInstanceRegistry — multi-instance codex slice", () => {
         auth: { status: "unknown" },
         message: "Claude Agent CLI failed while checking account status.",
       });
-      expect(probeCount).toBe(3);
-
-      failProbe = false;
-      const recovered = yield* claude!.snapshot.refresh;
-      expect(recovered).toMatchObject({
-        status: "ready",
-        auth: { status: "authenticated", email: "test@example.com" },
-        slashCommands: expect.arrayContaining([expect.objectContaining({ name: "recovered" })]),
-      });
-      expect(recovered.usageLimits?.unavailable).toBeUndefined();
-      expect(probeCount).toBe(failedProbeCount + 2);
+      expect(repeatedFailure.slashCommands).not.toEqual(
+        expect.arrayContaining([expect.objectContaining({ name: "recovered" })]),
+      );
+      expect(probeCount).toBeGreaterThan(sameAccountFailureProbeCount);
     }).pipe(Effect.provide(layerTest)),
   );
 

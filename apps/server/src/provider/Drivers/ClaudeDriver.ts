@@ -216,10 +216,16 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
                 Effect.flatMap((capabilities) =>
                   capabilities === undefined
                     ? Effect.fail(error)
-                    : Effect.succeed({
-                        _tag: "fallback" as const,
-                        capabilities: withoutUsage(capabilities),
-                      }),
+                    : ClaudeResetCredits.readClaudeOrganizationId(accountConfigPath).pipe(
+                        Effect.flatMap((workspaceId) =>
+                          workspaceId === capabilities.workspaceId
+                            ? Effect.succeed({
+                                _tag: "fallback" as const,
+                                capabilities: withoutUsage(capabilities),
+                              })
+                            : Effect.fail(error),
+                        ),
+                      ),
                 ),
               ),
             ),
