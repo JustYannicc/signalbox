@@ -3,6 +3,13 @@ import { SIGNALBOX_PERSON_BROWSER_WS_METHODS } from "@t3tools/contracts/signalbo
 
 /** Signalbox's own RPC groups (`SIGNALBOX_WS_RPCS` in contracts' rpc.ts). */
 export const SIGNALBOX_RPC_REACH = {
+  "signalbox.timezone.get": read({ name: "timezone.get" }),
+  "signalbox.timezone.set": write({
+    name: "timezone.set",
+    summary:
+      "Set your scheduling timezone; null restores device detection. Existing schedules keep their timezone.",
+  }),
+  "signalbox.timezone.report": exempt("client-report", "A client reports its own device timezone."),
   "signalbox.analytics.getSettings": read({ name: "analytics.get" }),
   "signalbox.analytics.setEnabled": write({ name: "analytics.setEnabled" }),
   "signalbox.analytics.recordClientEvent": exempt(

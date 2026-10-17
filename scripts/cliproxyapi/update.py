@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """Update the shared CLIProxyAPI release manifest from a verified release."""
 
 from __future__ import annotations
@@ -8,8 +7,9 @@ import os
 import re
 import sys
 from pathlib import Path
-from typing import Any, NoReturn
+from typing import Any
 
+from .release_policy import fail, matching_holds, read_json, semver
 
 PLATFORMS = {
     "darwin-arm64": "darwin_aarch64",
@@ -20,24 +20,6 @@ PLATFORMS = {
     "win32-x64": "windows_amd64",
 }
 CONTAINER_ARCHIVE = "CLIProxyAPI_{version}_linux_amd64_no-plugin.tar.gz"
-
-
-def fail(message: str) -> NoReturn:
-    raise SystemExit(message)
-
-
-def read_json(path: Path) -> dict[str, Any]:
-    value = json.loads(path.read_text(encoding="utf-8"))
-    if not isinstance(value, dict):
-        fail(f"Expected a JSON object in {path}.")
-    return value
-
-
-def semver(value: Any) -> tuple[int, int, int]:
-    if not isinstance(value, str) or not re.fullmatch(r"\d+\.\d+\.\d+", value):
-        fail(f"Expected a stable x.y.z CLIProxyAPI version, got {value!r}.")
-    major, minor, patch = value.split(".")
-    return int(major), int(minor), int(patch)
 
 
 def read_checksums(path: Path) -> dict[str, str]:
@@ -57,7 +39,9 @@ def read_checksums(path: Path) -> dict[str, str]:
 
 def main() -> None:
     if len(sys.argv) != 5:
-        fail("usage: update.py release.json checksums.txt source-commit shared-release.json")
+        fail(
+            "usage: python3 -m scripts.cliproxyapi.update release.json checksums.txt source-commit shared-release.json"
+        )
 
     release_path, checksums_path = map(Path, sys.argv[1:3])
     source_commit = sys.argv[3].lower()
@@ -75,6 +59,8 @@ def main() -> None:
     previous = manifest.get("version")
     if semver(version) <= semver(previous):
         fail(f"Upstream release {version} is not newer than the pinned {previous}.")
+    if matching_holds(version, manifest):
+        fail(f"CLIProxyAPI release {version} is held; see the manifest's holds.")
 
     release_assets: dict[str, dict[str, Any]] = {}
     for asset in release.get("assets", []):
@@ -108,6 +94,8 @@ def main() -> None:
         "platforms": platforms,
         "container": container,
     }
+    if "holds" in manifest:
+        updated["holds"] = manifest["holds"]
     manifest_path.write_text(f"{json.dumps(updated, indent=2)}\n", encoding="utf-8")
 
     output = f"version={version}\nsource_commit={source_commit}\nprevious_version={previous}\n"

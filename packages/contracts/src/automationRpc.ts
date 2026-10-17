@@ -317,8 +317,8 @@ const ValidateRpc = Rpc.make(AUTOMATION_WS_METHODS.automationsValidate, {
 /**
  * Saves a file in a project, live unless `draft`: new without `automationId`,
  * a new version of that automation with it. A file that doesn't compile is
- * not saved; the result says what to fix. The cloud saves only what the
- * caller compiled (`compiled`).
+ * not saved; the result says what to fix. The cloud keeps the caller's compiled
+ * code and resolves omitted cron zones into the saved scheduling metadata.
  */
 const SaveRpc = Rpc.make(AUTOMATION_WS_METHODS.automationsSave, {
   payload: Schema.Struct({

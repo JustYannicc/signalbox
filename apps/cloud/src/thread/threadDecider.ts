@@ -12,7 +12,7 @@ import {
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 
-import { isHarnessInstance } from "./providerCatalog.ts";
+import { isHarnessInstance } from "../models/ModelRouting.ts";
 import { pullRequestLinkEvents } from "./pullRequests/pullRequestLinks.ts";
 import * as threadLifecycle from "./threadLifecycle.ts";
 import {
