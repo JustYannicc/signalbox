@@ -95,6 +95,122 @@ const withService = <A, E>(
 };
 
 describe("CloudAttachments", () => {
+  const retryInput = {
+    threadId: ThreadId.make("expired-retry-thread"),
+    messageId: MessageId.make("expired-retry-message"),
+    attachments: [
+      {
+        type: "image" as const,
+        name: "shot.png",
+        mimeType: "image/png",
+        sizeBytes: PNG.length,
+        dataUrl: `data:image/png;base64,${Base64.encode(PNG)}`,
+      },
+    ],
+  };
+
+  it.live("recreates expired pending bytes without a delayed sweep deleting the retry", () =>
+    Effect.gen(function* () {
+      const objects = makeMemoryObjects();
+      const seeded = Promise.withResolvers<void>();
+      const seeding = {
+        ...objects,
+        list: async (...args: Parameters<typeof objects.list>) => {
+          const snapshot = await objects.list(...args);
+          seeded.resolve();
+          return snapshot;
+        },
+      };
+      const saved = yield* CloudAttachments.use((service) =>
+        service.persistImages(userId, retryInput),
+      ).pipe(Effect.provide(layerAttachments(seeding)));
+      yield* Effect.promise(() => seeded.promise);
+      const key = attachmentKey("", saved.attachments[0]!.id);
+      // This expired key makes sweep deletion observable even when the retry is fresh.
+      const sentinel = attachmentKey("", "pending-00000000-0000-4000-8000-000000000000");
+      yield* Effect.promise(() => objects.put(sentinel, PNG, { customMetadata: {} }));
+      objects.age(key, 25 * 60 * 60_000);
+      objects.age(sentinel, 25 * 60 * 60_000);
+      const listed = Promise.withResolvers<void>();
+      const release = Promise.withResolvers<void>();
+      const swept = Promise.withResolvers<void>();
+      let writes = 0;
+      const gated = {
+        ...objects,
+        put: (...args: Parameters<typeof objects.put>) => {
+          writes++;
+          return objects.put(...args);
+        },
+        list: async (...args: Parameters<typeof objects.list>) => {
+          const snapshot = await objects.list(...args);
+          listed.resolve();
+          await release.promise;
+          return snapshot;
+        },
+        delete: async (keys: string | string[]) => {
+          await objects.delete(keys);
+          if (keys.includes(sentinel)) {
+            swept.resolve();
+          }
+        },
+      };
+      yield* CloudAttachments.use((service) =>
+        Effect.gen(function* () {
+          const retried = yield* service.persistImages(userId, retryInput);
+          expect(retried).toEqual(saved);
+          yield* Effect.promise(() => listed.promise);
+          release.resolve();
+          yield* Effect.promise(() => swept.promise);
+          const file = yield* service.open({
+            userId,
+            attachmentId: retried.attachments[0]!.id,
+            canSee: () => Effect.succeed(false),
+          });
+          expect({ writes, readable: file !== null }).toEqual({ writes: 1, readable: true });
+          expect(yield* bytesOf(file!.body)).toEqual(PNG);
+          const claimed = yield* service.claim({
+            userId,
+            threadId: retryInput.threadId,
+            commandId: "send-after-expired-retry",
+            attachments: retried.attachments,
+          });
+          expect(claimed.attachments[0]?.id).toMatch(/^expired-retry-thread-/);
+        }).pipe(Effect.ensuring(Effect.sync(() => release.resolve()))),
+      ).pipe(Effect.provide(layerAttachments(gated)));
+    }),
+  );
+
+  it.live("reuses pending bytes near expiry without risking another write", () =>
+    Effect.gen(function* () {
+      const objects = makeMemoryObjects();
+      const saved = yield* CloudAttachments.use((service) =>
+        service.persistImages(userId, retryInput),
+      ).pipe(Effect.provide(layerAttachments(objects)));
+      objects.age(attachmentKey("", saved.attachments[0]!.id), 23 * 60 * 60_000 + 59 * 60_000);
+      let writes = 0;
+      const failing = {
+        ...objects,
+        put: async () => {
+          writes++;
+          throw new Error("test retry write must not happen");
+        },
+      };
+      yield* CloudAttachments.use((service) =>
+        Effect.gen(function* () {
+          expect(yield* service.persistImages(userId, retryInput)).toEqual(saved);
+          expect(writes).toBe(0);
+          const file = yield* service.open({
+            userId,
+            attachmentId: saved.attachments[0]!.id,
+            canSee: () => Effect.succeed(false),
+          });
+          expect(file).not.toBeNull();
+          expect(yield* bytesOf(file!.body)).toEqual(PNG);
+        }),
+      ).pipe(Effect.provide(layerAttachments(failing)));
+    }),
+  );
+
   it.effect("preserves successful pending bytes when a later retry cannot read storage", () => {
     const objects = makeMemoryObjects();
     let reads = 0;

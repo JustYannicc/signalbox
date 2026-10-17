@@ -209,7 +209,7 @@ export const layer = ({ objects, prefix }: AttachmentStorage) =>
     Effect.gen(function* () {
       const tokens = yield* CloudTokens.CloudTokens;
       const crypto = yield* Crypto.Crypto;
-      // Failed writes remove their pending key, so overlapping retries must not write that key.
+      // Failed retries and stale sweep lists must not delete a later successful write.
       const persisting = yield* Semaphore.make(1);
       const uuid = Effect.orDie(crypto.randomUUIDv4());
       const keyOf = (id: string) => attachmentKey(prefix, id);
@@ -238,13 +238,14 @@ export const layer = ({ objects, prefix }: AttachmentStorage) =>
         }
         if (deleted > 0) yield* Effect.logInfo("removed expired attachment uploads", { deleted });
       }).pipe(
+        persisting.withPermits(1),
         Effect.catchTags({
           AttachmentStorageError: (failure) =>
             Effect.logWarning("attachment sweep failed", failure),
         }),
       );
 
-      /** Starts a sweep beside the request when one is due; the upload never waits for it. */
+      /** Schedules a detached sweep when one is due. */
       const sweepWhenDue = Effect.gen(function* () {
         const now = yield* Clock.currentTimeMillis;
         if (now - lastSweep < SWEEP_INTERVAL_MS) return;
@@ -525,7 +526,7 @@ export const layer = ({ objects, prefix }: AttachmentStorage) =>
               const existing = yield* storage("head", () => objects.head(keyOf(id))).pipe(
                 Effect.mapError(unavailable),
               );
-              // A failed retry must not replace or delete bytes already returned to the caller.
+              // Unexpired successes must survive retries even when another write would fail.
               if (existing !== null) {
                 const saved = metaOf(existing);
                 if (
@@ -538,7 +539,15 @@ export const layer = ({ objects, prefix }: AttachmentStorage) =>
                     message: "The stored attachment does not match this image.",
                   });
                 }
-                return pending;
+                if (
+                  (yield* Clock.currentTimeMillis) - existing.uploaded.getTime() <=
+                  PENDING_MAX_AGE_MS
+                ) {
+                  return pending;
+                }
+                yield* storage("delete", () => objects.delete(keyOf(id))).pipe(
+                  Effect.mapError(unavailable),
+                );
               }
               const token = yield* tokens.sign({
                 _tag: "attachment-upload",

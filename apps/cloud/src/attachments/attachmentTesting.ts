@@ -41,7 +41,11 @@ export const makeMemoryObjects = (): AttachmentObjects & {
       const object = objects.get(key);
       return object === undefined
         ? null
-        : { size: object.bytes.length, customMetadata: object.customMetadata };
+        : {
+            size: object.bytes.length,
+            customMetadata: object.customMetadata,
+            uploaded: object.uploaded,
+          };
     },
     delete: async (keys) => {
       for (const key of typeof keys === "string" ? [keys] : keys) objects.delete(key);
