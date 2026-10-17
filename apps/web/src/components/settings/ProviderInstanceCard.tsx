@@ -579,6 +579,7 @@ interface ProviderInstanceCardProps {
   readonly readOnly?: boolean | undefined;
   readonly canWriteSettings?: boolean;
   readonly supportsServerSettingsWrite?: boolean;
+  readonly canWriteModelPreferences?: boolean;
   readonly onUpdate: (nextInstance: ProviderInstanceConfig) => void;
   readonly onDelete?: (() => void) | undefined;
   readonly headerAction?: ReactNode | undefined;
@@ -630,6 +631,7 @@ export function ProviderInstanceCard({
   readOnly = false,
   canWriteSettings = true,
   supportsServerSettingsWrite = true,
+  canWriteModelPreferences = supportsServerSettingsWrite && canWriteSettings,
   onUpdate,
   onDelete,
   headerAction,
@@ -1281,7 +1283,7 @@ export function ProviderInstanceCard({
             </p>
             <ProviderModelsSection
               canManageCustomModels={supportsServerSettingsWrite && !readOnly}
-              canWritePreferences={supportsServerSettingsWrite && canWriteSettings}
+              canWritePreferences={canWriteModelPreferences}
               instanceId={instanceId}
               driverKind={driverKind}
               models={modelsForDisplay}

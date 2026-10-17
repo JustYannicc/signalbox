@@ -43,6 +43,8 @@ import { SettingsSwitchRow } from "./components/SettingsSwitchRow";
 import { SettingsScreen } from "./components/SettingsScreen";
 import { resolveAgentAwarenessPlatformPresentation } from "./SettingsRouteScreen.logic";
 import { useOneEnvironmentCopy } from "../home/useOneEnvironmentCopy"; // signalbox
+import { useShowsEnvironmentUi } from "../../state/environmentCapabilities";
+import { SettingsSignalboxNotificationsRouteScreen } from "./SettingsSignalboxNotificationsRouteScreen";
 
 type NotificationStatus = "checking" | "enabled" | "disabled" | "unsupported";
 type LiveActivityStatus = "checking" | "enabled" | "disabled" | "signed-out" | "linking";
@@ -57,6 +59,8 @@ function useDeviceRegistered(): boolean {
 }
 
 export function SettingsNotificationsRouteScreen() {
+  const showsEnvironmentUi = useShowsEnvironmentUi();
+  if (!showsEnvironmentUi) return <SettingsSignalboxNotificationsRouteScreen />;
   if (!hasCloudPublicConfig()) {
     return (
       <SettingsScreen title="Notifications">

@@ -187,6 +187,9 @@ vi.mock("./settingsLayout", () => ({
   }) => <button {...props} aria-label={`Reset ${label} to default`} />,
 }));
 vi.mock("./ProjectDefaultsSettings", () => ({ ProjectDefaultsSettings: () => null }));
+vi.mock("./SettingsCapability", () => ({
+  SettingsCapability: ({ children }: { children: ReactNode }) => children,
+}));
 vi.mock("./ProjectActionsSettings", () => ({ ProjectActionsSettings: () => null }));
 vi.mock("../ProjectFavicon", () => ({ ProjectFavicon: () => null }));
 vi.mock("../chat/ProviderModelPicker", () => ({ ProviderModelPicker: "model-picker" }));

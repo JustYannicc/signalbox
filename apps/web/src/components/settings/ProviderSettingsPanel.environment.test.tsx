@@ -30,7 +30,7 @@ const commands = vi.hoisted(() => ({
   canWriteSettings: true,
 }));
 
-const capabilities = vi.hoisted(() => ({ serverSettingsWrite: true }));
+const capabilities = vi.hoisted(() => ({ serverSettingsWrite: true, modelSettingsWrite: true }));
 
 const settingsState = vi.hoisted(() => ({
   value: null as UnifiedSettings | null,
@@ -148,6 +148,7 @@ vi.mock("../../state/entities", () => ({
 vi.mock("../../state/environmentCapabilities", () => ({
   useEnvironmentSupports: (_environmentId: EnvironmentId, capability: string) =>
     capability === "serverSettingsWrite" ? capabilities.serverSettingsWrite : true,
+  useEnvironmentCanWriteModelSettings: () => capabilities.modelSettingsWrite,
 }));
 
 import { EnvironmentProviderSettings } from "./ProviderSettingsPanel";
@@ -247,6 +248,7 @@ describe("EnvironmentProviderSettings routing", () => {
     commands.canManageProviders = true;
     commands.canWriteSettings = true;
     capabilities.serverSettingsWrite = true;
+    capabilities.modelSettingsWrite = true;
     commands.refresh.mockReset().mockResolvedValue({ _tag: "Success" });
     commands.updateProvider.mockReset().mockResolvedValue({ _tag: "Success" });
     commands.uninstall.mockReset().mockResolvedValue({ _tag: "Success", value: {} });
@@ -483,6 +485,22 @@ describe("EnvironmentProviderSettings routing", () => {
     expect(visitElements(panel, (element) => element.type === MoveNativeLogins)).toBeNull();
     expect(visitElements(panel, isRefreshButton)).not.toBeNull();
     expect(settingsState.updateSettings).not.toHaveBeenCalled();
+  });
+
+  it("keeps model preferences writable when Cloud advertises their separate capability", async () => {
+    capabilities.serverSettingsWrite = false;
+    atoms.providers = [provider()];
+    const panel = renderPanel({ targetInstanceId: codexId });
+    const card = visitElements(
+      panel,
+      (element) => element.props.instanceId === codexId && element.props.mode === "editor",
+    );
+    expect(card?.props.canWriteModelPreferences).toBe(true);
+    (card?.props.onHiddenModelsChange as (models: string[]) => void)(["pool-model"]);
+    await flushPromises();
+    expect(settingsState.updateSettings).toHaveBeenCalledWith({
+      setModelsHidden: [{ provider: codexId, model: "pool-model", hidden: true }],
+    });
   });
 
   it("keeps pool account setup and provider refresh available in Cloud", () => {

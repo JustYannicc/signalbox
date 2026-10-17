@@ -130,7 +130,11 @@ import {
   resolveRemoteOperateAccess,
   resolveSelectedProviderEnvironmentId,
 } from "./ProviderSettingsPanel.logic";
-import { useEnvironmentSupports, useShowsEnvironmentUi } from "../../state/environmentCapabilities";
+import {
+  useEnvironmentSupports,
+  useShowsEnvironmentUi,
+  useEnvironmentCanWriteModelSettings,
+} from "../../state/environmentCapabilities";
 import { useOneEnvironmentCopy } from "~/state/oneEnvironmentCopy"; // signalbox
 
 function modelListChanges(current: ReadonlyArray<string>, next: ReadonlyArray<string>) {
@@ -565,6 +569,7 @@ export function EnvironmentProviderSettings({
   const settings = useEnvironmentSettings(environmentId);
   const supportsServerSettingsWrite = useEnvironmentSupports(environmentId, "serverSettingsWrite");
   const canWriteSettings = useEnvironmentScope(environmentId, AuthSettingsWriteScope);
+  const canWriteModelSettings = useEnvironmentCanWriteModelSettings(environmentId);
   const canRefreshProviders = useEnvironmentScope(environmentId, AuthOrchestrationReadScope);
   const updateSettings = useUpdateEnvironmentSettings(environmentId);
   const updateModelPreferences = useUpdateEnvironmentModelPreferences(environmentId);
@@ -981,6 +986,7 @@ export function EnvironmentProviderSettings({
           ) : undefined
         }
         canWriteSettings={supportsServerSettingsWrite && canWriteSettings}
+        canWriteModelPreferences={canWriteSettings && canWriteModelSettings && !readOnly}
         setup={
           // signalbox: hub instances add accounts to the account hub.
           mode === "editor" && isHubInstanceConfig(row.instance.config) ? (
@@ -1102,7 +1108,7 @@ export function EnvironmentProviderSettings({
           const models =
             affectedModels ??
             modelListChanges(modelPreferences.hiddenModels, next).map((change) => change.model);
-          if (!supportsServerSettingsWrite || !canWriteSettings) return;
+          if (!canWriteModelSettings || !canWriteSettings || readOnly) return;
           void updateModelPreferences({
             setModelsHidden: models.map((model) => ({
               provider: row.instanceId,
@@ -1112,11 +1118,11 @@ export function EnvironmentProviderSettings({
           });
         }}
         onToggleFavorite={(model) => {
-          if (!supportsServerSettingsWrite || !canWriteSettings) return;
+          if (!canWriteModelSettings || !canWriteSettings || readOnly) return;
           void toggleModelFavorite(row.instanceId, model);
         }}
         onFavoriteModelsChange={(next) => {
-          if (!supportsServerSettingsWrite || !canWriteSettings) return;
+          if (!canWriteModelSettings || !canWriteSettings || readOnly) return;
           void updateModelPreferences({
             setModelFavorites: modelListChanges(favoriteModels, next).map(
               ({ model, selected }) => ({ provider: row.instanceId, model, favorite: selected }),
@@ -1124,7 +1130,7 @@ export function EnvironmentProviderSettings({
           });
         }}
         onModelOrderChange={(modelOrder) => {
-          if (!supportsServerSettingsWrite || !canWriteSettings) return;
+          if (!canWriteModelSettings || !canWriteSettings || readOnly) return;
           void updateModelPreferences({
             setProviderModelOrder: { provider: row.instanceId, modelOrder },
           });

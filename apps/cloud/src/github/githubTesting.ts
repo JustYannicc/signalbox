@@ -4,8 +4,10 @@ import * as NodeChildProcess from "node:child_process";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Redacted from "effect/Redacted";
+import * as Stream from "effect/Stream";
 import { HttpClient, HttpClientResponse } from "effect/http";
 
+import { concatBytes } from "../drive/git/gitObjects.ts";
 import * as GitHub from "./GitHub.ts";
 
 /**
@@ -462,11 +464,16 @@ export const makeFakeGitHub = (options: {
   };
 
   const client = HttpClient.make((request) =>
-    Effect.sync(() => {
+    Effect.gen(function* () {
       const url = new URL(request.url);
       const host = url.origin === WORKOS ? "workos" : url.origin === ENDPOINTS.web ? "web" : "api";
       calls.push(`${request.method} ${host}${url.pathname}`);
-      const body = request.body._tag === "Uint8Array" ? request.body.body : new Uint8Array();
+      const body =
+        request.body._tag === "Uint8Array"
+          ? request.body.body
+          : request.body._tag === "Stream"
+            ? concatBytes(yield* Stream.runCollect(Stream.orDie(request.body.stream)))
+            : new Uint8Array();
       return HttpClientResponse.fromWeb(
         request,
         options.more?.(request.method, url, body) ?? answer(request.method, url, body),
