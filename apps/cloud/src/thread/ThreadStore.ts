@@ -20,6 +20,12 @@ import type { SqlError } from "effect/sql/SqlError";
 
 import * as Migrations from "../storage/migrations.ts";
 import { PreparationState } from "./preparation/preparationState.ts";
+import {
+  migrateCurrentItemExpansion,
+  migrateCurrentItemHistory,
+  backfillCurrentItemState,
+  recordCurrentItemState,
+} from "./currentItemHistory.ts";
 import { migrateDiagnostics } from "./diagnostics/DiagnosticsStore.ts";
 import { migrateBrowsing } from "./browsing/browsingTables.ts";
 import { migratePullRequestPolls } from "./pullRequests/PullRequestPolls.ts";
@@ -316,6 +322,8 @@ const migrations = Migrator.fromRecord({
     const sql = yield* SqlClient.SqlClient;
     yield* sql`CREATE TABLE preparation (id INTEGER PRIMARY KEY CHECK (id = 1), state TEXT NOT NULL)`;
   }),
+  "0012_current_item_history": migrateCurrentItemHistory,
+  "0013_current_item_expansion": migrateCurrentItemExpansion,
 });
 
 /** Applies every migration not recorded yet (`storage/migrations.ts`). Never edit or rename a merged one. */
@@ -491,6 +499,9 @@ const make = Effect.gen(function* () {
       sequence += 1;
       yield* sql`INSERT INTO events (sequence, command_id, format, event)
           VALUES (${sequence}, ${input.command?.id ?? null}, ${EVENT_FORMAT}, ${encodeEvent(event)})`;
+      yield* recordCurrentItemState(sequence, event).pipe(
+        Effect.provideService(SqlClient.SqlClient, sql),
+      );
     }
     if (input.command) {
       yield* sql`INSERT INTO receipts
@@ -590,7 +601,11 @@ const make = Effect.gen(function* () {
   return ThreadStore.of({
     preparation,
     initialized,
-    initialize: Effect.asVoid(migrate.pipe(Effect.provideService(SqlClient.SqlClient, sql))),
+    initialize: migrate.pipe(
+      Effect.andThen(backfillCurrentItemState),
+      Effect.provideService(SqlClient.SqlClient, sql),
+      Effect.asVoid,
+    ),
     owner,
     events,
     receipt,

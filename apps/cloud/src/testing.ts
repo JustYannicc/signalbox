@@ -38,6 +38,7 @@ import type * as DrivePacks from "./drive/DrivePacks.ts";
 import { makeMemoryDrives } from "./drive/driveTesting.ts";
 import * as Platform from "./platform.ts";
 import * as NoteReader from "./notes/NoteReader.ts";
+import * as ModelCompletion from "./models/ModelCompletion.ts";
 import * as UserNotes from "./notes/UserNotes.ts";
 import * as PoolDirectory from "./pool/PoolDirectory.ts";
 import * as PreviewSetup from "./previewSetup/PreviewSetup.ts";
@@ -294,11 +295,12 @@ const makeUserRuntime = (
   kernel: KernelApi | null,
   logins: { readonly kernel: KernelAuth | null; readonly executor: ExecutorLogins | null },
   noteReader: Layer.Layer<NoteReader.NoteReader>,
+  modelCompletion: Layer.Layer<ModelCompletion.ModelCompletion>,
 ) =>
   ManagedRuntime.make(
     // The user's automations, on the same services the object gives them.
     CloudEngine.layer.pipe(
-      Layer.provide(Layer.mergeAll(runner, alarm)),
+      Layer.provide(Layer.mergeAll(runner, alarm, modelCompletion)),
       Layer.provideMerge(
         // The same branches the socket's RPC uses, so the git panel sees what the agent pushed.
         Layer.mergeAll(
@@ -494,6 +496,7 @@ export const makeMemoryCloud = (
       options.kernel ?? null,
       { kernel: options.kernelAuth ?? null, executor: options.executorLogins ?? null },
       options.noteReader ?? NoteReader.layerNone,
+      ModelCompletion.layer((name) => pools.objectFor(name).api),
     );
     const object = { api: makeUserObjectApi((effect) => runtime.runPromise(effect)), runtime };
     users.set(userId, object);

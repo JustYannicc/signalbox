@@ -21,6 +21,10 @@ import {
   HttpServerResponse,
 } from "effect/http";
 
+import * as ClientTraceExport from "./observability/ClientTraceExport.ts";
+import * as ClientTraceLimits from "./observability/ClientTraceLimits.ts";
+import * as ClientTraceIntake from "./observability/ClientTraceIntake.ts";
+import * as ClientTraceRoutes from "./observability/clientTraceRoutes.ts";
 import * as CloudAccounts from "./account/CloudAccounts.ts";
 import * as IdentityProvider from "./account/IdentityProvider.ts";
 import * as TestIdentities from "./testSignIn/TestIdentities.ts";
@@ -93,10 +97,29 @@ export const layerServices = (input: {
   readonly users: UserDirectory.UserObjectNamespace;
   readonly threads: ThreadDirectory.ThreadObjectNamespace;
   readonly localWorkerd: boolean;
+  readonly traceExport?: Pick<Fetcher, "fetch">;
+  readonly traceLimiter?: Pick<RateLimit, "limit">;
   /** The drives bucket and its preview prefix, where attachments live. */
   readonly attachments: AttachmentStorage;
 }) =>
-  CloudAssets.layer.pipe(
+  Layer.merge(CloudAssets.layer, ClientTraceIntake.layer).pipe(
+    Layer.provideMerge(
+      Layer.mergeAll(
+        ClientTraceExport.layer({
+          ...(input.traceExport ? { TRACE_EXPORT: input.traceExport } : {}),
+          ...(input.vars.TRACE_EXPORT_TOKEN
+            ? { TRACE_EXPORT_TOKEN: input.vars.TRACE_EXPORT_TOKEN }
+            : {}),
+          ...(input.vars.T3CODE_TELEMETRY_ENABLED
+            ? { T3CODE_TELEMETRY_ENABLED: input.vars.T3CODE_TELEMETRY_ENABLED }
+            : {}),
+        }),
+        ClientTraceLimits.layer(
+          input.traceLimiter,
+          input.vars.ENVIRONMENT_ID ?? input.vars.SIGNALBOX_STAGE,
+        ),
+      ),
+    ),
     Layer.provideMerge(TestSignIn.layer),
     Layer.provideMerge(Layer.mergeAll(TestIdentities.layer, TestSignInPolicy.layer)),
     Layer.provideMerge(
@@ -134,6 +157,7 @@ type Services = Layer.Success<ReturnType<typeof layerServices>>;
 // Raw account routes resolve services per request, from the context the web
 // handler is built with; the API groups take them when the router is built.
 const routes = Layer.mergeAll(
+  ClientTraceRoutes.layer,
   EnvironmentApi.layer,
   AccountRoutes.layer,
   TestSignInRoutes.layer,
