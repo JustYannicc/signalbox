@@ -44,6 +44,7 @@ export const toSnapshot = (current: FolderState): SignalboxFoldersSnapshot => {
         ...(poolId === undefined ? {} : { poolId }),
         ...(folder.instructions === null ? {} : { instructions: folder.instructions }),
         ...(folder.secrets === null ? {} : { secrets: { environmentId: folder.secrets } }),
+        ...(folder.phase === null ? {} : { phase: folder.phase }),
         ...(githubLend === undefined ? {} : { githubLend }),
       };
     }),

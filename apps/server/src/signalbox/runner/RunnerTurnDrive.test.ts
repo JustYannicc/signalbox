@@ -14,7 +14,6 @@ const finishing = (finishTurn: RunnerDrive["finishTurn"]) =>
     const emitted: Array<RunnerItem> = [];
     yield* finishDriveTurn({
       runId,
-      message: "Turn",
       drive: { finishTurn } as unknown as RunnerDrive,
       emit: (item) => Effect.sync(() => void emitted.push(item)),
       resolve: () => Effect.succeed(false),

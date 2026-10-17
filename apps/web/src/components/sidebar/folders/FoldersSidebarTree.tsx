@@ -70,6 +70,7 @@ import {
 import { openFolderDialog } from "./folderDialogStore";
 import { LevelRow, NewThreadButton } from "./LevelRow";
 import { FolderMenu, OwnerMenu } from "./FolderMenus";
+import { FolderPhaseLabel } from "./FolderPhase";
 import {
   folderNodeKey,
   folderOwnerKey,
@@ -387,6 +388,7 @@ const FolderRow = memo(function FolderRow(props: {
           <span>{folder.name}</span>
         </FolderStatusTooltip>
       }
+      afterName={<FolderPhaseLabel folder={folder} />}
       trailing={
         count > 0 || status?.summary ? <FolderStatusCount count={count} status={status} /> : null
       }

@@ -30,7 +30,7 @@ const poolHarnesses = exempt("Pools run each harness; nothing installs per user.
 
 /** Keys are operation names, or `prefix.*` for every operation under a prefix. */
 export const CLOUD_UNSERVED: Readonly<Record<string, Unserved>> = {
-  "settings.*": gap("#440"),
+  "settings.get": gap("#440"),
   "keybindings.*": gap("#440"),
   "analytics.*": gap("#284"),
 
@@ -113,9 +113,9 @@ export const CLOUD_UNSERVED: Readonly<Record<string, Unserved>> = {
   "server.updateServer": selfDeploying,
   "server.updateServerWithProgress": selfDeploying,
   "storage.*": noHost,
-  "terminal.*": noHost,
-  "terminalEvents.subscribe": noHost,
-  "terminalMetadata.subscribe": noHost,
+  "terminal.*": gap("#744"),
+  "terminalEvents.subscribe": gap("#744"),
+  "terminalMetadata.subscribe": gap("#744"),
   "usage.*": exempt("Pools report usage per account (`pool/poolViews.ts`)."),
   "vcs.createRef": ownBranch,
   "vcs.switchRef": ownBranch,

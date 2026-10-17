@@ -3,15 +3,34 @@ import type { PoolNeed } from "@t3tools/client-runtime/state/sections";
 
 /** The composer's copy for a pool need, given the pool's name once its views list it. */
 export function needsPoolCopy(need: PoolNeed, poolName: string | undefined) {
-  const action = need._tag === "signIn" ? `Sign in to ${poolName ?? "its pool"}` : "Choose a pool";
-  return {
-    action,
-    why:
-      need._tag === "signIn"
-        ? "Nobody is signed in to this folder's pool yet."
-        : "Nothing above this folder has a pool.",
-    placeholder: `${action} to send a message`,
-  };
+  switch (need._tag) {
+    case "noPool":
+      return {
+        action: "Choose a pool",
+        why: "Nothing above this folder has a pool.",
+        placeholder: "Choose a pool to send a message",
+      };
+    case "signIn": {
+      const action = `Sign in to ${poolName ?? "its pool"}`;
+      return {
+        action,
+        why: "Nobody is signed in to this folder's pool yet.",
+        placeholder: `${action} to send a message`,
+      };
+    }
+    case "noModels":
+      return {
+        action: "Open pool settings",
+        why: need.message,
+        placeholder: "No models are available from this pool right now.",
+      };
+    case "unavailable":
+      return {
+        action: "Open pool settings",
+        why: need.message,
+        placeholder: "This pool is unavailable right now.",
+      };
+  }
 }
 
 /**

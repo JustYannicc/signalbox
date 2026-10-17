@@ -26,7 +26,9 @@ import {
 } from "@t3tools/shared/threadPullRequests";
 import * as Effect from "effect/Effect";
 
+import type { UserFolders } from "../user/UserFolders.ts";
 import { acceptCompiled, type CloudCompiler } from "./cloudCompiler.ts";
+import { setFolderPhase } from "./folderPhaseTool.ts";
 
 /**
  * Automation tools an agent calls from its cloud thread's machine, answered
@@ -118,6 +120,7 @@ export const makeCloudTools = (deps: {
   readonly engine: WorkflowEngineShape;
   readonly compiler: CloudCompiler["Service"];
   readonly threads: AutomationThreadsShape;
+  readonly folders: UserFolders["Service"];
 }): Readonly<Record<string, Handler>> => {
   const { engine } = deps;
 
@@ -311,6 +314,11 @@ export const makeCloudTools = (deps: {
           },
           { authorize: withinCaller(caller), builtInDefaults: defaultsOf(caller) },
         );
+      }),
+    set_folder_phase: (caller, input) =>
+      setFolderPhase(deps.folders, input, {
+        threadId: ThreadId.make(caller.id),
+        projectId: caller.projectId,
       }),
   };
 };

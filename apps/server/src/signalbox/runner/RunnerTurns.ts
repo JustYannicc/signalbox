@@ -201,6 +201,21 @@ const failureMessage = (cause: Cause.Cause<unknown>) => {
     .message;
 };
 
+const machineStateCause = Schema.decodeUnknownOption(
+  Schema.Struct({
+    code: Schema.Literals(["ENOTCONN", "EIO", "EROFS", "EACCES", "EPERM", "ENOENT", "ENOSPC"]),
+  }),
+);
+
+const machineStateError = (error: PlatformError.PlatformError) => {
+  // Keep the OS code, without exposing a credential-bearing path or arbitrary error text.
+  const cause = machineStateCause(error.cause);
+  const code = Option.isSome(cause) ? cause.value.code : error.reason._tag;
+  return new RunnerTurnError({
+    message: `Signalbox couldn't write this machine's state (${code === "ENOTCONN" ? "ENOTCONN: filesystem disconnected" : code}).`,
+  });
+};
+
 /** Why a drive couldn't be readied, in words a thread may show: ours, not a file system's. */
 const drivePrepareError = (error: RunnerDriveError) =>
   new RunnerTurnError({
@@ -247,6 +262,8 @@ export const makeRunnerTurns = Effect.fn("makeRunnerTurns")(function* (input: {
   readonly emit: (item: RunnerItem) => Effect.Effect<void>;
   /** Installs or reuses the dependencies in `cwd` before each turn. */
   readonly dependencies?: RunnerDependencies;
+  /** Preview restoration shares the checkout preparation lock with turns. */
+  readonly preparing?: Semaphore.Semaphore;
   /** The thread's drive, checked out in `cwd`. Absent: turns run in a plain directory. */
   readonly openDrive?: (access: DriveAccess) => Effect.Effect<RunnerDrive, never, Scope.Scope>;
   /** Where the harnesses' sessions are kept. Absent: they stay on this machine. */
@@ -383,7 +400,7 @@ export const makeRunnerTurns = Effect.fn("makeRunnerTurns")(function* (input: {
       yield* input.emit({ kind: "machine.outgrown", runId, reason });
     });
   /** One turn readies the working directory at a time, even after a stop left one installing. */
-  const preparing = yield* Semaphore.make(1);
+  const preparing = input.preparing ?? (yield* Semaphore.make(1));
 
   const interruptNow = (turn: Turn) =>
     turn.session === null || turn.providerThread === null || turn.providerTurnId === null
@@ -628,7 +645,6 @@ export const makeRunnerTurns = Effect.fn("makeRunnerTurns")(function* (input: {
       let attempts = 0;
       yield* finishDriveTurn({
         runId,
-        message: state.turn.message.text,
         drive: current,
         emit: input.emit,
         resolve: (prompt) => continueTurn(runId, state, prompt, "merge", ++attempts),
@@ -993,7 +1009,7 @@ export const makeRunnerTurns = Effect.fn("makeRunnerTurns")(function* (input: {
           return { drive, secrets };
         }),
       );
-      yield* input.useModelToken(modelToken);
+      yield* input.useModelToken(modelToken).pipe(Effect.mapError(machineStateError));
       // The harness loads its session as last saved: on a new machine, from the store.
       if (input.sessions !== undefined && sessionAccess !== null) {
         yield* input.sessions.use(sessionAccess);

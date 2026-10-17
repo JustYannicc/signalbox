@@ -23,6 +23,8 @@ import * as Schema from "effect/Schema";
 import type { PullRequestMerges } from "../github/PullRequestMerges.ts";
 import type * as CloudThreadService from "../thread/CloudThreadService.ts";
 import type { Actor } from "../thread/ThreadEngine.ts";
+import type { UserFolders } from "../user/UserFolders.ts";
+import { setFolderPhase } from "./folderPhaseTool.ts";
 
 /**
  * `w.call("…", "signalbox.<tool>")` in the cloud: the Signalbox tools the
@@ -50,6 +52,7 @@ export const makeCloudBuiltinTools = (deps: {
   readonly service: CloudThreadService.CloudThreadService["Service"];
   readonly owner: Effect.Effect<Actor, AutomationError>;
   readonly merges: PullRequestMerges["Service"];
+  readonly folders: UserFolders["Service"];
 }): BuiltinToolHandler => {
   const shellOf = (threadId: ThreadId) =>
     deps.threads
@@ -191,6 +194,21 @@ export const makeCloudBuiltinTools = (deps: {
         }
         return yield* refuse(
           `pull_request_action "${String(args.action)}" isn't available in the cloud yet; merge and delete-branch are.`,
+        );
+      }),
+    // The folder named, else the home of the thread passed (#677).
+    set_folder_phase: (_call, args) =>
+      Effect.gen(function* () {
+        // A named folder needs no thread.
+        const named = typeof args.folderId === "string" && args.folderId !== "";
+        const shell =
+          named || args.threadId === undefined
+            ? null
+            : yield* threadIdOf(args).pipe(Effect.flatMap(shellOf));
+        return yield* setFolderPhase(
+          deps.folders,
+          args,
+          shell === null ? null : { threadId: shell.id, projectId: shell.projectId },
         );
       }),
     t3_thread_send: (call, args) =>
