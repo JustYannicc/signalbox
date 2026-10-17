@@ -2,7 +2,6 @@
  * signalbox: a failed run reads as Failed, not Completed, until the person has
  * looked at it. Sidebar.logic's status pill hooks in here.
  */
-import type { ThreadStatusPill } from "../Sidebar.logic";
 import type { SidebarThreadSummary } from "../../types";
 
 /**
@@ -21,8 +20,9 @@ export function hasUnseenFailure(
   return completedAt > lastVisitedAt;
 }
 
-export const FAILED_STATUS_PILL: ThreadStatusPill = {
-  label: "Failed",
+// Typed where Sidebar.logic returns it; importing its pill type here would be a cycle.
+export const FAILED_STATUS_PILL = {
+  label: "Failed" as const,
   colorClass: "text-red-600 dark:text-red-300/90",
   dotClass: "bg-red-500 dark:bg-red-300/90",
   pulse: false,
