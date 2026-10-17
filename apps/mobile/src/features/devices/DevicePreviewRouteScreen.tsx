@@ -308,46 +308,44 @@ function DevicePreviewScreen({
             top: Math.max(insets.top, 12) + 60,
             left: Math.max(insets.left, 12),
             right: Math.max(insets.right, 12),
+            maxHeight: 136,
           }}
         >
           <AppText
             accessibilityRole="alert"
             accessibilityLiveRegion="polite"
+            numberOfLines={1}
             className="text-sm font-t3-medium text-warning-foreground"
           >
             agent-device {agentCommandFailure.command} failed
           </AppText>
-          <AppText selectable className="text-xs text-warning-foreground">
-            {agentCommandFailure.message}
+          <AppText selectable numberOfLines={2} className="text-xs text-warning-foreground">
+            {agentCommandFailure.hint ?? agentCommandFailure.message}
           </AppText>
-          {agentCommandFailure.hint ? (
-            <AppText selectable className="text-xs text-warning-foreground">
-              {agentCommandFailure.hint}
+          <Pressable
+            accessibilityRole="button"
+            className="min-h-8 justify-center"
+            onPress={() =>
+              Dialog.alert(
+                "Agent-device failure",
+                [
+                  agentCommandFailure.message,
+                  agentCommandFailure.hint,
+                  agentCommandFailure.reason ? `Reason: ${agentCommandFailure.reason}` : null,
+                  agentCommandFailure.diagnosticId
+                    ? `Diagnostic ID: ${agentCommandFailure.diagnosticId}`
+                    : null,
+                  agentCommandFailure.logPath ? `Log path: ${agentCommandFailure.logPath}` : null,
+                ]
+                  .filter((entry) => entry !== null)
+                  .join("\n\n"),
+              )
+            }
+          >
+            <AppText className="text-xs font-t3-medium text-warning-foreground underline">
+              View details
             </AppText>
-          ) : null}
-          {agentCommandFailure.diagnosticId || agentCommandFailure.logPath ? (
-            <Pressable
-              accessibilityRole="button"
-              className="min-h-10 justify-center"
-              onPress={() =>
-                Dialog.alert(
-                  "Agent-device diagnostics",
-                  [
-                    agentCommandFailure.diagnosticId
-                      ? `Diagnostic ID: ${agentCommandFailure.diagnosticId}`
-                      : null,
-                    agentCommandFailure.logPath ? `Log path: ${agentCommandFailure.logPath}` : null,
-                  ]
-                    .filter((entry) => entry !== null)
-                    .join("\n"),
-                )
-              }
-            >
-              <AppText className="text-xs font-t3-medium text-warning-foreground underline">
-                Diagnostic details
-              </AppText>
-            </Pressable>
-          ) : null}
+          </Pressable>
         </View>
       ) : null}
       {controlsVisible ? (

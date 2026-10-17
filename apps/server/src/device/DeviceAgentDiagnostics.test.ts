@@ -19,11 +19,13 @@ import * as DeviceService from "./DeviceService.ts";
 
 const session = (id: string, threadId = `thread-${id}`): AgentDeviceSession => ({
   sessionId: id,
+  leaseId: `lease-${id}`,
   ownerKind: "agent",
   providerSessionId: ProviderSessionId.make(`provider-${id}`),
   threadId: ThreadId.make(threadId),
   hostId: DeviceHostId.make("local"),
   deviceId: DeviceId.make(`device-${id}`),
+  platform: "ios",
 });
 
 const stateWith = (sessions: ReadonlyArray<AgentDeviceSession>) =>
@@ -57,12 +59,17 @@ describe("device agent diagnostics", () => {
       const second = session("session-2");
       yield* setDeviceState(stateWith([first, second]));
       const diagnostics = yield* DeviceAgentDiagnostics.DeviceAgentDiagnostics;
+      const firstGeneration = yield* diagnostics.beginCommand(first);
+      const secondGeneration = yield* diagnostics.beginCommand(second);
+      if (firstGeneration === null || secondGeneration === null) {
+        throw new Error("Expected live device sessions");
+      }
 
-      yield* diagnostics.recordFailure(first, {
+      yield* diagnostics.recordFailure(first, firstGeneration, {
         command: "press",
         message: "First command failed.",
       });
-      yield* diagnostics.recordFailure(second, {
+      yield* diagnostics.recordFailure(second, secondGeneration, {
         command: "snapshot",
         message: "Second command failed.",
       });
@@ -71,7 +78,7 @@ describe("device agent diagnostics", () => {
         "session-2",
       ]);
 
-      yield* diagnostics.clearSessionFailure(first);
+      yield* diagnostics.clearSessionFailure(first, firstGeneration);
       expect((yield* diagnostics.snapshot).map((failure) => failure.sessionId)).toEqual([
         "session-2",
       ]);
@@ -83,7 +90,9 @@ describe("device agent diagnostics", () => {
       const live = session("session-1");
       yield* setDeviceState(stateWith([live]));
       const diagnostics = yield* DeviceAgentDiagnostics.DeviceAgentDiagnostics;
-      yield* diagnostics.recordFailure(live, {
+      const generation = yield* diagnostics.beginCommand(live);
+      if (generation === null) throw new Error("Expected a live device session");
+      yield* diagnostics.recordFailure(live, generation, {
         command: "press",
         message: "Runner failed.",
         diagnosticId: "diag-1",
@@ -97,14 +106,34 @@ describe("device agent diagnostics", () => {
     }).pipe(Effect.provide(testLayer)),
   );
 
+  it.effect("does not return diagnostics after the lease generation changes", () =>
+    Effect.gen(function* () {
+      const live = session("session-1");
+      yield* setDeviceState(stateWith([live]));
+      const diagnostics = yield* DeviceAgentDiagnostics.DeviceAgentDiagnostics;
+      const generation = yield* diagnostics.beginCommand(live);
+      if (generation === null) throw new Error("Expected a live device session");
+      yield* diagnostics.recordFailure(live, generation, {
+        command: "press",
+        message: "Runner failed.",
+      });
+      expect(yield* diagnostics.snapshot).toHaveLength(1);
+
+      yield* setDeviceState(stateWith([{ ...live, leaseId: "replacement-lease" }]));
+      expect(yield* diagnostics.snapshot).toEqual([]);
+    }).pipe(Effect.provide(testLayer)),
+  );
+
   it.effect("publishes an empty snapshot when the owning session closes", () =>
     Effect.gen(function* () {
       const live = session("session-1");
       yield* setDeviceState(stateWith([live]));
       const diagnostics = yield* DeviceAgentDiagnostics.DeviceAgentDiagnostics;
       const subscription = yield* diagnostics.subscribe;
+      const generation = yield* diagnostics.beginCommand(live);
+      if (generation === null) throw new Error("Expected a live device session");
 
-      yield* diagnostics.recordFailure(live, {
+      yield* diagnostics.recordFailure(live, generation, {
         command: "press",
         message: "Runner failed.",
       });
@@ -117,5 +146,32 @@ describe("device agent diagnostics", () => {
         Option.getOrNull(yield* Stream.runHead(Stream.fromSubscription(subscription))),
       ).toEqual([]);
     }).pipe(Effect.scoped, Effect.provide(testLayer)),
+  );
+
+  it.effect("ignores an older command outcome after a newer failure", () =>
+    Effect.gen(function* () {
+      const live = session("session-1");
+      yield* setDeviceState(stateWith([live]));
+      const diagnostics = yield* DeviceAgentDiagnostics.DeviceAgentDiagnostics;
+      const olderGeneration = yield* diagnostics.beginCommand(live);
+      const newerGeneration = yield* diagnostics.beginCommand(live);
+      if (olderGeneration === null || newerGeneration === null) {
+        throw new Error("Expected a live device session");
+      }
+
+      yield* diagnostics.recordFailure(live, newerGeneration, {
+        command: "swipe",
+        message: "The newer command failed.",
+      });
+      yield* diagnostics.clearSessionFailure(live, olderGeneration);
+      yield* diagnostics.recordFailure(live, olderGeneration, {
+        command: "press",
+        message: "The older command failed later.",
+      });
+
+      expect(yield* diagnostics.snapshot).toMatchObject([
+        { command: "swipe", message: "The newer command failed." },
+      ]);
+    }).pipe(Effect.provide(testLayer)),
   );
 });

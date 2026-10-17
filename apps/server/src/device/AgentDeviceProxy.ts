@@ -2,6 +2,7 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Schedule from "effect/Schedule";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import {
@@ -34,6 +35,20 @@ const HOP_BY_HOP_HEADERS = new Set([
   "upgrade",
   "trailer",
   "te",
+]);
+
+const DROPPED_REQUEST_HEADERS = new Set([
+  ...HOP_BY_HOP_HEADERS,
+  "host",
+  "content-length",
+  "cookie",
+  "authorization",
+  "dpop",
+  "accept-encoding",
+  "sec-websocket-key",
+  "sec-websocket-version",
+  "sec-websocket-extensions",
+  "sec-websocket-protocol",
 ]);
 
 const routeMethod = (path: string) => {
@@ -96,12 +111,7 @@ const upstreamUrl = (baseUrl: string, route: string, search: string) => {
 const forwardedHeaders = (request: HttpServerRequest.HttpServerRequest) => {
   const headers: Record<string, string> = {};
   for (const [name, value] of Object.entries(request.headers)) {
-    if (
-      value === undefined ||
-      name === "host" ||
-      name === "content-length" ||
-      HOP_BY_HOP_HEADERS.has(name.toLowerCase())
-    ) {
+    if (value === undefined || DROPPED_REQUEST_HEADERS.has(name.toLowerCase())) {
       continue;
     }
     headers[name] = value;
@@ -153,7 +163,7 @@ const handler = Effect.gen(function* () {
   if (!before) return HttpServerResponse.text("Device session is not active", { status: 404 });
 
   const registered = yield* proxyRegistry.get(info.sessionId);
-  if (!registered || registered.hostId !== before.hostId) {
+  if (!registered || !sameAgentDeviceSession(registered.session, before)) {
     return HttpServerResponse.text("Device tools are not available", { status: 503 });
   }
   if (!authorized(request, registered.proxyToken)) {
@@ -194,17 +204,33 @@ const handler = Effect.gen(function* () {
         ? upstreamRequest
         : HttpClientRequest.bodyStream(upstreamRequest, request.stream);
   const current = findAgentDeviceSession(yield* devices.state, info.sessionId);
-  if (!current || !sameAgentDeviceSession(before, current)) {
+  const currentRegistration = yield* proxyRegistry.isCurrent(registered);
+  if (!current || !sameAgentDeviceSession(before, current) || !currentRegistration) {
+    return HttpServerResponse.text("Device session is no longer active", { status: 409 });
+  }
+  const commandGeneration = command === null ? null : yield* diagnostics.beginCommand(before);
+  if (command !== null && commandGeneration === null) {
+    return HttpServerResponse.text("Device session is no longer active", { status: 409 });
+  }
+  const finalSession = findAgentDeviceSession(yield* devices.state, info.sessionId);
+  if (
+    !finalSession ||
+    !sameAgentDeviceSession(before, finalSession) ||
+    !(yield* proxyRegistry.isCurrent(registered))
+  ) {
     return HttpServerResponse.text("Device session is no longer active", { status: 409 });
   }
   const response = yield* httpClient.execute(requestWithBody);
 
   const responseStream =
-    command === null
+    command === null || commandGeneration === null
       ? response.stream
       : observeAgentDeviceCommandResponse(response, {
           command,
-          session: before,
+          commandGeneration,
+          session: finalSession,
+          registration: registered,
+          proxyRegistry,
           proxyToken: registered.proxyToken,
           daemonToken: registered.endpoint.token,
           devices,
@@ -224,19 +250,16 @@ const pruneRegistry = Effect.gen(function* () {
   const registry = yield* AgentDeviceProxyRegistry.AgentDeviceProxyRegistry;
   const fs = yield* FileSystem.FileSystem;
   const scope = yield* Scope.Scope;
+  const pruneCurrentRegistrations = Effect.gen(function* () {
+    const liveSessions = new Map(
+      listAgentDeviceSessions(yield* devices.state).map((session) => [session.sessionId, session]),
+    );
+    yield* registry.pruneSessions(liveSessions, (registration) =>
+      fs.remove(registration.configPath, { force: true }),
+    );
+  }).pipe(Effect.retry(Schedule.spaced("5 seconds")), Effect.ignore);
   yield* DeviceService.stateStream(devices).pipe(
-    Stream.runForEach((state) =>
-      registry
-        .retainSessions(new Set(listAgentDeviceSessions(state).map((session) => session.sessionId)))
-        .pipe(
-          Effect.flatMap((configPaths) =>
-            Effect.forEach(configPaths, (configPath) => fs.remove(configPath, { force: true }), {
-              discard: true,
-            }),
-          ),
-          Effect.ignore,
-        ),
-    ),
+    Stream.runForEach(() => pruneCurrentRegistrations),
     Effect.forkIn(scope),
     Effect.asVoid,
   );

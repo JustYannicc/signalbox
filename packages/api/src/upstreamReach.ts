@@ -202,6 +202,7 @@ export const UPSTREAM_RPC_REACH = {
   "device.detail": read(),
   "device.action": write(),
   subscribeDeviceState: read(),
+  subscribeDeviceAgentDiagnostics: read(),
 
   subscribeServerConfig: read(),
   subscribeServerLifecycle: exempt("internal", "The connection handshake: welcome, then ready."),

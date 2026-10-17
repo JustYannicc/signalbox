@@ -151,3 +151,21 @@ export const agentDeviceCommandOutcome = (input: {
     },
   };
 };
+
+export const agentDeviceCommandOutcomeFromNdjsonRecord = (input: {
+  readonly body: string;
+  readonly status: number;
+  readonly command: string;
+  readonly tokens: ReadonlyArray<string>;
+}): AgentDeviceCommandOutcome => {
+  const record = Option.getOrNull(decodeJsonRecord(input.body));
+  if (!record || record.type === "progress") return null;
+  const response =
+    record.type === "response" ? Option.getOrNull(decodeObjectRecord(record.response)) : record;
+  if (!response) return null;
+  return agentDeviceCommandOutcome({
+    ...input,
+    body: JSON.stringify(response),
+    contentType: "application/json",
+  });
+};

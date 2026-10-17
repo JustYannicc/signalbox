@@ -20,7 +20,7 @@ import * as AgentDeviceProxy from "./AgentDeviceProxy.ts";
 import { decodeAgentDeviceRpcRequest } from "./AgentDeviceRpc.ts";
 import * as AgentDeviceProxyRegistry from "./AgentDeviceProxyRegistry.ts";
 import * as DeviceAgentDiagnostics from "./DeviceAgentDiagnostics.ts";
-import type { AgentDeviceSession } from "./AgentDeviceSession.ts";
+import { sameAgentDeviceSession, type AgentDeviceSession } from "./AgentDeviceSession.ts";
 import * as DeviceService from "./DeviceService.ts";
 
 const disposers: Array<() => Promise<void>> = [];
@@ -33,11 +33,13 @@ const proxyTokenFor = (sessionId: string) => `${TOKEN}-${sessionId}`;
 
 const session = (id: string, host = "local", thread = `thread-${id}`): AgentDeviceSession => ({
   sessionId: id,
+  leaseId: `lease-${id}`,
   ownerKind: "agent",
   providerSessionId: ProviderSessionId.make(`provider-${id}`),
   threadId: ThreadId.make(thread),
   hostId: DeviceHostId.make(host),
   deviceId: DeviceId.make(`device-${id}`),
+  platform: "ios",
 });
 
 const stateWith = (sessions: ReadonlyArray<unknown>) =>
@@ -94,13 +96,15 @@ const createFixture = (options: {
     readonly body: string;
   }> = [];
   const failures = new Map<string, DeviceAgentCommandFailure>();
+  const commandGenerations = new Map<string, number>();
+  let nextRegistrationId = 1;
   const endpoints = new Map(
     options.sessions.map((current, index) => [
       current.sessionId,
       {
-        sessionId: current.sessionId,
-        hostId: current.hostId,
-        configPath: `/state/${current.sessionId}.json`,
+        registrationId: nextRegistrationId++,
+        session: current,
+        configPath: `/state/${current.sessionId}-${proxyTokenFor(current.sessionId)}.json`,
         proxyToken: proxyTokenFor(current.sessionId),
         endpoint: {
           baseUrl: `http://daemon-${index}.test`,
@@ -133,14 +137,22 @@ const createFixture = (options: {
     state: Effect.sync(() => state),
   } as unknown as DeviceService.DeviceService["Service"];
   const diagnostics = {
+    beginCommand: (current: AgentDeviceSession) =>
+      Effect.sync(() => {
+        const generation = (commandGenerations.get(current.sessionId) ?? 0) + 1;
+        commandGenerations.set(current.sessionId, generation);
+        return generation;
+      }),
     recordFailure: (
       current: AgentDeviceSession,
+      generation: number,
       input: Omit<
         DeviceAgentCommandFailure,
         "sessionId" | "threadId" | "hostId" | "deviceId" | "occurredAt"
       >,
     ) =>
       Effect.sync(() => {
+        if (commandGenerations.get(current.sessionId) !== generation) return;
         failures.set(current.sessionId, {
           ...input,
           sessionId: current.sessionId,
@@ -150,8 +162,12 @@ const createFixture = (options: {
           occurredAt: "2026-10-17T12:00:00.000Z",
         });
       }),
-    clearSessionFailure: (current: AgentDeviceSession) =>
-      Effect.sync(() => void failures.delete(current.sessionId)),
+    clearSessionFailure: (current: AgentDeviceSession, generation: number) =>
+      Effect.sync(() => {
+        if (commandGenerations.get(current.sessionId) === generation) {
+          failures.delete(current.sessionId);
+        }
+      }),
     snapshot: Effect.sync(() => Array.from(failures.values())),
   } as unknown as DeviceAgentDiagnostics.DeviceAgentDiagnostics["Service"];
   const registry = {
@@ -159,6 +175,20 @@ const createFixture = (options: {
       Effect.sync(() => {
         options.beforeRegistryReply?.();
         return endpoints.get(sessionId) ?? null;
+      }),
+    isCurrent: (expected: {
+      readonly registrationId: number;
+      readonly proxyToken: string;
+      readonly session: AgentDeviceSession;
+    }) =>
+      Effect.sync(() => {
+        const current = endpoints.get(expected.session.sessionId);
+        return (
+          current !== undefined &&
+          current.registrationId === expected.registrationId &&
+          current.proxyToken === expected.proxyToken &&
+          sameAgentDeviceSession(current.session, expected.session)
+        );
       }),
   } as unknown as AgentDeviceProxyRegistry.AgentDeviceProxyRegistry["Service"];
   const { handler, dispose } = HttpRouter.toWebHandler(
@@ -178,6 +208,16 @@ const createFixture = (options: {
     handler,
     requests,
     failures,
+    setRegistration: (sessionId: string, proxyToken: string) => {
+      const current = endpoints.get(sessionId);
+      if (!current) throw new Error(`Missing registration for ${sessionId}`);
+      endpoints.set(sessionId, {
+        ...current,
+        registrationId: nextRegistrationId++,
+        proxyToken,
+        configPath: `/state/${sessionId}-${proxyToken}.json`,
+      });
+    },
     setSessions: (sessions: ReadonlyArray<unknown>) => {
       state = stateWith(sessions);
     },
@@ -197,11 +237,20 @@ const commandRequest = (
 
 const replaceSessionField = (
   session: AgentDeviceSession,
-  field: "sessionId" | "ownerKind" | "providerSessionId" | "threadId" | "hostId" | "deviceId",
+  field:
+    | "sessionId"
+    | "leaseId"
+    | "ownerKind"
+    | "providerSessionId"
+    | "threadId"
+    | "hostId"
+    | "deviceId",
 ): unknown => {
   switch (field) {
     case "sessionId":
       return { ...session, sessionId: "replacement-session" };
+    case "leaseId":
+      return { ...session, leaseId: "replacement-lease" };
     case "ownerKind":
       return { ...session, ownerKind: "panel" };
     case "providerSessionId":
@@ -224,10 +273,12 @@ describe("agent-device proxy", () => {
     });
     const fixture = createFixture({ sessions: [session("session-1")], reply: () => ({ body }) });
     expect(decodeAgentDeviceRpcRequest(JSON.parse(requestBody))).not.toBeNull();
+    const request = commandRequest("session-1", proxyTokenFor("session-1"), requestBody);
+    request.headers.set("cookie", "client-session=secret");
+    request.headers.set("dpop", "client-proof");
+    request.headers.set("x-request-id", "request-1");
 
-    const response = await fixture.handler(
-      commandRequest("session-1", proxyTokenFor("session-1"), requestBody),
-    );
+    const response = await fixture.handler(request);
 
     expect(response.status).toBe(200);
     expect(await response.text()).toBe(body);
@@ -235,6 +286,9 @@ describe("agent-device proxy", () => {
     expect(fixture.requests[0]?.url).toBe("http://daemon-0.test/rpc");
     expect(fixture.requests[0]?.headers.authorization).toBe("Bearer daemon-secret-0");
     expect(fixture.requests[0]?.headers["x-agent-device-token"]).toBe("daemon-secret-0");
+    expect(fixture.requests[0]?.headers.cookie).toBeUndefined();
+    expect(fixture.requests[0]?.headers.dpop).toBeUndefined();
+    expect(fixture.requests[0]?.headers["x-request-id"]).toBe("request-1");
     expect(fixture.requests[0]?.body).toBe(requestBody);
     expect(fixture.failures.get("session-1")).toMatchObject({
       command: "press",
@@ -407,6 +461,7 @@ describe("agent-device proxy", () => {
 
   it.each([
     "sessionId",
+    "leaseId",
     "ownerKind",
     "providerSessionId",
     "threadId",
@@ -430,21 +485,6 @@ describe("agent-device proxy", () => {
     },
   );
 
-  it("does not bind the agent session identity to the lease generation", async () => {
-    const current = session("session-1");
-    let setSessions: (sessions: ReadonlyArray<unknown>) => void = () => {};
-    const fixture = createFixture({
-      sessions: [current],
-      reply: () => ({ body: typedFailure() }),
-      beforeReply: () => setSessions([{ ...current, leaseId: "new-lease" }]),
-    });
-    setSessions = fixture.setSessions;
-
-    await (await fixture.handler(commandRequest("session-1"))).text();
-
-    expect(fixture.failures.get("session-1")?.reason).toBe("simulator_service_hub_unavailable");
-  });
-
   it("rejects a stale session tuple before forwarding", async () => {
     const current = session("session-1");
     let setSessions: (sessions: ReadonlyArray<unknown>) => void = () => {};
@@ -460,6 +500,39 @@ describe("agent-device proxy", () => {
 
     expect(response.status).toBe(409);
     expect(fixture.requests).toHaveLength(0);
+    expect(fixture.failures.size).toBe(0);
+  });
+
+  it("rejects a request when its registered lease is no longer live", async () => {
+    const current = session("session-1");
+    let setSessions: (sessions: ReadonlyArray<unknown>) => void = () => {};
+    const fixture = createFixture({
+      sessions: [current],
+      reply: () => ({ body: typedFailure() }),
+      beforeRegistryReply: () => setSessions([{ ...current, leaseId: "replacement-lease" }]),
+    });
+    setSessions = fixture.setSessions;
+
+    const response = await fixture.handler(commandRequest("session-1"));
+
+    expect(response.status).toBe(409);
+    expect(fixture.requests).toHaveLength(0);
+    expect(fixture.failures.size).toBe(0);
+  });
+
+  it("does not publish a response after the proxy token is re-registered", async () => {
+    let replaceRegistration: (sessionId: string, proxyToken: string) => void = () => {};
+    const fixture = createFixture({
+      sessions: [session("session-1")],
+      reply: () => ({ body: typedFailure() }),
+      beforeReply: () => replaceRegistration("session-1", "replacement-proxy-token"),
+    });
+    replaceRegistration = fixture.setRegistration;
+
+    const response = await fixture.handler(commandRequest("session-1"));
+
+    expect(response.status).toBe(200);
+    expect(await response.text()).toBe(typedFailure());
     expect(fixture.failures.size).toBe(0);
   });
 
@@ -504,9 +577,9 @@ describe("agent-device proxy", () => {
         const subscription = yield* diagnostics.subscribe;
         const deviceService = Context.get(services, DeviceService.DeviceService);
         const endpoint = {
-          sessionId: liveSession.sessionId,
-          hostId: liveSession.hostId,
-          configPath: "/state/session-1.json",
+          registrationId: 1,
+          session: liveSession,
+          configPath: "/state/session-1-proxy.json",
           proxyToken: proxyTokenFor(liveSession.sessionId),
           endpoint: {
             baseUrl: "http://daemon.test",
@@ -526,8 +599,9 @@ describe("agent-device proxy", () => {
         );
         const registry = Layer.succeed(AgentDeviceProxyRegistry.AgentDeviceProxyRegistry, {
           get: (sessionId: string) =>
-            Effect.succeed(sessionId === endpoint.sessionId ? endpoint : null),
-        } as AgentDeviceProxyRegistry.AgentDeviceProxyRegistry["Service"]);
+            Effect.succeed(sessionId === endpoint.session.sessionId ? endpoint : null),
+          isCurrent: () => Effect.succeed(true),
+        } as unknown as AgentDeviceProxyRegistry.AgentDeviceProxyRegistry["Service"]);
         const { handler, dispose } = HttpRouter.toWebHandler(
           AgentDeviceProxy.routeLayer.pipe(
             Layer.provideMerge(Layer.succeed(DeviceService.DeviceService, deviceService)),
