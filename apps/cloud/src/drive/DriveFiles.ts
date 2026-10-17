@@ -9,7 +9,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 
-import { parseCheckpointRange } from "../thread/runner/driveItems.ts";
+import { parseCheckpointRange } from "../thread/driveEvents.ts";
 import { DriveDirectory } from "./DriveDirectory.ts";
 import { DrivePacks } from "./DrivePacks.ts";
 import { type DriveReader, DriveReadError, makeDriveReader, pathSegments } from "./DriveReader.ts";

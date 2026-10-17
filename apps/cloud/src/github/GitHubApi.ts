@@ -6,7 +6,8 @@ import * as Effect from "effect/Effect";
 import * as Base64 from "effect/encoding/Base64";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
-import type * as Stream from "effect/Stream";
+import * as Stream from "effect/Stream";
+import * as HttpClientError from "effect/http/HttpClientError";
 import { type HttpClient, HttpClientRequest, type HttpClientResponse } from "effect/http";
 
 /**
@@ -24,6 +25,9 @@ export class GitHubError extends Schema.TaggedError<GitHubError>()("GitHubError"
   requestKind: Schema.optional(Schema.Literals(["rest", "graphql", "git"])),
   /** A short, sanitized excerpt of the response body, when an answer arrived. */
   responseExcerpt: Schema.optional(Schema.String),
+  /** Sanitized response headers that help identify malformed GitHub answers. */
+  responseContentType: Schema.optional(Schema.String),
+  responseContentLength: Schema.optional(Schema.String),
   /** When GitHub's rate limit lets the caller ask again (epoch ms), when it said. */
   retryAt: Schema.optional(Schema.Number),
 }) {}
@@ -62,6 +66,8 @@ const GITHUB_ENDPOINTS: GitHubEndpoints = {
   web: "https://github.com",
   api: "https://api.github.com",
 };
+
+const MAX_JSON_RESPONSE_BYTES = 8 * 1024 * 1024;
 
 const Viewer = Schema.Struct({
   login: Schema.String,
@@ -145,6 +151,27 @@ const decodeErrorBody = Schema.decodeUnknownOption(
   Schema.Struct({ message: Schema.optional(Schema.String) }),
 );
 
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === "object" && value !== null && !Array.isArray(value);
+
+const isGraphQlRateLimit = (body: unknown) =>
+  isRecord(body) &&
+  Array.isArray(body.errors) &&
+  body.errors.some((error) => {
+    if (!isRecord(error)) return false;
+    if (error.type === "RATE_LIMITED") return true;
+    if (error.type !== "RATE_LIMIT") return false;
+    const code = error.code ?? (isRecord(error.extensions) ? error.extensions.code : undefined);
+    return code === "graphql_rate_limit";
+  });
+
+const graphqlRateLimitRetryAt = (response: HttpClientResponse.HttpClientResponse, now: number) => {
+  const retryAfter = retryAtFromHeader(response.headers["retry-after"], now);
+  if (retryAfter !== undefined) return retryAfter;
+  const reset = Number(response.headers["x-ratelimit-reset"]) * 1_000;
+  return Number.isFinite(reset) && reset > now ? reset : now + 60_000;
+};
+
 /** git's credential for a token over HTTPS. */
 export const gitAuthorization = (token: string) =>
   `Basic ${Base64.encode(`x-access-token:${token}`)}`;
@@ -168,17 +195,32 @@ const sanitizeGitHubDiagnostic = (value: string, token: string) => {
     .trim();
 };
 
-const responseExcerpt = (text: string, token: string) => {
-  const sanitized = sanitizeGitHubDiagnostic(text, token);
+const boundedDiagnostic = (value: string, token: string, maxLength: number) => {
+  const sanitized = sanitizeGitHubDiagnostic(value, token);
   if (sanitized.length === 0) return undefined;
-  return sanitized.length > 240 ? `${sanitized.slice(0, 240)}…` : sanitized;
+  return sanitized.length > maxLength ? `${sanitized.slice(0, maxLength)}…` : sanitized;
 };
 
-const responseDiagnostics = (requestKind: GitHubRequestKind, text: string, token: string) => {
-  const excerpt = responseExcerpt(text, token);
+const responseDiagnostics = (
+  requestKind: GitHubRequestKind,
+  response: HttpClientResponse.HttpClientResponse,
+  text: string,
+  token: string,
+) => {
+  const excerpt = boundedDiagnostic(text, token, 240);
+  const contentType =
+    response.headers["content-type"] === undefined
+      ? undefined
+      : boundedDiagnostic(response.headers["content-type"], token, 120);
+  const contentLength =
+    response.headers["content-length"] === undefined
+      ? undefined
+      : boundedDiagnostic(response.headers["content-length"], token, 120);
   return {
     requestKind,
     ...(excerpt === undefined ? {} : { responseExcerpt: excerpt }),
+    ...(contentType === undefined ? {} : { responseContentType: contentType }),
+    ...(contentLength === undefined ? {} : { responseContentLength: contentLength }),
   };
 };
 
@@ -240,7 +282,35 @@ export const makeGitHubApi = (
       requestKind: error.requestKind ?? "unknown",
       status: error.status,
       ...(error.responseExcerpt === undefined ? {} : { responseExcerpt: error.responseExcerpt }),
+      ...(error.responseContentType === undefined
+        ? {}
+        : { responseContentType: error.responseContentType }),
+      ...(error.responseContentLength === undefined
+        ? {}
+        : { responseContentLength: error.responseContentLength }),
     });
+
+  const readResponseText = (
+    operation: string,
+    response: HttpClientResponse.HttpClientResponse,
+    requestKind: GitHubRequestKind,
+    token: string,
+  ) =>
+    response.text.pipe(
+      Effect.catch(() =>
+        Effect.gen(function* () {
+          const retryAt = rateLimitRetryAt(response, yield* Clock.currentTimeMillis);
+          return yield* new GitHubError({
+            operation,
+            status: response.status,
+            message: "GitHub's answer was cut off.",
+            ...responseDiagnostics(requestKind, response, "", token),
+            ...(retryAt === undefined ? {} : { retryAt }),
+          });
+        }),
+      ),
+      Effect.tapError(logResponseFailure),
+    );
 
   /** A REST or GraphQL call as `token`. Null on 404; any other non-2xx fails with GitHub's message. */
   const json = <A>(
@@ -280,9 +350,10 @@ export const makeGitHubApi = (
                       operation,
                       status: response.status,
                       message: "GitHub's answer was cut off.",
-                      requestKind,
+                      ...responseDiagnostics(requestKind, response, "", token),
                     }),
                 ),
+                Effect.tapError(logResponseFailure),
               ),
       ),
       Effect.scoped,
@@ -309,7 +380,7 @@ export const makeGitHubApi = (
             `GitHub answered ${response.status}.`,
           token,
         ),
-        ...responseDiagnostics(requestKind, text, token),
+        ...responseDiagnostics(requestKind, response, text, token),
         ...(retryAt === undefined ? {} : { retryAt }),
       });
       yield* logResponseFailure(failure);
@@ -336,26 +407,62 @@ export const makeGitHubApi = (
     ).pipe(
       Effect.flatMap((response) =>
         Effect.gen(function* () {
-          const text = yield* response.text.pipe(Effect.orElseSucceed(() => ""));
-          if (response.status === 404) return null;
-          yield* failUnlessOk(
-            operation,
-            response,
-            Option.getOrNull(parseJson(text)),
-            text,
-            requestKind,
-            token,
+          const chunks: Uint8Array[] = [];
+          let length = 0;
+          yield* response.stream.pipe(
+            Stream.runForEach((chunk) => {
+              length += chunk.byteLength;
+              if (length > MAX_JSON_RESPONSE_BYTES) {
+                return Effect.fail(
+                  new GitHubError({
+                    operation,
+                    status: response.status,
+                    message: "GitHub's answer is too large to read.",
+                    requestKind,
+                  }),
+                );
+              }
+              chunks.push(chunk);
+              return Effect.void;
+            }),
+            Effect.catchIf(
+              (error) =>
+                HttpClientError.isHttpClientError(error) && error.reason._tag === "EmptyBodyError",
+              () => Effect.void,
+            ),
+            Effect.catch(() =>
+              Effect.gen(function* () {
+                const retryAt = rateLimitRetryAt(response, yield* Clock.currentTimeMillis);
+                return yield* new GitHubError({
+                  operation,
+                  status: response.status,
+                  message: "GitHub's answer could not be read within its size limit.",
+                  ...responseDiagnostics(requestKind, response, "", token),
+                  ...(retryAt === undefined ? {} : { retryAt }),
+                });
+              }),
+            ),
+            Effect.tapError(logResponseFailure),
           );
+          const bytes = new Uint8Array(length);
+          let offset = 0;
+          for (const chunk of chunks) {
+            bytes.set(chunk, offset);
+            offset += chunk.byteLength;
+          }
+          const text = new TextDecoder().decode(bytes);
+          if (response.status === 404) return null;
+          const body = Option.getOrNull(parseJson(text));
+          yield* failUnlessOk(operation, response, body, text, requestKind, token);
           // GraphQL answers its own rate limit with a 200 and an error in the body.
-          if (text.includes('"RATE_LIMITED"')) {
+          if (response.status === 200 && isGraphQlRateLimit(body)) {
             const now = yield* Clock.currentTimeMillis;
-            const reset = Number(response.headers["x-ratelimit-reset"]) * 1_000;
             const failure = new GitHubError({
               operation,
               status: response.status,
               message: "GitHub's API rate limit is used up for now.",
-              ...responseDiagnostics(requestKind, text, token),
-              retryAt: Number.isFinite(reset) && reset > now ? reset : now + 60_000,
+              ...responseDiagnostics(requestKind, response, text, token),
+              retryAt: graphqlRateLimitRetryAt(response, now),
             });
             yield* logResponseFailure(failure);
             return yield* failure;
@@ -374,9 +481,9 @@ export const makeGitHubApi = (
     token: string,
   ) =>
     Effect.gen(function* () {
-      const text = yield* response.text.pipe(Effect.orElseSucceed(() => ""));
-      const body = Option.getOrNull(parseJson(text));
       if (response.status === 404) return null;
+      const text = yield* readResponseText(operation, response, requestKind, token);
+      const body = Option.getOrNull(parseJson(text));
       yield* failUnlessOk(operation, response, body, text, requestKind, token);
       return yield* Schema.decodeUnknownEffect(schema)(body).pipe(
         // Schema internals can echo response data; keep only the bounded excerpt in diagnostics.
@@ -386,7 +493,7 @@ export const makeGitHubApi = (
               operation,
               status: response.status,
               message: "GitHub sent an answer Signalbox does not understand.",
-              ...responseDiagnostics(requestKind, text, token),
+              ...responseDiagnostics(requestKind, response, text, token),
             }),
         ),
         Effect.tapError(logResponseFailure),
@@ -554,9 +661,10 @@ export const makeGitHubApi = (
                   operation: "receivePack",
                   status: response.status,
                   message: "GitHub's answer to the push was cut off.",
-                  requestKind: "git",
+                  ...responseDiagnostics("git", response, "", token),
                 }),
             ),
+            Effect.tapError(logResponseFailure),
           ),
         ),
         Effect.scoped,

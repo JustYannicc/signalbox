@@ -148,8 +148,11 @@ export const fixture = Effect.gen(function* () {
     ),
   );
   const dependencies = Layer.mergeAll(
-    Layer.succeed(GitHub, { pipes: null, api: makeGitHubApi(client) }),
-    Layer.mock(GitHubConnection, { configured: true, accessToken: Effect.sync(() => state.token) }),
+    Layer.succeed(GitHub, { pipesForUser: () => Effect.succeed(null), api: makeGitHubApi(client) }),
+    Layer.mock(GitHubConnection, {
+      configured: Effect.succeed(true),
+      accessToken: Effect.sync(() => state.token),
+    }),
     Layer.mock(UserDrives, {
       access: () =>
         Effect.sync(() => {

@@ -195,17 +195,18 @@ describe("cloud review reads", () => {
       );
       const github = Layer.succeed(GitHub, {
         api: makeGitHubApi(http),
-        pipes: {
-          authorizeUrl: () => Effect.die("unused"),
-          disconnect: () => Effect.void,
-          accessToken: () =>
-            Effect.succeed({
-              _tag: "active",
-              token: Redacted.make("reader-token"),
-              expiresAt: null,
-              missingScopes: [],
-            }),
-        },
+        pipesForUser: () =>
+          Effect.succeed({
+            authorizeUrl: () => Effect.die("unused"),
+            disconnect: () => Effect.void,
+            accessToken: () =>
+              Effect.succeed({
+                _tag: "active",
+                token: Redacted.make("reader-token"),
+                expiresAt: null,
+                missingScopes: [],
+              }),
+          }),
       });
       const { cloud, input, client } = yield* setup(github);
       yield* GitHubConnection.use((connection) =>

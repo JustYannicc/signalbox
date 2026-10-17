@@ -1,7 +1,7 @@
 import type { SearchHit, ThreadTurn } from "@signalbox/runner-protocol/ContextProtocol";
 import type { OrchestrationV2ThreadProjection, ProjectId } from "@t3tools/contracts";
 
-import { parseCheckpointRange } from "../thread/runner/driveItems.ts";
+import { parseCheckpointRange } from "../thread/driveEvents.ts";
 import { excerpt, matchTerms } from "./contextMatch.ts";
 
 /**

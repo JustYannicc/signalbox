@@ -175,9 +175,9 @@ it.effect("expands promised files through authenticated GitHub blobs and verifie
     );
     const services = Layer.mergeAll(
       drives.layer,
-      Layer.succeed(GitHub, { pipes: null, api: makeGitHubApi(http) }),
+      Layer.succeed(GitHub, { pipesForUser: () => Effect.succeed(null), api: makeGitHubApi(http) }),
       Layer.succeed(GitHubConnection, {
-        configured: true,
+        configured: Effect.succeed(true),
         account: Effect.succeed(null),
         commitAuthor: Effect.succeed(null),
         begin: () => Effect.die("unused"),
