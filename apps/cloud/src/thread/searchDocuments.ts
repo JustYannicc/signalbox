@@ -1,5 +1,5 @@
 import { threadPullRequestsOf } from "@t3tools/shared/threadPullRequests";
-import type { OrchestrationV2ThreadProjection, OrchestrationV2TurnItem } from "@t3tools/contracts";
+import type { OrchestrationV2ThreadProjection } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 
 import type { SearchDocument } from "../search/SearchIndex.ts";

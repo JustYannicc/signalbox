@@ -8,7 +8,7 @@ import type { LegendListRef } from "@legendapp/list/react-native";
 import { useIsFocused } from "@react-navigation/native";
 import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { useCallback, useEffect, useMemo, useRef, useState, type RefObject } from "react";
-import { Pressable, View, type TextInputInstance } from "react-native";
+import { Pressable, type TextInputInstance } from "react-native";
 import Animated, { FadeIn, FadeOut, ReduceMotion } from "react-native-reanimated";
 
 import { AppActivityIndicator } from "../../../components/ui/AppActivityIndicator";
@@ -88,7 +88,7 @@ export function ThreadFindBar(props: {
   readonly threadId: ThreadId;
   readonly listRef: RefObject<LegendListRef | null>;
   /** Changes whenever the feed does, so a match that wasn't rendered yet gets another try. */
-  readonly feed: unknown;
+  readonly feed: ReadonlyArray<unknown>;
   readonly top: number;
 }) {
   const enabled = useEnvironmentServerConfig(props.environmentId)?.threadFind === true;
@@ -141,7 +141,13 @@ export function ThreadFindBar(props: {
       ? null
       : `${find.focusRequest}:${find.query.trim()}:${match.entryId}:${match.occurrence}`;
   useEffect(() => {
-    if (match === null || matchKey === null || scrolledRef.current === matchKey) return;
+    if (
+      props.feed.length === 0 ||
+      match === null ||
+      matchKey === null ||
+      scrolledRef.current === matchKey
+    )
+      return;
     const list = props.listRef.current;
     if (list === null) return;
     const index = feedIndexForFindTarget(list.getState().data, match);
@@ -161,7 +167,7 @@ export function ThreadFindBar(props: {
 
   const inputRef = useRef<TextInputInstance>(null);
   useEffect(() => {
-    if (find.open && find.autoFocus) inputRef.current?.focus();
+    if (find.open && find.autoFocus && find.focusRequest > 0) inputRef.current?.focus();
   }, [find.open, find.autoFocus, find.focusRequest]);
 
   const status = useMemo(() => {

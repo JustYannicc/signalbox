@@ -45,6 +45,7 @@ export function usePendingThreadFindRequest(
     if (request !== null) apply(request);
   });
   useEffect(() => {
+    if (!threadKey || !enabled) return;
     onRequest();
     listeners.add(onRequest);
     return () => {

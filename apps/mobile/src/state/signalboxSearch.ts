@@ -168,7 +168,7 @@ const contentSearchEnvironmentIdsAtom = Atom.make((get) => {
   const ids = [...get(environmentServerConfigsAtom)]
     .filter(([, config]) => config.environment.capabilities.folders === true)
     .map(([environmentId]) => environmentId)
-    .toSorted();
+    .sort();
   const previous = Option.getOrUndefined(get.self<ReadonlyArray<EnvironmentId>>());
   return previous !== undefined &&
     previous.length === ids.length &&

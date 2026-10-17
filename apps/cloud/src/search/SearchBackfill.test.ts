@@ -26,7 +26,6 @@ import * as SearchBackfill from "./SearchBackfill.ts";
 import * as SearchIndex from "./SearchIndex.ts";
 
 const userId = "user_1";
-const actor: Actor = { userId, contextIds: [PERSONAL_CONTEXT_ID] };
 const at = (millis: number) => DateTime.makeUnsafe(millis);
 type SearchProgress = Effect.Success<ReturnType<SearchIndex.SearchIndex["Service"]["progress"]>>;
 
@@ -76,9 +75,7 @@ const summary = (id: string, archived = false): ThreadSummary => {
     threadId,
     contextId: PERSONAL_CONTEXT_ID,
     revision: 1,
-    shell: shell(threadId, ProjectId.make(`project-${id}`), {
-      ...(archived ? { archivedAt: at(20) } : {}),
-    }),
+    shell: shell(threadId, ProjectId.make(`project-${id}`), archived ? { archivedAt: at(20) } : {}),
   };
 };
 

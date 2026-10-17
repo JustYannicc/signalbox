@@ -45,6 +45,7 @@ export function usePendingThreadFindRequest(
     if (request !== null) apply(request);
   });
   useEffect(() => {
+    if (threadKey === null || !enabled) return;
     onRequest();
     window.addEventListener(THREAD_FIND_REQUEST_EVENT, onRequest);
     return () => window.removeEventListener(THREAD_FIND_REQUEST_EVENT, onRequest);

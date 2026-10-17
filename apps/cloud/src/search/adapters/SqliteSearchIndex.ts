@@ -10,6 +10,7 @@ import * as SearchIndex from "../SearchIndex.ts";
 import * as SqliteSearchQueries from "./SqliteSearchQueries.ts";
 
 const encodeStrings = Schema.encodeSync(Schema.fromJsonString(Schema.Array(Schema.String)));
+const isSearchIndexError = Schema.is(SearchIndex.SearchIndexError);
 
 const migrations = Migrator.fromRecord({
   "0001_thread_search": Effect.gen(function* () {
@@ -191,7 +192,7 @@ const make = (home: SearchIndex.SearchHome) =>
         )
         .pipe(
           Effect.mapError((cause) =>
-            Schema.is(SearchIndex.SearchIndexError)(cause)
+            isSearchIndexError(cause)
               ? cause
               : new SearchIndex.SearchIndexError({ operation: "deliver", cause }),
           ),
@@ -247,7 +248,7 @@ export const initialize = (home: SearchIndex.SearchHome) =>
     );
   }).pipe(
     Effect.mapError((cause) =>
-      Schema.is(SearchIndex.SearchIndexError)(cause)
+      isSearchIndexError(cause)
         ? cause
         : new SearchIndex.SearchIndexError({ operation: "initialize", cause }),
     ),
