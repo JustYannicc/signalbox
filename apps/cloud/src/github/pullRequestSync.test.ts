@@ -35,6 +35,7 @@ import { scriptedModelSelection } from "../thread/scriptedProvider.ts";
 import { UserDirectory } from "../user/UserDirectory.ts";
 import * as CloudRpc from "../user/rpc.ts";
 import { makeFakeGitHub } from "./githubTesting.ts";
+import * as PullRequestMerges from "./PullRequestMerges.ts";
 import * as PullRequestReads from "./PullRequestReads.ts";
 
 const identity = { environmentId: EnvironmentId.make("cloud-test"), label: "Cloud" };
@@ -229,6 +230,34 @@ describe("cloud pull request sync", () => {
           repository: "owner/repo",
           number: 1,
         };
+        github.update(1, {
+          labels: ["ready-for-review"],
+          reviews: [
+            {
+              id: "review-1",
+              author: "reviewer",
+              body: "Please fix the test.",
+              state: "CHANGES_REQUESTED",
+              at: "2026-10-08T00:20:00Z",
+            },
+          ],
+        });
+        const merges = yield* PullRequestMerges.PullRequestMerges.pipe(
+          Effect.provide(PullRequestMerges.layer.pipe(Layer.provide(cloud.userObject(userId)))),
+        );
+        expect(yield* merges.evidence(ref)).toMatchObject({
+          baseSha: remote.head,
+          baseRepository: "owner/repo",
+          labels: ["ready-for-review"],
+          reviews: [
+            {
+              author: "reviewer",
+              state: "changes-requested",
+              submittedAt: "2026-10-08T00:20:00Z",
+              body: "Please fix the test.",
+            },
+          ],
+        });
         expect(yield* reads.failedChecks(ref)).toEqual([
           { name: "test", status: "failure", url: "https://github.test/owner/repo/runs/test" },
         ]);

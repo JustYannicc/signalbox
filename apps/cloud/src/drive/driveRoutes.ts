@@ -33,6 +33,7 @@ import * as ThreadDirectory from "../thread/ThreadDirectory.ts";
 import type { DriveAuthorization } from "../thread/runner/ThreadRunner.ts";
 import * as UserDirectory from "../user/UserDirectory.ts";
 import * as DriveDirectory from "./DriveDirectory.ts";
+import * as DriveShortcuts from "./DriveShortcuts.ts";
 import * as DrivePacks from "./DrivePacks.ts";
 import {
   type DriveWriter,
@@ -85,6 +86,7 @@ export interface DriveRouteEnv extends GitHub.GitHubEnv, DirectUploadsEnv {
 type Services =
   | Crypto.Crypto
   | DriveDirectory.DriveDirectory
+  | DriveShortcuts.DriveShortcuts
   | DrivePacks.DrivePacks
   | UserDirectory.UserDirectory
   | GitHub.GitHub
@@ -104,6 +106,9 @@ const toState = (driveId: string, refs: ThreadRefs): DriveState => ({
   packs: refs.packs,
   remote: refs.remote,
   shallow: refs.shallow,
+  notes: refs.notes,
+  pinnedViews: refs.pinnedViews,
+  revision: refs.revision,
 });
 
 const decodeOid = Schema.decodeUnknownOption(Oid);
@@ -148,10 +153,16 @@ export async function handleDriveRequest(
     ContextTool.layer.pipe(
       Layer.provideMerge(
         Layer.mergeAll(
-          DriveDirectory.layerDurableObjects(env.DRIVES, options),
+          DriveShortcuts.layer.pipe(
+            Layer.provideMerge(
+              Layer.mergeAll(
+                DriveDirectory.layerDurableObjects(env.DRIVES, options),
+                UserDirectory.layerDurableObjects(env.USERS, options),
+              ),
+            ),
+          ),
           DrivePacks.layerBucket(env.DRIVE_PACKS, env.DRIVE_PACKS_PREFIX),
           Platform.layerCrypto,
-          UserDirectory.layerDurableObjects(env.USERS, options),
           ThreadDirectory.layerDurableObjects(env.THREADS, options),
           // Only users' own tokens act on GitHub here; the App's client stays in their objects.
           GitHub.layer(null, GitHub.gitHubEndpoints(env)).pipe(
@@ -283,7 +294,12 @@ async function route(
 
   // Shortcut targets, read-only (#142): the thread's user's access to each, asked now.
   if (pathname === DRIVE_PATHS.shortcuts || pathname.startsWith(`${DRIVE_PATHS.shortcuts}/`)) {
-    return await run(shortcutRoute({ userId: auth.userId, driveId: auth.driveId }, request));
+    return await run(
+      shortcutRoute(
+        { userId: auth.userId, driveId: auth.driveId, threadId: auth.threadId },
+        request,
+      ),
+    );
   }
   if (request.method === "GET" && pathname.startsWith(`${DRIVE_PATHS.packs}/`)) {
     return await run(packResponse(auth.driveId, pathname.slice(DRIVE_PATHS.packs.length + 1)));
@@ -291,6 +307,14 @@ async function route(
   if (request.method !== "POST") return text("Method not allowed.", 405);
 
   switch (pathname) {
+    case DRIVE_PATHS.checkpoint: {
+      const body = decodeBody(driveJson.checkpoint.decode, await request.text());
+      if (body === null) return text("Unreadable request.", 400);
+      const written = await run(
+        Effect.flatMap(drive, (handle) => handle.recordCheckpoint(writer, body)),
+      );
+      return json(driveJson.refWrite.encode(toResult(auth.driveId, written)));
+    }
     case DRIVE_PATHS.open: {
       const opened = await run(Effect.flatMap(drive, (handle) => handle.open(writer)));
       // A newer machine writes here now; nothing this one retries changes that.

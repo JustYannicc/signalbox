@@ -475,6 +475,117 @@ describe("RunnerTurns", () => {
   );
 
   it.effect(
+    "records an interrupted turn's auto-save and exact provider turn before reporting its end",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const fake = yield* makeFakeAdapter;
+          const reported: Array<RunnerItem> = [];
+          const checkpoints: Array<{
+            runId: string;
+            turnId: string;
+            threadId: string;
+            views: unknown;
+          }> = [];
+          const driveCalls: Array<string> = [];
+          const checkpoint = { start: "a".repeat(40), commit: "b".repeat(40), files: [] } as const;
+          const context = {
+            driveId: "home",
+            contexts: [
+              {
+                contextId: "personal",
+                name: "Personal",
+                drives: [
+                  {
+                    driveId: "spec",
+                    path: "My Drive/spec",
+                    commit: "c".repeat(40),
+                    time: 1,
+                    shortcuts: [],
+                  },
+                ],
+              },
+            ],
+          };
+          const drive: RunnerDrive = {
+            prepare: () => Effect.succeed({ instructions: "", notices: [] }),
+            autosave: Effect.sync(() => void driveCalls.push("autosave")),
+            flush: Effect.void,
+            restoreDependencyEdits: Effect.void,
+            saveNow: Effect.void,
+            changed: Effect.succeed(false),
+            checkpointViews: (pinned) => ({ shortcuts: [], context: pinned }),
+            recordCheckpoint: (record) =>
+              Effect.sync(
+                () =>
+                  void checkpoints.push({
+                    runId: record.runId,
+                    turnId: record.turnId,
+                    threadId: record.threadId,
+                    views: record.views,
+                  }),
+              ),
+            captureCheckpoint: Effect.sync(() => {
+              driveCalls.push("capture");
+              return checkpoint;
+            }),
+            finishTurn: () => Effect.die(new Error("failed runs do not land")),
+            continueAfterResolution: Effect.die(new Error("not in this test")),
+            takeInMain: Effect.die(new Error("not in this test")),
+            abandonMerge: Effect.die(new Error("not in this test")),
+            saveBranch: () => Effect.die(new Error("not in this test")),
+            published: () => Effect.void,
+          };
+          const turns = yield* makeRunnerTurns({
+            threadId,
+            adapters: new Map([[instanceId, fake.adapter]]),
+            cwd: "/tmp",
+            useModelToken: () => Effect.void,
+            usage: Effect.succeed(unmeasured),
+            emit: (item) => Effect.sync(() => void reported.push(item)),
+            openDrive: () => Effect.succeed(drive),
+            pinDrives: () => Effect.succeed(context),
+          });
+          yield* Deferred.succeed(fake.loaded, undefined);
+          yield* turns.start({
+            turn: turnFor(1),
+            modelToken: "token-1",
+            drive: { driveId: "home", token: "drive-token", remoteToken: null },
+          });
+          yield* settle;
+          yield* Queue.offer(fake.events, providerTurnStarted(1));
+          yield* settle;
+          yield* Queue.offer(fake.events, {
+            type: "turn.terminal",
+            driver,
+            providerThreadId: providerThread.id,
+            providerTurnId: ProviderTurnId.make("native-1"),
+            runOrdinal: 1,
+            status: "interrupted",
+            failure: null,
+            threadDisposition: "reusable",
+          } as ProviderAdapterV2Event);
+          yield* settle;
+
+          expect(driveCalls).toEqual(["autosave", "capture"]);
+          expect(checkpoints).toEqual([
+            {
+              runId: "run-1",
+              turnId: "native-1",
+              threadId: "thread-1",
+              views: { shortcuts: [], context },
+            },
+          ]);
+          expect(reported.map((item) => item.kind)).toContain("drive.checkpoint");
+          expect(reported.at(-1)).toMatchObject({
+            kind: "provider",
+            event: { type: "turn.terminal" },
+          });
+        }),
+      ),
+  );
+
+  it.effect(
     "saves after file changes, and reports a turn's end only once its files land, conflicts resolved by the agent",
     () =>
       Effect.scoped(
@@ -493,6 +604,7 @@ describe("RunnerTurns", () => {
               ),
           });
           const driveCalls: Array<string> = [];
+          const checkpoints: Array<{ runId: string; turnId: string; threadId: string }> = [];
           let outcome: DriveOutcome = { _tag: "conflict", files: ["notes.md"] };
           const drive: RunnerDrive = {
             prepare: (remoteToken) =>
@@ -505,6 +617,17 @@ describe("RunnerTurns", () => {
             restoreDependencyEdits: Effect.void,
             saveNow: Effect.void,
             changed: Effect.succeed(false),
+            checkpointViews: (context) => ({ shortcuts: [], context }),
+            recordCheckpoint: (record) =>
+              Effect.sync(
+                () =>
+                  void checkpoints.push({
+                    runId: record.runId,
+                    turnId: record.turnId,
+                    threadId: record.threadId,
+                  }),
+              ),
+            captureCheckpoint: Effect.succeed({ start: null, commit: "w".repeat(40), files: [] }),
             finishTurn: () =>
               Effect.sync(() => {
                 driveCalls.push("finish");
@@ -610,6 +733,9 @@ describe("RunnerTurns", () => {
             "drive.checkpoint",
             "drive.notice",
           ]);
+          expect(checkpoints).toEqual([
+            { threadId: "thread-1", runId: "run-1", turnId: "native-1" },
+          ]);
 
           // The adapter names the merge step's provider turn, then ends it.
           yield* Queue.offer(fake.events, {
@@ -659,6 +785,7 @@ describe("RunnerTurns", () => {
             ),
         });
         const driveCalls: Array<string> = [];
+        const checkpoints: Array<{ runId: string; turnId: string; threadId: string }> = [];
         let outcome: DriveOutcome = { _tag: "conflict", files: ["notes.md"] };
         const drive: RunnerDrive = {
           prepare: (remoteToken) =>
@@ -671,6 +798,17 @@ describe("RunnerTurns", () => {
           restoreDependencyEdits: Effect.void,
           saveNow: Effect.void,
           changed: Effect.succeed(false),
+          checkpointViews: (context) => ({ shortcuts: [], context }),
+          recordCheckpoint: (record) =>
+            Effect.sync(
+              () =>
+                void checkpoints.push({
+                  runId: record.runId,
+                  turnId: record.turnId,
+                  threadId: record.threadId,
+                }),
+            ),
+          captureCheckpoint: Effect.succeed({ start: null, commit: "w".repeat(40), files: [] }),
           finishTurn: () =>
             Effect.sync(() => {
               driveCalls.push("finish");
@@ -776,6 +914,7 @@ describe("RunnerTurns", () => {
           "drive.checkpoint",
           "drive.notice",
         ]);
+        expect(checkpoints).toEqual([{ threadId: "thread-1", runId: "run-1", turnId: "native-1" }]);
 
         // Stopped mid-merge: the merge is dropped and the run ends once.
         yield* turns.interrupt(RunId.make("run-1"));
@@ -842,6 +981,9 @@ describe("RunnerTurns", () => {
           restoreDependencyEdits: Effect.void,
           saveNow: Effect.void,
           changed: Effect.succeed(false),
+          checkpointViews: (context) => ({ shortcuts: [], context }),
+          recordCheckpoint: () => Effect.void,
+          captureCheckpoint: Effect.succeed(null),
           finishTurn: () => Effect.die(new Error("not in this test")),
           continueAfterResolution: Effect.sync((): DriveOutcome => {
             driveCalls.push("continue");
@@ -1293,6 +1435,9 @@ describe("RunnerTurns", () => {
         restoreDependencyEdits: Effect.void,
         saveNow: Effect.void,
         changed: Effect.succeed(false),
+        checkpointViews: (context) => ({ shortcuts: [], context }),
+        recordCheckpoint: () => Effect.void,
+        captureCheckpoint: Effect.succeed(null),
         finishTurn: () =>
           Effect.succeed({
             checkpoint: null,
