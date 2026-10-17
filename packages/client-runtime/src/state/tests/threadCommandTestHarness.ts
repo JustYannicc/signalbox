@@ -1,6 +1,5 @@
 import "./threadCommandTestSession.ts";
 import {
-  RuntimeRequestId,
   EnvironmentId,
   ORCHESTRATION_V2_WS_METHODS,
   ProjectId,
@@ -29,17 +28,6 @@ export { testConfigAtoms, testSessionAtoms } from "./threadCommandTestSession.ts
 export const ENVIRONMENT_ID = EnvironmentId.make("remote");
 export const THREAD_ID = ThreadId.make("thread");
 export const NOW = DateTime.makeUnsafe("2026-09-12T10:00:00.000Z");
-export const FUTURE = DateTime.makeUnsafe("2099-01-01T00:00:00.000Z");
-export const APPROVAL = {
-  id: RuntimeRequestId.make("approval"),
-  kind: "command" as const,
-  createdAt: NOW,
-};
-export const USER_INPUT = {
-  id: RuntimeRequestId.make("input"),
-  kind: "user_input" as const,
-  createdAt: NOW,
-};
 export const SNAPSHOT: OrchestrationV2ShellSnapshot = {
   snapshotSequence: 1,
   schemaVersion: 2,
