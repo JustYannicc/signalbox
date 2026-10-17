@@ -805,6 +805,55 @@ const checkpointWorkerReply = (worker: NodeWorkerThreads.Worker) =>
       }),
   );
 
+const waitForCheckpointMessage = (worker: NodeWorkerThreads.Worker, id: unknown) =>
+  new Promise<Record<string, unknown>>((resolve) => {
+    const onMessage = (message: unknown) => {
+      if (
+        typeof message === "object" &&
+        message !== null &&
+        "type" in message &&
+        message.type === "checkpoint" &&
+        "id" in message &&
+        message.id === id
+      ) {
+        worker.off("message", onMessage);
+        resolve(message as Record<string, unknown>);
+      }
+    };
+    worker.on("message", onMessage);
+  });
+
+const waitForWorkerMessage = (worker: NodeWorkerThreads.Worker, type: string) =>
+  new Promise<Record<string, unknown>>((resolve) => {
+    const onMessage = (message: unknown) => {
+      if (
+        typeof message === "object" &&
+        message !== null &&
+        "type" in message &&
+        message.type === type
+      ) {
+        worker.off("message", onMessage);
+        resolve(message as Record<string, unknown>);
+      }
+    };
+    worker.on("message", onMessage);
+  });
+
+const observeWriterWaiters = (worker: NodeWorkerThreads.Worker, count: number) => {
+  let seen = 0;
+  let resolve: () => void = () => {};
+  const ready = new Promise<void>((done) => {
+    resolve = done;
+  });
+  const ref = worker.ref;
+  const spy = vi.spyOn(worker, "ref").mockImplementation(function (this: NodeWorkerThreads.Worker) {
+    const result = ref.call(this);
+    if (++seen === count) resolve();
+    return result;
+  });
+  return { ready, restore: () => spy.mockRestore() };
+};
+
 const pauseCheckpointRequests = (worker: NodeWorkerThreads.Worker) => {
   const queued: Array<Parameters<typeof worker.postMessage>> = [];
   const send = worker.postMessage.bind(worker);
@@ -812,11 +861,19 @@ const pauseCheckpointRequests = (worker: NodeWorkerThreads.Worker) => {
     queued.push(args);
   });
   let restored = false;
-  return () => {
-    if (restored) return;
-    restored = true;
-    spy.mockRestore();
-    for (const args of queued) send(...args);
+  return {
+    queued,
+    sendNext() {
+      const args = queued.shift();
+      if (args !== undefined) send(...args);
+      return args?.[0];
+    },
+    release() {
+      if (restored) return;
+      restored = true;
+      spy.mockRestore();
+      for (const args of queued.splice(0)) send(...args);
+    },
   };
 };
 
@@ -828,14 +885,34 @@ const readCheckpointState = (db: NodeSqlite.DatabaseSync) => {
   return { log: state.log, checkpointed: state.checkpointed };
 };
 
+it.effect.skipIf(!supportsNoopCheckpoint)(
+  "keeps one authorizer installed across prepare and automatic reprepare",
+  () => {
+    const authorizer = vi.spyOn(NodeSqlite.DatabaseSync.prototype, "setAuthorizer");
+    return withCheckpointClient((sql) =>
+      Effect.gen(function* () {
+        yield* sql.unsafe("CREATE TABLE entries(value TEXT NOT NULL)").unprepared;
+        yield* sql.unsafe("INSERT INTO entries VALUES ('kept')").unprepared;
+        const select = sql<{ readonly value: string }>`SELECT value FROM entries`;
+        assert.deepEqual(yield* select, [{ value: "kept" }]);
+        yield* sql.unsafe("ALTER TABLE entries ADD COLUMN extra TEXT").unprepared;
+        assert.deepEqual(yield* select, [{ value: "kept" }]);
+        yield* sql.unsafe("SELECT 1 AS one").unprepared;
+        yield* sql.unsafe("SELECT 2 AS two").unprepared;
+        assert.equal(authorizer.mock.calls.length, 1);
+      }),
+    ).pipe(Effect.ensuring(Effect.sync(() => authorizer.mockRestore())));
+  },
+);
+
 it.effect("checkpoints the WAL on the worker instead of the writer", () =>
   withCheckpointClient((sql, filename) =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const walSize = Effect.map(fs.stat(`${filename}-wal`), (info) => Number(info.size));
       const worker = startedWorkers.at(-1)!;
-      const releaseCheckpointRequests = pauseCheckpointRequests(worker);
-      yield* Effect.addFinalizer(() => Effect.sync(releaseCheckpointRequests));
+      const checkpointRequests = pauseCheckpointRequests(worker);
+      yield* Effect.addFinalizer(() => Effect.sync(checkpointRequests.release));
       const limit = 1024 * 1024;
       yield* sql.unsafe(`PRAGMA journal_size_limit = ${limit}`);
       const autocheckpoint = yield* sql<{
@@ -855,7 +932,7 @@ it.effect("checkpoints the WAL on the worker instead of the writer", () =>
       }>`PRAGMA wal_checkpoint(NOOP)`;
       assert.isAbove(pending[0]!.log, 1000);
       assert.isBelow(pending[0]!.checkpointed, pending[0]!.log);
-      releaseCheckpointRequests();
+      checkpointRequests.release();
       yield* checkpointWorkerReply(worker);
       const wal = yield* sql<{
         readonly log: number;
@@ -871,6 +948,388 @@ it.effect("checkpoints the WAL on the worker instead of the writer", () =>
 );
 
 it.effect.skipIf(!supportsNoopCheckpoint)(
+  "pauses writer admission before the checkpoint worker truncates the WAL",
+  () =>
+    withCheckpointClient(
+      (sql, filename) =>
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const worker = startedWorkers.at(-1)!;
+          const truncateRequested = waitForWorkerMessage(worker, "truncate-request");
+          const truncateStarted = waitForWorkerMessage(worker, "truncate-start");
+          const checkpointRequests = pauseCheckpointRequests(worker);
+          yield* Effect.addFinalizer(() => Effect.sync(checkpointRequests.release));
+
+          const walLimit = 1024 * 1024;
+          yield* sql.unsafe(`PRAGMA journal_size_limit = ${walLimit}`).unprepared;
+          yield* sql.unsafe("CREATE TABLE pages(payload BLOB)").unprepared;
+          yield* sql.unsafe(`
+            WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < 6000)
+            INSERT INTO pages(payload) SELECT randomblob(4000) FROM n
+          `).unprepared;
+          const request = checkpointRequests.queued[0]?.[0];
+          assert(typeof request === "object" && request !== null && "id" in request);
+
+          const reader = yield* Effect.acquireRelease(
+            Effect.sync(() => new NodeSqlite.DatabaseSync(filename)),
+            (database) => Effect.sync(() => database.close()),
+          );
+          reader.exec("BEGIN");
+          assert.equal(reader.prepare("SELECT COUNT(*) AS count FROM pages").get()?.count, 6000);
+
+          const requestId = (request as { readonly id: unknown }).id;
+          const truncateFinished = waitForCheckpointMessage(worker, requestId);
+          checkpointRequests.sendNext();
+          checkpointRequests.release();
+          const truncate = yield* Effect.promise(() => truncateRequested);
+          assert.isBelow(truncate.log as number, 10_000);
+          assert.equal(truncate.checkpointed, truncate.log);
+          yield* Effect.promise(() => truncateStarted);
+
+          const writerWaiter = observeWriterWaiters(worker, 1);
+          const insertStarted = yield* Deferred.make<void>();
+          const inserted = yield* Deferred.make<void>();
+          yield* Effect.forkChild(
+            Effect.gen(function* () {
+              yield* Deferred.succeed(insertStarted, undefined);
+              yield* sql.unsafe("INSERT INTO pages(payload) VALUES (x'00')").unprepared;
+              yield* Deferred.succeed(inserted, undefined);
+            }),
+            { startImmediately: true },
+          );
+          yield* Deferred.await(insertStarted);
+          yield* Effect.promise(() => writerWaiter.ready);
+          writerWaiter.restore();
+
+          let resolveRead: (count: number) => void = () => {};
+          const readReply = new Promise<number>((resolve) => {
+            resolveRead = resolve;
+          });
+          yield* Effect.forkChild(
+            sql
+              .withTransaction(sql<{ readonly count: number }>`SELECT COUNT(*) AS count FROM pages`)
+              .pipe(
+                SqliteClient.readOnly,
+                Effect.tap((rows) => Effect.sync(() => resolveRead(rows[0]?.count ?? -1))),
+              ),
+            { startImmediately: true },
+          );
+          const first = yield* Effect.promise(() =>
+            Promise.race([
+              readReply.then((count) => ({ type: "read", count })),
+              truncateFinished.then(() => ({ type: "truncate" as const })),
+            ]),
+          );
+          assert.deepEqual(first, { type: "read", count: 6000 });
+          assert.equal(yield* Deferred.isDone(inserted), false);
+
+          reader.exec("ROLLBACK");
+          yield* Effect.promise(() => truncateFinished);
+          yield* Deferred.await(inserted);
+          assert.isAtMost(Number((yield* fs.stat(`${filename}-wal`)).size), walLimit);
+        }),
+      { readerWorker: true },
+    ),
+);
+
+it.effect.skipIf(!supportsNoopCheckpoint)(
+  "cancels blocked transaction admission and rechecks queued writes before execution",
+  () =>
+    withCheckpointClient(
+      (sql, filename) =>
+        Effect.gen(function* () {
+          const worker = startedWorkers.at(-1)!;
+          yield* sql.unsafe("PRAGMA journal_size_limit = 1").unprepared;
+          yield* sql.unsafe("CREATE TABLE entries(value INTEGER PRIMARY KEY)").unprepared;
+          yield* sql.unsafe("CREATE TABLE batch_pages(id INTEGER PRIMARY KEY, payload BLOB)")
+            .unprepared;
+          const seed = yield* Effect.acquireRelease(
+            Effect.sync(() => new NodeSqlite.DatabaseSync(filename)),
+            (database) => Effect.sync(() => database.close()),
+          );
+
+          const reader = yield* Effect.acquireRelease(
+            Effect.sync(() => new NodeSqlite.DatabaseSync(filename)),
+            (database) => Effect.sync(() => database.close()),
+          );
+          reader.exec("BEGIN");
+          reader.prepare("SELECT COUNT(*) FROM entries").get();
+          yield* sql.unsafe("INSERT INTO entries VALUES (0)").unprepared;
+          const initialCheckpoint = waitForCheckpointMessage(worker, -1);
+          // The real worker reports an over-size WAL that an old reader prevents it from draining.
+          // oxlint-disable-next-line unicorn/require-post-message-target-origin -- Node workers do not accept a target origin.
+          worker.postMessage({ type: "check", id: -1, journalSizeLimit: 1, force: true });
+          const initialState = yield* Effect.promise(() => initialCheckpoint);
+          assert.isTrue(initialState.blocked as boolean);
+          assert.isBelow(initialState.log as number, 10_000);
+          assert.isAbove((initialState.log as number) - (initialState.checkpointed as number), 0);
+
+          const checkpointRequests = pauseCheckpointRequests(worker);
+          yield* Effect.addFinalizer(() => Effect.sync(checkpointRequests.release));
+          const transactionBody = yield* Deferred.make<void>();
+          const cancelledWaiter = observeWriterWaiters(worker, 1);
+          const cancelled = yield* Effect.forkChild(
+            sql.withTransaction(Deferred.succeed(transactionBody, undefined)),
+            { startImmediately: true },
+          );
+          yield* Effect.promise(() => cancelledWaiter.ready);
+          cancelledWaiter.restore();
+          yield* Fiber.interrupt(cancelled);
+          assert.isFalse(yield* Deferred.isDone(transactionBody));
+
+          const cancellationRequest = checkpointRequests.queued[0]?.[0];
+          assert(
+            typeof cancellationRequest === "object" &&
+              cancellationRequest !== null &&
+              "id" in cancellationRequest,
+          );
+          const cancellationReply = waitForCheckpointMessage(
+            worker,
+            (cancellationRequest as { readonly id: unknown }).id,
+          );
+          checkpointRequests.sendNext();
+          yield* Effect.promise(() => cancellationReply);
+
+          // Leave the reader snapshot in place, but remove the artificial size-limit block.
+          // Below 10,000 frames the worker can now admit one statement while preserving that snapshot.
+          yield* sql.unsafe("PRAGMA journal_size_limit = -1").unprepared;
+
+          const largeDone = yield* Deferred.make<void>();
+          const largeWaiter = observeWriterWaiters(worker, 1);
+          yield* Effect.forkChild(
+            Effect.gen(function* () {
+              yield* sql.unsafe(`
+                WITH RECURSIVE n(i) AS (
+                  SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < 12000
+                )
+                INSERT INTO batch_pages(id, payload) SELECT i, randomblob(4000) FROM n
+              `).unprepared;
+              yield* Deferred.succeed(largeDone, undefined);
+            }),
+            { startImmediately: true },
+          );
+          yield* Effect.promise(() => largeWaiter.ready);
+          largeWaiter.restore();
+
+          const smallDone = yield* Deferred.make<void>();
+          const smallWaiter = observeWriterWaiters(worker, 1);
+          yield* Effect.forkChild(
+            sql
+              .unsafe("INSERT INTO entries VALUES (1)")
+              .unprepared.pipe(Effect.tap(() => Deferred.succeed(smallDone, undefined))),
+            { startImmediately: true },
+          );
+          yield* Effect.promise(() => smallWaiter.ready);
+          smallWaiter.restore();
+
+          const firstRequest = checkpointRequests.queued[0]?.[0];
+          assert(typeof firstRequest === "object" && firstRequest !== null && "id" in firstRequest);
+          const initialUnblock = waitForCheckpointMessage(
+            worker,
+            (firstRequest as { readonly id: unknown }).id,
+          );
+          checkpointRequests.sendNext();
+          const unblockedState = yield* Effect.promise(() => initialUnblock);
+          assert.isFalse(unblockedState.blocked as boolean);
+          assert.isBelow(unblockedState.log as number, 10_000);
+
+          yield* Deferred.await(largeDone);
+          const frames = readCheckpointState(seed);
+          assert.isAtLeast(frames.log, 10_000);
+          assert.isAbove(frames.log - frames.checkpointed, 10_000);
+          assert.deepEqual(yield* sql.unsafe("PRAGMA journal_mode").unprepared, [
+            { journal_mode: "wal" },
+          ]);
+
+          let resolveRead: (count: number) => void = () => {};
+          const readReply = new Promise<number>((resolve) => {
+            resolveRead = resolve;
+          });
+          yield* Effect.forkChild(
+            sql
+              .withTransaction(
+                sql<{ readonly count: number }>`SELECT COUNT(*) AS count FROM entries`,
+              )
+              .pipe(
+                SqliteClient.readOnly,
+                Effect.tap((rows) => Effect.sync(() => resolveRead(rows[0]?.count ?? -1))),
+              ),
+            { startImmediately: true },
+          );
+          assert.equal(yield* Effect.promise(() => readReply), 1);
+          assert.isFalse(yield* Deferred.isDone(smallDone));
+
+          reader.exec("ROLLBACK");
+          checkpointRequests.release();
+          yield* checkpointWorkerReply(worker);
+          yield* Deferred.await(smallDone);
+          yield* checkpointWorkerReply(worker);
+
+          // A new transaction also proves the cancelled BEGIN released the writer semaphore.
+          yield* sql.withTransaction(sql`SELECT 1`);
+        }),
+      { readerWorker: true },
+    ),
+);
+
+it.effect.skipIf(!supportsNoopCheckpoint)(
+  "gates incremental vacuum while allowing read-only PRAGMAs",
+  () =>
+    withCheckpointClient((sql, filename) =>
+      Effect.gen(function* () {
+        const worker = startedWorkers.at(-1)!;
+        yield* sql.unsafe("PRAGMA journal_size_limit = 1").unprepared;
+        yield* sql.unsafe("PRAGMA auto_vacuum = INCREMENTAL").unprepared;
+        yield* sql.unsafe("VACUUM").unprepared;
+        yield* sql.unsafe("CREATE TABLE entries(value INTEGER PRIMARY KEY)").unprepared;
+        yield* sql.unsafe("CREATE TABLE reclaim_pages(payload BLOB)").unprepared;
+        yield* sql.unsafe(`
+          WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < 200)
+          INSERT INTO reclaim_pages(payload) SELECT randomblob(4000) FROM n
+        `).unprepared;
+        yield* sql.unsafe("DELETE FROM reclaim_pages").unprepared;
+        const seed = yield* Effect.acquireRelease(
+          Effect.sync(() => new NodeSqlite.DatabaseSync(filename)),
+          (database) => Effect.sync(() => database.close()),
+        );
+        assert.equal(seed.prepare("PRAGMA auto_vacuum").get()?.auto_vacuum, 2);
+        const pagesBefore = seed.prepare("PRAGMA page_count").get()?.page_count;
+        const freeBefore = seed.prepare("PRAGMA freelist_count").get()?.freelist_count as number;
+        assert.isAbove(freeBefore, 0);
+
+        const reader = yield* Effect.acquireRelease(
+          Effect.sync(() => new NodeSqlite.DatabaseSync(filename)),
+          (database) => Effect.sync(() => database.close()),
+        );
+        reader.exec("BEGIN");
+        reader.prepare("SELECT COUNT(*) FROM entries").get();
+        yield* sql.unsafe("INSERT INTO entries VALUES (1)").unprepared;
+        const initialCheckpoint = waitForCheckpointMessage(worker, -1);
+        // oxlint-disable-next-line unicorn/require-post-message-target-origin -- Node workers do not accept a target origin.
+        worker.postMessage({ type: "check", id: -1, journalSizeLimit: 1, force: true });
+        const initialState = yield* Effect.promise(() => initialCheckpoint);
+        assert.isTrue(initialState.blocked as boolean);
+
+        const checkpointRequests = pauseCheckpointRequests(worker);
+        yield* Effect.addFinalizer(() => Effect.sync(checkpointRequests.release));
+        yield* sql.unsafe("PRAGMA journal_size_limit = -1").unprepared;
+        let resolveVacuum: () => void = () => {};
+        const vacuumFinished = new Promise<void>((resolve) => {
+          resolveVacuum = resolve;
+        });
+        const waiter = observeWriterWaiters(worker, 1);
+        yield* Effect.forkChild(
+          sql
+            .unsafe("PRAGMA incremental_vacuum(1)")
+            .unprepared.pipe(Effect.tap(() => Effect.sync(resolveVacuum))),
+          { startImmediately: true },
+        );
+        const admission = yield* Effect.promise(() =>
+          Promise.race([
+            waiter.ready.then(() => "blocked" as const),
+            vacuumFinished.then(() => "completed" as const),
+          ]),
+        );
+        assert.equal(admission, "blocked");
+        waiter.restore();
+        assert.deepEqual(yield* sql.unsafe("PRAGMA journal_mode").unprepared, [
+          { journal_mode: "wal" },
+        ]);
+
+        reader.exec("ROLLBACK");
+        checkpointRequests.release();
+        yield* checkpointWorkerReply(worker);
+        yield* Effect.promise(() => vacuumFinished);
+        yield* checkpointWorkerReply(worker);
+        const pagesAfter = seed.prepare("PRAGMA page_count").get()?.page_count;
+        const freeAfter = seed.prepare("PRAGMA freelist_count").get()?.freelist_count as number;
+        assert.isAtMost(pagesAfter as number, pagesBefore as number);
+        assert.isBelow(freeAfter, freeBefore);
+      }),
+    ),
+);
+
+it.effect.skipIf(!supportsNoopCheckpoint)(
+  "accounts partial writes from a failed OR FAIL statement before admitting another writer",
+  () =>
+    withCheckpointClient((sql, filename) =>
+      Effect.gen(function* () {
+        const worker = startedWorkers.at(-1)!;
+        yield* sql.unsafe("PRAGMA journal_size_limit = 1").unprepared;
+        yield* sql.unsafe("CREATE TABLE entries(id INTEGER PRIMARY KEY, payload BLOB)").unprepared;
+        yield* sql.unsafe("INSERT INTO entries VALUES (12001, x'00')").unprepared;
+        const seed = yield* Effect.acquireRelease(
+          Effect.sync(() => new NodeSqlite.DatabaseSync(filename)),
+          (database) => Effect.sync(() => database.close()),
+        );
+        const reader = yield* Effect.acquireRelease(
+          Effect.sync(() => new NodeSqlite.DatabaseSync(filename)),
+          (database) => Effect.sync(() => database.close()),
+        );
+        reader.exec("BEGIN");
+        reader.prepare("SELECT COUNT(*) FROM entries").get();
+
+        const checkpointRequests = pauseCheckpointRequests(worker);
+        yield* Effect.addFinalizer(() => Effect.sync(checkpointRequests.release));
+        const failure = yield* Effect.flip(
+          sql.unsafe(`
+            WITH RECURSIVE n(i) AS (
+              SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < 12001
+            )
+            INSERT OR FAIL INTO entries(id, payload)
+            SELECT i, randomblob(4000) FROM n ORDER BY i
+          `).unprepared,
+        );
+        assert.equal(failure._tag, "SqlError");
+        assert.equal(
+          (yield* sql<{ readonly count: number }>`SELECT COUNT(*) AS count FROM entries`)[0]?.count,
+          12_001,
+        );
+        const frames = readCheckpointState(seed);
+        assert.isAtLeast(frames.log, 10_000);
+        assert.isAbove(frames.log - frames.checkpointed, 0);
+
+        const attemptedCheck = checkpointRequests.queued[0]?.[0];
+        assert(
+          typeof attemptedCheck === "object" &&
+            attemptedCheck !== null &&
+            "force" in attemptedCheck,
+        );
+        assert.isTrue((attemptedCheck as { readonly force: boolean }).force);
+
+        let resolveInserted: () => void = () => {};
+        const insertFinished = new Promise<void>((resolve) => {
+          resolveInserted = resolve;
+        });
+        const waiter = observeWriterWaiters(worker, 1);
+        yield* Effect.forkChild(
+          sql
+            .unsafe("INSERT INTO entries VALUES (12002, x'01')")
+            .unprepared.pipe(Effect.tap(() => Effect.sync(resolveInserted))),
+          { startImmediately: true },
+        );
+        const admission = yield* Effect.promise(() =>
+          Promise.race([
+            waiter.ready.then(() => "backpressured" as const),
+            insertFinished.then(() => "executed" as const),
+          ]),
+        );
+        assert.equal(admission, "backpressured");
+        waiter.restore();
+
+        reader.exec("ROLLBACK");
+        checkpointRequests.release();
+        yield* checkpointWorkerReply(worker);
+        yield* Effect.promise(() => insertFinished);
+        assert.equal(
+          (yield* sql<{ readonly count: number }>`SELECT COUNT(*) AS count FROM entries`)[0]?.count,
+          12_002,
+        );
+      }),
+    ),
+);
+
+it.effect.skipIf(!supportsNoopCheckpoint)(
   "backpressures writes at transaction boundaries while reads stay available",
   () =>
     withCheckpointClient(
@@ -879,8 +1338,8 @@ it.effect.skipIf(!supportsNoopCheckpoint)(
           const fs = yield* FileSystem.FileSystem;
           const walLimit = 1024 * 1024;
           const worker = startedWorkers.at(-1)!;
-          const releaseCheckpointRequests = pauseCheckpointRequests(worker);
-          yield* Effect.addFinalizer(() => Effect.sync(releaseCheckpointRequests));
+          const checkpointRequests = pauseCheckpointRequests(worker);
+          yield* Effect.addFinalizer(() => Effect.sync(checkpointRequests.release));
           yield* sql.unsafe(`PRAGMA journal_size_limit = ${walLimit}`).unprepared;
           const seed = yield* Effect.acquireRelease(
             Effect.sync(() => new NodeSqlite.DatabaseSync(filename)),
@@ -981,7 +1440,7 @@ it.effect.skipIf(!supportsNoopCheckpoint)(
           yield* Effect.promise(() => new Promise<void>((resolve) => setImmediate(resolve)));
           assert.equal(yield* Deferred.isDone(deleted), false);
 
-          releaseCheckpointRequests();
+          checkpointRequests.release();
           yield* checkpointWorkerReply(worker);
           const held = readCheckpointState(seed);
           assert.isAbove(held.log - held.checkpointed, 10_000);

@@ -497,11 +497,16 @@ let frames;
 let checkpoint;
 let truncate;
 let journalSizeLimit = -1;
+let nextTruncateRequestId = 0;
+let pendingTruncate;
+let pendingBarriers = 0;
 const initialize = () => {
   if (db !== undefined) return;
   // Client setup switches the writer to WAL after the client layer starts.
   // Opening this connection earlier can race that mode change and WAL recovery.
   db = new DatabaseSync(workerData.filename);
+  // TRUNCATE may wait for readers; the writer is already gated on the main thread.
+  db.exec("PRAGMA busy_timeout = 5000;");
   const version = db.prepare("SELECT sqlite_version() AS version").get().version;
   const [major, minor] = version.split(".").map(Number);
   if (major < 3 || (major === 3 && minor < 51)) {
@@ -520,6 +525,9 @@ const needsBackpressure = (state) =>
   state.log >= workerData.backpressureFrames && state.checkpointed < state.log;
 const check = (id, nextJournalSizeLimit, force) => {
   initialize();
+  if (pendingTruncate !== undefined) {
+    return { ...pendingTruncate.state, blocked: true, waitingForTruncate: true };
+  }
   if (Number.isSafeInteger(nextJournalSizeLimit) && nextJournalSizeLimit !== journalSizeLimit) {
     db.exec("PRAGMA journal_size_limit = " + nextJournalSizeLimit);
     journalSizeLimit = nextJournalSizeLimit;
@@ -536,37 +544,79 @@ const check = (id, nextJournalSizeLimit, force) => {
     state.checkpointed === state.log &&
     (state.log >= workerData.backpressureFrames || walSizeLimitExceeded)
   ) {
-    try {
-      blocked = truncate.get().busy !== 0;
-    } catch {
-      blocked = true;
-    }
-    state = frames.get();
+    pendingTruncate = {
+      truncateId: ++nextTruncateRequestId,
+      checkId: id,
+      state,
+    };
+    parentPort.postMessage({
+      type: "truncate-request",
+      truncateId: pendingTruncate.truncateId,
+      checkId: id,
+      ...state,
+    });
+    return { ...state, blocked: true, waitingForTruncate: true };
   }
   blocked ||= needsBackpressure(state);
   const result = { ...state, blocked };
   parentPort.postMessage({ type: "checkpoint", id, ...result });
-  return result;
+  return { ...result, waitingForTruncate: false };
+};
+const finishTruncate = (truncateId) => {
+  if (pendingTruncate === undefined || pendingTruncate.truncateId !== truncateId) return;
+  const pending = pendingTruncate;
+  parentPort.postMessage({ type: "truncate-start", truncateId });
+  let blocked;
+  try {
+    blocked = truncate.get().busy !== 0;
+  } catch {
+    blocked = true;
+  }
+  const state = frames.get();
+  const walSizeLimitExceeded =
+    journalSizeLimit >= 0 && statSync(workerData.filename + "-wal").size > journalSizeLimit;
+  blocked ||= needsBackpressure(state) || walSizeLimitExceeded;
+  pendingTruncate = undefined;
+  parentPort.postMessage({ type: "checkpoint", id: pending.checkId, truncateId, ...state, blocked });
+  while (pendingBarriers > 0) {
+    pendingBarriers--;
+    parentPort.postMessage("barrier");
+  }
+  if (pendingFrames(state) >= workerData.frames || blocked) {
+    idle = setTimeout(finish, workerData.idleMs);
+  }
 };
 const finish = () => {
   const before = frames.get();
   const force = needsBackpressure(before);
   const state = check(undefined, journalSizeLimit, force);
-  if (pendingFrames(state) >= workerData.frames || state.blocked) {
+  if (!state.waitingForTruncate && (pendingFrames(state) >= workerData.frames || state.blocked)) {
     idle = setTimeout(finish, workerData.idleMs);
   }
 };
 let idle;
 parentPort.on("message", (request) => {
   clearTimeout(idle);
+  if (request && request.type === "truncate") {
+    finishTruncate(request.truncateId);
+    return;
+  }
+  const isBarrier = request === "barrier";
+  if (pendingTruncate !== undefined) {
+    if (isBarrier) pendingBarriers++;
+    return;
+  }
   const checkRequest = request && typeof request === "object" ? request : undefined;
   const state = check(
     checkRequest && checkRequest.id,
     checkRequest && checkRequest.journalSizeLimit,
     checkRequest && checkRequest.force,
   );
-  if (request === "barrier") parentPort.postMessage("barrier");
-  if (pendingFrames(state) >= workerData.frames || state.blocked) {
+  if (isBarrier) {
+    if (state.waitingForTruncate) pendingBarriers++;
+    else parentPort.postMessage("barrier");
+  }
+  if (!state.waitingForTruncate && (pendingFrames(state) >= workerData.frames || state.blocked)) {
     idle = setTimeout(finish, workerData.idleMs);
   }
 });
@@ -634,6 +684,8 @@ const startCheckpointWorker = Effect.fnUntraced(function* (
   let checkpointBlocked = false;
   let frameStatusUnknown = false;
   let journalSizeLimit = -1;
+  let truncateRequestId: number | undefined;
+  let truncatePaused = false;
   try {
     const state = readFrameCounts();
     logFrames = state.log;
@@ -641,10 +693,16 @@ const startCheckpointWorker = Effect.fnUntraced(function* (
   } catch {
     frameStatusUnknown = true;
   }
-  const waiters: Array<(effect: Effect.Effect<void>) => void> = [];
+  const waiters: Array<{
+    readonly write: boolean;
+    readonly resume: (effect: Effect.Effect<void>) => void;
+  }> = [];
+  let beforeStatement: (write: boolean) => Effect.Effect<void>;
   const backlogFrames = () => logFrames - checkpointedFrames;
+  const resumeWaiter = (waiter: (typeof waiters)[number]) =>
+    waiter.resume(Effect.suspend(() => beforeStatement(waiter.write)));
   const resumeWaiters = () => {
-    for (const resume of waiters.splice(0)) resume(Effect.void);
+    for (const waiter of waiters.splice(0)) resumeWaiter(waiter);
     worker.unref();
   };
   const resumeWaitersBelowThreshold = () => {
@@ -652,30 +710,54 @@ const startCheckpointWorker = Effect.fnUntraced(function* (
       waiters.length > 0 &&
       !frameStatusUnknown &&
       !checkpointBlocked &&
+      truncateRequestId === undefined &&
       logFrames < CHECKPOINT_BACKPRESSURE_FRAMES
     ) {
-      resumeWaiters();
+      const waiter = waiters.shift();
+      if (waiter !== undefined) resumeWaiter(waiter);
+      if (waiters.length === 0) worker.unref();
     }
   };
   const needsBackpressure = (write: boolean) =>
     write &&
     !stopped &&
     !writer.isTransaction &&
-    (frameStatusUnknown || checkpointBlocked || logFrames >= CHECKPOINT_BACKPRESSURE_FRAMES);
+    (frameStatusUnknown ||
+      checkpointBlocked ||
+      truncateRequestId !== undefined ||
+      logFrames >= CHECKPOINT_BACKPRESSURE_FRAMES);
   const handBack = (reason: string) => {
     if (stopped) return;
     stopped = true;
+    truncateRequestId = undefined;
+    truncatePaused = false;
     try {
       writer.exec(`PRAGMA wal_autocheckpoint = ${CHECKPOINT_FRAMES};`);
     } catch {}
     resumeWaiters();
     runFork(warn(reason));
   };
+  const acknowledgeTruncate = () => {
+    if (truncateRequestId === undefined || truncatePaused || stopped || writer.isTransaction)
+      return;
+    truncatePaused = true;
+    try {
+      // The main thread is between statements and now admits no new writes.
+      // Keep its event loop free while the worker takes SQLite's exclusive lock.
+      // oxlint-disable-next-line unicorn/require-post-message-target-origin -- Node workers do not accept a target origin.
+      worker.postMessage({ type: "truncate", truncateId: truncateRequestId });
+    } catch (cause) {
+      truncatePaused = false;
+      handBack(String(cause));
+    }
+  };
   worker.on("error", (cause) => handBack(cause.message));
   worker.on("exit", (code) => handBack(`exited with code ${code}`));
   yield* Effect.addFinalizer(() =>
     Effect.promise(() => {
       stopped = true;
+      truncateRequestId = undefined;
+      truncatePaused = false;
       resumeWaiters();
       return worker.terminate();
     }),
@@ -685,6 +767,10 @@ const startCheckpointWorker = Effect.fnUntraced(function* (
   // one more check, so the frames of a last commit before idle still get one.
   const check = (force = false) => {
     if (stopped || writer.isTransaction) return;
+    if (truncateRequestId !== undefined) {
+      acknowledgeTruncate();
+      return;
+    }
     try {
       const state = readFrameCounts();
       logFrames = state.log;
@@ -723,6 +809,19 @@ const startCheckpointWorker = Effect.fnUntraced(function* (
       typeof message === "object" &&
       message !== null &&
       "type" in message &&
+      message.type === "truncate-request" &&
+      "truncateId" in message &&
+      typeof message.truncateId === "number"
+    ) {
+      truncateRequestId = message.truncateId;
+      checkpointBlocked = true;
+      acknowledgeTruncate();
+      return;
+    }
+    if (
+      typeof message === "object" &&
+      message !== null &&
+      "type" in message &&
       message.type === "checkpoint" &&
       "id" in message &&
       "log" in message &&
@@ -736,6 +835,14 @@ const startCheckpointWorker = Effect.fnUntraced(function* (
       checkpointedFrames = message.checkpointed;
       checkpointBlocked = message.blocked;
       frameStatusUnknown = false;
+      if (
+        "truncateId" in message &&
+        typeof message.truncateId === "number" &&
+        message.truncateId === truncateRequestId
+      ) {
+        truncateRequestId = undefined;
+        truncatePaused = false;
+      }
     }
     if (message === "barrier") return;
     if (
@@ -759,24 +866,26 @@ const startCheckpointWorker = Effect.fnUntraced(function* (
   });
   // After the listeners: adding a "message" listener refs the worker again.
   worker.unref();
-  const beforeStatement = (write: boolean) => {
+  beforeStatement = (write: boolean) => {
     if (!needsBackpressure(write)) {
       return Effect.void;
     }
-    return Effect.callback<void>((resume) => {
-      if (!needsBackpressure(write)) {
-        resume(Effect.void);
-        return;
-      }
-      waiters.push(resume);
-      worker.ref();
-      check(true);
-      return Effect.sync(() => {
-        const index = waiters.indexOf(resume);
-        if (index !== -1) waiters.splice(index, 1);
-        if (waiters.length === 0) worker.unref();
-      });
-    });
+    return Effect.interruptible(
+      Effect.callback<void>((resume) => {
+        if (!needsBackpressure(write)) {
+          resume(Effect.suspend(() => beforeStatement(write)));
+          return;
+        }
+        waiters.push({ write, resume });
+        worker.ref();
+        check(true);
+        return Effect.sync(() => {
+          const index = waiters.findIndex((waiter) => waiter.resume === resume);
+          if (index !== -1) waiters.splice(index, 1);
+          if (waiters.length === 0) worker.unref();
+        });
+      }),
+    );
   };
   return { check, beforeStatement };
 });
@@ -822,8 +931,72 @@ const make = Effect.fn("makeWithDatabase")(function* (
         : undefined;
 
     const statementReaderCache = new WeakMap<NodeSqlite.StatementSync, boolean>();
-    const checkpointBackpressureStatements = new WeakSet<NodeSqlite.StatementSync>();
-    const checkpointCheckStatements = new WeakSet<NodeSqlite.StatementSync>();
+    interface CheckpointClassification {
+      backpressure: boolean;
+      check: boolean;
+    }
+    const checkpointClassifications = new WeakMap<
+      NodeSqlite.StatementSync,
+      CheckpointClassification
+    >();
+    const mutatingPragmasWithValues = new Set([
+      "application_id",
+      "auto_vacuum",
+      "journal_mode",
+      "schema_version",
+      "user_version",
+    ]);
+    // Gate page mutations and checkpoints, while reads and connection settings stay available.
+    const mutatesPragma = (name: string | null, value: string | null) => {
+      const pragma = name?.toLowerCase();
+      if (pragma === undefined) return false;
+      if (pragma === "incremental_vacuum" || pragma === "optimize") return true;
+      if (pragma === "wal_checkpoint") return value?.toLowerCase() !== "noop";
+      return value !== null && mutatingPragmasWithValues.has(pragma);
+    };
+    let activeClassification: CheckpointClassification | undefined;
+    const withClassification = <A>(
+      classification: CheckpointClassification | undefined,
+      f: () => A,
+    ): A => {
+      if (classification === undefined) return f();
+      const previous = activeClassification;
+      activeClassification = classification;
+      try {
+        return f();
+      } finally {
+        activeClassification = previous;
+      }
+    };
+    if (checkpoint !== undefined) {
+      // SQLite may reprepare an expired statement while it executes. Keep this
+      // callback installed and collect only around that statement's prepare/run.
+      db.setAuthorizer((actionCode, action, argument) => {
+        const classification = activeClassification;
+        if (classification === undefined) return NodeSqlite.constants.SQLITE_OK;
+        const constants = NodeSqlite.constants;
+        if (actionCode === constants.SQLITE_TRANSACTION) {
+          classification.backpressure ||= action === "BEGIN";
+          classification.check ||= action === "COMMIT" || action === "ROLLBACK";
+        } else if (actionCode === constants.SQLITE_SAVEPOINT) {
+          classification.backpressure ||= action === "BEGIN";
+          classification.check = true;
+        } else if (actionCode === constants.SQLITE_PRAGMA && mutatesPragma(action, argument)) {
+          classification.backpressure = true;
+          classification.check = true;
+        } else if (
+          actionCode !== constants.SQLITE_READ &&
+          actionCode !== constants.SQLITE_SELECT &&
+          actionCode !== constants.SQLITE_FUNCTION &&
+          actionCode !== constants.SQLITE_RECURSIVE &&
+          actionCode !== constants.SQLITE_PRAGMA
+        ) {
+          classification.backpressure = true;
+          classification.check = true;
+        }
+        return constants.SQLITE_OK;
+      });
+    }
     const hasRows = (statement: NodeSqlite.StatementSync): boolean => {
       const cached = statementReaderCache.get(statement);
       if (cached !== undefined) {
@@ -837,38 +1010,10 @@ const make = Effect.fn("makeWithDatabase")(function* (
     const prepare = (sql: string) =>
       Effect.try({
         try: () => {
-          let backpressure = false;
-          let check = false;
-          if (checkpoint !== undefined) {
-            db.setAuthorizer((actionCode, action) => {
-              const constants = NodeSqlite.constants;
-              if (actionCode === constants.SQLITE_TRANSACTION) {
-                backpressure ||= action === "BEGIN";
-                check ||= action === "COMMIT" || action === "ROLLBACK";
-              } else if (actionCode === constants.SQLITE_SAVEPOINT) {
-                backpressure ||= action === "BEGIN";
-                check = true;
-              } else if (
-                actionCode !== constants.SQLITE_READ &&
-                actionCode !== constants.SQLITE_SELECT &&
-                actionCode !== constants.SQLITE_FUNCTION &&
-                actionCode !== constants.SQLITE_RECURSIVE &&
-                actionCode !== constants.SQLITE_PRAGMA
-              ) {
-                backpressure = true;
-                check = true;
-              }
-              return constants.SQLITE_OK;
-            });
-          }
-          try {
-            const statement = db.prepare(sql);
-            if (backpressure) checkpointBackpressureStatements.add(statement);
-            if (check) checkpointCheckStatements.add(statement);
-            return statement;
-          } finally {
-            if (checkpoint !== undefined) db.setAuthorizer(null);
-          }
+          const classification = { backpressure: false, check: false };
+          const statement = withClassification(classification, () => db.prepare(sql));
+          if (checkpoint !== undefined) checkpointClassifications.set(statement, classification);
+          return statement;
         },
         catch: (cause) =>
           new SqlError({
@@ -892,25 +1037,33 @@ const make = Effect.fn("makeWithDatabase")(function* (
       raw: boolean,
     ) =>
       Effect.flatMap(
-        checkpoint?.beforeStatement(checkpointBackpressureStatements.has(statement)) ?? Effect.void,
+        checkpoint?.beforeStatement(
+          checkpointClassifications.get(statement)?.backpressure ?? false,
+        ) ?? Effect.void,
         () =>
           Effect.withFiber<ReadonlyArray<any>, SqlError>((fiber) => {
             try {
-              statement.setReadBigInts(Boolean(Context.get(fiber.context, Client.SafeIntegers)));
-              if (hasRows(statement)) {
-                const rows = statement.all(...(params as any));
-                if (checkpointCheckStatements.has(statement)) checkpoint?.check();
-                return Effect.succeed(rows);
+              const result = withClassification(checkpointClassifications.get(statement), () => {
+                statement.setReadBigInts(Boolean(Context.get(fiber.context, Client.SafeIntegers)));
+                if (hasRows(statement)) {
+                  return { rows: statement.all(...(params as any)), result: undefined };
+                }
+                return { rows: [], result: statement.run(...(params as any)) };
+              });
+              if (result.result === undefined) {
+                return Effect.succeed(result.rows);
               }
-              const result = statement.run(...(params as any));
-              if (checkpointCheckStatements.has(statement)) checkpoint?.check();
-              return Effect.succeed(raw ? (result as unknown as ReadonlyArray<any>) : []);
+              return Effect.succeed(
+                raw ? (result.result as unknown as ReadonlyArray<any>) : result.rows,
+              );
             } catch (cause) {
               return Effect.fail(
                 new SqlError({
                   reason: classifyError(cause, "Failed to execute statement", "execute"),
                 }),
               );
+            } finally {
+              if (checkpointClassifications.get(statement)?.check) checkpoint?.check();
             }
           }),
       );
@@ -926,25 +1079,32 @@ const make = Effect.fn("makeWithDatabase")(function* (
         Effect.succeed(statement),
         (statement) =>
           Effect.flatMap(
-            checkpoint?.beforeStatement(checkpointBackpressureStatements.has(statement)) ??
-              Effect.void,
+            checkpoint?.beforeStatement(
+              checkpointClassifications.get(statement)?.backpressure ?? false,
+            ) ?? Effect.void,
             () =>
               Effect.try({
                 try: () => {
-                  statement.setReadBigInts(
-                    Boolean(Context.get(Fiber.getCurrent()!.context, Client.SafeIntegers)),
-                  );
-                  if (hasRows(statement)) {
-                    statement.setReturnArrays(true);
-                    const rows = statement.all(...(params as any)) as unknown as ReadonlyArray<
-                      ReadonlyArray<unknown>
-                    >;
-                    if (checkpointCheckStatements.has(statement)) checkpoint?.check();
-                    return rows;
+                  const classification = checkpointClassifications.get(statement);
+                  let rows: ReadonlyArray<ReadonlyArray<unknown>>;
+                  try {
+                    rows = withClassification(classification, () => {
+                      statement.setReadBigInts(
+                        Boolean(Context.get(Fiber.getCurrent()!.context, Client.SafeIntegers)),
+                      );
+                      if (hasRows(statement)) {
+                        statement.setReturnArrays(true);
+                        return statement.all(...(params as any)) as unknown as ReadonlyArray<
+                          ReadonlyArray<unknown>
+                        >;
+                      }
+                      statement.run(...(params as any));
+                      return [];
+                    });
+                  } finally {
+                    if (classification?.check) checkpoint?.check();
                   }
-                  statement.run(...(params as any));
-                  if (checkpointCheckStatements.has(statement)) checkpoint?.check();
-                  return [];
+                  return rows;
                 },
                 catch: (cause) =>
                   new SqlError({
