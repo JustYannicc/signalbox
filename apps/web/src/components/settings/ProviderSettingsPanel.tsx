@@ -789,7 +789,7 @@ export function EnvironmentProviderSettings({
       !serverProviders.some((provider) => provider.instanceId === defaultInstanceId);
     if (
       hasDefaultSlot &&
-      !isPhantomSlot && // signalbox
+      !isPhantomSlot && // signalbox: skip phantom default provider slots
       (driver === "codex" ||
         driver === "claudeAgent" ||
         isDirty ||
