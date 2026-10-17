@@ -1,20 +1,17 @@
-import * as Clock from "effect/Clock";
 import * as Config from "effect/Config";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
-import { HttpClient, HttpClientRequest } from "effect/http";
 
+import * as ClientTraceExport from "./ClientTraceExport.ts";
+import * as ClientTraceLimits from "./ClientTraceLimits.ts";
+import * as UserDirectory from "../user/UserDirectory.ts";
 import * as CloudSessions from "../auth/CloudSessions.ts";
 import { ClientTraces, safeClientTraces } from "./clientTraces.ts";
 
 const MAX_BYTES = 128 * 1024;
-const WINDOW_MS = 60_000;
-const MAX_REQUESTS = 300;
-const MAX_PEOPLE = 1000;
 
 export class ClientTraceRejected extends Schema.TaggedError<ClientTraceRejected>()(
   "ClientTraceRejected",
@@ -37,15 +34,15 @@ export class ClientTraceIntake extends Context.Service<
 const isClientTraceRejected = Schema.is(ClientTraceRejected);
 
 const make = Effect.gen(function* () {
+  const users = yield* UserDirectory.UserDirectory;
   const sessions = yield* CloudSessions.CloudSessions;
-  const http = (yield* HttpClient.HttpClient).pipe(HttpClient.filterStatusOk);
-  const dsn = yield* Config.Redacted("SENTRY_DSN").pipe(Config.withDefault(Redacted.make("")));
+  const exporter = yield* ClientTraceExport.ClientTraceExport;
+  const limits = yield* ClientTraceLimits.ClientTraceLimits;
   const environment = yield* Config.String("SIGNALBOX_STAGE").pipe(
     Config.withDefault("development"),
   );
   const release = yield* Config.String("APP_VERSION").pipe(Config.withDefault("development"));
   const enabled = yield* Config.String("T3CODE_TELEMETRY_ENABLED").pipe(Config.withDefault("true"));
-  const limits = new Map<string, { start: number; count: number }>();
   const decode = Schema.decodeUnknownEffect(Schema.fromJsonString(ClientTraces));
   const reject = (status: number) => new ClientTraceRejected({ status });
 
@@ -53,12 +50,7 @@ const make = Effect.gen(function* () {
     const session = yield* sessions
       .authenticate(input.credentials)
       .pipe(Effect.catchTags({ UserObjectError: () => Effect.fail(reject(503)) }));
-    const now = yield* Clock.currentTimeMillis;
-    for (const [key, value] of limits) if (now - value.start >= WINDOW_MS) limits.delete(key);
-    const bucket = limits.get(session.userId);
-    if ((bucket?.count ?? 0) >= MAX_REQUESTS || (!bucket && limits.size >= MAX_PEOPLE))
-      return yield* reject(429);
-    limits.set(session.userId, { start: bucket?.start ?? now, count: (bucket?.count ?? 0) + 1 });
+    if (!(yield* limits.allow(session.userId))) return yield* reject(429);
     if (
       input.contentType?.split(";", 1)[0]?.trim().toLowerCase() !== "application/json" ||
       (input.contentEncoding && input.contentEncoding !== "identity")
@@ -70,19 +62,6 @@ const make = Effect.gen(function* () {
     )
       return yield* reject(413);
     if (enabled === "false") return;
-    const destination = yield* Effect.try({
-      try: () => {
-        const url = new URL(Redacted.value(dsn));
-        const segments = url.pathname.split("/").filter(Boolean);
-        const project = segments.pop();
-        if (url.protocol !== "https:" || !url.username || !project) throw new Error("Invalid DSN");
-        return {
-          url: `${url.origin}${segments.map((part) => `/${part}`).join("")}/api/${project}/integration/otlp/v1/traces`,
-          key: url.username,
-        };
-      },
-      catch: () => reject(503),
-    });
     const bytes = yield* input.body.pipe(
       Stream.runFoldEffect(
         () => new Uint8Array(0),
@@ -101,15 +80,37 @@ const make = Effect.gen(function* () {
     const inputTraces = yield* decode(new TextDecoder().decode(bytes)).pipe(
       Effect.mapError(() => reject(400)),
     );
-    const traces = safeClientTraces(inputTraces, session.userId, environment, release);
-    if (traces === null) return yield* reject(400);
-    yield* HttpClientRequest.post(destination.url).pipe(
-      HttpClientRequest.setHeader("x-sentry-auth", `sentry sentry_key=${destination.key}`),
-      HttpClientRequest.bodyJson(traces),
-      Effect.flatMap(http.execute),
-      Effect.timeout("5 seconds"),
-      Effect.mapError(() => reject(502)),
+    const spanCount = inputTraces.resourceSpans.reduce(
+      (count, resource) =>
+        count + resource.scopeSpans.reduce((total, scope) => total + scope.spans.length, 0),
+      0,
     );
+    if (spanCount > 256) return yield* reject(400);
+    const threadIds = [
+      ...new Set(
+        inputTraces.resourceSpans.flatMap((resource) =>
+          resource.scopeSpans.flatMap((scope) =>
+            scope.spans.flatMap((span) =>
+              (span.attributes ?? []).flatMap((attribute) =>
+                attribute.key === "thread.id" && attribute.value.stringValue
+                  ? [attribute.value.stringValue]
+                  : [],
+              ),
+            ),
+          ),
+        ),
+      ),
+    ];
+    const dimensions =
+      threadIds.length === 0
+        ? []
+        : yield* users
+            .forUser(session.userId)
+            .clientTraceDimensions(threadIds)
+            .pipe(Effect.mapError(() => reject(503)));
+    const traces = safeClientTraces(inputTraces, session.userId, environment, release, dimensions);
+    if (traces === null) return yield* reject(400);
+    yield* exporter.submit(traces).pipe(Effect.mapError(({ status }) => reject(status)));
   });
   return ClientTraceIntake.of({ ingest });
 });

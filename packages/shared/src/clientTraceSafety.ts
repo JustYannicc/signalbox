@@ -4,6 +4,9 @@ import * as Tracer from "effect/Tracer";
 
 export const CLIENT_TRACES_PATH = "/api/observability/v1/traces";
 
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const WORKOS_ORG = /^org_[0-9A-HJKMNP-TV-Z]{26}$/;
+
 const OPERATIONS = new Set([
   "EnvironmentRpc.request",
   "EnvironmentRpc.authorize",
@@ -40,8 +43,9 @@ export function clientSpanAttribute(key: string, value: unknown): boolean {
   if (key === "http.response.status_code")
     return typeof value === "number" && Number.isInteger(value) && value >= 100 && value <= 599;
   if (key === "error") return typeof value === "boolean";
-  if (["thread.id", "folder.id", "org.id", "automation.id", "environment.id"].includes(key)) {
-    return typeof value === "string" && /^[a-zA-Z0-9_-]{1,80}$/.test(value);
+  if (key === "org.id") return typeof value === "string" && WORKOS_ORG.test(value);
+  if (["thread.id", "folder.id", "automation.id", "environment.id"].includes(key)) {
+    return typeof value === "string" && UUID.test(value);
   }
   return false;
 }
@@ -68,4 +72,16 @@ export function contentFreeTracer(delegate: Tracer.Tracer): Tracer.Tracer {
     },
     ...(delegate.context ? { context: delegate.context } : {}),
   });
+}
+
+/** Only thread identity crosses into telemetry; payload fields and strings never do. */
+export function clientThreadAttributes(input: unknown): Record<string, string> {
+  if (typeof input !== "object" || input === null) return {};
+  const source =
+    "command" in input && typeof input.command === "object" && input.command !== null
+      ? input.command
+      : input;
+  return "threadId" in source && typeof source.threadId === "string" && UUID.test(source.threadId)
+    ? { "thread.id": source.threadId }
+    : {};
 }

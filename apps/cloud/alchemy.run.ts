@@ -273,6 +273,10 @@ function deploy(
       env: {
         ...env,
         ...telemetry,
+        CLIENT_TRACE_LIMITER: Cloudflare.Workers.RateLimit("ClientTraceLimiter", {
+          namespaceId: 866,
+          simple: { limit: 300, period: 60 },
+        }),
         // Binding and class names are the Durable Objects' identity.
         USERS: Cloudflare.DurableObject<UserObject>(DO.USERS),
         DRIVES: Cloudflare.DurableObject<DriveObject>(DO.DRIVES),

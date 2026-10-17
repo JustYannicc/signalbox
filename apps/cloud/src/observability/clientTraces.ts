@@ -1,4 +1,5 @@
 import { clientSpanAttribute, clientSpanName } from "@t3tools/shared/clientTraceSafety";
+import type { ClientTraceDimension } from "../user/UserDirectory.ts";
 import * as Schema from "effect/Schema";
 
 const hex = (length: number) =>
@@ -40,6 +41,7 @@ export function safeClientTraces(
   personId: string,
   environment: string,
   release: string,
+  dimensions: ReadonlyArray<ClientTraceDimension> = [],
 ) {
   const spans = input.resourceSpans.flatMap((resource) =>
     resource.scopeSpans.flatMap((scope) => scope.spans),
@@ -54,6 +56,7 @@ export function safeClientTraces(
     )
   )
     return null;
+  const byThread = new Map(dimensions.map((dimension) => [dimension.threadId, dimension]));
   const attribute = (key: string, stringValue: string) => ({ key, value: { stringValue } });
   const safeAttributes = (attributes: typeof Span.Type.attributes) =>
     (attributes ?? []).flatMap((item) => {
@@ -61,7 +64,11 @@ export function safeClientTraces(
         item.value.stringValue ??
         item.value.boolValue ??
         (item.value.intValue === undefined ? undefined : Number(item.value.intValue));
-      if (!clientSpanAttribute(item.key, value)) return [];
+      if (
+        ["person.id", "org.id", "folder.id", "thread.id", "automation.id"].includes(item.key) ||
+        !clientSpanAttribute(item.key, value)
+      )
+        return [];
       // Reconstruct the value too: an attacker can send several AnyValue variants at once.
       return [
         {
@@ -86,7 +93,7 @@ export function safeClientTraces(
       return {
         resource: {
           attributes: [
-            attribute("service.name", "signalbox-client"),
+            attribute("service.name", mode === "react-native" ? "t3code-mobile" : "t3code-web"),
             attribute("service.mode", mode),
             attribute("deployment.environment", environment),
             attribute("service.version", release),
@@ -94,19 +101,34 @@ export function safeClientTraces(
         },
         scopeSpans: resource.scopeSpans.map((scope) => ({
           scope: { name: "signalbox.client" },
-          spans: scope.spans.map((span) => ({
-            traceId: span.traceId,
-            spanId: span.spanId,
-            ...(span.parentSpanId ? { parentSpanId: span.parentSpanId } : {}),
-            name: clientSpanName(span.name),
-            kind: [0, 1, 2, 3, 4, 5].includes(span.kind ?? 0) ? (span.kind ?? 0) : 0,
-            startTimeUnixNano: span.startTimeUnixNano,
-            endTimeUnixNano: span.endTimeUnixNano,
-            attributes: [attribute("person.id", personId), ...safeAttributes(span.attributes)],
-            status: {
-              code: [0, 1, 2].includes(span.status?.code ?? 0) ? (span.status?.code ?? 0) : 0,
-            },
-          })),
+          spans: scope.spans.map((span) => {
+            const dimension = byThread.get(
+              span.attributes?.find((item) => item.key === "thread.id")?.value.stringValue ?? "",
+            );
+            return {
+              traceId: span.traceId,
+              spanId: span.spanId,
+              ...(span.parentSpanId ? { parentSpanId: span.parentSpanId } : {}),
+              name: clientSpanName(span.name),
+              kind: [0, 1, 2, 3, 4, 5].includes(span.kind ?? 0) ? (span.kind ?? 0) : 0,
+              startTimeUnixNano: span.startTimeUnixNano,
+              endTimeUnixNano: span.endTimeUnixNano,
+              attributes: [
+                attribute("person.id", personId),
+                ...safeAttributes(span.attributes),
+                ...(dimension
+                  ? [
+                      attribute("thread.id", dimension.threadId),
+                      ...(dimension.folderId ? [attribute("folder.id", dimension.folderId)] : []),
+                      ...(dimension.orgId ? [attribute("org.id", dimension.orgId)] : []),
+                    ]
+                  : []),
+              ],
+              status: {
+                code: [0, 1, 2].includes(span.status?.code ?? 0) ? (span.status?.code ?? 0) : 0,
+              },
+            };
+          }),
         })),
       };
     }),

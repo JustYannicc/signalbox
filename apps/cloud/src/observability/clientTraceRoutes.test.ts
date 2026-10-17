@@ -4,14 +4,22 @@ import * as ConfigProvider from "effect/ConfigProvider";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as HttpEffect from "effect/http/HttpEffect";
-import { FetchHttpClient, HttpRouter } from "effect/http";
+import { HttpRouter } from "effect/http";
 
+import * as UserDirectory from "../user/UserDirectory.ts";
+import { makeMemoryCloud } from "../testing.ts";
+import * as ClientTraceExport from "./ClientTraceExport.ts";
+import * as ClientTraceLimits from "./ClientTraceLimits.ts";
 import * as CloudSessions from "../auth/CloudSessions.ts";
 import * as ClientTraceIntake from "./ClientTraceIntake.ts";
 import * as Routes from "./clientTraceRoutes.ts";
 
 const TRACE = "0123456789abcdef0123456789abcdef";
 const SPAN = "0123456789abcdef";
+const PERSON = "user_01ARZ3NDEKTSV4RRFFQ69G5FAV";
+const THREAD = "7b2dd8b5-cfee-49a1-86ce-bac041bf43b1";
+const FOLDER = "8b9b5f11-587e-4ed0-a363-87f462deddd9";
+const ORG = "org_01ARZ3NDEKTSV4RRFFQ69G5FAV";
 const CANARY = "message and file content must never leave intake";
 const payload = () => ({
   resourceSpans: [
@@ -31,7 +39,18 @@ const payload = () => ({
               attributes: [
                 { key: "message", value: { stringValue: CANARY } },
                 { key: "person.id", value: { stringValue: "forged" } },
-                { key: "thread.id", value: { stringValue: "thread_test", intValue: CANARY } },
+                {
+                  key: "folder.id",
+                  value: { stringValue: "90f2a4bd-1178-4ebf-832f-642695d2a8e1" },
+                },
+                { key: "org.id", value: { stringValue: "org_01ARZ3NDEKTSV4RRFFQ69G5FAW" } },
+                {
+                  key: "url.full",
+                  value: {
+                    stringValue: `https://app.test/oauth?code=${CANARY}&state=${CANARY}&token=${CANARY}`,
+                  },
+                },
+                { key: "thread.id", value: { stringValue: THREAD, intValue: CANARY } },
               ],
               events: [{ name: CANARY }],
               links: [{ attributes: [{ key: "file", value: { stringValue: CANARY } }] }],
@@ -45,12 +64,14 @@ const payload = () => ({
 });
 
 const setup = Effect.gen(function* () {
-  const sent: Array<{ url: string; init: RequestInit | undefined }> = [];
+  const sent: Array<{ url: string; body: string; headers: Headers }> = [];
+  let requests = 0;
+  const cloud = makeMemoryCloud();
   let upstreamStatus = 200;
   const authenticate: CloudSessions.CloudSessions["Service"]["authenticate"] = (credentials) =>
     credentials.bearer === "session" || credentials.cookie === "session"
       ? Effect.succeed({
-          userId: "user_test",
+          userId: PERSON,
           sessionId: AuthSessionId.make("session_test"),
           method: "bearer-access-token",
           scopes: [],
@@ -74,20 +95,34 @@ const setup = Effect.gen(function* () {
       ),
     ),
     Layer.provide(
-      FetchHttpClient.layer.pipe(
-        Layer.provide(
-          Layer.succeed(FetchHttpClient.Fetch, async (url, init) => {
-            sent.push({ url: String(url), init });
+      ClientTraceExport.layer({
+        TRACE_EXPORT_TOKEN: "write-only-ingest-key",
+        TRACE_EXPORT: {
+          fetch: async (input) => {
+            const request = new Request(input);
+            sent.push({ url: request.url, body: await request.text(), headers: request.headers });
             return new Response(null, { status: upstreamStatus });
-          }),
-        ),
-      ),
+          },
+        },
+      }),
+    ),
+    Layer.provide(ClientTraceLimits.layer({ limit: async () => ({ success: ++requests <= 300 }) })),
+    Layer.provide(
+      Layer.succeed(UserDirectory.UserDirectory, {
+        ...cloud.userDirectory,
+        forUser: (id) => ({
+          ...cloud.userDirectory.forUser(id),
+          clientTraceDimensions: (ids) =>
+            Effect.succeed(
+              ids.includes(THREAD) ? [{ threadId: THREAD, folderId: FOLDER, orgId: ORG }] : [],
+            ),
+        }),
+      }),
     ),
     Layer.provide(
       ConfigProvider.layer(
         ConfigProvider.fromEnv({
           env: {
-            SENTRY_DSN: "https://public@o123.ingest.de.sentry.io/456",
             SIGNALBOX_STAGE: "pr-test",
             APP_VERSION: "test-release",
           },
@@ -129,22 +164,36 @@ describe("Cloud browser trace intake", () => {
         const { post, sent } = yield* setup;
         expect((yield* post()).status).toBe(200);
         expect(sent).toHaveLength(1);
-        expect(sent[0]?.url).toBe(
-          "https://o123.ingest.de.sentry.io/api/456/integration/otlp/v1/traces",
-        );
-        const exported = new TextDecoder().decode(sent[0]?.init?.body as Uint8Array);
+        expect(sent[0]?.url).toBe("https://trace-export/v1/traces");
+        const exported = sent[0]?.body ?? "";
         expect(exported).not.toContain(CANARY);
         expect(exported).not.toContain("forged");
+        expect(exported).not.toContain("90f2a4bd-1178-4ebf-832f-642695d2a8e1");
+        expect(exported).not.toContain("org_01ARZ3NDEKTSV4RRFFQ69G5FAW");
         expect(exported).toContain(TRACE);
         expect(exported).toContain(SPAN);
         expect(exported).toContain("1111111111111111");
-        expect(exported).toContain("user_test");
+        expect(exported).toContain(PERSON);
+        expect(exported).toContain(THREAD);
+        expect(exported).toContain(FOLDER);
+        expect(exported).toContain(ORG);
         expect(exported).toContain("pr-test");
-        expect(new Headers(sent[0]?.init?.headers).get("x-sentry-auth")).toBe(
-          "sentry sentry_key=public",
-        );
-        expect(new Headers(sent[0]?.init?.headers).get("authorization")).toBeNull();
+        expect(sent[0]?.headers.get("authorization")).toBe("Bearer write-only-ingest-key");
+        expect(sent[0]?.headers.get("x-sentry-auth")).toBeNull();
       }),
+  );
+  it.effect("omits thread dimensions the authenticated person cannot access", () =>
+    Effect.gen(function* () {
+      const { post, sent } = yield* setup;
+      const document = payload();
+      document.resourceSpans[0]!.scopeSpans[0]!.spans[0]!.attributes = [
+        { key: "thread.id", value: { stringValue: "90f2a4bd-1178-4ebf-832f-642695d2a8e1" } },
+      ];
+      expect((yield* post(JSON.stringify(document))).status).toBe(200);
+      expect(sent[0]?.body).not.toContain("90f2a4bd-1178-4ebf-832f-642695d2a8e1");
+      expect(sent[0]?.body).not.toContain('"folder.id"');
+      expect(sent[0]?.body).not.toContain('"org.id"');
+    }),
   );
   it.effect("requires a live cookie or bearer session before reading or forwarding", () =>
     Effect.gen(function* () {
@@ -167,6 +216,27 @@ describe("Cloud browser trace intake", () => {
         415,
       );
       expect((yield* post(undefined, { "content-encoding": "gzip" })).status).toBe(415);
+      expect(sent).toHaveLength(0);
+    }),
+  );
+  it.effect("rejects too many spans and invalid trace identities without forwarding", () =>
+    Effect.gen(function* () {
+      const { post, sent } = yield* setup;
+      const document = payload();
+      const span = {
+        ...document.resourceSpans[0]!.scopeSpans[0]!.spans[0]!,
+        name: "client.operation",
+        attributes: [],
+        events: [],
+        links: [],
+        status: { code: 0, message: "" },
+      };
+      document.resourceSpans[0]!.scopeSpans[0]!.spans = Array.from({ length: 257 }, () => span);
+      expect((yield* post(JSON.stringify(document))).status).toBe(400);
+      document.resourceSpans[0]!.scopeSpans[0]!.spans = [{ ...span, traceId: "0".repeat(32) }];
+      expect((yield* post(JSON.stringify(document))).status).toBe(400);
+      document.resourceSpans[0]!.scopeSpans[0]!.spans = [{ ...span, endTimeUnixNano: "0" }];
+      expect((yield* post(JSON.stringify(document))).status).toBe(400);
       expect(sent).toHaveLength(0);
     }),
   );

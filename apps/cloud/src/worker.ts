@@ -44,6 +44,9 @@ export { AutomationHost, AutomationWorkflow } from "./automations/automationWork
 
 export interface CloudEnv
   extends UserObjectEnv, ThreadObjectEnv, PoolObjectEnv, PreviewCleanupEnv, AutomationWorkflowEnv {
+  readonly TRACE_EXPORT?: Pick<Fetcher, "fetch">;
+  readonly TRACE_EXPORT_TOKEN?: string;
+  readonly CLIENT_TRACE_LIMITER?: Pick<RateLimit, "limit">;
   readonly ASSETS: { readonly fetch: (request: Request) => Promise<Response> };
 }
 
@@ -65,6 +68,8 @@ const appFor = (env: CloudEnv) => {
   cloudApp ??= makeCloudApp(
     layerServices({
       vars: stringVars(env),
+      ...(env.TRACE_EXPORT ? { traceExport: env.TRACE_EXPORT } : {}),
+      ...(env.CLIENT_TRACE_LIMITER ? { traceLimiter: env.CLIENT_TRACE_LIMITER } : {}),
       users: env.USERS,
       threads: env.THREADS,
       localWorkerd: env.LOCAL_WORKERD === "1",

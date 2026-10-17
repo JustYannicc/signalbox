@@ -5,11 +5,19 @@ import * as Tracer from "effect/Tracer";
 import { FetchHttpClient } from "effect/http";
 import { OtlpExporter, OtlpSerialization, OtlpTracer } from "effect/observability";
 
-import { contentFreeTracer } from "./clientTraceSafety.ts";
+import { clientThreadAttributes, contentFreeTracer } from "./clientTraceSafety.ts";
 
 const CANARY = "message-file-secret-canary";
 
 describe("client trace privacy", () => {
+  it("extracts only a generated thread ID from RPC inputs", () => {
+    const threadId = "7b2dd8b5-cfee-49a1-86ce-bac041bf43b1";
+    expect(clientThreadAttributes({ command: { threadId, message: CANARY } })).toEqual({
+      "thread.id": threadId,
+    });
+    expect(clientThreadAttributes({ threadId, file: CANARY })).toEqual({ "thread.id": threadId });
+    expect(clientThreadAttributes({ threadId: CANARY })).toEqual({});
+  });
   it.effect(
     "removes content before OTLP serialization without changing the trace identity or failure",
     () => {
@@ -43,8 +51,12 @@ describe("client trace privacy", () => {
           yield* Effect.annotateCurrentSpan({
             message: CANARY,
             file: { content: CANARY },
-            "thread.id": "thread_test",
+            "thread.id": "7b2dd8b5-cfee-49a1-86ce-bac041bf43b1",
             "http.response.status_code": 503,
+            "url.full": `https://app.test/callback?code=${CANARY}&state=${CANARY}&token=${CANARY}`,
+            "http.url": `https://app.test/callback?access_token=${CANARY}&refresh_token=${CANARY}`,
+            "http.request.header.authorization": `Bearer ${CANARY}`,
+            "http.request.header.cookie": `session=${CANARY}`,
           });
           span.event(CANARY, 0n, { payload: CANARY });
           return yield* Effect.fail(failure);
@@ -63,7 +75,7 @@ describe("client trace privacy", () => {
             expect(exported).not.toContain(CANARY);
             expect(exported).toContain(traceId);
             expect(exported).toContain(spanId);
-            expect(exported).toContain("thread_test");
+            expect(exported).toContain("7b2dd8b5-cfee-49a1-86ce-bac041bf43b1");
             expect(exported).toContain("client.operation");
           }),
         ),

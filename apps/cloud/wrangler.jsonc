@@ -88,6 +88,13 @@
       "class_name": "AutomationWorkflow",
     },
   ],
+  "ratelimits": [
+    {
+      "name": "CLIENT_TRACE_LIMITER",
+      "namespace_id": "866",
+      "simple": { "limit": 300, "period": 60 },
+    },
+  ],
   "worker_loaders": [{ "binding": "LOADER" }],
   "vars": {
     // Production identity. Never reuse it for another deployment.
@@ -105,6 +112,13 @@
     "dev": {
       "name": "signalbox-cloud",
       "routes": [],
+      "ratelimits": [
+        {
+          "name": "CLIENT_TRACE_LIMITER",
+          "namespace_id": "866",
+          "simple": { "limit": 300, "period": 60 },
+        },
+      ],
       "durable_objects": {
         "bindings": [
           { "name": "USERS", "class_name": "UserObject" },
