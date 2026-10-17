@@ -515,13 +515,9 @@ export const layer = ({ objects, prefix }: AttachmentStorage) =>
           const pending = yield* Effect.forEach(images, ({ attachment, bytes }, index) =>
             Effect.gen(function* () {
               const hash = yield* crypto.digest("SHA-256", bytes).pipe(Effect.orDie);
-              const key = JSON.stringify([
-                userId,
-                input.threadId,
-                input.messageId,
-                index,
-                Hex.encode(hash),
-              ]);
+              const key = [userId, input.threadId, input.messageId, String(index), Hex.encode(hash)]
+                .map((part) => `${part.length}:${part}`)
+                .join("");
               const digest = yield* crypto
                 .digest("SHA-256", new TextEncoder().encode(key))
                 .pipe(Effect.orDie);
