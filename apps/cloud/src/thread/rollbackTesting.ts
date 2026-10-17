@@ -32,6 +32,7 @@ export const fixture = () => {
     lostResponse: false,
     transient: false,
     stopping: false,
+    creating: false,
   };
   let refs: ThreadRefs = {
     main: thirdCommit,
@@ -95,7 +96,11 @@ export const fixture = () => {
         order.push("stop");
         return {
           desired: "stopped",
-          actual: state.stopping && !repeated ? "stopping" : "stopped",
+          actual: state.creating
+            ? "starting"
+            : state.stopping && !repeated
+              ? "stopping"
+              : "stopped",
           machineId: "test",
         } as const;
       }),
@@ -105,7 +110,7 @@ export const fixture = () => {
         () =>
           ({
             desired: "stopped",
-            actual: state.stopping ? "stopping" : "stopped",
+            actual: state.creating ? "none" : state.stopping ? "stopping" : "stopped",
             machineId: "test",
           }) as const,
       ),

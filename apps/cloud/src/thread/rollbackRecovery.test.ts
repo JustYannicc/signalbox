@@ -68,37 +68,40 @@ describe("cloud rollback recovery", () => {
     },
   );
 
-  it.effect("waits for an asynchronously stopping machine before restoring", () => {
-    const f = fixture();
-    return withObject(
-      freshDatabase(),
-      (engine, runner) =>
-        Effect.gen(function* () {
-          yield* launch(engine);
-          const machine = yield* connect(runner);
-          const first = yield* finish(
-            runner,
-            machine.generation,
-            1,
-            f,
-            firstCommit,
-            null,
-            "answer",
-          );
-          f.state.stopping = true;
-          expect(
-            (yield* Effect.exit(undo(engine, first.turn.runId, "stop-machine", true)))._tag,
-          ).toBe("Failure");
-          expect(f.calls).toHaveLength(0);
-          expect((yield* Effect.exit(engine.step))._tag).toBe("Failure");
-          expect(f.calls).toHaveLength(0);
-          f.state.stopping = false;
-          yield* engine.step;
-          expect(f.order).toEqual(["stop", "stop", "stop", "restore"]);
-        }),
-      f.options,
-    );
-  });
+  it.effect.each(["stopping", "creating"] as const)(
+    "waits for a %s machine before restoring",
+    (state) => {
+      const f = fixture();
+      return withObject(
+        freshDatabase(),
+        (engine, runner) =>
+          Effect.gen(function* () {
+            yield* launch(engine);
+            const machine = yield* connect(runner);
+            const first = yield* finish(
+              runner,
+              machine.generation,
+              1,
+              f,
+              firstCommit,
+              null,
+              "answer",
+            );
+            f.state[state] = true;
+            expect(
+              (yield* Effect.exit(undo(engine, first.turn.runId, "stop-machine", true)))._tag,
+            ).toBe("Failure");
+            expect(f.calls).toHaveLength(0);
+            expect((yield* Effect.exit(engine.step))._tag).toBe("Failure");
+            expect(f.calls).toHaveLength(0);
+            f.state[state] = false;
+            yield* engine.step;
+            expect(f.order).toEqual(["stop", "stop", "stop", "restore"]);
+          }),
+        f.options,
+      );
+    },
+  );
 
   it.effect(
     "recovers a lost restore response after eviction and blocks new work until recovery",

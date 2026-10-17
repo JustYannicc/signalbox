@@ -133,7 +133,10 @@ const make = Effect.gen(function* () {
       yield* runtime?.endRunners(operation.generation) ?? Effect.void;
       // Undo retains the drive's saved refs; unflushed machine files are outside that recovery boundary.
       for (const backend of MachineBackend.distinctBackends(backends)) {
-        yield* Effect.orDie(backend.stop(operation.threadId));
+        const requested = yield* Effect.orDie(backend.stop(operation.threadId));
+        if (requested.actual === "starting") {
+          return yield* Effect.die("Undo is waiting for the old machine to finish creating.");
+        }
         const stopped = yield* Effect.orDie(backend.inspect(operation.threadId));
         if (stopped.actual !== "none" && stopped.actual !== "stopped") {
           return yield* Effect.die("Undo is waiting for the old machine to stop.");
