@@ -109,6 +109,11 @@ import { makePushHandlers } from "../push/pushRpc.ts";
 import { makeKeysHandlers } from "./keysRpc.ts";
 import { makeSignInHandlers } from "../signIn/signInRpc.ts";
 import {
+  KEYBINDING_METHODS,
+  KEYBINDING_REQUIRED_SCOPES,
+  makeKeybindingHandlers,
+} from "./keybindingsRpc.ts";
+import {
   ANALYTICS_METHODS,
   ANALYTICS_REQUIRED_SCOPES,
   makeAnalyticsHandlers,
@@ -234,6 +239,7 @@ const SERVED = [
   ...POOL_METHODS,
   // The user's automations (`automations/`), run on this object.
   ...AUTOMATION_METHODS,
+  ...KEYBINDING_METHODS,
   ...ANALYTICS_METHODS,
 ] as const;
 type ServedTag = (typeof SERVED)[number];
@@ -255,6 +261,7 @@ const REQUIRED_SCOPES = {
   [WS_METHODS.subscribeServerConfig]: AuthOrchestrationReadScope,
   [WS_METHODS.serverGetConfig]: AuthOrchestrationReadScope,
   [WS_METHODS.serverUpdateSettings]: AuthSettingsWriteScope,
+  ...KEYBINDING_REQUIRED_SCOPES,
   ...ANALYTICS_REQUIRED_SCOPES,
   [WS_METHODS.serverProbe]: AuthOrchestrationReadScope,
   [WS_METHODS.serverReportClientActivity]: AuthOrchestrationReadScope,
@@ -547,6 +554,7 @@ export const layerHandlers = (input: {
         scopes: input.scopes ?? AuthStandardClientScopes,
       });
       const signIn = yield* makeSignInHandlers({ userId });
+      const keybindings = yield* makeKeybindingHandlers;
       const analytics = yield* makeAnalyticsHandlers;
       return {
         ...pools.handlers,
@@ -555,6 +563,7 @@ export const layerHandlers = (input: {
         ...notes,
         ...keys,
         ...signIn,
+        ...keybindings,
         ...analytics,
         [WS_METHODS.subscribeServerConfig]: (request) => pools.configStream(request),
         [WS_METHODS.serverGetConfig]: () => pools.configNow,

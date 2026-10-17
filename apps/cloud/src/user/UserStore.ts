@@ -34,6 +34,7 @@ import * as StatusNoteTables from "./statusNoteTables.ts";
 import * as OnePasswordAccount from "./OnePasswordAccount.ts";
 import * as SignInTables from "../signIn/signInTables.ts";
 import * as UserPools from "./UserPools.ts";
+import * as UserKeybindings from "./UserKeybindings.ts";
 import * as UserAnalyticsPreference from "./UserAnalyticsPreference.ts";
 import * as UserSections from "./UserSections.ts";
 import type { ThreadSummary } from "../thread/ThreadEngine.ts";
@@ -227,6 +228,7 @@ const migrations = Migrator.fromRecord({
     )`;
   }),
   "0020_folder_phases": FolderTables.addPhases,
+  "0021_keybindings": UserKeybindings.createTables,
   "0021_analytics_preference": UserAnalyticsPreference.createTables,
 });
 
