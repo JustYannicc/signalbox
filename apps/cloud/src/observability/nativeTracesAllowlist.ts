@@ -1,3 +1,5 @@
+import { WsRpcGroup } from "@t3tools/contracts";
+
 /**
  * What may leave Cloudflare's native Worker traces for Sentry (#680). Every
  * entry is reviewed: a key's value is a bounded number, a boolean, a member
@@ -18,6 +20,13 @@ export type AttributeRule =
   | { readonly type: "spanId" }
   /** One of our own ids, in its exact generated format. */
   | { readonly type: "id"; readonly format: RegExp };
+
+const RPC_METHODS = new Set(WsRpcGroup.requests.keys());
+const RPC_SPAN_NAMES = [...RPC_METHODS].flatMap((method) => [
+  method,
+  `RpcClient.${method}`,
+  `RpcServer.${method}`,
+]);
 
 const count = { type: "count" } as const;
 const measure = { type: "measure" } as const;
@@ -72,6 +81,7 @@ const FAAS_TRIGGERS = oneOf("http", "timer", "pubsub", "datasource", "other");
 
 export const SPAN_ATTRIBUTES: ReadonlyMap<string, AttributeRule> = new Map<string, AttributeRule>([
   ...DIMENSIONS,
+  ["rpc.method", { type: "enum", values: RPC_METHODS }],
   // Root spans: what ran and how it went.
   ["faas.trigger", FAAS_TRIGGERS],
   ["cloudflare.handler_type", HANDLER_TYPES],
@@ -143,8 +153,9 @@ export const SPAN_ATTRIBUTES: ReadonlyMap<string, AttributeRule> = new Map<strin
   ["jsrpc.caller_span_id", { type: "spanId" }],
 ]);
 
-/** Operations Cloudflare names its spans after. Any other name becomes `worker.operation`. */
+/** Known Cloudflare operations and exact RPC templates; other names become `worker.operation`. */
 export const OPERATIONS: ReadonlySet<string> = new Set([
+  ...RPC_SPAN_NAMES,
   "fetch",
   "cache_put",
   "cache_match",

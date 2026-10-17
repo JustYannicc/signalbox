@@ -27,15 +27,20 @@ const provider = (
       name: slug,
       isCustom: false,
       isDefault: index === 0,
+      defaultSelection: index === 0 ? "excluded" : "economical",
+      pricing:
+        index === 0
+          ? { inputCostPerMillionTokens: 20, outputCostPerMillionTokens: 100 }
+          : { inputCostPerMillionTokens: 1, outputCostPerMillionTokens: 2 },
       capabilities: null,
     })),
   }) as unknown as ServerProvider;
 
 const providers = [
   provider("claude_hub", "claudeAgent", ["claude-opus-5-5", "claude-sonnet-5-5"]),
-  provider("codex_hub", "codex", ["gpt-6-astra"]),
+  provider("codex_hub", "codex", ["gpt-6-astra", "gpt-6-luna"]),
   provider("claude_hub_work", "claudeAgent", ["claude-opus-5-5", "claude-sonnet-5-5"]),
-  provider("codex_hub_lab", "codex", ["gpt-6-astra"]),
+  provider("codex_hub_lab", "codex", ["gpt-6-astra", "gpt-6-luna"]),
   provider("claude_hub_empty", "claudeAgent", [], false),
 ];
 
@@ -89,14 +94,38 @@ describe("project pools", () => {
 
   it("moves a new thread's model onto its pool, keeping model and options", () => {
     expect(onItsPool(onPool("work"))).toEqual({ ...sonnet, instanceId: "claude_hub_work" });
-    // The pool has no provider of that kind: its own, on its default model.
-    expect(onItsPool(onPool("lab"))).toEqual({ instanceId: "codex_hub_lab", model: "gpt-6-astra" });
+    // A different provider still uses an economical fallback.
+    expect(onItsPool(onPool("lab"))).toEqual({ instanceId: "codex_hub_lab", model: "gpt-6-luna" });
     expect(onItsPool(onPool("work"), null)).toEqual({
       instanceId: "claude_hub_work",
-      model: "claude-opus-5-5",
+      model: "claude-sonnet-5-5",
     });
     expect(onItsPool(null)).toBeNull();
     expect(onItsPool(onPool("empty"))).toBeNull();
+  });
+
+  it("does not select a flagship when a pool has no economical model", () => {
+    expect(
+      projectPoolModelSelection({
+        selection: null,
+        snapshot: snapshot(onPool("work")),
+        projectId: project,
+        providerInstances,
+        providers: [
+          {
+            ...provider("claude_hub_work", "claudeAgent", []),
+            models: ["claude-fable-5-1", "claude-opus-5-5"].map((slug) => ({
+              slug,
+              name: slug,
+              isCustom: false,
+              defaultSelection: "excluded" as const,
+              pricing: { inputCostPerMillionTokens: 20, outputCostPerMillionTokens: 100 },
+              capabilities: null,
+            })),
+          },
+        ],
+      }),
+    ).toBeNull();
   });
 
   it("needs a pool with none on the chain, or one nobody is signed in to", () => {

@@ -1,3 +1,4 @@
+import { resolveInitialModelSelection } from "@t3tools/shared/defaultModelSelection";
 import {
   type AccountHubConnection,
   type AccountPool,
@@ -220,38 +221,32 @@ export const poolProviders = (
     }),
   );
 
-/**
- * What a new thread starts on unless something closer picks (the project, its
- * section's pool, the user's last choice): the first pool, Personal first,
- * with a provider ready to run, on that provider's default model. Null when
- * no pool can run anything; clients then say to add an account.
- */
+/** The economical initial selection from pools ready to run. */
 export const poolDefaultModelSelection = (
   providers: ReadonlyArray<ServerProvider>,
 ): ModelSelection | null => {
   const eligible = providers.filter(
     (provider) =>
-      (provider.auth.status === "authenticated" || provider.auth.status === "unknown") &&
-      provider.models.length > 0,
+      provider.enabled &&
+      provider.installed &&
+      provider.availability !== "unavailable" &&
+      provider.auth.status !== "unauthenticated" &&
+      (provider.status !== "error" ||
+        (provider.auth.status === "unknown" &&
+          provider.unavailableReason !== undefined &&
+          provider.models.length > 0)),
   );
-  const provider = eligible.find((candidate) => candidate.status === "ready") ?? eligible[0];
-  const model = provider?.models.find((candidate) => candidate.isDefault) ?? provider?.models[0];
-  return provider && model ? { instanceId: provider.instanceId, model: model.slug } : null;
+  return (
+    resolveInitialModelSelection({
+      providers: eligible.filter((provider) => provider.status === "ready"),
+    }) ?? resolveInitialModelSelection({ providers: eligible })
+  );
 };
 
-/**
- * An automation may use an unavailable provider's cached model, but a default
- * must still be one that the pool lists.
- */
+/** An automation may use an unavailable provider's cached economical model. */
 export const poolFallbackModelSelection = (
   providers: ReadonlyArray<ServerProvider>,
-): ModelSelection | null => {
-  for (const provider of providers) {
-    const model = provider.models.find((candidate) => candidate.isDefault) ?? provider.models[0];
-    if (model) return { instanceId: provider.instanceId, model: model.slug };
-  }
-  return null;
-};
+): ModelSelection | null => resolveInitialModelSelection({ providers });
 
 /** Settings list each instance with its pool, which is how clients group instances by pool. */
 export const poolProviderInstances = (

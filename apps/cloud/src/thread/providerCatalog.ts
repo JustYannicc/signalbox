@@ -1,7 +1,7 @@
+import { resolveInitialModelSelection } from "@t3tools/shared/defaultModelSelection";
 import type { ModelGatewayProvider } from "@signalbox/runner-protocol/RunnerProtocol";
 import { PERSONAL_POOL_ID, POOL_INSTANCE_KINDS } from "@t3tools/contracts/accountHub";
 import {
-  DEFAULT_MODEL_BY_PROVIDER,
   defaultInstanceIdForDriver,
   ProviderDriverKind,
   type ProviderInstanceId,
@@ -150,12 +150,7 @@ export const harnessModels = (
   const ordered = own.toSorted(
     (left, right) => rank(left.id) - rank(right.id) || left.id.localeCompare(right.id),
   );
-  const slugs = ordered.map((model) => model.id);
-  const defaultSlug =
-    [catalog?.defaults?.chat, DEFAULT_MODEL_BY_PROVIDER[harness.driver]].find(
-      (slug) => slug !== undefined && slugs.includes(slug),
-    ) ?? slugs[0];
-  return ordered.map((model): ServerProviderModel => {
+  const models = ordered.map((model): ServerProviderModel => {
     const entry = entryOf(model.id);
     const profile = entry?.profile === undefined ? undefined : catalog?.profiles[entry.profile];
     return {
@@ -165,11 +160,19 @@ export const harnessModels = (
       ...(entry?.subProvider ? { subProvider: entry.subProvider } : {}),
       ...(entry?.aliases ? { aliases: entry.aliases } : {}),
       ...(entry?.badge ? { badge: entry.badge } : {}),
+      ...(entry?.pricing ? { pricing: entry.pricing } : {}),
+      ...(entry?.defaultSelection ? { defaultSelection: entry.defaultSelection } : {}),
+      ...(entry?.status === "legacy" ? { isLegacy: true } : {}),
       isCustom: false,
-      ...(model.id === defaultSlug ? { isDefault: true } : {}),
       capabilities: poolModelCapabilities(kind, model, profile?.capabilities),
     };
   });
+  const defaultSlug = resolveInitialModelSelection({
+    providers: [{ instanceId: harness.instanceId, driver: harness.driver, models }],
+  })?.model;
+  return models.map((model) =>
+    model.slug === defaultSlug ? { ...model, isDefault: true } : model,
+  );
 };
 
 /** What the cloud advertises besides the pools' instances: the scripted provider, when on. */

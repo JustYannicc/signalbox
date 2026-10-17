@@ -3,6 +3,10 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./clientTraceSafety": {
+      "types": "./src/clientTraceSafety.ts",
+      "import": "./src/clientTraceSafety.ts"
+    },
     "./pnpmVirtualStore": {
       "types": "./src/pnpmVirtualStore.ts",
       "import": "./src/pnpmVirtualStore.ts",
@@ -547,6 +551,10 @@
     "./poolUsage": {
       "types": "./src/poolUsage.ts",
       "import": "./src/poolUsage.ts"
+    },
+    "./defaultModelSelection": {
+      "types": "./src/defaultModelSelection.ts",
+      "import": "./src/defaultModelSelection.ts"
     },
     "./agentProcessInspection": {
       "types": "./src/agentProcesses/processOps.ts",
