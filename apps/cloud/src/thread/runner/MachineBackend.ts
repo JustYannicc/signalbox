@@ -47,8 +47,11 @@ export interface MachineBackendEnv {
   readonly CLOUD_URL?: string;
   /** The Runner image machines run. */
   readonly RUNNER_IMAGE?: string;
+  readonly BOAT_RUNNER_API_KEY?: string;
   readonly BOAT_API_KEY?: string;
   readonly BOAT_API_URL?: string;
+  readonly BOAT_RUNNER_SNAPSHOT?: string;
+  readonly BOAT_RUNNER_ENVIRONMENT?: string;
   /** `small` (2 vCPU / 4 GB, the default), `default` or `large`. */
   readonly BOAT_MACHINE_TYPE?: string;
   /** The hard TTL of each wake, in seconds. */

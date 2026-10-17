@@ -16,8 +16,10 @@ import * as Alchemy from "alchemy";
 import * as Cloudflare from "alchemy/Cloudflare";
 import * as Config from "effect/Config";
 import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
 import * as Redacted from "effect/Redacted";
 
+import { boatProviders, boatRunner } from "./infra/boat.ts";
 import {
   AUTOMATION_BINDINGS as AUTOMATION,
   COMPATIBILITY_DATE,
@@ -93,7 +95,7 @@ const drivePacks = (id: string, name: string) =>
 export default Alchemy.Stack(
   "SignalboxCloud",
   {
-    providers: Cloudflare.providers(),
+    providers: Layer.mergeAll(Cloudflare.providers(), boatProviders),
     state: Cloudflare.state(),
   },
   Effect.gen(function* () {
@@ -162,6 +164,7 @@ function deploy(
   env: Readonly<Record<string, string | Redacted.Redacted<string>>>,
 ) {
   return Effect.gen(function* () {
+    const boat = yield* boatRunner(target);
     // The web app, built by CI before the deploy. Same origin as the API.
     const assets = {
       directory: here("../web/dist"),
@@ -203,6 +206,7 @@ function deploy(
       limits: { cpuMs: 300_000 },
       env: {
         ...env,
+        ...boat,
         // Binding and class names are the Durable Objects' identity.
         USERS: Cloudflare.DurableObject<UserObject>(DO.USERS),
         DRIVES: Cloudflare.DurableObject<DriveObject>(DO.DRIVES),

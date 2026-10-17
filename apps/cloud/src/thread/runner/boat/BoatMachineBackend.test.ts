@@ -131,10 +131,19 @@ const makeStore = () => {
   };
 };
 
-const makeBackend = (boat: ReturnType<typeof makeFakeBoat>, store: ReturnType<typeof makeStore>) =>
+const makeBackend = (
+  boat: ReturnType<typeof makeFakeBoat>,
+  store: ReturnType<typeof makeStore>,
+  configured: Extract<MachineSettings, { kind: "boat" }> = settings,
+) =>
   Effect.gen(function* () {
     const crypto = yield* Crypto.Crypto;
-    return makeBoatMachineBackend({ settings, api: boat.api, records: store.records, crypto });
+    return makeBoatMachineBackend({
+      settings: configured,
+      api: boat.api,
+      records: store.records,
+      crypto,
+    });
   }).pipe(Effect.provide(Platform.layerCrypto));
 
 const request = (generation: number) => ({
@@ -209,6 +218,49 @@ describe("BoatMachineBackend", () => {
       expect((yield* backend.ensure(request(2))).actual).toBe("running");
       expect(boat.sandboxes.size).toBe(1);
       expect(boat.config("bx_1")?.generation).toBe(2);
+    }),
+  );
+
+  it.effect("keeps and resumes a legacy VM after migrating to managed runner settings", () =>
+    Effect.gen(function* () {
+      const boat = makeFakeBoat();
+      const store = makeStore();
+      const legacy = yield* makeBackend(boat, store);
+      yield* legacy.ensure(request(1));
+      boat.settle();
+      yield* legacy.ensure(request(1));
+
+      const prepared = {
+        ...settings,
+        apiKey: Redacted.make("runner-scoped-key"),
+        snapshot: "signalbox-runner-v1",
+        environment: "signalbox-runner",
+        image: "ghcr.io/test/runner:2",
+      };
+      const migrated = yield* makeBackend(boat, store, prepared);
+      expect(yield* migrated.ensure(request(2))).toMatchObject({
+        machineId: "bx_1",
+        actual: "running",
+        wake: "warm",
+      });
+      expect(boat.config("bx_1")).toMatchObject({ generation: 2, image: prepared.image });
+      yield* migrated.stop(threadId);
+      boat.settle();
+
+      const resumed = yield* makeBackend(boat, store, prepared);
+      expect(yield* resumed.ensure(request(3))).toMatchObject({
+        machineId: "bx_1",
+        wake: "disk_resume",
+      });
+      boat.settle();
+      expect(yield* resumed.ensure(request(3))).toMatchObject({
+        machineId: "bx_1",
+        actual: "running",
+      });
+      expect(boat.config("bx_1")).toMatchObject({ generation: 3, image: prepared.image });
+      expect(boat.calls.filter((call) => call === "create")).toHaveLength(1);
+      expect(boat.calls.filter((call) => call === "resume")).toHaveLength(1);
+      expect(boat.calls).not.toContain("delete");
     }),
   );
 

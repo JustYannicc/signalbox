@@ -91,7 +91,7 @@ jobs:
       - name: Read limits and static resources
         run: node infra/boat/scripts/inventory.mjs --json
         env:
-          BOAT_API_KEY: ${{ secrets.BOAT_API_KEY }}
+          BOAT_API_KEY: ${{ secrets.BOAT_DEPLOY_API_KEY || secrets.BOAT_API_KEY }}
 
   deploy_production:
     name: Deploy production cloud
@@ -124,6 +124,7 @@ jobs:
       T3CODE_WORKOS_WEBHOOK_SECRET: ${{ secrets.T3CODE_WORKOS_WEBHOOK_SECRET }}
       # Optional: Claude and Codex on boat VMs (docs/operations/cloud.md).
       BOAT_API_KEY: ${{ secrets.BOAT_API_KEY }}
+      BOAT_DEPLOY_API_KEY: ${{ secrets.BOAT_DEPLOY_API_KEY }}
       # Optional: chat or task classifiers; unset, threads stay tasks (docs/operations/cloud.md).
       TYPESAFE_API_KEY: ${{ secrets.TYPESAFE_API_KEY }}
       OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
@@ -364,6 +365,7 @@ jobs:
       EXECUTOR_MCP_URL: ${{ vars.EXECUTOR_MCP_URL }}
       T3CODE_WORKOS_API_KEY: ${{ secrets.T3CODE_WORKOS_API_KEY }}
       BOAT_API_KEY: ${{ secrets.BOAT_API_KEY }}
+      BOAT_DEPLOY_API_KEY: ${{ secrets.BOAT_DEPLOY_API_KEY }}
       # Optional: chat or task classifiers; unset, threads stay tasks (docs/operations/cloud.md).
       TYPESAFE_API_KEY: ${{ secrets.TYPESAFE_API_KEY }}
       OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
@@ -482,6 +484,8 @@ jobs:
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
       GH_TOKEN: ${{ github.token }}
       PR_NUMBER: ${{ github.event.pull_request.number }}
+      MACHINE_BACKEND: ${{ vars.MACHINE_BACKEND }}
+      BOAT_DEPLOY_API_KEY: ${{ secrets.BOAT_DEPLOY_API_KEY }}
     steps:
       # Only main's code runs here: no PR code ever sees the token in this job.
       - name: Checkout trusted cleanup

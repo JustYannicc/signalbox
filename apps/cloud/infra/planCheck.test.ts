@@ -49,6 +49,55 @@ describe("readPlan", () => {
     expect(readPlan("Error: Cloudflare State store not found").summary).toBeNull();
   });
 
+  it("blocks changing an existing infrastructure binding's target", () => {
+    const report = readPlan(
+      [
+        line("Plan: 1 to update, 4 binding changes"),
+        line("[Cloud] update"),
+        line("[Cloud/DRIVE_PACKS] update"),
+        line("[Cloud/POOLS] update"),
+        line("[PoolContainer/POOLS] update"),
+        line("[ModelGateway/GRANTS] update"),
+      ].join("\n"),
+    );
+    expect(report.blocking.map((row) => row.resource)).toEqual([
+      "Cloud/DRIVE_PACKS",
+      "Cloud/POOLS",
+      "PoolContainer/POOLS",
+      "ModelGateway/GRANTS",
+    ]);
+  });
+
+  it("allows additive infrastructure bindings and ordinary secret updates", () => {
+    const report = readPlan(
+      [
+        line("Plan: 1 to update, 2 binding changes"),
+        line("[Cloud] update"),
+        line("[Cloud/DRIVE_PACKS] create"),
+        line("[Cloud/BOAT_API_KEY] update"),
+      ].join("\n"),
+    );
+    expect(report.blocking).toEqual([]);
+  });
+
+  it("recognizes explicit destroy and rebind actions as unsafe", () => {
+    const report = readPlan(
+      [
+        line("Plan: 1 to destroy, 1 to rebind"),
+        line("[Cloud] destroy"),
+        line("[Cloud/POOLS] rebind"),
+      ].join("\n"),
+    );
+    expect(report.blocking.map((row) => row.action)).toEqual(["destroy", "rebind"]);
+  });
+
+  it("blocks updating a runner snapshot's artifact under its existing name", () => {
+    expect(readPlan(line("[BoatRunnerSnapshot] update")).blocking).toEqual([
+      { resource: "BoatRunnerSnapshot", action: "update" },
+    ]);
+    expect(readPlan(line("[BoatRunnerSnapshot] create")).blocking).toEqual([]);
+  });
+
   it("ignores log lines that only look like rows", () => {
     expect(readPlan(line("Cloudflare Worker put: [object] creates")).rows).toEqual([]);
   });

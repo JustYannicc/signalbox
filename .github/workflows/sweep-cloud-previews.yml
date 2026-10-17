@@ -37,6 +37,8 @@ jobs:
       CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
       GH_TOKEN: ${{ github.token }}
+      MACHINE_BACKEND: ${{ vars.MACHINE_BACKEND }}
+      BOAT_DEPLOY_API_KEY: ${{ secrets.BOAT_DEPLOY_API_KEY }}
       CLEANUP_LEGACY_PREVIEW_PACKS: ${{ inputs.cleanup_legacy_preview_packs }}
       BACKFILL_PREVIEW_LINKS: ${{ inputs.backfill_preview_links }}
     steps:

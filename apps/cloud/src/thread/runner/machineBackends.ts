@@ -43,6 +43,8 @@ export type MachineSettings =
       readonly image: string;
       readonly machineType: string;
       readonly ttlSeconds: number;
+      readonly snapshot?: string;
+      readonly environment?: string;
     };
 
 /** The heavy backend the environment configures, or null when it cannot run Claude or Codex. */
@@ -50,10 +52,12 @@ export const machineSettings = (env: MachineBackendEnv): MachineSettings | null 
   const modelGatewayUrl = nonEmpty(env.MODEL_GATEWAY_URL);
   if (modelGatewayUrl === null) return null;
   if (nonEmpty(env.MACHINE_BACKEND) === "boat") {
-    const apiKey = nonEmpty(env.BOAT_API_KEY);
+    const apiKey = nonEmpty(env.BOAT_RUNNER_API_KEY) ?? nonEmpty(env.BOAT_API_KEY);
     const cloudUrl = nonEmpty(env.CLOUD_URL);
     if (apiKey === null || cloudUrl === null) return null;
     const ttlSeconds = Number(nonEmpty(env.BOAT_TTL_SECONDS) ?? DEFAULT_BOAT_TTL_SECONDS);
+    const snapshot = nonEmpty(env.BOAT_RUNNER_SNAPSHOT);
+    const environment = nonEmpty(env.BOAT_RUNNER_ENVIRONMENT);
     return {
       kind: "boat",
       apiUrl: nonEmpty(env.BOAT_API_URL) ?? "https://boat.dev/api/v1",
@@ -62,6 +66,8 @@ export const machineSettings = (env: MachineBackendEnv): MachineSettings | null 
       modelGatewayUrl,
       image: nonEmpty(env.RUNNER_IMAGE) ?? DEFAULT_RUNNER_IMAGE,
       machineType: nonEmpty(env.BOAT_MACHINE_TYPE) ?? "small",
+      ...(snapshot === null ? {} : { snapshot }),
+      ...(environment === null ? {} : { environment }),
       ttlSeconds:
         Number.isInteger(ttlSeconds) && ttlSeconds > 0 ? ttlSeconds : DEFAULT_BOAT_TTL_SECONDS,
     };
@@ -165,7 +171,7 @@ const heavyFromEnv = (env: MachineBackendEnv) =>
       }
       if (nonEmpty(env.MACHINE_BACKEND) === "boat") {
         yield* Effect.logWarning(
-          "MACHINE_BACKEND=boat needs BOAT_API_KEY, CLOUD_URL and MODEL_GATEWAY_URL; Claude and Codex stay off.",
+          "MACHINE_BACKEND=boat needs BOAT_RUNNER_API_KEY (or BOAT_API_KEY), CLOUD_URL and MODEL_GATEWAY_URL; Claude and Codex stay off.",
         );
       }
       return null;

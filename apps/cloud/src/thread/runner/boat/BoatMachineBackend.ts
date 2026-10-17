@@ -1,4 +1,4 @@
-import { MACHINE_HOME, machineConfigJson } from "@signalbox/runner-protocol/RunnerProtocol";
+import { machineConfigJson } from "@signalbox/runner-protocol/RunnerProtocol";
 import type * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 
@@ -12,6 +12,9 @@ import {
   type MachineStatus,
 } from "../MachineBackend.ts";
 import type { BoatApi, BoatApiError, BoatSandbox } from "./BoatApi.ts";
+import { BOAT_RUNNER_SETUP, CONFIG_PATH } from "./runnerSetup.ts";
+
+export { CONFIG_PATH } from "./runnerSetup.ts";
 
 /**
  * The heavy class: one boat VM per thread (2 vCPU / 4 GB by default), whose
@@ -20,68 +23,16 @@ import type { BoatApi, BoatApiError, BoatSandbox } from "./BoatApi.ts";
  * TTL (`BOAT_TTL_SECONDS`, counted from each start and pushed out while a turn
  * runs) stops it if the object never does.
  *
- * The VM runs the Runner image (`RUNNER_IMAGE`) under systemd, installed by
- * the setup script below when the VM is created. `ensure` writes the Runner's
+ * The VM runs the Runner image (`RUNNER_IMAGE`) under systemd, installed in
+ * its base snapshot or by the create-time setup script. `ensure` writes the Runner's
  * config (`RunnerMachineConfig`) to `CONFIG_PATH`; the Runner follows that file
  * (`apps/server/src/signalbox/runner/RunnerMachine.ts`). Writing a new
  * generation to a running VM replaces its Runner, so a thread object that
  * lost its machine's socket never needs a second VM.
  */
 
-/** On the VM's disk, mounted into the Runner's container at the same path. */
-export const CONFIG_PATH = `${MACHINE_HOME}/machine.json`;
-
 /** Create, boot, setup and the first image pull. A resume takes seconds. */
 const CONNECT_TIMEOUT_MS = 5 * 60_000;
-
-/**
- * Installs the Runner as an enabled systemd unit, which boat starts again on
- * every resume. The unit waits for the config, then runs the image it names;
- * the Runner exits when the config names another image, and the unit restarts
- * it on that one.
- */
-const SETUP_SCRIPT = `#!/bin/bash
-set -euo pipefail
-sudo install -d -m 0755 -o user -g user ${MACHINE_HOME}
-sudo tee /usr/local/bin/signalbox-runner >/dev/null <<'SCRIPT'
-#!/bin/bash
-set -euo pipefail
-config=${CONFIG_PATH}
-until [ -s "$config" ]; do sleep 1; done
-image=$(python3 -c 'import json, sys; print(json.load(open(sys.argv[1]))["image"])' "$config")
-docker pull --quiet "$image" || true
-digest=$(docker image inspect --format '{{index .RepoDigests 0}}' "$image" 2>/dev/null || true)
-docker rm --force signalbox-runner >/dev/null 2>&1 || true
-# FUSE, for the read-only /drives mount; without it the Runner runs, unmounted.
-fuse=()
-if [ -e /dev/fuse ]; then fuse=(--device /dev/fuse --cap-add SYS_ADMIN --security-opt apparmor=unconfined); fi
-exec docker run --name signalbox-runner --network host --init "\${fuse[@]}" \\
-  --volume ${MACHINE_HOME}:${MACHINE_HOME} \\
-  --env SIGNALBOX_RUNNER_IMAGE="$image" \\
-  --env SIGNALBOX_RUNNER_IMAGE_DIGEST="$digest" \\
-  "$image" machine --config "$config"
-SCRIPT
-sudo chmod 0755 /usr/local/bin/signalbox-runner
-sudo tee /etc/systemd/system/signalbox-runner.service >/dev/null <<'UNIT'
-[Unit]
-Description=Signalbox Runner
-StartLimitIntervalSec=0
-After=docker.service network-online.target
-Requires=docker.service
-Wants=network-online.target
-
-[Service]
-ExecStart=/usr/local/bin/signalbox-runner
-Restart=always
-RestartSec=2
-
-[Install]
-WantedBy=multi-user.target
-UNIT
-sudo systemctl daemon-reload
-sudo systemctl enable --now signalbox-runner.service
-`;
-
 type Actual = MachineStatus["actual"];
 
 const actualOf = (state: string): Actual => {
@@ -148,7 +99,10 @@ export const makeBoatMachineBackend = ({
   const createRequest = {
     type: settings.machineType,
     ttlSeconds: settings.ttlSeconds,
-    setupScript: SETUP_SCRIPT,
+    ...(settings.snapshot === undefined
+      ? { setupScript: BOAT_RUNNER_SETUP }
+      : { from: settings.snapshot }),
+    ...(settings.environment === undefined ? {} : { environment: settings.environment }),
   };
 
   /** The sandbox behind `record`, forgetting it when boat no longer has it. */

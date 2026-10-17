@@ -43,9 +43,18 @@ else
   failed=1
 fi
 
+boat_numbers=''
+if [[ -n "${BOAT_DEPLOY_API_KEY:-}" ]]; then
+  if ! boat_numbers="$(node infra/boat/scripts/preview-numbers.mjs)"; then
+    echo "::error::Could not list Boat preview resources."
+    failed=1
+  fi
+fi
+
 candidate_numbers="$(
   sed -nE 's/^signalbox-(cloud|model-gateway)-pr-([1-9][0-9]*)$/\2/p' <<< "$worker_names"
   printf '%s\n' "$image_numbers"
+  printf '%s\n' "$boat_numbers"
   jq -r '.[]?.name | try capture("^signalbox-cloud-pr-(?<number>[1-9][0-9]*)-(pools|threads)$").number catch empty' \
     <<< "$containers"
   jq -r '.prNumbers[]?' <<< "$assets"

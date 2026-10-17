@@ -1,6 +1,6 @@
 // @effect-diagnostics nodeBuiltinImport:off globalConsole:off - Standalone CI guard, run with plain node.
 /**
- * Fails a deploy whose plan would replace, delete, orphan or unbind anything:
+ * Fails a deploy whose plan would replace, delete, orphan, unbind or retarget infrastructure:
  *
  *   node apps/cloud/infra/check-plan.ts <stage> <plan output file>
  *

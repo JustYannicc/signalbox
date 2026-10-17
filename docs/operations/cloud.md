@@ -125,28 +125,42 @@ VM (`small`: 2 vCPU / 4 GB), started when a turn needs it and stopped after a
 10-minute idle tail. The VM's disk survives the stop, so the next message
 resumes the same VM with its checkout and caches. The Worker needs:
 
-| Name                | Kind   | What                                                                 |
-| ------------------- | ------ | -------------------------------------------------------------------- |
-| `MACHINE_BACKEND`   | var    | `boat`                                                               |
-| `BOAT_API_KEY`      | secret | A boat API key                                                       |
-| `CLOUD_URL`         | var    | The cloud's public origin, which machines dial. The deploy sets it.  |
-| `MODEL_GATEWAY_URL` | var    | The ModelGateway's public origin: `https://gateway.signalbox.run`    |
-| `RUNNER_IMAGE`      | var    | Optional. Defaults to `ghcr.io/justyannicc/signalbox-runner:nightly` |
-| `BOAT_MACHINE_TYPE` | var    | Optional. `small` (default), `default` or `large`                    |
-| `BOAT_TTL_SECONDS`  | var    | Optional. Hard TTL, default 7200 (2 hours, boat's trial maximum)     |
+| Name                      | Kind   | What                                                                 |
+| ------------------------- | ------ | -------------------------------------------------------------------- |
+| `MACHINE_BACKEND`         | var    | `boat`                                                               |
+| `BOAT_API_KEY`            | secret | Legacy runtime key, retained for existing installations              |
+| `BOAT_RUNNER_API_KEY`     | secret | Runtime key managed by Alchemy. Takes precedence over the legacy key |
+| `BOAT_RUNNER_SNAPSHOT`    | var    | Runner base snapshot managed by Alchemy                              |
+| `BOAT_RUNNER_ENVIRONMENT` | var    | Runner environment managed by Alchemy                                |
+| `CLOUD_URL`               | var    | The cloud's public origin, which machines dial. The deploy sets it.  |
+| `MODEL_GATEWAY_URL`       | var    | The ModelGateway's public origin: `https://gateway.signalbox.run`    |
+| `RUNNER_IMAGE`            | var    | Optional. Defaults to `ghcr.io/justyannicc/signalbox-runner:nightly` |
+| `BOAT_MACHINE_TYPE`       | var    | Optional. `small` (default), `default` or `large`                    |
+| `BOAT_TTL_SECONDS`        | var    | Optional. Hard TTL, default 7200 (2 hours, boat's trial maximum)     |
 
-The deploy workflow passes `BOAT_API_KEY` from the GitHub environment's
-secrets and `MACHINE_BACKEND` from its variables. Production takes
-`MODEL_GATEWAY_URL` from its variables too; a preview points it at its own
-gateway. Setting `MACHINE_BACKEND=boat` turns boat on for production or
-previews.
+Set `MACHINE_BACKEND=boat` in the GitHub environment's variables and store
+`BOAT_DEPLOY_API_KEY` in its secrets. This deployment credential needs Boat's
+`admin` preset to manage environments, snapshots and scoped keys. It never
+reaches the Worker. Alchemy creates a separate runtime key, environment and
+snapshot for each stage. Production resources are retained; closing a PR
+destroys its preview's Boat resources along with its Cloudflare resources.
+Keep the existing `BOAT_API_KEY` secret during adoption. Existing thread VMs
+continue to resume with their disks; only new VMs use the prepared snapshot.
+
+The first preview apply initializes Boat's environment inventory if the
+account has never used it. Do that before the read-only production plan:
+Boat's `GET /environments` creates the default `base` environment on first
+access. The production plan must not be the first access.
 
 How a machine comes up, in `apps/cloud/src/thread/runner/boat/`: the thread
 object records the machine it wants before every boat call, creates the VM with
 an idempotency key it keeps until boat names the VM, and resumes a stopped one.
 Its alarm retries until the machine is up or stopped, so a duplicate alarm or a
-lost boat response never makes a second VM. The VM is created `noEnv` with a
-setup script that installs the Runner as a systemd unit; the object then writes
+lost boat response never makes a second VM. New VMs start from the prepared
+snapshot, which installs the Runner as a systemd unit. Their named environment
+passes no account secrets or credentials. Without a prepared snapshot, the
+runtime installs the same unit with a setup script, using `noEnv` when no
+named environment is configured. The object then writes
 the Runner's config (generation, token, cloud and gateway URLs, image) to
 `/home/user/signalbox/machine.json`, and the Runner dials in. boat stops every
 VM at its TTL whatever the object does, so a thread object that is gone cannot
@@ -155,7 +169,10 @@ TTL, so only an abandoned VM reaches it.
 
 The boat key needs the actions `sandbox.create`, `sandbox.read`,
 `sandbox.update`, `sandbox.stop`, `sandbox.resume`, `sandbox.delete` and
-`file.write`.
+`file.write` and `snapshot.read`. The generated key expires after 365 days;
+an expired key or changed scope plans a replacement, which the deploy guard
+rejects for review. Rotating a key's secret requires an explicit
+`secretVersion` change in the Alchemy resource.
 
 To try it locally, the machine must reach your `wrangler dev` and the gateway,
 for example through `cloudflared tunnel --url http://127.0.0.1:8787

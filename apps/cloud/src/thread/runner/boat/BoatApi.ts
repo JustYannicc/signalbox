@@ -41,10 +41,12 @@ const decodeErrorBody = Schema.decodeUnknownOption(
 );
 
 export interface BoatCreateRequest {
+  readonly from?: string;
+  readonly environment?: string;
   readonly type: string;
   readonly ttlSeconds: number;
   /** Runs once, in the background, after the sandbox is first ready. */
-  readonly setupScript: string;
+  readonly setupScript?: string;
 }
 
 export interface BoatApi {
@@ -134,8 +136,11 @@ export const makeBoatApi = (
         "create",
         HttpClientRequest.post(url("/sandboxes")).pipe(
           HttpClientRequest.setHeader("Idempotency-Key", idempotencyKey),
-          // No-env: none of the account's secrets or credentials reach the machine.
-          HttpClientRequest.bodyJsonUnsafe({ ...request, noEnv: true }),
+          // noEnv overrides a named environment. The managed environment withholds credentials itself.
+          HttpClientRequest.bodyJsonUnsafe({
+            ...request,
+            ...(request.environment === undefined ? { noEnv: true } : {}),
+          }),
         ),
       ).pipe(Effect.flatMap(sandboxOf("create"))),
     get: (id) =>
