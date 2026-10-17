@@ -10,6 +10,7 @@ import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Schema from "effect/Schema";
+import * as Scheduler from "effect/Scheduler";
 
 import { makeRunnerFeedback } from "./RunnerFeedback.ts";
 
@@ -39,6 +40,33 @@ const request: FeedbackRequest = {
 };
 
 describe("Runner feedback", () => {
+  it.effect(
+    "claims identical requests once even when scheduling yields during receipt creation",
+    () =>
+      Effect.forEach([4, 5, 6, 7, 8, 9, 10, 11, 12, 16, 24, 32], (budget) =>
+        Effect.gen(function* () {
+          let uploads = 0;
+          const session = {
+            providerSessionId: ProviderSessionId.make("session-1"),
+            uploadFeedback: () =>
+              Effect.sync(() => {
+                uploads++;
+                return { feedbackId: "receipt-1" };
+              }),
+          };
+          const feedback = makeRunnerFeedback(threadId, () => session);
+          feedback.remember(session, thread);
+          const results = yield* Effect.all(
+            Array.from({ length: 16 }, () => feedback.upload(request)),
+            { concurrency: "unbounded" },
+          );
+          expect(uploads).toBe(1);
+          expect(results).toEqual(
+            Array.from({ length: 16 }, () => ({ _tag: "uploaded", feedbackId: "receipt-1" })),
+          );
+        }).pipe(Effect.provideService(Scheduler.MaxOpsBeforeYield, budget)),
+      ),
+  );
   it.effect("uploads only on request and takes concurrent duplicates once", () =>
     Effect.gen(function* () {
       const entered = yield* Deferred.make<void>();

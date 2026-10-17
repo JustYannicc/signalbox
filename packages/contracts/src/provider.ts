@@ -118,7 +118,7 @@ export type ProviderRespondToUserInputInput = typeof ProviderRespondToUserInputI
 export const ProviderUploadFeedbackInput = Schema.Struct({
   threadId: ThreadId,
   /** Reuse this id to read the cloud receipt without submitting again. */
-  requestId: Schema.optional(TrimmedNonEmptyString),
+  requestId: Schema.optional(TrimmedNonEmptyString), // signalbox: cloud receipts make feedback retries one-shot
   reason: Schema.optional(TrimmedNonEmptyString),
 });
 export type ProviderUploadFeedbackInput = typeof ProviderUploadFeedbackInput.Type;
@@ -128,6 +128,7 @@ export const ProviderUploadFeedbackResult = Schema.Struct({
 });
 export type ProviderUploadFeedbackResult = typeof ProviderUploadFeedbackResult.Type;
 
+// signalbox: cloud runner failures need recoverable categories
 export const ProviderFeedbackFailure = Schema.Literals([
   "unsupported",
   "session_unavailable",
@@ -140,11 +141,12 @@ export class ProviderUploadFeedbackError extends Schema.TaggedError<ProviderUplo
   "ProviderUploadFeedbackError",
   {
     threadId: ThreadId,
-    failure: Schema.optional(ProviderFeedbackFailure),
+    failure: Schema.optional(ProviderFeedbackFailure), // signalbox: keep cloud feedback failures typed on the wire
     cause: Schema.optional(Schema.Defect()),
   },
 ) {
   override get message(): string {
+    // signalbox: cloud session recovery and ambiguous uploads need distinct messages
     switch (this.failure) {
       case "unsupported":
         return "This provider does not support feedback uploads.";
