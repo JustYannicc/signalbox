@@ -146,6 +146,65 @@ describe("legacy catalog shadow audit", () => {
     expect(auditLegacyCatalogSources([source]).ambiguousTopConfigurations).toBe(1);
   });
 
+  it("compares nested copies structurally and counts one-sided optional fields", () => {
+    const copy = () =>
+      folder("shared", ORG, {
+        secrets: { environmentId: OnePasswordEnvironmentId.make("vault-one") },
+        phase: { phases: ["Plan", "Ship"], current: "Plan" },
+        files: { projectId: ProjectId.make("drive:shared/org_acme/files-one") },
+        githubLend: { login: "login-one", lentAt: 1 },
+      });
+    const sources = [
+      ownerCopy("person-one", snapshot({ folders: [copy()] }), 0),
+      ownerCopy("person-two", snapshot({ folders: [copy()] }), 0),
+    ];
+
+    const equal = auditLegacyCatalogSources(sources);
+    expect(equal.duplicateOrgLevels).toBe(1);
+    expect(equal.divergentOrgLevels).toBe(0);
+    expect(Object.values(equal.divergentFields)).toEqual(Array(9).fill(0));
+
+    const differing = auditLegacyCatalogSources([
+      ...sources,
+      ownerCopy(
+        "person-three",
+        snapshot({ folders: [{ ...copy(), instructions: "Only one source has this" }] }),
+        0,
+      ),
+    ]);
+    expect(differing.duplicateOrgLevels).toBe(1);
+    expect(differing.divergentOrgLevels).toBe(1);
+    expect(differing.divergentFields).toEqual({ ...equal.divergentFields, instructions: 1 });
+  });
+
+  it("keeps equal folder IDs in different organisations separate", () => {
+    const result = auditLegacyCatalogSources([
+      ownerCopy("person-one", snapshot({ folders: [folder("same", ORG)] }), 0),
+      ownerCopy(
+        "person-two",
+        snapshot({ folders: [folder("same", SignalboxContextId.make("org_other"))] }),
+        0,
+      ),
+    ]);
+    expect(result.logicalOrgLevels).toBe(2);
+    expect(result.duplicateOrgLevels).toBe(0);
+  });
+
+  it("does not count a configured Personal-only top as ambiguous", () => {
+    const result = auditLegacyCatalogSources([
+      ownerCopy("person-one", snapshot({ instructions: "Personal", topPool: "pool-one" }), 0),
+    ]);
+    expect(result.ambiguousTopConfigurations).toBe(0);
+  });
+
+  it("rejects noncanonical source identities with a fixed message", () => {
+    for (const personId of ["", " ", " person-one", "person-one ", "x".repeat(257)]) {
+      expect(() => auditLegacyCatalogSources([ownerCopy(personId, snapshot({}), 0)])).toThrow(
+        "Legacy catalog audit source identity must be a canonical person ID.",
+      );
+    }
+  });
+
   it("rejects repeated source identities with a fixed message", () => {
     const source = ownerCopy("person-one", snapshot({}), 0);
     expect(() =>

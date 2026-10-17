@@ -5,6 +5,7 @@ import type { SignalboxFoldersSnapshot } from "@t3tools/contracts/signalboxFolde
 import * as Schema from "effect/Schema";
 
 import { parseDriveId } from "../drive/driveAccess.ts";
+import { CatalogPersonId } from "./catalogHome.ts";
 
 const Count = NonNegativeInt.check(Schema.isLessThanOrEqualTo(Number.MAX_SAFE_INTEGER));
 
@@ -35,7 +36,6 @@ const decodeResult = Schema.decodeSync(LegacyCatalogAuditResultSchema);
 export interface LegacyCatalogAuditSource {
   readonly personId: string;
   readonly folders: SignalboxFoldersSnapshot;
-  readonly topPoolId?: string;
   readonly privateThreadCount: number;
 }
 
@@ -50,6 +50,7 @@ const DIVERGENT_FIELDS = [
   "poolId",
   "githubLend",
 ] as const satisfies ReadonlyArray<keyof Folder>;
+const isPersonId = Schema.is(CatalogPersonId);
 
 type DivergentField = (typeof DIVERGENT_FIELDS)[number];
 
@@ -106,8 +107,8 @@ export const auditLegacyCatalogSources = (
   let privateThreadPlacements = 0;
 
   for (const source of sources) {
-    if (source.personId.trim() === "") {
-      throw new Error("Legacy catalog audit source identity must be non-empty.");
+    if (!isPersonId(source.personId)) {
+      throw new Error("Legacy catalog audit source identity must be a canonical person ID.");
     }
     if (people.has(source.personId)) {
       throw new Error("Duplicate legacy catalog audit source identity.");
@@ -121,7 +122,6 @@ export const auditLegacyCatalogSources = (
     const topConfigured =
       source.folders.top.instructions !== undefined ||
       source.folders.top.secrets !== undefined ||
-      source.topPoolId !== undefined ||
       source.folders.pools.top !== null;
     if (topConfigured && ownerContextsOf(source.folders).size > 1) {
       ambiguousTopConfigurations = add(ambiguousTopConfigurations, 1);

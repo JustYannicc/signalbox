@@ -1,14 +1,15 @@
-import { TrimmedNonEmptyString } from "@t3tools/contracts";
 import { PERSONAL_CONTEXT_ID, SignalboxContextId } from "@t3tools/contracts/signalboxContexts";
 import { FolderId } from "@t3tools/contracts/signalboxFolders";
 import * as Schema from "effect/Schema";
 
-const PersonId = TrimmedNonEmptyString.check(Schema.isMaxLength(256));
+export const CatalogPersonId = Schema.Trimmed.check(Schema.isMinLength(1), Schema.isMaxLength(256));
+const ContextId = Schema.toType(SignalboxContextId).check(Schema.isTrimmed());
+const LevelId = Schema.toType(FolderId).check(Schema.isTrimmed());
 
 export const CatalogOwner = Schema.Union([
-  Schema.TaggedStruct("person", { id: PersonId }),
+  Schema.TaggedStruct("person", { id: CatalogPersonId }),
   Schema.TaggedStruct("organization", {
-    id: SignalboxContextId.check(Schema.makeFilter((id) => id !== PERSONAL_CONTEXT_ID)),
+    id: ContextId.check(Schema.makeFilter((id) => id !== PERSONAL_CONTEXT_ID)),
   }),
 ]);
 
@@ -16,10 +17,10 @@ export const CatalogHome = Schema.Struct({
   owner: CatalogOwner,
   level: Schema.Union([
     Schema.TaggedStruct("top", {}),
-    Schema.TaggedStruct("folder", { id: FolderId }),
+    Schema.TaggedStruct("folder", { id: LevelId }),
   ]),
   // Legacy org folders are independent private copies, even when their folder IDs match.
-  legacySource: Schema.optionalKey(PersonId),
+  legacySource: Schema.optionalKey(CatalogPersonId),
 }).check(
   Schema.makeFilter(
     (home) =>
@@ -35,14 +36,14 @@ const HomeKey = Schema.fromJsonString(
     Schema.Literal("catalog"),
     Schema.Literal(1),
     Schema.Literals(["person", "organization"]),
-    TrimmedNonEmptyString,
-    Schema.NullOr(PersonId),
-    Schema.NullOr(FolderId),
+    Schema.Trimmed.check(Schema.isMinLength(1)),
+    Schema.NullOr(CatalogPersonId),
+    Schema.NullOr(LevelId),
   ]),
 );
 const encodeKey = Schema.encodeSync(HomeKey);
 const decodeKey = Schema.decodeUnknownSync(HomeKey);
-const decodeHome = Schema.decodeSync(CatalogHome);
+const decodeHome = Schema.decodeUnknownSync(CatalogHome);
 
 /** A home identity, never an authorization grant or an index generation. */
 export const catalogHomeKey = (input: CatalogHome) => {
@@ -59,7 +60,7 @@ export const catalogHomeKey = (input: CatalogHome) => {
 
 export const catalogHomeFromKey = (key: string): CatalogHome => {
   const [, , ownerKind, ownerId, legacySource, folderId] = decodeKey(key);
-  return decodeHome({
+  const home = decodeHome({
     owner:
       ownerKind === "person"
         ? { _tag: "person", id: ownerId }
@@ -67,6 +68,8 @@ export const catalogHomeFromKey = (key: string): CatalogHome => {
     level: folderId === null ? { _tag: "top" } : { _tag: "folder", id: folderId },
     ...(legacySource === null ? {} : { legacySource }),
   });
+  if (catalogHomeKey(home) !== key) throw new Error("Catalog home key must be canonical.");
+  return home;
 };
 
 /** Resolves a user-local home without merging its data into another person's copy. */

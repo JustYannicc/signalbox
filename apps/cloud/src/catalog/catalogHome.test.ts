@@ -63,6 +63,9 @@ describe("catalog home identity", () => {
       '["search",1,"person","person_1",null,null]',
       '["catalog",1,"organization","personal",null,null]',
       '["catalog",1,"person","person_1","person_2",null]',
+      '["catalog", 1,"person","person_1",null,null]',
+      '["catalog",1,"person"," person_1",null,null]',
+      '["catalog",1,"person","person\\u005f1",null,null]',
     ]) {
       expect(() => catalogHomeFromKey(key)).toThrow();
     }
@@ -78,6 +81,28 @@ describe("catalog home identity", () => {
         owner: { _tag: "person", id: "person_1" },
         level: { _tag: "top" },
         legacySource: "person_2",
+      }),
+    ).toThrow();
+  });
+
+  it("rejects padded identities rather than merging distinct source values", () => {
+    for (const personId of [" person_1", "person_1 ", " "]) {
+      expect(() =>
+        legacyCatalogHome({ personId, contextId: PERSONAL_CONTEXT_ID, folderId: null }),
+      ).toThrow();
+    }
+    expect(() =>
+      legacyCatalogHome({
+        personId: "person_1",
+        contextId: SignalboxContextId.make(" org_1"),
+        folderId: null,
+      }),
+    ).toThrow();
+    expect(() =>
+      legacyCatalogHome({
+        personId: "person_1",
+        contextId: ORG,
+        folderId: FolderId.make(" folder_1"),
       }),
     ).toThrow();
   });
