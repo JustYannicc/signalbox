@@ -2268,8 +2268,11 @@ describe("RunnerTurns", () => {
               const first = yield* makeFakeAdapter;
               const second = yield* makeFakeAdapter;
               const secondInstance = ProviderInstanceId.make("second-codex");
+              const secondRunSentinel = "printf after-old-terminal-sentinel";
               const started = yield* Deferred.make<void>();
               const oldTerminal = yield* Deferred.make<void>();
+              const secondRunUpgrade = yield* Deferred.make<void>();
+              const secondRunSentinelEmitted = yield* Deferred.make<void>();
               const reported: Array<RunnerItem> = [];
               const turns = yield* makeRunnerTurns({
                 threadId,
@@ -2289,6 +2292,12 @@ describe("RunnerTurns", () => {
                     }
                     if (item.kind === "provider" && item.event.type === "turn.terminal") {
                       yield* Deferred.succeed(oldTerminal, undefined);
+                    }
+                    if (item.kind === "machine.outgrown" && item.runId === RunId.make("run-2")) {
+                      yield* Deferred.succeed(secondRunUpgrade, undefined);
+                    }
+                    if (emittedCommand(item, secondRunSentinel)) {
+                      yield* Deferred.succeed(secondRunSentinelEmitted, undefined);
                     }
                   }),
               });
@@ -2315,7 +2324,29 @@ describe("RunnerTurns", () => {
               yield* Queue.offer(first.events, turnEnded(1));
               yield* Deferred.await(oldTerminal);
               expect(reported.some((item) => item.kind === "machine.outgrown")).toBe(false);
+              expect(
+                reported.filter(
+                  (item) => item.kind === "provider" && item.event.type === "turn.terminal",
+                ),
+              ).toMatchObject([{ runId: RunId.make("run-1") }]);
               expect(second.calls).toEqual(["start run-2"]);
+
+              yield* Queue.offer(
+                second.events,
+                command("running", REQUEST_HEAVY_MACHINE_COMMAND, undefined, RunId.make("run-2")),
+              );
+              yield* Queue.offer(
+                second.events,
+                command("running", secondRunSentinel, undefined, RunId.make("run-2")),
+              );
+              const secondRunProgress = yield* Effect.race(
+                Deferred.await(secondRunUpgrade).pipe(Effect.as("moved")),
+                Deferred.await(secondRunSentinelEmitted).pipe(Effect.as("processed")),
+              );
+              expect(secondRunProgress).toBe("moved");
+              expect(reported.filter((item) => item.kind === "machine.outgrown")).toMatchObject([
+                { runId: RunId.make("run-2") },
+              ]);
             }),
           ),
       );

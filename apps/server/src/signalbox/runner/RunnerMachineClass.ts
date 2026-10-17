@@ -207,7 +207,7 @@ const unwrapCommand = (
     start++;
   }
   const tool = words[start] === undefined ? undefined : baseName(words[start]!);
-  if (tool === undefined) return { command: [] as ReadonlyArray<string> };
+  if (tool === undefined) return { command: [] };
   if (SHELLS.has(tool)) {
     const flag = words.findIndex((word, index) => index > start && /^-\w*c\w*$/.test(word));
     const script = flag === -1 ? undefined : words[flag + 1];
