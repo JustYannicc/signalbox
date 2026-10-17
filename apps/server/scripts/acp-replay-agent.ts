@@ -57,8 +57,9 @@ const pendingClientRequestIds = new Map<string, string | number>();
 const pendingAgentRequestMethods = new Map<string, string>();
 
 function writeStatus(failure?: unknown): void {
+  const temporaryPath = `${replayStatusPath}.tmp`;
   NodeFS.writeFileSync(
-    replayStatusPath,
+    temporaryPath,
     JSON.stringify({
       scenario: transcript.scenario,
       cursor,
@@ -67,6 +68,7 @@ function writeStatus(failure?: unknown): void {
     }),
     "utf8",
   );
+  NodeFS.renameSync(temporaryPath, replayStatusPath);
 }
 
 function stableStringify(value: unknown): string {
@@ -244,9 +246,10 @@ function flushInbound(): void {
       stopWithFailure("Invalid emit_inbound logical ACP frame", entry.frame);
       return;
     }
+    // The parent can stop us as soon as it receives this frame.
+    advance();
     emitInbound(frame);
     if (stopped) return;
-    advance();
   }
 }
 
