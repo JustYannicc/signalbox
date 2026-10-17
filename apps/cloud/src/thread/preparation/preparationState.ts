@@ -117,7 +117,6 @@ export const settleStoppedPreparation = (
   lease: {
     readonly generation: number;
     readonly status: "none" | "requested" | "connected";
-    readonly preparations?: boolean | undefined;
   },
   ctx: DecisionContext,
 ): PreparationState => {

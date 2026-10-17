@@ -2612,62 +2612,154 @@ describe("addressed runner preparation", () => {
         }),
       ),
   );
-  it.effect.each([false, true])(
-    "interrupts v7 loading before turn.started, handoff granted=%s, and permits a newer attempt",
-    (afterHandoff) =>
-      Effect.scoped(
-        Effect.gen(function* () {
-          const fake = yield* makeFakeAdapter;
-          const ready = yield* Queue.unbounded<number>();
-          const stopped = yield* Deferred.make<void>();
-          const opening = yield* Deferred.make<void>();
-          const turns = yield* makeRunnerTurns({
-            threadId,
-            cwd: "/tmp",
-            useModelToken: () => Effect.void,
-            usage: Effect.succeed(unmeasured),
-            adapters: new Map([
-              [
-                instanceId,
-                {
-                  ...fake.adapter,
-                  openSession: (input) =>
-                    fake.adapter
-                      .openSession(input)
-                      .pipe(Effect.tap(() => Deferred.succeed(opening, undefined))),
-                },
-              ],
-            ]),
-            emit: (item) =>
-              item.kind === "preparation.ready"
-                ? Effect.asVoid(Queue.offer(ready, item.preparationGeneration))
-                : item.kind === "preparation.cancelled"
-                  ? Effect.asVoid(Deferred.succeed(stopped, undefined))
-                  : Effect.void,
-          });
-          const start = (preparationGeneration: number) =>
-            turns.start({ turn: { ...turnFor(1), preparationGeneration }, modelToken: "token" });
-          yield* start(1);
-          expect(yield* Queue.take(ready)).toBe(1);
-          if (afterHandoff) {
-            yield* turns.handoffPreparation(RunId.make("run-1"), 1);
-            yield* Deferred.await(opening);
-          }
-          yield* turns.interrupt(RunId.make("run-1"), 99);
-          expect(yield* Deferred.isDone(stopped)).toBe(false);
-          yield* turns.interrupt(RunId.make("run-1"), 1);
-          yield* Deferred.await(stopped);
-          yield* turns.handoffPreparation(RunId.make("run-1"), 1);
-          expect(fake.calls).toEqual([]);
-          yield* Deferred.succeed(fake.loaded, undefined);
-          yield* start(2);
-          expect(yield* Queue.take(ready)).toBe(2);
-          yield* turns.interrupt(RunId.make("run-1"), 1);
-          yield* turns.handoffPreparation(RunId.make("run-1"), 2);
-          yield* Deferred.await(fake.firstStarted);
-          expect(fake.calls).toEqual(["start run-1"]);
-        }),
-      ),
+  it.effect("interrupts v7 before handoff, confirms the stop, and permits a newer attempt", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fake = yield* makeFakeAdapter;
+        const ready = yield* Queue.unbounded<number>();
+        const stopped = yield* Deferred.make<void>();
+        const turns = yield* makeRunnerTurns({
+          threadId,
+          cwd: "/tmp",
+          useModelToken: () => Effect.void,
+          usage: Effect.succeed(unmeasured),
+          adapters: new Map([[instanceId, fake.adapter]]),
+          emit: (item) =>
+            item.kind === "preparation.ready"
+              ? Effect.asVoid(Queue.offer(ready, item.preparationGeneration))
+              : item.kind === "preparation.cancelled"
+                ? Effect.asVoid(Deferred.succeed(stopped, undefined))
+                : Effect.void,
+        });
+        const start = (preparationGeneration: number) =>
+          turns.start({ turn: { ...turnFor(1), preparationGeneration }, modelToken: "token" });
+        yield* start(1);
+        expect(yield* Queue.take(ready)).toBe(1);
+        yield* turns.interrupt(RunId.make("run-1"), 99);
+        expect(yield* Deferred.isDone(stopped)).toBe(false);
+        yield* turns.interrupt(RunId.make("run-1"), 1);
+        yield* Deferred.await(stopped);
+        yield* turns.handoffPreparation(RunId.make("run-1"), 1);
+        expect(fake.calls).toEqual([]);
+        yield* Deferred.succeed(fake.loaded, undefined);
+        yield* start(2);
+        expect(yield* Queue.take(ready)).toBe(2);
+        yield* turns.interrupt(RunId.make("run-1"), 1);
+        yield* turns.handoffPreparation(RunId.make("run-1"), 2);
+        yield* Deferred.await(fake.firstStarted);
+        expect(fake.calls).toEqual(["start run-1"]);
+      }),
+    ),
+  );
+
+  it.effect.each([
+    { protocol: 6, blockedAt: "openSession" },
+    { protocol: 6, blockedAt: "ensureThread" },
+    { protocol: 7, blockedAt: "openSession" },
+    { protocol: 7, blockedAt: "ensureThread" },
+  ] as const)(
+    "stops protocol $protocol cooperatively during $blockedAt after handoff and reuses its clean session",
+    ({ protocol, blockedAt }) =>
+      Effect.gen(function* () {
+        let closed = 0;
+        yield* Effect.scoped(
+          Effect.gen(function* () {
+            const fake = yield* makeFakeAdapter;
+            const runtime = yield* fake.adapter.openSession({} as never);
+            const ensure = runtime.ensureThread;
+            const entered = yield* Deferred.make<void>();
+            const release = yield* Deferred.make<void>();
+            const loaded = yield* Deferred.make<boolean>();
+            const ready = yield* Queue.unbounded<RunId>();
+            const emitted: Array<RunnerItem> = [];
+            let opens = 0;
+            let loads = 0;
+            const wait = Deferred.succeed(entered, undefined).pipe(
+              Effect.andThen(Deferred.await(release)),
+            );
+            Object.assign(runtime, {
+              ensureThread: (input: Parameters<typeof ensure>[0]) =>
+                Effect.gen(function* () {
+                  const first = ++loads === 1;
+                  if (first && blockedAt === "ensureThread") yield* wait;
+                  const thread = yield* ensure(input);
+                  if (first) yield* Deferred.succeed(loaded, true);
+                  return thread;
+                }).pipe(Effect.onInterrupt(() => Effect.asVoid(Deferred.succeed(loaded, false)))),
+            });
+            const turns = yield* makeRunnerTurns({
+              threadId,
+              cwd: "/tmp",
+              usage: Effect.succeed(unmeasured),
+              useModelToken: () => Effect.void,
+              adapters: new Map([
+                [
+                  instanceId,
+                  {
+                    ...fake.adapter,
+                    openSession: () =>
+                      Effect.gen(function* () {
+                        opens += 1;
+                        yield* Effect.addFinalizer(() =>
+                          Effect.sync(() => {
+                            closed += 1;
+                          }),
+                        );
+                        if (blockedAt === "openSession") yield* wait;
+                        return runtime;
+                      }).pipe(
+                        Effect.onInterrupt(() => Effect.asVoid(Deferred.succeed(loaded, false))),
+                      ),
+                  },
+                ],
+              ]),
+              emit: (item) =>
+                Effect.gen(function* () {
+                  emitted.push(item);
+                  if (item.kind === "preparation.ready") yield* Queue.offer(ready, item.runId);
+                }),
+            });
+            const start = (n: number) =>
+              turns.start({
+                turn: { ...turnFor(n), ...(protocol === 7 ? { preparationGeneration: n } : {}) },
+                modelToken: "token",
+              });
+            yield* Deferred.succeed(fake.loaded, undefined);
+            yield* start(1);
+            if (protocol === 7) {
+              expect(yield* Queue.take(ready)).toBe("run-1");
+              yield* turns.handoffPreparation(RunId.make("run-1"), 1);
+            }
+            yield* Deferred.await(entered);
+            yield* turns.interrupt(RunId.make("run-1"), protocol === 7 ? 1 : undefined);
+            yield* Effect.yieldNow;
+            expect(yield* Deferred.isDone(loaded)).toBe(false);
+            yield* Deferred.succeed(release, undefined);
+            expect(yield* Deferred.await(loaded)).toBe(true);
+            yield* start(2);
+            if (protocol === 7) {
+              expect(yield* Queue.take(ready)).toBe("run-2");
+              yield* turns.handoffPreparation(RunId.make("run-2"), 2);
+            }
+            yield* Deferred.await(fake.secondStarted);
+            expect(opens).toBe(1);
+            expect(loads).toBe(2);
+            expect(closed).toBe(0);
+            expect(fake.calls).toEqual(["start run-2"]);
+            expect(
+              emitted.filter(
+                (item) =>
+                  "runId" in item &&
+                  item.runId === "run-1" &&
+                  ["turn.started", "turn.failed", "provider", "preparation.cancelled"].includes(
+                    item.kind,
+                  ),
+              ),
+            ).toEqual([]);
+          }),
+        );
+        expect(closed).toBe(1);
+      }),
   );
 
   it.effect(

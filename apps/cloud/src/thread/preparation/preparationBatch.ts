@@ -6,6 +6,7 @@ import type {
 import * as DateTime from "effect/DateTime";
 
 import type { DecisionContext } from "../threadEvents.ts";
+import { isLiveRun } from "../runLifecycle.ts";
 import { applyEvents } from "../threadProjection.ts";
 import { failRunEvents, unknownFailure } from "../runner/runnerTurn.ts";
 import {
@@ -85,7 +86,8 @@ export const preparationBatch = (
         events.push(
           ...(preparation.status === "failed" &&
           item.kind === "preparation.failed" &&
-          run !== undefined
+          run !== undefined &&
+          isLiveRun(run)
             ? failRunEvents(
                 after,
                 run,

@@ -1333,7 +1333,7 @@ export const makeRunnerTurns = Effect.fn("makeRunnerTurns")(function* (input: {
       if (held !== undefined) held.stopped = true;
       if (held?.waiting != null) Deferred.doneUnsafe(held.waiting, Effect.succeed(false));
       if (turn === undefined || turn.status === "stopped") return Effect.void;
-      if (turn.status === "loading") return preparations.interrupt(turn);
+      if (turn.status === "loading" && !turn.handedOff) return preparations.interrupt(turn);
       const wasRunning = turn.status === "running";
       turn.status = "stopped";
       // Before the harness names its turn, `track` interrupts once it does. The
