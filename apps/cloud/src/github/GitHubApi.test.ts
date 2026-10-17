@@ -271,7 +271,10 @@ it.effect(
     return Effect.gen(function* () {
       const now = yield* Clock.currentTimeMillis;
       const api = makeGitHubApi(client);
-      for (const read of [api.viewer(token), api.rest("viewer", token, "/user")]) {
+      for (const read of [
+        Effect.asVoid(api.viewer(token)),
+        Effect.asVoid(api.rest("viewer", token, "/user")),
+      ]) {
         const error = yield* read.pipe(Effect.flip);
         expect(error).toMatchObject({
           operation: "viewer",
