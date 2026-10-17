@@ -55,6 +55,10 @@ function layerFor(
   encryptionAvailable = true,
   failDecrypt: Ref.Ref<boolean> | null = null,
   fileSystemLayer: Layer.Layer<FileSystem.FileSystem> = NodeServices.layer,
+  safeStorageLayer: Layer.Layer<ElectronSafeStorage.ElectronSafeStorage> = layerSafeStorageFor(
+    encryptionAvailable,
+    failDecrypt,
+  ),
 ) {
   const layerEnvironment = DesktopEnvironment.layer({
     dirname: "/repo/apps/desktop/src",
@@ -71,10 +75,9 @@ function layerFor(
       Layer.mergeAll(NodeServices.layer, DesktopConfig.layerTest({ T3CODE_HOME: baseDir })),
     ),
   );
-  const layerSafeStorage = layerSafeStorageFor(encryptionAvailable, failDecrypt);
   const layerDependencies = Layer.mergeAll(
     layerEnvironment,
-    layerSafeStorage,
+    safeStorageLayer,
     NodeServices.layer,
     fileSystemLayer,
   );
@@ -125,6 +128,60 @@ describe("DesktopConnectionCatalogStore", () => {
       }),
       false,
     ),
+  );
+
+  it.effect("skips secure storage when the legacy registry is empty", () =>
+    Effect.gen(function* () {
+      const baseFileSystem = yield* FileSystem.FileSystem;
+      const baseDir = yield* baseFileSystem.makeTempDirectoryScoped({
+        prefix: "t3-desktop-connection-catalog-test-",
+      });
+      const safeStorageCalls = yield* Ref.make(0);
+      const safeStorageLayer = Layer.succeed(ElectronSafeStorage.ElectronSafeStorage, {
+        isEncryptionAvailable: Effect.gen(function* () {
+          yield* Ref.update(safeStorageCalls, (count) => count + 1);
+          return yield* new ElectronSafeStorage.ElectronSafeStorageAvailabilityError({
+            cause: new Error("secure storage should not be checked for an empty registry"),
+          });
+        }),
+        encryptString: () =>
+          Effect.gen(function* () {
+            yield* Ref.update(safeStorageCalls, (count) => count + 1);
+            return yield* new ElectronSafeStorage.ElectronSafeStorageEncryptError({
+              cause: new Error("secure storage should not encrypt an empty registry"),
+            });
+          }),
+        decryptString: () =>
+          Effect.gen(function* () {
+            yield* Ref.update(safeStorageCalls, (count) => count + 1);
+            return yield* new ElectronSafeStorage.ElectronSafeStorageDecryptError({
+              cause: new Error("secure storage should not decrypt an empty registry"),
+            });
+          }),
+        selectedStorageBackend: Effect.succeedNone,
+      } satisfies ElectronSafeStorage.ElectronSafeStorage["Service"]);
+      const layer = layerFor(baseDir, true, null, NodeServices.layer, safeStorageLayer);
+
+      yield* Effect.gen(function* () {
+        const environment = yield* DesktopEnvironment.DesktopEnvironment;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const store = yield* DesktopConnectionCatalogStore.DesktopConnectionCatalogStore;
+        const catalogPath = (yield* Path.Path).join(
+          environment.stateDir,
+          "connection-catalog.json",
+        );
+
+        yield* fileSystem.makeDirectory(environment.stateDir, { recursive: true });
+        yield* fileSystem.writeFileString(
+          environment.savedEnvironmentRegistryPath,
+          '{"version":1,"records":[]}',
+        );
+
+        assert.deepStrictEqual(yield* store.get, Option.none());
+        assert.equal(yield* Ref.get(safeStorageCalls), 0);
+        assert.isFalse(yield* fileSystem.exists(catalogPath));
+      }).pipe(Effect.provide(layer));
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
   );
 
   it.effect("migrates legacy relay, SSH, bearer profile, and credential data", () =>
