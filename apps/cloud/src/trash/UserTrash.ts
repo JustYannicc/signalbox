@@ -113,7 +113,7 @@ const make = Effect.gen(function* () {
           context_id: row.context_id,
         });
         if (hiddenHome === null) return "clear" as const;
-        yield* journal.error(row.id, "Restore the folder first.");
+        yield* journal.error(row.id, "Restore its folder, then this thread.");
         return "blocked" as const;
       }
       const preflight = yield* resources.folderRestorePreflight(actor, {

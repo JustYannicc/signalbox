@@ -137,6 +137,7 @@ describe("public API calls", () => {
 
         for (const [threadId, title] of [
           ["unfiled-project-home", "Unfiled project thread"],
+          ["filed-project-home", "Thread filed in its project home"],
           ["filed-elsewhere", "Explicitly filed thread"],
         ] as const) {
           const created = json(
@@ -157,6 +158,14 @@ describe("public API calls", () => {
         expect(
           json(
             yield* call("threads.move", {
+              threadId: "filed-project-home",
+              folderId: projectHome.id,
+            }),
+          ).status,
+        ).toBe(200);
+        expect(
+          json(
+            yield* call("threads.move", {
               threadId: "filed-elsewhere",
               folderId: elsewhere.id,
             }),
@@ -165,10 +174,13 @@ describe("public API calls", () => {
 
         const unfiled = decodeTrash(
           json(yield* call("trash.thread", { threadId: "unfiled-project-home" })).body,
-        ).entries[0]!;
+        ).entries.find((entry) => entry.targetId === "unfiled-project-home")!;
         const filed = decodeTrash(
           json(yield* call("trash.thread", { threadId: "filed-elsewhere" })).body,
-        ).entries[0]!;
+        ).entries.find((entry) => entry.targetId === "filed-elsewhere")!;
+        const filedInHome = decodeTrash(
+          json(yield* call("trash.thread", { threadId: "filed-project-home" })).body,
+        ).entries.find((entry) => entry.targetId === "filed-project-home")!;
         yield* cloud.settle;
         const projectHomeTrash = decodeTrash(
           json(yield* call("trash.folder", { folderId: projectHome.id })).body,
@@ -185,7 +197,14 @@ describe("public API calls", () => {
         ).entries.find((entry) => entry.id === unfiled.id)!;
         expect(blocked).toMatchObject({
           status: "trashed",
-          error: "Restore the folder first.",
+          error: "Restore its folder, then this thread.",
+        });
+        const filedInHomeBlocked = decodeTrash(
+          json(yield* call("trash.restore", { id: filedInHome.id })).body,
+        ).entries.find((entry) => entry.id === filedInHome.id)!;
+        expect(filedInHomeBlocked).toMatchObject({
+          status: "trashed",
+          error: "Restore its folder, then this thread.",
         });
 
         const restoredProjectHome = decodeTrash(
@@ -199,6 +218,10 @@ describe("public API calls", () => {
           status: "restored",
           error: null,
         });
+        const filedInHomeRestored = decodeTrash(
+          json(yield* call("trash.restore", { id: filedInHome.id })).body,
+        ).entries.find((entry) => entry.id === filedInHome.id)!;
+        expect(filedInHomeRestored).toMatchObject({ status: "restored", error: null });
       }),
   );
 
