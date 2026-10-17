@@ -400,14 +400,24 @@ const make = Effect.gen(function* () {
                     attemptId: run.activeAttemptId,
                     generation: machine.generation,
                   };
-            const retired = candidate.turnItems.flatMap((item) =>
-              item.type === "secret_request" &&
-              ((input.retireOrphanedSecrets === true && item.secretStatus === "pending") ||
-                item.secretStatus === "cancelled" ||
-                item.secretStatus === "declined")
-                ? [item.id]
-                : [],
+            const terminalBefore = new Set(
+              current.thread?.projection.turnItems.flatMap((item) =>
+                item.type === "secret_request" && item.secretStatus !== "pending" ? [item.id] : [],
+              ),
             );
+            // Other runs' custody is erased by the binding check. Historical terminals stay retired.
+            const retired =
+              binding === null
+                ? []
+                : candidate.turnItems.flatMap((item) =>
+                    item.type === "secret_request" &&
+                    item.runId === binding.runId &&
+                    ((input.retireOrphanedSecrets === true && item.secretStatus === "pending") ||
+                      ((item.secretStatus === "cancelled" || item.secretStatus === "declined") &&
+                        !terminalBefore.has(item.id)))
+                      ? [item.id]
+                      : [],
+                  );
             const usable = yield* secrets.reconcile(binding, retired);
             return settleSecretRequests(
               current.thread?.projection ?? null,

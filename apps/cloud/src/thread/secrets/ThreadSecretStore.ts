@@ -103,9 +103,12 @@ const make = Effect.gen(function* () {
               OR generation != ${binding.generation})`;
         yield* sql`UPDATE signalbox_secret_requests SET value = NULL, consumed = 1
           WHERE ${unusable} AND (consumed = 0 OR value IS NOT NULL)`;
-        if (retiredRequests.length > 0) {
-          yield* sql`UPDATE signalbox_secret_requests SET value = NULL, consumed = 1
-            WHERE request_id IN ${sql.in(retiredRequests)}`;
+        // DO SQLite caps each statement at 100 bindings; null binding already erased everything.
+        if (binding !== null) {
+          for (let offset = 0; offset < retiredRequests.length; offset += 90) {
+            yield* sql`UPDATE signalbox_secret_requests SET value = NULL, consumed = 1
+              WHERE request_id IN ${sql.in(retiredRequests.slice(offset, offset + 90))}`;
+          }
         }
         const rows = yield* sql<{ request_id: string }>`SELECT request_id
           FROM signalbox_secret_requests WHERE consumed = 0`;
