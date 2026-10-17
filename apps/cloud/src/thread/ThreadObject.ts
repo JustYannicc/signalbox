@@ -194,6 +194,7 @@ const makeRuntime = (
   machine: MachineBackend.MachineHost,
   threadId: () => ThreadId,
   endOldRunners: (generation: number) => void,
+  setAlarmNoLaterThan: (at: number) => Promise<void>,
 ) =>
   ManagedRuntime.make(
     ThreadRunner.layer.pipe(
@@ -231,11 +232,7 @@ const makeRuntime = (
           Layer.provide(
             Layer.succeed(CheckpointRollback.RollbackRuntime, {
               arm: Effect.flatMap(Clock.currentTimeMillis, (now) =>
-                Effect.promise(async () => {
-                  const due = now + 1_000;
-                  const current = await storage.getAlarm();
-                  if (current === null || current > due) await storage.setAlarm(due);
-                }),
+                Effect.promise(() => setAlarmNoLaterThan(now + 1_000)),
               ),
               endRunners: (generation) => Effect.sync(() => endOldRunners(generation)),
             }),
@@ -332,6 +329,7 @@ export class ThreadObject extends DurableObject<ThreadObjectEnv> implements Thre
       },
       () => this.threadId(),
       (generation) => endRunners(ctx, generation, "Thread was undone."),
+      (at) => this.setAlarmNoLaterThan(at),
     );
     this.runnerHost = {
       ctx,
