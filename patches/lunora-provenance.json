@@ -6,25 +6,34 @@
     "notice": "The modified Lunora distributions retain their upstream license terms and copyright notices."
   },
   "sourceBase": "52b5a3a27c0c0a2a34e6260edb04e766dcde1438",
-  "sourceCandidate": "15b3f889011b7b7a27cdd3760d52358f526617f3",
+  "sourceCandidate": "6e869223c8d88b27a6728bb2e5c64ff9b05bb78b",
   "nodeVersion": "v24.18.0",
   "baselineFileCount": 603,
   "upstreamSourceLanes": {
     "auth": {
-      "candidate": "c8c82d7de08956a6c4967dd69d8656204aa92fdd",
-      "productionBase": "0baf35ee1c553cb3139f8c9f9dcf105bce122e30"
+      "candidate": "be1e01e50ec15a1899aec48512238958114f57f1",
+      "productionCandidate": "9a9b957c51630beddd89b8be9748b8d5927f61d4",
+      "reviewedCandidate": "9a9b957c51630beddd89b8be9748b8d5927f61d4",
+      "productionBase": "c8c82d7de08956a6c4967dd69d8656204aa92fdd",
+      "finalFollowup": "Documentation only; production source is unchanged."
     },
     "strictTypes": {
-      "candidate": "8efe9eb80431df07228a47abf1ec153e092a0a03"
+      "candidate": "ac9614316f69c48de3f3c04c199d926a05b5c8cd",
+      "productionCandidate": "8efe9eb80431df07228a47abf1ec153e092a0a03"
     },
     "lazyCore": {
       "candidate": "ddc1d020db2dcb45bf5b76ec2632e0aceeca0b23"
     },
     "lazyCliFollowup": {
-      "candidate": "3b9d8ace1d9eefdf504b2367a8618f9ae8ea282d"
+      "candidate": "a9d2d5219429b5fa5e2b02c209343c4fe035068e",
+      "productionCandidate": "9d99adc470affa7656e3ab43bae00ab06eb16f0c",
+      "reviewedCandidate": "9d99adc470affa7656e3ab43bae00ab06eb16f0c",
+      "productionBase": "3b9d8ace1d9eefdf504b2367a8618f9ae8ea282d",
+      "finalFollowup": "Tests only; production source and public declarations are unchanged."
     },
     "retry": {
-      "candidate": "60ba88ccb12b4d59fdd500d3e933827fdcdaeb17"
+      "candidate": "c2d6be347f20cd2393cb655320c0b8dd30a82a8c",
+      "productionBase": "60ba88ccb12b4d59fdd500d3e933827fdcdaeb17"
     }
   },
   "lockedReleaseAdaptations": [
@@ -33,7 +42,8 @@
     "Resolved emitter intersections preserving authorization and lazy behavior.",
     "Regenerated combined fixture goldens using actual built codegen.",
     "CLI and config metadata use exact release tags; their source equals the combined release base.",
-    "Updated stale emitted read-range assertion for strict optional-property omission."
+    "Updated stale emitted read-range assertion for strict optional-property omission.",
+    "Imported the ts-morph Node type for the extracted discovery helper; the locked release has no room imports."
   ],
   "packages": {
     "@lunora/errors": {
@@ -544,8 +554,8 @@
       "baselineCommit": "6afb8ab674cd3d88373f6c4a398c11f72cff3cf2",
       "baselinePackageTree": "e68a49f423ea152f42bd0312d7413ecf873856f1",
       "patch": "@lunora__do@1.0.0-alpha.218.patch",
-      "patchBytes": 327961,
-      "patchSha256": "c20cfc4049c47c4f1011273ae69d708991da57a4632b55678c626dacca4fea99",
+      "patchBytes": 330044,
+      "patchSha256": "33c8ace78d674a202aedd63355c58acddadfaf1d3949b9541471e98c913c4fa2",
       "baseSha256": {
         "index.d.mts": "a794a04edd16244ae3fd8774b685a6978d010c9502529d2b221eaf8daf3fa085",
         "index.d.ts": "a794a04edd16244ae3fd8774b685a6978d010c9502529d2b221eaf8daf3fa085",
@@ -561,12 +571,12 @@
         "packem_shared/serveRelationFanout-DcSjzAZv.mjs": "3f25212501f4ef2367ee6e70ee422b2c97057ad08772ede5c233f84d7444150e"
       },
       "candidateSha256": {
-        "index.d.mts": "d625650b89c55a5c5e0e14b7c9d6a705d4369c405aae3920d9026601d044a637",
-        "index.d.ts": "d625650b89c55a5c5e0e14b7c9d6a705d4369c405aae3920d9026601d044a637",
-        "index.mjs": "db49dcc365de2b9ccb976a6525ccaa7cef6192567248c42586af6afc32804c92",
+        "index.d.mts": "3d98d5693e55fec55e014b92e71bf9424e2654f9dd0acad61348e4a382d0ac7f",
+        "index.d.ts": "3d98d5693e55fec55e014b92e71bf9424e2654f9dd0acad61348e4a382d0ac7f",
+        "index.mjs": "f900ac075e7999dd4d6067c7c286d05dd5df76ff3351ebc1231f8e69faf01c17",
         "packem_chunks/sql-assistant.mjs": "cf8a7f3ce93c3af42a2a81ba9e9162a35a3d232fd47082ff1f15c03ddd30bace",
         "packem_shared/MERGED_ROLES-C4RToZ16.mjs": "af659fda47462a21877df1d2567291499803326318e91b24c7f205a84a1efc9d",
-        "packem_shared/ROOT_DO_SIZE_WARN_BYTES-use_3CQs.mjs": "3a62e1f252532a01216990642d5e488d912d042fec802f6ca1ff318943ef99bf",
+        "packem_shared/ROOT_DO_SIZE_WARN_BYTES-Ds-qLIHB.mjs": "f16e105c0a6b432358ee77d0345e2bb599b347d022c18a962c459795d2dd9a26",
         "packem_shared/SESSION_DO_TTL_DEFAULT-DSvTwRjc.mjs": "7dffa0e9162e88ae4e0dc0c29ec544a0381e374fa88719642a79ad68907e15a8",
         "packem_shared/SHARD_REGISTRY_DO_NAME-DRIFt2FK.mjs": "ccb2918b1256dbff586bd4b821e9dec0118f6cfa6434c827eb7ec3540ae73996",
         "packem_shared/constant-time-equal-BRh9yUCr.mjs": "435e5c6ed7d820d29da8287df085b3fca390c408b2a361be1e1db7ca4e505491",
@@ -677,8 +687,8 @@
       "baselineCommit": "52b5a3a27c0c0a2a34e6260edb04e766dcde1438",
       "baselinePackageTree": "a8499321c248bbb68848c82f79f9811ec68cce4b",
       "patch": "@lunora__codegen@1.0.0-alpha.315.patch",
-      "patchBytes": 864056,
-      "patchSha256": "16215af99e06721ebaf3f46ebc05efe4ea146dbdc707792449cfed85ba6d62f5",
+      "patchBytes": 864126,
+      "patchSha256": "cc5fbbd14b2d8c3d0f54f8b038e0ca83d5922d9e4dfd8fdbdd2ea947f00eeb12",
       "baseSha256": {
         "index.d.mts": "45699b8308660de65195625e2470525aa46ce371aa0ef461b9cbd16f4eede81f",
         "index.d.ts": "e2b8c6782d2d81822122525df8565a2658275ac3bed540ed8d4c404dc181674b",
@@ -772,7 +782,7 @@
       "candidateSha256": {
         "index.d.mts": "6585340661e85d0c464b9b1f9341ec1413e41e3dad179d2eece093145c057af8",
         "index.d.ts": "f16779247f507a4a5bdd3b41576c4abffb0561f9945d0f35d290ec8b501665aa",
-        "index.mjs": "c2caa6f783acb2a574698f3700f8bc738e2aa1e6ed479f3186a897ab8a0854e4",
+        "index.mjs": "07e8f71795b4c1633d59706b8c7100339d6cfd7bceb89ca2029f4b312976ccd6",
         "packem_shared/AGENTS_FILENAME-B6-kjzM3.mjs": "ac9768377097d321bf3f40575ef63d5df02e7262db4056968ab8499ebf82bdd8",
         "packem_shared/CAPABILITY_PROBES-brcmKenl.mjs": "79354b4621f2ea4a6012f5ab68234d9a709c2622ed1dbeab306a1121ad1cad10",
         "packem_shared/CONTAINERS_FILENAME-dFRtAyIe.mjs": "7ccd99af14994ac5075721e7dc22a84959fceb7418081908028287a7888e223c",
@@ -786,7 +796,7 @@
         "packem_shared/OPENRPC_VERSION-CCY7xqSL.mjs": "3e8041cdacd3812dfa292829da92e9a75cb00efd6750e99a9b582a2aa426522b",
         "packem_shared/PROJECT_CONFIG_FILENAMES-DzOu-lSc.mjs": "9abc655fff9e805b1cc5183b15ec9717495895f0db9a990cec4f1ad7e1a3c328",
         "packem_shared/QUEUES_FILENAME-CsRy4VTF.mjs": "44166ef5367c63546e0d3e2d394ec3955742f254ccae647bfd179a5b0c9f2d00",
-        "packem_shared/SCHEMA_SNAPSHOT_FILENAME-CfLUApzg.mjs": "6bd71e5c83f749357a58ac3e4d77d4149bf1096bd44daa963e12565435dbd8c5",
+        "packem_shared/SCHEMA_SNAPSHOT_FILENAME-Czb5_WoP.mjs": "dc0922e7edaa6db65ec11fd43e4bb8271d58536b87ac0ed8d87e23efdfa9030a",
         "packem_shared/SCHEMA_SNAPSHOT_VERSION-C0oHwiJZ.mjs": "500f76314b1fb108be135046dea6c69729cfe4f598e68df7b6013cadc3c5eff9",
         "packem_shared/SHAPES_FILENAME-DkBUN9dK.mjs": "399db90754b254682b0c8445803eb90837af8a09b358a709a5498f07613c5b94",
         "packem_shared/SchemaSnapshotParseError-BRJT7c2k.mjs": "e5c8751a528d16f43e5437488ae56f62419d73f2c5799f71cd680fae3a716223",
@@ -804,7 +814,7 @@
         "packem_shared/describeErrorLevelFindings-vzaGS9KL.mjs": "a95422be79295473a458fa98cd080bb0fc4cdf5e42cdb2623cd54b2f080bf0f5",
         "packem_shared/discoverAuthApiCalls-xs0ONfI-.mjs": "4735d45ec3132227e7b0a0f4971318ea72ec77b18729873921f476f7f7796f4b",
         "packem_shared/discoverCrons-DBnCama4.mjs": "799a21943adf8c0a200902688e0d119062efdca999dc0f701c164c9ef31e906c",
-        "packem_shared/discoverFunctions-CWP_vxna.mjs": "c86fb8c2a6d990aba8de38b195aeb95baf6ef2563a341154b6770da3cf5336c5",
+        "packem_shared/discoverFunctions-naPh6aVs.mjs": "93b06372cc98c1d20567bf1834c399d1a76817e7f6204b243580415944264764",
         "packem_shared/discoverHttpRoutes-BccLtGKg.mjs": "07ef7d990cb1c621bcee520fe87689c0f3dff31571e55c98f7bbbf1380315a78",
         "packem_shared/discoverHyperdriveCalls-DSx8aimh.mjs": "72aa68cc2d766a532a571c4c9fe92819fcbd331630a83c30e2ecaee18480e2ba",
         "packem_shared/discoverInserts-Bl-MywI9.mjs": "1e94570d4af28f97cd2d265c1b794a5a4fd0d72036b3b14d615ca06ab71ddbc7",
@@ -997,8 +1007,8 @@
       "baselineCommit": "db584ea7f86f361ad46922b9708f20d6b84d78ad",
       "baselinePackageTree": "0c7230e2e88d19f2329292258e97c2de6ce045ab",
       "patch": "@lunora__config@1.0.0-alpha.363.patch",
-      "patchBytes": 56936,
-      "patchSha256": "8a11dc67289fdf533a844f8b8f5a0d8d029dcbf5462d4ec215866ff0f37fce24",
+      "patchBytes": 56928,
+      "patchSha256": "794b4d0c12b887885df734ad56cee6bbd21d6ac142610ad61f20a5843683cb95",
       "baseSha256": {
         "cli/index.d.mts": "09ddaa58431c31e810100e771a256b06b25795ff3a450b19526715d42b9c6d5c",
         "cli/index.d.ts": "adf4bc9a9a493aa9a1425e34eef324d2a31607e4d988b40c44f2fcfd08c1de2f",
@@ -1110,8 +1120,8 @@
         "cloudflare/index.d.mts": "ce73dc39a59e3d4e18870472ea74b11ce5d4e34ab54db954502076446388f2ba",
         "cloudflare/index.d.ts": "9daaffa7c8e378de2b0422be8252870b09916b3c8f8d513f2cc63499069112f9",
         "cloudflare/index.mjs": "8df76cff1d4a9463f190a931b360f2d5868c45f88215593405085cac74309dde",
-        "index.d.mts": "2799f410d6aeaa54f072b15e1ea77587cf5ef38987cd353e4ac6bbd95d39e334",
-        "index.d.ts": "7972f69ad3732a7e8ad689c31a789f83f6629ab8ad7d22679e644ef4a4c4061a",
+        "index.d.mts": "d006ba6e936902ef5e9db5cf84ea30b5db6212ee7d5410e356e66cb2cf57208b",
+        "index.d.ts": "4a114cd9f9ccdae5e57b71a5f005730856dc0d9ccced83a5a000097ec2ff7e44",
         "index.mjs": "d98bec3c960069c2b4f7bd4377c340b8d811a8bc91f965d8c10b33394f5154da",
         "packem_shared/ACCENT-CotPTfv7.mjs": "dcff165339893cbaf14324488965d3ceea1e898165a176a169c9e042ed87d4f4",
         "packem_shared/AGENT_MODE_ENV-D8MvSwPE.mjs": "bfb9af0f5515a28acb4ee5067165c55f45bc0d539ef3b279abbfc7d9d4cdd96c",
@@ -1215,8 +1225,8 @@
       "baselineCommit": "378a58ef53a989f53d23056055ae26ce526a4e58",
       "baselinePackageTree": "d4c1f1ccdd06c62b16944525d2b214b9b082158c",
       "patch": "@lunora__cli@1.0.0-alpha.399.patch",
-      "patchBytes": 334786,
-      "patchSha256": "7ce9a23146015d9a0134f693dca62fc08505651ef1da2f5eebe47d4ebf821be4",
+      "patchBytes": 407920,
+      "patchSha256": "7f81083881647627c23ccf12dc6688f11a492822befd7c3159eda11f49b5e666",
       "baseSha256": {
         "bin.mjs": "e0960dac6da4abf6b410f3f00ec34fc336e3bdc34f5c24d5c2ef6e5fca816767",
         "index.d.mts": "081602653839bd74f8b3f3889f213c1f56c6d5b48e3803695a48928a9ec73420",
@@ -1307,21 +1317,21 @@
         "packem_shared/wrangler-secrets-CTQPpalP.mjs": "a43ff2d1088e1cef184f886f86df4add63707213cd9228d457ed6efe704a2ba7"
       },
       "candidateSha256": {
-        "bin.mjs": "19b304353ba1c3b13035efe1c466738720cf7c0bcca02175b701f6fe7b5503e5",
-        "index.d.mts": "34c75da138a730862f80d84629295ac4d90401368e02da19c5c9a0c747cc90e3",
-        "index.d.ts": "34c75da138a730862f80d84629295ac4d90401368e02da19c5c9a0c747cc90e3",
-        "index.mjs": "1df83c151ec6b8075bfc6f965e2c03e1a46332189fd8f5b93b64187175a36263",
+        "bin.mjs": "5ca15978f5343546af8e70d38cbf560737152069ae280a2fcf678fc060410e21",
+        "index.d.mts": "cd947052132f77d8bd06d5fafa6684bbea807869632e91eda30d5ba16e2a3b3a",
+        "index.d.ts": "cd947052132f77d8bd06d5fafa6684bbea807869632e91eda30d5ba16e2a3b3a",
+        "index.mjs": "6725ed926869d383b06d77a5673c3c86893a885a026bc3e15e58080af8444be5",
         "packem_chunks/dispatch.mjs": "d42898f9a2c885a42dda367d75042a13367b9ad47d34c650e19314fb8f986886",
         "packem_chunks/handler.mjs": "6023da5162bfe7705d6c76127ae88179045c049698201bfd10a07eb2d0906c82",
-        "packem_chunks/handler10.mjs": "2b64d41c478396b9b2f96ca749bc5409f67573800d8f1c61a158955ccce94355",
+        "packem_chunks/handler10.mjs": "18e2ac81e7c1f098e10637f4da9fbe37449f60bd47d17b2ab076c22c480e32a3",
         "packem_chunks/handler11.mjs": "b3dcb0ace9879db8d59047d3e66b9872ead141fda6c881c88f41dd67bc984206",
         "packem_chunks/handler12.mjs": "85c50eca33d737d6997414f15bbcc1892bbe729976e622b4b6c67fc61331da6f",
         "packem_chunks/handler13.mjs": "d75a8c4be733bd477f64b3aeac3ce26a994ea189f83f74709ae13dd12631dec5",
         "packem_chunks/handler14.mjs": "d6ea1b761566bf2981fba8c8bcf2b603b4a585fb3ff0aba416798848b52806f1",
-        "packem_chunks/handler15.mjs": "1a65207e364fa5240e33e28536db15979b0e262bd0fdd0a42afacf8e6ead17bc",
+        "packem_chunks/handler15.mjs": "e714c955c127fc91ff842ae59112647288e3df06d160c6f554f640f6ce218aae",
         "packem_chunks/handler16.mjs": "331a65d52b37e880ed6e45ab8a630fcc43d405b4cbc5ba5ed0fa9b4637b82d95",
-        "packem_chunks/handler17.mjs": "55f6d14990632866b736797dc09f26d1e9d1b51791a7e5f974a7f0c3d890b10a",
-        "packem_chunks/handler18.mjs": "13b01eb4b59bb7c9e42eaac5361540128009c0566f2a9e25110cd2c35704cb15",
+        "packem_chunks/handler17.mjs": "2d697a18d2f9ae3bec45ba20c62dcdd213f5c5ed57ebf1c79fe42a9449bf9249",
+        "packem_chunks/handler18.mjs": "2bc61d80e023e3e4d070d08db1b92201440290e8c93f64b085b0963faaf71b7e",
         "packem_chunks/handler19.mjs": "0b0c995b2bf0856793d6d99afc794eec9d8ee9c0a3388199494d9f6793a7040d",
         "packem_chunks/handler2.mjs": "323b11ae38d86151a1c2ec46f3867aeea620a56d3d90b6833a887c3c3a6751fb",
         "packem_chunks/handler20.mjs": "c2f1b6d28a38cab0d78cac8f1678e9f43356821146a8d1d15d0a73d8157001da",
@@ -1330,8 +1340,8 @@
         "packem_chunks/handler23.mjs": "87c753804b2946fd23cd0b31790de0b58cc72b41cd6227149b6587e4fd0680cd",
         "packem_chunks/handler24.mjs": "4f9917ef3a76617fa1a492f20f664b837feac32286916fa8aa3c0df1f8823c2c",
         "packem_chunks/handler25.mjs": "b8da5e0b10c793ca6d1f38f7f3b210684c5161952b6fbe80ee184769ff85490d",
-        "packem_chunks/handler26.mjs": "a8e7aad6c941ce5214bfd1ca1e8964d1ee65804e9dcdd68edacdcf04549d7f32",
-        "packem_chunks/handler27.mjs": "6a9d6dd53ca5ddf2f715f4df7674930cf8f90b15d05f514e7cbe58813f600b6f",
+        "packem_chunks/handler26.mjs": "4425ae28d25d23e8d6b8859d1bd08e30db413335b9ae3fd1fd91267b9e418b6a",
+        "packem_chunks/handler27.mjs": "52026f8217796b396a27b1cdfc4f66c2b8837d1db0eb20f43aad39c7897873d0",
         "packem_chunks/handler3.mjs": "5396fbf7b5f1450965440d168fb566a1b9412d0dc3083ddb52c5f90ce133ee17",
         "packem_chunks/handler4.mjs": "c55550cc5c384602459bbed91a8f5202c68546b7fdb9cf21e67f783a5d118ad3",
         "packem_chunks/handler5.mjs": "d03f6850910a1038ae5bb759dd55c59667680fbb541c728e2016c112d25c44aa",
@@ -1340,12 +1350,12 @@
         "packem_chunks/handler8.mjs": "963013f1da11c30f740a301c02df16ea11ac8c9c6222d2f94aa96f37ed3cc53d",
         "packem_chunks/handler9.mjs": "e022eaaa7f13581fff8ddb7939b766022603cdd1eff89fc05b87f1a50e68c5fa",
         "packem_chunks/runCodegenCommand.mjs": "cc1c4f421fb396c3038d2fd2c5baec48d51b3f4730000464a4bfddb2e1a13ad1",
-        "packem_chunks/runDeployCommand.mjs": "a420266b1f63ce048d76139b775fed074dcf3ae20af9601c250718eede95379e",
+        "packem_chunks/runDeployCommand.mjs": "24b715137179cd346db234ae0825c381285dee1bdcbfbf3be306b4e0a468899e",
         "packem_chunks/runDevCommand.mjs": "99d488189cda3fa3e5eee1d00392d4a496e8ff18c7258443361c1d9b19bcba27",
         "packem_chunks/runInitCommand.mjs": "ef461c7b54a0c3c2bd51379630b55c7e4ee0778ed3ba8b091bd8b8ca18f40886",
         "packem_chunks/runResetCommand.mjs": "e387075e676f13b6c5d39b08b5a10fdf33394364ad7400cfb5ad1429670d3843",
         "packem_chunks/runRpcCommand.mjs": "37c445b6b3f677ad78c5ae5a89d02e778f0747d228f3b9ab03c329a0a6fcd520",
-        "packem_shared/COMMANDS-BePyNPYQ.mjs": "4ad4f454d60e33a665b873d9815044b8aee87c094958deef439ea08ec9940666",
+        "packem_shared/COMMANDS-aSTSMwZS.mjs": "767e093224f42be385555f9fc7000e02b0ab8817c2927a8db5910bbf6099fcb5",
         "packem_shared/DEFAULT_IMPORT_BATCH_SIZE-CyIsI3S1.mjs": "95e24838562d725e9bf52b4a035c803cedf8d1820180e876620be70ea05697c8",
         "packem_shared/EXIT_CODE-D_XCixv8.mjs": "9b919e7b5ef635961b68ad6f56da1d8b2abe0ab39dc50f0c2b26f9e24d1ed16b",
         "packem_shared/admin-token-VdUnvnKW.mjs": "d979c40fca89d87be970b860e5e0908d9d60754f47e0eb92eddabfeb99abf7d6",
@@ -1355,7 +1365,7 @@
         "packem_shared/buildRegistryIndex-Dc8D8AR6.mjs": "4a8ea8065650b36c3ae27223c73e62f59628246969a9746b99af213a6fa8bad6",
         "packem_shared/cap-error-body-YBKO32BF.mjs": "aeab4310ed39fbda5521a1cf0146ec294bd12d4f2962f939bd8480df335915af",
         "packem_shared/catalog-CahzmDLV.mjs": "260be436e8236563547a4142393efd4ffad476ccdc45f4ed00a2044635d344cf",
-        "packem_shared/cli-8bgV9n7G.mjs": "58e067bd899c39f7363094e4bc153cb0932331472cfc2c3d776a57bfc48fa033",
+        "packem_shared/cli-CFsmCYWp.mjs": "fe4a3a13a087256997140b5c17cc747306e717a8c04e0a04f41978f498bf5dae",
         "packem_shared/cli-manifest-DoQ_3bzs.mjs": "daf7b5e75819861a8dadc3db29148c205f346ef758eec65fa2e53bcd56ac25f1",
         "packem_shared/cloudflare-credentials-BVmZnDZk.mjs": "4fbfac6d14e202ccfd6288dc326b37a9cf44372e26c7296d33c5f202dd720ce8",
         "packem_shared/codegen-error-AmH54ofi.mjs": "dd00006bd5e77d3f593841bb21ee8fdad7c6960a1c0f603bbf0cc27e0992ce75",
@@ -1406,13 +1416,15 @@
     "absoluteSourceMapPaths": 0,
     "sourceMapFiles": 0,
     "checks": [
-      "Affected source strict typechecks and production builds pass.",
-      "Combined auth suite: 141 tests pass; stale strict-codegen assertion corrected and all twelve tests in the affected file pass.",
-      "Native workerd transaction rollback, replay, hibernation revocation and persisted fencing pass on final auth artifacts.",
-      "Actual split-module cold imports preserve concurrent request identities, permits, receipts and replay in both dispatch and custom generated-style handler gates.",
-      "Prior unchanged strict fixtures: zero exact-optional diagnostics across six fixtures in eager and lazy mode; legacy simple retains eleven unrelated errors.",
-      "Prior unchanged CLI: 167 focused tests, 131 final followup tests and actual binary opt-in/default behavior pass.",
-      "Prior unchanged retry: 189 tests and native deterministic refusal, long outage recovery and restart proof pass."
+      "Affected locked-release production builds and scoped strict typechecks pass.",
+      "Auth, lazy metadata and schedule custody: 138 focused tests across twelve files pass.",
+      "CLI deployment paths: twelve focused tests and six offline actual CLI invocations pass.",
+      "Four changed package declaration trees contain only expected authority flags, CLI option, private helpers and a config comment; codegen public declarations are unchanged.",
+      "Seven unaffected package distribution trees remain byte-identical to the previously verified candidate.",
+      "Prior strict generated fixtures retain zero exact-optional diagnostics across six fixtures in both eager and lazy mode.",
+      "Prior native recovery evidence remains valid for unchanged retry semantics; new persisted-threshold warning tests pass.",
+      "Native workerd transaction rollback, receipt replay, socket hibernation, signed revocation and process-restart persistence pass on the final artifacts.",
+      "Actual split-module cold imports preserve concurrent identities, authority permits and SQLite receipts in both dispatch and custom generated-style handler gates; same-key replay does not rerun."
     ]
   }
 }
