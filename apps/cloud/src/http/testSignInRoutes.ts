@@ -33,7 +33,7 @@ const signIn = Effect.gen(function* () {
     ),
   );
   const result = yield* (yield* TestSignIn.TestSignIn).signIn({
-    rawBody: new TextDecoder().decode(bytes),
+    rawBody: bytes,
     signature: request.headers["x-signalbox-test-signature"],
     origin: (yield* requestUrl).origin,
   });

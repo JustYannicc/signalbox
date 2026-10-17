@@ -28,7 +28,7 @@ export class TestSignIn extends Context.Service<
   TestSignIn,
   {
     readonly signIn: (input: {
-      readonly rawBody: string;
+      readonly rawBody: Uint8Array;
       readonly signature: string | undefined;
       readonly origin: string;
     }) => Effect.Effect<

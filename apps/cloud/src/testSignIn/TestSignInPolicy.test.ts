@@ -23,12 +23,19 @@ const makeLayer = (env: Readonly<Record<string, string>>) =>
     Layer.orDie,
   );
 
-const verifyWith = (env: Readonly<Record<string, string>>, rawBody: string, signature?: string) =>
+const verifyBytesWith = (
+  env: Readonly<Record<string, string>>,
+  rawBody: Uint8Array,
+  signature?: string,
+) =>
   TestSignInPolicy.TestSignInPolicy.use((policy) => policy.verify(rawBody, signature)).pipe(
     Effect.provide(makeLayer(env)),
   );
 
-const signed = async (rawBody: string) => {
+const verifyWith = (env: Readonly<Record<string, string>>, rawBody: string, signature?: string) =>
+  verifyBytesWith(env, encoder.encode(rawBody), signature);
+
+const signed = async (rawBody: string | Uint8Array) => {
   const key = await globalThis.crypto.subtle.importKey(
     "raw",
     encoder.encode(SECRET),
@@ -36,7 +43,10 @@ const signed = async (rawBody: string) => {
     false,
     ["sign"],
   );
-  const message = encoder.encode(`POST\n/api/testing/sign-in\n${rawBody}`);
+  const message = new Uint8Array([
+    ...encoder.encode("POST\n/api/testing/sign-in\n"),
+    ...(typeof rawBody === "string" ? encoder.encode(rawBody) : rawBody),
+  ]);
   const bytes = new Uint8Array(await globalThis.crypto.subtle.sign("HMAC", key, message));
   return Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
 };
@@ -60,6 +70,33 @@ const expectDenied = (
   });
 
 describe("TestSignInPolicy", () => {
+  it.effect("authenticates a leading BOM as part of the original signed body", () =>
+    Effect.gen(function* () {
+      yield* TestClock.setTime(NOW);
+      const body = rawRequest();
+      const prefixed = `\uFEFF${body}`;
+      yield* expectDenied(
+        verifyWith(previewEnv, prefixed, yield* Effect.promise(() => signed(body))),
+        "unauthorized",
+      );
+      expect(
+        (yield* verifyWith(previewEnv, prefixed, yield* Effect.promise(() => signed(prefixed))))
+          .user,
+      ).toBe("richard");
+    }),
+  );
+
+  it.effect("rejects invalid UTF-8 after authenticating its original bytes", () =>
+    Effect.gen(function* () {
+      yield* TestClock.setTime(NOW);
+      const invalid = new Uint8Array([...encoder.encode(rawRequest()), 0xff]);
+      yield* expectDenied(
+        verifyBytesWith(previewEnv, invalid, yield* Effect.promise(() => signed(invalid))),
+        "invalid_request",
+      );
+    }),
+  );
+
   it.effect("accepts the exact signed body at the byte limit and the maximum expiry window", () =>
     Effect.gen(function* () {
       yield* TestClock.setTime(NOW);

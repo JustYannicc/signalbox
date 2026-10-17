@@ -12,6 +12,7 @@ export const MAX_BODY_BYTES = 8_192;
 const MAX_EXPIRY_AHEAD_MS = 60_000;
 const SIGN_IN_PATH = "/api/testing/sign-in";
 const encoder = new TextEncoder();
+const signaturePrefix = encoder.encode(`POST\n${SIGN_IN_PATH}\n`);
 const REQUEST_KEYS = ["user", "mode", "environmentId", "expiresAt"] as const;
 
 const RequestSchema = Schema.Struct({
@@ -67,7 +68,7 @@ export class TestSignInPolicy extends Context.Service<
   {
     readonly checkEnabled: Effect.Effect<void, TestSignInDeniedError>;
     readonly verify: (
-      rawBody: string,
+      rawBody: Uint8Array,
       signature: string | undefined,
     ) => Effect.Effect<TestSignInRequest, TestSignInDeniedError>;
   }
@@ -110,14 +111,14 @@ const make = Effect.gen(function* () {
   );
 
   const verify: TestSignInPolicy["Service"]["verify"] = (rawBody, signature) => {
-    if (rawBody.length > MAX_BODY_BYTES) return Effect.fail(denied("invalid_request"));
-    const bodyBytes = encoder.encode(rawBody);
-    if (bodyBytes.byteLength > MAX_BODY_BYTES) return Effect.fail(denied("invalid_request"));
+    if (rawBody.byteLength > MAX_BODY_BYTES) return Effect.fail(denied("invalid_request"));
 
     const suppliedSignature = signatureBytes(signature);
     if (suppliedSignature === undefined) return Effect.fail(denied("unauthorized"));
 
-    const signedMessage = encoder.encode(`POST\n${SIGN_IN_PATH}\n${rawBody}`);
+    const signedMessage = new Uint8Array(signaturePrefix.byteLength + rawBody.byteLength);
+    signedMessage.set(signaturePrefix);
+    signedMessage.set(rawBody, signaturePrefix.byteLength);
     return Effect.gen(function* () {
       const validSignature = yield* Effect.tryPromise({
         try: () => globalThis.crypto.subtle.verify("HMAC", key, suppliedSignature, signedMessage),
@@ -125,9 +126,14 @@ const make = Effect.gen(function* () {
       });
       if (!validSignature) return yield* Effect.fail(denied("unauthorized"));
 
-      const parsed = yield* decodeJson(rawBody).pipe(
-        Effect.mapError(() => denied("invalid_request")),
-      );
+      const body = yield* Effect.try({
+        try: () =>
+          new TextDecoder("utf-8", { fatal: true }).decode(
+            signedMessage.subarray(signaturePrefix.byteLength),
+          ),
+        catch: () => denied("invalid_request"),
+      });
+      const parsed = yield* decodeJson(body).pipe(Effect.mapError(() => denied("invalid_request")));
       if (!hasExactKeys(parsed)) return yield* Effect.fail(denied("invalid_request"));
 
       const request = yield* decodeRequest(parsed).pipe(

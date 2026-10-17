@@ -61,7 +61,12 @@ const setup = (env: Readonly<Record<string, string>> = PREVIEW_ENV) =>
     const handle = HttpEffect.toWebHandler(
       http.pipe(Effect.provide(context), Effect.provideService(Clock.Clock, clock)),
     );
-    const post = (mode: "browser" | "token" | "mobile", user = "richard", signature?: string) =>
+    const post = (
+      mode: "browser" | "token" | "mobile",
+      user = "richard",
+      signature?: string,
+      transmittedBody?: (body: string) => Uint8Array<ArrayBuffer>,
+    ) =>
       Effect.gen(function* () {
         const rawBody = encodeRequest({
           user,
@@ -95,7 +100,7 @@ const setup = (env: Readonly<Record<string, string>> = PREVIEW_ENV) =>
                 "content-type": "application/json",
                 "x-signalbox-test-signature": signature ?? signed,
               },
-              body: rawBody,
+              body: transmittedBody ? transmittedBody(rawBody) : rawBody,
             }),
           ),
         );
@@ -104,6 +109,18 @@ const setup = (env: Readonly<Record<string, string>> = PREVIEW_ENV) =>
   });
 
 describe("test sign-in through normal cloud sessions", () => {
+  it.effect("rejects an unsigned BOM prepended to a signed HTTP body before identity lookup", () =>
+    Effect.gen(function* () {
+      const { post, resolved } = yield* setup();
+      const response = yield* post("browser", "richard", undefined, (body) =>
+        new TextEncoder().encode(`\uFEFF${body}`),
+      );
+      expect(response.status).toBe(401);
+      expect(resolved).toEqual([]);
+      expect(response.headers.get("set-cookie")).toBeNull();
+    }),
+  );
+
   it.effect("sets the normal browser cookie and account routes recognize the test person", () =>
     Effect.gen(function* () {
       const { post, handle } = yield* setup();
