@@ -167,9 +167,10 @@ const commandsOf = (text: string): Array<Array<string>> => {
 
 const baseName = (word: string) => word.slice(word.lastIndexOf("/") + 1);
 
-/** The heavy tool `words` runs, if any. */
-const heavyTool = (words: ReadonlyArray<string>): string | null => {
-  // Past `sudo`, `env X=1`, `timeout 60` and the like, to the command itself.
+/** One command after its wrappers, or the script a shell passes to `-c`. */
+const unwrapCommand = (
+  words: ReadonlyArray<string>,
+): { readonly command: ReadonlyArray<string>; readonly script?: string } => {
   let start = 0;
   while (
     start < words.length &&
@@ -181,78 +182,102 @@ const heavyTool = (words: ReadonlyArray<string>): string | null => {
     start++;
   }
   const tool = words[start] === undefined ? undefined : baseName(words[start]!);
-  if (tool === undefined) return null;
+  if (tool === undefined) return { command: [] };
   if (SHELLS.has(tool)) {
     const flag = words.findIndex((word, index) => index > start && /^-\w*c\w*$/.test(word));
     const script = flag === -1 ? undefined : words[flag + 1];
-    return script === undefined ? null : heavyCommand(script);
+    return { command: [], ...(script === undefined ? {} : { script }) };
   }
-  if (HEAVY_TOOLS.has(tool)) return tool;
-  const subcommands = HEAVY_SUBCOMMANDS.get(tool);
-  // `npm run build`: the script's name decides, as `npm build` would.
-  const found = words
-    .slice(start + 1, start + 1 + SUBCOMMAND_REACH)
-    .find((word) => subcommands?.has(word) === true);
-  return found === undefined ? null : `${tool} ${found}`;
+  return { command: words.slice(start) };
+};
+
+/** The commands wrappers and shell `-c` scripts actually run. */
+const executedCommandsOf = (text: string): ReadonlyArray<ReadonlyArray<string>> => {
+  const commands: Array<ReadonlyArray<string>> = [];
+  const visit = (script: string) => {
+    for (const words of commandsOf(script)) {
+      const unwrapped = unwrapCommand(words);
+      if (unwrapped.script !== undefined) visit(unwrapped.script);
+      else if (unwrapped.command.length > 0) commands.push(unwrapped.command);
+    }
+  };
+  visit(text);
+  return commands;
+};
+
+interface MachineCommandNeed {
+  readonly heavyTool: string | null;
+  readonly requestsHeavyMachine: boolean;
+}
+
+/** Classifies one shell item in one traversal so its two machine rules agree. */
+const machineCommandNeed = (text: string): MachineCommandNeed => {
+  let heavy: string | null = null;
+  let requestsHeavy = false;
+  for (const words of executedCommandsOf(text)) {
+    if (!requestsHeavy && words.join(" ") === REQUEST_HEAVY_MACHINE_COMMAND) {
+      requestsHeavy = true;
+    }
+    const tool = words[0] === undefined ? undefined : baseName(words[0]);
+    if (heavy === null && tool !== undefined) {
+      if (HEAVY_TOOLS.has(tool)) {
+        heavy = tool;
+      } else {
+        const subcommands = HEAVY_SUBCOMMANDS.get(tool);
+        // `npm run build`: the script's name decides, as `npm build` would.
+        const found = words
+          .slice(1, 1 + SUBCOMMAND_REACH)
+          .find((word) => subcommands?.has(word) === true);
+        if (found !== undefined) heavy = `${tool} ${found}`;
+      }
+    }
+    if (requestsHeavy && heavy !== null) break;
+  }
+  return { heavyTool: heavy, requestsHeavyMachine: requestsHeavy };
 };
 
 /** The heavy tool `command` runs, if any: `npm build`, `cargo test`, `tsc`. */
-export const heavyCommand = (command: string): string | null => {
-  for (const words of commandsOf(command)) {
-    const tool = heavyTool(words);
-    if (tool !== null) return tool;
+export const heavyCommand = (command: string): string | null =>
+  machineCommandNeed(command).heavyTool;
+
+export interface OutgrownCommandDecision {
+  readonly reason: string | null;
+  /** The explicit capacity command is an internal request, not transcript work. */
+  readonly suppressTranscript: boolean;
+}
+
+/** Why a provider command moves the run up, and whether it is internal. */
+export const outgrownCommandDecision = (event: ProviderAdapterV2Event): OutgrownCommandDecision => {
+  if (event.type !== "turn_item.updated" || event.turnItem.type !== "command_execution") {
+    return { reason: null, suppressTranscript: false };
   }
-  return null;
-};
-
-/** Whether the agent ran the explicit, harmless request command. */
-const requestsHeavyMachine = (command: string): boolean => {
-  const requestIn = (text: string): boolean =>
-    commandsOf(text).some((words) => {
-      let start = 0;
-      while (
-        start < words.length &&
-        (WRAPPERS.has(baseName(words[start]!)) ||
-          /^\w+=/.test(words[start]!) ||
-          words[start]!.startsWith("-") ||
-          /^\d+[smh]?$/.test(words[start]!))
-      ) {
-        start++;
-      }
-      const tool = words[start] === undefined ? undefined : baseName(words[start]!);
-      if (tool === undefined) return false;
-      if (SHELLS.has(tool)) {
-        const flag = words.findIndex((word, index) => index > start && /^-\w*c\w*$/.test(word));
-        const script = flag === -1 ? undefined : words[flag + 1];
-        return script === undefined ? false : requestIn(script);
-      }
-      return words.slice(start).join(" ") === REQUEST_HEAVY_MACHINE_COMMAND;
-    });
-  return requestIn(command);
-};
-
-/**
- * Why `event` moves its turn to a heavy machine, or null. A heavy command
- * counts as soon as it starts, so the light machine is let go before it gets
- * far; a killed one counts when it ends.
- */
-export const outgrownBy = (event: ProviderAdapterV2Event): string | null => {
-  if (event.type !== "turn_item.updated") return null;
   const item = event.turnItem;
-  if (item.type !== "command_execution") return null;
-  const canRequest =
-    item.status === "pending" || item.status === "running" || item.status === "completed";
-  if (canRequest && requestsHeavyMachine(item.input)) {
-    return REQUEST_HEAVY_MACHINE_REASON;
+  const need = machineCommandNeed(item.input);
+  if (item.status === "pending" || item.status === "running" || item.status === "completed") {
+    if (need.requestsHeavyMachine) {
+      return { reason: REQUEST_HEAVY_MACHINE_REASON, suppressTranscript: true };
+    }
   }
   if (item.status === "running" || item.status === "pending") {
-    const tool = heavyCommand(item.input);
-    return tool === null ? null : `It runs \`${tool}\`, which needs a bigger machine.`;
+    return {
+      reason:
+        need.heavyTool === null
+          ? null
+          : `It runs \`${need.heavyTool}\`, which needs a bigger machine.`,
+      suppressTranscript: false,
+    };
   }
   // Codex reports the exit code; Claude's Bash only says so in its failed output.
   const killed =
     item.exitCode === KILLED_EXIT_CODE ||
     ((item.status === "failed" || item.outputIndicatesFailure === true) &&
       /\bexit code 137\b/i.test(item.output ?? ""));
-  return killed ? "A command ran out of memory." : null;
+  return {
+    reason: killed ? "A command ran out of memory." : null,
+    suppressTranscript: need.requestsHeavyMachine,
+  };
 };
+
+/** Why `event` moves its turn to a heavy machine, or null. */
+export const outgrownBy = (event: ProviderAdapterV2Event): string | null =>
+  outgrownCommandDecision(event).reason;

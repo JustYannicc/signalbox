@@ -56,7 +56,7 @@ import { RunnerInstructionsError } from "./RunnerInstructions.ts";
 import { type RunnerSecrets, SecretsRegisterError } from "./RunnerSecrets.ts";
 import type { RunnerSessions } from "./RunnerSessions.ts";
 import { causeText, runnerLog } from "./runnerLog.ts";
-import { outgrownBy } from "./RunnerMachineClass.ts";
+import { outgrownCommandDecision } from "./RunnerMachineClass.ts";
 import {
   FILE_CHANGING_ITEMS,
   finishDriveTurn,
@@ -341,16 +341,20 @@ export const makeRunnerTurns = Effect.fn("makeRunnerTurns")(function* (input: {
   /** Commands already checked, by item and phase: a running one repeats as its output grows. */
   const classified = new Set<string>();
   /** Why `event` moves its run up, checking each command once as it starts and once as it ends. */
-  const outgrownByOnce = (event: ProviderAdapterV2Event) => {
+  const outgrownByOnce = (
+    event: ProviderAdapterV2Event,
+    runId: RunId | null,
+    decision: ReturnType<typeof outgrownCommandDecision>,
+  ) => {
     if (event.type !== "turn_item.updated" || event.turnItem.type !== "command_execution") {
       return null;
     }
-    const { id, status, runId } = event.turnItem;
+    const { id, status } = event.turnItem;
     if (runId === null || runId !== latestRunId || runId !== runningRunId) return null;
     const key = `${id}:${status === "running" || status === "pending" ? "start" : "end"}`;
     if (classified.has(key)) return null;
     classified.add(key);
-    const reason = outgrownBy(event);
+    const reason = decision.reason;
     return reason === null ? null : { runId, reason };
   };
 
@@ -663,16 +667,32 @@ export const makeRunnerTurns = Effect.fn("makeRunnerTurns")(function* (input: {
     runtime: ProviderAdapterV2SessionRuntime,
   ) => {
     const instanceId = adapter.instanceId;
+    // Subagent commands often omit run metadata. Attribute them only to the
+    // current session's live run; an old session can still be winding down.
+    const eventRunId = (event: ProviderAdapterV2Event): RunId | null => {
+      if (event.type !== "turn_item.updated") return latestRunId;
+      if (event.turnItem.runId !== null) return event.turnItem.runId;
+      const providerTurnId = event.turnItem.providerTurnId;
+      for (const [runId, turn] of turns) {
+        if (providerTurnId !== null && turn.providerTurnId === providerTurnId) return runId;
+      }
+      return latestRunId;
+    };
     const filterAssistant = makeAssistantStreamingFilter(
       DEFAULT_SERVER_SETTINGS.responseStreamingMode,
     );
     /** Sends `event` as `runId`'s; a held end goes out under its own run, whatever runs since. */
-    const deliver = (event: ProviderAdapterV2Event, runId: RunId | null = latestRunId) =>
+    const deliver = (
+      event: ProviderAdapterV2Event,
+      runId: RunId | null = latestRunId,
+      suppressTranscript = false,
+    ) =>
       Effect.gen(function* () {
         const delivered = filterAssistant(event, yield* Clock.currentTimeMillis);
         if (delivered === null || runId === null) return;
         // Complete only once the rows behind it would survive this machine.
         if (input.sessions !== undefined) yield* input.sessions.settle(adapter.driver, delivered);
+        if (suppressTranscript) return;
         const stored =
           delivered.type === "turn_item.updated"
             ? { ...delivered, turnItem: stripUnservedToolOutputImageBytes(delivered.turnItem) }
@@ -697,9 +717,18 @@ export const makeRunnerTurns = Effect.fn("makeRunnerTurns")(function* (input: {
         Effect.gen(function* () {
           if (latestRunId !== null && outgrown.has(latestRunId)) return;
           if (yield* holdForDrive(event, (held, runId) => deliver(held, runId))) return;
+          const originatingRunId = eventRunId(event);
+          const commandDecision = outgrownCommandDecision(event);
           yield* track(event);
-          yield* deliver(event);
-          const upgrade = input.machineClass === "light" ? outgrownByOnce(event) : null;
+          yield* deliver(event, latestRunId, commandDecision.suppressTranscript);
+          const owner = originatingRunId === null ? undefined : turns.get(originatingRunId);
+          const mayMove =
+            input.machineClass === "light" &&
+            originatingRunId !== null &&
+            originatingRunId === latestRunId &&
+            owner?.status === "running" &&
+            owner.session === runtime;
+          const upgrade = mayMove ? outgrownByOnce(event, originatingRunId, commandDecision) : null;
           if (upgrade !== null) yield* moveUp(upgrade.runId, upgrade.reason);
         }),
       ),
@@ -935,6 +964,7 @@ export const makeRunnerTurns = Effect.fn("makeRunnerTurns")(function* (input: {
         cwd: input.cwd,
       };
       latestRunId = turn.runId;
+      classified.clear();
       latestTraceId = turn.traceId;
       // `/drives` and the context tool read one version of everything for the whole
       // turn; the view is taken while the checkout and session load.

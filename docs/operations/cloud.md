@@ -190,16 +190,17 @@ container (`wrangler dev`, for one) runs every thread on boat or the local
 Runner host. The light class needs `CLOUD_URL` and `MODEL_GATEWAY_URL` like
 boat does.
 
-A light thread moves to the heavy class for good when its Runner sees a
-command it should not run there: a build, test, install or dev server
-(`apps/server/src/signalbox/runner/RunnerMachineClass.ts`), or one killed for
-memory (exit 137). The Runner saves the turn's files and session rows, reports
-`machine.outgrown`, and the thread continues the run on a heavy machine the
-same way it continues one whose machine was lost (below): the command shows as
-interrupted and the agent runs it again there. A light container that runs out
-of memory mid-turn (exit 137) moves its run up too. Any other exit, including
-Cloudflare restarting the container for a deploy's rollout, is a lost machine:
-the run continues on a new light one.
+A light thread moves to the heavy class for good when its Runner sees a build,
+test, install or dev server that belongs there, a command killed for memory
+(exit 137), or the agent's explicit `: request-heavy-machine` request. The
+Runner saves the turn's files and session rows, reports `machine.outgrown`, and
+the thread continues the run on a heavy machine the same way it continues one
+whose machine was lost (below). The move reason appears in thread details; the
+conversation transcript contains neither a move notice nor the explicit request
+command. A light container that runs out of memory mid-turn (exit 137) moves
+its run up too. Any
+other exit, including Cloudflare restarting the container for a deploy's
+rollout, is a lost machine: the run continues on a new light one.
 
 Each preview gets its own container application,
 `signalbox-cloud-pr-<number>-threads`, deleted with the preview. Containers

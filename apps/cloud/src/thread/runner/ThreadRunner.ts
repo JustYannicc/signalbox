@@ -672,9 +672,7 @@ const make = Effect.gen(function* () {
       {
         events: [
           ...events,
-          ...(after === null || run === undefined
-            ? []
-            : recoverRunEvents(after, run, ctx, moves ? { reason: detail } : undefined)),
+          ...(after === null || run === undefined ? [] : recoverRunEvents(after, run, ctx, moves)),
         ],
         machine: { ...released(lease), movedUp: lease.movedUp === true || moves },
       },
@@ -796,14 +794,6 @@ const make = Effect.gen(function* () {
       const grant = projection === null ? undefined : modelGrantFor(projection, yield* ownerId);
       const run = projection === null ? undefined : harnessRun(projection);
       const driveId = turn === null || !drivesEnabled ? null : yield* driveOf;
-      const instructions =
-        turn === null ||
-        driveId === null ||
-        lease.token === null ||
-        projection === null ||
-        run === undefined
-          ? []
-          : yield* Effect.orDie(store.instructions(continuedRun(projection, run).id));
       return keep<RunnerWork>({
         generation: lease.generation,
         needsUpkeep: needsUpkeep(lease, run !== undefined, yield* previews.held),
@@ -823,10 +813,10 @@ const make = Effect.gen(function* () {
                 remoteToken: yield* remoteToken(lease.token, projection.thread.id, run.id),
                 // Its folders' `AGENTS.md`, as the turn was started with (#227), also
                 // when this run continues it on another machine (#620).
-                instructions:
-                  classOf(lease) === "light"
-                    ? [...instructions, REQUEST_HEAVY_MACHINE_INSTRUCTIONS]
-                    : instructions,
+                instructions: [
+                  ...(yield* Effect.orDie(store.instructions(continuedRun(projection, run).id))),
+                  ...(classOf(lease) === "light" ? [REQUEST_HEAVY_MACHINE_INSTRUCTIONS] : []),
+                ],
               },
         sessions:
           turn === null || lease.token === null || projection === null

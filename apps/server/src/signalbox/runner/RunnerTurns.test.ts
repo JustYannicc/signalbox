@@ -153,6 +153,7 @@ const makeFakeAdapterFor = (selection: {
       readonly text: string | undefined;
       readonly nativeThreadRef: unknown;
     }> = [];
+    const startedRuns = yield* Queue.unbounded<string>();
     const opened = { count: 0 };
     const session = {
       providerSessionId: ProviderSessionId.make("session-1"),
@@ -167,7 +168,7 @@ const makeFakeAdapterFor = (selection: {
         readonly message?: { readonly text: string };
         readonly providerThread: { readonly nativeThreadRef: unknown };
       }) =>
-        Effect.sync(() => {
+        Effect.gen(function* () {
           started.push({
             providerTurnOrdinal: input.providerTurnOrdinal,
             text: input.message?.text,
@@ -178,6 +179,7 @@ const makeFakeAdapterFor = (selection: {
               ? `start ${input.runId}`
               : `start ${input.runId} continuing ${input.restartContinuationOfRunId}`,
           );
+          yield* Queue.offer(startedRuns, input.runId);
         }),
       interruptTurn: (input: { readonly providerTurnId: string }) =>
         Effect.sync(() => void calls.push(`interrupt ${input.providerTurnId}`)),
@@ -194,7 +196,7 @@ const makeFakeAdapterFor = (selection: {
       driver: selection.driver,
       openSession: () => Effect.sync(() => (opened.count++, session)),
     } as unknown as ProviderAdapterV2["Service"];
-    return { adapter, events, loaded, calls, started, opened };
+    return { adapter, events, loaded, calls, started, startedRuns, opened };
   });
 const makeFakeAdapter = makeFakeAdapterFor({
   instanceId,
@@ -1394,13 +1396,20 @@ describe("RunnerTurns", () => {
 
   describe("sessions", () => {
     /** Sessions that record what the turn asked of them, in `log`. */
-    const makeFakeSessions = (log: Array<string>) =>
+    const makeFakeSessions = (
+      log: Array<string>,
+      onSettle?: (event: ProviderAdapterV2Event) => Effect.Effect<void>,
+    ) =>
       Effect.map(Queue.unbounded<string>(), (failures) => ({
         failures,
         sessions: {
           use: (access) => Effect.sync(() => void log.push(`use ${access.token}`)),
           prepare: (kind) => Effect.sync(() => void log.push(`prepare ${kind}`)),
-          settle: (_kind, event) => Effect.sync(() => void log.push(`settle ${event.type}`)),
+          settle: (_kind, event) =>
+            Effect.gen(function* () {
+              log.push(`settle ${event.type}`);
+              if (onSettle !== undefined) yield* onSettle(event);
+            }),
           failures,
           claude: undefined as never,
           flush: (kind) =>
@@ -1579,7 +1588,7 @@ describe("RunnerTurns", () => {
         status: "running" | "completed",
         input: string,
         exitCode?: number,
-        runId = RunId.make("run-1"),
+        runId: RunId | null = RunId.make("run-1"),
         eventDriver: typeof driver | typeof claudeDriver = driver,
         selectedThread: OrchestrationV2ProviderThread = providerThread,
       ) => {
@@ -1609,6 +1618,17 @@ describe("RunnerTurns", () => {
         } as ProviderAdapterV2Event;
       };
 
+      const subagentCommand = (
+        input: string,
+        harness: "codex" | "claude",
+      ): ProviderAdapterV2Event => {
+        const selectedDriver = harness === "claude" ? claudeDriver : driver;
+        const selectedThread = harness === "claude" ? claudeProviderThread : providerThread;
+        const event = command("running", input, undefined, null, selectedDriver, selectedThread);
+        if (event.type !== "turn_item.updated") throw new Error("Expected a command item");
+        return { ...event, turnItem: { ...event.turnItem, runId: null, providerTurnId: null } };
+      };
+
       /** A light machine's turn with a drive, and everything it did in order. */
       const lightTurn = (machineClass: "light" | "heavy", harness: "codex" | "claude" = "codex") =>
         Effect.gen(function* () {
@@ -1619,7 +1639,11 @@ describe("RunnerTurns", () => {
           const selectedThread = harness === "claude" ? claudeProviderThread : providerThread;
           const reported: Array<RunnerItem> = [];
           const log: Array<string> = [];
-          const { sessions } = yield* makeFakeSessions(log);
+          const settledEvents = yield* Queue.unbounded<ProviderAdapterV2Event>();
+          const handedOff = yield* Deferred.make<void>();
+          const { sessions } = yield* makeFakeSessions(log, (event) =>
+            Queue.offer(settledEvents, event).pipe(Effect.asVoid),
+          );
           const drive = {
             prepare: () => Effect.void,
             autosave: Effect.sync(() => void log.push("autosave")),
@@ -1635,9 +1659,12 @@ describe("RunnerTurns", () => {
             useModelToken: () => Effect.void,
             usage: Effect.succeed(unmeasured),
             emit: (item) =>
-              Effect.sync(() => {
+              Effect.gen(function* () {
                 reported.push(item);
                 log.push(item.kind === "provider" ? `emit ${String(item.event.type)}` : item.kind);
+                if (item.kind === "machine.outgrown") {
+                  yield* Deferred.succeed(handedOff, undefined);
+                }
               }),
             openDrive: () => Effect.succeed(drive),
             sessions,
@@ -1652,7 +1679,7 @@ describe("RunnerTurns", () => {
           });
           yield* settle;
           log.length = 0;
-          return { fake, log, reported, selectedDriver, selectedThread };
+          return { fake, log, reported, selectedDriver, selectedThread, settledEvents, handedOff };
         });
 
       it.effect.each(["codex", "claude"] as const)(
@@ -1660,10 +1687,8 @@ describe("RunnerTurns", () => {
         (harness) =>
           Effect.scoped(
             Effect.gen(function* () {
-              const { fake, log, reported, selectedDriver, selectedThread } = yield* lightTurn(
-                "light",
-                harness,
-              );
+              const { fake, log, reported, selectedDriver, selectedThread, handedOff } =
+                yield* lightTurn("light", harness);
               const input =
                 harness === "claude"
                   ? `/bin/bash -lc '${REQUEST_HEAVY_MACHINE_COMMAND}'`
@@ -1679,16 +1704,23 @@ describe("RunnerTurns", () => {
                   selectedThread,
                 ),
               );
-              for (let round = 0; round < 30; round++) yield* Effect.yieldNow;
+              yield* Deferred.await(handedOff);
 
               expect(reported.filter((item) => item.kind === "log")).toEqual([]);
               expect(log).toEqual([
                 "settle turn_item.updated",
-                "emit turn_item.updated",
                 "drive save",
                 "flush " + selectedDriver,
                 "machine.outgrown",
               ]);
+              expect(
+                reported.some(
+                  (item) =>
+                    item.kind === "provider" &&
+                    item.event.type === "turn_item.updated" &&
+                    JSON.stringify(item.event).includes(REQUEST_HEAVY_MACHINE_COMMAND),
+                ),
+              ).toBe(false);
               expect(reported.find((item) => item.kind === "machine.outgrown")).toMatchObject({
                 runId: RunId.make("run-1"),
                 reason: REQUEST_HEAVY_MACHINE_REASON,
@@ -1697,11 +1729,122 @@ describe("RunnerTurns", () => {
           ),
       );
 
+      it.effect.each(["codex", "claude"] as const)(
+        "moves up for a runless %s subagent request",
+        (harness) =>
+          Effect.scoped(
+            Effect.gen(function* () {
+              const { fake, reported, handedOff } = yield* lightTurn("light", harness);
+              yield* Queue.offer(
+                fake.events,
+                subagentCommand(REQUEST_HEAVY_MACHINE_COMMAND, harness),
+              );
+              yield* Deferred.await(handedOff);
+
+              expect(reported.filter((item) => item.kind === "machine.outgrown")).toMatchObject([
+                {
+                  runId: RunId.make("run-1"),
+                  reason: REQUEST_HEAVY_MACHINE_REASON,
+                },
+              ]);
+              expect(
+                reported.some(
+                  (item) =>
+                    item.kind === "provider" &&
+                    item.event.type === "turn_item.updated" &&
+                    JSON.stringify(item.event).includes(REQUEST_HEAVY_MACHINE_COMMAND),
+                ),
+              ).toBe(false);
+            }),
+          ),
+      );
+
+      it.effect.each(["codex", "claude"] as const)(
+        "leaves a displayed %s request command on the light machine",
+        (harness) =>
+          Effect.scoped(
+            Effect.gen(function* () {
+              const { fake, reported, settledEvents } = yield* lightTurn("light", harness);
+              const input = "printf '%s\\n' '" + REQUEST_HEAVY_MACHINE_COMMAND + "'";
+              yield* Queue.offer(fake.events, subagentCommand(input, harness));
+              yield* Queue.take(settledEvents);
+
+              expect(reported.filter((item) => item.kind === "machine.outgrown")).toEqual([]);
+              expect(
+                reported.some(
+                  (item) =>
+                    item.kind === "provider" &&
+                    item.event.type === "turn_item.updated" &&
+                    JSON.stringify(item.event).includes(REQUEST_HEAVY_MACHINE_COMMAND),
+                ),
+              ).toBe(true);
+            }),
+          ),
+      );
+
+      it.effect("ignores a runless request from an older provider session", () =>
+        Effect.scoped(
+          Effect.gen(function* () {
+            const codex = yield* makeFakeAdapter;
+            const claude = yield* makeFakeClaudeAdapter;
+            const settledEvents = yield* Queue.unbounded<ProviderAdapterV2Event>();
+            const reported: Array<RunnerItem> = [];
+            const { sessions } = yield* makeFakeSessions([], (event) =>
+              Queue.offer(settledEvents, event).pipe(Effect.asVoid),
+            );
+            const turns = yield* makeRunnerTurns({
+              threadId,
+              adapters: new Map([
+                [instanceId, codex.adapter],
+                [claudeInstanceId, claude.adapter],
+              ]),
+              cwd: "/tmp",
+              machineClass: "light",
+              useModelToken: () => Effect.void,
+              usage: Effect.succeed(unmeasured),
+              emit: (item) => Effect.sync(() => void reported.push(item)),
+              sessions,
+            });
+
+            yield* Deferred.succeed(codex.loaded, undefined);
+            yield* turns.start({
+              turn: turnFor(1, providerThread, instanceId),
+              modelToken: "token-1",
+              sessions: { token: "sbs1.t.1" },
+            });
+            expect(yield* Queue.take(codex.startedRuns)).toBe("run-1");
+
+            yield* Deferred.succeed(claude.loaded, undefined);
+            yield* turns.start({
+              turn: turnFor(2, claudeProviderThread, claudeInstanceId),
+              modelToken: "token-2",
+              sessions: { token: "sbs1.t.2" },
+            });
+            expect(yield* Queue.take(claude.startedRuns)).toBe("run-2");
+
+            yield* Queue.offer(
+              codex.events,
+              subagentCommand(REQUEST_HEAVY_MACHINE_COMMAND, "codex"),
+            );
+            yield* Queue.take(settledEvents);
+
+            expect(reported.filter((item) => item.kind === "machine.outgrown")).toEqual([]);
+          }),
+        ),
+      );
+
       it.effect("ignores an explicit request from a stale run", () =>
         Effect.scoped(
           Effect.gen(function* () {
-            const { fake, log, reported, selectedDriver, selectedThread } =
-              yield* lightTurn("light");
+            const {
+              fake,
+              log,
+              reported,
+              selectedDriver,
+              selectedThread,
+              settledEvents,
+              handedOff,
+            } = yield* lightTurn("light");
             yield* Queue.offer(
               fake.events,
               command(
@@ -1713,7 +1856,7 @@ describe("RunnerTurns", () => {
                 selectedThread,
               ),
             );
-            for (let round = 0; round < 20; round++) yield* Effect.yieldNow;
+            yield* Queue.take(settledEvents);
             expect(log).not.toContain("machine.outgrown");
 
             yield* Queue.offer(
@@ -1727,7 +1870,7 @@ describe("RunnerTurns", () => {
                 selectedThread,
               ),
             );
-            for (let round = 0; round < 30; round++) yield* Effect.yieldNow;
+            yield* Deferred.await(handedOff);
             expect(reported.filter((item) => item.kind === "machine.outgrown")).toHaveLength(1);
           }),
         ),
@@ -1738,10 +1881,8 @@ describe("RunnerTurns", () => {
         (harness) =>
           Effect.scoped(
             Effect.gen(function* () {
-              const { fake, log, reported, selectedDriver, selectedThread } = yield* lightTurn(
-                "heavy",
-                harness,
-              );
+              const { fake, log, reported, selectedDriver, selectedThread, settledEvents } =
+                yield* lightTurn("heavy", harness);
               for (const status of ["running", "completed"] as const) {
                 yield* Queue.offer(
                   fake.events,
@@ -1755,14 +1896,21 @@ describe("RunnerTurns", () => {
                   ),
                 );
               }
-              for (let round = 0; round < 30; round++) yield* Effect.yieldNow;
+              yield* Queue.take(settledEvents);
+              yield* Queue.take(settledEvents);
               expect(reported.filter((item) => item.kind === "machine.outgrown")).toEqual([]);
+              expect(
+                reported.filter(
+                  (item) =>
+                    item.kind === "provider" &&
+                    item.event.type === "turn_item.updated" &&
+                    JSON.stringify(item.event).includes(REQUEST_HEAVY_MACHINE_COMMAND),
+                ),
+              ).toEqual([]);
               expect(log).toEqual([
                 "settle turn_item.updated",
-                "emit turn_item.updated",
                 "autosave",
                 "settle turn_item.updated",
-                "emit turn_item.updated",
               ]);
             }),
           ),

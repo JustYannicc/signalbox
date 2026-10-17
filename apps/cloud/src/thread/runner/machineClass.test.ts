@@ -159,6 +159,17 @@ describe("machine classes", () => {
           expect(projection.runs.map((run) => run.status)).toEqual(["interrupted", "starting"]);
           const [cut, continuation] = projection.runs;
           expect(continuation?.restartContinuationOfRunId).toBe(cut?.id);
+          expect(
+            projection.messages.find((message) => message.id === continuation?.userMessageId),
+          ).toMatchObject({ role: "system", text: CONTINUE_PROMPT });
+          expect(
+            projection.turnItems.filter(
+              (item) =>
+                item.runId === continuation?.id &&
+                item.type === "user_message" &&
+                item.text === CONTINUE_PROMPT,
+            ),
+          ).toEqual([]);
           const items = projection.turnItems.filter((item) => item.runId === cut?.id);
           // Nothing the light machine said after the move counts.
           expect(items.find((item) => item.type === "assistant_message")).toMatchObject({
