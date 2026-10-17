@@ -41,45 +41,24 @@ const allFieldNames = (value: unknown): Array<string> => {
 };
 
 describe("cloud model steps", () => {
-  it.effect("resolves an unsaved model from the current pool when a model step runs", () =>
+  it.effect("fails model steps without a selection before requesting the gateway", () =>
     Effect.gen(function* () {
       const harness = yield* makeModelStepHarness();
-      const automation = yield* harness.save(
-        `export const meta = { name: "Deferred model" } as const;
-export default workflow(async (w) => await w.llm("Summarize", { prompt: "Hello" }));`,
-        SCRATCH_PROJECT_ID,
-        null,
-      );
       const { gateway } = yield* connectModelPool(harness.cloud, ["claude"], () => ({
-        text: "Resolved from the current pool.",
+        text: "Unexpected request",
       }));
-
-      const done = yield* harness.startAndWait(automation.id);
-
-      expect(done.run.status).toBe("succeeded");
-      expect(done.output).toBe("Resolved from the current pool.");
-      expect(gateway.requests).toHaveLength(1);
-      expect(gateway.requests[0]?.body.model).toEqual(expect.any(String));
-      expect(yield* harness.threadProjectionIds()).toEqual([]);
-    }),
-  );
-
-  it.effect("reports an absent model before forwarding an implicit model step", () =>
-    Effect.gen(function* () {
-      const harness = yield* makeModelStepHarness();
-      const automation = yield* harness.save(
-        `export const meta = { name: "Missing model" } as const;
-export default workflow(async (w) => await w.llm("Summarize", { prompt: "Hello" }));`,
-        SCRATCH_PROJECT_ID,
-        null,
-      );
-      const { gateway } = yield* connectModelPool(harness.cloud, [], () => ({ text: "Unused" }));
-
-      const done = yield* harness.startAndWait(automation.id);
-
-      expect(done.run.status).toBe("failed");
-      expect(done.run.error).toContain("Choose a model or set a default");
-      expect(gateway.requests).toEqual([]);
+      for (const verb of ["llm", "judge", "extract"]) {
+        const automation = yield* harness.save(
+          `export const meta = { name: "No model ${verb}" } as const;
+export default workflow(async (w) => await w.${verb}("Ready?", { prompt: "Checks passed", input: "Checks passed" }));`,
+          SCRATCH_PROJECT_ID,
+          null,
+        );
+        const done = yield* harness.startAndWait(automation.id);
+        expect(done.run.status).toBe("failed");
+        expect(done.steps[0]?.error).toContain("Choose a default model");
+      }
+      expect(gateway.requests).toHaveLength(0);
       expect(yield* harness.threadProjectionIds()).toEqual([]);
     }),
   );
