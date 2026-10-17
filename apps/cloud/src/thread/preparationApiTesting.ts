@@ -133,6 +133,15 @@ export const setup = Effect.gen(function* () {
       engine.subscribePreparation({ userId, contextIds: [] }).pipe(Effect.orDie),
     ),
   );
+  const runnerWork = cloud.inThread(
+    threadId,
+    ThreadRunner.ThreadRunner.use((runner) => runner.work),
+  );
+  const runnerBatch = (input: Parameters<ThreadRunner.ThreadRunner["Service"]["batch"]>[0]) =>
+    cloud.inThread(
+      threadId,
+      ThreadRunner.ThreadRunner.use((runner) => runner.batch(input)),
+    );
   return {
     cloud,
     layer,
@@ -145,5 +154,7 @@ export const setup = Effect.gen(function* () {
     readerKey,
     connect,
     changes,
+    runnerWork,
+    runnerBatch,
   };
 });

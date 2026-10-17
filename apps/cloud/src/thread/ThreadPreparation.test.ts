@@ -22,11 +22,10 @@ import {
 import { requestCancellation } from "./preparationTesting.ts";
 import type * as ThreadEngine from "./ThreadEngine.ts";
 import * as ThreadStore from "./ThreadStore.ts";
-import type * as ThreadRunner from "./runner/ThreadRunner.ts";
 
 const preparing = (
   engine: ThreadEngine.ThreadEngine["Service"],
-  runner: ThreadRunner.ThreadRunner["Service"],
+  runner: Parameters<Parameters<typeof withObject>[1]>[1],
 ) =>
   Effect.gen(function* () {
     yield* launch(engine);

@@ -6,7 +6,6 @@ import * as Fiber from "effect/Fiber";
 
 import { loadingPreparation, preparationApi } from "./preparationTesting.ts";
 import { freshDatabase, owner, withObject } from "./runnerTesting.ts";
-import { pushRunnerWork } from "./runner/runnerSockets.ts";
 
 describe("preparation stop transport", () => {
   it.effect(
@@ -14,12 +13,12 @@ describe("preparation stop transport", () => {
     () =>
       withObject(freshDatabase(), (engine, runner, context) =>
         Effect.gen(function* () {
-          const { target, host, socket, say } = yield* loadingPreparation(engine, runner);
+          const { target, pushWork, socket, say } = yield* loadingPreparation(engine, runner);
           const outer = yield* Effect.context<never>();
           const sent = yield* Deferred.make<void>();
           const completed = yield* Deferred.make<void>();
           const api = preparationApi(Context.merge(outer, context), async () => {
-            await pushRunnerWork(host);
+            await pushWork();
             Deferred.doneUnsafe(sent, Effect.void);
           });
           const response = yield* Effect.promise(() => api.cancelPreparation(owner, target)).pipe(

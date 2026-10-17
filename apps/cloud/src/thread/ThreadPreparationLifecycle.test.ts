@@ -11,7 +11,6 @@ import {
   threadId,
   withObject,
 } from "./runnerTesting.ts";
-import { pushRunnerWork } from "./runner/runnerSockets.ts";
 import { loadingPreparation } from "./preparationTesting.ts";
 
 describe("preparation lifecycle stops", () => {
@@ -20,7 +19,7 @@ describe("preparation lifecycle stops", () => {
     () =>
       withObject(freshDatabase(), (engine, runner) =>
         Effect.gen(function* () {
-          const { target, socket, host, say } = yield* loadingPreparation(engine, runner);
+          const { target, socket, pushWork, say } = yield* loadingPreparation(engine, runner);
           yield* engine.dispatch(
             owner,
             {
@@ -33,7 +32,7 @@ describe("preparation lifecycle stops", () => {
             personal,
           );
           expect((yield* engine.preparation)?.status).toBe("cancelling");
-          yield* Effect.promise(() => pushRunnerWork(host));
+          yield* Effect.promise(pushWork);
           expect(socket.sent).toContainEqual({
             type: "preparation.cancel",
             runId: target.runId,
@@ -73,7 +72,7 @@ describe("preparation lifecycle stops", () => {
     (holdQueue) =>
       withObject(freshDatabase(), (engine, runner) =>
         Effect.gen(function* () {
-          const { target, socket, host, say } = yield* loadingPreparation(engine, runner);
+          const { target, socket, pushWork, say } = yield* loadingPreparation(engine, runner);
           yield* send(engine, 2, "Next run");
           yield* engine.dispatch(
             owner,
@@ -93,7 +92,7 @@ describe("preparation lifecycle stops", () => {
           const queued = (yield* engine.snapshot(owner)).projection.runs[1];
           expect(queued?.status).toBe(holdQueue ? "queued" : "starting");
           if (holdQueue) expect(queued?.queueHeld).toBe(true);
-          yield* Effect.promise(() => pushRunnerWork(host));
+          yield* Effect.promise(pushWork);
           expect(socket.sent.some((frame) => frame.type === "turn.start")).toBe(false);
           yield* say({
             type: "batch",
@@ -121,7 +120,7 @@ describe("preparation lifecycle stops", () => {
     () =>
       withObject(freshDatabase(), (engine, runner) =>
         Effect.gen(function* () {
-          const { target, host, say, socket } = yield* loadingPreparation(engine, runner);
+          const { target, pushWork, say, socket } = yield* loadingPreparation(engine, runner);
           yield* send(engine, 2, "Restart with this message");
           yield* engine.dispatch(
             owner,
@@ -133,7 +132,7 @@ describe("preparation lifecycle stops", () => {
             },
             personal,
           );
-          yield* Effect.promise(() => pushRunnerWork(host));
+          yield* Effect.promise(pushWork);
           yield* say({
             type: "batch",
             sequence: 1,
@@ -161,7 +160,7 @@ describe("preparation lifecycle stops", () => {
     (ending) =>
       withObject(freshDatabase(), (engine, runner) =>
         Effect.gen(function* () {
-          const { target, turn, generation, say, host, socket } = yield* loadingPreparation(
+          const { target, turn, generation, say, pushWork, socket } = yield* loadingPreparation(
             engine,
             runner,
           );
@@ -183,7 +182,7 @@ describe("preparation lifecycle stops", () => {
               },
               personal,
             );
-            yield* Effect.promise(() => pushRunnerWork(host));
+            yield* Effect.promise(pushWork);
             expect(socket.sent).toContainEqual({
               type: "interrupt",
               runId: target.runId,

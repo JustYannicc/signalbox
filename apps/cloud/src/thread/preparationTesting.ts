@@ -12,7 +12,7 @@ import {
   threadId,
   withObject,
 } from "./runnerTesting.ts";
-import { onRunnerMessage } from "./runner/runnerSockets.ts";
+import { onRunnerMessage, pushRunnerWork } from "./runner/runnerSockets.ts";
 import type * as ThreadEngine from "./ThreadEngine.ts";
 import { PullRequestSync } from "./pullRequests/PullRequestSync.ts";
 import { makeThreadObjectApi } from "./threadObjectApi.ts";
@@ -59,7 +59,15 @@ export const loadingPreparation = (
       preparationGeneration: start.turn.preparationGeneration,
     };
     socket.sent.length = 0;
-    return { target, socket, host, say, turn: start.turn, generation: plan.ensure.generation };
+    return {
+      target,
+      socket,
+      host,
+      say,
+      turn: start.turn,
+      generation: plan.ensure.generation,
+      pushWork: () => pushRunnerWork(host),
+    };
   });
 
 export const requestCancellation = (

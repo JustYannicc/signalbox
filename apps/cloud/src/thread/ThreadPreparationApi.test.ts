@@ -8,7 +8,6 @@ import * as Stream from "effect/Stream";
 
 import { handleMcpRequest } from "../api/mcpRoutes.ts";
 import { setup, threadId } from "./preparationApiTesting.ts";
-import * as ThreadRunner from "./runner/ThreadRunner.ts";
 
 const decodeSnapshot = Schema.decodeUnknownSync(WorktreeSetupSnapshot);
 
@@ -17,8 +16,18 @@ describe("preparation through production API and MCP", () => {
     "serves status, targeted cancel, retained reconnect and same-run retry through HTTP, rejecting nonowners and stale or missing guards",
     () =>
       Effect.gen(function* () {
-        const { cloud, api, read, target, initial, strangerKey, readerKey, connect, changes } =
-          yield* setup;
+        const {
+          runnerWork,
+          runnerBatch,
+          api,
+          read,
+          target,
+          initial,
+          strangerKey,
+          readerKey,
+          connect,
+          changes,
+        } = yield* setup;
         expect(initial).toMatchObject({
           phase: "running",
           worktreePath: null,
@@ -57,16 +66,11 @@ describe("preparation through production API and MCP", () => {
         );
         expect(yield* Deferred.isDone(completed)).toBe(false);
         expect(yield* read).toMatchObject({ phase: "running", cancellationRequested: true });
-        yield* cloud.inThread(
-          threadId,
-          ThreadRunner.ThreadRunner.use((runner) =>
-            runner.batch({
-              generation: machine.generation,
-              sequence: 1,
-              items: [{ kind: "preparation.cancelled", ...target }],
-            }),
-          ),
-        );
+        yield* runnerBatch({
+          generation: machine.generation,
+          sequence: 1,
+          items: [{ kind: "preparation.cancelled", ...target }],
+        });
         expect((yield* Fiber.join(cancellation)).body).toEqual({ cancelled: true });
         expect((yield* api("worktreeSetup.cancel", target)).body).toEqual({ cancelled: true });
         const terminal = yield* read;
@@ -95,10 +99,7 @@ describe("preparation through production API and MCP", () => {
             .status,
         ).toBe(422);
         expect(yield* read).toEqual(retried);
-        yield* cloud.inThread(
-          threadId,
-          ThreadRunner.ThreadRunner.use((runner) => runner.work),
-        );
+        yield* runnerWork;
         expect(
           (yield* api("threads.interrupt", {
             commandId: "http-stop-retry",
@@ -108,22 +109,17 @@ describe("preparation through production API and MCP", () => {
           })).status,
         ).toBe(200);
         expect(yield* read).toMatchObject({ phase: "running", cancellationRequested: true });
-        yield* cloud.inThread(
-          threadId,
-          ThreadRunner.ThreadRunner.use((runner) =>
-            runner.batch({
-              generation: machine.generation,
-              sequence: 2,
-              items: [
-                {
-                  kind: "preparation.cancelled",
-                  ...target,
-                  preparationGeneration: retried.preparationGeneration!,
-                },
-              ],
-            }),
-          ),
-        );
+        yield* runnerBatch({
+          generation: machine.generation,
+          sequence: 2,
+          items: [
+            {
+              kind: "preparation.cancelled",
+              ...target,
+              preparationGeneration: retried.preparationGeneration!,
+            },
+          ],
+        });
         expect(yield* read).toMatchObject({ phase: "cancelled", runId: target.runId });
       }),
   );
@@ -132,7 +128,8 @@ describe("preparation through production API and MCP", () => {
     "discovers and executes the same functional status, cancel and retry operations over authenticated MCP",
     () =>
       Effect.gen(function* () {
-        const { cloud, layer, target, ownerKey, strangerKey, connect, changes } = yield* setup;
+        const { runnerWork, runnerBatch, layer, target, ownerKey, strangerKey, connect, changes } =
+          yield* setup;
         const Answer = Schema.Struct({
           result: Schema.optional(Schema.Unknown),
           error: Schema.optional(Schema.Unknown),
@@ -216,16 +213,11 @@ describe("preparation through production API and MCP", () => {
           Stream.runDrain,
         );
         expect(yield* Deferred.isDone(completed)).toBe(false);
-        yield* cloud.inThread(
-          threadId,
-          ThreadRunner.ThreadRunner.use((runner) =>
-            runner.batch({
-              generation: machine.generation,
-              sequence: 1,
-              items: [{ kind: "preparation.cancelled", ...target }],
-            }),
-          ),
-        );
+        yield* runnerBatch({
+          generation: machine.generation,
+          sequence: 1,
+          items: [{ kind: "preparation.cancelled", ...target }],
+        });
         const cancelled = yield* Fiber.join(cancellation);
         expect(cancelled.isError ?? false).toBe(false);
         expect(JSON.parse(cancelled.content[0]!.text)).toEqual({ cancelled: true });
@@ -250,10 +242,7 @@ describe("preparation through production API and MCP", () => {
         ] as const) {
           expect((yield* stranger.tool(operation, input)).isError).toBe(true);
         }
-        yield* cloud.inThread(
-          threadId,
-          ThreadRunner.ThreadRunner.use((runner) => runner.work),
-        );
+        yield* runnerWork;
         expect(
           (yield* owner.tool("threads.interrupt", {
             commandId: "mcp-stop-retry",
@@ -267,22 +256,17 @@ describe("preparation through production API and MCP", () => {
           phase: "running",
           cancellationRequested: true,
         });
-        yield* cloud.inThread(
-          threadId,
-          ThreadRunner.ThreadRunner.use((runner) =>
-            runner.batch({
-              generation: machine.generation,
-              sequence: 2,
-              items: [
-                {
-                  kind: "preparation.cancelled",
-                  ...target,
-                  preparationGeneration: target.preparationGeneration + 1,
-                },
-              ],
-            }),
-          ),
-        );
+        yield* runnerBatch({
+          generation: machine.generation,
+          sequence: 2,
+          items: [
+            {
+              kind: "preparation.cancelled",
+              ...target,
+              preparationGeneration: target.preparationGeneration + 1,
+            },
+          ],
+        });
         const stopped = yield* owner.tool("worktreeSetup.subscribe", { threadId });
         expect(decodeSnapshot(JSON.parse(stopped.content[0]!.text)).phase).toBe("cancelled");
       }),
