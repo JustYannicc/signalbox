@@ -78,10 +78,8 @@ const formatPendingPrimaryActionLabel = (input: {
   return input.questionIndex > 0 ? "Submit answers" : "Submit answer";
 };
 
-// A stop can take seconds to land, and then this slot becomes Resume, so
-// repeat Stop clicks would resume the run. Stop re-enables if it never lands.
+// A stop can take seconds to land. Stop re-enables if it never lands.
 const STOP_PENDING_MAX_MS = 10_000;
-const RESUME_AFTER_STOP_GUARD_MS = 1_000;
 
 const messageActionPillClassName =
   "inline-flex shrink-0 cursor-pointer items-center justify-center gap-1.5 whitespace-nowrap rounded-full bg-message-action font-medium text-base text-message-action-foreground shadow-xs shadow-message-action/24 outline-none hover:bg-message-action-hover focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background disabled:pointer-events-none disabled:opacity-64 disabled:shadow-none sm:text-sm";
@@ -127,11 +125,8 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
   else if (stopPhase === "landed" && canInterrupt) setStopPhase(null);
   const isStopping = stopPhase !== null;
   useEffect(() => {
-    if (stopPhase === null) return;
-    const timeout = setTimeout(
-      () => setStopPhase(null),
-      stopPhase === "pending" ? STOP_PENDING_MAX_MS : RESUME_AFTER_STOP_GUARD_MS,
-    );
+    if (stopPhase !== "pending") return;
+    const timeout = setTimeout(() => setStopPhase(null), STOP_PENDING_MAX_MS);
     return () => clearTimeout(timeout);
   }, [stopPhase]);
   const pointerFocusProps = preserveComposerFocusOnPointerDown
@@ -170,7 +165,9 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
               setStopPhase("pending");
               onInterrupt();
             }}
-            aria-label={isStopping ? "Stopping" : "Stop generation"}
+            aria-label={
+              stopPhase === "landed" ? "Stopped" : isStopping ? "Stopping" : "Stop generation"
+            }
           />
         }
       >
@@ -178,7 +175,9 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
           <rect x="2" y="2" width="8" height="8" rx="1.5" />
         </svg>
       </TooltipTrigger>
-      <TooltipPopup>{isStopping ? "Stopping…" : "Interrupt"}</TooltipPopup>
+      <TooltipPopup>
+        {stopPhase === "landed" ? "Stopped" : isStopping ? "Stopping…" : "Interrupt"}
+      </TooltipPopup>
     </Tooltip>
   );
 
@@ -347,7 +346,7 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
         isSendDisabled ||
         isConnecting ||
         isEnvironmentUnavailable ||
-        (showResume && isStopping) ||
+        (showResume && stopPhase === "pending") ||
         (!hasSendableContent && !showResume)
       }
       aria-label={submitStatus ?? submitLabel}
@@ -387,6 +386,16 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
       <TooltipPopup>{submitTooltip}</TooltipPopup>
     </Tooltip>
   );
+  // Repeat Stop clicks can outlast any cooldown, so the stopped button keeps its slot
+  // and Resume appears beside it.
+  if (showResume && stopPhase === "landed") {
+    return (
+      <div className="flex items-center gap-2">
+        {submit}
+        {renderStopGenerationButton(false)}
+      </div>
+    );
+  }
   if (compactTokens === null) return submit;
 
   return (

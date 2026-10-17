@@ -111,6 +111,8 @@ describe("ComposerPrimaryActions", () => {
 });
 
 describe("ComposerPrimaryActions stop pending state", () => {
+  const onInterrupt = vi.fn();
+  const onResume = vi.fn();
   function runningProps(canInterrupt: boolean) {
     return {
       compact: true,
@@ -128,8 +130,8 @@ describe("ComposerPrimaryActions stop pending state", () => {
       isPreparingWorktree: false,
       hasSendableContent: false,
       onPreviousPendingQuestion: () => {},
-      onInterrupt: () => {},
-      onResume: () => {},
+      onInterrupt,
+      onResume,
       onImplementPlanInNewThread: () => {},
     };
   }
@@ -142,6 +144,8 @@ describe("ComposerPrimaryActions stop pending state", () => {
   const clickStop = () => act(() => slot().click());
 
   beforeEach(() => {
+    onInterrupt.mockClear();
+    onResume.mockClear();
     vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
     vi.useFakeTimers();
     container = document.createElement("div");
@@ -156,15 +160,21 @@ describe("ComposerPrimaryActions stop pending state", () => {
     vi.unstubAllGlobals();
   });
 
-  it("blocks Resume briefly after a stop lands so repeat clicks do not resume", () => {
+  it("keeps repeat Stop clicks inert after the stop lands, with a separate Resume target", () => {
     clickStop();
     expect(slot()).toMatchObject({ ariaLabel: "Stopping", disabled: true });
 
     render(false);
-    expect(slot()).toMatchObject({ ariaLabel: "Resume thread", disabled: true });
+    act(() => vi.advanceTimersByTime(1_100));
+    for (let i = 0; i < 20; i++) clickStop();
+    expect(onInterrupt).toHaveBeenCalledTimes(1);
+    expect(onResume).not.toHaveBeenCalled();
+    expect(slot()).toMatchObject({ ariaLabel: "Stopped", disabled: true });
 
-    act(() => vi.advanceTimersByTime(1_000));
-    expect(slot().disabled).toBe(false);
+    const resume = container.querySelector<HTMLButtonElement>('button[aria-label="Resume thread"]');
+    expect(resume?.disabled).toBe(false);
+    act(() => resume?.click());
+    expect(onResume).toHaveBeenCalledTimes(1);
   });
 
   it("enables Stop at once for a new run started after the stop lands", () => {
