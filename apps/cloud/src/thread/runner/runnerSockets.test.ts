@@ -214,6 +214,93 @@ describe("runnerSockets", () => {
     );
   });
 
+  it.effect("fails visibly if the replacement Runner still cannot enforce secret filters", () => {
+    const database = freshDatabase();
+    let tokenReads = 0;
+    const creation = {
+      ...personal,
+      secrets: {
+        top: [],
+        projects: {},
+        thread: [OnePasswordEnvironmentId.make("env-scoped")],
+        environmentNames: { top: [], projects: {}, thread: [["SHARED"]] },
+      },
+    };
+    const options = {
+      secretsToken: () =>
+        Effect.sync(() => {
+          tokenReads += 1;
+          return "ops_fake_scope_test";
+        }),
+    };
+    return Effect.gen(function* () {
+      yield* withObject(
+        database,
+        (engine, runner) =>
+          Effect.gen(function* () {
+            yield* launch(engine, "launch-scoped", creation);
+            const plan = yield* runner.reconcile;
+            if (plan.ensure === null) throw new Error("expected a machine request");
+            yield* runner.ensured(plan.ensure.generation);
+            yield* runner.hello({
+              ...hello(plan.ensure.generation, plan.ensure.token),
+              secretScopes: false,
+            });
+            expect((yield* runner.reconcile).release).toBe(plan.ensure.generation);
+          }),
+        options,
+      );
+
+      // The replacement budget survives the object waking up again.
+      yield* withObject(
+        database,
+        (engine, runner) =>
+          Effect.gen(function* () {
+            const replacement = yield* runner.reconcile;
+            if (replacement.ensure === null) throw new Error("expected a replacement");
+            yield* runner.ensured(replacement.ensure.generation);
+            const sockets: Array<WebSocket> = [];
+            const host = yield* hostFor(runner, sockets);
+            const old = fakeSocket();
+            sockets.push(old.socket);
+            yield* say(host, old, {
+              ...hello(replacement.ensure.generation, replacement.ensure.token),
+              secretScopes: false,
+            });
+            expect(old.sent.map((message) => message.type)).toEqual(["welcome"]);
+            expect(tokenReads).toBe(0);
+            expect(yield* runner.reconcile).toMatchObject({
+              release: replacement.ensure.generation,
+              stop: true,
+              wakeAt: null,
+            });
+            const { projection } = yield* snapshot(engine);
+            expect(projection.runs.map((run) => run.status)).toEqual(["failed"]);
+            expect(projection.turnItems.find((item) => item.type === "error")).toMatchObject({
+              failure: {
+                message:
+                  "This machine's Runner is too old to load folder secrets. Try again after the Runner update finishes.",
+              },
+            });
+            expect((yield* runner.reconcile).ensure).toBeNull();
+
+            yield* send(engine, 2, "Try again after the update", creation);
+            const retry = yield* runner.reconcile;
+            if (retry.ensure === null) throw new Error("expected a new machine request");
+            yield* runner.ensured(retry.ensure.generation);
+            const current = fakeSocket();
+            sockets.push(current.socket);
+            yield* say(host, current, hello(retry.ensure.generation, retry.ensure.token));
+            const start = current.sent.find((message) => message.type === "turn.start");
+            if (start?.type !== "turn.start") throw new Error("expected the retry turn");
+            expect(start.secrets?.environmentNames).toEqual([["SHARED"]]);
+            expect(tokenReads).toBe(1);
+          }),
+        options,
+      );
+    });
+  });
+
   it.effect("holds a waiting turn back while its pull requests are being read (#495)", () =>
     withObject(freshDatabase(), (engine, runner) =>
       Effect.gen(function* () {

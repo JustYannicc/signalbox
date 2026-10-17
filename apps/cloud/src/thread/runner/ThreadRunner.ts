@@ -637,6 +637,7 @@ const make = Effect.gen(function* () {
     generation: lease.generation,
     machineClass: lease.machineClass,
     movedUp: lease.movedUp,
+    secretUpgradeRunId: lease.secretUpgradeRunId,
   });
 
   /** Ends the lease's machine session in the diagnostics. */
@@ -1048,6 +1049,7 @@ const make = Effect.gen(function* () {
           readonly recover?: boolean;
           readonly lost?: boolean;
           readonly idleSince?: number;
+          readonly secretUpgradeRunId?: RunId;
         }) => {
           const events =
             projection === null || run === undefined
@@ -1063,7 +1065,10 @@ const make = Effect.gen(function* () {
             projection === null ? Effect.void : sessionEnded(lease, { ...input, runId, now }),
             {
               events,
-              machine: released(lease),
+              machine: {
+                ...released(lease),
+                secretUpgradeRunId: input.secretUpgradeRunId ?? lease.secretUpgradeRunId,
+              },
               result: {
                 ...UNNEEDED,
                 release: lease.generation,
@@ -1098,6 +1103,7 @@ const make = Effect.gen(function* () {
               requestedAt: now,
               machineClass,
               movedUp: lease.movedUp,
+              secretUpgradeRunId: lease.secretUpgradeRunId,
             },
             result: {
               ...IDLE,
@@ -1143,10 +1149,23 @@ const make = Effect.gen(function* () {
             recover: run !== undefined,
           });
         }
-        if (needsSecretUpgrade(lease, run, (yield* Effect.orDie(store.secrets)).length > 0)) {
+        if (
+          run !== undefined &&
+          needsSecretUpgrade(lease, run, (yield* Effect.orDie(store.secrets)).length > 0)
+        ) {
+          const exhausted = lease.secretUpgradeRunId === run.id;
           return yield* release({
             reason: "error",
-            detail: "Replacing a Runner that cannot enforce secret name filters.",
+            detail: exhausted
+              ? "The replacement Runner still cannot enforce secret name filters."
+              : "Replacing a Runner that cannot enforce secret name filters.",
+            secretUpgradeRunId: run.id,
+            ...(exhausted
+              ? {
+                  failure:
+                    "This machine's Runner is too old to load folder secrets. Try again after the Runner update finishes.",
+                }
+              : {}),
           });
         }
         if (run !== undefined || (yield* previews.held)) {

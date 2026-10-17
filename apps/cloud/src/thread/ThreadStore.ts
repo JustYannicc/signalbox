@@ -4,6 +4,7 @@ import {
   CommandId,
   type OrchestrationV2DomainEvent,
   OrchestrationV2DomainEventJson,
+  RunId,
 } from "@t3tools/contracts";
 import { SignalboxContextId } from "@t3tools/contracts/signalboxContexts";
 import {
@@ -100,6 +101,8 @@ export interface MachineLease {
   readonly steers?: boolean | undefined;
   /** This generation enforces per-Environment secret name filters. */
   readonly secretScopes?: boolean | undefined;
+  /** The run that already replaced an incapable Runner; kept across leases to bound rollout retries. */
+  readonly secretUpgradeRunId?: RunId | undefined;
   /**
    * The idle machine was asked to save everything before it goes (#493), at
    * `id` (when it was asked), and whether it answered and what it couldn't save.
@@ -399,6 +402,7 @@ const MachineLeaseJson = Schema.fromJsonString(
     drains: Schema.optional(Schema.Boolean),
     steers: Schema.optional(Schema.Boolean),
     secretScopes: Schema.optional(Schema.Boolean),
+    secretUpgradeRunId: Schema.optional(RunId),
     drain: Schema.optional(
       Schema.Union([
         Schema.Struct({ _tag: Schema.Literal("asked"), id: Schema.Number }),
