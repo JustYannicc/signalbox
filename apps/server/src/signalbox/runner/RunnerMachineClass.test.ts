@@ -1,6 +1,13 @@
 import { describe, expect, it } from "@effect/vitest";
+import type { ProviderAdapterV2Event } from "@t3tools/provider-core/server/ProviderAdapter";
 
-import { heavyCommand } from "./RunnerMachineClass.ts";
+import { heavyCommand, outgrownBy } from "./RunnerMachineClass.ts";
+
+const dynamicToolEvent = (toolName: string | null, status: "pending" | "running" | "completed") =>
+  ({
+    type: "turn_item.updated",
+    turnItem: { type: "dynamic_tool", toolName, status },
+  }) as unknown as ProviderAdapterV2Event;
 
 describe("heavyCommand", () => {
   it("finds builds, tests, installs and dev servers", () => {
@@ -54,6 +61,33 @@ describe("heavyCommand", () => {
     expect(heavyCommand("bunx tsx scripts/check-config.ts")).toBe("bunx");
     expect(heavyCommand("./apps/web/node_modules/.bin/eslint .")).toBe("eslint");
     expect(heavyCommand("node scripts/check-config.js")).toBe("node");
+  });
+
+  it("keeps Node version queries light while Node code stays heavy", () => {
+    for (const command of ["node -v", "node --version", "nodejs -v", "nodejs --version"]) {
+      expect(heavyCommand(command)).toBeNull();
+    }
+    expect(heavyCommand("node -e \"require('./package.json')\"")).toBe("node");
+    expect(heavyCommand("node -p \"require('./package.json').name\"")).toBe("node");
+  });
+
+  it("moves a running preview service start tool to a heavy machine across adapter names", () => {
+    const reason = "Starting `preview_service_start`, a dev server that needs a bigger machine.";
+    for (const toolName of [
+      "preview_service_start",
+      "mcp__signalbox__preview_service_start",
+      "signalbox.preview_service_start",
+      "signalbox_preview_service_start",
+    ]) {
+      expect(outgrownBy(dynamicToolEvent(toolName, "pending"))).toBe(reason);
+      expect(outgrownBy(dynamicToolEvent(toolName, "running"))).toBe(reason);
+    }
+    expect(outgrownBy(dynamicToolEvent("mcp__signalbox__preview_service_stop", "running"))).toBe(
+      null,
+    );
+    expect(outgrownBy(dynamicToolEvent("mcp__signalbox__preview_service_start", "completed"))).toBe(
+      null,
+    );
   });
 
   it("does not classify package or Node commands written as shell data", () => {

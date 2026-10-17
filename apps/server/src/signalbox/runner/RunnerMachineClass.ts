@@ -43,6 +43,15 @@ const HEAVY_TOOLS: ReadonlySet<string> = new Set([
   "nodejs",
 ]);
 
+/** This tool declares a server that the next machine must keep running. */
+const PREVIEW_SERVICE_START_TOOL_NAMES: ReadonlySet<string> = new Set([
+  "preview_service_start",
+  // MCP names from the Codex/Cursor/Pi, ACP, and OpenCode adapters.
+  "mcp__signalbox__preview_service_start",
+  "signalbox.preview_service_start",
+  "signalbox_preview_service_start",
+]);
+
 /** Tools whose run is heavy with one of these subcommands, within the next few words. */
 const HEAVY_SUBCOMMANDS: ReadonlyMap<string, ReadonlySet<string>> = new Map(
   Object.entries({
@@ -202,6 +211,10 @@ const heavyTool = (words: ReadonlyArray<string>): string | null => {
     return script === undefined ? null : heavyCommand(script);
   }
   if (tool === "npx" || tool === "bunx") return heavyTool(words.slice(start + 1)) ?? tool;
+  if (tool === "node" || tool === "nodejs") {
+    const args = words.slice(start + 1);
+    return args.length === 1 && (args[0] === "-v" || args[0] === "--version") ? null : tool;
+  }
   if (HEAVY_TOOLS.has(tool)) return tool;
   const subcommands = HEAVY_SUBCOMMANDS.get(tool);
   const args = words.slice(start + 1, start + 1 + SUBCOMMAND_REACH);
@@ -233,6 +246,13 @@ export const heavyCommand = (command: string): string | null => {
 export const outgrownBy = (event: ProviderAdapterV2Event): string | null => {
   if (event.type !== "turn_item.updated") return null;
   const item = event.turnItem;
+  if (item.type === "dynamic_tool") {
+    return (item.status === "running" || item.status === "pending") &&
+      item.toolName !== null &&
+      PREVIEW_SERVICE_START_TOOL_NAMES.has(item.toolName)
+      ? "Starting `preview_service_start`, a dev server that needs a bigger machine."
+      : null;
+  }
   if (item.type !== "command_execution") return null;
   if (item.status === "running" || item.status === "pending") {
     const tool = heavyCommand(item.input);

@@ -1729,6 +1729,35 @@ describe("RunnerTurns", () => {
           },
         } as ProviderAdapterV2Event;
       };
+      const previewServiceStart = (
+        status: "pending" | "running" | "completed",
+        toolName: string,
+      ) => {
+        const now = DateTime.makeUnsafe(0);
+        return {
+          type: "turn_item.updated",
+          driver,
+          turnItem: {
+            id: TurnItemId.make("preview-service-start"),
+            threadId,
+            runId: RunId.make("run-1"),
+            nodeId: null,
+            providerThreadId: providerThread.id,
+            providerTurnId: ProviderTurnId.make("native-1"),
+            nativeItemRef: null,
+            parentItemId: null,
+            ordinal: 1,
+            status,
+            title: null,
+            startedAt: now,
+            completedAt: status === "completed" ? now : null,
+            updatedAt: now,
+            type: "dynamic_tool",
+            toolName,
+            input: { port: 5173, command: "npm run dev" },
+          },
+        } as ProviderAdapterV2Event;
+      };
 
       /** A light machine's turn with a drive, and everything it did in order. */
       const lightTurn = (machineClass: "light" | "heavy", saveFailure?: "drive" | "session") =>
@@ -1736,6 +1765,8 @@ describe("RunnerTurns", () => {
           const fake = yield* makeFakeAdapter;
           const log: Array<string> = [];
           const reported: Array<RunnerItem> = [];
+          const started = yield* Deferred.make<void>();
+          const handedOff = yield* Deferred.make<void>();
           const original = yield* makeFakeSessions(log);
           const sessions: RunnerSessions = {
             ...original.sessions,
@@ -1772,7 +1803,16 @@ describe("RunnerTurns", () => {
               Effect.sync(() => {
                 reported.push(item);
                 log.push(item.kind === "provider" ? `emit ${String(item.event.type)}` : item.kind);
-              }),
+              }).pipe(
+                Effect.andThen(() =>
+                  item.kind === "turn.started"
+                    ? Deferred.succeed(started, undefined)
+                    : item.kind === "machine.outgrown"
+                      ? Deferred.succeed(handedOff, undefined)
+                      : Effect.void,
+                ),
+                Effect.asVoid,
+              ),
             openDrive: () => Effect.succeed(drive),
             sessions,
             machineClass,
@@ -1784,9 +1824,9 @@ describe("RunnerTurns", () => {
             drive: { driveId: "my/personal/user_1", token: "sbd1.x.y", remoteToken: null },
             sessions: { token: "sbs1.t.1" },
           });
-          yield* settle;
+          yield* Deferred.await(started);
           log.length = 0;
-          return { fake, log, reported, turns };
+          return { fake, log, reported, turns, handedOff };
         });
 
       it.effect.each(["drive", "session"] as const)(
@@ -1866,15 +1906,112 @@ describe("RunnerTurns", () => {
           ),
       );
 
+      it.effect(
+        "clears usage attribution when a failed handoff leaves drive notices for the next run",
+        () =>
+          Effect.scoped(
+            Effect.gen(function* () {
+              const fake = yield* makeFakeAdapter;
+              const reported: Array<RunnerItem> = [];
+              const started = yield* Deferred.make<void>();
+              const failedHandoff = yield* Deferred.make<void>();
+              const idleUsage = yield* Deferred.make<void>();
+              const nextNotice = yield* Deferred.make<void>();
+              let changed = false;
+              const drive = {
+                prepare: () =>
+                  Effect.succeed({ instructions: "", notices: [] } satisfies PreparedDrive),
+                autosave: Effect.void,
+                flush: Effect.void,
+                restoreDependencyEdits: Effect.void,
+                saveNow: Effect.fail(new RunnerGitError({ message: "file store unavailable" })),
+                changed: Effect.sync(() => changed),
+              } as unknown as RunnerDrive;
+              const turns = yield* makeRunnerTurns({
+                threadId,
+                adapters: new Map([[instanceId, fake.adapter]]),
+                cwd: "/tmp",
+                useModelToken: () => Effect.void,
+                usage: countingUsage(),
+                emit: (item) =>
+                  Effect.gen(function* () {
+                    reported.push(item);
+                    if (item.kind === "turn.started") yield* Deferred.succeed(started, undefined);
+                    if (item.kind === "turn.failed")
+                      yield* Deferred.succeed(failedHandoff, undefined);
+                    if (item.kind === "usage" && item.runId === null) {
+                      yield* Deferred.succeed(idleUsage, undefined);
+                    }
+                    if (item.kind === "drive.notice" && item.runId === RunId.make("run-2")) {
+                      yield* Deferred.succeed(nextNotice, undefined);
+                    }
+                  }),
+                openDrive: () => Effect.succeed(drive),
+                machineClass: "light",
+              });
+              yield* Deferred.succeed(fake.loaded, undefined);
+              yield* turns.start({
+                turn: turnFor(1),
+                modelToken: "token-1",
+                drive: { driveId: "my/personal/user_1", token: "sbd1.x.y", remoteToken: null },
+              });
+              yield* Deferred.await(started);
+              yield* Queue.offer(fake.events, providerTurnStarted(1));
+              yield* Queue.offer(
+                fake.events,
+                previewServiceStart("running", "mcp__signalbox__preview_service_start"),
+              );
+              yield* Deferred.await(failedHandoff);
+
+              const failed = reported.find((item) => item.kind === "turn.failed");
+              expect(failed?.kind === "turn.failed" ? failed.runId : null).toBe(
+                RunId.make("run-1"),
+              );
+              expect(failed?.kind === "turn.failed" ? failed.message : "").toContain(
+                "could not move to a larger machine because its state could not be saved",
+              );
+              expect(reported.some((item) => item.kind === "machine.outgrown")).toBe(false);
+
+              yield* Queue.offer(fake.events, turnEnded(1));
+              changed = true;
+              yield* TestClock.adjust("5 minutes");
+              yield* Deferred.await(idleUsage);
+
+              expect(reported.map(label)).toContain("usage null 2");
+              expect(reported.map(label)).not.toContain("usage run-1 2");
+              expect(
+                reported.some(
+                  (item) => item.kind === "drive.notice" && item.runId === RunId.make("run-1"),
+                ),
+              ).toBe(false);
+
+              yield* turns.start({
+                turn: turnFor(2),
+                modelToken: "token-2",
+                drive: { driveId: "my/personal/user_1", token: "sbd1.x.y", remoteToken: null },
+              });
+              yield* Deferred.await(nextNotice);
+
+              const notice = reported.find((item) => item.kind === "drive.notice");
+              expect(notice?.kind === "drive.notice" ? notice.runId : null).toBe(
+                RunId.make("run-2"),
+              );
+              expect(notice?.kind === "drive.notice" ? notice.message : "").toContain(
+                "Saving this thread's latest changes failed",
+              );
+            }),
+          ),
+      );
+
       it.effect("saves everything, then hands a build to a heavy machine and drops the rest", () =>
         Effect.scoped(
           Effect.gen(function* () {
-            const { fake, log } = yield* lightTurn("light");
+            const { fake, log, handedOff } = yield* lightTurn("light");
             yield* Queue.offer(fake.events, command("running", "sed -n 1,5p notes.md"));
             yield* Queue.offer(fake.events, command("running", "/bin/bash -lc 'npm run build'"));
             yield* Queue.offer(fake.events, command("completed", "npm run build"));
             yield* Queue.offer(fake.events, turnEnded(1));
-            for (let round = 0; round < 30; round++) yield* Effect.yieldNow;
+            yield* Deferred.await(handedOff);
 
             expect(log).toEqual([
               "settle turn_item.updated",
@@ -1883,6 +2020,27 @@ describe("RunnerTurns", () => {
               // The build shows as started, so the thread can report it interrupted.
               "emit turn_item.updated",
               // Everything saved, as for any machine about to go (#493).
+              "drive save",
+              "flush codex",
+              "machine.outgrown",
+            ]);
+          }),
+        ),
+      );
+
+      it.effect("saves before handing a preview service start to a heavy machine", () =>
+        Effect.scoped(
+          Effect.gen(function* () {
+            const { fake, log, handedOff } = yield* lightTurn("light");
+            yield* Queue.offer(
+              fake.events,
+              previewServiceStart("running", "mcp__signalbox__preview_service_start"),
+            );
+            yield* Deferred.await(handedOff);
+
+            expect(log).toEqual([
+              "settle turn_item.updated",
+              "emit turn_item.updated",
               "drive save",
               "flush codex",
               "machine.outgrown",

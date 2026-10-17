@@ -1,5 +1,6 @@
 import type { RunId } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
+import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as TestClock from "effect/testing/TestClock";
@@ -25,6 +26,7 @@ import {
 } from "./runnerTestKit.ts";
 import { remoteThreadWorktree } from "../../user/contextProjects.ts";
 import { DRAIN_TIMEOUT_MS } from "./ThreadRunner.ts";
+import * as ThreadStore from "../ThreadStore.ts";
 
 /** A backend that does nothing, with its class's idle tail. */
 const fakeBackend = (kind: "cloudflare" | "boat", idleTailMs: number): MachineBackendShape => {
@@ -68,6 +70,28 @@ const outgrown = (runId: RunId) =>
   }) as const;
 
 describe("machine classes", () => {
+  it.effect("keeps a pre-upgrade heavy repo thread heavy after an eviction", () =>
+    Effect.gen(function* () {
+      const filename = freshDatabase();
+      yield* withObject(
+        filename,
+        (engine, _runner, context) =>
+          Effect.gen(function* () {
+            yield* launch(engine, "launch-1", onRemote);
+            // Repo threads used to be heavy without ever setting movedUp.
+            yield* Context.get(context, ThreadStore.ThreadStore).saveMachine({
+              ...ThreadStore.NO_MACHINE,
+              generation: 3,
+              machineClass: "heavy",
+            });
+          }),
+        options,
+      );
+      const next = yield* withObject(filename, (_engine, runner) => runner.reconcile, options);
+      expect(next).toMatchObject({ ensure: { generation: 4 }, machineClass: "heavy" });
+    }),
+  );
+
   it.effect("starts remote repo threads light until a command needs a heavy machine", () =>
     Effect.gen(function* () {
       const light = yield* withObject(

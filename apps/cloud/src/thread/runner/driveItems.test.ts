@@ -27,19 +27,17 @@ const projection = {
   turnItems: [],
 } as unknown as OrchestrationV2ThreadProjection;
 const contextAt = (at: string): DecisionContext => ({ now: DateTime.makeUnsafe(at) });
+const decodeTurnItem = Schema.decodeSync(OrchestrationV2TurnItem);
+const encodeTurnItem = Schema.encodeSync(OrchestrationV2TurnItem);
 
 function itemFromProgress(
-  input: typeof DependencyProgress.Type,
+  input: DependencyProgress,
   context: DecisionContext,
   existing = projection,
 ) {
   const event = dependencyProgressEvents(existing, run, input, context)[0];
   if (event?.type !== "turn-item.updated") throw new Error("Expected a turn item event");
-  expect(
-    Schema.decodeUnknownSync(OrchestrationV2TurnItem)(
-      Schema.encodeSync(OrchestrationV2TurnItem)(event.payload),
-    ),
-  ).toEqual(event.payload);
+  expect(decodeTurnItem(encodeTurnItem(event.payload))).toEqual(event.payload);
   return event.payload;
 }
 
@@ -104,8 +102,10 @@ describe("runner dependency progress", () => {
     });
   });
 
-  it("records reused dependencies as informational and install failures as warnings", () => {
-    const reused = itemFromProgress(
+  it("keeps reuse quiet and records install failures as warnings", () => {
+    const reused = dependencyProgressEvents(
+      projection,
+      run,
       {
         root: "",
         status: "reused",
@@ -114,13 +114,7 @@ describe("runner dependency progress", () => {
       },
       contextAt("2026-01-01T00:00:03Z"),
     );
-    expect(reused).toMatchObject({
-      id: `turn-item:${runId}:dependencies:`,
-      type: "notification",
-      status: "completed",
-      source: { kind: "system" },
-      outcome: "completed",
-    });
+    expect(reused).toEqual([]);
 
     const startedAt = "2026-01-01T00:00:00Z";
     const install = itemFromProgress(

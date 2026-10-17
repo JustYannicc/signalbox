@@ -104,7 +104,7 @@ describe("RunnerDependencies", () => {
         const failed = yield* prepare(machine);
         expect(failed.progress.map((update) => update.status)).toEqual(["installing", "failed"]);
         const again = yield* prepare(machine);
-        expect(again.progress).toMatchObject([{ root: "app", status: "failed" }]);
+        expect(again.progress).toEqual([]);
         expect(machine.installs()).toHaveLength(2);
       }),
     ),

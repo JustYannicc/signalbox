@@ -138,6 +138,7 @@ export function dependencyProgressEvents(
 ): ReadonlyArray<OrchestrationV2DomainEvent> {
   const id = TurnItemId.make(`turn-item:${run.id}:dependencies:${progress.root}`);
   const previous = projection.turnItems.find((item) => item.id === id);
+  if (progress.status === "reused" && previous === undefined) return [];
   const status =
     progress.status === "installing"
       ? "running"

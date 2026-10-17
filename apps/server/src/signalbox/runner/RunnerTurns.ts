@@ -338,14 +338,22 @@ export const makeRunnerTurns = Effect.fn("makeRunnerTurns")(function* (input: {
   const mergeProviderTurns = new Set<ProviderTurnId>();
   /** Runs that moved to a heavy machine: this one does nothing more for them. */
   const outgrown = new Set<RunId>();
-  /** Commands already checked, by item and phase: a running one repeats as its output grows. */
+  /** Classified commands and dev-server tools, by item and phase. */
   const classified = new Set<string>();
-  /** Why `event` moves its run up, checking each command once as it starts and once as it ends. */
+  /** Checks commands once at start/end and a declared dev server once when it starts. */
   const outgrownByOnce = (event: ProviderAdapterV2Event) => {
-    if (event.type !== "turn_item.updated" || event.turnItem.type !== "command_execution") {
-      return null;
+    if (event.type !== "turn_item.updated") return null;
+    const item = event.turnItem;
+    if (item.type === "dynamic_tool") {
+      const reason = outgrownBy(event);
+      if (reason === null) return null;
+      const key = `${item.id}:start`;
+      if (classified.has(key)) return null;
+      classified.add(key);
+      return reason;
     }
-    const { id, status } = event.turnItem;
+    if (item.type !== "command_execution") return null;
+    const { id, status } = item;
     const key = `${id}:${status === "running" || status === "pending" ? "start" : "end"}`;
     if (classified.has(key)) return null;
     classified.add(key);
@@ -359,14 +367,14 @@ export const makeRunnerTurns = Effect.fn("makeRunnerTurns")(function* (input: {
    */
   let heldNotices: ReadonlyArray<string> = [];
   const driveNotice = (message: string) =>
-    Effect.suspend(() => {
-      const runId = runningRunId;
-      if (runId !== null) {
-        return ordered.withPermits(1)(input.emit({ kind: "drive.notice", runId, message }));
-      }
-      heldNotices = message === SAVED_AGAIN_NOTICE ? [] : [...heldNotices, message];
-      return Effect.logWarning(message);
-    });
+    ordered.withPermits(1)(
+      Effect.suspend(() => {
+        const runId = runningRunId;
+        if (runId !== null) return input.emit({ kind: "drive.notice", runId, message });
+        heldNotices = message === SAVED_AGAIN_NOTICE ? [] : [...heldNotices, message];
+        return Effect.logWarning(message);
+      }),
+    );
 
   /** Installs only on a machine that can keep the turn; a light machine moves up on demand. */
   const prepareDependencies = (runId: RunId) => {
@@ -408,11 +416,16 @@ export const makeRunnerTurns = Effect.fn("makeRunnerTurns")(function* (input: {
       const unsaved = yield* drain;
       if (unsaved.length > 0) {
         yield* interrupt(runId);
-        yield* input.emit({
-          kind: "turn.failed",
-          runId,
-          message: `This turn could not move to a larger machine because its state could not be saved. ${unsaved.join(" ")}`,
-        });
+        yield* ordered.withPermits(1)(
+          Effect.gen(function* () {
+            if (runningRunId === runId) runningRunId = null;
+            yield* input.emit({
+              kind: "turn.failed",
+              runId,
+              message: `This turn could not move to a larger machine because its state could not be saved. ${unsaved.join(" ")}`,
+            });
+          }),
+        );
         return;
       }
       yield* input.emit({ kind: "machine.outgrown", runId, reason });

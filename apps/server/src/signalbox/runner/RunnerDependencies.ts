@@ -400,11 +400,6 @@ export const makeRunnerDependencies = Effect.fn("makeRunnerDependencies")(functi
         yield* Effect.logInfo("dependencies failed at this key before; not retried", {
           root: root.relative,
         });
-        yield* progress({
-          root: root.relative,
-          status: "failed",
-          message: `The last automatic dependency install in ${where(root)} failed. It has not been retried.`,
-        });
         return { _tag: "skipped" } as const;
       }
       const started = yield* Clock.currentTimeMillis;

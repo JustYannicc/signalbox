@@ -1067,7 +1067,7 @@ const make = Effect.gen(function* () {
           const token = yield* newToken;
           const machineClass = machineClassFor({
             worktreePath: projection.thread.worktreePath,
-            movedUp: lease.movedUp === true,
+            movedUp: lease.movedUp === true || lease.machineClass === "heavy",
           });
           if (run !== undefined) {
             yield* diagnostics.machineRequested({ generation, run, now, machineClass });
