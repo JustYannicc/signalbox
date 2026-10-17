@@ -31,6 +31,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v6
         with:
+          fetch-depth: 0
           sparse-checkout: |
             /*
             !/.repos/
@@ -53,6 +54,14 @@ jobs:
 
       - name: Ensure Electron runtime is installed
         run: vp run --filter @t3tools/desktop ensure:electron
+
+      - name: Check module boundaries
+        env:
+          BOUNDARIES_BASE: ${{ github.event.pull_request.base.sha || github.event.before || 'origin/main' }}
+        run: |
+          git fetch --no-tags https://github.com/pingdotgg/t3code.git main:refs/remotes/upstream/main
+          node --test scripts/boundaries/tests.mjs
+          vp run lint:boundaries --base "$BOUNDARIES_BASE"
 
       - name: Check unused code
         run: vp run knip:check
@@ -197,7 +206,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3, 4, 5, 6]
+        # Every shard still covers its share of the full suite. Small PRs need
+        # fewer runner startups; main and larger diffs keep the faster split.
+        shard: ${{ fromJSON(github.event_name == 'pull_request' && github.event.pull_request.changed_files > 0 && github.event.pull_request.changed_files <= 10 && '[1,2,3]' || '[1,2,3,4,5,6]') }}
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -275,10 +286,11 @@ jobs:
       - name: Exercise release-only workflow steps
         run: node scripts/release-smoke.ts
 
-  # Fails when a PR adds conflicts with upstream T3 Code: files that conflict for
-  # the PR head but not for its base, so a sync conflict pending on main doesn't
-  # block every PR. On main it only reports. A PR that merges upstream also
-  # fails when it drops a `signalbox:` hook line.
+  # Reports, as warnings, the conflicts a PR adds with upstream T3 Code: files
+  # that conflict for the PR head but not for its base. Upstream doesn't
+  # constrain design (AGENTS.md), so they never fail the PR; they are the next
+  # sync's cost. A PR that merges upstream fails when it drops a `signalbox:`
+  # hook line.
   upstream_merge:
     name: Upstream Merge
     runs-on: ubuntu-latest
@@ -312,7 +324,7 @@ jobs:
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
           case "$EVENT_NAME" in
-            pull_request) set -- --base "$BASE_SHA" --head "$HEAD_SHA" ;;
+            pull_request) set -- --base "$BASE_SHA" --head "$HEAD_SHA" --report ;;
             push) set -- --base HEAD --report ;;
             *) set -- --base origin/main ;;
           esac
