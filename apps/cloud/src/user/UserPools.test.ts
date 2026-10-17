@@ -306,4 +306,56 @@ describe("UserPools config subscriptions", () => {
       expect(didRecover).toBe(true);
     }).pipe(Effect.scoped, Effect.ensuring(Effect.sync(() => vi.useRealTimers())));
   });
+
+  it.effect("keeps a healthy pool's accounts across concurrent reads with a stalled pool", () => {
+    const cloud = makeMemoryCloud();
+    return Effect.gen(function* () {
+      const pools = yield* UserPools.UserPools;
+      yield* pools.state(actor);
+      const personal = cloud.pools.directory.forPool(`${userId}:personal`);
+      const login = yield* personal.startLogin(actor, "claude");
+      yield* personal.completeLogin(actor, `http://localhost/callback?code=c&state=${login.state}`);
+      yield* personal.loginStatus(actor, login.state);
+      const slow = yield* pools.create(actor, { name: "Slow" });
+      const healthyAccounts = (yield* pools.state(actor)).find((entry) => entry.pool.personal)
+        ?.source.accounts;
+      expect(healthyAccounts).toHaveLength(1);
+      const slowPool = (yield* pools.list(actor)).find((pool) => pool.id === slow.id);
+      if (slowPool === undefined) throw new Error("Expected the slow pool to exist");
+      const slowObject = cloud.pools.objectFor(slowPool.objectName);
+      const originalAccounts = slowObject.api.accounts;
+      const pending: Array<() => void> = [];
+      const { promise: started, resolve: signalStart } = Promise.withResolvers<void>();
+      cloud.pools.objects.set(slowPool.objectName, {
+        ...slowObject,
+        api: {
+          ...slowObject.api,
+          accounts: (reader) => {
+            signalStart();
+            return new Promise((resolve, reject) => {
+              pending.push(() => void originalAccounts(reader).then(resolve, reject));
+            });
+          },
+        },
+      });
+
+      yield* TestClock.adjust(PoolEngine.ACCOUNTS_FRESH_MS + 1);
+      const reads = yield* Effect.forkChild(
+        Effect.all([pools.state(actor), pools.state(actor), pools.state(actor)], {
+          concurrency: "unbounded",
+        }),
+      );
+      yield* Effect.promise(() => started);
+      yield* TestClock.adjust(UserPools.POOL_SNAPSHOT_TIMEOUT_MS + 1);
+      const states = yield* Fiber.join(reads);
+      for (const state of states) {
+        const healthy = state.find((entry) => entry.pool.personal);
+        expect(healthy?.source.accounts).toEqual(healthyAccounts);
+        expect(healthy?.source.error).toBeUndefined();
+        expect(state.find((entry) => entry.pool.id === slow.id)?.source.error).toBeTruthy();
+      }
+      expect(pending).toHaveLength(1);
+      for (const release of pending) release();
+    }).pipe(Effect.provide(cloud.userObject(userId)), Effect.scoped);
+  });
 });

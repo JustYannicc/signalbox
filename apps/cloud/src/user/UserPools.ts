@@ -56,6 +56,11 @@ import {
 /** Every pool, in order, with its accounts. */
 export type PoolsState = ReadonlyArray<PoolEntry>;
 
+interface PoolSnapshot {
+  readonly state: PoolsState;
+  readonly checkedAt: number;
+}
+
 /** One pool object gets this long to answer its part of a user snapshot. */
 const POOL_ACCOUNT_READ_TIMEOUT_MS = 1_000;
 
@@ -184,9 +189,7 @@ const make = Effect.gen(function* () {
   const newPoolId = Effect.map(Effect.orDie(crypto.randomUUIDv4()), (uuid) =>
     uuid.replaceAll("-", "").slice(0, 8),
   );
-  const current = yield* SubscriptionRef.make(
-    Option.none<{ readonly state: PoolsState; readonly checkedAt: number }>(),
-  );
+  const current = yield* SubscriptionRef.make(Option.none<PoolSnapshot>());
   const reading = yield* Semaphore.make(1);
 
   const entryFor = (
@@ -247,55 +250,66 @@ const make = Effect.gen(function* () {
     });
 
   /** Reads every pool's accounts and shares the result with every subscriber. */
-  const unavailableState = (actor: PoolActor, message: string) =>
+  const unavailableState = (observed: Option.Option<PoolSnapshot>, message: string) =>
     Effect.gen(function* () {
+      const latest = yield* SubscriptionRef.get(current);
+      if (latest !== observed && Option.isSome(latest)) return latest.value.state;
       // The user object owns pool names; don't reuse account details from an older read here.
       const all = yield* rows.pipe(Effect.catchTags({ SqlError: storageFailed }));
       const now = yield* Clock.currentTimeMillis;
       const state = all.map((pool) => entryFor(pool, { error: message }, now));
-      yield* SubscriptionRef.set(current, Option.some({ state, checkedAt: now }));
-      return state;
+      return yield* SubscriptionRef.modify(current, (known) =>
+        known !== observed && Option.isSome(known)
+          ? [known.value.state, known]
+          : [state, Option.some({ state, checkedAt: now })],
+      );
     });
 
   const refresh: UserPools["Service"]["refresh"] = (actor) =>
-    reading
-      .withPermits(1)(
-        Effect.gen(function* () {
-          const all = yield* pools(actor);
-          const now = yield* Clock.currentTimeMillis;
-          const state = yield* Effect.forEach(
-            all,
-            (pool) =>
-              directory
-                .forPool(pool.objectName)
-                .accounts(actor)
-                .pipe(
-                  Effect.timeoutOrElse({
-                    duration: POOL_ACCOUNT_READ_TIMEOUT_MS,
-                    orElse: () => Effect.succeed({ error: POOL_READ_TIMEOUT_MESSAGE }),
-                  }),
-                  Effect.catchTags({
-                    PoolRejectedError: (error) => Effect.succeed({ error: error.reason }),
-                    PoolObjectError: (error) =>
-                      Effect.map(PoolDirectory.poolErrorMessage(error), (message) => ({
-                        error: message,
-                      })),
-                  }),
-                  Effect.map((accounts) => entryFor(pool, accounts, now)),
-                ),
-            { concurrency: "unbounded" },
-          );
-          yield* SubscriptionRef.set(current, Option.some({ state, checkedAt: now }));
-          return state;
-        }),
-      )
-      .pipe(
-        // The DO's RPC Promise can outlive its caller. Bound that call and the semaphore queue.
-        Effect.timeoutOrElse({
-          duration: POOL_SNAPSHOT_TIMEOUT_MS,
-          orElse: () => unavailableState(actor, POOL_READ_TIMEOUT_MESSAGE),
-        }),
-      );
+    Effect.gen(function* () {
+      const observed = yield* SubscriptionRef.get(current);
+      return yield* reading
+        .withPermits(1)(
+          Effect.gen(function* () {
+            const latest = yield* SubscriptionRef.get(current);
+            // Coalesce queued reads even when their snapshots share the same clock millisecond.
+            if (latest !== observed && Option.isSome(latest)) return latest.value.state;
+            const all = yield* pools(actor);
+            const now = yield* Clock.currentTimeMillis;
+            const state = yield* Effect.forEach(
+              all,
+              (pool) =>
+                directory
+                  .forPool(pool.objectName)
+                  .accounts(actor)
+                  .pipe(
+                    Effect.timeoutOrElse({
+                      duration: POOL_ACCOUNT_READ_TIMEOUT_MS,
+                      orElse: () => Effect.succeed({ error: POOL_READ_TIMEOUT_MESSAGE }),
+                    }),
+                    Effect.catchTags({
+                      PoolRejectedError: (error) => Effect.succeed({ error: error.reason }),
+                      PoolObjectError: (error) =>
+                        Effect.map(PoolDirectory.poolErrorMessage(error), (message) => ({
+                          error: message,
+                        })),
+                    }),
+                    Effect.map((accounts) => entryFor(pool, accounts, now)),
+                  ),
+              { concurrency: "unbounded" },
+            );
+            yield* SubscriptionRef.set(current, Option.some({ state, checkedAt: now }));
+            return state;
+          }),
+        )
+        .pipe(
+          // The DO's RPC Promise can outlive its caller. Bound that call and the semaphore queue.
+          Effect.timeoutOrElse({
+            duration: POOL_SNAPSHOT_TIMEOUT_MS,
+            orElse: () => unavailableState(observed, POOL_READ_TIMEOUT_MESSAGE),
+          }),
+        );
+    });
 
   const state: UserPools["Service"]["state"] = (actor) =>
     Effect.gen(function* () {
