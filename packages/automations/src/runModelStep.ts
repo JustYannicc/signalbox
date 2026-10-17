@@ -1,0 +1,56 @@
+import type { AutomationDefaults } from "@t3tools/contracts";
+import * as Effect from "effect/Effect";
+import * as Result from "effect/Result";
+
+import { fail } from "./errors.ts";
+import type { AutomationModelSteps } from "./host.ts";
+import { extractionOutput } from "./modelOutput.ts";
+import { modelPrompt, modelResult, type ModelVerb } from "./modelSteps.ts";
+import { retryDelayMs, retryPolicy, stepTimeoutMs, transientCause } from "./stepPolicy.ts";
+import { modelFor } from "./steps.ts";
+
+/** Owns the retry budget so a hosted runner's transport retries cannot multiply model calls. */
+export const runModelStep = (input: {
+  readonly verb: ModelVerb;
+  readonly label: string;
+  readonly options: Readonly<Record<string, unknown>>;
+  readonly defaults: AutomationDefaults;
+  readonly projectId: string;
+  readonly models: AutomationModelSteps["Service"];
+}) => {
+  const { verb, options } = input;
+  return Effect.gen(function* () {
+    const output =
+      verb === "extract"
+        ? extractionOutput(options.schema)
+        : { ok: true as const, decode: (text: string) => modelResult(verb, options, text) };
+    if (!output.ok) return yield* fail(output.error);
+    const modelSelection = yield* modelFor(options, input.defaults);
+    const prompt = modelPrompt(verb, input.label, options);
+    const policy = retryPolicy(verb, [options]);
+    for (let attempt = 1; ; attempt++) {
+      const answer = yield* Effect.result(
+        input.models.complete({
+          projectId: input.projectId,
+          modelSelection,
+          prompt,
+        }),
+      );
+      if (Result.isFailure(answer)) {
+        const transient = transientCause(answer.failure);
+        if (transient === undefined) return yield* Effect.fail(answer.failure);
+        // Exhaustion is final: don't hand a retry marker to the hosted transport.
+        if (attempt >= policy.attempts)
+          return yield* fail(answer.failure.message, { cause: transient.cause });
+        yield* Effect.sleep(retryDelayMs(policy, attempt, transient.retryAfterMs));
+        continue;
+      }
+      const result = output.decode(answer.success);
+      if (result.ok) return result.value;
+      if (attempt >= policy.attempts) return yield* fail(result.error);
+    }
+  }).pipe(
+    Effect.timeout(stepTimeoutMs(verb, [options]) ?? "10 minutes"),
+    Effect.catchTags({ TimeoutError: () => fail("The model step timed out.") }),
+  );
+};

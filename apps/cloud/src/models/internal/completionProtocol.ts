@@ -118,7 +118,8 @@ export const completionRequestFor = (
           headers: {},
           body: {
             model: selection.model,
-            max_output_tokens: MAX_OUTPUT_TOKENS,
+            stream: false,
+            store: false,
             ...(effort === undefined ? {} : { reasoning: { effort } }),
             ...(apiServiceTier === undefined ? {} : { service_tier: apiServiceTier }),
             input: prompt,

@@ -1,4 +1,5 @@
 import { AutomationModelSteps } from "@signalbox/automations/host";
+import { TransientFailure } from "@signalbox/automations/stepPolicy";
 import { AutomationError, ProjectId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -42,7 +43,21 @@ export const layer = Layer.effect(
             modelSelection,
             prompt,
           });
-        }).pipe(Effect.mapError((cause) => new AutomationError({ message: cause.message, cause }))),
+        }).pipe(
+          Effect.mapError((cause) => {
+            if (cause instanceof AutomationError) return cause;
+            const retryable =
+              cause._tag === "ModelCompletionError" &&
+              (cause.code === "pool-unavailable" ||
+                (cause.code === "http-error" &&
+                  cause.status !== undefined &&
+                  (cause.status === 429 || cause.status >= 500)));
+            return new AutomationError({
+              message: cause.message,
+              cause: retryable ? new TransientFailure(cause.message, { cause }) : cause,
+            });
+          }),
+        ),
     });
   }),
 );

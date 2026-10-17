@@ -72,6 +72,14 @@ const installGateway = (
       headers: new Headers(request.headers),
     };
     requests.push(captured);
+    if (
+      path === "/v1/responses" &&
+      (captured.body.stream !== false ||
+        captured.body.store !== false ||
+        "max_output_tokens" in captured.body ||
+        "max_tokens" in captured.body)
+    )
+      return Response.json({ error: "Unsupported Codex account request" }, { status: 400 });
     return completionResponse(path, responder(captured));
   };
   return {

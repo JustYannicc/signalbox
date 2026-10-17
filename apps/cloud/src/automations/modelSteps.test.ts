@@ -33,6 +33,86 @@ const allFieldNames = (value: unknown): Array<string> => {
 };
 
 describe("cloud model steps", () => {
+  it.effect("retries a pool rate limit within the judge's default budget", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeModelStepHarness();
+      let requests = 0;
+      const { gateway } = yield* connectModelPool(harness.cloud, ["codex"], () => {
+        requests += 1;
+        if (requests === 1) {
+          return { status: 429, text: "Rate limited" };
+        }
+        return { text: '{"verdict":true,"reason":"Checks passed."}' };
+      });
+      const automation =
+        yield* harness.save(`export const meta = { name: "Retry rate limit" } as const;
+export default workflow(async (w) => await w.judge("Ready?", {
+  input: "Checks passed", ${providerAndModel.codex},
+}));`);
+      const done = yield* harness.startAndWait(automation.id);
+      expect(done.run.status).toBe("succeeded");
+      expect(done.output).toEqual({ verdict: true, reason: "Checks passed." });
+      expect(gateway.requests).toHaveLength(2);
+      expect(done.steps[0]?.threadId).toBeNull();
+    }),
+  );
+
+  it.effect("bounds repeated upstream failures by the extraction retry budget", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeModelStepHarness();
+      const { gateway } = yield* connectModelPool(harness.cloud, ["claude"], () => {
+        return { status: 503, text: "Unavailable" };
+      });
+      const automation =
+        yield* harness.save(`export const meta = { name: "Exhaust unavailable pool" } as const;
+export default workflow(async (w) => await w.extract("Read checks", {
+  input: "Three checks", schema: { count: "number" }, retry: { attempts: 3, backoff: "fixed" },
+}));`);
+      const done = yield* harness.startAndWait(automation.id);
+      expect(done.run.status).toBe("failed");
+      expect(done.steps[0]?.error).toContain("HTTP 503");
+      expect(gateway.requests).toHaveLength(3);
+      expect(done.steps[0]?.threadId).toBeNull();
+    }),
+  );
+
+  it.effect("does not retry permanent upstream rejection", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeModelStepHarness();
+      const { gateway } = yield* connectModelPool(harness.cloud, ["claude"], () => ({
+        status: 400,
+        text: "Bad request",
+      }));
+      const automation =
+        yield* harness.save(`export const meta = { name: "Permanent rejection" } as const;
+export default workflow(async (w) => await w.judge("Ready?", {
+  input: "Checks passed", retry: { attempts: 3 },
+}));`);
+      const done = yield* harness.startAndWait(automation.id);
+      expect(done.run.status).toBe("failed");
+      expect(done.steps[0]?.error).toContain("HTTP 400");
+      expect(gateway.requests).toHaveLength(1);
+    }),
+  );
+
+  it.effect("rejects an invalid extraction schema before requesting a model", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeModelStepHarness();
+      const { gateway } = yield* connectModelPool(harness.cloud, ["claude"], () => ({
+        text: "{}",
+      }));
+      const automation =
+        yield* harness.save(`export const meta = { name: "Invalid shape" } as const;
+export default workflow(async (w) => await w.extract("Read count", {
+  input: "Three", schema: { count: "integerish" }, retry: { attempts: 3 },
+}));`);
+      const done = yield* harness.startAndWait(automation.id);
+      expect(done.run.status).toBe("failed");
+      expect(done.steps[0]?.error).toContain("Unsupported extraction shape");
+      expect(gateway.requests).toHaveLength(0);
+    }),
+  );
+
   it.effect("runs text, both judge forms and nested extraction through each pool gateway", () =>
     Effect.gen(function* () {
       const harness = yield* makeModelStepHarness();

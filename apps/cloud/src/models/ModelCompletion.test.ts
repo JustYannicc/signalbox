@@ -120,7 +120,8 @@ describe("ModelCompletion", () => {
       const body = yield* bodyOf(args[2]!);
       expect(body).toEqual({
         model: "gpt-6.1-sol",
-        max_output_tokens: 4096,
+        stream: false,
+        store: false,
         reasoning: { effort: "medium" },
         input: "Write one sentence.",
       });
@@ -226,22 +227,26 @@ describe("ModelCompletion", () => {
         ),
       );
       expect(poolError).toMatchObject({ code: "pool-unavailable" });
+      expect(poolError).not.toHaveProperty("status");
 
-      const httpError = yield* Effect.flip(
-        withCompletion(
-          { _tag: "forwarded", response: new Response("", { status: 429 }), upstreamMs: 2 },
-          (service) =>
-            service.complete({
-              pool,
-              modelSelection: selection("codex", "gpt-6.1-sol"),
-              prompt: "Hello",
-            }),
-        ),
-      );
-      expect(httpError).toMatchObject({
-        code: "http-error",
-        reason: expect.stringContaining("429"),
-      });
+      for (const status of [429, 503, 400]) {
+        const httpError = yield* Effect.flip(
+          withCompletion(
+            { _tag: "forwarded", response: new Response("", { status }), upstreamMs: 2 },
+            (service) =>
+              service.complete({
+                pool,
+                modelSelection: selection("codex", "gpt-6.1-sol"),
+                prompt: "Hello",
+              }),
+          ),
+        );
+        expect(httpError).toMatchObject({
+          code: "http-error",
+          reason: expect.stringContaining(String(status)),
+          status,
+        });
+      }
     }),
   );
 

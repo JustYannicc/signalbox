@@ -32,6 +32,7 @@ export class ModelCompletionError extends Schema.TaggedError<ModelCompletionErro
       "no-text",
     ]),
     reason: Schema.String,
+    status: Schema.optional(Schema.Number),
   },
 ) {
   override get message() {
@@ -150,9 +151,12 @@ const completeWith =
       }
       if (!forward.response.ok) {
         yield* cancelBody(forward.response);
-        return yield* fail(
-          "http-error",
-          `The model provider returned HTTP ${forward.response.status}.`,
+        return yield* Effect.fail(
+          new ModelCompletionError({
+            code: "http-error",
+            reason: `The model provider returned HTTP ${forward.response.status}.`,
+            status: forward.response.status,
+          }),
         );
       }
       const body = yield* Effect.tryPromise({
