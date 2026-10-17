@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 import * as Schema from "effect/Schema";
-import { UserInputQuestion } from "./providerRuntime.ts";
-import { OrchestrationV2UserInputQuestion } from "./orchestrationV2.ts";
+import { OrchestrationV2UserInputQuestion, UserInputQuestion } from "@t3tools/contracts";
 
 const decodeRuntimeQuestion = Schema.decodeUnknownSync(UserInputQuestion);
 const decodeV2Question = Schema.decodeUnknownSync(OrchestrationV2UserInputQuestion);

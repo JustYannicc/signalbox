@@ -1,6 +1,10 @@
+import { ThreadCommandRejectedError } from "./threadCommandErrors.ts";
+export { ThreadCommandRejectedError } from "./threadCommandErrors.ts";
+
 import { type ThreadCommand } from "./threadCommands.ts";
 import { expireRuntimeRequests } from "./expireRuntimeRequests.ts";
-import { mirrorNativeAskEvents, compactAskEvents } from "@t3tools/shared/signalboxAsks";
+import { compactAskEvents } from "@t3tools/shared/signalboxAsks";
+import { mirrorNativeAskEvents } from "@t3tools/shared/signalboxNativeAsks";
 import {
   type CommandId,
   EventId,
@@ -35,7 +39,8 @@ import * as Stream from "effect/Stream";
 
 import { traceIdOf } from "./diagnostics/traceId.ts";
 import { hasPendingTurnWork, scriptedStep } from "./scriptedTurn.ts";
-import { type Decision, decide, decideLaunch, type ThreadWorktree } from "./threadDecider.ts";
+import { decide, decideLaunch, type ThreadWorktree } from "./threadDecider.ts";
+import type { Decision } from "./threadEvents.ts";
 import type { DecisionContext } from "./threadEvents.ts";
 import { applyEvents, threadShellFromProjection, workStartedAt } from "./threadProjection.ts";
 import { noteKey, noteRunId, supersedes } from "./statusLine/statusNotePolicy.ts";
@@ -69,26 +74,6 @@ export class ThreadNotFoundError extends Schema.TaggedError<ThreadNotFoundError>
 ) {
   override get message(): string {
     return "Thread not found.";
-  }
-}
-
-export class ThreadCommandRejectedError extends Schema.TaggedError<ThreadCommandRejectedError>()(
-  "ThreadCommandRejectedError",
-  { commandId: Schema.String, commandType: Schema.String, reason: Schema.String },
-) {
-  override get message(): string {
-    return this.reason;
-  }
-
-  static forCommand(
-    command: { readonly id: string; readonly type: string },
-    reason: string,
-  ): ThreadCommandRejectedError {
-    return new ThreadCommandRejectedError({
-      commandId: command.id,
-      commandType: command.type,
-      reason,
-    });
   }
 }
 

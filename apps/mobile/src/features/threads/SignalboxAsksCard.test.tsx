@@ -7,7 +7,7 @@ import { act, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
-import { v2Projection } from "../../../../../packages/client-runtime/src/state/orchestrationV2TestFixtures.ts";
+import { v2Projection } from "@t3tools/client-runtime/state/orchestration-v2-test-fixtures";
 
 const { state, send } = vi.hoisted(() => ({
   state: { allowed: true, projection: null as OrchestrationV2ThreadProjection | null },

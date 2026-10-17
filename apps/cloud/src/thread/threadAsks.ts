@@ -8,7 +8,7 @@ import type { SignalboxAskServerCommand } from "@t3tools/contracts/signalboxAsks
 import { applyAskCommand, nativeAskAnswerMessage } from "@t3tools/shared/signalboxAsks";
 import * as DateTime from "effect/DateTime";
 
-import type { Decision } from "./threadDecider.ts";
+import type { Decision } from "./threadEvents.ts";
 import { type DecisionContext, threadEvent } from "./threadEvents.ts";
 
 type Projection = OrchestrationV2ThreadProjection;

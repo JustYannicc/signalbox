@@ -3,7 +3,8 @@ import type {
   OrchestrationV2ThreadProjection,
   ThreadId,
 } from "@t3tools/contracts";
-import { mirrorNativeAskEvents, compactAskEvents } from "@t3tools/shared/signalboxAsks";
+import { compactAskEvents } from "@t3tools/shared/signalboxAsks";
+import { mirrorNativeAskEvents } from "@t3tools/shared/signalboxNativeAsks";
 import type { SignalboxNativeAskRespondCommand } from "@t3tools/contracts/signalboxAsks";
 import * as Effect from "effect/Effect";
 

@@ -1,7 +1,7 @@
 import { expect, it } from "vite-plus/test";
 import * as Schema from "effect/Schema";
-import { OrchestrationV2Command } from "./orchestrationV2.ts";
-import { SignalboxAsk } from "./signalboxAsks.ts";
+import { OrchestrationV2Command } from "@t3tools/contracts";
+import { SignalboxAsk } from "@t3tools/contracts/signalboxAsks";
 
 const decodeAsk = Schema.decodeUnknownSync(SignalboxAsk);
 const decodeCommand = Schema.decodeUnknownSync(OrchestrationV2Command);

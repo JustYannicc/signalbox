@@ -2,7 +2,7 @@ import { EnvironmentId } from "@t3tools/contracts";
 import type { SignalboxAsk } from "@t3tools/contracts/signalboxAsks";
 import { describe, expect, it } from "vite-plus/test";
 
-import { v2Projection } from "../../../../packages/client-runtime/src/state/orchestrationV2TestFixtures.ts";
+import { v2Projection } from "@t3tools/client-runtime/state/orchestration-v2-test-fixtures";
 import { resolveThreadListV2Status } from "../features/threads/threadListV2";
 import { threadDetailToShell } from "./thread-detail-shell";
 

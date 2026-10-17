@@ -7,6 +7,10 @@
       "types": "./src/signalboxAsks.ts",
       "import": "./src/signalboxAsks.ts"
     },
+    "./signalboxNativeAsks": {
+      "types": "./src/signalboxNativeAsks.ts",
+      "import": "./src/signalboxNativeAsks.ts"
+    },
     "./nativeElicitation": {
       "types": "./src/nativeElicitation.ts",
       "import": "./src/nativeElicitation.ts"

@@ -213,8 +213,6 @@ export function applyAskCommand(
   };
 }
 
-export { mirrorNativeAskEvents } from "./signalboxNativeAsks.ts";
-
 /** A client can answer as itself; native and workflow provenance comes from internal paths. */
 export function clientAskCommand(
   command: OrchestrationV2Command,

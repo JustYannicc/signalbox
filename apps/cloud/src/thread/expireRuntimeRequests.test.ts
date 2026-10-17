@@ -7,7 +7,7 @@ import {
   RuntimeRequestId,
   TurnItemId,
 } from "@t3tools/contracts";
-import { mirrorNativeAskEvents } from "@t3tools/shared/signalboxAsks";
+import { mirrorNativeAskEvents } from "@t3tools/shared/signalboxNativeAsks";
 import { describe, expect, it } from "@effect/vitest";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -23,7 +23,7 @@ import {
   snapshot,
   turnReport,
   withObject,
-} from "./runner/runnerTestKit.ts";
+} from "./runnerTestKit.ts";
 
 const fixture = () =>
   withObject(freshDatabase(), (engine, runner) =>

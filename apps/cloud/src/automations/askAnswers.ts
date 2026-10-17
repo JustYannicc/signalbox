@@ -1,11 +1,13 @@
 import type { SignalboxAsk, SignalboxAskAnswerCommand } from "@t3tools/contracts/signalboxAsks";
-import type { OrchestrationV2Command } from "@t3tools/contracts";
+import type {
+  OrchestrationV2Command,
+  OrchestrationV2ThreadProjection,
+  ThreadId,
+} from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 
-import { ThreadCommandRejectedError } from "../thread/ThreadEngine.ts";
-import type { Actor } from "../thread/ThreadEngine.ts";
-import type * as CloudThreadService from "../thread/CloudThreadService.ts";
+import { ThreadCommandRejectedError } from "../thread/threadCommandErrors.ts";
 import { CloudAutomations } from "./CloudAutomations.ts";
 
 /** Read at the operation boundary: the engine itself depends on the thread service. */
@@ -24,11 +26,19 @@ export const answerAutomationAsk = (
       .pipe(Effect.mapError((cause) => rejected(cause.message)));
   });
 
-export const dispatchAutomationAskAnswer = (
+export const dispatchAutomationAskAnswer = <Actor, E>(
   actor: Actor,
   command: OrchestrationV2Command,
-  threads: Pick<CloudThreadService.CloudThreadService["Service"], "threadSnapshot">,
-): Effect.Effect<{ readonly sequence: number } | null, CloudThreadService.CloudThreadError> =>
+  threads: {
+    readonly threadSnapshot: (
+      actor: Actor,
+      threadId: ThreadId,
+    ) => Effect.Effect<
+      { readonly projection: OrchestrationV2ThreadProjection; readonly snapshotSequence: number },
+      E
+    >;
+  },
+): Effect.Effect<{ readonly sequence: number } | null, E | ThreadCommandRejectedError> =>
   Effect.gen(function* () {
     if (command.type !== "thread.ask.answer") return null;
     const snapshot = yield* threads.threadSnapshot(actor, command.threadId);

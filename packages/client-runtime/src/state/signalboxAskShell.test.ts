@@ -3,14 +3,21 @@ import type { SignalboxAsk } from "@t3tools/contracts/signalboxAsks";
 import { Atom, AtomRegistry } from "effect/reactivity";
 import { describe, expect, it } from "vite-plus/test";
 
-import { presentThreadShell } from "./models.ts";
-import { v2Now, v2ShellSnapshot, v2ThreadShell } from "./orchestrationV2TestFixtures.ts";
-import { applyShellStreamEvent, reuseUnchangedThreadShells } from "./shellReducer.ts";
+import {
+  v2Now,
+  v2ShellSnapshot,
+  v2ThreadShell,
+} from "@t3tools/client-runtime/state/orchestration-v2-test-fixtures";
+import {
+  applyShellStreamEvent,
+  presentThreadShell,
+  reuseUnchangedThreadShells,
+} from "@t3tools/client-runtime/state/shell";
 import { isThreadWorking } from "./threadInbox.ts";
 import {
   createEnvironmentThreadShellAtoms,
   pendingSubagentRequestsByThread,
-} from "./threadShell.ts";
+} from "@t3tools/client-runtime/state/threads";
 import { canSnooze, effectiveSnoozed } from "./threadSettled.ts";
 
 const environmentId = EnvironmentId.make("ask-environment");

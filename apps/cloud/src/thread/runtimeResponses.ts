@@ -9,7 +9,7 @@ import {
   type OrchestrationV2ThreadProjection,
   type OrchestrationV2RuntimeRequest,
 } from "@t3tools/contracts";
-import type { Decision } from "./threadDecider.ts";
+import type { Decision } from "./threadEvents.ts";
 import { activeRun } from "./runLifecycle.ts";
 import { type DecisionContext, threadEvent, unstampedEventId } from "./threadEvents.ts";
 

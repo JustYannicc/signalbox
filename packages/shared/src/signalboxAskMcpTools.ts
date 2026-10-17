@@ -1,4 +1,4 @@
-import type { T3McpToolDefinition } from "./t3McpToolPresentation.ts";
+import type { T3McpToolDefinition } from "./t3McpToolTypes.ts";
 
 function tool(
   labels: T3McpToolDefinition["labels"],
