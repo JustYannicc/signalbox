@@ -221,6 +221,7 @@ try {
     { stdio: "inherit" },
   );
 
+  // signalbox: verify fork archive consumers before the release-only steps.
   NodeChildProcess.execFileSync(
     process.execPath,
     [NodePath.resolve(repoRoot, "scripts/release-artifacts-smoke.ts")],
