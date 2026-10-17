@@ -12,8 +12,6 @@ describe("composer submission recovery", () => {
 
   it.each([
     { _tag: "RpcClientError", message: "SocketCloseError" },
-    { _tag: "ConnectionTransientError", message: "Connection lost" },
-    { _tag: "EnvironmentRpcUnavailableError" },
     new Error("Socket is not connected"),
   ])("keeps a possibly accepted prompt out of the draft after %o", (error) => {
     const result = AsyncResult.failure(Cause.fail(error));
@@ -24,6 +22,9 @@ describe("composer submission recovery", () => {
   it.each([
     { _tag: "OrchestrationDispatchCommandError", message: "Thread is not connected." },
     { _tag: "EnvironmentAuthorizationError", message: "Permission denied" },
+    { _tag: "ConnectionTransientError", message: "Connection lost" },
+    { _tag: "EnvironmentRpcUnavailableError", message: "Socket is not connected" },
+    { _tag: "EnvironmentNotRegisteredError", message: "Environment is not connected." },
     new Error("Model is not supported"),
   ])("allows restoring a rejected prompt after %o", (error) => {
     expect(isComposerSubmissionUncertain(AsyncResult.failure(Cause.fail(error)), true)).toBe(false);

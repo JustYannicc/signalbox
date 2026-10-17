@@ -30,11 +30,11 @@ export function isComposerSubmissionUncertain(
     switch (error._tag) {
       case "OrchestrationDispatchCommandError":
       case "EnvironmentAuthorizationError":
-        return false;
       case "ConnectionTransientError":
-      case "RpcClientError":
       case "EnvironmentRpcUnavailableError":
       case "EnvironmentNotRegisteredError":
+        return false;
+      case "RpcClientError":
         return true;
     }
   }

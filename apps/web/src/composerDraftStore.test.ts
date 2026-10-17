@@ -428,6 +428,35 @@ describe("composerDraftStore clearComposerContent", () => {
     },
   );
 
+  it.each([
+    "EnvironmentRpcUnavailableError",
+    "EnvironmentNotRegisteredError",
+    "ConnectionTransientError",
+  ])("restores a prompt after %s before dispatch and retains it across reload", async (_tag) => {
+    vi.useFakeTimers();
+    try {
+      const store = useComposerDraftStore.getState();
+      store.setPrompt(threadRef, "Keep this offline prompt");
+      const content = store.getComposerDraft(threadRef)!;
+      await vi.advanceTimersByTimeAsync(300);
+      store.clearComposerContent(threadRef);
+      recoverComposerSubmission({
+        target: threadRef,
+        result: AsyncResult.failure(Cause.fail({ _tag, message: "Socket is not connected" })),
+        requestStarted: true,
+        content,
+      });
+      await vi.advanceTimersByTimeAsync(300);
+      await useComposerDraftStore.persist.rehydrate();
+      expect(useComposerDraftStore.getState().getComposerDraft(threadRef)?.prompt).toBe(
+        "Keep this offline prompt",
+      );
+    } finally {
+      await useComposerDraftStore.persist.clearStorage();
+      vi.useRealTimers();
+    }
+  });
+
   it.each([false, true])(
     "restores a rejected prompt without overwriting newer work (%s)",
     (newerDraft) => {

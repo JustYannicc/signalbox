@@ -84,10 +84,7 @@ import {
   RuntimeMode,
 } from "@t3tools/contracts";
 import { type EnvironmentConnectionPresentation } from "@t3tools/client-runtime/connection";
-import {
-  wasBootstrapThreadDeleted,
-  wasBootstrapThreadNotCreated,
-} from "@t3tools/client-runtime/errors";
+import { wasBootstrapThreadDeleted } from "@t3tools/client-runtime/errors";
 import { readPastedComposerContext } from "./composerInlineTokenPaste";
 import { isPasteAsTextShortcut } from "@t3tools/client-runtime/text-paste";
 import { effectiveSnoozed, threadWokeAt } from "@t3tools/client-runtime/state/thread-settled";
@@ -750,9 +747,7 @@ async function startFanoutThread(input: {
     const result = await input.start(targetThreadId);
     if (result._tag === "Failure") {
       const error = squashAtomCommandFailure(result);
-      if (wasBootstrapThreadDeleted(error) || wasBootstrapThreadNotCreated(error)) {
-        requestMayHaveStarted = false;
-      }
+      requestMayHaveStarted = isComposerSubmissionUncertain(result, true);
       throw error;
     }
     return true;
