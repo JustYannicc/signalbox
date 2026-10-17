@@ -8,7 +8,7 @@ import type { SidebarThreadSortOrder } from "@t3tools/contracts/settings";
 
 import { sortThreads } from "../../lib/threadSort";
 import type { SidebarThreadSummary } from "../../types";
-import { hasUnseenFailure } from "../Sidebar.logic";
+import { hasUnseenFailure } from "./failedPill";
 
 /** Waiting on the person: a question or approval (its own or a subagent's), or a failure not yet seen, including one in a thread nobody has opened. */
 export function threadNeedsYou(thread: SidebarThreadSummary): boolean {
