@@ -12,12 +12,19 @@ import * as Stream from "effect/Stream";
 import { Argument, Command } from "effect/cli";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
+import * as NativeArtifactCache from "./lib/native-artifact-cache.ts";
+import * as NativeClientArtifactBuilder from "./lib/native-client-artifact-builder.ts";
+import * as NativeClientBuildIdentity from "./lib/native-client-build-identity.ts";
+
 export type NativePlatform = "ios" | "android";
-const NativeClientRecord = Schema.Struct({ fingerprint: Schema.String, binary: Schema.String });
+const NativeClientRecord = Schema.Struct({
+  fingerprint: Schema.String,
+  cacheKey: Schema.String,
+  binary: Schema.String,
+});
 const encodeRecord = Schema.encodeEffect(Schema.fromJsonString(NativeClientRecord));
 const decodeRecord = Schema.decodeUnknownEffect(Schema.fromJsonString(NativeClientRecord));
 const encodeOutput = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
-const isNotLink = Schema.is(Schema.Struct({ code: Schema.Literal("EINVAL") }));
 const decodeSimulators = Schema.decodeUnknownEffect(
   Schema.fromJsonString(
     Schema.Struct({
@@ -30,6 +37,14 @@ const decodeSimulators = Schema.decodeUnknownEffect(
 );
 export type NativeClientRecord = typeof NativeClientRecord.Type;
 export type NativeClientStatus = "compatible" | "missing" | "unknown" | "stale";
+export interface NativeClientAssessment {
+  readonly status: NativeClientStatus;
+  readonly reason: string | null;
+}
+interface NativeClientBuildContext {
+  readonly identity: NativeArtifactCache.NativeArtifactIdentity;
+  readonly cacheKey: string;
+}
 export class NativeClientError extends Schema.TaggedError<NativeClientError>()(
   "NativeClientError",
   { message: Schema.String },
@@ -39,47 +54,77 @@ export function clientStatus(
   fingerprint: string,
   binary: string | null,
   record: NativeClientRecord | null,
-): NativeClientStatus {
-  if (binary === null) return "missing";
-  if (!record || record.binary !== binary) return "unknown";
-  return record.fingerprint === fingerprint ? "compatible" : "stale";
+  cacheKey: string,
+): NativeClientAssessment {
+  if (binary === null) return { status: "missing", reason: "installed binary is missing" };
+  if (!record) return { status: "unknown", reason: "no verified per-device build record" };
+  if (record.binary !== binary)
+    return { status: "unknown", reason: "installed binary differs from the verified build" };
+  if (record.fingerprint !== fingerprint)
+    return { status: "stale", reason: "Expo native fingerprint changed" };
+  if (record.cacheKey !== cacheKey)
+    return { status: "stale", reason: "native source or toolchain identity changed" };
+  return { status: "compatible", reason: null };
 }
 
-/** Keep native sources stable during ensure, as with a normal build; endpoint checks reject detected edits. */
-export const ensureClient = Effect.fn("ensureClient")(function* <E, R, E2, R2>(operations: {
-  fingerprint: Effect.Effect<string, E, R>;
+/** Keep Expo inputs stable during build, installation, and record publication. */
+export const ensureClient = Effect.fn("ensureClient")(function* <
+  E,
+  R,
+  E2,
+  R2,
+  EBuild,
+  RBuild,
+>(operations: {
+  buildContext: Effect.Effect<NativeClientBuildContext, E, R>;
+  currentBuildContext: () => Effect.Effect<NativeClientBuildContext, E, R>;
   installedBinary: Effect.Effect<string | null, E, R>;
   readRecord: Effect.Effect<NativeClientRecord | null, E, R>;
-  build: Effect.Effect<void, E, R>;
+  buildAndInstall: (
+    context: NativeClientBuildContext,
+  ) => Effect.Effect<{ binary: string; built: boolean; cacheHit: boolean }, EBuild, RBuild>;
   saveRecord: (record: NativeClientRecord) => Effect.Effect<void, E2, R2>;
 }) {
-  const fingerprint = yield* operations.fingerprint;
-  const status = clientStatus(
+  const context = yield* operations.buildContext;
+  const fingerprint = context.identity.fingerprint;
+  const assessment = clientStatus(
     fingerprint,
     yield* operations.installedBinary,
     yield* operations.readRecord,
+    context.cacheKey,
   );
   const verifyInputs = Effect.gen(function* () {
-    if ((yield* operations.fingerprint) !== fingerprint) {
+    if ((yield* operations.currentBuildContext()).cacheKey !== context.cacheKey) {
       return yield* new NativeClientError({
-        message:
-          "Native inputs changed during verification. Run ensure again; this build was not recorded.",
+        message: "Native source or toolchain changed during ensure; this build was not recorded.",
       });
     }
   });
   yield* verifyInputs;
-  if (status === "compatible") {
-    return { status, rebuilt: false, fingerprint };
+  if (assessment.status === "compatible") {
+    return {
+      status: assessment.status,
+      reason: assessment.reason,
+      rebuilt: false,
+      cacheHit: false,
+      fingerprint,
+    };
   }
-  yield* operations.build;
+  const build = yield* operations.buildAndInstall(context);
   const binary = yield* operations.installedBinary;
-  if (binary === null)
+  if (binary === null || binary !== build.binary)
     return yield* new NativeClientError({
-      message: "Build finished but the development client is not installed.",
+      message: "Installed development client does not match the verified native artifact.",
     });
   yield* verifyInputs;
-  yield* operations.saveRecord({ fingerprint, binary });
-  return { status: "compatible" as const, rebuilt: true, fingerprint };
+  yield* operations.saveRecord({ fingerprint, cacheKey: context.cacheKey, binary });
+  return {
+    status: "compatible" as const,
+    reason: assessment.reason,
+    rebuilt: build.built,
+    cacheHit: build.cacheHit,
+    fingerprint,
+  };
 });
 
 const digest = Effect.fn("nativeClient.digest")(function* (value: string | Uint8Array) {
@@ -91,49 +136,7 @@ const digest = Effect.fn("nativeClient.digest")(function* (value: string | Uint8
   return Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
 });
 
-/** Hash fixed-size chunks to bound memory, including resources and symlink targets. */
-export const hashBundle = Effect.fn("hashBundle")(function* (root: string) {
-  const fs = yield* FileSystem.FileSystem;
-  const path = yield* Path.Path;
-  const entries: string[] = [];
-  const visit = (
-    relative: string,
-  ): Effect.Effect<void, FileSystemError, FileSystem.FileSystem | Crypto.Crypto> =>
-    Effect.gen(function* () {
-      const names = (yield* fs.readDirectory(path.join(root, relative))).sort((a, b) =>
-        a.localeCompare(b, "en"),
-      );
-      for (const name of names) {
-        const key = path.join(relative, name);
-        const absolute = path.join(root, key);
-        // FileSystem.stat follows links; readLink distinguishes them without following a cycle.
-        const link = yield* fs.readLink(absolute).pipe(
-          Effect.catchIf(
-            (error) => isNotLink(error.reason.cause),
-            () => Effect.succeed(null),
-          ),
-        );
-        if (link !== null) {
-          entries.push(`link:${key}:${link}`);
-          continue;
-        }
-        const info = yield* fs.stat(absolute);
-        if (info.type === "Directory") {
-          entries.push(`directory:${key}`);
-          yield* visit(key);
-        } else {
-          const chunks = yield* fs.stream(absolute, { chunkSize: 65536 }).pipe(
-            Stream.mapEffect((chunk) => digest(chunk)),
-            Stream.runCollect,
-          );
-          entries.push(`file:${key}:${yield* digest(chunks.join("\n"))}`);
-        }
-      }
-    });
-  yield* visit("");
-  return yield* digest(entries.map((entry) => `${entry.length}:${entry}`).join(""));
-});
-type FileSystemError = import("effect/PlatformError").PlatformError;
+export const hashBundle = NativeArtifactCache.hashArtifact;
 
 const bundleId = "com.justyannicc.signalbox.dev";
 const roots = Effect.gen(function* () {
@@ -170,6 +173,7 @@ const command = Effect.fn("nativeClient.command")(function* (
   args: string[],
   inherit = false,
   cwd?: string,
+  includeStderr = false,
 ) {
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const environment = yield* HostProcess.Environment;
@@ -199,22 +203,30 @@ const command = Effect.fn("nativeClient.command")(function* (
     return yield* new NativeClientError({
       message: `${program} ${args[0]} failed (${code}): ${stderr || "see build output"}`,
     });
-  return stdout.trim();
+  return (includeStderr ? `${stdout}\n${stderr}` : stdout).trim();
 }, Effect.scoped);
 
 const fingerprint = Effect.fn("nativeClient.fingerprint")(function* (platform: NativePlatform) {
   const output = yield* command(yield* HostProcess.ExecutablePath, [
     "--eval",
-    `require('expo/fingerprint').createFingerprintAsync(process.cwd(), { platforms: [process.argv[1]], silent: true }).then(fp => console.log('T3_NATIVE_FINGERPRINT=' + fp.hash)).catch(e => { console.error(e); process.exitCode = 1; });`,
+    `require('expo/fingerprint').createFingerprintAsync(process.cwd(), { platforms: [process.argv[1]], silent: true }).then(fp => console.log('T3_NATIVE_FINGERPRINT=' + JSON.stringify({ hash: fp.hash, sources: fp.sources.map(({ type, filePath, reasons, hash, overrideHashKey }) => ({ type, filePath, reasons, hash, overrideHashKey })) }))).catch(e => { console.error(e); process.exitCode = 1; });`,
     platform,
   ]);
-  const hash = output
+  const serialized = output
     .split("\n")
     .find((line) => line.startsWith("T3_NATIVE_FINGERPRINT="))
-    ?.split("=")[1];
-  if (!hash || !/^[a-f0-9]{40,64}$/.test(hash))
+    ?.slice("T3_NATIVE_FINGERPRINT=".length);
+  const snapshot = yield* NativeClientBuildIdentity.decodeExpoFingerprint(serialized ?? "").pipe(
+    Effect.catchTags({
+      SchemaError: () =>
+        Effect.fail(
+          new NativeClientError({ message: "Expo did not return native input sources." }),
+        ),
+    }),
+  );
+  if (!/^[a-f0-9]{40,64}$/.test(snapshot.hash))
     return yield* new NativeClientError({ message: "Expo did not return a native fingerprint." });
-  return hash;
+  return snapshot;
 });
 
 const validateDevice = Effect.fn("nativeClient.validateDevice")(function* (
@@ -229,17 +241,19 @@ const validateDevice = Effect.fn("nativeClient.validateDevice")(function* (
     const listing = yield* decodeSimulators(
       yield* command("xcrun", ["simctl", "list", "devices", "available", "--json"]),
     );
-    const simulator = Object.values(listing.devices)
-      .flat()
-      .find((entry) => entry.udid === device);
-    if (!simulator)
+    const match = Object.entries(listing.devices)
+      .flatMap(([runtime, devices]) => devices.map((entry) => ({ runtime, entry })))
+      .find(({ entry }) => entry.udid === device);
+    if (!match)
       return yield* new NativeClientError({
         message: `No available iOS simulator with UDID ${device}.`,
       });
-    if (simulator.state !== "Booted")
+    if (match.entry.state !== "Booted")
       return yield* new NativeClientError({
         message: `Boot the selected simulator first: xcrun simctl boot ${device}`,
       });
+    const architecture = (yield* HostProcess.Architecture) === "arm64" ? "arm64" : "x86_64";
+    return { platform, runtime: match.runtime, architecture };
   } else {
     if ((yield* command("adb", ["-s", device, "get-state"])) !== "device")
       return yield* new NativeClientError({ message: "Android device is not connected." });
@@ -247,6 +261,23 @@ const validateDevice = Effect.fn("nativeClient.validateDevice")(function* (
       return yield* new NativeClientError({
         message: "Select an Android emulator, not a physical device.",
       });
+    const abi = yield* command("adb", ["-s", device, "shell", "getprop", "ro.product.cpu.abi"]);
+    if (!["arm64-v8a", "x86_64", "x86", "armeabi-v7a"].includes(abi))
+      return yield* new NativeClientError({
+        message: `Android emulator ABI '${abi || "unknown"}' is not supported for a cached development client.`,
+      });
+    const apiLevel = yield* command("adb", [
+      "-s",
+      device,
+      "shell",
+      "getprop",
+      "ro.build.version.sdk",
+    ]);
+    if (!/^\d+$/.test(apiLevel))
+      return yield* new NativeClientError({
+        message: "Could not determine the Android emulator API level.",
+      });
+    return { platform, abi, apiLevel };
   }
 });
 
@@ -292,7 +323,7 @@ const main = Command.make(
     device: Argument.String("device"),
   },
   Effect.fn("nativeClient.main")(function* ({ mode, platform, device }) {
-    yield* validateDevice(platform, device);
+    const target = yield* validateDevice(platform, device);
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
     const environment = yield* HostProcess.Environment;
@@ -307,8 +338,22 @@ const main = Command.make(
       platform,
       `${yield* digest(device)}.json`,
     );
+    const readBuildContext = () =>
+      Effect.gen(function* () {
+        const { repo } = yield* roots;
+        const snapshot = yield* fingerprint(platform);
+        const identity = yield* NativeClientBuildIdentity.nativeArtifactIdentity({
+          snapshot,
+          target,
+          repositoryRoot: repo,
+          command,
+        });
+        const cacheKey = yield* NativeArtifactCache.nativeArtifactCacheKey(identity);
+        return { identity, cacheKey } satisfies NativeClientBuildContext;
+      });
     const operations = {
-      fingerprint: fingerprint(platform),
+      buildContext: readBuildContext(),
+      currentBuildContext: readBuildContext,
       installedBinary: installedBinary(platform, device),
       readRecord: fs.readFileString(recordPath).pipe(
         Effect.flatMap(decodeRecord),
@@ -318,75 +363,28 @@ const main = Command.make(
           () => Effect.succeed(null),
         ),
       ),
-      build: Effect.gen(function* () {
-        yield* Console.error(
-          "Native client is missing, stale, or unverified. Building and installing a development client...",
-        );
-        const tracked = yield* command(
-          "git",
-          ["ls-files", `apps/mobile/${platform}`],
-          false,
-          (yield* roots).repo,
-        );
-        if (tracked)
-          return yield* new NativeClientError({
-            message:
-              "Native directory contains tracked files; clean prebuild would overwrite them.",
+      buildAndInstall: (context: NativeClientBuildContext) =>
+        Effect.gen(function* () {
+          const { mobile, repo } = yield* roots;
+          const result = yield* NativeClientArtifactBuilder.ensureNativeClientArtifact({
+            cacheRoot: path.join(home, ".cache/t3code/native-clients/builds"),
+            platform,
+            device,
+            target,
+            identity: context.identity,
+            repositoryRoot: repo,
+            mobileRoot: mobile,
+            command,
+            currentIdentity: () => Effect.map(readBuildContext(), (current) => current.identity),
+            installedBinary: () => installedBinary(platform, device),
           });
-        yield* command(
-          "vp",
-          ["exec", "expo", "prebuild", "--clean", "--platform", platform, "--no-install"],
-          true,
-        );
-        if (platform === "ios") {
-          const output = yield* fs.makeTempDirectoryScoped({ prefix: "t3-native-client-" });
-          const { mobile } = yield* roots;
-          yield* command("pod", ["install"], true, path.join(mobile, "ios"));
-          yield* command(
-            "xcrun",
-            [
-              "xcodebuild",
-              "-workspace",
-              path.join(mobile, "ios/SignalboxDev.xcworkspace"),
-              "-scheme",
-              "SignalboxDev",
-              "-configuration",
-              "Debug",
-              "-destination",
-              `id=${device}`,
-              "-derivedDataPath",
-              output,
-              "build",
-            ],
-            true,
+          yield* Console.error(
+            result.cacheHit
+              ? "Reused a verified native development client build."
+              : "Published the native development client build to the shared cache.",
           );
-          yield* command(
-            "xcrun",
-            [
-              "simctl",
-              "install",
-              device,
-              path.join(output, "Build/Products/Debug-iphonesimulator/SignalboxDev.app"),
-            ],
-            true,
-          );
-        } else {
-          yield* command(
-            "vp",
-            [
-              "exec",
-              "expo",
-              "run:android",
-              "--device",
-              device,
-              "--no-bundler",
-              "--variant",
-              "debug",
-            ],
-            true,
-          );
-        }
-      }).pipe(Effect.scoped),
+          return result;
+        }),
       saveRecord: Effect.fn(function* (record: NativeClientRecord) {
         yield* fs.makeDirectory(path.dirname(recordPath), { recursive: true });
         yield* fs.writeFileString(recordPath, yield* encodeRecord(record));
@@ -395,23 +393,30 @@ const main = Command.make(
     if (mode === "ensure") {
       yield* Console.log(yield* encodeOutput(yield* ensureClient(operations)));
     } else {
-      const current = yield* operations.fingerprint;
-      const status = clientStatus(
-        current,
+      const context = yield* operations.buildContext;
+      const assessment = clientStatus(
+        context.identity.fingerprint,
         yield* operations.installedBinary,
         yield* operations.readRecord,
+        context.cacheKey,
       );
       yield* Console.log(
         yield* encodeOutput({
-          status,
-          fingerprint: current,
+          status: assessment.status,
+          reason: assessment.reason,
+          fingerprint: context.identity.fingerprint,
+          compatibility: {
+            platform: context.identity.platform,
+            target: context.identity.target,
+            toolchain: context.identity.toolchain,
+          },
           next:
-            status === "compatible"
+            assessment.status === "compatible"
               ? "Start Metro with vp run dev:client"
               : `node scripts/mobile-native-client.ts ensure ${platform} ${device}`,
         }),
       );
-      process.exitCode = status === "compatible" ? 0 : 2;
+      process.exitCode = assessment.status === "compatible" ? 0 : 2;
     }
   }),
 );
