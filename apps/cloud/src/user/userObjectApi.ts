@@ -22,6 +22,7 @@ import {
   recordLocalModelRequest,
 } from "../localKeys/localModelAccess.ts";
 import * as UserPreviewSetup from "../previewSetup/UserPreviewSetup.ts";
+import { wire as terminalWire } from "../thread/terminalSync.ts";
 import { wire } from "../thread/threadWire.ts";
 import { shellSnapshotWire, type UserObjectApi } from "./UserDirectory.ts";
 import * as UserContexts from "./UserContexts.ts";
@@ -33,6 +34,7 @@ import * as UserShell from "./UserShell.ts";
 import * as UserStore from "./UserStore.ts";
 import * as UserThreadKinds from "./UserThreadKinds.ts";
 import * as UserThreadStatus from "./UserThreadStatus.ts";
+import * as UserTerminals from "./UserTerminals.ts";
 
 const decodeDriveEvents = Schema.decodeUnknownSync(Schema.Array(DriveRefEvent));
 
@@ -58,6 +60,7 @@ export const makeUserObjectApi = (
       | GitHubBranches.GitHubBranches
       | UserThreadKinds.UserThreadKinds
       | UserThreadStatus.UserThreadStatus
+      | UserTerminals.UserTerminals
       | LocalKeys.LocalKeys
       | ResourceBindings.ResourceBindings
       | OnePasswordAccount.OnePasswordAccount
@@ -109,6 +112,10 @@ export const makeUserObjectApi = (
           ),
         ),
       );
+    },
+    recordTerminalEvents: (encoded) => {
+      const delivery = terminalWire.delivery.decode(encoded);
+      return run(UserTerminals.UserTerminals.use((terminals) => terminals.record(delivery)));
     },
     // An object without automations yet takes the events and drops them.
     threadEvents: ({ threadId, events }) =>

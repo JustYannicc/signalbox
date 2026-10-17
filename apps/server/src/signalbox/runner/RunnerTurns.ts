@@ -134,6 +134,11 @@ export interface RunnerTurns {
   readonly steer: (runId: RunId, message: RunnerMessageInput) => Effect.Effect<void>;
   /** Stops every turn but `runId`, the one the thread still considers live. */
   readonly keepOnly: (runId: RunId | null) => Effect.Effect<void>;
+  /** Keeps the shared drive watcher active for work started outside a turn, such as a terminal. */
+  readonly watchDrive: (
+    drive: RunnerDrive,
+    onSavedAgain?: Effect.Effect<void>,
+  ) => Effect.Effect<void>;
   /**
    * Saves everything the machine wrote, for a machine about to go (#493): the
    * drive, then each harness's session rows. Answers what couldn't be saved,
@@ -326,7 +331,10 @@ export const makeRunnerTurns = Effect.fn("makeRunnerTurns")(function* (input: {
   /** The drive, opened by the first turn that names it; one per machine generation. */
   let drive: { readonly driveId: string; readonly drive: RunnerDrive } | null = null;
   /** The drive whose changes stream in. */
-  let watching: RunnerDrive | null = null;
+  let watching: {
+    readonly drive: RunnerDrive;
+    readonly savedAgain: Set<Effect.Effect<void>>;
+  } | null = null;
   /**
    * Runs whose end is held until their files land, or whose start waits for a
    * conflict to be resolved, and the agent turn awaited for it. `stopped`: the
@@ -366,6 +374,31 @@ export const makeRunnerTurns = Effect.fn("makeRunnerTurns")(function* (input: {
       }
       heldNotices = message === SAVED_AGAIN_NOTICE ? [] : [...heldNotices, message];
       return Effect.logWarning(message);
+    });
+
+  const watchDrive: RunnerTurns["watchDrive"] = (opened, onSavedAgain) =>
+    Effect.suspend(() => {
+      if (watching?.drive === opened) {
+        if (onSavedAgain !== undefined) watching.savedAgain.add(onSavedAgain);
+        return Effect.void;
+      }
+      const savedAgain = new Set<Effect.Effect<void>>();
+      if (onSavedAgain !== undefined) savedAgain.add(onSavedAgain);
+      watching = { drive: opened, savedAgain };
+      return Effect.asVoid(
+        Effect.forkIn(
+          watchChanges({
+            interval: WATCH_INTERVAL,
+            changed: opened.changed,
+            save: opened.saveNow.pipe(Effect.mapError(saveFailureReason)),
+            notice: driveNotice,
+            onSavedAgain: Effect.gen(function* () {
+              for (const recover of savedAgain) yield* recover;
+            }),
+          }),
+          scope,
+        ),
+      );
     });
 
   const drain: RunnerTurns["drain"] = Effect.gen(function* () {
@@ -972,15 +1005,7 @@ export const makeRunnerTurns = Effect.fn("makeRunnerTurns")(function* (input: {
           // Edits the thread made inside dependency trees, once the trees are rebuilt (#490).
           if (opened !== null) yield* opened.restoreDependencyEdits;
           // From the first turn on, changes stream into the drive as they happen (#493).
-          if (opened !== null && watching !== opened) {
-            watching = opened;
-            yield* watchChanges({
-              interval: WATCH_INTERVAL,
-              changed: opened.changed,
-              save: opened.saveNow.pipe(Effect.mapError(saveFailureReason)),
-              notice: driveNotice,
-            }).pipe(Effect.forkIn(scope));
-          }
+          if (opened !== null) yield* watchDrive(opened);
           const secrets =
             input.secrets === undefined
               ? 0
@@ -1223,6 +1248,7 @@ export const makeRunnerTurns = Effect.fn("makeRunnerTurns")(function* (input: {
     interrupt,
     steer,
     keepOnly,
+    watchDrive,
     drain,
     taken: Effect.sync(() => [...taken]),
   } satisfies RunnerTurns;

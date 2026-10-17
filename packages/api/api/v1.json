@@ -1676,14 +1676,14 @@
       "access": "read",
       "stream": "snapshot",
       "input": "0640135d",
-      "output": "5e95f168"
+      "output": "919dd194"
     },
     {
       "name": "terminal.open",
       "rpc": "terminal.open",
       "access": "write",
       "input": "95f54c5d",
-      "output": "b1e6c6f1"
+      "output": "788cc60f"
     },
     {
       "name": "terminal.resize",
@@ -1697,13 +1697,13 @@
       "rpc": "terminal.restart",
       "access": "write",
       "input": "5a677a5f",
-      "output": "b1e6c6f1"
+      "output": "788cc60f"
     },
     {
       "name": "terminal.write",
       "rpc": "terminal.write",
       "access": "write",
-      "input": "db19ce54",
+      "input": "7554b8ff",
       "output": "794c92c1"
     },
     {
@@ -1712,7 +1712,7 @@
       "access": "read",
       "stream": "snapshot",
       "input": "03c2b661",
-      "output": "b6f8ae30"
+      "output": "af17df5c"
     },
     {
       "name": "terminalMetadata.subscribe",
@@ -1720,7 +1720,7 @@
       "access": "read",
       "stream": "snapshot",
       "input": "03c2b661",
-      "output": "fd689900"
+      "output": "dd899e48"
     },
     {
       "name": "threadKinds.list",

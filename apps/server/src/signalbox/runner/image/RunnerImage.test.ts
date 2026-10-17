@@ -50,11 +50,19 @@ describe("Runner image pins", () => {
     expect(arg("OXC_VERSION")).toBe(packageJson.dependencies["oxc-transform"]);
   });
 
+  it("installs and exercises the native PTY on the Runner image", () => {
+    expect(`^${arg("NODE_PTY_VERSION")}`).toBe(packageJson.dependencies["node-pty"]);
+    expect(dockerfile).toContain("--allow-scripts=node-pty");
+    expect(dockerfile).toContain('require("node-pty").spawn("/bin/sh"');
+    expect(dockerfile).toContain('output.includes("terminal-image-smoke")');
+  });
+
   // A second `npm install --no-save` into the same prefix prunes what the
   // first one put there, which shipped an image without playwright-core.
   it("installs everything beside the Runner in one npm install", () => {
     const installs = dockerfile.match(/npm install --prefix \/opt\/signalbox[^&]*/g) ?? [];
     expect(installs).toHaveLength(1);
+    expect(installs[0]).toContain('"node-pty@${NODE_PTY_VERSION}"');
     expect(installs[0]).toContain('"playwright-core@${PLAYWRIGHT_CORE_VERSION}"');
     expect(installs[0]).toContain('"@rrweb/record@${RRWEB_RECORD_VERSION}"');
     expect(installs[0]).toContain('"@1password/sdk@${ONEPASSWORD_SDK_VERSION}"');

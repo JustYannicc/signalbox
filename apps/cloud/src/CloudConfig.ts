@@ -53,6 +53,7 @@ export class CloudConfig extends Context.Service<
     readonly sessionSecret: Redacted.Redacted<string>;
     readonly accounts: AccountConfig.AccountConfig;
     readonly workosWebhookSecret: Redacted.Redacted<string> | undefined;
+    readonly drives?: boolean;
   }
 >()("@signalbox/cloud/CloudConfig") {}
 
@@ -93,3 +94,9 @@ const make = Effect.gen(function* () {
 
 /** Reads the ambient `ConfigProvider`; the Worker builds one from its `env`. */
 export const layer = Layer.effect(CloudConfig, make);
+
+export const layerWithDrives = (drives: boolean) =>
+  Layer.effect(
+    CloudConfig,
+    Effect.map(make, (config) => ({ ...config, drives })),
+  );

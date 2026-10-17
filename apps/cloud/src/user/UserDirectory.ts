@@ -111,6 +111,8 @@ export interface UserObjectApi {
   readonly shellSnapshot: () => Promise<unknown>;
   /** A thread object's summary outbox delivery, in its JSON encoding. */
   readonly recordThreadSummary: (summary: unknown) => Promise<void>;
+  /** A thread object's terminal outbox delivery, in `terminalSync.wire.delivery` encoding. */
+  readonly recordTerminalEvents: (encoded: unknown) => Promise<void>;
   /**
    * A thread object's event outbox delivery (`thread/eventOutbox.ts`): the
    * user's thread's next domain events with their sequence, in order and in
@@ -309,6 +311,7 @@ const METHODS = Object.keys({
   syncOrganizations: true,
   shellSnapshot: true,
   recordThreadSummary: true,
+  recordTerminalEvents: true,
   threadEvents: true,
   driveEvents: true,
   rebuildThreadIndex: true,

@@ -5,19 +5,24 @@ import {
   type RunnerMessage,
   type ThreadMessage,
 } from "@signalbox/runner-protocol/RunnerProtocol";
+import type { TerminalReport } from "@signalbox/runner-protocol/TerminalProtocol";
 import type { ThreadId } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Crypto from "effect/Crypto";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
-import * as Schema from "effect/Schema";
 import type * as Scope from "effect/Scope";
 import * as Semaphore from "effect/Semaphore";
 
+import { RunnerConnectionError } from "./RunnerConnectionError.ts";
 import { runnerLog } from "./runnerLog.ts";
 import type { RunnerTurns } from "./RunnerTurns.ts";
+import type { RunnerTerminals } from "./RunnerTerminals.ts";
+
+export { RunnerConnectionError };
 
 /**
  * One thread's Runner: its connection to the thread's object and the
@@ -37,11 +42,6 @@ import type { RunnerTurns } from "./RunnerTurns.ts";
  * session saves everything the same way, within `STOP_DRAIN_WITHIN`, unless
  * the thread already let it go and took its tokens.
  */
-
-export class RunnerConnectionError extends Schema.TaggedError<RunnerConnectionError>()(
-  "RunnerConnectionError",
-  { message: Schema.String, cause: Schema.optional(Schema.Defect()) },
-) {}
 
 /** One open connection to the thread. `receive` fails once it closes. */
 export interface RunnerConnection {
@@ -67,6 +67,11 @@ export interface RunnerSessionInput {
   readonly makeTurns: (
     emit: (item: RunnerItem) => Effect.Effect<void>,
   ) => Effect.Effect<RunnerTurns, never, Scope.Scope>;
+  /** Builds the terminal bridge after it can report on the current socket and share drive watching. */
+  readonly makeTerminals: (
+    emit: (report: TerminalReport) => Effect.Effect<void, RunnerConnectionError>,
+    watchDrive: RunnerTurns["watchDrive"],
+  ) => Effect.Effect<RunnerTerminals, never, Scope.Scope | Crypto.Crypto>;
 }
 
 export interface RunnerSession {
@@ -97,7 +102,7 @@ const STOP_DRAIN_WITHIN = "25 seconds";
 
 export const makeRunnerSession = Effect.fn("makeRunnerSession")(function* (
   input: RunnerSessionInput,
-): Effect.fn.Return<RunnerSession, never, Scope.Scope> {
+): Effect.fn.Return<RunnerSession, never, Scope.Scope | Crypto.Crypto> {
   const items = yield* Queue.unbounded<RunnerItem>();
   const ended = yield* Deferred.make<string>();
   // Outbox order is wire order: appending and (re)sending share one lock.
@@ -108,6 +113,8 @@ export const makeRunnerSession = Effect.fn("makeRunnerSession")(function* (
     readonly pending: ReadonlyArray<Batch>;
   }>({ acked: 0, next: 1, pending: [] });
   const current = yield* Ref.make<RunnerConnection | null>(null);
+  const crypto = yield* Crypto.Crypto;
+  const terminalProcessId = yield* crypto.randomUUIDv4().pipe(Effect.orDie);
   /** Whether the latest connection got as far as `welcome`. */
   const welcomed = yield* Ref.make(false);
   /** Whether any connection of this session did. */
@@ -122,12 +129,24 @@ export const makeRunnerSession = Effect.fn("makeRunnerSession")(function* (
   // Closing the session's scope (a newer generation replaced it) ends it too.
   yield* Effect.addFinalizer(() => Deferred.succeed(ended, "stopped"));
   const turns = yield* input.makeTurns((item) => Effect.asVoid(Queue.offer(items, item)));
+  const terminals = yield* input.makeTerminals(
+    (report) =>
+      Effect.flatMap(Ref.get(current), (connection) =>
+        connection === null ? Effect.void : connection.send({ type: "terminal.report", report }),
+      ),
+    turns.watchDrive,
+  );
+  const drainAll = Effect.gen(function* () {
+    const terminalUnsaved = yield* terminals.drain;
+    const turnUnsaved = yield* turns.drain;
+    return [...terminalUnsaved, ...turnUnsaved];
+  });
   // Runs before the turns' own resources close, so the drive is still there to save to.
   yield* Effect.addFinalizer(() =>
     Effect.gen(function* () {
       // Let go by the thread, or replaced by a newer generation: its tokens are gone.
       if (yield* Deferred.isDone(ended)) return;
-      const unsaved = yield* turns.drain.pipe(
+      const unsaved = yield* drainAll.pipe(
         Effect.timeoutOrElse({
           duration: STOP_DRAIN_WITHIN,
           orElse: () => Effect.succeed([`Saving took longer than ${STOP_DRAIN_WITHIN}.`]),
@@ -194,13 +213,15 @@ export const makeRunnerSession = Effect.fn("makeRunnerSession")(function* (
         return acknowledge(message.sequence);
       case "turn.start":
         return turns.start(message);
+      case "terminal.command":
+        return terminals.handleCommand(message);
       case "interrupt":
         return turns.interrupt(message.runId);
       case "steer":
         return turns.steer(message.runId, message.message);
       case "drain":
         // Outlives this connection: the answer goes out on whichever one is open by then.
-        return turns.drain.pipe(
+        return drainAll.pipe(
           Effect.flatMap((unsaved) =>
             Queue.offer(items, { kind: "machine.drained", id: message.id, unsaved }),
           ),
@@ -218,6 +239,9 @@ export const makeRunnerSession = Effect.fn("makeRunnerSession")(function* (
   const connectOnce = Effect.scoped(
     Effect.gen(function* () {
       const connection = yield* input.transport.connect;
+      yield* Effect.addFinalizer(() =>
+        Ref.update(current, (active) => (active === connection ? null : active)),
+      );
       const { acked } = yield* Ref.get(outbox);
       yield* connection.send({
         type: "hello",
@@ -226,6 +250,7 @@ export const makeRunnerSession = Effect.fn("makeRunnerSession")(function* (
         machineId: input.machineId,
         threadId: input.threadId,
         generation: input.generation,
+        terminalProcessId,
         token: input.token,
         lastAckedSequence: acked,
         build: input.build,
@@ -266,13 +291,14 @@ export const makeRunnerSession = Effect.fn("makeRunnerSession")(function* (
       });
       // Turns the thread stopped while this machine was away.
       yield* turns.keepOnly(answer.activeRunId);
-      yield* wire.withPermits(1)(
-        Effect.gen(function* () {
-          yield* Ref.set(current, connection);
-          for (const batch of (yield* Ref.get(outbox)).pending) yield* sendNow(connection, batch);
-        }),
+      yield* terminals.replayEvents(
+        wire.withPermits(1)(
+          Effect.gen(function* () {
+            yield* Ref.set(current, connection);
+            for (const batch of (yield* Ref.get(outbox)).pending) yield* sendNow(connection, batch);
+          }),
+        ),
       );
-      yield* Effect.addFinalizer(() => Ref.set(current, null));
       while (true) yield* handle(connection, yield* connection.receive);
     }),
   );

@@ -83,18 +83,21 @@ RUN npm install --global --no-fund --no-audit --allow-scripts=bun "bun@${BUN_VER
 # browser's tabs run so people can watch them (`RunnerBrowserRecorder.ts`);
 # 1Password's SDK, which reads a folder's secrets (RunnerOnePassword.ts) and
 # loads its WebAssembly core from beside itself; and oxc's native parser and
-# transformer, which compile the automations agents save
-# (`RunnerAutomationTools.ts`). One install: a second
-# `--no-save` install into the same prefix prunes the first one's packages, so
-# the build checks they all still load.
+# transformer, which compile the automations agents save; and node-pty, which
+# runs thread terminals. One install: a second `--no-save` install into the
+# same prefix prunes the first one's packages. Load checks and a PTY smoke
+# test below catch missing runtime dependencies.
 ARG PLAYWRIGHT_CORE_VERSION=1.60.0
 ARG RRWEB_RECORD_VERSION=2.1.7
 ARG ONEPASSWORD_SDK_VERSION=0.5.0
 ARG OXC_VERSION=0.148.0
+ARG NODE_PTY_VERSION=1.2.0-beta.15
 RUN install -d /opt/signalbox \
   && npm install --prefix /opt/signalbox --no-fund --no-audit --no-save \
+    --allow-scripts=node-pty \
     "playwright-core@${PLAYWRIGHT_CORE_VERSION}" "@rrweb/record@${RRWEB_RECORD_VERSION}" \
     "@1password/sdk@${ONEPASSWORD_SDK_VERSION}" "oxc-parser@${OXC_VERSION}" "oxc-transform@${OXC_VERSION}" \
+    "node-pty@${NODE_PTY_VERSION}" \
   && npm cache clean --force \
   && cd /opt/signalbox && node -e 'require("playwright-core"); require("@rrweb/record"); require("@1password/sdk"); require("oxc-parser"); require("oxc-transform")'
 
@@ -112,6 +115,13 @@ ENV SIGNALBOX_RUNNER_REVISION=${SIGNALBOX_RUNNER_REVISION}
 # Claude Code refuses to skip permission prompts as root. `node` is uid 1000,
 # the same as boat's `user`, so files on the machine's disk keep one owner.
 USER node
+
+RUN cd /opt/signalbox && node -e '\
+  const pty = require("node-pty").spawn("/bin/sh", ["-c", "printf terminal-image-smoke"], { cols: 80, rows: 24 }); \
+  let output = ""; \
+  const timer = setTimeout(() => { pty.kill(); process.exit(1); }, 8000); \
+  pty.onData(data => { output += data; }); \
+  pty.onExit(({ exitCode }) => { clearTimeout(timer); process.exit(exitCode === 0 && output.includes("terminal-image-smoke") ? 0 : 1); });'
 
 ENTRYPOINT ["node", "/opt/signalbox/runner.mjs"]
 CMD ["machine"]

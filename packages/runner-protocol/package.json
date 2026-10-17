@@ -15,6 +15,10 @@
       "types": "./src/PreviewServices.ts",
       "import": "./src/PreviewServices.ts"
     },
+    "./TerminalProtocol": {
+      "types": "./src/TerminalProtocol.ts",
+      "import": "./src/TerminalProtocol.ts"
+    },
     "./DriveProtocol": {
       "types": "./src/DriveProtocol.ts",
       "import": "./src/DriveProtocol.ts"

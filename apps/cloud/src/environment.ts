@@ -78,6 +78,7 @@ export interface CloudEnvironmentIdentity {
   readonly scripted?: boolean;
   /** Whether threads take pasted screenshots and files (`attachments/`): the cloud has a bucket. */
   readonly attachments?: boolean;
+  readonly drives?: boolean;
 }
 
 export const authDescriptor: ServerAuthDescriptor = {
@@ -128,8 +129,7 @@ export const descriptor = (identity: CloudEnvironmentIdentity): ExecutionEnviron
     // Threads link pull requests and keep their state synced (`thread/pullRequests/`), so the
     // sidebar badge and Thread details show them. The `pullRequests.*` reads and watching are #397.
     threadPullRequests: true,
-    // Threads run on machines nobody operates, and the user never runs this server.
-    terminal: false,
+    terminal: identity.drives === true,
     worktrees: false,
     serverSettingsWrite: false,
     modelSettingsWrite: true,

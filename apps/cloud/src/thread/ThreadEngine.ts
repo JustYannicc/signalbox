@@ -49,6 +49,11 @@ import {
 } from "./turnPool.ts";
 import { poolErrorMessage } from "../pool/PoolDirectory.ts";
 import type { ThreadMonitor, ThreadSnapshotWire, ThreadSummaryWire } from "./threadWire.ts";
+import { ThreadNotFoundError } from "./ThreadObjectError.ts";
+import type { Actor } from "./ThreadActor.ts";
+
+export { ThreadNotFoundError };
+export type { Actor };
 
 /**
  * One thread's orchestration, inside its Durable Object. Commands and provider
@@ -60,15 +65,6 @@ import type { ThreadMonitor, ThreadSnapshotWire, ThreadSummaryWire } from "./thr
  * Events are only published after they commit, so a subscriber never sees an
  * event the log could lose.
  */
-
-export class ThreadNotFoundError extends Schema.TaggedError<ThreadNotFoundError>()(
-  "ThreadNotFoundError",
-  {},
-) {
-  override get message(): string {
-    return "Thread not found.";
-  }
-}
 
 export class ThreadCommandRejectedError extends Schema.TaggedError<ThreadCommandRejectedError>()(
   "ThreadCommandRejectedError",
@@ -88,16 +84,6 @@ export class ThreadCommandRejectedError extends Schema.TaggedError<ThreadCommand
       reason,
     });
   }
-}
-
-/**
- * Who is acting. Only a thread's owner can read or change it until sharing
- * lands, and only while they're still in its context: `contextIds` are the
- * owner's contexts as their own object holds them at the time of the call.
- */
-export interface Actor {
-  readonly userId: string;
-  readonly contextIds: ReadonlyArray<SignalboxContextId>;
 }
 
 /**

@@ -28,8 +28,14 @@ import type {
   BrowsingStreamItem,
 } from "@t3tools/contracts/signalboxBrowsing";
 import type { BrowsingDispatched } from "./browsing/ThreadBrowsing.ts";
+import {
+  terminalHandleFor,
+  type TerminalHandle,
+  type TerminalObjectApi,
+} from "./terminal/terminalDirectory.ts";
 import { browsingWire } from "./browsing/browsingWire.ts";
 import type { PreviewLinkResult } from "./preview/PreviewGateway.ts";
+import { ThreadObjectError } from "./ThreadObjectError.ts";
 import type {
   DriveAuthorization,
   ModelAuthorization,
@@ -61,15 +67,7 @@ import {
  */
 
 export const THREAD_OBJECT_JURISDICTION = "eu";
-
-export class ThreadObjectError extends Schema.TaggedError<ThreadObjectError>()(
-  "ThreadObjectError",
-  { operation: Schema.String, cause: Schema.Defect() },
-) {
-  override get message(): string {
-    return `Thread object call failed (${this.operation}).`;
-  }
-}
+export { ThreadObjectError };
 
 /** A watcher fell behind the agent's browser; its stream ended for good (see `preview/BrowserMirror.ts`). */
 export class BrowserWatchBehindError extends Schema.TaggedError<BrowserWatchBehindError>()(
@@ -90,7 +88,7 @@ export interface ThreadPreviews {
 const isBehind = Schema.is(BrowserWatchBehind);
 
 /** What a thread object answers. `ThreadObject` implements it method for method. */
-export interface ThreadObjectApi {
+export interface ThreadObjectApi extends TerminalObjectApi {
   readonly dispatch: (
     actor: Actor,
     command: unknown,
@@ -169,7 +167,7 @@ export interface ThreadObjectApi {
 
 type CommandFailure = ThreadNotFoundError | ThreadCommandRejectedError | ThreadObjectError;
 
-export interface ThreadHandle {
+export interface ThreadHandle extends TerminalHandle {
   readonly dispatch: (
     actor: Actor,
     command: OrchestrationV2Command,
@@ -327,6 +325,7 @@ const lines = <A>(
 /** Wraps any `ThreadObjectApi` (a Durable Object stub, or a test double) as Effects. */
 export function handleFor(api: ThreadObjectApi): ThreadHandle {
   return {
+    ...terminalHandleFor(api),
     dispatch: (actor, command, creation) =>
       call("dispatch", () => api.dispatch(actor, wire.command.encode(command), creation)).pipe(
         Effect.flatMap(fromReply),
