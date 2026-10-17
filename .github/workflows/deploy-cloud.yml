@@ -67,6 +67,12 @@ on:
 permissions:
   contents: read
 
+# Cancel the whole old PR pipeline, including work before the deploy job.
+# Production keeps its job lock and must finish an in-progress deployment.
+concurrency:
+  group: cloud-pr-run-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 env:
   ALCHEMY_TELEMETRY_DISABLED: "1"
 
