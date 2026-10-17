@@ -491,7 +491,7 @@ const make = Effect.gen(function* () {
           if (machine.status === "connected" && machine.runtimeResponses !== true) {
             return yield* refuse(
               machine.runtimeResponsesUpgrade === true
-                ? "This machine couldn't update to support questions and approvals. Stop this turn before retrying."
+                ? "This machine couldn't update to support questions and approvals. Stop this turn and wait for the machine to shut down before retrying."
                 : "This machine is updating. Try your answer again shortly.",
               { record: false },
             );
