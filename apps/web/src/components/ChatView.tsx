@@ -549,6 +549,7 @@ import { useAtomCommand } from "../state/use-atom-command";
 import { useOrchestrationCommand } from "../state/use-orchestration-command";
 import { useAtomQueryRunner } from "../state/use-atom-query-runner";
 import { Button, InlineButton } from "./ui/button";
+import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from "./ui/empty";
 import {
   AlertDialog,
   AlertDialogClose,
@@ -8175,13 +8176,24 @@ export default function ChatView(props: ChatViewProps) {
       <ThreadPullRequestsPanel threadRef={activeThreadRef} />
     ) : renderedRightPanelSurface?.kind === "agent-browser" ? (
       // signalbox: agent browser
-      <Suspense fallback={null}>
-        <AgentBrowserPanel
-          environmentId={activeThreadRef.environmentId}
-          threadId={activeThreadRef.threadId}
-          visible={rightPanelOpen}
-        />
-      </Suspense>
+      isServerThread ? (
+        <Suspense fallback={null}>
+          <AgentBrowserPanel
+            environmentId={activeThreadRef.environmentId}
+            threadId={activeThreadRef.threadId}
+            visible={rightPanelOpen}
+          />
+        </Suspense>
+      ) : (
+        <Empty>
+          <EmptyHeader>
+            <EmptyTitle>Agent's browser</EmptyTitle>
+            <EmptyDescription>
+              Send a message to start this thread. Pages the agent opens will appear here.
+            </EmptyDescription>
+          </EmptyHeader>
+        </Empty>
+      )
     ) : renderedRightPanelSurface?.kind === "device" ? (
       <Suspense fallback={null}>
         <DevicePanel
