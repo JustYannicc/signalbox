@@ -1,5 +1,6 @@
 import { sectionMcpToolDefinitions, type SectionMcpToolSummaryAction } from "./sectionsMcpTools.ts";
 import { AUTOMATION_MCP_TOOLS } from "./automationMcpTools.ts"; // signalbox: automations
+import { SIGNALBOX_ASK_MCP_TOOLS } from "./signalboxAskMcpTools.ts";
 
 export type T3McpToolLogo = "t3-code";
 
@@ -343,6 +344,7 @@ const T3_MCP_TOOLS: Readonly<Record<string, T3McpToolDefinition>> = {
   html_preview: tool(["Preview", "Previewing", "Previewed", "an HTML page"], "html-preview"),
   html_render: tool(["Render", "Rendering", "Rendered", "an HTML page"], "html-render"),
   ...AUTOMATION_MCP_TOOLS, // signalbox: automations
+  ...SIGNALBOX_ASK_MCP_TOOLS,
 };
 
 export const T3_MCP_TOOL_NAMES: ReadonlySet<string> = new Set(Object.keys(T3_MCP_TOOLS));
