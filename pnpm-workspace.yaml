@@ -12,6 +12,8 @@ allowBuilds:
   browser-tabs-lock: false
   bufferutil: false
   core-js: false
+  # Lunora's CLI includes optional SSH, protobuf and Vue tooling; codegen uses none of their install hooks.
+  cpu-features: false
   electron: true
   electron-winstaller: false
   esbuild: true
@@ -20,10 +22,13 @@ allowBuilds:
   node-pty: true
   # Ships N-API prebuilds; its install script only rebuilds from source.
   objc-js: false
+  protobufjs: false
   "react-native-enriched-markdown@file:apps/mobile/deps/react-native-enriched-markdown-1.2.0-t3.15.tgz": true
   sharp: true
+  ssh2: false
   tsc-rs: true
   utf-8-validate: false
+  vue-demi: false
   workerd: false
 
 catalog:
