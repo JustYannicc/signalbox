@@ -335,3 +335,32 @@ it.effect("a cron firing doesn't lift an event-trigger pause", () => {
     }),
   );
 });
+
+it.effect("concurrent external events respect an automation's overlap policy", () =>
+  withEngine(
+    {},
+    Effect.gen(function* () {
+      const engine = yield* WorkflowEngine;
+      const saved = yield* saveOk(`export const meta = {
+      name: "Wait after a PR opens", overlap: "skip", triggers: [{ on: "pr.opened" }]
+    } as const;
+    export default workflow(async (w) => await w.waitFor("Keep the run open", { on: "pr.closed" }));`);
+      yield* Effect.all(
+        [1, 2].map((number) =>
+          engine.deliverEvent({
+            event: "pr.opened",
+            id: `external-opened-${number}`,
+            at: DateTime.formatIso(AT),
+            projectId: PROJECT,
+            fields: Effect.succeed({ repository: "owner/repo", number }),
+          }),
+        ),
+        { concurrency: 2 },
+      );
+      yield* engine.drain;
+      const runs = yield* runsOf(saved.id);
+      expect(runs).toHaveLength(1);
+      expect(runs[0]?.status).toBe("running");
+    }),
+  ),
+);
