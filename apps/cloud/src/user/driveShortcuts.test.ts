@@ -95,12 +95,16 @@ const land = (cloud: Cloud, driveId: string, userId: string, files: Record<strin
       newMain: head,
     });
     expect(landed._tag).toBe("ok");
+    return { git, head };
   }).pipe(Effect.provide(cloud.drives.layer));
 
 /** What a thread's machine gets asking the drive API, as `userId` working in `driveId`. */
-const machine = (cloud: Cloud, userId: string, driveId: string) => {
+const machine = (cloud: Cloud, userId: string, driveId: string, threadId?: string) => {
   const call = (request: Request) =>
-    shortcutRoute({ userId, driveId }, request).pipe(
+    shortcutRoute(
+      { userId, driveId, ...(threadId === undefined ? {} : { threadId }) },
+      request,
+    ).pipe(
       Effect.provide(
         Layer.mergeAll(
           cloud.drives.layer,
@@ -128,6 +132,123 @@ const machine = (cloud: Cloud, userId: string, driveId: string) => {
 };
 
 describe("drive shortcuts (#142)", () => {
+  it.effect(
+    "forks keep shortcut paths and commits while current access remains authoritative",
+    () =>
+      Effect.gen(function* () {
+        const { cloud, alice, bob } = yield* setup;
+        const design = yield* bob[SIGNALBOX_DRIVES_WS_METHODS.create]({
+          contextId: ACME,
+          name: "Design",
+        });
+        yield* bob[SIGNALBOX_DRIVES_WS_METHODS.share]({
+          driveId: design.id,
+          email: "alice@acme.test",
+          role: "viewer",
+        });
+        const target = yield* land(cloud, design.id, "user_bob", { "spec.md": "Version one\n" });
+        const own = "my/personal/user_alice";
+        const source = yield* land(cloud, own, "user_alice", { "work.md": "Uses version one\n" });
+        yield* alice[SIGNALBOX_DRIVES_WS_METHODS.addShortcut]({
+          driveId: SignalboxDriveId.make(own),
+          path: "design",
+          target: design.id,
+        });
+        const threadId = `thread-${own.replaceAll("/", "-")}`;
+        const views = {
+          shortcuts: [{ path: "design", target: design.id, commit: target.head }],
+          context: null,
+        };
+        const record = {
+          runId: "run-uses-v1",
+          turnId: "run-uses-v1",
+          commit: source.head,
+          start: null,
+          views,
+        };
+        source.git.git([
+          "notes",
+          "--ref=signalbox/checkpoints",
+          "add",
+          "-m",
+          JSON.stringify(record),
+          source.head,
+        ]);
+        const notes = source.git.git(["rev-parse", "refs/notes/signalbox/checkpoints"]);
+        yield* uploadPack({
+          driveId: own,
+          threadId,
+          ...source.git.pack([notes], [source.head]),
+        }).pipe(Effect.provide(cloud.drives.layer));
+        const handle = cloud.drives.apiFor(own);
+        expect(
+          (yield* Effect.promise(() =>
+            handle.recordCheckpoint(
+              { threadId, userId: "user_alice", generation: 1, live: true, packsAfter: 0 },
+              { ...record, notes },
+            ),
+          ))._tag,
+        ).toBe("ok");
+        expect(
+          (yield* Effect.promise(() =>
+            handle.forkCheckpoint("user_alice", {
+              sourceThreadId: threadId,
+              runId: record.runId,
+              threadId: "child-uses-v1",
+              operationId: "fork-uses-v1",
+            }),
+          ))._tag,
+        ).toBe("ok");
+
+        target.git.write("spec.md", "Version two\n");
+        const latest = target.git.commit("Version two");
+        yield* uploadPack({
+          driveId: design.id,
+          threadId: "target-update",
+          ...target.git.pack([latest], [target.head]),
+        }).pipe(Effect.provide(cloud.drives.layer));
+        const targetHandle = cloud.drives.apiFor(design.id);
+        const writer = {
+          threadId: "target-update",
+          userId: "user_bob",
+          generation: 1,
+          live: true,
+          packsAfter: 0,
+        };
+        yield* Effect.promise(() => targetHandle.open(writer));
+        yield* Effect.promise(() =>
+          targetHandle.updateRefs(writer, [
+            { name: threadRef(writer.threadId), old: target.head, new: latest },
+          ]),
+        );
+        yield* Effect.promise(() =>
+          targetHandle.reconcile(writer, { expectedMain: target.head, newMain: latest }),
+        );
+        yield* alice[SIGNALBOX_DRIVES_WS_METHODS.removeShortcut]({
+          driveId: SignalboxDriveId.make(own),
+          path: "design",
+        });
+        const pinned = machine(cloud, "user_alice", own, "child-uses-v1");
+        expect(yield* machine(cloud, "user_alice", own).list).toEqual([]);
+        expect(yield* pinned.list).toMatchObject([
+          { path: "design", target: design.id, main: target.head, pinned: true, readable: true },
+        ]);
+        const [pack] = yield* Effect.promise(() => targetHandle.refs(null)).pipe(
+          Effect.map((refs) => refs.packs),
+        );
+        expect(yield* pinned.pack(design.id, pack!.name)).toBe(200);
+
+        yield* bob[SIGNALBOX_DRIVES_WS_METHODS.unshare]({
+          driveId: design.id,
+          userId: "user_alice",
+        });
+        expect(yield* pinned.list).toMatchObject([
+          { path: "design", main: null, readable: false, packs: [] },
+        ]);
+        expect(yield* pinned.pack(design.id, pack!.name)).toBe(403);
+      }),
+  );
+
   it.effect(
     "a shortcut shows another drive at a new folder; the rules keep the drive's own files safe",
     () =>

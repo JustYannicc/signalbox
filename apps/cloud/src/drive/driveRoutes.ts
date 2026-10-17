@@ -104,6 +104,9 @@ const toState = (driveId: string, refs: ThreadRefs): DriveState => ({
   packs: refs.packs,
   remote: refs.remote,
   shallow: refs.shallow,
+  notes: refs.notes,
+  pinnedViews: refs.pinnedViews,
+  revision: refs.revision,
 });
 
 const decodeOid = Schema.decodeUnknownOption(Oid);
@@ -283,7 +286,12 @@ async function route(
 
   // Shortcut targets, read-only (#142): the thread's user's access to each, asked now.
   if (pathname === DRIVE_PATHS.shortcuts || pathname.startsWith(`${DRIVE_PATHS.shortcuts}/`)) {
-    return await run(shortcutRoute({ userId: auth.userId, driveId: auth.driveId }, request));
+    return await run(
+      shortcutRoute(
+        { userId: auth.userId, driveId: auth.driveId, threadId: auth.threadId },
+        request,
+      ),
+    );
   }
   if (request.method === "GET" && pathname.startsWith(`${DRIVE_PATHS.packs}/`)) {
     return await run(packResponse(auth.driveId, pathname.slice(DRIVE_PATHS.packs.length + 1)));
@@ -291,6 +299,14 @@ async function route(
   if (request.method !== "POST") return text("Method not allowed.", 405);
 
   switch (pathname) {
+    case DRIVE_PATHS.checkpoint: {
+      const body = decodeBody(driveJson.checkpoint.decode, await request.text());
+      if (body === null) return text("Unreadable request.", 400);
+      const written = await run(
+        Effect.flatMap(drive, (handle) => handle.recordCheckpoint(writer, body)),
+      );
+      return json(driveJson.refWrite.encode(toResult(auth.driveId, written)));
+    }
     case DRIVE_PATHS.open: {
       const opened = await run(Effect.flatMap(drive, (handle) => handle.open(writer)));
       // A newer machine writes here now; nothing this one retries changes that.

@@ -167,7 +167,7 @@ export const proxyRemote = (
       const target = decodeBody(decodeURIComponent, shortcut[1]!);
       if (target === null) return text("Unknown path.", 404);
       driveId = target;
-      const reader = { userId: verdict.userId, driveId: verdict.driveId };
+      const reader = { userId: verdict.userId, driveId: verdict.driveId, threadId: threadId.value };
       if (!(yield* readsShortcut(reader, driveId))) {
         return text("This drive has no shortcut to that drive you can open.", 403);
       }

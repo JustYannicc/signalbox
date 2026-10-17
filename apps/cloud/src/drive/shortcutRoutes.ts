@@ -20,16 +20,29 @@ import { decodeBody, json, packResponse, text } from "./routeResponses.ts";
 
 export interface ShortcutReader {
   readonly userId: string;
+  readonly threadId?: string;
   /** The thread's own drive, whose shortcuts these are. */
   readonly driveId: string;
 }
+
+const shortcutsOf = (reader: ShortcutReader) =>
+  Effect.gen(function* () {
+    const drive = (yield* DriveDirectory).forDrive(reader.driveId);
+    const pins =
+      reader.threadId === undefined
+        ? null
+        : (yield* drive.refs(reader.threadId, Number.MAX_SAFE_INTEGER)).pinnedViews;
+    return pins === undefined || pins === null
+      ? (yield* drive.shortcuts()).map((shortcut) => ({ ...shortcut, pinned: false, commit: null }))
+      : pins.shortcuts.map((shortcut) => ({ ...shortcut, pinned: true }));
+  });
 
 /** The thread's shortcuts, each with its target as the user may read it now. */
 export const listShortcuts = (reader: ShortcutReader, have: Readonly<Record<string, number>>) =>
   Effect.gen(function* () {
     const directory = yield* DriveDirectory;
     const user = (yield* UserDirectory).forUser(reader.userId);
-    const shortcuts = yield* directory.forDrive(reader.driveId).shortcuts();
+    const shortcuts = yield* shortcutsOf(reader);
     return yield* Effect.forEach(
       shortcuts,
       (shortcut) =>
@@ -49,7 +62,7 @@ export const listShortcuts = (reader: ShortcutReader, have: Readonly<Record<stri
           return {
             ...shortcut,
             readable: true,
-            main: refs.main,
+            main: shortcut.pinned ? shortcut.commit : refs.main,
             packs: refs.packs,
             shallow: refs.shallow,
             remote: refs.remote,
@@ -63,10 +76,7 @@ export const listShortcuts = (reader: ShortcutReader, have: Readonly<Record<stri
 export const readsShortcut = (reader: ShortcutReader, target: string) =>
   Effect.gen(function* () {
     const [shortcuts, role] = yield* Effect.all(
-      [
-        (yield* DriveDirectory).forDrive(reader.driveId).shortcuts(),
-        (yield* UserDirectory).forUser(reader.userId).driveAccess(target),
-      ],
+      [shortcutsOf(reader), (yield* UserDirectory).forUser(reader.userId).driveAccess(target)],
       { concurrency: 2 },
     );
     return role !== null && shortcuts.some((shortcut) => shortcut.target === target);

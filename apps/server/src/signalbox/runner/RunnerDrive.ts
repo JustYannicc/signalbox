@@ -1,8 +1,12 @@
 import {
   type CommitAuthor,
+  type CheckpointViews,
+  type DriveCheckpointRecord,
   type FolderInstructions,
   DRIVE_COMMIT_AUTHOR,
   DRIVE_MERGE_MESSAGE,
+  Oid,
+  CheckpointShortcutView,
   type DriveFileChange,
   type DriveRemote,
   type SkippedFolder,
@@ -15,6 +19,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import type * as PlatformError from "effect/PlatformError";
 import * as Semaphore from "effect/Semaphore";
+import * as Schema from "effect/Schema";
 
 import {
   type DriveClient,
@@ -22,14 +27,14 @@ import {
   type DriveRefusedError,
   DriveTooLargeError,
 } from "./RunnerDriveClient.ts";
-import { type DriveRefs, makeDriveMirror } from "./RunnerDriveMirror.ts";
+import { CHECKPOINT_NOTES_REF, type DriveRefs, makeDriveMirror } from "./RunnerDriveMirror.ts";
 import { EMPTY_TREE, makeRunnerGit, remoteCredentialFile, RunnerGitError } from "./RunnerGit.ts";
 import { CACHES_LINE, makeExcludes } from "./RunnerExcludes.ts";
 import { makeRunnerInstructions, type RunnerInstructionsError } from "./RunnerInstructions.ts";
 import type { DependencyTree, DependencyTreesError } from "./RunnerDependencies.ts";
 import { makeMachineState, type OutsideFolder } from "./RunnerMachineState.ts";
 import { mergedPullRequestOf } from "./mergedPullRequest.ts";
-import { makeRunnerShortcuts } from "./RunnerShortcuts.ts";
+import { makeRunnerShortcuts, type MountedShortcut } from "./RunnerShortcuts.ts";
 import { commitSummary, parseNameStatus } from "./commitSummary.ts";
 import type { SecretMask } from "./secretMask.ts";
 
@@ -83,7 +88,7 @@ export interface DriveCheckpoint {
 
 export type DriveOutcome =
   | { readonly _tag: "landed"; readonly main: string }
-  /** A remote-backed drive's branch, saved for the user to push. */
+  /** The thread branch was saved without merging it into main. */
   | { readonly _tag: "saved"; readonly head: string }
   | { readonly _tag: "conflict"; readonly files: ReadonlyArray<string> }
   | { readonly _tag: "not_landed"; readonly reason: string }
@@ -160,6 +165,14 @@ export interface RunnerDrive {
    * were edited at. Only after `prepare` restored the thread on a new machine.
    */
   readonly restoreDependencyEdits: Effect.Effect<void>;
+  /** The commits mounted for shortcuts and the context view pinned for this turn. */
+  readonly checkpointViews: (context: CheckpointViews["context"]) => CheckpointViews;
+  /** Adds a durable Git note and registers its uploaded ref before the checkpoint event is emitted. */
+  readonly recordCheckpoint: (
+    record: Omit<DriveCheckpointRecord, "notes"> & { readonly threadId: string },
+  ) => Effect.Effect<void, RunnerDriveError>;
+  /** Saves the current worktree as an auto-save revision without landing the branch. */
+  readonly captureCheckpoint: Effect.Effect<DriveCheckpoint | null, RunnerDriveError>;
   /**
    * Commits the turn's files with a message describing the change (never the
    * turn's prompt, which pushing would publish), then lands or saves the branch.
@@ -188,6 +201,23 @@ export interface RunnerDrive {
    */
   readonly published: (head: string) => Effect.Effect<void, RunnerDriveError>;
 }
+
+const CheckpointNoteJson = Schema.fromJsonString(
+  Schema.Struct({
+    threadId: Schema.String,
+    turnId: Schema.String,
+    runId: Schema.String,
+    commit: Oid,
+    start: Schema.NullOr(Oid),
+    views: Schema.Struct({
+      shortcuts: Schema.Array(CheckpointShortcutView),
+      context: Schema.NullOr(
+        Schema.Array(Schema.Struct({ driveId: Schema.String, commit: Schema.NullOr(Oid) })),
+      ),
+    }),
+  }),
+);
+const encodeCheckpointNote = Schema.encodeSync(CheckpointNoteJson);
 
 const BRANCH = "refs/heads/signalbox";
 /** The remote's head as last fetched. */
@@ -235,8 +265,11 @@ export const makeRunnerDrive = Effect.fn("makeRunnerDrive")(function* (input: {
   let remote: DriveRemote | null | undefined = undefined;
   /** Whether a turn start opened the drive here: only then is there anything to save. */
   let prepared = false;
+  /** A restored/forked thread stays on its selected input until it explicitly updates to latest. */
+  let pinnedContinuation = false;
   /** Where the last turn mounted the drive's shortcuts. */
   let mounted: ReadonlySet<string> = new Set();
+  let mountedShortcuts: ReadonlyArray<MountedShortcut> = [];
   const machineState =
     input.machine === undefined
       ? null
@@ -489,6 +522,14 @@ export const makeRunnerDrive = Effect.fn("makeRunnerDrive")(function* (input: {
       const files = yield* concludeMerge;
       if (files.length > 0) return { _tag: "conflict", files } as DriveOutcome;
     }
+    if (pinnedContinuation) {
+      const head = yield* git.resolve("HEAD");
+      if (head === null) return { _tag: "nothing_saved" } as const;
+      const refused = yield* drive.saveBranch(head);
+      return refused === null
+        ? ({ _tag: "saved", head } as const)
+        : ({ _tag: "not_landed", reason: refused } as const);
+    }
     // Only a drive without a remote lands on its own main.
     return syncing === null && (remote === null || remote === undefined)
       ? yield* land
@@ -640,6 +681,8 @@ export const makeRunnerDrive = Effect.fn("makeRunnerDrive")(function* (input: {
         yield* fs.makeDirectory(input.cwd, { recursive: true });
         if (!existed) yield* git.run(["init", "-q", `--initial-branch=signalbox`]);
         for (const [key, value] of configFor(author)) yield* git.run(["config", key, value]);
+        yield* git.run(["config", "core.notesRef", CHECKPOINT_NOTES_REF]);
+        yield* git.run(["config", "notes.displayRef", CHECKPOINT_NOTES_REF]);
         yield* excludeCaches;
         const localThread = existed ? yield* git.resolve("refs/drive/thread") : null;
         // A merge a turn start reported belongs to that turn alone.
@@ -670,11 +713,20 @@ export const makeRunnerDrive = Effect.fn("makeRunnerDrive")(function* (input: {
           if (fetched?._tag === "fetched") fetchedMain = fetched.head;
         }
         const state = yield* drive.open;
+        pinnedContinuation = state.pinnedViews !== null;
+        const revisionFile = path.join(gitDir, "signalbox-revision");
+        const localRevision = yield* fs.readFileString(revisionFile).pipe(
+          Effect.map((value) => value.trim() || null),
+          Effect.orElseSucceed(() => null),
+        );
+        const revisionChanged =
+          state.revision !== undefined && (state.revision ?? "") !== (localRevision ?? "");
         const notices: Array<string> = [];
-        if (!existed || localThread !== state.thread) {
+        if (!existed || localThread !== state.thread || revisionChanged) {
           conflicted = [];
           // The branch may still have files where a shortcut is mounted read-only.
           yield* shortcuts.release;
+          if (revisionChanged) yield* git.run(["clean", "-ffdq"]);
           yield* checkout(state).pipe(
             Effect.catchTags({
               RunnerGitError: (error) =>
@@ -688,6 +740,7 @@ export const makeRunnerDrive = Effect.fn("makeRunnerDrive")(function* (input: {
                     ),
             }),
           );
+          yield* fs.writeFileString(revisionFile, state.revision ?? "");
         }
         // A new machine: the last one's machine state comes back on top of the checkout.
         if (!existed && machineState !== null && state.machine !== null) {
@@ -716,7 +769,13 @@ export const makeRunnerDrive = Effect.fn("makeRunnerDrive")(function* (input: {
                 branch: input.branch,
                 repository: remote.repository,
               });
-        if (merged !== null && fetchedMain !== null && remote !== null && remote !== undefined) {
+        if (
+          merged !== null &&
+          fetchedMain !== null &&
+          remote !== null &&
+          remote !== undefined &&
+          !pinnedContinuation
+        ) {
           const main = remote.defaultBranch;
           const outcome = yield* syncMain(merged, remote, fetchedMain);
           if (outcome?._tag === "merged") {
@@ -733,8 +792,9 @@ export const makeRunnerDrive = Effect.fn("makeRunnerDrive")(function* (input: {
         }
         turnStart = yield* git.resolve("HEAD");
         prepared = true;
-        const mounts = yield* shortcuts.mount(remoteToken);
+        const mounts = yield* shortcuts.mount(remoteToken, state.pinnedViews !== null);
         mounted = new Set(mounts.mounted.map((mount) => mount.path));
+        mountedShortcuts = mounts.mounted;
         return {
           instructions: yield* instructions.compose(mounts.mounted, folders),
           notices: [...notices, ...mounts.notices],
@@ -791,17 +851,23 @@ export const makeRunnerDrive = Effect.fn("makeRunnerDrive")(function* (input: {
           } else {
             yield* commitAll();
           }
-          const head = yield* git.resolve("HEAD");
-          const checkpoint =
-            head === null
-              ? null
-              : {
-                  start: turnStart,
-                  commit: head,
-                  files: yield* git.changedFiles(turnStart ?? EMPTY_TREE, head),
-                };
-          if (head === null) return { checkpoint, outcome: { _tag: "nothing_saved" } };
-          if (remote !== null && remote !== undefined) {
+          let head = yield* git.resolve("HEAD");
+          if (head === null) {
+            // The first completed turn needs a real, restorable revision even when it wrote no files.
+            head = (yield* git.run([
+              "commit-tree",
+              EMPTY_TREE,
+              "-m",
+              "Initialize the drive",
+            ])).trim();
+            yield* git.setRef(BRANCH, head);
+          }
+          const checkpoint = {
+            start: turnStart,
+            commit: head,
+            files: yield* git.changedFiles(turnStart ?? EMPTY_TREE, head),
+          };
+          if ((remote !== null && remote !== undefined) || pinnedContinuation) {
             const refused = yield* drive.saveBranch(head);
             return {
               checkpoint,
@@ -817,6 +883,33 @@ export const makeRunnerDrive = Effect.fn("makeRunnerDrive")(function* (input: {
         }),
       ),
     );
+
+  const captureCheckpoint: RunnerDrive["captureCheckpoint"] = Effect.suspend(() =>
+    prepared
+      ? exclusive(
+          Effect.gen(function* () {
+            yield* saveWip;
+            let commit = drive.known().wip ?? drive.known().thread;
+            if (commit === null) {
+              commit = (yield* git.run([
+                "commit-tree",
+                EMPTY_TREE,
+                "-m",
+                "Initialize the drive",
+              ])).trim();
+              const refused = yield* drive.saveWip(commit);
+              if (refused !== null) return yield* new DriveRefusedError({ message: refused });
+              commit = drive.known().wip ?? commit;
+            }
+            return {
+              start: turnStart,
+              commit,
+              files: yield* git.changedFiles(turnStart ?? EMPTY_TREE, commit),
+            };
+          }),
+        )
+      : Effect.succeed(null),
+  );
 
   const abandonMerge = exclusive(
     Effect.gen(function* () {
@@ -880,6 +973,53 @@ export const makeRunnerDrive = Effect.fn("makeRunnerDrive")(function* (input: {
       }),
     );
 
+  const recordCheckpoint: RunnerDrive["recordCheckpoint"] = (record) =>
+    exclusive(
+      Effect.gen(function* () {
+        const note = encodeCheckpointNote({
+          threadId: record.threadId,
+          turnId: record.turnId,
+          runId: record.runId,
+          commit: record.commit,
+          start: record.start,
+          views: {
+            shortcuts: record.views.shortcuts,
+            context:
+              record.views.context?.contexts.flatMap((context) =>
+                context.drives.map(({ driveId, commit }) => ({ driveId, commit })),
+              ) ?? null,
+          },
+        });
+        const existing = yield* git.exec([
+          "notes",
+          `--ref=${CHECKPOINT_NOTES_REF}`,
+          "show",
+          record.commit,
+        ]);
+        if (existing.code !== 0 || !existing.stdout.split("\n").includes(note)) {
+          yield* git.run(
+            ["notes", `--ref=${CHECKPOINT_NOTES_REF}`, "append", "-F", "-", record.commit],
+            { stdin: `${note}\n` },
+          );
+        }
+        const notes = yield* git.resolve(CHECKPOINT_NOTES_REF);
+        if (notes === null) {
+          return yield* new RunnerGitError({ message: "git notes didn't create a notes ref." });
+        }
+        yield* drive.saveNotes(notes);
+        const result = yield* input.client.recordCheckpoint({ ...record, notes });
+        if (result._tag === "refused") {
+          return yield* new DriveRefusedError({ message: result.reason });
+        }
+        if (result._tag === "conflict") {
+          return yield* new DriveRefusedError({
+            message: "The drive changed while this checkpoint was being recorded.",
+          });
+        }
+        yield* drive.adopt(result.state);
+      }),
+    );
+
   return {
     prepare,
     autosave,
@@ -902,6 +1042,12 @@ export const makeRunnerDrive = Effect.fn("makeRunnerDrive")(function* (input: {
               ),
             ),
           ),
+    checkpointViews: (context) => ({
+      shortcuts: mountedShortcuts.map(({ path, target, commit }) => ({ path, target, commit })),
+      context,
+    }),
+    recordCheckpoint,
+    captureCheckpoint,
     finishTurn,
     continueAfterResolution: exclusive(resolveAndLand),
     takeInMain: exclusive(takeInMain),

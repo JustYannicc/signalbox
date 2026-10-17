@@ -10,6 +10,8 @@ import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
 import {
+  type CheckpointViews,
+  type DriveCheckpointRecord,
   type DriveShortcut,
   type DriveState,
   type RefWriteResult,
@@ -84,8 +86,17 @@ export const makeFakeDrive = (
   let main: string | null = null;
   const threads = new Map<
     string,
-    { thread: string | null; wip: string | null; machine: string | null; base: string | null }
+    {
+      thread: string | null;
+      wip: string | null;
+      machine: string | null;
+      base: string | null;
+      notes: string | null;
+      pinnedViews: CheckpointViews | null;
+      revision: string | null;
+    }
   >();
+  const checkpointRecords = new Map<string, Array<DriveCheckpointRecord>>();
   const calls = { reconcile: 0, reconcileConflicts: 0, mirror: 0 };
   /** Set to make the cloud refuse every mirror, as when GitHub has not caught up yet. */
   const settings = { refuseMirror: false };
@@ -120,12 +131,18 @@ export const makeFakeDrive = (
       wip: null,
       machine: null,
       base: null,
+      notes: null,
+      pinnedViews: null,
+      revision: null,
     };
     return {
       driveId: id,
       main,
       ...refs,
       ...(options.machineState === false ? {} : { machine }),
+      notes: refs.notes ?? null,
+      pinnedViews: refs.pinnedViews ?? null,
+      revision: refs.revision ?? null,
       packs: packs
         .filter((pack) => pack.seq > packsAfter)
         .filter((pack) => pack.owner === undefined || pack.owner === threadId)
@@ -150,7 +167,15 @@ export const makeFakeDrive = (
       },
       open: Effect.sync(() => {
         if (!threads.has(threadId)) {
-          threads.set(threadId, { thread: main, wip: null, machine: null, base: main });
+          threads.set(threadId, {
+            thread: main,
+            wip: null,
+            machine: null,
+            base: main,
+            notes: null,
+            pinnedViews: null,
+            revision: null,
+          });
         }
         return state(threadId, packsAfter);
       }),
@@ -169,6 +194,18 @@ export const makeFakeDrive = (
             return { _tag: "conflict", state: state(threadId, packsAfter) };
           }
           main = request.newMain;
+          return { _tag: "ok", state: state(threadId, packsAfter) };
+        }),
+      recordCheckpoint: (record) =>
+        Effect.sync((): RefWriteResult => {
+          const refs = threads.get(threadId)!;
+          if (!has(record.commit) || !has(record.notes)) {
+            return { _tag: "refused", reason: "unknown checkpoint object" };
+          }
+          refs.notes = record.notes;
+          const records = checkpointRecords.get(threadId) ?? [];
+          if (!records.some((entry) => entry.runId === record.runId)) records.push(record);
+          checkpointRecords.set(threadId, records);
           return { _tag: "ok", state: state(threadId, packsAfter) };
         }),
       downloadPack: (name, dir) =>
@@ -275,6 +312,7 @@ export const makeFakeDrive = (
                 packs: [],
                 shallow: [],
                 remote: null,
+                pinned: false,
               };
             }
             const target = shortcut.target.state(null, have[shortcut.target.id] ?? 0);
@@ -282,6 +320,7 @@ export const makeFakeDrive = (
               path: shortcut.path,
               target: shortcut.target.id,
               readable: true,
+              pinned: false,
               main: target.main,
               packs: target.packs,
               shallow: target.shallow,
@@ -341,6 +380,7 @@ export const makeFakeDrive = (
     calls,
     client,
     refs: (threadId: string) => ({ main, ...threads.get(threadId)! }),
+    checkpoints: (threadId: string) => checkpointRecords.get(threadId) ?? [],
     /** Every object in the packs `threadId` is handed. */
     objectsVisibleTo: (threadId: string) =>
       new Set(
@@ -351,6 +391,14 @@ export const makeFakeDrive = (
     /** Moves a thread's ref behind its back, as a save that never landed would leave it. */
     forceRef: (threadId: string, ref: "thread" | "wip", oid: string | null) => {
       threads.get(threadId)![ref] = oid;
+    },
+    /** Applies the drive refs a restore would publish before a machine reopens the thread. */
+    pinToCheckpoint: (threadId: string, commit: string, views: CheckpointViews) => {
+      const refs = threads.get(threadId)!;
+      refs.thread = commit;
+      refs.wip = commit;
+      refs.pinnedViews = views;
+      refs.revision = `restore-${commit}`;
     },
     /** Objects in packs only `threadId` is handed. */
     privateObjectsOf: (threadId: string) =>

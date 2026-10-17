@@ -56,6 +56,12 @@ export const makeDriveObjectApi = (
     addShortcut: (userId, shortcut) => run(store.use((s) => s.addShortcut(userId, shortcut))),
     removeShortcut: (userId, path) => run(store.use((s) => s.removeShortcut(userId, path))),
     unreconciled: (input) => run(store.use((s) => s.unreconciled(input))),
+    recordCheckpoint: (writer, record) => run(store.use((s) => s.recordCheckpoint(writer, record))),
+    checkpoint: (threadId, runId) => run(store.use((s) => s.checkpoint(threadId, runId))),
+    forkCheckpoint: (userId, request) => run(store.use((s) => s.forkCheckpoint(userId, request))),
+    restoreCheckpoint: (userId, request) =>
+      changingOutbox(run(store.use((s) => s.restoreCheckpoint(userId, request)))),
+    updateToLatest: (userId, request) => run(store.use((s) => s.updateToLatest(userId, request))),
     setup: (input) => changingOutbox(run(members.use((m) => m.setup(input)))),
     driveName: () => run(members.use((m) => m.name)),
     role: (userId) => run(members.use((m) => m.role(userId))),
