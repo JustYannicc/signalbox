@@ -1,11 +1,12 @@
 // @effect-diagnostics nodeBuiltinImport:off globalConsole:off - Standalone CI script, run by signalbox-ci.yml.
 /**
- * Fails when a branch stops merging cleanly with upstream T3 Code.
+ * Reports the files a branch makes conflict with upstream T3 Code: the cost
+ * the next upstream sync pays. Fails on them unless `--report`.
  *
  *   node scripts/upstream-sync/check-merge.ts --base <ref> --head <ref> --upstream <ref> [--report]
  *
  * Only conflicts the head introduces count: files that conflict for head but
- * not for base. `--report` prints conflicts and always exits 0.
+ * not for base. `--report` prints them as warnings and always exits 0.
  */
 import * as NodePath from "node:path";
 import * as NodeUtil from "node:util";
@@ -40,10 +41,12 @@ function main() {
   console.log(`${values.head} no longer merges cleanly with ${values.upstream}:`);
   for (const file of introduced) {
     console.log(`  ${file}`);
-    if (!values.report) console.log(`::error file=${file}::Conflicts with ${values.upstream}`);
+    console.log(
+      `::${values.report ? "warning" : "error"} file=${file}::Conflicts with ${values.upstream}`,
+    );
   }
   console.log(
-    "Keep fork changes out of upstream files where you can. See docs/operations/upstream-sync.md.",
+    "The next upstream sync resolves these by hand or ports instead. See docs/operations/upstream-sync.md.",
   );
   if (!values.report) process.exitCode = 1;
 }

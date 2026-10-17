@@ -1,4 +1,4 @@
-import type { DriveAccess } from "@signalbox/runner-protocol/DriveProtocol";
+import type { CheckpointViews, DriveAccess } from "@signalbox/runner-protocol/DriveProtocol";
 import {
   type MachineClass,
   type MachineUsage,
@@ -61,6 +61,7 @@ import { outgrownBy } from "./RunnerMachineClass.ts";
 import {
   FILE_CHANGING_ITEMS,
   finishDriveTurn,
+  captureInterruptedDriveTurn,
   resolveMainConflict,
   saveFailureReason,
 } from "./RunnerTurnDrive.ts";
@@ -182,6 +183,8 @@ interface Turn {
   /** Messages steered in, by id, and the ones waiting for the harness to name its turn. */
   readonly steered: Set<string>;
   readonly steers: Array<RunnerMessageInput>;
+  /** The view this run pinned while its checkout and session loaded. */
+  pinnedContext: Fiber.Fiber<CheckpointViews["context"], never> | null;
 }
 
 const encodeAdapterEvent = Schema.encodeUnknownSync(Schema.toCodecJson(ProviderAdapterV2Event));
@@ -276,7 +279,7 @@ export const makeRunnerTurns = Effect.fn("makeRunnerTurns")(function* (input: {
   /** This machine's class. On a light one, a turn that needs more moves up (`RunnerMachineClass.ts`). */
   readonly machineClass?: MachineClass;
   /** Pins this turn's view of every drive the user can read (#141). Never fails. */
-  readonly pinDrives?: (access: DriveAccess) => Effect.Effect<void>;
+  readonly pinDrives?: (access: DriveAccess) => Effect.Effect<CheckpointViews["context"]>;
   /** The folder's secrets for the harness sessions. Absent: none load on this machine. */
   readonly secrets?: RunnerSecrets;
   /** Registers them with the thread, with the turn's session token (`makeSecretsRegistrar`). */
@@ -642,14 +645,30 @@ export const makeRunnerTurns = Effect.fn("makeRunnerTurns")(function* (input: {
       if (held !== undefined || state === undefined || event.status !== "completed") {
         // Interrupted or failed: what the agent did is kept as an auto-save.
         yield* current.autosave;
+        if (held === undefined && state !== undefined && event.status !== "completed") {
+          const context =
+            state.pinnedContext === null ? null : yield* Fiber.join(state.pinnedContext);
+          yield* captureInterruptedDriveTurn({
+            runId,
+            turnId: event.providerTurnId,
+            threadId: input.threadId,
+            drive: current,
+            views: current.checkpointViews(context),
+            emit: input.emit,
+          });
+        }
         return false;
       }
       finishing.set(runId, { waiting: null });
       yield* track(event);
+      const context = state.pinnedContext === null ? null : yield* Fiber.join(state.pinnedContext);
       let attempts = 0;
       yield* finishDriveTurn({
         runId,
+        turnId: event.providerTurnId,
+        threadId: input.threadId,
         drive: current,
+        views: current.checkpointViews(context),
         emit: input.emit,
         resolve: (prompt) => continueTurn(runId, state, prompt, "merge", ++attempts),
       }).pipe(
@@ -950,6 +969,7 @@ export const makeRunnerTurns = Effect.fn("makeRunnerTurns")(function* (input: {
         access === null || input.pinDrives === undefined
           ? null
           : yield* Effect.forkChild(input.pinDrives(access));
+      state.pinnedContext = pinning;
       // The harness starts in the thread's branch, as the drive last saved it, with its dependencies.
       const opened = access === null ? null : yield* driveFor(access);
       const prepared = yield* preparing.withPermits(1)(
@@ -1136,6 +1156,7 @@ export const makeRunnerTurns = Effect.fn("makeRunnerTurns")(function* (input: {
         sessionToken: sessionAccess?.token ?? null,
         steered: new Set(),
         steers: [],
+        pinnedContext: null,
       };
       // The thread hands out one run at a time, so any other this machine
       // still runs is one it stopped, even when that `interrupt` never came.

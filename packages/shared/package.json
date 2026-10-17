@@ -11,6 +11,10 @@
       "types": "./src/nativeElicitation.ts",
       "import": "./src/nativeElicitation.ts"
     },
+    "./synchronization": {
+      "types": "./src/synchronization.ts",
+      "import": "./src/synchronization.ts"
+    },
     "./signalboxAppUrl": {
       "types": "./src/signalboxAppUrl.ts",
       "import": "./src/signalboxAppUrl.ts"

@@ -2,6 +2,7 @@ import { clientAskCommand } from "@t3tools/shared/signalboxAsks";
 import type { ThreadCommand } from "./threadCommands.ts";
 import { dispatchAutomationAskAnswer } from "../automations/askAnswers.ts";
 import type { SignalboxAsk, SignalboxAskAnswerCommand } from "@t3tools/contracts/signalboxAsks";
+import { traceSynchronization } from "@t3tools/shared/synchronization";
 import {
   CommandId,
   type ChatAttachment,
@@ -498,20 +499,41 @@ const make = Effect.gen(function* () {
       Effect.gen(function* () {
         const handle = directory.forThread(input.threadId);
         const cursor = yield* Ref.make(input.afterSequence);
+        yield* traceSynchronization("connecting", {
+          side: "server",
+          stream: "thread",
+          threadId: input.threadId,
+        });
         return yield* resuming({
           operation: "subscribe",
           threadId: input.threadId,
           open: Stream.unwrap(
-            Effect.map(Ref.get(cursor), (afterSequence) =>
-              handle.subscribe(actor, {
+            Effect.gen(function* () {
+              const afterSequence = yield* Ref.get(cursor);
+              yield* traceSynchronization(afterSequence === undefined ? "snapshot" : "resuming", {
+                side: "server",
+                stream: "thread",
+                threadId: input.threadId,
+                mode: afterSequence === undefined ? "snapshot" : "resume",
+                ...(afterSequence === undefined ? {} : { afterSequence }),
+              });
+              return handle.subscribe(actor, {
                 ...input,
                 ...(afterSequence === undefined ? {} : { afterSequence }),
-              }),
-            ),
+              });
+            }),
           ),
           delivered: (batch) => {
             const next = cursorAfter(batch);
-            return next === undefined ? Effect.void : Ref.set(cursor, next);
+            return (
+              batch.some((item) => item.kind === "synchronized")
+                ? traceSynchronization("marker_emitted", {
+                    side: "server",
+                    stream: "thread",
+                    threadId: input.threadId,
+                  })
+                : Effect.void
+            ).pipe(Effect.andThen(next === undefined ? Effect.void : Ref.set(cursor, next)));
           },
         });
       }),
