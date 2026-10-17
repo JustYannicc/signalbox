@@ -20,7 +20,7 @@ import {
 } from "../automations/webhookRequest.ts";
 import { DriveDirectory } from "../drive/DriveDirectory.ts";
 import { driveOfProject } from "../user/contextProjects.ts";
-import { UserProfile } from "../user/UserProfile.ts";
+import { makeProfileId } from "../user/profileId.ts";
 import { GitHub } from "./GitHub.ts";
 import { GitHubConnection } from "./GitHubConnection.ts";
 import { GITHUB_SIGNATURE, parseGitHubPayload } from "./githubEvents.ts";
@@ -46,13 +46,13 @@ const make = Effect.gen(function* () {
   const connection = yield* GitHubConnection;
   const github = yield* GitHub;
   const hooks = makeGitHubHookApi(github.api);
-  const users = yield* UserProfile;
+  const ownerId = yield* makeProfileId;
   const crypto = yield* Crypto.Crypto;
   const origin = yield* HookOrigin;
   const drives = yield* Effect.serviceOption(DriveDirectory);
   const uuid = crypto.randomUUIDv4().pipe(Effect.orDie);
   const deliverEvent = yield* makeGitHubEventDelivery;
-  const profile = users.current.pipe(
+  const profile = ownerId.pipe(
     Effect.mapError(
       (cause) => new AutomationError({ message: "Couldn't read the GitHub webhook owner.", cause }),
     ),
@@ -60,7 +60,7 @@ const make = Effect.gen(function* () {
 
   const base = Effect.gen(function* () {
     const owner = yield* profile;
-    return owner ? `${origin}/api/github/hooks/${encodeURIComponent(owner.id)}` : null;
+    return owner ? `${origin}/api/github/hooks/${encodeURIComponent(owner)}` : null;
   });
 
   const reconcile = Effect.gen(function* () {
@@ -68,7 +68,7 @@ const make = Effect.gen(function* () {
     const repositories = new Map<string, string | null>();
     const owner = yield* profile;
     for (const projectId of new Set(automations.map((automation) => automation.projectId))) {
-      const driveId = owner ? driveOfProject(ProjectId.make(projectId), owner.id) : null;
+      const driveId = owner ? driveOfProject(ProjectId.make(projectId), owner) : null;
       const remote =
         driveId && drives._tag === "Some"
           ? yield* drives.value
