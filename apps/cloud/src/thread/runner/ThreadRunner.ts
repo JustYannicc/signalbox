@@ -1155,8 +1155,7 @@ const make = Effect.gen(function* () {
         const tailFrom = Math.max(idleSince, (yield* previews.lastActiveAt) ?? 0);
         if (closing || now - tailFrom >= backend.idleTailMs) {
           const idle = `Idle for ${formatDuration(now - tailFrom)}.`;
-          // The machine saves everything it wrote before its tokens go (#493);
-          // a Runner from before drains is let go as it always was.
+          // The machine saves everything it wrote before its tokens go (#493).
           if (lease.drains !== true) {
             if (closing)
               return {
