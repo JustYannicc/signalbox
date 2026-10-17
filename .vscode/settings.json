@@ -5,7 +5,7 @@
     "source.fixAll.oxc": "always"
   },
   "oxc.unusedDisableDirectives": "warn",
-  "js/ts.tsdk.path": "node_modules/typescript/lib",
+  "js/ts.tsdk.path": ".generated/effect-tsgo-sdk",
   "typescript.preferences.autoImportFileExcludePatterns": [".repos/**"],
   "javascript.preferences.autoImportFileExcludePatterns": [".repos/**"],
   "files.watcherExclude": {

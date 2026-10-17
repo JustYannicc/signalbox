@@ -1,7 +1,8 @@
 /**
- * The `automations.open` keybinding (mod+alt+w by default): opens the
- * overview, the same as the palette entry. Lives here so CommandPalette's own
- * key handler stays upstream's.
+ * The `automations.open` keybinding (mod+alt+w by default): opens the palette
+ * on its automation entries, since automations live in their folders and have
+ * no page of their own. Lives here so CommandPalette's own key handler stays
+ * upstream's.
  */
 import { useAtomValue } from "@effect/atom-react";
 import { useEffect } from "react";
@@ -9,11 +10,10 @@ import { useEffect } from "react";
 import { resolveShortcutCommand } from "../../keybindings";
 import { isTerminalFocused } from "../../lib/terminalFocus";
 import { primaryServerKeybindingsAtom } from "../../state/server";
-import { useOpenAutomations } from "./useOpenAutomation";
+import { openAutomationsInPalette } from "./useOpenAutomation";
 
 export function AutomationsShortcut() {
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
-  const openAutomations = useOpenAutomations();
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -26,11 +26,11 @@ export function AutomationsShortcut() {
       if (command !== "automations.open") return;
       event.preventDefault();
       event.stopPropagation();
-      void openAutomations();
+      openAutomationsInPalette();
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [keybindings, openAutomations]);
+  }, [keybindings]);
 
   return null;
 }
