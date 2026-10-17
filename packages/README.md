@@ -18,6 +18,10 @@ present means warning, absent means fork-owned and error. Using the merged upstr
 history keeps severity stable when upstream deletes a file before we sync it.
 A modified upstream file still warns, including its `signalbox:` hook lines.
 Cycles are tracked by importing edge; an edge from a fork-only file errors.
+The checker compares complete cycle edges with the PR base. Unrecorded edges at
+`7eaa0c3a37` remain exempt only while still cyclic in the base; the migration source
+never advances. They are counted separately without adding baseline entries.
+Newly cyclic fork edges still fail, including cycles introduced by concurrent merges.
 Fetch the ref before running locally:
 
 ```sh

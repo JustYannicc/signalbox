@@ -15,6 +15,7 @@ import * as CloudAssets from "../assets/CloudAssets.ts";
 import { AutomationAlarm, CloudAutomations } from "../automations/CloudAutomations.ts";
 import * as PersonBrowsers from "../browser/PersonBrowsers.ts";
 import * as CloudEngine from "../automations/cloudEngine.ts";
+import { HookOrigin } from "../automations/cloudIngress.ts";
 import { layerWorkflows } from "../automations/workflowRunner.ts";
 import { type AttachmentObjects, attachmentStorage } from "../attachments/attachmentObjects.ts";
 import * as CloudAttachments from "../attachments/CloudAttachments.ts";
@@ -40,6 +41,7 @@ import * as PoolDirectory from "../pool/PoolDirectory.ts";
 import * as UserPreviewSetup from "../previewSetup/UserPreviewSetup.ts";
 import * as PushNotifier from "../push/PushNotifier.ts";
 import * as CloudThreadService from "../thread/CloudThreadService.ts";
+import * as ThreadsLive from "../thread/ThreadsLive.ts";
 import * as ModelManifest from "../thread/ModelManifest.ts";
 import { scriptedProviderEnabled } from "../thread/scriptedProvider.ts";
 import type { MachineBackendEnv } from "../thread/runner/MachineBackend.ts";
@@ -48,6 +50,7 @@ import { machineSettings } from "../thread/runner/machineBackends.ts";
 import * as ThreadDirectory from "../thread/ThreadDirectory.ts";
 import * as KindClassifier from "../threadKinds/KindClassifier.ts";
 import { ClientSockets, PING, PONG } from "./clientSockets.ts";
+import { clientKindOf } from "./clientSessionLog.ts";
 import * as PoolSignIns from "./PoolSignIns.ts";
 import {
   CONNECTION_HEADER,
@@ -103,6 +106,7 @@ export interface UserObjectEnv
   readonly DRIVE_PACKS_PREFIX?: string;
   readonly ENVIRONMENT_ID: string;
   readonly ENVIRONMENT_LABEL?: string;
+  readonly AUTOMATION_HOOK_ORIGIN?: string;
   /** Set by `vp run dev` only. Local workerd has no jurisdictions. */
   readonly LOCAL_WORKERD?: string;
   readonly THREADS: ThreadDirectory.ThreadObjectNamespace;
@@ -193,7 +197,11 @@ const makeRuntime = (storage: DurableObjectStorage, env: UserObjectEnv) => {
     // The user's automations (#434), on the services below.
     CloudEngine.layer.pipe(
       Layer.provide(
-        Layer.mergeAll(layerWorkflows(env.AUTOMATION_RUNS), layerAutomationAlarm(storage)),
+        Layer.mergeAll(
+          layerWorkflows(env.AUTOMATION_RUNS),
+          layerAutomationAlarm(storage),
+          Layer.succeed(HookOrigin, env.AUTOMATION_HOOK_ORIGIN ?? ""),
+        ),
       ),
       // Building it only touches the object's own SQLite, which the object can't run without either.
       Layer.orDie,
@@ -220,7 +228,7 @@ const makeRuntime = (storage: DurableObjectStorage, env: UserObjectEnv) => {
             Layer.mergeAll(
               UserShell.layer,
               UserThreadStatus.layer,
-              CloudThreadService.layer,
+              CloudThreadService.layer.pipe(Layer.provideMerge(ThreadsLive.layer)),
               PoolSignIns.layer,
               drives.services,
               ConnectionLinks.layer,
@@ -334,7 +342,7 @@ export class UserObject extends DurableObject<UserObjectEnv> implements UserObje
     void ctx.blockConcurrencyWhile(async () => {
       await this.runtime.runPromise(UserStore.migrate);
       // Serves sockets that outlived the object's memory before anything else runs.
-      await this.sockets.restore(await this.now());
+      await this.sockets.restore(await this.now(), (await this.profile())?.id);
       // An alarm lost to a crash between sweeps is set again; one that's set is enough.
       if ((await ctx.storage.getAlarm()) === null) {
         await this.runtime.runPromise(
@@ -549,6 +557,10 @@ export class UserObject extends DurableObject<UserObjectEnv> implements UserObje
     return this.api.automationHost(call);
   }
 
+  receiveHook(request: Parameters<UserObjectApi["receiveHook"]>[0]) {
+    return this.api.receiveHook(request);
+  }
+
   automationWorkerModule(automationId: string, version: number) {
     return this.api.automationWorkerModule(automationId, version);
   }
@@ -589,7 +601,12 @@ export class UserObject extends DurableObject<UserObjectEnv> implements UserObje
     if (!session || !profile) return new Response("Unauthorized", { status: 401 });
 
     const [client, server] = Object.values(new WebSocketPair()) as [WebSocket, WebSocket];
-    await this.sockets.accept(server, session, profile.id);
+    await this.sockets.accept(
+      server,
+      session,
+      profile.id,
+      clientKindOf(new URL(request.url).searchParams.get("clientSurface")),
+    );
     // The alarm disconnects it when its session expires.
     await armBy(this.ctx.storage, session.expiresAt);
     // A revoke that landed while the socket was being set up missed it.
@@ -606,7 +623,7 @@ export class UserObject extends DurableObject<UserObjectEnv> implements UserObje
   }
 
   override async webSocketError(socket: WebSocket) {
-    await this.sockets.closed(socket);
+    await this.sockets.closed(socket, 1011, "", "error");
   }
 
   /**

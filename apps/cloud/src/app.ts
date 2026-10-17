@@ -36,6 +36,7 @@ import * as ConnectionRoutes from "./connections/connectionRoutes.ts";
 import { verifyLocalKey } from "./localKeys/LocalKeys.ts";
 import * as LocalKeyRoutes from "./localKeys/localKeyRoutes.ts";
 import * as AccountRoutes from "./http/accountRoutes.ts";
+import * as HookRoutes from "./automations/hookRoutes.ts";
 import * as WorkOSWebhook from "./http/workosWebhook.ts";
 import * as PreviewOpenRoutes from "./http/previewOpenRoutes.ts";
 import { NO_STORE_HEADERS, requestCredentials, traceId } from "./http/credentials.ts";
@@ -52,6 +53,7 @@ import {
   protectedResourceMetadata,
 } from "./api/mcpRoutes.ts";
 import * as CloudThreadService from "./thread/CloudThreadService.ts";
+import * as ThreadsLive from "./thread/ThreadsLive.ts";
 import type { LocalKeyVerifier } from "./thread/runner/modelGrants.ts";
 import * as ThreadDirectory from "./thread/ThreadDirectory.ts";
 import * as ThreadKindTurns from "./thread/ThreadKindTurns.ts";
@@ -92,7 +94,7 @@ export const layerServices = (input: {
     Layer.provideMerge(
       Layer.mergeAll(
         CloudAccounts.layer,
-        CloudThreadService.layer,
+        CloudThreadService.layer.pipe(Layer.provideMerge(ThreadsLive.layer)),
         PreviewSetup.layer,
         ThreadKindRoutes.layerTestClock,
       ),
@@ -126,6 +128,7 @@ type Services = Layer.Success<ReturnType<typeof layerServices>>;
 const routes = Layer.mergeAll(
   EnvironmentApi.layer,
   AccountRoutes.layer,
+  HookRoutes.layer,
   PreviewOpenRoutes.layer,
   DiagnosticsRoutes.layer,
   ThreadKindRoutes.layer,

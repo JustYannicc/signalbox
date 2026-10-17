@@ -2,7 +2,7 @@
 
 Signalbox is one app for working with AI. You start a thread, say what you want, and agents do the work on a server and tell you when they need you. It is meant for knowledge workers as much as for developers.
 
-Signalbox is built on [T3 Code](https://github.com/pingdotgg/t3code). T3 Code gets a lot right, and we want to keep receiving its updates. See [Staying on T3 Code](#staying-on-t3-code).
+Signalbox started from [T3 Code](https://github.com/pingdotgg/t3code), which gets a lot right. Upstream is now a source, not a branch. See [Upstream T3 Code](#upstream-t3-code).
 
 Explicit user instructions take precedence over these defaults and skill guidance. Continue authorized work without inventing approval gates. If an instruction blocks work, identify its file and exact rule, explain the conflict, and state what remains unfinished.
 
@@ -72,16 +72,19 @@ Most of this has been figured out somewhere. Before designing anything, look at 
 
 Two interaction models I don't want. The first is the department bot: a university chatbot, a company's accounting agent, Grokbot's roster of bots. Grokbot made AI dead simple to start, and that was a real step for most people. But it doesn't remove the complexity. You still pay the supervisor tax of picking the right bot and managing it. People want to go to the one assistant they already use and have it handle everything from there. The second is the void: OpenClaw started as a CLI, and its front ends still feel bolted on. I tell it something and trust the void to handle it. That trust is the goal. But when something breaks, I need to see what happened. T3 Code's site shows you the app immediately. That difference is felt before anything else.
 
-## Staying on T3 Code
+## Upstream T3 Code
 
-`origin` is `JustYannicc/signalbox`. `pingdotgg/t3code` is the remote `t3code`, fetched into `refs/remotes/upstream/*` so `upstream/main` is T3 Code's main (`git fetch t3code`). Don't name a remote `upstream`: T3 Code and Signalbox name a project after it, and the sidebar would show T3 Code's repository. Upstream ships hundreds of commits a week, so every fork change is a future merge.
+Staying merge-compatible with T3 Code is not a goal. We're rebuilding the backend on Cloudflare and the frontend will diverge. Upstream is a source, not a branch: we take what's valuable where code is still shared (provider adapters, contracts, bug and performance fixes), and it constrains nothing else.
 
-- Merge upstream into `main`; never rebase shared history.
-- Rename what users see, type, or install. Keep upstream's internal names (`@t3tools/*`, `T3CODE_*`, symbols, `t3.json`) so upstream patches apply cleanly.
-- Put fork features in their own modules. Give an upstream file at most a hook line, using existing seams (routes, provider registries, settings sections) before adding new ones.
-- When upstream ships a workflow-shaped feature, adopt the primitive it implies, not the feature itself (principle 8). Make the primitive available to automations and agents, and leave upstream's code in place so merges stay clean.
-- Generic fixes and seams belong upstream. Open those as PRs to T3 Code instead of carrying them.
-- `apps/server` persistence migrations are numbered and the runner only applies ids above the latest recorded one. A fork migration that takes a number upstream later uses silently skips upstream's. Fork tables create themselves (`CREATE TABLE IF NOT EXISTS`) instead.
+`origin` is `JustYannicc/signalbox`. `pingdotgg/t3code` is the remote `t3code`, fetched into `refs/remotes/upstream/*` so `upstream/main` is T3 Code's main (`git fetch t3code`). Don't name a remote `upstream`: T3 Code and Signalbox name a project after it, and the sidebar would show T3 Code's repository.
+
+- Design for Signalbox. Restructure, replace or delete upstream code wherever that makes the better system. A conflict with upstream is a cost the next sync pays, never a reason to keep the worse design.
+- Syncs merge upstream into `main` while they stay cheap; never rebase shared history. Where conflicts cost more than the sync brings, port the upstream changes we want instead. [Upstream sync](docs/operations/upstream-sync.md) covers how to decide.
+- Rename internal names (`@t3tools/*`, `T3CODE_*`, `t3.json`) only as part of a real change, never in a rename-only sweep. Where code we still merge from upstream uses the old name, extend the rebrand codemod in the same PR so syncs keep renaming it.
+- Where fork code sits in a file we still merge from upstream, mark it `// signalbox: <why>`. Signalbox CI fails a sync that drops a marked line.
+- When upstream ships a workflow-shaped feature, adopt the primitive it implies, not the feature itself (principle 8), and make the primitive available to automations and agents.
+- Upstream PRs are welcome for generic fixes, with a demo. Ship ours first; never wait on or design around one.
+- `apps/server` persistence migrations are numbered and the runner only applies ids above the latest recorded one. While we merge upstream's persistence code, a fork migration that takes a number upstream later uses silently skips upstream's. Fork tables create themselves (`CREATE TABLE IF NOT EXISTS`) instead.
 - Cloud Durable Object migrations (`apps/cloud`) run by full name, so ids may repeat or land out of order. Never edit, rename or remove one once merged; CI fails on it. See [Durable Object migrations](docs/operations/cloud.md#durable-object-migrations).
 - `settings.json` decodes through the contracts schema and drops unknown keys on write. Fork settings live in their own file.
 
@@ -198,6 +201,9 @@ Architecture and its constraints: `docs/internals/overview.md`. Glossary: `docs/
 ## Where code lives
 
 Before adding a module or importing across modules, read [workspace boundaries](packages/README.md) and [cloud module boundaries](apps/cloud/src/README.md).
+Before changing thread execution or live events, read the [threads module](apps/cloud/src/thread/README.md).
+
+For live people views or explicit location joins, read [presence](apps/cloud/src/presence/README.md).
 
 - `apps/server` - WebSocket, orchestration, providers, checkpointing. Effect-heavy: read [Effect services](docs/internals/effect-services.md) before adding server code, and `.repos/effect-smol/LLMS.md` for the Effect library itself.
 - `apps/cloud` - the hosted product on Cloudflare: Workers, Durable Objects, the model gateway, drives, pools and automations. Deploys through Alchemy.
@@ -206,6 +212,7 @@ Before adding a module or importing across modules, read [workspace boundaries](
 - `packages/shared` - shared runtime utils, subpath exports, no barrel.
 - `packages/client-runtime` - client code shared by web and mobile.
 - `packages/runner-protocol` - what the cloud and a runner machine say to each other. The Runner itself lives in `apps/server/src/signalbox/runner`.
+- `apps/server/src/signalbox` and `apps/desktop/src/signalbox` hold fork code kept apart for upstream merges. New code goes where it belongs in the app, not there by default.
 - `.repos/` - vendored read-only references. Prefer their patterns over invented ones. Never edit or import from them. Sync with `vpr sync:repos` when bumping the matching dependency.
 
 ## Taste
