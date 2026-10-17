@@ -70,7 +70,7 @@ export function AutomationRunList(props: {
   return (
     <aside
       aria-label="Runs"
-      className="hidden w-64 shrink-0 flex-col overflow-y-auto border-t border-r p-2 md:flex"
+      className="hidden w-64 shrink-0 flex-col overflow-y-auto border-t border-r p-2 @3xl/automation:flex"
     >
       <h2 className="px-2.5 pt-1 pb-2 text-xs font-medium text-muted-foreground">Runs</h2>
       {props.runs.length === 0 ? (

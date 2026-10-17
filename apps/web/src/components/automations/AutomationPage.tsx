@@ -90,7 +90,18 @@ export function AutomationPage(props: {
     shownRunId ? automationState.run({ environmentId, input: { runId: shownRunId } }) : null,
   );
   const runDetail = runQuery.data?.run.id === shownRunId ? runQuery.data : null;
-  const [draftSide, setDraftSide] = useState<DraftSide>("draft");
+  // A run picked by link (Home's needs-you row) shows on the live diagram, since runs
+  // don't draw on a draft. A side picked in the draft bar holds until the run changes.
+  const [pickedSide, setPickedSide] = useState<{ side: DraftSide; runId: string | null } | null>(
+    null,
+  );
+  const draftSide: DraftSide =
+    pickedSide && pickedSide.runId === props.runId
+      ? pickedSide.side
+      : props.runId
+        ? "live"
+        : "draft";
+  const setDraftSide = (side: DraftSide) => setPickedSide({ side, runId: props.runId });
   const home = useProjectHomeLabel(environmentId, detail?.automation.projectId ?? null);
 
   if (!detail) {
@@ -185,16 +196,13 @@ export function AutomationPage(props: {
           onSideChange={setDraftSide}
         />
       ) : null}
-      <div className="flex min-h-0 flex-1">
+      <div className="@container/automation flex min-h-0 flex-1">
         <AutomationRunList
           runs={detail.runs}
           selectedId={shownRunId}
           // A run's chat stays a chat; from the diagram or the code, the run traces on the
           // live diagram, since runs don't draw on a draft.
-          onSelect={(runId) => {
-            if (props.view !== "run" && automation.version > 0) setDraftSide("live");
-            show(props.view === "run" ? "run" : "diagram", runId);
-          }}
+          onSelect={(runId) => show(props.view === "run" ? "run" : "diagram", runId)}
         />
         {props.view === "code" ? (
           <AutomationSourceView

@@ -6,19 +6,11 @@
 import { ScrollArea } from "../ui/scroll-area";
 import { WorkspacePageContainer } from "../WorkspacePageContainer";
 import { AutomationsPageShell } from "./AutomationsPageShell";
-import { NewAutomationButton } from "./NewAutomationButton";
 import { StepsReference } from "./StepsReference";
 
 export function AutomationStepsPage() {
   return (
-    <AutomationsPageShell
-      title="Triggers and steps"
-      header={
-        <div className="ms-auto flex items-center gap-2">
-          <NewAutomationButton />
-        </div>
-      }
-    >
+    <AutomationsPageShell title="Triggers and steps">
       <div className="min-h-0 flex-1 border-t">
         <ScrollArea className="h-full">
           <WorkspacePageContainer>

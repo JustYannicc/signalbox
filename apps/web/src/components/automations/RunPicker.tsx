@@ -54,10 +54,10 @@ export function RunPicker(props: {
   return (
     <div className="flex max-w-[min(32rem,calc(100vw-2rem))] flex-col gap-1.5 rounded-lg border bg-card p-1 shadow-sm/5">
       <div className="flex items-center gap-1">
-        <span className="hidden min-w-0 px-2 text-xs md:flex">
+        <span className="hidden min-w-0 px-2 text-xs @3xl/automation:flex">
           <RunLine run={selected} />
         </span>
-        <div className="flex min-w-0 md:hidden">
+        <div className="flex min-w-0 @3xl/automation:hidden">
           <Select value={selected.id} onValueChange={(id) => id && props.onSelect(id)}>
             <SelectTrigger size="xs" variant="ghost" aria-label="Run shown on the diagram">
               <SelectValue>
