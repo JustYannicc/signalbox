@@ -44,8 +44,6 @@ export { AutomationHost, AutomationWorkflow } from "./automations/automationWork
 
 export interface CloudEnv
   extends UserObjectEnv, ThreadObjectEnv, PoolObjectEnv, PreviewCleanupEnv, AutomationWorkflowEnv {
-  readonly TRACE_EXPORT?: Pick<Fetcher, "fetch">;
-  readonly TRACE_EXPORT_TOKEN?: string;
   readonly CLIENT_TRACE_LIMITER?: Pick<RateLimit, "limit">;
   readonly ASSETS: { readonly fetch: (request: Request) => Promise<Response> };
   readonly TRACE_EXPORT?: Fetcher;

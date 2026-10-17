@@ -104,7 +104,9 @@ const setup = Effect.gen(function* () {
             const request = new Request(input);
             const body = await request.text();
             sent.push({ url: request.url, body, headers: request.headers });
-            filtered.push(filterTraces(JSON.parse(body), { stage: "pr-test", version: "test-release" }));
+            filtered.push(
+              filterTraces(JSON.parse(body), { stage: "pr-test", version: "test-release" }),
+            );
             return new Response(null, { status: upstreamStatus });
           },
         },
@@ -186,7 +188,9 @@ describe("Cloud browser trace intake", () => {
         const spans = filtered[0]?.resourceSpans[0]?.scopeSpans[0]?.spans;
         expect(spans).toHaveLength(1);
         expect(spans?.[0]).toMatchObject({
-          traceId: TRACE, spanId: SPAN, parentSpanId: "1111111111111111",
+          traceId: TRACE,
+          spanId: SPAN,
+          parentSpanId: "1111111111111111",
         });
         for (const dimension of [PERSON, THREAD, FOLDER, ORG]) {
           expect(JSON.stringify(filtered[0])).toContain(dimension);

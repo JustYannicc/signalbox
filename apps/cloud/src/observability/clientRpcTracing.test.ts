@@ -10,6 +10,7 @@ import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as Scope from "effect/Scope";
+import * as TestClock from "effect/testing/TestClock";
 import type { FromServerEncoded } from "effect/rpc/RpcMessage";
 
 import { makeMemoryCloud } from "../testing.ts";
@@ -86,6 +87,7 @@ describe("Cloud client RPC tracing", () => {
 
   it.effect("exports a joined server span without holding the RPC open", () =>
     Effect.gen(function* () {
+      yield* TestClock.setTime(1_000);
       const cloud = makeMemoryCloud();
       yield* cloud.userDirectory.forUser(userId).recordSignIn({
         id: userId,
@@ -208,11 +210,14 @@ describe("Cloud client RPC tracing", () => {
       const filtered = filterTraces(document, { stage: "pr-test", version: "test-release" });
       const filteredSpan = filtered?.resourceSpans[0]?.scopeSpans[0]?.spans[0];
       expect(filteredSpan).toMatchObject({
-        traceId: TRACE_ID, parentSpanId: CLIENT_SPAN_ID,
-        name: WS_METHODS.accountPoolCreate, kind: 2,
+        traceId: TRACE_ID,
+        parentSpanId: CLIENT_SPAN_ID,
+        name: WS_METHODS.accountPoolCreate,
+        kind: 2,
       });
       expect(filteredSpan?.attributes).toContainEqual({
-        key: "rpc.method", value: { stringValue: WS_METHODS.accountPoolCreate },
+        key: "rpc.method",
+        value: { stringValue: WS_METHODS.accountPoolCreate },
       });
       expect(JSON.stringify(filtered)).not.toContain(CANARY);
       releaseExport(new Response(null, { status: 200 }));
