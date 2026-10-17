@@ -71,7 +71,7 @@ export function QuickCaptureDialog(props: { readonly open: boolean }) {
   const [isMac] = useState(() => isMacPlatform(navigator.platform));
   // A second Enter (or a dismiss) during saving or the exit animation must not save twice.
   const savedRef = useRef(false);
-  // Preparing attached files takes a moment; the bar stays up until the draft has them.
+  // The bar stays up as Saving… until the draft has everything; usually only a moment.
   const [saving, setSaving] = useState(false);
   const saveCapture = useSaveCapture();
 
@@ -97,11 +97,8 @@ export function QuickCaptureDialog(props: { readonly open: boolean }) {
       closeQuickCapture();
       return;
     }
+    // Up until the draft holds it, even for plain text: draft creation can wait on settings.
     const saved = saveCapture({ text, files, destination }, { open });
-    if (files.length === 0) {
-      closeQuickCapture();
-      return;
-    }
     setSaving(true);
     // Only this opening: if it was dismissed and a failed save reopened it, leave that one up.
     void saved.finally(() => closeQuickCapture(openCount));
