@@ -59,6 +59,20 @@ it.effect("browser sign-in, email verification and sign-out over HTTP", () =>
           );
 
         yield* Effect.promise(async () => {
+          const nativeChallenge = "a".repeat(43);
+          const nativeEmail = await get(
+            `/api/account/authorize?provider=email&mode=native&origin=https%3A%2F%2Funregistered.example&returnUrl=signalbox%3A%2F%2Fauth%2Freturn&challenge=${nativeChallenge}&via=web`,
+          );
+          const nativeSignIn = nativeEmail.headers.get("location") ?? "";
+          const nativeSignInUrl = new URL(nativeSignIn, ORIGIN);
+          expect(nativeEmail.status).toBe(302);
+          expect(nativeSignIn.startsWith("/sign-in?")).toBe(true);
+          expect(nativeSignInUrl.origin).toBe(ORIGIN);
+          expect(nativeSignInUrl.searchParams.get("origin")).toBe("https://unregistered.example");
+          expect(nativeSignInUrl.searchParams.get("mode")).toBe("native");
+          expect(nativeSignInUrl.searchParams.get("challenge")).toBe(nativeChallenge);
+          expect(nativeSignInUrl.searchParams.get("via")).toBe("web");
+
           const invalid = await get(
             `/api/account/authorize?provider=google&mode=browser&origin=${ORIGIN}&returnTo=//evil.com`,
           );

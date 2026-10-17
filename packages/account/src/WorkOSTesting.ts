@@ -34,11 +34,20 @@ export type WorkOSCodes = Readonly<
     | WorkOSTestUser
     | { readonly verify: { readonly code: string; readonly user: WorkOSTestUser } }
     | { readonly fail: string }
+    | {
+        readonly select: {
+          readonly user: WorkOSTestUser;
+          readonly organizationId: string;
+          readonly verifyCode?: string;
+        };
+      }
   >
 >;
 
 export const EMAIL_VERIFICATION_GRANT = "urn:workos:oauth:grant-type:email-verification:code";
 export const DEVICE_CODE_GRANT = "urn:ietf:params:oauth:grant-type:device_code";
+export const ORGANIZATION_SELECTION_GRANT = "urn:workos:oauth:grant-type:organization-selection";
+export const MAGIC_AUTH_GRANT = "urn:workos:oauth:grant-type:magic-auth:code";
 
 /** What the fake's device authorization hands out; approve it by adding a `codes` entry for it. */
 export const TEST_DEVICE_CODE = "device-1";
@@ -52,13 +61,19 @@ export type WorkOSMemberships = Readonly<Record<string, ReadonlyArray<WorkOSOrga
 
 /** Fake `GET /user_management/organization_memberships`, paged by `limit` and `after`. */
 const listMemberships = (url: URL, memberships: WorkOSMemberships): Response => {
-  const all = (memberships[url.searchParams.get("user_id") ?? ""] ?? []).map(
-    (organization, index) => ({
+  const all = (memberships[url.searchParams.get("user_id") ?? ""] ?? [])
+    .filter(
+      (organization) =>
+        !url.searchParams.has("organization_id") ||
+        organization.id === url.searchParams.get("organization_id"),
+    )
+    .map((organization, index) => ({
       id: `om_${index}`,
       organization_id: organization.id,
       organization_name: organization.name,
-    }),
-  );
+      user_id: url.searchParams.get("user_id"),
+      status: "active",
+    }));
   const after = url.searchParams.get("after");
   const start = after ? all.findIndex((membership) => membership.id === after) + 1 : 0;
   const page = all.slice(start, start + Number(url.searchParams.get("limit") ?? 10));
@@ -74,7 +89,13 @@ const listMemberships = (url: URL, memberships: WorkOSMemberships): Response => 
 const findUsers = (url: URL, codes: WorkOSCodes): Response => {
   const email = url.searchParams.get("email");
   const users = Object.values(codes).flatMap((entry) =>
-    "fail" in entry ? [] : "verify" in entry ? [entry.verify.user] : [entry],
+    "fail" in entry
+      ? []
+      : "verify" in entry
+        ? [entry.verify.user]
+        : "select" in entry
+          ? [entry.select.user]
+          : [entry],
   );
   return Response.json({
     object: "list",
@@ -103,6 +124,22 @@ export const workosStubLayer = (
         if (url.pathname === "/user_management/users") {
           return HttpClientResponse.fromWeb(request, findUsers(url, codes));
         }
+        if (url.pathname.startsWith("/organizations/external_id/")) {
+          const externalId = decodeURIComponent(url.pathname.split("/").at(-1) ?? "");
+          const entry = Object.values(codes).find(
+            (entry) => "select" in entry && externalId === `personal:${entry.select.user.id}`,
+          );
+          return HttpClientResponse.fromWeb(
+            request,
+            entry && "select" in entry
+              ? Response.json({
+                  id: entry.select.organizationId,
+                  name: "Personal",
+                  external_id: externalId,
+                })
+              : Response.json({ code: "not_found" }, { status: 404 }),
+          );
+        }
         if (url.pathname === "/user_management/authorize/device") {
           return HttpClientResponse.fromWeb(
             request,
@@ -121,13 +158,57 @@ export const workosStubLayer = (
             ? decodeBody(new TextDecoder().decode(request.body.body))
             : {};
         exchanges.push({ url: request.url, ...body });
+        if (url.pathname === "/user_management/magic_auth") {
+          return HttpClientResponse.fromWeb(request, Response.json({ id: "magic_auth_test" }));
+        }
         const signedIn = (user: WorkOSTestUser) =>
           Response.json({ user, access_token: "workos-access", refresh_token: "workos-refresh" });
+        const selectionRequired = (authCode: string, user: WorkOSTestUser) =>
+          Response.json(
+            {
+              code: "organization_selection_required",
+              pending_authentication_token: `selection-${authCode}`,
+              user,
+              organizations: memberships[user.id] ?? [],
+            },
+            { status: 400 },
+          );
         const respond = (): Response => {
+          if (body.grant_type === MAGIC_AUTH_GRANT) {
+            const entry = typeof body.code === "string" ? codes[body.code] : undefined;
+            if (entry && "select" in entry && entry.select.user.email === body.email) {
+              return selectionRequired(String(body.code), entry.select.user);
+            }
+            return entry &&
+              !("select" in entry) &&
+              !("verify" in entry) &&
+              !("fail" in entry) &&
+              entry.email === body.email
+              ? signedIn(entry)
+              : Response.json({ code: "magic_auth_code_invalid" }, { status: 400 });
+          }
+          if (body.grant_type === ORGANIZATION_SELECTION_GRANT) {
+            const entry = Object.entries(codes).find(
+              ([authCode]) => `selection-${authCode}` === body.pending_authentication_token,
+            )?.[1];
+            return entry &&
+              "select" in entry &&
+              body.organization_id === entry.select.organizationId
+              ? signedIn(entry.select.user)
+              : Response.json({ code: "invalid_pending_authentication_token" }, { status: 400 });
+          }
           if (body.grant_type === EMAIL_VERIFICATION_GRANT) {
             const entry = Object.entries(codes).find(
               ([authCode]) => `pending-${authCode}` === body.pending_authentication_token,
             )?.[1];
+            if (entry && "select" in entry) {
+              return body.code === entry.select.verifyCode
+                ? selectionRequired(
+                    String(body.pending_authentication_token).slice("pending-".length),
+                    entry.select.user,
+                  )
+                : Response.json({ code: "email_verification_code_invalid" }, { status: 400 });
+            }
             if (!entry || !("verify" in entry)) {
               return Response.json(
                 { code: "invalid_pending_authentication_token" },
@@ -142,7 +223,13 @@ export const workosStubLayer = (
             // Not approved yet, until `codes` has a plain user for the device code.
             const approved =
               typeof body.device_code === "string" ? codes[body.device_code] : undefined;
-            return approved && !("fail" in approved) && !("verify" in approved)
+            if (approved && "select" in approved) {
+              return selectionRequired(String(body.device_code), approved.select.user);
+            }
+            return approved &&
+              !("fail" in approved) &&
+              !("verify" in approved) &&
+              !("select" in approved)
               ? signedIn(approved)
               : Response.json({ error: "authorization_pending" }, { status: 400 });
           }
@@ -151,6 +238,19 @@ export const workosStubLayer = (
           if ("fail" in entry) {
             return Response.json(
               { code: entry.fail, message: "nope", pending_authentication_token: "secret" },
+              { status: 403 },
+            );
+          }
+          if ("select" in entry && !entry.select.verifyCode) {
+            return selectionRequired(String(body.code), entry.select.user);
+          }
+          if ("select" in entry) {
+            return Response.json(
+              {
+                code: "email_verification_required",
+                pending_authentication_token: `pending-${String(body.code)}`,
+                email: entry.select.user.email,
+              },
               { status: 403 },
             );
           }

@@ -23,13 +23,16 @@ reusable dev token still mint sessions. Clients show sign-in whenever
 not an account. Without a WorkOS client ID the server reports `enabled: false`
 and clients pair exactly as before.
 
-## The client tells the server its origin
+## Hosted callbacks use the client origin
 
 `authorize` takes the server origin from the client. The Vite dev proxy rewrites
 `Host`, and tunnels and Tailscale put other names in front of the server, so the
-server cannot derive its public origin. This is safe only because WorkOS rejects
-redirect URIs that are not registered on the WorkOS application. Keep that list
-tight. A wildcard there widens which origins can receive a callback.
+server cannot derive its public origin. Hosted WorkOS sign-in uses that origin
+for its callback URL, and WorkOS rejects callback URLs that are not registered
+on the WorkOS application. Keep that list tight. Email sign-in without a known
+personal organization uses WorkOS Magic Auth instead. Signalbox returns those
+requests and their code page to the relative `/sign-in` path, so `origin` does
+not choose where the browser goes while entering a code.
 
 ## Native sign-in binds the handoff to the app
 
@@ -53,13 +56,17 @@ The page posts the emailed code, and the server finishes through the same path
 as the callback. The email-verification grant requires the client secret even
 though the code grant does not.
 
-## Desktop signs in through the browser
+## Desktop starts on Signalbox's sign-in screen
 
-Desktop opens WorkOS's hosted page in the system browser rather than an embedded
-window. Google blocks OAuth in embedded webviews, and the system browser has the
-user's password manager, passkeys and existing WorkOS session. With that
-session, sign-in returns without a prompt. The callback lands on `/sign-in` in
-that browser, which confirms and forwards the handoff to the app.
+Desktop opens Signalbox's provider and email screen in the system browser. The
+request keeps the app's PKCE challenge and return URL while the person chooses
+how to sign in. Known email accounts with an authoritative personal WorkOS
+organization continue through hosted AuthKit with that organization pinned.
+Other email sign-ins use WorkOS Magic Auth and enter the emailed code on the
+Signalbox screen. Social providers also use hosted WorkOS sign-in. The system
+browser gives those hosted flows the user's password manager, passkeys and any
+existing WorkOS session. The callback lands on `/sign-in` in that browser,
+which confirms and forwards the handoff to the app.
 
 The desktop renderer reaches its server with a bearer from the main process and
 sends no cookies, because production CORS does not allow credentialed requests.
@@ -69,6 +76,8 @@ It therefore keeps the account's own bearer and sends it only to
 ## Sign-out
 
 Sign-out revokes the current environment session only. The WorkOS browser
-session survives, which is what makes the next desktop sign-in instant. After
-sign-out, clients pass `selectAccount`. Google then shows its account picker and
-the hosted page asks for credentials again, so switching accounts works.
+session survives, but the next desktop sign-in still starts on Signalbox's
+provider and email screen. Hosted sign-in may reuse that WorkOS session; email
+sign-in may instead ask for a code. After sign-out, clients pass
+`selectAccount` where the selected provider supports it, so Google can show its
+account picker and AuthKit can ask for credentials again.

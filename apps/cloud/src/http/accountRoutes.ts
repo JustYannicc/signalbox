@@ -78,7 +78,10 @@ const authorizeRoute = HttpRouter.add(
   Effect.gen(function* () {
     const accounts = yield* CloudAccounts.CloudAccounts;
     const params = yield* requestQuery.pipe(Effect.flatMap(decodeAuthorizeParams));
-    const { location, binding } = yield* accounts.authorize(params);
+    const { location, binding } = yield* accounts.authorize(
+      params,
+      yield* requestCredentialsEffect,
+    );
     const cookies = binding
       ? yield* signInBindingCookie(CloudAccounts.SIGN_IN_BINDING_COOKIE, binding)
       : undefined;
