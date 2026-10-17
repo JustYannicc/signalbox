@@ -1763,6 +1763,68 @@ describe("deriveMessagesTimelineRows", () => {
     ]);
   });
 
+  // signalbox: a newer turn must not rewrite how an older one ended (sweep G, 2026-10-17)
+  it("keeps an older turn's stopped label and duration once a newer turn is latest", () => {
+    const prompt = (id: string, runId: string, at: string) => ({
+      id,
+      kind: "message" as const,
+      createdAt: at,
+      message: {
+        id: MessageId.make(id),
+        role: "user" as const,
+        text: id,
+        runId: RunId.make(runId),
+        createdAt: at,
+        updatedAt: at,
+        streaming: false,
+      },
+    });
+    const rows = deriveMessagesTimelineRows({
+      timelineEntries: [
+        prompt("first-prompt", "turn-1", "2026-01-01T00:00:00Z"),
+        {
+          id: "work-entry-1",
+          kind: "work",
+          createdAt: "2026-01-01T00:00:05Z",
+          entry: {
+            id: "work-1",
+            createdAt: "2026-01-01T00:00:05Z",
+            runId: "turn-1" as never,
+            label: "Ran command",
+            tone: "tool" as const,
+          },
+        },
+        prompt("second-prompt", "turn-2", "2026-01-01T00:02:00Z"),
+      ],
+      latestRun: {
+        runId: "turn-2" as never,
+        status: "running",
+        startedAt: "2026-01-01T00:02:00Z",
+        completedAt: null,
+        settledRuns: new Map([
+          [
+            RunId.make("turn-1"),
+            {
+              runId: RunId.make("turn-1"),
+              status: "interrupted" as const,
+              startedAt: "2026-01-01T00:00:00Z",
+              completedAt: "2026-01-01T00:01:29Z",
+            },
+          ],
+        ]),
+      },
+      isWorking: true,
+      activeTurnStartedAt: "2026-01-01T00:02:00Z",
+      turnDiffSummaries: [],
+      supportsConversationRollback: false,
+    });
+
+    expect(rows.find((row) => row.kind === "turn-fold")).toMatchObject({
+      runId: "turn-1",
+      label: "You stopped after 1m 29s",
+    });
+  });
+
   it("keeps the working header below the initiating prompt across repeated steers", () => {
     const runId = RunId.make("steered-run");
     const startedAt = "2026-01-01T00:00:00Z";

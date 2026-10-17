@@ -470,7 +470,14 @@ export interface TimelineDurationMessage {
 export type TimelineLatestRun = Pick<
   ThreadRunSummary,
   "runId" | "status" | "startedAt" | "workStartedAt" | "completedAt"
->;
+> & {
+  /**
+   * signalbox: the thread's settled runs, each with its own status and times
+   * (settledRunSummaries). They ride on the latest run so the timeline
+   * component needs no prop of its own.
+   */
+  readonly settledRuns?: ReadonlyMap<RunId, TimelineLatestRun> | undefined;
+};
 
 const LIVE_ACTIVITY_ROW_ID = "live-activity-row";
 
@@ -1104,23 +1111,27 @@ function deriveTurnFolds(input: {
       continue;
     }
 
-    const isLatestInterruptedTurn =
-      input.latestRun?.runId === runId && input.latestRun.status === "interrupted";
+    // A turn's own settled run says how it ended and how long it took, from when it left the
+    // queue, even once a newer turn is latest.
+    const run =
+      input.latestRun?.settledRuns?.get(runId) ??
+      (input.latestRun?.runId === runId ? input.latestRun : null);
+    const isInterruptedTurn = run?.status === "interrupted";
     // A turn cut short by a steer leaves trailing work entries behind its
     // terminal message — take whichever ended last.
     const lastEntryEnd =
       lastEntry.kind === "message" ? lastEntry.message.updatedAt : lastEntry.createdAt;
-    const latestWorkStartedAt = input.latestRun?.workStartedAt ?? input.latestRun?.startedAt;
+    const workStartedAt = run?.workStartedAt ?? run?.startedAt;
     const elapsedMs =
-      input.latestRun?.runId === runId && latestWorkStartedAt && input.latestRun.completedAt
-        ? computeElapsedMs(latestWorkStartedAt, input.latestRun.completedAt)
+      workStartedAt && run?.completedAt
+        ? computeElapsedMs(workStartedAt, run.completedAt)
         : computeElapsedMs(
             group.startBoundary ?? firstEntry.createdAt,
             maxIsoTimestamp(group.terminalEntry?.message.updatedAt ?? null, lastEntryEnd) ??
               lastEntryEnd,
           );
     const duration = elapsedMs !== null ? formatDuration(elapsedMs) : null;
-    const label = isLatestInterruptedTurn
+    const label = isInterruptedTurn
       ? duration
         ? `You stopped after ${duration}`
         : "You stopped this response"
