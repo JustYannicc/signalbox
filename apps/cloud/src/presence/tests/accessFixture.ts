@@ -3,13 +3,13 @@ import * as Layer from "effect/Layer";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 
-import { PresenceAccess, type PresenceGuard, PresenceUnavailable } from "../PresenceAccess.ts";
+import * as PresenceAccess from "../PresenceAccess.ts";
 
 export const makeAccess = () => {
   let invalidateNext: "Reset" | "Revoked" | undefined;
-  const permissions = new Map<string, Set<PresenceGuard>>();
+  const permissions = new Map<string, Set<PresenceAccess.PresenceGuard>>();
   const invalidators = new Map<
-    PresenceGuard,
+    PresenceAccess.PresenceGuard,
     (reason: "Reset" | "Revoked" | "dependency") => void
   >();
   const encodeKey = Schema.encodeSync(
@@ -29,22 +29,22 @@ export const makeAccess = () => {
     permissions.delete(key);
     for (const guard of guards ?? []) invalidators.get(guard)?.(reason);
   };
-  const access = PresenceAccess.of({
+  const access = PresenceAccess.PresenceAccess.of({
     open: (actor, target) =>
       Effect.gen(function* () {
         const guards = permissions.get(keyOf(actor.userId, target));
-        if (guards === undefined) return yield* new PresenceUnavailable({ reason: "access" });
-        let terminal: Result.Result<"Reset" | "Revoked", PresenceUnavailable> | undefined;
-        const callbacks = new Set<Parameters<PresenceGuard["onInvalidate"]>[0]>();
-        const guard: PresenceGuard = {
+        if (guards === undefined) return yield* new PresenceAccess.PresenceDenied();
+        let terminal: Result.Result<"Reset" | "Revoked", PresenceAccess.PresenceError> | undefined;
+        const callbacks = new Set<Parameters<PresenceAccess.PresenceGuard["onInvalidate"]>[0]>();
+        const guard: PresenceAccess.PresenceGuard = {
           target,
           withCurrent: (use) =>
             terminal === undefined
               ? Result.succeed(use())
               : Result.fail(
-                  new PresenceUnavailable({
-                    reason: Result.isFailure(terminal) ? "dependency" : "access",
-                  }),
+                  Result.isFailure(terminal)
+                    ? new PresenceAccess.PresenceUnavailable()
+                    : new PresenceAccess.PresenceDenied(),
                 ),
           onInvalidate: (callback) => {
             callbacks.add(callback);
@@ -61,7 +61,7 @@ export const makeAccess = () => {
               if (terminal !== undefined) return;
               terminal =
                 reason === "dependency"
-                  ? Result.fail(new PresenceUnavailable({ reason: "dependency" }))
+                  ? Result.fail(new PresenceAccess.PresenceUnavailable())
                   : Result.succeed(reason);
               for (const callback of callbacks) callback(terminal);
             });
@@ -86,6 +86,6 @@ export const makeAccess = () => {
     invalidateNextOpen: (reason: "Reset" | "Revoked") => {
       invalidateNext = reason;
     },
-    layer: Layer.succeed(PresenceAccess, access),
+    layer: Layer.succeed(PresenceAccess.PresenceAccess, access),
   };
 };

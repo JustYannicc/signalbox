@@ -4,14 +4,22 @@ import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import type * as Scope from "effect/Scope";
 
+export class PresenceDenied extends Schema.TaggedError<PresenceDenied>()("PresenceDenied", {}) {
+  override get message() {
+    return "Presence is unavailable.";
+  }
+}
+
 export class PresenceUnavailable extends Schema.TaggedError<PresenceUnavailable>()(
   "PresenceUnavailable",
-  { reason: Schema.Literals(["access", "dependency"]) },
+  {},
 ) {
   override get message() {
     return "Presence is unavailable.";
   }
 }
+
+export type PresenceError = PresenceDenied | PresenceUnavailable;
 
 export interface PresenceActor {
   readonly userId: string;
@@ -29,10 +37,10 @@ type Synchronous<A> = [Extract<A, DeferredWork>] extends [never] ? unknown : nev
 export interface PresenceGuard {
   readonly target: PresenceTarget;
   /** Checks the installed fence and runs the callback synchronously, without an intervening await. */
-  readonly withCurrent: <A>(use: () => A & Synchronous<A>) => Result.Result<A, PresenceUnavailable>;
+  readonly withCurrent: <A>(use: () => A & Synchronous<A>) => Result.Result<A, PresenceError>;
   /** Sticky and synchronous; registration immediately reports an already-invalidated guard. */
   readonly onInvalidate: (
-    invalidate: (result: Result.Result<"Reset" | "Revoked", PresenceUnavailable>) => void,
+    invalidate: (result: Result.Result<"Reset" | "Revoked", PresenceError>) => void,
   ) => () => void;
 }
 
@@ -44,6 +52,6 @@ export class PresenceAccess extends Context.Service<
       actor: PresenceActor,
       target: PresenceTarget,
       intent: "observe" | "publish",
-    ) => Effect.Effect<PresenceGuard, PresenceUnavailable, Scope.Scope>;
+    ) => Effect.Effect<PresenceGuard, PresenceError, Scope.Scope>;
   }
 >()("@signalbox/cloud/presence/PresenceAccess") {}

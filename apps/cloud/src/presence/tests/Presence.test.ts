@@ -41,7 +41,7 @@ describe("Presence", () => {
         const { presence, access, read } = yield* setup();
         access.invalidateNextOpen("Revoked");
         const joined = yield* presence.join(actor("one"), thread, "web").pipe(Effect.result);
-        expect(Result.isFailure(joined) && joined.failure.reason).toBe("access");
+        expect(Result.isFailure(joined) && joined.failure._tag).toBe("PresenceDenied");
         expect(yield* read()).toEqual({ _tag: "Snapshot", people: [] });
         access.invalidateNextOpen("Reset");
         expect(yield* presence.view(actor("reader"), thread).pipe(Stream.runCollect)).toEqual([
@@ -113,7 +113,9 @@ describe("Presence", () => {
       access.invalidate("reader", thread, "Revoked");
       expect(yield* pull).toEqual([{ _tag: "Revoked" }]);
       const reopened = yield* read().pipe(Effect.result);
-      expect(Result.isFailure(reopened) && reopened.failure.reason).toBe("access");
+      expect(Result.isFailure(reopened) && reopened.failure._tag).toBe("PresenceDenied");
+      access.allow("reader", thread);
+      expect(yield* read()).toEqual({ _tag: "Snapshot", people: ["one"] });
     }).pipe(Effect.scoped),
   );
 
@@ -130,32 +132,40 @@ describe("Presence", () => {
     }).pipe(Effect.scoped),
   );
 
-  it.effect("authority failure stays unavailable instead of becoming an empty roster", () =>
-    Effect.gen(function* () {
-      const { presence, join, access } = yield* setup();
-      yield* join("one", "web");
-      const pull = yield* Stream.toPull(presence.view(actor("reader"), thread));
-      yield* pull;
-      access.invalidate("one", thread, "dependency");
-      const failed = yield* pull.pipe(Effect.result);
-      expect(Result.isFailure(failed) && failed.failure._tag).toBe("PresenceUnavailable");
-    }).pipe(Effect.scoped),
+  it.effect(
+    "authority failure stays unavailable until the failed join closes, then allows recovery",
+    () =>
+      Effect.gen(function* () {
+        const { presence, join, access, read } = yield* setup();
+        const { leave } = yield* join("one", "web");
+        const pull = yield* Stream.toPull(presence.view(actor("reader"), thread));
+        yield* pull;
+        access.invalidate("one", thread, "dependency");
+        const failed = yield* pull.pipe(Effect.result);
+        expect(Result.isFailure(failed) && failed.failure._tag).toBe("PresenceUnavailable");
+        access.allow("one", thread);
+        const stillUnavailable = yield* read().pipe(Effect.result);
+        expect(Result.isFailure(stillUnavailable) && stillUnavailable.failure._tag).toBe(
+          "PresenceUnavailable",
+        );
+        yield* leave;
+        expect(yield* read()).toEqual({ _tag: "Snapshot", people: [] });
+        yield* join("one", "web");
+        expect(yield* read()).toEqual({ _tag: "Snapshot", people: ["one"] });
+      }).pipe(Effect.scoped),
   );
 
-  it.effect("missing and inaccessible targets are indistinguishable for both operations", () =>
+  it.effect("publisher reset withdraws the old join and recovery reauthorizes a new scope", () =>
     Effect.gen(function* () {
-      const { presence } = yield* setup();
-      for (const target of ["missing", "private-thread"]) {
-        const deniedView = yield* presence
-          .view(actor("reader"), target)
-          .pipe(Stream.runCollect, Effect.asVoid, Effect.result);
-        const deniedJoin = yield* presence.join(actor("reader"), target, "web").pipe(Effect.result);
-        for (const result of [deniedView, deniedJoin]) {
-          expect(Result.isFailure(result) && result.failure.message).toBe(
-            "Presence is unavailable.",
-          );
-        }
-      }
+      const { join, access, read } = yield* setup();
+      const { leave } = yield* join("one", "web");
+      access.invalidate("one", thread, "Reset");
+      expect(yield* read()).toEqual({ _tag: "Snapshot", people: [] });
+      access.allow("one", thread);
+      expect(yield* read()).toEqual({ _tag: "Snapshot", people: [] });
+      yield* leave;
+      yield* join("one", "web");
+      expect(yield* read()).toEqual({ _tag: "Snapshot", people: ["one"] });
     }).pipe(Effect.scoped),
   );
 });

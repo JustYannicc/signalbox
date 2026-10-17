@@ -7,13 +7,7 @@ import * as Schema from "effect/Schema";
 import type * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 
-import {
-  PresenceAccess,
-  type PresenceActor,
-  type PresenceGuard,
-  type PresenceTarget,
-  type PresenceUnavailable,
-} from "./PresenceAccess.ts";
+import * as PresenceAccess from "./PresenceAccess.ts";
 
 export type PresenceFrame =
   | { readonly _tag: "Snapshot" | "Update"; readonly people: ReadonlyArray<string> }
@@ -23,15 +17,15 @@ export class Presence extends Context.Service<
   Presence,
   {
     readonly view: (
-      actor: PresenceActor,
-      target: PresenceTarget,
-    ) => Stream.Stream<PresenceFrame, PresenceUnavailable>;
-    /** Explicit location only. Scope teardown leaves; connectionKey is the session recorder's key. */
+      actor: PresenceAccess.PresenceActor,
+      target: PresenceAccess.PresenceTarget,
+    ) => Stream.Stream<PresenceFrame, PresenceAccess.PresenceError>;
+    /** Explicit location only. Scope teardown leaves; connectionKey identifies the authenticated connection. */
     readonly join: (
-      actor: PresenceActor,
-      target: PresenceTarget,
+      actor: PresenceAccess.PresenceActor,
+      target: PresenceAccess.PresenceTarget,
       connectionKey: string,
-    ) => Effect.Effect<void, PresenceUnavailable, Scope.Scope>;
+    ) => Effect.Effect<void, PresenceAccess.PresenceError, Scope.Scope>;
   }
 >()("@signalbox/cloud/presence/Presence") {}
 
@@ -40,11 +34,11 @@ const encodeConnection = Schema.encodeSync(
 );
 
 const make = Effect.gen(function* () {
-  const access = yield* PresenceAccess;
+  const access = yield* PresenceAccess.PresenceAccess;
   type Join = {
     readonly userId: string;
-    readonly guard: PresenceGuard;
-    failure?: PresenceUnavailable;
+    readonly guard: PresenceAccess.PresenceGuard;
+    failure?: PresenceAccess.PresenceError;
   };
   const targets = new Map<string, Map<string, Set<Join>>>();
   const observers = new Map<string, Set<() => void>>();
@@ -68,7 +62,7 @@ const make = Effect.gen(function* () {
       yield* Effect.acquireRelease(
         Effect.sync(() =>
           guard.onInvalidate((result) => {
-            if (Result.isSuccess(result) || result.failure.reason === "access") {
+            if (Result.isSuccess(result) || result.failure._tag === "PresenceDenied") {
               remove(guard.target, key, entry);
             } else {
               // Losing the authority must not turn an unknown roster into an empty one.
@@ -117,7 +111,7 @@ const make = Effect.gen(function* () {
               Queue.shutdownUnsafe(dirty);
             }),
         );
-        let terminal: Result.Result<"Reset" | "Revoked", PresenceUnavailable> | undefined;
+        let terminal: Result.Result<"Reset" | "Revoked", PresenceAccess.PresenceError> | undefined;
         yield* Effect.acquireRelease(
           Effect.sync(() =>
             guard.onInvalidate((result) => {
@@ -142,14 +136,14 @@ const make = Effect.gen(function* () {
                   if (entry.failure !== undefined) return Result.fail(entry.failure);
                   const current = entry.guard.withCurrent(() => entry.userId);
                   if (Result.isFailure(current)) {
-                    if (current.failure.reason === "dependency")
+                    if (current.failure._tag === "PresenceUnavailable")
                       return Result.fail(current.failure);
                   } else people.add(current.success);
                 }
               }
               return Result.succeed([...people].sort());
             });
-            if (Result.isFailure(collected) && collected.failure.reason === "access") {
+            if (Result.isFailure(collected) && collected.failure._tag === "PresenceDenied") {
               return { _tag: "Revoked" } satisfies PresenceFrame;
             }
             const people = yield* Effect.fromResult(collected).pipe(
