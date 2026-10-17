@@ -49,6 +49,9 @@ function emitReport(
 ) {
   process.stdout.write(`TYPECHECK_BENCHMARK_JSON ${JSON.stringify(report)}\n`);
   const [before, after] = runs;
+  const baselineLabel = String(
+    report.baselineLabel ?? "baseline scripts with Effect-equivalent tsc commands",
+  );
   const notes = report.scriptCoverage as Record<string, string[]> | undefined;
   const noteLabels: Record<string, string> = {
     newWorkspaces: "New candidate workspaces use their current scripts in both runs",
@@ -68,13 +71,13 @@ function emitReport(
     "## Full typecheck benchmark",
     "",
     `Baseline ref: \`${baselineRef.replaceAll("|", "\\|")}\`. Both runs use this candidate checkout and installed dependencies; only matching workspace \`scripts.typecheck\` values differ.`,
-    `Before maps baseline \`tsc\` command tokens to the resolved \`@effect/tsgo\` binary \`${String(report.effectCompilerPath ?? "unresolved").replaceAll("|", "\\|")}\`; \`tsc-rs\` and Astro commands stay as written.`,
+    `The Effect-equivalent baseline maps only baseline \`tsc\` command tokens to the resolved \`@effect/tsgo\` binary \`${String(report.effectCompilerPath ?? "unresolved").replaceAll("|", "\\|")}\`; \`tsc-rs\` and Astro commands stay as written.`,
     `Peak aggregate \`VmRSS\` is sampled from the captured Vite CLI PID and transitive descendants every ${sampleIntervalMs} ms.`,
     "",
     "| Run | Script set | Status | Wall time (s) | Peak aggregate RSS (MiB) |",
     "| --- | --- | --- | ---: | ---: |",
-    `| Before | baseline scripts with Effect native compiler | ${runStatus(before)} | ${seconds(before)} | ${mib(before)} |`,
-    `| After | current Rust scripts | ${runStatus(after)} | ${seconds(after)} | ${mib(after)} |`,
+    `| Before | ${baselineLabel} | ${runStatus(before)} | ${seconds(before)} | ${mib(before)} |`,
+    `| After | candidate scripts | ${runStatus(after)} | ${seconds(after)} | ${mib(after)} |`,
     ...(coverage.length ? ["", "Coverage notes:", ...coverage] : []),
     "",
   ].join("\n");
@@ -116,6 +119,11 @@ async function main(args: string[]) {
     );
     report.scriptCoverage = plan.notes;
     report.compilerMapping = plan.compilerMappings;
+    const mappedCommands = plan.compilerMappings.reduce(
+      (total, mapping) => total + mapping.commandCount,
+      0,
+    );
+    report.baselineLabel = `baseline scripts, ${mappedCommands} tsc commands in ${plan.compilerMappings.length} workspaces mapped to Effect tsgo`;
     const before = await withTemporaryTypecheckScripts(root, workspaces, plan.overrides, () =>
       runTypecheck(root, interrupts.signal),
     );
@@ -123,8 +131,8 @@ async function main(args: string[]) {
     const after = await runTypecheck(root, interrupts.signal);
     runs.push(after);
     report.runs = [
-      { scriptSet: "baseline scripts with Effect native compiler", ...before },
-      { scriptSet: "current Rust scripts", ...after },
+      { scriptSet: report.baselineLabel, ...before },
+      { scriptSet: "candidate scripts", ...after },
     ];
     failed = [before, after].some((run) => run.exitCode !== 0 || run.signal !== null);
   } catch (error) {
@@ -139,8 +147,7 @@ async function main(args: string[]) {
 
   if (runs.length && !report.runs)
     report.runs = runs.map((run, index) => ({
-      scriptSet:
-        index === 0 ? "baseline scripts with Effect native compiler" : "current Rust scripts",
+      scriptSet: index === 0 ? report.baselineLabel : "candidate scripts",
       ...run,
     }));
   emitReport(report, runs, baselineRef);
