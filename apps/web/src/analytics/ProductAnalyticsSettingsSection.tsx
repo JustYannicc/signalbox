@@ -3,7 +3,7 @@ import type { EnvironmentId } from "@t3tools/contracts";
 import type { ProductAnalyticsSettings } from "@t3tools/contracts/signalboxAnalytics";
 import * as Option from "effect/Option";
 import { AsyncResult, Atom } from "effect/reactivity";
-import { useMemo, useState } from "react";
+import { useState } from "react";
 
 import { useSettingsScope } from "../components/settings/SettingsScopeContext";
 import { SettingsRow, SettingsSection } from "../components/settings/settingsLayout";
@@ -25,19 +25,15 @@ interface EnvironmentAnalytics {
 /** Each selected environment's setting; a server sends its own events. */
 function useEnvironmentAnalytics(environmentIds: readonly EnvironmentId[]) {
   return useAtomValue(
-    useMemo(
-      () =>
-        Atom.make((get) =>
-          environmentIds.map((environmentId): EnvironmentAnalytics => {
-            const result = get(productAnalyticsSettings({ environmentId, input: {} }));
-            return {
-              environmentId,
-              settings: Option.getOrNull(AsyncResult.value(result)),
-              waiting: result.waiting,
-            };
-          }),
-        ),
-      [environmentIds],
+    Atom.make((get) =>
+      environmentIds.map((environmentId): EnvironmentAnalytics => {
+        const result = get(productAnalyticsSettings({ environmentId, input: {} }));
+        return {
+          environmentId,
+          settings: Option.getOrNull(AsyncResult.value(result)),
+          waiting: result.waiting,
+        };
+      }),
     ),
   );
 }
@@ -63,10 +59,7 @@ function describe(
  */
 export function ProductAnalyticsSettingsSection() {
   const { connectedEnvironments } = useSettingsScope();
-  const environmentIds = useMemo(
-    () => connectedEnvironments.map((environment) => environment.environmentId),
-    [connectedEnvironments],
-  );
+  const environmentIds = connectedEnvironments.map((environment) => environment.environmentId);
   const environments = useEnvironmentAnalytics(environmentIds);
   const setEnabled = useAtomCommand(setProductAnalyticsEnabled);
   const showsEnvironmentUi = useShowsEnvironmentUi();

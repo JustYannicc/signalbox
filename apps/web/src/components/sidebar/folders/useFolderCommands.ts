@@ -19,7 +19,6 @@ import type {
   OnePasswordEnvironmentId,
   SignalboxFoldersSnapshot,
 } from "@t3tools/contracts/signalboxFolders";
-import { useMemo } from "react";
 
 import { signalboxFolders } from "../../../state/signalboxFolders";
 import { useAtomCommand } from "../../../state/use-atom-command";
@@ -75,84 +74,70 @@ export function useFolderCommands() {
     reportFailure: false,
   });
 
-  return useMemo(
-    () => ({
-      create: (environmentId: EnvironmentId, input: FolderCreateInput): Change =>
-        reported("Could not create folder", create({ environmentId, input })),
-      rename: (environmentId: EnvironmentId, id: FolderId, name: string): Change =>
-        reported("Could not rename folder", update({ environmentId, input: { id, name } })),
-      /** Null inherits the pool from above again. */
-      setPool: (environmentId: EnvironmentId, id: FolderId, poolId: AccountPoolId | null): Change =>
-        reported(
-          "Could not change this folder's pool",
-          update({ environmentId, input: { id, poolId } }),
-        ),
-      /** Null leaves the folder without files of its own. */
-      setFiles: (environmentId: EnvironmentId, id: FolderId, files: ProjectId | null): Change =>
-        reported(
-          "Could not change this folder's files",
-          update({ environmentId, input: { id, files } }),
-        ),
-      /** Lends the user's GitHub to the folder's CI steps (#641), or stops lending it. */
-      setGitHubLend: (environmentId: EnvironmentId, id: FolderId, lent: boolean): Change =>
-        reported(
-          lent ? "Could not lend your GitHub" : "Could not stop lending your GitHub",
-          setGitHubLend({ environmentId, input: { id, lent } }),
-        ),
-      move: (environmentId: EnvironmentId, input: FolderMoveInput): Change =>
-        reported("Could not move folder", move({ environmentId, input })),
-      remove: (environmentId: EnvironmentId, folder: Folder): Change =>
-        reported("Could not delete folder", remove({ environmentId, input: { id: folder.id } })),
-      moveThread: (
-        environmentId: EnvironmentId,
-        threadId: ThreadId,
-        folderId: FolderId | null,
-      ): Change =>
-        reported(
-          "Could not move thread",
-          moveThread({ environmentId, input: { threadId, folderId } }),
-        ),
-      setInstructions: (
-        environmentId: EnvironmentId,
-        level: FolderLevel,
-        instructions: string,
-      ): Change =>
-        reported(
-          "Could not save instructions",
-          setInstructions({ environmentId, input: { level, instructions } }),
-        ),
-      /** Null stops loading secrets at this level. */
-      setSecrets: (
-        environmentId: EnvironmentId,
-        level: FolderLevel,
-        secretsEnvironmentId: OnePasswordEnvironmentId | null,
-      ): Attempt =>
-        attempted(
-          setSecrets({
-            environmentId,
-            input: {
-              level,
-              secrets:
-                secretsEnvironmentId === null ? null : { environmentId: secretsEnvironmentId },
-            },
-          }),
-        ),
-      /** The user's service account token, for every level; null disconnects it. */
-      setOnePassword: (environmentId: EnvironmentId, token: string | null): Attempt =>
-        attempted(setOnePassword({ environmentId, input: { token } })),
-    }),
-    [
-      create,
-      move,
-      moveThread,
-      remove,
-      setGitHubLend,
-      setInstructions,
-      setOnePassword,
-      setSecrets,
-      update,
-    ],
-  );
+  return {
+    create: (environmentId: EnvironmentId, input: FolderCreateInput): Change =>
+      reported("Could not create folder", create({ environmentId, input })),
+    rename: (environmentId: EnvironmentId, id: FolderId, name: string): Change =>
+      reported("Could not rename folder", update({ environmentId, input: { id, name } })),
+    /** Null inherits the pool from above again. */
+    setPool: (environmentId: EnvironmentId, id: FolderId, poolId: AccountPoolId | null): Change =>
+      reported(
+        "Could not change this folder's pool",
+        update({ environmentId, input: { id, poolId } }),
+      ),
+    /** Null leaves the folder without files of its own. */
+    setFiles: (environmentId: EnvironmentId, id: FolderId, files: ProjectId | null): Change =>
+      reported(
+        "Could not change this folder's files",
+        update({ environmentId, input: { id, files } }),
+      ),
+    /** Lends the user's GitHub to the folder's CI steps (#641), or stops lending it. */
+    setGitHubLend: (environmentId: EnvironmentId, id: FolderId, lent: boolean): Change =>
+      reported(
+        lent ? "Could not lend your GitHub" : "Could not stop lending your GitHub",
+        setGitHubLend({ environmentId, input: { id, lent } }),
+      ),
+    move: (environmentId: EnvironmentId, input: FolderMoveInput): Change =>
+      reported("Could not move folder", move({ environmentId, input })),
+    remove: (environmentId: EnvironmentId, folder: Folder): Change =>
+      reported("Could not delete folder", remove({ environmentId, input: { id: folder.id } })),
+    moveThread: (
+      environmentId: EnvironmentId,
+      threadId: ThreadId,
+      folderId: FolderId | null,
+    ): Change =>
+      reported(
+        "Could not move thread",
+        moveThread({ environmentId, input: { threadId, folderId } }),
+      ),
+    setInstructions: (
+      environmentId: EnvironmentId,
+      level: FolderLevel,
+      instructions: string,
+    ): Change =>
+      reported(
+        "Could not save instructions",
+        setInstructions({ environmentId, input: { level, instructions } }),
+      ),
+    /** Null stops loading secrets at this level. */
+    setSecrets: (
+      environmentId: EnvironmentId,
+      level: FolderLevel,
+      secretsEnvironmentId: OnePasswordEnvironmentId | null,
+    ): Attempt =>
+      attempted(
+        setSecrets({
+          environmentId,
+          input: {
+            level,
+            secrets: secretsEnvironmentId === null ? null : { environmentId: secretsEnvironmentId },
+          },
+        }),
+      ),
+    /** The user's service account token, for every level; null disconnects it. */
+    setOnePassword: (environmentId: EnvironmentId, token: string | null): Attempt =>
+      attempted(setOnePassword({ environmentId, input: { token } })),
+  };
 }
 
 export type FolderCommands = ReturnType<typeof useFolderCommands>;

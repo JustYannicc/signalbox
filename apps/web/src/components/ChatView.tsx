@@ -5745,7 +5745,7 @@ export default function ChatView(props: ChatViewProps) {
       },
       // signalbox: send lock
       "composer.toggleSendLock": ({ event }) =>
-        toggleComposerSendLockFromShortcut(event, composerDraftTarget),
+        toggleComposerSendLockFromShortcut(event, composerDraftTarget), // signalbox: send lock
       "composer.branch": ({ event }) => {
         if (!event.repeat) branchToolbarRef.current?.openBranchPicker();
       },

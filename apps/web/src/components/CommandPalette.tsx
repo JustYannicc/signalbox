@@ -2947,13 +2947,10 @@ function OpenCommandPaletteDialog(props: {
 
   // signalbox: the account's repositories to pick from, where the server can list them.
   const repositoryPickerSource = addProjectCloneFlow?.source ?? null;
-  const repositoryPickerIcon = useMemo(
-    () =>
-      repositoryPickerSource === null
-        ? null
-        : remoteProjectSourceIcon(repositoryPickerSource, ITEM_ICON_CLASS),
-    [repositoryPickerSource],
-  );
+  const repositoryPickerIcon =
+    repositoryPickerSource === null
+      ? null
+      : remoteProjectSourceIcon(repositoryPickerSource, ITEM_ICON_CLASS);
   const repositoryPickerGroups = useRepositoryPickerGroups({
     environmentId:
       addProjectCloneFlow?.step === "repository" ? addProjectCloneFlow.environmentId : null,

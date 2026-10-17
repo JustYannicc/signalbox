@@ -8,7 +8,7 @@ import {
   type SignalboxDriveMember,
   type SignalboxDriveRole,
 } from "@t3tools/contracts/signalboxDrives";
-import { useCallback, useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 
 import { environmentDrivesAtom, signalboxDrives } from "../../state/signalboxDrives";
 import { useAtomCommand } from "../../state/use-atom-command";
@@ -64,12 +64,9 @@ export function ShareDriveDialog(props: {
   const unshareCommand = useAtomCommand(signalboxDrives.unshare, { reportFailure: false });
   const shareFolderCommand = useAtomCommand(signalboxDrives.shareFolder, { reportFailure: false });
 
-  const fetchMembers = useCallback(
-    (driveId: SignalboxDrive["id"]) =>
-      membersCommand({ environmentId: props.environmentId, input: { driveId } }),
-    [membersCommand, props.environmentId],
-  );
-  const showMembers = useCallback((result: Awaited<ReturnType<typeof fetchMembers>>) => {
+  const fetchMembers = (driveId: SignalboxDrive["id"]) =>
+    membersCommand({ environmentId: props.environmentId, input: { driveId } });
+  const showMembers = (result: Awaited<ReturnType<typeof fetchMembers>>) => {
     if (result._tag === "Failure") {
       const message = driveCommandFailure(result);
       if (message !== null) setError(message);
@@ -78,7 +75,7 @@ export function ShareDriveDialog(props: {
     }
     setMembers(result.value.members);
     setMembersStatus("loaded");
-  }, []);
+  };
   const loadMembers = async (driveId: SignalboxDrive["id"]) =>
     showMembers(await fetchMembers(driveId));
 
@@ -106,45 +103,48 @@ export function ShareDriveDialog(props: {
   const folderName = props.folderShare?.name;
   const title = folderName ? `Share ${folderName}` : `Share ${activeDrive?.name ?? "drive"}`;
 
-  const addPerson = async (email: string, role: SignalboxDriveRole) => {
-    if (!email || adding || !canAddPeople) return false;
-    setAdding(true);
-    setError(null);
-    try {
-      if (activeDrive === null && props.folderShare !== undefined) {
-        const result = await shareFolderCommand({
-          environmentId: props.environmentId,
-          input: {
-            driveId: props.folderShare.myDrive.id,
-            path: props.folderShare.path,
-            email,
-            role: role as DriveItemRole,
-          },
-        });
-        if (result._tag === "Failure") {
-          const message = driveCommandFailure(result);
-          if (message !== null) setError(message);
-          return false;
-        }
-        setCreatedDrive(result.value);
-        setMembersStatus("loading");
-        return true;
-      }
-      if (activeDrive === null) return false;
-      const result = await shareCommand({
+  // Commands settle into results, so the pending flag clears after the await.
+  const sharePerson = async (email: string, role: SignalboxDriveRole): Promise<boolean> => {
+    if (activeDrive === null && props.folderShare !== undefined) {
+      const result = await shareFolderCommand({
         environmentId: props.environmentId,
-        input: { driveId: activeDrive.id, email, role },
+        input: {
+          driveId: props.folderShare.myDrive.id,
+          path: props.folderShare.path,
+          email,
+          role: role as DriveItemRole,
+        },
       });
       if (result._tag === "Failure") {
         const message = driveCommandFailure(result);
         if (message !== null) setError(message);
         return false;
       }
-      await loadMembers(activeDrive.id);
+      setCreatedDrive(result.value);
+      setMembersStatus("loading");
       return true;
-    } finally {
-      setAdding(false);
     }
+    if (activeDrive === null) return false;
+    const result = await shareCommand({
+      environmentId: props.environmentId,
+      input: { driveId: activeDrive.id, email, role },
+    });
+    if (result._tag === "Failure") {
+      const message = driveCommandFailure(result);
+      if (message !== null) setError(message);
+      return false;
+    }
+    await loadMembers(activeDrive.id);
+    return true;
+  };
+
+  const addPerson = async (email: string, role: SignalboxDriveRole) => {
+    if (!email || adding || !canAddPeople) return false;
+    setAdding(true);
+    setError(null);
+    const added = await sharePerson(email, role);
+    setAdding(false);
+    return added;
   };
 
   const changeRole = async (member: SignalboxDriveMember, role: SignalboxDriveRole) => {

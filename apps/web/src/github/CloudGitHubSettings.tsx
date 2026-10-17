@@ -6,6 +6,7 @@ import { Button } from "../components/ui/button";
 import { readLocalApi } from "../localApi";
 import { useServerConfigs } from "../state/entities";
 import { useEnvironmentHttpBaseUrl } from "../state/environments";
+import { settlePromise } from "@t3tools/client-runtime/state/runtime";
 
 /** Whether `environmentId` is a Signalbox Cloud, which connects GitHub its own way. */
 export function useIsSignalboxCloud(environmentId: EnvironmentId | null): boolean {
@@ -53,12 +54,11 @@ export function CloudGitHubSettings({
 
   const disconnect = async () => {
     setDisconnecting(true);
-    try {
-      await fetch(pageUrl("/api/github/disconnect"), { method: "POST", credentials: "include" });
-      onChanged();
-    } finally {
-      setDisconnecting(false);
-    }
+    const result = await settlePromise(() =>
+      fetch(pageUrl("/api/github/disconnect"), { method: "POST", credentials: "include" }),
+    );
+    setDisconnecting(false);
+    if (result._tag === "Success") onChanged();
   };
 
   return (

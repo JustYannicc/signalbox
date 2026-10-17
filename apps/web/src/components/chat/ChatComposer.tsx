@@ -1811,7 +1811,7 @@ function useComposerProviderSelection(
         activeProjectId,
       ),
     );
-  // signalbox: only the pool the project runs on.
+  // signalbox: only the pool the project runs on; its need waits for the catalog, like the chrome.
   const { entries: providerInstanceEntries, need: poolNeedNow } = useProjectPoolEntries(
     environmentId,
     activeProjectId,
@@ -2005,6 +2005,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   });
   // signalbox: send lock
   const sendLock = useComposerSendLock(
+    // signalbox: send lock
     composerDraftTargetKey,
     !!activePendingProgress || showPlanFollowUpPrompt,
   );
@@ -2280,7 +2281,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     lockedInstanceId:
       activeThread?.runtime?.providerInstanceId ?? activeThreadModelSelection?.instanceId,
   });
-  // signalbox: a pool need waits for the catalog, like the chrome.
+  // signalbox: the pool's need, once the catalog is known.
   const projectPoolNeed = providerCatalogKnown ? poolNeedNow : null;
   const needsPool = useNeedsPool(environmentId, projectPoolNeed);
   const selectedInstanceId =

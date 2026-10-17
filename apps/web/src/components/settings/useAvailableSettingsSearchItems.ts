@@ -95,5 +95,7 @@ export function useAvailableSettingsSearchItems(scopeSearch: SettingsScopeSearch
     managedTunnelActive,
     unsupportedCapabilities,
     // signalbox: the thin cloud build has no local server to turn on.
-  }).filter((item) => item.id !== "local-environment" || isLocalEnvironmentAvailable());
+  })
+    .filter((item) => item.id !== "local-environment" || isLocalEnvironmentAvailable())
+    .filter((item) => item.id !== "mobile-app"); // signalbox: no store app, so no Mobile app row
 }

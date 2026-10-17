@@ -69,13 +69,10 @@ function SignInGrantsSection({ environmentId }: { readonly environmentId: Enviro
   const run = async (key: string, command: () => Promise<string | null>) => {
     setPending(key);
     setError(null);
-    try {
-      const failure = await command();
-      setError(failure);
-      return failure === null;
-    } finally {
-      setPending(null);
-    }
+    const failure = await command();
+    setError(failure);
+    setPending(null);
+    return failure === null;
   };
   const allow = (key: "everywhere" | "add", site: string) =>
     run(key, async () =>
@@ -215,13 +212,10 @@ function TrySite({ environmentId }: { readonly environmentId: EnvironmentId }) {
     const origin = site.trim();
     if (origin.length === 0) return;
     setChecking(true);
-    try {
-      const result = await check({ environmentId, input: { source: PERSON, origin } });
-      const shown = signInCheckShown(origin, result);
-      if (shown !== null) setAnswer(shown);
-    } finally {
-      setChecking(false);
-    }
+    const result = await check({ environmentId, input: { source: PERSON, origin } });
+    const shown = signInCheckShown(origin, result);
+    if (shown !== null) setAnswer(shown);
+    setChecking(false);
   };
   return (
     <SettingsRow

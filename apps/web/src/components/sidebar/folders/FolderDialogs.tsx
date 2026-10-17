@@ -22,6 +22,7 @@ import { Textarea } from "../../ui/textarea";
 import { closeFolderDialog, useFolderDialogStore, type FolderDialog } from "./folderDialogStore";
 import { FolderSecretsDialog } from "./FolderSecretsDialog";
 import { useFolderCommands } from "./useFolderCommands";
+import { settlePromise } from "@t3tools/client-runtime/state/runtime";
 
 const NAME_MAX_LENGTH = 128;
 const numberFormat = new Intl.NumberFormat();
@@ -32,11 +33,9 @@ function usePendingSave() {
   const run = async (save: () => Promise<unknown>) => {
     if (pending) return;
     setPending(true);
-    try {
-      if ((await save()) !== null) closeFolderDialog();
-    } finally {
-      setPending(false);
-    }
+    const saved = await settlePromise(save);
+    setPending(false);
+    if (saved._tag === "Success" && saved.value !== null) closeFolderDialog();
   };
   return { pending, run };
 }

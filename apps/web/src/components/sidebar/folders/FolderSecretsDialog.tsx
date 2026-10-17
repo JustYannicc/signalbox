@@ -27,6 +27,7 @@ import {
   secretSourcesAbove,
 } from "./folderSecretsModel";
 import { useFolderCommands, type Attempt } from "./useFolderCommands";
+import { settlePromise } from "@t3tools/client-runtime/state/runtime";
 
 type TokenMode = "connected" | "replace" | "disconnect";
 type Action = "save" | "remove" | "disconnect";
@@ -61,11 +62,9 @@ export function FolderSecretsDialog(props: { dialog: Extract<FolderDialog, { kin
       if (failure !== null) setError(failure.error);
       return failure === null;
     };
-    try {
-      if (await steps(step)) closeFolderDialog();
-    } finally {
-      setRunning(null);
-    }
+    const done = await settlePromise(() => steps(step));
+    setRunning(null);
+    if (done._tag === "Success" && done.value) closeFolderDialog();
   };
 
   const save = (event?: FormEvent) => {

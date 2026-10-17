@@ -26,7 +26,7 @@ import {
   FolderPlusIcon,
   HardDriveIcon,
 } from "lucide-react";
-import { createContext, memo, useCallback, useContext, useMemo, type ReactNode } from "react";
+import { createContext, memo, useContext, type ReactNode } from "react";
 
 import { useComposerDraftStore } from "../../../composerDraftStore";
 import {
@@ -126,7 +126,7 @@ function HomeThreads(props: ListProps) {
   )
     ? activeThreadKey
     : null;
-  const scope = useMemo<SidebarThreadScope>(() => {
+  const scope = ((): SidebarThreadScope => {
     const homeOf = threadHomeLookup(snapshot);
     return {
       threads,
@@ -144,9 +144,9 @@ function HomeThreads(props: ListProps) {
         },
       }),
     };
-  }, [activeHere, canEdit, commands, environmentId, ownerId, projectKeys, snapshot, threads]);
+  })();
   const project = environment.ownerProjects.get(ownerId);
-  const row = useMemo(() => project && folderListRow(project, listKey), [listKey, project]);
+  const row = project && folderListRow(project, listKey);
   if (!row || !renderProject || threads.length === 0) return null;
   return (
     <SidebarThreadScopeContext value={scope}>
@@ -416,13 +416,10 @@ const NO_COUNTS: ReadonlyMap<FolderId, number> = new Map();
 function useStartFromSidebar(): (input: StartInFolder) => void {
   const startInFolder = useStartInFolder();
   const { isMobile, setOpenMobile } = useSidebar();
-  return useCallback(
-    (input: StartInFolder) => {
-      if (isMobile) setOpenMobile(false);
-      void startInFolder(input);
-    },
-    [isMobile, setOpenMobile, startInFolder],
-  );
+  return (input: StartInFolder) => {
+    if (isMobile) setOpenMobile(false);
+    void startInFolder(input);
+  };
 }
 
 /** Your top level's ⋯ (new thread, instructions, secrets): it has no row of its own. */
@@ -472,10 +469,12 @@ export function FoldersSidebarTree(props: {
   const start = useStartFromSidebar();
   const editable = useAtomValue(folderEditableEnvironmentsAtom);
   const activeThreadKey = useActiveThreadKey();
-  const tree = useMemo<TreeContext>(
-    () => ({ collapsed: sidebar.collapsed, toggle: sidebar.toggle, commands, start }),
-    [commands, sidebar.collapsed, sidebar.toggle, start],
-  );
+  const tree: TreeContext = {
+    collapsed: sidebar.collapsed,
+    toggle: sidebar.toggle,
+    commands,
+    start,
+  };
   if (sidebar.environments.length === 0 && sidebar.failures.length === 0) return null;
 
   return (

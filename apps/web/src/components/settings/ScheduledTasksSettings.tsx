@@ -364,10 +364,7 @@ function ScheduledTaskEnvironmentList({
 }) {
   const { scope, environments: scopeEnvironments } = useSettingsScope();
   // signalbox: environments that don't run scheduled tasks get no section.
-  const environments = useMemo(
-    () => scopeEnvironments.filter(runsScheduledTasks),
-    [scopeEnvironments],
-  );
+  const environments = scopeEnvironments.filter(runsScheduledTasks);
   const states = useAtomValue(
     Atom.make((get) =>
       environments.map((environment) => {
