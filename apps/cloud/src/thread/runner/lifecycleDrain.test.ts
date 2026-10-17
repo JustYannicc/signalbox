@@ -152,14 +152,46 @@ describe("cloud lifecycle machine release", () => {
               ],
             });
             yield* TestClock.adjust(1);
-            const retry = yield* runner.reconcile;
-            expect(retry.release).toBeNull();
+            const retryAt = timeout.drain!.id + DRAIN_TIMEOUT_MS;
+            expect(yield* runner.reconcile).toMatchObject({
+              release: null,
+              drain: null,
+              wakeAt: retryAt,
+            });
+            yield* TestClock.adjust(DRAIN_TIMEOUT_MS - 2);
+            expect(yield* runner.reconcile).toMatchObject({
+              release: null,
+              drain: null,
+              wakeAt: retryAt,
+            });
             expect(yield* runner.leaseToken(machine.generation)).toBe(machine.token);
+            expect((yield* runner.work).drain).toBeNull();
+            yield* TestClock.adjust(1);
+            const retry = yield* runner.reconcile;
+            expect(retry.drain).not.toBeNull();
             expect((yield* runner.work).needsUpkeep).toBe(false);
             yield* runner.batch({
               generation: machine.generation,
               sequence: 3,
-              items: [{ kind: "machine.drained", id: retry.drain!.id, unsaved: [] }],
+              items: [
+                {
+                  kind: "machine.drained",
+                  id: retry.drain!.id,
+                  unsaved: ["Files are still saving"],
+                },
+              ],
+            });
+            expect(yield* runner.reconcile).toMatchObject({
+              release: null,
+              drain: null,
+              wakeAt: retry.drain!.id + DRAIN_TIMEOUT_MS,
+            });
+            yield* TestClock.adjust(DRAIN_TIMEOUT_MS);
+            const saved = yield* runner.reconcile;
+            yield* runner.batch({
+              generation: machine.generation,
+              sequence: 4,
+              items: [{ kind: "machine.drained", id: saved.drain!.id, unsaved: [] }],
             });
             expect((yield* runner.reconcile).release).toBe(machine.generation);
             expect(yield* runner.leaseToken(machine.generation)).toBeNull();

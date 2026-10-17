@@ -1179,6 +1179,8 @@ const make = Effect.gen(function* () {
           if (lease.drain?._tag === "answered") {
             const unsaved = lease.drain.unsaved;
             if (closing && unsaved.length > 0) {
+              const retryAt = lease.drain.id + DRAIN_TIMEOUT_MS;
+              if (now < retryAt) return keep({ ...IDLE, wakeAt: retryAt });
               return {
                 events: [],
                 machine: { ...lease, idleSince, drain: { _tag: "asked", id: now } as const },
