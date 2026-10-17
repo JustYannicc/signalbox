@@ -5,9 +5,11 @@ import {
   type ProviderDriverKind,
   type ResolvedKeybindingsConfig,
 } from "@t3tools/contracts";
+import { hubInstancePoolId } from "@t3tools/contracts/accountHub";
 import { resolveSelectableModel } from "@t3tools/shared/model";
 import { useAtomValue } from "@effect/atom-react";
 import { formatProviderUpdateRequiredNotice } from "@t3tools/client-runtime/providerUpdateRequiredModels";
+import { formatPoolModelStatus } from "@t3tools/client-runtime/poolModelStatus";
 import { useNavigate } from "@tanstack/react-router";
 import { LegendList, type LegendListRef } from "@legendapp/list/react";
 import { memo, useMemo, useState, useCallback, useEffect, useLayoutEffect, useRef } from "react";
@@ -32,6 +34,9 @@ import {
 import { ModelEsque } from "./providerIconUtils";
 import { isCommandPaletteOpen } from "../../commandPaletteBus";
 import { primaryServerKeybindingsAtom } from "../../state/server";
+import { usePoolViews } from "../../state/accountPools";
+import { useNowMinute } from "../../hooks/useNowMinute";
+import { useServerConfigs } from "../../state/entities";
 import {
   modelPickerJumpCommandForIndex,
   modelPickerJumpIndexFromCommand,
@@ -47,6 +52,7 @@ import { getVirtualizedScrollFadeClassName } from "../ui/scroll-area";
 import { TooltipProvider } from "../ui/tooltip";
 import { InlineButton } from "../ui/button";
 import {
+  hasCachedPoolSnapshot,
   isProviderInstancePickerReady,
   isProviderInstancePickerVisible,
   type ProviderInstanceEntry,
@@ -68,6 +74,7 @@ type ModelPickerItem = {
   continuationGroupKey?: string | undefined;
   isLegacy?: boolean | undefined;
   isUnavailable?: boolean | undefined;
+  poolStatusText?: string | undefined;
 };
 
 export function resolveModelPickerSelectedModel(input: {
@@ -92,11 +99,20 @@ export function shouldIncludeModelPickerOption(input: {
   readonly option: ModelEsque;
   readonly activeInstanceId: ProviderInstanceId;
   readonly activeModel: string;
+  readonly isHubInstance?: boolean;
 }): boolean {
   if (input.entry.driverKind === "antigravity" && input.option.slug === ANTIGRAVITY_DEFAULT_MODEL) {
     return false;
   }
   if (isProviderInstancePickerReady(input.entry)) return true;
+  // signalbox: A failed pool snapshot may retain a model the server can still revalidate on send.
+  if (
+    hasCachedPoolSnapshot(input.entry, input.isHubInstance === true) &&
+    input.entry.models.some((model) => model.slug === input.option.slug) &&
+    !input.option.isUnavailable
+  ) {
+    return true;
+  }
   return (
     input.entry.enabled &&
     (input.entry.driverKind === "opencode" || input.entry.driverKind === "antigravity") &&
@@ -189,6 +205,12 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
   const pickerContentRef = useRef<HTMLDivElement>(null);
   const highlightedModelKeyRef = useRef<string | null>(null);
   const { favorites } = useEnvironmentModelPreferences(props.environmentId);
+  const serverConfigs = useServerConfigs();
+  const environmentConfig = props.environmentId
+    ? serverConfigs.get(props.environmentId)
+    : undefined;
+  const poolViews = usePoolViews(props.environmentId);
+  const now = Date.parse(`${useNowMinute()}:00Z`);
   const activeEntry = props.instanceEntries.find(
     (entry) => entry.instanceId === props.activeInstanceId,
   );
@@ -219,6 +241,13 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
     () => new Set(selectedModelKeys ?? (activeModelKey ? [activeModelKey] : [])),
     [selectedModelKeys, activeModelKey],
   );
+  const activeEntryIsHub =
+    activeEntry !== undefined &&
+    (activeEntry.instanceId === "claude_hub" ||
+      activeEntry.instanceId === "codex_hub" ||
+      hubInstancePoolId(
+        environmentConfig?.settings.providerInstances[activeEntry.instanceId]?.config,
+      ) !== null);
   const activeInstanceHasSelectableUnavailableModel =
     activeEntry !== undefined &&
     (modelOptionsByInstance.get(props.activeInstanceId) ?? []).some((option) =>
@@ -227,6 +256,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
         option,
         activeInstanceId: props.activeInstanceId,
         activeModel: activeModelSlug,
+        isHubInstance: activeEntryIsHub,
       }),
     ) &&
     !isProviderInstancePickerReady(activeEntry);
@@ -305,6 +335,31 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
     () => new Map(instanceEntries.map((entry) => [entry.instanceId, entry])),
     [instanceEntries],
   );
+  const poolStatusByInstance = useMemo(() => {
+    const statuses = new Map<ProviderInstanceId, string>();
+    // signalbox: Members see only their pool provider's availability and reset time.
+    for (const entry of instanceEntries) {
+      const poolId = hubInstancePoolId(
+        environmentConfig?.settings.providerInstances[entry.instanceId]?.config,
+      );
+      const isKnownPoolInstance =
+        poolId !== null || entry.instanceId === "claude_hub" || entry.instanceId === "codex_hub";
+      if (!isKnownPoolInstance) continue;
+      const overview = poolViews.find(
+        (candidate) =>
+          (poolId !== null && candidate.id === poolId) ||
+          candidate.providers.some((provider) => provider.providerInstanceId === entry.instanceId),
+      );
+      const status = formatPoolModelStatus({
+        overview,
+        providerInstanceId: entry.instanceId,
+        now,
+        snapshotUnavailable: !isProviderInstancePickerReady(entry),
+      });
+      if (status) statuses.set(entry.instanceId, status);
+    }
+    return statuses;
+  }, [environmentConfig, instanceEntries, poolViews, now]);
   const matchesLockedProvider = useCallback(
     (entry: Pick<ProviderInstanceEntry, "driverKind" | "continuationGroupKey">): boolean => {
       if (props.lockedProvider === null) return true;
@@ -329,6 +384,15 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
         }
       }
     }
+    for (const entry of instanceEntries) {
+      const isHubInstance =
+        entry.instanceId === "claude_hub" ||
+        entry.instanceId === "codex_hub" ||
+        hubInstancePoolId(
+          environmentConfig?.settings.providerInstances[entry.instanceId]?.config,
+        ) !== null;
+      if (hasCachedPoolSnapshot(entry, isHubInstance)) instanceIds.add(entry.instanceId);
+    }
     return instanceIds.size > 0 ? instanceIds : undefined;
   }, [
     activeInstanceHasSelectableUnavailableModel,
@@ -336,6 +400,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
     modelOptionsByInstance,
     props.activeInstanceId,
     props.onOpenProviderSetup,
+    environmentConfig,
   ]);
 
   const flatModels = useMemo(() => {
@@ -345,6 +410,11 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
       if (!entry) {
         continue;
       }
+      const isHubInstance =
+        instanceId === "claude_hub" ||
+        instanceId === "codex_hub" ||
+        hubInstancePoolId(environmentConfig?.settings.providerInstances[instanceId]?.config) !==
+          null;
       for (const model of models) {
         if (
           !shouldIncludeModelPickerOption({
@@ -352,6 +422,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
             option: model,
             activeInstanceId: props.activeInstanceId,
             activeModel: activeModelSlug,
+            isHubInstance,
           })
         ) {
           continue;
@@ -364,6 +435,9 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
           ...(model.badge ? { badge: model.badge } : {}),
           ...(model.isLegacy ? { isLegacy: true } : {}),
           ...(model.isUnavailable ? { isUnavailable: true } : {}),
+          ...(poolStatusByInstance.has(instanceId)
+            ? { poolStatusText: poolStatusByInstance.get(instanceId) }
+            : {}),
           instanceId,
           driverKind: entry.driverKind,
           instanceDisplayName: entry.displayName,
@@ -377,7 +451,14 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
       }
     }
     return out;
-  }, [modelOptionsByInstance, entryByInstanceId, props.activeInstanceId, activeModelSlug]);
+  }, [
+    modelOptionsByInstance,
+    entryByInstanceId,
+    props.activeInstanceId,
+    activeModelSlug,
+    environmentConfig,
+    poolStatusByInstance,
+  ]);
 
   const isLocked = props.lockedProvider !== null;
   const isSearching = searchQuery.trim().length > 0;
@@ -747,6 +828,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
             onSelectInstance={handleSelectInstance}
             onFocusSearch={focusSearchInput}
             instanceEntries={sidebarInstanceEntries}
+            poolStatusByInstance={poolStatusByInstance}
             showFavorites
             {...(selectableUnavailableInstanceIds ? { selectableUnavailableInstanceIds } : {})}
             {...(lockedDisabledInstanceIds
@@ -933,6 +1015,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
                         useTriggerLabel={false}
                         showNewBadge={model.badge === "new"}
                         unavailable={model.isUnavailable === true}
+                        poolStatusText={model.poolStatusText}
                         jumpLabel={modelJumpLabelByKey.get(modelKey) ?? null}
                         disabledReason={disabledReason}
                         onToggleFavorite={() => toggleFavorite(model.instanceId, model.slug)}

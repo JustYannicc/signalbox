@@ -172,7 +172,7 @@
       "rpc": "automations.customize",
       "access": "write",
       "input": "91eb786d",
-      "output": "2e94ba08"
+      "output": "c1cd1923"
     },
     {
       "name": "automations.delete",
@@ -187,7 +187,7 @@
       "rpc": "automations.discardDraft",
       "access": "write",
       "input": "e4926bda",
-      "output": "2e94ba08"
+      "output": "c1cd1923"
     },
     {
       "name": "automations.disconnect",
@@ -202,7 +202,7 @@
       "access": "read",
       "stream": "snapshot",
       "input": "e4926bda",
-      "output": "3af231ca"
+      "output": "24d42c5f"
     },
     {
       "name": "automations.githubSubscriptions",
@@ -217,7 +217,7 @@
       "access": "read",
       "stream": "snapshot",
       "input": "03c2b661",
-      "output": "86625594"
+      "output": "25c7d51b"
     },
     {
       "name": "automations.notices",
@@ -232,14 +232,14 @@
       "rpc": "automations.publish",
       "access": "write",
       "input": "b3f469e7",
-      "output": "2e94ba08"
+      "output": "c1cd1923"
     },
     {
       "name": "automations.rotateWebhook",
       "rpc": "automations.rotateWebhook",
       "access": "write",
       "input": "e4926bda",
-      "output": "2e94ba08"
+      "output": "c1cd1923"
     },
     {
       "name": "automations.run",
@@ -276,21 +276,21 @@
       "access": "write",
       "compiles": true,
       "input": "e4a20fc8",
-      "output": "4a3e4ebe"
+      "output": "ca09aba7"
     },
     {
       "name": "automations.setEnabled",
       "rpc": "automations.setEnabled",
       "access": "write",
       "input": "a3f5fcc8",
-      "output": "2e94ba08"
+      "output": "c1cd1923"
     },
     {
       "name": "automations.setWebhookSecret",
       "rpc": "automations.setWebhookSecret",
       "access": "write",
       "input": "2af82751",
-      "output": "2e94ba08"
+      "output": "c1cd1923"
     },
     {
       "name": "automations.stopAttached",
@@ -849,7 +849,7 @@
       "access": "read",
       "stream": "snapshot",
       "input": "03c2b661",
-      "output": "c053554a"
+      "output": "5f63282c"
     },
     {
       "name": "preview.adjust",
@@ -1427,7 +1427,7 @@
       "rpc": "scheduledTasks.list",
       "access": "read",
       "input": "03c2b661",
-      "output": "d21e29dd"
+      "output": "bbeb7192"
     },
     {
       "name": "scheduledTasks.listWebhookDeliveries",
@@ -1441,21 +1441,21 @@
       "rpc": "scheduledTasks.rotateWebhookToken",
       "access": "write",
       "input": "a3ac90c6",
-      "output": "a6fa4606"
+      "output": "be4843bd"
     },
     {
       "name": "scheduledTasks.runNow",
       "rpc": "scheduledTasks.runNow",
       "access": "write",
       "input": "a3ac90c6",
-      "output": "a6fa4606"
+      "output": "be4843bd"
     },
     {
       "name": "scheduledTasks.setEnabled",
       "rpc": "scheduledTasks.setEnabled",
       "access": "write",
       "input": "94a2337a",
-      "output": "a6fa4606"
+      "output": "be4843bd"
     },
     {
       "name": "scheduledTasks.subscribe",
@@ -1463,14 +1463,14 @@
       "access": "read",
       "stream": "snapshot",
       "input": "03c2b661",
-      "output": "d21e29dd"
+      "output": "bbeb7192"
     },
     {
       "name": "scheduledTasks.upsert",
       "rpc": "scheduledTasks.upsert",
       "access": "write",
-      "input": "14e189d6",
-      "output": "a6fa4606"
+      "input": "a07aa6f7",
+      "output": "be4843bd"
     },
     {
       "name": "secrets.answer",
@@ -1543,7 +1543,7 @@
       "rpc": "server.getConfig",
       "access": "read",
       "input": "03c2b661",
-      "output": "26e783d1"
+      "output": "4ad1cf23"
     },
     {
       "name": "server.refreshProviders",
@@ -1580,7 +1580,7 @@
       "access": "read",
       "stream": "snapshot",
       "input": "240ec835",
-      "output": "5cf1e626"
+      "output": "a5e05ae4"
     },
     {
       "name": "settings.get",
@@ -2176,6 +2176,20 @@
       "output": "259e0077"
     },
     {
+      "name": "timezone.get",
+      "rpc": "signalbox.timezone.get",
+      "access": "read",
+      "input": "03c2b661",
+      "output": "aaa9ffaf"
+    },
+    {
+      "name": "timezone.set",
+      "rpc": "signalbox.timezone.set",
+      "access": "write",
+      "input": "a63efefe",
+      "output": "aaa9ffaf"
+    },
+    {
       "name": "usage.refreshRates",
       "rpc": "server.refreshUsageRates",
       "access": "read",
@@ -2273,6 +2287,10 @@
   "exemptions": [
     {
       "rpc": "signalbox.analytics.recordClientEvent",
+      "kind": "client-report"
+    },
+    {
+      "rpc": "signalbox.timezone.report",
       "kind": "client-report"
     },
     {
