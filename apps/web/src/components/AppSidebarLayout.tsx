@@ -59,6 +59,7 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 import { useIsMobile } from "../hooks/useMediaQuery";
 import { SidebarViews } from "./sidebar/SidebarViews";
 import { TITLEBAR_HISTORY_WIDTH, TitlebarHistoryButtons } from "./sidebar/TitlebarHistoryButtons";
+import { resolveCollapsedRailWidth } from "../workspaceTitlebar";
 import { FolderDialogs } from "./sidebar/folders/FolderDialogs"; // signalbox: folders
 import { NotesSheet } from "./notes/NotesSheet"; // signalbox: notes
 
@@ -277,6 +278,10 @@ export function AppSidebarLayout({ children }: { children: ReactNode }) {
       : {
           "--workspace-titlebar-content-left": `calc(var(--workspace-controls-left) + ${TITLEBAR_HISTORY_WIDTH} + var(--workspace-titlebar-control-size) + var(--workspace-titlebar-control-gap))`,
         }),
+    "--workspace-collapsed-rail-width": resolveCollapsedRailWidth({
+      isMobile,
+      railLayout: !legacySidebarEnabled,
+    }),
   } as CSSProperties;
 
   useEffect(() => {
