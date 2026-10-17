@@ -577,6 +577,10 @@ export class UserObject extends DurableObject<UserObjectEnv> implements UserObje
     return this.api.clientTraceDimensions(threadIds);
   }
 
+  clientFolderDimensions(folderIds: Parameters<UserObjectApi["clientFolderDimensions"]>[0]) {
+    return this.api.clientFolderDimensions(folderIds);
+  }
+
   recordDriveAccess(entry: Parameters<UserObjectApi["recordDriveAccess"]>[0]) {
     return this.api.recordDriveAccess(entry);
   }

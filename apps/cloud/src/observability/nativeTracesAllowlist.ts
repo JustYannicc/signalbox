@@ -1,4 +1,5 @@
 import { WsRpcGroup } from "@t3tools/contracts";
+import { CLIENT_ISSUE_CODES } from "@t3tools/contracts/clientIssues";
 
 /**
  * What may leave Cloudflare's native Worker traces for Sentry (#680). Every
@@ -39,6 +40,13 @@ const UUID = "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}";
 const workos = (prefix: string) =>
   ({ type: "id", format: new RegExp(`^${prefix}_[0-9A-HJKMNP-TV-Z]{26}$`) }) as const;
 const uuid = { type: "id", format: new RegExp(`^${UUID}$`) } as const;
+const clientRelease = {
+  type: "id",
+  format: /^(?:[a-f0-9]{7,40}|\d{1,4}\.\d{1,4}\.\d{1,4}(?:-[a-z]+\.\d{1,8})?|development|unknown)$/,
+} as const;
+const environmentId = { type: "id", format: /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/ } as const;
+const clientIssueSources = oneOf("ui", "rpc", "subscription", "exception", "console", "react");
+const clientIssueClients = oneOf("web", "desktop", "mobile");
 
 /**
  * The shared dimensions (`evlogWorkers.ts` `CloudFields`) the clients stamp
@@ -82,6 +90,13 @@ const FAAS_TRIGGERS = oneOf("http", "timer", "pubsub", "datasource", "other");
 export const SPAN_ATTRIBUTES: ReadonlyMap<string, AttributeRule> = new Map<string, AttributeRule>([
   ...DIMENSIONS,
   ["rpc.method", { type: "enum", values: RPC_METHODS }],
+  ["client.issue.code", { type: "enum", values: new Set(CLIENT_ISSUE_CODES) }],
+  ["client.issue.severity", oneOf("error", "warning")],
+  ["client.issue.source", clientIssueSources],
+  ["client.issue.duration_ms", measure],
+  ["client.release", clientRelease],
+  ["client.type", clientIssueClients],
+  ["environment.id", environmentId],
   // Root spans: what ran and how it went.
   ["faas.trigger", FAAS_TRIGGERS],
   ["cloudflare.handler_type", HANDLER_TYPES],
@@ -156,6 +171,8 @@ export const SPAN_ATTRIBUTES: ReadonlyMap<string, AttributeRule> = new Map<strin
 /** Known Cloudflare operations and exact RPC templates; other names become `worker.operation`. */
 export const OPERATIONS: ReadonlySet<string> = new Set([
   ...RPC_SPAN_NAMES,
+  "client.issue",
+  "client.issue.intake",
   "fetch",
   "cache_put",
   "cache_match",
@@ -218,9 +235,14 @@ const SERVICES: ReadonlyArray<readonly [service: string, matches: (name: string)
   ["signalbox-model-gateway", (name) => /^signalbox-model-gateway(?:-pr-\d{1,6})?$/.test(name)],
   ["t3code-web", (name) => name === "t3code-web"],
   ["t3code-mobile", (name) => name === "t3code-mobile"],
+  ["t3code-desktop", (name) => name === "t3code-desktop"],
 ];
 export const UNKNOWN_SERVICE = "signalbox";
-export const CLIENT_SERVICES: ReadonlySet<string> = new Set(["t3code-web", "t3code-mobile"]);
+export const CLIENT_SERVICES: ReadonlySet<string> = new Set([
+  "t3code-web",
+  "t3code-mobile",
+  "t3code-desktop",
+]);
 
 /** Where a trace may say which service it came from, most specific first. */
 export const SERVICE_KEYS: ReadonlyArray<string> = [
