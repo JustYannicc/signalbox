@@ -47,6 +47,14 @@
       "types": "./src/server/pullRequestBatches.graphql.ts",
       "import": "./src/server/pullRequestBatches.graphql.ts"
     },
+    "./server/pullRequestReviews.graphql": {
+      "types": "./src/server/pullRequestReviews.graphql.ts",
+      "import": "./src/server/pullRequestReviews.graphql.ts"
+    },
+    "./server/pullRequestListings.graphql": {
+      "types": "./src/server/pullRequestListings.graphql.ts",
+      "import": "./src/server/pullRequestListings.graphql.ts"
+    },
     "./server/pullRequestReads.graphql": {
       "types": "./src/server/pullRequestReads.graphql.ts",
       "import": "./src/server/pullRequestReads.graphql.ts"
