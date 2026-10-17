@@ -12,7 +12,9 @@ import * as DesktopUserData from "./DesktopUserData.ts";
 const resolveWindowsUserData = (appDataDirectory: string) =>
   DesktopUserData.resolveUserDataPath({
     appDataDirectory,
+    dirname: "/app/dist-electron",
     isDevelopment: false,
+    isPackaged: true,
     platform: "win32",
   }).pipe(Effect.provide(DesktopPreReadyFileSystem.layer));
 

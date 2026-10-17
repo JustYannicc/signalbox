@@ -499,8 +499,9 @@ folders (`legacySections.ts`). A pool placed at a folder made since is stored
 as a `folder` level, which a build from before folders can't read.
 
 `wrangler dev` keeps the bucket locally. Both buckets are in the stack and
-retained: no stage's destroy ever deletes one, and every stage that declares
-them keeps their settings (no lifecycle rules, CORS or public access).
+retained: no stage's destroy ever deletes one. Both retain the seven-day
+multipart-abort rule, and production also expires pending attachments after
+two days. Neither enables CORS or public access.
 
 The preview bucket may still contain keys written before PR prefixes existed.
 A preview whose prefixed read misses falls back to the unprefixed key, so
