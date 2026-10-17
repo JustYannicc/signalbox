@@ -1,5 +1,5 @@
 import { statusLineJson } from "@signalbox/runner-protocol/StatusLineProtocol";
-import { AutomationError, ThreadId } from "@t3tools/contracts";
+import { AutomationError, ProjectId, ThreadId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
@@ -35,6 +35,7 @@ import * as UserShell from "./UserShell.ts";
 import * as UserStore from "./UserStore.ts";
 import * as UserThreadKinds from "./UserThreadKinds.ts";
 import * as UserThreadStatus from "./UserThreadStatus.ts";
+import * as UserFolders from "./UserFolders.ts";
 
 const decodeDriveEvents = Schema.decodeUnknownSync(Schema.Array(DriveRefEvent));
 
@@ -61,6 +62,7 @@ export const makeUserObjectApi = (
       | GitHubBranches.GitHubBranches
       | UserThreadKinds.UserThreadKinds
       | UserThreadStatus.UserThreadStatus
+      | UserFolders.UserFolders
       | LocalKeys.LocalKeys
       | ResourceBindings.ResourceBindings
       | OnePasswordAccount.OnePasswordAccount
@@ -113,6 +115,18 @@ export const makeUserObjectApi = (
         ),
       );
     },
+    copyThreadHome: ({ parentThreadId, childThreadId, projectId, ownerId }) =>
+      run(
+        UserFolders.UserFolders.use((folders) =>
+          Effect.gen(function* () {
+            const { home } = yield* folders.threadHome(ThreadId.make(parentThreadId), {
+              projectId: ProjectId.make(projectId),
+              ownerId,
+            });
+            yield* folders.moveThread({ threadId: ThreadId.make(childThreadId), folderId: home });
+          }),
+        ),
+      ),
     // An object without automations yet takes the events and drops them.
     threadEvents: ({ threadId, events }) =>
       run(

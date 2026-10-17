@@ -24,6 +24,7 @@ import { migrateBrowsing } from "./browsing/browsingTables.ts";
 import { migratePullRequestPolls } from "./pullRequests/PullRequestPolls.ts";
 import { migrateStatusNote, readNote, writeNote } from "./statusLine/statusNoteTables.ts";
 import { type MachineRecord, MachineRecords, NO_MACHINE_RECORD } from "./runner/MachineBackend.ts";
+import { nativeChildPendingWire, type NativeChildPending } from "./runner/nativeChildBatch.ts";
 import {
   migrateSecretValues,
   readSecretValues,
@@ -59,6 +60,12 @@ export interface ThreadOwner {
    * before shared drives, which work in their owner's My Drive.
    */
   readonly driveId: string | null;
+}
+
+export interface NativeChildPendingChanges {
+  readonly upsert: ReadonlyArray<NativeChildPending>;
+  readonly removeChildThreadIds: ReadonlyArray<string>;
+  readonly clearRunIds: ReadonlyArray<string>;
 }
 
 export type CommandReceipt =
@@ -141,6 +148,8 @@ export class ThreadStore extends Context.Service<
       limit?: number,
     ) => Effect.Effect<ReadonlyArray<StoredEvent>, SqlError>;
     readonly receipt: (commandId: CommandId) => Effect.Effect<CommandReceipt | null, SqlError>;
+    /** Unattested native child rows buffered until their matching subagent record arrives. */
+    readonly pendingNativeChildren: Effect.Effect<ReadonlyArray<NativeChildPending>, SqlError>;
     /**
      * Appends events after `head`, the command's receipt, the owner (when the
      * thread is being created) and the outbox revision, in one transaction.
@@ -159,6 +168,7 @@ export class ThreadStore extends Context.Service<
       readonly summaryChanged: boolean;
       /** The machine lease as of these events, such as a Runner batch's acknowledgement. */
       readonly machine?: MachineLease;
+      readonly nativeChildPending?: NativeChildPendingChanges;
       /** The instructions of the thread's chain, for the run these events start. */
       readonly instructions?: {
         readonly runId: string;
@@ -308,6 +318,14 @@ const migrations = Migrator.fromRecord({
   "0010_browsing": migrateBrowsing,
   // The thread's status note and the runtime's cursor through ended runs (#670, `statusLine/`).
   "0011_status_note": migrateStatusNote,
+  "0012_native_child_pending": Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    yield* sql`CREATE TABLE native_child_pending (
+      child_thread_id TEXT PRIMARY KEY,
+      parent_run_id TEXT NOT NULL,
+      pending TEXT NOT NULL
+    )`;
+  }),
 });
 
 /** Applies every migration not recorded yet (`storage/migrations.ts`). Never edit or rename a merged one. */
@@ -445,6 +463,12 @@ const make = Effect.gen(function* () {
       }),
     );
 
+  const pendingNativeChildren: ThreadStore["Service"]["pendingNativeChildren"] = sql<{
+    readonly pending: string;
+  }>`SELECT pending FROM native_child_pending ORDER BY child_thread_id`.pipe(
+    Effect.map((rows) => rows.flatMap((row) => nativeChildPendingWire.decode(row.pending))),
+  );
+
   const machine: ThreadStore["Service"]["machine"] =
     sql`SELECT lease FROM machine WHERE id = 1`.pipe(
       Effect.map((rows) => decodeMachineRows(rows)[0]?.lease ?? NO_MACHINE),
@@ -497,6 +521,20 @@ const make = Effect.gen(function* () {
       yield* sql`INSERT INTO thread_secrets (id, environments)
           VALUES (1, ${encodeSecrets(input.secrets)})
           ON CONFLICT (id) DO UPDATE SET environments = excluded.environments`;
+    }
+    if (input.nativeChildPending) {
+      for (const childThreadId of input.nativeChildPending.removeChildThreadIds) {
+        yield* sql`DELETE FROM native_child_pending WHERE child_thread_id = ${childThreadId}`;
+      }
+      for (const runId of input.nativeChildPending.clearRunIds) {
+        yield* sql`DELETE FROM native_child_pending WHERE parent_run_id = ${runId}`;
+      }
+      for (const pending of input.nativeChildPending.upsert) {
+        yield* sql`INSERT INTO native_child_pending (child_thread_id, parent_run_id, pending)
+          VALUES (${pending.childThreadId}, ${pending.parentRunId}, ${nativeChildPendingWire.encode([pending])})
+          ON CONFLICT (child_thread_id) DO UPDATE SET parent_run_id = excluded.parent_run_id,
+            pending = excluded.pending`;
+      }
     }
     return sequence;
   }, sql.withTransaction);
@@ -570,6 +608,7 @@ const make = Effect.gen(function* () {
     owner,
     events,
     receipt,
+    pendingNativeChildren,
     commit,
     recordRejection,
     outbox,

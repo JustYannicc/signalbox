@@ -411,6 +411,10 @@ export class UserObject extends DurableObject<UserObjectEnv> implements UserObje
     return this.api.recordThreadSummary(summary);
   }
 
+  copyThreadHome(input: Parameters<UserObjectApi["copyThreadHome"]>[0]) {
+    return this.api.copyThreadHome(input);
+  }
+
   rebuildThreadIndex() {
     return this.api.rebuildThreadIndex();
   }

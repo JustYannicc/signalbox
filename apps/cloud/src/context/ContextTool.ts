@@ -88,8 +88,8 @@ export class ContextTool extends Context.Service<
       request: {
         readonly query: string;
         readonly driveId: string | null;
-        readonly includeArchived?: boolean;
-        readonly threadCursor?: SearchThreadCursor | null;
+        readonly includeArchived?: boolean | undefined;
+        readonly threadCursor?: SearchThreadCursor | null | undefined;
       },
     ) => Effect.Effect<SearchResult, ContextAccessError | ContextUnavailable>;
     readonly thread: (

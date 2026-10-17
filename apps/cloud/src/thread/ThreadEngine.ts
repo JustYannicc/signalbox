@@ -1,5 +1,6 @@
 import {
-  type CommandId,
+  CommandId,
+  type OrchestrationV2AppThread,
   type OrchestrationV2AppThreadLineage,
   EventId,
   type OrchestrationV2Command,
@@ -36,7 +37,9 @@ import * as Stream from "effect/Stream";
 import { traceIdOf } from "./diagnostics/traceId.ts";
 import { hasPendingTurnWork, scriptedStep } from "./scriptedTurn.ts";
 import { type Decision, decide, decideLaunch, type ThreadWorktree } from "./threadDecider.ts";
-import type { DecisionContext } from "./threadEvents.ts";
+import { type DecisionContext, threadEvent } from "./threadEvents.ts";
+import { providerEventThreadId, recordedNativeChildEvents } from "./runner/runnerEvents.ts";
+import type { NativeChildBatchInput } from "./runner/nativeChildBatch.ts";
 import { applyEvents, threadShellFromProjection, workStartedAt } from "./threadProjection.ts";
 import { noteKey, noteRunId, supersedes } from "./statusLine/statusNotePolicy.ts";
 import * as ThreadStore from "./ThreadStore.ts";
@@ -142,6 +145,11 @@ const NO_CONTEXT =
   "That project does not exist in this environment, or you can't change its files.";
 const POOLS_UNRESOLVED = "Couldn't tell which pool this thread runs on. Try again.";
 
+const isProviderNativeChild = (thread: OrchestrationV2AppThread) =>
+  thread.creationSource === "provider" &&
+  thread.lineage.relationshipToParent === "subagent" &&
+  thread.forkedFrom?.type === "node";
+
 /**
  * A thread's sidebar row as its owner's index stores it. `revision` grows with
  * every change to the row, so delivering an old one again changes nothing.
@@ -154,6 +162,7 @@ export type ThreadSnapshot = typeof ThreadSnapshotWire.Type;
 export interface EngineDecision<A> {
   readonly events: ReadonlyArray<OrchestrationV2DomainEvent>;
   readonly machine?: ThreadStore.MachineLease;
+  readonly nativeChildPending?: ThreadStore.NativeChildPendingChanges;
   readonly result: A;
 }
 
@@ -205,6 +214,8 @@ export class ThreadEngine extends Context.Service<
         ctx: DecisionContext,
       ) => Effect.Effect<EngineDecision<A>>,
     ) => Effect.Effect<A>;
+    /** Saves an authenticated native-child batch before its parent Runner is acknowledged. */
+    readonly recordNativeChildBatch: (input: NativeChildBatchInput) => Effect.Effect<void>;
     /** The committed projection, read without the lock, for checks that decide nothing. */
     readonly projection: Effect.Effect<OrchestrationV2ThreadProjection | null>;
     /** Runs one scripted provider step. True while turn work remains. */
@@ -357,6 +368,7 @@ const make = Effect.gen(function* () {
     /** Set by the commit that creates the thread. */
     readonly owner?: ThreadStore.ThreadOwner;
     readonly machine?: ThreadStore.MachineLease;
+    readonly nativeChildPending?: ThreadStore.NativeChildPendingChanges;
     /** The chain's instructions for the run this commit starts. */
     readonly instructions?: {
       readonly runId: string;
@@ -384,6 +396,7 @@ const make = Effect.gen(function* () {
         ...(input.secrets === undefined ? {} : { secrets: input.secrets }),
         ...(current.thread === null ? { owner } : {}),
         ...(input.machine ? { machine: input.machine } : {}),
+        ...(input.nativeChildPending ? { nativeChildPending: input.nativeChildPending } : {}),
         summaryChanged: nextKey !== current.summaryKey,
       }),
     );
@@ -544,6 +557,17 @@ const make = Effect.gen(function* () {
         ...(command.type === "thread.create" ? { projectId: command.projectId } : {}),
       },
       (projection, ctx, pool) => {
+        if (
+          command.type === "message.dispatch" &&
+          projection !== null &&
+          isProviderNativeChild(projection.thread)
+        ) {
+          return {
+            _tag: "rejected",
+            message:
+              "Provider-native child history is read-only; continue it in the parent thread.",
+          };
+        }
         const onItsPool =
           typeof pool === "string" ? commandOnPool(command, projection, pool) : command;
         return decide(
@@ -576,15 +600,21 @@ const make = Effect.gen(function* () {
           projectId: input.projectId,
         },
         (projection, ctx, pool) =>
-          decideLaunch(
-            projection,
-            typeof pool === "string"
-              ? { ...input, modelSelection: onPool(input.modelSelection, pool) }
-              : input,
-            ctx,
-            creation.worktree ?? null,
-            creation.lineage,
-          ),
+          projection !== null && isProviderNativeChild(projection.thread)
+            ? {
+                _tag: "rejected",
+                message:
+                  "Provider-native child history is read-only; continue it in the parent thread.",
+              }
+            : decideLaunch(
+                projection,
+                typeof pool === "string"
+                  ? { ...input, modelSelection: onPool(input.modelSelection, pool) }
+                  : input,
+                ctx,
+                creation.worktree ?? null,
+                creation.lineage,
+              ),
       );
       const { projection } = yield* readable(actor);
       return { threadId: input.threadId, projection, resumed: result.replayed };
@@ -624,15 +654,98 @@ const make = Effect.gen(function* () {
       Effect.gen(function* () {
         const current = yield* Ref.get(state);
         const decision = yield* decideWith(current.thread?.projection ?? null, yield* context);
-        if (decision.events.length > 0) {
+        if (
+          decision.events.length > 0 ||
+          decision.machine !== undefined ||
+          decision.nativeChildPending !== undefined
+        ) {
           yield* commit({
             events: decision.events,
             ...(decision.machine ? { machine: decision.machine } : {}),
+            ...(decision.nativeChildPending
+              ? { nativeChildPending: decision.nativeChildPending }
+              : {}),
           });
-        } else if (decision.machine) {
-          yield* Effect.orDie(store.saveMachine(decision.machine));
         }
         return decision.result;
+      }),
+    );
+
+  const recordNativeChildBatch: ThreadEngine["Service"]["recordNativeChildBatch"] = (input) =>
+    serialized(
+      Effect.gen(function* () {
+        const current = yield* Ref.get(state);
+        const childProjection = current.thread?.projection ?? null;
+        const receiptId = CommandId.make(
+          `native-child:${input.parentThreadId}:${input.generation}:${input.sequence}:${input.childThreadId}`,
+        );
+        const receipt =
+          childProjection === null ? null : yield* Effect.orDie(store.receipt(receiptId));
+        if (receipt?._tag === "accepted") return;
+        if (receipt?._tag === "rejected") {
+          return yield* Effect.die("A native child batch receipt was rejected.");
+        }
+
+        const appThread = input.appThread;
+        if (
+          appThread.id !== input.childThreadId ||
+          appThread.id !== (childProjection?.thread.id ?? appThread.id)
+        ) {
+          return yield* Effect.die("A native child batch did not name its child thread.");
+        }
+        if (
+          !isProviderNativeChild(appThread) ||
+          appThread.lineage.parentThreadId !== input.parentThreadId ||
+          input.attestation.threadId !== input.parentThreadId ||
+          input.attestation.runId !== input.parentRunId ||
+          input.attestation.origin !== "provider_native" ||
+          input.attestation.childThreadId !== input.childThreadId ||
+          appThread.forkedFrom?.type !== "node" ||
+          appThread.forkedFrom.nodeId !== input.attestation.id ||
+          appThread.providerInstanceId !== input.attestation.providerInstanceId ||
+          appThread.activeProviderThreadId !== input.attestation.providerThreadId
+        ) {
+          return yield* Effect.die("A native child batch did not match its parent lineage.");
+        }
+        if (childProjection !== null) {
+          const owner = current.thread?.owner;
+          if (
+            owner === undefined ||
+            owner.userId !== input.owner.userId ||
+            owner.contextId !== input.owner.contextId ||
+            owner.driveId !== input.owner.driveId ||
+            childProjection.thread.projectId !== appThread.projectId ||
+            childProjection.thread.lineage.rootThreadId !== appThread.lineage.rootThreadId ||
+            childProjection.runs.length > 0
+          ) {
+            return yield* Effect.die(
+              "The stored native child no longer matches its owner or home.",
+            );
+          }
+        }
+
+        const ctx = yield* context;
+        const events: Array<OrchestrationV2DomainEvent> =
+          childProjection === null ? [threadEvent(ctx, "thread.created", appThread)] : [];
+        let nextProjection = childProjection === null ? applyEvents(null, events) : childProjection;
+        if (nextProjection === null) {
+          return yield* Effect.die("A native child batch could not create its thread.");
+        }
+        for (const item of input.items) {
+          if (providerEventThreadId(item) !== nextProjection.thread.id) {
+            return yield* Effect.die("A native child batch contained an event for another thread.");
+          }
+          const recorded = recordedNativeChildEvents(nextProjection, item, ctx);
+          if (recorded === "undecodable") continue;
+          if (recorded.length === 0) continue;
+          events.push(...recorded);
+          nextProjection = applyEvents(nextProjection, recorded) ?? nextProjection;
+        }
+        yield* commit({
+          events,
+          command: { id: receiptId, type: "native-child.batch" },
+          ...(childProjection === null ? { owner: input.owner } : {}),
+        });
       }),
     );
 
@@ -781,6 +894,7 @@ const make = Effect.gen(function* () {
     snapshot,
     subscribe,
     apply,
+    recordNativeChildBatch,
     projection,
     step,
     hasTurnWork,

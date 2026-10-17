@@ -29,6 +29,7 @@ import type {
 } from "@t3tools/contracts/signalboxBrowsing";
 import type { BrowsingDispatched } from "./browsing/ThreadBrowsing.ts";
 import { browsingWire } from "./browsing/browsingWire.ts";
+import { nativeChildBatchWire, type NativeChildBatchInput } from "./runner/nativeChildBatch.ts";
 import type { PreviewLinkResult } from "./preview/PreviewGateway.ts";
 import type {
   DriveAuthorization,
@@ -101,6 +102,8 @@ export interface ThreadObjectApi {
     input: unknown,
     creation: ThreadCreation,
   ) => Promise<ThreadObjectReply<unknown>>;
+  /** Internal Runner relay; it does not create or start a provider turn. */
+  readonly recordNativeChildBatch: (input: unknown) => Promise<void>;
   readonly snapshot: (actor: Actor) => Promise<ThreadObjectReply<unknown>>;
   /** Newline-delimited JSON batches, or null when the actor cannot see the thread. */
   readonly subscribe: (actor: Actor, input: unknown) => Promise<ReadableStream<Uint8Array> | null>;
@@ -180,6 +183,10 @@ export interface ThreadHandle {
     input: typeof LaunchInputWire.Type,
     creation: ThreadCreation,
   ) => Effect.Effect<OrchestrationV2ThreadLaunchResult, CommandFailure>;
+  /** Saves a provider-native child transcript batch on the child's own object. */
+  readonly recordNativeChildBatch: (
+    input: NativeChildBatchInput,
+  ) => Effect.Effect<void, ThreadObjectError>;
   readonly snapshot: (
     actor: Actor,
   ) => Effect.Effect<ThreadSnapshot, ThreadNotFoundError | ThreadObjectError>;
@@ -335,6 +342,10 @@ export function handleFor(api: ThreadObjectApi): ThreadHandle {
       call("launch", () => api.launch(actor, wire.launchInput.encode(input), creation)).pipe(
         Effect.flatMap(fromReply),
         Effect.flatMap((value) => decodeIn("launch", () => wire.launchResult.decode(value))),
+      ),
+    recordNativeChildBatch: (input) =>
+      call("recordNativeChildBatch", () =>
+        api.recordNativeChildBatch(nativeChildBatchWire.encode(input)),
       ),
     snapshot: (actor) =>
       call("snapshot", () => api.snapshot(actor)).pipe(

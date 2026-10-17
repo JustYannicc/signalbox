@@ -40,6 +40,7 @@ import { sessionToken } from "../session/sessionToken.ts";
 import * as ThreadEngine from "../ThreadEngine.ts";
 import { applyEvents } from "../threadProjection.ts";
 import * as ThreadStore from "../ThreadStore.ts";
+import type { NativeChildBatchInput } from "./nativeChildBatch.ts";
 import type { StopReason } from "../diagnostics/DiagnosticsStore.ts";
 import { isLeaseToken } from "./leaseToken.ts";
 import { MachineBackend, type MachineExit } from "./MachineBackend.ts";
@@ -129,6 +130,19 @@ export const PreviewHold = Context.Reference<{
 }>("@signalbox/cloud/thread/runner/ThreadRunner/PreviewHold", {
   defaultValue: () => ({ held: Effect.succeed(false), lastActiveAt: Effect.succeed(null) }),
 });
+
+export interface NativeChildRelayService {
+  readonly save: (input: NativeChildBatchInput) => Effect.Effect<void>;
+}
+
+export const NativeChildRelay = Context.Reference<NativeChildRelayService>(
+  "@signalbox/cloud/thread/runner/NativeChildRelay",
+  {
+    defaultValue: () => ({
+      save: () => Effect.die("Native child recording is unavailable in this thread runtime."),
+    }),
+  },
+);
 
 /** What a drive token lets its holder do right now (see `drive/driveRoutes.ts`). */
 export type DriveAuthorization =
@@ -406,6 +420,7 @@ const needsUpkeep = (lease: ThreadStore.MachineLease, live: boolean, previewHeld
 const make = Effect.gen(function* () {
   const engine = yield* ThreadEngine.ThreadEngine;
   const previews = yield* PreviewHold;
+  const nativeChildRelay = yield* NativeChildRelay;
   const store = yield* ThreadStore.ThreadStore;
   const sessionRows = yield* SessionRows;
   const crypto = yield* Crypto.Crypto;
@@ -562,46 +577,75 @@ const make = Effect.gen(function* () {
           keep<BatchResult>({ _tag: "out_of_order", ackedSequence: lease.ackedSequence }),
         );
       }
-      const { events, undecodable, outgrown, drained } = runnerBatchEvents(
-        projection,
-        input.items,
-        ctx,
-        lease.steers === true,
-      );
-      const recorded = Effect.andThen(
-        diagnostics.batch({
-          ...input,
-          liveRunId: harnessRun(projection)?.id ?? null,
-          runs: projection.runs,
-          now,
-        }),
-        undecodable.length === 0
-          ? Effect.void
-          : Effect.logWarning("dropped Runner events this build cannot read", { undecodable }),
-      );
-      const acked = { _tag: "ack", sequence: input.sequence } as const;
-      // The Runner saved everything and stopped reporting: its machine is done
-      // either way, and only a light one's run moves up.
-      if (outgrown !== null) {
-        return Effect.andThen(
-          recorded,
-          Effect.map(
-            machineGone({ projection, lease, now, ctx, detail: outgrown, moveUp: true, events }),
-            (gone) => ({ ...gone, result: acked }),
+      return Effect.flatMap(Effect.orDie(store.pendingNativeChildren), (pendingChildren) => {
+        const { events, undecodable, nativeChildren, pendingNativeChildren, outgrown, drained } =
+          runnerBatchEvents(projection, input.items, ctx, lease.steers === true, pendingChildren);
+        const childRelay = Effect.gen(function* () {
+          if (nativeChildren.length === 0) return;
+          const owner = yield* Effect.orDie(store.owner);
+          if (owner === null) return yield* Effect.die("A running thread has no owner.");
+          yield* Effect.forEach(nativeChildren, (child) =>
+            nativeChildRelay.save({
+              ...child,
+              parentThreadId: projection.thread.id,
+              parentRunId: child.parentRunId,
+              generation: input.generation,
+              sequence: input.sequence,
+              owner,
+            }),
+          );
+        });
+        const recorded = Effect.andThen(
+          childRelay,
+          Effect.andThen(
+            diagnostics.batch({
+              ...input,
+              liveRunId: harnessRun(projection)?.id ?? null,
+              runs: projection.runs,
+              now,
+            }),
+            undecodable.length === 0
+              ? Effect.void
+              : Effect.logWarning("dropped Runner events this build cannot read", { undecodable }),
           ),
         );
-      }
-      return Effect.as(recorded, {
-        events,
-        machine: {
-          ...lease,
-          ackedSequence: input.sequence,
-          // Only an answer to a drain still asked for lets the machine go.
-          ...(drained !== null && lease.drain?._tag === "asked" && lease.drain.id === drained.id
-            ? { drain: { _tag: "answered", id: drained.id, unsaved: drained.unsaved } as const }
-            : {}),
-        },
-        result: acked,
+        const acked = { _tag: "ack", sequence: input.sequence } as const;
+        // The Runner saved everything and stopped reporting: its machine is done
+        // either way, and only a light one's run moves up.
+        if (outgrown !== null) {
+          return Effect.andThen(
+            recorded,
+            Effect.map(
+              machineGone({ projection, lease, now, ctx, detail: outgrown, moveUp: true, events }),
+              (gone) => ({
+                ...gone,
+                nativeChildPending: {
+                  upsert: pendingNativeChildren,
+                  removeChildThreadIds: [],
+                  clearRunIds: [],
+                },
+                result: acked,
+              }),
+            ),
+          );
+        }
+        return Effect.as(recorded, {
+          events,
+          machine: {
+            ...lease,
+            ackedSequence: input.sequence,
+            // Only an answer to a drain still asked for lets the machine go.
+            ...(drained !== null && lease.drain?._tag === "asked" && lease.drain.id === drained.id
+              ? { drain: { _tag: "answered", id: drained.id, unsaved: drained.unsaved } as const }
+              : {}),
+          },
+          nativeChildPending: {
+            upsert: pendingNativeChildren,
+            removeChildThreadIds: [],
+            clearRunIds: [],
+          },
+          result: acked,
+        });
       });
     });
 

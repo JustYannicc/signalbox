@@ -6,12 +6,15 @@ import type {
 import {
   type OrchestrationV2ConversationMessage,
   type OrchestrationV2DomainEvent,
+  type OrchestrationV2AppThread,
   OrchestrationV2ProviderFailure,
   type OrchestrationV2Run,
+  type OrchestrationV2Subagent,
   type OrchestrationV2ThreadProjection,
   type OrchestrationV2TurnItem,
   type ProviderTurnId,
   type RunId,
+  type ThreadId,
   TurnItemId,
 } from "@t3tools/contracts";
 import * as Exit from "effect/Exit";
@@ -33,11 +36,14 @@ import { applyEvents } from "../threadProjection.ts";
 import { checkpointEvents, noticeEvents } from "./driveItems.ts";
 import {
   ERROR_ITEM_BAND_POSITION,
+  appThreadCreated,
   type Json,
+  providerEventThreadId,
   recordedEvents,
   stringField,
   systemNoticeEvents,
 } from "./runnerEvents.ts";
+import type { NativeChildPending, ProviderRunnerItem } from "./nativeChildBatch.ts";
 
 /**
  * What a Runner's reports mean for a thread, decided from the projection
@@ -47,6 +53,60 @@ import {
 
 type Projection = OrchestrationV2ThreadProjection;
 type Run = OrchestrationV2Run;
+
+export interface NativeChildBatch {
+  readonly childThreadId: ThreadId;
+  readonly parentRunId: RunId;
+  readonly appThread: OrchestrationV2AppThread;
+  readonly attestation: OrchestrationV2Subagent;
+  readonly items: ReadonlyArray<ProviderRunnerItem>;
+}
+
+interface NativeChildCandidate {
+  readonly childThreadId: ThreadId;
+  readonly parentRunId: RunId;
+  appThread?: OrchestrationV2AppThread;
+  createdByDriver?: string;
+  readonly items: Array<ProviderRunnerItem>;
+  readonly drivers: Set<string>;
+  invalidDriver: boolean;
+  materialized: boolean;
+}
+
+const nativeChildMatches = (
+  parent: Projection,
+  candidate: NativeChildCandidate,
+  subagent: OrchestrationV2Subagent,
+) => {
+  if (
+    subagent.threadId !== parent.thread.id ||
+    subagent.runId !== candidate.parentRunId ||
+    subagent.origin !== "provider_native" ||
+    subagent.childThreadId !== candidate.childThreadId ||
+    candidate.drivers.size === 0 ||
+    candidate.invalidDriver ||
+    [...candidate.drivers].some((driver) => driver !== subagent.driver) ||
+    (candidate.appThread !== undefined && candidate.createdByDriver !== subagent.driver)
+  ) {
+    return false;
+  }
+  const appThread = candidate.appThread;
+  if (appThread === undefined) return true;
+  return (
+    appThread.id === candidate.childThreadId &&
+    appThread.createdBy === "agent" &&
+    appThread.creationSource === "provider" &&
+    appThread.projectId === parent.thread.projectId &&
+    appThread.lineage.parentThreadId === parent.thread.id &&
+    appThread.lineage.relationshipToParent === "subagent" &&
+    appThread.lineage.rootThreadId === parent.thread.lineage.rootThreadId &&
+    appThread.forkedFrom?.type === "node" &&
+    appThread.forkedFrom.nodeId === subagent.id &&
+    appThread.providerInstanceId === subagent.providerInstanceId &&
+    appThread.modelSelection.instanceId === subagent.providerInstanceId &&
+    appThread.activeProviderThreadId === subagent.providerThreadId
+  );
+};
 
 /** The live run a Runner drives, if any. */
 export const harnessRun = (projection: Projection): Run | undefined => {
@@ -349,10 +409,15 @@ export function runnerBatchEvents(
   items: ReadonlyArray<RunnerItem>,
   ctx: DecisionContext,
   steers = false,
+  pendingChildren: ReadonlyArray<NativeChildPending> = [],
 ): {
   readonly events: ReadonlyArray<OrchestrationV2DomainEvent>;
   readonly undecodable: ReadonlyArray<string>;
   readonly outgrown: string | null;
+  /** Provider-native child history authenticated by this parent batch's subagent records. */
+  readonly nativeChildren: ReadonlyArray<NativeChildBatch>;
+  /** Child rows held until the parent projection attests their native lineage. */
+  readonly pendingNativeChildren: ReadonlyArray<NativeChildPending>;
   /** A `machine.drained` in the batch: which drain it answers, and what couldn't be saved. */
   readonly drained: { readonly id: number; readonly unsaved: ReadonlyArray<string> } | null;
 } {
@@ -360,10 +425,126 @@ export function runnerBatchEvents(
   const undecodable: Array<string> = [];
   let drained: { readonly id: number; readonly unsaved: ReadonlyArray<string> } | null = null;
   let current = projection;
+  const nativeChildCandidates = new Map<string, NativeChildCandidate>();
+  const keyOf = (parentRunId: RunId, childThreadId: ThreadId) => `${parentRunId}\n${childThreadId}`;
+  const addDrivers = (candidate: NativeChildCandidate) => {
+    for (const item of candidate.items) {
+      const driver = stringField(item.event, "driver");
+      if (driver !== undefined) candidate.drivers.add(driver);
+    }
+  };
+  for (const pending of pendingChildren) {
+    const candidate: NativeChildCandidate = {
+      childThreadId: pending.childThreadId,
+      parentRunId: pending.parentRunId,
+      ...(pending.appThread === undefined ? {} : { appThread: pending.appThread }),
+      ...(pending.createdByDriver === undefined
+        ? {}
+        : { createdByDriver: pending.createdByDriver }),
+      items: [...pending.items],
+      drivers: new Set<string>(),
+      invalidDriver: pending.invalidDriver,
+      materialized: pending.materialized,
+    };
+    addDrivers(candidate);
+    if (pending.createdByDriver !== undefined) candidate.drivers.add(pending.createdByDriver);
+    nativeChildCandidates.set(keyOf(pending.parentRunId, pending.childThreadId), candidate);
+  }
+  const captureNativeChild = (item: RunnerItem) => {
+    if (item.kind !== "provider") return;
+    const appThread = appThreadCreated(item);
+    const childThreadId = appThread?.id ?? (providerEventThreadId(item) as ThreadId | undefined);
+    if (childThreadId === undefined || childThreadId === projection.thread.id) return;
+    const parentRunId = item.runId;
+    const key = keyOf(parentRunId, childThreadId);
+    const candidate: NativeChildCandidate = nativeChildCandidates.get(key) ?? {
+      childThreadId,
+      parentRunId,
+      items: [],
+      drivers: new Set<string>(),
+      invalidDriver: false,
+      materialized: false,
+    };
+    if (appThread !== undefined) {
+      const driver = stringField(item.event, "driver");
+      if (driver === undefined) candidate.invalidDriver = true;
+      if (
+        candidate.appThread !== undefined &&
+        (candidate.appThread.id !== appThread.id || candidate.createdByDriver !== driver)
+      ) {
+        candidate.invalidDriver = true;
+      }
+      candidate.appThread ??= appThread;
+      if (driver !== undefined) candidate.createdByDriver ??= driver;
+    } else {
+      candidate.items.push(item as ProviderRunnerItem);
+    }
+    const driver = stringField(item.event, "driver");
+    if (driver !== undefined) candidate.drivers.add(driver);
+    else candidate.invalidDriver = true;
+    nativeChildCandidates.set(key, candidate);
+  };
+  const pendingNativeChildrenNow = (): ReadonlyArray<NativeChildPending> =>
+    [...nativeChildCandidates.values()].flatMap((candidate) => {
+      const subagent = current.subagents.find(
+        (item) =>
+          item.childThreadId === candidate.childThreadId &&
+          item.runId === candidate.parentRunId &&
+          item.origin === "provider_native",
+      );
+      const attested =
+        candidate.appThread !== undefined &&
+        subagent !== undefined &&
+        nativeChildMatches(projection, candidate, subagent);
+      return [
+        {
+          parentRunId: candidate.parentRunId,
+          childThreadId: candidate.childThreadId,
+          ...(candidate.appThread === undefined ? {} : { appThread: candidate.appThread }),
+          ...(candidate.createdByDriver === undefined
+            ? {}
+            : { createdByDriver: candidate.createdByDriver }),
+          invalidDriver: candidate.invalidDriver,
+          materialized: attested ? true : candidate.materialized,
+          items: attested ? [] : candidate.items,
+        },
+      ];
+    });
+  const nativeChildren = (): ReadonlyArray<NativeChildBatch> =>
+    [...nativeChildCandidates.values()].flatMap((candidate) => {
+      if (candidate.appThread === undefined) return [];
+      const subagent = current.subagents.find(
+        (item) =>
+          item.childThreadId === candidate.childThreadId &&
+          item.runId === candidate.parentRunId &&
+          item.origin === "provider_native",
+      );
+      return (!candidate.materialized || candidate.items.length > 0) &&
+        subagent !== undefined &&
+        nativeChildMatches(projection, candidate, subagent)
+        ? [
+            {
+              childThreadId: candidate.childThreadId,
+              parentRunId: candidate.parentRunId,
+              appThread: candidate.appThread,
+              attestation: subagent,
+              items: candidate.items,
+            },
+          ]
+        : [];
+    });
   for (const item of items) {
     if (item.kind === "machine.outgrown" && harnessRun(current)?.id === item.runId) {
-      return { events, undecodable, outgrown: item.reason, drained };
+      return {
+        events,
+        undecodable,
+        nativeChildren: nativeChildren(),
+        pendingNativeChildren: pendingNativeChildrenNow(),
+        outgrown: item.reason,
+        drained,
+      };
     }
+    captureNativeChild(item);
     if (item.kind === "machine.drained") drained = { id: item.id, unsaved: item.unsaved };
     const next = itemEvents(current, item, ctx);
     if (next === "undecodable") {
@@ -375,5 +556,12 @@ export function runnerBatchEvents(
     events.push(...driven);
     current = applyEvents(current, driven) ?? current;
   }
-  return { events, undecodable, outgrown: null, drained };
+  return {
+    events,
+    undecodable,
+    nativeChildren: nativeChildren(),
+    pendingNativeChildren: pendingNativeChildrenNow(),
+    outgrown: null,
+    drained,
+  };
 }

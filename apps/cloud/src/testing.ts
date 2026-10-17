@@ -62,6 +62,7 @@ import { browserUpdateLine, previewsLine } from "./thread/threadWire.ts";
 import * as MachineBackends from "./thread/runner/machineBackends.ts";
 import type * as MachineBackend from "./thread/runner/MachineBackend.ts";
 import * as ThreadRunner from "./thread/runner/ThreadRunner.ts";
+import type { NativeChildBatchInput } from "./thread/runner/nativeChildBatch.ts";
 import * as SessionRows from "./thread/session/SessionRows.ts";
 import * as PullRequestPolls from "./thread/pullRequests/PullRequestPolls.ts";
 import * as PullRequestSync from "./thread/pullRequests/PullRequestSync.ts";
@@ -212,9 +213,19 @@ export const layerThreadObject = (
     readonly models?: Layer.Layer<TurnModels.TurnModels>;
     /** What writes runtime status notes; no model, unless given. */
     readonly statusNoteModel?: Layer.Layer<StatusNoteModel.StatusNoteModel>;
+    /** Saves an attested provider-native child before acknowledging its parent batch. */
+    readonly nativeChildRelay?: ThreadRunner.NativeChildRelayService;
   } = {},
 ) =>
   ThreadRunner.layer.pipe(
+    Layer.provideMerge(
+      Layer.succeed(
+        ThreadRunner.NativeChildRelay,
+        options.nativeChildRelay ?? {
+          save: () => Effect.die("Unexpected provider-native child relay in this test."),
+        },
+      ),
+    ),
     Layer.provideMerge(
       Layer.succeed(ThreadRunner.ThreadDrives, {
         enabled: options.drives === true,
@@ -482,6 +493,22 @@ export const makeMemoryCloud = (
       models: TurnModels.layer({ scripted: true }).pipe(
         Layer.provide(Layer.succeed(PoolDirectory.PoolDirectory, pools.directory)),
       ),
+      nativeChildRelay: {
+        save: (input: NativeChildBatchInput) =>
+          Effect.andThen(
+            Effect.orDie(
+              threadDirectory.forThread(input.childThreadId).recordNativeChildBatch(input),
+            ),
+            Effect.orDie(
+              userDirectory.forUser(input.owner.userId).copyThreadHome({
+                parentThreadId: input.parentThreadId,
+                childThreadId: input.childThreadId,
+                projectId: input.appThread.projectId,
+                ownerId: input.owner.contextId,
+              }),
+            ),
+          ),
+      },
     });
   const threadFor = (threadId: string) => {
     const existing = threads.get(threadId);

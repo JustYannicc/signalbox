@@ -1,6 +1,7 @@
 import {
   type AuthEnvironmentScope,
   OrchestrationV2ShellSnapshot,
+  type ProjectId,
   type ServerAuthSessionMethod,
 } from "@t3tools/contracts";
 import type { WorkOSOrganization } from "@signalbox/account/WorkOSClient";
@@ -111,6 +112,13 @@ export interface UserObjectApi {
   readonly shellSnapshot: () => Promise<unknown>;
   /** A thread object's summary outbox delivery, in its JSON encoding. */
   readonly recordThreadSummary: (summary: unknown) => Promise<void>;
+  /** Gives a mirrored native child the exact folder home of its parent. */
+  readonly copyThreadHome: (input: {
+    readonly parentThreadId: string;
+    readonly childThreadId: string;
+    readonly projectId: ProjectId;
+    readonly ownerId: SignalboxContextId;
+  }) => Promise<void>;
   /**
    * A thread object's event outbox delivery (`thread/eventOutbox.ts`): the
    * user's thread's next domain events with their sequence, in order and in
@@ -309,6 +317,7 @@ const METHODS = Object.keys({
   syncOrganizations: true,
   shellSnapshot: true,
   recordThreadSummary: true,
+  copyThreadHome: true,
   threadEvents: true,
   driveEvents: true,
   rebuildThreadIndex: true,

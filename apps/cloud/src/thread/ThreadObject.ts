@@ -34,6 +34,7 @@ import * as BrowserTrail from "./preview/BrowserTrail.ts";
 import { PreviewGateway } from "./preview/PreviewGateway.ts";
 import { type PreviewEnv, previewSettings } from "./preview/previewHost.ts";
 import * as UserDirectory from "../user/UserDirectory.ts";
+import * as ThreadDirectory from "./ThreadDirectory.ts";
 import * as CloudAnalytics from "./diagnostics/CloudAnalytics.ts";
 import * as DiagnosticsStore from "./diagnostics/DiagnosticsStore.ts";
 import * as TurnDiagnostics from "./diagnostics/TurnDiagnostics.ts";
@@ -50,6 +51,7 @@ import {
   type RunnerSocketHost,
 } from "./runner/runnerSockets.ts";
 import * as ThreadRunner from "./runner/ThreadRunner.ts";
+import type { NativeChildBatchInput } from "./runner/nativeChildBatch.ts";
 import * as SessionRows from "./session/SessionRows.ts";
 import { handleSessionRequest, isSessionApiPath } from "./session/sessionRoutes.ts";
 import { deliverPendingEvents } from "./eventOutbox.ts";
@@ -96,6 +98,7 @@ export interface ThreadObjectEnv
   /** Set by `vp run dev` only. Local workerd has no jurisdictions. */
   readonly LOCAL_WORKERD?: string;
   readonly USERS: UserDirectory.UserObjectNamespace;
+  readonly THREADS: ThreadDirectory.ThreadObjectNamespace;
   /** Pools' objects: a turn starts only on a model its pool serves (`TurnModels.ts`). */
   readonly POOLS: PoolDirectory.PoolObjectNamespace;
   /** `1` in dev and tests: scripted turns run (`scriptedProvider.ts`). */
@@ -174,6 +177,33 @@ const layerThreadSecrets = Layer.effect(
   })),
 );
 
+const layerNativeChildRelay = (parentThreadId: () => ThreadId) =>
+  Layer.effect(
+    ThreadRunner.NativeChildRelay,
+    Effect.gen(function* () {
+      const users = yield* UserDirectory.UserDirectory;
+      const threads = yield* ThreadDirectory.ThreadDirectory;
+      return {
+        save: (input: NativeChildBatchInput) => {
+          if (input.parentThreadId !== parentThreadId()) {
+            return Effect.die("A native child relay was sent to the wrong parent thread.");
+          }
+          return Effect.andThen(
+            Effect.orDie(threads.forThread(input.childThreadId).recordNativeChildBatch(input)),
+            Effect.orDie(
+              users.forUser(input.owner.userId).copyThreadHome({
+                parentThreadId: input.parentThreadId,
+                childThreadId: input.childThreadId,
+                projectId: input.appThread.projectId,
+                ownerId: input.owner.contextId,
+              }),
+            ),
+          );
+        },
+      };
+    }),
+  );
+
 // The whole storage, not just `storage.sql`: commits and migrations run in transactions.
 // `machine`: the object's own container, the light class's machine where the deployment has one.
 const makeRuntime = (
@@ -191,6 +221,7 @@ const makeRuntime = (
           lastActiveAt: Effect.sync(() => previews.lastActiveAt),
         }),
       ),
+      Layer.provideMerge(layerNativeChildRelay(threadId)),
       Layer.provideMerge(Layer.mergeAll(layerThreadDrives(env), layerThreadSecrets)),
       // Its linked pull requests' sync reads GitHub only through the API, with the owner's token.
       Layer.provideMerge(
@@ -231,6 +262,11 @@ const makeRuntime = (
       ),
       Layer.provideMerge(
         UserDirectory.layerDurableObjects(env.USERS, { localWorkerd: env.LOCAL_WORKERD === "1" }),
+      ),
+      Layer.provideMerge(
+        ThreadDirectory.layerDurableObjects(env.THREADS, {
+          localWorkerd: env.LOCAL_WORKERD === "1",
+        }),
       ),
       Layer.provideMerge(
         Layer.mergeAll(
@@ -323,6 +359,10 @@ export class ThreadObject extends DurableObject<ThreadObjectEnv> implements Thre
 
   launch(...args: Parameters<ThreadObjectApi["launch"]>) {
     return this.api.launch(...args);
+  }
+
+  recordNativeChildBatch(...args: Parameters<ThreadObjectApi["recordNativeChildBatch"]>) {
+    return this.api.recordNativeChildBatch(...args);
   }
 
   snapshot(...args: Parameters<ThreadObjectApi["snapshot"]>) {
