@@ -76,6 +76,23 @@ export const AUTOMATION_TOOLS = {
     success: TaskLifecycleResult,
     readonly: false,
   }),
+  automation_github_subscriptions: declare({
+    title: "GitHub event subscriptions",
+    description:
+      "Read which repositories deliver events to your folders, including missing GitHub permissions and upstream release polling.",
+    success: Schema.Struct({
+      subscriptions: Schema.Array(
+        Schema.Struct({
+          projectId: Schema.String,
+          repository: Schema.String,
+          mode: Schema.Literals(["webhook", "release-poll", "unavailable"]),
+          connected: Schema.Boolean,
+          error: Schema.NullOr(Schema.String),
+        }),
+      ),
+    }),
+    readonly: true,
+  }),
   automation_reference: declare({
     title: "Automation reference",
     description:

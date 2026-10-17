@@ -18,6 +18,7 @@ import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
+import * as Tracer from "effect/Tracer";
 import * as RpcTest from "effect/rpc/RpcTest";
 
 import { SignalboxContextId } from "@t3tools/contracts/signalboxContexts";
@@ -105,6 +106,44 @@ const sidebar = (rpc: Rpc) =>
   );
 
 describe("cloud RPC", () => {
+  it.effect("emits resume transitions and its marker under the requesting trace", () =>
+    Effect.gen(function* () {
+      const spans: Array<Tracer.NativeSpan> = [];
+      const tracer = Tracer.make({
+        span(options) {
+          const span = new Tracer.NativeSpan(options);
+          spans.push(span);
+          return span;
+        },
+      });
+      yield* Effect.gen(function* () {
+        const rpc = yield* client();
+        yield* launch(rpc);
+        const first = yield* openThread(rpc);
+        const snapshot = first.find((item) => item.kind === "snapshot");
+        if (snapshot?.kind !== "snapshot") throw new Error("Expected the initial snapshot");
+        const resumed = yield* rpc[ORCHESTRATION_V2_WS_METHODS.subscribeThread]({
+          threadId,
+          afterSequence: snapshot.snapshotSequence,
+          requestCompletionMarker: true,
+        }).pipe(
+          Stream.takeUntil((item) => item.kind === "synchronized"),
+          Stream.runCollect,
+        );
+        expect(resumed.at(-1)?.kind).toBe("synchronized");
+      }).pipe(Effect.withSpan("test.resume"), Effect.provideService(Tracer.Tracer, tracer));
+      const transitions = spans.filter((span) => span.name.startsWith("orchestration.sync."));
+      expect(transitions.map((span) => span.attributes.get("sync.transition"))).toContain(
+        "resuming",
+      );
+      expect(transitions.map((span) => span.attributes.get("sync.transition"))).toContain(
+        "marker_emitted",
+      );
+      expect(new Set(transitions.map((span) => span.traceId)).size).toBe(1);
+      expect(transitions.every((span) => span.status._tag === "Ended")).toBe(true);
+    }).pipe(Effect.scoped),
+  );
+
   it.effect("opens the config stream with a snapshot of this environment and holds it open", () =>
     Effect.gen(function* () {
       const rpc = yield* client();

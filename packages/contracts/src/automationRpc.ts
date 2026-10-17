@@ -29,6 +29,7 @@ export const AUTOMATION_WS_METHODS = {
   automationsDelete: "automations.delete",
   automationsRotateWebhook: "automations.rotateWebhook",
   automationsSetWebhookSecret: "automations.setWebhookSecret",
+  automationsGitHubSubscriptions: "automations.githubSubscriptions",
   automationsRunNow: "automations.runNow",
   automationsCustomize: "automations.customize",
   automationsStopAttached: "automations.stopAttached",
@@ -113,6 +114,23 @@ const SetWebhookSecretRpc = Rpc.make(AUTOMATION_WS_METHODS.automationsSetWebhook
     secret: Schema.NullOr(TrimmedNonEmptyString),
   }),
   success: Automation,
+  error,
+});
+
+/** Installation state, including missing repository-admin access, never hook secrets or URLs. */
+const GitHubSubscriptionsRpc = Rpc.make(AUTOMATION_WS_METHODS.automationsGitHubSubscriptions, {
+  payload: Schema.Struct({}),
+  success: Schema.Struct({
+    subscriptions: Schema.Array(
+      Schema.Struct({
+        projectId: ProjectId,
+        repository: Schema.String,
+        mode: Schema.Literals(["webhook", "release-poll", "unavailable"]),
+        connected: Schema.Boolean,
+        error: Schema.NullOr(Schema.String),
+      }),
+    ),
+  }),
   error,
 });
 
@@ -329,6 +347,7 @@ export const AutomationRpcs = [
   DeleteRpc,
   RotateWebhookRpc,
   SetWebhookSecretRpc,
+  GitHubSubscriptionsRpc,
   RunNowRpc,
   CustomizeRpc,
   StopAttachedRpc,
