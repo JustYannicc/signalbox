@@ -234,6 +234,7 @@ const migrations = Migrator.fromRecord({
   "0021_analytics_preference": UserAnalyticsPreference.createTables,
   "0022_pool_snapshots": PoolSnapshotCache.createTables,
   "0023_person_timezone": UserTimezone.createTables,
+  "0023_folder_lineage": FolderTables.addLineage,
 });
 
 /** Applies every migration not recorded yet (`storage/migrations.ts`). Never edit or rename a merged one. */
