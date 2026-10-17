@@ -31,6 +31,8 @@ import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
+import { remapComposerContextAttachments } from "@t3tools/shared/composerContextReferences";
+
 import { CloudAttachments } from "../attachments/CloudAttachments.ts";
 import { remoteThreadWorktree } from "../user/contextProjects.ts";
 import { ThreadContexts, type ThreadPlace, type ThreadTurn } from "../user/threadContexts.ts";
@@ -395,9 +397,25 @@ const make = Effect.gen(function* () {
           attachments: command.attachments ?? [],
         },
         (claimed) =>
-          directory
-            .forThread(threadId)
-            .dispatch(actor, { ...command, attachments: claimed }, creation),
+          Effect.gen(function* () {
+            const context =
+              command.type === "queued-run.edit"
+                ? remapComposerContextAttachments(
+                    command.context,
+                    command.attachments ?? [],
+                    claimed,
+                  )
+                : undefined;
+            return yield* directory.forThread(threadId).dispatch(
+              actor,
+              {
+                ...command,
+                attachments: claimed,
+                ...(context === undefined ? {} : { context }),
+              },
+              creation,
+            );
+          }),
       );
     });
 

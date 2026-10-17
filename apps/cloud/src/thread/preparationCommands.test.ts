@@ -247,7 +247,7 @@ describe("preparation retry command", () => {
         payload: expect.objectContaining({ id: queued.id, queueHeld: true }),
       }),
     );
-    expect(failed.filter((event) => event.type === "message.created")).toHaveLength(0);
+    expect(failed.filter((event) => event.type === "message.updated")).toHaveLength(0);
     expect(
       failed.some(
         (event) =>

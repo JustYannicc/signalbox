@@ -1,6 +1,7 @@
 import {
   ChatAttachmentId,
   CommandId,
+  ComposerContextId,
   MessageId,
   type OrchestrationV2ThreadStreamItem,
   ThreadId,
@@ -215,6 +216,21 @@ describe("CloudThreadService", () => {
         runId: queued.id,
         text: "Edited with owned attachment",
         attachments: [owned],
+        context: {
+          version: 1,
+          records: [
+            {
+              version: 1,
+              contextId: ComposerContextId.make("owned-image"),
+              label: "owned.png",
+              kind: "image",
+              attachmentId: owned.id,
+              name: owned.name,
+              mimeType: owned.mimeType,
+              sizeBytes: owned.sizeBytes,
+            },
+          ],
+        },
       });
       const edited = (yield* service.threadSnapshot(actor, launched.threadId)).projection;
       const editedMessage = edited.messages.find((message) => message.id === queued.userMessageId);
@@ -222,6 +238,13 @@ describe("CloudThreadService", () => {
       if (copied === undefined) throw new Error("expected the owned attachment to be copied");
       expect(editedMessage?.text).toBe("Edited with owned attachment");
       expect(copied.id).not.toBe(owned.id);
+      expect(editedMessage?.context?.records).toEqual([
+        expect.objectContaining({
+          contextId: ComposerContextId.make("owned-image"),
+          kind: "image",
+          attachmentId: copied.id,
+        }),
+      ]);
       expect(edited.visibleTurnItems).not.toContainEqual(
         expect.objectContaining({
           item: expect.objectContaining({ messageId: queued.userMessageId }),
