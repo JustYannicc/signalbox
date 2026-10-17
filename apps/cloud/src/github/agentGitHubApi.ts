@@ -7,7 +7,12 @@ import * as Schema from "effect/Schema";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import { type HttpClient, HttpClientRequest, type HttpClientResponse } from "effect/http";
 
-import { GitHubError, type GitHubEndpoints, unreadable } from "./GitHubApi.ts";
+import {
+  defaultGitHubEndpoints,
+  GitHubError,
+  type GitHubEndpoints,
+  unreadable,
+} from "./GitHubApiSupport.ts";
 
 const PAGE_LIMIT = 10;
 const PER_PAGE = 100;
@@ -79,7 +84,7 @@ const githubError = (operation: string, status: number, retryAt?: number) =>
 
 export const makeAgentGitHubApi = (
   client: HttpClient.HttpClient,
-  endpoints: GitHubEndpoints = { web: "https://github.com", api: "https://api.github.com" },
+  endpoints: GitHubEndpoints = defaultGitHubEndpoints,
 ) => {
   const api = endpoints.api.replace(/\/+$/, "");
   const uploads = (endpoints.uploads ?? "https://uploads.github.com").replace(/\/+$/, "");

@@ -7,10 +7,13 @@ import {
 import { ThreadId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 
-import type { DriveAuthorization } from "../thread/runner/ThreadRunner.ts";
 import type { DriveRouteEnv } from "./driveRoutes.ts";
 import { handleDriveRequest } from "./driveRoutes.ts";
 import { driveToken } from "./driveToken.ts";
+
+type DriveAuthorization = Awaited<
+  ReturnType<ReturnType<DriveRouteEnv["THREADS"]["get"]>["authorizeDrive"]>
+>;
 
 const OWNER = "user_owner";
 const OTHER_OWNER = "user_other";
