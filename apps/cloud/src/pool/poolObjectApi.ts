@@ -1,6 +1,7 @@
 import * as Effect from "effect/Effect";
 
-import type { ModelForwardReply, PoolModelApi, PoolObjectApi, PoolReply } from "./PoolDirectory.ts";
+import type { PoolModelApi, PoolObjectApi, PoolReply } from "./PoolDirectory.ts";
+import type { ModelForwardReply } from "../models/ModelProtocol.ts";
 import * as PoolEngine from "./PoolEngine.ts";
 import { handleLinkRequest, type PoolLinkTarget } from "./poolLink.ts";
 import * as PoolLinks from "./PoolLinks.ts";

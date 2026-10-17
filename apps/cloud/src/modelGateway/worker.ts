@@ -1,7 +1,7 @@
 // @effect-diagnostics globalDate:off globalConsole:off - a plain Workers fetch handler that forwards streams; no Effect runtime on the hot path.
 import type { ModelGatewayProvider } from "@signalbox/runner-protocol/RunnerProtocol";
 
-import type { ModelServeReply } from "../thread/runner/modelGrants.ts";
+import type { ModelServeReply } from "../models/ModelProtocol.ts";
 import { handleModelRequest } from "./modelGateway.ts";
 import type { ModelGatewayRecord } from "./modelGatewayRecord.ts";
 

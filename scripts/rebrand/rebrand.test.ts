@@ -173,6 +173,22 @@ describe("rebrandFile", () => {
     );
   });
 
+  it("routes our builds' app ids and scheme names in docs, but not other t3code tokens", () => {
+    const doc = [
+      "Allow `clerk://com.t3tools.t3code.dev.callback` and `<TEAM_ID>.com.t3tools.t3code.webauthn`.",
+      "These are separate from the `t3code-dev` / `t3code-preview` / `t3code` navigation schemes.",
+      "Both run in `service.namespace` `t3code`.",
+    ].join("\n");
+
+    expect(rebrandFile("docs/operations/connect-setup.md", doc)).toBe(
+      [
+        "Allow `clerk://com.justyannicc.signalbox.dev.callback` and `<TEAM_ID>.com.justyannicc.signalbox.webauthn`.",
+        "These are separate from the `signalbox-dev` / `signalbox-preview` / `signalbox` navigation schemes.",
+        "Both run in `service.namespace` `t3code`.",
+      ].join("\n"),
+    );
+  });
+
   it("keeps the maintainer glossary term outside user docs", () => {
     expect(rebrandFile("docs/internals/glossary.md", "the T3 home directory")).toBe(
       "the T3 home directory",
