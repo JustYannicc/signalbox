@@ -18,6 +18,7 @@ import type {
   ModelServeReply,
 } from "./ModelProtocol.ts";
 
+/** Promise methods match the gateway binding without a per-request Effect runtime. */
 export class ModelAccess extends Context.Service<
   ModelAccess,
   {

@@ -2,7 +2,7 @@ import { RunId, ThreadId } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 
-import { isModelToken, modelToken, threadOfModelToken } from "../ModelTokens.ts";
+import { isModelToken, modelToken, threadOfModelToken } from "./ModelTokens.ts";
 
 const grant = {
   threadId: ThreadId.make("thread-a"),

@@ -19,7 +19,7 @@ import { handleModelRequest } from "./modelGateway.ts";
  * was handed. Every secret here is generated per run.
  */
 
-/** A model token for thread `thread-a` (`modelToken.ts`). */
+/** A model token for thread `thread-a` (`thread/ModelTokens.ts`). */
 const TOKEN = "sbm1.dGhyZWFkLWE.live";
 
 const fake = (label: string) => `${label}-${crypto.randomUUID()}`;
