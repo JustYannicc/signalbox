@@ -94,31 +94,38 @@ export const authorizeExecutorToken = (claimsValue: unknown, binding: ExecutorTo
         return (yield* UserStore.UserStore.use((store) => store.findSession(sessionId))) !== null;
       }
       case "turn": {
+        const runnerGeneration = binding.runnerGeneration;
         if (
           binding.purpose !== "turn" ||
           claims.thread === undefined ||
-          claims.turn === undefined
+          claims.turn === undefined ||
+          runnerGeneration === undefined
         ) {
           return false;
         }
+        const runId = claims.turn;
+        const threadId = ThreadId.make(claims.thread);
         const actor = {
           userId: profile.id,
           contextIds: folderState.contexts.map((context) => context.id),
         };
         const thread = ThreadDirectory.ThreadDirectory.use((directory) =>
           Effect.gen(function* () {
-            const handle = directory.forThread(ThreadId.make(claims.thread!));
+            const handle = directory.forThread(threadId);
             const [summary, snapshot, home] = yield* Effect.all([
               handle.summary(actor),
               handle.snapshot(actor),
-              UserFolders.UserFolders.use((folders) =>
-                folders.threadHome(ThreadId.make(claims.thread!)),
-              ),
+              UserFolders.UserFolders.use((folders) => folders.threadHome(threadId)),
             ]);
+            const runnerActive = yield* handle.authorizeExecutorTurn(actor, {
+              runId,
+              generation: runnerGeneration,
+            });
             return {
               summary,
               activeRunId: activeRun(snapshot.projection)?.id ?? null,
               level: home.home ?? summary?.contextId ?? null,
+              runnerActive,
             };
           }).pipe(Effect.catchCause(() => Effect.succeed(null))),
         );
@@ -130,7 +137,8 @@ export const authorizeExecutorToken = (claimsValue: unknown, binding: ExecutorTo
             contextId: current.summary.contextId,
             level: current.level,
             activeRunId: current.activeRunId,
-          })
+          }) &&
+          current.runnerActive
         );
       }
       case "automation": {

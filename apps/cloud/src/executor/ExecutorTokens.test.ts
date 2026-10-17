@@ -1,4 +1,4 @@
-import { exportJWK, generateKeyPair, SignJWT, jwtVerify } from "jose";
+import { calculateJwkThumbprint, exportJWK, generateKeyPair, SignJWT, jwtVerify } from "jose";
 import { describe, expect, it } from "@effect/vitest";
 import { FolderId } from "@t3tools/contracts/signalboxFolders";
 import * as DateTime from "effect/DateTime";
@@ -11,7 +11,9 @@ import {
   EXECUTOR_TOKEN_TTL_SECONDS,
   makeExecutorTokenService,
   type ExecutorTokenAuthority,
+  type ExecutorTokenEnv,
   type ExecutorTokenIdentity,
+  type ExecutorTokenService,
 } from "./ExecutorTokens.ts";
 import type {
   ExecutorTokenBinding,
@@ -62,20 +64,44 @@ const runtimeAt = (now: number) => {
   };
 };
 
+const issueToken = (
+  service: ExecutorTokenService,
+  tokenIdentity: ExecutorTokenIdentity,
+  tokenBinding = binding(),
+) =>
+  service.issue(
+    tokenIdentity,
+    tokenBinding,
+    tokenBinding.purpose === "turn" ? { runnerGeneration: 1 } : undefined,
+  );
+
 const serviceFor = async (
   privateKey: CryptoKey,
   bindings: ExecutorTokenBindingStore = memoryBindings(),
+  envOverrides: ExecutorTokenEnv = {},
 ) => {
   const privateJwk = await exportJWK(privateKey);
   const service = makeExecutorTokenService(
     {
       EXECUTOR_TOKEN_ISSUER: ISSUER,
       EXECUTOR_TOKEN_PRIVATE_JWK: JSON.stringify(privateJwk),
+      ...envOverrides,
     },
     bindings,
     runtimeAt(NOW),
   );
   return { service, now: NOW };
+};
+
+const retiringJwk = async (key: CryptoKey) => {
+  const jwk = await exportJWK(key);
+  return {
+    ...jwk,
+    kid: await calculateJwkThumbprint(jwk),
+    use: "sig",
+    alg: "ES256",
+    key_ops: ["verify"],
+  };
 };
 
 const fixture = async () => {
@@ -104,6 +130,128 @@ describe("Executor token issuer and live authorization", () => {
 
     await expect(service.issue({ ...identity, owner: "org acme" }, binding())).rejects.toThrow(
       "Invalid Executor token identity.",
+    );
+  });
+
+  it("requires a canonical HTTPS issuer, except for local workerd loopback", async () => {
+    const pair = await generateKeyPair("ES256", { extractable: true });
+    const personIdentity = { owner: "org_acme", level: "folder_1", person: "user_mia" };
+    const personBinding = binding({ purpose: "interactive-person", sessionId: "session_1" });
+    for (const issuer of [
+      `${ISSUER}/`,
+      `${ISSUER}/path`,
+      `${ISSUER}?aud=other`,
+      "https://SIGNALBOX.example.test",
+      "https://signalbox.example.test.",
+      "https://signalbox.example.test:443",
+      "http://localhost:8787",
+    ]) {
+      const { service } = await serviceFor(pair.privateKey, memoryBindings(), {
+        EXECUTOR_TOKEN_ISSUER: issuer,
+      });
+      await expect(service.issue(personIdentity, personBinding)).rejects.toThrow(
+        "Executor token issuer is not configured canonically.",
+      );
+    }
+
+    const local = makeExecutorTokenService(
+      { EXECUTOR_TOKEN_ISSUER: "http://localhost:8787", LOCAL_WORKERD: "1" },
+      memoryBindings(),
+      runtimeAt(NOW),
+    );
+    await expect(local.issue(personIdentity, personBinding)).resolves.toEqual(expect.any(String));
+  });
+
+  it("requires a live runner generation and clamps a turn token to its trusted deadline", async () => {
+    const pair = await generateKeyPair("ES256", { extractable: true });
+    const records = memoryBindings();
+    let persisted: ExecutorTokenBinding | undefined;
+    const bindings: ExecutorTokenBindingStore = {
+      bind: async (record) => {
+        persisted = record;
+        return records.bind(record);
+      },
+      get: records.get,
+      remove: records.remove,
+    };
+    const { service } = await serviceFor(pair.privateKey, bindings);
+
+    await expect(service.issue(identity, binding())).rejects.toThrow(
+      "Executor token authority binding is invalid.",
+    );
+    await expect(service.issue(identity, binding(), { runnerGeneration: 0 })).rejects.toThrow(
+      "Executor token authority binding is invalid.",
+    );
+    await expect(
+      service.issue(identity, binding(), {
+        runnerGeneration: 1,
+        turnDeadlineSeconds: NOW,
+      }),
+    ).rejects.toThrow("Executor token turn deadline has elapsed.");
+    await expect(
+      service.issue(identity, binding(), {
+        runnerGeneration: 1,
+        turnDeadlineSeconds: NOW + 0.5,
+      }),
+    ).rejects.toThrow("Executor token authority binding is invalid.");
+
+    const deadline = NOW + 45;
+    const token = await service.issue(identity, binding(), {
+      runnerGeneration: 9,
+      turnDeadlineSeconds: deadline,
+    });
+    const claims = await claimsFrom(token, pair.publicKey);
+    expect(claims.exp).toBe(deadline);
+    expect(persisted).toMatchObject({
+      runnerGeneration: 9,
+      issuedAt: NOW,
+      expiresAt: deadline,
+    });
+  });
+
+  it("publishes only unique public ES256 retiring keys", async () => {
+    const active = await generateKeyPair("ES256", { extractable: true });
+    const retiring = await generateKeyPair("ES256", { extractable: true });
+    const publicKey = await retiringJwk(retiring.publicKey);
+    const { service } = await serviceFor(active.privateKey, memoryBindings(), {
+      EXECUTOR_TOKEN_RETIRING_PUBLIC_JWKS: JSON.stringify([publicKey]),
+    });
+    const jwks = await service.jwks();
+
+    expect(jwks.keys).toHaveLength(2);
+    expect(new Set(jwks.keys.map((key) => key.kid)).size).toBe(2);
+    expect(jwks.keys[1]).toMatchObject({
+      kty: "EC",
+      crv: "P-256",
+      use: "sig",
+      alg: "ES256",
+      kid: publicKey.kid,
+      key_ops: ["verify"],
+    });
+    expect(jwks.keys[1]).not.toHaveProperty("d");
+    expect(Object.keys(jwks.keys[1] ?? {}).sort()).toEqual([
+      "alg",
+      "crv",
+      "key_ops",
+      "kid",
+      "kty",
+      "use",
+      "x",
+      "y",
+    ]);
+
+    const duplicate = await serviceFor(active.privateKey, memoryBindings(), {
+      EXECUTOR_TOKEN_RETIRING_PUBLIC_JWKS: JSON.stringify([publicKey, publicKey]),
+    });
+    await expect(duplicate.service.jwks()).rejects.toThrow(
+      "Executor retiring public keys are not configured correctly.",
+    );
+    const privateKeyJwk = await exportJWK(retiring.privateKey);
+    const privateKeyRing = await serviceFor(active.privateKey, memoryBindings(), {
+      EXECUTOR_TOKEN_RETIRING_PUBLIC_JWKS: JSON.stringify([{ ...publicKey, d: privateKeyJwk.d }]),
+    });
+    await expect(privateKeyRing.service.jwks()).rejects.toThrow(
+      "Executor retiring public keys are not configured correctly.",
     );
   });
 
@@ -160,7 +308,7 @@ describe("Executor token issuer and live authorization", () => {
 
   it("issues short-lived ES256 tokens and publishes only the public key", async () => {
     const { pair, service, now } = await fixture();
-    const token = await service.issue({ ...identity, person: "user_mia" }, binding());
+    const token = await issueToken(service, { ...identity, person: "user_mia" });
     const verified = await jwtVerify(token, pair.publicKey, {
       issuer: ISSUER,
       audience: "executor",
@@ -216,7 +364,7 @@ describe("Executor token issuer and live authorization", () => {
 
   it("rejects a wrong audience, wrong signing key, and expired token", async () => {
     const { pair, service } = await fixture();
-    const token = await service.issue(identity, binding());
+    const token = await issueToken(service, identity);
     const wrongKey = await generateKeyPair("ES256");
     const expiredToken = await new SignJWT(identity)
       .setProtectedHeader({ alg: "ES256" })
@@ -248,7 +396,7 @@ describe("Executor token issuer and live authorization", () => {
 
   it("denies stopped turns and a level outside the current folder on every request", async () => {
     const { pair, service } = await fixture();
-    const token = await service.issue(identity, binding());
+    const token = await issueToken(service, identity);
     const claims = await claimsFrom(token, pair.publicKey);
     let activeTurn: string | null = "run_live";
     let currentFolder = "folder_1";
@@ -278,7 +426,7 @@ describe("Executor token issuer and live authorization", () => {
 
   it("denies mutated identity, time and JTI before consulting current authority", async () => {
     const { pair, service } = await fixture();
-    const token = await service.issue(identity, binding());
+    const token = await issueToken(service, identity);
     const claims = await claimsFrom(token, pair.publicKey);
     let consulted = false;
     const authority: ExecutorTokenAuthority = {
@@ -301,6 +449,12 @@ describe("Executor token issuer and live authorization", () => {
       active: false,
     });
     expect(await service.authorize({ ...claims, jti: "unknown-jti" }, authority)).toEqual({
+      active: false,
+    });
+    expect(await service.authorize({ ...claims, sub: "user_mia" }, authority)).toEqual({
+      active: false,
+    });
+    expect(await service.authorize({ ...claims, scope: "admin" }, authority)).toEqual({
       active: false,
     });
     expect(consulted).toBe(false);
@@ -331,7 +485,7 @@ describe("Executor token issuer and live authorization", () => {
 
   it("denies when live authorization is unavailable", async () => {
     const { pair, service } = await fixture();
-    const token = await service.issue(identity, binding());
+    const token = await issueToken(service, identity);
     const claims = await claimsFrom(token, pair.publicKey);
 
     expect(
@@ -445,7 +599,7 @@ describe("Executor token issuer and live authorization", () => {
       },
       remove: async () => undefined,
     });
-    const token = await service.issue(identity, binding());
+    const token = await issueToken(service, identity);
     const claims = await claimsFrom(token, pair.publicKey);
     let consulted = false;
 
@@ -464,7 +618,7 @@ describe("Executor token issuer and live authorization", () => {
 
   it("denies malformed claims and current-authority failures", async () => {
     const { pair, service } = await fixture();
-    const token = await service.issue(identity, binding());
+    const token = await issueToken(service, identity);
     const claims = await claimsFrom(token, pair.publicKey);
     let consulted = 0;
 

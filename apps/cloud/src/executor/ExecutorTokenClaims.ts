@@ -25,6 +25,21 @@ export const AuthorizationClaims = Schema.Struct({
 
 const decodeIdentity = Schema.decodeUnknownOption(ExecutorTokenIdentitySchema);
 const decodeAuthorizationClaims = Schema.decodeUnknownOption(AuthorizationClaims);
+const AUTHORIZATION_CLAIM_KEYS = new Set([
+  "owner",
+  "level",
+  "person",
+  "thread",
+  "turn",
+  "automation",
+  "iat",
+  "exp",
+  "jti",
+  // The signing layer sets these standard claims. The service receives their
+  // already-verified payload and deliberately keeps only its authority tuple.
+  "iss",
+  "aud",
+]);
 
 export type ExecutorTokenIdentity = typeof ExecutorTokenIdentitySchema.Type;
 export type ExecutorAuthorizationClaims = typeof AuthorizationClaims.Type;
@@ -40,6 +55,14 @@ export const decodeExecutorTokenIdentity = (value: unknown): ExecutorTokenIdenti
 export const decodeExecutorAuthorizationClaims = (
   value: unknown,
 ): ExecutorAuthorizationClaims | null => {
+  if (
+    typeof value !== "object" ||
+    value === null ||
+    Array.isArray(value) ||
+    Object.keys(value).some((key) => !AUTHORIZATION_CLAIM_KEYS.has(key))
+  ) {
+    return null;
+  }
   const parsed = decodeAuthorizationClaims(value);
   if (parsed._tag === "None") return null;
   try {

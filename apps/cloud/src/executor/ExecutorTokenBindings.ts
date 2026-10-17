@@ -19,6 +19,11 @@ export const ExecutorTokenBinding = Schema.Struct({
   grantId: ExecutorTokenIdentifier,
   purpose: ExecutorTokenPurpose,
   sessionId: Schema.optionalKey(ExecutorTokenIdentifier),
+  // Stored only beside the JTI, never in the signed claims. Old turn bindings
+  // without a generation decode but cannot authorize against a live Runner.
+  runnerGeneration: Schema.optionalKey(
+    Schema.Number.check(Schema.isInt(), Schema.isGreaterThanOrEqualTo(1)),
+  ),
   expiresAt: Schema.Number,
 });
 export type ExecutorTokenBinding = typeof ExecutorTokenBinding.Type;
@@ -26,7 +31,7 @@ export const decodeExecutorTokenBinding = Schema.decodeUnknownOption(ExecutorTok
 
 export type ExecutorTokenBindingInput = Omit<
   ExecutorTokenBinding,
-  "jti" | "identity" | "issuedAt" | "expiresAt"
+  "jti" | "identity" | "issuedAt" | "expiresAt" | "runnerGeneration"
 >;
 
 export const executorTokenBindingMatchesIdentity = (

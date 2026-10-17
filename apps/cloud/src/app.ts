@@ -212,6 +212,37 @@ export interface CloudApp {
   readonly authorizeExecutor: (claims: unknown) => Promise<{ readonly active: boolean }>;
 }
 
+export const executorJwksResponse = async (
+  executorTokens: Pick<ExecutorTokenService, "jwks"> | undefined,
+): Promise<Response> => {
+  if (executorTokens === undefined) {
+    return new Response("Executor token signing is not configured.", { status: 503 });
+  }
+  try {
+    return Response.json(await executorTokens.jwks(), {
+      headers: { "cache-control": "public, max-age=60" },
+    });
+  } catch {
+    return new Response("Executor token signing is not configured.", { status: 503 });
+  }
+};
+
+const EXECUTOR_AUTHORIZATION_TIMEOUT_MS = 5_000;
+
+export const authorizeExecutorWithTimeout = (
+  authorize: () => Promise<{ readonly active: boolean }>,
+): Promise<{ readonly active: boolean }> =>
+  Effect.runPromise(
+    Effect.promise(() =>
+      Promise.resolve()
+        .then(authorize)
+        .catch(() => ({ active: false })),
+    ).pipe(
+      Effect.timeout(EXECUTOR_AUTHORIZATION_TIMEOUT_MS),
+      Effect.orElseSucceed(() => ({ active: false })),
+    ),
+  );
+
 export const makeCloudApp = <E>(
   services: Layer.Layer<Services, E>,
   options: { readonly executorTokens?: ExecutorTokenService } = {},
@@ -261,25 +292,18 @@ export const makeCloudApp = <E>(
           ? protectedResourceMetadata(request)
           : handleMcpRequest(request),
       ),
-    executorJwks: async () => {
-      if (options.executorTokens === undefined) {
-        return new Response("Executor token signing is not configured.", { status: 503 });
-      }
-      try {
-        return Response.json(await options.executorTokens.jwks(), {
-          headers: { "cache-control": "no-store" },
-        });
-      } catch {
-        return new Response("Executor token signing is not configured.", { status: 503 });
-      }
-    },
-    authorizeExecutor: (claims) =>
-      options.executorTokens === undefined
+    executorJwks: () => executorJwksResponse(options.executorTokens),
+    authorizeExecutor: (claims) => {
+      const executorTokens = options.executorTokens;
+      return executorTokens === undefined
         ? Promise.resolve({ active: false })
-        : options.executorTokens.authorize(claims, {
-            person: authorizeExecutorUser,
-            turn: authorizeExecutorUser,
-            automation: authorizeExecutorUser,
-          }),
+        : authorizeExecutorWithTimeout(() =>
+            executorTokens.authorize(claims, {
+              person: authorizeExecutorUser,
+              turn: authorizeExecutorUser,
+              automation: authorizeExecutorUser,
+            }),
+          );
+    },
   };
 };

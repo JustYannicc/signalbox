@@ -65,6 +65,7 @@ const setup = (
         snapshot: async () => ({ _tag: "not_found" }),
         subscribe: async () => null,
         summary: async () => null,
+        authorizeExecutorTurn: async () => false,
         diagnostics: async () => null,
         previews: async () => null,
         previewLink: async () => ({ _tag: "unavailable", message: "none" }),

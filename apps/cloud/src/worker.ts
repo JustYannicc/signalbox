@@ -56,6 +56,7 @@ export interface CloudEnv
   readonly EXECUTOR_TOKEN_BINDINGS: ExecutorTokenBindingNamespace;
   readonly EXECUTOR_TOKEN_ISSUER?: string;
   readonly EXECUTOR_TOKEN_PRIVATE_JWK?: string;
+  readonly EXECUTOR_TOKEN_RETIRING_PUBLIC_JWKS?: string;
 }
 
 /** Plain string vars and secrets, for the config provider. Bindings are objects. */

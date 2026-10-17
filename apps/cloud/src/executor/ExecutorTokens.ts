@@ -9,6 +9,7 @@ import {
 import * as Schema from "effect/Schema";
 
 import {
+  ExecutorTokenIdentifier,
   decodeExecutorAuthorizationClaims,
   decodeExecutorTokenIdentity,
   executorTokenPurpose,
@@ -39,8 +40,17 @@ export interface ExecutorTokenEnv {
   readonly EXECUTOR_TOKEN_ISSUER?: string;
   /** JSON P-256 JWK, derived from the deployment's stable secret seed. */
   readonly EXECUTOR_TOKEN_PRIVATE_JWK?: string;
+  /** JSON array of public ES256 keys from issuer keys that still have live tokens. */
+  readonly EXECUTOR_TOKEN_RETIRING_PUBLIC_JWKS?: string;
   /** Local workerd may use an ephemeral key because it never holds production state. */
   readonly LOCAL_WORKERD?: string;
+}
+
+export interface ExecutorTokenIssuanceContext {
+  /** The current ThreadRunner lease generation. Stored beside the JTI, never in the JWT. */
+  readonly runnerGeneration: number;
+  /** A trusted run deadline in epoch seconds; caps this token's expiration. */
+  readonly turnDeadlineSeconds?: number;
 }
 
 export interface ExecutorTokenAuthority {
@@ -62,6 +72,7 @@ export interface ExecutorTokenService {
   readonly issue: (
     identity: ExecutorTokenIdentity,
     binding: ExecutorTokenBindingInput,
+    context?: ExecutorTokenIssuanceContext,
   ) => Promise<string>;
   readonly jwks: () => Promise<{ readonly keys: ReadonlyArray<ExecutorPublicJwk> }>;
   readonly authorize: (
@@ -83,6 +94,94 @@ const PrivateJwk = Schema.Struct({
   y: Schema.NonEmptyString,
 });
 const decodePrivateJwk = Schema.decodeUnknownOption(PrivateJwk);
+
+const RetiringPublicJwk = Schema.Struct({
+  kty: Schema.Literal("EC"),
+  crv: Schema.Literal("P-256"),
+  x: Schema.NonEmptyString,
+  y: Schema.NonEmptyString,
+  kid: ExecutorTokenIdentifier,
+  use: Schema.Literal("sig"),
+  alg: Schema.Literal("ES256"),
+  key_ops: Schema.Array(Schema.Literal("verify")),
+});
+const decodeRetiringPublicJwk = Schema.decodeUnknownOption(RetiringPublicJwk);
+const RETIRING_JWK_FIELDS = new Set(["kty", "crv", "x", "y", "kid", "use", "alg", "key_ops"]);
+
+const executorIssuerFrom = (env: ExecutorTokenEnv): string => {
+  const issuer = env.EXECUTOR_TOKEN_ISSUER;
+  if (issuer === undefined || issuer.length === 0 || issuer !== issuer.trim()) {
+    throw new Error("Executor token issuer is not configured canonically.");
+  }
+  let url: URL;
+  try {
+    url = new URL(issuer);
+  } catch {
+    throw new Error("Executor token issuer is not configured canonically.");
+  }
+  const loopback =
+    env.LOCAL_WORKERD === "1" &&
+    url.protocol === "http:" &&
+    (url.hostname === "localhost" ||
+      url.hostname === "127.0.0.1" ||
+      url.hostname === "[::1]" ||
+      url.hostname.endsWith(".localhost"));
+  if (
+    issuer !== url.origin ||
+    url.hostname.endsWith(".") ||
+    (url.protocol !== "https:" && !loopback)
+  ) {
+    throw new Error("Executor token issuer is not configured canonically.");
+  }
+  return issuer;
+};
+
+const retiringPublicJwksFrom = async (
+  env: ExecutorTokenEnv,
+  activeKid: string,
+): Promise<ReadonlyArray<ExecutorPublicJwk>> => {
+  const serialized = env.EXECUTOR_TOKEN_RETIRING_PUBLIC_JWKS?.trim();
+  if (serialized === undefined || serialized.length === 0) return [];
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(serialized) as unknown;
+  } catch {
+    throw new Error("Executor retiring public keys are not configured correctly.");
+  }
+  if (!Array.isArray(parsed)) {
+    throw new Error("Executor retiring public keys are not configured correctly.");
+  }
+
+  const kids = new Set([activeKid]);
+  const keys: ExecutorPublicJwk[] = [];
+  for (const value of parsed) {
+    if (
+      value === null ||
+      typeof value !== "object" ||
+      Array.isArray(value) ||
+      Object.keys(value).some((field) => !RETIRING_JWK_FIELDS.has(field))
+    ) {
+      throw new Error("Executor retiring public keys are not configured correctly.");
+    }
+    const decoded = decodeRetiringPublicJwk(value);
+    if (decoded._tag === "None" || decoded.value.key_ops.length !== 1) {
+      throw new Error("Executor retiring public keys are not configured correctly.");
+    }
+    const jwk = decoded.value;
+    const publicJwk = { ...jwk, key_ops: [...jwk.key_ops] };
+    if (kids.has(publicJwk.kid) || (await calculateJwkThumbprint(publicJwk)) !== publicJwk.kid) {
+      throw new Error("Executor retiring public keys are not configured correctly.");
+    }
+    try {
+      await importJWK(publicJwk, "ES256");
+    } catch {
+      throw new Error("Executor retiring public keys are not configured correctly.");
+    }
+    kids.add(publicJwk.kid);
+    keys.push(publicJwk);
+  }
+  return keys;
+};
 
 const privateJwkFrom = (env: ExecutorTokenEnv): JWK => {
   const serialized = env.EXECUTOR_TOKEN_PRIVATE_JWK?.trim();
@@ -129,6 +228,7 @@ export const makeExecutorTokenService = (
         readonly kid: string;
       }>
     | undefined;
+  let retiringKeys: Promise<ReadonlyArray<ExecutorPublicJwk>> | undefined;
   const keyMaterial = () => {
     material ??= (async () => {
       const configuredKey = env.EXECUTOR_TOKEN_PRIVATE_JWK?.trim();
@@ -162,13 +262,17 @@ export const makeExecutorTokenService = (
     })();
     return material;
   };
+  const retiringPublicKeys = (activeKid: string) => {
+    retiringKeys ??= retiringPublicJwksFrom(env, activeKid);
+    return retiringKeys;
+  };
 
   return {
-    issue: async (input, context) => {
+    issue: async (input, context, issuance) => {
       const identity = decodeExecutorTokenIdentity(input);
-      const issuer = env.EXECUTOR_TOKEN_ISSUER?.trim();
-      if (!issuer) throw new Error("Executor token issuer is not configured.");
+      const issuer = executorIssuerFrom(env);
       const purpose = executorTokenPurpose(identity);
+      const isTurn = roleOf(identity) === "turn";
       if (
         context.purpose !== purpose ||
         (purpose === "interactive-person" && context.sessionId === undefined) ||
@@ -176,14 +280,31 @@ export const makeExecutorTokenService = (
         (identity.person !== undefined && identity.person !== context.ownerUserId) ||
         (context.source._tag === "person" && identity.level !== identity.owner) ||
         (context.source._tag === "folder" &&
-          (identity.level === identity.owner || context.source.folderId !== identity.level))
+          (identity.level === identity.owner || context.source.folderId !== identity.level)) ||
+        (isTurn &&
+          (issuance === undefined ||
+            !Number.isSafeInteger(issuance.runnerGeneration) ||
+            issuance.runnerGeneration < 1)) ||
+        (!isTurn && issuance !== undefined) ||
+        (issuance?.turnDeadlineSeconds !== undefined &&
+          !Number.isSafeInteger(issuance.turnDeadlineSeconds))
       ) {
         throw new Error("Executor token authority binding is invalid.");
       }
       const { privateKey, kid } = await keyMaterial();
+      await retiringPublicKeys(kid);
       const iat = await runtime.nowSeconds();
       if (!Number.isSafeInteger(iat)) throw new Error("Executor token clock is unavailable.");
-      const exp = iat + EXECUTOR_TOKEN_TTL_SECONDS;
+      const deadline = issuance?.turnDeadlineSeconds;
+      if (deadline !== undefined && deadline <= iat) {
+        throw new Error("Executor token turn deadline has elapsed.");
+      }
+      const ttlExpiry = iat + EXECUTOR_TOKEN_TTL_SECONDS;
+      if (!Number.isSafeInteger(ttlExpiry)) {
+        throw new Error("Executor token clock is unavailable.");
+      }
+      const exp = Math.min(ttlExpiry, deadline ?? Number.MAX_SAFE_INTEGER);
+      if (exp <= iat) throw new Error("Executor token turn deadline has elapsed.");
       const jti = await runtime.newJti();
       const token = await new SignJWT(identity)
         .setProtectedHeader({ alg: "ES256", kid, typ: "JWT" })
@@ -195,6 +316,9 @@ export const makeExecutorTokenService = (
         .sign(privateKey);
       const created = await bindings.bind({
         ...context,
+        ...(isTurn && issuance !== undefined
+          ? { runnerGeneration: issuance.runnerGeneration }
+          : {}),
         jti,
         identity,
         issuedAt: iat,
@@ -204,8 +328,8 @@ export const makeExecutorTokenService = (
       return token;
     },
     jwks: async () => {
-      const { publicJwk } = await keyMaterial();
-      return { keys: [publicJwk] };
+      const { publicJwk, kid } = await keyMaterial();
+      return { keys: [publicJwk, ...(await retiringPublicKeys(kid))] };
     },
     authorize: async (value, authority) => {
       const claims = decodeExecutorAuthorizationClaims(value);

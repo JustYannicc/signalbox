@@ -131,6 +131,8 @@ function workerEnv(target: CloudStage) {
       SESSION_SECRET: yield* Config.Redacted("SESSION_SECRET"),
       T3CODE_WORKOS_API_KEY: yield* Config.Redacted("T3CODE_WORKOS_API_KEY"),
       EXECUTOR_TOKEN_PRIVATE_JWK: signingJwk,
+      // Optional public verification keys for tokens signed before an operator rotates the seed.
+      EXECUTOR_TOKEN_RETIRING_PUBLIC_JWKS: yield* optional("EXECUTOR_TOKEN_RETIRING_PUBLIC_JWKS"),
       // Optional: Claude and Codex on boat VMs.
       BOAT_API_KEY: yield* optionalSecret("BOAT_API_KEY"),
       // Optional: chat or task classifiers (`src/threadKinds/`); unset, threads stay tasks.
