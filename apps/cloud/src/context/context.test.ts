@@ -1,7 +1,7 @@
 import {
   CONTEXT_PATHS,
   contextJson,
-  type SearchResult,
+  type ContextSearchResult,
   type ThreadResult,
   type TreeResult,
 } from "@signalbox/runner-protocol/ContextProtocol";
@@ -14,12 +14,16 @@ import {
   MessageId,
   ORCHESTRATION_V2_WS_METHODS,
   ThreadId,
+  type ProjectId,
 } from "@t3tools/contracts";
 import { SignalboxContextId } from "@t3tools/contracts/signalboxContexts";
 import { SIGNALBOX_DRIVES_WS_METHODS } from "@t3tools/contracts/signalboxDrives";
+import type { ThreadSearchInput, ThreadSearchResult } from "@t3tools/contracts/signalboxSearch";
 import { afterEach, describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+
+import type { SearchActor } from "../search/SearchAuthority.ts";
 import * as RpcTest from "effect/rpc/RpcTest";
 
 import { DriveDirectory } from "../drive/DriveDirectory.ts";
@@ -56,6 +60,109 @@ afterEach(() => {
 
 const setup = Effect.gen(function* () {
   const cloud = makeMemoryCloud({ people: PEOPLE });
+  const searchCalls: Array<{ userId: string; actor: SearchActor; input: ThreadSearchInput }> = [];
+  const itemReads: Array<{
+    userId: string;
+    actor: SearchActor;
+    threadId: ThreadId;
+    itemId: string;
+  }> = [];
+  const deniedDriveAccess = new Set<string>();
+  let revokeOnNextSearch: string | null = null;
+  let revokeOnNextItemRead: string | null = null;
+  const contextUsers = new Proxy(cloud.userDirectory, {
+    get(target, property, receiver) {
+      if (property !== "forUser") return Reflect.get(target, property, receiver);
+      return (userId: string) =>
+        new Proxy(target.forUser(userId), {
+          get(user, operation, userReceiver) {
+            if (operation === "searchThreads") {
+              return (actor: SearchActor, input: ThreadSearchInput) => {
+                searchCalls.push({ userId, actor, input });
+                if (revokeOnNextSearch !== null) {
+                  deniedDriveAccess.add(revokeOnNextSearch);
+                  revokeOnNextSearch = null;
+                }
+                const projectIds = actor.projectIds;
+                const archivedProjectId = projectIds?.find((id) =>
+                  String(id).startsWith("drive:shared/org_acme/"),
+                );
+                if (
+                  (input as { query?: string }).query === "archive probe" &&
+                  archivedProjectId !== undefined
+                ) {
+                  return Effect.succeed({
+                    hits: [
+                      {
+                        threadId: ThreadId.make("archived-search-thread"),
+                        projectId: archivedProjectId,
+                        title: "Old billing decision",
+                        archived: true,
+                        itemId: "archived-search-item",
+                        entryId: "archived-search-entry",
+                        runId: null,
+                        position: 2,
+                        kind: "summary",
+                        snippet: "archive probe",
+                        createdAt: null,
+                        sourceSequence: 5,
+                        indexedThrough: 5,
+                      },
+                    ],
+                    nextCursor: "opaque-search-cursor",
+                    coverage: {
+                      complete: true,
+                      indexedThreads: 1,
+                      pendingThreads: 0,
+                      available: true,
+                    },
+                  } satisfies ThreadSearchResult);
+                }
+                return user.searchThreads(actor, input);
+              };
+            }
+            if (operation === "driveAccess") {
+              return (driveId: string) =>
+                deniedDriveAccess.has(`${userId}/${driveId}`)
+                  ? Effect.succeed(null)
+                  : user.driveAccess(driveId);
+            }
+            if (operation === "readSearchItem") {
+              return (actor: SearchActor, threadId: ThreadId, itemId: string) => {
+                itemReads.push({ userId, actor, threadId, itemId });
+                if (revokeOnNextItemRead !== null) {
+                  deniedDriveAccess.add(revokeOnNextItemRead);
+                  revokeOnNextItemRead = null;
+                }
+                if (threadId === "archived-search-thread" && itemId === "archived-search-item") {
+                  const projectId = actor.projectIds?.find((id) =>
+                    String(id).startsWith("drive:shared/org_acme/"),
+                  );
+                  if (projectId === undefined) return Effect.succeed(null);
+                  return Effect.succeed({
+                    snapshotSequence: 5,
+                    projectId,
+                    title: "Old billing decision",
+                    archived: true,
+                    item: {
+                      itemId,
+                      entryId: "archived-search-entry",
+                      runId: null,
+                      position: 2,
+                      kind: "summary" as const,
+                      text: "archive probe exact result",
+                      createdAt: null,
+                    },
+                  });
+                }
+                return user.readSearchItem(actor, threadId, itemId);
+              };
+            }
+            return Reflect.get(user, operation, userReceiver);
+          },
+        });
+    },
+  });
   const clientOf = (person: (typeof PEOPLE)[number]) =>
     Effect.gen(function* () {
       const user = cloud.userDirectory.forUser(person.userId);
@@ -80,7 +187,7 @@ const setup = Effect.gen(function* () {
   const tool = layerContextTool.pipe(
     Layer.provide(
       Layer.mergeAll(
-        Layer.succeed(UserDirectory, cloud.userDirectory),
+        Layer.succeed(UserDirectory, contextUsers),
         Layer.succeed(ThreadDirectory, cloud.threadDirectory),
         cloud.drives.layer,
       ),
@@ -101,7 +208,23 @@ const setup = Effect.gen(function* () {
         raw: answer.body,
       })),
     );
-  return { cloud, alice, bob, call };
+  return {
+    cloud,
+    alice,
+    bob,
+    call,
+    searchCalls,
+    itemReads,
+    denyDrive: (userId: string, driveId: string) => deniedDriveAccess.add(`${userId}/${driveId}`),
+    allowDrive: (userId: string, driveId: string) =>
+      deniedDriveAccess.delete(`${userId}/${driveId}`),
+    revokeDuringNextSearch: (userId: string, driveId: string) => {
+      revokeOnNextSearch = `${userId}/${driveId}`;
+    },
+    revokeDuringNextItemRead: (userId: string, driveId: string) => {
+      revokeOnNextItemRead = `${userId}/${driveId}`;
+    },
+  };
 });
 
 type Client = Effect.Success<typeof setup>["alice"];
@@ -219,7 +342,7 @@ const search = (
 ) =>
   Effect.map(
     env.call(reader, CONTEXT_PATHS.search, { query, driveId }, contextJson.search.decode),
-    (answer) => answer.body as SearchResult,
+    (answer) => answer.body as ContextSearchResult,
   );
 
 describe("context API (#141)", () => {
@@ -280,30 +403,152 @@ describe("context API (#141)", () => {
       expect(
         view.contexts.flatMap((context) => context.drives.map((drive) => drive.driveId)),
       ).toEqual(["my/personal/user_carol"]);
-      expect((yield* search(env, "dark mode toggle", null, carol))._tag).toBe(
-        "insufficient_evidence",
-      );
+      const noSearch = yield* search(env, "dark mode toggle", null, carol);
+      expect(noSearch.hits).toEqual([]);
+      expect(noSearch.driveHits).toEqual([]);
     }),
   );
 
-  it.effect("finds the thread and the commit that built something, and its diff", () =>
+  it.effect("keeps indexed search owner-scoped, including archived items and exact reads", () =>
     Effect.gen(function* () {
       const env = yield* world;
+      const reader = { ...env.reader, driveId: env.billing.id };
+      const found = (yield* env.call(
+        reader,
+        CONTEXT_PATHS.search,
+        { query: "archive probe", driveId: null, projectIds: [env.billing.projectId] },
+        contextJson.search.decode,
+      )).body as ContextSearchResult;
+      expect(found).toMatchObject({
+        hits: [
+          {
+            threadId: "archived-search-thread",
+            projectId: env.billing.projectId,
+            archived: true,
+            itemId: "archived-search-item",
+          },
+        ],
+        nextCursor: "opaque-search-cursor",
+        coverage: { complete: true, available: true },
+      });
+      expect(env.searchCalls.at(-1)).toMatchObject({
+        userId: "user_alice",
+        actor: { userId: "user_alice", contextIds: [ACME], projectIds: [env.billing.projectId] },
+        input: { query: "archive probe", projectIds: [env.billing.projectId] },
+      });
+
+      const opened = (yield* env.call(
+        reader,
+        CONTEXT_PATHS.thread,
+        {
+          threadId: "archived-search-thread",
+          itemId: "archived-search-item",
+          projectId: env.billing.projectId,
+        },
+        contextJson.thread.decode,
+      )).body as ThreadResult;
+      expect(opened).toMatchObject({
+        _tag: "item",
+        threadId: "archived-search-thread",
+        archived: true,
+        item: { itemId: "archived-search-item", text: "archive probe exact result" },
+      });
+      expect(env.itemReads.at(-1)).toMatchObject({
+        userId: "user_alice",
+        actor: { userId: "user_alice", contextIds: [ACME], projectIds: [env.billing.projectId] },
+        threadId: "archived-search-thread",
+        itemId: "archived-search-item",
+      });
+
+      // A personal thread token cannot search the Acme index for this user.
+      const crossOwner = yield* search(env, "archive probe");
+      expect(crossOwner.hits).toEqual([]);
+      expect(env.searchCalls.at(-1)).toMatchObject({
+        actor: { contextIds: [SignalboxContextId.make("personal")] },
+      });
+      expect(
+        (env.searchCalls.at(-1)?.actor as { projectIds: ReadonlyArray<ProjectId> }).projectIds,
+      ).not.toContain(env.billing.projectId);
+    }),
+  );
+
+  it.effect("rechecks live drive roles when the readable-drive index is stale", () =>
+    Effect.gen(function* () {
+      const env = yield* world;
+      env.denyDrive("user_alice", env.billing.id);
+
+      // A stale listing cannot keep a revoked target drive in search scope.
+      const personalSearch = yield* search(env, "archive probe");
+      expect(personalSearch.hits).toEqual([]);
+      expect(
+        (env.searchCalls.at(-1)?.actor as { projectIds: ReadonlyArray<ProjectId> }).projectIds,
+      ).not.toContain(env.billing.projectId);
+
+      // The same stale listing cannot authorize a request from that revoked drive.
+      const revokedReader = { ...env.reader, driveId: env.billing.id };
+      const deniedSearch = yield* env.call(
+        revokedReader,
+        CONTEXT_PATHS.search,
+        { query: "archive probe", driveId: null },
+        contextJson.search.decode,
+      );
+      const deniedItem = yield* env.call(
+        revokedReader,
+        CONTEXT_PATHS.thread,
+        {
+          threadId: "archived-search-thread",
+          itemId: "archived-search-item",
+          projectId: env.billing.projectId,
+        },
+        contextJson.thread.decode,
+      );
+      expect(deniedSearch.status).toBe(403);
+      expect(deniedItem.status).toBe(403);
+      expect(env.searchCalls).toHaveLength(1);
+      expect(env.itemReads).toEqual([]);
+    }),
+  );
+
+  it.effect("rechecks drive access after indexed search and item reads", () =>
+    Effect.gen(function* () {
+      const env = yield* world;
+      const reader = { ...env.reader, driveId: env.billing.id };
+      env.revokeDuringNextSearch("user_alice", env.billing.id);
+      const search = yield* env.call(
+        reader,
+        CONTEXT_PATHS.search,
+        { query: "archive probe", driveId: null },
+        contextJson.search.decode,
+      );
+      expect(search.status).toBe(403);
+
+      env.allowDrive("user_alice", env.billing.id);
+      env.revokeDuringNextItemRead("user_alice", env.billing.id);
+      const item = yield* env.call(
+        reader,
+        CONTEXT_PATHS.thread,
+        {
+          threadId: "archived-search-thread",
+          itemId: "archived-search-item",
+          projectId: env.billing.projectId,
+        },
+        contextJson.thread.decode,
+      );
+      expect(item.status).toBe(403);
+    }),
+  );
+
+  it.effect("keeps drive-history commits and full-turn reads available", () =>
+    Effect.gen(function* () {
+      const env = yield* world;
+      const reader = { ...env.reader, driveId: env.billing.id };
       const found = yield* search(
         env,
         "In Billing we implemented a dark mode toggle",
         env.billing.id,
+        reader,
       );
-      expect(found._tag).toBe("found");
-      if (found._tag !== "found") return;
-      expect(found.terms).toEqual(["billing", "dark", "mode", "toggle"]);
-      const kinds = found.hits.map((hit) => hit.kind);
-      expect(kinds).toContain("thread");
-      expect(kinds).toContain("commit");
-      const thread = found.hits.find((hit) => hit.kind === "thread")!;
-      // The current thread asks the question; it is never its own answer.
-      expect(thread).toMatchObject({ threadId: env.toggleThread, driveId: env.billing.id });
-      const commit = found.hits.find((hit) => hit.kind === "commit");
+      const commit = found.driveHits.find((hit) => hit.kind === "commit");
       expect(commit).toMatchObject({
         commit: env.toggle,
         parent: env.first,
@@ -311,7 +556,7 @@ describe("context API (#141)", () => {
       });
 
       const diff = (yield* env.call(
-        env.reader,
+        reader,
         CONTEXT_PATHS.diff,
         { driveId: env.billing.id, from: env.first, to: env.toggle },
         contextJson.diff.decode,
@@ -319,7 +564,7 @@ describe("context API (#141)", () => {
       expect(diff._tag === "diff" && diff.patch).toContain("+export const darkMode");
 
       const opened = (yield* env.call(
-        env.reader,
+        reader,
         CONTEXT_PATHS.thread,
         { threadId: env.toggleThread, turn: null },
         contextJson.thread.decode,
@@ -334,22 +579,20 @@ describe("context API (#141)", () => {
   it.effect("finds others' unreconciled work, without naming their threads", () =>
     Effect.gen(function* () {
       const env = yield* world;
-      const found = yield* search(env, "invoices export");
-      expect(found).toMatchObject({
-        _tag: "found",
-        hits: [
-          {
-            kind: "work",
-            threadId: "thread-bob-export",
-            title: null,
-            commit: env.exportWip,
-            files: ["invoices/export.csv"],
-          },
-        ],
-      });
+      const reader = { ...env.reader, driveId: env.billing.id };
+      const found = yield* search(env, "invoices export", null, reader);
+      expect(found.driveHits).toContainEqual(
+        expect.objectContaining({
+          kind: "work",
+          threadId: "thread-bob-export",
+          title: null,
+          commit: env.exportWip,
+          files: ["invoices/export.csv"],
+        }),
+      );
       // Bob's conversation stays his.
       const opened = yield* env.call(
-        env.reader,
+        reader,
         CONTEXT_PATHS.thread,
         { threadId: "thread-bob-export", turn: null },
         contextJson.thread.decode,
@@ -399,25 +642,33 @@ describe("context API (#141)", () => {
         packed: git.pack([merged], [audit, env.exportWip]),
         land: false,
       });
-      const found = yield* search(env, "q3 reports");
-      expect(found).toMatchObject({
-        _tag: "found",
-        hits: [{ kind: "work", threadId: late.threadId, base: audit, files: ["reports/q3.ts"] }],
-      });
+      const reader = { ...env.reader, driveId: billing.id };
+      const found = yield* search(env, "q3 reports", null, reader);
+      expect(found.driveHits).toContainEqual(
+        expect.objectContaining({
+          kind: "work",
+          threadId: late.threadId,
+          base: audit,
+          files: ["reports/q3.ts"],
+        }),
+      );
       // The audit log is main's: it isn't evidence of Bob's work.
-      const audit_ = yield* search(env, "audit log");
-      expect(audit_._tag === "found" && audit_.hits.map((hit) => hit.kind)).toEqual(["commit"]);
+      const audit_ = yield* search(env, "audit log", null, reader);
+      expect(audit_.driveHits.map((hit) => hit.kind)).toEqual(["commit"]);
     }),
   );
 
   it.effect("answers insufficient evidence instead of guessing", () =>
     Effect.gen(function* () {
       const env = yield* world;
-      const weak = yield* search(env, "kubernetes autoscaler for dark nodes");
-      expect(weak._tag).toBe("insufficient_evidence");
-      expect(weak.searched).toMatchObject({ threads: 1, drives: 3 });
-      const empty = yield* search(env, "how did we implement it");
-      expect(empty._tag === "insufficient_evidence" && empty.reason).toMatch(/no words/);
+      const reader = { ...env.reader, driveId: env.billing.id };
+      const weak = yield* search(env, "kubernetes autoscaler for dark nodes", null, reader);
+      expect(weak.hits).toEqual([]);
+      expect(weak.driveHits).toEqual([]);
+      expect(weak.coverage.available).toBe(true);
+      const empty = yield* search(env, "how did we implement it", null, reader);
+      expect(empty.hits).toEqual([]);
+      expect(empty.driveHits).toEqual([]);
       const main = yield* DriveDirectory.use((directory) =>
         directory.forDrive(env.billing.id).ref(MAIN_REF),
       ).pipe(Effect.provide(env.cloud.drives.layer));

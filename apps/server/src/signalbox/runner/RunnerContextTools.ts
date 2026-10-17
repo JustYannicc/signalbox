@@ -1,5 +1,9 @@
-import { SearchThreadCursor, type SearchHit } from "@signalbox/runner-protocol/ContextProtocol";
-import { NonNegativeInt, PositiveInt } from "@t3tools/contracts";
+import {
+  ContextSearchInput,
+  type SearchHit,
+  type ThreadRequest,
+} from "@signalbox/runner-protocol/ContextProtocol";
+import { NonNegativeInt, PositiveInt, ProjectId, ThreadId } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -25,8 +29,8 @@ export const CONTEXT_SERVER_NAME = "signalbox";
 export const CONTEXT_INSTRUCTIONS = [
   `Everything your user can read is under ${DRIVES_ROOT}: ${DRIVES_ROOT}/<owner>/My Drive, ${DRIVES_ROOT}/<owner>/Shared drives/<name> and ${DRIVES_ROOT}/<owner>/Shared with me/<name>, where an owner is Personal or one of their organizations.`,
   `It is read-only and pinned to the version at the start of this turn. Your working directory is your own drive, the only one you change: to reuse a file from another drive, copy it into your working directory.`,
-  `When the user refers to work done elsewhere ("in drive B we implemented X"), call search_context first, then open_thread and drive_diff on what it found, and reproduce the change from the diff.`,
-  `If search_context answers insufficient_evidence and nextThreadCursor is non-null, continue with that cursor before deciding nothing matched. If threadCoverageComplete is false and searched.threadReadFailures is nonzero, rerun from the first page to retry those reads before deciding nothing matched. Never guess which work was meant.`,
+  `When the user refers to earlier work, call search_context first. Use open_thread with a hit's threadId and itemId to read that exact indexed item; pass its projectId too when present. Use turn to open a full conversation turn.`,
+  `Search includes active and archived threads. Continue with cursor when nextCursor is non-null. If coverage.complete is false or coverage.available is false, the search is incomplete; retry or qualify any claim that nothing matched.`,
   `Where ${DRIVES_ROOT} is not mounted as a folder, list_drives and read_drive_file read the same paths.`,
   `In a drive backed by a GitHub repository, push and create_pr publish this thread's branch; git push has no credential here.`,
   `Before you finish each turn, call set_thread_status with the next step (one line, who acts) and where the work got to (one or two plain sentences for someone new). thread_status and folder_status read what's going on.`,
@@ -41,10 +45,13 @@ const Commit = Schema.String.check(Schema.isPattern(/^[0-9a-f]{40}$/)).annotate(
   description: "A full commit id, as search_context or open_thread gave it.",
 });
 
-/** Search hits with drive ids turned into the paths the agent reads them at. */
-const presentHit = (view: DrivesView, hit: SearchHit) => {
+/** Replace internal drive ids with the paths the agent can read. */
+const presentDriveHit = (view: DrivesView, hit: SearchHit) => {
   const { driveId, ...rest } = hit;
-  return { drive: driveId === null ? null : (view.drivePath(driveId) ?? driveId), ...rest };
+  return {
+    drive: driveId === null ? null : (view.drivePath(driveId) ?? driveId),
+    ...rest,
+  };
 };
 
 /** Most bytes `read_drive_file` answers at once: a file beyond it is read in parts. */
@@ -138,24 +145,16 @@ export const layerContextTools = (view: DrivesView) => {
       register({
         name: "search_context",
         description:
-          "Search what the user can read for work done before: their active threads (titles, changed files, full conversations), each drive's history, and other threads' work not merged yet. Archived threads are omitted unless includeArchived is true. Pass the distinctive words (a feature, file, error or term), not a sentence. Each result holds most of the words; when nothing does, the answer is insufficient_evidence, never a guess. A non-null nextThreadCursor means more threads remain; repeat the same search with it as threadCursor to continue. threadCoverageComplete is true only when every eligible thread was read successfully; if false with nonzero searched.threadReadFailures, rerun from the first page to retry those reads. Thread hits show up to five matching message locations; messagesTruncated means open_thread can show the rest of the turn history. driveHitsTruncated means more drive matches were omitted from this response. Results name threads, commits and files to follow with open_thread, drive_diff and read_drive_file.",
+          "Search the user's thread titles, messages, completed summaries, and other searchable thread items, including archived threads. Trash is excluded. Search uses keyword matching by default; choose literal for exact substring matching. Filter with drive, threadId, kinds, or limit. Pass the opaque cursor back unchanged to continue, and check coverage before claiming the search is exhaustive. Hits give a bounded snippet; use open_thread with threadId and itemId to read that exact indexed item.",
         parameters: Schema.Struct({
-          query: Schema.String,
-          includeArchived: Schema.optional(
-            Schema.Boolean.annotate({
-              description: "Include archived threads in the search. Defaults to false.",
-            }),
-          ),
-          threadCursor: Schema.optional(
-            SearchThreadCursor.annotate({ description: "Continue a prior thread search page." }),
-          ),
+          ...ContextSearchInput.fields,
           drive: Schema.optional(
             DrivePath.annotate({
               description: `Only this drive: its ${DRIVES_ROOT} path, or its name when that is unique.`,
             }),
           ),
         }),
-        handle: ({ query, drive, includeArchived, threadCursor }) =>
+        handle: ({ drive, ...input }) =>
           Effect.gen(function* () {
             const scope = drive === undefined ? null : view.driveOf(drive);
             if (drive !== undefined && scope === null) {
@@ -164,52 +163,50 @@ export const layerContextTools = (view: DrivesView) => {
               );
             }
             const result = yield* (yield* client).search({
-              query,
+              ...input,
               driveId: scope?.driveId ?? null,
-              ...(includeArchived === undefined ? {} : { includeArchived }),
-              ...(threadCursor === undefined ? {} : { threadCursor }),
             });
-            const coverage =
-              result.nextThreadCursor === undefined
-                ? {}
-                : {
-                    nextThreadCursor: result.nextThreadCursor,
-                    ...(result.threadCoverageComplete === undefined
-                      ? {}
-                      : { threadCoverageComplete: result.threadCoverageComplete }),
-                  };
-            const driveCoverage =
-              result.driveHitsTruncated === undefined
-                ? {}
-                : { driveHitsTruncated: result.driveHitsTruncated };
-            return result._tag === "found"
-              ? json({
-                  result: "found",
-                  words: result.terms,
-                  hits: result.hits.map((hit) => presentHit(view, hit)),
-                  searched: result.searched,
-                  ...coverage,
-                  ...driveCoverage,
-                })
-              : json({
-                  result: "insufficient_evidence",
-                  words: result.terms,
-                  reason: result.reason,
-                  searched: result.searched,
-                  ...coverage,
-                  ...driveCoverage,
-                });
+            return json({
+              result:
+                result.hits.length === 0 && result.driveHits.length === 0
+                  ? "insufficient_evidence"
+                  : "found",
+              ...result,
+              driveHits: result.driveHits.map((hit) => presentDriveHit(view, hit)),
+            });
           }),
       }),
       register({
         name: "open_thread",
         description:
-          "Open a thread search_context found: its turns in order, each with the user's and agent's messages, the files it changed and the commits before and after it (for drive_diff). Without turn, every turn with messages cut short; with turn, that turn in full. Also names the thread's unmerged work, if any.",
-        parameters: Schema.Struct({ threadId: Schema.String, turn: Schema.optional(PositiveInt) }),
-        handle: ({ threadId, turn }) =>
+          "Read a thread item search_context found by passing threadId and itemId, plus its projectId when present; this returns the exact indexed item. Or pass turn to read one full conversation turn. With neither, returns all turns with messages cut short.",
+        parameters: Schema.Struct({
+          threadId: ThreadId,
+          turn: Schema.optional(PositiveInt),
+          itemId: Schema.optional(Schema.String),
+          projectId: Schema.optional(ProjectId),
+        }),
+        handle: ({ threadId, turn, itemId, projectId }) =>
           Effect.gen(function* () {
-            const found = yield* (yield* client).thread({ threadId, turn: turn ?? null });
+            if (itemId !== undefined && turn !== undefined) {
+              return yield* fail("Pass itemId or turn, not both.");
+            }
+            if (itemId !== undefined && projectId === undefined) {
+              return yield* fail("Pass the projectId from the search hit with itemId.");
+            }
+            if (itemId === undefined && projectId !== undefined) {
+              return yield* fail("projectId applies only to an exact item read.");
+            }
+            const request: ThreadRequest =
+              itemId === undefined
+                ? { threadId, turn: turn ?? null }
+                : { threadId, itemId, projectId: projectId! };
+            const found = yield* (yield* client).thread(request);
             if (found._tag === "not_found") {
+              return yield* fail("No such thread, or it isn't one the user can see.");
+            }
+            if (found._tag === "item") return json(found);
+            if (found._tag !== "thread") {
               return yield* fail("No such thread, or it isn't one the user can see.");
             }
             const { driveId, ...rest } = found;

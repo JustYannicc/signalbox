@@ -1,4 +1,9 @@
-import { NonNegativeInt, PositiveInt } from "@t3tools/contracts";
+import { NonNegativeInt, PositiveInt, ProjectId, ThreadId } from "@t3tools/contracts";
+import {
+  SearchItemKind,
+  ThreadSearchInput,
+  ThreadSearchResult,
+} from "@t3tools/contracts/signalboxSearch";
 import * as Schema from "effect/Schema";
 
 import { DRIVE_API_PREFIX, Oid } from "./DriveProtocol.ts";
@@ -7,7 +12,7 @@ import { jsonCodec } from "./jsonCodec.ts";
 /**
  * What a thread's machine reads beyond its own drive (#141): every drive its
  * user can read, across contexts, and the context tool's search over their
- * threads, the drives' history and other threads' unreconciled work. All of it
+ * user's indexed thread items. All of it
  * is read-only. Calls carry the thread's drive token (`DriveProtocol.ts`), and
  * the cloud asks the user's access again on every one, so a drive someone
  * loses stops reading at once.
@@ -21,8 +26,8 @@ import { jsonCodec } from "./jsonCodec.ts";
  * - `blob` answers a file's bytes by object id: 404 when the drive has no such
  *   object, 413 when it is bigger than `MAX_CONTEXT_BLOB_BYTES`.
  * - `diff` is a patch between two commits of one drive.
- * - `search` and `thread` are the context tool. Search answers
- *   `insufficient_evidence` rather than its closest guess.
+ * - `search` and `thread` are the context tool. Search includes archived
+ *   threads and reports index coverage alongside its matches.
  */
 
 export const CONTEXT_API_PREFIX = `${DRIVE_API_PREFIX}/context`;
@@ -108,23 +113,33 @@ export const DiffResult = Schema.Union([
 ]);
 export type DiffResult = typeof DiffResult.Type;
 
+/** Search options exposed to a thread agent; project scope stays server-derived. */
+export const ContextSearchInput = Schema.Struct({
+  query: ThreadSearchInput.fields.query,
+  mode: ThreadSearchInput.fields.mode,
+  threadId: ThreadSearchInput.fields.threadId,
+  kinds: ThreadSearchInput.fields.kinds,
+  limit: ThreadSearchInput.fields.limit,
+  cursor: ThreadSearchInput.fields.cursor,
+});
+export type ContextSearchInput = typeof ContextSearchInput.Type;
+
+export const SearchRequest = Schema.Struct({
+  ...ContextSearchInput.fields,
+  /** Server-intersected project scope; agents do not choose authority. */
+  projectIds: ThreadSearchInput.fields.projectIds,
+  /** Only this drive. Null: every drive the user can read. */
+  driveId: Schema.NullOr(Schema.String),
+});
+export type SearchRequest = typeof SearchRequest.Type;
+
+/** Internal legacy thread-scan cursor used only while drive history is reused. */
 export const SearchThreadCursor = Schema.Struct({
   updatedAt: Schema.Number,
   threadId: Schema.String,
-  /** Read failures from earlier pages, carried until the final page. */
   threadReadFailures: Schema.optional(NonNegativeInt),
 });
 export type SearchThreadCursor = typeof SearchThreadCursor.Type;
-
-export const SearchRequest = Schema.Struct({
-  query: Schema.String,
-  /** Only this drive. Null: every drive the user can read. */
-  driveId: Schema.NullOr(Schema.String),
-  /** Archived threads are omitted unless requested. */
-  includeArchived: Schema.optional(Schema.Boolean),
-  /** Resume the thread scan after this thread's position in the stable ordering. */
-  threadCursor: Schema.optional(Schema.NullOr(SearchThreadCursor)),
-});
 
 /** A turn's saved files, as the commits its checkpoint names. */
 export const TurnCommits = Schema.Struct({
@@ -136,17 +151,15 @@ export const TurnCommits = Schema.Struct({
 
 const matched = Schema.Array(Schema.String);
 
+/** Legacy drive history hits retained alongside indexed thread results. */
 export const SearchHit = Schema.Union([
   Schema.Struct({
     kind: Schema.Literal("thread"),
     threadId: Schema.String,
     title: Schema.String,
     driveId: Schema.NullOr(Schema.String),
-    /** The query's words this thread matched. */
     matched,
-    /** Files the thread's turns changed. */
     files: Schema.Array(Schema.String),
-    /** Where in the conversation the words are, by message. */
     messages: Schema.Array(
       Schema.Struct({
         messageId: Schema.String,
@@ -155,10 +168,8 @@ export const SearchHit = Schema.Union([
         excerpt: Schema.String,
       }),
     ),
-    /** More matching message locations exist; use open_thread to read the full turns. */
     messagesTruncated: Schema.optional(Schema.Boolean),
     turns: Schema.Array(TurnCommits),
-    /** Present only when the search explicitly included archived threads. */
     archived: Schema.optional(Schema.Boolean),
   }),
   Schema.Struct({
@@ -172,28 +183,22 @@ export const SearchHit = Schema.Union([
     files: Schema.Array(Schema.String),
   }),
   Schema.Struct({
-    /** A thread's work not yet reconciled into its drive's `main`. */
     kind: Schema.Literal("work"),
     driveId: Schema.String,
     threadId: Schema.String,
-    /** The thread's title, when the user can see the thread; others' threads stay unnamed. */
     title: Schema.NullOr(Schema.String),
     commit: Oid,
     base: Schema.NullOr(Oid),
     matched,
     files: Schema.Array(Schema.String),
-    /** Present only when the search explicitly included an archived thread. */
     archived: Schema.optional(Schema.Boolean),
   }),
 ]);
 export type SearchHit = typeof SearchHit.Type;
 
 export const Searched = Schema.Struct({
-  /** Conversations read on this page, of `threadsInScope`. */
   threads: NonNegativeInt,
-  /** Thread conversations that could not be read on this page. */
   threadReadFailures: Schema.optional(NonNegativeInt),
-  /** Threads in the drive scope after applying the archived option. */
   threadsInScope: NonNegativeInt,
   drives: NonNegativeInt,
   commits: NonNegativeInt,
@@ -201,17 +206,15 @@ export const Searched = Schema.Struct({
 });
 export type Searched = typeof Searched.Type;
 
+/** Internal drive-history search result, not sent over the Runner protocol. */
 export const SearchResult = Schema.Union([
   Schema.Struct({
     _tag: Schema.Literal("found"),
     terms: Schema.Array(Schema.String),
     hits: Schema.Array(SearchHit),
     searched: Searched,
-    /** Resume the thread scan after this page; null when every eligible thread was searched. */
     nextThreadCursor: Schema.optional(Schema.NullOr(SearchThreadCursor)),
-    /** Whether the search sequence covered every eligible thread without read failures. */
     threadCoverageComplete: Schema.optional(Schema.Boolean),
-    /** Some matching drive hits were omitted by the response-size limit. */
     driveHitsTruncated: Schema.optional(Schema.Boolean),
   }),
   Schema.Struct({
@@ -219,21 +222,37 @@ export const SearchResult = Schema.Union([
     terms: Schema.Array(Schema.String),
     reason: Schema.String,
     searched: Searched,
-    /** Resume the thread scan after this page; null when every eligible thread was searched. */
     nextThreadCursor: Schema.optional(Schema.NullOr(SearchThreadCursor)),
-    /** Whether the search sequence covered every eligible thread without read failures. */
     threadCoverageComplete: Schema.optional(Schema.Boolean),
-    /** Some matching drive hits were omitted by the response-size limit. */
     driveHitsTruncated: Schema.optional(Schema.Boolean),
   }),
 ]);
 export type SearchResult = typeof SearchResult.Type;
 
-export const ThreadRequest = Schema.Struct({
-  threadId: Schema.String,
-  /** One turn in full. Null: every turn, each message cut short. */
-  turn: Schema.NullOr(PositiveInt),
+/** Opaque cursor and index coverage cross this boundary unchanged. */
+export const ContextSearchResult = Schema.Struct({
+  ...ThreadSearchResult.fields,
+  /** Commits and unmerged work remain searchable alongside indexed thread items. */
+  driveHits: Schema.Array(SearchHit),
+  driveSearched: Searched,
+  driveHitsTruncated: Schema.Boolean,
 });
+export type ContextSearchResult = typeof ContextSearchResult.Type;
+
+export const ThreadRequest = Schema.Union([
+  Schema.Struct({
+    threadId: ThreadId,
+    /** One turn in full. Null: every turn, each message cut short. */
+    turn: Schema.NullOr(PositiveInt),
+  }),
+  Schema.Struct({
+    threadId: ThreadId,
+    itemId: Schema.String,
+    /** A search hit's project keeps an exact-item read within its selected drive. */
+    projectId: ProjectId,
+  }),
+]);
+export type ThreadRequest = typeof ThreadRequest.Type;
 
 export const ThreadMessage = Schema.Struct({
   messageId: Schema.String,
@@ -267,6 +286,23 @@ export const ThreadResult = Schema.Union([
     /** The thread's latest auto-save or branch, when `main` doesn't hold it yet. */
     unreconciled: Schema.NullOr(Schema.Struct({ commit: Oid, base: Schema.NullOr(Oid) })),
   }),
+  Schema.Struct({
+    _tag: Schema.Literal("item"),
+    threadId: ThreadId,
+    projectId: ProjectId,
+    title: Schema.String,
+    archived: Schema.Boolean,
+    snapshotSequence: NonNegativeInt,
+    item: Schema.Struct({
+      itemId: Schema.String,
+      entryId: Schema.String,
+      runId: Schema.NullOr(Schema.String),
+      position: NonNegativeInt,
+      kind: SearchItemKind,
+      text: Schema.String,
+      createdAt: Schema.NullOr(Schema.String),
+    }),
+  }),
   Schema.Struct({ _tag: Schema.Literal("not_found") }),
 ]);
 export type ThreadResult = typeof ThreadResult.Type;
@@ -279,7 +315,7 @@ export const contextJson = {
   diffRequest: jsonCodec(DiffRequest),
   diff: jsonCodec(DiffResult),
   searchRequest: jsonCodec(SearchRequest),
-  search: jsonCodec(SearchResult),
+  search: jsonCodec(ContextSearchResult),
   threadRequest: jsonCodec(ThreadRequest),
   thread: jsonCodec(ThreadResult),
 };
