@@ -13,7 +13,7 @@ import {
   snapshot,
   turnReport,
   withObject,
-} from "./runnerTestKit.ts";
+} from "../runnerTesting.ts";
 
 const time = (iso: string) => Date.parse(iso);
 const epoch = (value: DateTime.Utc | null | undefined) =>

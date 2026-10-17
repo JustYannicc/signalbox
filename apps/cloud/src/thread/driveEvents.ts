@@ -11,8 +11,8 @@ import {
   TurnItemId,
 } from "@t3tools/contracts";
 
-import { type DecisionContext, turnItemEvent, unstampedEventId } from "../threadEvents.ts";
-import { positionTurnItem, systemNoticeEvents } from "./runnerEvents.ts";
+import { type DecisionContext, turnItemEvent, unstampedEventId } from "./threadEvents.ts";
+import { positionTurnItem, systemNoticeEvents } from "./runner/runnerEvents.ts";
 
 /**
  * What a Runner's drive reports become in a thread's log. A turn's saved

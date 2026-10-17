@@ -23,11 +23,11 @@ import {
   threadId,
   turnReport,
   withObject,
-} from "./runnerTestKit.ts";
+} from "../runnerTesting.ts";
 import { remoteThreadWorktree } from "../../user/contextProjects.ts";
 import { DRAIN_TIMEOUT_MS } from "./ThreadRunner.ts";
 import * as ThreadStore from "../ThreadStore.ts";
-import * as PreviewState from "../preview/PreviewState.ts";
+import * as PreviewState from "../PreviewState.ts";
 
 /** A backend that does nothing, with its class's idle tail. */
 const fakeBackend = (kind: "cloudflare" | "boat", idleTailMs: number): MachineBackendShape => {

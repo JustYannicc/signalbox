@@ -30,7 +30,7 @@ import {
   turnItemEvent,
 } from "../threadEvents.ts";
 import { applyEvents } from "../threadProjection.ts";
-import { checkpointEvents, dependencyProgressEvents, noticeEvents } from "./driveItems.ts";
+import { checkpointEvents, dependencyProgressEvents, noticeEvents } from "../driveEvents.ts";
 import {
   ERROR_ITEM_BAND_POSITION,
   type Json,

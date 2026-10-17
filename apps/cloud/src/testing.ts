@@ -51,7 +51,7 @@ import { deliverPendingEvents } from "./thread/eventOutbox.ts";
 import { deliverPendingSummary } from "./thread/summaryOutbox.ts";
 import * as ThreadDirectory from "./thread/ThreadDirectory.ts";
 import * as ThreadBrowsing from "./thread/browsing/ThreadBrowsing.ts";
-import * as PreviewState from "./thread/preview/PreviewState.ts";
+import * as PreviewState from "./thread/PreviewState.ts";
 import * as ThreadEngine from "./thread/ThreadEngine.ts";
 import * as StatusNoteModel from "./thread/statusLine/StatusNoteModel.ts";
 import * as ThreadStatusNotes from "./thread/statusLine/ThreadStatusNotes.ts";

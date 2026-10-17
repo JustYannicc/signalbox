@@ -11,7 +11,7 @@ import * as DateTime from "effect/DateTime";
 import * as Schema from "effect/Schema";
 
 import type { DecisionContext } from "../threadEvents.ts";
-import { dependencyProgressEvents, noticeEvents } from "./driveItems.ts";
+import { dependencyProgressEvents, noticeEvents } from "../driveEvents.ts";
 
 const threadId = ThreadId.make("drive-items-test");
 const runId = RunId.make("drive-items-run");

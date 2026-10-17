@@ -35,7 +35,7 @@ import { TurnDiagnostics } from "../diagnostics/TurnDiagnostics.ts";
 import { driveToken, isDriveToken } from "../../drive/driveToken.ts";
 import { gatewayProviderFor, poolIdOfInstance } from "../providerCatalog.ts";
 import { holdsNativeSession } from "../session/nativeSession.ts";
-import * as PreviewState from "../preview/PreviewState.ts";
+import * as PreviewState from "../PreviewState.ts";
 import { steersOf } from "../steering.ts";
 import { SessionRows } from "../session/SessionRows.ts";
 import { sessionToken } from "../session/sessionToken.ts";

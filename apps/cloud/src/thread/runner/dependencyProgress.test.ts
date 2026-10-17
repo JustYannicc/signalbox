@@ -14,7 +14,7 @@ import {
   threadId,
   turnReport,
   withObject,
-} from "./runnerTestKit.ts";
+} from "../runnerTesting.ts";
 
 describe("dependency progress at the end of a run", () => {
   it.effect.each(["stop", "failure", "completion", "lost", "recovery"] as const)(
