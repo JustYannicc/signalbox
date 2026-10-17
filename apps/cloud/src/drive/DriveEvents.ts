@@ -102,13 +102,17 @@ export const allowDeletedRefs = Effect.gen(function* () {
     at INTEGER NOT NULL
   )`;
   yield* sql`INSERT INTO ref_events_nullable SELECT * FROM ref_events`;
+  // A temporary row advances AUTOINCREMENT without writing SQLite's system table.
+  const [marker] = yield* sql<{ readonly seq: number }>`INSERT INTO ref_events_nullable
+    (seq, ref, before, after, thread_id, at)
+    SELECT ${seq}, '', NULL, NULL, NULL, 0
+    WHERE ${seq} > (SELECT COALESCE(MAX(seq), 0) FROM ref_events_nullable)
+    RETURNING seq`;
+  if (marker !== undefined) {
+    yield* sql`DELETE FROM ref_events_nullable WHERE seq = ${marker.seq}`;
+  }
   yield* sql`DROP TABLE ref_events`;
   yield* sql`ALTER TABLE ref_events_nullable RENAME TO ref_events`;
-  // Delivered events are pruned; their sequence numbers must never be reused.
-  yield* sql`INSERT INTO sqlite_sequence (name, seq)
-    SELECT 'ref_events', ${seq}
-    WHERE NOT EXISTS (SELECT 1 FROM sqlite_sequence WHERE name = 'ref_events')`;
-  yield* sql`UPDATE sqlite_sequence SET seq = MAX(seq, ${seq}) WHERE name = 'ref_events'`;
 });
 
 /** Moves a person's backlog keeps while their object can't take them; older ones go. */

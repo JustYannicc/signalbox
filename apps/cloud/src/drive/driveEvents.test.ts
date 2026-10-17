@@ -150,6 +150,12 @@ describe("drive events", () => {
         { sequence: 1, after: "first" },
         { sequence: 4, before: "first", after: null },
       ]);
+      yield* events.acknowledge("user_1", 4);
+      yield* DriveEvents.allowDeletedRefs.pipe(sql.withTransaction);
+      yield* events.record({ ...first, after: "after-empty-rebuild" });
+      expect(yield* events.pending("user_1", 10)).toMatchObject([
+        { sequence: 5, after: "after-empty-rebuild" },
+      ]);
     }).pipe(Effect.provide(layer));
   });
 

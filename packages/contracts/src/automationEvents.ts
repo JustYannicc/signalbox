@@ -55,7 +55,7 @@ const SOURCE = {
 const DRIVE = {
   driveId: "the drive's id",
   before: "the commit it moved from, or null for the first",
-  after: "the commit it moved to",
+  after: "the commit it moved to, or null when the branch was removed",
   commits:
     "[{ oid, author, message (up to 4k chars), parents }] new since before, newest first, up to 20",
   commitsTruncated: "true when there were more",
@@ -392,9 +392,9 @@ export const AUTOMATION_EVENTS = [
   },
   {
     name: "drive.branch-saved",
-    when: "When a thread saves its work",
+    when: "When a thread's branch changes",
     description:
-      "A thread saved its work to its branch in a cloud drive, before it lands: a new revision to check.",
+      "A thread saved, restored or removed its branch in a cloud drive, before it lands.",
     fields: { ...DRIVE, ref: "threads/<thread id>" },
   },
   {
