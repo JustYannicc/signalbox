@@ -3,6 +3,7 @@ import {
   AuthFilesystemReadScope,
   AuthOrchestrationOperateScope,
   AuthOrchestrationReadScope,
+  AuthSettingsWriteScope,
   AuthPreviewOperateScope,
   AuthSourceControlWriteScope,
   AuthStandardClientScopes,
@@ -154,6 +155,7 @@ const SECTION_METHODS = [
 const SERVED = [
   WS_METHODS.subscribeServerConfig,
   WS_METHODS.serverGetConfig,
+  WS_METHODS.serverUpdateSettings,
   WS_METHODS.serverProbe,
   WS_METHODS.serverReportClientActivity,
   WS_METHODS.subscribeServerLifecycle,
@@ -227,6 +229,7 @@ export const CloudRpcGroup = WsRpcGroup.omit(
 const REQUIRED_SCOPES = {
   [WS_METHODS.subscribeServerConfig]: AuthOrchestrationReadScope,
   [WS_METHODS.serverGetConfig]: AuthOrchestrationReadScope,
+  [WS_METHODS.serverUpdateSettings]: AuthSettingsWriteScope,
   [WS_METHODS.serverProbe]: AuthOrchestrationReadScope,
   [WS_METHODS.serverReportClientActivity]: AuthOrchestrationReadScope,
   [WS_METHODS.subscribeServerLifecycle]: AuthOrchestrationReadScope,
@@ -796,6 +799,7 @@ export const layerHandlers = (input: {
           folderCall(folders.moveThread(request)),
         [SIGNALBOX_FOLDERS_WS_METHODS.setInstructions]: (request) =>
           folderCall(folders.setInstructions(request)),
+        [SIGNALBOX_FOLDERS_WS_METHODS.setPhase]: (request) => folderCall(folders.setPhase(request)),
         [SIGNALBOX_FOLDERS_WS_METHODS.setGitHubLend]: (request) =>
           folderCall(githubActions.setLend(request)),
         [SIGNALBOX_THREAD_KINDS_WS_METHODS.subscribe]: () =>

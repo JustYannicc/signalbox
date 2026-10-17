@@ -1281,6 +1281,7 @@ describe("ThreadRunner", () => {
         yield* launch(engine);
         yield* connect(runner);
         expect((yield* runner.work).drive).toBeNull();
+        expect(yield* runner.previewDrive).toBeNull();
         expect((yield* runner.authorizeDrive("sbd1.x.y"))._tag).toBe("denied");
       }),
     ),
@@ -1337,9 +1338,39 @@ describe("ThreadRunner", () => {
             release: machine.generation,
             stop: true,
           });
-          // A preview never starts a machine.
+          // A preview can ask for its own machine even without a live turn.
           previews.held = true;
-          expect(yield* runner.reconcile).toMatchObject({ ensure: null, stop: true });
+          previews.lastActiveAt = yield* Clock.currentTimeMillis;
+          const requested = yield* runner.reconcile;
+          expect(requested).toMatchObject({ runId: null, release: null, stop: false });
+          expect(requested.ensure).not.toBeNull();
+          const previewMachine = requested.ensure!;
+          yield* runner.ensured(previewMachine.generation);
+          expect(
+            yield* runner.hello(hello(previewMachine.generation, previewMachine.token)),
+          ).toMatchObject({ _tag: "welcome", activeRunId: null });
+
+          const previewWork = yield* runner.work;
+          expect(previewWork).toMatchObject({ turn: null, activeRunId: null });
+          expect((yield* snapshot(engine)).projection.runs.map((run) => run.status)).toEqual([
+            "completed",
+          ]);
+          expect(yield* runner.reconcile).toMatchObject({
+            busy: true,
+            release: null,
+            wakeAt: null,
+          });
+          yield* TestClock.adjust(IDLE_TAIL_MS * 3);
+          expect(yield* runner.reconcile).toMatchObject({ busy: true, release: null });
+
+          previews.held = false;
+          const previewClosedAt = yield* Clock.currentTimeMillis;
+          previews.lastActiveAt = previewClosedAt;
+          expect(yield* runner.reconcile).toMatchObject({
+            busy: false,
+            release: null,
+            wakeAt: previewClosedAt + IDLE_TAIL_MS,
+          });
         }),
       { previews },
     );
@@ -1358,4 +1389,64 @@ describe("ThreadRunner", () => {
       }),
     ),
   );
+
+  it.effect("gives a preview read access to the owner's drive without a live turn", () => {
+    const previews: Previews = { held: true, lastActiveAt: null };
+    return withObject(
+      freshDatabase(),
+      (engine, runner) =>
+        Effect.gen(function* () {
+          yield* launch(engine);
+          const first = yield* connect(runner);
+          const turn = yield* liveTurn(runner);
+          const report = turnReport(turn.runId, turn.runOrdinal, turn.providerThread);
+          yield* runner.batch({
+            generation: first.generation,
+            sequence: 1,
+            items: [report.started, report.full, report.terminal],
+          });
+
+          expect((yield* runner.work).turn).toBeNull();
+          const firstDrive = yield* runner.previewDrive;
+          expect(firstDrive).toMatchObject({
+            driveId: personal.place.driveId,
+            remoteToken: null,
+          });
+          expect(yield* runner.authorizeDrive(firstDrive!.token)).toMatchObject({
+            _tag: "granted",
+            driveId: personal.place.driveId,
+            live: false,
+          });
+
+          // A preview token is still fenced by the machine generation.
+          yield* runner.ended(first.generation, "preview machine replaced");
+          expect(yield* runner.authorizeDrive(firstDrive!.token)).toMatchObject({
+            _tag: "denied",
+          });
+          const requested = yield* runner.reconcile;
+          expect(requested.runId).toBeNull();
+          expect(requested.ensure).not.toBeNull();
+          const second = requested.ensure!;
+          expect(yield* runner.previewDrive).toMatchObject({
+            driveId: personal.place.driveId,
+            remoteToken: null,
+          });
+          yield* runner.ensured(second.generation);
+          yield* runner.hello(hello(second.generation, second.token));
+
+          const secondDrive = yield* runner.previewDrive;
+          expect(secondDrive?.token).not.toBe(firstDrive?.token);
+          expect(yield* runner.authorizeDrive(firstDrive!.token)).toMatchObject({
+            _tag: "denied",
+          });
+          expect(yield* runner.authorizeDrive(secondDrive!.token)).toMatchObject({
+            _tag: "granted",
+            driveId: personal.place.driveId,
+            live: false,
+          });
+          expect((yield* runner.work).turn).toBeNull();
+        }),
+      { drives: true, previews },
+    );
+  });
 });

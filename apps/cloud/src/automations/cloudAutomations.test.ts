@@ -11,6 +11,7 @@ import {
 } from "@t3tools/contracts";
 import { scheduledTaskSource } from "@signalbox/automations/scheduledTasks";
 import * as WorkflowEngine from "@signalbox/automations/WorkflowEngine";
+import { SIGNALBOX_FOLDERS_WS_METHODS } from "@t3tools/contracts/signalboxFolders";
 import { afterEach, describe, expect, it, vi } from "@effect/vitest";
 import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
@@ -127,6 +128,44 @@ export default workflow(async (w, event: { threadId: string }) => {
       expect(runs.map((run) => [run.trigger, run.status])).toEqual([["event", "succeeded"]]);
       const run = yield* engine((engine) => engine.getRun(runs[0]!.id));
       expect(run.output).toBe("noted");
+    }),
+  );
+
+  it.effect("an agent and an automation move their folder to another phase", () =>
+    Effect.gen(function* () {
+      const { rpc, thread, tool, save } = yield* setup;
+      const writer = yield* thread("thread-writer", "Plan the trip");
+      const created = yield* rpc[SIGNALBOX_FOLDERS_WS_METHODS.create]({
+        name: "Trip",
+        parentId: null,
+      });
+      const trip = created.folders.find((folder) => folder.name === "Trip")!.id;
+      const atTop = yield* Effect.exit(tool(writer, "set_folder_phase", { current: "Doing" }));
+      expect(atTop._tag === "Failure" ? Cause.pretty(atTop.cause) : "moved").toContain("top level");
+
+      // From its thread's machine, the agent's own folder.
+      yield* rpc[SIGNALBOX_FOLDERS_WS_METHODS.moveThread]({ threadId: writer, folderId: trip });
+      expect(yield* tool(writer, "set_folder_phase", { current: "doing" })).toEqual({
+        folderId: trip,
+        phase: { phases: ["Idea", "Doing", "Done"], current: "Doing" },
+      });
+
+      // An automation step: the folder of the thread whose turn finished.
+      const saved = (yield* save(
+        writer,
+        `export const meta = { name: "Done on a turn", triggers: [{ on: "turn.finished" }] } as const;
+export default workflow(async (w, event: { threadId: string }) => {
+  await w.call("Mark it done", "signalbox.set_folder_phase", { threadId: event.threadId, current: "Done" });
+});`,
+      )) as { readonly ok: boolean };
+      expect(saved.ok).toBe(true);
+      yield* rpc[SIGNALBOX_FOLDERS_WS_METHODS.moveThread]({
+        threadId: ThreadId.make("thread-work"),
+        folderId: trip,
+      });
+      yield* thread("thread-work", "Book it");
+      const after = yield* rpc[SIGNALBOX_FOLDERS_WS_METHODS.update]({ id: trip });
+      expect(after.folders.find((folder) => folder.id === trip)?.phase?.current).toBe("Done");
     }),
   );
 

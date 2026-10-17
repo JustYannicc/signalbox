@@ -3,6 +3,7 @@ import { isElectron } from "~/env";
 import { isMacPlatform, isWindowsPlatform, normalizeSearchText } from "~/lib/utils";
 import { STATIC_KEYBINDING_COMMANDS, type KeybindingCommand } from "@t3tools/contracts";
 import {
+  environmentCanWriteModelSettings,
   environmentSupports,
   SignalboxEnvironmentCapabilityFields,
   type EnvironmentId,
@@ -63,6 +64,7 @@ export interface SettingsSearchItem {
   readonly localEnvironmentOnly?: boolean;
   readonly wslAvailableOnly?: boolean;
   readonly managedTunnelOnly?: boolean;
+  readonly hidden?: boolean; // signalbox: no row renders for it
   // signalbox: its row only renders where the environment it acts on can do this.
   readonly capability?: SignalboxEnvironmentCapability;
   readonly secondary?: boolean;
@@ -214,7 +216,7 @@ export const SETTINGS_SEARCH_ITEMS = [
   },
   {
     id: "default-model",
-    capability: "serverSettingsWrite",
+    capability: "modelSettingsWrite",
     title: "Default model",
     to: "/settings/general",
     scope: "project-defaults",
@@ -573,6 +575,13 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["cli terminal shell path install command line"],
     desktopOnly: true,
     localEnvironmentOnly: true, // signalbox: the thin build bundles no CLI
+  },
+  {
+    id: "mobile-app",
+    title: "Mobile app",
+    to: "/settings/general",
+    searchTerms: ["phone tablet iPhone iPad iOS Android App Store Google Play QR"],
+    hidden: true, // signalbox: no Signalbox app in the stores yet
   },
   {
     id: "privacy-policy",
@@ -1168,6 +1177,7 @@ export function filterAvailableSettingsSearchItems(
   const items: ReadonlyArray<SettingsSearchItem> = SETTINGS_SEARCH_ITEMS;
   return items.filter(
     (item) =>
+      !item.hidden && // signalbox
       (!item.cloudOnly || availability.hasCloudPublicConfig) &&
       (!item.environmentOnly || availability.hasEnvironment) &&
       (!item.providerSettingsOnly || availability.hasProviderSettingsEnvironment) &&
@@ -1219,7 +1229,9 @@ export function unsupportedSettingsCapabilities(
       return (
         candidates.length > 0 &&
         !candidates.some((environment) =>
-          environmentSupports(environment.serverConfig?.environment.capabilities, capability),
+          capability === "modelSettingsWrite"
+            ? environmentCanWriteModelSettings(environment.serverConfig?.environment.capabilities)
+            : environmentSupports(environment.serverConfig?.environment.capabilities, capability),
         )
       );
     }),

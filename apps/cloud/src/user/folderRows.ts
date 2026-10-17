@@ -16,6 +16,9 @@ export const FolderRow = Schema.Struct({
   instructions: Schema.NullOr(Schema.String),
   // Optional: a cloud from before folder secrets (#395) sends none.
   secrets_environment_id: Schema.optionalKey(Schema.NullOr(OnePasswordEnvironmentId)),
+  // Optional: a cloud from before folder phases (#677) sends none.
+  phases: Schema.optionalKey(Schema.NullOr(Schema.String)),
+  phase: Schema.optionalKey(Schema.NullOr(Schema.String)),
 });
 export type FolderRow = typeof FolderRow.Type;
 export const FolderRows = Schema.Struct({

@@ -19,7 +19,7 @@ import {
   SettingsEnvironmentFilterHeader,
 } from "./components/SettingsEnvironmentFilterHeader";
 import { useSettingsEnvironmentFilter } from "./settings-environment-filter";
-import { targetsSupporting } from "./signalboxSettingsTargets"; // signalbox
+import { targetsSupporting, targetsWithRepositoryIdentity } from "./signalboxSettingsTargets"; // signalbox
 import { AutomationsSettingsRows } from "../automations/AutomationsSettingsRows"; // signalbox: automations
 import { SignInSettingsRow } from "../signIn/SignInSettingsRow"; // signalbox: sign-in grants
 import { OnlyEnvironmentAccountSections } from "../account/EnvironmentAccountSection"; // signalbox
@@ -85,13 +85,15 @@ function ConfiguredSettingsRouteScreen() {
         contentContainerStyle={{ paddingBottom: Math.max(insets.bottom, 18) + 18 }}
       >
         <SettingsSection title="Connections">
-          <SettingsRow
-            icon="person.crop.circle"
-            label="T3 Account"
-            value={accountLabel}
-            disabled={!isLoaded}
-            onPress={() => navigation.navigate("SettingsSheet", { screen: "SettingsAuth" })}
-          />
+          {showsEnvironments ? (
+            <SettingsRow
+              icon="person.crop.circle"
+              label="T3 Account"
+              value={accountLabel}
+              disabled={!isLoaded}
+              onPress={() => navigation.navigate("SettingsSheet", { screen: "SettingsAuth" })}
+            />
+          ) : null}
           {showsEnvironments ? (
             <SettingsRow
               icon="desktopcomputer"
@@ -151,10 +153,16 @@ function LocalSettingsRouteScreen() {
 
 function SettingsIndexSections() {
   const { selectedTargets, projectGroups, selectedProjectKey } = useSettingsEnvironmentFilter();
+  const showsEnvironments = useShowsEnvironmentUi();
   const noServerTargets = selectedTargets.length === 0;
   // signalbox: connected, but none of them takes server settings (Signalbox Cloud).
+  const serverSettingsTargets = targetsSupporting(selectedTargets, "serverSettingsWrite");
   const hidesServerSettings =
-    !noServerTargets && targetsSupporting(selectedTargets, "serverSettingsWrite").length === 0;
+    (noServerTargets && !showsEnvironments) ||
+    (!noServerTargets && serverSettingsTargets.length === 0);
+  const hidesProjectGrouping =
+    (noServerTargets && !showsEnvironments) ||
+    (!noServerTargets && targetsWithRepositoryIdentity(selectedTargets).length === 0);
   const selectedProject = projectGroups.find((group) => group.key === selectedProjectKey);
   const scopedProjectMembers =
     selectedProject?.members
@@ -202,51 +210,58 @@ function SettingsIndexSections() {
             target="SettingsProjectOverview"
           />
         ) : null}
-        <SettingsRow icon="folder" label="Organization" target="SettingsOrganization" />
+        {hidesProjectGrouping ? null : (
+          <SettingsRow icon="folder" label="Organization" target="SettingsOrganization" />
+        )}
         <SettingsRow icon="text.bubble" label="Thread behavior" target="SettingsThreads" />
         <SettingsRow icon="arrow.turn.left.up" label="Follow-ups" target="SettingsFollowUp" />
         <SettingsRow icon="archivebox" label="Archived Threads" target="SettingsArchive" />
       </SettingsSection>
 
-      <SettingsSection title="Server settings">
-        <SettingsRow
-          icon="person.crop.circle"
-          label="Provider accounts"
-          target="SettingsProviderAccounts"
-          disabled={noServerTargets}
-        />
-        {hidesServerSettings ? null : (
-          <>
-            <SettingsRow
-              icon="text.bubble"
-              label="New threads"
-              target="SettingsEnvironmentNewThreads"
-              disabled={noServerTargets}
-            />
-            <SettingsRow
-              icon="arrow.triangle.branch"
-              label="Source control"
-              target="SettingsEnvironmentSourceControl"
-              disabled={noServerTargets}
-            />
-            <SettingsRow
-              icon="text.alignleft"
-              label="Agent behavior"
-              target="SettingsEnvironmentAgentBehavior"
-              disabled={noServerTargets}
-            />
-            <SettingsRow
-              icon="arrow.clockwise"
-              label="Maintenance"
-              target="SettingsEnvironmentMaintenance"
-              disabled={noServerTargets}
-            />
-          </>
-        )}
-      </SettingsSection>
+      {hidesServerSettings ? null : (
+        <SettingsSection title="Server settings">
+          <SettingsRow
+            icon="person.crop.circle"
+            label="Provider accounts"
+            target="SettingsProviderAccounts"
+            disabled={noServerTargets}
+          />
+          <SettingsRow
+            icon="text.bubble"
+            label="New threads"
+            target="SettingsEnvironmentNewThreads"
+            disabled={noServerTargets}
+          />
+          <SettingsRow
+            icon="arrow.triangle.branch"
+            label="Source control"
+            target="SettingsEnvironmentSourceControl"
+            disabled={noServerTargets}
+          />
+          <SettingsRow
+            icon="text.alignleft"
+            label="Agent behavior"
+            target="SettingsEnvironmentAgentBehavior"
+            disabled={noServerTargets}
+          />
+          <SettingsRow
+            icon="arrow.clockwise"
+            label="Maintenance"
+            target="SettingsEnvironmentMaintenance"
+            disabled={noServerTargets}
+          />
+        </SettingsSection>
+      )}
 
       <SettingsSection title="App">
         <UsageSettingsRow />
+        {hidesServerSettings && !noServerTargets ? (
+          <SettingsRow
+            icon="person.crop.circle"
+            label="Provider accounts"
+            target="SettingsProviderAccounts"
+          />
+        ) : null}
         <SettingsRow icon="info.circle" label="About Signalbox" target="SettingsAbout" />
       </SettingsSection>
     </>

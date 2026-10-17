@@ -25,6 +25,7 @@ import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Queue from "effect/Queue";
+import * as PlatformError from "effect/PlatformError";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 
@@ -1035,6 +1036,44 @@ describe("RunnerTurns", () => {
         yield* settle;
 
         expect(reported.map(label)).toEqual(["turn.started run-1", "provider run-1 turn.terminal"]);
+      }),
+    ),
+  );
+
+  it.effect("names a disconnected machine filesystem before the provider starts", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fake = yield* makeFakeAdapter;
+        const failed = yield* Deferred.make<RunnerItem>();
+        const turns = yield* makeRunnerTurns({
+          threadId,
+          adapters: new Map([[instanceId, fake.adapter]]),
+          cwd: "/tmp",
+          useModelToken: () =>
+            Effect.fail(
+              PlatformError.systemError({
+                _tag: "Unknown",
+                module: "FileSystem",
+                method: "writeFile",
+                pathOrDescriptor: "/machine/model-token.next",
+                cause: Object.assign(new Error("socket is not connected: token=sk-secret"), {
+                  code: "ENOTCONN",
+                }),
+              }),
+            ),
+          usage: Effect.succeed(unmeasured),
+          emit: (item) =>
+            item.kind === "turn.failed"
+              ? Deferred.succeed(failed, item).pipe(Effect.asVoid)
+              : Effect.void,
+        });
+        yield* turns.start({ turn: turnFor(1), modelToken: "token-1" });
+        const item = yield* Deferred.await(failed);
+        expect(item.kind === "turn.failed" && item.message).toBe(
+          "Signalbox couldn't write this machine's state (ENOTCONN: filesystem disconnected).",
+        );
+        expect(fake.calls).toEqual([]);
+        expect(JSON.stringify(item)).not.toContain("sk-secret");
       }),
     ),
   );
