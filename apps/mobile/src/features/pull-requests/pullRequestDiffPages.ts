@@ -1,4 +1,5 @@
 import type { PullRequestDiffResult } from "@t3tools/contracts";
+import { samePullRequestDiffRevision } from "@t3tools/client-runtime/pull-request-diff-revision";
 import { buildReviewParsedDiff, type ReviewParsedDiff } from "../review/reviewModel";
 
 export interface PullRequestDiffPage {
@@ -12,12 +13,21 @@ export function retainPullRequestDiffPage(
   cursor: string | null,
   result: PullRequestDiffResult,
 ): readonly PullRequestDiffPage[] {
+  if (
+    cursor !== null &&
+    pages.some((page) => !samePullRequestDiffRevision(page.result.revision, result.revision))
+  ) {
+    // The server restarts a stale cursor with the new first page. Keep this response as the new
+    // chain's seed under the request cursor so its cached result can be continued exactly once.
+    return [{ cursor, result }];
+  }
   const index = pages.findIndex((page) => page.cursor === cursor);
   if (index === -1) return [...pages, { cursor, result }];
   const previous = pages[index]?.result;
   if (
     previous === result ||
     (previous?.patch === result.patch &&
+      samePullRequestDiffRevision(previous.revision, result.revision) &&
       previous.truncated === result.truncated &&
       previous.nextCursor === result.nextCursor &&
       JSON.stringify(previous.omittedFileStats ?? []) ===

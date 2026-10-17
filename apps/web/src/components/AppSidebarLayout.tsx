@@ -32,6 +32,7 @@ import {
   usePanelNavigationSuppression,
 } from "../panelAnimations";
 import LegacyThreadSidebar from "./LegacySidebar";
+import { QuickCaptureHost } from "./capture/QuickCaptureHost"; // signalbox: quick capture
 import { useThreadVisitedMigration } from "../hooks/useThreadVisitedMigration";
 import { SettingsSidebarNav } from "./settings/SettingsSidebarNav";
 import { SidebarBrandWidthProbe, SidebarChromeHeader } from "./sidebar/SidebarChrome";
@@ -371,6 +372,7 @@ export function AppSidebarLayout({ children }: { children: ReactNode }) {
         <MainAppLocationTracker />
         <FolderDialogs />
         <NotesSheet />
+        <QuickCaptureHost />
       </SidebarProvider>
     </PanelAnimationSuppressionProvider>
   );
