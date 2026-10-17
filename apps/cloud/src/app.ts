@@ -38,6 +38,7 @@ import * as LocalKeyRoutes from "./localKeys/localKeyRoutes.ts";
 import * as AccountRoutes from "./http/accountRoutes.ts";
 import * as HookRoutes from "./automations/hookRoutes.ts";
 import * as WorkOSWebhook from "./http/workosWebhook.ts";
+import * as PreviewOpenRoutes from "./http/previewOpenRoutes.ts";
 import { NO_STORE_HEADERS, requestCredentials, traceId } from "./http/credentials.ts";
 import * as DiagnosticsRoutes from "./http/diagnosticsRoutes.ts";
 import * as ThreadKindRoutes from "./http/threadKindRoutes.ts";
@@ -127,6 +128,7 @@ const routes = Layer.mergeAll(
   EnvironmentApi.layer,
   AccountRoutes.layer,
   HookRoutes.layer,
+  PreviewOpenRoutes.layer,
   DiagnosticsRoutes.layer,
   ThreadKindRoutes.layer,
   WorkOSWebhook.layer,
