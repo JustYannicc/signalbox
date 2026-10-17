@@ -9,6 +9,8 @@ import * as Schema from "effect/Schema";
 import type * as Stream from "effect/Stream";
 import { type HttpClient, HttpClientRequest, type HttpClientResponse } from "effect/http";
 
+import { makeAgentGitHubApi } from "./agentGitHubApi.ts";
+
 /**
  * The GitHub calls Signalbox Cloud makes: a few REST and GraphQL reads, opening pull requests, and git's
  * smart HTTP. Every call takes the user's token it acts with; nothing here
@@ -50,6 +52,8 @@ export interface GitHubEndpoints {
   readonly web: string;
   /** The REST API, e.g. `https://api.github.com`. */
   readonly api: string;
+  /** Attachment uploads; a stand-in is used only by local tests. */
+  readonly uploads?: string;
 }
 
 const GITHUB_ENDPOINTS: GitHubEndpoints = {
@@ -302,6 +306,7 @@ export const makeGitHubApi = (
     });
 
   return {
+    ...makeAgentGitHubApi(client, endpoints),
     viewer: (token: string) => json("viewer", Viewer, HttpClientRequest.get(`${api}/user`), token),
     repository: (token: string, repository: string) =>
       json("repository", Repository, HttpClientRequest.get(`${api}/repos/${repository}`), token),

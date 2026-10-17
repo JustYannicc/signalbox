@@ -26,6 +26,7 @@ import * as Environment from "../environment.ts";
 import * as GitHub from "../github/GitHub.ts";
 import * as GitHubActions from "../github/GitHubActions.ts";
 import * as GitHubBranches from "../github/GitHubBranches.ts";
+import * as AgentPullRequests from "../github/AgentPullRequests.ts";
 import * as ConnectionLinks from "../connections/ConnectionLinks.ts";
 import * as GitHubConnection from "../github/GitHubConnection.ts";
 import { API_HEADER, decodeApiCredential, serveApiRequest } from "../api/apiObject.ts";
@@ -200,6 +201,7 @@ const makeRuntime = (storage: DurableObjectStorage, env: UserObjectEnv) => {
       Layer.provideMerge(
         Layer.mergeAll(
           GitHubBranches.layer,
+          AgentPullRequests.layer,
           GitHubActions.layer,
           UserPreviewSetup.layer,
           CloudAssets.layer,
