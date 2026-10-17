@@ -28,6 +28,29 @@ To use the real web UI against it, build the web app once
 (`vp run --filter @t3tools/web build`) and open `http://localhost:8787`, or run
 web dev with `T3CODE_PORT=8787` so the Vite proxy forwards to the Worker.
 
+### Unattended test sign-in
+
+UI testing uses a dedicated WorkOS sandbox with fictional users. Give each
+user the external ID `signalbox-test:<alias>` from
+[`TestIdentities`](../../apps/cloud/src/testSignIn/TestIdentities.ts). Keep
+this sandbox separate from the environment used by real people.
+
+Set `E2E_WORKOS_CLIENT_ID`, `E2E_WORKOS_API_KEY` and a separate random
+`E2E_SIGN_IN_SECRET` of at least 32 characters in the `cloud-preview` GitHub
+environment as secrets, or in the ignored cloud dev vars for local tests.
+Normal account sign-in keeps its own
+WorkOS configuration. Production receives none of these test bindings.
+
+Trusted testing tools call `POST /api/testing/sign-in` using the signed
+request format in
+[`TestSignInPolicy`](../../apps/cloud/src/testSignIn/TestSignInPolicy.ts).
+The response supplies a normal browser cookie, bearer session, or a one-time
+`signalbox-dev://` pairing link. The stage and deployment identity must agree;
+production and unknown stages return 404 even with test secrets present.
+Signed requests are credentials and can be replayed until their expiry, at
+most 60 seconds. Mint them immediately before use and keep their bodies and
+responses out of traces, logs, and uploaded artifacts.
+
 ### Real Claude and Codex turns
 
 Claude and Codex turns run in a Runner on a machine, never in the Worker, on
@@ -786,6 +809,10 @@ Alchemy keeps its state in the account (`Cloudflare.state()`: an
 `alchemy-state-store` Worker and the account's Secrets Store). It manages
 Durable Object migrations itself, so new Durable Object classes go in the stack
 as a new binding; the `migrations` in `wrangler.jsonc` are for `wrangler dev`.
+
+Roll back a bad deploy of an Alchemy-managed Worker with `wrangler rollback`
+to an earlier version, never by reverting the merge: a revert deploys again
+and replays the legacy migration tags.
 
 Closing a pull request also deletes its R2 prefix and removes its pool links
 from production. The close workflow destroys the preview's stage first (and

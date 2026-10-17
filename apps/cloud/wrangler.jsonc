@@ -90,6 +90,7 @@
   ],
   "worker_loaders": [{ "binding": "LOADER" }],
   "vars": {
+    "SIGNALBOX_STAGE": "production",
     // Production identity. Never reuse it for another deployment.
     "ENVIRONMENT_ID": "4bfb70e5-7954-458a-9b75-4834c0ab4e13",
     "ENVIRONMENT_LABEL": "Signalbox Cloud",
@@ -143,7 +144,7 @@
       "worker_loaders": [{ "binding": "LOADER" }],
       // The scripted provider: a reply without a model, for trying the cloud locally.
       // The idle-chat test clock (`http/threadKindRoutes.ts`).
-      "vars": { "SCRIPTED_PROVIDER": "1", "THREAD_KIND_TEST_CLOCK": "1" },
+      "vars": { "SIGNALBOX_STAGE": "dev", "SCRIPTED_PROVIDER": "1", "THREAD_KIND_TEST_CLOCK": "1" },
     },
   },
 }

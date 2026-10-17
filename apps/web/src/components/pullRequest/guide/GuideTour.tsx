@@ -63,6 +63,7 @@ export function GuideTour({
   const loadDiffFiles = createPullRequestDiffFileContentsLoader(getDiffFileContents, {
     environmentId,
     reference,
+    ...(diff.revision === undefined ? {} : { revision: diff.revision }),
     commit: null,
     cacheKey: `pull-request-guide:${key}`,
   });
@@ -101,7 +102,12 @@ export function GuideTour({
         </aside>
         <main className="flex min-w-0 flex-col gap-4">
           {banner}
-          {diff.error !== null ? (
+          {diff.stale ? (
+            <p className="text-xs text-muted-foreground">
+              This guide and the current diff refer to different commits, so its excerpts are
+              hidden.
+            </p>
+          ) : diff.error !== null ? (
             <p className="text-xs text-muted-foreground">
               The diff could not be loaded, so excerpts are missing: {diff.error}
             </p>

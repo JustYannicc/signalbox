@@ -390,12 +390,27 @@ export const captureViewport = async (
       scale: options.scale,
     };
   }
-  const { data } = await cdp.send("Page.captureScreenshot", {
-    format: options.format,
-    ...(options.quality === undefined ? {} : { quality: options.quality }),
-    ...(clip ? { clip } : {}),
-  });
-  return data;
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      const { data } = await cdp.send("Page.captureScreenshot", {
+        format: options.format,
+        ...(options.quality === undefined ? {} : { quality: options.quality }),
+        ...(clip ? { clip } : {}),
+      });
+      return data;
+    } catch (cause) {
+      // Chromium can temporarily fail to copy a frame even after the page loads.
+      if (
+        attempt >= 2 ||
+        !(cause instanceof Error) ||
+        !cause.message.includes(
+          "Protocol error (Page.captureScreenshot): Unable to capture screenshot",
+        )
+      ) {
+        throw cause;
+      }
+    }
+  }
 };
 
 type SnapshotInput = {

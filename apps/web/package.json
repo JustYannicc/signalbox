@@ -5,9 +5,9 @@
   "type": "module",
   "scripts": {
     "build:ghostty-wasm": "bash scripts/build-libghostty-wasm.sh",
-    "dev": "vp dev",
+    "dev": "node ../../packages/shared/src/agentProcesses/cli.ts run -- vp dev",
     "build": "vp build",
-    "preview": "vp preview",
+    "preview": "node ../../packages/shared/src/agentProcesses/cli.ts run -- vp preview",
     "typecheck": "tsc-rs --noEmit",
     "test": "vp test run --passWithNoTests --project unit --project browser"
   },

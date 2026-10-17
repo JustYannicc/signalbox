@@ -1,7 +1,7 @@
 /**
  * One-click feedback from the rail: click, type, Send (or Enter). Shift+Enter
- * adds a line. A screenshot of the window and recent server warnings and
- * errors ride along unless unchecked. The draft survives a failed send so
+ * adds a line. A screenshot of the window and, where a host keeps them, recent
+ * server warnings and errors ride along unless unchecked. The draft survives a failed send so
  * nothing typed is lost. Builds without a feedback DSN show the button
  * disabled with the reason.
  */
@@ -10,6 +10,7 @@ import { useId, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNo
 
 import { recordProductAnalyticsEvent } from "../../../analytics/productAnalytics";
 import { APP_BASE_NAME } from "../../../branding";
+import { useEnvironmentSupports } from "../../../state/environmentCapabilities";
 import { usePrimaryEnvironmentId } from "../../../state/environments";
 import { useAtomCommand } from "../../../state/use-atom-command";
 import { Button } from "../../ui/button";
@@ -83,6 +84,10 @@ export function SidebarFeedbackButton() {
   const [attachScreenshot, setAttachScreenshot] = useState(true);
   const [attachLogs, setAttachLogs] = useState(true);
   const primaryEnvironmentId = usePrimaryEnvironmentId();
+  // Server logs are the host's trace diagnostics: none before a host reports, none on the cloud.
+  const hasServerLogs = useEnvironmentSupports(primaryEnvironmentId, "localFilesystem", {
+    waitForConfig: true,
+  });
   const recordAnalyticsEvent = useAtomCommand(recordProductAnalyticsEvent, {
     reportFailure: false,
     reportDefect: false,
@@ -112,7 +117,7 @@ export function SidebarFeedbackButton() {
     const [screenshotBlob, serverLogs] = await Promise.all([
       // A slow capture drops the screenshot rather than holding up Send.
       attachScreenshot ? withTimeout(resolveScreenshot(), SCREENSHOT_WAIT_MS) : null,
-      attachLogs ? readFeedbackServerLogs() : null,
+      attachLogs && hasServerLogs ? readFeedbackServerLogs() : null,
     ]);
     return { screenshot: screenshotBlob, serverLogs };
   };
@@ -213,13 +218,15 @@ export function SidebarFeedbackButton() {
               >
                 Attach screenshot
               </AttachmentOption>
-              <AttachmentOption
-                checked={attachLogs}
-                disabled={sending}
-                onCheckedChange={setAttachLogs}
-              >
-                Attach recent server logs
-              </AttachmentOption>
+              {hasServerLogs ? (
+                <AttachmentOption
+                  checked={attachLogs}
+                  disabled={sending}
+                  onCheckedChange={setAttachLogs}
+                >
+                  Attach recent server logs
+                </AttachmentOption>
+              ) : null}
             </div>
           </div>
           <div className="flex items-center justify-between gap-2">

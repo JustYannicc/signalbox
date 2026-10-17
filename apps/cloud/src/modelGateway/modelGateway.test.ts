@@ -2,8 +2,7 @@ import type { ModelGatewayProvider } from "@signalbox/runner-protocol/RunnerProt
 import { RunId } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
 
-import type { ModelForwardReply } from "../pool/PoolDirectory.ts";
-import type { ModelServeReply } from "../thread/runner/modelGrants.ts";
+import type { ModelForwardReply, ModelServeReply } from "../models/ModelProtocol.ts";
 import { handleModelRequest, type ModelGatewayDeps } from "./modelGateway.ts";
 import type { ModelGatewayRecord } from "./modelGatewayRecord.ts";
 

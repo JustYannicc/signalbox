@@ -7,21 +7,28 @@ something you want to approve.
 ## Create one
 
 Ask an agent in any thread, for example "Every weekday at 9, summarize new Sentry issues and ask
-me before filing any of them in Linear." The agent writes the automation and saves it. **New
-automation** on the **Automations** page starts that thread for you.
+me before filing any of them in Linear." The agent writes the automation and saves it in the thread's
+folder. **New automation** in a folder's **⋯** menu starts that thread for you.
 
 To change an automation, choose **Change with agent** from its **⋯** menu or above its code (on
 mobile, on the automation's screen or a run's **⋯** menu). It opens a thread with the request
 started; say what to change and send it. **Add a step** on the diagram does the same for one new
-step or trigger. **Automations → Steps** lists everything an automation can do.
+step or trigger. **Automation triggers and steps** in the command palette lists everything an
+automation can do.
 
 To try a change before it goes live, ask the agent to save it as a draft. The automation keeps
 running its live version and its page shows **Draft**: switch between **Live** and **Draft** to
 compare the diagram and code, or read **Changes** for the lines that differ. **Publish** makes the
 draft live; **Discard** drops it. A new automation saved as a draft stays off until you publish it.
 
-To see every automation, open **Automations** from the command palette (`mod+alt+w`) and pick
-**All**.
+## Find one
+
+An automation lives in its folder in Home, next to that folder's threads. A folder's automations
+fold into one row; open it to see them all. One that needs you, with a question waiting or a run
+that failed, shows on its own, and questions also wait at the top of Home, where you can answer
+them without opening anything. Opening an automation shows its runs beside the diagram, the ones
+that need you on top. To jump to any automation, choose **Open automation…** in the command
+palette (`mod+alt+w`).
 
 ## In Signalbox Cloud
 
@@ -29,9 +36,17 @@ Automations in your cloud folders run in Signalbox Cloud, so they fire on schedu
 and pull request news with every app closed, and their questions reach your phone. Ask an agent in
 a cloud thread to write one. When an agent there schedules recurring work for itself ("every 5
 minutes, post the time"), that's an automation in the thread's folder too: pause or delete it like
-any other, or ask the agent to stop it. Some steps don't run in the cloud yet: webhooks and callback links
-(`w.hook`), calls to connected services, `w.run` functions, and model steps (`w.llm`, `w.judge`,
-`w.extract`). Use a self-hosted server for automations that need them.
+any other, or ask the agent to stop it. Webhooks and callback links work with every app closed.
+Model steps use the model saved with the automation and the folder's pool.
+
+For GitHub events, connect GitHub in Settings and ask the agent to add a repository trigger.
+Signalbox installs the webhook when your account has permission to manage that repository's hooks.
+Published releases on upstream repositories can be checked every five minutes when hook access is unavailable.
+An agent can check the connection status and explain missing permissions. Pull requests already linked to
+threads keep their existing watcher.
+
+Calls to connected services and local `w.run` functions still need a self-hosted server.
+Steps on GitHub Actions are available as described below.
 
 ### Steps on GitHub Actions
 

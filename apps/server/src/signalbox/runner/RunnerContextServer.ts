@@ -115,6 +115,7 @@ export const startContextServer = Effect.fn("startContextServer")(function* (inp
   ) => Effect.Effect<void, RunnerConnectionError>;
   /** Waits for the first tunnel welcome to restore saved services before exposing their tools. */
   readonly previewServicesReady?: Effect.Effect<void, RunnerConnectionError>;
+  readonly previewHosts?: Effect.Effect<ReadonlyArray<string> | null, RunnerConnectionError>;
   /** The browser behind the `preview_*` tools; the machine's and the person's by default. */
   readonly browser?: BrowserBackend;
   /** The thread this machine runs, which scheduled tasks wake. */
@@ -129,6 +130,7 @@ export const startContextServer = Effect.fn("startContextServer")(function* (inp
     input.browser === undefined && input.threadId !== undefined
       ? makePayments({ asker: paymentAsker(automationCaller(view), input.threadId) })
       : null;
+  const previewHosts = input.previewHosts;
   const browser =
     input.browser ??
     makeRunnerBrowser(
@@ -136,7 +138,12 @@ export const startContextServer = Effect.fn("startContextServer")(function* (inp
         machine: machineTabs({ executable: env[BROWSER_EXECUTABLE_ENV], env }),
         person: personTabs(personSession(view)),
       },
-      payments === null ? {} : { guard: payments.guard },
+      {
+        ...(payments === null ? {} : { guard: payments.guard }),
+        ...(previewHosts === undefined
+          ? {}
+          : { previewHosts: () => Effect.runPromise(previewHosts) }),
+      },
     );
   payments?.bind(browser);
   yield* Effect.addFinalizer(() =>

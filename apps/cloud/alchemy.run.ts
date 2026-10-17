@@ -17,6 +17,7 @@ import * as Cloudflare from "alchemy/Cloudflare";
 import * as Config from "effect/Config";
 import * as Effect from "effect/Effect";
 import * as Redacted from "effect/Redacted";
+import { testSignInEnv } from "./infra/testSignInEnv.ts";
 
 import {
   AUTOMATION_BINDINGS as AUTOMATION,
@@ -153,7 +154,7 @@ function workerEnv(target: CloudStage) {
           RUNNER_IMAGE: yield* optional("RUNNER_IMAGE"),
         };
 
-    return { ...target.vars, ...shared, ...stageEnv };
+    return { ...target.vars, ...shared, ...stageEnv, ...(yield* testSignInEnv(target.production)) };
   });
 }
 
@@ -203,6 +204,7 @@ function deploy(
       limits: { cpuMs: 300_000 },
       env: {
         ...env,
+        AUTOMATION_HOOK_ORIGIN: `https://${target.cloudDomain}`,
         // Binding and class names are the Durable Objects' identity.
         USERS: Cloudflare.DurableObject<UserObject>(DO.USERS),
         DRIVES: Cloudflare.DurableObject<DriveObject>(DO.DRIVES),

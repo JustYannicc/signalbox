@@ -535,7 +535,8 @@ export function SourceControlSettingsPanel() {
   };
   const hostSettingsPanel = (kind: string) => {
     const definition = sourceControlClients.find(kind);
-    if (!definition?.settings || environmentId === null) return undefined;
+    if (!serverSettingsWritable || !definition?.settings || environmentId === null)
+      return undefined;
     return (
       <SettingsSearchTarget id={sourceControlHostSettingsSearchId(kind)}>
         <SourceControlHostSettings
@@ -620,7 +621,7 @@ export function SourceControlSettingsPanel() {
                       auth={item.auth}
                       onChanged={handleScan}
                     />
-                  ) : item.kind === "github" ? (
+                  ) : item.kind === "github" && serverSettingsWritable ? (
                     <SettingsSearchTarget id={searchableSetting("github-accounts").id}>
                       <div className="grid gap-6">
                         {}

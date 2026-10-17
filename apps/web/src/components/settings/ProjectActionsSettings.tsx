@@ -32,8 +32,9 @@ import { ProjectActionsList } from "./ProjectActionsList";
 import { useProjectScriptSettings } from "./useProjectScriptSettings";
 import { SettingsRow, SettingsSection } from "./settingsLayout";
 import { useSettingsScope } from "./SettingsScopeContext";
+import { SettingsCapability } from "./SettingsCapability"; // signalbox
 
-export function ProjectActionsSettings() {
+function ProjectActionsSettingsSection() {
   const { scope, targets, target } = useSettingsScope();
   const { environments } = useEnvironments();
   const isProjectScope = scope.kind === "project" || scope.kind === "checkout";
@@ -213,5 +214,14 @@ export function ProjectActionsSettings() {
         />
       )}
     </SettingsSection>
+  );
+}
+
+// signalbox: actions are terminal scripts saved to server settings.
+export function ProjectActionsSettings() {
+  return (
+    <SettingsCapability id="project-actions">
+      <ProjectActionsSettingsSection />
+    </SettingsCapability>
   );
 }

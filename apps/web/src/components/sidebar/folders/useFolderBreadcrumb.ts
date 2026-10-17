@@ -5,16 +5,13 @@
  * the environment has no folders, so the header keeps naming the project.
  */
 import { useAtomValue } from "@effect/atom-react";
-import {
-  folderPath,
-  homeOfThread,
-  ownerFilesProject,
-  ownerLevelName,
-} from "@t3tools/client-runtime/state/signalboxFolders";
+import { contextOfProject } from "@t3tools/client-runtime/state/signalboxContexts";
+import { homeOfThread, ownerFilesProject } from "@t3tools/client-runtime/state/signalboxFolders";
 import type { EnvironmentId, ProjectId, ThreadId } from "@t3tools/contracts";
 
 import { environmentContextsAtom } from "../../../state/signalboxContexts";
 import { environmentFoldersAtom } from "../../../state/signalboxFolders";
+import { homeLabel } from "./folderSidebarModel";
 import { useStartInFolder } from "./useStartInFolder";
 
 export interface FolderBreadcrumb {
@@ -33,15 +30,13 @@ export function useFolderBreadcrumb(input: {
   const place = (() => {
     if (snapshot === null || contexts === null || input.projectId === null) return null;
     const projectId = input.projectId;
-    const owner = contexts.contexts.find((context) => context.projectIds.includes(projectId));
+    const owner = contextOfProject(contexts, projectId);
     if (owner === undefined) return null;
     const home = homeOfThread(snapshot, { id: input.threadId, projectId });
-    const path = folderPath(snapshot, home);
     return {
       home,
       ownerProjectId: ownerFilesProject(owner),
-      label:
-        path.length === 0 ? ownerLevelName(owner) : path.map((folder) => folder.name).join(" / "),
+      label: homeLabel(snapshot, owner, home),
     };
   })();
   const onNewThread = () => {

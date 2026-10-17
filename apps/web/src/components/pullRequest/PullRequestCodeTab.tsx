@@ -4,6 +4,7 @@ import type {
   EnvironmentId,
   PullRequestDetailView,
   PullRequestDiffSide,
+  PullRequestDiffRevision,
   PullRequestOmittedFileStat,
   PullRequestRef,
   PullRequestReviewPosition,
@@ -36,6 +37,7 @@ import {
   type ReactNode,
 } from "react";
 
+import { samePullRequestDiffRevision } from "@t3tools/client-runtime/pull-request-diff-revision";
 import { useLocalStorage } from "~/hooks/useLocalStorage";
 import { useClientSettings, useUpdateClientSettings } from "~/hooks/useSettings";
 import { useTheme } from "~/hooks/useTheme";
@@ -129,6 +131,7 @@ interface DiffSlice {
   readonly truncated: boolean;
   readonly nextCursor: string | null;
   readonly omittedFileStats: ReadonlyArray<PullRequestOmittedFileStat>;
+  readonly revision?: PullRequestDiffRevision;
 }
 
 /**
@@ -358,7 +361,16 @@ function PullRequestCodeTab({
         truncated: data.truncated,
         nextCursor: data.nextCursor,
         omittedFileStats: data.omittedFileStats ?? [],
+        ...(data.revision === undefined ? {} : { revision: data.revision }),
       };
+      if (
+        cursor !== null &&
+        slices.some((slice) => !samePullRequestDiffRevision(slice.revision, next.revision))
+      ) {
+        // The server restarts a stale cursor with the new first page. Keep it under this request
+        // cursor so the cached response is recognized as processed and its next cursor can load.
+        return { key: scopeKey, cursor, slices: [next] };
+      }
       const index = slices.findIndex((slice) => slice.cursor === cursor);
       if (index === -1) {
         return { key: scopeKey, cursor, slices: [...slices, next] };
@@ -367,6 +379,7 @@ function PullRequestCodeTab({
       if (
         existing !== undefined &&
         existing.patch === next.patch &&
+        samePullRequestDiffRevision(existing.revision, next.revision) &&
         existing.truncated === next.truncated &&
         existing.nextCursor === next.nextCursor &&
         existing.omittedFileStats.length === next.omittedFileStats.length &&
@@ -439,9 +452,11 @@ function PullRequestCodeTab({
   const requestTreeReveal = useCodeViewFileReveal(viewer, scopeKey);
   const answeredReveal = useRef<number | null>(null);
 
+  const displayedRevision = loadedSlices[0]?.revision;
   const loadDiffFiles = createPullRequestDiffFileContentsLoader(getDiffFileContents, {
     environmentId,
     reference,
+    ...(displayedRevision === undefined ? {} : { revision: displayedRevision }),
     commit,
     cacheKey: `pull-request:${referenceKey}:${detail.updatedAt}:${commit ?? "all"}`,
   });

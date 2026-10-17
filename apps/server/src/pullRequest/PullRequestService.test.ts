@@ -179,7 +179,7 @@ it.effect("caches narrow previews and invalidates them after refresh or mutation
 it.effect("keeps cached previews available and pauses uncached previews until quota resets", () =>
   Effect.gen(function* () {
     let reads = 0;
-    const retryAt = Date.parse("2099-08-13T14:00:00Z");
+    const retryAt = (yield* Clock.currentTimeMillis) + 60_000;
     const service = yield* makeService({
       projects: [project({ id: "p1", title: "web", workspaceRoot: "/w", repository: "acme/web" })],
       providers: [
@@ -1494,6 +1494,7 @@ it.effect("publishes a merge for immediate settlement only after host confirmati
   Effect.scoped(
     Effect.gen(function* () {
       const mergedAt = "2026-09-03T02:00:00.000Z";
+      yield* TestClock.setTime(Date.parse(mergedAt));
       let state: "open" | "merged" = "open";
       let confirmationFails = false;
       const reference = { projectId: "p1" as ProjectId, repository: "acme/web", number: 1 };
@@ -1532,7 +1533,6 @@ it.effect("publishes a merge for immediate settlement only after host confirmati
       );
       confirmationFails = false;
       state = "merged";
-      yield* TestClock.setTime(Date.parse(mergedAt));
       yield* service.runAction({
         ...reference,
         repository: " ACME/WEB ",

@@ -23,6 +23,7 @@ import {
   tokenTypeSegments,
 } from "./usageBreakdown";
 import { PROVIDER_PRESENTATION } from "./usageProviders";
+import { useCanEditUsagePrices } from "./usagePriceCapabilities"; // signalbox
 
 export interface UsageChartWindow {
   readonly days: readonly string[];
@@ -55,6 +56,10 @@ export function UsageModelDialog({
   const presentation = PROVIDER_PRESENTATION[model.provider];
   const costUnknown = isModelCostUnknown(model);
   const hitRate = cacheHitRate(model);
+  const canSetPrice = useCanEditUsagePrices(
+    // signalbox
+    new Set(environments.map((environment) => environment.environmentId)),
+  );
   const perMillion = costPerMillionTokens(model);
   const stats = [
     { label: "Cost", value: costUnknown ? "Unpriced" : formatUsd(model.costUsd) },
@@ -138,7 +143,7 @@ export function UsageModelDialog({
             <span className="text-xs text-muted-foreground">
               {formatTokens(model.unpricedTokens)} tokens have no known price
             </span>
-            <Button onClick={onSetPrice}>Set price</Button>
+            {canSetPrice ? <Button onClick={onSetPrice}>Set price</Button> : null}
           </DialogFooter>
         ) : null}
       </DialogPopup>

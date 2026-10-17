@@ -114,6 +114,7 @@ export const cloudStage = (stage: string): CloudStage => {
       drivePacksBucket: "signalbox-drives",
       automationWorkflow: "signalbox-cloud-automations",
       vars: {
+        SIGNALBOX_STAGE: PRODUCTION_STAGE,
         // Production identity. Never reuse it for another deployment.
         ENVIRONMENT_ID: "4bfb70e5-7954-458a-9b75-4834c0ab4e13",
         ENVIRONMENT_LABEL: "Signalbox Cloud",
@@ -139,11 +140,12 @@ export const cloudStage = (stage: string): CloudStage => {
     gatewayDomain,
     previewHost: previews,
     poolContainer: { name: `signalbox-cloud-pr-${number}-pools`, maxInstances: 2 },
-    threadContainer: { name: `signalbox-cloud-pr-${number}-threads`, maxInstances: 2 },
+    threadContainer: { name: `signalbox-cloud-pr-${number}-threads`, maxInstances: 4 },
     // Previews never touch production's packs; each keeps its own prefix.
     drivePacksBucket: PREVIEW_DRIVE_PACKS_BUCKET,
     automationWorkflow: `signalbox-cloud-pr-${number}-automations`,
     vars: {
+      SIGNALBOX_STAGE: stage,
       ENVIRONMENT_ID: `cloud-preview-${number}`,
       ENVIRONMENT_LABEL: `Signalbox Cloud (PR #${number})`,
       ...urls(cloudDomain, gatewayDomain),

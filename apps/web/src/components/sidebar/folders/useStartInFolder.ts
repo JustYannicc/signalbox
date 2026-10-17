@@ -2,7 +2,7 @@
  * Starts a thread in a folder: a draft in the folder's files (or its owner's
  * own), filed there when it lives somewhere else, on the folder's pool. With
  * `openFiles` it also opens the draft's Files panel, which is how a folder's
- * files are browsed.
+ * files are browsed; with `prompt` the draft starts with that request typed.
  */
 import { RegistryContext } from "@effect/atom-react";
 import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
@@ -34,6 +34,7 @@ export interface StartInFolder {
   readonly ownerProjectId: ProjectId | null;
   readonly folderId: FolderId | null;
   readonly openFiles?: boolean;
+  readonly prompt?: string;
 }
 
 export function useStartInFolder() {
@@ -99,6 +100,7 @@ export function useStartInFolder() {
     // The draft picked its pool by its project; it runs on its folder's.
     const pool = filed && poolOfHome(filed, input.folderId);
     if (pool) followPool(opened.draftId, input.environmentId, projectId, pool.poolId);
+    if (input.prompt) useComposerDraftStore.getState().setPrompt(opened.draftId, input.prompt);
     if (input.openFiles) {
       useRightPanelStore
         .getState()
