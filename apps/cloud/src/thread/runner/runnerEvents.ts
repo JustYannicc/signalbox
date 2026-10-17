@@ -81,6 +81,16 @@ export function appThreadCreated(
   return Exit.isFailure(decoded) ? undefined : decoded.value;
 }
 
+/** The raw ID lets the batch retain a decode failure without retaining metadata. */
+export function appThreadCreatedId(
+  item: Extract<RunnerItem, { readonly kind: "provider" }>,
+): ThreadId | undefined {
+  if (stringField(item.event, "type") !== "app_thread.created") return undefined;
+  const value = item.event.appThread;
+  const id = isRecord(value) ? stringField(value, "id") : undefined;
+  return id === undefined ? undefined : (id as ThreadId);
+}
+
 /** The explicitly named thread for a supported provider event. */
 export function providerEventThreadId(item: Extract<RunnerItem, { readonly kind: "provider" }>) {
   const eventType = stringField(item.event, "type");

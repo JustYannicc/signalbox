@@ -578,8 +578,15 @@ const make = Effect.gen(function* () {
         );
       }
       return Effect.flatMap(Effect.orDie(store.pendingNativeChildren), (pendingChildren) => {
-        const { events, undecodable, nativeChildren, pendingNativeChildren, outgrown, drained } =
-          runnerBatchEvents(projection, input.items, ctx, lease.steers === true, pendingChildren);
+        const {
+          events,
+          undecodable,
+          nativeChildren,
+          pendingNativeChildren,
+          nativeChildDiagnostics,
+          outgrown,
+          drained,
+        } = runnerBatchEvents(projection, input.items, ctx, lease.steers === true, pendingChildren);
         const childRelay = Effect.gen(function* () {
           if (nativeChildren.length === 0) return;
           const owner = yield* Effect.orDie(store.owner);
@@ -600,6 +607,15 @@ const make = Effect.gen(function* () {
           Effect.andThen(
             diagnostics.batch({
               ...input,
+              items: [
+                ...input.items,
+                ...nativeChildDiagnostics.map(({ runId, reason, count }): RunnerItem => ({
+                  kind: "log",
+                  runId,
+                  level: "warning",
+                  message: `Native child capture: count=${count}; reason=${reason}.`,
+                })),
+              ],
               liveRunId: harnessRun(projection)?.id ?? null,
               runs: projection.runs,
               now,

@@ -12,6 +12,7 @@ import {
   TurnItemId,
 } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Schema from "effect/Schema";
@@ -29,6 +30,7 @@ import {
   withObject,
 } from "./runnerTestKit.ts";
 import type { NativeChildBatchInput } from "./nativeChildBatch.ts";
+import { runnerBatchEvents } from "./runnerTurn.ts";
 
 const encodeThread = Schema.encodeEffect(Schema.toCodecJson(OrchestrationV2AppThread));
 const encodeMessage = Schema.encodeEffect(Schema.toCodecJson(OrchestrationV2ConversationMessage));
@@ -153,6 +155,110 @@ describe("provider-native child history", () => {
                 runId: turn.runId,
                 event: { driver: claudeDriver, ...event },
               });
+              const encodedAppThread = yield* encodeThread(appThread);
+              const encodedMessage = yield* encodeMessage(message);
+              const terminal = item({
+                type: "turn.terminal",
+                runOrdinal: turn.runOrdinal,
+                status: "completed",
+              });
+              const candidateItems = [
+                item({ type: "app_thread.created", appThread: encodedAppThread }),
+                item({ type: "message.updated", message: encodedMessage }),
+                terminal,
+              ];
+              const candidateContext = {
+                now: DateTime.makeUnsafe("2026-10-17T10:00:00.000Z"),
+              };
+              const validCapture = runnerBatchEvents(
+                { ...parent, subagents: [attestation] },
+                candidateItems,
+                candidateContext,
+              );
+              expect(validCapture.nativeChildren).toHaveLength(1);
+              expect(validCapture.nativeChildDiagnostics).toEqual([]);
+
+              const malformedCreation = runnerBatchEvents(
+                { ...parent, subagents: [attestation] },
+                [
+                  item({ type: "app_thread.created", appThread: { id: childThreadId } }),
+                  item({ type: "message.updated", message: encodedMessage }),
+                  terminal,
+                ],
+                candidateContext,
+              );
+              expect(malformedCreation.nativeChildren).toEqual([]);
+              expect(malformedCreation.nativeChildDiagnostics).toEqual([
+                { runId: turn.runId, reason: "creation_decode", count: 1 },
+              ]);
+
+              const missingCreation = runnerBatchEvents(
+                { ...parent, subagents: [attestation] },
+                [item({ type: "message.updated", message: encodedMessage }), terminal],
+                candidateContext,
+              );
+              expect(missingCreation.nativeChildDiagnostics).toEqual([
+                { runId: turn.runId, reason: "missing_creation", count: 1 },
+              ]);
+
+              const absentCapture = runnerBatchEvents(
+                { ...parent, subagents: [attestation] },
+                [terminal],
+                candidateContext,
+              );
+              expect(absentCapture.nativeChildDiagnostics).toEqual([
+                { runId: turn.runId, reason: "missing_creation", count: 1 },
+              ]);
+
+              const missingAttestation = runnerBatchEvents(
+                { ...parent, subagents: [] },
+                [
+                  item({ type: "app_thread.created", appThread: encodedAppThread }),
+                  item({ type: "message.updated", message: encodedMessage }),
+                  terminal,
+                ],
+                candidateContext,
+              );
+              expect(missingAttestation.nativeChildDiagnostics).toEqual([
+                { runId: turn.runId, reason: "missing_attestation", count: 1 },
+              ]);
+
+              const mismatchedCreation = runnerBatchEvents(
+                { ...parent, subagents: [attestation] },
+                [
+                  item({
+                    type: "app_thread.created",
+                    appThread: {
+                      ...encodedAppThread,
+                      activeProviderThreadId: ProviderThreadId.make("different-provider-thread"),
+                    },
+                  }),
+                  item({ type: "message.updated", message: encodedMessage }),
+                  terminal,
+                ],
+                candidateContext,
+              );
+              expect(mismatchedCreation.nativeChildDiagnostics).toEqual([
+                { runId: turn.runId, reason: "creation_provider_thread_mismatch", count: 1 },
+              ]);
+
+              const emptyMismatchedCreation = runnerBatchEvents(
+                { ...parent, subagents: [attestation] },
+                [
+                  item({
+                    type: "app_thread.created",
+                    appThread: {
+                      ...encodedAppThread,
+                      activeProviderThreadId: ProviderThreadId.make("different-provider-thread"),
+                    },
+                  }),
+                  terminal,
+                ],
+                candidateContext,
+              );
+              expect(emptyMismatchedCreation.nativeChildDiagnostics).toEqual([
+                { runId: turn.runId, reason: "creation_provider_thread_mismatch", count: 1 },
+              ]);
               // Child rows can precede the parent card in a different batch.
               yield* runner.batch({
                 generation: machine.generation,
@@ -160,11 +266,11 @@ describe("provider-native child history", () => {
                 items: [
                   item({
                     type: "app_thread.created",
-                    appThread: yield* encodeThread(appThread),
+                    appThread: encodedAppThread,
                   }),
                   item({
                     type: "message.updated",
-                    message: yield* encodeMessage(message),
+                    message: encodedMessage,
                   }),
                 ],
               });

@@ -40,6 +40,7 @@ const NativeChildPending = Schema.Struct({
   childThreadId: ThreadId,
   appThread: Schema.optionalKey(OrchestrationV2AppThread),
   createdByDriver: Schema.optionalKey(Schema.String),
+  creationDecode: Schema.optionalKey(Schema.Boolean),
   invalidDriver: Schema.Boolean,
   materialized: Schema.Boolean,
   items: Schema.Array(ProviderRunnerItemWire),
