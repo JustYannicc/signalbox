@@ -15,8 +15,15 @@ import {
 import { describe, expect, it } from "@effect/vitest";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 
+import { makeMemoryObjects } from "../attachments/attachmentTesting.ts";
+import * as Platform from "../platform.ts";
+import { layerAttachments, layerPersonalThreadContexts, makeMemoryCloud } from "../testing.ts";
+import * as ThreadDirectory from "./ThreadDirectory.ts";
+import * as Threads from "./Threads.ts";
+import * as ThreadsLive from "./ThreadsLive.ts";
 import { pushFor } from "../push/pushRules.ts";
 import { derivePendingThreadRequests } from "@t3tools/client-runtime/state/thread-requests";
 import { unsupported } from "./threadDecider.ts";
@@ -513,7 +520,7 @@ describe("cloud native runtime requests", () => {
       ),
   );
 
-  it.effect("answers a message question after completion with one new user turn", () =>
+  it.effect("routes a completed message question through Threads into one new user turn", () =>
     withObject(freshDatabase(), (engine, runner) =>
       Effect.gen(function* () {
         const { machine, report } = yield* waiting(engine, runner, "user_input", true);
@@ -523,7 +530,22 @@ describe("cloud native runtime requests", () => {
           items: [report.terminal],
         });
         expect((yield* snapshot(engine)).projection.runtimeRequests[0]?.status).toBe("pending");
-        yield* engine.dispatch(owner, answer(), personal);
+        const directory = makeMemoryCloud().threadDirectory;
+        const service = yield* Threads.Threads.pipe(
+          Effect.provide(
+            ThreadsLive.layer.pipe(
+              Layer.provide(
+                Layer.succeed(ThreadDirectory.ThreadDirectory, {
+                  forThread: (id) => ({ ...directory.forThread(id), dispatch: engine.dispatch }),
+                }),
+              ),
+              Layer.provide(layerPersonalThreadContexts(owner.userId)),
+              Layer.provide(Platform.layerCrypto),
+              Layer.provide(layerAttachments(makeMemoryObjects())),
+            ),
+          ),
+        );
+        yield* service.dispatch(owner, answer());
         const projection = (yield* snapshot(engine)).projection;
         expect(projection.runs).toHaveLength(2);
         expect(
@@ -531,7 +553,7 @@ describe("cloud native runtime requests", () => {
         ).toBe("Which colour?\nBlue");
         expect(threadShellFromProjection(projection).pendingRuntimeRequest).toBeNull();
         expect((yield* runner.work).runtimeResponses).toEqual([]);
-        yield* engine.dispatch(owner, answer(), personal);
+        yield* service.dispatch(owner, answer());
         expect((yield* snapshot(engine)).projection.runs).toHaveLength(2);
       }),
     ),
