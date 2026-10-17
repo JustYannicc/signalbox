@@ -19,9 +19,8 @@ export const boatProviders = Boat.providers({
   ),
 });
 
-export const boatRunner = (target: CloudStage) =>
+export const boatRunner = (target: CloudStage, backend: string) =>
   Effect.gen(function* () {
-    const backend = yield* Config.String("MACHINE_BACKEND").pipe(Config.withDefault(""));
     if (backend.trim() !== "boat") return {};
 
     const name = `${target.cloudWorker}-runner`;

@@ -159,12 +159,9 @@ function workerEnv(target: CloudStage) {
   });
 }
 
-function deploy(
-  target: CloudStage,
-  env: Readonly<Record<string, string | Redacted.Redacted<string>>>,
-) {
+function deploy(target: CloudStage, env: Effect.Success<ReturnType<typeof workerEnv>>) {
   return Effect.gen(function* () {
-    const boat = yield* boatRunner(target);
+    const boat = yield* boatRunner(target, env.MACHINE_BACKEND);
     // The web app, built by CI before the deploy. Same origin as the API.
     const assets = {
       directory: here("../web/dist"),
