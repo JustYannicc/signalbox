@@ -1,11 +1,11 @@
 import { NonNegativeInt } from "@t3tools/contracts";
-import { PERSONAL_CONTEXT_ID, SignalboxContextId } from "@t3tools/contracts/signalboxContexts";
-import { Folder, FolderId } from "@t3tools/contracts/signalboxFolders";
+import { PERSONAL_CONTEXT_ID } from "@t3tools/contracts/signalboxContexts";
+import { Folder } from "@t3tools/contracts/signalboxFolders";
 import type { SignalboxFoldersSnapshot } from "@t3tools/contracts/signalboxFolders";
 import * as Schema from "effect/Schema";
 
 import { parseDriveId } from "../drive/driveAccess.ts";
-import { CatalogPersonId } from "./catalogHome.ts";
+import { CatalogHome, CatalogPersonId, catalogHomeKey } from "./catalogHome.ts";
 
 const Count = NonNegativeInt.check(Schema.isLessThanOrEqualTo(Number.MAX_SAFE_INTEGER));
 
@@ -51,6 +51,7 @@ const DIVERGENT_FIELDS = [
   "githubLend",
 ] as const satisfies ReadonlyArray<keyof Folder>;
 const isPersonId = Schema.is(CatalogPersonId);
+const isHome = Schema.is(CatalogHome);
 
 type DivergentField = (typeof DIVERGENT_FIELDS)[number];
 
@@ -71,9 +72,6 @@ const fieldEquivalences = new Map(
         Schema.toEquivalence<Folder[DivergentField]>(Schema.UndefinedOr(Folder.fields[field])),
       ] as const,
   ),
-);
-const encodeLogicalLevel = Schema.encodeSync(
-  Schema.fromJsonString(Schema.Tuple([SignalboxContextId, FolderId])),
 );
 
 const ownerContextsOf = (snapshot: SignalboxFoldersSnapshot) => {
@@ -130,7 +128,14 @@ export const auditLegacyCatalogSources = (
     for (const folder of source.folders.folders) {
       if (folder.ownerId === PERSONAL_CONTEXT_ID) continue;
       orgCopies = add(orgCopies, 1);
-      const key = encodeLogicalLevel([folder.ownerId, folder.id]);
+      const home = {
+        owner: { _tag: "organization", id: folder.ownerId },
+        level: { _tag: "folder", id: folder.id },
+      } as const;
+      if (!isHome(home)) {
+        throw new Error("Legacy catalog audit folder identity must be canonical.");
+      }
+      const key = catalogHomeKey(home);
       const copies = levels.get(key) ?? [];
       if (copies.some((copy) => copy.personId === source.personId)) {
         throw new Error("Duplicate organization folder in legacy catalog source.");

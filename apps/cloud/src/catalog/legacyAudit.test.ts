@@ -205,6 +205,18 @@ describe("legacy catalog shadow audit", () => {
     }
   });
 
+  it("rejects noncanonical folder identities without normalizing or revealing them", () => {
+    for (const invalid of [
+      folder(" shared", ORG),
+      folder("shared", SignalboxContextId.make(" org_acme")),
+    ]) {
+      const folders = { ...snapshot({}), folders: [invalid] };
+      expect(() => auditLegacyCatalogSources([ownerCopy("person-one", folders, 0)])).toThrow(
+        new Error("Legacy catalog audit folder identity must be canonical."),
+      );
+    }
+  });
+
   it("rejects repeated source identities with a fixed message", () => {
     const source = ownerCopy("person-one", snapshot({}), 0);
     expect(() =>
