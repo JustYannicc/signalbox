@@ -99,11 +99,22 @@ export function assertUnpatchedCompiler(compiler: string) {
     );
 }
 
-function run(compiler: string, project: string) {
-  const args = ["--noEmit", "--pretty", "false", "--incremental", "false", "-p", project];
+export function runCompiler(compiler: string, project: string) {
   const started = performance.now();
   const measurement = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "compiler-parity-"));
   const stats = NodePath.join(measurement, "time.txt");
+  // Composite projects require incremental checking; isolate build state so every run is fresh.
+  const args = [
+    "--noEmit",
+    "--pretty",
+    "false",
+    "--incremental",
+    "true",
+    "--tsBuildInfoFile",
+    NodePath.join(measurement, "build.tsbuildinfo"),
+    "-p",
+    project,
+  ];
   try {
     // GNU time records the compiler's RSS, rather than this Node process or a polling estimate.
     const measured = platform === "linux";
@@ -164,9 +175,9 @@ function main(args: string[]) {
   };
   let failed = false;
   for (const project of selected) {
-    const before = run(declared, project);
-    const plugin = run(effect, project);
-    const after = run(rust, project);
+    const before = runCompiler(declared, project);
+    const plugin = runCompiler(effect, project);
+    const after = runCompiler(rust, project);
     for (const [name, result] of [
       ["declared", before],
       ["effect", plugin],

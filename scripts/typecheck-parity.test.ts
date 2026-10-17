@@ -3,7 +3,12 @@ import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import { expect, test } from "vite-plus/test";
-import { assertUnpatchedCompiler, compareDiagnostics, diagnostics } from "./typecheck-parity.ts";
+import {
+  assertUnpatchedCompiler,
+  compareDiagnostics,
+  diagnostics,
+  runCompiler,
+} from "./typecheck-parity.ts";
 
 const typeError =
   "src/file.ts(4,2): error TS2322: Type 'string' is not assignable to type 'number'.\n";
@@ -57,4 +62,28 @@ test("parity normalizes Windows line endings before locating multiline diagnosti
   const windows = unix.replaceAll("\n", "\r\n");
   expect(compareDiagnostics(typeError, effectError, windows).equal).toBe(true);
   expect(diagnostics(windows)).toEqual(diagnostics(unix));
+});
+
+test("compiler parity checks composite projects with fresh build state on every run", () => {
+  const directory = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "composite-parity-"));
+  try {
+    const project = NodePath.join(directory, "tsconfig.json");
+    const source = NodePath.join(directory, "fixture.ts");
+    NodeFS.writeFileSync(
+      project,
+      JSON.stringify({ compilerOptions: { composite: true, noEmit: true }, files: ["fixture.ts"] }),
+    );
+    NodeFS.writeFileSync(source, "const value: number = 1;\n");
+    const compiler = NodePath.resolve("node_modules/.bin/tsc-rs");
+    const clean = runCompiler(compiler, project);
+    expect(clean.output).not.toContain("TS6379");
+    expect(clean.status).toBe(0);
+    NodeFS.writeFileSync(source, 'const value: number = "wrong";\n');
+    const changed = runCompiler(compiler, project);
+    expect(changed.status).not.toBe(0);
+    expect(changed.output).toContain("TS2322");
+    expect(NodeFS.readdirSync(directory).sort()).toEqual(["fixture.ts", "tsconfig.json"]);
+  } finally {
+    NodeFS.rmSync(directory, { recursive: true, force: true });
+  }
 });
