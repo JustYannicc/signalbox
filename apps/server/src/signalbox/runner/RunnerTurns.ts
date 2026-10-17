@@ -11,6 +11,7 @@ import {
 import type { SecretValue } from "@signalbox/runner-protocol/SecretScrubber";
 import type { SecretsAccess } from "@signalbox/runner-protocol/SecretsProtocol";
 import type { SessionAccess } from "@signalbox/runner-protocol/SessionProtocol";
+import type { FeedbackOutcome, FeedbackRequest } from "@signalbox/runner-protocol/FeedbackProtocol";
 import {
   MessageId,
   type OrchestrationV2ProviderThread,
@@ -66,6 +67,7 @@ import {
 } from "./RunnerTurnDrive.ts";
 import { SAVED_AGAIN_NOTICE, watchChanges } from "./RunnerDriveWatch.ts";
 import { isUnmeasured } from "./RunnerUsage.ts";
+import { makeRunnerFeedback } from "./RunnerFeedback.ts";
 
 /**
  * Drives one thread's turns through the provider adapters, the way the
@@ -115,6 +117,7 @@ export class RunnerTurnError extends Schema.TaggedError<RunnerTurnError>()("Runn
 }) {}
 
 export interface RunnerTurns {
+  readonly uploadFeedback?: (request: FeedbackRequest) => Effect.Effect<FeedbackOutcome>;
   /**
    * Starts a turn, as `turn.start` hands it over. A run already started is
    * ignored, so the thread can repeat itself.
@@ -288,6 +291,10 @@ export const makeRunnerTurns = Effect.fn("makeRunnerTurns")(function* (input: {
   const scope = yield* Effect.scope;
   const logAnnotations = yield* References.CurrentLogAnnotations;
   const sessions = new Map<ProviderInstanceId, OpenSession>();
+  const feedback = makeRunnerFeedback(
+    input.threadId,
+    (instanceId) => sessions.get(instanceId)?.runtime,
+  );
   const turns = new Map<RunId, Turn>();
   /** Runs this machine already took, so a repeated `turn.start` starts nothing. */
   const taken = new Set<RunId>();
@@ -1128,6 +1135,7 @@ export const makeRunnerTurns = Effect.fn("makeRunnerTurns")(function* (input: {
         turn,
         runtimePolicy,
       );
+      feedback.remember(session, providerThread);
       if (pinning !== null) yield* Fiber.join(pinning);
       if (attachments !== null) yield* Fiber.join(attachments);
       const started = yield* ordered.withPermits(1)(
@@ -1311,6 +1319,7 @@ export const makeRunnerTurns = Effect.fn("makeRunnerTurns")(function* (input: {
   ).pipe(Effect.forkIn(scope));
 
   return {
+    uploadFeedback: feedback.upload,
     start,
     interrupt,
     steer,

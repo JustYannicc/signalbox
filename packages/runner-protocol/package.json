@@ -58,6 +58,10 @@
     "./SecretScrubber": {
       "types": "./src/SecretScrubber.ts",
       "import": "./src/SecretScrubber.ts"
+    },
+    "./FeedbackProtocol": {
+      "types": "./src/FeedbackProtocol.ts",
+      "import": "./src/FeedbackProtocol.ts"
     }
   },
   "scripts": {

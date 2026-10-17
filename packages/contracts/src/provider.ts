@@ -117,6 +117,8 @@ export type ProviderRespondToUserInputInput = typeof ProviderRespondToUserInputI
 
 export const ProviderUploadFeedbackInput = Schema.Struct({
   threadId: ThreadId,
+  /** Reuse this id to read the cloud receipt without submitting again. */
+  requestId: Schema.optional(TrimmedNonEmptyString),
   reason: Schema.optional(TrimmedNonEmptyString),
 });
 export type ProviderUploadFeedbackInput = typeof ProviderUploadFeedbackInput.Type;
@@ -126,14 +128,35 @@ export const ProviderUploadFeedbackResult = Schema.Struct({
 });
 export type ProviderUploadFeedbackResult = typeof ProviderUploadFeedbackResult.Type;
 
+export const ProviderFeedbackFailure = Schema.Literals([
+  "unsupported",
+  "session_unavailable",
+  "runner_unavailable",
+  "upload_failed",
+  "outcome_unknown",
+]);
+
 export class ProviderUploadFeedbackError extends Schema.TaggedError<ProviderUploadFeedbackError>()(
   "ProviderUploadFeedbackError",
   {
     threadId: ThreadId,
+    failure: Schema.optional(ProviderFeedbackFailure),
     cause: Schema.optional(Schema.Defect()),
   },
 ) {
   override get message(): string {
+    switch (this.failure) {
+      case "unsupported":
+        return "This provider does not support feedback uploads.";
+      case "session_unavailable":
+        return "The native provider session is unavailable on this machine. Send a message first, then request feedback again.";
+      case "runner_unavailable":
+        return "The thread's runner is unavailable or needs an update. Send a message first, then request feedback again.";
+      case "upload_failed":
+        return "The provider could not upload feedback.";
+      case "outcome_unknown":
+        return "The feedback upload could not be confirmed. It will not be sent again automatically.";
+    }
     return `Failed to upload feedback for thread ${this.threadId}.`;
   }
 }
