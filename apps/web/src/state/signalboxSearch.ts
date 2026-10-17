@@ -31,7 +31,7 @@ import {
 } from "@t3tools/client-runtime/state/signalboxSearchModel";
 
 const SEARCH_PAGE_SIZE = 25;
-export const MIN_CONTENT_SEARCH_LENGTH = 2;
+const MIN_CONTENT_SEARCH_LENGTH = 2;
 
 /**
  * Changes whenever who can see what might have: the environment's folders
@@ -51,7 +51,7 @@ const searchAccessSignal = Atom.family((environmentId: EnvironmentId) =>
 // Access can be revoked between searches, so a search is never served from
 // cache: no stale window and no idle retention. Session changes re-run it in
 // the query runtime already.
-export const signalboxSearchQuery = createEnvironmentRpcQueryAtomFamily(connectionAtomRuntime, {
+const signalboxSearchQuery = createEnvironmentRpcQueryAtomFamily(connectionAtomRuntime, {
   label: "signalbox:search:query",
   tag: SIGNALBOX_SEARCH_WS_METHODS.query,
   staleTimeMs: 0,
@@ -80,6 +80,7 @@ function pageAtoms(key: SearchPagesKey) {
         input: {
           query: key.query,
           limit: SEARCH_PAGE_SIZE,
+          distinctThreads: true,
           ...(cursor === null ? {} : { cursor }),
         },
       }),

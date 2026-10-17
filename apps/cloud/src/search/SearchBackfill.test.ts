@@ -27,7 +27,7 @@ import * as SearchIndex from "./SearchIndex.ts";
 
 const userId = "user_1";
 const at = (millis: number) => DateTime.makeUnsafe(millis);
-type SearchProgress = Effect.Success<ReturnType<SearchIndex.SearchIndex["Service"]["progress"]>>;
+type BackfillAttempt = { readonly threadId: string; readonly requestKey: string | undefined };
 
 const shell = (
   threadId: ThreadId,
@@ -81,8 +81,9 @@ const summary = (id: string, archived = false): ThreadSummary => {
 
 const makeHarness = (options: {
   readonly summaries: ReadonlyArray<ThreadSummary>;
+  readonly generation?: string;
+  readonly disabled?: boolean;
   readonly completeProgress?: ReadonlySet<string>;
-  readonly incompleteProgress?: ReadonlySet<string>;
   readonly failFirstBackfill?: string;
 }) =>
   Effect.gen(function* () {
@@ -94,24 +95,31 @@ const makeHarness = (options: {
     yield* store.recordSignIn({ id: userId, email: "person@example.com" });
     yield* store.replaceThreadIndex(options.summaries);
 
-    const attempts: Array<string> = [];
+    const attempts: Array<BackfillAttempt> = [];
     const alarms: Array<number> = [];
+    let registryReads = 0;
+    let progressCalls = 0;
+    let activeGeneration = options.generation ?? "1";
+    let indexDisabled = options.disabled ?? false;
     const delivered = new Set<string>();
     let failurePending = options.failFirstBackfill ?? null;
     const index: SearchIndex.SearchIndex["Service"] = {
+      get generation() {
+        return activeGeneration;
+      },
+      get disabled() {
+        return indexDisabled;
+      },
       deliver: () => Effect.void,
       query: () => Effect.succeed({ candidates: [], hasMore: false }),
       progress: (_home, threadIds) =>
         Effect.sync(() => {
-          const rows: Array<SearchProgress[number]> = [];
-          for (const threadId of threadIds) {
-            if (options.completeProgress?.has(threadId) || delivered.has(threadId)) {
-              rows.push({ threadId, revision: 2, complete: true });
-            } else if (options.incompleteProgress?.has(threadId)) {
-              rows.push({ threadId, revision: 1, complete: false });
-            }
-          }
-          return rows;
+          progressCalls++;
+          return threadIds.flatMap((threadId) =>
+            options.completeProgress?.has(threadId) || delivered.has(threadId)
+              ? [{ threadId, revision: 2, complete: true }]
+              : [],
+          );
         }),
     };
     const directory: ThreadDirectory.ThreadDirectory["Service"] = {
@@ -121,12 +129,13 @@ const makeHarness = (options: {
             if (property === "backfill") {
               return (
                 _requestActor: Actor,
+                requestKey?: string,
               ): Effect.Effect<
                 SearchBackfillProgress,
                 ThreadNotFoundError | ThreadDirectory.ThreadObjectError
               > => {
                 const id = String(threadId);
-                attempts.push(id);
+                attempts.push({ threadId: id, requestKey });
                 if (failurePending === id) {
                   failurePending = null;
                   return Effect.fail(
@@ -145,8 +154,17 @@ const makeHarness = (options: {
         }),
     };
 
+    const observedStore: UserStore.UserStore["Service"] = {
+      ...store,
+      threadIndex: Effect.zipRight(
+        Effect.sync(() => {
+          registryReads++;
+        }),
+        store.threadIndex,
+      ),
+    };
     const storage = Layer.mergeAll(
-      Layer.effect(UserStore.UserStore, UserStore.UserStore),
+      Layer.succeed(UserStore.UserStore, observedStore),
       Layer.effect(UserContexts.UserContexts, UserContexts.UserContexts),
       Layer.effect(SqlClient.SqlClient, SqlClient.SqlClient),
     ).pipe(Layer.provide(userServices));
@@ -169,36 +187,66 @@ const makeHarness = (options: {
       SearchBackfill.SearchBackfill.use((service) => service.step).pipe(
         Effect.provide(Layer.fresh(layer)),
       );
+    const ready = () =>
+      SearchBackfill.SearchBackfill.use((service) => service.ready).pipe(
+        Effect.provide(Layer.fresh(layer)),
+      );
 
-    return { attempts, alarms, step };
+    return {
+      attempts,
+      alarms,
+      get progressCalls() {
+        return progressCalls;
+      },
+      get registryReads() {
+        return registryReads;
+      },
+      setGeneration: (generation: string) => {
+        activeGeneration = generation;
+      },
+      setDisabled: (disabled: boolean) => {
+        indexDisabled = disabled;
+      },
+      ready,
+      step,
+    };
   });
 
 describe("SearchBackfill", () => {
   it.effect(
-    "persists eight-thread scan batches, resumes incomplete progress, and skips completed progress",
+    "persists eight-thread batches, forces source snapshots, and hibernates completed generations",
     () => {
       const ids = Array.from(
         { length: 45 },
         (_, index) => `thread-${String(index).padStart(2, "0")}`,
       );
       const complete = "thread-05";
-      const incomplete = "thread-06";
       const archived = "thread-17";
 
       return Effect.gen(function* () {
         const harness = yield* makeHarness({
           summaries: ids.map((id) => summary(id, id === archived)),
           completeProgress: new Set([complete]),
-          incompleteProgress: new Set([incomplete]),
         });
 
-        for (const expected of [7, 15, 23, 31, 39, 44]) {
+        for (const expected of [8, 16, 24, 32, 40, 45]) {
           yield* harness.step();
           expect(harness.attempts).toHaveLength(expected);
         }
-        expect(harness.attempts).toEqual(ids.filter((id) => id !== complete));
-        expect(harness.attempts).toContain(incomplete);
-        expect(harness.attempts).toContain(archived);
+        expect(harness.attempts.map((attempt) => attempt.threadId)).toEqual(ids);
+        expect(harness.attempts.map((attempt) => attempt.requestKey)).toEqual(
+          Array.from({ length: ids.length }, () => "search-backfill:user_1:1:1"),
+        );
+        expect(harness.attempts.map((attempt) => attempt.threadId)).toContain(complete);
+        expect(harness.attempts.map((attempt) => attempt.threadId)).toContain(archived);
+        expect(harness.alarms).toHaveLength(5);
+        expect(harness.registryReads).toBe(6);
+        expect(harness.progressCalls).toBe(0);
+
+        yield* harness.step();
+        expect(harness.attempts).toHaveLength(ids.length);
+        expect(harness.registryReads).toBe(6);
+        expect(harness.progressCalls).toBe(0);
         expect(harness.alarms).toHaveLength(5);
       });
     },
@@ -217,19 +265,87 @@ describe("SearchBackfill", () => {
       });
 
       yield* harness.step();
-      expect(harness.attempts).toEqual(["thread-00", "thread-01", "thread-02", "thread-03"]);
-      yield* harness.step();
-      expect(harness.attempts).toEqual([
+      expect(harness.attempts.map((attempt) => attempt.threadId)).toEqual([
         "thread-00",
         "thread-01",
         "thread-02",
         "thread-03",
+      ]);
+      yield* harness.step();
+      expect(harness.attempts.map((attempt) => attempt.threadId)).toEqual([
+        "thread-00",
+        "thread-01",
+        "thread-02",
+        "thread-03",
+        "thread-00",
+        "thread-01",
+        "thread-02",
         "thread-03",
         "thread-04",
         "thread-05",
         "thread-06",
         "thread-07",
       ]);
+      expect(harness.attempts[3]?.requestKey).toBe("search-backfill:user_1:1:1");
+      expect(harness.attempts[7]?.requestKey).toBe("search-backfill:user_1:1:1");
+      expect(harness.attempts.slice(0, 4).map((attempt) => attempt.requestKey)).toEqual(
+        harness.attempts.slice(4, 8).map((attempt) => attempt.requestKey),
+      );
+      expect(harness.registryReads).toBe(2);
     });
   });
+
+  it.effect("replays 1 to 2 to 1 activations despite retained complete destination progress", () =>
+    Effect.gen(function* () {
+      const summaries = [summary("thread-a"), summary("thread-b")];
+      const harness = yield* makeHarness({
+        summaries,
+        completeProgress: new Set(summaries.map((entry) => entry.shell.id)),
+      });
+
+      yield* harness.step();
+      harness.setGeneration("2");
+      yield* harness.step();
+      harness.setGeneration("1");
+      yield* harness.step();
+
+      expect(harness.attempts).toEqual([
+        { threadId: "thread-a", requestKey: "search-backfill:user_1:1:1" },
+        { threadId: "thread-b", requestKey: "search-backfill:user_1:1:1" },
+        { threadId: "thread-a", requestKey: "search-backfill:user_1:2:2" },
+        { threadId: "thread-b", requestKey: "search-backfill:user_1:2:2" },
+        { threadId: "thread-a", requestKey: "search-backfill:user_1:1:3" },
+        { threadId: "thread-b", requestKey: "search-backfill:user_1:1:3" },
+      ]);
+      expect(harness.registryReads).toBe(3);
+      expect(harness.progressCalls).toBe(0);
+    }),
+  );
+
+  it.effect("does not scan while disabled or after the same generation is reenabled", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({ summaries: [summary("thread-a")], disabled: true });
+
+      expect(yield* harness.ready()).toBe(false);
+      yield* harness.step();
+      expect(harness.registryReads).toBe(0);
+      expect(harness.attempts).toEqual([]);
+      expect(harness.alarms).toEqual([]);
+
+      harness.setDisabled(false);
+      expect(yield* harness.ready()).toBe(false);
+      yield* harness.step();
+      expect(harness.registryReads).toBe(0);
+      expect(harness.attempts).toEqual([]);
+      expect(harness.alarms).toEqual([]);
+
+      harness.setGeneration("2");
+      expect(yield* harness.ready()).toBe(true);
+      yield* harness.step();
+      expect(harness.registryReads).toBe(1);
+      expect(harness.attempts).toEqual([
+        { threadId: "thread-a", requestKey: "search-backfill:user_1:2:2" },
+      ]);
+    }),
+  );
 });

@@ -52,7 +52,7 @@ import {
 import { Badge } from "../ui/badge";
 import { HighlightedSearchText } from "../ThreadSearchMatch";
 
-export const SEARCH_ITEM_KIND_ICON: Record<SearchItemKind, LucideIcon> = {
+const SEARCH_ITEM_KIND_ICON: Record<SearchItemKind, LucideIcon> = {
   thread: MessageSquareIcon,
   user: UserRoundIcon,
   assistant: BotIcon,

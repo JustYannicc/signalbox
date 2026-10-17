@@ -110,7 +110,10 @@ export interface ThreadObjectApi {
   /** The thread's current summary, when `actor` owns it. */
   readonly summary: (actor: Actor) => Promise<unknown>;
   /** Requests/restarts a durable backfill; `not_found` keeps the actor check at the thread. */
-  readonly backfill: (actor: Actor) => Promise<ThreadObjectReply<SearchBackfillProgress>>;
+  readonly backfill: (
+    actor: Actor,
+    requestKey?: string,
+  ) => Promise<ThreadObjectReply<SearchBackfillProgress>>;
   /** Selected current rows only, for stale-candidate checks. */
   readonly searchDocuments: (
     actor: Actor,
@@ -208,6 +211,7 @@ export interface ThreadHandle {
   readonly summary: (actor: Actor) => Effect.Effect<ThreadSummary | null, ThreadObjectError>;
   readonly backfill: (
     actor: Actor,
+    requestKey?: string,
   ) => Effect.Effect<SearchBackfillProgress, ThreadNotFoundError | ThreadObjectError>;
   readonly searchDocuments: (
     actor: Actor,
@@ -368,8 +372,8 @@ export function handleFor(api: ThreadObjectApi): ThreadHandle {
         Effect.catchTags({ ThreadCommandRejectedError: (error) => Effect.die(error) }),
         Effect.flatMap((value) => decodeIn("snapshot", () => wire.snapshot.decode(value))),
       ),
-    backfill: (actor) =>
-      call("backfill", () => api.backfill(actor)).pipe(
+    backfill: (actor, requestKey) =>
+      call("backfill", () => api.backfill(actor, requestKey)).pipe(
         Effect.flatMap(fromReply),
         Effect.catchTags({ ThreadCommandRejectedError: (error) => Effect.die(error) }),
       ),

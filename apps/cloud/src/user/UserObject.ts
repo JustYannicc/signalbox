@@ -41,6 +41,7 @@ import * as UserPreviewSetup from "../previewSetup/UserPreviewSetup.ts";
 import * as PushNotifier from "../push/PushNotifier.ts";
 import * as ThreadSearch from "../search/ThreadSearch.ts";
 import * as SearchCursors from "../search/SearchCursors.ts";
+import { searchSettings } from "../search/searchSettings.ts";
 import * as SearchAuthority from "../search/SearchAuthority.ts";
 import * as SearchBackfill from "../search/SearchBackfill.ts";
 import * as CloudflareSearchIndex from "../search/CloudflareSearchIndex.ts";
@@ -195,6 +196,13 @@ const layerAlarm = (storage: DurableObjectStorage) =>
 // The whole storage, not just `storage.sql`: migrations run in transactions.
 const makeRuntime = (storage: DurableObjectStorage, env: UserObjectEnv) => {
   const drives = layerDrives(env);
+  const searchBackfill = SearchBackfill.layer.pipe(
+    Layer.provide(
+      Layer.succeed(SearchBackfill.SearchBackfillAlarm, {
+        by: (at) => Effect.promise(() => armBy(storage, at)),
+      }),
+    ),
+  );
   return ManagedRuntime.make(
     // The user's automations (#434), on the services below.
     CloudEngine.layer.pipe(
@@ -229,13 +237,7 @@ const makeRuntime = (storage: DurableObjectStorage, env: UserObjectEnv) => {
               CloudThreadService.layer,
               ThreadSearch.layer.pipe(
                 Layer.provide(Layer.mergeAll(SearchAuthority.layerUser, SearchCursors.layerSql)),
-              ),
-              SearchBackfill.layer.pipe(
-                Layer.provide(
-                  Layer.succeed(SearchBackfill.SearchBackfillAlarm, {
-                    by: (at) => Effect.promise(() => armBy(storage, at)),
-                  }),
-                ),
+                Layer.provideMerge(searchBackfill),
               ),
               PoolSignIns.layer,
               drives.services,
@@ -339,6 +341,7 @@ export class UserObject extends DurableObject<UserObjectEnv> implements UserObje
       previews: machineSettings(env) !== null && previewSettings(env) !== null,
       scripted: scriptedProviderEnabled(env),
       attachments: env.DRIVE_PACKS !== undefined,
+      searchDisabled: searchSettings(env).disabled,
     };
     this.runtime = makeRuntime(ctx.storage, env);
     this.sockets = new ClientSockets({

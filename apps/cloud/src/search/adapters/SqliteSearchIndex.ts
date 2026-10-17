@@ -7,11 +7,11 @@ import * as SqlClient from "effect/sql/SqlClient";
 
 import * as Migrations from "../../storage/migrations.ts";
 import * as SearchIndex from "../SearchIndex.ts";
+import * as SqliteSearchParts from "./SqliteSearchParts.ts";
 import * as SqliteSearchQueries from "./SqliteSearchQueries.ts";
 
 const encodeStrings = Schema.encodeSync(Schema.fromJsonString(Schema.Array(Schema.String)));
 const isSearchIndexError = Schema.is(SearchIndex.SearchIndexError);
-
 const migrations = Migrator.fromRecord({
   "0001_thread_search": Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
@@ -63,6 +63,65 @@ const migrations = Migrator.fromRecord({
       search_text, tokenize = 'unicode61 remove_diacritics 2 tokenchars ''_'''
     )`;
   }),
+  "0002_bounded_search_document_parts": Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    yield* sql`ALTER TABLE search_threads ADD COLUMN updated_at TEXT NOT NULL DEFAULT ''`;
+    yield* sql`ALTER TABLE search_threads ADD COLUMN complete_requested INTEGER NOT NULL DEFAULT 0`;
+    yield* sql`CREATE TABLE search_document_parts (
+      id INTEGER PRIMARY KEY,
+      document_id INTEGER NOT NULL REFERENCES search_documents(id) ON DELETE CASCADE,
+      part_index INTEGER NOT NULL,
+      offset INTEGER NOT NULL,
+      total_length INTEGER NOT NULL,
+      text TEXT NOT NULL,
+      search_text TEXT NOT NULL,
+      literal_text TEXT NOT NULL,
+      UNIQUE (document_id, part_index),
+      UNIQUE (document_id, offset)
+    )`;
+    yield* sql`CREATE TABLE search_document_staging (
+      thread_id TEXT NOT NULL,
+      item_id TEXT NOT NULL,
+      revision INTEGER NOT NULL,
+      entry_id TEXT NOT NULL,
+      run_id TEXT,
+      position REAL NOT NULL,
+      kind TEXT NOT NULL,
+      created_at TEXT,
+      total_length INTEGER NOT NULL,
+      invalid INTEGER NOT NULL DEFAULT 0,
+      PRIMARY KEY (thread_id, item_id, revision)
+    )`;
+    yield* sql`CREATE TABLE search_document_staging_parts (
+      thread_id TEXT NOT NULL,
+      item_id TEXT NOT NULL,
+      revision INTEGER NOT NULL,
+      offset INTEGER NOT NULL,
+      text TEXT NOT NULL,
+      PRIMARY KEY (thread_id, item_id, revision, offset),
+      FOREIGN KEY (thread_id, item_id, revision)
+        REFERENCES search_document_staging(thread_id, item_id, revision) ON DELETE CASCADE
+    )`;
+    yield* sql`CREATE VIRTUAL TABLE search_document_parts_fts USING fts5(
+      search_text, tokenize = 'unicode61 remove_diacritics 2 tokenchars ''_'''
+    )`;
+  }),
+  "0003_per_document_source_sequence_and_conversion": Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    yield* sql`ALTER TABLE search_documents ADD COLUMN source_sequence INTEGER NOT NULL DEFAULT 0`;
+    yield* sql`ALTER TABLE search_document_staging ADD COLUMN source_sequence INTEGER`;
+    yield* sql`ALTER TABLE search_document_parts ADD COLUMN unit_length INTEGER NOT NULL DEFAULT 0`;
+    yield* sql`CREATE TABLE search_document_conversion (
+      document_id INTEGER PRIMARY KEY REFERENCES search_documents(id) ON DELETE CASCADE,
+      char_offset INTEGER NOT NULL,
+      unit_offset INTEGER NOT NULL,
+      total_chars INTEGER NOT NULL,
+      total_length INTEGER NOT NULL,
+      stage TEXT NOT NULL CHECK (stage IN ('reading', 'indexing', 'verifying', 'invalid')),
+      next_part_index INTEGER NOT NULL,
+      next_index_part INTEGER NOT NULL
+    )`;
+  }),
 });
 const matchesHome = (expected: SearchIndex.SearchHome, actual: SearchIndex.SearchHome) =>
   expected.ownerId === actual.ownerId && expected.projectId === actual.projectId;
@@ -77,9 +136,19 @@ const make = (home: SearchIndex.SearchHome) =>
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
 
+    const clearIndexedParts = (documentId: number) =>
+      Effect.gen(function* () {
+        yield* sql`DELETE FROM search_documents_fts WHERE rowid = ${documentId}`;
+        yield* SqliteSearchParts.deleteIndexedParts(sql, documentId);
+        yield* sql`DELETE FROM search_document_conversion WHERE document_id = ${documentId}`;
+      });
+
     const deliver = (delivery: SearchIndex.SearchDelivery) => {
       if (!matchesHome(home, delivery.home)) return Effect.fail(failHome("deliver"));
-      if (delivery.documents.some((document) => document.threadId !== delivery.thread.threadId)) {
+      if (
+        delivery.documents.some((document) => document.threadId !== delivery.thread.threadId) ||
+        (delivery.parts ?? []).some((part) => part.threadId !== delivery.thread.threadId)
+      ) {
         return Effect.fail(
           new SearchIndex.SearchIndexError({
             operation: "deliver",
@@ -101,13 +170,14 @@ const make = (home: SearchIndex.SearchHome) =>
             const stale = currentRevision !== undefined && delivery.revision < currentRevision;
 
             if (!stale) {
-              const newer = currentRevision === undefined || delivery.revision > currentRevision;
               yield* sql`INSERT INTO search_threads
-              (thread_id, title, archived, deleted, revision, source_sequence, complete)
+              (thread_id, title, archived, deleted, revision, source_sequence, complete,
+                updated_at, complete_requested)
               VALUES (
                 ${delivery.thread.threadId}, ${delivery.thread.title},
                 ${delivery.thread.archived ? 1 : 0}, ${delivery.thread.deleted ? 1 : 0},
-                ${delivery.revision}, ${delivery.sourceSequence}, ${delivery.complete ? 1 : 0}
+                ${delivery.revision}, ${delivery.sourceSequence}, 0,
+                ${delivery.thread.updatedAt ?? ""}, ${delivery.complete ? 1 : 0}
               )
               ON CONFLICT(thread_id) DO UPDATE SET
                 title = excluded.title,
@@ -115,74 +185,52 @@ const make = (home: SearchIndex.SearchHome) =>
                 deleted = excluded.deleted,
                 revision = excluded.revision,
                 source_sequence = excluded.source_sequence,
-                complete = MAX(search_threads.complete, excluded.complete)`;
+                updated_at = excluded.updated_at,
+                complete = MAX(search_threads.complete, excluded.complete),
+                complete_requested = MAX(search_threads.complete_requested, excluded.complete_requested)`;
 
-              for (const document of delivery.documents) {
-                const tombstones = yield* sql<{ readonly revision: number }>`SELECT revision
-                FROM search_tombstones WHERE thread_id = ${document.threadId}
-                  AND item_id = ${document.itemId}`;
-                if (tombstones[0] !== undefined && tombstones[0].revision >= delivery.revision)
-                  continue;
-
-                const previous = yield* sql<{
-                  readonly id: number;
-                  readonly revision: number;
-                }>`SELECT id, revision FROM search_documents
-                WHERE thread_id = ${document.threadId} AND item_id = ${document.itemId}`;
-                const existingRow = previous[0];
-                if (existingRow !== undefined && existingRow.revision > delivery.revision) continue;
-                const existingId = existingRow?.id;
-                if (existingId !== undefined) {
-                  yield* sql`DELETE FROM search_documents_fts WHERE rowid = ${existingId}`;
-                }
-                yield* sql`INSERT INTO search_documents
-                (thread_id, item_id, entry_id, run_id, position, kind, text, search_text, literal_text, created_at, revision)
-                VALUES (
-                  ${document.threadId}, ${document.itemId}, ${document.entryId}, ${document.runId},
-                  ${document.position}, ${document.kind}, ${document.text},
-                  ${SqliteSearchQueries.normalizeKeywordText(document.text)},
-                  ${SqliteSearchQueries.foldLiteralText(document.text)}, ${document.createdAt},
-                  ${delivery.revision}
-                )
-                ON CONFLICT(thread_id, item_id) DO UPDATE SET
-                  entry_id = excluded.entry_id,
-                  run_id = excluded.run_id,
-                  position = excluded.position,
-                  kind = excluded.kind,
-                  text = excluded.text,
-                  search_text = excluded.search_text,
-                  literal_text = excluded.literal_text,
-                  created_at = excluded.created_at,
-                  revision = excluded.revision
-                WHERE excluded.revision >= search_documents.revision`;
-                const inserted = yield* sql<{ readonly id: number }>`SELECT id FROM search_documents
-                WHERE thread_id = ${document.threadId} AND item_id = ${document.itemId}`;
-                const rowId = inserted[0]?.id;
-                if (rowId !== undefined) {
-                  yield* sql`INSERT INTO search_documents_fts (rowid, search_text)
-                  VALUES (${rowId}, ${SqliteSearchQueries.normalizeKeywordText(document.text)})`;
-                }
-                // A newer source revision is the only event that can resurrect a removed item.
-                if (newer) {
-                  yield* sql`DELETE FROM search_tombstones
-                  WHERE thread_id = ${document.threadId} AND item_id = ${document.itemId}
-                    AND revision < ${delivery.revision}`;
-                }
+              const incomingParts: Array<SearchIndex.SearchDocumentPart> = [
+                ...delivery.documents.flatMap((document) =>
+                  SqliteSearchParts.splitDocument(document).map((piece) => ({
+                    ...document,
+                    ...piece,
+                  })),
+                ),
+                ...(delivery.parts ?? []).flatMap(SqliteSearchParts.boundPart),
+              ];
+              for (const part of incomingParts) {
+                yield* SqliteSearchParts.stagePart(
+                  sql,
+                  part,
+                  delivery.revision,
+                  delivery.sourceSequence,
+                );
               }
 
               for (const itemId of delivery.removed) {
                 const previous = yield* sql<{ readonly id: number }>`SELECT id FROM search_documents
                 WHERE thread_id = ${delivery.thread.threadId} AND item_id = ${itemId}`;
-                const rowId = previous[0]?.id;
-                if (rowId !== undefined) {
-                  yield* sql`DELETE FROM search_documents_fts WHERE rowid = ${rowId}`;
+                const documentId = previous[0]?.id;
+                if (documentId !== undefined) {
+                  yield* clearIndexedParts(documentId);
                   yield* sql`DELETE FROM search_documents
                   WHERE thread_id = ${delivery.thread.threadId} AND item_id = ${itemId}`;
                 }
+                yield* sql`DELETE FROM search_document_staging_parts
+                  WHERE thread_id = ${delivery.thread.threadId} AND item_id = ${itemId}`;
+                yield* sql`DELETE FROM search_document_staging
+                  WHERE thread_id = ${delivery.thread.threadId} AND item_id = ${itemId}`;
                 yield* sql`INSERT INTO search_tombstones (thread_id, item_id, revision)
                 VALUES (${delivery.thread.threadId}, ${itemId}, ${delivery.revision})
                 ON CONFLICT(thread_id, item_id) DO UPDATE SET
                   revision = MAX(search_tombstones.revision, excluded.revision)`;
+              }
+
+              const pending = yield* sql<{ readonly pending: number }>`SELECT 1 AS pending
+                FROM search_document_staging WHERE thread_id = ${delivery.thread.threadId} LIMIT 1`;
+              if (pending.length === 0) {
+                yield* sql`UPDATE search_threads SET complete = 1
+                  WHERE thread_id = ${delivery.thread.threadId} AND complete_requested = 1`;
               }
             }
 
@@ -224,7 +272,13 @@ const make = (home: SearchIndex.SearchHome) =>
       );
     };
 
-    return SearchIndex.SearchIndex.of({ deliver, query, progress });
+    return SearchIndex.SearchIndex.of({
+      generation: "1",
+      disabled: false,
+      deliver,
+      query,
+      progress,
+    });
   });
 
 /** Initializes the named additive migration and binds the object to one search home. */
@@ -253,6 +307,19 @@ export const initialize = (home: SearchIndex.SearchHome) =>
         : new SearchIndex.SearchIndexError({ operation: "initialize", cause }),
     ),
   );
+
+export const advanceLegacyConversion = Effect.gen(function* () {
+  const sql = yield* SqlClient.SqlClient;
+  return yield* SqliteSearchParts.advanceLegacyConversion(sql);
+}).pipe(
+  Effect.mapError(
+    (cause) =>
+      new SearchIndex.SearchIndexError({
+        operation: "legacyConversion",
+        cause,
+      }),
+  ),
+);
 
 export const layer = (home: SearchIndex.SearchHome) =>
   Layer.effect(SearchIndex.SearchIndex, make(home));

@@ -20,11 +20,20 @@ export const SearchDocument = Schema.Struct({
 });
 export type SearchDocument = typeof SearchDocument.Type;
 
+/** Bounded transport/storage pieces of one logical item. Offsets are UTF-16 code units. */
+export const SearchDocumentPart = Schema.Struct({
+  ...SearchDocument.fields,
+  offset: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
+  totalLength: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
+});
+export type SearchDocumentPart = typeof SearchDocumentPart.Type;
+
 export const SearchThreadMetadata = Schema.Struct({
   threadId: Schema.String,
   title: Schema.String,
   archived: Schema.Boolean,
   deleted: Schema.Boolean,
+  updatedAt: Schema.optionalKey(Schema.String),
 });
 export type SearchThreadMetadata = typeof SearchThreadMetadata.Type;
 
@@ -36,15 +45,26 @@ export interface SearchDelivery {
   readonly sourceSequence: number;
   readonly deliveryId: string;
   readonly documents: ReadonlyArray<SearchDocument>;
+  /** New writers use parts. documents remains readable for already queued deliveries. */
+  readonly parts?: ReadonlyArray<SearchDocumentPart>;
   readonly removed: ReadonlyArray<string>;
   readonly complete: boolean;
 }
 
-export interface SearchCandidate extends SearchDocument {
+export interface SearchCandidate extends Omit<SearchDocument, "text"> {
   readonly title: string;
   readonly archived: boolean;
   readonly revision: number;
   readonly sourceSequence: number;
+  readonly matchRank: number;
+  readonly threadUpdatedAt: string;
+}
+
+export interface SearchSortKey {
+  readonly matchRank: number;
+  readonly threadUpdatedAt: string;
+  readonly threadId: string;
+  readonly itemId: string;
 }
 
 export class SearchIndexError extends Schema.TaggedError<SearchIndexError>()("SearchIndexError", {
@@ -60,6 +80,8 @@ export class SearchIndexError extends Schema.TaggedError<SearchIndexError>()("Se
 export class SearchIndex extends Context.Service<
   SearchIndex,
   {
+    readonly generation: string;
+    readonly disabled: boolean;
     readonly deliver: (delivery: SearchDelivery) => Effect.Effect<void, SearchIndexError>;
     readonly query: (input: {
       readonly home: SearchHome;
@@ -68,7 +90,8 @@ export class SearchIndex extends Context.Service<
       readonly mode: "keyword" | "literal";
       readonly kinds?: ReadonlyArray<SearchDocument["kind"]>;
       readonly distinctThreads?: boolean;
-      readonly after: { readonly threadId: string; readonly itemId: string } | null;
+      readonly order?: "rich" | "legacy";
+      readonly after: SearchSortKey | null;
       readonly limit: number;
     }) => Effect.Effect<
       {

@@ -14,6 +14,7 @@ import { type SearchActor } from "./SearchAuthority.ts";
 import * as SearchAuthority from "./SearchAuthority.ts";
 import * as SearchIndex from "./SearchIndex.ts";
 import * as SearchCursors from "./SearchCursors.ts";
+import { compareSearchKeys, searchKey } from "./searchOrdering.ts";
 import { matchesSearchText, searchSnippet } from "./searchText.ts";
 
 const unavailable = () => new ThreadSearchError({ reason: "unavailable" });
@@ -46,19 +47,28 @@ export const make = Effect.gen(function* () {
     actor: SearchActor,
     scope: SearchAuthority.SearchScope,
     input: ThreadSearchInput,
+    legacy: boolean,
   ) =>
     crypto
       .digest(
         "SHA-256",
         new TextEncoder().encode(
           encodeFingerprint({
-            version: 1,
+            version: 2,
             actor: actor.userId,
-            revision: scope.revision,
-            homes: scopeFor(scope, input),
+            contexts: [...scope.actor.contextIds].sort(),
+            representedProjects:
+              actor.projectIds === undefined ? null : [...actor.projectIds].sort(),
+            grants: [...new Set(scope.grants.map(homeKey))].sort(),
+            projects: input.projectIds === undefined ? null : [...input.projectIds].sort(),
+            thread: input.threadId ?? null,
             query: input.query,
             mode: input.mode ?? "keyword",
-            kinds: input.kinds ?? null,
+            kinds: input.kinds === undefined ? null : [...input.kinds].sort(),
+            distinctThreads: legacy || input.distinctThreads === true,
+            order: legacy ? "legacy" : "rich",
+            limit: input.limit ?? 20,
+            generation: index.generation,
           }),
         ),
       )
@@ -67,55 +77,42 @@ export const make = Effect.gen(function* () {
   const queryItems = (
     actor: SearchActor,
     input: ThreadSearchInput,
-    distinctThreads = false,
+    legacy = false,
   ): Effect.Effect<ThreadSearchResult, ThreadSearchError> =>
     Effect.gen(function* () {
+      if (index.disabled) return yield* unavailable();
       const scope = yield* authority.current(actor);
-      const homes = scopeFor(scope, input);
-      const fingerprint = yield* fingerprintFor(actor, scope, input);
+      const fingerprint = yield* fingerprintFor(actor, scope, input, legacy);
       const cursor = input.cursor === undefined ? null : yield* cursors.read(input.cursor);
       if (input.cursor !== undefined && (cursor === null || cursor.fingerprint !== fingerprint))
         return yield* expired();
-      if (cursor !== null && !homes.some(({ home }) => homeKey(home) === cursor.home))
-        return yield* expired();
-
-      let indexedThreads = 0;
-      let pendingThreads = 0;
-      let available = true;
-      for (const { home, threadIds } of homes) {
-        const progress = yield* index.progress(home, threadIds).pipe(
-          Effect.catchTags({
-            SearchIndexError: () => {
-              available = false;
-              return Effect.succeed([]);
-            },
-          }),
-        );
-        const complete = new Set(progress.filter((row) => row.complete).map((row) => row.threadId));
-        indexedThreads += complete.size;
-        pendingThreads += threadIds.length - complete.size;
-      }
-
-      const hits: Array<ThreadSearchHit> = [];
-      const limit = input.limit ?? 20;
       const mode = input.mode ?? "keyword";
-      let nextCursor: string | null = null;
-      let budget = 500;
-      const start =
-        cursor === null ? 0 : homes.findIndex(({ home }) => homeKey(home) === cursor.home);
-      outer: for (let h = start; h < homes.length; h++) {
-        const partition = homes[h]!;
-        let after = h === start ? (cursor?.after ?? null) : null;
-        while (budget > 0) {
+      const distinctThreads = legacy || input.distinctThreads === true;
+      const seen = new Set(distinctThreads && cursor !== null ? yield* cursors.seen(cursor) : []);
+      const emitted: Array<string> = [];
+      const partitions = scopeFor(scope, input).map((partition) => ({
+        ...partition,
+        buffer: [] as Array<SearchIndex.SearchCandidate>,
+        after: cursor?.after ?? null,
+        more: true,
+      }));
+      let available = true;
+      const refill = (partition: (typeof partitions)[number]) =>
+        Effect.gen(function* () {
+          if (partition.buffer.length > 0 || !partition.more) return;
           const page = yield* index
             .query({
-              ...partition,
+              home: partition.home,
+              threadIds: distinctThreads
+                ? partition.threadIds.filter((id) => !seen.has(id))
+                : partition.threadIds,
               query: input.query,
               mode,
-              distinctThreads,
+              distinctThreads: false,
+              order: legacy ? "legacy" : "rich",
               ...(input.kinds === undefined ? {} : { kinds: input.kinds }),
-              after,
-              limit: Math.min(50, budget),
+              after: partition.after,
+              limit: 50,
             })
             .pipe(
               Effect.catchTags({
@@ -125,103 +122,161 @@ export const make = Effect.gen(function* () {
                 },
               }),
             );
-          const grouped = new Map<string, Array<SearchIndex.SearchCandidate>>();
-          for (const candidate of page.candidates) {
-            const group = grouped.get(candidate.threadId) ?? [];
-            group.push(candidate);
-            grouped.set(candidate.threadId, group);
-          }
-          // Fetch only selected items, with the latest grants. Never trust cached ACLs or snippets.
-          const current = yield* authority.current(actor);
-          const allowed = new Set(
-            scopeFor(current, input).flatMap((p) =>
-              homeKey(p.home) === homeKey(partition.home) ? p.threadIds : [],
-            ),
-          );
-          const verified = yield* Effect.forEach(
+          partition.buffer.push(...page.candidates);
+          partition.more = page.hasMore;
+          const last = page.candidates.at(-1);
+          if (last !== undefined) partition.after = searchKey(last);
+          // An adapter cannot advance an empty page; avoid a retry loop on bad responses.
+          else partition.more = false;
+        });
+      yield* Effect.forEach(partitions, refill, { concurrency: 4 });
+      const hits: Array<ThreadSearchHit> = [];
+      let consumed = 0;
+      let after = cursor?.after ?? null;
+      let unconsumed = false;
+      const limit = input.limit ?? 20;
+      while (consumed < 500 && hits.length < limit) {
+        const selected: Array<{
+          home: SearchIndex.SearchHome;
+          candidate: SearchIndex.SearchCandidate;
+        }> = [];
+        while (selected.length < Math.min(50, 500 - consumed)) {
+          yield* Effect.forEach(partitions, refill, { concurrency: 4 });
+          const next = partitions
+            .filter((p) => p.buffer.length > 0)
+            .sort((a, b) => compareSearchKeys(a.buffer[0]!, b.buffer[0]!))[0];
+          if (next === undefined) break;
+          selected.push({ home: next.home, candidate: next.buffer.shift()! });
+        }
+        if (selected.length === 0) break;
+        const current = yield* authority.current(actor);
+        const allowed = new Map(
+          scopeFor(current, input).map((p) => [homeKey(p.home), new Set(p.threadIds)]),
+        );
+        const grouped = new Map<string, Array<SearchIndex.SearchCandidate>>();
+        for (const { home, candidate } of selected) {
+          if (!allowed.get(homeKey(home))?.has(candidate.threadId)) continue;
+          const group = grouped.get(candidate.threadId) ?? [];
+          group.push(candidate);
+          grouped.set(candidate.threadId, group);
+        }
+        const records = new Map(
+          yield* Effect.forEach(
             [...grouped],
             ([id, candidates]) =>
-              allowed.has(id)
-                ? threads
-                    .forThread(ThreadId.make(id))
-                    .searchDocuments(
-                      current.actor,
-                      candidates.map((c) => c.itemId),
-                    )
-                    .pipe(
-                      Effect.catchTags({
-                        ThreadObjectError: () => {
-                          available = false;
-                          return Effect.succeed(null);
-                        },
-                      }),
-                    )
-                : Effect.succeed(null),
+              threads
+                .forThread(ThreadId.make(id))
+                .searchDocuments(
+                  current.actor,
+                  candidates.map((c) => c.itemId),
+                )
+                .pipe(
+                  Effect.catchTags({
+                    ThreadObjectError: () => {
+                      available = false;
+                      return Effect.succeed(null);
+                    },
+                  }),
+                  Effect.map((record) => [id, record] as const),
+                ),
             { concurrency: 4 },
-          );
-          const records = new Map([...grouped.keys()].map((id, i) => [id, verified[i]]));
-          for (let c = 0; c < page.candidates.length; c++) {
-            const candidate = page.candidates[c]!;
-            budget--;
-            after = { threadId: candidate.threadId, itemId: candidate.itemId };
-            const record = records.get(candidate.threadId);
-            if (
-              record === null ||
-              record === undefined ||
-              record.deleted ||
-              record.projectId !== partition.home.projectId
-            )
-              continue;
-            const document = record.documents.find((d) => d.itemId === candidate.itemId);
-            if (document === undefined || !matchesSearchText(document.text, input.query, mode))
-              continue;
-            if (input.kinds !== undefined && !input.kinds.includes(document.kind)) continue;
-            hits.push({
-              threadId: ThreadId.make(candidate.threadId),
-              projectId: ProjectId.make(partition.home.projectId),
-              title: record.title,
-              archived: record.archived,
-              itemId: document.itemId,
-              entryId: document.entryId,
-              runId: document.runId,
-              position: document.position,
-              kind: document.kind,
-              snippet: searchSnippet(document.text, input.query),
-              createdAt: document.createdAt,
-              sourceSequence: record.snapshotSequence,
-              indexedThrough: candidate.sourceSequence,
-            });
-            if (hits.length >= limit) {
-              if (c < page.candidates.length - 1 || page.hasMore || h < homes.length - 1) {
-                nextCursor = yield* cursors.save({
-                  version: 1,
-                  fingerprint,
-                  home: homeKey(partition.home),
-                  after,
-                });
-              }
-              break outer;
-            }
-          }
-          if (!page.hasMore) break;
-          if (budget <= 0) {
-            nextCursor = yield* cursors.save({
-              version: 1,
-              fingerprint,
-              home: homeKey(partition.home),
-              after,
-            });
-            break outer;
+          ),
+        );
+        for (let position = 0; position < selected.length; position++) {
+          const { home, candidate } = selected[position]!;
+          consumed++;
+          after = searchKey(candidate);
+          const record = records.get(candidate.threadId);
+          if (
+            record === null ||
+            record === undefined ||
+            record.deleted ||
+            record.projectId !== home.projectId
+          )
+            continue;
+          const document = record.documents.find((d) => d.itemId === candidate.itemId);
+          if (document === undefined || !matchesSearchText(document.text, input.query, mode))
+            continue;
+          if (input.kinds !== undefined && !input.kinds.includes(document.kind)) continue;
+          if (distinctThreads && seen.has(candidate.threadId)) continue;
+          seen.add(candidate.threadId);
+          emitted.push(candidate.threadId);
+          hits.push({
+            threadId: ThreadId.make(candidate.threadId),
+            projectId: ProjectId.make(home.projectId),
+            title: record.title,
+            archived: record.archived,
+            itemId: document.itemId,
+            entryId: document.entryId,
+            runId: document.runId,
+            position: document.position,
+            kind: document.kind,
+            snippet: searchSnippet(document.text, input.query),
+            createdAt: document.createdAt,
+            sourceSequence: record.snapshotSequence,
+            indexedThrough: candidate.sourceSequence,
+          });
+          if (hits.length >= limit) {
+            unconsumed = position < selected.length - 1;
+            break;
           }
         }
       }
-      // A membership change during index/record reads invalidates the entire page, including coverage.
+      const more = unconsumed || partitions.some((p) => p.buffer.length > 0 || p.more);
       const finalScope = yield* authority.current(actor);
-      if ((yield* fingerprintFor(actor, finalScope, input)) !== fingerprint)
+      if ((yield* fingerprintFor(actor, finalScope, input, legacy)) !== fingerprint)
         return yield* expired();
+      const finalHomes = scopeFor(finalScope, input);
+      const finalAllowed = new Map(finalHomes.map((p) => [homeKey(p.home), new Set(p.threadIds)]));
+      const finalHits = hits.filter((hit) =>
+        finalHomes.some(
+          (p) =>
+            p.home.projectId === hit.projectId &&
+            finalAllowed.get(homeKey(p.home))?.has(hit.threadId),
+        ),
+      );
+      const completedByHome = new Map<string, ReadonlySet<string>>();
+      for (const { home, threadIds } of finalHomes) {
+        const progress = yield* index.progress(home, threadIds).pipe(
+          Effect.catchTags({
+            SearchIndexError: () => {
+              available = false;
+              return Effect.succeed([]);
+            },
+          }),
+        );
+        const allowedIds = new Set(threadIds);
+        const complete = new Set(
+          progress
+            .filter((row) => row.complete && allowedIds.has(row.threadId))
+            .map((row) => row.threadId),
+        );
+        completedByHome.set(homeKey(home), complete);
+      }
+      // Progress reads also cross object boundaries, so recheck grants after those reads.
+      const checkedScope = yield* authority.current(actor);
+      if ((yield* fingerprintFor(actor, checkedScope, input, legacy)) !== fingerprint)
+        return yield* expired();
+      const checkedHomes = scopeFor(checkedScope, input);
+      const checkedIds = new Set(checkedHomes.flatMap((p) => p.threadIds));
+      let indexedThreads = 0;
+      let pendingThreads = 0;
+      for (const partition of checkedHomes) {
+        const complete = completedByHome.get(homeKey(partition.home));
+        const indexed = partition.threadIds.filter((id) => complete?.has(id)).length;
+        indexedThreads += indexed;
+        pendingThreads += partition.threadIds.length - indexed;
+      }
       return {
-        hits,
-        nextCursor,
+        hits: finalHits.filter((hit) => checkedIds.has(hit.threadId)),
+        nextCursor:
+          more && after !== null
+            ? yield* cursors.save(
+                { version: 2, fingerprint, after },
+                cursor,
+                distinctThreads ? emitted : [],
+              )
+            : null,
         coverage: {
           complete: available && pendingThreads === 0,
           indexedThreads,

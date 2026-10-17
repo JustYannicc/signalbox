@@ -202,6 +202,19 @@ describe("SearchAuthority", () => {
     }),
   );
 
+  it.effect("keeps the grant fingerprint stable when a home's last thread disappears", () =>
+    Effect.gen(function* () {
+      const { authority, store } = yield* prepare;
+      const actor = { userId, contextIds: [PERSONAL_CONTEXT_ID, orgId] };
+      const before = yield* authority.current(actor);
+      yield* store.replaceThreadIndex([]);
+      const after = yield* authority.current(actor);
+      expect(after.homes).toEqual([]);
+      expect(after.grants).toEqual(before.grants);
+      expect(after.grants.length).toBeGreaterThan(0);
+    }),
+  );
+
   it.effect("keeps archived threads searchable and excludes deleted threads", () =>
     Effect.gen(function* () {
       const { authority } = yield* prepare;

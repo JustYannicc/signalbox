@@ -17,6 +17,8 @@ export type SearchActor = Actor & { readonly projectIds?: ReadonlyArray<string> 
 export interface SearchScope {
   readonly actor: Actor;
   readonly revision: number;
+  /** Readable homes independent of whether the thread registry currently has any rows in them. */
+  readonly grants: ReadonlyArray<SearchHome>;
   readonly homes: ReadonlyArray<{
     readonly home: SearchHome;
     readonly threadIds: ReadonlyArray<string>;
@@ -48,10 +50,22 @@ const make = Effect.gen(function* () {
           contextIds,
           ...(actor.projectIds === undefined ? {} : { projectIds: actor.projectIds }),
         };
-        if (profile?.id !== actor.userId) return { actor: currentActor, revision, homes: [] };
+        if (profile?.id !== actor.userId)
+          return { actor: currentActor, revision, grants: [], homes: [] };
         const index = yield* store.threadIndex;
         const homes = new Map<string, { home: SearchHome; threadIds: Array<string> }>();
         const access = new Map<string, boolean>();
+        const grants: Array<SearchHome> = [];
+        for (const drive of yield* drives.drives) {
+          if (!contextAllows(contextIds, drive.contextId)) continue;
+          if (actor.projectIds !== undefined && !actor.projectIds.includes(drive.projectId))
+            continue;
+          const allowed = (yield* drives.access(drive.id)) !== null;
+          access.set(drive.id, allowed);
+          if (allowed)
+            grants.push(searchHomeForThread(actor.userId, drive.contextId, drive.projectId));
+        }
+        const granted = new Set(grants.map((home) => `${home.ownerId}/${home.projectId}`));
         for (const row of index.threads) {
           if (!contextAllows(contextIds, row.contextId) || row.shell.deletedAt !== null) continue;
           if (actor.projectIds !== undefined && !actor.projectIds.includes(row.shell.projectId))
@@ -66,6 +80,7 @@ const make = Effect.gen(function* () {
           if (!allowed) continue;
           const home = searchHomeForThread(actor.userId, row.contextId, row.shell.projectId);
           const key = `${home.ownerId}/${home.projectId}`;
+          if (!granted.has(key)) continue;
           const entry = homes.get(key) ?? { home, threadIds: [] };
           entry.threadIds.push(row.shell.id);
           homes.set(key, entry);
@@ -73,6 +88,17 @@ const make = Effect.gen(function* () {
         return {
           actor: currentActor,
           revision,
+          grants: grants.toSorted((a, b) =>
+            a.ownerId < b.ownerId
+              ? -1
+              : a.ownerId > b.ownerId
+                ? 1
+                : a.projectId < b.projectId
+                  ? -1
+                  : a.projectId > b.projectId
+                    ? 1
+                    : 0,
+          ),
           homes: [...homes]
             .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
             .map(([, entry]) => ({

@@ -56,6 +56,7 @@ import {
   SearchDocument,
   SearchThreadMetadata,
 } from "../search/SearchIndex.ts";
+import * as SearchSettings from "../search/searchSettings.ts";
 import { searchHomeForThread } from "../search/searchHome.ts";
 import { findProjectedThreadItems } from "../search/threadFind.ts";
 import {
@@ -285,7 +286,10 @@ export class ThreadEngine extends Context.Service<
       deliveryId: string,
     ) => Effect.Effect<void>;
     /** Starts or restarts an additive backfill, after the normal actor check. */
-    readonly backfill: (actor: Actor) => Effect.Effect<SearchBackfillProgress | null>;
+    readonly backfill: (
+      actor: Actor,
+      requestKey?: string,
+    ) => Effect.Effect<SearchBackfillProgress | null>;
     /** Rechecks current content before search can return a snippet. */
     readonly searchDocuments: (
       actor: Actor,
@@ -341,7 +345,6 @@ const toStreamItem = (stored: ThreadStore.StoredEvent): OrchestrationV2ThreadStr
   event: stored.event,
 });
 
-const SEARCH_DELIVERY_PAGE_SIZE = 48;
 const sameSearchDocument = Schema.toEquivalence(SearchDocument);
 const sameSearchMetadata = Schema.toEquivalence(SearchThreadMetadata);
 
@@ -353,6 +356,7 @@ const searchMetadata = (projection: OrchestrationV2ThreadProjection) => ({
   title: projection.thread.title,
   archived: projection.thread.archivedAt !== null,
   deleted: projection.thread.deletedAt !== null,
+  updatedAt: DateTime.formatIso(projection.thread.updatedAt),
 });
 
 function searchDeliveryDrafts(
@@ -380,24 +384,7 @@ function searchDeliveryDrafts(
     documents: ReadonlyArray<SearchDocument>,
     removed: ReadonlyArray<string>,
   ): Array<ThreadStore.SearchDeliveryDraft> => {
-    const count = Math.max(
-      1,
-      Math.ceil(Math.max(documents.length, removed.length) / SEARCH_DELIVERY_PAGE_SIZE),
-    );
-    return Array.from({ length: count }, (_, page) => ({
-      home,
-      thread,
-      documents: documents.slice(
-        page * SEARCH_DELIVERY_PAGE_SIZE,
-        (page + 1) * SEARCH_DELIVERY_PAGE_SIZE,
-      ),
-      removed: removed.slice(
-        page * SEARCH_DELIVERY_PAGE_SIZE,
-        (page + 1) * SEARCH_DELIVERY_PAGE_SIZE,
-      ),
-      complete,
-      sourceSequence,
-    }));
+    return [{ home, thread, documents, removed, complete, sourceSequence }];
   };
 
   if (homeChanged && before !== null) {
@@ -425,6 +412,7 @@ function searchDeliveryDrafts(
 
 const make = Effect.gen(function* () {
   const store = yield* ThreadStore.ThreadStore;
+  const searchSettings = yield* SearchSettings.SearchSettings;
   const crypto = yield* Crypto.Crypto;
   const turnModels = yield* TurnModels.TurnModels;
   const lock = yield* Semaphore.make(1);
@@ -528,17 +516,19 @@ const make = Effect.gen(function* () {
           event.type === "checkpoint.captured"
         );
       });
-    const searchComplete =
-      current.thread === null || (yield* Effect.orDie(store.searchOutbox)).backfillComplete;
-    const searchDeliveries = searchChanged
-      ? searchDeliveryDrafts(
-          current.thread?.projection ?? null,
-          projection,
-          owner,
-          searchComplete,
-          current.head + events.length,
-        )
-      : [];
+    const searchComplete = searchSettings.disabled
+      ? false
+      : current.thread === null || (yield* Effect.orDie(store.searchOutbox)).backfillComplete;
+    const searchDeliveries =
+      !searchSettings.disabled && searchChanged
+        ? searchDeliveryDrafts(
+            current.thread?.projection ?? null,
+            projection,
+            owner,
+            searchComplete,
+            current.head + events.length,
+          )
+        : [];
     const head = yield* Effect.orDie(
       store.commit({
         head: current.head,
@@ -933,17 +923,19 @@ const make = Effect.gen(function* () {
     Effect.orDie(store.acknowledgeEvents(through));
 
   const hasPendingSearch: ThreadEngine["Service"]["hasPendingSearch"] = Effect.gen(function* () {
+    if (searchSettings.disabled) return false;
     const current = yield* Ref.get(state);
     if (current.thread === null) return false;
     const [outbox, pending] = yield* Effect.all([
       store.searchOutbox,
-      store.pendingSearchDelivery,
+      store.hasPendingSearchDelivery,
     ]).pipe(Effect.orDie);
-    return outbox.backfillRequested || pending !== null;
+    return outbox.backfillRequested || pending;
   });
 
   const pendingSearchDelivery: ThreadEngine["Service"]["pendingSearchDelivery"] = Effect.gen(
     function* () {
+      if (searchSettings.disabled) return null;
       const current = yield* Ref.get(state);
       return current.thread === null ? null : yield* Effect.orDie(store.pendingSearchDelivery);
     },
@@ -954,14 +946,15 @@ const make = Effect.gen(function* () {
     deliveryId,
   ) => serialized(Effect.orDie(store.acknowledgeSearchDelivery(revision, deliveryId)));
 
-  const backfill: ThreadEngine["Service"]["backfill"] = (actor) =>
+  const backfill: ThreadEngine["Service"]["backfill"] = (actor, requestKey) =>
     serialized(
       Effect.gen(function* () {
         const current = yield* Ref.get(state);
         const thread = visibleTo(current, actor);
         if (thread === null) return null;
+        if (searchSettings.disabled) return { revision: 0, complete: false };
         const existing = yield* Effect.orDie(store.searchOutbox);
-        if (existing.backfillRequested)
+        if (requestKey === undefined && existing.backfillRequested)
           return { revision: existing.backfillRevision, complete: false };
         const marker: ThreadStore.SearchDeliveryDraft = {
           home: searchHome(thread.owner, thread.projection),
@@ -977,6 +970,7 @@ const make = Effect.gen(function* () {
             thread: marker.thread,
             documents: marker.documents,
             sourceSequence: marker.sourceSequence,
+            ...(requestKey === undefined ? {} : { requestKey }),
           }),
         );
         return { revision: outbox.backfillRevision, complete: outbox.backfillComplete };

@@ -15,11 +15,13 @@ import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
+import * as SearchBackfill from "./SearchBackfill.ts";
 
 import * as ThreadDirectory from "../thread/ThreadDirectory.ts";
 import type { SearchActor } from "./SearchAuthority.ts";
 import * as SearchAuthority from "./SearchAuthority.ts";
-import type * as SearchIndex from "./SearchIndex.ts";
+import * as SearchIndex from "./SearchIndex.ts";
 import * as SearchQuery from "./SearchQuery.ts";
 
 /** The one search service for people, agents and API callers. */
@@ -62,8 +64,18 @@ const encodeStrings = Schema.encodeSync(Schema.fromJsonString(Schema.Array(Schem
 
 const make = Effect.gen(function* () {
   const authority = yield* SearchAuthority.SearchAuthority;
+  const index = yield* SearchIndex.SearchIndex;
   const threads = yield* ThreadDirectory.ThreadDirectory;
-  const queryItems = yield* SearchQuery.make;
+  const runQuery = yield* SearchQuery.make;
+  const backfill = yield* Effect.serviceOption(SearchBackfill.SearchBackfill);
+  const requireEnabled = Effect.gen(function* () {
+    // Persist the disabled generation even when a query wakes the object first.
+    const ready =
+      Option.isNone(backfill) || (yield* backfill.value.ready.pipe(Effect.mapError(unavailable)));
+    if (index.disabled || !ready) return yield* unavailable();
+  });
+  const queryItems: typeof runQuery = (actor, input, legacy) =>
+    requireEnabled.pipe(Effect.andThen(runQuery(actor, input, legacy)));
 
   const search: ThreadSearch["Service"]["search"] = (actor, input) =>
     Effect.gen(function* () {
@@ -104,6 +116,7 @@ const make = Effect.gen(function* () {
 
   const searchOne: ThreadSearch["Service"]["searchOne"] = (actor, input) =>
     Effect.gen(function* () {
+      yield* requireEnabled;
       const scope = yield* authority.current(actor);
       if (!scope.homes.some((home) => home.threadIds.includes(input.threadId)))
         return yield* unavailable();
@@ -115,10 +128,17 @@ const make = Effect.gen(function* () {
       )
         return yield* expired();
       return { ...result, complete: true };
-    }).pipe(Effect.mapError(() => unavailable()));
+    }).pipe(
+      Effect.catchTags({
+        SearchIndexError: () => Effect.fail(unavailable()),
+        ThreadObjectError: () => Effect.fail(unavailable()),
+        ThreadNotFoundError: () => Effect.fail(unavailable()),
+      }),
+    );
 
   const readItem: ThreadSearch["Service"]["readItem"] = (actor, threadId, itemId) =>
     Effect.gen(function* () {
+      yield* requireEnabled;
       const scope = yield* authority.current(actor);
       if (!scope.homes.some((home) => home.threadIds.includes(threadId))) return null;
       const record = yield* threads.forThread(threadId).searchDocuments(scope.actor, [itemId]);

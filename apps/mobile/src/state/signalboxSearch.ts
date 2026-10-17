@@ -81,6 +81,7 @@ function pageAtoms(key: SearchPagesKey) {
         input: {
           query: key.query,
           limit: SEARCH_PAGE_SIZE,
+          distinctThreads: true,
           ...(cursor === null ? {} : { cursor }),
         },
       }),

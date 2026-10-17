@@ -319,6 +319,8 @@ const makeUserRuntime = (
                 Layer.provide(Layer.mergeAll(SearchAuthority.layerUser, SearchCursors.layerSql)),
                 Layer.provide(
                   Layer.succeed(SearchIndex.SearchIndex, {
+                    generation: "1",
+                    disabled: false,
                     deliver: () => Effect.void,
                     query: () => Effect.succeed({ candidates: [], hasMore: false }),
                     progress: () => Effect.succeed([]),

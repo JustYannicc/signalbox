@@ -2,19 +2,25 @@ import { describe, expect, it } from "@effect/vitest";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as SqlClient from "effect/sql/SqlClient";
 
 import * as SearchIndex from "../SearchIndex.ts";
 import * as SqliteSearchIndex from "./SqliteSearchIndex.ts";
 
 const home = { ownerId: "owner-1", projectId: "project-1" };
 
-const document = (threadId: string, itemId: string, text: string): SearchIndex.SearchDocument => ({
+const document = (
+  threadId: string,
+  itemId: string,
+  text: string,
+  kind: SearchIndex.SearchDocument["kind"] = "user",
+): SearchIndex.SearchDocument => ({
   threadId,
   itemId,
   entryId: `entry-${itemId}`,
   runId: null,
   position: 1,
-  kind: "user",
+  kind,
   text,
   createdAt: null,
 });
@@ -23,21 +29,27 @@ const delivery = (input: {
   readonly id: string;
   readonly threadId: string;
   readonly revision: number;
+  readonly sourceSequence?: number;
   readonly documents?: ReadonlyArray<SearchIndex.SearchDocument>;
+  readonly parts?: ReadonlyArray<SearchIndex.SearchDocumentPart>;
+  readonly title?: string;
   readonly removed?: ReadonlyArray<string>;
   readonly complete?: boolean;
+  readonly updatedAt?: string;
 }): SearchIndex.SearchDelivery => ({
   home,
   thread: {
     threadId: input.threadId,
-    title: `Title ${input.threadId}`,
+    title: input.title ?? `Title ${input.threadId}`,
     archived: false,
     deleted: false,
+    updatedAt: input.updatedAt ?? "2026-10-17T00:00:00.000Z",
   },
   revision: input.revision,
-  sourceSequence: input.revision,
+  sourceSequence: input.sourceSequence ?? input.revision,
   deliveryId: input.id,
   documents: input.documents ?? [],
+  ...(input.parts === undefined ? {} : { parts: input.parts }),
   removed: input.removed ?? [],
   complete: input.complete ?? false,
 });
@@ -54,8 +66,10 @@ const query = (input: {
   readonly threadIds: ReadonlyArray<string>;
   readonly query: string;
   readonly mode: "keyword" | "literal";
+  readonly kinds?: ReadonlyArray<SearchIndex.SearchDocument["kind"]>;
   readonly distinctThreads?: boolean;
-  readonly after?: { readonly threadId: string; readonly itemId: string } | null;
+  readonly order?: "rich" | "legacy";
+  readonly after?: SearchIndex.SearchSortKey | null;
   readonly limit?: number;
 }) =>
   SearchIndex.SearchIndex.use((index) =>
@@ -66,6 +80,30 @@ const query = (input: {
       limit: input.limit ?? 20,
     }),
   );
+
+const parts = (
+  value: SearchIndex.SearchDocument,
+  maxUnits = 16_000,
+): ReadonlyArray<SearchIndex.SearchDocumentPart> => {
+  if (value.text.length === 0) return [{ ...value, offset: 0, totalLength: 0 }];
+  const result: Array<SearchIndex.SearchDocumentPart> = [];
+  for (let offset = 0; offset < value.text.length;) {
+    let end = Math.min(value.text.length, offset + maxUnits);
+    if (end < value.text.length) {
+      const before = value.text.charCodeAt(end - 1);
+      const after = value.text.charCodeAt(end);
+      if (before >= 0xd800 && before <= 0xdbff && after >= 0xdc00 && after <= 0xdfff) end -= 1;
+    }
+    result.push({
+      ...value,
+      text: value.text.slice(offset, end),
+      offset,
+      totalLength: value.text.length,
+    });
+    offset = end;
+  }
+  return result;
+};
 
 describe("SQLite search index", () => {
   it.effect("applies the authorized thread scope before LIMIT", () =>
@@ -106,7 +144,12 @@ describe("SQLite search index", () => {
         threadIds: ["z-allowed"],
         query: "needle",
         mode: "keyword",
-        after: { threadId: "z-allowed", itemId: "item-1" },
+        after: {
+          matchRank: 1,
+          threadUpdatedAt: "2026-10-17T00:00:00.000Z",
+          threadId: "z-allowed",
+          itemId: "item-1",
+        },
         limit: 1,
       });
       expect(next.candidates.map((candidate) => candidate.itemId)).toEqual(["item-2"]);
@@ -191,7 +234,7 @@ describe("SQLite search index", () => {
         mode: "literal",
       });
       const old = yield* query({ threadIds: ["thread-1"], query: "old wording", mode: "literal" });
-      expect(current.candidates.map((candidate) => candidate.text)).toEqual(["current wording"]);
+      expect(current.candidates.map((candidate) => candidate.itemId)).toEqual(["item-1"]);
       expect(duplicate.candidates).toEqual([]);
       expect(old.candidates).toEqual([]);
     }).pipe(Effect.provide(layerForTest())),
@@ -232,7 +275,12 @@ describe("SQLite search index", () => {
         query: "needle",
         mode: "literal",
         distinctThreads: true,
-        after: { threadId: "thread-a", itemId: "item-a" },
+        after: {
+          matchRank: 1,
+          threadUpdatedAt: "2026-10-17T00:00:00.000Z",
+          threadId: "thread-a",
+          itemId: "item-a",
+        },
         limit: 1,
       });
       expect(first.candidates.map((candidate) => [candidate.threadId, candidate.itemId])).toEqual([
@@ -244,6 +292,493 @@ describe("SQLite search index", () => {
       ]);
       expect(next.hasMore).toBe(false);
     }).pipe(Effect.provide(layerForTest())),
+  );
+
+  it.effect("ranks content classes, then thread recency and binary IDs with tuple cursors", () =>
+    Effect.gen(function* () {
+      yield* SqliteSearchIndex.initialize(home);
+      yield* deliver(
+        delivery({
+          id: "title-match",
+          threadId: "m-title",
+          revision: 1,
+          title: "needle in the title",
+          updatedAt: "2020-01-01T00:00:00.000Z",
+          documents: [document("m-title", "thread", "needle in the title", "thread")],
+        }),
+      );
+      yield* deliver(
+        delivery({
+          id: "recent-match",
+          threadId: "a-recent",
+          revision: 1,
+          updatedAt: "2026-10-16T00:00:00.000Z",
+          documents: [
+            document("a-recent", "z-user", "needle later user"),
+            document("a-recent", "a-user", "needle earlier user"),
+            document("a-recent", "assistant", "needle assistant", "assistant"),
+          ],
+        }),
+      );
+      yield* deliver(
+        delivery({
+          id: "old-match",
+          threadId: "z-old",
+          revision: 1,
+          updatedAt: "2025-10-16T00:00:00.000Z",
+          documents: [document("z-old", "user", "needle old user")],
+        }),
+      );
+
+      const first = yield* query({
+        threadIds: ["m-title", "a-recent", "z-old"],
+        query: "needle",
+        mode: "keyword",
+        limit: 1,
+      });
+      expect(
+        first.candidates.map(({ threadId, itemId, matchRank }) => [threadId, itemId, matchRank]),
+      ).toEqual([["m-title", "thread", 0]]);
+      expect(first.hasMore).toBe(true);
+
+      const next = yield* query({
+        threadIds: ["m-title", "a-recent", "z-old"],
+        query: "needle",
+        mode: "keyword",
+        after: {
+          matchRank: first.candidates[0]!.matchRank,
+          threadUpdatedAt: first.candidates[0]!.threadUpdatedAt,
+          threadId: first.candidates[0]!.threadId,
+          itemId: first.candidates[0]!.itemId,
+        },
+        limit: 1,
+      });
+      expect(next.candidates.map(({ threadId, itemId }) => [threadId, itemId])).toEqual([
+        ["a-recent", "a-user"],
+      ]);
+
+      const rich = yield* query({
+        threadIds: ["m-title", "a-recent", "z-old"],
+        query: "needle",
+        mode: "keyword",
+      });
+      expect(rich.candidates.map(({ threadId, itemId }) => [threadId, itemId])).toEqual([
+        ["m-title", "thread"],
+        ["a-recent", "a-user"],
+        ["a-recent", "z-user"],
+        ["z-old", "user"],
+        ["a-recent", "assistant"],
+      ]);
+
+      const legacy = yield* query({
+        threadIds: ["m-title", "a-recent", "z-old"],
+        query: "needle",
+        mode: "keyword",
+        order: "legacy",
+        kinds: ["user", "assistant"],
+      });
+      expect(
+        legacy.candidates.map(({ threadId, itemId, matchRank }) => [threadId, itemId, matchRank]),
+      ).toEqual([
+        ["a-recent", "a-user", 0],
+        ["a-recent", "z-user", 0],
+        ["z-old", "user", 0],
+        ["a-recent", "assistant", 1],
+      ]);
+
+      const distinct = yield* query({
+        threadIds: ["m-title", "a-recent", "z-old"],
+        query: "needle",
+        mode: "keyword",
+        distinctThreads: true,
+      });
+      expect(distinct.candidates.map(({ threadId, itemId }) => [threadId, itemId])).toEqual([
+        ["m-title", "thread"],
+        ["a-recent", "a-user"],
+        ["z-old", "user"],
+      ]);
+      const nextDistinct = yield* query({
+        threadIds: ["m-title", "a-recent", "z-old"],
+        query: "needle",
+        mode: "keyword",
+        distinctThreads: true,
+        limit: 1,
+        after: {
+          matchRank: distinct.candidates[0]!.matchRank,
+          threadUpdatedAt: distinct.candidates[0]!.threadUpdatedAt,
+          threadId: distinct.candidates[0]!.threadId,
+          itemId: distinct.candidates[0]!.itemId,
+        },
+      });
+      expect(nextDistinct.candidates.map(({ threadId, itemId }) => [threadId, itemId])).toEqual([
+        ["a-recent", "a-user"],
+      ]);
+    }).pipe(Effect.provide(layerForTest())),
+  );
+
+  it.effect("publishes staged parts only after exact coverage and rejects overlap", () =>
+    Effect.gen(function* () {
+      yield* SqliteSearchIndex.initialize(home);
+      const whole = document("thread-parts", "split", "start needle");
+      const split = parts(whole, 6);
+      const second = split[1]!;
+      yield* deliver(
+        delivery({
+          id: "split-tail",
+          threadId: "thread-parts",
+          revision: 1,
+          parts: [second],
+        }),
+      );
+      yield* deliver(
+        delivery({
+          id: "split-tail-retry",
+          threadId: "thread-parts",
+          revision: 1,
+          parts: [second],
+        }),
+      );
+      expect(
+        (yield* query({
+          threadIds: ["thread-parts"],
+          query: "start needle",
+          mode: "keyword",
+        })).candidates,
+      ).toEqual([]);
+
+      yield* deliver(
+        delivery({
+          id: "split-head",
+          threadId: "thread-parts",
+          revision: 1,
+          parts: [split[0]!],
+        }),
+      );
+      expect(
+        (yield* query({
+          threadIds: ["thread-parts"],
+          query: "start needle",
+          mode: "keyword",
+        })).candidates.map(({ itemId }) => itemId),
+      ).toEqual(["split"]);
+
+      yield* deliver(
+        delivery({
+          id: "gap-first",
+          threadId: "thread-parts",
+          revision: 2,
+          parts: [{ ...document("thread-parts", "gap", "ab"), offset: 0, totalLength: 4 }],
+        }),
+      );
+      yield* deliver(
+        delivery({
+          id: "gap-last",
+          threadId: "thread-parts",
+          revision: 2,
+          parts: [{ ...document("thread-parts", "gap", "d"), offset: 3, totalLength: 4 }],
+        }),
+      );
+      expect(
+        (yield* query({
+          threadIds: ["thread-parts"],
+          query: "abcd",
+          mode: "literal",
+        })).candidates,
+      ).toEqual([]);
+      yield* deliver(
+        delivery({
+          id: "gap-fill",
+          threadId: "thread-parts",
+          revision: 2,
+          parts: [{ ...document("thread-parts", "gap", "c"), offset: 2, totalLength: 4 }],
+        }),
+      );
+      expect(
+        (yield* query({
+          threadIds: ["thread-parts"],
+          query: "abcd",
+          mode: "literal",
+        })).candidates.map(({ itemId }) => itemId),
+      ).toEqual(["gap"]);
+
+      yield* deliver(
+        delivery({
+          id: "overlap-first",
+          threadId: "thread-parts",
+          revision: 3,
+          parts: [{ ...document("thread-parts", "overlap", "abcd"), offset: 0, totalLength: 6 }],
+        }),
+      );
+      yield* deliver(
+        delivery({
+          id: "overlap-second",
+          threadId: "thread-parts",
+          revision: 3,
+          parts: [{ ...document("thread-parts", "overlap", "def"), offset: 3, totalLength: 6 }],
+        }),
+      );
+      expect(
+        (yield* query({
+          threadIds: ["thread-parts"],
+          query: "abcdef",
+          mode: "literal",
+        })).candidates,
+      ).toEqual([]);
+    }).pipe(Effect.provide(layerForTest())),
+  );
+
+  it.effect(
+    "keeps published revision and indexed-through metadata until replacement coverage is complete",
+    () =>
+      Effect.gen(function* () {
+        yield* SqliteSearchIndex.initialize(home);
+        yield* deliver(
+          delivery({
+            id: "published-v1",
+            threadId: "thread-metadata",
+            revision: 1,
+            sourceSequence: 10,
+            documents: [document("thread-metadata", "item", "old published phrase")],
+          }),
+        );
+        const replacement = parts(document("thread-metadata", "item", "new published phrase"), 4);
+
+        yield* deliver(
+          delivery({
+            id: "replacement-tail",
+            threadId: "thread-metadata",
+            revision: 2,
+            sourceSequence: 99,
+            parts: [replacement[replacement.length - 1]!],
+          }),
+        );
+        const oldWhileStaging = yield* query({
+          threadIds: ["thread-metadata"],
+          query: "old published phrase",
+          mode: "literal",
+        });
+        expect(
+          oldWhileStaging.candidates.map(({ revision, sourceSequence }) => [
+            revision,
+            sourceSequence,
+          ]),
+        ).toEqual([[1, 10]]);
+
+        yield* deliver(
+          delivery({
+            id: "replacement-prefix",
+            threadId: "thread-metadata",
+            revision: 2,
+            sourceSequence: 99,
+            parts: replacement.slice(0, -1),
+          }),
+        );
+        expect(
+          (yield* query({
+            threadIds: ["thread-metadata"],
+            query: "old published phrase",
+            mode: "literal",
+          })).candidates,
+        ).toEqual([]);
+        const current = yield* query({
+          threadIds: ["thread-metadata"],
+          query: "new published phrase",
+          mode: "literal",
+        });
+        expect(
+          current.candidates.map(({ revision, sourceSequence }) => [revision, sourceSequence]),
+        ).toEqual([[2, 99]]);
+      }).pipe(Effect.provide(layerForTest())),
+  );
+
+  it.effect(
+    "converts legacy rows in bounded steps and preserves them when final coverage is incomplete",
+    () =>
+      Effect.gen(function* () {
+        yield* SqliteSearchIndex.initialize(home);
+        const sql = yield* SqlClient.SqlClient;
+        const insertLegacyDocument = (threadId: string, itemId: string, text: string) =>
+          Effect.gen(function* () {
+            yield* sql`INSERT INTO search_threads
+          (thread_id, title, archived, deleted, revision, source_sequence, complete, updated_at, complete_requested)
+          VALUES (${threadId}, ${`Legacy ${threadId}`}, 0, 0, 9, 99, 0, '', 0)`;
+            const [row] = yield* sql<{ readonly id: number }>`INSERT INTO search_documents
+          (thread_id, item_id, entry_id, run_id, position, kind, text, search_text,
+            literal_text, created_at, revision)
+          VALUES (${threadId}, ${itemId}, ${`entry-${itemId}`}, NULL, 1, 'user', ${text},
+            ${text.toLowerCase()}, ${text.toLowerCase()}, NULL, 8) RETURNING id`;
+            if (row === undefined) throw new Error("Legacy row insert did not return an id.");
+            yield* sql`INSERT INTO search_documents_fts (rowid, search_text)
+          VALUES (${row.id}, ${text.toLowerCase()})`;
+            return row.id;
+          });
+
+        const legacyText = `before ${"x".repeat(20_000)} legacyneedle`;
+        const legacyId = yield* insertLegacyDocument("legacy-ok", "ok", legacyText);
+        const initial = yield* query({
+          threadIds: ["legacy-ok"],
+          query: "legacyneedle",
+          mode: "keyword",
+        });
+        expect(
+          initial.candidates.map(({ revision, sourceSequence }) => [revision, sourceSequence]),
+        ).toEqual([[8, 0]]);
+
+        expect(yield* SqliteSearchIndex.advanceLegacyConversion).toBe(true);
+        const whileConverting = yield* query({
+          threadIds: ["legacy-ok"],
+          query: "legacyneedle",
+          mode: "keyword",
+        });
+        expect(whileConverting.candidates.map(({ itemId }) => itemId)).toEqual(["ok"]);
+        const [legacy] = yield* sql<{
+          readonly text: string;
+        }>`SELECT text FROM search_documents WHERE id = ${legacyId}`;
+        expect(legacy?.text).toBe(legacyText);
+
+        let more = true;
+        let steps = 1;
+        while (more && steps < 20) {
+          more = yield* SqliteSearchIndex.advanceLegacyConversion;
+          steps += 1;
+        }
+        expect(more).toBe(false);
+        expect(steps).toBeGreaterThan(5);
+        const converted = yield* query({
+          threadIds: ["legacy-ok"],
+          query: "legacyneedle",
+          mode: "keyword",
+        });
+        expect(
+          converted.candidates.map(({ itemId, revision, sourceSequence }) => [
+            itemId,
+            revision,
+            sourceSequence,
+          ]),
+        ).toEqual([["ok", 8, 0]]);
+        const [cleared] = yield* sql<{
+          readonly text: string;
+          readonly part_count: number;
+        }>`SELECT d.text,
+          (SELECT COUNT(*) FROM search_document_parts p WHERE p.document_id = d.id) AS part_count
+        FROM search_documents d WHERE d.id = ${legacyId}`;
+        expect(cleared?.text).toBe("");
+        expect(cleared?.part_count).toBe(3);
+
+        const faultText = `before ${"y".repeat(20_000)} faultneedle`;
+        const faultId = yield* insertLegacyDocument("legacy-gap", "gap", faultText);
+        let stage: string | undefined;
+        let faultSteps = 0;
+        while (stage !== "verifying" && faultSteps < 20) {
+          yield* SqliteSearchIndex.advanceLegacyConversion;
+          const [conversion] = yield* sql<{ readonly stage: string }>`SELECT stage
+          FROM search_document_conversion WHERE document_id = ${faultId}`;
+          stage = conversion?.stage;
+          faultSteps += 1;
+        }
+        expect(stage).toBe("verifying");
+        const [middle] = yield* sql<{ readonly id: number }>`SELECT id FROM search_document_parts
+        WHERE document_id = ${faultId} AND part_index = 1`;
+        expect(middle).toBeDefined();
+        yield* sql`DELETE FROM search_document_parts_fts WHERE rowid = ${middle!.id}`;
+        yield* sql`DELETE FROM search_document_parts WHERE id = ${middle!.id}`;
+        expect(yield* SqliteSearchIndex.advanceLegacyConversion).toBe(false);
+        const [failedConversion] = yield* sql<{ readonly stage: string }>`SELECT stage
+        FROM search_document_conversion WHERE document_id = ${faultId}`;
+        const [preserved] = yield* sql<{
+          readonly text: string;
+        }>`SELECT text FROM search_documents WHERE id = ${faultId}`;
+        expect(failedConversion?.stage).toBe("invalid");
+        expect(preserved?.text).toBe(faultText);
+        expect(
+          (yield* query({
+            threadIds: ["legacy-gap"],
+            query: "faultneedle",
+            mode: "keyword",
+          })).candidates.map(({ itemId }) => itemId),
+        ).toEqual(["gap"]);
+
+        // SQLite text length/substr stop at NUL; byte coverage must prevent clearing the tail.
+        const nulText = "prefix\0suffix";
+        const nulId = yield* insertLegacyDocument("legacy-nul", "nul", nulText);
+        for (let step = 0; step < 8; step++) {
+          if (!(yield* SqliteSearchIndex.advanceLegacyConversion)) break;
+        }
+        const [nulRow] = yield* sql<{ readonly text: string }>`SELECT text
+        FROM search_documents WHERE id = ${nulId}`;
+        expect(nulRow?.text).toBe(nulText);
+      }).pipe(Effect.provide(layerForTest())),
+  );
+
+  it.effect(
+    "searches large bounded parts across distant terms, literal seams, accents and surrogate pairs",
+    () =>
+      Effect.gen(function* () {
+        yield* SqliteSearchIndex.initialize(home);
+        const largeText = `alpha ${"x".repeat(1_050_000)} Cafe\u0301 ${"x".repeat(1_050_000)} omega`;
+        expect(largeText.length).toBeGreaterThan(2_000_000);
+        const large = parts(document("thread-large", "large", largeText));
+        const seamText = `${"p".repeat(15_998)}crossboundary${"q".repeat(20)}`;
+        const seam = parts(document("thread-large", "seam", seamText));
+        const surrogate = parts(document("thread-large", "surrogate", "A😀B"), 2);
+        yield* deliver(
+          delivery({
+            id: "large-parts",
+            threadId: "thread-large",
+            revision: 1,
+            parts: [...large, ...seam, ...surrogate],
+          }),
+        );
+
+        expect(
+          (yield* query({
+            threadIds: ["thread-large"],
+            query: "alpha omega",
+            mode: "keyword",
+          })).candidates.map(({ itemId }) => itemId),
+        ).toEqual(["large"]);
+        expect(
+          (yield* query({
+            threadIds: ["thread-large"],
+            query: "CAFÉ",
+            mode: "keyword",
+          })).candidates.map(({ itemId }) => itemId),
+        ).toEqual(["large"]);
+        expect(
+          (yield* query({
+            threadIds: ["thread-large"],
+            query: "crossboundary",
+            mode: "literal",
+          })).candidates.map(({ itemId }) => itemId),
+        ).toEqual(["seam"]);
+        expect(
+          (yield* query({
+            threadIds: ["thread-large"],
+            query: "😀B",
+            mode: "literal",
+          })).candidates.map(({ itemId }) => itemId),
+        ).toEqual(["surrogate"]);
+
+        const sql = yield* SqlClient.SqlClient;
+        const [sizes] = yield* sql<{
+          readonly largestPartBytes: number;
+          readonly largestLiteralWindowBytes: number;
+          readonly largestKeywordWindowBytes: number;
+          readonly largestLegacyDocumentBytes: number;
+        }>`SELECT
+        (SELECT MAX(length(CAST(text AS BLOB))) FROM search_document_parts) AS largestPartBytes,
+        (SELECT MAX(length(CAST(literal_text AS BLOB))) FROM search_document_parts) AS largestLiteralWindowBytes,
+        MAX(
+          COALESCE((SELECT MAX(length(CAST(search_text AS BLOB))) FROM search_documents_fts), 0),
+          COALESCE((SELECT MAX(length(CAST(search_text AS BLOB))) FROM search_document_parts_fts), 0)
+        ) AS largestKeywordWindowBytes,
+        (SELECT MAX(MAX(length(CAST(text AS BLOB)), length(CAST(search_text AS BLOB)),
+          length(CAST(literal_text AS BLOB)))) FROM search_documents) AS largestLegacyDocumentBytes`;
+        expect(sizes?.largestPartBytes).toBeLessThanOrEqual(64_000);
+        expect(sizes?.largestLiteralWindowBytes).toBeLessThan(512 * 1024);
+        expect(sizes?.largestKeywordWindowBytes).toBeLessThan(512 * 1024);
+        expect(sizes?.largestLegacyDocumentBytes).toBe(0);
+      }).pipe(Effect.provide(layerForTest())),
   );
 
   it.effect(

@@ -76,10 +76,10 @@ export const makeThreadObjectApi = (
     },
     snapshot: (actor) =>
       reply(engine.use((service) => Effect.map(service.snapshot(actor), wire.snapshot.encode))),
-    backfill: async (actor) => {
-      const value = await run(engine.use((service) => service.backfill(actor)));
+    backfill: async (actor, requestKey) => {
+      const value = await run(engine.use((service) => service.backfill(actor, requestKey)));
       if (value === null) return { _tag: "not_found" };
-      await afterChange();
+      if (value.revision > 0 || value.complete) await afterChange();
       return { _tag: "ok", value };
     },
     searchDocuments: (actor, itemIds) =>

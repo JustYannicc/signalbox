@@ -29,6 +29,8 @@ export const ThreadSearchInput = Schema.Struct({
   kinds: Schema.optionalKey(Schema.Array(SearchItemKind)),
   limit: Schema.optionalKey(Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 50 }))),
   cursor: Schema.optionalKey(Schema.String.check(Schema.isMaxLength(8_192))),
+  /** Home requests one best matching item per thread; agents may page individual items. */
+  distinctThreads: Schema.optionalKey(Schema.Boolean),
 });
 export type ThreadSearchInput = typeof ThreadSearchInput.Type;
 
