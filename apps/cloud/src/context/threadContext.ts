@@ -57,7 +57,9 @@ const checkpointsByTurn = (projection: Projection) => {
   const out = new Map<number, Projection["checkpoints"][number]>();
   for (const checkpoint of projection.checkpoints) {
     const turn = checkpoint.runId === null ? undefined : ordinals.get(checkpoint.runId);
-    if (turn !== undefined && checkpoint.status === "ready") out.set(turn, checkpoint);
+    if (turn !== undefined && checkpoint.status === "ready" && checkpoint.appRunOrdinal !== null) {
+      out.set(turn, checkpoint);
+    }
   }
   return out;
 };

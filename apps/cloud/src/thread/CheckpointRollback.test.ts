@@ -26,6 +26,7 @@ import {
   withObject,
 } from "./runnerTesting.ts";
 import * as ThreadStore from "./ThreadStore.ts";
+import { threadTurns } from "../context/threadContext.ts";
 import { applyEvents } from "./threadProjection.ts";
 import { threadEvent } from "./threadEvents.ts";
 
@@ -243,6 +244,11 @@ describe("cloud checkpoint rollback", () => {
             expect(
               snapshot.projection.checkpoints.filter((item) => item.ordinalWithinScope === 0),
             ).toMatchObject([{ id: `checkpoint:${runId}:start`, ref: "empty", status: "ready" }]);
+            expect(threadTurns(snapshot.projection, 1)[0]?.commits).toEqual({
+              turn: 1,
+              start: null,
+              commit: firstCommit,
+            });
             return snapshot.snapshotSequence;
           }),
         f.options,
