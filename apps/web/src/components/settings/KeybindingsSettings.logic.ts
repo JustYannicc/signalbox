@@ -14,6 +14,10 @@ import {
 import { shortcutKeyFromEvent } from "../../keybindings";
 import { isMacPlatform } from "../../lib/utils";
 import { METRIC_OPTIONS, WINDOW_OPTIONS } from "../usage/usageShortcuts";
+import {
+  capabilityKeybindingLabel,
+  keybindingWhenWithoutTerminalState,
+} from "./keybindingSettingsCapabilities";
 
 // Every usage.* command needs a rank. An unranked one falls back to the
 // alphabetical compare, which makes the comparator inconsistent and the order
@@ -351,8 +355,10 @@ export function buildKeybindingCommandOptions(
   return [...commands].toSorted((left, right) => compareCommands(left, right, commandLabel));
 }
 
-export function commandLabel(command: KeybindingCommand): string {
+export function commandLabel(command: KeybindingCommand, hasLocalFilesystem = true): string {
   if (command === "sidebar.home") return "Go to Home";
+  const capabilityLabel = capabilityKeybindingLabel(command, hasLocalFilesystem);
+  if (capabilityLabel) return capabilityLabel;
   if (command === "composer.sendAlternate") return "Composer: Opposite Queue or Steer Action";
   if (command === "composer.sendBackground") return "Composer: Start in Background";
   if (command === "composer.sendAndNewThread") return "Composer: Send and Start New Thread";
@@ -431,4 +437,30 @@ export function keybindingFromKeyboardEvent(
   if (event.shiftKey) parts.push("shift");
   parts.push(keyToken);
   return parts.join("+");
+}
+
+// Terminal state is always false when the environment has no terminal.
+export function keybindingWhenWithoutTerminal(node: KeybindingWhenNode | undefined): string {
+  if (!node) return "";
+  const result = keybindingWhenWithoutTerminalState(node);
+  return typeof result === "boolean" ? (result ? "" : "Never") : whenAstToExpression(result);
+}
+
+/** signalbox: search what the environment displays: its labels, and conditions minus terminal state. */
+export function filterKeybindingRowsForEnvironment(
+  rows: ReadonlyArray<KeybindingRow>,
+  query: string,
+  capabilities: { readonly localFilesystem: boolean; readonly terminal: boolean },
+): ReadonlyArray<KeybindingRow> {
+  const normalizedQuery = query.trim().toLowerCase();
+  if (normalizedQuery.length === 0) return rows;
+  return rows.filter((row) =>
+    [
+      row.command,
+      commandLabel(row.command, capabilities.localFilesystem),
+      row.key,
+      capabilities.terminal ? row.when : keybindingWhenWithoutTerminal(row.binding.whenAst),
+      row.source,
+    ].some((value) => value.toLowerCase().includes(normalizedQuery)),
+  );
 }
