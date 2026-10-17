@@ -26,6 +26,7 @@ import { readWorkflowScript } from "../../orchestration-v2/workflowScriptQuery.t
 export const makeRunnerWorkflows = (
   emit: (item: RunnerItem) => Effect.Effect<void>,
   read: typeof readWorkflowScript = readWorkflowScript,
+  configDir?: string,
 ) => {
   const tasks = new Map<
     NodeId,
@@ -63,7 +64,10 @@ export const makeRunnerWorkflows = (
       let captured = false;
       const path = task.workflow?.runHandles?.scriptPath;
       if (script === undefined && path !== undefined) {
-        const file = yield* read({ scriptPath: path }).pipe(Effect.option);
+        const file = yield* read({
+          scriptPath: path,
+          ...(configDir === undefined ? {} : { configDir }),
+        }).pipe(Effect.option);
         if (file._tag === "Some") {
           script = {
             subagentId: task.id,

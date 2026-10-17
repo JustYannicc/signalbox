@@ -6,6 +6,7 @@ import {
 } from "@signalbox/runner-protocol/RunnerProtocol";
 import type { RunId } from "@t3tools/contracts";
 import type * as Effect from "effect/Effect";
+import * as Hex from "effect/encoding/Hex";
 
 import * as ThreadRunner from "./ThreadRunner.ts";
 
@@ -33,7 +34,8 @@ interface Attachment {
   readonly steers?: boolean | undefined;
   /** How many of `sentRunId`'s steers this socket's Runner was handed; absent: none. */
   readonly sentSteers?: number | undefined;
-  readonly sentWorkflowStops?: ReadonlyArray<string>;
+  /** SHA-256 of pending stop identities. Older attachments stored an array per stop. */
+  readonly sentWorkflowStops?: string | ReadonlyArray<string> | undefined;
 }
 
 export interface RunnerSocketHost {
@@ -129,17 +131,35 @@ export async function pushRunnerWork(host: RunnerSocketHost): Promise<ThreadRunn
       : null;
   const drive: DriveAccess | null =
     work.drive === null || author === null ? work.drive : { ...work.drive, author };
+  // Keep the hibernation attachment below 2 KiB even with many simultaneous stops.
+  // A changed set replays pending requests; the Runner caches each attempt's result.
+  const pendingStopIdentities = work.workflowStops
+    .map((stop) =>
+      JSON.stringify([
+        stop.generation,
+        stop.subagentId,
+        stop.runId,
+        stop.taskId,
+        stop.attempt ?? 1,
+      ]),
+    )
+    .sort();
+  const workflowStopsDigest = Hex.encode(
+    new Uint8Array(
+      await crypto.subtle.digest(
+        "SHA-256",
+        new TextEncoder().encode(JSON.stringify(pendingStopIdentities)),
+      ),
+    ),
+  );
   for (const socket of host.ctx.getWebSockets(RUNNER_TAG)) {
     const attachment = attachmentOf(socket);
     if (attachment === null || attachment.generation !== work.generation) continue;
-    const sentWorkflowStops = new Set(attachment.sentWorkflowStops ?? []);
-    if (attachment.connection === work.connection)
-      for (const stop of work.workflowStops) {
-        const key = `${stop.subagentId}:${stop.runId}:${stop.taskId}:${stop.attempt ?? 1}`;
-        if (sentWorkflowStops.has(key)) continue;
-        send(socket, { type: "workflow.stop", ...stop });
-        sentWorkflowStops.add(key);
-      }
+    let sentWorkflowStops = attachment.sentWorkflowStops;
+    if (attachment.connection === work.connection && sentWorkflowStops !== workflowStopsDigest) {
+      for (const stop of work.workflowStops) send(socket, { type: "workflow.stop", ...stop });
+      sentWorkflowStops = workflowStopsDigest;
+    }
     let sentRunId = attachment.sentRunId;
     let sentSteers = attachment.sentSteers ?? 0;
     if (sentRunId !== null && sentRunId !== work.activeRunId) {
@@ -176,7 +196,7 @@ export async function pushRunnerWork(host: RunnerSocketHost): Promise<ThreadRunn
       sentDrainId = work.drain;
     }
     if (
-      sentWorkflowStops.size !== (attachment.sentWorkflowStops?.length ?? 0) ||
+      sentWorkflowStops !== attachment.sentWorkflowStops ||
       sentRunId !== attachment.sentRunId ||
       sentDrainId !== attachment.sentDrainId ||
       sentSteers !== (attachment.sentSteers ?? 0)
@@ -184,7 +204,7 @@ export async function pushRunnerWork(host: RunnerSocketHost): Promise<ThreadRunn
       socket.serializeAttachment({
         ...attachment,
         sentRunId,
-        sentWorkflowStops: [...sentWorkflowStops],
+        sentWorkflowStops,
         sentDrainId,
         sentSteers,
       } satisfies Attachment);

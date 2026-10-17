@@ -10,7 +10,6 @@ import * as Effect from "effect/Effect";
 import * as Context from "effect/Context";
 import * as Schema from "effect/Schema";
 import { SignalboxContextId } from "@t3tools/contracts/signalboxContexts";
-import { claude } from "./runner/runnerTestKit.ts";
 import { runEvent } from "./threadEvents.ts";
 
 import { ThreadStore } from "./ThreadStore.ts";
@@ -21,8 +20,11 @@ import {
   scriptPath,
   workflowFixture,
 } from "./workflowTestKit.ts";
-import { recordedEvents } from "./runner/runnerEvents.ts";
 import {
+  claude,
+  recordedEvents,
+  pushRunnerWork,
+  onRunnerMessage,
   freshDatabase,
   withObject,
   launch,
@@ -33,8 +35,7 @@ import {
   liveTurn,
   fakeSocket,
   hostFor,
-} from "./runner/runnerTestKit.ts";
-import { pushRunnerWork, onRunnerMessage } from "./runner/runnerSockets.ts";
+} from "./runnerTesting.ts";
 
 const encodeSubagent = Schema.encodeSync(Schema.toCodecJson(OrchestrationV2Subagent));
 

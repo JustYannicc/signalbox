@@ -16,7 +16,7 @@ import {
   hello,
   turnReport,
   liveTurn,
-} from "./runner/runnerTestKit.ts";
+} from "./runnerTesting.ts";
 
 const encodeSubagent = Schema.encodeSync(Schema.toCodecJson(OrchestrationV2Subagent));
 const stop = { threadId, subagentId: coordinatorId };

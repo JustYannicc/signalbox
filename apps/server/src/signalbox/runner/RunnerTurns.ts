@@ -259,6 +259,8 @@ export const makeRunnerTurns = Effect.fn("makeRunnerTurns")(function* (input: {
   readonly adapters: ReadonlyMap<ProviderInstanceId, ProviderAdapterV2["Service"]>;
   /** The thread's working directory on this machine. */
   readonly cwd: string;
+  /** CLAUDE_CONFIG_DIR used by this machine's Claude adapter. Absent: ~/.claude. */
+  readonly claudeConfigDir?: string;
   /** Makes `token` the one the harnesses present to the ModelGateway. */
   readonly useModelToken: (token: string) => Effect.Effect<void, PlatformError.PlatformError>;
   /** The machine's usage so far (`RunnerUsage.ts`). */
@@ -291,7 +293,7 @@ export const makeRunnerTurns = Effect.fn("makeRunnerTurns")(function* (input: {
   const scope = yield* Effect.scope;
   const logAnnotations = yield* References.CurrentLogAnnotations;
   const sessions = new Map<ProviderInstanceId, OpenSession>();
-  const workflows = makeRunnerWorkflows(input.emit);
+  const workflows = makeRunnerWorkflows(input.emit, undefined, input.claudeConfigDir);
   const workflowThreads = new Map<RunId, OrchestrationV2ProviderThread>();
   const turns = new Map<RunId, Turn>();
   /** Runs this machine already took, so a repeated `turn.start` starts nothing. */
