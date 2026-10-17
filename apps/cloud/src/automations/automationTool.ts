@@ -2,6 +2,7 @@ import { LIST_NOTES_TOOL, type ToolResult } from "@signalbox/runner-protocol/Aut
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 
+import { collaborationTool, isCollaborationTool } from "../collaboration/tool.ts";
 import { listNotesTool } from "../notes/notesTool.ts";
 import { CloudAutomations } from "./CloudAutomations.ts";
 
@@ -12,6 +13,7 @@ import { CloudAutomations } from "./CloudAutomations.ts";
  */
 export const automationTool = (threadId: string, name: string, input: unknown) =>
   Effect.gen(function* (): Effect.fn.Return<ToolResult> {
+    if (isCollaborationTool(name)) return yield* collaborationTool(threadId, name, input);
     if (name === LIST_NOTES_TOOL) return yield* listNotesTool(threadId);
     const automations = yield* Effect.serviceOption(CloudAutomations);
     if (Option.isNone(automations)) {

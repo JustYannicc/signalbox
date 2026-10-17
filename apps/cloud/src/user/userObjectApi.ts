@@ -4,6 +4,8 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
+import { deliverCompletion } from "../collaboration/completion.ts";
+import type { CloudThreadService } from "../thread/CloudThreadService.ts";
 import { automationTool } from "../automations/automationTool.ts";
 import * as PersonBrowsers from "../browser/PersonBrowsers.ts";
 import * as CloudAutomations from "../automations/CloudAutomations.ts";
@@ -48,6 +50,7 @@ export const makeUserObjectApi = (
       A,
       E,
       | UserStore.UserStore
+      | CloudThreadService
       | UserShell.UserShell
       | UserContexts.UserContexts
       | GitHubConnection.GitHubConnection
@@ -113,14 +116,25 @@ export const makeUserObjectApi = (
     // An object without automations yet takes the events and drops them.
     threadEvents: ({ threadId, events }) =>
       run(
-        Effect.flatMap(Effect.serviceOption(CloudAutomations.CloudAutomations), (automations) =>
-          Option.isNone(automations)
-            ? Effect.void
-            : automations.value.threadEvents({ threadId, events: wire.events.decode(events) }),
-        ).pipe(
-          // Ids only, never what happened (#284).
-          Effect.withSpan("UserObject.threadEvents", { attributes: { "thread.id": threadId } }),
-        ),
+        deliverCompletion(threadId, wire.events.decode(events))
+          .pipe(
+            Effect.andThen(
+              Effect.flatMap(
+                Effect.serviceOption(CloudAutomations.CloudAutomations),
+                (automations) =>
+                  Option.isNone(automations)
+                    ? Effect.void
+                    : automations.value.threadEvents({
+                        threadId,
+                        events: wire.events.decode(events),
+                      }),
+              ),
+            ),
+          )
+          .pipe(
+            // Ids only, never what happened (#284).
+            Effect.withSpan("UserObject.threadEvents", { attributes: { "thread.id": threadId } }),
+          ),
       ),
     driveEvents: ({ driveId, events }) =>
       run(

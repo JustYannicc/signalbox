@@ -1,5 +1,6 @@
 import {
   type ChatAttachment,
+  type OrchestrationV2AppThreadLineage,
   type OrchestrationV2Command,
   type OrchestrationV2SubscribeThreadInput,
   type OrchestrationV2ThreadBoundedSnapshot,
@@ -128,6 +129,7 @@ export class CloudThreadService extends Context.Service<
     readonly launchThread: (
       actor: Actor,
       input: OrchestrationV2ThreadLaunchInput,
+      lineage?: OrchestrationV2AppThreadLineage,
     ) => Effect.Effect<OrchestrationV2ThreadLaunchResult, CloudThreadError>;
     /**
      * The whole thread at its current sequence. Cloud threads are short
@@ -398,7 +400,7 @@ const make = Effect.gen(function* () {
       );
     });
 
-  const launchThread: CloudThreadService["Service"]["launchThread"] = (actor, input) =>
+  const launchThread: CloudThreadService["Service"]["launchThread"] = (actor, input, lineage) =>
     Effect.gen(function* () {
       const place = yield* threadContexts.placeOfProject(input.projectId);
       // Receipts live in the thread's object, so a launch without an id needs
@@ -440,7 +442,7 @@ const make = Effect.gen(function* () {
                 ? {}
                 : { initialMessage: { ...message, attachments: claimed } }),
             },
-            creation,
+            { ...creation, ...(lineage === undefined ? {} : { lineage }) },
           ),
       );
     });

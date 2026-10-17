@@ -2,6 +2,15 @@ import { exempt, read, type Reach, write, type WsRpcMethod } from "./reach.ts";
 
 /** Signalbox's own RPC groups (`SIGNALBOX_WS_RPCS` in contracts' rpc.ts). */
 export const SIGNALBOX_RPC_REACH = {
+  "signalbox.collaboration.capabilities": read({ name: "threads.collaboration.capabilities" }),
+  "signalbox.collaboration.list": read({ name: "threads.collaboration.list" }),
+  "signalbox.collaboration.read": read({ name: "threads.collaboration.read" }),
+  "signalbox.collaboration.send": write({ name: "threads.collaboration.send" }),
+  "signalbox.collaboration.wait": read({ name: "threads.collaboration.wait" }),
+  "signalbox.collaboration.delegate": write({ name: "threads.collaboration.delegate" }),
+  "signalbox.collaboration.status": read({ name: "threads.collaboration.status" }),
+  "signalbox.collaboration.cancel": write({ name: "threads.collaboration.cancel" }),
+  "signalbox.collaboration.interrupt": write({ name: "threads.collaboration.interrupt" }),
   "signalbox.analytics.getSettings": read({ name: "analytics.get" }),
   "signalbox.analytics.setEnabled": write({ name: "analytics.setEnabled" }),
   "signalbox.analytics.recordClientEvent": exempt(

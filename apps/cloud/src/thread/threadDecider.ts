@@ -1,6 +1,7 @@
 import {
   MessageId,
   type OrchestrationV2AppThread,
+  type OrchestrationV2AppThreadLineage,
   type OrchestrationV2Command,
   type OrchestrationV2ConversationMessage,
   type OrchestrationV2DomainEvent,
@@ -377,6 +378,7 @@ export function decideLaunch(
   input: OrchestrationV2ThreadLaunchInput & { readonly threadId: ThreadId },
   ctx: DecisionContext,
   worktree: ThreadWorktree | null = null,
+  lineage?: OrchestrationV2AppThreadLineage,
 ): Decision {
   if (input.workspaceStrategy.type !== "root") {
     return reject("Cloud threads have no worktrees yet.");
@@ -385,7 +387,7 @@ export function decideLaunch(
     return reject("This thread already exists.");
   }
   const creationSource = input.creationSource ?? "web";
-  const created =
+  const initial =
     projection === null
       ? createThread(
           {
@@ -405,6 +407,16 @@ export function decideLaunch(
           ctx,
         )
       : accept([]);
+  const created =
+    initial._tag === "accepted" && lineage !== undefined
+      ? accept(
+          initial.events.map((event) =>
+            event.type === "thread.created"
+              ? { ...event, payload: { ...event.payload, lineage, createdBy: "agent" } }
+              : event,
+          ),
+        )
+      : initial;
   const message = input.initialMessage;
   if (created._tag === "rejected" || message === undefined) return created;
   const withThread = applyEvents(projection, created.events);
@@ -414,7 +426,8 @@ export function decideLaunch(
     {
       type: "message.dispatch",
       commandId: input.commandId,
-      createdBy: "user",
+      createdBy: lineage === undefined ? "user" : "agent",
+      ...(lineage?.parentThreadId == null ? {} : { senderThreadId: lineage.parentThreadId }),
       creationSource,
       threadId: input.threadId,
       messageId: message.messageId ?? MessageId.make(`message:${input.commandId}`),

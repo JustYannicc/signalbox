@@ -58,6 +58,7 @@ import { SIGNALBOX_PUSH_RPCS } from "./signalboxPush.ts"; // signalbox: push dev
 import { SIGNALBOX_REPOSITORIES_RPCS } from "./signalboxRepositories.ts"; // signalbox: repositories
 import { SIGNALBOX_THREAD_KINDS_RPCS } from "./signalboxThreadKinds.ts"; // signalbox: thread kinds
 import { SIGNALBOX_THREAD_STATUS_RPCS } from "./signalboxStatusLine.ts"; // signalbox: status lines
+import { SIGNALBOX_COLLABORATION_RPCS } from "./signalboxCollaboration.ts"; // signalbox: cloud collaboration
 import { SIGNALBOX_KEYS_RPCS } from "./signalboxKeys.ts"; // signalbox: personal keys
 import { SIGNALBOX_SIGN_IN_RPCS } from "./signalboxSignIn.ts"; // signalbox: sign-in grants
 import {
@@ -2029,6 +2030,7 @@ export const SIGNALBOX_WS_RPCS = [
   ...SIGNALBOX_REPOSITORIES_RPCS,
   ...SIGNALBOX_THREAD_KINDS_RPCS,
   ...SIGNALBOX_THREAD_STATUS_RPCS,
+  ...SIGNALBOX_COLLABORATION_RPCS,
   ...SIGNALBOX_KEYS_RPCS,
   ...SIGNALBOX_SIGN_IN_RPCS,
 ] as const;

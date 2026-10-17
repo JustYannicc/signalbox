@@ -53,9 +53,12 @@ import { ACCOUNT_POOL_RPC_SCOPES } from "../accountHub/poolRpcScopes.ts"; // sig
 
 import { AUTOMATION_RPC_SCOPES } from "@signalbox/automations/rpcScopes"; // signalbox: automations
 
+import { SIGNALBOX_COLLABORATION_SCOPES } from "@t3tools/contracts/signalboxCollaboration"; // signalbox: cloud collaboration
+
 type WsRpcMethod = RpcGroup.Rpcs<typeof WsRpcGroup>["_tag"];
 
 export const RPC_REQUIRED_SCOPES = {
+  ...SIGNALBOX_COLLABORATION_SCOPES,
   ...SIGNALBOX_ANALYTICS_RPC_REQUIRED_SCOPES, // signalbox: analytics
   ...SIGNALBOX_CONTEXTS_REQUIRED_SCOPES, // signalbox: contexts
   ...SIGNALBOX_DRIVES_REQUIRED_SCOPES, // signalbox: drives

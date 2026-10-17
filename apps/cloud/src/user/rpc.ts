@@ -86,6 +86,11 @@ import * as Stream from "effect/Stream";
 import type * as RpcGroup from "effect/rpc/RpcGroup";
 import type { SqlError } from "effect/sql/SqlError";
 
+import {
+  SIGNALBOX_COLLABORATION_RPCS,
+  SIGNALBOX_COLLABORATION_SCOPES,
+} from "@t3tools/contracts/signalboxCollaboration";
+import { makeCollaborationHandlers } from "../collaboration/rpc.ts";
 import * as CloudAssets from "../assets/CloudAssets.ts";
 import { CloudAttachments } from "../attachments/CloudAttachments.ts";
 import * as Environment from "../environment.ts";
@@ -152,6 +157,7 @@ const SECTION_METHODS = [
 ] as const;
 
 const SERVED = [
+  ...SIGNALBOX_COLLABORATION_RPCS.map((rpc) => rpc._tag),
   WS_METHODS.subscribeServerConfig,
   WS_METHODS.serverGetConfig,
   WS_METHODS.serverProbe,
@@ -163,6 +169,7 @@ const SERVED = [
   ORCHESTRATION_V2_WS_METHODS.launchThread,
   ORCHESTRATION_V2_WS_METHODS.subscribeThread,
   ORCHESTRATION_V2_WS_METHODS.getThreadProjection,
+  ORCHESTRATION_V2_WS_METHODS.getTurnItem,
   // Images tools returned in a thread and attachments (`assets/CloudAssets.ts`).
   WS_METHODS.assetsCreateUrl,
   WS_METHODS.projectsEnsureScratch,
@@ -225,6 +232,7 @@ export const CloudRpcGroup = WsRpcGroup.omit(
 
 /** Same scopes the self-hosted server requires for these RPCs. */
 const REQUIRED_SCOPES = {
+  ...SIGNALBOX_COLLABORATION_SCOPES,
   [WS_METHODS.subscribeServerConfig]: AuthOrchestrationReadScope,
   [WS_METHODS.serverGetConfig]: AuthOrchestrationReadScope,
   [WS_METHODS.serverProbe]: AuthOrchestrationReadScope,
@@ -236,6 +244,7 @@ const REQUIRED_SCOPES = {
   [ORCHESTRATION_V2_WS_METHODS.launchThread]: AuthOrchestrationOperateScope,
   [ORCHESTRATION_V2_WS_METHODS.subscribeThread]: AuthOrchestrationReadScope,
   [ORCHESTRATION_V2_WS_METHODS.getThreadProjection]: AuthOrchestrationReadScope,
+  [ORCHESTRATION_V2_WS_METHODS.getTurnItem]: AuthOrchestrationReadScope,
   // A cloud serves only tool output images, which a self-hosted server gates on this scope.
   [WS_METHODS.assetsCreateUrl]: AuthOrchestrationReadScope,
   [WS_METHODS.projectsEnsureScratch]: AuthOrchestrationOperateScope,
@@ -406,6 +415,7 @@ export const layerHandlers = (input: {
 }) =>
   CloudRpcGroup.toLayer(
     Effect.gen(function* () {
+      const collaboration = yield* makeCollaborationHandlers;
       const shell = yield* UserShell.UserShell;
       const threads = yield* CloudThreadService.CloudThreadService;
       const assets = yield* CloudAssets.CloudAssets;
@@ -507,6 +517,7 @@ export const layerHandlers = (input: {
         ...notes,
         ...keys,
         ...signIn,
+        ...collaboration,
         [WS_METHODS.subscribeServerConfig]: (request) => pools.configStream(request),
         [WS_METHODS.serverGetConfig]: () => pools.configNow,
         [WS_METHODS.serverProbe]: () => Effect.succeed({}),
@@ -601,6 +612,18 @@ export const layerHandlers = (input: {
             Effect.map(
               Effect.flatMap(actorNow, (actor) => threads.threadSnapshot(actor, request.threadId)),
               (snapshot) => snapshot.projection,
+            ),
+            (message) =>
+              new OrchestrationV2GetThreadProjectionError({ threadId: request.threadId, message }),
+          ),
+        [ORCHESTRATION_V2_WS_METHODS.getTurnItem]: (request) =>
+          threadCall(
+            Effect.flatMap(actorNow, (actor) =>
+              threads.threadSnapshot(actor, request.threadId),
+            ).pipe(
+              Effect.map(({ projection }) => ({
+                item: projection.turnItems.find((item) => item.id === request.itemId) ?? null,
+              })),
             ),
             (message) =>
               new OrchestrationV2GetThreadProjectionError({ threadId: request.threadId, message }),

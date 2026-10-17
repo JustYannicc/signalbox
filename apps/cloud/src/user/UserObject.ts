@@ -39,6 +39,7 @@ import * as Platform from "../platform.ts";
 import * as PoolDirectory from "../pool/PoolDirectory.ts";
 import * as UserPreviewSetup from "../previewSetup/UserPreviewSetup.ts";
 import * as PushNotifier from "../push/PushNotifier.ts";
+import { layer as layerCollaboration } from "../collaboration/CloudCollaboration.ts";
 import * as CloudThreadService from "../thread/CloudThreadService.ts";
 import * as ModelManifest from "../thread/ModelManifest.ts";
 import { scriptedProviderEnabled } from "../thread/scriptedProvider.ts";
@@ -198,6 +199,7 @@ const makeRuntime = (storage: DurableObjectStorage, env: UserObjectEnv) => {
       Layer.orDie,
       Layer.provideMerge(
         Layer.mergeAll(
+          layerCollaboration,
           GitHubBranches.layer,
           GitHubActions.layer,
           UserPreviewSetup.layer,

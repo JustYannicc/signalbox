@@ -42,6 +42,7 @@ import * as PreviewSetup from "./previewSetup/PreviewSetup.ts";
 import * as PushNotifier from "./push/PushNotifier.ts";
 import * as UserPreviewSetup from "./previewSetup/UserPreviewSetup.ts";
 import { makeMemoryPools } from "./pool/testing.ts";
+import { layer as layerCollaboration } from "./collaboration/CloudCollaboration.ts";
 import * as CloudThreadService from "./thread/CloudThreadService.ts";
 import * as CloudAnalytics from "./thread/diagnostics/CloudAnalytics.ts";
 import * as DiagnosticsStore from "./thread/diagnostics/DiagnosticsStore.ts";
@@ -287,6 +288,7 @@ const makeUserRuntime = (
       Layer.provideMerge(
         // The same branches the socket's RPC uses, so the git panel sees what the agent pushed.
         Layer.mergeAll(
+          layerCollaboration,
           GitHubBranches.layer,
           GitHubActions.layer,
           UserPreviewSetup.layer,

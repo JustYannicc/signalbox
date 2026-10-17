@@ -59,6 +59,28 @@ const setup = Effect.gen(function* () {
 });
 
 describe("command permissions", () => {
+  it.effect("requires the destination's operate grant for cloud thread collaboration", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const registry = yield* setup;
+        for (const method of [
+          "signalbox.collaboration.send",
+          "signalbox.collaboration.delegate",
+          "signalbox.collaboration.cancel",
+          "signalbox.collaboration.interrupt",
+        ]) {
+          const collaboration = createCommandPermissions(runtime, method);
+          registry.set(sessions(env), AsyncResult.success(grant(false)));
+          expect(registry.get(collaboration.permissionAtom(env))).toBe(false);
+          expect((yield* collaboration.authorize(registry, env).pipe(Effect.flip))._tag).toBe(
+            "EnvironmentAuthorizationError",
+          );
+          registry.set(sessions(env), AsyncResult.success(grant(true)));
+          yield* collaboration.authorize(registry, env);
+        }
+      }),
+    ),
+  );
   it.effect("requires the destination settings grant to run storage cleanup", () =>
     Effect.scoped(
       Effect.gen(function* () {

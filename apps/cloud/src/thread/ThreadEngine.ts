@@ -1,5 +1,6 @@
 import {
   type CommandId,
+  type OrchestrationV2AppThreadLineage,
   EventId,
   type OrchestrationV2Command,
   type OrchestrationV2DomainEvent,
@@ -107,6 +108,7 @@ export interface Actor {
  * already landed still replays, a new thread is rejected.
  */
 export interface ThreadCreation {
+  readonly lineage?: OrchestrationV2AppThreadLineage;
   readonly place: { readonly contextId: SignalboxContextId; readonly driveId: string } | null;
   /** The branch and worktree a new thread gets, when its drive has threads work on their own branch. */
   readonly worktree?: ThreadWorktree | null;
@@ -575,6 +577,7 @@ const make = Effect.gen(function* () {
               : input,
             ctx,
             creation.worktree ?? null,
+            creation.lineage,
           ),
       );
       const { projection } = yield* readable(actor);

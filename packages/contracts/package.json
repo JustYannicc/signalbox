@@ -7,6 +7,10 @@
   ],
   "type": "module",
   "exports": {
+    "./signalboxCollaboration": {
+      "types": "./src/signalboxCollaboration.ts",
+      "import": "./src/signalboxCollaboration.ts"
+    },
     ".": {
       "types": "./src/index.ts",
       "import": "./src/index.ts"
