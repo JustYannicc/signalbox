@@ -137,6 +137,7 @@ export const makeCatalog = (deps: {
         return yield* fail(`Another automation in this project is already called "${meta.name}".`);
       }
       if (existing && authorize) yield* authorize(automationDefaults(existing));
+      const defaults = existing ? automationDefaults(existing) : input.defaults;
       const now = yield* DateTime.now;
       const nowText = DateTime.formatIso(now);
       const automationId = existing?.automation_id ?? (yield* newId("automation"));
@@ -151,7 +152,7 @@ export const makeCatalog = (deps: {
       const fresh = {
         automation_id: automationId,
         project_id: input.projectId,
-        defaults_json: toJson(input.defaults),
+        defaults_json: toJson(defaults),
         webhook_token: existing?.webhook_token ?? (yield* newId("hook")),
         webhook_secret_set: existing?.webhook_secret_set ?? 0,
         created_at: existing?.created_at ?? nowText,
@@ -185,7 +186,7 @@ export const makeCatalog = (deps: {
             worker_module: workerModule ?? null,
             graph_json: toJson(graph),
             meta_json: toJson(meta),
-            defaults_json: toJson(input.defaults),
+            defaults_json: toJson(defaults),
             created_at: nowText,
             approved_by: approvedBy ?? "agent",
           }),
