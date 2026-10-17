@@ -9,6 +9,8 @@ import {
 } from "@t3tools/contracts";
 import { poolInstanceId, poolSourceId } from "@t3tools/contracts/accountHub";
 import { describe, expect, it } from "@effect/vitest";
+import * as Clock from "effect/Clock";
+import * as TestClock from "effect/testing/TestClock";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
@@ -93,6 +95,274 @@ const personalDownOnce = (cloud: Effect.Success<ReturnType<typeof client>>["clou
   });
 
 describe("cloud pool RPC", () => {
+  it.live("refuses another flow's callback and lets the active sign-in be corrected", () =>
+    Effect.gen(function* () {
+      const { rpc } = yield* client();
+      const instanceId = ProviderInstanceId.make(poolInstanceId("claude", "personal"));
+      const otherId = ProviderInstanceId.make(poolInstanceId("codex", "personal"));
+      const started = yield* rpc[WS_METHODS.providerAuthStart]({
+        instanceId,
+        callbackMode: "client",
+      });
+      const other = yield* rpc[WS_METHODS.providerAuthStart]({ instanceId: otherId });
+      const otherState = "foreign-state";
+      const failure = yield* Effect.flip(
+        rpc[WS_METHODS.providerAuthComplete]({
+          instanceId,
+          flowId: started.flowId!,
+          callbackUrl: `http://localhost:54545/callback?code=foreign-code&state=${otherState}`,
+        }),
+      );
+      expect(failure.message).toBe(
+        "Enter the authorization code or the full callback URL from this sign-in.",
+      );
+      expect((yield* first(rpc[WS_METHODS.providerAuthSubscribe]({ instanceId }))).phase).toBe(
+        "waiting",
+      );
+      yield* rpc[WS_METHODS.providerAuthCancel]({ instanceId: otherId, flowId: other.flowId! });
+      yield* rpc[WS_METHODS.providerAuthComplete]({
+        instanceId,
+        flowId: started.flowId!,
+        callbackUrl: "correct-code",
+      });
+      const finished = yield* first(
+        rpc[WS_METHODS.providerAuthSubscribe]({ instanceId }).pipe(
+          Stream.filter((state) => state.phase === "succeeded" || state.phase === "failed"),
+        ),
+      );
+      expect(finished.phase).toBe("succeeded");
+    }).pipe(Effect.scoped),
+  );
+
+  it.live.each([{ provider: "claude", driver: "claudeAgent" }] as const)(
+    "adds a $provider account from its short authorization code",
+    ({ provider, driver }) =>
+      Effect.gen(function* () {
+        const { rpc } = yield* client();
+        const work = yield* rpc[WS_METHODS.accountPoolCreate]({ name: "Work" });
+        const instanceId = ProviderInstanceId.make(poolInstanceId(provider, work.id));
+        const started = yield* rpc[WS_METHODS.providerAuthStart]({ instanceId });
+        yield* rpc[WS_METHODS.providerAuthComplete]({
+          instanceId,
+          flowId: started.flowId!,
+          callbackUrl: "short-authorization-code",
+        });
+        const finished = yield* first(
+          rpc[WS_METHODS.providerAuthSubscribe]({ instanceId }).pipe(
+            Stream.filter((state) => state.phase === "succeeded" || state.phase === "failed"),
+          ),
+        );
+        expect(finished.phase).toBe("succeeded");
+        expect(started.interaction).toMatchObject({
+          type: "browser",
+          requiresConsent: false,
+          acceptsCallback: false,
+          acceptsCode: true,
+        });
+        expect(new URL(started.authorizationUrl!).searchParams.get("redirect_uri")).toBe(
+          "https://platform.claude.com/oauth/code/callback",
+        );
+        expect(
+          (yield* config(rpc)).sources.find((source) => source.id === poolSourceId(work.id))
+            ?.accounts,
+        ).toEqual([expect.objectContaining({ driver })]);
+      }).pipe(Effect.scoped),
+  );
+
+  it.live("keeps manual Claude codes bound to the active authorization state", () =>
+    Effect.gen(function* () {
+      const { rpc } = yield* client();
+      const instanceId = ProviderInstanceId.make(poolInstanceId("claude", "personal"));
+      const started = yield* rpc[WS_METHODS.providerAuthStart]({ instanceId });
+      const state = new URL(started.authorizationUrl!).searchParams.get("state");
+      expect(started.interaction).toMatchObject({
+        type: "browser",
+        requiresConsent: false,
+        acceptsCallback: false,
+        acceptsCode: true,
+      });
+      const failure = yield* Effect.flip(
+        rpc[WS_METHODS.providerAuthComplete]({
+          instanceId,
+          flowId: started.flowId!,
+          callbackUrl: "foreign-code#foreign-state",
+        }),
+      );
+      expect(failure.message).toBe("Enter the authorization code from this sign-in.");
+      expect((yield* first(rpc[WS_METHODS.providerAuthSubscribe]({ instanceId }))).phase).toBe(
+        "waiting",
+      );
+      yield* rpc[WS_METHODS.providerAuthComplete]({
+        instanceId,
+        flowId: started.flowId!,
+        callbackUrl: `correct-code#${state}`,
+      });
+      const finished = yield* first(
+        rpc[WS_METHODS.providerAuthSubscribe]({ instanceId }).pipe(
+          Stream.filter((value) => value.phase === "succeeded" || value.phase === "failed"),
+        ),
+      );
+      expect(finished.phase).toBe("succeeded");
+    }).pipe(Effect.scoped),
+  );
+
+  it.live("finishes Codex device sign-in without submitting a callback", () =>
+    Effect.gen(function* () {
+      const { rpc, cloud } = yield* client();
+      const instanceId = ProviderInstanceId.make(poolInstanceId("codex", "personal"));
+      const before = yield* Clock.currentTimeMillis;
+      const started = yield* rpc[WS_METHODS.providerAuthStart]({
+        instanceId,
+        callbackMode: "client",
+      });
+      expect(started.phase).toBe("waiting");
+      expect(started.authorizationUrl).toBe("https://auth.openai.com/codex/device");
+      expect(started.interaction).toMatchObject({
+        type: "deviceCode",
+        url: started.authorizationUrl,
+      });
+      expect(Date.parse(started.expiresAt!)).toBeGreaterThanOrEqual(before + 900_000);
+      expect(Date.parse(started.expiresAt!)).toBeLessThanOrEqual(
+        (yield* Clock.currentTimeMillis) + 900_000,
+      );
+      if (started.interaction?.type !== "deviceCode") throw new Error("Expected a device code");
+      const failure = yield* Effect.flip(
+        rpc[WS_METHODS.providerAuthComplete]({
+          instanceId,
+          flowId: started.flowId!,
+          callbackUrl: "unnecessary-code",
+        }),
+      );
+      expect(failure.message).toContain("finish automatically");
+      expect(
+        cloud.pools
+          .objectFor(`${userId}:personal`)
+          .cliProxyApi.authorizeDevice(started.interaction.userCode),
+      ).toBe(true);
+      const finished = yield* first(
+        rpc[WS_METHODS.providerAuthSubscribe]({ instanceId }).pipe(
+          Stream.filter((state) => state.phase === "succeeded" || state.phase === "failed"),
+        ),
+      );
+      expect(finished.phase).toBe("succeeded");
+      expect(finished.interaction).toBeNull();
+      expect(
+        (yield* config(rpc)).sources.find((source) => source.id === poolSourceId("personal"))
+          ?.accounts,
+      ).toEqual([expect.objectContaining({ driver: "codex" })]);
+    }).pipe(Effect.scoped),
+  );
+
+  it.live("cancels and replaces device sessions without leaving the old code usable", () =>
+    Effect.gen(function* () {
+      const { rpc, cloud } = yield* client();
+      const instanceId = ProviderInstanceId.make(poolInstanceId("codex", "personal"));
+      const firstLogin = yield* rpc[WS_METHODS.providerAuthStart]({ instanceId });
+      const secondLogin = yield* rpc[WS_METHODS.providerAuthStart]({ instanceId });
+      const fake = cloud.pools.objectFor(`${userId}:personal`).cliProxyApi;
+      if (
+        firstLogin.interaction?.type !== "deviceCode" ||
+        secondLogin.interaction?.type !== "deviceCode"
+      ) {
+        throw new Error("Expected device codes");
+      }
+      expect(fake.authorizeDevice(firstLogin.interaction.userCode)).toBe(false);
+      const cancelled = yield* rpc[WS_METHODS.providerAuthCancel]({
+        instanceId,
+        flowId: secondLogin.flowId!,
+      });
+      expect(cancelled.phase).toBe("cancelled");
+      expect(cancelled.interaction).toBeNull();
+      expect(fake.authorizeDevice(secondLogin.interaction.userCode)).toBe(false);
+      expect((yield* first(rpc[WS_METHODS.providerAuthSubscribe]({ instanceId }))).phase).toBe(
+        "cancelled",
+      );
+    }).pipe(Effect.scoped),
+  );
+
+  it.live("keeps a device login alive when CLIProxyAPI has started saving it", () =>
+    Effect.gen(function* () {
+      const { rpc, cloud } = yield* client();
+      const instanceId = ProviderInstanceId.make(poolInstanceId("codex", "personal"));
+      const started = yield* rpc[WS_METHODS.providerAuthStart]({ instanceId });
+      if (started.interaction?.type !== "deviceCode") throw new Error("Expected a device code");
+      const fake = cloud.pools.objectFor(`${userId}:personal`).cliProxyApi;
+      expect(fake.beginLoginSave(started.interaction.userCode)).toBe(true);
+
+      const cancel = yield* rpc[WS_METHODS.providerAuthCancel]({
+        instanceId,
+        flowId: started.flowId!,
+      });
+      expect(cancel.phase).toBe("verifying");
+      expect(cancel.interaction).toBeNull();
+      expect((yield* rpc[WS_METHODS.providerAuthStart]({ instanceId })).phase).toBe("verifying");
+
+      expect(fake.authorizeDevice(started.interaction.userCode)).toBe(true);
+      const finished = yield* first(
+        rpc[WS_METHODS.providerAuthSubscribe]({ instanceId }).pipe(
+          Stream.filter((state) => state.phase === "succeeded" || state.phase === "failed"),
+        ),
+      );
+      expect(finished.phase).toBe("succeeded");
+      expect(
+        (yield* config(rpc)).sources.find((source) => source.id === poolSourceId("personal"))
+          ?.accounts,
+      ).toEqual([expect.objectContaining({ driver: "codex" })]);
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("expires device sign-in at the provider deadline and cancels its session", () =>
+    Effect.gen(function* () {
+      const { rpc, cloud } = yield* client();
+      const instanceId = ProviderInstanceId.make(poolInstanceId("codex", "personal"));
+      const started = yield* rpc[WS_METHODS.providerAuthStart]({ instanceId });
+      if (started.interaction?.type !== "deviceCode") throw new Error("Expected a device code");
+      yield* TestClock.adjust("15 minutes");
+      const finished = yield* first(
+        rpc[WS_METHODS.providerAuthSubscribe]({ instanceId }).pipe(
+          Stream.filter((state) => state.phase === "failed"),
+        ),
+      );
+      expect(finished.message).toBe("Sign-in timed out. Start again.");
+      expect(finished.interaction).toBeNull();
+      expect(
+        cloud.pools
+          .objectFor(`${userId}:personal`)
+          .cliProxyApi.authorizeDevice(started.interaction.userCode),
+      ).toBe(false);
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("keeps polling after expiry when CLIProxyAPI has already begun saving", () =>
+    Effect.gen(function* () {
+      const { rpc, cloud } = yield* client();
+      const instanceId = ProviderInstanceId.make(poolInstanceId("codex", "personal"));
+      const fake = cloud.pools.objectFor(`${userId}:personal`).cliProxyApi;
+      fake.setDeviceExpiresIn(1);
+      const started = yield* rpc[WS_METHODS.providerAuthStart]({ instanceId });
+      if (started.interaction?.type !== "deviceCode") throw new Error("Expected a device code");
+      expect(fake.beginLoginSave(started.interaction.userCode)).toBe(true);
+
+      yield* TestClock.adjust("1 second");
+      const finishing = yield* first(
+        rpc[WS_METHODS.providerAuthSubscribe]({ instanceId }).pipe(
+          Stream.filter((state) => state.phase === "verifying"),
+        ),
+      );
+      expect(finishing.message).toBe("Sign-in is finishing.");
+      expect(finishing.interaction).toBeNull();
+
+      expect(fake.authorizeDevice(started.interaction.userCode)).toBe(true);
+      yield* TestClock.adjust("1 second");
+      const finished = yield* first(
+        rpc[WS_METHODS.providerAuthSubscribe]({ instanceId }).pipe(
+          Stream.filter((state) => state.phase === "succeeded" || state.phase === "failed"),
+        ),
+      );
+      expect(finished.phase).toBe("succeeded");
+    }).pipe(Effect.scoped),
+  );
+
   it.live("creates a pool and signs an account into it from the existing pool UI", () =>
     Effect.gen(function* () {
       const { rpc } = yield* client();

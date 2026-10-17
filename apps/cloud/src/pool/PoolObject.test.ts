@@ -1,10 +1,12 @@
 import { describe, expect, it } from "@effect/vitest";
-import { DEFAULT_POOL_ROUTING } from "@t3tools/contracts/accountHub";
+import { DEFAULT_POOL_ROUTING, POOL_LINK_PATH } from "@t3tools/contracts/accountHub";
 import * as Effect from "effect/Effect";
 import * as SqlClient from "effect/sql/SqlClient";
 import type { SqlError } from "effect/sql/SqlError";
+import { vi } from "vite-plus/test";
 
 import * as CliProxyApi from "./cliProxyApi.ts";
+import * as PoolEngine from "./PoolEngine.ts";
 import * as PoolContainer from "./PoolContainer.ts";
 import { handleFor } from "./PoolDirectory.ts";
 import * as PoolStore from "./poolStore.ts";
@@ -12,6 +14,7 @@ import { makeFakeCliProxyApi, makeMemoryPoolObject } from "./testing.ts";
 
 const alice = { userId: "user_alice" };
 const bob = { userId: "user_bob" };
+const T0 = Date.parse("2026-10-17T10:00:00.000Z");
 
 const makePool = (external?: (request: Request) => Promise<Response>) => {
   const object = makeMemoryPoolObject(external);
@@ -35,6 +38,219 @@ const forget = (runtime: ReturnType<typeof makePool>["runtime"]) =>
   );
 
 describe("PoolObject", () => {
+  it.effect(
+    "backs off a failed legacy first model read before waking a sleeping pool again",
+    () => {
+      vi.useFakeTimers({ toFake: ["Date"] });
+      vi.setSystemTime(T0);
+      const { pool, runtime, cliProxyApi, container } = makePool();
+      let modelReads = 0;
+      let failModelReads = false;
+      const serve = cliProxyApi.serve;
+      cliProxyApi.serve = (request) => {
+        if (new URL(request.url).pathname === "/v1/models") {
+          modelReads += 1;
+          if (failModelReads) return Promise.resolve(Response.json({}, { status: 503 }));
+        }
+        return serve(request);
+      };
+      const sql = (query: (sql: SqlClient.SqlClient) => Effect.Effect<unknown, SqlError>) =>
+        Effect.promise(() => runtime.runPromise(SqlClient.SqlClient.use(query)));
+      return Effect.gen(function* () {
+        yield* pool.create(alice, { name: "Work", personal: false });
+        yield* signIn(pool);
+        yield* sql(
+          (sql) => sql`UPDATE accounts_state SET models_checked_at = 0,
+          models_attempted_at = 0 WHERE id = 1`,
+        );
+        failModelReads = true;
+        const before = modelReads;
+
+        yield* pool.models(alice);
+        expect(modelReads).toBe(before + 1);
+        expect(container.starts).toBe(1);
+
+        yield* Effect.promise(() =>
+          runtime.runPromise(PoolContainer.PoolContainer.use((service) => service.stop)),
+        );
+        yield* pool.models(alice);
+        expect(container.starts).toBe(1);
+        expect(modelReads).toBe(before + 1);
+      }).pipe(Effect.ensuring(Effect.sync(() => vi.useRealTimers())));
+    },
+  );
+
+  it.effect("refreshes stale models from a running managed pool without waking it", () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(T0);
+    const { pool, runtime, cliProxyApi, container } = makePool();
+    let modelReads = 0;
+    const serve = cliProxyApi.serve;
+    cliProxyApi.serve = (request) => {
+      if (new URL(request.url).pathname === "/v1/models") modelReads += 1;
+      return serve(request);
+    };
+    return Effect.gen(function* () {
+      yield* pool.create(alice, { name: "Work", personal: false });
+      yield* signIn(pool);
+      const before = modelReads;
+      cliProxyApi.catalog.claude!.push({
+        id: "claude-opus-6",
+        created: 1_800_000_000,
+        displayName: "Claude Opus 6",
+        reasoningEfforts: ["high"],
+      });
+      vi.setSystemTime(T0 + PoolEngine.MODELS_REFRESH_MS + 1);
+
+      const read = yield* pool.models(alice);
+
+      expect(read.models.map((model) => model.id)).toContain("claude-opus-6");
+      expect(modelReads).toBeGreaterThan(before);
+      expect(container.starts).toBe(1);
+      expect(
+        yield* Effect.promise(() =>
+          runtime.runPromise(PoolEngine.PoolEngine.use((engine) => engine.nextModelsRefreshAt())),
+        ),
+      ).toBe(T0 + PoolEngine.MODELS_REFRESH_MS + 1 + PoolEngine.MODELS_REFRESH_MS);
+    }).pipe(Effect.ensuring(Effect.sync(() => vi.useRealTimers())));
+  });
+
+  it.effect("keeps a catalog deadline while asleep and wakes once for its scheduled read", () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(T0);
+    const { pool, runtime, cliProxyApi, container } = makePool();
+    const runEngine = <A, E>(
+      effect: (engine: PoolEngine.PoolEngine["Service"]) => Effect.Effect<A, E>,
+    ) => Effect.promise(() => runtime.runPromise(PoolEngine.PoolEngine.use(effect)));
+    return Effect.gen(function* () {
+      yield* pool.create(alice, { name: "Work", personal: false });
+      expect(yield* runEngine((engine) => engine.nextModelsRefreshAt())).toBeNull();
+      yield* signIn(pool);
+      yield* Effect.promise(() =>
+        runtime.runPromise(PoolContainer.PoolContainer.use((service) => service.stop)),
+      );
+      cliProxyApi.catalog.claude!.push({
+        id: "claude-new-while-asleep",
+        created: 1,
+        displayName: "New Claude",
+        reasoningEfforts: ["high"],
+      });
+      const deadline = T0 + PoolEngine.MODELS_REFRESH_MS;
+      expect(yield* runEngine((engine) => engine.nextModelsRefreshAt())).toBe(deadline);
+      vi.setSystemTime(deadline);
+      yield* runEngine((engine) => engine.refreshModelsAtAlarm());
+      expect(
+        (yield* runEngine((engine) => engine.cachedModels(alice))).models.map((model) => model.id),
+      ).toContain("claude-new-while-asleep");
+      expect(container.starts).toBe(2);
+      yield* runEngine((engine) => engine.refreshModelsAtAlarm());
+      expect(container.starts).toBe(2);
+    }).pipe(Effect.ensuring(Effect.sync(() => vi.useRealTimers())));
+  });
+
+  it.effect("backs off failed model refreshes and does not wake a sleeping managed pool", () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(T0);
+    const { pool, runtime, cliProxyApi, container } = makePool();
+    let modelReads = 0;
+    const serve = cliProxyApi.serve;
+    let failModelReads = false;
+    cliProxyApi.serve = (request) => {
+      if (new URL(request.url).pathname === "/v1/models") {
+        modelReads += 1;
+        if (failModelReads) return Promise.resolve(Response.json({}, { status: 503 }));
+      }
+      return serve(request);
+    };
+    const nextRefresh = () =>
+      Effect.promise(() =>
+        runtime.runPromise(PoolEngine.PoolEngine.use((engine) => engine.nextModelsRefreshAt())),
+      );
+    return Effect.gen(function* () {
+      yield* pool.create(alice, { name: "Work", personal: false });
+      yield* signIn(pool);
+      const before = modelReads;
+      failModelReads = true;
+      vi.setSystemTime(T0 + PoolEngine.MODELS_REFRESH_MS + 1);
+
+      yield* pool.models(alice);
+      expect(modelReads).toBe(before + 1);
+      expect(yield* nextRefresh()).toBe(T0 + PoolEngine.MODELS_REFRESH_MS + 1 + 5 * 60_000);
+
+      yield* pool.models(alice);
+      expect(modelReads).toBe(before + 1);
+
+      yield* Effect.promise(() =>
+        runtime.runPromise(PoolContainer.PoolContainer.use((service) => service.stop)),
+      );
+      vi.setSystemTime(T0 + 2 * PoolEngine.MODELS_REFRESH_MS);
+      yield* pool.models(alice);
+      expect(container.starts).toBe(1);
+      expect(modelReads).toBe(before + 1);
+      expect(yield* nextRefresh()).toBe(T0 + 2 * PoolEngine.MODELS_REFRESH_MS);
+    }).pipe(Effect.ensuring(Effect.sync(() => vi.useRealTimers())));
+  });
+
+  it.effect(
+    "refreshes linked catalogs from the cache endpoint and keeps the last good list on 404",
+    () => {
+      vi.useFakeTimers({ toFake: ["Date"] });
+      vi.setSystemTime(T0);
+      const requests: Array<string> = [];
+      let unavailable = false;
+      const { pool, runtime, container } = makePool((request) => {
+        const url = new URL(request.url);
+        requests.push(url.pathname);
+        if (url.pathname.endsWith("/models")) {
+          return Promise.resolve(
+            unavailable
+              ? new Response(null, { status: 404 })
+              : Response.json({
+                  models: [{ id: "gpt-6.1-sol", ownedBy: "openai", created: 1_790_640_000 }],
+                }),
+          );
+        }
+        return Promise.resolve(Response.json({ name: "Source", accounts: [] }));
+      });
+      const runEngine = <A, E>(
+        effect: (engine: PoolEngine.PoolEngine["Service"]) => Effect.Effect<A, E>,
+      ) => Effect.promise(() => runtime.runPromise(PoolEngine.PoolEngine.use(effect)));
+      return Effect.gen(function* () {
+        yield* pool.create(alice, { name: "Preview", personal: false });
+        yield* Effect.promise(() =>
+          runtime.runPromise(
+            SqlClient.SqlClient.use(
+              (sql) => sql`UPDATE pool SET backing = 'external',
+              external_url = ${`https://source.test${POOL_LINK_PATH}`},
+              external_management_key = 'management', external_client_key = 'client'
+              WHERE id = 1`,
+            ),
+          ),
+        );
+
+        yield* runEngine((engine) => engine.refreshModelsAtAlarm());
+        expect(yield* runEngine((engine) => engine.cachedModels(alice))).toMatchObject({
+          models: [{ id: "gpt-6.1-sol" }],
+        });
+        expect(requests).toEqual([`${POOL_LINK_PATH}/models`]);
+
+        unavailable = true;
+        vi.setSystemTime(T0 + PoolEngine.MODELS_REFRESH_MS + 1);
+        yield* runEngine((engine) => engine.refreshModelsAtAlarm());
+        expect(yield* runEngine((engine) => engine.cachedModels(alice))).toMatchObject({
+          models: [{ id: "gpt-6.1-sol" }],
+        });
+        expect(requests).toEqual([`${POOL_LINK_PATH}/models`, `${POOL_LINK_PATH}/models`]);
+        expect(yield* runEngine((engine) => engine.nextModelsRefreshAt())).toBe(
+          T0 + PoolEngine.MODELS_REFRESH_MS + 1 + 5 * 60_000,
+        );
+        yield* runEngine((engine) => engine.refreshModelsAtAlarm());
+        expect(requests).toHaveLength(2);
+        expect(container.starts).toBe(0);
+      }).pipe(Effect.ensuring(Effect.sync(() => vi.useRealTimers())));
+    },
+  );
+
   it.effect("is set up once, by its admin, and refuses everyone else", () =>
     Effect.gen(function* () {
       const { pool, runtime } = makePool();

@@ -2,11 +2,17 @@ import type { ServerProviderUsageLimits } from "@t3tools/contracts";
 import {
   DEFAULT_POOL_ROUTING,
   PoolLinkInfo,
+  PoolLinkModels,
   type PoolRouting,
 } from "@t3tools/contracts/accountHub";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
+
+import * as PoolModelDiscovery from "./poolModelDiscovery.ts";
+import type { ServedModel } from "./poolModelDiscovery.ts";
+
+export type { ServedModel } from "./poolModelDiscovery.ts";
 
 /**
  * How a pool object talks to the CLIProxyAPI behind it: its own container,
@@ -296,24 +302,9 @@ const ModelList = Schema.Struct({
   ),
 });
 
-/**
- * A model the CLIProxyAPI serves. It lists only what its loaded, enabled
- * accounts can run, every provider together; `ownedBy` says whose it is
- * (`anthropic` for Claude accounts, `openai` for ChatGPT ones).
- */
-export interface ServedModel {
-  readonly id: string;
-  readonly ownedBy: string;
-  /** When the model came out, in epoch seconds, if the CLIProxyAPI knows. */
-  readonly created: number | null;
-}
+const decodePoolLinkModels = Schema.decodeUnknownEffect(PoolLinkModels);
 
-/**
- * The models the CLIProxyAPI serves now (`GET /v1/models`). Asked without
- * `Anthropic-Version` or a `claude-cli` agent, which would get the
- * Anthropic-shaped list with other providers' models renamed.
- */
-export const listModels = (endpoint: PoolEndpoint) =>
+const servedModels = (endpoint: PoolEndpoint) =>
   Effect.gen(function* () {
     const response = yield* send(
       endpoint,
@@ -331,7 +322,6 @@ export const listModels = (endpoint: PoolEndpoint) =>
       ModelList,
       `${hostOf(endpoint)} returned an invalid model list.`,
     )(json);
-    // A pinned account's models are listed again under its pin (`threadAccounts.ts`).
     return decoded.data.flatMap((model): ReadonlyArray<ServedModel> =>
       isPinnedModel(model.id)
         ? []
@@ -342,6 +332,108 @@ export const listModels = (endpoint: PoolEndpoint) =>
               created: model.created && model.created > 0 ? model.created : null,
             },
           ],
+    );
+  });
+
+export const listPoolLinkModels = (endpoint: PoolEndpoint) =>
+  Effect.tryPromise({
+    try: () =>
+      endpoint.fetch(
+        new Request(`${endpoint.baseUrl}/models`, {
+          headers: { authorization: `Bearer ${endpoint.clientKey}` },
+        }),
+      ),
+    catch: (cause) =>
+      new PoolBackendError({ detail: `${hostOf(endpoint)} could not be reached.`, cause }),
+  }).pipe(
+    Effect.filterOrFail(
+      (response) => response.status < 300,
+      () => new PoolBackendError({ detail: "The linked pool has no cached model metadata." }),
+    ),
+    Effect.flatMap((response) =>
+      Effect.tryPromise({
+        try: () => response.json() as Promise<unknown>,
+        catch: (cause) =>
+          new PoolBackendError({
+            detail: "The linked pool returned invalid model metadata.",
+            cause,
+          }),
+      }),
+    ),
+    Effect.flatMap((json) => decodePoolLinkModels(json)),
+    Effect.map((result) => result.models),
+    // A missing route differs from an empty list so scheduled reads can keep the last good cache.
+    Effect.catch(() => Effect.succeed(null)),
+  );
+
+const definitionsFor = (endpoint: PoolEndpoint, channel: PoolModelDiscovery.ModelChannel) =>
+  management(endpoint, "GET", `routing/model-definitions/${channel}`).pipe(
+    Effect.filterOrFail(
+      (response) => response.status < 300,
+      () => new PoolBackendError({ detail: "CLIProxyAPI model definitions are unavailable." }),
+    ),
+    Effect.flatMap((response) => PoolModelDiscovery.decodeModelDefinitions(response.json)),
+    Effect.filterOrFail(
+      (definitions) => definitions.channel === channel,
+      () =>
+        new PoolBackendError({ detail: "CLIProxyAPI returned definitions for another channel." }),
+    ),
+    Effect.option,
+    Effect.map(Option.getOrNull),
+  );
+
+const linkedDefinitions = (
+  models: ReadonlyArray<ServedModel>,
+): ReadonlyArray<PoolModelDiscovery.ModelDefinitions> => {
+  const groups = new Map<
+    PoolModelDiscovery.ModelChannel,
+    Array<PoolModelDiscovery.ModelDefinitions["models"][number]>
+  >();
+  for (const model of models) {
+    const channel = model.provider;
+    if (channel !== "claude" && channel !== "codex") continue;
+    const group = groups.get(channel) ?? [];
+    group.push({
+      id: model.id,
+      ...(model.displayName === undefined ? {} : { display_name: model.displayName }),
+      ...(model.reasoningEfforts === undefined
+        ? {}
+        : { thinking: { levels: model.reasoningEfforts } }),
+    });
+    groups.set(channel, group);
+  }
+  return [...groups].map(([channel, definitions]) => ({ channel, models: definitions }));
+};
+
+/**
+ * The models the CLIProxyAPI serves now (`GET /v1/models`). Asked without
+ * `Anthropic-Version` or a `claude-cli` agent, which would get the
+ * Anthropic-shaped list with other providers' models renamed.
+ */
+export const listModels = (endpoint: PoolEndpoint) =>
+  Effect.gen(function* () {
+    const served = yield* servedModels(endpoint);
+    if (endpoint.link) {
+      const cached = yield* listPoolLinkModels(endpoint);
+      return PoolModelDiscovery.withMetadata(served, linkedDefinitions(cached ?? []));
+    }
+
+    const channels = new Set(
+      served.flatMap((model) => {
+        const channel = PoolModelDiscovery.channelForOwner(model.ownedBy);
+        return channel === undefined ? [] : [channel];
+      }),
+    );
+    const definitions = yield* Effect.forEach(
+      [...channels],
+      (channel) => definitionsFor(endpoint, channel),
+      { concurrency: "unbounded" },
+    );
+    return PoolModelDiscovery.withMetadata(
+      served,
+      definitions.filter(
+        (definition): definition is PoolModelDiscovery.ModelDefinitions => definition !== null,
+      ),
     );
   });
 
@@ -392,15 +484,91 @@ export const servedBy = (response: Response) =>
 const LoginStart = Schema.Struct({
   url: Schema.String,
   state: Schema.String,
+  flow: Schema.optional(Schema.Literals(["manual"])),
   user_code: Schema.optional(Schema.String),
+  expires_in: Schema.optional(Schema.Int.check(Schema.isGreaterThan(0))),
+});
+const ManualLoginStart = Schema.Struct({
+  flow: Schema.Literals(["manual"]),
+  url: Schema.NonEmptyString,
+  state: Schema.NonEmptyString,
+  user_code: Schema.optional(Schema.String),
+  expires_in: Schema.optional(Schema.Int.check(Schema.isGreaterThan(0))),
+});
+const DeviceLoginStart = Schema.Struct({
+  url: Schema.NonEmptyString,
+  state: Schema.NonEmptyString,
+  user_code: Schema.NonEmptyString,
+  expires_in: Schema.Int.check(Schema.isGreaterThan(0)),
 });
 export type LoginStart = typeof LoginStart.Type;
+export type PoolLoginFlow = "browser" | "manual";
+export type LoginCallback = string | { readonly state: string; readonly code: string };
+export const CLAUDE_MANUAL_REDIRECT = "https://platform.claude.com/oauth/code/callback";
 
-export const startLogin = (endpoint: PoolEndpoint, provider: PoolLoginProvider) =>
-  management(endpoint, "GET", `oauth/auth-url?provider=${provider}`).pipe(
-    Effect.flatMap((response) =>
-      decodeOr(LoginStart, "The pool's CLIProxyAPI could not start sign-in.")(response.json),
+const isManualClaudeLogin = (login: typeof ManualLoginStart.Type) => {
+  try {
+    const authorization = new URL(login.url);
+    const redirectUris = authorization.searchParams.getAll("redirect_uri");
+    return (
+      authorization.protocol === "https:" &&
+      !authorization.username &&
+      !authorization.password &&
+      authorization.searchParams.getAll("state").length === 1 &&
+      authorization.searchParams.get("state") === login.state &&
+      redirectUris.length === 1 &&
+      redirectUris[0] === CLAUDE_MANUAL_REDIRECT
+    );
+  } catch {
+    return false;
+  }
+};
+
+export const startLogin = (
+  endpoint: PoolEndpoint,
+  provider: PoolLoginProvider,
+  flow: PoolLoginFlow = "browser",
+) =>
+  management(
+    endpoint,
+    "GET",
+    `oauth/auth-url?provider=${provider}${provider === "codex" ? "&flow=device" : flow === "manual" ? "&flow=manual" : ""}`,
+  ).pipe(
+    Effect.tap(
+      expectOk(endpoint, () =>
+        provider === "codex"
+          ? "could not start device sign-in. Update it to a build with Codex device login support."
+          : flow === "manual"
+            ? "could not start Claude manual sign-in. Update it to a build with manual Claude code support."
+            : "could not start sign-in.",
+      ),
     ),
+    Effect.flatMap((response): Effect.Effect<LoginStart, PoolBackendError> => {
+      if (provider === "codex") {
+        return decodeOr(
+          DeviceLoginStart,
+          "The pool's CLIProxyAPI could not start device sign-in. Update it to a build with Codex device login support.",
+        )(response.json);
+      }
+      if (flow === "manual") {
+        return decodeOr(
+          ManualLoginStart,
+          "The pool's CLIProxyAPI could not start Claude manual sign-in. Update it to a build with manual Claude code support.",
+        )(response.json).pipe(
+          Effect.flatMap((login) =>
+            isManualClaudeLogin(login)
+              ? Effect.succeed(login)
+              : Effect.fail(
+                  new PoolBackendError({
+                    detail:
+                      "The pool's CLIProxyAPI returned an unsupported Claude sign-in redirect. Update it to a build with manual Claude code support.",
+                  }),
+                ),
+          ),
+        );
+      }
+      return decodeOr(LoginStart, "The pool's CLIProxyAPI could not start sign-in.")(response.json);
+    }),
   );
 
 const LoginStatus = Schema.Struct({
@@ -428,27 +596,40 @@ export const loginStatus = (
     ),
   );
 
-/** Hands over the address the provider redirected to, for a login finished on another device. */
-export const completeLogin = (endpoint: PoolEndpoint, redirectUrl: string) =>
+/** Hands over a provider callback or a code already bound to this login's state. */
+export const completeLogin = (endpoint: PoolEndpoint, callback: LoginCallback) =>
   Effect.gen(function* () {
-    // CLIProxyAPI reads the provider from the login's state, which the URL carries.
-    const response = yield* management(endpoint, "POST", "oauth/callback", {
-      redirect_url: redirectUrl,
-    });
+    const body =
+      typeof callback === "string"
+        ? { redirect_url: callback }
+        : { state: callback.state, code: callback.code };
+    const response = yield* management(endpoint, "POST", "oauth/callback", body);
     const status =
       response.json !== null && typeof response.json === "object" && "status" in response.json
         ? response.json.status
         : null;
     if (response.status >= 300 || status === "error") {
       return yield* new PoolBackendError({
-        detail: "That URL does not belong to this sign-in. Copy the full address and try again.",
+        detail:
+          typeof callback === "string"
+            ? "That URL does not belong to this sign-in. Copy the full address and try again."
+            : "That code does not belong to this sign-in. Check it and try again.",
       });
     }
   });
 
+const LoginCancellation = Schema.Struct({ cancelled: Schema.Boolean });
+
 export const cancelLogin = (endpoint: PoolEndpoint, state: string) =>
   management(endpoint, "DELETE", `oauth/session?state=${encodeURIComponent(state)}`).pipe(
-    Effect.ignore,
+    Effect.tap(expectOk(endpoint, () => "could not cancel sign-in.")),
+    Effect.flatMap((response) =>
+      decodeOr(
+        LoginCancellation,
+        "The pool's CLIProxyAPI could not confirm whether sign-in was cancelled. Update it and try again.",
+      )(response.json),
+    ),
+    Effect.map((result) => result.cancelled),
   );
 
 /** One local retry restriction CLIProxyAPI holds an account in (its `cooldowns` view). */

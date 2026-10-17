@@ -13,6 +13,7 @@ import {
   filterAutomations,
   needsAttention,
   runActions,
+  runsByAttention,
   sortAutomations,
 } from "./list.ts";
 
@@ -166,5 +167,40 @@ describe("runActions", () => {
     expect(canRetryRun({ status: "failed" })).toBe(true);
     expect(canRetryRun({ status: "cancelled" })).toBe(true);
     expect(canRetryRun({ status: "running" })).toBe(false);
+  });
+});
+
+describe("runsByAttention", () => {
+  const run = (id: string, status: AutomationRunSummary["status"], waitingOnYou = false) => ({
+    ...lastRun(status, id),
+    id,
+    waitingOnYou,
+  });
+  const ids = (runs: ReadonlyArray<{ readonly id: string }>) => runs.map((each) => each.id);
+
+  it("puts questions and unresolved failures on top, keeping newest first", () => {
+    const split = runsByAttention([
+      run("asks", "running", true),
+      run("working", "running"),
+      run("failed", "failed"),
+      run("done", "succeeded"),
+    ]);
+    expect(ids(split.needsYou)).toEqual(["asks", "failed"]);
+    expect(ids(split.rest)).toEqual(["working", "done"]);
+  });
+
+  it("lets a later run that got through clear older failures", () => {
+    const split = runsByAttention([
+      run("done", "succeeded"),
+      run("old-failure", "failed"),
+      run("still-asks", "running", true),
+    ]);
+    expect(ids(split.needsYou)).toEqual(["still-asks"]);
+    expect(ids(split.rest)).toEqual(["done", "old-failure"]);
+  });
+
+  it("doesn't count a cancelled run as getting through", () => {
+    const split = runsByAttention([run("cancelled", "cancelled"), run("failed", "failed")]);
+    expect(ids(split.needsYou)).toEqual(["failed"]);
   });
 });

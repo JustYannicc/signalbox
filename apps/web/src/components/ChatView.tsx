@@ -63,6 +63,7 @@ import {
   type EnvironmentId,
   type MessageId,
   type ModelSelection,
+  type OrchestrationV2Run,
   type ProjectScript,
   type ProjectId,
   type PreviewAnnotationPayload,
@@ -535,6 +536,7 @@ import {
   startAttachmentUpload,
 } from "../lib/attachmentUploadQueue";
 import { sanitizeThreadErrorMessage } from "~/rpc/transportError";
+import { useSettledRunSummaries } from "./chat/settledRunSummaries"; // signalbox
 import { RightPanelSheet } from "./RightPanelSheet";
 import { previewEnvironment } from "../state/preview";
 import { clampFileAttachmentUploadBytes } from "@t3tools/client-runtime/state/attachments";
@@ -580,6 +582,7 @@ import { recallableComposerPrompt } from "./chat/composerPromptHistory";
 import { observeResize } from "~/lib/observeResize";
 
 const EMPTY_PROVIDERS: ServerProvider[] = [];
+const EMPTY_RUNS: ReadonlyArray<OrchestrationV2Run> = [];
 const EMPTY_PROVIDER_MODELS: ServerProvider["models"] = [];
 const EMPTY_USAGE_LIMIT_SOURCES: UsageLimitSourceSnapshots = [];
 import type { CodexArtifactTemplate } from "@t3tools/shared/codexArtifactTemplates";
@@ -1579,6 +1582,12 @@ export default function ChatView(props: ChatViewProps) {
   const activeLatestRun = isServerThread ? serverLatestRun : (activeThread?.latestRun ?? null);
   const activeActivityRun = isServerThread ? serverActivityRun : (activeThread?.latestRun ?? null);
   const activeRuntime = isServerThread ? serverRuntime : (activeThread?.runtime ?? null);
+  // signalbox: older turns keep how their own run ended (settledRunSummaries)
+  const settledRuns = useSettledRunSummaries(serverProjection?.runs ?? EMPTY_RUNS);
+  const timelineLatestRun = useMemo(
+    () => (activeActivityRun === null ? null : { ...activeActivityRun, settledRuns }),
+    [activeActivityRun, settledRuns],
+  );
   const hasHeldQueuedRuns =
     isServerThread &&
     serverProjection?.runs.some((run) => run.status === "queued" && run.queueHeld === true) ===
@@ -8546,7 +8555,7 @@ export default function ChatView(props: ChatViewProps) {
                 timelineEntries={displayedTimeline.entries}
                 providerStatuses={timelineProviders}
                 runs={paintOnlyDisplayedTimeline ? [] : (serverProjection?.runs ?? [])}
-                latestRun={paintOnlyDisplayedTimeline ? null : activeActivityRun}
+                latestRun={paintOnlyDisplayedTimeline ? null : timelineLatestRun}
                 runningRunId={paintOnlyDisplayedTimeline ? null : activeRunningTurnId}
                 turnDiffSummaries={
                   paintOnlyDisplayedTimeline ? EMPTY_HELD_TURN_DIFF_SUMMARIES : turnDiffSummaries

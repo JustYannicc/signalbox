@@ -205,6 +205,13 @@
       "output": "3af231ca"
     },
     {
+      "name": "automations.githubSubscriptions",
+      "rpc": "automations.githubSubscriptions",
+      "access": "read",
+      "input": "03c2b661",
+      "output": "285a6028"
+    },
+    {
       "name": "automations.list",
       "rpc": "automations.subscribe",
       "access": "read",
@@ -1521,7 +1528,7 @@
       "rpc": "server.getConfig",
       "access": "read",
       "input": "03c2b661",
-      "output": "16378cfb"
+      "output": "29489fe2"
     },
     {
       "name": "server.refreshProviders",
@@ -1558,7 +1565,7 @@
       "access": "read",
       "stream": "snapshot",
       "input": "240ec835",
-      "output": "7fbc36f2"
+      "output": "08a033e3"
     },
     {
       "name": "settings.get",

@@ -37,24 +37,71 @@ interface FakeModel {
   readonly id: string;
   /** Epoch seconds. */
   readonly created: number;
+  readonly displayName: string;
+  readonly reasoningEfforts: ReadonlyArray<string>;
 }
 
 /** What `/v1/models` lists per account type: CLIProxyAPI's catalog, trimmed to what tests need. */
 const fakeCatalog = (): Record<string, Array<FakeModel>> => ({
   claude: [
-    { id: "claude-opus-5-5", created: 1_790_035_200 },
-    { id: "claude-sonnet-5-5", created: 1_790_553_600 },
-    { id: "claude-fable-5-1", created: 1_788_220_800 },
+    {
+      id: "claude-opus-5-5",
+      created: 1_790_035_200,
+      displayName: "Claude Opus 5.5",
+      reasoningEfforts: ["low", "medium", "high"],
+    },
+    {
+      id: "claude-sonnet-5-5",
+      created: 1_790_553_600,
+      displayName: "Claude Sonnet 5.5",
+      reasoningEfforts: [],
+    },
+    {
+      id: "claude-fable-5-1",
+      created: 1_788_220_800,
+      displayName: "Claude Fable 5.1",
+      reasoningEfforts: [],
+    },
     // Legacy in the model manifest.
-    { id: "claude-opus-5", created: 1_784_038_800 },
+    {
+      id: "claude-opus-5",
+      created: 1_784_038_800,
+      displayName: "Claude Opus 5",
+      reasoningEfforts: [],
+    },
     // Unknown to the manifest, and older than every current model.
-    { id: "claude-3-7-sonnet-20250219", created: 1_708_300_800 },
+    {
+      id: "claude-3-7-sonnet-20250219",
+      created: 1_708_300_800,
+      displayName: "Claude 3.7 Sonnet",
+      reasoningEfforts: [],
+    },
   ],
   codex: [
-    { id: "gpt-6-astra", created: 1_783_616_400 },
-    { id: "gpt-6.1-sol", created: 1_790_640_000 },
-    { id: "gpt-6-luna", created: 1_790_035_200 },
-    { id: "gpt-5.5", created: 1_776_902_400 },
+    {
+      id: "gpt-6-astra",
+      created: 1_783_616_400,
+      displayName: "GPT-6 Astra",
+      reasoningEfforts: ["low", "medium", "high", "xhigh", "max", "ultra"],
+    },
+    {
+      id: "gpt-6.1-sol",
+      created: 1_790_640_000,
+      displayName: "GPT-6.1 Sol",
+      reasoningEfforts: ["low", "medium", "high", "xhigh", "max", "ultra"],
+    },
+    {
+      id: "gpt-6-luna",
+      created: 1_790_035_200,
+      displayName: "GPT-6 Luna",
+      reasoningEfforts: ["low", "medium", "high", "xhigh", "max"],
+    },
+    {
+      id: "gpt-5.5",
+      created: 1_776_902_400,
+      displayName: "GPT-5.5",
+      reasoningEfforts: [],
+    },
   ],
 });
 
@@ -76,7 +123,19 @@ const OWNER_BY_TYPE: Record<string, string> = { claude: "anthropic", codex: "ope
 export const makeFakeCliProxyApi = () => {
   const accounts = new Map<string, FakeAccount>();
   const catalog = fakeCatalog();
-  const logins = new Map<string, { readonly type: string; done: boolean }>();
+  const logins = new Map<
+    string,
+    { readonly type: string; readonly userCode?: string; saving?: boolean; done: boolean }
+  >();
+  const finishLogin = (state: string) => {
+    const login = logins.get(state);
+    if (!login || login.done) return false;
+    login.done = true;
+    counter += 1;
+    const email = `${login.type}-${counter}@example.test`;
+    accounts.set(`${login.type}-${email}.json`, { type: login.type, email, disabled: false });
+    return true;
+  };
   const configPatches: Array<unknown> = [];
   /** The upstream URLs asked as each account (`requests/api-call`), by account name. */
   const accountRequests: Array<{ readonly name: string; readonly url: string }> = [];
@@ -88,9 +147,12 @@ export const makeFakeCliProxyApi = () => {
       .padStart(8, "0");
   /** Accounts whose cooldown was cleared (`routing/cooldown/reset`), in order. */
   const cooldownResets: Array<string> = [];
+  /** Provider channels whose optional model definitions were read. */
+  const modelDefinitionRequests: Array<string> = [];
   const cooling = (account: FakeAccount) =>
     account.cooldownUntil !== undefined && Date.parse(account.cooldownUntil) > Date.now();
   let counter = 0;
+  let deviceExpiresIn = 900;
   let turn = 0;
   const json = (body: unknown, status = 200) => Response.json(body, { status });
   const modelError = (status: number, message: string) =>
@@ -177,6 +239,21 @@ export const makeFakeCliProxyApi = () => {
     }
     const route = url.pathname.slice("/v8/management/".length);
     if (request.headers.get("authorization") === "Bearer wrong") return json({}, 401);
+    const modelDefinitions = /^routing\/model-definitions\/(claude|codex)$/u.exec(route);
+    if (request.method === "GET" && modelDefinitions !== null) {
+      const channel = modelDefinitions[1] as "claude" | "codex";
+      modelDefinitionRequests.push(channel);
+      return json({
+        channel,
+        models: (catalog[channel] ?? []).map((model) => ({
+          id: model.id,
+          display_name: model.displayName,
+          type: channel,
+          owned_by: OWNER_BY_TYPE[channel],
+          thinking: { levels: model.reasoningEfforts },
+        })),
+      });
+    }
     switch (`${request.method} ${route}`) {
       case "GET config":
         return json({});
@@ -188,8 +265,33 @@ export const makeFakeCliProxyApi = () => {
         if (provider !== "claude" && provider !== "codex") return json({}, 404);
         counter += 1;
         const state = `state-${counter}`;
+        if (provider === "codex" && url.searchParams.get("flow") === "device") {
+          const userCode = `TEST-${counter}`;
+          logins.set(state, { type: provider, userCode, done: false });
+          return json({
+            url: "https://auth.openai.com/codex/device",
+            state,
+            user_code: userCode,
+            expires_in: deviceExpiresIn,
+          });
+        }
         logins.set(state, { type: provider, done: false });
-        return json({ url: `https://login.example.test/?state=${state}`, state });
+        const manual = provider === "claude" && url.searchParams.get("flow") === "manual";
+        // Each provider's browser flow ends on its CLIProxyAPI listener; Claude manual mode
+        // returns a code directly instead of pretending the hosted callback reached this server.
+        const redirect = manual
+          ? "https://platform.claude.com/oauth/code/callback"
+          : provider === "claude"
+            ? "http://localhost:54545/callback"
+            : "http://localhost:1455/auth/callback";
+        const login = new URL("https://login.example.test/");
+        login.searchParams.set("redirect_uri", redirect);
+        login.searchParams.set("state", state);
+        return json({
+          url: login.toString(),
+          state,
+          ...(manual ? { flow: "manual" } : {}),
+        });
       }
       case "GET oauth/status": {
         const login = logins.get(url.searchParams.get("state") ?? "");
@@ -197,19 +299,28 @@ export const makeFakeCliProxyApi = () => {
         return json({ status: login.done ? "ok" : "wait" });
       }
       case "POST oauth/callback": {
-        const body = (await request.json()) as { readonly redirect_url: string };
-        const state = new URL(body.redirect_url).searchParams.get("state") ?? "";
+        const body = (await request.json()) as {
+          readonly redirect_url?: string;
+          readonly state?: string;
+          readonly code?: string;
+        };
+        const state = body.redirect_url
+          ? (new URL(body.redirect_url).searchParams.get("state") ?? "")
+          : (body.state ?? "");
         const login = logins.get(state);
         if (!login) return json({ status: "error" }, 404);
-        login.done = true;
-        counter += 1;
-        const email = `${login.type}-${counter}@example.test`;
-        accounts.set(`${login.type}-${email}.json`, { type: login.type, email, disabled: false });
+        if (login.userCode !== undefined || (!body.redirect_url && !body.code)) {
+          return json({ status: "error" }, 400);
+        }
+        finishLogin(state);
         return json({ status: "ok" });
       }
-      case "DELETE oauth/session":
-        logins.delete(url.searchParams.get("state") ?? "");
-        return json({ status: "ok" });
+      case "DELETE oauth/session": {
+        const state = url.searchParams.get("state") ?? "";
+        const login = logins.get(state);
+        if (login?.saving) return json({ cancelled: false });
+        return json({ cancelled: logins.delete(state) });
+      }
       case "GET credentials":
         return json({
           files: [...accounts].map(([name, account]) => ({
@@ -288,7 +399,28 @@ export const makeFakeCliProxyApi = () => {
         return json({ error: `no route ${request.method} ${route}` }, 404);
     }
   };
-  return { serve, accounts, catalog, configPatches, accountRequests, cooldownResets };
+  return {
+    serve,
+    accounts,
+    catalog,
+    configPatches,
+    accountRequests,
+    cooldownResets,
+    modelDefinitionRequests,
+    authorizeDevice: (userCode: string) => {
+      const found = [...logins].find(([, login]) => login.userCode === userCode);
+      return found !== undefined && finishLogin(found[0]);
+    },
+    beginLoginSave: (userCode: string) => {
+      const found = [...logins.values()].find((login) => login.userCode === userCode);
+      if (!found || found.done) return false;
+      found.saving = true;
+      return true;
+    },
+    setDeviceExpiresIn: (seconds: number) => {
+      deviceExpiresIn = seconds;
+    },
+  };
 };
 
 /**
