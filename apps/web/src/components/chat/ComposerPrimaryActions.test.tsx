@@ -113,10 +113,10 @@ describe("ComposerPrimaryActions", () => {
 describe("ComposerPrimaryActions stop pending state", () => {
   const onInterrupt = vi.fn();
   const onResume = vi.fn();
-  function runningProps(canInterrupt: boolean) {
+  function runningProps(canInterrupt: boolean, canOperateThread = true) {
     return {
       compact: true,
-      canOperateThread: true,
+      canOperateThread,
       pendingAction: null,
       isRunning: canInterrupt,
       canInterrupt,
@@ -138,8 +138,12 @@ describe("ComposerPrimaryActions stop pending state", () => {
 
   let container: HTMLDivElement;
   let root: Root;
-  const render = (canInterrupt: boolean) =>
-    act(() => root.render(createElement(ComposerPrimaryActions, runningProps(canInterrupt))));
+  const render = (canInterrupt: boolean, canOperateThread = true) =>
+    act(() =>
+      root.render(
+        createElement(ComposerPrimaryActions, runningProps(canInterrupt, canOperateThread)),
+      ),
+    );
   const slot = () => [...container.querySelectorAll("button")].at(-1)!;
   const clickStop = () => act(() => slot().click());
 
@@ -210,5 +214,15 @@ describe("ComposerPrimaryActions stop pending state", () => {
     clickStop();
     expect(onInterrupt).toHaveBeenCalledTimes(2);
     expect(slot()).toMatchObject({ ariaLabel: "Stopping", disabled: true });
+  });
+
+  it("does not read a lost operate permission as a landed stop", () => {
+    clickStop();
+    // ChatView folds the permission into canInterrupt, so a flap drops both.
+    render(false, false);
+    render(true);
+
+    expect(slot()).toMatchObject({ ariaLabel: "Stopping", disabled: true });
+    expect(container.querySelector('button[aria-label="Resume thread"]')).toBeNull();
   });
 });
