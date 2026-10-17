@@ -17,6 +17,7 @@ import * as Layer from "effect/Layer";
 import * as RpcTest from "effect/rpc/RpcTest";
 
 import { DriveDirectory } from "../drive/DriveDirectory.ts";
+import * as RuntimeDriveShortcuts from "../drive/DriveShortcuts.ts";
 import { threadRef } from "../drive/DriveStore.ts";
 import { makeRepo } from "../drive/driveTesting.ts";
 import { uploadPack } from "../drive/DriveUploads.ts";
@@ -106,9 +107,13 @@ const machine = (cloud: Cloud, userId: string, driveId: string, threadId?: strin
       request,
     ).pipe(
       Effect.provide(
-        Layer.mergeAll(
-          cloud.drives.layer,
-          Layer.succeed(UserDirectory.UserDirectory, cloud.userDirectory),
+        RuntimeDriveShortcuts.layer.pipe(
+          Layer.provideMerge(
+            Layer.mergeAll(
+              cloud.drives.layer,
+              Layer.succeed(UserDirectory.UserDirectory, cloud.userDirectory),
+            ),
+          ),
         ),
       ),
     );

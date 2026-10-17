@@ -33,6 +33,7 @@ import * as ThreadDirectory from "../thread/ThreadDirectory.ts";
 import type { DriveAuthorization } from "../thread/runner/ThreadRunner.ts";
 import * as UserDirectory from "../user/UserDirectory.ts";
 import * as DriveDirectory from "./DriveDirectory.ts";
+import * as DriveShortcuts from "./DriveShortcuts.ts";
 import * as DrivePacks from "./DrivePacks.ts";
 import {
   type DriveWriter,
@@ -85,6 +86,7 @@ export interface DriveRouteEnv extends GitHub.GitHubEnv, DirectUploadsEnv {
 type Services =
   | Crypto.Crypto
   | DriveDirectory.DriveDirectory
+  | DriveShortcuts.DriveShortcuts
   | DrivePacks.DrivePacks
   | UserDirectory.UserDirectory
   | GitHub.GitHub
@@ -151,10 +153,16 @@ export async function handleDriveRequest(
     ContextTool.layer.pipe(
       Layer.provideMerge(
         Layer.mergeAll(
-          DriveDirectory.layerDurableObjects(env.DRIVES, options),
+          DriveShortcuts.layer.pipe(
+            Layer.provideMerge(
+              Layer.mergeAll(
+                DriveDirectory.layerDurableObjects(env.DRIVES, options),
+                UserDirectory.layerDurableObjects(env.USERS, options),
+              ),
+            ),
+          ),
           DrivePacks.layerBucket(env.DRIVE_PACKS, env.DRIVE_PACKS_PREFIX),
           Platform.layerCrypto,
-          UserDirectory.layerDurableObjects(env.USERS, options),
           ThreadDirectory.layerDurableObjects(env.THREADS, options),
           // Only users' own tokens act on GitHub here; the App's client stays in their objects.
           GitHub.layer(null, GitHub.gitHubEndpoints(env)).pipe(
