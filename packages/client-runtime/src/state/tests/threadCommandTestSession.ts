@@ -34,7 +34,7 @@ const sessionResults = Atom.family((id: EnvironmentId) =>
       : AsyncResult.success(session);
   }),
 );
-vi.mock("./session.ts", () => ({
+vi.mock("../session.ts", () => ({
   createEnvironmentSessionAtoms: () => ({
     initialConfigValueAtom: testConfigAtoms,
     sessionStateValueAtom: testSessionAtoms,

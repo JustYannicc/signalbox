@@ -6,7 +6,7 @@ import * as Queue from "effect/Queue";
 import * as Option from "effect/Option";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 
-import { managedRelaySessionAtom } from "../relay/managedRelayState.ts";
+import { managedRelaySessionAtom } from "@t3tools/client-runtime/relay";
 import { RpcClientError } from "effect/rpc";
 import * as Socket from "effect/socket/Socket";
 import {
@@ -17,7 +17,7 @@ import {
   testConfigAtoms,
   testSessionAtoms,
   THREAD_ID,
-} from "./threadCommandTestHarness.ts";
+} from "./tests/threadCommandTestHarness.ts";
 
 const target = { environmentId: ENVIRONMENT_ID, input: { threadId: THREAD_ID } };
 

@@ -20,10 +20,9 @@ import * as Queue from "effect/Queue";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 import { Atom, AtomRegistry } from "effect/reactivity";
 
-import * as EnvironmentRegistry from "../connection/registry.ts";
-import * as EnvironmentSupervisor from "../connection/supervisor.ts";
-import type { RpcSession } from "../rpc/session.ts";
-import { createThreadEnvironmentAtoms } from "./threadCommands.ts";
+import { EnvironmentRegistry, EnvironmentSupervisor } from "@t3tools/client-runtime/connection";
+import { type RpcSession } from "@t3tools/client-runtime/rpc";
+import { createThreadEnvironmentAtoms } from "@t3tools/client-runtime/state/threads";
 
 export { testConfigAtoms, testSessionAtoms } from "./threadCommandTestSession.ts";
 
@@ -85,7 +84,7 @@ export const SNAPSHOT: OrchestrationV2ShellSnapshot = {
 export const makeHarness = Effect.fn("TestThreadCommands.makeHarness")(function* () {
   const requests = yield* Queue.unbounded<{
     command: OrchestrationV2Command;
-    reply: Deferred.Deferred<OrchestrationV2DispatchCommandResult, Error>;
+    reply: Deferred.Deferred<OrchestrationV2DispatchCommandResult, unknown>;
   }>();
   const supervisor = EnvironmentSupervisor.EnvironmentSupervisor.of({
     target: { environmentId: ENVIRONMENT_ID },
@@ -94,7 +93,7 @@ export const makeHarness = Effect.fn("TestThreadCommands.makeHarness")(function*
         client: {
           [ORCHESTRATION_V2_WS_METHODS.dispatchCommand]: (command: OrchestrationV2Command) =>
             Effect.gen(function* () {
-              const reply = yield* Deferred.make<OrchestrationV2DispatchCommandResult, Error>();
+              const reply = yield* Deferred.make<OrchestrationV2DispatchCommandResult, unknown>();
               yield* Queue.offer(requests, { command, reply });
               return yield* Deferred.await(reply);
             }),
