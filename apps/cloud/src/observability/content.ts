@@ -89,8 +89,8 @@ export const redactContent = (event: Record<string, unknown>): void => {
   try {
     // Match the router's decoding, duplicate slashes and case-insensitive paths.
     if (typeof event.path === "string") {
-      const path = decodeURI(event.path).replace(/\/+/g, "/");
-      if (/^\/api\/hooks(?:\/|$)/i.test(path)) {
+      const path = decodeURI(event.path).replace(/\/+/g, "/").toLowerCase();
+      if (/^\/api\/hooks(?:\/|$)/.test(path)) {
         event.path = "/api/hooks/:userId/:hookId/[REDACTED]";
       }
     }

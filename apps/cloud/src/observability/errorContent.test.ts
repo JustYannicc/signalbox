@@ -15,9 +15,14 @@ class RejectedInput extends Schema.TaggedError<RejectedInput>()("RejectedInput",
 
 describe("error content at the drain", () => {
   it.each(
-    ["/api/hooks", "/api//hooks", "/api/Hooks", "/api/%68ooks"].flatMap((prefix) =>
-      [false, true].map((fails) => ({ prefix, fails })),
-    ),
+    [
+      "/api/hooks",
+      "/api//hooks",
+      "/api/Hooks",
+      "/api/%68ooks",
+      "/api/hoo%E2%84%AAs",
+      "/api//HOO%E2%84%AAS",
+    ].flatMap((prefix) => [false, true].map((fails) => ({ prefix, fails }))),
   )(
     "keeps hook credentials out of $prefix request events (failure: $fails)",
     async ({ prefix, fails }) => {
