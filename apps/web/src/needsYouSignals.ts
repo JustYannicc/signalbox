@@ -9,7 +9,7 @@ import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/model
 import type { ClientSettings } from "@t3tools/contracts/settings";
 
 /** Matches `LONG_TURN_MS` in apps/cloud/src/push/pushRules.ts. */
-export const LONG_TURN_MS = 60_000;
+const LONG_TURN_MS = 60_000;
 
 /** Whether a finished turn earns a signal: a person's own thread, and a long turn. */
 export function completionEarnsSignal(
