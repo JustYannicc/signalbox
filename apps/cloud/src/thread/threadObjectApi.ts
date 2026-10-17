@@ -76,6 +76,16 @@ export const makeThreadObjectApi = (
     },
     snapshot: (actor) =>
       reply(engine.use((service) => Effect.map(service.snapshot(actor), wire.snapshot.encode))),
+    backfill: async (actor) => {
+      const value = await run(engine.use((service) => service.backfill(actor)));
+      if (value === null) return { _tag: "not_found" };
+      await afterChange();
+      return { _tag: "ok", value };
+    },
+    searchDocuments: (actor, itemIds) =>
+      run(engine.use((service) => service.searchDocuments(actor, itemIds))),
+    find: (actor, input) =>
+      reply(engine.use((service) => service.find(actor, wire.findInput.decode(input)))),
     subscribe: (actor, input) =>
       run(
         engine.use((service) =>

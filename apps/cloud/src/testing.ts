@@ -49,6 +49,10 @@ import * as TurnDiagnostics from "./thread/diagnostics/TurnDiagnostics.ts";
 import * as TurnReports from "./thread/diagnostics/TurnReports.ts";
 import { deliverPendingEvents } from "./thread/eventOutbox.ts";
 import { deliverPendingSummary } from "./thread/summaryOutbox.ts";
+import * as ThreadSearch from "./search/ThreadSearch.ts";
+import * as SearchAuthority from "./search/SearchAuthority.ts";
+import * as SearchCursors from "./search/SearchCursors.ts";
+import * as SearchIndex from "./search/SearchIndex.ts";
 import * as ThreadDirectory from "./thread/ThreadDirectory.ts";
 import * as ThreadBrowsing from "./thread/browsing/ThreadBrowsing.ts";
 import * as ThreadEngine from "./thread/ThreadEngine.ts";
@@ -309,6 +313,16 @@ const makeUserRuntime = (
               SignInGrants.layer,
               PoolSignIns.layer,
               CloudThreadService.layer,
+              ThreadSearch.layer.pipe(
+                Layer.provide(Layer.mergeAll(SearchAuthority.layerUser, SearchCursors.layerSql)),
+                Layer.provide(
+                  Layer.succeed(SearchIndex.SearchIndex, {
+                    deliver: () => Effect.void,
+                    query: () => Effect.succeed({ candidates: [], hasMore: false }),
+                    progress: () => Effect.succeed([]),
+                  }),
+                ),
+              ),
               PersonBrowsers.layer(kernel),
             ),
           ),

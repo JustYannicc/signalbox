@@ -198,6 +198,7 @@ export const serverConfig = (
     },
     shellResumeCompletionMarker: true,
     threadResumeCompletionMarker: true,
+    threadFind: true,
     scratchWorkspaceRoot: SCRATCH_ROOT,
   };
 };

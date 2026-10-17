@@ -56,6 +56,7 @@ import { SIGNALBOX_PREVIEWS_RPCS } from "./signalboxPreviews.ts"; // signalbox: 
 import { SIGNALBOX_BROWSING_RPCS } from "./signalboxBrowsing.ts"; // signalbox: browsing
 import { SIGNALBOX_PUSH_RPCS } from "./signalboxPush.ts"; // signalbox: push devices
 import { SIGNALBOX_REPOSITORIES_RPCS } from "./signalboxRepositories.ts"; // signalbox: repositories
+import { SIGNALBOX_SEARCH_RPCS } from "./signalboxSearch.ts"; // signalbox: thread search
 import { SIGNALBOX_THREAD_KINDS_RPCS } from "./signalboxThreadKinds.ts"; // signalbox: thread kinds
 import { SIGNALBOX_THREAD_STATUS_RPCS } from "./signalboxStatusLine.ts"; // signalbox: status lines
 import { SIGNALBOX_KEYS_RPCS } from "./signalboxKeys.ts"; // signalbox: personal keys
@@ -2028,6 +2029,7 @@ export const SIGNALBOX_WS_RPCS = [
   ...SIGNALBOX_PUSH_RPCS,
   ...SIGNALBOX_REPOSITORIES_RPCS,
   ...SIGNALBOX_THREAD_KINDS_RPCS,
+  ...SIGNALBOX_SEARCH_RPCS,
   ...SIGNALBOX_THREAD_STATUS_RPCS,
   ...SIGNALBOX_KEYS_RPCS,
   ...SIGNALBOX_SIGN_IN_RPCS,
