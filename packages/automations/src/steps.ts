@@ -104,7 +104,10 @@ const effortOption = (instanceId: string, model: string) =>
   });
 
 /** The defaults' model, with `provider`, `model` and `effort` from the step's options applied. */
-const modelFor = (options: Readonly<Record<string, unknown>>, defaults: AutomationDefaults) =>
+export const modelFor = (
+  options: Readonly<Record<string, unknown>>,
+  defaults: AutomationDefaults,
+) =>
   Effect.gen(function* () {
     const provider = typeof options.provider === "string" ? options.provider : undefined;
     const model = typeof options.model === "string" ? options.model : undefined;
