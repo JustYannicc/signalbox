@@ -4,6 +4,7 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
+import type * as Collaboration from "../collaboration/CloudCollaboration.ts";
 import { deliverCompletion } from "../collaboration/completion.ts";
 import type { CloudThreadService } from "../thread/CloudThreadService.ts";
 import * as ThreadSearch from "../search/ThreadSearch.ts";
@@ -54,6 +55,7 @@ export const makeUserObjectApi = (
       | ThreadSearch.ThreadSearch
       | UserStore.UserStore
       | CloudThreadService
+      | Collaboration.CloudCollaboration
       | UserShell.UserShell
       | UserContexts.UserContexts
       | GitHubConnection.GitHubConnection

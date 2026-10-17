@@ -17,12 +17,13 @@ import * as Effect from "effect/Effect";
 import * as Hex from "effect/encoding/Hex";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
+import type { SqlError } from "effect/sql/SqlError";
 import * as Stream from "effect/Stream";
 
 import { threadShellFromProjection as threadShell } from "../thread/threadProjection.ts";
 import * as ThreadInbox from "../thread/ThreadInbox.ts";
 import { UserShell } from "../user/UserShell.ts";
-import { isLiveRun } from "../thread/runLifecycle.ts";
+import { activeRun, isLiveRun } from "../thread/runLifecycle.ts";
 import { makeAccess, collaborationFailure, refuse } from "./access.ts";
 import { listItem, readPage } from "./threadReads.ts";
 import { makeCapabilities } from "./capabilities.ts";
@@ -36,9 +37,25 @@ export type CollaborationService = {
   ) => Effect.Effect<CollaborationOutput<M>, OrchestratorMcpFailure>;
 };
 
-export class CloudCollaboration extends Context.Service<CloudCollaboration, CollaborationService>()(
-  "@signalbox/cloud/collaboration/CloudCollaboration",
-) {}
+export type CollaborationLifecycle = {
+  readonly stopDescendants: (
+    parentThreadId: ThreadId,
+    parentOrdinal: number,
+  ) => Effect.Effect<void, OrchestratorMcpFailure>;
+  readonly completion: <A, E, R>(
+    childThreadId: ThreadId,
+    childOrdinal: number,
+    deliver: (disposition: {
+      readonly allowed: boolean;
+      readonly parentOrdinal: number | null;
+    }) => Effect.Effect<A, E, R>,
+  ) => Effect.Effect<A, E | SqlError, R>;
+};
+
+export class CloudCollaboration extends Context.Service<
+  CloudCollaboration,
+  CollaborationService & CollaborationLifecycle
+>()("@signalbox/cloud/collaboration/CloudCollaboration") {}
 
 const latestRun = (projection: OrchestrationV2ThreadProjection) =>
   projection.runs.toSorted((a, b) => b.ordinal - a.ordinal)[0];
@@ -51,6 +68,7 @@ export const make = Effect.gen(function* () {
   const crypto = yield* Crypto.Crypto;
   const shellService = yield* UserShell;
   const inbox = yield* ThreadInbox.make;
+  const records = yield* makeTaskRecords;
 
   /** A retry keeps its command and message ids, including after its first run finishes. */
   const key = (sourceThreadId: ThreadId, operation: string, requestId: string | undefined) =>
@@ -136,7 +154,7 @@ export const make = Effect.gen(function* () {
         );
       const operation = yield* key(source, `send:${input.threadId}`, input.clientRequestId);
       const messageId = MessageId.make(`message:${operation}`);
-      return yield* inbox.post(caller.actor, {
+      const receipt = yield* inbox.post(caller.actor, {
         type: "message.dispatch",
         commandId: CommandId.make(`collaboration:${operation}`),
         threadId: input.threadId,
@@ -150,7 +168,19 @@ export const make = Effect.gen(function* () {
           input.mode === "queue" ? { type: "queue_after_active" } : { type: "start_immediately" },
         deliveryIntent: input.mode === "steer" ? "steer" : "auto",
       });
-    }).pipe(Effect.mapError(collaborationFailure));
+      const parentRun = activeRun(caller.projection);
+      if (
+        projection.thread.lineage.relationshipToParent === "subagent" &&
+        projection.thread.lineage.parentThreadId === source &&
+        parentRun !== undefined
+      ) {
+        const updated = yield* access.read(source, input.threadId);
+        const childRun = updated.projection.runs.find((run) => run.id === receipt.runId);
+        if (childRun !== undefined)
+          yield* records.recordRun(source, parentRun.ordinal, input.threadId, childRun.ordinal);
+      }
+      return receipt;
+    }).pipe(records.lock.withPermits(1), Effect.mapError(collaborationFailure));
 
   const wait: CollaborationService["wait"] = (source, input) =>
     Effect.gen(function* () {
@@ -223,7 +253,6 @@ export const make = Effect.gen(function* () {
     }).pipe(Effect.mapError(collaborationFailure));
 
   const capabilities = yield* makeCapabilities(access);
-  const records = yield* makeTaskRecords;
   const tasks = makeTasks({ access, inbox, key, wait, interrupt, capabilities, records });
   return CloudCollaboration.of({ list, read, send, wait, interrupt, capabilities, ...tasks });
 });

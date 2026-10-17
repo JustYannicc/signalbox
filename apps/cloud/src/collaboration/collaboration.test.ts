@@ -183,6 +183,12 @@ describe("cloud thread collaboration", () => {
         const completed = yield* service.status(source, { taskId: task.taskId });
         expect(completed.status).toBe("completed");
         expect(completed.summary).toContain("Return the child result");
+        expect(
+          (yield* service.delegate(source, {
+            task: "Return the child result",
+            clientRequestId: "child-one",
+          })).childRunId,
+        ).toBe(completed.childRunId);
         const notifications = (yield* service.read(source, { threadId: source })).items.filter(
           (item) => item.text?.startsWith("Child task cloud-task:"),
         );
@@ -259,10 +265,12 @@ describe("cloud thread collaboration", () => {
     }),
   );
 
-  it.effect("stops queued and active child work without deleting its result", () =>
+  it.effect("task cancellation stops queued and active child work without waking its parent", () =>
     Effect.gen(function* () {
       const { cloud, service } = yield* setup;
-      const task = yield* service.delegate(source, { task: "Stop this child" });
+      const request = { task: "Stop this child", clientRequestId: "cancelled-child" };
+      const task = yield* service.delegate(source, request);
+      const parentBefore = yield* service.read(source, { threadId: source });
       yield* service.send(source, {
         threadId: task.childThreadId,
         message: "Queued work",
@@ -273,6 +281,144 @@ describe("cloud thread collaboration", () => {
       const child = yield* service.read(source, { threadId: task.childThreadId });
       expect(child.recentRuns.map((run) => run.status)).toEqual(["cancelled", "interrupted"]);
       expect((yield* service.status(source, { taskId: task.taskId })).status).toBe("interrupted");
+      expect((yield* service.delegate(source, request)).status).toBe("interrupted");
+      yield* cloud.settle;
+      const parentAfter = yield* service.read(source, { threadId: source });
+      expect(parentAfter.items).toEqual(parentBefore.items);
+      expect(parentAfter.recentRuns).toEqual(parentBefore.recentRuns);
+    }),
+  );
+
+  it.effect("a root Stop cancels queued and active child and grandchild runs", () =>
+    Effect.gen(function* () {
+      const { cloud, service, threads } = yield* setup;
+      const rootRun = yield* service.send(source, { threadId: source, message: "Parent work" });
+      const child = yield* service.delegate(source, { task: "Child work" });
+      yield* service.send(source, {
+        threadId: child.childThreadId,
+        message: "Queued child work",
+        mode: "queue",
+      });
+      const grandchild = yield* service.delegate(child.childThreadId, { task: "Nested work" });
+      yield* service.send(child.childThreadId, {
+        threadId: grandchild.childThreadId,
+        message: "Queued grandchild work",
+        mode: "queue",
+      });
+
+      // A person's Stop must still revoke children started before the parent's modes changed.
+      yield* threads.dispatchCommand(
+        { userId, contextIds: [PERSONAL_CONTEXT_ID] },
+        {
+          type: "thread.interaction-mode.set",
+          commandId: CommandId.make("parent-enters-plan"),
+          threadId: source,
+          interactionMode: "plan",
+        },
+      );
+      yield* threads.dispatchCommand(
+        { userId, contextIds: [PERSONAL_CONTEXT_ID] },
+        {
+          type: "thread.runtime-mode.set",
+          commandId: CommandId.make("parent-lowers-runtime-mode"),
+          threadId: source,
+          runtimeMode: "approval-required",
+        },
+      );
+
+      yield* threads.dispatchCommand(
+        { userId, contextIds: [PERSONAL_CONTEXT_ID] },
+        {
+          type: "run.interrupt",
+          commandId: CommandId.make("stop-root-parent"),
+          threadId: source,
+          runId: rootRun.runId,
+        },
+      );
+      yield* cloud.settle;
+
+      expect(
+        (yield* service.read(source, { threadId: child.childThreadId })).recentRuns.map(
+          (run) => run.status,
+        ),
+      ).toEqual(["cancelled", "interrupted"]);
+      const childEvents = yield* cloud.threadEvents(child.childThreadId);
+      const queuedCancellation = childEvents.findIndex(
+        (event) =>
+          event.type === "run.updated" &&
+          event.payload.ordinal === 2 &&
+          event.payload.status === "cancelled",
+      );
+      const activeInterruption = childEvents.findIndex(
+        (event) =>
+          event.type === "run.updated" &&
+          event.payload.ordinal === 1 &&
+          event.payload.status === "interrupted",
+      );
+      expect(queuedCancellation).toBeGreaterThanOrEqual(0);
+      expect(queuedCancellation).toBeLessThan(activeInterruption);
+      expect(
+        (yield* service.read(source, { threadId: grandchild.childThreadId })).recentRuns.map(
+          (run) => run.status,
+        ),
+      ).toEqual(["cancelled", "interrupted"]);
+      const parent = yield* service.read(source, { threadId: source });
+      expect(parent.recentRuns.map((run) => run.status)).toEqual(["interrupted"]);
+      expect(parent.items.some((item) => item.text?.startsWith("Child task cloud-task:"))).toBe(
+        false,
+      );
+    }),
+  );
+
+  it.effect("replaying an old root Stop leaves a later turn's child work available", () =>
+    Effect.gen(function* () {
+      const { cloud, service, threads } = yield* setup;
+      const firstRun = yield* service.send(source, { threadId: source, message: "First turn" });
+      const firstChild = yield* service.delegate(source, { task: "First child" });
+      yield* threads.dispatchCommand(
+        { userId, contextIds: [PERSONAL_CONTEXT_ID] },
+        {
+          type: "run.interrupt",
+          commandId: CommandId.make("stop-first-parent-turn"),
+          threadId: source,
+          runId: firstRun.runId,
+        },
+      );
+      expect(
+        yield* Effect.result(service.delegate(source, { task: "Late first-turn child" })),
+      ).toMatchObject({ _tag: "Failure", failure: { code: "invalid_request" } });
+
+      const secondRun = yield* service.send(source, { threadId: source, message: "Second turn" });
+      const secondChild = yield* service.delegate(source, { task: "Second child" });
+      const oldEvents = yield* cloud.threadEvents(source);
+      yield* cloud.settle;
+
+      const first = yield* service.read(source, { threadId: firstChild.childThreadId });
+      const second = yield* service.read(source, { threadId: secondChild.childThreadId });
+      expect(first.recentRuns[0]?.status).toBe("interrupted");
+      expect(second.recentRuns[0]?.status).not.toBe("cancelled");
+      expect(second.recentRuns[0]?.status).not.toBe("interrupted");
+      expect(secondRun.runId).not.toBe(firstRun.runId);
+      const parentBeforeReplay = yield* service.read(source, { threadId: source });
+
+      yield* cloud.userDirectory.forUser(userId).threadEvents({
+        threadId: source,
+        events: wire.events.encode(
+          oldEvents.map((event, index) => ({ event, sequence: index + 1 })),
+        ),
+      });
+
+      const parentAfterReplay = yield* service.read(source, { threadId: source });
+      expect(parentAfterReplay.items).toEqual(parentBeforeReplay.items);
+      expect(parentAfterReplay.recentRuns).toEqual(parentBeforeReplay.recentRuns);
+      expect(
+        parentAfterReplay.items.some((item) =>
+          item.text?.startsWith(`Child task cloud-task:${firstChild.childThreadId}`),
+        ),
+      ).toBe(false);
+      expect((yield* service.status(source, { taskId: secondChild.taskId })).status).not.toBe(
+        "interrupted",
+      );
     }),
   );
 

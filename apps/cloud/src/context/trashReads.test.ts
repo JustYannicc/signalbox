@@ -2,9 +2,14 @@ import { ProjectId } from "@t3tools/contracts";
 import { expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 
-import { makeThreadObjectApi } from "../thread/threadObjectApi.ts";
 import { threadEvent } from "../thread/threadEvents.ts";
-import { freshDatabase, launch, owner, withObject } from "../thread/runner/runnerTestKit.ts";
+import {
+  freshDatabase,
+  launch,
+  owner,
+  threadObjectApiFor,
+  withObject,
+} from "../thread/runner/runnerTestKit.ts";
 
 it.effect("context reads include archived history and refuse trashed history immediately", () =>
   withObject(freshDatabase(), (engine, _runner, context) =>
@@ -19,11 +24,7 @@ it.effect("context reads include archived history and refuse trashed history imm
       expect(yield* engine.contextWorkVisible(teammate, ProjectId.make("other-project"))).toBe(
         false,
       );
-      const api = makeThreadObjectApi(
-        (effect) => Effect.runPromise(effect.pipe(Effect.provide(context))),
-        async () => {},
-        async () => {},
-      );
+      const api = threadObjectApiFor(context);
       yield* engine.apply((projection, ctx) =>
         Effect.succeed({
           events: [

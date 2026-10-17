@@ -228,6 +228,7 @@ const migrations = Migrator.fromRecord({
     )`;
   }),
   "0020_folder_phases": FolderTables.addPhases,
+  "0021_collaboration_task_runs": TaskRecords.createRunLinks,
 });
 
 /** Applies every migration not recorded yet (`storage/migrations.ts`). Never edit or rename a merged one. */

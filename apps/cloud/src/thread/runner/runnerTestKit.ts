@@ -38,6 +38,7 @@ import * as Schema from "effect/Schema";
 import { layerThreadObject } from "../../testing.ts";
 import * as SessionRows from "../session/SessionRows.ts";
 import * as ThreadEngine from "../ThreadEngine.ts";
+import { makeThreadObjectApi } from "../threadObjectApi.ts";
 import type { RunnerSocketHost } from "./runnerSockets.ts";
 import * as ThreadRunner from "./ThreadRunner.ts";
 
@@ -408,3 +409,13 @@ export const hostFor = (
     holdsTurn: () => Promise.resolve(holds()),
     afterChange: () => Promise.resolve(),
   }));
+
+/** The Durable Object's Promise boundary over the same scoped engine as the test. */
+export const threadObjectApiFor = (
+  context: Context.Context<Layer.Success<ReturnType<typeof layerThreadObject>>>,
+) =>
+  makeThreadObjectApi(
+    Effect.runPromiseWith(context),
+    async () => {},
+    async () => {},
+  );
