@@ -1,5 +1,5 @@
 import { SettingsGroup } from "./SettingsGroup";
-import { AuthSettingsWriteScope } from "@t3tools/contracts";
+import { AuthSettingsWriteScope, type SignalboxEnvironmentCapability } from "@t3tools/contracts";
 import { usePrimaryEnvironmentId, usePrimaryEnvironment } from "../../state/environments";
 import { useEnvironmentScope, useEnvironmentsWithScope } from "../../state/session";
 import { InfoIcon, Undo2Icon } from "lucide-react";
@@ -254,6 +254,7 @@ export function SettingsRow({
   onResetOverride,
   control,
   serverScoped = false,
+  serverCapability = "serverSettingsWrite",
   settingKeys = EMPTY_SETTING_KEYS,
   mixed: mixedOverride,
   children,
@@ -267,12 +268,13 @@ export function SettingsRow({
   onResetOverride?: () => void;
   control?: ReactNode;
   serverScoped?: boolean;
+  serverCapability?: SignalboxEnvironmentCapability;
   settingKeys?: readonly (keyof ServerSettings)[];
   mixed?: boolean;
   children?: ReactNode;
 }) {
   const targetRef = useSettingsSearchTarget<HTMLDivElement>(rowProps.id);
-  const serverSettingsWritable = useServerSettingsWritable();
+  const serverSettingsWritable = useServerSettingsWritable(serverCapability);
   const primarySettingsAvailable = usePrimarySettingsAvailable();
   const context = useOptionalSettingsScope();
   const primaryEnvironmentId = usePrimaryEnvironmentId();
