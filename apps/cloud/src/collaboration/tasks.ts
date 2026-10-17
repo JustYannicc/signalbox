@@ -10,6 +10,7 @@ import { runtimeModeWithin } from "@signalbox/automations/access";
 import type { CollaborationInput } from "@t3tools/contracts/signalboxCollaboration";
 import * as Effect from "effect/Effect";
 
+import { poolKindOfInstance } from "../thread/providerCatalog.ts";
 import { isLiveRun } from "../thread/runLifecycle.ts";
 import type { TaskRecords } from "./taskRecords.ts";
 import { collaborationFailure, refuse, type CollaborationAccess } from "./access.ts";
@@ -126,7 +127,10 @@ export const makeTasks = (deps: {
       } else {
         const parent = caller.projection.thread;
         let modelSelection = parent.modelSelection;
-        if (input.target !== undefined) {
+        if (
+          input.target !== undefined ||
+          poolKindOfInstance(parent.providerInstanceId) !== undefined
+        ) {
           const { providers } = yield* deps.capabilities(source, {});
           const provider = providers.find(
             (candidate) =>
@@ -140,11 +144,11 @@ export const makeTasks = (deps: {
           );
           if (provider === undefined || !provider.canRunChildTask)
             return yield* refuse(
-              "That provider can't run a child in this folder.",
+              provider?.constraints.join(" ") || "That provider can't run a child in this folder.",
               "provider_unavailable",
             );
           const model =
-            input.target.model ??
+            input.target?.model ??
             (provider.providerInstanceId === parent.providerInstanceId
               ? parent.modelSelection.model
               : provider.models[0]?.id);
@@ -153,7 +157,7 @@ export const makeTasks = (deps: {
           modelSelection = {
             instanceId: provider.providerInstanceId,
             model,
-            ...(input.target.options !== undefined
+            ...(input.target?.options !== undefined
               ? { options: input.target.options }
               : provider.providerInstanceId === parent.providerInstanceId &&
                   model === parent.modelSelection.model &&

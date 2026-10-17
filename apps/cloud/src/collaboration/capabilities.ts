@@ -1,9 +1,8 @@
 import type { CollaborationInput } from "@t3tools/contracts/signalboxCollaboration";
-import * as DateTime from "effect/DateTime";
+import { providerChildTasks } from "@t3tools/shared/providerChildTasks";
 import * as Effect from "effect/Effect";
 
-import { poolProviders } from "../pool/poolViews.ts";
-import { ModelManifest } from "../thread/ModelManifest.ts";
+import { poolModelCatalog } from "../pool/poolModelCatalog.ts";
 import { forThread } from "../thread/turnPool.ts";
 import { UserPools } from "../user/UserPools.ts";
 import { collaborationFailure, type CollaborationAccess } from "./access.ts";
@@ -12,7 +11,6 @@ import type { CollaborationService } from "./CloudCollaboration.ts";
 export const makeCapabilities = (access: CollaborationAccess) =>
   Effect.gen(function* () {
     const pools = yield* UserPools;
-    const manifest = yield* ModelManifest;
     const capabilities: CollaborationService["capabilities"] = (
       source,
       _input: CollaborationInput<"capabilities">,
@@ -25,29 +23,35 @@ export const makeCapabilities = (access: CollaborationAccess) =>
         const state = (yield* pools.state(caller.actor)).filter(
           (entry) => entry.pool.id === poolId,
         );
-        const providers = poolProviders(
-          state,
-          DateTime.formatIso(yield* DateTime.now),
-          yield* manifest.current,
-        );
+        const { providers } = yield* poolModelCatalog(state);
         return {
           parentThreadId: source,
           inheritedProviderInstanceId: thread.providerInstanceId,
           inheritedModel: thread.modelSelection.model,
           runtimeMode: thread.runtimeMode,
           interactionMode: thread.interactionMode,
-          providers: providers.map((provider) => ({
-            providerInstanceId: provider.instanceId,
-            driverKind: provider.driver,
-            displayName: provider.displayName ?? null,
-            models: provider.models.map((model) => ({ id: model.slug, label: model.name })),
-            runtimeModes: ["full-access" as const],
-            canRunChildTask: provider.status === "ready",
-            canRunCrossProviderChildTask: provider.status === "ready",
-            constraints: [
-              "Cloud children have their own branch and inherit their parent's folder.",
-            ],
-          })),
+          providers: providers.map((provider) => {
+            const availability = providerChildTasks(provider);
+            return {
+              providerInstanceId: provider.instanceId,
+              driverKind: provider.driver,
+              displayName: provider.displayName ?? null,
+              models: provider.models.map((model) => ({
+                id: model.slug,
+                label: model.name,
+                ...(model.capabilities?.optionDescriptors === undefined
+                  ? {}
+                  : { options: model.capabilities.optionDescriptors }),
+              })),
+              runtimeModes: ["full-access" as const],
+              canRunChildTask: availability.canRun,
+              canRunCrossProviderChildTask: availability.canRun,
+              constraints: [
+                ...availability.constraints,
+                "Cloud children have their own branch and inherit their parent's folder.",
+              ],
+            };
+          }),
           features: {
             appOwnedSubagents: true,
             asyncPolling: true,

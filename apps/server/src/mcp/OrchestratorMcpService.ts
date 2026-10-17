@@ -1,7 +1,6 @@
 import {
   CommandId,
   type RunId,
-  isProviderAvailable,
   MessageId,
   type ModelSelection,
   NodeId,
@@ -58,6 +57,7 @@ import {
   type ServerProvider,
   ThreadId,
 } from "@t3tools/contracts";
+import { providerChildTasks } from "@t3tools/shared/providerChildTasks";
 import { runRanAfter } from "@t3tools/shared/orchestrationV2ThreadError";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
@@ -249,29 +249,6 @@ function scheduledTaskSummary(task: ScheduledTask, mayRun: boolean): Orchestrato
       ? {}
       : { webhookSignature: task.webhook.hasSecret ? "set" : "none" }),
   };
-}
-
-function providerConstraints(
-  provider: ServerProvider | undefined,
-  supportsOrchestrationV2: boolean,
-): ReadonlyArray<string> {
-  const constraints: Array<string> = [];
-  if (!supportsOrchestrationV2) {
-    constraints.push("No V2 provider adapter is registered.");
-  }
-  if (provider === undefined) return constraints;
-  if (!provider.enabled) constraints.push("Provider instance is disabled.");
-  if (!provider.installed) constraints.push("Provider executable is not installed.");
-  if (!isProviderAvailable(provider)) {
-    constraints.push(provider.unavailableReason ?? "Provider driver is unavailable.");
-  }
-  if (provider.status === "error" || provider.status === "disabled") {
-    constraints.push(provider.message ?? `Provider status is ${provider.status}.`);
-  }
-  if (provider.auth.status === "unauthenticated") {
-    constraints.push("Provider is not authenticated.");
-  }
-  return constraints;
 }
 
 /**
@@ -1163,7 +1140,7 @@ const make = Effect.gen(function* () {
           );
         }
         const healthyCandidates = candidates.filter(
-          (candidate) => providerConstraints(candidate, true).length === 0,
+          (candidate) => providerChildTasks(candidate).canRun,
         );
         const inheritedCandidate = healthyCandidates.find(
           (candidate) => candidate.instanceId === input.parent.thread.modelSelection.instanceId,
@@ -1208,14 +1185,14 @@ const make = Effect.gen(function* () {
           `Provider instance ${instanceId} uses driver ${provider.driver}, not ${requestedDriver}.`,
         );
       }
-      const constraints = providerConstraints(
+      const availability = providerChildTasks(
         provider,
         orchestrationCapableInstanceIds.has(provider.instanceId),
       );
-      if (constraints.length > 0) {
+      if (!availability.canRun) {
         return yield* failure(
           "provider_unavailable",
-          `Provider ${instanceId} cannot run a child task: ${constraints.join(" ")}`,
+          `Provider ${instanceId} cannot run a child task: ${availability.constraints.join(" ")}`,
         );
       }
 
@@ -1856,7 +1833,7 @@ const make = Effect.gen(function* () {
           runtimeMode: limits.runtimeMode,
           interactionMode: limits.interactionMode,
           providers: providers.map((provider) => {
-            const constraints = providerConstraints(
+            const availability = providerChildTasks(
               provider,
               orchestrationCapableInstanceIds.has(provider.instanceId),
             );
@@ -1882,9 +1859,9 @@ const make = Effect.gen(function* () {
               provider.supportedRuntimeModes.length === 0
                 ? {}
                 : { runtimeModes: [...provider.supportedRuntimeModes] }),
-              canRunChildTask: constraints.length === 0,
-              canRunCrossProviderChildTask: constraints.length === 0,
-              constraints: [...constraints],
+              canRunChildTask: availability.canRun,
+              canRunCrossProviderChildTask: availability.canRun,
+              constraints: availability.constraints,
             };
           }),
           features: {
