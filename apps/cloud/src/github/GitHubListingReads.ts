@@ -4,7 +4,7 @@ import {
   type PullRequestListFilters,
   type PullRequestListState,
 } from "@t3tools/contracts";
-import { PullRequestStats } from "@t3tools/source-control-github/server/pullRequestBatches.graphql";
+import { PullRequestBatchesGraphQLGroup } from "@t3tools/source-control-github/server/pullRequestBatches.graphql";
 import {
   PullRequestList,
   PullRequestSearch,
@@ -14,13 +14,23 @@ import {
   type GitHubPullRequestListItem,
 } from "@t3tools/source-control-github/server/gitHubPullRequestJson";
 import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as RequestResolver from "effect/RequestResolver";
 import * as Schema from "effect/Schema";
+import * as Stream from "effect/Stream";
+import {
+  GraphQLClient,
+  GraphQLClientError,
+  GraphQLProtocol,
+  GraphQLResolver,
+} from "effect/graphql";
 
 import { GitHubError, parseRepository, unreadable, type GitHubApi } from "./GitHubApi.ts";
 
 const SEARCH_PAGE_SIZE = 100;
 const MAX_CURSOR_LENGTH = 4_096;
+const STATS_ALIASES_PER_REQUEST = 25;
 const SEARCH_REPOSITORY = /^[A-Za-z0-9._-]+\/[A-Za-z0-9._-]+$/;
 
 type CursorSource = "search" | "repository";
@@ -58,16 +68,56 @@ export interface GitHubPullRequestStat {
 }
 
 const decodeJson = Schema.decodeUnknownOption(Schema.fromJsonString(Schema.Unknown));
-const isGitHubError = Schema.is(GitHubError);
-
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
-
 const genericReadFailure = (operation: string, status = 200) =>
   new GitHubError({
     operation,
     status,
     message: "GitHub could not complete this pull request read.",
+  });
+const isGitHubError = Schema.is(GitHubError);
+
+const isNotFoundOnly = (error: unknown) =>
+  GraphQLClientError.isGraphQLClientError(error) &&
+  error.reason._tag === "ResponseError" &&
+  error.reason.errors.every((graphQlError) => graphQlError["type"] === "NOT_FOUND");
+
+const statsGraphQlError = (error: unknown) => {
+  if (isGitHubError(error)) return error;
+  if (
+    GraphQLClientError.isGraphQLClientError(error) &&
+    error.reason._tag === "TransportError" &&
+    isGitHubError(error.reason.cause)
+  ) {
+    return error.reason.cause;
+  }
+  const status =
+    GraphQLClientError.isGraphQLClientError(error) && error.reason._tag === "ResponseError"
+      ? (error.reason.status ?? 200)
+      : 200;
+  return genericReadFailure("listPullRequestStats", status);
+};
+
+const statsProtocol = (api: GitHubApi, token: string) =>
+  Layer.succeed(GraphQLProtocol.GraphQLProtocol, {
+    execute: (request) =>
+      Effect.gen(function* () {
+        const variables = isRecord(request.variables) ? request.variables : {};
+        const text = yield* api.graphql("listPullRequestStats", token, request.query, variables);
+        if (text === null) return yield* genericReadFailure("listPullRequestStats", 404);
+        return { body: Option.getOrElse(decodeJson(text), () => null), status: 200 };
+      }).pipe(
+        Effect.mapError(
+          (error) =>
+            new GraphQLClientError.TransportError({
+              description: error.message,
+              status: error.status,
+              cause: error,
+            }),
+        ),
+      ),
+    subscribe: () => Stream.empty,
   });
 
 const cursorError = () =>
@@ -280,6 +330,13 @@ const readRepositoryPage = (
 ) =>
   Effect.gen(function* () {
     const [owner, name] = repository.split("/");
+    if (owner === undefined || name === undefined) {
+      return yield* new GitHubError({
+        operation: "listPullRequests",
+        status: 400,
+        message: "The repository name is not valid.",
+      });
+    }
     const data = yield* graphQlData(api, token, "listPullRequests", PullRequestList.document, {
       owner,
       name,
@@ -331,7 +388,7 @@ export const listGitHubPullRequests = (
     return yield* readRepositoryPage(api, token, input, parsedRepository, null);
   });
 
-/** Reads line counts on demand for the rows the caller kept. */
+/** Reads line counts in the same 25-alias batches used by the self-hosted provider. */
 export const listGitHubPullRequestStats = (
   api: GitHubApi,
   token: string,
@@ -347,47 +404,52 @@ export const listGitHubPullRequestStats = (
       });
     }
     const [owner, name] = repository.split("/");
+    if (owner === undefined || name === undefined) {
+      return yield* new GitHubError({
+        operation: "listPullRequestStats",
+        status: 400,
+        message: "The repository name is not valid.",
+      });
+    }
     const numbers = [...new Set(input.numbers)];
+    if (numbers.some((number) => !Number.isInteger(number) || number < 1)) {
+      return yield* new GitHubError({
+        operation: "listPullRequestStats",
+        status: 400,
+        message: "The pull request reference is not valid.",
+      });
+    }
+
+    const client = yield* GraphQLClient.make(PullRequestBatchesGraphQLGroup).pipe(
+      Effect.provide(statsProtocol(api, token)),
+    );
+    const statsResolver = GraphQLResolver.aliased(client.PullRequestStats).pipe(
+      RequestResolver.batchN(STATS_ALIASES_PER_REQUEST),
+    );
     const stats = yield* Effect.forEach(
       numbers,
       (number) =>
-        Effect.gen(function* () {
-          if (!Number.isInteger(number) || number < 1) {
-            return yield* new GitHubError({
-              operation: "listPullRequestStats",
-              status: 400,
-              message: "The pull request reference is not valid.",
-            });
-          }
-          const data = yield* graphQlData(
-            api,
-            token,
-            "listPullRequestStats",
-            PullRequestStats.document,
-            { owner, name, number },
-          );
-          const repositoryResult = data.repository;
-          if (repositoryResult === null) {
-            return yield* genericReadFailure("listPullRequestStats", 404);
-          }
-          if (!isRecord(repositoryResult)) return yield* unreadable("listPullRequestStats");
-          const value = repositoryResult.pullRequest;
-          if (value === null) return [];
-          if (!isRecord(value)) return yield* unreadable("listPullRequestStats");
-          const { additions, deletions } = value;
-          if (
-            typeof additions !== "number" ||
-            !Number.isInteger(additions) ||
-            additions < 0 ||
-            typeof deletions !== "number" ||
-            !Number.isInteger(deletions) ||
-            deletions < 0
-          ) {
-            return yield* unreadable("listPullRequestStats");
-          }
-          return [{ repository, number, additions, deletions } satisfies GitHubPullRequestStat];
-        }),
-      { concurrency: 2 },
+        GraphQLResolver.request({ owner, name, number }, statsResolver).pipe(
+          Effect.flatMap((result) => {
+            const repositoryResult = result.repository;
+            if (repositoryResult === null) {
+              return Effect.fail(genericReadFailure("listPullRequestStats", 404));
+            }
+            const pullRequest = repositoryResult.pullRequest;
+            if (pullRequest === null) return Effect.succeed([]);
+            return Effect.succeed([
+              {
+                repository,
+                number,
+                additions: pullRequest.additions,
+                deletions: pullRequest.deletions,
+              } satisfies GitHubPullRequestStat,
+            ]);
+          }),
+          Effect.catchIf(isNotFoundOnly, () => Effect.succeed([])),
+          Effect.mapError(statsGraphQlError),
+        ),
+      { concurrency: "unbounded" },
     );
     return stats.flat();
   });

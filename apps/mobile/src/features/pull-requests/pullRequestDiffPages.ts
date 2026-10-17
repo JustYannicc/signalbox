@@ -1,16 +1,10 @@
 import type { PullRequestDiffResult } from "@t3tools/contracts";
+import { samePullRequestDiffRevision } from "@t3tools/client-runtime/pull-request-diff-revision";
 import { buildReviewParsedDiff, type ReviewParsedDiff } from "../review/reviewModel";
 
 export interface PullRequestDiffPage {
   readonly cursor: string | null;
   readonly result: PullRequestDiffResult;
-}
-
-function sameRevision(
-  left: PullRequestDiffResult["revision"],
-  right: PullRequestDiffResult["revision"],
-): boolean {
-  return left?.baseSha === right?.baseSha && left?.headSha === right?.headSha;
 }
 
 /** A changed page invalidates later cursors, which belong to the previous patch. */
@@ -21,7 +15,7 @@ export function retainPullRequestDiffPage(
 ): readonly PullRequestDiffPage[] {
   if (
     cursor !== null &&
-    pages.some((page) => !sameRevision(page.result.revision, result.revision))
+    pages.some((page) => !samePullRequestDiffRevision(page.result.revision, result.revision))
   ) {
     // A continuation can only be combined with pages from the comparison that issued its cursor.
     return [];
@@ -32,7 +26,7 @@ export function retainPullRequestDiffPage(
   if (
     previous === result ||
     (previous?.patch === result.patch &&
-      sameRevision(previous.revision, result.revision) &&
+      samePullRequestDiffRevision(previous.revision, result.revision) &&
       previous.truncated === result.truncated &&
       previous.nextCursor === result.nextCursor &&
       JSON.stringify(previous.omittedFileStats ?? []) ===

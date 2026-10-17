@@ -1,7 +1,7 @@
 import { expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 
-import type { GitHubApi } from "./GitHubApi.ts";
+import { GitHubError, type GitHubApi } from "./GitHubApi.ts";
 import {
   getGitHubRoutingIdentity,
   listGitHubPullRequestStats,
@@ -25,9 +25,14 @@ const mockApi = (answers: Array<unknown | null>) => {
       query: string,
       variables: Readonly<Record<string, unknown>>,
     ) => {
-      calls.push({ operation, token, query, variables });
+      const call = { operation, token, query, variables };
+      calls.push(call);
       const answer = answers.shift();
-      return Effect.succeed(answer === null ? null : JSON.stringify(answer));
+      const resolved =
+        typeof answer === "function"
+          ? (answer as (call: GraphQlCall) => unknown | null)(call)
+          : answer;
+      return Effect.succeed(resolved === null ? null : JSON.stringify(resolved));
     },
     viewer: (token: string) => {
       expect(token).toBe("user-token");
@@ -86,6 +91,24 @@ const repositoryAnswer = (
       pullRequests: { pageInfo: { hasNextPage, endCursor }, nodes },
     },
   },
+});
+
+const statsAnswer = (call: GraphQlCall, missingNumbers: ReadonlyArray<number> = []) => ({
+  data: Object.fromEntries(
+    Object.entries(call.variables)
+      .filter(([key]) => key.endsWith("_number"))
+      .map(([key, value]) => {
+        const number = typeof value === "number" ? value : -1;
+        return [
+          key.replace(/number$/, "repository"),
+          {
+            pullRequest: missingNumbers.includes(number)
+              ? null
+              : { additions: number, deletions: 1 },
+          },
+        ];
+      }),
+  ),
 });
 
 it.effect("uses the upstream search qualifiers and maps line counts and the search cursor", () =>
@@ -229,22 +252,33 @@ it.effect("treats a missing repository as unavailable while preserving a real em
   }),
 );
 
-it.effect("reads list stats and the authenticated routing identity", () =>
+it.effect("batches stats by 25, omits deleted PRs, and reads the routing identity", () =>
   Effect.gen(function* () {
     const { api, calls } = mockApi([
-      { data: { repository: { pullRequest: { additions: 8, deletions: 3 } } } },
+      (call: GraphQlCall) => statsAnswer(call, [10]),
+      (call: GraphQlCall) => statsAnswer(call),
     ]);
     const stats = yield* listGitHubPullRequestStats(api, "user-token", {
       repository: "acme/web",
-      numbers: [9],
+      numbers: Array.from({ length: 26 }, (_, index) => index + 1),
     });
-    expect(stats).toEqual([{ repository: "acme/web", number: 9, additions: 8, deletions: 3 }]);
+    expect(calls).toHaveLength(2);
     expect(calls[0]).toMatchObject({
       operation: "listPullRequestStats",
-      variables: { owner: "acme", name: "web", number: 9 },
+      variables: { _0_owner: "acme", _0_name: "web", _0_number: 1, _24_number: 25 },
     });
+    expect(calls[1]?.variables).toMatchObject({ _0_number: 26 });
+    expect(stats).toHaveLength(25);
+    expect(stats[0]).toEqual({
+      repository: "acme/web",
+      number: 1,
+      additions: 1,
+      deletions: 1,
+    });
+    expect(stats.some(({ number }) => number === 10)).toBe(false);
+    expect(stats.at(-1)?.number).toBe(26);
 
-    const missingRepository = mockApi([{ data: { repository: null } }]);
+    const missingRepository = mockApi([{ data: { _0_repository: null } }]);
     const statsError = yield* listGitHubPullRequestStats(missingRepository.api, "user-token", {
       repository: "acme/web",
       numbers: [9],
@@ -255,7 +289,7 @@ it.effect("reads list stats and the authenticated routing identity", () =>
       status: 404,
     });
 
-    const deleted = mockApi([{ data: { repository: { pullRequest: null } } }]);
+    const deleted = mockApi([{ data: { _0_repository: { pullRequest: null } } }]);
     expect(
       yield* listGitHubPullRequestStats(deleted.api, "user-token", {
         repository: "acme/web",
@@ -277,6 +311,52 @@ it.effect("reads list stats and the authenticated routing identity", () =>
       _tag: "GitHubError",
       operation: "routeIdentity",
       status: 404,
+    });
+  }),
+);
+
+it.effect("treats partial GraphQL errors as unavailable and preserves rate-limit details", () =>
+  Effect.gen(function* () {
+    const partial = mockApi([
+      {
+        data: { _0_repository: null },
+        errors: [
+          {
+            type: "FORBIDDEN",
+            message: "Resource not accessible",
+            path: ["_0_repository"],
+          },
+        ],
+      },
+    ]);
+    const input = { repository: "acme/web", numbers: [7] };
+    const unavailable = yield* listGitHubPullRequestStats(partial.api, "user-token", input).pipe(
+      Effect.flip,
+    );
+    expect(unavailable).toMatchObject({
+      _tag: "GitHubError",
+      operation: "listPullRequestStats",
+      status: 200,
+    });
+
+    const rateLimit = new GitHubError({
+      operation: "listPullRequestStats",
+      status: 403,
+      message: "GitHub's API rate limit is used up for now.",
+      retryAt: 123_456,
+    });
+    const limitedApi = {
+      ...partial.api,
+      graphql: () => Effect.fail(rateLimit),
+    } as unknown as GitHubApi;
+    const limited = yield* listGitHubPullRequestStats(limitedApi, "user-token", input).pipe(
+      Effect.flip,
+    );
+    expect(limited).toMatchObject({
+      _tag: "GitHubError",
+      operation: "listPullRequestStats",
+      status: 403,
+      retryAt: 123_456,
     });
   }),
 );

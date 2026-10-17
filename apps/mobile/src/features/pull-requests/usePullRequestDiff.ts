@@ -7,6 +7,7 @@ import {
 import { useAtomRefresh } from "@effect/atom-react";
 import { useCallback, useMemo, useState } from "react";
 
+import { samePullRequestDiffRevision } from "@t3tools/client-runtime/pull-request-diff-revision";
 import { composerPullRequests } from "../../state/pull-requests";
 import { useEnvironmentQuery } from "../../state/query";
 import { usePullToRefresh } from "../../state/use-pull-to-refresh";
@@ -42,13 +43,6 @@ export function pullRequestTarget(params: PullRequestParams) {
 
 const NO_PAGES: readonly PullRequestDiffPage[] = [];
 
-function sameRevision(
-  left: PullRequestDiffResult["revision"],
-  right: PullRequestDiffResult["revision"],
-): boolean {
-  return left?.baseSha === right?.baseSha && left?.headSha === right?.headSha;
-}
-
 export function usePullRequestDiff(params: PullRequestDiffParams) {
   const reference = pullRequestTarget(params);
   const target = {
@@ -76,7 +70,7 @@ export function usePullRequestDiff(params: PullRequestDiffParams) {
     cursor !== null &&
     data !== null &&
     state.key === key &&
-    state.pages.some((page) => !sameRevision(page.result.revision, data.revision));
+    state.pages.some((page) => !samePullRequestDiffRevision(page.result.revision, data.revision));
   const pages = useMemo(() => {
     const loaded = state.key === key ? state.pages : NO_PAGES;
     return data ? retainPullRequestDiffPage(loaded, cursor, data) : loaded;

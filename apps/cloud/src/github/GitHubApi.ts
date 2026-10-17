@@ -6,7 +6,8 @@ import * as Effect from "effect/Effect";
 import * as Base64 from "effect/encoding/Base64";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
-import type * as Stream from "effect/Stream";
+import * as Stream from "effect/Stream";
+import * as HttpClientError from "effect/http/HttpClientError";
 import { type HttpClient, HttpClientRequest, type HttpClientResponse } from "effect/http";
 
 /**
@@ -56,6 +57,8 @@ const GITHUB_ENDPOINTS: GitHubEndpoints = {
   web: "https://github.com",
   api: "https://api.github.com",
 };
+
+const MAX_JSON_RESPONSE_BYTES = 8 * 1024 * 1024;
 
 const Viewer = Schema.Struct({
   login: Schema.String,
@@ -259,7 +262,44 @@ export const makeGitHubApi = (
     ).pipe(
       Effect.flatMap((response) =>
         Effect.gen(function* () {
-          const text = yield* response.text.pipe(Effect.orElseSucceed(() => ""));
+          const chunks: Uint8Array[] = [];
+          let length = 0;
+          yield* response.stream.pipe(
+            Stream.runForEach((chunk) => {
+              length += chunk.byteLength;
+              if (length > MAX_JSON_RESPONSE_BYTES) {
+                return Effect.fail(
+                  new GitHubError({
+                    operation,
+                    status: response.status,
+                    message: "GitHub's answer is too large to read.",
+                  }),
+                );
+              }
+              chunks.push(chunk);
+              return Effect.void;
+            }),
+            Effect.catchIf(
+              (error) =>
+                HttpClientError.isHttpClientError(error) && error.reason._tag === "EmptyBodyError",
+              () => Effect.void,
+            ),
+            Effect.mapError(
+              () =>
+                new GitHubError({
+                  operation,
+                  status: response.status,
+                  message: "GitHub's answer could not be read within its size limit.",
+                }),
+            ),
+          );
+          const bytes = new Uint8Array(length);
+          let offset = 0;
+          for (const chunk of chunks) {
+            bytes.set(chunk, offset);
+            offset += chunk.byteLength;
+          }
+          const text = new TextDecoder().decode(bytes);
           if (response.status === 404) return null;
           yield* failUnlessOk(operation, response, Option.getOrNull(parseJson(text)));
           // GraphQL answers its own rate limit with a 200 and an error in the body.

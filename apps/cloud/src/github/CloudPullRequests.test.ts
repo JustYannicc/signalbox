@@ -15,6 +15,7 @@ import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
+import { ConnectionError, SqlError } from "effect/sql/SqlError";
 import { beforeEach, describe, expect, it } from "@effect/vitest";
 import { vi } from "vite-plus/test";
 
@@ -138,8 +139,10 @@ const makeFixture = () => {
     accountId: "account-A",
     repository: "Acme/Web",
     authorized: true,
+    userIdFailed: false,
     resolveCalls: 0,
     canSeeCalls: [] as Array<{ readonly userId: string; readonly threadId: ThreadId }>,
+    syncCalls: [] as Array<{ readonly userId: string; readonly threadId: ThreadId }>,
   };
   const target = (ref: PullRequestRef): PullRequestRepository.ResolvedPullRequestRepository => ({
     project: {
@@ -159,7 +162,7 @@ const makeFixture = () => {
     resolve: (ref) => {
       state.resolveCalls += 1;
       return state.authorized
-        ? Effect.succeed(target(ref))
+        ? Effect.succeed({ ...target(ref), repository: ref.repository })
         : Effect.fail(new PullRequestUnavailableError({ reason: "provider-unsupported" }));
     },
     identity: (host) =>
@@ -189,7 +192,11 @@ const makeFixture = () => {
     rebuildThreadIndex: Effect.succeed(0),
   });
   const userDrives = UserDrives.UserDrives.of({
-    userId: Effect.sync(() => state.userId),
+    userId: Effect.suspend(() =>
+      state.userIdFailed
+        ? Effect.fail(new SqlError({ reason: new ConnectionError({ cause: "unavailable" }) }))
+        : Effect.succeed(state.userId),
+    ),
     contextIds: Effect.succeed([]),
     drives: Effect.succeed([]),
     changes: Stream.empty,
@@ -201,14 +208,20 @@ const makeFixture = () => {
       state.canSeeCalls.push({ userId: actor.userId, threadId: id });
       return id !== ThreadId.make("private") || actor.userId === "owner";
     });
-  const threads = CloudThreadService.of({ canSee } as CloudThreadService["Service"]);
+  const threadLayer = Layer.mock(CloudThreadService, {
+    canSee,
+    requestPullRequestSync: (actor, threadId) =>
+      Effect.sync(() => {
+        state.syncCalls.push({ userId: actor.userId, threadId });
+      }),
+  });
   const api = { host: "github.com" } as GitHubApi;
   const dependencies = Layer.mergeAll(
     Layer.succeed(GitHub, GitHub.of({ pipes: null, api })),
     Layer.succeed(PullRequestRepository.PullRequestRepository, repository),
     Layer.succeed(UserShell.UserShell, userShell),
     Layer.succeed(UserDrives.UserDrives, userDrives),
-    Layer.succeed(CloudThreadService, threads),
+    threadLayer,
   );
   return {
     state,
@@ -327,7 +340,10 @@ describe("CloudPullRequests", () => {
       return Effect.gen(function* () {
         const pullRequests = yield* CloudPullRequests.CloudPullRequests;
         const primary = reference();
-        const other = reference({ projectId: ProjectId.make("another-project") });
+        const other = reference({
+          projectId: ProjectId.make("another-project"),
+          repository: "Elsewhere/Repo",
+        });
 
         yield* pullRequests.summary(primary);
         fixture.state.repository = "Elsewhere/Repo";
@@ -364,6 +380,60 @@ describe("CloudPullRequests", () => {
       expect(detailError._tag).toBe("PullRequestOperationError");
       if (detailError._tag === "PullRequestOperationError")
         expect(detailError.operation).toBe("detail");
+    }).pipe(Effect.provide(fixture.layer));
+  });
+
+  it.effect("refreshes only visible linked threads and tolerates a removed repository", () => {
+    const fixture = makeFixture();
+    fixture.state.userId = "another-user";
+    return Effect.gen(function* () {
+      const pullRequests = yield* CloudPullRequests.CloudPullRequests;
+      yield* pullRequests.invalidate({ reference: reference() });
+      expect(fixture.state.syncCalls.map((call) => call.threadId)).toEqual([
+        ThreadId.make("visible"),
+        ThreadId.make("archived"),
+      ]);
+      fixture.state.authorized = false;
+      yield* pullRequests.invalidate({ reference: reference() });
+      expect(fixture.state.syncCalls).toHaveLength(2);
+    }).pipe(Effect.provide(fixture.layer));
+  });
+
+  it.effect("resolves another repository's URL through the folder's current GitHub account", () => {
+    const fixture = makeFixture();
+    vi.mocked(Review.pullRequestSummary).mockReturnValue(Effect.succeed(summaryValue("Upstream")));
+    return Effect.gen(function* () {
+      const pullRequests = yield* CloudPullRequests.CloudPullRequests;
+      const value = yield* pullRequests.resolvePullRequest({
+        cwd: Environment.scratchProject.workspaceRoot,
+        reference: "https://github.com/elsewhere/repo/pull/12",
+      });
+      expect(value.pullRequest.title).toBe("Upstream");
+      expect(Review.pullRequestSummary).toHaveBeenCalledWith(
+        expect.anything(),
+        "token-A",
+        "elsewhere/repo",
+        12,
+      );
+      const wrongHost = yield* pullRequests
+        .resolvePullRequest({
+          cwd: Environment.scratchProject.workspaceRoot,
+          reference: "https://gitlab.com/elsewhere/repo/-/merge_requests/12",
+        })
+        .pipe(Effect.flip);
+      expect(wrongHost._tag).toBe("GitManagerError");
+    }).pipe(Effect.provide(fixture.layer));
+  });
+
+  it.effect("returns a typed resolution error when the current user cannot be read", () => {
+    const fixture = makeFixture();
+    fixture.state.userIdFailed = true;
+    return Effect.gen(function* () {
+      const pullRequests = yield* CloudPullRequests.CloudPullRequests;
+      const error = yield* pullRequests
+        .resolvePullRequest({ cwd: Environment.scratchProject.workspaceRoot, reference: "12" })
+        .pipe(Effect.flip);
+      expect(error._tag).toBe("GitManagerError");
     }).pipe(Effect.provide(fixture.layer));
   });
 });

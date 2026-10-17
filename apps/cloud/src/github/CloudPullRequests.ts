@@ -14,6 +14,7 @@ import {
 import { parseChangeRequestUrl } from "@t3tools/shared/changeRequestUrl";
 import {
   legacyThreadPullRequestKey,
+  threadPullRequestKeyOf,
   threadPullRequestKeysEqual,
   visibleThreadPullRequests,
 } from "@t3tools/shared/threadPullRequests";
@@ -302,16 +303,44 @@ const make = Effect.gen(function* () {
 
   const invalidate = (input: PullRequestInvalidateInput) =>
     Effect.gen(function* () {
-      const scope =
-        input.reference === undefined
-          ? undefined
-          : scopeOf(yield* repositories.resolve(input.reference));
+      const reference = input.reference;
+      const target =
+        reference === undefined
+          ? null
+          : yield* repositories.resolve(reference).pipe(Effect.orElseSucceed(() => null));
+      const scope = target === null ? undefined : scopeOf(target);
       yield* cache.invalidate(scope);
       yield* SubscriptionRef.update(revision, (current) => current + 1);
+      if (reference === undefined || target === null) return;
+      const actor = yield* Effect.all({
+        userId: drives.userId,
+        contextIds: drives.contextIds,
+      }).pipe(Effect.orElseSucceed(() => null));
+      if (actor === null || actor.userId === null) return;
+      const { userId, contextIds } = actor;
+      const visible = yield* linkedThreads(reference).pipe(
+        Effect.orElseSucceed(() => ({ threads: [] })),
+      );
+      yield* Effect.forEach(
+        visible.threads,
+        (thread) =>
+          threads
+            .requestPullRequestSync(
+              { userId, contextIds },
+              thread.id,
+              threadPullRequestKeyOf({
+                host: target.host,
+                repository: target.repository,
+                number: reference.number,
+              }),
+            )
+            .pipe(Effect.orElseSucceed(() => undefined)),
+        { concurrency: 2, discard: true },
+      );
     });
   const resolvePullRequest = (input: GitPullRequestRefInput) =>
     Effect.gen(function* () {
-      const userId = yield* drives.userId.pipe(Effect.orDie);
+      const userId = yield* drives.userId;
       const driveId =
         threadWorktreeAt(input.cwd)?.driveId ??
         (userId === null ? null : driveOfRoot(input.cwd, userId));
@@ -326,15 +355,13 @@ const make = Effect.gen(function* () {
       if (
         !Number.isSafeInteger(number) ||
         number < 1 ||
-        (parsed !== null &&
-          (parsed.host !== target.host ||
-            parsed.repository.toLowerCase() !== target.repository.toLowerCase()))
+        (parsed !== null && parsed.host !== target.host)
       )
         return yield* missing("resolvePullRequest");
       const value = yield* summary({
         projectId,
         host: target.host,
-        repository: target.repository,
+        repository: parsed?.repository ?? target.repository,
         number,
       });
       return {

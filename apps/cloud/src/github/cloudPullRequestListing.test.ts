@@ -106,7 +106,8 @@ const fixture = (options: {
       variables: Readonly<Record<string, unknown>>,
     ) => {
       calls.push({ operation, token, variables });
-      const answer = answers.shift();
+      const queued = answers.shift();
+      const answer = typeof queued === "function" ? queued(variables) : queued;
       return Effect.succeed(answer == null ? null : JSON.stringify(answer));
     },
   } as unknown as GitHubApi;
@@ -272,7 +273,16 @@ it.effect("rejects a continuation cursor when its query changes before another G
 it.effect("shares stats for a repository while decorating each selected project", () => {
   const first = project("stats-a", "A", "acme/web");
   const second = project("stats-b", "B", "acme/web");
-  const statsAnswer = { data: { repository: { pullRequest: { additions: 12, deletions: 4 } } } };
+  const statsAnswer = (variables: Readonly<Record<string, unknown>>) => ({
+    data: Object.fromEntries(
+      Object.keys(variables)
+        .filter((key) => key.endsWith("_number"))
+        .map((key) => [
+          key.replace(/number$/, "repository"),
+          { pullRequest: { additions: 12, deletions: 4 } },
+        ]),
+    ),
+  });
   const current = fixture({
     projects: [first, second],
     targets: [target(first, "acme/web"), target(second, "acme/web")],

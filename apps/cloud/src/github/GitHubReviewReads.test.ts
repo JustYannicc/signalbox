@@ -262,6 +262,54 @@ it.effect("rejects GraphQL partial data that also contains errors", () =>
   }),
 );
 
+it.effect("returns a missing pull request when every GraphQL error is NOT_FOUND", () =>
+  Effect.gen(function* () {
+    const missingPullRequest = {
+      data: {
+        repository: {
+          mergeCommitAllowed: true,
+          squashMergeAllowed: true,
+          rebaseMergeAllowed: true,
+          viewerPermission: "READ",
+          pullRequest: null,
+        },
+      },
+      errors: [{ type: "NOT_FOUND", message: "Could not resolve to a PullRequest" }],
+    };
+    const { api } = mockApi({ pullRequestDetail: [missingPullRequest] });
+
+    expect(yield* pullRequestDetail(api, "token", "acme/web", 7)).toBeNull();
+  }),
+);
+
+it.effect("rejects a NOT_FOUND result when another GraphQL error is present", () =>
+  Effect.gen(function* () {
+    const { api } = mockApi({
+      pullRequestDetail: [
+        {
+          data: {
+            repository: {
+              mergeCommitAllowed: true,
+              squashMergeAllowed: true,
+              rebaseMergeAllowed: true,
+              viewerPermission: "READ",
+              pullRequest: null,
+            },
+          },
+          errors: [
+            { type: "NOT_FOUND", message: "Could not resolve to a PullRequest" },
+            { type: "FORBIDDEN", message: "Resource not accessible" },
+          ],
+        },
+      ],
+    });
+
+    const error = yield* pullRequestDetail(api, "token", "acme/web", 7).pipe(Effect.flip);
+
+    expect(error.operation).toBe("pullRequestDetail");
+  }),
+);
+
 it.effect("returns one review-thread comment page only for the requested pull request", () =>
   Effect.gen(function* () {
     const threadAnswer = {

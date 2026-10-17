@@ -2,6 +2,10 @@ import type { FileDiffMetadata } from "@pierre/diffs";
 import type { EnvironmentId, PullRequestDiffRevision, PullRequestRef } from "@t3tools/contracts";
 import { useEffect, useState } from "react";
 
+import {
+  isGuideDiffRevisionCurrent,
+  samePullRequestDiffRevision,
+} from "@t3tools/client-runtime/pull-request-diff-revision";
 import { getRenderablePatch, resolveFileDiffPath } from "~/lib/diffRendering";
 import { pullRequestEnvironment } from "~/state/pullRequests";
 import { useEnvironmentQuery } from "~/state/query";
@@ -18,20 +22,6 @@ interface LoadedDiff {
 }
 
 const NO_FILES: ReadonlyMap<string, FileDiffMetadata> = new Map();
-
-function sameRevision(
-  left: PullRequestDiffRevision | undefined,
-  right: PullRequestDiffRevision | undefined,
-): boolean {
-  return left?.baseSha === right?.baseSha && left?.headSha === right?.headSha;
-}
-
-export function isGuideDiffRevisionCurrent(
-  guideHeadSha: string,
-  revision: PullRequestDiffRevision | undefined,
-): boolean {
-  return revision === undefined || revision.headSha.toLowerCase() === guideHeadSha.toLowerCase();
-}
 
 export function useGuideDiffFiles({
   environmentId,
@@ -103,7 +93,7 @@ export function useGuideDiffFiles({
           stale: true,
         };
       }
-      if (cursor !== null && !sameRevision(base.revision, data.revision)) {
+      if (cursor !== null && !samePullRequestDiffRevision(base.revision, data.revision)) {
         // A continuation from another snapshot has no place in this page chain. Start over.
         return {
           key,
@@ -118,7 +108,7 @@ export function useGuideDiffFiles({
         data.patch,
         `pull-request-guide:${key}:${cursor ?? "first"}`,
       );
-      const files = sameRevision(base.revision, data.revision)
+      const files = samePullRequestDiffRevision(base.revision, data.revision)
         ? new Map(base.files)
         : new Map<string, FileDiffMetadata>();
       if (parsed?.kind === "files") {

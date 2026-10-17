@@ -107,7 +107,7 @@ it.effect(
 
       expect(first).toEqual({
         project: current.project,
-        repository: "Acme/Web",
+        repository: "acme/web",
         host: "github.com",
         token: "current-token",
         viewer: "octocat",
@@ -131,17 +131,38 @@ it.effect(
   },
 );
 
-it.effect("rejects a different repository before using the GitHub credential", () => {
+it.effect("allows another GitHub repository on the authorized host", () => {
   const current = fixture();
   return Effect.gen(function* () {
     const repository = yield* PullRequestRepository.PullRequestRepository;
-    const error = yield* Effect.flip(
-      repository.resolve(reference({ repository: "elsewhere/private" })),
+    const resolved = yield* repository.resolve(
+      reference({ repository: "pingdotgg/t3code", expectedAccountId: "123" }),
     );
 
-    expect(error._tag).toBe("PullRequestOperationError");
+    expect(resolved.repository).toBe("pingdotgg/t3code");
+    expect(resolved.token).toBe("current-token");
+    expect(resolved.accountId).toBe("123");
     expect(current.state.accessReads).toBe(1);
     expect(current.state.remoteReads).toBe(1);
+    expect(current.state.tokenReads).toBe(1);
+    expect(current.state.viewerReads).toBe(1);
+  }).pipe(Effect.provide(current.layer));
+});
+
+it.effect("rejects wrong-host and malformed pull request repositories", () => {
+  const current = fixture();
+  return Effect.gen(function* () {
+    const repository = yield* PullRequestRepository.PullRequestRepository;
+    const wrongHost = yield* Effect.flip(
+      repository.resolve(reference({ repository: "pingdotgg/t3code", host: "gitlab.com" })),
+    );
+    const malformed = yield* Effect.flip(
+      repository.resolve(reference({ repository: "not a repo" })),
+    );
+    expect(wrongHost._tag).toBe("PullRequestOperationError");
+    expect(malformed._tag).toBe("PullRequestOperationError");
+    expect(current.state.accessReads).toBe(2);
+    expect(current.state.remoteReads).toBe(2);
     expect(current.state.tokenReads).toBe(0);
     expect(current.state.viewerReads).toBe(0);
 
@@ -160,7 +181,9 @@ it.effect("rejects removed drive access and a routing identity for another host"
     const repository = yield* PullRequestRepository.PullRequestRepository;
     yield* repository.resolve(reference());
     current.state.canAccess = false;
-    const denied = yield* Effect.flip(repository.resolve(reference()));
+    const denied = yield* Effect.flip(
+      repository.resolve(reference({ repository: "pingdotgg/t3code" })),
+    );
     const wrongHost = yield* Effect.flip(repository.identity("git.example.com"));
 
     expect(denied._tag).toBe("PullRequestOperationError");

@@ -39,6 +39,11 @@ const decodeReviewDismissals = decodeGraphqlData(ReviewDismissals.result);
 
 const operationError = (operation: string) => unreadable(operation);
 
+interface BoundedActivity {
+  readonly activity: GitHubPullRequestActivity;
+  readonly truncated: boolean;
+}
+
 const pullRequestActivityPages = (
   api: GitHubApi,
   token: string,
@@ -83,14 +88,21 @@ const pullRequestActivityPages = (
       withComments = withComments && commentsAfter !== null;
       withReviews = withReviews && reviewsAfter !== null;
     }
-    if (commentsAfter !== null || reviewsAfter !== null)
-      return yield* operationError("pullRequestActivity");
     return {
-      author: author ?? null,
-      comments: remarks.toSorted((left, right) => left.createdAt.localeCompare(right.createdAt)),
-      commits,
-    } satisfies GitHubPullRequestActivity;
+      activity: {
+        author: author ?? null,
+        comments: remarks.toSorted((left, right) => left.createdAt.localeCompare(right.createdAt)),
+        commits,
+      } satisfies GitHubPullRequestActivity,
+      // The host read has a fixed page budget. Return what arrived and let the UI say more exists.
+      truncated: commentsAfter !== null || reviewsAfter !== null,
+    } satisfies BoundedActivity;
   });
+
+interface BoundedReviewThreadComments extends GitHubReviewThreadComments {
+  /** A dismissal reason or a thread's remaining comments did not fit in the read budget. */
+  readonly commentsTruncated: boolean;
+}
 
 const pullRequestReviewThreads = (
   api: GitHubApi,
@@ -158,7 +170,7 @@ const pullRequestReviewThreads = (
       cursor = read.nextCursor;
       page += 1;
     } while (cursor !== null && page < REVIEW_PAGES);
-    if (cursor !== null) return yield* operationError("pullRequestReviewThreads");
+    const reviewThreadsTruncated = cursor !== null;
 
     let after = dismissalCursor;
     const seenDismissalCursors = new Set<string>();
@@ -184,20 +196,22 @@ const pullRequestReviewThreads = (
       for (const [id, message] of read.dismissalsByReviewId) dismissalsByReviewId.set(id, message);
       after = read.nextCursor;
     }
-    if (after !== null) return yield* operationError("pullRequestReviewThreads");
+    const dismissalsTruncated = after !== null;
 
     const reviewThreads = threads.map(({ thread, commentCount, nextCommentCursor }) => ({
       ...thread,
       commentCount,
       ...(nextCommentCursor === null ? {} : { nextCommentsCursor: nextCommentCursor }),
     }));
+    const threadCommentsTruncated = threads.some((entry) => entry.nextCommentCursor !== null);
     return {
       comments: reviewThreadConversation(reviewThreads),
       dismissalsByReviewId,
       reviewThreads,
       commentCount: threads.reduce((total, entry) => total + entry.commentCount, 0),
-      truncated: threads.some((entry) => entry.nextCommentCursor !== null),
-      reviewThreadsTruncated: false,
+      truncated: threadCommentsTruncated,
+      commentsTruncated: threadCommentsTruncated || dismissalsTruncated,
+      reviewThreadsTruncated,
       reactions,
       reactionsById,
       editedAtById,
@@ -207,7 +221,7 @@ const pullRequestReviewThreads = (
       commitStats,
       commits,
       viewer,
-    } satisfies GitHubReviewThreadComments;
+    } satisfies BoundedReviewThreadComments;
   });
 
 const loginAvatarUrl = (login: string, host: string) =>
@@ -240,14 +254,15 @@ export const pullRequestActivity = (
   number: number,
 ) =>
   Effect.gen(function* () {
-    const [activity, reviewThreads] = yield* Effect.all(
+    const [activityRead, reviewThreads] = yield* Effect.all(
       [
         pullRequestActivityPages(api, token, repository, number),
         pullRequestReviewThreads(api, token, repository, number),
       ],
       { concurrency: 2 },
     );
-    if (activity === null || reviewThreads === null) return null;
+    if (activityRead === null || reviewThreads === null) return null;
+    const activity = activityRead.activity;
     const comments = [...activity.comments, ...reviewThreads.comments]
       .map((comment): PullRequestComment => ({
         ...comment,
@@ -311,7 +326,7 @@ export const pullRequestActivity = (
       commits,
       comments,
       commentCount: activity.comments.length + reviewThreads.commentCount,
-      commentsTruncated: reviewThreads.truncated,
+      commentsTruncated: activityRead.truncated || reviewThreads.commentsTruncated,
       reviewThreadsTruncated: reviewThreads.reviewThreadsTruncated,
       reviewThreads: threads,
     } satisfies PullRequestActivity;

@@ -20,20 +20,13 @@ import {
 import { type GitHubApi, unreadable } from "./GitHubApi.ts";
 
 const DIFF_PAGE_SIZE = 100;
-const DIFF_PAGE_LIMIT = 10_000;
+const DIFF_FILE_LIMIT = 3_000;
+const DIFF_PAGE_LIMIT = DIFF_FILE_LIMIT / DIFF_PAGE_SIZE;
 const FILE_CONTENT_LIMIT = 1_048_576;
 const DIFF_OUTPUT_LIMIT = 8 * FILE_CONTENT_LIMIT;
 const EMPTY_TREE_SHA = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
 const COMMIT_SHA = /^[0-9a-f]{7,64}$/iu;
 const FULL_SHA = /^[0-9a-f]{40}(?:[0-9a-f]{24})?$/iu;
-
-const DiffFile = Schema.Struct({
-  filename: Schema.String,
-  status: Schema.optional(Schema.NullOr(Schema.String)),
-  previous_filename: Schema.optional(Schema.NullOr(Schema.String)),
-  additions: Schema.optional(Schema.NullOr(Schema.Int)),
-  deletions: Schema.optional(Schema.NullOr(Schema.Int)),
-});
 
 const PullRequestRevisions = Schema.Struct({
   base: Schema.Struct({ sha: Schema.String }),
@@ -46,10 +39,8 @@ const CommitRevisions = Schema.Struct({
 });
 const CompareRevisions = Schema.Struct({
   base_commit: Schema.Struct({ sha: Schema.String }),
-  head_commit: Schema.Struct({ sha: Schema.String }),
   merge_base_commit: Schema.Struct({ sha: Schema.String }),
   changed_files: Schema.optional(Schema.Int),
-  files: Schema.optional(Schema.NullOr(Schema.Array(DiffFile))),
 });
 const ContentFile = Schema.Struct({
   type: Schema.String,
@@ -67,17 +58,25 @@ const decodeContentFile = Schema.decodeUnknownOption(Schema.fromJsonString(Conte
 
 interface DiffCursor {
   readonly kind: "pull-request" | "commit";
+  /** The mutable pull-request base, or a commit's first parent. */
+  readonly sourceBaseSha: string;
+  /** The merge base shown to the user, or the commit's first parent. */
   readonly baseSha: string;
   readonly headSha: string;
-  readonly mergeBaseSha: string;
   readonly page: number;
   readonly changedFiles: number | null;
   readonly filesRead: number;
 }
 
 interface ResolvedDiff {
+  readonly sourceBaseSha: string;
   readonly revision: PullRequestDiffRevision;
-  readonly mergeBaseSha: string;
+  readonly changedFiles: number | null;
+}
+
+interface PullRequestRefs {
+  readonly baseSha: string;
+  readonly headSha: string;
   readonly changedFiles: number | null;
 }
 
@@ -104,38 +103,55 @@ const decodeOrFail = <A>(
 ): Effect.Effect<A, import("./GitHubApi.ts").GitHubError> =>
   Option.isSome(decode) ? Effect.succeed(decode.value) : fail(operation);
 
-const resolvePullRequestDiff = (
+const readPullRequestRefs = (
   api: GitHubApi,
   token: string,
   repository: string,
   number: number,
-): Effect.Effect<ResolvedDiff, import("./GitHubApi.ts").GitHubError> =>
+): Effect.Effect<PullRequestRefs, import("./GitHubApi.ts").GitHubError> =>
   Effect.gen(function* () {
     const root = pathRoot(repository);
     if (root === null) return yield* fail("pullRequestDiff");
     const pullText = yield* api.rest("pullRequestDiffRefs", token, `${root}/pulls/${number}`);
     if (pullText === null) return yield* fail("pullRequestDiff");
     const pull = yield* decodeOrFail("pullRequestDiff", decodePullRequestRevisions(pullText));
-    const { baseSha, headSha } = { baseSha: pull.base.sha, headSha: pull.head.sha };
-    if (!validFullSha(baseSha) || !validFullSha(headSha)) return yield* fail("pullRequestDiff");
+    if (!validFullSha(pull.base.sha) || !validFullSha(pull.head.sha)) {
+      return yield* fail("pullRequestDiff");
+    }
+    return {
+      baseSha: pull.base.sha,
+      headSha: pull.head.sha,
+      changedFiles: pull.changed_files ?? null,
+    };
+  });
+
+const resolvePullRequestDiffFromRefs = (
+  api: GitHubApi,
+  token: string,
+  repository: string,
+  refs: PullRequestRefs,
+): Effect.Effect<ResolvedDiff, import("./GitHubApi.ts").GitHubError> =>
+  Effect.gen(function* () {
+    const root = pathRoot(repository);
+    if (root === null) return yield* fail("pullRequestDiff");
     const compareText = yield* api.rest(
       "pullRequestDiffMergeBase",
       token,
-      `${root}/compare/${baseSha}...${headSha}`,
+      `${root}/compare/${refs.baseSha}...${refs.headSha}`,
+      { per_page: "1", page: "2" },
     );
     if (compareText === null) return yield* fail("pullRequestDiff");
     const compare = yield* decodeOrFail("pullRequestDiff", decodeCompareRevisions(compareText));
     if (
-      compare.base_commit.sha.toLowerCase() !== baseSha.toLowerCase() ||
-      compare.head_commit.sha.toLowerCase() !== headSha.toLowerCase() ||
+      compare.base_commit.sha.toLowerCase() !== refs.baseSha.toLowerCase() ||
       !validFullSha(compare.merge_base_commit.sha)
     ) {
       return yield* fail("pullRequestDiff");
     }
     return {
-      revision: { baseSha: compare.merge_base_commit.sha, headSha },
-      mergeBaseSha: compare.merge_base_commit.sha,
-      changedFiles: pull.changed_files ?? null,
+      sourceBaseSha: refs.baseSha,
+      revision: { baseSha: compare.merge_base_commit.sha, headSha: refs.headSha },
+      changedFiles: refs.changedFiles,
     };
   });
 
@@ -157,27 +173,35 @@ const resolveCommitDiff = (
     const parent = decoded.parents[0]?.sha ?? EMPTY_TREE_SHA;
     if (!validFullSha(parent)) return yield* fail("pullRequestDiff");
     return {
+      sourceBaseSha: parent,
       revision: { baseSha: parent, headSha: decoded.sha },
-      mergeBaseSha: parent,
       changedFiles: null,
     };
   });
 
 const parseCursor = (cursor: string): DiffCursor | null => {
-  const [version, kind, baseSha, headSha, mergeBaseSha, pageText, changedFilesText, filesReadText] =
-    cursor.split(":");
-  if (version !== "ghrd1" || (kind !== "pull-request" && kind !== "commit")) return null;
+  const [
+    version,
+    kind,
+    sourceBaseSha,
+    baseSha,
+    headSha,
+    pageText,
+    changedFilesText,
+    filesReadText,
+  ] = cursor.split(":");
+  if (version !== "ghrd2" || (kind !== "pull-request" && kind !== "commit")) return null;
   if (
+    sourceBaseSha === undefined ||
     baseSha === undefined ||
     headSha === undefined ||
-    mergeBaseSha === undefined ||
     pageText === undefined ||
     changedFilesText === undefined ||
     filesReadText === undefined
   )
     return null;
   if (
-    ![baseSha, headSha, mergeBaseSha].every(validFullSha) ||
+    ![sourceBaseSha, baseSha, headSha].every(validFullSha) ||
     !/^[1-9][0-9]{0,5}$/u.test(pageText) ||
     !/^(?:-|0|[1-9][0-9]*)$/u.test(changedFilesText) ||
     !/^(?:0|[1-9][0-9]*)$/u.test(filesReadText)
@@ -190,12 +214,12 @@ const parseCursor = (cursor: string): DiffCursor | null => {
     Number.isSafeInteger(filesRead) &&
     (changedFiles === null || Number.isSafeInteger(changedFiles)) &&
     filesRead === (page - 1) * DIFF_PAGE_SIZE
-    ? { kind, baseSha, headSha, mergeBaseSha, page, changedFiles, filesRead }
+    ? { kind, sourceBaseSha, baseSha, headSha, page, changedFiles, filesRead }
     : null;
 };
 
 const cursorFor = (cursor: DiffCursor) =>
-  `ghrd1:${cursor.kind}:${cursor.baseSha}:${cursor.headSha}:${cursor.mergeBaseSha}:${cursor.page}:${cursor.changedFiles ?? "-"}:${cursor.filesRead}`;
+  `ghrd2:${cursor.kind}:${cursor.sourceBaseSha}:${cursor.baseSha}:${cursor.headSha}:${cursor.page}:${cursor.changedFiles ?? "-"}:${cursor.filesRead}`;
 
 const pullRequestFilesPage = (
   api: GitHubApi,
@@ -243,33 +267,9 @@ const commitFilesPage = (
     );
 };
 
-const checkPullRequestRefs = (
-  api: GitHubApi,
-  token: string,
-  repository: string,
-  number: number,
-  revision: PullRequestDiffRevision,
-) =>
-  Effect.gen(function* () {
-    const root = pathRoot(repository);
-    if (root === null) return yield* fail("pullRequestDiff");
-    const text = yield* api.rest("pullRequestDiffRefs", token, `${root}/pulls/${number}`);
-    if (text === null) return yield* fail("pullRequestDiff");
-    const pull = yield* decodeOrFail("pullRequestDiff", decodePullRequestRevisions(text));
-    const compareText = yield* api.rest(
-      "pullRequestDiffMergeBase",
-      token,
-      `${root}/compare/${pull.base.sha}...${pull.head.sha}`,
-    );
-    if (compareText === null) return yield* fail("pullRequestDiff");
-    const compare = yield* decodeOrFail("pullRequestDiff", decodeCompareRevisions(compareText));
-    return (
-      compare.base_commit.sha.toLowerCase() === pull.base.sha.toLowerCase() &&
-      compare.head_commit.sha.toLowerCase() === pull.head.sha.toLowerCase() &&
-      compare.merge_base_commit.sha.toLowerCase() === revision.baseSha.toLowerCase() &&
-      pull.head.sha.toLowerCase() === revision.headSha.toLowerCase()
-    );
-  });
+const sameRefs = (left: Pick<PullRequestRefs, "baseSha" | "headSha">, right: DiffCursor) =>
+  left.baseSha.toLowerCase() === right.sourceBaseSha.toLowerCase() &&
+  left.headSha.toLowerCase() === right.headSha.toLowerCase();
 
 const asSlice = (
   files: GitHubPullRequestFilesPatch,
@@ -278,12 +278,16 @@ const asSlice = (
   changedFiles: number | null,
 ): PullRequestDiffResult => {
   const filesRead = cursor.filesRead + files.rawCount;
+  const capped =
+    cursor.page === DIFF_PAGE_LIMIT && (changedFiles === null || filesRead < changedFiles);
   const hasMore =
-    files.rawCount === DIFF_PAGE_SIZE && (changedFiles === null || filesRead < changedFiles);
+    cursor.page < DIFF_PAGE_LIMIT &&
+    files.rawCount === DIFF_PAGE_SIZE &&
+    (changedFiles === null || filesRead < changedFiles);
   return {
     revision,
     patch: files.patch,
-    truncated: files.truncated,
+    truncated: files.truncated || capped,
     nextCursor: hasMore ? cursorFor({ ...cursor, page: cursor.page + 1, filesRead }) : null,
     ...(files.omittedFileStats.length === 0 ? {} : { omittedFileStats: files.omittedFileStats }),
   };
@@ -306,135 +310,78 @@ export const pullRequestDiff = (
 
     let resolved: ResolvedDiff;
     let page = 1;
-    if (suppliedCursor !== null) {
-      if (kind === "commit") {
-        const commit = input.commit;
-        if (commit === undefined) return yield* fail(operation);
-        resolved = yield* resolveCommitDiff(api, token, repository, commit);
+    let filesRead = 0;
+
+    if (kind === "pull-request") {
+      if (suppliedCursor !== null) {
+        const beforeRefs = yield* readPullRequestRefs(api, token, repository, number);
+        if (sameRefs(beforeRefs, suppliedCursor)) {
+          resolved = {
+            sourceBaseSha: suppliedCursor.sourceBaseSha,
+            revision: { baseSha: suppliedCursor.baseSha, headSha: suppliedCursor.headSha },
+            changedFiles: suppliedCursor.changedFiles,
+          };
+          page = suppliedCursor.page;
+          filesRead = suppliedCursor.filesRead;
+        } else {
+          // A cursor whose PR moved starts a new first slice so clients can discard stale pages.
+          resolved = yield* resolvePullRequestDiffFromRefs(api, token, repository, beforeRefs);
+        }
+      } else {
+        const beforeRefs = yield* readPullRequestRefs(api, token, repository, number);
+        resolved = yield* resolvePullRequestDiffFromRefs(api, token, repository, beforeRefs);
+      }
+    } else {
+      const commit = input.commit;
+      if (commit === undefined) return yield* fail(operation);
+      resolved = yield* resolveCommitDiff(api, token, repository, commit);
+      if (suppliedCursor !== null) {
         if (
           resolved.revision.headSha.toLowerCase() !== suppliedCursor.headSha.toLowerCase() ||
-          resolved.revision.baseSha.toLowerCase() !== suppliedCursor.baseSha.toLowerCase()
+          resolved.revision.baseSha.toLowerCase() !== suppliedCursor.baseSha.toLowerCase() ||
+          resolved.sourceBaseSha.toLowerCase() !== suppliedCursor.sourceBaseSha.toLowerCase()
         ) {
           return yield* fail(operation);
         }
-      } else {
-        resolved = {
-          revision: { baseSha: suppliedCursor.baseSha, headSha: suppliedCursor.headSha },
-          mergeBaseSha: suppliedCursor.mergeBaseSha,
-          changedFiles: suppliedCursor.changedFiles,
-        };
+        page = suppliedCursor.page;
+        filesRead = suppliedCursor.filesRead;
       }
-      page = suppliedCursor.page;
-    } else {
-      resolved =
-        input.commit === undefined
-          ? yield* resolvePullRequestDiff(api, token, repository, number)
-          : yield* resolveCommitDiff(api, token, repository, input.commit);
     }
 
-    if (input.commit === undefined) {
-      if (!(yield* checkPullRequestRefs(api, token, repository, number, resolved.revision))) {
-        return yield* fail(operation);
-      }
-    }
-    const cursor: DiffCursor = {
+    const activeCursor: DiffCursor = {
       kind,
+      sourceBaseSha: resolved.sourceBaseSha,
       baseSha: resolved.revision.baseSha,
       headSha: resolved.revision.headSha,
-      mergeBaseSha: resolved.mergeBaseSha,
       page,
       changedFiles: resolved.changedFiles,
-      filesRead: suppliedCursor?.filesRead ?? 0,
+      filesRead,
     };
     const files =
-      input.commit === undefined
-        ? yield* pullRequestFilesPage(api, token, repository, number, page)
+      kind === "pull-request"
+        ? yield* pullRequestFilesPage(api, token, repository, number, activeCursor.page)
         : yield* commitFilesPage(api, token, repository, resolved.revision.headSha, page);
     if (new TextEncoder().encode(files.patch).length > DIFF_OUTPUT_LIMIT)
       return yield* fail(operation);
-    if (
-      input.commit === undefined &&
-      !(yield* checkPullRequestRefs(api, token, repository, number, resolved.revision))
-    ) {
-      return yield* fail(operation);
+
+    if (kind === "pull-request") {
+      const afterRefs = yield* readPullRequestRefs(api, token, repository, number);
+      if (!sameRefs(afterRefs, activeCursor)) return yield* fail(operation);
     }
-    const filesRead = cursor.filesRead + files.rawCount;
+    const totalFilesRead = activeCursor.filesRead + files.rawCount;
     if (
       resolved.changedFiles !== null &&
-      (filesRead > resolved.changedFiles ||
-        (files.rawCount < DIFF_PAGE_SIZE && filesRead !== resolved.changedFiles))
+      (totalFilesRead > resolved.changedFiles ||
+        (activeCursor.page < DIFF_PAGE_LIMIT &&
+          files.rawCount < DIFF_PAGE_SIZE &&
+          totalFilesRead !== resolved.changedFiles))
     ) {
       return yield* fail(operation);
     }
-    const result = asSlice(files, cursor, resolved.revision, resolved.changedFiles);
+    const result = asSlice(files, activeCursor, resolved.revision, resolved.changedFiles);
     if (result.nextCursor !== null && result.nextCursor === input.cursor)
       return yield* fail(operation);
     return result;
-  });
-
-type DiffFileMetadata = typeof DiffFile.Type;
-
-const pathMatches = (
-  file: DiffFileMetadata,
-  input: Pick<PullRequestDiffFileContentsInput, "changeType" | "oldPath" | "newPath">,
-) => {
-  const status = file.status?.toLowerCase();
-  switch (input.changeType) {
-    case "new":
-      return status === "added" && file.filename === input.newPath;
-    case "deleted":
-      return status === "removed" && file.filename === input.oldPath;
-    case "change":
-      return (
-        (status === "modified" || status === "changed") &&
-        file.filename === input.newPath &&
-        input.oldPath === input.newPath
-      );
-    case "rename-pure":
-      return (
-        status === "renamed" &&
-        file.previous_filename === input.oldPath &&
-        file.filename === input.newPath &&
-        (file.additions ?? 0) + (file.deletions ?? 0) === 0
-      );
-    case "rename-changed":
-      return (
-        status === "renamed" &&
-        file.previous_filename === input.oldPath &&
-        file.filename === input.newPath &&
-        (file.additions ?? 0) + (file.deletions ?? 0) > 0
-      );
-  }
-};
-
-const verifyCompareFile = (
-  api: GitHubApi,
-  token: string,
-  repository: string,
-  revision: PullRequestDiffRevision,
-  input: Pick<PullRequestDiffFileContentsInput, "changeType" | "oldPath" | "newPath">,
-) =>
-  Effect.gen(function* () {
-    const root = pathRoot(repository);
-    if (root === null) return yield* fail("pullRequestDiffFileContents");
-    const text = yield* api.rest(
-      "pullRequestDiffFileContentsMetadata",
-      token,
-      `${root}/compare/${revision.baseSha}...${revision.headSha}`,
-      { per_page: "300", page: "1" },
-    );
-    if (text === null) return yield* fail("pullRequestDiffFileContents");
-    const compare = decodeCompareRevisions(text);
-    if (
-      Option.isNone(compare) ||
-      compare.value.files == null ||
-      compare.value.base_commit.sha.toLowerCase() !== revision.baseSha.toLowerCase() ||
-      compare.value.head_commit.sha.toLowerCase() !== revision.headSha.toLowerCase() ||
-      compare.value.merge_base_commit.sha.toLowerCase() !== revision.baseSha.toLowerCase() ||
-      !compare.value.files.some((file) => pathMatches(file, input))
-    ) {
-      return yield* fail("pullRequestDiffFileContents");
-    }
   });
 
 const readFile = (
@@ -485,7 +432,8 @@ const resolveContentRevision = (
       const resolved = yield* resolveCommitDiff(api, token, repository, input.commit);
       return resolved.revision;
     }
-    const resolved = yield* resolvePullRequestDiff(api, token, repository, number);
+    const refs = yield* readPullRequestRefs(api, token, repository, number);
+    const resolved = yield* resolvePullRequestDiffFromRefs(api, token, repository, refs);
     return resolved.revision;
   });
 
@@ -508,7 +456,6 @@ export const pullRequestDiffFileContents = (
     if (!validFullSha(revision.baseSha) || !validFullSha(revision.headSha)) {
       return yield* fail("pullRequestDiffFileContents");
     }
-    yield* verifyCompareFile(api, token, repository, revision, input);
     const oldContents =
       input.changeType === "new"
         ? ""

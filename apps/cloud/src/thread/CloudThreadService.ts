@@ -149,6 +149,12 @@ export class CloudThreadService extends Context.Service<
       OrchestrationV2ThreadHistoryPage,
       ThreadNotFoundError | ThreadDirectory.ThreadObjectError
     >;
+    /** Asks the thread's owner token to refresh one link currently visible on the thread. */
+    readonly requestPullRequestSync: (
+      actor: Actor,
+      threadId: ThreadId,
+      key: string,
+    ) => Effect.Effect<void, CloudThreadError>;
     /**
      * `subscribeThread` that survives its thread object: when the object is
      * evicted or redeployed mid-stream, the subscription resumes from the last
@@ -469,6 +475,12 @@ const make = Effect.gen(function* () {
       hasMoreHistory: false,
     }));
 
+  const requestPullRequestSync: CloudThreadService["Service"]["requestPullRequestSync"] = (
+    actor,
+    threadId,
+    key,
+  ) => directory.forThread(threadId).requestPullRequestSync(actor, key);
+
   const subscribeThread: CloudThreadService["Service"]["subscribeThread"] = (actor, input) =>
     Stream.unwrap(
       Effect.gen(function* () {
@@ -557,6 +569,7 @@ const make = Effect.gen(function* () {
     launchThread,
     threadSnapshot,
     threadHistoryPage,
+    requestPullRequestSync,
     subscribeThread,
     turnDiagnostics: (actor, threadId, key) =>
       directory.forThread(threadId).diagnostics(actor, key),

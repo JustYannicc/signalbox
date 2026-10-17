@@ -17,6 +17,7 @@ import { driveOfProject } from "../user/contextProjects.ts";
 import * as UserDrives from "../user/UserDrives.ts";
 import * as UserShell from "../user/UserShell.ts";
 import { GitHub } from "./GitHub.ts";
+import { parseRepository } from "./GitHubApi.ts";
 import { GitHubConnection } from "./GitHubConnection.ts";
 
 export interface ResolvedPullRequestRepository {
@@ -208,7 +209,8 @@ const make = Effect.gen(function* () {
           "routeIdentity",
           "The GitHub repository could not be verified.",
         );
-      if (ref.repository.toLowerCase() !== authorized.repository.toLowerCase())
+      const repository = parseRepository(ref.repository);
+      if (repository === null)
         return yield* operationFailed(
           "routeIdentity",
           "The GitHub repository could not be verified.",
@@ -218,7 +220,7 @@ const make = Effect.gen(function* () {
       if (ref.expectedAccountId !== undefined && ref.expectedAccountId !== resolved.accountId)
         return yield* operationFailed("routeIdentity", "The GitHub account could not be verified.");
 
-      return resolved;
+      return { ...resolved, repository };
     }).pipe(
       Effect.withSpan("PullRequestRepository.resolve", {
         attributes: { "project.id": ref.projectId },

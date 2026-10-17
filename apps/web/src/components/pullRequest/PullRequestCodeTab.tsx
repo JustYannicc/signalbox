@@ -29,6 +29,7 @@ import { useAtomRefresh } from "@effect/atom-react";
 import * as Schema from "effect/Schema";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 
+import { samePullRequestDiffRevision } from "@t3tools/client-runtime/pull-request-diff-revision";
 import { useLocalStorage } from "~/hooks/useLocalStorage";
 import { useClientSettings, useUpdateClientSettings } from "~/hooks/useSettings";
 import { useTheme } from "~/hooks/useTheme";
@@ -123,13 +124,6 @@ interface DiffSlice {
   readonly nextCursor: string | null;
   readonly omittedFileStats: ReadonlyArray<PullRequestOmittedFileStat>;
   readonly revision?: PullRequestDiffRevision;
-}
-
-function sameDiffRevision(
-  left: PullRequestDiffRevision | undefined,
-  right: PullRequestDiffRevision | undefined,
-): boolean {
-  return left?.baseSha === right?.baseSha && left?.headSha === right?.headSha;
 }
 
 /**
@@ -273,7 +267,7 @@ function PullRequestCodeTab({
       };
       if (
         cursor !== null &&
-        slices.some((slice) => !sameDiffRevision(slice.revision, next.revision))
+        slices.some((slice) => !samePullRequestDiffRevision(slice.revision, next.revision))
       ) {
         // A continuation from another comparison cannot be combined with the pages already on
         // screen. Restart at the first page, which establishes the snapshot for the new chain.
@@ -287,7 +281,7 @@ function PullRequestCodeTab({
       if (
         existing !== undefined &&
         existing.patch === next.patch &&
-        sameDiffRevision(existing.revision, next.revision) &&
+        samePullRequestDiffRevision(existing.revision, next.revision) &&
         existing.truncated === next.truncated &&
         existing.nextCursor === next.nextCursor &&
         existing.omittedFileStats.length === next.omittedFileStats.length &&
