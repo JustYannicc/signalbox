@@ -1224,6 +1224,57 @@ it.effect("checkpoints the WAL on the worker instead of the writer", () =>
 );
 
 it.effect.skipIf(!supportsNoopCheckpoint)(
+  "answers checks received while the worker waits for truncation acknowledgement",
+  () =>
+    withCheckpointClient((sql) =>
+      Effect.gen(function* () {
+        const worker = startedWorkers.at(-1)!;
+        const send = worker.postMessage.bind(worker);
+        const truncateRequest = holdWorkerMessage(worker, "truncate-request");
+        yield* Effect.addFinalizer(() => Effect.sync(truncateRequest.release));
+        const checkpointRequests = pauseCheckpointRequests(worker);
+        yield* Effect.addFinalizer(() => Effect.sync(checkpointRequests.release));
+        const replies: Array<unknown> = [];
+        const onMessage = (message: unknown) => replies.push(message);
+        worker.on("message", onMessage);
+        yield* Effect.addFinalizer(() => Effect.sync(() => worker.off("message", onMessage)));
+
+        yield* sql.unsafe("PRAGMA journal_size_limit = 1").unprepared;
+        yield* sql.unsafe("CREATE TABLE pages(payload BLOB)").unprepared;
+        yield* sql.unsafe(`
+          WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < 1200)
+          INSERT INTO pages(payload) SELECT randomblob(4000) FROM n
+        `).unprepared;
+        checkpointRequests.sendNext();
+        const pending = yield* Effect.promise(() => truncateRequest.ready);
+        assert(typeof pending === "object" && pending !== null && "generation" in pending);
+        assert.equal(typeof pending.generation, "number");
+
+        // Queue a newer check before allowing the main thread to acknowledge truncation.
+        send({ type: "check", id: "during-truncate", generation: Number(pending.generation) + 1 });
+        truncateRequest.deliver();
+        checkpointRequests.release();
+        yield* checkpointWorkerReply(worker);
+        const reply = replies.find(
+          (message) =>
+            typeof message === "object" &&
+            message !== null &&
+            "id" in message &&
+            message.id === "during-truncate",
+        );
+        assert.include(reply, {
+          type: "checkpoint",
+          id: "during-truncate",
+          generation: pending.generation,
+          blocked: true,
+        });
+        yield* sql.unsafe("INSERT INTO pages(payload) VALUES (x'00')").unprepared;
+        assert.deepEqual(yield* sql`SELECT COUNT(*) AS count FROM pages`, [{ count: 1201 }]);
+      }),
+    ),
+);
+
+it.effect.skipIf(!supportsNoopCheckpoint)(
   "pauses writer admission before the checkpoint worker truncates the WAL",
   () =>
     withCheckpointClient(
