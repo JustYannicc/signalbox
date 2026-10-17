@@ -89,12 +89,18 @@ describe("catalog folder topology", () => {
     }),
   );
 
-  it.effect("requires management access at both source and destination", () =>
+  it.effect("requires management access at the current and destination parents", () =>
     Effect.gen(function* () {
       for (const grants of [
         [grant(target, "guest", "Admin")],
         [grant(target, "guest", "Viewer"), grant(after, "guest", "Admin")],
         [grant(target, "guest", "Admin"), grant(after, "guest", "Member")],
+        [grant(target, "guest", "Admin"), grant(after, "guest", "Admin")],
+        [
+          grant(before, "guest", "Member"),
+          grant(target, "guest", "Admin"),
+          grant(after, "guest", "Admin"),
+        ],
       ]) {
         const context = policyContext("guest", { folders, grants });
         yield* denied(move.run(context.ctx, { target, parent: after, before: null }));
@@ -103,11 +109,44 @@ describe("catalog folder topology", () => {
       }
       const context = policyContext("guest", {
         folders,
-        grants: [grant(target, "guest", "Admin"), grant(after, "guest", "Admin")],
+        grants: [grant(before, "guest", "Admin"), grant(after, "guest", "Admin")],
       });
       expect(yield* move.run(context.ctx, { target, parent: after, before: null })).toEqual({
         changed: true,
       });
+    }),
+  );
+
+  it.effect("folder-only Admin cannot remove access granted at its current parent", () =>
+    Effect.gen(function* () {
+      const context = policyContext("guest", {
+        folders,
+        grants: [
+          grant(target, "guest", "Admin"),
+          grant(after, "guest", "Admin"),
+          grant(before, "reader", "Viewer"),
+        ],
+      });
+      const reader = { ...context.ctx, actor: { userId: "reader" } };
+      expect(yield* access.run(reader, nested)).toEqual({ role: "Viewer" });
+      yield* denied(move.run(context.ctx, { target, parent: after, before: null }));
+      expect(yield* access.run(reader, nested)).toEqual({ role: "Viewer" });
+      expect(context.folders.rows()).toEqual(folders);
+      expect(context.root.rows()[0]).toEqual({ key: "root", topologyRevision: 0, authEpoch: 0 });
+      expect(context.state.rows()[0]?.revision).toBe(0);
+      expect(context.fences).toEqual([]);
+    }),
+  );
+
+  it.effect("a top-level folder needs root management access to leave the root", () =>
+    Effect.gen(function* () {
+      const context = policyContext("guest", {
+        folders,
+        grants: [grant(before, "guest", "Admin"), grant(after, "guest", "Admin")],
+      });
+      yield* denied(move.run(context.ctx, { target: before, parent: after, before: null }));
+      expect(context.folders.rows()).toEqual(folders);
+      expect(context.fences).toEqual([]);
     }),
   );
 

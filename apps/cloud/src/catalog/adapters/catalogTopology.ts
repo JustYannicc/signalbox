@@ -106,6 +106,14 @@ export const moveCatalogFolder = (
     const changesAccess =
       moving.parentId !== input.parent.folderId ||
       moving.parentIncarnation !== input.parent.incarnation;
+    if (changesAccess) {
+      // Removing a subtree changes access inherited from its current parent.
+      const currentParent = yield* resolveCatalogAccess(ctx, {
+        folderId: moving.parentId,
+        incarnation: moving.parentIncarnation,
+      });
+      if (!canManage(currentParent)) return yield* denied();
+    }
     if (input.before?.folderId === input.target.folderId) {
       if (input.before.incarnation !== input.target.incarnation || changesAccess) {
         return yield* denied();
