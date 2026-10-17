@@ -4,6 +4,7 @@ import { Atom } from "effect/reactivity";
 
 import { IANA_TIMEZONES } from "./ianaTimezones.ts";
 import { isTransportConnectionErrorMessage } from "./errors/transport.ts";
+import { isRpcClientError } from "./rpc/client.ts";
 
 type IntlWithTimezoneValues = typeof Intl & {
   readonly supportedValuesOf?: (key: "timeZone") => ReadonlyArray<string>;
@@ -54,6 +55,7 @@ export function supportsPersonTimezone(
 export function personTimezoneErrorMessage(cause: Cause.Cause<unknown>, fallback: string): string {
   if (Cause.hasInterruptsOnly(cause)) return fallback;
   const error = Cause.squash(cause);
+  if (isRpcClientError(error)) return fallback;
   if (
     typeof error === "object" &&
     error !== null &&

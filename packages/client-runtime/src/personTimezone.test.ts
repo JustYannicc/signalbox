@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "@effect/vitest";
 import type { ExecutionEnvironmentCapabilities } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
+import * as RpcClientError from "effect/rpc/RpcClientError";
 
 import {
   connectedPersonTimezoneEnvironmentIds,
@@ -64,6 +65,13 @@ describe("person timezone client helpers", () => {
   });
 
   it("uses the friendly fallback for transport errors while keeping backend messages", () => {
+    const protocolFailure = new RpcClientError.RpcClientError({
+      reason: new RpcClientError.RpcClientDefect({
+        message: "Time zone config subscription failed.",
+        cause: new Error("Protocol decode failed"),
+      }),
+    });
+    expect(personTimezoneErrorMessage(Cause.fail(protocolFailure), "Try again")).toBe("Try again");
     expect(
       personTimezoneErrorMessage(
         Cause.fail(new Error("SocketCloseError: connection closed")),
