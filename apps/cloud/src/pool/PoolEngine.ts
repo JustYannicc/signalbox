@@ -336,6 +336,12 @@ const MANAGED_CONFIG_RETRY_MS = 5 * 60_000;
 /** How old the account list may get before a read asks the CLIProxyAPI again. */
 export const ACCOUNTS_FRESH_MS = 30_000;
 
+/** A passive account snapshot never waits on an unbounded pool or provider read. */
+export const ACCOUNTS_READ_TIMEOUT_MS = 750;
+
+const ACCOUNTS_READ_TIMEOUT_MESSAGE =
+  "The pool did not refresh its account snapshot in time. Try again shortly.";
+
 /** CLIProxyAPI refreshes its model registry every three hours. */
 export const MODELS_REFRESH_MS = 3 * 60 * 60_000;
 
@@ -696,6 +702,8 @@ const make = Effect.gen(function* () {
       const mode: PoolLimits.ReadMode =
         options?.passive === true || options?.probe === true ? "probe" : "free";
       if (changed.length === 0 && removed.length === 0 && cached.error === null) {
+        // Account-list freshness is independent of the usage probes below.
+        yield* sql`UPDATE accounts_state SET checked_at = ${now}, error = NULL WHERE id = 1`;
         yield* refreshLimits(endpoint, live, now, mode);
         return live;
       }
@@ -864,13 +872,33 @@ const make = Effect.gen(function* () {
    */
   const cachedOrRead = (row: PoolRow) =>
     Effect.gen(function* () {
-      // A failed first read leaves the cached accounts as they were.
-      yield* firstModelsRead(row).pipe(Effect.ignore);
       const cached = yield* cachedAccounts;
-      if ((yield* Clock.currentTimeMillis) - cached.checkedAt < ACCOUNTS_FRESH_MS) return cached;
-      if (row.backing !== "external" && !(yield* container.running)) return cached;
-      const read = yield* refreshAccounts(row, undefined, { passive: true }).pipe(Effect.result);
-      return read._tag === "Success" ? yield* cachedAccounts : cached;
+      return yield* Effect.gen(function* () {
+        // A failed first read leaves the cached accounts and models intact.
+        yield* firstModelsRead(row).pipe(Effect.ignore);
+        const afterModels = yield* cachedAccounts;
+        if ((yield* Clock.currentTimeMillis) - afterModels.checkedAt < ACCOUNTS_FRESH_MS) {
+          return afterModels;
+        }
+        if (row.backing !== "external" && !(yield* container.running)) return afterModels;
+        // A backend error is recorded beside the last authorized snapshot.
+        yield* refreshAccounts(row, undefined, { passive: true }).pipe(Effect.result);
+        return yield* cachedAccounts.pipe(Effect.orElseSucceed(() => afterModels));
+      }).pipe(
+        Effect.timeoutOrElse({
+          duration: ACCOUNTS_READ_TIMEOUT_MS,
+          orElse: () =>
+            Effect.gen(function* () {
+              // The account list may already have committed while its usage probes were slow.
+              const after = yield* cachedAccounts;
+              if (after.checkedAt > cached.checkedAt) return after;
+              const now = yield* Clock.currentTimeMillis;
+              yield* sql`UPDATE accounts_state SET checked_at = ${now},
+                error = ${ACCOUNTS_READ_TIMEOUT_MESSAGE} WHERE id = 1`;
+              return yield* cachedAccounts;
+            }),
+        }),
+      );
     });
 
   /** Whether a catalog can be refreshed without starting this pool's container. */
