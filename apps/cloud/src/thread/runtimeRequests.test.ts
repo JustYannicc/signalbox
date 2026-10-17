@@ -2,6 +2,8 @@ import {
   CommandId,
   EnvironmentId,
   NodeId,
+  OrchestrationV2ExecutionNode,
+  OrchestrationV2TurnItem,
   OrchestrationV2RuntimeRequest,
   RuntimeRequestId,
   TurnItemId,
@@ -13,7 +15,7 @@ import * as Schema from "effect/Schema";
 import { pushFor } from "../push/pushRules.ts";
 import { derivePendingThreadRequests } from "@t3tools/client-runtime/state/thread-requests";
 import { unsupported } from "./threadDecider.ts";
-import { nodeEvent, turnItemEvent } from "./threadEvents.ts";
+import { nodeEvent, runEvent, turnItemEvent } from "./threadEvents.ts";
 import { threadShellFromProjection } from "./threadProjection.ts";
 import {
   connect,
@@ -30,6 +32,8 @@ import {
 
 const requestId = RuntimeRequestId.make("native-request-1");
 const encodeRequest = Schema.encodeSync(Schema.toCodecJson(OrchestrationV2RuntimeRequest));
+const encodeNode = Schema.encodeSync(Schema.toCodecJson(OrchestrationV2ExecutionNode));
+const encodeItem = Schema.encodeSync(Schema.toCodecJson(OrchestrationV2TurnItem));
 
 const waiting = (
   engine: Parameters<typeof launch>[0],
@@ -228,6 +232,7 @@ describe("cloud native runtime requests", () => {
     withObject(freshDatabase(), (engine, runner) =>
       Effect.gen(function* () {
         const { machine, item, turn } = yield* waiting(engine, runner);
+        const pending = (yield* snapshot(engine)).projection;
         yield* engine.dispatch(
           owner,
           {
@@ -238,9 +243,41 @@ describe("cloud native runtime requests", () => {
           },
           personal,
         );
-        yield* runner.batch({ generation: machine.generation, sequence: 3, items: [item] });
+        yield* runner.batch({
+          generation: machine.generation,
+          sequence: 3,
+          items: [
+            item,
+            {
+              kind: "provider",
+              runId: turn.runId,
+              event: {
+                type: "node.updated",
+                node: encodeNode(
+                  pending.nodes.find((node) => node.runtimeRequestId === requestId)!,
+                ),
+              },
+            },
+            {
+              kind: "provider",
+              runId: turn.runId,
+              event: {
+                type: "turn_item.updated",
+                turnItem: encodeItem(
+                  pending.turnItems.find((item) => item.id === "question-item")!,
+                ),
+              },
+            },
+          ],
+        });
         const stopped = (yield* snapshot(engine)).projection;
         expect(stopped.runtimeRequests[0]?.status).toBe("expired");
+        expect(stopped.nodes.find((node) => node.runtimeRequestId === requestId)?.status).toBe(
+          "cancelled",
+        );
+        expect(stopped.turnItems.find((item) => item.id === "question-item")?.status).toBe(
+          "cancelled",
+        );
         expect(derivePendingThreadRequests(stopped).userInputs).toEqual([]);
         expect((yield* engine.summary(owner))?.shell.pendingRuntimeRequest).toBeNull();
         expect(yield* Effect.result(engine.dispatch(owner, answer(), personal))).toMatchObject({
@@ -249,6 +286,46 @@ describe("cloud native runtime requests", () => {
       }),
     ),
   );
+
+  it.effect("retires questions left pending by older builds when a stopped thread loads", () => {
+    const database = freshDatabase();
+    return Effect.gen(function* () {
+      yield* withObject(database, (engine, runner) =>
+        Effect.gen(function* () {
+          const { turn } = yield* waiting(engine, runner);
+          const projection = (yield* snapshot(engine)).projection;
+          const run = projection.runs.find((run) => run.id === turn.runId)!;
+          // Older cloud builds stopped runs without expiring their callbacks.
+          yield* engine.apply(() =>
+            Effect.succeed({
+              events: [
+                runEvent({ now: projection.updatedAt }, "run.updated", {
+                  ...run,
+                  status: "interrupted",
+                  completedAt: projection.updatedAt,
+                }),
+              ],
+              result: undefined,
+            }),
+          );
+        }),
+      );
+      const repairedHead = yield* withObject(database, (engine) =>
+        Effect.gen(function* () {
+          const repaired = yield* snapshot(engine);
+          expect(repaired.projection.runtimeRequests[0]?.status).toBe("expired");
+          expect(derivePendingThreadRequests(repaired.projection).userInputs).toEqual([]);
+          expect(threadShellFromProjection(repaired.projection).pendingRuntimeRequest).toBeNull();
+          return repaired.head;
+        }),
+      );
+      yield* withObject(database, (engine) =>
+        Effect.gen(function* () {
+          expect((yield* snapshot(engine)).head).toBe(repairedHead);
+        }),
+      );
+    });
+  });
 
   it.effect.each(["accept", "decline"] as const)(
     "commits %s for an approval and resumes the waiting run",

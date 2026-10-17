@@ -35,6 +35,7 @@ import { traceIdOf } from "./diagnostics/traceId.ts";
 import { hasPendingTurnWork, scriptedStep } from "./scriptedTurn.ts";
 import { type Decision, decide, decideLaunch, type ThreadWorktree } from "./threadDecider.ts";
 import type { DecisionContext } from "./threadEvents.ts";
+import { expireEndedRuntimeRequests } from "./runtimeRequests.ts";
 import { applyEvents, threadShellFromProjection, workStartedAt } from "./threadProjection.ts";
 import { noteKey, noteRunId, supersedes } from "./statusLine/statusNotePolicy.ts";
 import * as ThreadStore from "./ThreadStore.ts";
@@ -391,6 +392,11 @@ const make = Effect.gen(function* () {
     }
     return head;
   });
+
+  if (initial.owner !== null && initialProjection !== null) {
+    const events = expireEndedRuntimeRequests(initialProjection, yield* context);
+    if (events.length > 0) yield* commit({ events });
+  }
 
   /**
    * The thread as `actor` may see it: only its owner, while they're in its

@@ -176,6 +176,18 @@ export function recordedEvents(
     if (liveRunId !== item.runId) return [];
     return runtimeRequestEvents(projection, domainEvent, ctx);
   }
+  const requestId =
+    domainEvent.type === "node.updated"
+      ? domainEvent.payload.runtimeRequestId
+      : domainEvent.type === "turn-item.updated" &&
+          (domainEvent.payload.type === "approval_request" ||
+            domainEvent.payload.type === "user_input_request")
+        ? domainEvent.payload.requestId
+        : null;
+  if (requestId !== null) {
+    const request = projection.runtimeRequests.find((request) => request.id === requestId);
+    if (request !== undefined && request.status !== "pending") return [];
+  }
   return domainEvent.type === "turn-item.updated"
     ? [{ ...domainEvent, payload: positionTurnItem(projection, domainEvent.payload) }]
     : [domainEvent];

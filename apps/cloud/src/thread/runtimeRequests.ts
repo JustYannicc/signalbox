@@ -255,16 +255,44 @@ export function expireRuntimeRequests(
         !(completed && request.responseCapability.type === "message") &&
         projection.nodes.some((node) => node.id === request.nodeId && node.runId === runId),
     )
-    .map((request) =>
-      requestEvent(
-        projection,
-        {
-          ...request,
-          status: "expired",
-          resolvedAt: ctx.now,
-          responseCapability: { type: "not_resumable", reason: "The turn ended." },
-        },
-        ctx,
-      ),
-    );
+    .flatMap((request): ReadonlyArray<OrchestrationV2DomainEvent> => {
+      const node = projection.nodes.find((node) => node.id === request.nodeId);
+      const item = projection.turnItems.find(
+        (item) =>
+          (item.type === "approval_request" || item.type === "user_input_request") &&
+          item.requestId === request.id,
+      );
+      return [
+        requestEvent(
+          projection,
+          {
+            ...request,
+            status: "expired",
+            resolvedAt: ctx.now,
+            responseCapability: { type: "not_resumable", reason: "The turn ended." },
+          },
+          ctx,
+        ),
+        ...(node === undefined
+          ? []
+          : [nodeEvent(ctx, { ...node, status: "cancelled", completedAt: ctx.now })]),
+        ...(item === undefined
+          ? []
+          : [
+              turnItemEvent(ctx, {
+                ...item,
+                status: "cancelled",
+                completedAt: ctx.now,
+                updatedAt: ctx.now,
+              }),
+            ]),
+      ];
+    });
+}
+
+/** Older cloud builds ended runs without retiring their native callbacks. Repair through events. */
+export function expireEndedRuntimeRequests(projection: Projection, ctx: DecisionContext) {
+  return projection.runs
+    .filter((run) => !isLiveRun(run) && run.status !== "queued")
+    .flatMap((run) => expireRuntimeRequests(projection, run.id, ctx, run.status === "completed"));
 }
