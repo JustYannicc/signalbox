@@ -71,7 +71,9 @@ const snapshot = Schema.decodeUnknownSync(OrchestrationV2ThreadBoundedSnapshot)(
   },
 });
 
-class TestDrive extends Context.Service<TestDrive, DriveHandle>()("test/GitHubRefs/Drive") {}
+class TestDrive extends Context.Service<TestDrive, DriveHandle>()(
+  "@signalbox/cloud/github/githubRefsTesting/TestDrive",
+) {}
 
 export const fixture = Effect.gen(function* () {
   const state = {

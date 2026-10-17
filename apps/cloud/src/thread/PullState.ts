@@ -60,7 +60,7 @@ export class PullReports extends Context.Service<
     readonly revoke: (id: string, reason?: string) => Effect.Effect<void>;
     readonly exhausted: (id: string, generation: number) => Effect.Effect<void>;
   }
->()("@signalbox/cloud/thread/PullReports") {}
+>()("@signalbox/cloud/thread/PullState/PullReports") {}
 
 const pullById = (id: string) =>
   Effect.gen(function* () {
