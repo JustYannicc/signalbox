@@ -303,7 +303,9 @@ export const makePoolHandlers = (input: {
         followPools(pools, actor).pipe(
           Stream.mapEffect((state) =>
             Effect.map(Clock.currentTimeMillis, (now) =>
-              state.map((entry) => overview(entry.pool, entry.source, now)),
+              state.map(
+                (entry) => entry.lastKnownOverview ?? overview(entry.pool, entry.source, now),
+              ),
             ),
           ),
         ),

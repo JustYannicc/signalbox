@@ -33,7 +33,9 @@ export const poolProviders = (
         instanceId,
         displayName: config.displayName ?? POOL_INSTANCE_KINDS[kind].displayName,
         signedIn,
-        ...(source.error ? { unavailableReason: source.error } : {}),
+        ...(source.error && (signedIn || source.accounts.length === 0)
+          ? { unavailableReason: source.error }
+          : {}),
         models: harnessModels(kind, models, manifest),
         checkedAt,
       });
@@ -53,7 +55,24 @@ export const readyProviders = (providers: ReadonlyArray<ServerProvider>) =>
 /** The economical initial selection from pools ready to run. */
 export const poolDefaultModelSelection = (
   providers: ReadonlyArray<ServerProvider>,
-): ModelSelection | null => resolveInitialModelSelection({ providers: readyProviders(providers) });
+): ModelSelection | null => {
+  const eligible = providers.filter(
+    (provider) =>
+      provider.enabled &&
+      provider.installed &&
+      provider.availability !== "unavailable" &&
+      provider.auth.status !== "unauthenticated" &&
+      (provider.status !== "error" ||
+        (provider.auth.status === "unknown" &&
+          provider.unavailableReason !== undefined &&
+          provider.models.length > 0)),
+  );
+  return (
+    resolveInitialModelSelection({
+      providers: eligible.filter((provider) => provider.status === "ready"),
+    }) ?? resolveInitialModelSelection({ providers: eligible })
+  );
+};
 
 /** Settings list each instance with its pool, which is how clients group instances by pool. */
 export const poolProviderInstances = (

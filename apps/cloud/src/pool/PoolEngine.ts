@@ -682,16 +682,6 @@ const make = Effect.gen(function* () {
               WHERE id = 1`.pipe(Effect.andThen(Effect.fail(error))),
         }),
       );
-      // The models the accounts serve. A failed read keeps the last list.
-      yield* CliProxyApi.listModels(endpoint).pipe(
-        Effect.flatMap((models) => withSql(PoolModels.store(models, now))),
-        Effect.catchTags({
-          PoolBackendError: (error) =>
-            Effect.logWarning("pool model list read failed", error.detail, error.cause).pipe(
-              Effect.andThen(withSql(PoolModels.markTried(now))),
-            ),
-        }),
-      );
       const cached = yield* cachedAccounts;
       const known = new Map(cached.accounts.map((account) => [account.name, account]));
       const changed = live.filter((account) => {
@@ -709,26 +699,34 @@ const make = Effect.gen(function* () {
       const mode: PoolLimits.ReadMode =
         options?.passive === true || options?.probe === true ? "probe" : "free";
       if (changed.length === 0 && removed.length === 0 && cached.error === null) {
-        // Account-list freshness is independent of the usage probes below.
         yield* sql`UPDATE accounts_state SET checked_at = ${now}, error = NULL WHERE id = 1`;
-        yield* refreshLimits(endpoint, live, now, mode);
-        return live;
-      }
-      yield* sql.withTransaction(
-        Effect.gen(function* () {
-          for (const account of changed) {
-            const contributor = known.has(account.name) ? null : contributors(account.name);
-            yield* sql`INSERT INTO accounts (name, type, email, disabled, signed_out,
+      } else {
+        yield* sql.withTransaction(
+          Effect.gen(function* () {
+            for (const account of changed) {
+              const contributor = known.has(account.name) ? null : contributors(account.name);
+              yield* sql`INSERT INTO accounts (name, type, email, disabled, signed_out,
                 contributed_by, added_at)
               VALUES (${account.name}, ${account.type}, ${account.email},
                 ${account.disabled ? 1 : 0}, ${account.signedOut ? 1 : 0}, ${contributor}, ${now})
               ON CONFLICT (name) DO UPDATE SET type = excluded.type, email = excluded.email,
                 disabled = excluded.disabled, signed_out = excluded.signed_out`;
-          }
-          for (const account of removed) {
-            yield* sql`DELETE FROM accounts WHERE name = ${account.name}`;
-          }
-          yield* sql`UPDATE accounts_state SET checked_at = ${now}, error = NULL WHERE id = 1`;
+            }
+            for (const account of removed) {
+              yield* sql`DELETE FROM accounts WHERE name = ${account.name}`;
+            }
+            yield* sql`UPDATE accounts_state SET checked_at = ${now}, error = NULL WHERE id = 1`;
+          }),
+        );
+      }
+      // Account freshness must not wait for model discovery or provider usage probes.
+      yield* CliProxyApi.listModels(endpoint).pipe(
+        Effect.flatMap((models) => withSql(PoolModels.store(models, now))),
+        Effect.catchTags({
+          PoolBackendError: (error) =>
+            Effect.logWarning("pool model list read failed", error.detail, error.cause).pipe(
+              Effect.andThen(withSql(PoolModels.markTried(now))),
+            ),
         }),
       );
       yield* refreshLimits(endpoint, live, now, mode);
@@ -949,9 +947,7 @@ const make = Effect.gen(function* () {
       // The account list may already have committed while its usage probes were slow.
       const after = yield* cachedAccounts;
       if (after.checkedAt > cached.checkedAt) return after;
-      const now = yield* Clock.currentTimeMillis;
-      yield* sql`UPDATE accounts_state SET checked_at = ${now},
-        error = ${ACCOUNTS_READ_TIMEOUT_MESSAGE} WHERE id = 1`;
+      yield* sql`UPDATE accounts_state SET error = ${ACCOUNTS_READ_TIMEOUT_MESSAGE} WHERE id = 1`;
       return yield* cachedAccounts;
     });
 
