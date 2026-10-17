@@ -400,3 +400,65 @@ it.effect("preserves ordinary authentication advice", () => {
     expect(error.responseExcerpt).toContain(message);
   });
 });
+
+it.effect("reads the whole heads namespace from GitHub refs with the acting token", () => {
+  const body = [
+    { ref: "refs/heads/main", object: { sha: "a".repeat(40) } },
+    { ref: "refs/heads/feature/日本語", object: { sha: "b".repeat(40) } },
+  ];
+  const requests: Array<string> = [];
+  const client = HttpClient.make((request) => {
+    requests.push(request.url);
+    expect(request.headers.authorization).toBe("Bearer refs-token");
+    return Effect.succeed(HttpClientResponse.fromWeb(request, Response.json(body)));
+  });
+  return Effect.gen(function* () {
+    const refs = yield* makeGitHubApi(client).listRefs("refs-token", "owner/repository");
+    expect(refs).toEqual(body);
+    expect(requests).toEqual([
+      "https://api.github.com/repos/owner/repository/git/matching-refs/heads/",
+    ]);
+  });
+});
+
+it.effect("distinguishes an empty heads namespace from inaccessible refs", () =>
+  Effect.gen(function* () {
+    expect(yield* makeGitHubApi(responseClient([])).listRefs("token", "owner/repository")).toEqual(
+      [],
+    );
+    expect(
+      yield* makeGitHubApi(responseClient({}, 404)).listRefs("token", "owner/repository"),
+    ).toBe(null);
+  }),
+);
+
+it.effect("fails unreadable refs instead of silently omitting branches", () =>
+  Effect.gen(function* () {
+    for (const body of [
+      { ref: "refs/heads/main", object: { sha: "a".repeat(40) } },
+      [{ ref: "refs/heads/main", object: { sha: 17 } }],
+    ]) {
+      const error = yield* makeGitHubApi(responseClient(body))
+        .listRefs("token", "owner/repository")
+        .pipe(Effect.flip);
+      expect(error).toMatchObject({ operation: "listRefs", status: 200 });
+      expect(error.message).toBe("GitHub sent an answer Signalbox does not understand.");
+    }
+  }),
+);
+
+it.effect("lists no refs for an empty GitHub repository but retains unrelated conflicts", () =>
+  Effect.gen(function* () {
+    expect(
+      yield* makeGitHubApi(responseClient({ message: "Git Repository is empty." }, 409)).listRefs(
+        "token",
+        "owner/empty",
+      ),
+    ).toEqual([]);
+    const error = yield* makeGitHubApi(responseClient({ message: "A different conflict." }, 409))
+      .listRefs("token", "owner/repository")
+      .pipe(Effect.flip);
+    expect(error.status).toBe(409);
+    expect(error.message).toBe("A different conflict.");
+  }),
+);
