@@ -541,6 +541,10 @@ export class UserObject extends DurableObject<UserObjectEnv> implements UserObje
     return this.api.checkSignIn(input);
   }
 
+  authorizeExecutorToken(...args: Parameters<UserObjectApi["authorizeExecutorToken"]>) {
+    return this.api.authorizeExecutorToken(...args);
+  }
+
   endBrowser(input: Parameters<UserObjectApi["endBrowser"]>[0]) {
     return this.api.endBrowser(input);
   }
