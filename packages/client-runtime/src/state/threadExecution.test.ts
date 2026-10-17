@@ -56,29 +56,42 @@ function run(id: string, ordinal: number, status: OrchestrationV2RunStatus) {
 
 describe("thread execution presentation", () => {
   it("maps restart continuations through their root to the terminal run", () => {
-    const root = { ...run("root", 1, "interrupted"), completedAt: now };
+    const at = (value: string) => DateTime.makeUnsafe(value);
+    const root = {
+      ...run("root", 1, "interrupted"),
+      requestedAt: at("2026-07-28T10:00:00.000Z"),
+      startedAt: at("2026-07-28T10:00:05.000Z"),
+      workStartedAt: at("2026-07-28T10:00:00.000Z"),
+      completedAt: at("2026-07-28T10:00:30.000Z"),
+    };
     const middle = {
       ...run("middle", 2, "interrupted"),
       restartContinuationOfRunId: root.id,
-      workStartedAt: now,
-      completedAt: now,
+      requestedAt: at("2026-07-28T10:00:31.000Z"),
+      startedAt: at("2026-07-28T10:00:35.000Z"),
+      workStartedAt: at("2026-07-28T10:00:00.000Z"),
+      completedAt: at("2026-07-28T10:00:50.000Z"),
     };
     const terminal = {
       ...run("terminal", 3, "completed"),
       restartContinuationOfRunId: middle.id,
-      workStartedAt: now,
-      completedAt: now,
+      requestedAt: at("2026-07-28T10:00:51.000Z"),
+      startedAt: at("2026-07-28T10:00:55.000Z"),
+      workStartedAt: at("2026-07-28T10:00:00.000Z"),
+      completedAt: at("2026-07-28T10:01:24.000Z"),
     };
 
     const continuations = deriveRunContinuations([root, middle, terminal]);
     for (const runId of [root.id, middle.id, terminal.id]) {
-      expect(continuations.get(runId)).toEqual({
+      const summary = continuations.get(runId);
+      expect(summary).toEqual({
         rootRunId: root.id,
         terminalRunId: terminal.id,
         status: "completed",
         startedAt: "2026-07-28T10:00:00.000Z",
-        completedAt: "2026-07-28T10:00:00.000Z",
+        completedAt: "2026-07-28T10:01:24.000Z",
       });
+      expect(Date.parse(summary!.completedAt!) - Date.parse(summary!.startedAt)).toBe(84_000);
     }
   });
 

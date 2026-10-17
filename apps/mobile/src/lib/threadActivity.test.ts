@@ -1148,7 +1148,121 @@ describe("buildThreadFeed", () => {
       }),
     ]);
 
-    const expanded = deriveThreadFeedPresentation(feed, latestRun, new Set([rootRunId]));
+    const expanded = deriveThreadFeedPresentation(feed, latestRun, new Set([continuationRunId]));
+    expect(expanded.find((entry) => entry.type === "run-fold")).toMatchObject({ expanded: true });
+    const visibleRunIds = expanded.flatMap((entry) =>
+      entry.type === "activity-group"
+        ? [entry.runId, ...entry.activities.map((activity) => activity.runId)]
+        : entry.type === "work-toggle"
+          ? [entry.runId]
+          : [],
+    );
+    expect(visibleRunIds).toEqual(expect.arrayContaining([rootRunId, continuationRunId]));
+  });
+
+  it("keeps a stopped machine-loss continuation prompt visible and its fold boundary local", () => {
+    const rootRunId = RunId.make("run-machine-lost");
+    const continuationRunId = RunId.make("run-machine-resume");
+    const unrelatedRunId = RunId.make("run-after-resume");
+    const at = (value: string) => DateTime.makeUnsafe(value);
+    const runContinuations = deriveRunContinuations([
+      {
+        id: rootRunId,
+        ordinal: 1,
+        status: "interrupted",
+        requestedAt: at("2026-06-20T00:00:00.000Z"),
+        startedAt: at("2026-06-20T00:00:01.000Z"),
+        workStartedAt: at("2026-06-20T00:00:00.000Z"),
+        completedAt: at("2026-06-20T00:00:30.000Z"),
+      },
+      {
+        id: continuationRunId,
+        ordinal: 2,
+        restartContinuationOfRunId: rootRunId,
+        status: "interrupted",
+        requestedAt: at("2026-06-20T00:00:31.000Z"),
+        startedAt: at("2026-06-20T00:00:35.000Z"),
+        workStartedAt: at("2026-06-20T00:00:00.000Z"),
+        completedAt: at("2026-06-20T00:01:24.000Z"),
+      },
+    ]);
+    const continuationPromptId = MessageId.make("message-machine-lost-continuation");
+    const continuationPrompt = {
+      ...userMessage("2026-06-20T00:00:40.000Z"),
+      id: TurnItemId.make("item-machine-lost-continuation"),
+      messageId: continuationPromptId,
+      runId: continuationRunId,
+      text: "Continue where you left off.",
+    };
+    const rootWork = {
+      ...command("2026-06-20T00:00:20.000Z"),
+      id: TurnItemId.make("item-machine-lost-work"),
+      runId: rootRunId,
+    };
+    const continuationWork = {
+      ...command("2026-06-20T00:00:55.000Z"),
+      id: TurnItemId.make("item-machine-resumed-work"),
+      runId: continuationRunId,
+    };
+    const unrelatedWork = (id: string, createdAt: string) => {
+      const built = buildThreadFeed([
+        projected(
+          {
+            ...command(createdAt),
+            id: TurnItemId.make(id),
+            runId: unrelatedRunId,
+          },
+          0,
+        ),
+      ])[0];
+      if (built?.type !== "activity-group") throw new Error("Expected an activity group.");
+      return { ...built, id, createdAt };
+    };
+    const feed = [
+      ...buildThreadFeed([
+        projected({ ...userMessage("2026-06-20T00:00:00.000Z"), runId: rootRunId }, 0),
+        projected(rootWork, 1),
+      ]),
+      ...buildThreadFeed([projected(continuationPrompt, 0), projected(continuationWork, 1)]),
+      unrelatedWork("unrelated-start", "2026-06-20T00:02:00.000Z"),
+      unrelatedWork("unrelated-end", "2026-06-20T00:02:10.000Z"),
+    ];
+    const latestRun = {
+      runId: continuationRunId,
+      status: "interrupted" as const,
+      startedAt: "2026-06-20T00:00:00.000Z",
+      completedAt: "2026-06-20T00:01:24.000Z",
+      runContinuations,
+    };
+
+    const collapsed = deriveThreadFeedPresentation(feed, latestRun, new Set());
+    const continuationPromptIndex = collapsed.findIndex(
+      (entry) => entry.type === "message" && entry.message.id === continuationPromptId,
+    );
+    const rootFoldIndex = collapsed.findIndex(
+      (entry) => entry.type === "run-fold" && entry.runId === rootRunId,
+    );
+    expect(collapsed[continuationPromptIndex]).toMatchObject({
+      type: "message",
+      message: { role: "user", text: "Continue where you left off." },
+    });
+    expect(rootFoldIndex).toBeGreaterThan(continuationPromptIndex);
+    expect(collapsed[rootFoldIndex]).toMatchObject({
+      label: "You stopped after 1m 24s",
+      expanded: false,
+    });
+    expect(
+      collapsed.find((entry) => entry.type === "run-fold" && entry.runId === unrelatedRunId),
+    ).toMatchObject({
+      label: "Worked for 10s",
+    });
+
+    const expanded = deriveThreadFeedPresentation(feed, latestRun, new Set([continuationRunId]));
+    expect(
+      expanded.find((entry) => entry.type === "run-fold" && entry.runId === rootRunId),
+    ).toMatchObject({
+      expanded: true,
+    });
     const visibleRunIds = expanded.flatMap((entry) =>
       entry.type === "activity-group"
         ? [entry.runId, ...entry.activities.map((activity) => activity.runId)]

@@ -359,6 +359,12 @@ export function useThreadComposerState() {
         : (selectedThreadShell?.runtime ?? null),
     [selectedThreadProjection, selectedThreadShell?.runtime],
   );
+  const selectedThreadProjectionRuns = selectedThreadProjection?.projection.runs;
+  const selectedThreadRunContinuations = useMemo(
+    () =>
+      selectedThreadProjectionRuns ? deriveRunContinuations(selectedThreadProjectionRuns) : null,
+    [selectedThreadProjectionRuns],
+  );
   const selectedThreadActivityRun = useMemo<
     (ThreadFeedLatestRun & Pick<ThreadRunSummary, "requestedAt">) | null
   >(() => {
@@ -367,8 +373,10 @@ export function useThreadComposerState() {
     const run = deriveThreadActivityRun(projection);
     return run === null
       ? null
-      : { ...run, runContinuations: deriveRunContinuations(projection.runs) };
-  }, [selectedThreadProjection, selectedThreadShell?.latestRun]);
+      : selectedThreadRunContinuations === null
+        ? run
+        : { ...run, runContinuations: selectedThreadRunContinuations };
+  }, [selectedThreadProjection, selectedThreadRunContinuations, selectedThreadShell?.latestRun]);
 
   const isCompacting = useMemo(() => {
     const queuedCompact = selectedThreadQueuedMessages.some(

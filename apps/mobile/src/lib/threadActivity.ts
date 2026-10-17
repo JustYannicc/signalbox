@@ -1068,14 +1068,27 @@ function deriveThreadFeedRunFolds(
   }
   const groupsByRunId = new Map<
     RunId,
-    { entries: ThreadFeedEntry[]; startBoundary: string | null }
+    {
+      entries: ThreadFeedEntry[];
+      startBoundary: string | null;
+      continuationAnchorEntryId: string | null;
+    }
   >();
   let runlessKey: RunId | null = null;
   let responseKey: RunId | null = null;
-  let pendingUserBoundary: string | null = null;
+  let pendingUserBoundary: {
+    createdAt: string;
+    runId: RunId | null;
+  } | null = null;
   for (const [index, entry] of feed.entries()) {
     if (entry.type === "message" && entry.message.role === "user") {
-      pendingUserBoundary = entry.message.createdAt;
+      const nextEntry = feed[index + 1];
+      pendingUserBoundary = nextEntry
+        ? {
+            createdAt: entry.message.createdAt,
+            runId: entry.message.runId,
+          }
+        : null;
       runlessKey = entry.message.runId == null ? RunId.make(`runless:${entry.id}`) : null;
       responseKey = entry.message.runId ?? runlessKey;
       continue;
@@ -1099,9 +1112,23 @@ function deriveThreadFeedRunFolds(
     const runId = logicalRunId(attributedRunId);
     let group = groupsByRunId.get(runId);
     if (!group) {
-      group = { entries: [], startBoundary: pendingUserBoundary };
+      group = {
+        entries: [],
+        startBoundary: pendingUserBoundary?.createdAt ?? null,
+        continuationAnchorEntryId: null,
+      };
       pendingUserBoundary = null;
       groupsByRunId.set(runId, group);
+    } else if (pendingUserBoundary !== null) {
+      if (
+        pendingUserBoundary.runId !== null &&
+        pendingUserBoundary.runId !== runId &&
+        logicalRunId(pendingUserBoundary.runId) === runId
+      ) {
+        // The recovery prompt is a visible user row; keep the combined fold after it.
+        group.continuationAnchorEntryId = entry.id;
+      }
+      pendingUserBoundary = null;
     }
     group.entries.push(entry);
     if (entry.type === "message") {
@@ -1167,6 +1194,10 @@ function deriveThreadFeedRunFolds(
     const firstHiddenEntry = group.entries.find((entry) => hiddenEntryIds.has(entry.id));
     const lastEntry = group.entries.at(-1);
     if (!firstHiddenEntry || !firstEntry || !lastEntry) continue;
+    const foldAnchor = group.continuationAnchorEntryId
+      ? group.entries.find((entry) => entry.id === group.continuationAnchorEntryId)
+      : firstHiddenEntry;
+    if (!foldAnchor) continue;
     const hidesNonCompactionWork = group.entries.some(
       (entry) =>
         hiddenEntryIds.has(entry.id) &&
@@ -1192,9 +1223,9 @@ function deriveThreadFeedRunFolds(
           );
     const duration = elapsedMs === null ? null : formatDuration(elapsedMs);
     const interrupted = run?.status === "interrupted" || run?.status === "cancelled";
-    foldsByAnchorId.set(firstHiddenEntry.id, {
+    foldsByAnchorId.set(foldAnchor.id, {
       runId,
-      createdAt: firstHiddenEntry.createdAt,
+      createdAt: foldAnchor.createdAt,
       hiddenEntryIds,
       label: interrupted
         ? duration
@@ -1260,6 +1291,11 @@ export function deriveThreadFeedPresentation(
     activeRunId === null
       ? null
       : (latestRun?.runContinuations?.get(activeRunId)?.rootRunId ?? activeRunId);
+  const continuations = latestRun?.runContinuations;
+  const logicalExpandedRunIds =
+    expandedRunIds.size > 0 && continuations
+      ? new Set([...expandedRunIds].map((runId) => continuations.get(runId)?.rootRunId ?? runId))
+      : expandedRunIds;
   const isWorking = activeWorkStartedAt !== null && latestRun?.status !== "preparing";
   const foldsByAnchorId = deriveThreadFeedRunFolds(
     sourceFeed,
@@ -1269,7 +1305,7 @@ export function deriveThreadFeedPresentation(
   );
   const collapsedEntryIds = new Set<string>();
   for (const fold of foldsByAnchorId.values()) {
-    if (!expandedRunIds.has(fold.runId)) {
+    if (!logicalExpandedRunIds.has(fold.runId)) {
       for (const entryId of fold.hiddenEntryIds) collapsedEntryIds.add(entryId);
     }
   }
@@ -1287,7 +1323,7 @@ export function deriveThreadFeedPresentation(
           logicalActiveRunId);
     const fold = foldsByAnchorId.get(entry.id);
     if (fold) {
-      const expanded = expandedRunIds.has(fold.runId);
+      const expanded = logicalExpandedRunIds.has(fold.runId);
       let row = runFoldRowsCache.get(entry);
       if (
         !row ||

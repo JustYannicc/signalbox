@@ -1000,6 +1000,7 @@ function deriveTurnFolds(input: {
      */
     startBoundary: string | null;
     anchorEntryId: string;
+    continuationAnchorEntryId: string | null;
   }
   const groupsByRunId = new Map<RunId, TurnGroup>();
   const runlessFailedKeys = new Set<RunId>();
@@ -1009,16 +1010,20 @@ function deriveTurnFolds(input: {
   // first V2 run must not unfold every imported turn above it.
   let runlessKey: RunId | null = null;
   let responseKey: RunId | null = null;
-  let pendingBoundary: { createdAt: string; anchorEntryId: string } | null = null;
+  let pendingBoundary: {
+    createdAt: string;
+    anchorEntryId: string;
+    runId: RunId | null;
+  } | null = null;
   for (const [index, entry] of input.timelineEntries.entries()) {
     if (timelineEntryStartsResponse(entry)) {
       const nextEntry = input.timelineEntries[index + 1];
-      pendingBoundary = nextEntry
-        ? { createdAt: entry.createdAt, anchorEntryId: nextEntry.id }
-        : null;
       const boundaryRunId = responseBoundaryRunId(entry);
       runlessKey = boundaryRunId == null ? RunId.make(`runless:${entry.id}`) : null;
       responseKey = boundaryRunId ?? runlessKey;
+      pendingBoundary = nextEntry
+        ? { createdAt: entry.createdAt, anchorEntryId: nextEntry.id, runId: responseKey }
+        : null;
       continue;
     }
     const ownRunId = timelineEntryFoldRunId(entry, runlessKey);
@@ -1044,9 +1049,20 @@ function deriveTurnFolds(input: {
         hasStreamingMessage: false,
         startBoundary: pendingBoundary?.createdAt ?? null,
         anchorEntryId: pendingBoundary?.anchorEntryId ?? entry.id,
+        continuationAnchorEntryId: null,
       };
       pendingBoundary = null;
       groupsByRunId.set(runId, group);
+    } else if (pendingBoundary !== null) {
+      if (
+        pendingBoundary.runId !== null &&
+        pendingBoundary.runId !== runId &&
+        logicalRunId(pendingBoundary.runId) === runId
+      ) {
+        // The recovery prompt is a visible user row; keep the combined fold after it.
+        group.continuationAnchorEntryId = entry.id;
+      }
+      pendingBoundary = null;
     }
     group.entries.push(entry);
     if (entry.kind === "message") {
@@ -1145,9 +1161,9 @@ function deriveTurnFolds(input: {
         ? `Worked for ${duration}`
         : "Worked";
 
-    foldsByAnchorEntryId.set(group.anchorEntryId, {
+    foldsByAnchorEntryId.set(group.continuationAnchorEntryId ?? group.anchorEntryId, {
       runId,
-      anchorEntryId: group.anchorEntryId,
+      anchorEntryId: group.continuationAnchorEntryId ?? group.anchorEntryId,
       createdAt: group.startBoundary ?? firstEntry.createdAt,
       hiddenEntryIds,
       label,
@@ -1393,9 +1409,15 @@ export function deriveMessagesTimelineRows(input: {
     liveSubagentEntryIds,
     completeSupersededReplyEntryIds: completeSupersededReplyIds,
   });
+  const expandedRunIds = input.expandedRunIds;
+  const runContinuations = input.latestRun?.runContinuations;
+  const logicalExpandedRunIds =
+    expandedRunIds && expandedRunIds.size > 0 && runContinuations
+      ? new Set([...expandedRunIds].map((runId) => runContinuations.get(runId)?.rootRunId ?? runId))
+      : expandedRunIds;
   const collapsedEntryIds = new Set<string>();
   for (const fold of foldsByAnchorEntryId.values()) {
-    if (!input.expandedRunIds?.has(fold.runId)) {
+    if (!logicalExpandedRunIds?.has(fold.runId)) {
       for (const entryId of fold.hiddenEntryIds) {
         collapsedEntryIds.add(entryId);
       }
@@ -1545,7 +1567,7 @@ export function deriveMessagesTimelineRows(input: {
         createdAt: turnFold.createdAt,
         runId: turnFold.runId,
         label: turnFold.label,
-        expanded: input.expandedRunIds?.has(turnFold.runId) ?? false,
+        expanded: logicalExpandedRunIds?.has(turnFold.runId) ?? false,
       });
     }
 
