@@ -209,6 +209,8 @@ export function resolveClaudeCatalogEffort(
   model: string | null | undefined,
   raw: string | null | undefined,
 ): string | undefined {
+  if (!resolveClaudeCatalogModel(catalog, model)) return raw?.trim() || undefined;
+
   const caps = getClaudeCatalogModelCapabilities(catalog, model);
   const descriptors = getProviderOptionDescriptors({
     caps,

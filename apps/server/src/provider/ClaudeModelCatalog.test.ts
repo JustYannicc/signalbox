@@ -215,7 +215,8 @@ describe("Claude model catalog", () => {
     ]);
 
     assert.strictEqual(resolveClaudeModelSlug(catalog, "synthetic"), "synthetic");
-    assert.strictEqual(resolveClaudeCatalogEffort(catalog, "synthetic", "extreme"), undefined);
+    assert.strictEqual(resolveClaudeCatalogEffort(catalog, "synthetic", "extreme"), "extreme");
+    assert.strictEqual(normalizeClaudeCatalogEffort(catalog, "extreme", "synthetic"), "extreme");
 
     assert.strictEqual(
       resolveClaudeCatalogEffort(catalog, "claude-custom-tuned", "brutal"),

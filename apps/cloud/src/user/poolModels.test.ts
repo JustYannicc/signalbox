@@ -12,17 +12,19 @@ import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
 import * as RpcTest from "effect/rpc/RpcTest";
+import { vi } from "vite-plus/test";
 
 import type { CloudEnvironmentIdentity } from "../environment.ts";
 import { scratchProject } from "../environment.ts";
 import { makeMemoryCloud } from "../testing.ts";
+import * as PoolEngine from "../pool/PoolEngine.ts";
 import * as CloudRpc from "./rpc.ts";
 
 /**
  * What the model picker gets from a cloud whose pools run the fake
- * CLIProxyAPI (`pool/testing.ts`): its served models, named by the bundled
- * model manifest, and the model new threads start on.
+ * CLIProxyAPI (`pool/testing.ts`), including models the fallback labels do not know.
  */
 
 const userId = "user_1";
@@ -77,6 +79,8 @@ describe("cloud pool models", () => {
       personal.cliProxyApi.catalog.claude!.push({
         id: "claude-custom-team-model",
         created: 1_800_000_000,
+        displayName: "Custom team model",
+        reasoningEfforts: [],
       });
       yield* signIn("claude");
       yield* signIn("codex");
@@ -145,22 +149,55 @@ describe("cloud pool models", () => {
     }).pipe(Effect.scoped),
   );
 
-  it.effect("offers the models the pool's accounts serve, named by the manifest", () =>
+  it.effect("reads a scheduled catalog refresh when a client reloads its config", () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    const startedAt = Date.parse("2026-10-17T10:00:00.000Z");
+    vi.setSystemTime(startedAt);
+    return Effect.gen(function* () {
+      const { rpc, personal, signIn } = yield* client();
+      yield* signIn("claude");
+      personal.cliProxyApi.catalog.claude!.push({
+        id: "claude-new-pool-model",
+        created: 1,
+        displayName: "New pool model",
+        reasoningEfforts: [],
+      });
+      vi.setSystemTime(startedAt + PoolEngine.MODELS_REFRESH_MS + 1);
+      yield* TestClock.adjust(PoolEngine.MODELS_REFRESH_MS + 1);
+      yield* Effect.promise(() =>
+        personal.runtime.runPromise(
+          PoolEngine.PoolEngine.use((engine) => engine.refreshModelsAtAlarm()),
+        ),
+      );
+
+      const current = yield* config(rpc);
+      expect(current.provider("claude_hub")?.models.map((model) => model.slug)).toContain(
+        "claude-new-pool-model",
+      );
+    }).pipe(Effect.scoped, Effect.ensuring(Effect.sync(() => vi.useRealTimers())));
+  });
+
+  it.effect("offers every model the pool serves and never invents a model from the fallback", () =>
     Effect.gen(function* () {
       const { rpc, personal, signIn } = yield* client();
       // A model CLIProxyAPI serves before the manifest knows it.
-      personal.cliProxyApi.catalog.claude!.push({ id: "claude-zephyr-6", created: 1_800_000_000 });
+      personal.cliProxyApi.catalog.claude!.push({
+        id: "claude-zephyr-6",
+        created: 1_800_000_000,
+        displayName: "claude-zephyr-6",
+        reasoningEfforts: [],
+      });
       yield* signIn("claude");
 
       const { config: current, provider } = yield* config(rpc);
       const claude = provider("claude_hub");
       expect(claude?.status).toBe("ready");
-      // The manifest names them and gives them options; legacy and long-gone
-      // models stay out; the newcomer shows under its slug.
       expect(claude?.models.map((model) => [model.slug, model.name])).toEqual([
         ["claude-opus-5-5", "Claude Opus 5.5"],
         ["claude-sonnet-5-5", "Claude Sonnet 5.5"],
         ["claude-fable-5-1", "Claude Fable 5.1"],
+        ["claude-3-7-sonnet-20250219", "Claude 3.7 Sonnet"],
+        ["claude-opus-5", "Claude Opus 5"],
         ["claude-zephyr-6", "claude-zephyr-6"],
       ]);
       expect(claude?.models[0]?.capabilities?.optionDescriptors?.length).toBeGreaterThan(0);
@@ -183,6 +220,7 @@ describe("cloud pool models", () => {
         "gpt-6.1-sol",
         "gpt-6-astra",
         "gpt-6-luna",
+        "gpt-5.5",
       ]);
     }).pipe(Effect.scoped),
   );
