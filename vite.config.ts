@@ -1,7 +1,6 @@
 import "vite-plus/test/config";
 import { defineConfig } from "vite-plus";
 import * as NodeURL from "node:url";
-import { REACT_COMPILED_FILES } from "./apps/web/reactCompiledFiles.ts";
 
 const RESTRICTED_IMPORT_PATHS = [
   {
@@ -322,15 +321,17 @@ export default defineConfig({
         },
       },
       {
-        // Files the React Compiler must compile. Its bailout rules are errors here, and manual
-        // memoization is redundant. apps/web/src/compiledFiles.test.ts compiles each file and
-        // fails on any bailout lint cannot see, such as try/finally.
-        files: [...REACT_COMPILED_FILES],
+        // Every web file must compile under the React Compiler. Its bailout rules are errors here,
+        // and manual memoization is redundant. No upstream rule bans useMemo/useCallback, hence
+        // t3code/no-manual-memo.
+        files: ["apps/web/src/**/*.{ts,tsx}"],
         rules: {
           "react/exhaustive-effect-dependencies": "error",
           "react/globals": "error",
           "react/hooks": "error",
           "react/immutability": "error",
+          // The compiler memoizes context values; this rule would ask for useMemo.
+          "react/jsx-no-constructed-context-values": "off",
           "react/memo-dependencies": "error",
           "react/preserve-manual-memoization": "error",
           "react/purity": "error",
