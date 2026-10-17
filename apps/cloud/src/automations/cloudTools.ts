@@ -27,6 +27,7 @@ import * as Effect from "effect/Effect";
 import type { UserFolders } from "../user/UserFolders.ts";
 import { acceptCompiled, type CloudCompiler } from "./cloudCompiler.ts";
 import { setFolderPhase } from "./folderPhaseTool.ts";
+import type { GitHubWebhooks } from "../github/GitHubWebhooks.ts";
 
 /**
  * Automation tools an agent calls from its cloud thread's machine, answered
@@ -117,6 +118,7 @@ export const makeCloudTools = (deps: {
   readonly compiler: CloudCompiler["Service"];
   readonly threads: AutomationThreadsShape;
   readonly folders: UserFolders["Service"];
+  readonly github: GitHubWebhooks["Service"];
 }): Readonly<Record<string, Handler>> => {
   const { engine } = deps;
 
@@ -133,6 +135,8 @@ export const makeCloudTools = (deps: {
       });
 
   return {
+    automation_github_subscriptions: () =>
+      deps.github.status.pipe(Effect.map((subscriptions) => ({ subscriptions }))),
     automation_save: (caller, input) =>
       Effect.gen(function* () {
         const source = yield* required(input, "source");
