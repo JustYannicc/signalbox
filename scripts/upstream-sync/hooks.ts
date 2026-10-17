@@ -4,7 +4,7 @@
  * upstream merge must keep. A hook may move when upstream refactors the code
  * around it, so it's matched by its text anywhere in the tree, not by file.
  */
-import { git, isAncestor } from "./mergeTree.ts";
+import { git, isAncestor, mergedHead } from "./mergeTree.ts";
 
 export interface Hook {
   readonly file: string;
@@ -19,20 +19,21 @@ export function hookText(line: string): string | undefined {
 }
 
 /**
- * Hook lines `head` removes and adds since it left `base` (`base...head`), so
- * commits `base` gained later don't count. Outside vendored references.
+ * Hook lines merging `head` into the current `base` removes and adds.
+ * Base-side resolutions carry through. Outside vendored references.
  */
 export function hookChanges(
   cwd: string,
   refs: { readonly base: string; readonly head: string },
 ): { readonly removed: Hook[]; readonly added: Hook[] } {
+  const candidate = mergedHead(cwd, refs.base, refs.head);
   const diff = git(cwd, [
     "diff",
     "--no-color",
     "--no-ext-diff",
     "--no-renames",
     "-U0",
-    `${refs.base}...${refs.head}`,
+    `${refs.base}..${candidate}`,
     "--",
     ".",
     ":!.repos",
