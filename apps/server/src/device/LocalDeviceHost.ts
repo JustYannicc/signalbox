@@ -167,12 +167,12 @@ const androidSdk = Effect.gen(function* () {
     const emulator = yield* exists(
       path.join(root, "emulator", windows ? "emulator.exe" : "emulator"),
     );
-    if (!explicit && !adb && !emulator) return null;
     const avdmanager = yield* exists(
       path.join(root, "cmdline-tools", "latest", "bin", avdmanagerBinary),
     );
     const legacyAvdmanager =
       !avdmanager && (yield* exists(path.join(root, "tools", "bin", avdmanagerBinary)));
+    if (!explicit && !adb && !emulator && !avdmanager && !legacyAvdmanager) return null;
     return { root, adb, emulator, avdmanager, legacyAvdmanager };
   });
   const isComplete = (sdk: AndroidSdkCandidate) => sdk.adb && sdk.emulator && sdk.avdmanager;

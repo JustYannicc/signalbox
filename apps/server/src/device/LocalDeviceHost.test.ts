@@ -357,6 +357,16 @@ describe("Android SDK availability", () => {
     }),
   );
 
+  it.effect("identifies missing platform tools in a Homebrew command-line-tools installation", () =>
+    Effect.gen(function* () {
+      const root = "/opt/homebrew/share/android-commandlinetools";
+      const reason = yield* diagnose([`${root}/cmdline-tools/latest/bin/avdmanager`], {
+        HOME: "/test/home",
+      });
+      expect(reason).toContain(`Android SDK Platform-Tools are missing from ${root}`);
+    }),
+  );
+
   it.effect("prefers a complete SDK found on PATH to an incomplete conventional root", () =>
     Effect.gen(function* () {
       const incompleteRoot = "/test/home/Library/Android/sdk";
@@ -506,6 +516,32 @@ describe("Android SDK availability", () => {
     }),
   );
 });
+
+it.effect("keeps ANDROID_HOME precedence when SDK variables conflict", () =>
+  Effect.gen(function* () {
+    const path = yield* Path.Path;
+    const root = "/preferred-sdk";
+    const otherRoot = "/other-sdk";
+    const sourceEnvironment = { ANDROID_HOME: root, ANDROID_SDK_ROOT: otherRoot };
+    const sdk = yield* resolveSdk(
+      [root, otherRoot].flatMap((directory) => [
+        `${directory}/platform-tools/adb`,
+        `${directory}/emulator/emulator`,
+        `${directory}/cmdline-tools/latest/bin/avdmanager`,
+      ]),
+      sourceEnvironment,
+    );
+    expect(sdk.root).toBe(root);
+    const environment = LocalDeviceHost.__testing.deviceHostEnvironment(
+      sourceEnvironment,
+      sdk.root,
+      "darwin",
+      path,
+    );
+    expect(environment.ANDROID_HOME).toBe(root);
+    expect(environment.ANDROID_SDK_ROOT).toBe(root);
+  }).pipe(Effect.provide(NodePath.layerPosix)),
+);
 
 it.effect("propagates the resolved Android SDK consistently to helpers", () =>
   Effect.gen(function* () {
