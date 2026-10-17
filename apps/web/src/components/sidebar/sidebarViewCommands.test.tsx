@@ -5,7 +5,7 @@ import {
   DEFAULT_RESOLVED_KEYBINDINGS,
   mergeWithDefaultKeybindings,
 } from "@t3tools/shared/keybindings";
-import { act } from "react";
+import { act, useMemo } from "react";
 import { create, type ReactTestRenderer } from "react-test-renderer";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
@@ -20,6 +20,14 @@ const state = vi.hoisted(() => ({
 vi.mock("@effect/atom-react", () => ({ useAtomValue: () => state.keybindings }));
 vi.mock("@tanstack/react-router", () => ({
   useNavigate: () => state.navigate,
+  useParams: ({ select }: { select: (params: Record<string, string>) => unknown }) =>
+    useMemo(
+      () =>
+        select(
+          state.pathname === "/env/thread" ? { environmentId: "env", threadId: "thread" } : {},
+        ),
+      [state.pathname],
+    ),
   useLocation: ({
     select,
   }: {
@@ -142,6 +150,29 @@ describe("sidebar view commands", () => {
     expect(localStorage.getItem(storageKey)).toBeNull();
     expect(press({ key: "g", code: "KeyG" }).defaultPrevented).toBe(true);
     expect(localStorage.getItem(storageKey)).toBe(JSON.stringify("home"));
+  });
+
+  it("honors !editableFocus while typing in a Settings input", () => {
+    state.keybindings = compileResolvedKeybindingsConfig([
+      { key: "h", command: "sidebar.home", when: "!editableFocus" },
+    ]);
+    act(() => {
+      renderer = create(<Harness />);
+    });
+    state.pathname = "/settings/keybindings";
+    act(() => renderer.update(<Harness />));
+    const input = document.createElement("input");
+    document.body.append(input);
+    input.focus();
+    const chord = { key: "h", code: "KeyH", metaKey: false, altKey: false };
+
+    expect(press(chord, input).defaultPrevented).toBe(false);
+    expect(state.navigate).not.toHaveBeenCalled();
+    expect(localStorage.getItem(storageKey)).toBeNull();
+
+    input.blur();
+    expect(press(chord).defaultPrevented).toBe(true);
+    expect(state.navigate).toHaveBeenCalledExactlyOnceWith({ href: "/env/thread" });
   });
 
   it("handles Home forwarded from Electron's focused browser and unsubscribes", () => {

@@ -1,12 +1,18 @@
 import { useAtomValue } from "@effect/atom-react";
-import { useLocation } from "@tanstack/react-router";
+import { useLocation, useParams } from "@tanstack/react-router";
 import { HouseIcon } from "lucide-react";
 import { useCallback, useEffect } from "react";
 
 import { isCommandPaletteOpen } from "../../commandPaletteBus";
 import { resolveShortcutCommand } from "../../keybindings";
+import { isEditableFocused } from "../../lib/editableFocus";
+import { isPreviewFocused } from "../../lib/previewFocus";
 import { isTerminalFocused } from "../../lib/terminalFocus";
+import { isModelPickerOpen } from "../../modelPickerVisibility";
+import { selectActiveRightPanel, useRightPanelStore } from "../../rightPanelStore";
 import { primaryServerKeybindingsAtom } from "../../state/server";
+import { selectThreadTerminalUiState, useTerminalUiStateStore } from "../../terminalUiStateStore";
+import { resolveThreadRouteRef } from "../../threadRoutes";
 import { ITEM_ICON_CLASS, type CommandPaletteActionItem } from "../CommandPalette.logic";
 import { isSidebarUtilityPage, useNavigateToMainApp } from "./mainAppLocation";
 import { useSidebarView, type SidebarView } from "./sidebarView";
@@ -45,6 +51,10 @@ export function useSidebarViewPaletteItems(): CommandPaletteActionItem[] {
 export function SidebarViewShortcuts() {
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   const { changeView } = useSidebarViewNavigation();
+  const routeThreadRef = useParams({
+    strict: false,
+    select: (params) => resolveThreadRouteRef(params),
+  });
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -56,7 +66,22 @@ export function SidebarViewShortcuts() {
       )
         return;
       const command = resolveShortcutCommand(event, keybindings, {
-        context: { terminalFocus: isTerminalFocused() },
+        context: {
+          terminalFocus: isTerminalFocused(),
+          terminalOpen: routeThreadRef
+            ? selectThreadTerminalUiState(
+                useTerminalUiStateStore.getState().terminalUiStateByThreadKey,
+                routeThreadRef,
+              ).terminalOpen
+            : false,
+          previewFocus: isPreviewFocused(),
+          previewOpen: routeThreadRef
+            ? selectActiveRightPanel(useRightPanelStore.getState().byThreadKey, routeThreadRef) ===
+              "preview"
+            : false,
+          editableFocus: isEditableFocused(event.target),
+          modelPickerOpen: isModelPickerOpen(),
+        },
       });
       if (command !== "sidebar.home") return;
       event.preventDefault();
@@ -71,7 +96,7 @@ export function SidebarViewShortcuts() {
       window.removeEventListener("keydown", onKeyDown);
       unsubscribe?.();
     };
-  }, [keybindings, changeView]);
+  }, [keybindings, changeView, routeThreadRef]);
 
   return null;
 }
