@@ -20,7 +20,7 @@ function mergePrompt(existing: string, prompt: string): string {
 }
 
 /** Opens a draft thread in `projectRef` holding `prompt`. Reports when it couldn't. */
-export function useOpenAgentDraft() {
+function useOpenAgentDraft() {
   const newThread = useNewThreadHandler();
   return useCallback(
     async (projectRef: ScopedProjectRef, prompt: string) => {
