@@ -2022,12 +2022,15 @@ const decodeNativeMarkerManifest = Schema.decodeUnknownSync(
   Schema.fromJsonString(NativeMarkerManifest),
 );
 
-const findStorePackageDirectory = Effect.fn("findStorePackageDirectory")(function* (
+export const findStorePackageDirectory = Effect.fn("findStorePackageDirectory")(function* (
   repoRoot: string,
   packageName: string,
 ) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
+  // Global virtual stores keep private hoist links here, without local package files.
+  const hoisted = path.join(repoRoot, "node_modules/.pnpm/node_modules", packageName);
+  if (yield* fs.exists(hoisted)) return hoisted;
   const storeDir = path.join(repoRoot, "node_modules/.pnpm");
   const exists = (candidate: string) =>
     fs.exists(candidate).pipe(Effect.orElseSucceed(() => false));

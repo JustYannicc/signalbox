@@ -146,7 +146,7 @@ overrides:
   vite-plus: 1.0.0
   yaml: ^2.9.0
 
-packageExtensionsChecksum: sha256-EowbsmlBFaoO0Ypufw901RnvdyjKG5dcdk2FRbc7Dr0=
+packageExtensionsChecksum: sha256-0OoStWqkolMutHN6QST0WKw1DAQrFHK+Pm/kxNdDKpU=
 
 patchedDependencies:
   '@clerk/expo-native-components@0.2.0': 7a808b92da8460750b85818552e13be3fb73d111691c7db76965970351e124e4
@@ -20942,6 +20942,7 @@ snapshots:
 
   expo-quick-actions@6.0.2(expo@58.0.11)(typescript@7.0.2):
     dependencies:
+      '@expo/config-plugins': 58.0.9(typescript@7.0.2)
       '@expo/image-utils': 0.8.14(typescript@7.0.2)
       expo: 58.0.11(0279ba067f3e563cec3a046cc8b71592)
       schema-utils: 4.3.3

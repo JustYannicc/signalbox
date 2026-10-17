@@ -74,6 +74,7 @@ import {
   ancestorNodeModulesPaths,
   copyDirectoryPreservingSymlinks,
   hasNativeLoaderMarkers,
+  findStorePackageDirectory,
   LinuxBrowserSecretHostError,
   stageBrowserSecret,
   validateWindowsPackagedPayload,
@@ -2586,4 +2587,29 @@ it.effect("treats napi-rs loaders as native", () =>
     assert.strictEqual(yield* hasNativeLoaderMarkers(napiLoader), true);
     assert.strictEqual(yield* hasNativeLoaderMarkers(plainPackage), false);
   }).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it.effect.skipIf(!symlinksSupported)(
+  "finds native loaders through global virtual-store hoist links",
+  () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "desktop-global-store-" });
+      const repo = path.join(root, "worktree");
+      const modules = path.join(repo, "node_modules/.pnpm/node_modules");
+      const native = path.join(root, "store/links/native/1/hash/node_modules/native");
+      yield* fs.makeDirectory(modules, { recursive: true });
+      yield* fs.makeDirectory(native, { recursive: true });
+      yield* fs.writeFileString(path.join(native, "binding.gyp"), "{}");
+      yield* fs.symlink(native, path.join(modules, "native"));
+      const found = yield* findStorePackageDirectory(repo, "native");
+      assert.strictEqual(found, path.join(modules, "native"));
+      if (found === null) throw new Error("Missing native package");
+      assert.strictEqual(yield* hasNativeLoaderMarkers(found), true);
+      assert.strictEqual(yield* findStorePackageDirectory(repo, "missing"), null);
+      const local = path.join(repo, "node_modules/.pnpm/legacy@1/node_modules/legacy");
+      yield* fs.makeDirectory(local, { recursive: true });
+      assert.strictEqual(yield* findStorePackageDirectory(repo, "legacy"), local);
+    }).pipe(Effect.provide(NodeServices.layer)),
 );
