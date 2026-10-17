@@ -8,11 +8,17 @@ import * as SqlClient from "effect/sql/SqlClient";
 import type { SqlError } from "effect/sql/SqlError";
 
 import { DriveRemote } from "@signalbox/runner-protocol/DriveProtocol";
+import type {
+  CheckpointViews,
+  DriveCheckpointRecord,
+} from "@signalbox/runner-protocol/DriveProtocol";
 import { canManageDrive } from "@t3tools/contracts/signalboxDrives";
 import * as Migrations from "../storage/migrations.ts";
 import { canWrite } from "./driveAccess.ts";
 import * as DriveEvents from "./DriveEvents.ts";
 import * as DriveMembers from "./DriveMembers.ts";
+import * as DriveRevisions from "./DriveRevisions.ts";
+import * as DriveRevisionStore from "./DriveRevisionStore.ts";
 import { isWithin } from "./DriveReader.ts";
 import type { ObjectType, Oid } from "./git/gitObjects.ts";
 
@@ -80,12 +86,57 @@ export interface ThreadRefs {
   readonly remote: DriveRemote | null;
   /** Commits in `packs` whose parents are on the remote, not in the drive. */
   readonly shallow: ReadonlyArray<Oid>;
+  /** Latest uploaded Git notes ref commit for this thread. */
+  readonly notes?: Oid | null;
+  /** Context and shortcut view pinned by a fork or restore. */
+  readonly pinnedViews?: CheckpointViews | null;
+  /** Changes on fork or restore so the Runner replaces a stale checkout. */
+  readonly revision?: string | null;
 }
 
 export type RefWrite =
   | { readonly _tag: "ok"; readonly refs: ThreadRefs }
   | { readonly _tag: "conflict"; readonly refs: ThreadRefs }
   | { readonly _tag: "refused"; readonly reason: string };
+
+export type CheckpointOperationResult =
+  | { readonly _tag: "ok" | "conflict"; readonly refs: ThreadRefs; readonly generation: number }
+  | { readonly _tag: "refused"; readonly reason: string; readonly generation?: number };
+
+export interface ForkCheckpointRequest {
+  readonly sourceThreadId: string;
+  readonly runId: string;
+  readonly threadId: string;
+  readonly operationId: string;
+}
+
+export interface RestoreCheckpointRequest {
+  readonly threadId: string;
+  readonly runId: string;
+  readonly operationId: string;
+  readonly expectedThread: Oid | null;
+  readonly expectedWip: Oid | null;
+  /** The generation the caller observed; the operation advances it by one. */
+  readonly generation: number;
+}
+
+export interface UndoRestoreRequest {
+  readonly threadId: string;
+  readonly restoreOperationId: string;
+  readonly operationId: string;
+  readonly expectedThread: Oid | null;
+  readonly expectedWip: Oid | null;
+  /** The generation currently held by the thread; undo advances it by one. */
+  readonly generation: number;
+}
+
+export interface UpdateToLatestRequest {
+  readonly threadId: string;
+  readonly operationId: string;
+  readonly expectedThread: Oid | null;
+  readonly expectedWip: Oid | null;
+  readonly generation: number;
+}
 
 export interface PackRegistration {
   readonly name: string;
@@ -260,6 +311,47 @@ export class DriveStore extends Context.Service<
       readonly limit: number;
       readonly threadId?: string;
     }) => Effect.Effect<ReadonlyArray<UnreconciledWork>, SqlError>;
+    /** Records an immutable checkpoint and its private note ref after all objects are in public packs. */
+    readonly recordCheckpoint: (
+      writer: DriveWriter,
+      record: DriveCheckpointRecord,
+    ) => Effect.Effect<RefWrite, SqlError>;
+    /** Reads a thread's retained checkpoint, independent of its current branch. */
+    readonly checkpoint: (
+      threadId: string,
+      runId: string,
+    ) => Effect.Effect<DriveCheckpointRecord | null, SqlError>;
+    /** Starts a new thread at an exact retained checkpoint with an immutable retry receipt. */
+    readonly forkCheckpoint: (
+      userId: string,
+      request: ForkCheckpointRequest,
+    ) => Effect.Effect<CheckpointOperationResult, SqlError>;
+    /**
+     * Restores branch and autosave to a retained checkpoint, fencing older machines.
+     * The caller stops the active Runner first; this advances generation so any
+     * subsequent write from the stopped Runner is refused. The next Runner uses
+     * the generation returned with the operation result.
+     */
+    readonly restoreCheckpoint: (
+      userId: string,
+      request: RestoreCheckpointRequest,
+    ) => Effect.Effect<CheckpointOperationResult, SqlError>;
+    /**
+     * Reverses one successful restore while preserving current refs under private refs.
+     * The next Runner must use the generation returned here.
+     */
+    readonly undoRestore: (
+      userId: string,
+      request: UndoRestoreRequest,
+    ) => Effect.Effect<CheckpointOperationResult, SqlError>;
+    /**
+     * Explicitly drops a thread's historical input-view pins. The caller stops
+     * the active Runner first; this advances generation so it reloads current inputs.
+     */
+    readonly updateToLatest: (
+      userId: string,
+      request: UpdateToLatestRequest,
+    ) => Effect.Effect<CheckpointOperationResult, SqlError>;
   }
 >()("@signalbox/cloud/drive/DriveStore") {}
 
@@ -366,6 +458,11 @@ const migrations = Migrator.fromRecord({
   }),
   // Moves of `main` and threads' branches, for automations (#471).
   "0006_ref_events": DriveEvents.createTables,
+  // Immutable turn checkpoints and idempotent fork/restore receipts (#498).
+  "0007_drive_revisions": DriveRevisions.createTables,
+  // Undo snapshots for restores already tracked by 0007.
+  "0008_drive_restore_snapshots": DriveRevisions.createRestoreTables,
+  "0009_ref_deletions": DriveEvents.allowDeletedRefs,
 });
 
 /** Applies every migration not recorded yet (`storage/migrations.ts`). Never edit or rename a merged one. */
@@ -376,7 +473,6 @@ const PackRow = Schema.Struct({ seq: Schema.Number, name: Schema.String, size: S
 const decodeOwnerRows = Schema.decodeUnknownSync(
   Schema.Array(Schema.Struct({ private_to: Schema.NullOr(Schema.String) })),
 );
-const ThreadRow = Schema.Struct({ base: Schema.NullOr(Schema.String), generation: Schema.Number });
 const RemoteRow = Schema.Struct({
   provider: DriveRemote.fields.provider,
   repository: Schema.String,
@@ -402,7 +498,7 @@ const CommitRow = Schema.Struct({
 });
 const decodeRefRows = Schema.decodeUnknownSync(Schema.Array(RefRow));
 const decodePackRows = Schema.decodeUnknownSync(Schema.Array(PackRow));
-const decodeThreadRows = Schema.decodeUnknownSync(Schema.Array(ThreadRow));
+const decodeThreadRows = Schema.decodeUnknownSync(Schema.Array(DriveRevisions.ThreadRevisionRow));
 const decodeRemoteRows = Schema.decodeUnknownSync(Schema.Array(RemoteRow));
 const decodeLocationRows = Schema.decodeUnknownSync(Schema.Array(LocationRow));
 const decodeCommitRows = Schema.decodeUnknownSync(Schema.Array(CommitRow));
@@ -447,13 +543,18 @@ const make = Effect.gen(function* () {
   const members = yield* DriveMembers.DriveMembers;
   const events = yield* DriveEvents.DriveEvents;
 
-  const ref: DriveStore["Service"]["ref"] = (name) =>
+  const storedRef = (name: string) =>
     sql`SELECT name, oid FROM refs WHERE name = ${name}`.pipe(
       Effect.map((rows) => decodeRefRows(rows)[0]?.oid ?? null),
     );
+  // Checkpoint and notes refs are durable internal refs, never advertised as
+  // browseable drive refs or handed to a machine for push.
+  const ref: DriveStore["Service"]["ref"] = (name) =>
+    name.startsWith("signalbox/") ? Effect.succeed(null) : storedRef(name);
 
   const threadRow = (threadId: string) =>
-    sql`SELECT base, generation FROM threads WHERE thread_id = ${threadId}`.pipe(
+    sql`SELECT base, generation, notes_oid, pinned_views, revision
+      FROM threads WHERE thread_id = ${threadId}`.pipe(
       Effect.map((rows) => decodeThreadRows(rows)[0] ?? null),
     );
 
@@ -498,6 +599,10 @@ const make = Effect.gen(function* () {
         packs,
         remote: yield* remote,
         shallow,
+        notes: thread?.notes_oid ?? null,
+        pinnedViews:
+          thread?.pinned_views == null ? null : DriveRevisions.decodeViews(thread.pinned_views),
+        revision: thread?.revision ?? null,
       };
     });
 
@@ -511,17 +616,21 @@ const make = Effect.gen(function* () {
         sql`INSERT INTO refs (name, oid, updated_by, updated_at) VALUES (${name}, ${oid}, ${by}, ${now})
           ON CONFLICT (name) DO UPDATE SET oid = excluded.oid, updated_by = excluded.updated_by,
           updated_at = excluded.updated_at`,
-    );
+    ).pipe(Effect.asVoid);
 
   /** Moves `main` or a thread's branch from `before` for a thread or a person, recording it when it changed. */
   const land = (
     name: string,
     before: Oid | null,
-    after: Oid,
+    after: Oid | null,
     by: { readonly threadId: string } | { readonly userId: string },
   ) => {
     const threadId = "threadId" in by ? by.threadId : null;
-    return setRef(name, after, "threadId" in by ? by.threadId : by.userId).pipe(
+    const move =
+      after === null
+        ? sql`DELETE FROM refs WHERE name = ${name}`.pipe(Effect.asVoid)
+        : setRef(name, after, "threadId" in by ? by.threadId : by.userId);
+    return move.pipe(
       Effect.andThen(
         before === after ? Effect.void : events.record({ ref: name, before, after, threadId }),
       ),
@@ -551,9 +660,10 @@ const make = Effect.gen(function* () {
   /** Whether the writer's owner may still change files here. Removing them ends it at once. */
   const writes = (writer: DriveWriter) => Effect.map(members.role(writer.userId), canWrite);
 
+  const NO_ACCESS_REASON = "You no longer have access to change this drive.";
   const NO_ACCESS: RefWrite = {
     _tag: "refused",
-    reason: "You no longer have access to change this drive.",
+    reason: NO_ACCESS_REASON,
   };
 
   const open: DriveStore["Service"]["open"] = (writer) =>
@@ -927,6 +1037,26 @@ const make = Effect.gen(function* () {
         : ({ _tag: "ok" } as const);
     }).pipe(sql.withTransaction);
 
+  const revisionOperations = DriveRevisionStore.makeOperations({
+    sql,
+    role: members.role,
+    threadRow,
+    refs,
+    ref,
+    publicCommit: (oid) =>
+      Effect.gen(function* () {
+        if (!(yield* isCommit(oid))) return false;
+        return (yield* missing([oid], null)).length === 0;
+      }),
+    threadRef,
+    wipRef,
+    setRef,
+    land,
+    removeRef: (name) => sql`DELETE FROM refs WHERE name = ${name}`.pipe(Effect.asVoid),
+    internalRef: storedRef,
+    fence,
+  });
+
   /** Every commit `main` reaches, as a recursive CTE to join against. */
   const REACH = sql`reach(oid) AS (
       SELECT oid FROM refs WHERE name = ${MAIN_REF}
@@ -1000,6 +1130,7 @@ const make = Effect.gen(function* () {
     addShortcut,
     removeShortcut,
     unreconciled,
+    ...revisionOperations,
   });
 });
 
