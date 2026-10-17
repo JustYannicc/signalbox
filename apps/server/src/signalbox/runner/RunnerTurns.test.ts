@@ -22,8 +22,10 @@ import { describe, expect, it } from "@effect/vitest";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Queue from "effect/Queue";
 import * as PlatformError from "effect/PlatformError";
+import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 
@@ -1505,6 +1507,86 @@ describe("RunnerTurns", () => {
           expect(failed?.kind === "turn.failed" && failed.message).toBe(
             "Signalbox couldn't get this thread's files ready: Saving owner/repo's latest version failed: A pack of 110795399 bytes is bigger than the drive takes (67108864). token=[REDACTED]",
           );
+          expect(fake.calls).toEqual([]);
+        }),
+      ),
+    );
+  });
+
+  describe("draining preview work", () => {
+    const emptyDrive = (saveNow: Effect.Effect<void, RunnerDriveError>) =>
+      ({ saveNow }) as RunnerDrive;
+
+    it.effect("saves the preview-opened drive after checkout preparation finishes", () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const preparing = yield* Semaphore.make(1);
+          const entered = yield* Deferred.make<void>();
+          const release = yield* Deferred.make<void>();
+          let saves = 0;
+          const drive = emptyDrive(Effect.sync(() => void saves++));
+          const fake = yield* makeFakeAdapter;
+          const turns = yield* makeRunnerTurns({
+            threadId,
+            adapters: new Map([[instanceId, fake.adapter]]),
+            cwd: "/tmp",
+            useModelToken: () => Effect.void,
+            usage: Effect.succeed(unmeasured),
+            emit: () => Effect.void,
+            preparing,
+            previewDrive: () => drive,
+          });
+
+          const preparation = yield* preparing
+            .withPermits(1)(
+              Effect.gen(function* () {
+                yield* Deferred.succeed(entered, undefined);
+                yield* Deferred.await(release);
+              }),
+            )
+            .pipe(Effect.forkChild);
+          yield* Deferred.await(entered);
+          const drain = yield* Effect.forkChild(turns.drain);
+          yield* Effect.yieldNow;
+          expect(saves).toBe(0);
+
+          yield* Deferred.succeed(release, undefined);
+          expect(yield* Fiber.join(drain)).toEqual([]);
+          yield* Fiber.join(preparation);
+          expect(saves).toBe(1);
+          expect(fake.calls).toEqual([]);
+        }),
+      ),
+    );
+
+    it.effect("reports an unsaved preview drive and retries its save on the next drain", () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const fake = yield* makeFakeAdapter;
+          let saves = 0;
+          const drive = emptyDrive(
+            Effect.suspend(() => {
+              saves += 1;
+              return saves === 1
+                ? Effect.fail(new RunnerGitError({ message: "upload failed" }))
+                : Effect.void;
+            }),
+          );
+          const turns = yield* makeRunnerTurns({
+            threadId,
+            adapters: new Map([[instanceId, fake.adapter]]),
+            cwd: "/tmp",
+            useModelToken: () => Effect.void,
+            usage: Effect.succeed(unmeasured),
+            emit: () => Effect.void,
+            previewDrive: () => drive,
+          });
+
+          expect(yield* turns.drain).toEqual([
+            "Saving this thread's files failed: Signalbox couldn't reach this thread's storage.",
+          ]);
+          expect(yield* turns.drain).toEqual([]);
+          expect(saves).toBe(2);
           expect(fake.calls).toEqual([]);
         }),
       ),
