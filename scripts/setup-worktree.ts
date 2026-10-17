@@ -23,6 +23,27 @@ const install = NodeChildProcess.spawnSync("vp i --frozen-lockfile -- --yes", {
 });
 if (install.status !== 0) process.exit(install.status ?? 1);
 
+// pnpm 11 can reuse an interrupted patch-only slot without finishing its patch.
+// Check the type our Apple patch requires, then let pnpm repair under its slot lock.
+const transcriptionSpec = NodePath.join(
+  worktree,
+  "apps/mobile/node_modules/@react-native-ai/apple/src/NativeAppleTranscription.ts",
+);
+const hasTranscriptionPatch = () =>
+  NodeFS.readFileSync(transcriptionSpec, "utf8").includes(
+    "prepare(language: string): Promise<string>",
+  );
+if (!hasTranscriptionPatch()) {
+  const repair = NodeChildProcess.spawnSync("vp i --frozen-lockfile --force -- --yes", {
+    cwd: worktree,
+    shell: true,
+    stdio: ["ignore", "inherit", "inherit"],
+  });
+  if (repair.status !== 0) process.exit(repair.status ?? 1);
+  if (!hasTranscriptionPatch())
+    throw new Error("pnpm did not finish the Apple transcription patch.");
+}
+
 // Env files live as real files in the main checkout; worktrees only get
 // symlinks to them. Only a symlink is ever replaced, so a real env file is
 // never deleted, including when this runs in the main checkout itself.
