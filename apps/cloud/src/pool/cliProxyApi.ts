@@ -543,7 +543,7 @@ export const startLogin = (
             : "could not start sign-in.",
       ),
     ),
-    Effect.flatMap((response) => {
+    Effect.flatMap((response): Effect.Effect<LoginStart, PoolBackendError> => {
       if (provider === "codex") {
         return decodeOr(
           DeviceLoginStart,
