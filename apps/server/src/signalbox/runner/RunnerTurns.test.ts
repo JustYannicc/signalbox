@@ -1735,6 +1735,14 @@ describe("RunnerTurns", () => {
           },
         } as ProviderAdapterV2Event;
       };
+      const subagentCommand = () => {
+        const event = command("running", "npm test");
+        if (event.type !== "turn_item.updated") throw new Error("Expected a command item");
+        return {
+          ...event,
+          turnItem: { ...event.turnItem, runId: null, providerTurnId: null },
+        };
+      };
       const previewServiceStart = (
         status: "pending" | "running" | "completed",
         toolName: string,
@@ -1915,9 +1923,9 @@ describe("RunnerTurns", () => {
           ),
       );
 
-      it.effect(
-        "does not move the current provider's run for a stopped provider's late command",
-        () =>
+      it.effect.each(["identified", "subagent"] as const)(
+        "does not move the current provider's run for a stopped provider's late %s command",
+        (source) =>
           Effect.scoped(
             Effect.gen(function* () {
               const first = yield* makeFakeAdapter;
@@ -1963,13 +1971,31 @@ describe("RunnerTurns", () => {
               });
               yield* Deferred.await(second.secondStarted);
 
-              yield* Queue.offer(first.events, command("running", "npm test"));
+              yield* Queue.offer(
+                first.events,
+                source === "subagent" ? subagentCommand() : command("running", "npm test"),
+              );
               yield* Queue.offer(first.events, turnEnded(1));
               yield* Deferred.await(oldTerminal);
               expect(reported.some((item) => item.kind === "machine.outgrown")).toBe(false);
               expect(second.calls).toEqual(["start run-2"]);
             }),
           ),
+      );
+
+      it.effect("moves up for a current subagent's command without run identifiers", () =>
+        Effect.scoped(
+          Effect.gen(function* () {
+            const { fake, reported, handedOff } = yield* lightTurn("light");
+            yield* Queue.offer(fake.events, subagentCommand());
+            yield* Deferred.await(handedOff);
+            expect(reported).toContainEqual({
+              kind: "machine.outgrown",
+              runId: RunId.make("run-1"),
+              reason: expect.stringContaining("npm test"),
+            });
+          }),
+        ),
       );
 
       it.effect(
