@@ -334,7 +334,13 @@ export const makePoolHandlers = (input: {
       });
 
     const handlers = {
-      [WS_METHODS.accountPoolSubscribeAdvice]: () => pools.advice(actor),
+      [WS_METHODS.accountPoolSubscribeAdvice]: () =>
+        pools.advice(actor).pipe(
+          Stream.tapCause((cause) =>
+            Effect.logWarning("cloud pools unavailable, reading again", cause),
+          ),
+          Stream.retry(READ_AGAIN),
+        ),
       [WS_METHODS.accountPoolSubscribe]: () =>
         followPools(pools, actor).pipe(
           Stream.map((state) => state.map((entry) => accountPool(entry.pool, entry.routing))),
