@@ -31,5 +31,5 @@ export function useOpenAutomation() {
  * "Open automation…" reaches every one.
  */
 export function openAutomationsInPalette() {
-  openCommandPalette({ query: "automation" });
+  openCommandPalette({ query: "open automation" });
 }
