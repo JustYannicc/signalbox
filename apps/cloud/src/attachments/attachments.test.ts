@@ -15,6 +15,7 @@ import { describe, expect, it } from "@effect/vitest";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Base64 from "effect/encoding/Base64";
 import * as HttpEffect from "effect/http/HttpEffect";
 import { HttpRouter } from "effect/http";
 
@@ -137,8 +138,10 @@ describe("CloudAttachments", () => {
         const sent = yield* claim(userId, threadId, [shot]);
         const claimed = sent.attachments[0]!;
         expect(claimed.id.startsWith(`${threadSegment(threadId)}-`)).toBe(true);
-        // A retried command writes the same copy again, under the same id.
-        expect((yield* claim(userId, threadId, [shot])).attachments).toEqual([claimed]);
+        const retry = yield* claim(userId, threadId, [shot]);
+        expect(retry.attachments).toEqual([claimed]);
+        yield* retry.release;
+        expect(objects.keys()).toContain(attachmentKey("", claimed.id));
         // The thread's own attachment passes as stored; a made-up one of the thread doesn't.
         expect((yield* claim(userId, threadId, [claimed])).attachments).toEqual([claimed]);
         const forged = ChatAttachmentId.make(
@@ -393,7 +396,7 @@ describe("links to sent attachments", () => {
 });
 
 describe("the machine's attachments", () => {
-  it.effect("serves a thread's attachments to its machine, and nothing else", () =>
+  it.effect("serves legacy persisted images before and after replacing the machine", () =>
     Effect.scoped(
       Effect.gen(function* () {
         const objects = makeMemoryObjects();
@@ -401,12 +404,22 @@ describe("the machine's attachments", () => {
         const engine = Context.get(context, ThreadEngine.ThreadEngine);
         const runner = Context.get(context, ThreadRunner.ThreadRunner);
         const threadId = ThreadId.make("thread-machine");
-        const id = ChatAttachmentId.make(
-          `${threadSegment(threadId)}-0b6f6c2e-4d3c-4b8f-9f55-2f4b1d1e9a10`,
-        );
-        yield* Effect.promise(() =>
-          objects.put(attachmentKey("", id), PNG, { customMetadata: { mime: "image/png" } }),
-        );
+        const persisted = yield* CloudAttachments.use((attachments) =>
+          attachments.persistImages(userId, {
+            threadId,
+            messageId: MessageId.make("message-1"),
+            attachments: [
+              {
+                type: "image",
+                name: "shot.png",
+                mimeType: "image/png",
+                sizeBytes: PNG.length,
+                dataUrl: `data:image/png;base64,${Base64.encode(PNG)}`,
+              },
+            ],
+          }),
+        ).pipe(Effect.provide(layerAttachments(objects)));
+        const id = persisted.attachments[0]!.id;
         yield* engine.launch(
           actor,
           {
@@ -472,6 +485,42 @@ describe("the machine's attachments", () => {
         expect(yield* bytesOf(file.body!)).toEqual(PNG);
         expect((yield* call(`${SESSION_PATHS.attachments}/thread-other-x`)).status).toBe(404);
         expect((yield* call(SESSION_PATHS.attachments, "sbs1.x.y")).status).toBe(403);
+        yield* runner.ended(plan.ensure.generation, "test machine stopped");
+        yield* engine.dispatch(
+          actor,
+          {
+            type: "message.dispatch",
+            commandId: CommandId.make("resume-message"),
+            createdBy: "user",
+            creationSource: "web",
+            threadId,
+            messageId: MessageId.make("message-2"),
+            text: "Look again",
+            attachments: [],
+            dispatchMode: { type: "start_immediately" },
+            deliveryIntent: "auto",
+          },
+          {
+            place: { contextId: PERSONAL_CONTEXT_ID, driveId: "my/personal/user_1" },
+            pools: { top: PERSONAL_POOL_ID, projects: {} },
+          },
+        );
+        const replacement = yield* runner.reconcile;
+        if (replacement.ensure === null) throw new Error("expected a replacement machine");
+        yield* runner.hello({
+          type: "hello",
+          protocolVersion: RUNNER_PROTOCOL_VERSION,
+          imageVersion: "test",
+          machineId: "machine-2",
+          threadId,
+          generation: replacement.ensure.generation,
+          token: replacement.ensure.token,
+          lastAckedSequence: 0,
+        });
+        const resumedToken = (yield* runner.work).sessions?.token ?? "";
+        const resumed = yield* call(`${SESSION_PATHS.attachments}/${id}`, resumedToken);
+        expect(resumed.status).toBe(200);
+        expect(yield* bytesOf(resumed.body!)).toEqual(PNG);
       }),
     ),
   );

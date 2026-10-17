@@ -11,6 +11,7 @@ import {
   ThreadId,
   TurnItemId,
   WS_METHODS,
+  PersistChatAttachmentsResult,
 } from "@t3tools/contracts";
 import { SIGNALBOX_PERSON_BROWSER_WS_METHODS } from "@t3tools/contracts/signalboxPersonBrowser";
 import { describe, expect, it } from "@effect/vitest";
@@ -20,6 +21,7 @@ import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
 import * as Tracer from "effect/Tracer";
+import * as Schema from "effect/Schema";
 import * as RpcTest from "effect/rpc/RpcTest";
 
 import { SignalboxContextId } from "@t3tools/contracts/signalboxContexts";
@@ -33,6 +35,7 @@ import * as CloudRpc from "./rpc.ts";
 const identity = { environmentId: EnvironmentId.make("cloud-test"), label: "Cloud" };
 const userId = "user_1";
 const threadId = ThreadId.make("thread-1");
+const isPersisted = Schema.is(PersistChatAttachmentsResult);
 
 /** A socket to `userId`'s object in a fresh in-memory cloud, as the RPC test client. */
 const connect = (
@@ -105,6 +108,42 @@ const sidebar = (rpc: Rpc) =>
   );
 
 describe("cloud RPC", () => {
+  it.effect("persists legacy images through the public operation and enforces write scope", () =>
+    Effect.gen(function* () {
+      const rpc = yield* client();
+      yield* launch(rpc);
+      const input = {
+        threadId,
+        messageId: MessageId.make("image-message"),
+        attachments: [
+          {
+            type: "image" as const,
+            name: "shot.png",
+            mimeType: "image/png",
+            sizeBytes: 3,
+            dataUrl: "data:image/png;base64,AQID",
+          },
+        ],
+      };
+      const result = yield* rpc[WS_METHODS.assetsPersistChatAttachments](input);
+      expect(isPersisted(result)).toBe(true);
+      expect(result.attachments).toHaveLength(1);
+      expect(yield* rpc[WS_METHODS.assetsPersistChatAttachments](input)).toEqual(result);
+      expect(
+        (yield* Effect.flip(
+          rpc[WS_METHODS.assetsPersistChatAttachments]({
+            ...input,
+            threadId: ThreadId.make("someone-elses-thread"),
+          }),
+        ))._tag,
+      ).toBe("PersistChatAttachmentsError");
+      const readOnly = yield* client([AuthOrchestrationReadScope]);
+      expect(
+        (yield* Effect.flip(readOnly[WS_METHODS.assetsPersistChatAttachments](input)))._tag,
+      ).toBe("EnvironmentAuthorizationError");
+    }).pipe(Effect.scoped),
+  );
+
   it.effect("serves the person's one managed browser profile through the user RPC", () =>
     Effect.gen(function* () {
       const rpc = yield* client([AuthOrchestrationReadScope, AuthPreviewOperateScope]);

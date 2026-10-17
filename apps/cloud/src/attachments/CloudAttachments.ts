@@ -6,6 +6,9 @@ import {
   ChatAttachmentId,
   getProviderAttachmentLimitError,
   isProviderSendTurnSupportedImageMimeType,
+  type PersistChatAttachmentsInput,
+  type PersistChatAttachmentsResult,
+  PersistChatAttachmentsError,
 } from "@t3tools/contracts";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
@@ -18,6 +21,7 @@ import * as Schema from "effect/Schema";
 import * as CloudTokens from "../auth/CloudTokens.ts";
 import * as Ids from "./attachmentIds.ts";
 import { type AttachmentStorage, exactly } from "./attachmentObjects.ts";
+import { decodeLegacyImages } from "./legacyImages.ts";
 
 /**
  * Pasted screenshots and files in cloud threads, in the EU drives bucket under
@@ -96,6 +100,10 @@ export interface Claimed {
 export class CloudAttachments extends Context.Service<
   CloudAttachments,
   {
+    readonly persistImages: (
+      userId: string,
+      input: PersistChatAttachmentsInput,
+    ) => Effect.Effect<PersistChatAttachmentsResult, PersistChatAttachmentsError>;
     readonly issueUpload: (
       userId: string,
       input: AttachmentCreateUploadUrlInput,
@@ -405,6 +413,21 @@ export const layer = ({ objects, prefix }: AttachmentStorage) =>
             return yield* reject("it doesn't match its upload.");
           }
           const id = yield* sentId(input.threadId, input.commandId, attachment.id);
+          const existing = yield* storage("head", () => objects.head(keyOf(id)));
+          if (existing !== null) {
+            const saved = metaOf(existing);
+            if (
+              existing.size !== head.size ||
+              saved.thread !== input.threadId ||
+              saved.owner !== input.userId ||
+              saved.type !== attachment.type ||
+              saved.mime !== mime
+            ) {
+              return yield* reject("its stored copy doesn't match this upload.");
+            }
+            // A failed retry must never release bytes an earlier send already owns.
+            return { attachment: { ...attachment, id, mimeType: mime }, copy: null };
+          }
           const source = yield* storage("get", () => objects.get(keyOf(attachment.id)));
           if (source === null) return yield* reject("it is no longer available. Attach it again.");
           const sent: AttachmentMeta = {
@@ -485,7 +508,66 @@ export const layer = ({ objects, prefix }: AttachmentStorage) =>
         } satisfies Claimed;
       });
 
+      const persistImages: CloudAttachments["Service"]["persistImages"] = (userId, input) =>
+        Effect.gen(function* () {
+          const images = yield* decodeLegacyImages(input);
+          yield* sweepWhenDue;
+          const pending = yield* Effect.forEach(images, ({ attachment, bytes }, index) =>
+            Effect.gen(function* () {
+              const hash = yield* crypto.digest("SHA-256", bytes).pipe(Effect.orDie);
+              const key = JSON.stringify([
+                userId,
+                input.threadId,
+                input.messageId,
+                index,
+                Hex.encode(hash),
+              ]);
+              const digest = yield* crypto
+                .digest("SHA-256", new TextEncoder().encode(key))
+                .pipe(Effect.orDie);
+              const id = ChatAttachmentId.make(Ids.pendingId(Ids.uuidOf(Hex.encode(digest)), null));
+              const token = yield* tokens.sign({
+                _tag: "attachment-upload",
+                u: userId,
+                a: id,
+                t: "image",
+                m: attachment.mimeType,
+                s: bytes.byteLength,
+                exp: (yield* Clock.currentTimeMillis) + ATTACHMENT_UPLOAD_URL_TTL_MS,
+              });
+              const stored = yield* storeUpload(
+                token,
+                new Blob([bytes.slice()]).stream(),
+                bytes.byteLength,
+              );
+              if (stored._tag !== "stored") {
+                return yield* new PersistChatAttachmentsError({
+                  message: "Attachments can't be stored right now. Try again.",
+                });
+              }
+              return {
+                type: "image" as const,
+                id,
+                name: attachment.name,
+                mimeType: attachment.mimeType,
+                sizeBytes: bytes.byteLength,
+                ...(attachment.source === undefined ? {} : { source: attachment.source }),
+              };
+            }),
+          );
+          const claimed = yield* claim({
+            userId,
+            threadId: input.threadId,
+            commandId: `legacy:${input.messageId}`,
+            attachments: pending,
+          }).pipe(
+            Effect.mapError((error) => new PersistChatAttachmentsError({ message: error.reason })),
+          );
+          return { attachments: claimed.attachments };
+        });
+
       return CloudAttachments.of({
+        persistImages,
         issueUpload,
         storeUpload,
         deletePending,
