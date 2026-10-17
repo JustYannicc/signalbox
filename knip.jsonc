@@ -18,6 +18,7 @@
       "vitest": { "entry": [".github/**/*.test.cjs"] },
     },
     "packages/shared": {
+      "includeEntryExports": true,
       "entry": ["src/agentProcesses/cli.ts", "src/agentProcesses/preload.ts"], // Lifecycle hooks and Node's --import.
     },
     "scripts": {
