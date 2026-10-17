@@ -6,11 +6,13 @@ import * as Effect from "effect/Effect";
 import * as Base64Url from "effect/encoding/Base64Url";
 import * as Layer from "effect/Layer";
 import * as Result from "effect/Result";
+import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as TestClock from "effect/testing/TestClock";
 
 import * as CloudTokens from "../auth/CloudTokens.ts";
 import { PERSONAL_CONTEXT_ID } from "@t3tools/contracts/signalboxContexts";
+import { OnePasswordEnvironmentId } from "@t3tools/contracts/signalboxFolders";
 import { makeRepo } from "../drive/driveTesting.ts";
 import { makeFakeGitHub } from "../github/githubTesting.ts";
 import * as PoolDirectory from "../pool/PoolDirectory.ts";
@@ -20,7 +22,12 @@ import * as UserDirectory from "../user/UserDirectory.ts";
 import * as UserPools from "../user/UserPools.ts";
 import * as UserFolders from "../user/UserFolders.ts";
 import * as PreviewSetup from "./PreviewSetup.ts";
-import type { PreviewSetup as Setup } from "./previewSetupWire.ts";
+import {
+  PreviewSetup as PreviewSetupSchema,
+  type PreviewSetup as Setup,
+} from "./previewSetupWire.ts";
+
+const decodeWireSetup = Schema.decodeUnknownSync(PreviewSetupSchema);
 
 const userId = "user_1";
 const actor = { userId };
@@ -86,9 +93,10 @@ const setup = Effect.gen(function* () {
     preview.userDirectory,
     Layer.succeed(PreviewSetup.PreviewSetupSource, {
       redeem: (request) =>
-        prodWorker
-          .redeem(request)
-          .pipe(Effect.tap((setup) => Effect.sync(() => handed.push(setup)))),
+        prodWorker.redeem(request).pipe(
+          Effect.tap((setup) => Effect.sync(() => handed.push(setup))),
+          Effect.map((setup) => decodeWireSetup(JSON.parse(JSON.stringify(setup)) as unknown)),
+        ),
     }),
   );
 
@@ -161,6 +169,58 @@ const setup = Effect.gen(function* () {
 });
 
 describe("preview setup", () => {
+  it.effect("round-trips folder secret filters through the preview import", () =>
+    Effect.gen(function* () {
+      const { prod, preview, handed, handOff, inside } = yield* setup;
+      const environment = OnePasswordEnvironmentId.make;
+      const folders = yield* inside(
+        prod,
+        Effect.gen(function* () {
+          const service = yield* UserFolders.UserFolders;
+          const created = yield* service.create({
+            name: "Clients",
+            parentId: null,
+            ownerId: PERSONAL_CONTEXT_ID,
+          });
+          const clients = created.folders.find((folder) => folder.name === "Clients")!;
+          yield* service.setSecrets({
+            level: { _tag: "top" },
+            secrets: {
+              environmentId: environment("env-top"),
+              includeSubfolders: ["TOP_KEY"],
+            },
+          });
+          yield* service.setSecrets({
+            level: { _tag: "folder", folderId: clients.id },
+            secrets: {
+              environmentId: environment("env-clients"),
+              includeSubfolders: ["CLIENT_KEY"],
+            },
+          });
+          return yield* service.snapshot;
+        }),
+      );
+
+      expect(yield* handOff()).toBe("/settings");
+      expect(handed[0]?.folders).toMatchObject({
+        topSecretsIncludeSubfolders: ["TOP_KEY"],
+        folders: [
+          {
+            secrets_include_subfolders: ["CLIENT_KEY"],
+          },
+        ],
+      });
+      const imported = yield* inside(
+        preview,
+        UserFolders.UserFolders.use((service) => service.snapshot),
+      );
+      expect(imported.top.secrets).toEqual(folders.top.secrets);
+      expect(imported.folders.map((folder) => folder.secrets)).toEqual(
+        folders.folders.map((folder) => folder.secrets),
+      );
+    }).pipe(Effect.scoped),
+  );
+
   it.effect("a preview starts from the user's production setup, its pools routed to prod", () =>
     Effect.gen(function* () {
       const { prod, preview, github, handed, handOff, inside, poolsOf, signInOnProd } =

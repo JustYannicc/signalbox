@@ -186,7 +186,11 @@ describe("UserFolders", () => {
         expect(yield* folders.turn({ threadId, projectId: null })).toEqual({
           pools: { top: "personal", projects: { [SCRATCH]: "personal" } },
           instructions: { top: topOnly, projects: { [SCRATCH]: topOnly } },
-          secrets: { top: [], projects: { [SCRATCH]: [] } },
+          secrets: {
+            top: [],
+            projects: { [SCRATCH]: [] },
+            environmentNames: { top: [], projects: { [SCRATCH]: [] } },
+          },
         });
 
         // Filed in Clients: its own cascade, beside every project's for a thread it doesn't know.
@@ -229,7 +233,7 @@ describe("UserFolders", () => {
         const env = OnePasswordEnvironmentId.make;
         yield* folders.setSecrets({
           level: { _tag: "top" },
-          secrets: { environmentId: env("env-top") },
+          secrets: { environmentId: env("env-top"), includeSubfolders: ["TOP_ALLOWED"] },
         });
         yield* folders.setSecrets({
           level: { _tag: "folder", folderId: clients },
@@ -237,15 +241,17 @@ describe("UserFolders", () => {
         });
         snapshot = yield* folders.setSecrets({
           level: { _tag: "folder", folderId: work },
-          secrets: { environmentId: env("env-work") },
+          secrets: { environmentId: env("env-work"), includeSubfolders: ["WORK_ALLOWED"] },
         });
-        expect(snapshot.top).toEqual({ secrets: { environmentId: "env-top" } });
+        expect(snapshot.top).toEqual({
+          secrets: { environmentId: "env-top", includeSubfolders: ["TOP_ALLOWED"] },
+        });
         // Folders at different depths come in id order, which is random here.
         expect(
           Object.fromEntries(snapshot.folders.map((folder) => [folder.name, folder.secrets])),
         ).toEqual({
-          Work: { environmentId: "env-work" },
-          Clients: { environmentId: "env-clients" },
+          Work: { environmentId: "env-work", includeSubfolders: ["WORK_ALLOWED"] },
+          Clients: { environmentId: "env-clients", includeSubfolders: [] },
         });
 
         // Filed in Clients: every level up its chain, top level first.
@@ -254,6 +260,11 @@ describe("UserFolders", () => {
           top: ["env-top"],
           projects: { [SCRATCH]: ["env-top"] },
           thread: ["env-top", "env-work", "env-clients"],
+          environmentNames: {
+            top: [null],
+            projects: { [SCRATCH]: [null] },
+            thread: [["TOP_ALLOWED"], ["WORK_ALLOWED"], null],
+          },
         });
 
         // Clearing a level drops it; setting the same again changes nothing.
@@ -264,20 +275,21 @@ describe("UserFolders", () => {
         expect(
           (yield* folders.setSecrets({
             level: { _tag: "top" },
-            secrets: { environmentId: env("env-top") },
+            secrets: { environmentId: env("env-top"), includeSubfolders: ["TOP_ALLOWED"] },
           })).revision,
         ).toBe(snapshot.revision);
-        expect((yield* folders.turn({ threadId, projectId: null })).secrets.thread).toEqual([
-          "env-top",
-          "env-clients",
-        ]);
+        expect((yield* folders.turn({ threadId, projectId: null })).secrets).toMatchObject({
+          thread: ["env-top", "env-clients"],
+          environmentNames: { thread: [["TOP_ALLOWED"], null] },
+        });
 
         // Deleting Clients takes its reference with it; its thread goes up to Work.
         snapshot = yield* folders.delete({ id: clients });
         expect(snapshot.folders.map((folder) => folder.secrets)).toEqual([undefined]);
-        expect((yield* folders.turn({ threadId, projectId: null })).secrets.thread).toEqual([
-          "env-top",
-        ]);
+        expect((yield* folders.turn({ threadId, projectId: null })).secrets).toMatchObject({
+          thread: ["env-top"],
+          environmentNames: { thread: [["TOP_ALLOWED"]] },
+        });
         expect(
           yield* reasonOf(
             folders.setSecrets({
@@ -306,6 +318,87 @@ describe("UserFolders", () => {
         expect(disconnected.revision).toBeGreaterThan(connected.revision);
         expect(yield* account.token).toBeNull();
       }).pipe(Effect.provide(layerMemoryStore)),
+  );
+
+  it.effect(
+    "defaults ancestors to own-folder only, updates next turn, and resolves each home separately",
+    () =>
+      Effect.gen(function* () {
+        const { folders, store } = yield* services;
+        yield* store.recordSignIn({ id: USER, email: "a@b.c" });
+        const threadId = ThreadId.make("thread-secret-scope");
+        yield* indexThread(threadId, PERSONAL_CONTEXT_ID, SCRATCH);
+        let snapshot = yield* folders.create({ name: "Work", parentId: null });
+        snapshot = yield* folders.create({ name: "Clients", parentId: idOf(snapshot, "Work") });
+        const work = idOf(snapshot, "Work");
+        const clients = idOf(snapshot, "Clients");
+        const env = OnePasswordEnvironmentId.make;
+
+        yield* folders.setSecrets({
+          level: { _tag: "top" },
+          secrets: { environmentId: env("env-top") },
+        });
+        yield* folders.setSecrets({
+          level: { _tag: "folder", folderId: work },
+          secrets: { environmentId: env("env-work"), includeSubfolders: ["SHARED"] },
+        });
+        yield* folders.moveThread({ threadId, folderId: clients });
+
+        const firstTurn = yield* folders.turn({ threadId, projectId: null });
+        expect(firstTurn.secrets).toEqual({
+          top: ["env-top"],
+          projects: { [SCRATCH]: ["env-top"] },
+          thread: ["env-work"],
+          environmentNames: {
+            top: [null],
+            projects: { [SCRATCH]: [null] },
+            thread: [["SHARED"]],
+          },
+        });
+
+        // Changing the allowlist takes effect when the owner's object resolves the next turn.
+        yield* folders.setSecrets({
+          level: { _tag: "folder", folderId: work },
+          secrets: { environmentId: env("env-work"), includeSubfolders: [] },
+        });
+        expect((yield* folders.turn({ threadId, projectId: null })).secrets).toMatchObject({
+          thread: [],
+          environmentNames: { thread: [] },
+        });
+      }).pipe(Effect.provide(layerMemoryStore)),
+  );
+
+  it.effect("round-trips subfolder names in folder rows and top-level state", () =>
+    Effect.gen(function* () {
+      const { folders, store } = yield* services;
+      yield* store.recordSignIn({ id: USER, email: "a@b.c" });
+      const snapshot = yield* folders.create({ name: "Work", parentId: null });
+      const work = idOf(snapshot, "Work");
+      const env = OnePasswordEnvironmentId.make;
+      yield* folders.setSecrets({
+        level: { _tag: "top" },
+        secrets: { environmentId: env("env-top"), includeSubfolders: ["TOP_KEY"] },
+      });
+      yield* folders.setSecrets({
+        level: { _tag: "folder", folderId: work },
+        secrets: { environmentId: env("env-work"), includeSubfolders: ["WORK_KEY"] },
+      });
+      const rows = yield* folders.rows;
+
+      yield* folders.setSecrets({ level: { _tag: "top" }, secrets: null });
+      yield* folders.delete({ id: work });
+      yield* folders.adopt(rows);
+
+      const adopted = yield* folders.snapshot;
+      expect(adopted.top.secrets).toEqual({
+        environmentId: "env-top",
+        includeSubfolders: ["TOP_KEY"],
+      });
+      expect(adopted.folders[0]?.secrets).toEqual({
+        environmentId: "env-work",
+        includeSubfolders: ["WORK_KEY"],
+      });
+    }).pipe(Effect.provide(layerMemoryStore)),
   );
 
   it.effect("gives new folders their tree's phases, which people move, edit and clear", () =>
@@ -415,7 +508,9 @@ describe("UserFolders", () => {
       yield* sql`DROP TABLE folders_state`;
       yield* sql`DROP TABLE onepassword_account`;
       yield* sql`DELETE FROM effect_sql_migrations
-        WHERE migration_id IN (13, 15) OR (migration_id = 20 AND name = 'folder_phases')`;
+        WHERE migration_id IN (13, 15)
+          OR (migration_id = 20 AND name = 'folder_phases')
+          OR (migration_id = 21 AND name = 'folder_secret_subfolders')`;
       yield* sql`INSERT INTO sections (id, context_id, parent_id, name, position) VALUES
         ('work', 'personal', NULL, 'Work', 0),
         ('clients', 'personal', 'work', 'Clients', 0),

@@ -53,7 +53,7 @@ import {
   levelOf,
   poolResolver,
   sameOrder,
-  secretsOf,
+  secretResolutionOf,
   type Tree,
   type TreeFolder,
   withSoundParents,
@@ -62,6 +62,7 @@ import {
   decodeFolderRows,
   decodePlacementRows,
   decodeSectionRows,
+  SecretEnvironmentNamesJson,
   type FolderRow,
   type FolderRows,
   type SectionRows,
@@ -137,7 +138,7 @@ export class UserFolders extends Context.Service<
     readonly setPhase: (
       input: FolderSetPhaseInput,
     ) => Effect.Effect<SignalboxFoldersSnapshot, Failure>;
-    /** Names a level's 1Password Environment (#395), or stops loading secrets there. */
+    /** Names a level's 1Password Environment and its subfolder allowlist (#395, #695). */
     readonly setSecrets: (
       input: FolderSetSecretsInput,
     ) => Effect.Effect<SignalboxFoldersSnapshot, Failure>;
@@ -194,9 +195,11 @@ const decodeState = Schema.decodeUnknownSync(
       revision: Schema.Number,
       instructions: Schema.NullOr(Schema.String),
       secrets_environment_id: Schema.NullOr(OnePasswordEnvironmentId),
+      secrets_include_subfolders: SecretEnvironmentNamesJson,
     }),
   ),
 );
+const encodeSecretNames = Schema.encodeSync(SecretEnvironmentNamesJson);
 const toTreeFolder = (row: typeof FolderRow.Type): TreeFolder => ({
   id: row.id,
   ownerId: row.owner_id,
@@ -205,7 +208,13 @@ const toTreeFolder = (row: typeof FolderRow.Type): TreeFolder => ({
   position: row.position,
   driveId: row.drive_id,
   instructions: row.instructions,
-  secrets: row.secrets_environment_id ?? null,
+  secrets:
+    row.secrets_environment_id == null
+      ? null
+      : {
+          environmentId: row.secrets_environment_id,
+          includeSubfolders: row.secrets_include_subfolders ?? [],
+        },
   phase: phaseOfColumns(row.phases, row.phase),
 });
 
@@ -245,8 +254,9 @@ const make = Effect.gen(function* () {
 
   const bump = sql`UPDATE folders_state SET revision = revision + 1 WHERE id = 1`;
   const selectFolders = sql`SELECT id, owner_id, parent_id, name, position, drive_id, instructions,
-    secrets_environment_id, phases, phase FROM folders`;
-  const selectState = sql`SELECT revision, instructions, secrets_environment_id FROM folders_state`;
+    secrets_environment_id, secrets_include_subfolders, phases, phase FROM folders`;
+  const selectState = sql`SELECT revision, instructions, secrets_environment_id,
+    secrets_include_subfolders FROM folders_state`;
 
   /** A span for one operation (`tracing.ts`): never a folder's name or instructions. */
   const traced = makeTraced(userId);
@@ -283,7 +293,13 @@ const make = Effect.gen(function* () {
       const tree: Tree = {
         folders: withSoundParents(folders),
         topInstructions: state?.instructions ?? null,
-        topSecrets: state?.secrets_environment_id ?? null,
+        topSecrets:
+          state?.secrets_environment_id == null
+            ? null
+            : {
+                environmentId: state.secrets_environment_id,
+                includeSubfolders: state.secrets_include_subfolders,
+              },
         bindings: yield* bindings.pools,
         filed: new Map(homes.map((row) => [row.thread_id, row.folder_id])),
         driveOfProject: (projectId) => (user === null ? null : driveOfProject(projectId, user)),
@@ -632,16 +648,32 @@ const make = Effect.gen(function* () {
   const setSecrets: UserFolders["Service"]["setSecrets"] = (input) =>
     mutate((current) =>
       Effect.gen(function* () {
-        const environmentId = input.secrets?.environmentId ?? null;
+        const secrets =
+          input.secrets === null
+            ? null
+            : {
+                environmentId: input.secrets.environmentId,
+                includeSubfolders: input.secrets.includeSubfolders ?? [],
+              };
+        const sameSecrets = (currentSecrets: TreeFolder["secrets"] | Tree["topSecrets"]) =>
+          currentSecrets?.environmentId === secrets?.environmentId &&
+          (currentSecrets?.includeSubfolders ?? []).length ===
+            (secrets?.includeSubfolders ?? []).length &&
+          (currentSecrets?.includeSubfolders ?? []).every(
+            (name, index) => name === secrets?.includeSubfolders?.[index],
+          );
         if (input.level._tag === "top") {
-          if (current.tree.topSecrets === environmentId) return false;
-          yield* sql`UPDATE folders_state SET secrets_environment_id = ${environmentId} WHERE id = 1`;
+          if (sameSecrets(current.tree.topSecrets)) return false;
+          yield* sql`UPDATE folders_state SET secrets_environment_id = ${secrets?.environmentId ?? null},
+            secrets_include_subfolders = ${encodeSecretNames(secrets?.includeSubfolders ?? [])}
+            WHERE id = 1`;
           return true;
         }
         const folder = yield* requireFolder(current, input.level.folderId);
         yield* annotateOwner(folder.ownerId);
-        if (folder.secrets === environmentId) return false;
-        yield* sql`UPDATE folders SET secrets_environment_id = ${environmentId}
+        if (sameSecrets(folder.secrets)) return false;
+        yield* sql`UPDATE folders SET secrets_environment_id = ${secrets?.environmentId ?? null},
+          secrets_include_subfolders = ${encodeSecretNames(secrets?.includeSubfolders ?? [])}
           WHERE id = ${folder.id}`;
         return true;
       }),
@@ -707,9 +739,9 @@ const make = Effect.gen(function* () {
         if (!cascades.has(home)) cascades.set(home, instructionsOf(tree, home));
         return cascades.get(home)!;
       };
-      const secretChains = new Map<FolderId | null, TurnSecrets["top"]>();
+      const secretChains = new Map<FolderId | null, ReturnType<typeof secretResolutionOf>>();
       const secretsAt = (home: FolderId | null) => {
-        if (!secretChains.has(home)) secretChains.set(home, secretsOf(tree, home));
+        if (!secretChains.has(home)) secretChains.set(home, secretResolutionOf(tree, home));
         return secretChains.get(home)!;
       };
       const projectHomes = currentProjectIds(at.contexts).map(
@@ -737,9 +769,18 @@ const make = Effect.gen(function* () {
         ...(filed ? { thread: cascadeOf(home) } : {}),
       };
       const secrets: TurnSecrets = {
-        top: secretsAt(null),
-        projects: Object.fromEntries(projectHomes.map(([id, folder]) => [id, secretsAt(folder)])),
-        ...(filed ? { thread: secretsAt(home) } : {}),
+        top: secretsAt(null).environments,
+        projects: Object.fromEntries(
+          projectHomes.map(([id, folder]) => [id, secretsAt(folder).environments]),
+        ),
+        ...(filed ? { thread: secretsAt(home).environments } : {}),
+        environmentNames: {
+          top: secretsAt(null).environmentNames,
+          projects: Object.fromEntries(
+            projectHomes.map(([id, folder]) => [id, secretsAt(folder).environmentNames]),
+          ),
+          ...(filed ? { thread: secretsAt(home).environmentNames } : {}),
+        },
       };
       const own =
         filed || projectId === null
@@ -755,7 +796,7 @@ const make = Effect.gen(function* () {
           0,
         ),
         // A count only: Environment ids name the user's vaults' contents.
-        "secrets.levels": secretsAt(own).length,
+        "secrets.levels": secretsAt(own).environments.length,
       });
       return { pools, instructions, secrets };
     }).pipe(traced("UserFolders.turn", { "thread.id": thread.threadId }));
@@ -767,6 +808,7 @@ const make = Effect.gen(function* () {
       bindings: yield* bindings.rows,
       topInstructions: folderState?.instructions ?? null,
       topSecrets: folderState?.secrets_environment_id ?? null,
+      topSecretsIncludeSubfolders: folderState?.secrets_include_subfolders ?? [],
     };
   });
 
@@ -783,10 +825,12 @@ const make = Effect.gen(function* () {
       .withTransaction(
         Effect.gen(function* () {
           for (const row of input.folders) {
-            yield* sql`INSERT INTO folders (id, owner_id, parent_id, name, position, instructions,
-                secrets_environment_id, phases, phase)
+            yield* sql`INSERT INTO folders
+                (id, owner_id, parent_id, name, position, instructions, secrets_environment_id,
+                  secrets_include_subfolders, phases, phase)
               VALUES (${row.id}, ${row.owner_id}, ${row.parent_id}, ${row.name}, ${row.position},
-                ${row.instructions}, ${row.secrets_environment_id ?? null}, ${row.phases ?? null},
+                ${row.instructions}, ${row.secrets_environment_id ?? null},
+                ${encodeSecretNames(row.secrets_include_subfolders ?? [])}, ${row.phases ?? null},
                 ${row.phase ?? null})
               ON CONFLICT (id) DO NOTHING`;
           }
@@ -802,7 +846,8 @@ const make = Effect.gen(function* () {
               WHERE id = 1 AND instructions IS NULL`;
           }
           if (input.topSecrets != null) {
-            yield* sql`UPDATE folders_state SET secrets_environment_id = ${input.topSecrets}
+            yield* sql`UPDATE folders_state SET secrets_environment_id = ${input.topSecrets},
+              secrets_include_subfolders = ${encodeSecretNames(input.topSecretsIncludeSubfolders ?? [])}
               WHERE id = 1 AND secrets_environment_id IS NULL`;
           }
           yield* bump;

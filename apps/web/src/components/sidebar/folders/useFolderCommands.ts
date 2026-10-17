@@ -16,8 +16,8 @@ import type {
   FolderId,
   FolderLevel,
   FolderMoveInput,
+  FolderSecrets,
   FolderSetPhaseInput,
-  OnePasswordEnvironmentId,
   SignalboxFoldersSnapshot,
 } from "@t3tools/contracts/signalboxFolders";
 import { useMemo } from "react";
@@ -126,20 +126,16 @@ export function useFolderCommands() {
       /** Moves it to another phase, replaces its phases, or (`phases: null`) clears them. */
       setPhase: (environmentId: EnvironmentId, input: FolderSetPhaseInput): Change =>
         reported("Could not change this folder's phase", setPhase({ environmentId, input })),
-      /** Null stops loading secrets at this level. */
+      /** Null removes this source; updates replace the complete source settings. */
       setSecrets: (
         environmentId: EnvironmentId,
         level: FolderLevel,
-        secretsEnvironmentId: OnePasswordEnvironmentId | null,
+        secrets: FolderSecrets | null,
       ): Attempt =>
         attempted(
           setSecrets({
             environmentId,
-            input: {
-              level,
-              secrets:
-                secretsEnvironmentId === null ? null : { environmentId: secretsEnvironmentId },
-            },
+            input: { level, secrets },
           }),
         ),
       /** The user's service account token, for every level; null disconnects it. */

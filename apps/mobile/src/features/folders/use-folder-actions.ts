@@ -8,12 +8,14 @@ import {
   squashAtomCommandFailure,
   type AtomCommandResult,
 } from "@t3tools/client-runtime/state/runtime";
+import { secretSourcesAbove, type SecretsSave } from "@t3tools/client-runtime/state/folderSecrets";
 import type { EnvironmentId } from "@t3tools/contracts";
 import type { SignalboxContext, SignalboxContextId } from "@t3tools/contracts/signalboxContexts";
 import type {
   Folder,
   FolderId,
   FolderLevel,
+  FolderSecrets,
   FolderSetPhaseInput,
   SignalboxFoldersSnapshot,
 } from "@t3tools/contracts/signalboxFolders";
@@ -31,6 +33,15 @@ export interface InstructionsEditing {
   readonly level: FolderLevel;
   readonly name: string;
   readonly instructions: string;
+}
+
+/** A level's Secrets settings open from its native folder menu. */
+export interface SecretsEditing {
+  readonly level: FolderLevel;
+  readonly name: string;
+  readonly secrets: FolderSecrets | null;
+  readonly onePasswordConnected: boolean;
+  readonly ancestorSources: ReadonlyArray<string>;
 }
 
 /** A folder whose phases are open in the editor, and the template its tree starts from. */
@@ -74,9 +85,12 @@ export function useFolderActions(input: {
   const moveFolder = useAtomCommand(signalboxFolders.moveFolder, QUIET);
   const deleteFolder = useAtomCommand(signalboxFolders.deleteFolder, QUIET);
   const setInstructions = useAtomCommand(signalboxFolders.setInstructions, QUIET);
-  const setPhase = useAtomCommand(signalboxFolders.setPhase, QUIET);
+  const setSecrets = useAtomCommand(signalboxFolders.setSecrets, QUIET);
+  const setOnePassword = useAtomCommand(signalboxFolders.setOnePassword, QUIET);
   const setGitHubLend = useAtomCommand(signalboxFolders.setGitHubLend, QUIET);
   const [editing, setEditing] = useState<InstructionsEditing | null>(null);
+  const [editingSecrets, setEditingSecrets] = useState<SecretsEditing | null>(null);
+  const setPhase = useAtomCommand(signalboxFolders.setPhase, QUIET);
   const [editingPhases, setEditingPhases] = useState<PhasesEditing | null>(null);
   const [notes, setNotes] = useState<NotesOpen | null>(null);
 
@@ -157,6 +171,18 @@ export function useFolderActions(input: {
             instructions: folder.instructions ?? "",
           });
           return;
+        case "secrets":
+          setEditingSecrets({
+            level: { _tag: "folder", folderId: folder.id },
+            name: folder.name,
+            secrets: folder.secrets ?? null,
+            onePasswordConnected: snapshot.onePassword?.connectedAt != null,
+            ancestorSources: secretSourcesAbove(snapshot, {
+              _tag: "folder",
+              folderId: folder.id,
+            }),
+          });
+          return;
         case "notes":
           setNotes({ environmentId, level: { _tag: "folder", folderId: folder.id } });
           return;
@@ -201,6 +227,15 @@ export function useFolderActions(input: {
           instructions: snapshot.top.instructions ?? "",
         });
       }
+      if (event === "top:secrets" && snapshot !== null) {
+        setEditingSecrets({
+          level: { _tag: "top" },
+          name: ownerLevelName(owner),
+          secrets: snapshot.top.secrets ?? null,
+          onePasswordConnected: snapshot.onePassword?.connectedAt != null,
+          ancestorSources: [],
+        });
+      }
     },
     [environmentId, requestCreateFolder, snapshot],
   );
@@ -216,6 +251,59 @@ export function useFolderActions(input: {
     },
     [editing, environmentId, run, setInstructions],
   );
+
+  const saveSecrets = useCallback(
+    async (plan: SecretsSave, onConnected: () => void) => {
+      if (editingSecrets === null || "error" in plan) return false;
+      if (
+        plan.connect !== null &&
+        !(await run(
+          "Couldn't connect 1Password",
+          setOnePassword({ environmentId, input: { token: plan.connect } }),
+        ))
+      ) {
+        return false;
+      }
+      if (plan.connect !== null) {
+        setEditingSecrets((current) =>
+          current === null ? null : { ...current, onePasswordConnected: true },
+        );
+        onConnected();
+      }
+      return plan.secrets === undefined
+        ? true
+        : run(
+            "Couldn't save secrets",
+            setSecrets({
+              environmentId,
+              input: { level: editingSecrets.level, secrets: plan.secrets },
+            }),
+          );
+    },
+    [editingSecrets, environmentId, run, setOnePassword, setSecrets],
+  );
+
+  const removeSecrets = useCallback(() => {
+    if (editingSecrets === null) return Promise.resolve(false);
+    return run(
+      "Couldn't remove secrets",
+      setSecrets({ environmentId, input: { level: editingSecrets.level, secrets: null } }),
+    );
+  }, [editingSecrets, environmentId, run, setSecrets]);
+
+  const disconnectOnePassword = useCallback(async () => {
+    if (editingSecrets === null || !editingSecrets.onePasswordConnected) return false;
+    const disconnected = await run(
+      "Couldn't disconnect 1Password",
+      setOnePassword({ environmentId, input: { token: null } }),
+    );
+    if (disconnected) {
+      setEditingSecrets((current) =>
+        current === null ? null : { ...current, onePasswordConnected: false },
+      );
+    }
+    return disconnected;
+  }, [editingSecrets, environmentId, run, setOnePassword]);
 
   /** Saves the open phases editor's change; resolves whether it was saved. */
   const savePhases = useCallback(
@@ -234,6 +322,11 @@ export function useFolderActions(input: {
     onTopLevelAction,
     editing,
     closeEditor: useCallback(() => setEditing(null), []),
+    editingSecrets,
+    closeSecretsEditor: useCallback(() => setEditingSecrets(null), []),
+    saveSecrets,
+    removeSecrets,
+    disconnectOnePassword,
     notes,
     closeNotes: useCallback(() => setNotes(null), []),
     saveInstructions,

@@ -3,8 +3,10 @@ import type {
   FolderId,
   FolderLevel,
   FolderResolvedPool,
+  FolderSecrets,
   FolderPhase,
   OnePasswordEnvironmentId,
+  SecretEnvironmentName,
 } from "@t3tools/contracts/signalboxFolders";
 import type { SignalboxContext, SignalboxContextId } from "@t3tools/contracts/signalboxContexts";
 import type { FolderInstructions } from "@signalbox/runner-protocol/DriveProtocol";
@@ -34,8 +36,8 @@ export interface TreeFolder {
   readonly driveId: string | null;
   /** Never blank: no instructions is null. */
   readonly instructions: string | null;
-  /** The 1Password Environment its threads get, if any. */
-  readonly secrets: OnePasswordEnvironmentId | null;
+  /** The 1Password Environment and names its threads get, if any. */
+  readonly secrets: FolderSecrets | null;
   /** Where it is in its life (`folderPhases.ts`), if it has a phase. */
   readonly phase: FolderPhase | null;
 }
@@ -44,7 +46,7 @@ export interface Tree {
   /** Folders of the user's current owners only. */
   readonly folders: ReadonlyArray<TreeFolder>;
   readonly topInstructions: string | null;
-  readonly topSecrets: OnePasswordEnvironmentId | null;
+  readonly topSecrets: FolderSecrets | null;
   readonly bindings: ReadonlyArray<PoolBinding>;
   /** Threads filed explicitly, by thread id. Null: the top level. */
   readonly filed: ReadonlyMap<ThreadId, FolderId | null>;
@@ -170,22 +172,41 @@ export const instructionsOf = (
 };
 
 /**
- * The 1Password Environment of every level on `home`'s chain that names one,
- * the top level first, so a nearer folder's variable replaces one from above.
+ * Environments visible from `home`, top level first. An ancestor contributes
+ * only opted-in names; a home's own source contributes every name. Repeated
+ * Environment assignments keep their place so each retains its own filter.
  */
-export const secretsOf = (
+export const secretResolutionOf = (
   tree: Tree,
   home: FolderId | null,
-): ReadonlyArray<OnePasswordEnvironmentId> => {
+): {
+  readonly environments: ReadonlyArray<OnePasswordEnvironmentId>;
+  /** One access rule per Environment, in the same order. Null means the home gets all names. */
+  readonly environmentNames: ReadonlyArray<ReadonlyArray<SecretEnvironmentName> | null>;
+} => {
   const byId = indexed(tree.folders);
-  return chainOf(poolTreeOf(tree), levelOf(home))
-    .toReversed()
-    .flatMap((level) => {
-      const environmentId =
-        level._tag === "top" ? tree.topSecrets : (byId.get(level.folderId)?.secrets ?? null);
-      return environmentId === null ? [] : [environmentId];
-    });
+  const chain = chainOf(poolTreeOf(tree), levelOf(home)).toReversed();
+  const environments: Array<OnePasswordEnvironmentId> = [];
+  const environmentNames: Array<ReadonlyArray<SecretEnvironmentName> | null> = [];
+
+  for (const level of chain) {
+    const secrets =
+      level._tag === "top" ? tree.topSecrets : (byId.get(level.folderId)?.secrets ?? null);
+    if (secrets === null) continue;
+    const isHome = level._tag === "top" ? home === null : level.folderId === home;
+    const names = isHome ? null : (secrets.includeSubfolders ?? []);
+    // An empty ancestor allowlist contributes nothing. It must not cancel
+    // names shared by an earlier assignment of the same Environment.
+    if (names !== null && names.length === 0) continue;
+    environments.push(secrets.environmentId);
+    environmentNames.push(names);
+  }
+
+  return { environments, environmentNames };
 };
+
+export const secretsOf = (tree: Tree, home: FolderId | null) =>
+  secretResolutionOf(tree, home).environments;
 
 /** Resolves pools per home, each home once: `turn` and snapshots ask for many. */
 export const poolResolver = (tree: Tree) => {

@@ -1,11 +1,20 @@
 import { SectionId } from "@t3tools/contracts/sections";
 import { SignalboxContextId } from "@t3tools/contracts/signalboxContexts";
-import { FolderId, OnePasswordEnvironmentId } from "@t3tools/contracts/signalboxFolders";
+import {
+  FolderId,
+  OnePasswordEnvironmentId,
+  SecretEnvironmentName,
+} from "@t3tools/contracts/signalboxFolders";
 import * as Schema from "effect/Schema";
 
 import * as ResourceBindings from "./ResourceBindings.ts";
 
-/** Folders as `UserFolders` stores them, and what a preview takes along (`previewSetup/`). */
+export const SecretEnvironmentNamesJson = Schema.fromJsonString(
+  Schema.Array(SecretEnvironmentName),
+);
+const SecretEnvironmentNames = Schema.Array(SecretEnvironmentName);
+
+/** Folder rows in the preview setup wire format. */
 export const FolderRow = Schema.Struct({
   id: FolderId,
   owner_id: SignalboxContextId,
@@ -16,19 +25,29 @@ export const FolderRow = Schema.Struct({
   instructions: Schema.NullOr(Schema.String),
   // Optional: a cloud from before folder secrets (#395) sends none.
   secrets_environment_id: Schema.optionalKey(Schema.NullOr(OnePasswordEnvironmentId)),
+  // Optional: a cloud from before per-secret subfolder access sends none.
+  secrets_include_subfolders: Schema.optionalKey(Schema.NullOr(SecretEnvironmentNames)),
   // Optional: a cloud from before folder phases (#677) sends none.
   phases: Schema.optionalKey(Schema.NullOr(Schema.String)),
   phase: Schema.optionalKey(Schema.NullOr(Schema.String)),
 });
 export type FolderRow = typeof FolderRow.Type;
+
+/** Folder rows as SQLite returns them. JSON text becomes an array before use. */
+const FolderRowSql = Schema.Struct({
+  ...FolderRow.fields,
+  secrets_include_subfolders: Schema.optionalKey(Schema.NullOr(SecretEnvironmentNamesJson)),
+});
+
 export const FolderRows = Schema.Struct({
   folders: Schema.Array(FolderRow),
   bindings: Schema.Array(ResourceBindings.BindingRow),
   topInstructions: Schema.NullOr(Schema.String),
   topSecrets: Schema.optionalKey(Schema.NullOr(OnePasswordEnvironmentId)),
+  topSecretsIncludeSubfolders: Schema.optionalKey(Schema.NullOr(SecretEnvironmentNames)),
 });
 export type FolderRows = typeof FolderRows.Type;
-export const decodeFolderRows = Schema.decodeUnknownSync(Schema.Array(FolderRow));
+export const decodeFolderRows = Schema.decodeUnknownSync(Schema.Array(FolderRowSql));
 
 /**
  * Sections and project placements as clouds from before folders stored and

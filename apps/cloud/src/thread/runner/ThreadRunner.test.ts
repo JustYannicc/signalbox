@@ -1051,6 +1051,7 @@ describe("ThreadRunner", () => {
         OnePasswordEnvironmentId.make("env-top"),
         OnePasswordEnvironmentId.make("env-work"),
       ];
+      const environmentNames = [["SHARED"], null] as const;
       return withObject(
         freshDatabase(),
         (engine, runner) =>
@@ -1058,10 +1059,16 @@ describe("ThreadRunner", () => {
             // What the owner's object resolved for this thread's home (`UserFolders.turn`).
             yield* launch(engine, "launch-1", {
               ...personal,
-              secrets: { top: [], projects: {}, thread: environments },
+              secrets: {
+                top: [],
+                projects: {},
+                thread: environments,
+                environmentNames: { top: [], projects: {}, thread: environmentNames },
+              },
             });
             const machine = yield* connect(runner);
             expect((yield* runner.work).secrets).toEqual(environments);
+            expect((yield* runner.work).environmentNames).toEqual(environmentNames);
             // Only a turn's hand-out asks the owner's object, not every look at the work.
             expect(asked).toEqual([]);
             expect(yield* runner.secretsToken).toBe("ops_first-token");
@@ -1111,6 +1118,65 @@ describe("ThreadRunner", () => {
     },
   );
 
+  it.effect("fails closed for a persisted turn without #695 name filters", () =>
+    withObject(freshDatabase(), (engine, runner) =>
+      Effect.gen(function* () {
+        const environment = OnePasswordEnvironmentId.make("env-before-695");
+        yield* launch(engine, "launch-1", {
+          ...personal,
+          secrets: { top: [], projects: {}, thread: [environment] },
+        });
+        yield* connect(runner);
+
+        const work = yield* runner.work;
+        expect(work.secrets).toEqual([environment]);
+        expect(work.environmentNames).toEqual([]);
+      }),
+    ),
+  );
+
+  it.effect("refreshes folder secret names on the next turn without restarting the Runner", () =>
+    withObject(freshDatabase(), (engine, runner) =>
+      Effect.gen(function* () {
+        const environment = OnePasswordEnvironmentId.make("env-folder");
+        const firstNames = [["FIRST_KEY"]] as const;
+        const nextNames = [["NEXT_KEY"]] as const;
+        const creationWith = (environmentNames: typeof firstNames | typeof nextNames) => ({
+          ...personal,
+          secrets: {
+            top: [],
+            projects: {},
+            thread: [environment],
+            environmentNames: { top: [], projects: {}, thread: environmentNames },
+          },
+        });
+
+        yield* launch(engine, "launch-1", creationWith(firstNames));
+        const machine = yield* connect(runner);
+        const firstTurn = yield* liveTurn(runner);
+        const firstReport = turnReport(
+          firstTurn.runId,
+          firstTurn.runOrdinal,
+          firstTurn.providerThread,
+        );
+        yield* runner.batch({
+          generation: machine.generation,
+          sequence: 1,
+          items: [firstReport.started, firstReport.full, firstReport.terminal],
+        });
+
+        yield* send(engine, 2, "Again", creationWith(nextNames));
+        const nextTurn = yield* liveTurn(runner);
+        const work = yield* runner.work;
+        expect(nextTurn.runId).not.toBe(firstTurn.runId);
+        expect(work.generation).toBe(machine.generation);
+        expect(work.secrets).toEqual([environment]);
+        expect(work.environmentNames).toEqual(nextNames);
+        expect((yield* runner.reconcile).ensure).toBeNull();
+      }),
+    ),
+  );
+
   it.effect("hands out no secrets when the chain names none", () => {
     let asked = 0;
     return withObject(
@@ -1125,6 +1191,7 @@ describe("ThreadRunner", () => {
           const work = yield* runner.work;
           expect(work.turn).not.toBeNull();
           expect(work.secrets).toEqual([]);
+          expect(work.environmentNames).toEqual([]);
           expect(asked).toBe(0);
         }),
       {

@@ -43,6 +43,7 @@ import {
   commandOnPool,
   forThread,
   onPool,
+  type SecretEnvironmentNames,
   type TurnInstructions,
   type TurnPools,
   type TurnSecrets,
@@ -357,8 +358,11 @@ const make = Effect.gen(function* () {
       readonly runId: string;
       readonly levels: ReadonlyArray<FolderInstructions>;
     };
-    /** The chain's secrets, as of the run this commit starts. */
-    readonly secrets?: ReadonlyArray<OnePasswordEnvironmentId>;
+    /** The chain's secrets and subfolder access, as of the run this commit starts. */
+    readonly secrets?: {
+      readonly environments: ReadonlyArray<OnePasswordEnvironmentId>;
+      readonly environmentNames?: SecretEnvironmentNames;
+    };
   }) {
     const current = yield* Ref.get(state);
     const owner = current.thread?.owner ?? input.owner;
@@ -522,7 +526,16 @@ const make = Effect.gen(function* () {
               }),
           ...(started === undefined || creation.secrets === undefined || projectId === undefined
             ? {}
-            : { secrets: forThread(creation.secrets, projectId) }),
+            : {
+                secrets: {
+                  environments: forThread(creation.secrets, projectId),
+                  ...(creation.secrets.environmentNames === undefined
+                    ? {}
+                    : {
+                        environmentNames: forThread(creation.secrets.environmentNames, projectId),
+                      }),
+                },
+              }),
         });
         return { sequence, replayed: false };
       }),
