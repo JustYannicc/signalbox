@@ -19,7 +19,6 @@ import {
   visibleThreadPullRequests,
 } from "@t3tools/shared/threadPullRequests";
 import * as Clock from "effect/Clock";
-import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -33,12 +32,15 @@ import { UserShell } from "../user/UserShell.ts";
 import { GitHub } from "./GitHub.ts";
 import type { GitHubError } from "./GitHubApi.ts";
 import * as Review from "./GitHubReviewReads.ts";
+import { CloudPullRequests } from "./CloudPullRequestsService.ts";
 import {
   PullRequestRepository,
   type ResolvedPullRequestRepository,
 } from "./PullRequestRepository.ts";
 import { makeListingReads } from "./cloudPullRequestListing.ts";
 import { makeReadCache } from "./cloudReadCache.ts";
+
+export { CloudPullRequests };
 
 const capabilities: PullRequestCapabilities = {
   diff: true,
@@ -405,8 +407,4 @@ const make = Effect.gen(function* () {
   };
 });
 
-export class CloudPullRequests extends Context.Service<
-  CloudPullRequests,
-  Effect.Success<typeof make>
->()("@signalbox/cloud/github/CloudPullRequests") {}
 export const layer = Layer.effect(CloudPullRequests, make);

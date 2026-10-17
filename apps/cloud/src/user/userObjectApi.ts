@@ -7,7 +7,7 @@ import * as Schema from "effect/Schema";
 import { automationTool } from "../automations/automationTool.ts";
 import * as PersonBrowsers from "../browser/PersonBrowsers.ts";
 import * as CloudAutomations from "../automations/CloudAutomations.ts";
-import * as CloudPullRequests from "../github/CloudPullRequests.ts";
+import * as CloudPullRequests from "../github/CloudPullRequestsService.ts";
 import * as ConnectionLinks from "../connections/ConnectionLinks.ts";
 import { DriveRefEvent } from "../drive/DriveEvents.ts";
 import { linkedConnections, linkedToken } from "../connections/linkedConnections.ts";
