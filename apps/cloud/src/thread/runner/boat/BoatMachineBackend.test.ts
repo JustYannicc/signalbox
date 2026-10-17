@@ -333,6 +333,48 @@ describe("BoatMachineBackend", () => {
     }),
   );
 
+  it.effect("save-only recovery never creates a replacement for a missing disk", () =>
+    Effect.gen(function* () {
+      const boat = makeFakeBoat();
+      const backend = yield* makeBackend(boat, makeStore());
+      expect((yield* backend.ensure({ ...request(1), saveOnly: true })).actual).toBe("failed");
+      expect(boat.calls).toEqual([]);
+      yield* backend.ensure(request(1));
+      boat.sandboxes.delete("bx_1");
+      expect((yield* backend.ensure({ ...request(2), saveOnly: true })).actual).toBe("failed");
+      expect((yield* backend.ensure({ ...request(2), saveOnly: true })).actual).toBe("failed");
+      expect(boat.calls.filter((operation) => operation === "create")).toHaveLength(1);
+      expect(boat.sandboxes.size).toBe(0);
+    }),
+  );
+
+  it.effect("save-only recovery preserves a broken retained disk and resumes a stopped one", () =>
+    Effect.gen(function* () {
+      const boat = makeFakeBoat();
+      const backend = yield* makeBackend(boat, makeStore());
+      yield* backend.ensure(request(1));
+      boat.settle();
+      boat.sandboxes.get("bx_1")!.setupStatus = "failed";
+      expect((yield* backend.ensure({ ...request(2), saveOnly: true })).actual).toBe("failed");
+      expect(boat.sandboxes.has("bx_1")).toBe(true);
+      expect(boat.calls).not.toContain("delete");
+      boat.sandboxes.get("bx_1")!.setupStatus = "done";
+      yield* backend.stop(threadId);
+      boat.settle();
+      expect(yield* backend.ensure({ ...request(2), saveOnly: true })).toMatchObject({
+        actual: "starting",
+        machineId: "bx_1",
+        wake: "disk_resume",
+      });
+      boat.settle();
+      expect(yield* backend.ensure({ ...request(2), saveOnly: true })).toMatchObject({
+        actual: "running",
+        machineId: "bx_1",
+      });
+      expect(boat.calls.filter((operation) => operation === "create")).toHaveLength(1);
+    }),
+  );
+
   it.effect("a VM made by a create whose answer was lost is found again and stopped", () =>
     Effect.gen(function* () {
       const boat = makeFakeBoat();

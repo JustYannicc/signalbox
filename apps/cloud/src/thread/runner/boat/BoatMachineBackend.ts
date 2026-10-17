@@ -132,6 +132,13 @@ export const makeBoatMachineBackend = ({
   const ensure: MachineBackendShape["ensure"] = (request) =>
     Effect.gen(function* () {
       const stored = yield* records.get;
+      if (request.saveOnly && stored.machineId === null && stored.createKey === null) {
+        return statusOf(
+          stored,
+          "failed",
+          "The retained disk is missing; its final save is unconfirmed.",
+        );
+      }
       // What the thread wants goes down first, so whatever happens below is retried.
       const createKey = stored.machineId === null ? (stored.createKey ?? (yield* newKey)) : null;
       let record = yield* update(stored, {
@@ -161,7 +168,9 @@ export const makeBoatMachineBackend = ({
       const found = yield* sandboxOf({ ...record, machineId });
       let current = found.record;
       const sandbox = found.sandbox;
-      if (sandbox === null) return statusOf(current, "starting", "The machine was gone.");
+      if (sandbox === null) {
+        return statusOf(current, request.saveOnly ? "failed" : "starting", "The machine was gone.");
+      }
       const actual = actualOf(sandbox.state);
       switch (actual) {
         case "stopped":
@@ -173,11 +182,15 @@ export const makeBoatMachineBackend = ({
         case "none":
           return statusOf(current, "starting", sandbox.state);
         case "failed":
+          if (request.saveOnly)
+            return statusOf(current, "failed", sandbox.error ?? "boat reports an error.");
           return yield* replace(current, sandbox.id, sandbox.error ?? "boat reports an error.");
         case "running":
           break;
       }
       if (sandbox.setupStatus === "failed") {
+        if (request.saveOnly)
+          return statusOf(current, "failed", "The retained machine's setup failed.");
         return yield* replace(
           current,
           sandbox.id,

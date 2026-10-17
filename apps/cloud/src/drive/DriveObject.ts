@@ -235,6 +235,10 @@ export class DriveObject extends DurableObject<DriveObjectEnv> implements DriveO
     return this.api.purgeThread(...args);
   }
 
+  purgeDrive(...args: Parameters<DriveObjectApi["purgeDrive"]>) {
+    return this.api.purgeDrive(...args);
+  }
+
   collectPurgedPacks(...args: Parameters<DriveObjectApi["collectPurgedPacks"]>) {
     return this.api.collectPurgedPacks(...args);
   }

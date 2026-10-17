@@ -10,6 +10,7 @@ import type { AccessDelivery, DrivePerson, MembershipChange } from "./DriveMembe
 import type {
   DriveWriter,
   DrivePurgeReceipt,
+  DrivePurgeResult,
   ObjectLocation,
   PackRegistration,
   PromisedFile,
@@ -106,6 +107,13 @@ export interface DriveObjectApi {
     readonly purgedAt: number;
     readonly gcAfter: number;
   }) => Promise<DrivePurgeReceipt>;
+  /** Deletes an unshared, dedicated folder drive after its owner is revalidated. */
+  readonly purgeDrive: (input: {
+    readonly userId: string;
+    readonly purgeId: string;
+    readonly purgedAt: number;
+    readonly gcAfter: number;
+  }) => Promise<DrivePurgeResult>;
   /** Deletes at most `limit` due private packs from R2 and records the exact removals. */
   readonly collectPurgedPacks: (
     purgeId: string,
@@ -168,6 +176,7 @@ export function handleFor(api: DriveObjectApi): DriveHandle {
     unshare: wrap("unshare"),
     pendingAccess: wrap("pendingAccess"),
     purgeThread: wrap("purgeThread"),
+    purgeDrive: wrap("purgeDrive"),
     collectPurgedPacks: wrap("collectPurgedPacks"),
   } as DriveHandle;
 }

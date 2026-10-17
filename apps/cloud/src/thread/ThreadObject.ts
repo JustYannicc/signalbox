@@ -50,6 +50,7 @@ import {
   type RunnerSocketHost,
 } from "./runner/runnerSockets.ts";
 import * as ThreadRunner from "./runner/ThreadRunner.ts";
+import { applyMachinePlan } from "./runner/applyMachinePlan.ts";
 import * as SessionRows from "./session/SessionRows.ts";
 import { handleSessionRequest, isSessionApiPath } from "./session/sessionRoutes.ts";
 import { deliverPendingEvents } from "./eventOutbox.ts";
@@ -309,7 +310,12 @@ export class ThreadObject extends DurableObject<ThreadObjectEnv> implements Thre
   // Durable Object RPC dispatches to prototype methods, so each one is spelled out.
   async trash(...args: Parameters<ThreadObjectApi["trash"]>) {
     const reply = await this.api.trash(...args);
-    if (reply._tag === "ok") await this.gateway.closeForThreadTrash();
+    if (
+      reply._tag === "ok" &&
+      reply.value.state === "trashed" &&
+      reply.value.trashId === args[1].trashId
+    )
+      await this.gateway.closeForThreadTrash();
     return reply;
   }
 
@@ -648,82 +654,7 @@ export class ThreadObject extends DurableObject<ThreadObjectEnv> implements Thre
     const ensure = plan.ensure;
     const threadId = this.threadId();
     if (ensure !== null || plan.stop) {
-      // The backend call under way, for what a failure is logged as.
-      let operation: MachineReport["operation"] = "ensure";
-      // `ok`: the backend did what it could; `false` backs off. A machine that is
-      // still coming up is retried at the plan's own pace.
-      const ok = await this.runtime.runPromise(
-        Effect.gen(function* () {
-          const backends = yield* MachineBackend.MachineBackend;
-          const backend = backends[plan.machineClass];
-          operation = ensure === null ? "stop" : "ensure";
-          const report = (input: MachineReport) =>
-            noteMachine({ ...input, generation: ensure?.generation, runId: plan.runId });
-          /** Stops the thread's machine on every backend but `keep`. Cheap where there is none. */
-          const stopAll = (keep: MachineBackend.MachineBackendShape | null) =>
-            Effect.gen(function* () {
-              let stopped = true;
-              for (const other of MachineBackend.distinctBackends(backends)) {
-                if (other === keep) continue;
-                const status = yield* other.stop(threadId);
-                // Only a machine there was to stop is news.
-                if (status.actual !== "none") yield* report({ operation: "stop", status });
-                stopped &&= MachineBackend.isStopped(status);
-                if (!stopped) yield* Effect.logInfo("machine not stopped yet", status);
-              }
-              return stopped;
-            });
-          if (ensure === null) {
-            // A Runner that vanished while the thread still wanted its machine:
-            // a machine the backend stopped on its own reached its TTL.
-            if (plan.lost && plan.release !== null) {
-              operation = "inspect";
-              const status = yield* backend.inspect(threadId);
-              yield* report({ operation: "inspect", status });
-              const release = plan.release;
-              if (
-                status.desired === "running" &&
-                (status.actual === "stopped" || status.actual === "stopping")
-              ) {
-                yield* recordUnderLock((diagnostics) => diagnostics.refineStop(release, "ttl"));
-              }
-            }
-            operation = "stop";
-            return yield* stopAll(null);
-          }
-          // A thread that changed class lets its machine on the other backend go first.
-          operation = "stop";
-          if (!(yield* stopAll(backend))) return false;
-          operation = "ensure";
-          const status = yield* backend.ensure({
-            threadId,
-            ...ensure,
-            machineClass: plan.machineClass,
-          });
-          yield* report({ operation: "ensure", status });
-          if (status.actual !== "running") {
-            yield* Effect.logInfo("machine not up yet", status);
-            return status.actual !== "failed";
-          }
-          yield* ThreadRunner.ThreadRunner.use((runner) => runner.ensured(ensure.generation));
-          return true;
-        }).pipe(
-          Effect.catchTags({
-            MachineBackendError: (error) =>
-              Effect.logError("machine request failed", error.message, error.cause).pipe(
-                Effect.andThen(
-                  noteMachine({
-                    operation,
-                    error: error.message,
-                    generation: ensure?.generation,
-                    runId: plan.runId,
-                  }),
-                ),
-                Effect.as(false),
-              ),
-          }),
-        ),
-      );
+      const ok = await this.runtime.runPromise(applyMachinePlan(plan, threadId, now));
       this.machineFailures = ok ? 0 : this.machineFailures + 1;
       if (!ok) {
         wakeAt = now + retryDelay(this.machineFailures);

@@ -3,6 +3,7 @@ import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
 import type { SqlError } from "effect/sql/SqlError";
 
+import { parseDriveId } from "./driveAccess.ts";
 import type { Oid } from "./git/gitObjects.ts";
 
 export interface DrivePurgeRef {
@@ -284,7 +285,7 @@ export const make = (sql: SqlClient.SqlClient, driveId: string): Service => {
         );
       }
 
-      if (driveId.split("/", 1)[0] !== "folder") {
+      if (parseDriveId(driveId)?.kind !== "folder") {
         return {
           _tag: "retained",
           reason: "Only a dedicated folder drive can be purged.",
@@ -369,18 +370,19 @@ export const make = (sql: SqlClient.SqlClient, driveId: string): Service => {
             UNION SELECT base FROM threads WHERE base IS NOT NULL
             UNION SELECT e.dependency_oid FROM object_edges e JOIN reachable r ON e.oid = r.oid
           )
-          INSERT OR IGNORE INTO thread_purge_packs (purge_id, thread_id, pack_name, scope, state)
+          INSERT INTO thread_purge_packs (purge_id, thread_id, pack_name, scope, state)
           SELECT ${purgeId}, ${targetThreadId}, p.name, 'public', 'pending' FROM packs p
           WHERE p.private_to IS NULL
-            AND NOT EXISTS (SELECT 1 FROM thread_purge_packs q
-              WHERE q.purge_id = ${purgeId} AND q.pack_name = p.name)
             AND NOT EXISTS (SELECT 1 FROM pack_entries e JOIN reachable r ON r.oid = e.oid
               WHERE e.pack_seq = p.seq)
             AND NOT EXISTS (
               SELECT 1 FROM reachable r JOIN objects o ON o.oid = r.oid
               WHERE o.type = 'tree' AND o.size > 0
                 AND NOT EXISTS (SELECT 1 FROM object_edges edge WHERE edge.oid = o.oid)
-            )`;
+            )
+          ON CONFLICT (purge_id, pack_name) DO UPDATE SET
+            scope = 'public', state = 'pending', claimed_at = NULL
+          WHERE thread_purge_packs.scope = 'private' AND thread_purge_packs.state = 'retained'`;
       }
 
       const boundedLimit = Math.max(0, Math.min(PURGE_PACK_BATCH_MAX, Math.floor(limit)));

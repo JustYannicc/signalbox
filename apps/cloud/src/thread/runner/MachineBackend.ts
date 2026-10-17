@@ -134,6 +134,8 @@ export interface MachineExit {
 /** What a thread asks a backend for. */
 export interface MachineRequest extends Omit<MachineEnsureRequest, "modelGatewayUrl"> {
   readonly machineClass: MachineClass;
+  /** Resume only the retained disk to save it. Never replace it with a new machine. */
+  readonly saveOnly?: boolean;
 }
 
 /**

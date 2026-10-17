@@ -86,14 +86,53 @@ export const makeDriveObjectApi = (
           return receipt;
         }),
       ),
+    purgeDrive: (input) =>
+      changingOutbox(
+        run(
+          Effect.gen(function* () {
+            const result = yield* store.use((s) => s.purgeDrive(input));
+            if (result._tag === "purged") {
+              yield* packs.use((p) =>
+                p.writePurgeManifest({
+                  driveId,
+                  purgeId: input.purgeId,
+                  stage: "purge",
+                  contents: new TextEncoder().encode(
+                    JSON.stringify({ schemaVersion: 1, stage: "purge", result }),
+                  ),
+                }),
+              );
+            }
+            return result;
+          }),
+        ),
+      ),
     collectPurgedPacks: (purgeId, now, limit) =>
       run(
         Effect.gen(function* () {
           const names = yield* store.use((s) => s.claimPurgedPacks(purgeId, now, limit));
           if (names === null) return null;
           if (names.length > 0) {
+            const receipt = yield* store.use((s) => s.purgeReceipt(purgeId));
+            if (receipt === null) return null;
             yield* packs
-              .use((p) => p.remove(driveId, names))
+              .use((p) =>
+                p
+                  .writePurgeManifest({
+                    driveId,
+                    purgeId,
+                    stage: "gc",
+                    contents: new TextEncoder().encode(
+                      JSON.stringify({
+                        schemaVersion: 1,
+                        stage: "gc",
+                        receipt,
+                        deletingPackNames: names,
+                      }),
+                    ),
+                  })
+                  .pipe(Effect.andThen(p.remove(driveId, names))),
+              )
               .pipe(
                 Effect.catchCause((cause) =>
                   store
@@ -107,6 +146,7 @@ export const makeDriveObjectApi = (
               ? yield* store.use((s) => s.purgeReceipt(purgeId))
               : yield* store.use((s) => s.finishPurgedPacks(purgeId, names));
           if (receipt === null) return null;
+          if (names.length === 0 && receipt.pendingPackNames.length > 0) return receipt;
           yield* packs.use((p) =>
             p.writePurgeManifest({
               driveId,

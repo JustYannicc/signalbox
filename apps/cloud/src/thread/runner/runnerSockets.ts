@@ -163,7 +163,11 @@ export async function pushRunnerWork(host: RunnerSocketHost): Promise<ThreadRunn
     // A drain asked for and not answered yet, once per connection (#493).
     let sentDrainId = attachment.sentDrainId;
     if (work.drain !== null && sentDrainId !== work.drain) {
-      send(socket, { type: "drain", id: work.drain });
+      send(socket, {
+        type: "drain",
+        id: work.drain,
+        ...(work.drainRecovery === null ? {} : { recovery: work.drainRecovery }),
+      });
       sentDrainId = work.drain;
     }
     if (

@@ -112,6 +112,10 @@ export interface MachineLease {
   readonly steers?: boolean | undefined;
   /** A Runner's empty drain answer proved the current machine's work was saved before release. */
   readonly drainSaved?: boolean | undefined;
+  readonly saveOnly?: boolean | undefined;
+  readonly drainRecovery?: boolean | undefined;
+  /** Drain ids stay distinct when restore and trash happen in the same millisecond. */
+  readonly lastDrainId?: number | undefined;
   /**
    * The idle machine was asked to save everything before it goes (#493), at
    * `id` (when it was asked), and whether it answered and what it couldn't save.
@@ -493,6 +497,9 @@ const MachineLeaseJson = Schema.fromJsonString(
     drains: Schema.optional(Schema.Boolean),
     steers: Schema.optional(Schema.Boolean),
     drainSaved: Schema.optional(Schema.Boolean),
+    saveOnly: Schema.optional(Schema.Boolean),
+    drainRecovery: Schema.optional(Schema.Boolean),
+    lastDrainId: Schema.optional(Schema.Number),
     drain: Schema.optional(
       Schema.Union([
         Schema.Struct({ _tag: Schema.Literal("asked"), id: Schema.Number }),

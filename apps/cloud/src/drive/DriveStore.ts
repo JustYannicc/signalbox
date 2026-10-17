@@ -17,9 +17,9 @@ import * as DrivePurgeStore from "./drivePurgeStore.ts";
 import { isWithin } from "./DriveReader.ts";
 import type { ObjectType, Oid } from "./git/gitObjects.ts";
 
-import type { DrivePurgeReceipt } from "./drivePurgeStore.ts";
+import type { DrivePurgeReceipt, DrivePurgeResult } from "./drivePurgeStore.ts";
 
-export type { DrivePurgeReceipt } from "./drivePurgeStore.ts";
+export type { DrivePurgeReceipt, DrivePurgeResult } from "./drivePurgeStore.ts";
 
 /**
  * What one drive's Durable Object persists: its refs, the packs it holds in
@@ -685,12 +685,12 @@ const make = (driveId: string) =>
       });
 
     const storeObjectEdges = (edges: PackRegistration["objectEdges"]) =>
-      Effect.forEach(
-        edges,
-        (edge) =>
-          sql`INSERT OR IGNORE INTO object_edges (oid, dependency_oid)
-        VALUES (${edge.oid}, ${edge.dependencyOid})`,
-      ).pipe(Effect.asVoid);
+      edges.length === 0
+        ? Effect.void
+        : sql`INSERT OR IGNORE INTO object_edges (oid, dependency_oid)
+            SELECT value ->> 'oid', value ->> 'dependencyOid' FROM json_each(${JSON.stringify(edges)})`.pipe(
+            Effect.asVoid,
+          );
 
     const registerPack: DriveStore["Service"]["registerPack"] = (pack) =>
       Effect.gen(function* () {

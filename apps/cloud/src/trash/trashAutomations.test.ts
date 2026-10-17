@@ -1,6 +1,7 @@
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Stream from "effect/Stream";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as WorkflowEngine from "@signalbox/automations/WorkflowEngine";
 import * as WorkflowStore from "@signalbox/automations/WorkflowStore";
@@ -13,6 +14,59 @@ const storeLayer = Layer.effectDiscard(WorkflowStore.make).pipe(
   Layer.provideMerge(layerMemoryStore),
 );
 
+const unused = () => Effect.die("Unused by Trash automation tests.");
+
+const fakeEngine = (cancelRun: (runId: string) => Effect.Effect<void> = () => Effect.void) =>
+  WorkflowEngine.WorkflowEngine.of({
+    validate: () => ({ ok: false, diagnostics: [] }),
+    save: unused,
+    publish: unused,
+    discardDraft: unused,
+    list: unused,
+    get: unused,
+    getRun: unused,
+    setEnabled: unused,
+    rotateWebhook: unused,
+    remove: unused,
+    startRun: unused,
+    builtIns: Effect.succeed([]),
+    customize: unused,
+    cancelAttached: unused,
+    startWait: unused,
+    listWaits: unused,
+    stopWait: unused,
+    watchPullRequest: unused,
+    requestMerge: unused,
+    registerBuiltinTools: () => Effect.void,
+    registerPullRequestReads: () => Effect.void,
+    registerExternalRunner: () => Effect.void,
+    nextExternalPollAt: Effect.succeed(null),
+    setWebhookSecret: unused,
+    cancelRun,
+    retryRun: unused,
+    answer: unused,
+    emit: unused,
+    deliverEvent: () => Effect.void,
+    subscribeList: () => Stream.empty,
+    subscribeAutomation: () => Stream.empty,
+    subscribeRun: () => Stream.empty,
+    subscribeNotices: Effect.succeed(Stream.empty),
+    tick: Effect.void,
+    drain: Effect.void,
+  });
+
+const fakeCloudAutomations = (flush: Effect.Effect<void> = Effect.void) =>
+  CloudAutomations.CloudAutomations.of({
+    threadEvents: () => Effect.void,
+    driveEvents: () => Effect.void,
+    tool: () => Effect.succeed(undefined),
+    host: () => Effect.succeed(undefined),
+    workerModule: () => Effect.succeed(""),
+    start: Effect.void,
+    wake: Effect.void,
+    flush,
+  });
+
 const services = (
   options: {
     readonly cancelRun?: (runId: string) => Effect.Effect<void>;
@@ -20,26 +74,8 @@ const services = (
   } = {},
 ) => {
   const dependencies = Layer.mergeAll(
-    ...(options.cancelRun === undefined
-      ? []
-      : [
-          Layer.succeed(
-            WorkflowEngine.WorkflowEngine,
-            WorkflowEngine.WorkflowEngine.of({
-              cancelRun: options.cancelRun,
-            } as unknown as WorkflowEngine.WorkflowEngineShape),
-          ),
-        ]),
-    ...(options.flush === undefined
-      ? []
-      : [
-          Layer.succeed(
-            CloudAutomations.CloudAutomations,
-            CloudAutomations.CloudAutomations.of({
-              flush: options.flush,
-            } as CloudAutomations.CloudAutomationsShape),
-          ),
-        ]),
+    Layer.succeed(WorkflowEngine.WorkflowEngine, fakeEngine(options.cancelRun)),
+    Layer.succeed(CloudAutomations.CloudAutomations, fakeCloudAutomations(options.flush)),
   );
   return layer.pipe(Layer.provideMerge(dependencies), Layer.provideMerge(storeLayer));
 };

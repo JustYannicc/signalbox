@@ -255,45 +255,47 @@ const make = Effect.gen(function* () {
     prepareAutomationTrash(threadIds, trashId).pipe(
       Effect.flatMap((prepared) =>
         prepared.ready
-          ? sql.withTransaction(
-              Effect.gen(function* () {
-                const current = yield* ownership(threadIds);
-                const deletable = new Set(
-                  [...current.safeIds].filter(
-                    (id) => current.rows.find((row) => row.run_id === id)?.status !== "running",
-                  ),
-                );
-                let changed = true;
-                while (changed) {
-                  changed = false;
-                  for (const edge of current.edges) {
-                    if (deletable.has(edge.target_id) && !deletable.has(edge.source_id)) {
-                      deletable.delete(edge.target_id);
-                      changed = true;
+          ? sql
+              .withTransaction(
+                Effect.gen(function* () {
+                  const current = yield* ownership(threadIds);
+                  const deletable = new Set(
+                    [...current.safeIds].filter(
+                      (id) => current.rows.find((row) => row.run_id === id)?.status !== "running",
+                    ),
+                  );
+                  let changed = true;
+                  while (changed) {
+                    changed = false;
+                    for (const edge of current.edges) {
+                      if (deletable.has(edge.target_id) && !deletable.has(edge.source_id)) {
+                        deletable.delete(edge.target_id);
+                        changed = true;
+                      }
                     }
                   }
-                }
 
-                const ids = [...deletable];
-                for (const runId of ids) {
-                  // The receipt commits with deletion, so a cut-off response cannot lose the run id.
-                  yield* sql`
+                  const ids = [...deletable];
+                  for (const runId of ids) {
+                    // The receipt commits with deletion, so a cut-off response cannot lose the run id.
+                    yield* sql`
                     INSERT INTO trash_automation_receipts (trash_id, run_id)
                     VALUES (${trashId}, ${runId}) ON CONFLICT (trash_id, run_id) DO NOTHING
                   `;
-                }
-                if (ids.length > 0) {
-                  yield* sql`DELETE FROM signalbox_automation_callbacks WHERE run_id IN ${sql.in(ids)}`;
-                  yield* sql`DELETE FROM signalbox_automation_instance_events WHERE run_id IN ${sql.in(ids)}`;
-                  yield* sql`DELETE FROM signalbox_automation_run_inbox WHERE run_id IN ${sql.in(ids)}`;
-                  yield* sql`DELETE FROM signalbox_automation_run_links WHERE run_id IN ${sql.in(ids)}`;
-                  yield* sql`DELETE FROM signalbox_automation_steps WHERE run_id IN ${sql.in(ids)}`;
-                  // Keep webhook request keys until their normal TTL so redeliveries cannot rerun work.
-                  yield* sql`DELETE FROM signalbox_automation_runs WHERE run_id IN ${sql.in(ids)}`;
-                }
-                return yield* readReceipts(trashId);
-              }),
-            )
+                  }
+                  if (ids.length > 0) {
+                    yield* sql`DELETE FROM signalbox_automation_callbacks WHERE run_id IN ${sql.in(ids)}`;
+                    yield* sql`DELETE FROM signalbox_automation_instance_events WHERE run_id IN ${sql.in(ids)}`;
+                    yield* sql`DELETE FROM signalbox_automation_run_inbox WHERE run_id IN ${sql.in(ids)}`;
+                    yield* sql`DELETE FROM signalbox_automation_run_links WHERE run_id IN ${sql.in(ids)}`;
+                    yield* sql`DELETE FROM signalbox_automation_steps WHERE run_id IN ${sql.in(ids)}`;
+                    // Keep webhook request keys until their normal TTL so redeliveries cannot rerun work.
+                    yield* sql`DELETE FROM signalbox_automation_runs WHERE run_id IN ${sql.in(ids)}`;
+                  }
+                  return yield* readReceipts(trashId);
+                }),
+              )
+              .pipe(Effect.mapError(() => failed("Could not purge automation run history.")))
           : Effect.fail(
               failed("Owned automation runs are still active; Trash cleanup will retry."),
             ),

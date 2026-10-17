@@ -247,6 +247,10 @@ export interface RunnerWork {
   readonly needsUpkeep: boolean;
   /** A drain asked for and not answered yet (#493): asked again of each connection. */
   readonly drain: number | null;
+  readonly drainRecovery: {
+    readonly drive: DriveAccess | null;
+    readonly sessions: SessionAccess;
+  } | null;
   /** The turn to start, while its run waits for the Runner. */
   readonly turn: RunnerTurn | null;
   /** `turn`'s credential at the ModelGateway. */
@@ -394,7 +398,7 @@ const needsUpkeep = (
   const held = live || previewHeld;
   switch (lease.status) {
     case "none":
-      return live;
+      return live || (trashed && lease.generation > 0 && lease.drainSaved !== true);
     case "requested":
       return true;
     case "connected":
@@ -536,6 +540,7 @@ const make = Effect.gen(function* () {
           ensuredAt: lease.ensuredAt ?? now,
           disconnectedAt: null,
           drains: hello.drains === true,
+          drainRecovery: hello.drainRecovery === true,
           steers: hello.steers === true,
         },
         result: {
@@ -803,6 +808,12 @@ const make = Effect.gen(function* () {
       const grant = projection === null ? undefined : modelGrantFor(projection, yield* ownerId);
       const run = projection === null ? undefined : harnessRun(projection);
       const driveId = turn === null || !drivesEnabled ? null : yield* driveOf;
+      const recovery =
+        projection !== null &&
+        lease.drainRecovery === true &&
+        lease.drain?._tag === "asked" &&
+        lease.token !== null;
+      const recoveryDrive = recovery && drivesEnabled ? yield* driveOf : null;
       return keep<RunnerWork>({
         generation: lease.generation,
         needsUpkeep: needsUpkeep(
@@ -812,6 +823,26 @@ const make = Effect.gen(function* () {
           projection !== null && projection.thread.deletedAt !== null,
         ),
         drain: lease.drain?._tag === "asked" ? lease.drain.id : null,
+        drainRecovery:
+          !recovery || lease.token === null || projection === null
+            ? null
+            : {
+                drive:
+                  recoveryDrive === null
+                    ? null
+                    : {
+                        driveId: recoveryDrive,
+                        token: yield* driveToken(
+                          lease.token,
+                          projection.thread.id,
+                          lease.generation,
+                        ),
+                        remoteToken: null,
+                      },
+                sessions: {
+                  token: yield* sessionTokenOf(lease.token, projection.thread.id, lease.generation),
+                },
+              },
         turn,
         modelToken:
           turn === null || grant === undefined || lease.token === null
@@ -1048,12 +1079,39 @@ const make = Effect.gen(function* () {
                 release: lease.generation,
                 runId,
                 lost: input.lost === true,
-                wakeAt: continues ? now : null,
+                wakeAt: continues || (trashed && input.drainSaved !== true) ? now : null,
               },
             } satisfies ThreadEngine.EngineDecision<MachinePlan>,
           );
         };
+        const recoverForSave = Effect.gen(function* () {
+          const generation = lease.generation + 1;
+          const token = yield* newToken;
+          return {
+            events: [],
+            machine: {
+              ...ThreadStore.NO_MACHINE,
+              generation,
+              token,
+              status: "requested" as const,
+              requestedAt: now,
+              machineClass: classOf(lease),
+              movedUp: lease.movedUp,
+              saveOnly: true,
+              drainSaved: false,
+            },
+            result: {
+              ...IDLE,
+              release: lease.status === "none" ? null : lease.generation,
+              ensure: { generation, token },
+              wakeAt: now + ENSURE_RETRY_MS,
+            },
+          };
+        });
         if (lease.status === "none") {
+          if (trashed && lease.generation > 0 && lease.drainSaved !== true) {
+            return yield* recoverForSave;
+          }
           if (run === undefined || projection === null) return keep(UNNEEDED);
           const generation = lease.generation + 1;
           const token = yield* newToken;
@@ -1083,10 +1141,23 @@ const make = Effect.gen(function* () {
         }
         if (lease.status === "requested") {
           // Nothing needs it any more (the run was stopped before a Runner came).
-          if (run === undefined) {
+          if (run === undefined && !lease.saveOnly) {
             return yield* release({ reason: "idle", detail: "No turn needs it any more." });
           }
           const deadline = (lease.requestedAt ?? now) + backend.connectTimeoutMs;
+          if (lease.saveOnly && trashed) {
+            return keep<MachinePlan>({
+              ...IDLE,
+              ensure:
+                lease.token === null
+                  ? null
+                  : {
+                      generation: lease.generation,
+                      token: lease.token,
+                    },
+              wakeAt: now + ENSURE_RETRY_MS,
+            });
+          }
           if (now >= deadline) {
             const failure = "No machine came up to run this turn.";
             return yield* release({
@@ -1113,6 +1184,7 @@ const make = Effect.gen(function* () {
             recover: run !== undefined,
           });
         }
+        if (trashed && lease.drainRecovery !== true) return yield* recoverForSave;
         if (!trashed && (run !== undefined || (yield* previews.held))) {
           const busy = { ...BUSY, runId };
           // Needed again: a drain under way no longer leads anywhere.
@@ -1136,29 +1208,44 @@ const make = Effect.gen(function* () {
           }
           if (lease.drain?._tag === "answered") {
             const unsaved = lease.drain.unsaved;
-            return yield* release({
-              reason: "idle",
-              detail:
-                unsaved.length === 0
-                  ? idle
-                  : `${idle} Not everything it wrote was saved: ${unsaved.map((reason) => `- ${reason}`).join("\n")}`,
-              idleSince: tailFrom,
-              drainSaved: unsaved.length === 0,
-            });
+            if (trashed && unsaved.length > 0) {
+              const retryAt = lease.drain.id + ENSURE_RETRY_MS;
+              if (now < retryAt) return keep({ ...BUSY, wakeAt: retryAt });
+            } else {
+              return yield* release({
+                reason: "idle",
+                detail:
+                  unsaved.length === 0
+                    ? idle
+                    : `${idle} Not everything it wrote was saved: ${unsaved.map((reason) => `- ${reason}`).join("\n")}`,
+                idleSince: tailFrom,
+                drainSaved: unsaved.length === 0 && lease.drainRecovery === true,
+              });
+            }
           }
-          if (lease.drain === undefined) {
+          if (
+            lease.drain === undefined ||
+            (trashed &&
+              (lease.drain._tag === "answered" || now >= lease.drain.id + DRAIN_TIMEOUT_MS))
+          ) {
+            const id = Math.max(now, (lease.lastDrainId ?? -1) + 1);
             return {
               events: [],
-              machine: { ...lease, idleSince, drain: { _tag: "asked", id: now } as const },
+              machine: {
+                ...lease,
+                idleSince,
+                lastDrainId: id,
+                drain: { _tag: "asked", id } as const,
+              },
               result: {
-                ...IDLE,
-                drain: { generation: lease.generation, id: now },
-                wakeAt: now + DRAIN_TIMEOUT_MS,
+                ...(trashed ? BUSY : IDLE),
+                drain: { generation: lease.generation, id },
+                wakeAt: id + DRAIN_TIMEOUT_MS,
               },
             };
           }
           const deadline = lease.drain.id + DRAIN_TIMEOUT_MS;
-          if (now < deadline) return keep({ ...IDLE, wakeAt: deadline });
+          if (now < deadline) return keep({ ...(trashed ? BUSY : IDLE), wakeAt: deadline });
           return yield* release({
             reason: "idle",
             detail: `${idle} It didn't confirm its last saves within ${DRAIN_TIMEOUT_MS / 1000} s, so anything it wrote after its last save may be lost.`,
