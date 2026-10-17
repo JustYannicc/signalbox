@@ -115,8 +115,9 @@ vp run --filter <package> typecheck
 ```
 
 TypeScript workspaces typecheck with tsc-rs, which has Effect diagnostics built in.
-Keep `typescript`, `@effect/tsgo`, and the `effect-tsgo patch` prepare step: editors
-still use them for Effect quick fixes and refactors. Keep `@effect/tsgo` on the
+Keep `typescript`, `@effect/tsgo`, and the SDK prepare step: editors use the
+generated SDK for Effect quick fixes and refactors. It points at Effect's bundled
+compiler without changing packages in pnpm's shared store. Keep `@effect/tsgo` on the
 effect-tsgo version that tsc-rs ports (see the tsc-rs README), or the two disagree
 on rule names.
 Marketing keeps `astro check` for Astro files.
