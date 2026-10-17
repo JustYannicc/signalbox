@@ -6,7 +6,7 @@ import {
 } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { deriveProviderInstanceEntries } from "../../providerInstances";
+import { deriveProviderInstanceEntries, hasCachedPoolSnapshot } from "../../providerInstances";
 import {
   adjacentModelPickerProvider,
   resolveModelPickerSelectedModel,
@@ -33,7 +33,10 @@ function entry(status: ServerProvider["status"], driver = "opencode") {
 }
 
 describe("shouldIncludeModelPickerOption", () => {
-  it("keeps known hub models selectable through an unreadable pool snapshot", () => {
+  it.each([
+    ["error", "unknown"],
+    ["warning", "authenticated"],
+  ] as const)("keeps known hub models selectable through a %s pool snapshot", (status, auth) => {
     const poolEntry = deriveProviderInstanceEntries([
       {
         instanceId: ProviderInstanceId.make("codex_hub_work"),
@@ -41,8 +44,8 @@ describe("shouldIncludeModelPickerOption", () => {
         enabled: true,
         installed: true,
         version: null,
-        status: "error",
-        auth: { status: "unknown" },
+        status,
+        auth: { status: auth },
         unavailableReason: "Pool account status could not be refreshed.",
         checkedAt: "2026-08-28T00:00:00.000Z",
         models: [
@@ -58,6 +61,17 @@ describe("shouldIncludeModelPickerOption", () => {
       },
     ])[0]!;
     const option = { slug: "gpt-6-astra", name: "GPT-6 Astra" };
+
+    expect(hasCachedPoolSnapshot(poolEntry, true)).toBe(true);
+    expect(
+      adjacentModelPickerProvider({
+        entries: [entry("ready", "claudeAgent"), poolEntry],
+        selectedInstanceId: entry("ready", "claudeAgent").instanceId,
+        direction: 1,
+        disabledInstanceIds: undefined,
+        selectableUnavailableInstanceIds: new Set([poolEntry.instanceId]),
+      }),
+    ).toBe(poolEntry.instanceId);
 
     expect(
       shouldIncludeModelPickerOption({

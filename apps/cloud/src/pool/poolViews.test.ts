@@ -36,6 +36,32 @@ const poolEntry = (source: PoolEntry["source"], models: PoolEntry["models"]): Po
 });
 
 describe("poolFallbackModelSelection", () => {
+  it.each([
+    ["error", "unknown"],
+    ["warning", "authenticated"],
+  ] as const)("prefers a ready pool over a %s snapshot when choosing a default", (status, auth) => {
+    const stale = {
+      ...provider(true),
+      status,
+      auth: { status: auth },
+      models: [{ slug: "cached-model", name: "Cached", isCustom: false, capabilities: null }],
+    };
+    const ready = {
+      ...provider(true),
+      status: "ready" as const,
+      instanceId: ProviderInstanceId.make("work-codex"),
+      models: [{ slug: "ready-model", name: "Ready", isCustom: false, capabilities: null }],
+    };
+    expect(poolDefaultModelSelection([stale, ready])).toEqual({
+      instanceId: ready.instanceId,
+      model: "ready-model",
+    });
+    expect(poolDefaultModelSelection([stale])).toEqual({
+      instanceId: stale.instanceId,
+      model: "cached-model",
+    });
+  });
+
   it("does not revive signed-out or paused accounts in an errored or retained snapshot", () => {
     const checkedAt = "2026-10-16T00:00:00.000Z";
     const models = [{ id: "gpt-6-astra", ownedBy: "openai", created: 0 }];

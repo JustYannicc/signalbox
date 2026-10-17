@@ -229,12 +229,14 @@ export const poolProviders = (
 export const poolDefaultModelSelection = (
   providers: ReadonlyArray<ServerProvider>,
 ): ModelSelection | null => {
-  for (const provider of providers) {
-    if (provider.auth.status !== "authenticated" && provider.auth.status !== "unknown") continue;
-    const model = provider.models.find((candidate) => candidate.isDefault) ?? provider.models[0];
-    if (model) return { instanceId: provider.instanceId, model: model.slug };
-  }
-  return null;
+  const eligible = providers.filter(
+    (provider) =>
+      (provider.auth.status === "authenticated" || provider.auth.status === "unknown") &&
+      provider.models.length > 0,
+  );
+  const provider = eligible.find((candidate) => candidate.status === "ready") ?? eligible[0];
+  const model = provider?.models.find((candidate) => candidate.isDefault) ?? provider?.models[0];
+  return provider && model ? { instanceId: provider.instanceId, model: model.slug } : null;
 };
 
 /**

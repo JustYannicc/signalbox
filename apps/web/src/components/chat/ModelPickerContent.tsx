@@ -35,6 +35,7 @@ import { ModelEsque } from "./providerIconUtils";
 import { isCommandPaletteOpen } from "../../commandPaletteBus";
 import { primaryServerKeybindingsAtom } from "../../state/server";
 import { usePoolViews } from "../../state/accountPools";
+import { useNowMinute } from "../../hooks/useNowMinute";
 import { useServerConfigs } from "../../state/entities";
 import {
   modelPickerJumpCommandForIndex,
@@ -51,6 +52,7 @@ import { getVirtualizedScrollFadeClassName } from "../ui/scroll-area";
 import { TooltipProvider } from "../ui/tooltip";
 import { InlineButton } from "../ui/button";
 import {
+  hasCachedPoolSnapshot,
   isProviderInstancePickerReady,
   isProviderInstancePickerVisible,
   type ProviderInstanceEntry,
@@ -105,12 +107,7 @@ export function shouldIncludeModelPickerOption(input: {
   if (isProviderInstancePickerReady(input.entry)) return true;
   // signalbox: A failed pool snapshot may retain a model the server can still revalidate on send.
   if (
-    input.isHubInstance &&
-    input.entry.enabled &&
-    input.entry.isAvailable &&
-    input.entry.status === "error" &&
-    input.entry.snapshot.auth.status === "unknown" &&
-    input.entry.snapshot.unavailableReason !== undefined &&
+    hasCachedPoolSnapshot(input.entry, input.isHubInstance === true) &&
     input.entry.models.some((model) => model.slug === input.option.slug) &&
     !input.option.isUnavailable
   ) {
@@ -122,18 +119,6 @@ export function shouldIncludeModelPickerOption(input: {
     input.entry.instanceId === input.activeInstanceId &&
     input.option.slug === input.activeModel &&
     input.option.isUnavailable === true
-  );
-}
-
-function hasCachedPoolSnapshot(entry: ProviderInstanceEntry, isHubInstance: boolean): boolean {
-  return (
-    isHubInstance &&
-    entry.enabled &&
-    entry.isAvailable &&
-    entry.status === "error" &&
-    entry.snapshot.auth.status === "unknown" &&
-    entry.snapshot.unavailableReason !== undefined &&
-    entry.models.length > 0
   );
 }
 
@@ -225,6 +210,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
     ? serverConfigs.get(props.environmentId)
     : undefined;
   const poolViews = usePoolViews(props.environmentId);
+  const now = Date.parse(`${useNowMinute()}:00Z`);
   const activeEntry = props.instanceEntries.find(
     (entry) => entry.instanceId === props.activeInstanceId,
   );
@@ -367,13 +353,13 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
       const status = formatPoolModelStatus({
         overview,
         providerInstanceId: entry.instanceId,
-        now: Date.parse(entry.snapshot.checkedAt),
+        now,
         snapshotUnavailable: !isProviderInstancePickerReady(entry),
       });
       if (status) statuses.set(entry.instanceId, status);
     }
     return statuses;
-  }, [environmentConfig, instanceEntries, poolViews]);
+  }, [environmentConfig, instanceEntries, poolViews, now]);
   const matchesLockedProvider = useCallback(
     (entry: Pick<ProviderInstanceEntry, "driverKind" | "continuationGroupKey">): boolean => {
       if (props.lockedProvider === null) return true;

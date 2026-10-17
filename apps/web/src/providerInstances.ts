@@ -222,20 +222,18 @@ export function getDefaultProviderInstanceModel(
 const isSelectableProviderInstanceEntry = (entry: ProviderInstanceEntry): boolean =>
   entry.enabled && entry.isAvailable;
 
-// signalbox: Preserve an erroring hub's known catalog as the fallback after other usable providers.
-const isUnavailableHubSnapshotSelectable = (
+// signalbox: Snapshot failures leave known models selectable; turns still revalidate pool access.
+export const hasCachedPoolSnapshot = (
   entry: ProviderInstanceEntry,
-  providerInstances?: ServerSettings["providerInstances"],
+  isHubInstance: boolean,
 ): boolean =>
+  isHubInstance &&
   entry.enabled &&
   entry.isAvailable &&
-  entry.status === "error" &&
-  entry.snapshot.auth.status === "unknown" &&
+  ((entry.status === "error" && entry.snapshot.auth.status === "unknown") ||
+    (entry.status === "warning" && entry.snapshot.auth.status === "authenticated")) &&
   entry.snapshot.unavailableReason !== undefined &&
-  entry.models.length > 0 &&
-  (entry.instanceId === "claude_hub" ||
-    entry.instanceId === "codex_hub" ||
-    hubInstancePoolId(providerInstances?.[entry.instanceId]?.config) !== null);
+  entry.models.length > 0;
 
 export function resolveSelectableProviderInstanceEntry(
   entries: ReadonlyArray<ProviderInstanceEntry>,
@@ -251,7 +249,14 @@ export function resolveSelectableProviderInstanceEntry(
   return (
     entries.find(isProviderInstancePickerReady) ??
     entries.find((entry) => isSelectableProviderInstanceEntry(entry) && entry.status !== "error") ??
-    entries.find((entry) => isUnavailableHubSnapshotSelectable(entry, providerInstances))
+    entries.find((entry) =>
+      hasCachedPoolSnapshot(
+        entry,
+        entry.instanceId === "claude_hub" ||
+          entry.instanceId === "codex_hub" ||
+          hubInstancePoolId(providerInstances?.[entry.instanceId]?.config) !== null,
+      ),
+    )
   );
 }
 

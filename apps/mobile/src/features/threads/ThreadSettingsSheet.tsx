@@ -4,6 +4,7 @@ import { createV5StackNavigator as createNativeStackNavigator } from "../../nati
 import { DEFAULT_SERVER_SETTINGS, environmentCanWriteModelSettings } from "@t3tools/contracts";
 import { hubInstancePoolId } from "@t3tools/contracts/accountHub";
 import { formatPoolModelStatus } from "@t3tools/client-runtime/poolModelStatus";
+import { useNowMinute } from "../../lib/useNowMinute";
 import {
   modelPreferencesMigrationPatch,
   resolveModelPreferences,
@@ -356,6 +357,7 @@ function ThreadSettingsSessionProvider(
       : null,
   );
   const poolViews = poolViewsQuery.data ?? [];
+  const now = useNowMinute();
   const poolStatusByInstance = useMemo(() => {
     const statuses = new Map<ProviderInstanceId, string>();
     for (const provider of config?.providers ?? []) {
@@ -373,7 +375,7 @@ function ThreadSettingsSessionProvider(
       const status = formatPoolModelStatus({
         overview,
         providerInstanceId: provider.instanceId,
-        now: Date.parse(provider.checkedAt),
+        now,
         snapshotUnavailable: provider.status !== "ready" || poolViewsQuery.error !== null,
       });
       if (status ?? poolViewsQuery.isPending) {
@@ -381,7 +383,7 @@ function ThreadSettingsSessionProvider(
       }
     }
     return statuses;
-  }, [config?.providers, poolViews, poolViewsQuery.error, poolViewsQuery.isPending, settings]);
+  }, [config?.providers, poolViews, poolViewsQuery.error, poolViewsQuery.isPending, settings, now]);
   const modelSettingsWritable = environmentCanWriteModelSettings(config?.environment.capabilities);
   const [manageHidden, setManageHidden] = useState(false);
   const pendingHidden = useRef(new Set<string>());
