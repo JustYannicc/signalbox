@@ -221,6 +221,12 @@ try {
     { stdio: "inherit" },
   );
 
+  NodeChildProcess.execFileSync(
+    process.execPath,
+    [NodePath.resolve(repoRoot, "scripts/release-artifacts-smoke.ts")],
+    { cwd: repoRoot, stdio: "inherit" },
+  );
+
   copyWorkspaceManifestFixture(tempRoot);
 
   NodeChildProcess.execFileSync(

@@ -11,6 +11,7 @@ import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import * as NodeChildProcess from "node:child_process";
 import * as NodeCrypto from "node:crypto";
 import * as NodeEvents from "node:events";
+import * as NodeFS from "node:fs";
 import * as NodeHttp from "node:http";
 
 import { buildNpmLauncher } from "./build-npm-launcher.ts";
@@ -143,7 +144,11 @@ it.layer(NodeServices.layer)("build-npm-launcher", (it) => {
           cwd: root,
           env,
         });
-        assert.equal(first.stdout.trim(), `stub serve a b launcher=${launcher}`, first.stderr);
+        assert.equal(
+          first.stdout.trim(),
+          `stub serve a b launcher=${NodeFS.realpathSync(launcher)}`,
+          first.stderr,
+        );
         assert.equal(first.exitCode, 7);
         // The same layout the install scripts and `t3 update` use.
         const versionDir = path.join(home, "runtime/versions", VERSION);
