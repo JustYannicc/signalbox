@@ -104,11 +104,13 @@ export const makeStartStep =
           complete: (prompt) =>
             modelFor(options, defaults()).pipe(
               Effect.flatMap((modelSelection) =>
-                models.complete({
-                  projectId: automation.project_id,
-                  modelSelection,
-                  prompt,
-                }),
+                modelSelection === null
+                  ? fail("Choose a default model, or name both a provider and model in this step.")
+                  : models.complete({
+                      projectId: automation.project_id,
+                      modelSelection,
+                      prompt,
+                    }),
               ),
             ),
         }).pipe(
