@@ -28,6 +28,7 @@
         "knip-schemas.ts",
         "mobile-native-client.ts",
         "setup-worktree.ts",
+        "release-artifacts-smoke.ts", // signalbox: invoked as a subprocess by release-smoke.ts
         "workload-cost-replay.ts", // signalbox: workload analytics
         "boundaries/check.mjs", // signalbox: module boundaries
         "boundaries/tests.mjs", // signalbox: module boundaries
@@ -72,7 +73,7 @@
     "apps/cloud": {
       // Workers and Alchemy stacks load these entries by filename.
       "entry": [
-        "src/modelGateway/worker.ts!",
+        "src/models/gatewayWorker.ts!",
         "src/boxdSpike/worker.ts!",
         "alchemy.run.ts!",
         "infra/boxd-spike.alchemy.ts!",

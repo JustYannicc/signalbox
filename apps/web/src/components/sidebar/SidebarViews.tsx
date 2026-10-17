@@ -19,6 +19,7 @@ import { useEnvironmentIdentificationMode } from "../../hooks/useSettings";
 import { SidebarStageBackdrop, useSidebarStageBackdropVariant } from "../SidebarStageBackdrop";
 import { isSidebarUtilityPage, useNavigateToMainApp } from "./mainAppLocation";
 import { SidebarChromeHeader, SidebarRailContext } from "./SidebarChrome";
+import { HomeDrafts } from "./HomeDrafts";
 import { SidebarNewButton } from "./SidebarNewButton";
 import { SidebarViewRail } from "./SidebarViewRail";
 import { useSidebarView, type SidebarView } from "./sidebarView";
@@ -37,6 +38,7 @@ function SidebarViewPanel(props: { view: SidebarView; home: ReactNode }) {
         </h2>
       </div>
       <AutomationsWaitingGroup />
+      <HomeDrafts />
       {props.home}
     </>
   );
