@@ -60,7 +60,7 @@ const remoteStatusWithPr: VcsStatusRemoteResult = {
     title: "[codex] Rewrite client connection architecture",
     url: "https://github.com/pingdotgg/t3code/pull/2978",
     baseRef: "main",
-    headRef: "codex/connection-state-audit",
+    headRef: "feature/status-broadcast",
     state: "open",
   },
 };
@@ -77,9 +77,11 @@ function layerTestFor(state: {
   remoteStatusCalls: number;
   localInvalidationCalls: number;
   remoteInvalidationCalls: number;
+  remoteStatusStarts?: number;
   remoteStatusRefreshUpstreamValues?: Array<boolean | undefined>;
   backgroundWorkEnabled?: boolean;
   beforeRemoteStatus?: Effect.Effect<void>;
+  remoteStatusCompleted?: Deferred.Deferred<void>;
 }) {
   return VcsStatusBroadcaster.layer.pipe(
     Layer.provideMerge(NodeServices.layer),
@@ -92,15 +94,23 @@ function layerTestFor(state: {
             return state.currentLocalStatus;
           }),
         remoteStatus: (_input, options) =>
-          Effect.suspend(() => state.beforeRemoteStatus ?? Effect.void).pipe(
-            Effect.andThen(
-              Effect.sync(() => {
-                state.remoteStatusCalls += 1;
-                state.remoteStatusRefreshUpstreamValues?.push(options?.refreshUpstream);
-                return state.currentRemoteStatus;
-              }),
-            ),
-          ),
+          Effect.suspend(() => {
+            state.remoteStatusStarts = (state.remoteStatusStarts ?? 0) + 1;
+            return (state.beforeRemoteStatus ?? Effect.void).pipe(
+              Effect.andThen(
+                Effect.sync(() => {
+                  state.remoteStatusCalls += 1;
+                  state.remoteStatusRefreshUpstreamValues?.push(options?.refreshUpstream);
+                  return state.currentRemoteStatus;
+                }),
+              ),
+              Effect.tap(() =>
+                state.remoteStatusCompleted
+                  ? Deferred.succeed(state.remoteStatusCompleted, undefined).pipe(Effect.ignore)
+                  : Effect.void,
+              ),
+            );
+          }),
         invalidateLocalStatus: () =>
           Effect.sync(() => {
             state.localInvalidationCalls += 1;
@@ -336,6 +346,7 @@ describe("VcsStatusBroadcaster", () => {
               }
               return remoteStatusWithPr;
             }),
+          invalidateLocalStatus: () => Effect.void,
           invalidateStatus: () => Effect.void,
         }),
       ),
@@ -411,7 +422,7 @@ describe("VcsStatusBroadcaster", () => {
       });
       assert.equal(state.localStatusCalls, 2);
       assert.equal(state.remoteStatusCalls, 2);
-      assert.equal(state.localInvalidationCalls, 1);
+      assert.equal(state.localInvalidationCalls, 2);
       assert.equal(state.remoteInvalidationCalls, 1);
     }).pipe(Effect.provide(layerTestFor(state)));
   });
@@ -942,6 +953,53 @@ describe("VcsStatusBroadcaster", () => {
       const status = yield* Fiber.join(refresh);
       assert.deepStrictEqual(status.branchChanges, fetchedLocal.branchChanges);
     }).pipe(Effect.provide(layerTestFor(state)));
+  });
+
+  it.effect("returns local status while a delayed remote lookup is still pending", () => {
+    const state: Parameters<typeof layerTestFor>[0] = {
+      currentLocalStatus: baseLocalStatus,
+      currentRemoteStatus: baseRemoteStatus,
+      localStatusCalls: 0,
+      remoteStatusCalls: 0,
+      localInvalidationCalls: 0,
+      remoteInvalidationCalls: 0,
+    };
+
+    return Effect.gen(function* () {
+      const broadcaster = yield* VcsStatusBroadcaster.VcsStatusBroadcaster;
+      const remoteLookupStarted = yield* Deferred.make<void>();
+      const releaseRemoteLookup = yield* Deferred.make<void>();
+      const remoteStatusCompleted = yield* Deferred.make<void>();
+      state.remoteStatusCompleted = remoteStatusCompleted;
+      state.beforeRemoteStatus = Deferred.succeed(remoteLookupStarted, undefined).pipe(
+        Effect.andThen(Deferred.await(releaseRemoteLookup)),
+      );
+
+      const refresh = yield* broadcaster
+        .refreshStatus("/repo", { waitForRemote: false })
+        .pipe(Effect.forkScoped);
+      yield* Deferred.await(remoteLookupStarted);
+      const refreshResult = yield* Fiber.join(refresh).pipe(
+        Effect.timeoutOption(Duration.seconds(5)),
+        Effect.forkScoped,
+      );
+      yield* TestClock.adjust(Duration.seconds(5));
+
+      const completedBeforeRemote = yield* Fiber.join(refreshResult);
+      assert.isTrue(Option.isSome(completedBeforeRemote));
+      const status = Option.getOrThrow(completedBeforeRemote);
+      assert.equal(status.refName, baseLocalStatus.refName);
+      assert.equal(status.hasWorkingTreeChanges, baseLocalStatus.hasWorkingTreeChanges);
+
+      state.currentRemoteStatus = remoteStatusWithPr;
+      yield* Deferred.succeed(releaseRemoteLookup, undefined);
+      yield* Deferred.await(remoteStatusCompleted);
+      assert.equal(state.remoteStatusCalls, 1);
+      assert.deepStrictEqual(
+        (yield* broadcaster.getStatus({ cwd: "/repo" })).pr,
+        remoteStatusWithPr.pr,
+      );
+    }).pipe(Effect.provide(Layer.merge(layerTestFor(state), TestClock.layer())), Effect.scoped);
   });
 
   it("backs off remote refresh failures exponentially and honors larger configured intervals", () => {

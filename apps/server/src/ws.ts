@@ -1726,7 +1726,7 @@ const layerWsRpc = (
 
       const refreshGitStatus = (cwd: string) =>
         vcsStatusBroadcaster
-          .refreshStatus(cwd)
+          .refreshStatus(cwd, { waitForRemote: false })
           .pipe(Effect.ignoreCause({ log: true }), Effect.forkDetach, Effect.asVoid);
 
       const getOrchestrationV2ArchivedShellSnapshot = Effect.gen(function* () {
@@ -2788,7 +2788,8 @@ const layerWsRpc = (
           worktreeSetupTracker
             .cancel(input.threadId)
             .pipe(Effect.map((cancelled) => ({ cancelled }))),
-        [WS_METHODS.vcsRefreshStatus]: (input) => vcsStatusBroadcaster.refreshStatus(input.cwd),
+        [WS_METHODS.vcsRefreshStatus]: (input) =>
+          vcsStatusBroadcaster.refreshStatus(input.cwd, { waitForRemote: false }),
         [WS_METHODS.vcsPull]: (input) =>
           gitWorkflow.pullCurrentBranch(input.cwd).pipe(
             Effect.matchCauseEffect({

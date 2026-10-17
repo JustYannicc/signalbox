@@ -359,7 +359,7 @@ const make = Effect.gen(function* () {
         const continuation = yield* recheckAndBind.pipe(Effect.andThen(queueContinuation));
 
         yield* vcsStatusBroadcaster
-          .refreshStatus(worktreePath)
+          .refreshStatus(worktreePath, { waitForRemote: false })
           .pipe(Effect.ignoreCause({ log: true }), Effect.forkDetach);
 
         let setupScript: WorktreeMcpSetupScriptStatus = { status: "skipped" };

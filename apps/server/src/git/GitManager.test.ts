@@ -80,6 +80,11 @@ const decodeForgejoPullRequest = Schema.decodeEffect(ForgejoPullRequestSchema);
 
 interface FakeGhScenario {
   prListSequence?: string[];
+  prListGate?: {
+    readonly started: Deferred.Deferred<void>;
+    readonly release: Deferred.Deferred<void>;
+    readonly returned: Deferred.Deferred<void>;
+  };
   prListByHeadSelector?: Record<string, string>;
   prListSequenceByHeadSelector?: Record<string, string[]>;
   createdPrUrl?: string;
@@ -447,7 +452,15 @@ function createGitHubProviderWithFakeGh(scenario: FakeGhScenario = {}): {
           ? scenario.prListByHeadSelector?.[headSelector]
           : undefined;
       const stdout = (mappedQueue ?? mappedStdout ?? prListQueue.shift() ?? "[]") + "\n";
-      return Effect.succeed(fakeGhOutput(stdout));
+      const output = fakeGhOutput(stdout);
+      if (scenario.prListGate) {
+        return Deferred.succeed(scenario.prListGate.started, undefined).pipe(
+          Effect.andThen(Deferred.await(scenario.prListGate.release)),
+          Effect.andThen(Deferred.succeed(scenario.prListGate.returned, undefined)),
+          Effect.as(output),
+        );
+      }
+      return Effect.succeed(output);
     }
 
     if (args[0] === "pr" && args[1] === "create") {
@@ -972,6 +985,148 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
       yield* TestClock.adjust("1 minute");
       expect(remoteReads).toBe(1);
       yield* Scope.close(passiveScope, Exit.void);
+    }),
+  );
+
+  it.effect("refresh status returns local git state while gh PR lookup is held", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-refresh-status-gh-gate-");
+      yield* initRepo(repoDir);
+      yield* runGit(repoDir, ["checkout", "-b", "feature/delayed-status"]);
+      const remoteDir = yield* createBareRemote();
+      yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
+      yield* runGit(repoDir, ["push", "-u", "origin", "feature/delayed-status"]);
+
+      const prListGate = {
+        started: yield* Deferred.make<void>(),
+        release: yield* Deferred.make<void>(),
+        returned: yield* Deferred.make<void>(),
+      };
+      const branchRechecked = yield* Deferred.make<string>();
+      const branchCached = yield* Deferred.make<string>();
+      const cacheWatcherReady = yield* Deferred.make<void>();
+      let remoteStatusReturned = false;
+      const { manager, ghCalls } = yield* makeManager({
+        ghScenario: {
+          prListGate,
+          prListSequence: [
+            JSON.stringify([
+              {
+                number: 613,
+                title: "Delayed status PR",
+                url: "https://github.com/pingdotgg/codething-mvp/pull/613",
+                baseRefName: "main",
+                headRefName: "feature/delayed-status",
+              },
+            ]),
+          ],
+        },
+      });
+      const trackedManager: GitManager.GitManager["Service"] = {
+        ...manager,
+        localStatus: (input) =>
+          manager
+            .localStatus(input)
+            .pipe(
+              Effect.tap((local) =>
+                remoteStatusReturned
+                  ? Deferred.succeed(branchRechecked, local.refName ?? "")
+                  : Effect.void,
+              ),
+            ),
+        remoteStatus: (input, options) =>
+          manager.remoteStatus(input, options).pipe(
+            Effect.tap((remote) => {
+              remoteStatusReturned = remote?.pr !== null && remote?.pr !== undefined;
+              return Effect.void;
+            }),
+          ),
+      };
+      const workflowContext = yield* Layer.build(
+        GitWorkflowService.layer.pipe(
+          Layer.provide(Layer.succeed(GitManager.GitManager, trackedManager)),
+          Layer.provide(
+            VcsDriverRegistry.layer.pipe(
+              Layer.provide(VcsProjectConfig.layer),
+              Layer.provide(VcsProcess.layer),
+            ),
+          ),
+        ),
+      );
+      const broadcasterContext = yield* Layer.build(
+        VcsStatusBroadcaster.layer.pipe(
+          Layer.provide(
+            Layer.succeed(
+              GitWorkflowService.GitWorkflowService,
+              Context.get(workflowContext, GitWorkflowService.GitWorkflowService),
+            ),
+          ),
+          Layer.provide(
+            Layer.mock(BackgroundPolicy.BackgroundPolicy)({
+              hasDemand: () => Effect.succeed(true),
+              shouldRunScopeWork: () => Effect.succeed(true),
+            }),
+          ),
+        ),
+      );
+      const broadcaster = Context.get(
+        broadcasterContext,
+        VcsStatusBroadcaster.VcsStatusBroadcaster,
+      );
+      const cacheWatcher = yield* broadcaster
+        .streamStatus({ cwd: repoDir, includeRemote: false })
+        .pipe(
+          Stream.tap((event) => {
+            if (event._tag === "snapshot") {
+              return Deferred.succeed(cacheWatcherReady, undefined).pipe(Effect.asVoid);
+            }
+            if (event._tag === "localUpdated" && event.local.refName === "feature/next-status") {
+              return Deferred.succeed(branchCached, event.local.refName ?? "").pipe(Effect.asVoid);
+            }
+            return Effect.void;
+          }),
+          Stream.drop(1),
+          Stream.filter(
+            (event) =>
+              event._tag === "localUpdated" && event.local.refName === "feature/next-status",
+          ),
+          Stream.runHead,
+          Effect.forkScoped,
+        );
+      yield* Deferred.await(cacheWatcherReady);
+
+      const refresh = yield* broadcaster
+        .refreshStatus(repoDir, { waitForRemote: false })
+        .pipe(Effect.forkScoped);
+      yield* Deferred.await(prListGate.started);
+      const localResult = yield* Fiber.join(refresh).pipe(
+        Effect.timeoutOption(Duration.seconds(5)),
+        Effect.forkScoped,
+      );
+      yield* TestClock.adjust(Duration.seconds(5));
+      const completedBeforeGh = yield* Fiber.join(localResult);
+      expect(Option.isSome(completedBeforeGh)).toBe(true);
+      expect(Option.getOrThrow(completedBeforeGh).refName).toBe("feature/delayed-status");
+      expect(ghCalls.some((call) => call.startsWith("pr list "))).toBe(true);
+
+      yield* runGit(repoDir, ["checkout", "-b", "feature/next-status"]);
+      const currentBranch = yield* runGit(repoDir, ["branch", "--show-current"]);
+      expect(currentBranch.stdout.trim()).toBe("feature/next-status");
+      yield* Deferred.succeed(prListGate.release, undefined);
+      yield* Deferred.await(prListGate.returned);
+      expect(yield* Deferred.await(branchRechecked)).toBe("feature/next-status");
+      expect(yield* Deferred.await(branchCached)).toBe("feature/next-status");
+      expect(Option.isSome(yield* Fiber.join(cacheWatcher))).toBe(true);
+
+      const snapshot = yield* Stream.runHead(
+        broadcaster.streamStatus({ cwd: repoDir, includeRemote: false }),
+      );
+      expect(Option.isSome(snapshot)).toBe(true);
+      const event = Option.getOrThrow(snapshot);
+      expect(event._tag).toBe("snapshot");
+      if (event._tag !== "snapshot") return;
+      expect(event.local.refName).toBe("feature/next-status");
+      expect(event.remote).toBeNull();
     }),
   );
 
