@@ -18,6 +18,7 @@ import type {
 import type { OnePasswordEnvironmentId } from "@t3tools/contracts/signalboxFolders";
 import type { FolderInstructions } from "@signalbox/runner-protocol/DriveProtocol";
 import { contextAllows } from "../drive/driveAccess.ts";
+import { remoteThreadWorktree } from "../user/contextProjects.ts";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
@@ -33,7 +34,7 @@ import * as Stream from "effect/Stream";
 import { traceIdOf } from "./diagnostics/traceId.ts";
 import { hasPendingTurnWork, scriptedStep } from "./scriptedTurn.ts";
 import { type Decision, decide, decideLaunch, type ThreadWorktree } from "./threadDecider.ts";
-import type { DecisionContext } from "./threadEvents.ts";
+import { threadEvent, type DecisionContext } from "./threadEvents.ts";
 import { applyEvents, threadShellFromProjection, workStartedAt } from "./threadProjection.ts";
 import { noteKey, noteRunId, supersedes } from "./statusLine/statusNotePolicy.ts";
 import { type Actor, ThreadNotFoundError, ThreadCommandRejectedError } from "./ThreadAccess.ts";
@@ -48,7 +49,12 @@ import {
   type TurnSecrets,
 } from "./turnPool.ts";
 import { poolErrorMessage } from "../pool/PoolDirectory.ts";
-import type { ThreadMonitor, ThreadSnapshotWire, ThreadSummaryWire } from "./threadWire.ts";
+import type {
+  ThreadMonitor,
+  ThreadSnapshotWire,
+  ThreadSummaryWire,
+  ThreadWorkspace,
+} from "./threadWire.ts";
 
 /**
  * One thread's orchestration, inside its Durable Object. Commands and provider
@@ -71,7 +77,7 @@ export { type Actor, ThreadNotFoundError, ThreadCommandRejectedError } from "./T
  */
 export interface ThreadCreation {
   readonly place: { readonly contextId: SignalboxContextId; readonly driveId: string } | null;
-  /** The branch and worktree a new thread gets, when its drive has threads work on their own branch. */
+  /** Server-resolved workspace, including an existing local thread adopting its drive's remote. */
   readonly worktree?: ThreadWorktree | null;
   /**
    * What the owner's tree resolves each project to (`turnPool.ts`), for a
@@ -141,6 +147,7 @@ export class ThreadEngine extends Context.Service<
       ThreadNotFoundError | ThreadCommandRejectedError
     >;
     readonly snapshot: (actor: Actor) => Effect.Effect<ThreadSnapshot, ThreadNotFoundError>;
+    readonly workspace: (actor: Actor) => Effect.Effect<ThreadWorkspace, ThreadNotFoundError>;
     /**
      * `subscribeThread`: a snapshot or the events after the client's cursor,
      * the completion marker when asked for, then live batches as they commit.
@@ -422,7 +429,48 @@ const make = Effect.gen(function* () {
           creation.pools === null || projectId === undefined
             ? undefined
             : forThread(creation.pools, projectId);
-        const decision = decideWith(current.thread?.projection ?? null, yield* context, pool);
+        const ctx = yield* context;
+        let projection = current.thread?.projection ?? null;
+        const adoption: Array<OrchestrationV2DomainEvent> = [];
+        if (
+          current.thread !== null &&
+          projection !== null &&
+          projection.thread.branch === null &&
+          projection.thread.worktreePath === null &&
+          creation.worktree != null
+        ) {
+          const driveId = current.thread.owner.driveId;
+          if (driveId === null) {
+            return yield* ThreadCommandRejectedError.forCommand(
+              command,
+              "This thread has no drive.",
+            );
+          }
+          const expected = remoteThreadWorktree(driveId, projection.thread.id);
+          if (
+            creation.worktree.branch !== expected.branch ||
+            creation.worktree.path !== expected.path
+          ) {
+            return yield* ThreadCommandRejectedError.forCommand(
+              command,
+              "Invalid remote workspace.",
+            );
+          }
+          adoption.push(
+            threadEvent(ctx, "thread.metadata-updated", {
+              ...projection.thread,
+              branch: expected.branch,
+              worktreePath: expected.path,
+              updatedAt: ctx.now,
+            }),
+          );
+          projection = applyEvents(projection, adoption);
+        }
+        const decided = decideWith(projection, ctx, pool);
+        const decision =
+          decided._tag === "accepted"
+            ? { ...decided, events: [...adoption, ...decided.events] }
+            : decided;
         const refuse = (message: string, options: { readonly record: boolean }) =>
           Effect.gen(function* () {
             // Only a thread that exists keeps receipts; an unknown id leaves no trace.
@@ -506,11 +554,11 @@ const make = Effect.gen(function* () {
           typeof pool === "string" ? commandOnPool(command, projection, pool) : command;
         return decide(
           projection,
-          onItsPool.type === "thread.create" && creation.worktree
+          onItsPool.type === "thread.create"
             ? {
                 ...onItsPool,
-                branch: creation.worktree.branch,
-                worktreePath: creation.worktree.path,
+                branch: creation.worktree?.branch ?? null,
+                worktreePath: creation.worktree?.path ?? null,
               }
             : onItsPool,
           ctx,
@@ -546,6 +594,13 @@ const make = Effect.gen(function* () {
 
   const snapshot: ThreadEngine["Service"]["snapshot"] = (actor) =>
     Effect.map(readable(actor), ({ head, projection }) => ({ snapshotSequence: head, projection }));
+
+  const workspace: ThreadEngine["Service"]["workspace"] = (actor) =>
+    Effect.map(readable(actor), ({ projection: { thread } }) => ({
+      projectId: thread.projectId,
+      branch: thread.branch,
+      worktreePath: thread.worktreePath,
+    }));
 
   const subscribe: ThreadEngine["Service"]["subscribe"] = (actor, input) =>
     serialized(
@@ -733,6 +788,7 @@ const make = Effect.gen(function* () {
     dispatch,
     launch,
     snapshot,
+    workspace,
     subscribe,
     apply,
     projection,

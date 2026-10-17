@@ -85,6 +85,8 @@ export const makeThreadObjectApi = (
     },
     snapshot: (actor) =>
       reply(engine.use((service) => Effect.map(service.snapshot(actor), wire.snapshot.encode))),
+    workspace: (actor) =>
+      reply(engine.use((service) => Effect.map(service.workspace(actor), wire.workspace.encode))),
     subscribe: (actor, input) =>
       run(
         engine.use((service) =>

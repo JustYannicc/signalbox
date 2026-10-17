@@ -38,7 +38,10 @@ export class ThreadContexts extends Context.Service<
      * acts as, or null when the project is none of the acting user's or they
      * can't change files in its drive.
      */
-    readonly placeOfProject: (projectId: ProjectId) => Effect.Effect<ThreadPlace | null>;
+    readonly placeOfProject: (
+      projectId: ProjectId,
+      options?: { readonly remoteOnly: true },
+    ) => Effect.Effect<ThreadPlace | null>;
     /**
      * The thread's turn now, resolved from its home's chain (`folderTree.ts`).
      * `projectId`: the thread's, when the caller knows it (a create does).
@@ -55,12 +58,23 @@ export const layer = Layer.effect(
     const folders = yield* UserFolders.UserFolders;
     const directory = yield* Effect.serviceOption(DriveDirectory);
     return ThreadContexts.of({
-      placeOfProject: (projectId) =>
+      placeOfProject: (projectId, options) =>
         Effect.gen(function* () {
           const userId = yield* drives.userId;
           const driveId = userId === null ? null : driveOfProject(projectId, userId);
           const parsed = driveId === null ? null : parseDriveId(driveId);
           if (driveId === null || parsed === null) return null;
+          if (options?.remoteOnly === true) {
+            // Only a drive with a remote needs adoption. Check it before the separate role RPC.
+            if (
+              parsed.kind === "my" ||
+              directory._tag === "None" ||
+              (yield* directory.value.forDrive(driveId).remote()) === null
+            )
+              return null;
+            if (!canWrite(yield* drives.access(driveId))) return null;
+            return { contextId: parsed.contextId, driveId, remote: true };
+          }
           // `access` also says whether the user is still in the drive's context.
           if (!canWrite(yield* drives.access(driveId))) return null;
           // A My Drive is always its own home; any other drive says whether a remote is.
@@ -82,7 +96,8 @@ export const layer = Layer.effect(
 export const layerWorker = Layer.succeed(
   ThreadContexts,
   ThreadContexts.of({
-    placeOfProject: () => Effect.die("Threads are created in their user's object."),
+    // Worker reads cannot resolve an acting user's writable home. Adoption happens in their object.
+    placeOfProject: () => Effect.succeed(null),
     turn: () => Effect.die("Turns start in their user's object."),
   }),
 );

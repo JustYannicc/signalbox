@@ -1,4 +1,4 @@
-import { useAtomValue } from "@effect/atom-react";
+import { useAtomRefresh, useAtomValue } from "@effect/atom-react";
 import {
   createEnvironmentThreadDetailAtoms,
   createEnvironmentThreadShellAtoms,
@@ -46,4 +46,20 @@ export function useEnvironmentThread(
     () => EMPTY_ENVIRONMENT_THREAD_STATE,
   ) as EnvironmentThreadState;
   return state;
+}
+
+/**
+ * Resubscribes to a thread's live state, keeping what's shown meanwhile. The server reads where
+ * the thread works as it subscribes, so this picks up a change it can't announce itself, such as
+ * the thread's folder gaining a remote.
+ */
+export function useResubscribeEnvironmentThread(
+  environmentId: EnvironmentId | null,
+  threadId: ThreadId | null,
+): () => void {
+  return useAtomRefresh(
+    environmentId !== null && threadId !== null
+      ? environmentThreads.stateAtom(environmentId, threadId)
+      : EMPTY_THREAD_STATE_ATOM,
+  );
 }

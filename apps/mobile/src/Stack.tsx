@@ -69,6 +69,7 @@ import { GitBranchesSheet } from "./features/threads/git/GitBranchesSheet";
 import { GitCommitSheet } from "./features/threads/git/GitCommitSheet";
 import { GitConfirmSheet } from "./features/threads/git/GitConfirmSheet";
 import { GitOverviewSheet } from "./features/threads/git/GitOverviewSheet";
+import { PublishFolderSheet } from "./features/folders/PublishFolderSheet"; // signalbox: #810
 import { ThreadAgentsSheet } from "./features/threads/ThreadAgentsSheet";
 import { ThreadQueueSheet } from "./features/threads/ThreadQueueControl";
 import { ThreadRouteScreen } from "./features/threads/ThreadRouteScreen";
@@ -560,6 +561,7 @@ const WORKSPACE_OVERLAY_ROUTES = new Set([
   "GitCommit",
   "GitConfirm",
   "GitOverview",
+  "PublishFolder", // signalbox: #810
   "NewTaskSheet",
   "SettingsLegal",
   "SettingsSheet",
@@ -910,6 +912,16 @@ const RootStackConfig = createWorkspaceStackNavigator({
     GitBranches: createNativeStackScreen({
       screen: GitBranchesSheet,
       linking: `${THREAD_LINKING_PREFIX}/git/branches`,
+      options: {
+        ...FORM_SHEET_PRESENTATION_OPTIONS,
+        sheetAllowedDetents: [0.55, 0.92],
+        sheetGrabberVisible: true,
+      },
+    }),
+    // signalbox: publish a cloud folder to GitHub (#810)
+    PublishFolder: createNativeStackScreen({
+      screen: PublishFolderSheet,
+      linking: `${THREAD_LINKING_PREFIX}/git/publish`,
       options: {
         ...FORM_SHEET_PRESENTATION_OPTIONS,
         sheetAllowedDetents: [0.55, 0.92],

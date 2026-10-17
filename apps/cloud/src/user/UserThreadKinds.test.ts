@@ -63,6 +63,7 @@ const setup = (
         },
         launch: async () => ({ _tag: "not_found" }),
         snapshot: async () => ({ _tag: "not_found" }),
+        workspace: async () => ({ _tag: "not_found" }),
         subscribe: async () => null,
         summary: async () => null,
         requestPullRequestSync: async () => ({ _tag: "not_found" }),

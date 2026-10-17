@@ -17,6 +17,21 @@ export function useIsSignalboxCloud(environmentId: EnvironmentId | null): boolea
 }
 
 /**
+ * Starts connecting the user's own GitHub from inside a flow that has to survive it, such as
+ * publishing a folder: a new tab on the cloud's own web app, the system browser anywhere else.
+ * Null until the environment's address is known. Callers look again when the window regains focus.
+ */
+export function useConnectCloudGitHub(environmentId: EnvironmentId): (() => void) | null {
+  const httpBaseUrl = useEnvironmentHttpBaseUrl(environmentId);
+  if (httpBaseUrl === null) return null;
+  return () => {
+    const url = new URL("/api/github/connect", httpBaseUrl);
+    if (url.origin === window.location.origin) window.open(url, "_blank", "noopener");
+    else void readLocalApi()?.shell.openExternal(url.toString());
+  };
+}
+
+/**
  * GitHub in Signalbox Cloud: connecting runs GitHub's sign-in through WorkOS
  * Pipes in a browser signed in to the cloud, which then acts as the user on
  * their repositories. WorkOS keeps the tokens; this only opens the cloud's

@@ -28,6 +28,16 @@ export const makeDriveObjectApi = (
     return value;
   };
   return {
+    beginPublication: (userId, request) =>
+      run(store.use((s) => s.beginPublication(userId, request))),
+    markPublicationCreating: (userId, id) =>
+      run(store.use((s) => s.markPublicationCreating(userId, id))),
+    releasePublicationCreating: (userId, id) =>
+      run(store.use((s) => s.releasePublicationCreating(userId, id))),
+    recordPublicationCreated: (userId, request) =>
+      run(store.use((s) => s.recordPublicationCreated(userId, request))),
+    bindPublication: (userId, request) => run(store.use((s) => s.bindPublication(userId, request))),
+    finishPublication: (userId, id) => run(store.use((s) => s.finishPublication(userId, id))),
     open: (writer) => run(store.use((s) => s.open(writer))),
     refs: (threadId, packsAfter) => run(store.use((s) => s.refs(threadId, packsAfter))),
     ref: (name) => run(store.use((s) => s.ref(name))),

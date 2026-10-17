@@ -26,6 +26,7 @@ import * as DriveEvents from "./DriveEvents.ts";
 import * as DriveMembers from "./DriveMembers.ts";
 import * as DriveRevisions from "./DriveRevisions.ts";
 import * as DriveRevisionStore from "./DriveRevisionStore.ts";
+import * as DriveRepositoryPublication from "./DriveRepositoryPublication.ts";
 import { isWithin } from "./DriveReader.ts";
 import type { ObjectType, Oid } from "./git/gitObjects.ts";
 
@@ -144,7 +145,7 @@ export interface ObjectLocation {
 
 export class DriveStore extends Context.Service<
   DriveStore,
-  {
+  DriveRepositoryPublication.PublicationOperations & {
     readonly initialize: Effect.Effect<void, SqlError | Migrator.MigrationError>;
     /** A thread's view of the drive. Creates its branch at `main` and pins its base the first time. */
     readonly open: (writer: DriveWriter) => Effect.Effect<RefWrite, SqlError>;
@@ -402,6 +403,8 @@ const migrations = Migrator.fromRecord({
   // Undo snapshots for restores already tracked by 0007.
   "0008_drive_restore_snapshots": DriveRevisions.createRestoreTables,
   "0009_ref_deletions": DriveEvents.allowDeletedRefs,
+  "0010_drive_repository_publication": DriveRepositoryPublication.createTables,
+  "0011_drive_publication_creation_attempts": DriveRepositoryPublication.addCreationAttempts,
 });
 
 /** Applies every migration not recorded yet (`storage/migrations.ts`). Never edit or rename a merged one. */
@@ -1046,6 +1049,14 @@ const make = Effect.gen(function* () {
       );
     });
 
+  const publicationOperations = DriveRepositoryPublication.makeOperations({
+    sql,
+    role: members.role,
+    main: ref(MAIN_REF),
+    remote,
+    setRemote,
+  });
+
   return DriveStore.of({
     initialize: Effect.asVoid(migrate.pipe(Effect.provideService(SqlClient.SqlClient, sql))),
     open,
@@ -1070,6 +1081,7 @@ const make = Effect.gen(function* () {
     removeShortcut,
     unreconciled,
     ...revisionOperations,
+    ...publicationOperations,
   });
 });
 
