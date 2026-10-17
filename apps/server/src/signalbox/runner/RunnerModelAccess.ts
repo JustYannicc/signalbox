@@ -93,7 +93,7 @@ export function harnessEnvironment(
 }
 
 /** Makes project-installed commands available to provider shells, including Bash login shells. */
-export const agentToolEnvironment = (
+const agentToolEnvironment = (
   environment: NodeJS.ProcessEnv,
   cwd: string,
 ): NodeJS.ProcessEnv => {
