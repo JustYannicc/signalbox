@@ -4,8 +4,8 @@
  *
  *   node scripts/upstream-sync/check-merge.ts --base <ref> --head <ref> --upstream <ref> [--report]
  *
- * Only conflicts the head introduces count: files that conflict for head but
- * not for base or their merge base. `--report` prints conflicts and always exits 0.
+ * Only conflicts the PR's merge into base introduces count: files that conflict
+ * after merging but not for base. `--report` prints conflicts and always exits 0.
  */
 import * as NodePath from "node:path";
 import * as NodeUtil from "node:util";
@@ -30,9 +30,7 @@ function main() {
   });
 
   if (preexisting.length > 0) {
-    console.log(
-      `Already conflicting on ${values.base} or its merge base, left to the upstream sync:`,
-    );
+    console.log(`Already conflicting on ${values.base}, left to the upstream sync:`);
     for (const file of preexisting) console.log(`  ${file}`);
   }
   if (introduced.length === 0) {

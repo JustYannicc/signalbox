@@ -275,8 +275,8 @@ jobs:
       - name: Exercise release-only workflow steps
         run: node scripts/release-smoke.ts
 
-  # Fails when a PR adds conflicts with upstream T3 Code: files that conflict for
-  # the PR head but not for its base, so a sync conflict pending on main doesn't
+  # Fails when a PR adds conflicts with upstream T3 Code: files that conflict after
+  # merging the PR into its fresh base but not on that base, so a pending sync doesn't
   # block every PR. On main it only reports. A PR that merges upstream also
   # fails when it drops a `signalbox:` hook line.
   upstream_merge:

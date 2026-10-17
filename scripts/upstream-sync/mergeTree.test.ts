@@ -131,7 +131,7 @@ describe("introducedConflicts", () => {
 
     expect(introducedConflicts(repo, { base, head, upstream })).toEqual({
       introduced: ["a.ts"],
-      preexisting: [],
+      preexisting: ["b.ts"],
     });
   });
 
@@ -148,13 +148,40 @@ describe("introducedConflicts", () => {
     expect(conflictingFiles(repo, base, upstream)).toEqual([]);
     expect(introducedConflicts(repo, { base, head, upstream })).toEqual({
       introduced: [],
-      preexisting: ["b.ts"],
+      preexisting: [],
     });
 
     const conflictingHead = commit({ "a.ts": "pr\n" }, "pr adds its own conflict");
     expect(introducedConflicts(repo, { base, head: conflictingHead, upstream })).toEqual({
       introduced: ["a.ts"],
-      preexisting: ["b.ts"],
+      preexisting: [],
     });
+  });
+
+  it("catches a new conflict in a file whose inherited conflict main already resolved", () => {
+    const lines = Array.from({ length: 30 }, (_, index) => `line ${index + 1}`);
+    const contents = (first: string, twentieth = lines[19]) =>
+      lines.with(0, first).with(19, twentieth).join("\n") + "\n";
+    const root = commit({ "a.ts": contents("original") }, "long file");
+    const upstreamOne = commit({ "a.ts": contents("upstream") }, "upstream edits line 1");
+    branch("main", root);
+    const forkPoint = commit({ "a.ts": contents("fork") }, "fork conflicts on line 1");
+    expect(() => git(repo, ["merge", "--no-ff", "--no-edit", upstreamOne])).toThrow();
+    const base = commit({ "a.ts": contents("upstream") }, "main sync resolves line 1");
+    branch("upstream", upstreamOne);
+    const upstream = commit({ "a.ts": contents("upstream", "upstream line 20") }, "upstream 2");
+    branch("pr", forkPoint);
+    const head = commit({ "a.ts": contents("fork", "pr line 20") }, "PR conflicts on line 20");
+
+    expect(conflictingFiles(repo, base, upstream)).toEqual([]);
+    expect(conflictingFiles(repo, forkPoint, upstream)).toEqual(["a.ts"]);
+    const refsBefore = git(repo, ["show-ref"]);
+    expect(introducedConflicts(repo, { base, head, upstream })).toEqual({
+      introduced: ["a.ts"],
+      preexisting: [],
+    });
+    expect(git(repo, ["show-ref"])).toBe(refsBefore);
+    expect(git(repo, ["status", "--porcelain"])).toBe("");
+    expect(git(repo, ["rev-parse", "HEAD"])).toBe(head);
   });
 });
