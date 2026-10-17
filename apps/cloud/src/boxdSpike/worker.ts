@@ -8,6 +8,7 @@ import { TokenCache } from "./TokenCache.ts";
 import { makeSdkApi, sdkClient } from "./SdkApi.ts";
 import { exchangeToken } from "./adapters/tokenExchange.ts";
 import { handleProbe } from "./probeRoutes.ts";
+import { runCleanupAlarm } from "./cleanupAlarm.ts";
 
 interface Env {
   BOXD_SPIKE: DurableObjectNamespace<BoxdSpike>;
@@ -115,18 +116,13 @@ export class BoxdSpike extends DurableObject<Env> {
   }
 
   override alarm() {
-    return this.exclusive(async () => {
-      const record = await this.read();
-      if (!record) return;
-      // Watch for late create/fork completions past the run deadline plus provider TTL.
-      if (Date.now() > record.deadline + 3_600_000 && record.done) return;
-      await this.ctx.storage.setAlarm(Date.now() + 30_000);
-      try {
-        await this.run("sweep");
-      } catch {
-        /* The next alarm retries without logging credentials. */
-      }
-    });
+    return this.exclusive(() =>
+      runCleanupAlarm(
+        this.ctx.storage,
+        () => this.run("sweep"),
+        () => Date.now(),
+      ),
+    );
   }
 }
 

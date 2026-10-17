@@ -78,7 +78,7 @@ describe("SDK boundary", () => {
         shared: false,
         cmd: ["sleep", "infinity"],
         deleteAfter: expect.any(Number),
-        config: expect.objectContaining({ ssh: false, vcpu: 1 }),
+        config: expect.objectContaining({ ssh: false, vcpu: 1, autoSuspendTimeout: 0 }),
       }),
     );
     await api.step("create", true, deadline);

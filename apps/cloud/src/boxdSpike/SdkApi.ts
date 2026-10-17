@@ -175,6 +175,7 @@ export function makeSdkApi(client: Boxd, config: SdkConfig): ProbeApi["Service"]
                 vcpu: 1,
                 memory: "4G",
                 ssh: false,
+                autoSuspendTimeout: 0,
                 autoDestroyTimeout: ttl(deadline),
                 idleIgnoreOutbound: true,
               },
