@@ -21,10 +21,6 @@ permissions:
   issues: write
   pull-requests: write
 
-concurrency:
-  group: cliproxyapi-sync-auto-merge
-  cancel-in-progress: false
-
 jobs:
   enable-auto-merge:
     if: >-
@@ -32,6 +28,9 @@ jobs:
       (github.event.workflow_run.event == 'pull_request' &&
       github.event.workflow_run.head_repository.full_name == github.repository &&
       github.event.workflow_run.head_branch == 'automation/cliproxyapi-update')
+    concurrency:
+      group: cliproxyapi-sync-auto-merge
+      cancel-in-progress: false
     runs-on: ubuntu-latest
     timeout-minutes: 5
     env:
