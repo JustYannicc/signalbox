@@ -4,7 +4,7 @@ import * as Layer from "effect/Layer";
 import type * as Redacted from "effect/Redacted";
 import { HttpClient } from "effect/http";
 
-import { BoatApiError, makeBoatApi, type BoatApi } from "./BoatApi.ts";
+import { BoatApiError, makeBoatApi, type BoatApi } from "./runner/boat/BoatApi.ts";
 
 export interface BoatRecoverySettings {
   readonly apiUrl: string;
@@ -28,12 +28,12 @@ export interface BoatRecoveryControlShape {
 export class BoatRecoveryControl extends Context.Service<
   BoatRecoveryControl,
   BoatRecoveryControlShape | null
->()("@signalbox/cloud/thread/runner/boat/BoatRecoveryControl") {}
+>()("@signalbox/cloud/thread/RecoveryDrillBoat/BoatRecoveryControl") {}
 
 const safeState = (state: string) =>
   state.length <= 40 && /^[a-z][a-z0-9_-]*$/iu.test(state) ? state : "unknown";
 
-export const makeBoatRecoveryControl = (api: BoatApi): BoatRecoveryControlShape => ({
+const makeBoatRecoveryControl = (api: BoatApi): BoatRecoveryControlShape => ({
   inspect: (machineId) =>
     Effect.flatMap(
       api.get(machineId),
@@ -67,13 +67,20 @@ export const makeBoatRecoveryControl = (api: BoatApi): BoatRecoveryControlShape 
   remove: (machineId) => api.remove(machineId),
 });
 
+export const makeBoatRecoveryControlWithClient = (
+  client: HttpClient.HttpClient,
+  settings: BoatRecoverySettings,
+) =>
+  makeBoatRecoveryControl(
+    makeBoatApi(client, { baseUrl: settings.apiUrl, apiKey: settings.apiKey }),
+  );
+
 export const layer = (settings: BoatRecoverySettings | null) =>
   Layer.effect(
     BoatRecoveryControl,
     Effect.gen(function* () {
       if (settings === null) return null;
       const client = yield* HttpClient.HttpClient;
-      const api = makeBoatApi(client, { baseUrl: settings.apiUrl, apiKey: settings.apiKey });
-      return makeBoatRecoveryControl(api);
+      return makeBoatRecoveryControlWithClient(client, settings);
     }),
   );

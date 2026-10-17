@@ -1,11 +1,8 @@
 import { ThreadId } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
 
-import {
-  makeRecoveryDrill,
-  type RecoveryDrillEnv,
-  type RecoveryDrillState,
-} from "./RecoveryDrill.ts";
+import { makeRecoveryDrill } from "./RecoveryDrill.ts";
+import type { RecoveryDrillEnv, RecoveryDrillState } from "./RecoveryDrillProtocol.ts";
 import { NO_MACHINE } from "./ThreadStore.ts";
 import type { RecoveryEvidence, RecoveryInspection } from "./RecoveryEvidence.ts";
 

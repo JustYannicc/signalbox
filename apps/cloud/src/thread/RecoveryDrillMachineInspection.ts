@@ -1,5 +1,5 @@
 import type { RecoveryEvidence, RecoveryInspection } from "./RecoveryEvidence.ts";
-import type { RecoveryDrillCommand, RecoveryDrillHost } from "./RecoveryDrill.ts";
+import type { RecoveryDrillCommand, RecoveryDrillHost } from "./RecoveryDrillProtocol.ts";
 
 const rejection = (error: string) => ({ error });
 const isHeavy = (evidence: RecoveryEvidence) => evidence.lease.machineClass !== "light";

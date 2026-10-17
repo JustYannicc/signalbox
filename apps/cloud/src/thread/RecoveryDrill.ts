@@ -1,14 +1,18 @@
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
-import type { RecoveryEvidence, RecoveryInspection } from "./RecoveryEvidence.ts";
+import type { RecoveryEvidence } from "./RecoveryEvidence.ts";
+import {
+  RecoveryDrillCommandSchema,
+  type RecoveryDrillCommand,
+  type RecoveryDrillEnv,
+  type RecoveryDrillExpected,
+  type RecoveryDrillFault,
+  type RecoveryDrillHost,
+  type RecoveryDrillState,
+  type RecoveryInspector,
+} from "./RecoveryDrillProtocol.ts";
 import { makeRecoveryDrillMachineActions } from "./RecoveryDrillMachines.ts";
-
-export interface RecoveryDrillEnv {
-  readonly SIGNALBOX_STAGE?: string;
-  readonly ENVIRONMENT_ID?: string;
-  readonly RECOVERY_DRILLS?: string;
-}
 
 /** A deploy disables drills again; operators opt one preview in for its disposable threads. */
 export const recoveryDrillsEnabled = (env: RecoveryDrillEnv) => {
@@ -21,87 +25,13 @@ export const recoveryDrillsEnabled = (env: RecoveryDrillEnv) => {
   );
 };
 
-const Id = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200));
-const Expected = Schema.Struct({
-  generation: Schema.Number.check(Schema.isInt(), Schema.isGreaterThanOrEqualTo(0)),
-  runId: Schema.NullOr(Id),
-  machineId: Schema.NullOr(Id),
-});
-const Command = Schema.Struct({
-  action: Schema.Literals([
-    "inspect",
-    "inspect-machine",
-    "enroll",
-    "disable",
-    "reset",
-    "retry-alarm",
-    "kill-machine",
-  ]),
-  id: Id,
-  machineId: Schema.optionalKey(Id),
-  expected: Schema.optionalKey(Expected),
-  commandIds: Schema.Array(Id).check(Schema.isMaxLength(20)),
-});
-const decodeCommand = Schema.decodeUnknownOption(Command);
-export type RecoveryDrillCommand = typeof Command.Type;
-export type RecoveryDrillExpected = typeof Expected.Type;
+const decodeCommand = Schema.decodeUnknownOption(RecoveryDrillCommandSchema);
 type StandardRecoveryDrillCommand = Omit<RecoveryDrillCommand, "action"> & {
   readonly action: Exclude<RecoveryDrillCommand["action"], "inspect-machine" | "kill-machine">;
 };
 
-export interface RecoveryDrillFault {
-  readonly id: string;
-  readonly action: "reset" | "retry-alarm" | "kill-machine";
-  readonly incarnation: string;
-  readonly before: RecoveryEvidence;
-  readonly deliveries: ReadonlyArray<{ readonly isRetry: boolean; readonly retryCount: number }>;
-  readonly complete: boolean;
-  readonly cancelled?: string;
-  readonly machineOutcome?:
-    | "reserved"
-    | "unknown"
-    | "accepted"
-    | "absent"
-    | "rejected"
-    | "cancelled";
-  readonly providerStatus?: number;
-}
-
-export interface RecoveryDrillState {
-  readonly enabled: boolean;
-  readonly userId: string;
-  readonly faults: ReadonlyArray<RecoveryDrillFault>;
-}
-
-export interface RecoveryDrillMachineSnapshot {
-  readonly machineId: string;
-  readonly exists: boolean;
-  readonly state: string | null;
-  readonly hydrated: boolean | null;
-}
-
-export interface RecoveryDrillMachineControl {
-  readonly inspect: (machineId: string) => Promise<RecoveryDrillMachineSnapshot>;
-  readonly remove: (machineId: string) => Promise<void>;
-}
-
-type RecoveryInspector = (
-  userId: string,
-  commandIds: ReadonlyArray<string>,
-) => Promise<RecoveryInspection>;
-
-export interface RecoveryDrillHost {
-  readonly incarnation: () => Promise<string>;
-  readonly load: () => Promise<RecoveryDrillState | undefined>;
-  readonly save: (state: RecoveryDrillState, arm?: boolean) => Promise<void>;
-  readonly exclusive: <A>(work: (inspect: RecoveryInspector) => Promise<A>) => Promise<A>;
-  readonly boatControl: () => Promise<RecoveryDrillMachineControl | null>;
-  readonly rearm: () => Promise<void>;
-  readonly reset: () => void;
-}
-
 const rejection = (error: string) => ({ error });
-const matches = (expected: typeof Expected.Type, evidence: RecoveryEvidence) =>
+const matches = (expected: RecoveryDrillExpected, evidence: RecoveryEvidence) =>
   expected.generation === evidence.lease.generation &&
   expected.machineId === evidence.machine.machineId &&
   expected.runId === evidence.activeRunId;
@@ -131,16 +61,14 @@ export const makeRecoveryDrill = (env: RecoveryDrillEnv, host: RecoveryDrillHost
         faults: stored.faults.map((fault) =>
           fault.complete
             ? fault
-            : fault.action === "kill-machine"
-              ? fault.machineOutcome === "reserved"
-                ? {
-                    ...fault,
-                    complete: true,
-                    cancelled: "disabled",
-                    machineOutcome: "cancelled",
-                  }
-                : fault
-              : { ...fault, complete: true, cancelled: "disabled" },
+            : {
+                ...fault,
+                complete: true,
+                cancelled: "disabled",
+                ...(fault.machineOutcome === "reserved"
+                  ? { machineOutcome: "cancelled" as const }
+                  : {}),
+              },
         ),
       };
       await host.save(state);

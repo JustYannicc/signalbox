@@ -5,7 +5,7 @@ import type {
   RecoveryDrillFault,
   RecoveryDrillHost,
   RecoveryDrillState,
-} from "./RecoveryDrill.ts";
+} from "./RecoveryDrillProtocol.ts";
 
 const rejection = (error: string) => ({ error });
 const isHeavy = (evidence: RecoveryEvidence) => evidence.lease.machineClass !== "light";
@@ -212,35 +212,41 @@ export const makeRecoveryDrillMachineKiller = (options: {
       const current = await options.host.load();
       if (current === undefined || current.userId !== userId) return undefined;
       const complete = machineOutcome === "absent" || machineOutcome === "rejected";
-      const next = updateFault(current, command.id, (fault) => ({
-        ...fault,
-        machineOutcome,
-        complete,
-        ...(status === undefined ? {} : { providerStatus: status }),
-      }));
+      const next = updateFault(current, command.id, (fault) =>
+        fault.complete
+          ? fault
+          : {
+              ...fault,
+              machineOutcome,
+              complete,
+              ...(status === undefined ? {} : { providerStatus: status }),
+            },
+      );
       await options.host.save(next);
       return next;
     });
-    if (machineOutcome === "accepted") {
+    const outcome =
+      state?.faults.find((fault) => fault.id === command.id)?.machineOutcome ?? machineOutcome;
+    if (outcome === "accepted") {
       return {
         incarnation: await options.incarnation(),
         evidence: prepared.before,
         state,
-        machineOutcome,
+        machineOutcome: outcome,
         replayed: prepared.replayed,
       };
     }
     return {
       error:
-        machineOutcome === "absent"
+        outcome === "absent"
           ? "machine_absent"
-          : machineOutcome === "rejected"
+          : outcome === "rejected"
             ? "provider_rejected"
             : "provider_outcome_unknown",
       ...(status === undefined ? {} : { providerStatus: status }),
       evidence: prepared.before,
       state,
-      machineOutcome,
+      machineOutcome: outcome,
       replayed: prepared.replayed,
     };
   };

@@ -1,5 +1,5 @@
 import type { RecoveryEvidence } from "./RecoveryEvidence.ts";
-import type { RecoveryDrillExpected, RecoveryDrillHost } from "./RecoveryDrill.ts";
+import type { RecoveryDrillExpected, RecoveryDrillHost } from "./RecoveryDrillProtocol.ts";
 import { makeRecoveryDrillMachineInspector } from "./RecoveryDrillMachineInspection.ts";
 import { makeRecoveryDrillMachineKiller } from "./RecoveryDrillMachineKill.ts";
 

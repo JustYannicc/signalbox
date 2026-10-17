@@ -155,4 +155,61 @@ describe("preview recovery Boat kill", () => {
     });
     expect(test.removed).toEqual(["bx_old"]);
   });
+  it("abandons an uncertain fault on disable without repeating its consumed DELETE", async () => {
+    const test = fixture();
+    const drill = test.drill();
+    test.setDeleteFailure({ status: 0 });
+    await drill.command("owner", command("enroll"));
+    await drill.command("owner", command("kill-machine"));
+    expect(
+      await drill.command("owner", { ...command("inspect-machine"), machineId: "bx_old" }),
+    ).toMatchObject({ machine: { exists: true } });
+    await drill.command("owner", command("disable"));
+    expect(test.state?.faults[0]).toMatchObject({
+      machineOutcome: "unknown",
+      complete: true,
+      cancelled: "disabled",
+    });
+    await drill.command("owner", command("enroll"));
+    expect(await drill.command("owner", command("kill-machine"))).toMatchObject({ replayed: true });
+    expect(await drill.command("owner", command("reset", "next-fault"))).toMatchObject({
+      state: { faults: [{ id: "fault-1" }, { id: "next-fault", complete: true }] },
+    });
+    expect(test.removeCalls).toBe(1);
+  });
+
+  it("keeps confirmed absence when DELETE responds after a provider readback", async () => {
+    const test = fixture();
+    const drill = test.drill();
+    await drill.command("owner", command("enroll"));
+    test.setBeforeDeleteResponse(async () => {
+      expect(
+        await drill.command("owner", { ...command("inspect-machine"), machineId: "bx_old" }),
+      ).toMatchObject({ machine: { exists: false } });
+    });
+    expect(await drill.command("owner", command("kill-machine"))).toMatchObject({
+      machineOutcome: "absent",
+      state: { faults: [{ machineOutcome: "absent", complete: true }] },
+    });
+    expect(await drill.command("owner", command("reset", "next-fault"))).toMatchObject({
+      state: { faults: [{ id: "fault-1" }, { id: "next-fault", complete: true }] },
+    });
+    expect(test.removeCalls).toBe(1);
+  });
+
+  it("keeps an in-flight fault abandoned when disable wins the DELETE response race", async () => {
+    const test = fixture();
+    const drill = test.drill();
+    await drill.command("owner", command("enroll"));
+    test.setBeforeDeleteResponse(async () => {
+      await drill.command("owner", command("disable"));
+    });
+    expect(await drill.command("owner", command("kill-machine"))).toMatchObject({
+      machineOutcome: "unknown",
+      state: { enabled: false, faults: [{ complete: true, cancelled: "disabled" }] },
+    });
+    await drill.command("owner", command("enroll"));
+    expect(await drill.command("owner", command("kill-machine"))).toMatchObject({ replayed: true });
+    expect(test.removeCalls).toBe(1);
+  });
 });

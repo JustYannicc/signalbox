@@ -41,7 +41,7 @@ import * as DiagnosticsStore from "./diagnostics/DiagnosticsStore.ts";
 import * as TurnDiagnostics from "./diagnostics/TurnDiagnostics.ts";
 import * as TurnReports from "./diagnostics/TurnReports.ts";
 import { layerFromEnv as layerMachineBackend, machineSettings } from "./runner/machineBackends.ts";
-import * as BoatRecoveryControl from "./runner/boat/BoatRecoveryControl.ts";
+import * as BoatRecoveryControl from "./RecoveryDrillBoat.ts";
 import * as MachineBackend from "./runner/MachineBackend.ts";
 import {
   acceptRunnerSocket,
@@ -69,11 +69,8 @@ import { noteView } from "./statusLine/statusNotePolicy.ts";
 import * as PullRequestSync from "./pullRequests/PullRequestSync.ts";
 import * as StatusNoteModel from "./statusLine/StatusNoteModel.ts";
 import * as ThreadStatusNotes from "./statusLine/ThreadStatusNotes.ts";
-import {
-  makeRecoveryDrill,
-  type RecoveryDrillEnv,
-  type RecoveryDrillState,
-} from "./RecoveryDrill.ts";
+import { makeRecoveryDrill } from "./RecoveryDrill.ts";
+import type { RecoveryDrillEnv, RecoveryDrillState } from "./RecoveryDrillProtocol.ts";
 import { withRecoveryInspection } from "./RecoveryEvidence.ts";
 
 /**

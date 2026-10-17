@@ -4,8 +4,13 @@ import * as Redacted from "effect/Redacted";
 import { HttpClient, HttpClientResponse } from "effect/http";
 import * as HttpClientRequest from "effect/http/HttpClientRequest";
 
-import { makeBoatApi } from "./BoatApi.ts";
-import { makeBoatRecoveryControl } from "./BoatRecoveryControl.ts";
+import { makeBoatRecoveryControlWithClient } from "./RecoveryDrillBoat.ts";
+
+const makeBoatRecoveryControl = (client: HttpClient.HttpClient) =>
+  makeBoatRecoveryControlWithClient(client, {
+    apiUrl: "https://boat.test/api/v1",
+    apiKey: Redacted.make("worker-only-key"),
+  });
 
 interface RequestRecord {
   readonly method: string;
@@ -18,18 +23,15 @@ const apiWith = (
   respond: (request: HttpClientRequest.HttpClientRequest) => Response,
   requests: Array<RequestRecord>,
 ) =>
-  makeBoatApi(
-    HttpClient.make((request) => {
-      requests.push({
-        method: request.method,
-        url: request.url,
-        confirmation: request.headers["x-ascii-confirm-delete"] ?? null,
-        authorization: request.headers.authorization ?? null,
-      });
-      return Effect.succeed(HttpClientResponse.fromWeb(request, respond(request)));
-    }),
-    { baseUrl: "https://boat.test/api/v1", apiKey: Redacted.make("worker-only-key") },
-  );
+  HttpClient.make((request) => {
+    requests.push({
+      method: request.method,
+      url: request.url,
+      confirmation: request.headers["x-ascii-confirm-delete"] ?? null,
+      authorization: request.headers.authorization ?? null,
+    });
+    return Effect.succeed(HttpClientResponse.fromWeb(request, respond(request)));
+  });
 
 describe("BoatRecoveryControl", () => {
   it.effect("reads fresh sanitized provider state and confirms the exact DELETE target", () =>

@@ -1,10 +1,7 @@
 import { RunId, ThreadId } from "@t3tools/contracts";
 
-import {
-  makeRecoveryDrill,
-  type RecoveryDrillEnv,
-  type RecoveryDrillState,
-} from "./RecoveryDrill.ts";
+import { makeRecoveryDrill } from "./RecoveryDrill.ts";
+import type { RecoveryDrillEnv, RecoveryDrillState } from "./RecoveryDrillProtocol.ts";
 import { NO_MACHINE } from "./ThreadStore.ts";
 import type { RecoveryEvidence, RecoveryInspection } from "./RecoveryEvidence.ts";
 
@@ -51,6 +48,7 @@ export const fixture = (startingEvidence: RecoveryInspection = active) => {
     ["bx_old", { exists: true, state: "ready", hydrated: true }],
     ["bx_new", { exists: true, state: "provisioning", hydrated: false }],
   ]);
+  let beforeDeleteResponse: (() => Promise<void>) | undefined;
   let deleteFailure: unknown;
   let inspectFailure: unknown;
   let afterNextExclusive: (() => Promise<void>) | undefined;
@@ -94,6 +92,7 @@ export const fixture = (startingEvidence: RecoveryInspection = active) => {
           removed.push(machineId);
           if (deleteFailure !== undefined) throw deleteFailure;
           machines.set(machineId, { exists: false, state: null, hydrated: null });
+          await beforeDeleteResponse?.();
         },
       }),
       reset: () => {},
@@ -117,6 +116,9 @@ export const fixture = (startingEvidence: RecoveryInspection = active) => {
     inspected,
     setEvidence: (next: RecoveryInspection) => {
       evidence = next;
+    },
+    setBeforeDeleteResponse: (work: () => Promise<void>) => {
+      beforeDeleteResponse = work;
     },
     setDeleteFailure: (error: unknown) => {
       deleteFailure = error;
