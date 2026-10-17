@@ -1,5 +1,5 @@
 import { assert, it } from "@effect/vitest";
-import { DEFAULT_SERVER_SETTINGS, ProjectId } from "@t3tools/contracts";
+import { DEFAULT_SERVER_SETTINGS, ProjectId } from "@t3tools/contracts"; // signalbox: Startup tests leave initial model selection to the shared launch service.
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";

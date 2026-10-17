@@ -5,6 +5,7 @@ const testState = vi.hoisted(() => {
   let completeProjectFileRead: (value: null) => void = () => undefined;
   let projectFileRead = Promise.resolve<null>(null);
   let projectRemoved = false;
+  // signalbox: carry coverage controls the source route and destination-pool result.
   let currentRouteTarget: unknown = null;
   let carryComposerDraft: unknown = {};
   let mappedPoolSelection: unknown = null;
@@ -33,6 +34,7 @@ const testState = vi.hoisted(() => {
     }),
   };
   const draftStore = {
+    // signalbox: let the carry case provide an explicit source-draft selection.
     getComposerDraft: vi.fn(() => carryComposerDraft),
     getDraftSessionByLogicalProjectKey: vi.fn(() => storedDraft),
     getDraftSession: vi.fn(() => null),
@@ -56,6 +58,7 @@ const testState = vi.hoisted(() => {
     get projectPoolCalls() {
       return projectPoolCalls;
     },
+    // signalbox: expose source routing and destination pool mapping to the carry case.
     getCurrentRouteTarget() {
       return currentRouteTarget;
     },
@@ -86,6 +89,7 @@ const testState = vi.hoisted(() => {
     ) {
       storedDraft = nextStoredDraft;
       projectRemoved = false;
+      // signalbox: reset the source and destination state between carry-selection cases.
       currentRouteTarget = null;
       carryComposerDraft = {};
       mappedPoolSelection = null;
@@ -213,6 +217,7 @@ vi.mock("../state/server", () => ({
   environmentServerConfigsAtom: {},
   primaryServerSettingsAtom: "primary-settings",
 }));
+// signalbox: route an explicit carry through the destination pool in the integration case.
 vi.mock("../state/projectPool", () => ({
   // signalbox: no section pools in these tests.
   draftModelSelection: () => null,
@@ -379,6 +384,7 @@ describe("useNewThreadHandler with folders", () => {
 });
 
 describe("useNewThreadHandler model carry", () => {
+  // signalbox: explicit carried choices remain explicit after a pool remap.
   it("keeps an explicit carried choice explicit after mapping it to the destination pool", async () => {
     testState.reset(null);
     const carrySelection = { instanceId: "source-account", model: "carried-model" };

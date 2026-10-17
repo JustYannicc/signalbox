@@ -26,7 +26,7 @@ import {
 } from "@t3tools/contracts";
 import { newThreadWorkspaceMode, offersNewThreadBranch } from "./signalboxWorktrees"; // signalbox
 import { sanitizeNewRefName } from "@t3tools/shared/git";
-import { useNewTaskModelSelection } from "./new-task-model-selection"; // signalbox
+import { useNewTaskModelSelection } from "./new-task-model-selection"; // signalbox: resolve folder, person, and pool defaults for new tasks.
 import { resolveNewThreadEnvMode, resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import { parseT3ProjectFile } from "@t3tools/shared/t3ProjectFile";
 import * as Arr from "effect/Array";
@@ -121,7 +121,7 @@ import {
 } from "./new-task-context-presentation";
 import { resolveEnvironmentProjectMatch } from "./new-task-project-selection";
 import { resolveProjectThreadCreationBranch } from "./projectThreadCreationValidation";
-import { usePoolServerConfig } from "../sections/useProjectPool"; // signalbox
+import { usePoolServerConfig } from "../sections/useProjectPool"; // signalbox: load provider configuration for the project's pool.
 import { type NewTaskFolders, useNewTaskFolders } from "../folders/draft-folder"; // signalbox: folders
 import type { PoolNeed } from "@t3tools/client-runtime/state/sections"; // signalbox
 
@@ -559,6 +559,7 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
     selectedProject?.id ?? null,
   );
   const folders = useNewTaskFolders(activeDraftKey, selectedProject); // signalbox: folders
+  // signalbox: new tasks share model precedence and pool mapping across clients.
   const { projectDefaultModelSelection, selectedModelSelection: selectedModel } =
     useNewTaskModelSelection({
       draftSelection: draftModelSelection,
@@ -580,6 +581,7 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
     folders.poolHome, // signalbox: folders
   );
   const modelOptions = useMemo(
+    // signalbox: the selected pool supplies the options for the resolved default.
     () =>
       buildModelOptions(
         poolServerConfig,

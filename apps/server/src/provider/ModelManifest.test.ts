@@ -42,6 +42,7 @@ describe("resolveProviderCatalog", () => {
               aliases: ["next"],
               status: "current",
               badge: "new",
+              // signalbox: model-manifest.json prices and selection policy survive catalog resolution
               pricing: { inputCostPerMillionTokens: 0, outputCostPerMillionTokens: 0 },
               defaultSelection: "economical",
               profile: "standard",
@@ -60,6 +61,7 @@ describe("resolveProviderCatalog", () => {
       name: "Model Next",
       aliases: ["next"],
       badge: "new",
+      // signalbox: resolved catalog exposes metadata used for economical model selection
       pricing: { inputCostPerMillionTokens: 0, outputCostPerMillionTokens: 0 },
       defaultSelection: "economical",
       status: "current",

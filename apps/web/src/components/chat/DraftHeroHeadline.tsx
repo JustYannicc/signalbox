@@ -14,7 +14,7 @@ import { useNewThreadHandler } from "~/hooks/useHandleNewThread";
 import { useScratchProject } from "~/hooks/useScratchProject";
 import { useClientSettings } from "~/hooks/useSettings";
 import { hasExplicitComposerModelSelection } from "~/lib/chatThreadActions";
-import { resolveProjectDraftStartingModelSelection } from "~/lib/newThreadModelSelectionPolicy"; // signalbox
+import { resolveProjectDraftStartingModelSelection } from "~/lib/newThreadModelSelectionPolicy"; // signalbox: apply project/person precedence before mapping a draft to its pool.
 import {
   deriveLogicalProjectKeyFromSettings,
   selectProjectGroupingSettings,
@@ -41,7 +41,7 @@ import {
 } from "../ui/combobox";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { InlineButton } from "../ui/button";
-import { useProjectPoolModelSelection } from "../../state/projectPool"; // signalbox
+import { useProjectPoolModelSelection } from "../../state/projectPool"; // signalbox: map the project's starting model to its assigned pool.
 import { useDraftHeroCopy } from "../sidebar/folders/useFolderCopy"; // signalbox
 
 const ADD_PROJECT_VALUE = "add-project";
@@ -225,6 +225,7 @@ export function DraftHeroHeadline({
       draftId,
     );
     if (!hasExplicitComposerModelSelection(currentDraft)) {
+      // signalbox: initialize the project draft from configured defaults on its project pool.
       const startingModelSelection = resolveProjectDraftStartingModelSelection({
         project,
         environmentConfig: environments.find(

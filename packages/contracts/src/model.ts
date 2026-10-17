@@ -106,14 +106,14 @@ export type ModelCapabilities = typeof ModelCapabilities.Type;
 
 const ModelTokenPrice = Schema.Number.check(Schema.isFinite(), Schema.isGreaterThanOrEqualTo(0));
 
-/** Public per-million-token pricing metadata for model selection and display. */
+// signalbox: Per-million-token prices let the picker rank economical model defaults.
 export const ModelPricing = Schema.Struct({
   inputCostPerMillionTokens: ModelTokenPrice,
   outputCostPerMillionTokens: ModelTokenPrice,
 });
 export type ModelPricing = typeof ModelPricing.Type;
 
-/** How a model may participate in automatic initial selection without a price. */
+// signalbox: model-manifest.json can guide automatic selection when rates are missing.
 export const ModelDefaultSelection = Schema.Literals(["economical", "configured", "excluded"]);
 export type ModelDefaultSelection = typeof ModelDefaultSelection.Type;
 
@@ -157,8 +157,8 @@ export const DEFAULT_TEXT_GENERATION_REASONING_EFFORT = "low";
 export const MUSE_DEFAULT_MODEL = "default";
 
 export const DEFAULT_MODEL_BY_PROVIDER: Partial<Record<ProviderDriverKind, string>> = {
-  [CODEX_DRIVER_KIND]: "gpt-6-luna",
-  [CLAUDE_DRIVER_KIND]: "claude-haiku-5-5",
+  [CODEX_DRIVER_KIND]: "gpt-6-luna", // signalbox: start Codex on the economical Luna default
+  [CLAUDE_DRIVER_KIND]: "claude-haiku-5-5", // signalbox: start Claude on the economical Haiku default
   [CURSOR_DRIVER_KIND]: "auto",
   // Product slug, not an ACP model id. The Grok adapter treats it as "the session's current model".
   [GROK_DRIVER_KIND]: "grok-build",
@@ -166,7 +166,7 @@ export const DEFAULT_MODEL_BY_PROVIDER: Partial<Record<ProviderDriverKind, strin
   [ACP_REGISTRY_DRIVER_KIND]: "default",
   // "default" defers to the user's own Pi settings.json model selection.
   [PI_DRIVER_KIND]: "default",
-  [OPENCODE_DRIVER_KIND]: "openai/gpt-5-mini",
+  [OPENCODE_DRIVER_KIND]: "openai/gpt-5-mini", // signalbox: start OpenCode on the economical Mini default
   [ProviderDriverKind.make("antigravity")]: ANTIGRAVITY_DEFAULT_MODEL,
 };
 

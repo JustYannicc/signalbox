@@ -8,12 +8,13 @@ import type {
 } from "@t3tools/contracts";
 
 import { parseMaxDeliveryAge } from "@t3tools/client-runtime/scheduled-task-webhook";
-import { resolveScheduledTaskDefaultModelSelection } from "../threads/new-task-model-selection-policy"; // signalbox
+import { resolveScheduledTaskDefaultModelSelection } from "../threads/new-task-model-selection-policy"; // signalbox: share model precedence with new-task drafts.
 
 export function scheduledTaskDefaultModel(
   config: Parameters<typeof resolveScheduledTaskDefaultModelSelection>[0],
   project: Parameters<typeof resolveScheduledTaskDefaultModelSelection>[1],
 ): ModelSelection | null {
+  // signalbox: scheduled tasks use the same folder, person, and catalog defaults as new tasks.
   return resolveScheduledTaskDefaultModelSelection(config, project);
 }
 

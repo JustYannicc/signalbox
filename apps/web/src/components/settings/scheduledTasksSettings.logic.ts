@@ -10,7 +10,7 @@ import {
   type ProviderInteractionMode,
 } from "@t3tools/contracts";
 import { parseMaxDeliveryAge } from "@t3tools/client-runtime/scheduled-task-webhook";
-import { resolveScheduledTaskDefaultModelSelection } from "../../lib/defaultModelSelectionPolicy"; // signalbox
+import { resolveScheduledTaskDefaultModelSelection } from "../../lib/defaultModelSelectionPolicy"; // signalbox: share model precedence with new-task drafts.
 
 import type { ResolvedSettingsScope } from "./settingsScope";
 
@@ -173,5 +173,6 @@ export function scheduledTaskDefaultModel(
   project: Parameters<typeof resolveScheduledTaskDefaultModelSelection>[1],
   entries: Parameters<typeof resolveScheduledTaskDefaultModelSelection>[2],
 ): ModelSelection | null {
+  // signalbox: scheduled tasks use the same folder, person, and catalog defaults as new tasks.
   return resolveScheduledTaskDefaultModelSelection(settings, project, entries);
 }

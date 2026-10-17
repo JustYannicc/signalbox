@@ -72,6 +72,7 @@ describe("loadOpenCode2Catalog", () => {
     }),
   );
 
+  // signalbox: preserve OpenCode's reported zero price for free preview model ranking
   it.effect("preserves reported zero prices for free preview models", () =>
     Effect.gen(function* () {
       const models = yield* readCatalog({

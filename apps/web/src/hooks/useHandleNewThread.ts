@@ -38,10 +38,10 @@ import {
 import {
   explicitCarryModelSelection,
   resolveNewThreadInitialModelSelection,
-} from "../lib/newThreadModelSelectionPolicy"; // signalbox
+} from "../lib/newThreadModelSelectionPolicy"; // signalbox: carry explicit choices and resolve implicit defaults.
 import { readT3ProjectFile } from "../lib/t3ProjectFileDefaults";
 import { environmentServerConfigsAtom } from "../state/server";
-import { useProjectPoolModelSelection } from "../state/projectPool"; // signalbox
+import { useProjectPoolModelSelection } from "../state/projectPool"; // signalbox: map initial model choices to the destination project's pool.
 import { useDraftFiledAway } from "../components/sidebar/folders/draftFiling"; // signalbox
 import { resolveThreadRouteTarget } from "../threadRoutes";
 import { legacyProjectCwdPreferenceKey, useUiStateStore } from "../uiStateStore";
@@ -115,6 +115,7 @@ export function useNewThreadHandler() {
               : currentRouteTarget.draftId,
           )
         : null;
+      // signalbox: only carry a user's explicit model choice into the new draft.
       const explicitCarrySelection = explicitCarryModelSelection(carrySourceComposer);
       const carryInteractionMode =
         carrySourceComposer?.interactionMode ??
@@ -134,7 +135,7 @@ export function useNewThreadHandler() {
         project,
       );
       const defaultRuntimeMode = projectSettings.settings.defaultRuntimeMode;
-      // signalbox: the thread starts on the pool its project runs on.
+      // signalbox: resolve defaults, then translate the choice to the pool the project runs on.
       const resolveModelSelectionOverride = (destinationDraftId: DraftId) => {
         const result = resolveNewThreadInitialModelSelection({
           projectDefaultIsConfigured: projectSettings.sources.defaultModelSelection === "project",
@@ -281,7 +282,7 @@ export function useNewThreadHandler() {
             if (modelSelectionOverride.selection) {
               setModelSelection(emptyStoredDraftThread.draftId, modelSelectionOverride.selection, {
                 replaceOptions: true,
-                ...(modelSelectionOverride.explicit ? { explicit: true } : {}),
+                ...(modelSelectionOverride.explicit ? { explicit: true } : {}), // signalbox: retain explicit user intent after pool mapping.
               });
             }
           }
@@ -402,7 +403,7 @@ export function useNewThreadHandler() {
         if (modelSelectionOverride.selection) {
           setModelSelection(draftId, modelSelectionOverride.selection, {
             replaceOptions: true,
-            ...(modelSelectionOverride.explicit ? { explicit: true } : {}),
+            ...(modelSelectionOverride.explicit ? { explicit: true } : {}), // signalbox: retain explicit user intent after pool mapping.
           });
         }
         await router.navigate({

@@ -35,6 +35,7 @@ it.effect("attributes a launched thread's first message to the calling thread", 
     const projectId = ProjectId.make("project");
     const providerInstanceId = ProviderInstanceId.make("codex");
     const modelSelection = { instanceId: providerInstanceId, model: "gpt-5" };
+    // signalbox: Verify the shared launch service supplies defaults when MCP omits modelSelection.
     const initialSelection = { instanceId: providerInstanceId, model: "gpt-5.4-mini" };
     const caller = {
       id: sourceThreadId,
@@ -48,7 +49,7 @@ it.effect("attributes a launched thread's first message to the calling thread", 
       deletedAt: null,
     } as OrchestrationV2ThreadShell;
     let launchedSender: ThreadId | undefined;
-    let launchedModelSelection: ThreadLaunch.ThreadLaunchInput["modelSelection"];
+    let launchedModelSelection: ThreadLaunch.ThreadLaunchInput["modelSelection"]; // signalbox: Observe that MCP leaves omitted-model resolution to the service.
     const layerDependencies = Layer.mergeAll(
       ServerSettings.layerTest(),
       NodeCrypto.layer,
@@ -70,6 +71,7 @@ it.effect("attributes a launched thread's first message to the calling thread", 
       Layer.mock(ThreadLaunch.ThreadLaunchService)({
         launch: (input) => {
           launchedSender = input.initialMessage?.senderThreadId;
+          // signalbox: The launch service supplies a model after receiving the omitted selection.
           launchedModelSelection = input.modelSelection;
           return Effect.succeed({
             threadId: input.threadId,
@@ -100,7 +102,7 @@ it.effect("attributes a launched thread's first message to the calling thread", 
       .handle("t3_thread_launch", { title: "Audit", message: "Review the change" })
       .pipe(Stream.unwrap, Stream.runCollect, Effect.provide(layerDependencies));
     expect(result.at(-1)?.result).toMatchObject({ projectId, modelSelection: initialSelection });
-    expect(launchedModelSelection).toBeUndefined();
+    expect(launchedModelSelection).toBeUndefined(); // signalbox: A model-less MCP request must reach the shared resolver.
     expect(launchedSender).toBe(sourceThreadId);
   }),
 );
@@ -340,7 +342,7 @@ const clientLaunchHarness = (input: {
             thread: {
               id: launch.threadId,
               projectId: launch.projectId,
-              modelSelection: launch.modelSelection ?? modelSelection,
+              modelSelection: launch.modelSelection ?? modelSelection, // signalbox: The launch fixture resolves omitted models like the real service.
             },
             runs: [],
           },

@@ -9,7 +9,7 @@ import { DEFAULT_UNIFIED_SETTINGS, type UnifiedSettings } from "@t3tools/contrac
 import { describe, expect, it } from "vite-plus/test";
 import { createModelSelection } from "@t3tools/shared/model";
 import { deriveEffectiveComposerModelState } from "./composerDraftStore";
-import { deriveSignalboxComposerModelState } from "./lib/composerModelStatePolicy";
+import { deriveSignalboxComposerModelState } from "./lib/composerModelStatePolicy"; // signalbox: cover refreshed defaults while preserving explicit picks and thread pins.
 import { getComposerProviderState } from "./components/chat/composerProviderState";
 import { deriveProviderInstanceEntries, NO_PROVIDER_MODEL_SELECTION } from "./providerInstances";
 import {
@@ -600,6 +600,7 @@ describe("instance-scoped model selection", () => {
     expect(dispatch.modelOptionsForDispatch).toBeUndefined();
   });
 
+  // signalbox: implicit defaults refresh while explicit picks and existing thread pins retain priority.
   it("refreshes an implicit new-thread model from the folder or person default", () => {
     const instanceId = ProviderInstanceId.make("claudeAgent");
     const driver = ProviderDriverKind.make("claudeAgent");

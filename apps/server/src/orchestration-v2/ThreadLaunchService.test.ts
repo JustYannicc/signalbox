@@ -92,6 +92,7 @@ const otherProject = {
   title: "Other",
 } as const;
 
+// signalbox: Model pricing and availability let launch tests exercise the fork's default policy.
 const providerSnapshot = (
   instanceId: ServerProvider["instanceId"],
   driver: ServerProvider["driver"],
@@ -141,6 +142,7 @@ interface HarnessOptions {
   readonly generateBranchName?: TextGeneration.TextGeneration["Service"]["generateBranchName"];
   readonly serverSettings?: Parameters<typeof ServerSettings.layerTest>[0];
   readonly providers?: ReadonlyArray<ServerProvider>;
+  // signalbox: Allow tests to model projects with and without saved defaults.
   readonly projectDefaultModelSelection?: typeof modelSelection | null;
   readonly git?: Partial<GitWorkflow.GitWorkflowService["Service"]>;
 }
@@ -201,12 +203,12 @@ function makeHarness(options: HarnessOptions = {}) {
       getById: (id) =>
         Effect.succeed(
           id === projectId
-            ? Option.some(harnessProject)
+            ? Option.some(harnessProject) // signalbox: Resolve against this test's configured project default.
             : id === otherProjectId
               ? Option.some(otherProject)
               : Option.none(),
         ),
-      getByWorkspaceRoot: () => Effect.succeed(Option.some(harnessProject)),
+      getByWorkspaceRoot: () => Effect.succeed(Option.some(harnessProject)), // signalbox: Workspace lookup returns the same model preference as project lookup.
       snapshot: Effect.die("unused"),
       getShell: () => Effect.die("unused"),
       listShells: () => Effect.die("unused"),
@@ -256,7 +258,7 @@ function makeHarness(options: HarnessOptions = {}) {
               projectId,
               title: project.title,
               workspaceRoot: project.workspaceRoot,
-              defaultModelSelection: harnessProject.defaultModelSelection,
+              defaultModelSelection: harnessProject.defaultModelSelection, // signalbox: Keep projected preferences aligned with launch resolution.
               defaultThreadEnvMode: null,
               autoPull: false,
               faviconPath: null,
@@ -323,6 +325,7 @@ function launchInput(input: {
   };
 }
 
+// signalbox: Verify omitted launch selections resolve through project/person defaults.
 it.effect("uses the project's initial model when a launch omits its selection", () => {
   const harness = makeHarness();
   return Effect.gen(function* () {
@@ -335,6 +338,7 @@ it.effect("uses the project's initial model when a launch omits its selection", 
   }).pipe(Effect.provide(harness.layer));
 });
 
+// signalbox: Preserve an actionable failure when every default source is empty.
 it.effect("fails launch when no saved or economical model is available", () => {
   const harness = makeHarness({ projectDefaultModelSelection: null });
   return Effect.gen(function* () {
@@ -349,6 +353,7 @@ it.effect("fails launch when no saved or economical model is available", () => {
   }).pipe(Effect.provide(harness.layer));
 });
 
+// signalbox: Saved selections remain stable while disabled providers are excluded from fallback.
 it.effect("preserves an unavailable saved model but skips a disabled model", () => {
   const alternateInstanceId = ProviderInstanceId.make("claudeAgent");
   const harness = makeHarness({
@@ -2474,6 +2479,7 @@ it.effect("shared intake preserves durable attachment bytes after a lost launch 
     };
     const failed = yield* ThreadMessageIntake.launchThread(input).pipe(
       Effect.provideService(ThreadLaunch.ThreadLaunchService, {
+        // signalbox: Satisfy the launch resolver seam in the shared-intake failure fixture.
         initialModelSelection: () => Effect.succeed(modelSelection),
         launch: (request) =>
           launches.launch(request).pipe(

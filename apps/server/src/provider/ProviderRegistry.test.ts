@@ -54,8 +54,8 @@ import * as ProviderEventLoggers from "@t3tools/provider-core/server/ProviderEve
 import * as ProviderInstanceRegistryHydration from "./ProviderInstanceRegistryHydration.ts";
 import * as ServerConfig from "../config.ts";
 import * as ServerSettingsModule from "../serverSettings.ts";
-import * as UsageService from "../usage/UsageService.ts";
-import { parseRateTable } from "../usage/usagePricing.ts";
+import * as UsageService from "../usage/UsageService.ts"; // signalbox: supply cached rates to provider metadata enrichment
+import { parseRateTable } from "../usage/usagePricing.ts"; // signalbox: build model rates for provider refresh coverage
 import {
   readProviderStatusCache,
   resolveProviderStatusCachePath,
@@ -631,6 +631,7 @@ it.layer(
   });
 
   describe("ProviderRegistry.layer", () => {
+    // signalbox: provider refresh must expose the latest cached model rates without a network fetch
     it.effect("uses the latest cached model rates on provider refresh", () =>
       Effect.gen(function* () {
         const driver = ProviderDriverKind.make("codex");
@@ -1254,7 +1255,7 @@ it.layer(
             name: "GPT 6 Astra",
             isCustom: false,
             capabilities: null,
-            defaultSelection: "excluded",
+            defaultSelection: "excluded", // signalbox: models without an economical policy stay out of automatic defaults
           },
           cachedProvider.models[0]!,
           customModel,

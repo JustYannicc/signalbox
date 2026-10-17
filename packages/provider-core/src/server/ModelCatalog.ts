@@ -17,7 +17,7 @@ export interface ProviderCatalogModel {
   readonly status: "current" | "legacy";
   readonly badge?: "new";
   readonly pricing?: ServerProviderModel["pricing"];
-  readonly defaultSelection?: ServerProviderModel["defaultSelection"];
+  readonly defaultSelection?: ServerProviderModel["defaultSelection"]; // signalbox: catalog policy and prices guide economical defaults
   readonly capabilities: ModelCapabilities | null;
   readonly adapter: unknown;
   readonly profileAdapter: unknown;
@@ -50,7 +50,7 @@ export const catalogServerModel = (
   ...(entry.aliases ? { aliases: entry.aliases } : {}),
   ...(entry.badge ? { badge: entry.badge } : {}),
   ...(entry.pricing ? { pricing: entry.pricing } : {}),
-  ...(entry.defaultSelection ? { defaultSelection: entry.defaultSelection } : {}),
+  ...(entry.defaultSelection ? { defaultSelection: entry.defaultSelection } : {}), // signalbox: preserve automatic-selection policy in provider snapshots
   isCustom: false,
   ...(catalog.defaultChatModel === entry.slug ? { isDefault: true } : {}),
   ...(entry.status === "legacy" ? { isLegacy: true } : {}),

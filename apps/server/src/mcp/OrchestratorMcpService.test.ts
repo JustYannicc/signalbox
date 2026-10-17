@@ -18,7 +18,7 @@ import {
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import * as Option from "effect/Option";
+import * as Option from "effect/Option"; // signalbox: Test provider/project defaults without changing shared fixtures.
 import * as Ref from "effect/Ref";
 
 import {
@@ -818,6 +818,7 @@ describe("OrchestratorMcpService provider resolution", () => {
       refreshInstance: () => Effect.succeed(providers),
     });
 
+  // signalbox: Exercise MCP fallback behavior when a project has no saved model.
   const projectWithoutModelDefaultLayer = () =>
     Layer.mock(ProjectService.ProjectService)({
       getById: () => Effect.succeed(Option.some({ defaultModelSelection: null } as never)),
@@ -883,6 +884,7 @@ describe("OrchestratorMcpService provider resolution", () => {
     turnItems: [],
   } as unknown as OrchestrationV2ThreadProjection;
 
+  // signalbox: Cover project/person defaults and explicit-model precedence for MCP creation.
   it.effect("uses project initial selection for top-level threads without a target", () =>
     Effect.gen(function* () {
       const defaultSelection = {
@@ -955,6 +957,7 @@ describe("OrchestratorMcpService provider resolution", () => {
     }),
   );
 
+  // signalbox: Ensure provider switches choose eligible models and retain supported options.
   it.effect("selects an eligible model inside a requested provider for new threads", () =>
     Effect.gen(function* () {
       const claudeInstanceId = ProviderInstanceId.make("claudeAgent");
@@ -1371,6 +1374,7 @@ describe("OrchestratorMcpService provider resolution", () => {
       }),
   );
 
+  // signalbox: Supply fork pricing/default metadata for provider-target resolution.
   it.effect("resolves a driverKind target to a capable Antigravity instance", () =>
     Effect.gen(function* () {
       const dispatched = yield* Ref.make<ReadonlyArray<unknown>>([]);
@@ -1426,7 +1430,7 @@ describe("OrchestratorMcpService provider resolution", () => {
               } as never),
             ),
         }),
-        ServerSettings.layerTest({ defaultModelSelection: null }),
+        ServerSettings.layerTest({ defaultModelSelection: null }), // signalbox: Exercise provider fallback without a saved person default.
         Layer.mock(ProviderRegistry.ProviderRegistry)({
           getProviders: Effect.succeed([
             providerSnapshot({
@@ -1445,7 +1449,7 @@ describe("OrchestratorMcpService provider resolution", () => {
                   slug: "ant-model",
                   name: "Antigravity model",
                   isCustom: false,
-                  defaultSelection: "economical",
+                  defaultSelection: "economical", // signalbox: Make the fixture eligible when delegation switches provider.
                   pricing: { inputCostPerMillionTokens: 1, outputCostPerMillionTokens: 2 },
                   capabilities: null,
                 },
@@ -1582,6 +1586,7 @@ describe("OrchestratorMcpService provider resolution", () => {
     }),
   );
 
+  // signalbox: Exercise driver fallback with the fork's economical model metadata.
   it.effect("driver-only delegation skips an instance the project turned off", () =>
     Effect.gen(function* () {
       const altInstanceId = ProviderInstanceId.make("codex-alt");
@@ -1664,7 +1669,7 @@ describe("OrchestratorMcpService provider resolution", () => {
                 slug: "gpt-5.4",
                 name: "GPT 5.4",
                 isCustom: false,
-                defaultSelection: "economical",
+                defaultSelection: "economical", // signalbox: Make the fixture eligible when delegation switches provider.
                 pricing: { inputCostPerMillionTokens: 1, outputCostPerMillionTokens: 2 },
                 capabilities: null,
               },
@@ -1675,7 +1680,7 @@ describe("OrchestratorMcpService provider resolution", () => {
         projectWithoutModelDefaultLayer(),
         Layer.mock(SecretRequests.SecretRequests)({}),
         Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
-        ServerSettings.layerTest({ defaultModelSelection: null }),
+        ServerSettings.layerTest({ defaultModelSelection: null }), // signalbox: Exercise provider fallback without a saved person default.
       );
 
       yield* Effect.gen(function* () {
@@ -1920,6 +1925,7 @@ describe("OrchestratorMcpService provider resolution", () => {
     }),
   );
 
+  // signalbox: Model metadata drives healthy-peer selection in fork-aware delegation tests.
   it.effect(
     "inherits an available parent instance for driver-only targets and otherwise selects a healthy peer",
     () =>
@@ -2037,7 +2043,8 @@ describe("OrchestratorMcpService provider resolution", () => {
                   } as never),
                 ),
             }),
-            ServerSettings.layerTest({ defaultModelSelection: null }),
+            ServerSettings.layerTest({ defaultModelSelection: null }), // signalbox: Exercise provider fallback without a saved person default.
+            // signalbox: Catalog fixtures separate inherited options from a newly resolved provider default.
             providerRegistryLayer([
               {
                 ...providerSnapshot({
@@ -2067,7 +2074,7 @@ describe("OrchestratorMcpService provider resolution", () => {
                     slug: "codex-alt-model",
                     name: "Codex alt model",
                     isCustom: false,
-                    defaultSelection: "economical",
+                    defaultSelection: "economical", // signalbox: Make the fixture eligible when delegation switches provider.
                     pricing: { inputCostPerMillionTokens: 1, outputCostPerMillionTokens: 2 },
                     capabilities: null,
                   },
@@ -2154,6 +2161,7 @@ describe("OrchestratorMcpService provider resolution", () => {
       }),
   );
 
+  // signalbox: Verify delegated inheritance and provider-switch validation under fork defaults.
   it.effect(
     "inherits the parent model for delegated work and resolves a switched provider before validating its options",
     () =>

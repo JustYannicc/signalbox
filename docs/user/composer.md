@@ -102,6 +102,8 @@ instance:
 
 ## Model defaults
 
+<!-- signalbox: model defaults follow folder and personal settings before economical fallback. -->
+
 New threads and automations use the folder's configured model, then your personal
 default in Settings. Without either, Signalbox selects an economical model. If none
 is available, choose a model yourself. Changing a model in one thread does not

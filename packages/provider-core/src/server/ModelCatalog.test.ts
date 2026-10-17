@@ -80,6 +80,7 @@ describe("classifyCatalogModels", () => {
 });
 
 describe("catalogServerModel", () => {
+  // signalbox: provider snapshots must carry prices and automatic-selection policy to the picker
   it("carries pricing and automatic-selection policy into provider snapshots", () => {
     const entry: ModelCatalog.ProviderCatalogModel = {
       ...catalogModel("small", "current"),

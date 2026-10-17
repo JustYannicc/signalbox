@@ -274,6 +274,7 @@ const resolveAutoBootstrapWelcomeTargets = Effect.gen(function* () {
     if (existingThread === undefined) {
       const serverSettings = yield* ServerSettings.ServerSettingsService;
       const settings = yield* serverSettings.getSettings;
+      // signalbox: Auto-created welcome threads use the same model policy and can be skipped when none exists.
       const launched = yield* threadLaunch
         .launch({
           commandId: CommandId.make(yield* randomUUID),

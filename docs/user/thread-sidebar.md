@@ -137,6 +137,8 @@ enough to go on, it says so instead of guessing.
 
 ## Start a thread
 
+<!-- signalbox: new threads use configured model defaults instead of remembered model picks. -->
+
 On web and desktop, a new thread keeps the current project and mode selections.
 Its model comes from the folder's default, then your personal default, then an
 economical fallback. Its branch and workspace mode come from your configured defaults. To continue in

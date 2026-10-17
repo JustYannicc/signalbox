@@ -23,7 +23,7 @@ import {
   ResolvedKeybindingsConfig,
 } from "./keybindings.ts";
 import { EditorId, FileManagerRevealKind, RemoteOpenTarget } from "./editor.ts";
-import { ModelCapabilities, ModelDefaultSelection, ModelPricing } from "./model.ts";
+import { ModelCapabilities, ModelDefaultSelection, ModelPricing } from "./model.ts"; // signalbox: Provider snapshots expose the metadata used to rank model defaults.
 import { RuntimeMode } from "./providerPolicy.ts";
 import { ProviderDriverKind, ProviderInstanceId } from "./providerInstance.ts";
 import { ServerProviderUsageLimits, UsageLimitSourceSnapshots } from "./providerUsageLimits.ts";
@@ -81,7 +81,7 @@ export const ServerProviderModel = Schema.Struct({
   isCustom: Schema.Boolean,
   isDefault: Schema.optional(Schema.Boolean),
   isLegacy: Schema.optional(Schema.Boolean),
-  pricing: Schema.optional(ModelPricing),
+  pricing: Schema.optional(ModelPricing), // signalbox: send model prices and automatic-selection policy with provider snapshots
   defaultSelection: Schema.optional(ModelDefaultSelection),
   capabilities: Schema.NullOr(ModelCapabilities),
 });

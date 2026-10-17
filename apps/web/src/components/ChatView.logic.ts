@@ -60,8 +60,8 @@ import { derivePhase, type TimelineEntry } from "../session-logic";
 import type { PreviewMiniPlayerSource } from "../previewMiniPlayerStore";
 import type { DesktopPreviewOverlay } from "../previewStateStore";
 import type { RightPanelSurface } from "../rightPanelStore";
-export { getAntigravitySendBlockReason } from "../lib/antigravityModelPolicy";
-export { resolveComposerProviderSelection } from "../lib/composerProviderSelection";
+export { getAntigravitySendBlockReason } from "../lib/antigravityModelPolicy"; // signalbox: keep ChatView callers stable after extracting pool-aware send rules.
+export { resolveComposerProviderSelection } from "../lib/composerProviderSelection"; // signalbox: keep composer callers stable after extracting provider selection.
 
 export const LAST_INVOKED_SCRIPT_BY_PROJECT_KEY = "t3code:last-invoked-script-by-project";
 export const MAX_HIDDEN_MOUNTED_TERMINAL_THREADS = 10;

@@ -90,7 +90,7 @@ import * as ProjectService from "../project/ProjectService.ts";
 import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import * as ScheduledTaskService from "../scheduledTasks/ScheduledTaskService.ts";
 import * as ServerSettings from "../serverSettings.ts";
-import * as SignalboxMcpDefaultModels from "../signalbox/mcpDefaultModels.ts";
+import * as SignalboxMcpDefaultModels from "../signalbox/mcpDefaultModels.ts"; // signalbox: MCP launches resolve provider defaults using Signalbox policy.
 import {
   clientRuntimeModeCeiling,
   type McpInvocationScope,
@@ -900,6 +900,7 @@ const make = Effect.gen(function* () {
       ),
     );
 
+  // signalbox: Keep MCP's omitted-model behavior aligned with interactive thread launches.
   const initialModelSelectionForProject = (projectId: ProjectId) =>
     threadLaunch.initialModelSelection(projectId).pipe(
       Effect.mapError((error) =>
@@ -1098,6 +1099,7 @@ const make = Effect.gen(function* () {
 
   const loadProviders = providerRegistry.getProviders;
 
+  // signalbox: Provider switches need an eligible Signalbox default before validating options.
   const resolveDefaultModelForProvider = (
     parent: Pick<OrchestrationV2ThreadProjection, "thread">,
     provider: ServerProvider,
@@ -1113,6 +1115,7 @@ const make = Effect.gen(function* () {
       ),
     });
 
+  // signalbox: Same-provider children retain the parent model and its existing options.
   const resolveDelegatedModelForProvider = (
     parent: Pick<OrchestrationV2ThreadProjection, "thread">,
     provider: ServerProvider,
@@ -1165,6 +1168,7 @@ const make = Effect.gen(function* () {
     readonly parent: Pick<OrchestrationV2ThreadProjection, "thread">;
     readonly target: OrchestratorMcpTarget | undefined;
     readonly providers: ReadonlyArray<ServerProvider>;
+    // signalbox: Callers supply the default policy when a model is omitted.
     readonly resolveOmittedModel?: (
       provider: ServerProvider,
     ) => Effect.Effect<ModelSelection | null | undefined, OrchestratorMcpFailure>;
@@ -1254,6 +1258,7 @@ const make = Effect.gen(function* () {
 
       const inheritedSelection = input.parent.thread.modelSelection;
       const requestedModel = input.target?.model;
+      // signalbox: Resolve omitted models from the selected provider's model policy.
       const initialSelection =
         requestedModel === undefined && input.resolveOmittedModel !== undefined
           ? yield* input.resolveOmittedModel(provider)
@@ -1294,7 +1299,7 @@ const make = Effect.gen(function* () {
         );
       }
 
-      const requestedOptions = input.target?.options ?? initialSelection?.options;
+      const requestedOptions = input.target?.options ?? initialSelection?.options; // signalbox: Validate options from the resolved default against its model.
       if (requestedOptions !== undefined) {
         const descriptors = provider.models.find((candidate) => candidate.slug === model)
           ?.capabilities?.optionDescriptors;
@@ -1307,6 +1312,7 @@ const make = Effect.gen(function* () {
         }
       }
 
+      // signalbox: Keep resolved defaults intact and retain the parent selection when no default override applies.
       return {
         modelSelection:
           initialSelection !== undefined
@@ -1630,7 +1636,7 @@ const make = Effect.gen(function* () {
         const { parent, limits } = yield* loadCaller(scope);
         const projectId = yield* resolveProjectTarget(parent, input.projectId);
         yield* assertLiveCallerForOtherProject(scope, parent, projectId);
-        yield* requireProject(projectId);
+        yield* requireProject(projectId); // signalbox: Validate the project while its model policy stays in the launch service.
         const bindToCurrentThread =
           input.bindToCurrentThread ??
           (parent !== undefined && parent.thread.projectId === projectId);
@@ -1645,6 +1651,7 @@ const make = Effect.gen(function* () {
               : "bindToCurrentThread binds to this thread, which belongs to a different project.",
           );
         }
+        // signalbox: New top-level MCP threads share the launch service's default resolution.
         const modelSelection =
           parent?.thread.modelSelection ?? (yield* initialModelSelectionForProject(projectId));
         const derivedTitle = input.prompt.split("\n")[0]?.trim() ?? "";
@@ -1981,7 +1988,7 @@ const make = Effect.gen(function* () {
           parent,
           target: input.target,
           providers,
-          resolveOmittedModel: (provider) => resolveDelegatedModelForProvider(parent, provider),
+          resolveOmittedModel: (provider) => resolveDelegatedModelForProvider(parent, provider), // signalbox: Provider switches use the provider's eligible model default.
           skipProjectEnablementFilter: isRetryOfAcceptedDelegation,
         });
         const runtimeMode = yield* resolveRuntimeMode(
@@ -2283,6 +2290,7 @@ const make = Effect.gen(function* () {
           input.threads,
           (request, index) =>
             Effect.gen(function* () {
+              // signalbox: Batch launches without targets use the same project/person default as other entry points.
               const hasExplicitTarget =
                 request.target?.providerInstanceId !== undefined ||
                 request.target?.driverKind !== undefined ||

@@ -282,6 +282,7 @@ describe("scheduled task model defaults", () => {
         auth: { status: "authenticated" },
         models: [
           { slug: "first-model", name: "First", isCustom: false, capabilities: null },
+          // signalbox: test the economical catalog fallback used after configured defaults.
           {
             slug: "gpt-5.4-mini",
             name: "Economical",
@@ -325,11 +326,13 @@ describe("scheduled task model defaults", () => {
       ),
     ).toEqual(projectSelection);
   });
+  // signalbox: scheduled tasks use the configured person default before a cheap catalog fallback.
   it("uses a known economical fallback instead of the advertised or first model", () => {
     expect(
       resolve({ ...config, settings: { ...config.settings, defaultModelSelection: null } }, null),
     ).toEqual({ instanceId, model: "gpt-5.4-mini" });
   });
+  // signalbox: use the person's configured model when the project's configured model is unavailable.
   it("falls back to the person default when a project default is unavailable", () => {
     expect(
       resolve(config, {

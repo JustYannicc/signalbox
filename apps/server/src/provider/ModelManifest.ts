@@ -99,7 +99,7 @@ export function resolveProviderCatalog(
       ...(entry.aliases ? { aliases: entry.aliases } : {}),
       ...(entry.badge ? { badge: entry.badge } : {}),
       ...(entry.pricing ? { pricing: entry.pricing } : {}),
-      ...(entry.defaultSelection ? { defaultSelection: entry.defaultSelection } : {}),
+      ...(entry.defaultSelection ? { defaultSelection: entry.defaultSelection } : {}), // signalbox: model-manifest.json supplies the policy used to rank economical defaults
       status: entry.status,
       capabilities: profile?.capabilities ?? null,
       adapter: entry.adapter,

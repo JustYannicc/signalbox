@@ -154,7 +154,7 @@ export class UsageService extends Context.Service<
   {
     readonly readSummary: (input: UsageSummaryInput) => Effect.Effect<UsageSummary, UsageReadError>;
     readonly refreshRates: Effect.Effect<UsagePricing>;
-    /** Rates already in memory or on disk. This never refreshes from the network. */
+    // signalbox: Local rates enrich provider snapshots without network work during refresh.
     readonly cachedRates: Effect.Effect<RateTable>;
   }
 >()("t3/usage/UsageService") {}
@@ -182,7 +182,7 @@ const layerTest = Layer.succeed(
         scanDurationMs: 0,
       }),
     refreshRates: Effect.succeed(EMPTY_PRICING),
-    cachedRates: Effect.succeed(new Map() as RateTable),
+    cachedRates: Effect.succeed(new Map() as RateTable), // signalbox: test service keeps provider enrichment local
   }),
 );
 
@@ -225,6 +225,7 @@ export const make = Effect.gen(function* () {
   });
 
   const readCachedRates = Effect.fnUntraced(function* () {
+    // signalbox: share disk-cache loading with provider metadata enrichment
     if (ratesFetchedAtMs !== null) return rates;
     const fromDisk = yield* fileSystem.readFileString(ratesCachePath).pipe(
       Effect.flatMap((raw) => decodeRatesCache(raw)),
@@ -241,7 +242,7 @@ export const make = Effect.gen(function* () {
     return rates;
   });
 
-  const cachedRates = ratesLock.withPermit(readCachedRates());
+  const cachedRates = ratesLock.withPermit(readCachedRates()); // signalbox: expose cached prices without triggering a refresh
 
   const loadRates = Effect.fn("UsageService.loadRates")(function* (force: boolean) {
     const now = yield* Clock.currentTimeMillis;
@@ -835,7 +836,7 @@ export const make = Effect.gen(function* () {
     return yield* Deferred.await(deferred);
   });
 
-  return { readSummary, refreshRates, cachedRates, awaitPersisted } as const;
+  return { readSummary, refreshRates, cachedRates, awaitPersisted } as const; // signalbox: Expose cached prices to model-default ranking.
 });
 
 export const layer = Layer.effect(UsageService, make);

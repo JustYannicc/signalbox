@@ -3,7 +3,7 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 
 import * as OpenCodeRuntime from "./OpenCodeRuntime.ts";
-import { openCodeModelPricing } from "./modelPricing.ts";
+import { openCodeModelPricing } from "./modelPricing.ts"; // signalbox: map OpenCode-reported rates into economical model metadata
 import type { OpenCode2Model } from "./status.ts";
 
 /**
@@ -45,7 +45,7 @@ export const loadOpenCode2Catalog = (
           id: model.id,
           name: model.name,
           ...(providerName ? { providerName } : {}),
-          ...(pricing ? { pricing } : {}),
+          ...(pricing ? { pricing } : {}), // signalbox: carry OpenCode prices into provider model selection
           variants: model.variants.map((variant) => ({ id: variant.id })),
         };
       });

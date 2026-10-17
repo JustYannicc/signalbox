@@ -62,7 +62,7 @@ const layerStubServices = Layer.mergeAll(
   Layer.mock(SourceControlRepositoryService.SourceControlRepositoryService)({}),
   Layer.mock(ThreadLaunchService.ThreadLaunchService)({}),
   Layer.mock(ThreadSearch.ThreadSearch)({}),
-  Layer.mock(ProjectAutomations)({}),
+  Layer.mock(ProjectAutomations)({}), // signalbox: Supply the fork automation service required by the shared toolkit graph.
   Layer.mock(WorkflowEngine)({
     validate: () => ({ ok: true, graph: { nodes: [] } }),
     registerBuiltinTools: () => Effect.void,

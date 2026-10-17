@@ -20,7 +20,7 @@ import {
   type ServerSettingsError,
   ThreadId,
 } from "@t3tools/contracts";
-import * as SignalboxDefaultModels from "../signalbox/defaultModels.ts";
+import * as SignalboxDefaultModels from "../signalbox/defaultModels.ts"; // signalbox: Centralize project/person/economical launch model resolution.
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
@@ -83,7 +83,7 @@ export interface ThreadLaunchInput {
   readonly projectId: ProjectId;
   readonly title: string;
   readonly generateTitle?: boolean;
-  readonly modelSelection?: ModelSelection | undefined;
+  readonly modelSelection?: ModelSelection | undefined; // signalbox: Let launch callers use shared defaults when omitted.
   readonly runtimeMode: RuntimeMode;
   readonly interactionMode: ProviderInteractionMode;
   readonly workspaceStrategy: ThreadLaunchWorkspaceStrategy;
@@ -124,6 +124,7 @@ export class ThreadLaunchError extends Schema.TaggedError<ThreadLaunchError>()(
   {
     operation: Schema.Literals([
       "resolve-project",
+      // signalbox: Report model-default exhaustion separately so callers can explain recovery.
       "resolve-model",
       "read-receipt",
       "generate-metadata",
@@ -142,6 +143,7 @@ export class ThreadLaunchError extends Schema.TaggedError<ThreadLaunchError>()(
   },
 ) {
   override get message(): string {
+    // signalbox: Give callers a recovery step when no default model can be selected.
     if (this.operation === "resolve-model") {
       return "No model is available for this project or person, and no economical provider default is available. Connect a provider or choose a model.";
     }
@@ -166,6 +168,7 @@ export class ThreadLaunchBaseRefError extends Schema.TaggedError<ThreadLaunchBas
 export class ThreadLaunchService extends Context.Service<
   ThreadLaunchService,
   {
+    // signalbox: Expose the shared initial-model policy to server entry points.
     readonly initialModelSelection: (
       projectId: ProjectId,
     ) => Effect.Effect<
@@ -222,6 +225,7 @@ const make = Effect.gen(function* () {
   const threads = yield* ThreadManagement.ThreadManagementService;
   const managedFolders = yield* ManagedProjectFolders.ManagedProjectFolders;
 
+  // signalbox: Resolve saved project/person choices before economical provider defaults.
   const initialModelSelectionForProject = (projectId: ProjectId, project: Project) =>
     SignalboxDefaultModels.resolveForProject({
       projectId,
@@ -865,6 +869,7 @@ const make = Effect.gen(function* () {
       }
 
       const launchReceipt = yield* readReceipt(input, input.commandId);
+      // signalbox: Preserve retry/reuse selections, then resolve the initial model for new launches.
       let modelSelection: ModelSelection | null | undefined = input.modelSelection;
       const acceptedLaunchReceipt =
         Option.isSome(launchReceipt) &&
@@ -972,7 +977,7 @@ const make = Effect.gen(function* () {
                 threadId: candidateThreadId,
                 projectId: input.projectId,
                 title: input.title,
-                modelSelection: launchInput.modelSelection,
+                modelSelection: launchInput.modelSelection, // signalbox: Dispatch the resolved selection, including inherited model options.
                 runtimeMode: input.runtimeMode,
                 interactionMode: input.interactionMode,
                 branch: initialBranch,
@@ -1026,7 +1031,7 @@ const make = Effect.gen(function* () {
               attachments: input.initialMessage.attachments,
               ...(input.initialMessage.context ? { context: input.initialMessage.context } : {}),
               ...(input.generateTitle === true ? { titleSeed: input.title } : {}),
-              modelSelection: launchInput.modelSelection,
+              modelSelection: launchInput.modelSelection, // signalbox: Dispatch the resolved selection, including inherited model options.
               dispatchMode: { type: "defer_start", workspaceStrategy },
               createdBy: input.createdBy,
               creationSource: input.creationSource,
@@ -1171,6 +1176,7 @@ const make = Effect.gen(function* () {
   };
 
   return ThreadLaunchService.of({
+    // signalbox: Make the resolver available to other server launch paths.
     initialModelSelection,
     launch,
     checkWorktreeBase,

@@ -127,7 +127,7 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
           threadId,
           projectId,
           title: input.title,
-          modelSelection: input.modelSelection,
+          modelSelection: input.modelSelection, // signalbox: Let ThreadLaunchService resolve omitted models consistently.
           runtimeMode,
           interactionMode,
           workspaceStrategy: input.workspaceStrategy ?? { type: "root" },
@@ -158,6 +158,7 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
               });
             }
             if (error._tag === "ThreadLaunchError" && error.operation === "resolve-model") {
+              // signalbox: Surface the actionable missing-default error through MCP.
               return new OrchestratorMcpFailure({
                 code: "invalid_request",
                 message: error.message,

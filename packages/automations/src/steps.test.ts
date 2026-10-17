@@ -12,9 +12,9 @@ import {
   AutomationThreads,
   type AutomationThreadLaunch,
   type AutomationThreadsShape,
-} from "./host.ts";
-import { agentResult, launchAgent } from "./steps.ts";
-import type { StepRow } from "./WorkflowStore.ts";
+} from "@signalbox/automations/host";
+import { agentResult, launchAgent } from "@signalbox/automations/steps";
+import type { StepRow } from "@signalbox/automations/WorkflowStore";
 
 const threadId = "thread-sync";
 const run = { id: "run-1", status: "completed" };
