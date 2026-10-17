@@ -16,6 +16,7 @@ import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as ManagedRuntime from "effect/ManagedRuntime";
 
 import * as CloudAccounts from "./account/CloudAccounts.ts";
+import * as IdentityProvider from "./account/IdentityProvider.ts";
 import { API_HEADER, encodeApiCredential, serveApiRequest } from "./api/apiObject.ts";
 import { MCP_PATH, makeMcpHandler } from "./api/mcpObject.ts";
 import * as CloudAssets from "./assets/CloudAssets.ts";
@@ -53,10 +54,16 @@ import { deliverPendingEvents } from "./thread/eventOutbox.ts";
 import { deliverPendingSummary } from "./thread/summaryOutbox.ts";
 import * as ThreadDirectory from "./thread/ThreadDirectory.ts";
 import * as ThreadBrowsing from "./thread/browsing/ThreadBrowsing.ts";
+import * as PreviewState from "./thread/PreviewState.ts";
 import * as ThreadEngine from "./thread/ThreadEngine.ts";
 import * as StatusNoteModel from "./thread/statusLine/StatusNoteModel.ts";
 import * as ThreadStatusNotes from "./thread/statusLine/ThreadStatusNotes.ts";
 import * as ThreadKindTurns from "./thread/ThreadKindTurns.ts";
+import * as LearnerService from "./learner/LearnerService.ts";
+import * as LearnerJev from "./learner/LearnerJev.ts";
+import * as LearnerSummary from "./learner/LearnerSummary.ts";
+import * as LearnerHomes from "./user/LearnerHomes.ts";
+import * as UserLearner from "./user/UserLearner.ts";
 import * as KindClassifier from "./threadKinds/KindClassifier.ts";
 import { makeThreadObjectApi } from "./thread/threadObjectApi.ts";
 import { browserUpdateLine, previewsLine } from "./thread/threadWire.ts";
@@ -244,7 +251,7 @@ export const layerThreadObject = (
     Layer.provideMerge(options.analytics ?? CloudAnalytics.layerOff),
     Layer.provideMerge(machines),
     Layer.provideMerge(DiagnosticsStore.layer),
-    Layer.provideMerge(Layer.mergeAll(ThreadStore.layer, SessionRows.layer)),
+    Layer.provideMerge(Layer.mergeAll(ThreadStore.layer, SessionRows.layer, PreviewState.layer)),
     Layer.provideMerge(Layer.mergeAll(NodeSqliteClient.layer({ filename }), Platform.layerCrypto)),
   );
 
@@ -318,6 +325,7 @@ const makeUserRuntime = (
               SignInGrants.layer,
               PoolSignIns.layer,
               CloudThreadService.layer.pipe(Layer.provideMerge(ThreadsLive.layer)),
+              UserLearner.layer.pipe(Layer.provideMerge(LearnerHomes.layer)),
               PersonBrowsers.layer(kernel),
             ),
           ),
@@ -351,6 +359,11 @@ const makeUserRuntime = (
             Layer.mergeAll(UserDrives.layer, UserPools.layer, UserThreadKinds.layer),
           ),
           Layer.provideMerge(Layer.mergeAll(classifier, ChatArchive.layerAlarmNone)),
+          Layer.provideMerge(
+            Layer.mergeAll(LearnerService.layer, LearnerSummary.layerNone).pipe(
+              Layer.provideMerge(LearnerJev.layerNone),
+            ),
+          ),
           Layer.provideMerge(Layer.mergeAll(layerMemoryStore, ModelManifest.layerBundled)),
           Layer.provideMerge(Layer.mergeAll(drives, people, github)),
           Layer.provideMerge(
@@ -691,6 +704,7 @@ export const layerAccounts = (
   CloudAccounts.layer.pipe(
     Layer.provideMerge(CloudSessions.layer),
     Layer.provideMerge(CloudTokens.layer),
+    Layer.provideMerge(IdentityProvider.layer),
     Layer.provideMerge(layerConfig(env)),
     Layer.provideMerge(layerMemoryUsers),
     Layer.provideMerge(workosStubLayer(codes, [], memberships)),

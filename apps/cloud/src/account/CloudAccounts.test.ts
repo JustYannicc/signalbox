@@ -3,6 +3,9 @@ import type { WorkOSCodes } from "@signalbox/account/WorkOSTesting";
 import type { AccountAuthorizeParams } from "@t3tools/contracts/account";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
+import * as Redacted from "effect/Redacted";
+import { HttpClient, HttpClientResponse } from "effect/http";
 import * as TestClock from "effect/testing/TestClock";
 
 import * as CloudSessions from "../auth/CloudSessions.ts";
@@ -57,6 +60,49 @@ const locationOf = (result: CloudAccounts.SignInResult) => new URL(result.locati
 const withKey = { ...CLOUD_TEST_ENV, T3CODE_WORKOS_API_KEY: "sk_test" };
 
 describe("CloudAccounts", () => {
+  it.effect("uses a trusted caller's WorkOS realm for the sign-in membership sync", () =>
+    Effect.gen(function* () {
+      const requests: Array<{ url: string; authorization: string | undefined }> = [];
+      const client = HttpClient.make((request) =>
+        Effect.sync(() => {
+          requests.push({ url: request.url, authorization: request.headers.authorization });
+          return HttpClientResponse.fromWeb(
+            request,
+            Response.json({
+              data: [{ organization_id: "org_sandbox", organization_name: "Test company" }],
+              list_metadata: { after: null },
+            }),
+          );
+        }),
+      );
+      yield* CloudAccounts.CloudAccounts.use((service) =>
+        service.finishSignIn(
+          { origin: ORIGIN, codeVerifier: "", target: { mode: "browser", returnTo: "/" } },
+          { id: "user_sandbox", email: "richard@piedpiper.example" },
+          {
+            clientId: "client_sandbox",
+            apiKey: Redacted.make("sk_test_sandbox"),
+            apiBaseUrl: "https://sandbox.workos.test",
+          },
+        ),
+      ).pipe(
+        Effect.provide(
+          Layer.fresh(CloudAccounts.layer).pipe(
+            Layer.provide(Layer.succeed(HttpClient.HttpClient, client)),
+          ),
+        ),
+      );
+      expect(requests).toEqual([
+        {
+          url: "https://sandbox.workos.test/user_management/organization_memberships",
+          authorization: "Bearer sk_test_sandbox",
+        },
+      ]);
+      const users = yield* UserDirectory.UserDirectory;
+      const shell = yield* users.forUser("user_sandbox").shellSnapshot();
+      expect(JSON.stringify(shell)).toContain("org_sandbox");
+    }).pipe(Effect.provide(layerAccounts(CODES, withKey))),
+  );
   it.effect("browser sign-in sets a session the account routes recognize, until sign-out", () =>
     Effect.gen(function* () {
       const accounts = yield* CloudAccounts.CloudAccounts;

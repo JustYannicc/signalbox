@@ -221,13 +221,14 @@ export const makeRunnerHost = Effect.fn("makeRunnerHost")(function* (config: Run
                 );
                 const preparedDrive = {
                   ...drive,
-                  restoreDependencyEdits: drive.restoreDependencyEdits.pipe(
-                    Effect.tap(() =>
-                      Effect.sync(() => {
-                        filesPrepared = true;
-                      }),
+                  prepare: (...args: Parameters<RunnerDrive["prepare"]>) =>
+                    drive.prepare(...args).pipe(
+                      Effect.tap(() =>
+                        Effect.sync(() => {
+                          filesPrepared = true;
+                        }),
+                      ),
                     ),
-                  ),
                 };
                 openedDrive = { driveId: access.driveId, drive: preparedDrive };
                 yield* context.attachDrive(preparedDrive);
@@ -249,16 +250,18 @@ export const makeRunnerHost = Effect.fn("makeRunnerHost")(function* (config: Run
                       }),
                   ),
                 );
-                yield* dependencies.prepare(() => Effect.void);
-                yield* drive.restoreDependencyEdits.pipe(
-                  Effect.mapError(
-                    (cause) =>
-                      new RunnerConnectionError({
-                        message: "Could not restore the preview's dependency edits.",
-                        cause,
-                      }),
-                  ),
-                );
+                if (request.machineClass !== "light") {
+                  yield* dependencies.prepare(() => Effect.void);
+                  yield* drive.restoreDependencyEdits.pipe(
+                    Effect.mapError(
+                      (cause) =>
+                        new RunnerConnectionError({
+                          message: "Could not restore the preview's dependency edits.",
+                          cause,
+                        }),
+                    ),
+                  );
+                }
               }),
             );
           const attachments = yield* makeRunnerAttachments({ cloudUrl, attachmentsDir }).pipe(

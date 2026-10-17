@@ -58,6 +58,7 @@ export type ModelPickerKeybindingCommand = (typeof MODEL_PICKER_KEYBINDING_COMMA
 
 export const STATIC_KEYBINDING_COMMANDS = [
   "sidebar.toggle",
+  "sidebar.home",
   "navigation.back",
   "navigation.forward",
   "terminal.toggle",
@@ -100,6 +101,7 @@ export const STATIC_KEYBINDING_COMMANDS = [
   "composer.branch",
   "composer.toggleSendLock", // signalbox: send lock
   "chat.new",
+  "capture.open", // signalbox: quick capture
   "chat.newLocal",
   "chat.newWithoutProject",
   "chat.find",

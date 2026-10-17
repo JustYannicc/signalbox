@@ -21,6 +21,13 @@ done
 
 failed=0
 containers="$(apps/cloud/node_modules/.bin/wrangler containers list --json)"
+if preview_domain_numbers="$(node .github/scripts/cloudflare-preview-domains.cjs list-prs)"; then
+  :
+else
+  echo "::error::Could not list preview Worker domains."
+  preview_domain_numbers=''
+  failed=1
+fi
 # Without production's list, Cloudflare resources still get swept.
 if ! assets="$(bash .github/scripts/call-preview-cleanup.sh list)"; then
   echo "::error::Could not list production's preview packs and links."
@@ -45,6 +52,7 @@ fi
 
 candidate_numbers="$(
   sed -nE 's/^signalbox-(cloud|model-gateway)-pr-([1-9][0-9]*)$/\2/p' <<< "$worker_names"
+  printf '%s\n' "$preview_domain_numbers"
   printf '%s\n' "$image_numbers"
   jq -r '.[]?.name | try capture("^signalbox-cloud-pr-(?<number>[1-9][0-9]*)-(pools|threads)$").number catch empty' \
     <<< "$containers"

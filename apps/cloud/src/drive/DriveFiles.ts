@@ -1,10 +1,15 @@
-import type { OrchestrationV2Checkpoint, ProjectEntry } from "@t3tools/contracts";
+import type {
+  OrchestrationV2Checkpoint,
+  ProjectEntry,
+  ReviewDiffFileContentsInput,
+  ReviewDiffFileContentsResult,
+} from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 
-import { parseCheckpointRange } from "../thread/runner/driveItems.ts";
+import { parseCheckpointRange } from "../thread/driveEvents.ts";
 import { DriveDirectory } from "./DriveDirectory.ts";
 import { DrivePacks } from "./DrivePacks.ts";
 import { type DriveReader, DriveReadError, makeDriveReader, pathSegments } from "./DriveReader.ts";
@@ -58,6 +63,10 @@ export class DriveFiles extends Context.Service<
       path: string,
       at?: ReadAt,
     ) => Effect.Effect<DriveFile, Failure>;
+    readonly diffFileContents: (
+      driveId: string,
+      input: ReviewDiffFileContentsInput,
+    ) => Effect.Effect<ReviewDiffFileContentsResult, Failure>;
     readonly searchEntries: (
       driveId: string,
       input: {
@@ -180,6 +189,51 @@ const make = Effect.gen(function* () {
       } as const;
     });
 
+  const diffFileContents: DriveFiles["Service"]["diffFileContents"] = (driveId, input) =>
+    Effect.gen(function* () {
+      const reader = yield* readerOf(driveId);
+      const side = (revision: string | null, path: string) =>
+        Effect.gen(function* () {
+          const fail = (message: string) => new DriveReadError({ message });
+          if (revision === null || !/^[a-f0-9]{40}$/.test(revision)) {
+            return yield* fail(
+              "Diff expansion requires an immutable commit ID for each existing side.",
+            );
+          }
+          if ((yield* reader.drive.missing([revision], null)).length > 0) {
+            return yield* fail("The requested revision is not available in this drive.");
+          }
+          const segments = pathSegments(path);
+          if (segments === null || segments.length === 0) {
+            return yield* fail(`Diff file '${path}' resolves outside the review workspace.`);
+          }
+          const entry = yield* reader.entryAt(yield* reader.treeOf(revision), segments);
+          if (entry === null)
+            return yield* fail(`Diff file '${path}' does not exist at ${revision}.`);
+          if (entry.kind === "directory" || entry.kind === "submodule") {
+            return yield* fail(`Diff path '${path}' is not a file.`);
+          }
+          const size = (yield* reader.sizes([entry.oid])).get(entry.oid);
+          if (size !== undefined && size !== null && size > MAX_FILE_BYTES) {
+            return yield* fail(`Diff file '${path}' exceeds the 1 MB expansion limit.`);
+          }
+          const bytes = yield* reader.blob(entry.oid);
+          if (bytes.length > MAX_FILE_BYTES) {
+            return yield* fail(`Diff file '${path}' exceeds the 1 MB expansion limit.`);
+          }
+          if (bytes.includes(0)) return yield* fail(`Cannot expand binary file '${path}'.`);
+          return new TextDecoder().decode(bytes);
+        });
+      const [oldContents, newContents] = yield* Effect.all(
+        [
+          input.changeType === "new" ? Effect.succeed("") : side(input.baseRef, input.oldPath),
+          input.changeType === "deleted" ? Effect.succeed("") : side(input.headRef, input.newPath),
+        ],
+        { concurrency: 2 },
+      );
+      return { oldContents, newContents };
+    });
+
   const searchEntries: DriveFiles["Service"]["searchEntries"] = (driveId, input, at) =>
     Effect.gen(function* () {
       const reader = yield* readerOf(driveId);
@@ -223,7 +277,7 @@ const make = Effect.gen(function* () {
       });
     });
 
-  return DriveFiles.of({ listEntries, readFile, searchEntries, turnDiff });
+  return DriveFiles.of({ listEntries, readFile, diffFileContents, searchEntries, turnDiff });
 });
 
 export const layer = Layer.effect(DriveFiles, make);
