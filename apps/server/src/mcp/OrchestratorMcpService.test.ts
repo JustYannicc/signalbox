@@ -18,6 +18,7 @@ import {
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option"; // signalbox: Test provider/project defaults without changing shared fixtures.
 import * as Ref from "effect/Ref";
 
 import {
@@ -817,6 +818,12 @@ describe("OrchestratorMcpService provider resolution", () => {
       refreshInstance: () => Effect.succeed(providers),
     });
 
+  // signalbox: Exercise MCP fallback behavior when a project has no saved model.
+  const projectWithoutModelDefaultLayer = () =>
+    Layer.mock(ProjectService.ProjectService)({
+      getById: () => Effect.succeed(Option.some({ defaultModelSelection: null } as never)),
+    });
+
   const adapterRegistryLayer = (instanceIds: ReadonlyArray<ProviderInstanceId>) =>
     Layer.succeed(
       ProviderAdapterRegistry.ProviderAdapterRegistryV2,
@@ -876,6 +883,213 @@ describe("OrchestratorMcpService provider resolution", () => {
     runtimeRequests: [],
     turnItems: [],
   } as unknown as OrchestrationV2ThreadProjection;
+
+  // signalbox: Cover project/person defaults and explicit-model precedence for MCP creation.
+  it.effect("uses project initial selection for top-level threads without a target", () =>
+    Effect.gen(function* () {
+      const defaultSelection = {
+        instanceId: codexInstanceId,
+        model: "gpt-5.4-mini",
+      };
+      const dispatched = yield* Ref.make<ReadonlyArray<unknown>>([]);
+      const codex = providerSnapshot({
+        instanceId: codexInstanceId,
+        driver: ProviderDriverKind.make("codex"),
+        model: "gpt-5.4",
+      });
+      const layerDependencies = Layer.mergeAll(
+        NodeServices.layer,
+        Layer.mock(ThreadManagementService.ThreadManagementService)({
+          assertProviderInstanceEnabled: () => Effect.void,
+          getThreadRecords: () => Effect.succeed(parentProjection([])),
+          dispatch: (command) =>
+            Ref.update(dispatched, (commands) => [...commands, command]).pipe(
+              Effect.as({ sequence: 1, storedEvents: [] } as never),
+            ),
+        }),
+        ServerSettings.layerTest(),
+        providerRegistryLayer([
+          {
+            ...codex,
+            models: [
+              ...codex.models,
+              { slug: "gpt-5.4-mini", name: "Mini", isCustom: false, capabilities: null },
+            ],
+          },
+        ]),
+        adapterRegistryLayer([codexInstanceId]),
+        Layer.mock(ProjectService.ProjectService)({}),
+        Layer.mock(SecretRequests.SecretRequests)({}),
+        Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
+      );
+      const serviceLayer = OrchestratorMcpService.layer.pipe(
+        Layer.provide(
+          Layer.mock(ThreadLaunchService.ThreadLaunchService)({
+            initialModelSelection: () => Effect.succeed(defaultSelection),
+          }),
+        ),
+        Layer.provide(Layer.mock(GitVcsDriver.GitVcsDriver)({})),
+      );
+
+      const result = yield* Effect.gen(function* () {
+        const service = yield* OrchestratorMcpService.OrchestratorMcpService;
+        yield* service.createThreads(scope, {
+          threads: [{ prompt: "Use the default." }],
+          clientRequestId: "create-thread-default",
+        });
+        yield* service.createThreads(scope, {
+          threads: [{ prompt: "Use my model.", target: { model: "gpt-5.4" } }],
+          clientRequestId: "create-thread-explicit-model",
+        });
+        return (yield* Ref.get(dispatched)).filter(
+          (command): command is { type: string; modelSelection: unknown } =>
+            typeof command === "object" &&
+            command !== null &&
+            "type" in command &&
+            (command as { type: string }).type === "thread.create",
+        );
+      }).pipe(Effect.provide(serviceLayer.pipe(Layer.provide(layerDependencies))));
+
+      assert.deepEqual(
+        result.map((command) => command.modelSelection),
+        [defaultSelection, { instanceId: codexInstanceId, model: "gpt-5.4" }],
+      );
+    }),
+  );
+
+  // signalbox: Ensure provider switches choose eligible models and retain supported options.
+  it.effect("selects an eligible model inside a requested provider for new threads", () =>
+    Effect.gen(function* () {
+      const claudeInstanceId = ProviderInstanceId.make("claudeAgent");
+      const claudeDriver = ProviderDriverKind.make("claudeAgent");
+      const parentSelection = {
+        instanceId: codexInstanceId,
+        model: "gpt-5.4",
+      } as const;
+      const models: ServerProvider["models"] = [
+        {
+          slug: "claude-fable-5-5",
+          name: "Claude Fable",
+          isCustom: false,
+          defaultSelection: "excluded",
+          pricing: { inputCostPerMillionTokens: 10, outputCostPerMillionTokens: 50 },
+          capabilities: {
+            optionDescriptors: [
+              {
+                id: "reasoningEffort",
+                label: "Reasoning effort",
+                type: "select",
+                options: [{ id: "low", label: "Low" }],
+              },
+            ],
+          },
+        },
+        {
+          slug: "claude-haiku-5-5",
+          name: "Claude Haiku",
+          isCustom: false,
+          pricing: { inputCostPerMillionTokens: 1, outputCostPerMillionTokens: 2 },
+          capabilities: {
+            optionDescriptors: [
+              {
+                id: "reasoningEffort",
+                label: "Reasoning effort",
+                type: "select",
+                options: [
+                  { id: "low", label: "Low" },
+                  { id: "high", label: "High" },
+                ],
+              },
+            ],
+          },
+        },
+      ];
+      const claude = {
+        ...providerSnapshot({
+          instanceId: claudeInstanceId,
+          driver: claudeDriver,
+          model: "claude-fable-5-5",
+        }),
+        models,
+      };
+      const dispatched = yield* Ref.make<ReadonlyArray<unknown>>([]);
+      const layerDependencies = Layer.mergeAll(
+        NodeServices.layer,
+        Layer.mock(ThreadManagementService.ThreadManagementService)({
+          assertProviderInstanceEnabled: () => Effect.void,
+          isProviderInstanceEnabledForProject: () => Effect.succeed(true),
+          getThreadRecords: () => Effect.succeed(parentProjection([])),
+          dispatch: (command) =>
+            Ref.update(dispatched, (commands) => [...commands, command]).pipe(
+              Effect.as({ sequence: 1, storedEvents: [] } as never),
+            ),
+        }),
+        ServerSettings.layerTest({ defaultModelSelection: parentSelection }),
+        providerRegistryLayer([
+          providerSnapshot({
+            instanceId: codexInstanceId,
+            driver: ProviderDriverKind.make("codex"),
+            model: "gpt-5.4",
+          }),
+          claude,
+        ]),
+        adapterRegistryLayer([codexInstanceId, claudeInstanceId]),
+        Layer.mock(ProjectService.ProjectService)({
+          getById: () =>
+            Effect.succeed(Option.some({ defaultModelSelection: parentSelection } as never)),
+        }),
+        Layer.mock(SecretRequests.SecretRequests)({}),
+        Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
+      );
+      const serviceLayer = OrchestratorMcpService.layer.pipe(
+        Layer.provide(
+          Layer.mock(ThreadLaunchService.ThreadLaunchService)({
+            initialModelSelection: () => Effect.succeed(parentSelection),
+          }),
+        ),
+        Layer.provide(Layer.mock(GitVcsDriver.GitVcsDriver)({})),
+      );
+
+      yield* Effect.gen(function* () {
+        const service = yield* OrchestratorMcpService.OrchestratorMcpService;
+        yield* service.createThreads(scope, {
+          threads: [
+            {
+              prompt: "Use the requested instance.",
+              target: { providerInstanceId: claudeInstanceId },
+            },
+            {
+              prompt: "Use the requested driver.",
+              target: {
+                driverKind: claudeDriver,
+                options: [{ id: "reasoningEffort", value: "high" }],
+              },
+            },
+          ],
+          clientRequestId: "create-threads-provider-defaults",
+        });
+
+        const threadCreations = (yield* Ref.get(dispatched)).filter(
+          (command): command is { type: string; modelSelection: unknown } =>
+            typeof command === "object" &&
+            command !== null &&
+            "type" in command &&
+            (command as { type: string }).type === "thread.create",
+        );
+        assert.deepEqual(
+          threadCreations.map((command) => command.modelSelection),
+          [
+            { instanceId: claudeInstanceId, model: "claude-haiku-5-5" },
+            {
+              instanceId: claudeInstanceId,
+              model: "claude-haiku-5-5",
+              options: [{ id: "reasoningEffort", value: "high" }],
+            },
+          ],
+        );
+      }).pipe(Effect.provide(serviceLayer.pipe(Layer.provide(layerDependencies))));
+    }),
+  );
 
   it.effect(
     "advertises orchestration capability from registered adapters rather than a driver allowlist",
@@ -1160,6 +1374,7 @@ describe("OrchestratorMcpService provider resolution", () => {
       }),
   );
 
+  // signalbox: Supply fork pricing/default metadata for provider-target resolution.
   it.effect("resolves a driverKind target to a capable Antigravity instance", () =>
     Effect.gen(function* () {
       const dispatched = yield* Ref.make<ReadonlyArray<unknown>>([]);
@@ -1215,7 +1430,7 @@ describe("OrchestratorMcpService provider resolution", () => {
               } as never),
             ),
         }),
-        ServerSettings.layerTest(),
+        ServerSettings.layerTest({ defaultModelSelection: null }), // signalbox: Exercise provider fallback without a saved person default.
         Layer.mock(ProviderRegistry.ProviderRegistry)({
           getProviders: Effect.succeed([
             providerSnapshot({
@@ -1223,15 +1438,27 @@ describe("OrchestratorMcpService provider resolution", () => {
               driver: ProviderDriverKind.make("codex"),
               model: "gpt-5.4",
             }),
-            providerSnapshot({
-              instanceId: antigravityInstanceId,
-              driver: ProviderDriverKind.make("antigravity"),
-              model: "ant-model",
-            }),
+            {
+              ...providerSnapshot({
+                instanceId: antigravityInstanceId,
+                driver: ProviderDriverKind.make("antigravity"),
+                model: "ant-model",
+              }),
+              models: [
+                {
+                  slug: "ant-model",
+                  name: "Antigravity model",
+                  isCustom: false,
+                  defaultSelection: "economical", // signalbox: Make the fixture eligible when delegation switches provider.
+                  pricing: { inputCostPerMillionTokens: 1, outputCostPerMillionTokens: 2 },
+                  capabilities: null,
+                },
+              ],
+            },
           ]),
         }),
         adapterRegistryLayer([codexInstanceId, antigravityInstanceId]),
-        Layer.mock(ProjectService.ProjectService)({}),
+        projectWithoutModelDefaultLayer(),
         Layer.mock(SecretRequests.SecretRequests)({}),
         Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
       );
@@ -1359,6 +1586,7 @@ describe("OrchestratorMcpService provider resolution", () => {
     }),
   );
 
+  // signalbox: Exercise driver fallback with the fork's economical model metadata.
   it.effect("driver-only delegation skips an instance the project turned off", () =>
     Effect.gen(function* () {
       const altInstanceId = ProviderInstanceId.make("codex-alt");
@@ -1430,17 +1658,29 @@ describe("OrchestratorMcpService provider resolution", () => {
             driver: ProviderDriverKind.make("codex"),
             model: "gpt-5.4",
           }),
-          providerSnapshot({
-            instanceId: altInstanceId,
-            driver: ProviderDriverKind.make("codex"),
-            model: "gpt-5.4",
-          }),
+          {
+            ...providerSnapshot({
+              instanceId: altInstanceId,
+              driver: ProviderDriverKind.make("codex"),
+              model: "gpt-5.4",
+            }),
+            models: [
+              {
+                slug: "gpt-5.4",
+                name: "GPT 5.4",
+                isCustom: false,
+                defaultSelection: "economical", // signalbox: Make the fixture eligible when delegation switches provider.
+                pricing: { inputCostPerMillionTokens: 1, outputCostPerMillionTokens: 2 },
+                capabilities: null,
+              },
+            ],
+          },
         ]),
         adapterRegistryLayer([codexInstanceId, altInstanceId]),
-        Layer.mock(ProjectService.ProjectService)({}),
+        projectWithoutModelDefaultLayer(),
         Layer.mock(SecretRequests.SecretRequests)({}),
         Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
-        ServerSettings.layerTest(),
+        ServerSettings.layerTest({ defaultModelSelection: null }), // signalbox: Exercise provider fallback without a saved person default.
       );
 
       yield* Effect.gen(function* () {
@@ -1685,6 +1925,7 @@ describe("OrchestratorMcpService provider resolution", () => {
     }),
   );
 
+  // signalbox: Model metadata drives healthy-peer selection in fork-aware delegation tests.
   it.effect(
     "inherits an available parent instance for driver-only targets and otherwise selects a healthy peer",
     () =>
@@ -1802,23 +2043,46 @@ describe("OrchestratorMcpService provider resolution", () => {
                   } as never),
                 ),
             }),
-            ServerSettings.layerTest(),
+            ServerSettings.layerTest({ defaultModelSelection: null }), // signalbox: Exercise provider fallback without a saved person default.
+            // signalbox: Catalog fixtures separate inherited options from a newly resolved provider default.
             providerRegistryLayer([
-              providerSnapshot({
-                instanceId: codexInstanceId,
-                driver,
-                model: "gpt-5.4",
-                enabled: testCase.inheritedEnabled,
-              }),
-              providerSnapshot({
-                instanceId: codexAltInstanceId,
-                driver: testCase.candidateDriver,
-                model: "codex-alt-model",
-                enabled: testCase.peerEnabled,
-              }),
+              {
+                ...providerSnapshot({
+                  instanceId: codexInstanceId,
+                  driver,
+                  model: "gpt-5.4",
+                  enabled: testCase.inheritedEnabled,
+                }),
+                models: [
+                  {
+                    slug: "gpt-5.4",
+                    name: "GPT 5.4",
+                    isCustom: false,
+                    capabilities: { optionDescriptors: [] },
+                  },
+                ],
+              },
+              {
+                ...providerSnapshot({
+                  instanceId: codexAltInstanceId,
+                  driver: testCase.candidateDriver,
+                  model: "codex-alt-model",
+                  enabled: testCase.peerEnabled,
+                }),
+                models: [
+                  {
+                    slug: "codex-alt-model",
+                    name: "Codex alt model",
+                    isCustom: false,
+                    defaultSelection: "economical", // signalbox: Make the fixture eligible when delegation switches provider.
+                    pricing: { inputCostPerMillionTokens: 1, outputCostPerMillionTokens: 2 },
+                    capabilities: null,
+                  },
+                ],
+              },
             ]),
             adapterRegistryLayer([codexInstanceId, codexAltInstanceId]),
-            Layer.mock(ProjectService.ProjectService)({}),
+            projectWithoutModelDefaultLayer(),
             Layer.mock(SecretRequests.SecretRequests)({}),
             Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
           );
@@ -1894,6 +2158,183 @@ describe("OrchestratorMcpService provider resolution", () => {
             }
           }).pipe(Effect.provide(layerOrchestratorService.pipe(Layer.provide(layerDependencies))));
         }
+      }),
+  );
+
+  // signalbox: Verify delegated inheritance and provider-switch validation under fork defaults.
+  it.effect(
+    "inherits the parent model for delegated work and resolves a switched provider before validating its options",
+    () =>
+      Effect.gen(function* () {
+        const claudeInstanceId = ProviderInstanceId.make("claudeAgent");
+        const parentSelection = {
+          instanceId: codexInstanceId,
+          model: "gpt-5.4",
+          options: [{ id: "reasoningEffort", value: "high" }],
+        } as const;
+        const claudeModels: ServerProvider["models"] = [
+          {
+            slug: "claude-opus-5-5",
+            name: "Claude Opus",
+            isCustom: false,
+            defaultSelection: "excluded",
+            pricing: { inputCostPerMillionTokens: 15, outputCostPerMillionTokens: 75 },
+            capabilities: {
+              optionDescriptors: [
+                {
+                  id: "reasoningEffort",
+                  label: "Reasoning effort",
+                  type: "select",
+                  options: [{ id: "low", label: "Low" }],
+                },
+              ],
+            },
+          },
+          {
+            slug: "claude-haiku-5-5",
+            name: "Claude Haiku",
+            isCustom: false,
+            pricing: { inputCostPerMillionTokens: 1, outputCostPerMillionTokens: 2 },
+            capabilities: {
+              optionDescriptors: [
+                {
+                  id: "reasoningEffort",
+                  label: "Reasoning effort",
+                  type: "select",
+                  options: [
+                    { id: "low", label: "Low" },
+                    { id: "high", label: "High" },
+                  ],
+                },
+              ],
+            },
+          },
+        ];
+        const claude = {
+          ...providerSnapshot({
+            instanceId: claudeInstanceId,
+            driver: ProviderDriverKind.make("claudeAgent"),
+            model: "claude-opus-5-5",
+          }),
+          models: claudeModels,
+        };
+        const delegatedTask = {
+          id: taskId,
+          threadId: parentThreadId,
+          runId: parentRunId,
+          parentNodeId,
+          origin: "app_owned",
+          createdBy: "agent",
+          driver: ProviderDriverKind.make("claudeAgent"),
+          providerInstanceId: claudeInstanceId,
+          providerThreadId: null,
+          childThreadId,
+          nativeTaskRef: null,
+          prompt: "Review the diff.",
+          title: null,
+          model: "claude-haiku-5-5",
+          status: "running",
+          result: null,
+          startedAt: null,
+          completedAt: null,
+        };
+        const dispatched = yield* Ref.make<ReadonlyArray<unknown>>([]);
+        const layerDependencies = Layer.mergeAll(
+          NodeServices.layer,
+          Layer.mock(ThreadManagementService.ThreadManagementService)({
+            hasReceipt: () => Effect.succeed(false),
+            assertProviderInstanceEnabled: () => Effect.void,
+            getThreadRecords: (threadId) =>
+              Effect.succeed(
+                threadId === parentThreadId
+                  ? parentProjection([delegatedTask], parentSelection)
+                  : childProjection,
+              ),
+            getThreadShell: (threadId) => Effect.succeed(liveThreadShell(threadId)),
+            dispatch: (command) =>
+              Ref.update(dispatched, (commands) => [...commands, command]).pipe(
+                Effect.as({
+                  sequence: 1,
+                  storedEvents: [
+                    {
+                      sequence: 1,
+                      commandId: null,
+                      event: { type: "subagent.updated", payload: delegatedTask },
+                    },
+                  ],
+                } as never),
+              ),
+          }),
+          ServerSettings.layerTest({ defaultModelSelection: parentSelection }),
+          providerRegistryLayer([
+            providerSnapshot({
+              instanceId: codexInstanceId,
+              driver: ProviderDriverKind.make("codex"),
+              model: "gpt-5.4",
+            }),
+            claude,
+          ]),
+          adapterRegistryLayer([codexInstanceId, claudeInstanceId]),
+          Layer.mock(ProjectService.ProjectService)({
+            getById: () =>
+              Effect.succeed(Option.some({ defaultModelSelection: parentSelection } as never)),
+          }),
+          Layer.mock(SecretRequests.SecretRequests)({}),
+          Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
+        );
+
+        yield* Effect.gen(function* () {
+          const service = yield* OrchestratorMcpService.OrchestratorMcpService;
+          yield* service.delegateTask(scope, {
+            task: "Review the diff.",
+            mode: "async",
+            clientRequestId: "delegate-inherit-parent-model",
+          });
+          yield* service.delegateTask(scope, {
+            task: "Review the diff.",
+            target: { providerInstanceId: claudeInstanceId },
+            mode: "async",
+            clientRequestId: "delegate-switch-provider-model",
+          });
+          yield* service.delegateTask(scope, {
+            task: "Review the diff.",
+            target: {
+              providerInstanceId: claudeInstanceId,
+              options: [{ id: "reasoningEffort", value: "high" }],
+            },
+            mode: "async",
+            clientRequestId: "delegate-switch-provider-options",
+          });
+
+          const commands = yield* Ref.get(dispatched);
+          const selections = commands.map(
+            (command) => (command as { readonly modelSelection: unknown }).modelSelection,
+          );
+          assert.deepEqual(selections, [
+            parentSelection,
+            { instanceId: claudeInstanceId, model: "claude-haiku-5-5" },
+            {
+              instanceId: claudeInstanceId,
+              model: "claude-haiku-5-5",
+              options: [{ id: "reasoningEffort", value: "high" }],
+            },
+          ]);
+
+          const invalidOptions = yield* service
+            .delegateTask(scope, {
+              task: "Review the diff.",
+              target: {
+                providerInstanceId: claudeInstanceId,
+                options: [{ id: "reasoningEffort", value: "max" }],
+              },
+              mode: "async",
+              clientRequestId: "delegate-switch-provider-invalid-options",
+            })
+            .pipe(Effect.flip);
+          assert.equal(invalidOptions.code, "invalid_request");
+          assert.include(invalidOptions.message, "claude-haiku-5-5");
+          assert.equal((yield* Ref.get(dispatched)).length, 3);
+        }).pipe(Effect.provide(layerOrchestratorService.pipe(Layer.provide(layerDependencies))));
       }),
   );
 
