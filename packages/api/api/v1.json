@@ -644,14 +644,14 @@
       "rpc": "server.removeKeybinding",
       "access": "write",
       "input": "cf448475",
-      "output": "4e59e5b7"
+      "output": "e418aa8f"
     },
     {
       "name": "keybindings.upsert",
       "rpc": "server.upsertKeybinding",
       "access": "write",
       "input": "67081024",
-      "output": "4e59e5b7"
+      "output": "e418aa8f"
     },
     {
       "name": "keys.create",
@@ -1528,7 +1528,7 @@
       "rpc": "server.getConfig",
       "access": "read",
       "input": "03c2b661",
-      "output": "28fe8eea"
+      "output": "59a8d452"
     },
     {
       "name": "server.refreshProviders",
@@ -1565,7 +1565,7 @@
       "access": "read",
       "stream": "snapshot",
       "input": "240ec835",
-      "output": "4e2d5834"
+      "output": "b17f8f8c"
     },
     {
       "name": "settings.get",

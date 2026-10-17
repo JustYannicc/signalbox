@@ -1,4 +1,4 @@
-import { KeybindingRule, ResolvedKeybindingsConfig } from "@t3tools/contracts";
+import { KeybindingRule, KeybindingShortcut, ResolvedKeybindingsConfig } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 import { describe, expect, it } from "vite-plus/test";
 
@@ -11,6 +11,15 @@ import {
 const encodeResolved = Schema.encodeSync(ResolvedKeybindingsConfig);
 const decodeResolved = Schema.decodeUnknownSync(ResolvedKeybindingsConfig);
 const decodeRule = Schema.decodeUnknownSync(KeybindingRule);
+const decodeShortcutKey = (key: string) =>
+  Schema.decodeUnknownSync(KeybindingShortcut)({
+    key,
+    metaKey: false,
+    ctrlKey: false,
+    shiftKey: false,
+    altKey: false,
+    modKey: true,
+  }).key;
 
 // What the server sends and every client decodes: resolved keybindings over JSON.
 const overTheWire = (config: ResolvedKeybindingsConfig): ResolvedKeybindingsConfig =>
@@ -39,6 +48,14 @@ describe("resolved keybindings on the wire", () => {
 
   it("round-trip the defaults unchanged", () => {
     expect(overTheWire([...DEFAULT_RESOLVED_KEYBINDINGS])).toEqual(DEFAULT_RESOLVED_KEYBINDINGS);
+  });
+
+  it("keep only a single space literal and reject other blank keys", () => {
+    expect(decodeShortcutKey(" ")).toBe(" ");
+    expect(decodeShortcutKey(" k ")).toBe("k");
+    for (const blank of ["", "  ", "\t", "\n"]) {
+      expect(() => decodeShortcutKey(blank)).toThrow();
+    }
   });
 
   it("still trim the chord text people write in a rule", () => {
