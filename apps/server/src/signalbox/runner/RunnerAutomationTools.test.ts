@@ -1,3 +1,4 @@
+import { AUTOMATION_TOOLS } from "@signalbox/automations/tools/declarations";
 import { describe, expect, it } from "@effect/vitest";
 import { AUTOMATION_COMPILED_FORMAT } from "@t3tools/contracts";
 import * as Context from "effect/Context";
@@ -6,7 +7,7 @@ import * as Tool from "effect/ai/Tool";
 
 import { PullRequestsToolkit } from "../../mcp/toolkits/pullRequests/tools.ts";
 import { AutomationToolkit } from "../../workflows/mcp/tools.ts";
-import { RUNNER_AUTOMATION_TOOLS } from "./RunnerAutomationTools.ts";
+import { RUNNER_AUTOMATION_TOOLS, RUNNER_CLOUD_ONLY_TOOLS } from "./RunnerAutomationTools.ts";
 import { serve as serveTools, TOKEN } from "./RunnerAutomationTools.testkit.ts";
 
 /**
@@ -41,7 +42,8 @@ describe("automation tools on a cloud thread's machine (#434)", () => {
         ...AutomationToolkit.tools,
         ...PullRequestsToolkit.tools,
       };
-      for (const name of RUNNER_AUTOMATION_TOOLS) {
+      const cloudOnly: ReadonlyArray<string> = RUNNER_CLOUD_ONLY_TOOLS;
+      for (const name of RUNNER_AUTOMATION_TOOLS.filter((name) => !cloudOnly.includes(name))) {
         const tool = declared[name]!;
         expect(served.get(name), name).toMatchObject({
           description: tool.description,
@@ -51,6 +53,10 @@ describe("automation tools on a cloud thread's machine (#434)", () => {
             destructiveHint: Context.get(tool.annotations, Tool.Destructive),
           },
         });
+      }
+      // No server declares the cloud-only ones: they're the package's own.
+      for (const name of RUNNER_CLOUD_ONLY_TOOLS) {
+        expect(served.get(name)?.description, name).toBe(AUTOMATION_TOOLS[name].description);
       }
     }),
   );

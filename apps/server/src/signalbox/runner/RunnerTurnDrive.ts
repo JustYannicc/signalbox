@@ -83,14 +83,13 @@ const resolveConflicts = (
  */
 export const finishDriveTurn = (input: {
   readonly runId: RunId;
-  readonly message: string;
   readonly drive: RunnerDrive;
   readonly emit: (item: RunnerItem) => Effect.Effect<void>;
   readonly resolve: (prompt: string) => Effect.Effect<boolean>;
 }) =>
   Effect.gen(function* () {
     const { runId, drive, emit } = input;
-    const finished = yield* drive.finishTurn({ message: input.message });
+    const finished = yield* drive.finishTurn();
     if (finished.checkpoint !== null) {
       yield* emit({ kind: "drive.checkpoint", runId, ...finished.checkpoint });
     }

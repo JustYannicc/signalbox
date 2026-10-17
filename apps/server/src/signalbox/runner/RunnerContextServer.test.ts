@@ -1,12 +1,15 @@
 // @effect-diagnostics globalFetchInEffect:off - speaks MCP and WebDAV to a real loopback server, as the harness and rclone do.
 import type { PublishRequest, PublishResult } from "@signalbox/runner-protocol/BranchProtocol";
+import type { PreviewService } from "@signalbox/runner-protocol/PreviewServices";
 import type {
   ContextView,
   SearchResult,
   TreeResult,
 } from "@signalbox/runner-protocol/ContextProtocol";
 import { describe, expect, it } from "@effect/vitest";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 
 import { RUNNER_AUTOMATION_TOOLS, RUNNER_NOTE_TOOLS } from "./RunnerAutomationTools.ts";
 import { RUNNER_SCHEDULED_TASK_TOOLS } from "./RunnerScheduledTaskTools.ts";
@@ -15,6 +18,7 @@ import type { BranchDrive } from "./RunnerBranchTools.ts";
 import type { ContextClient } from "./RunnerContextClient.ts";
 import { startContextServer } from "./RunnerContextServer.ts";
 import { CONTEXT_SERVER_NAME } from "./RunnerContextTools.ts";
+import type { RunnerPreviewServices } from "./RunnerPreviewServices.ts";
 
 /** Tools the cloud answers (automations, status lines, notes), tested in their own files. */
 const AUTOMATION_SIDE = new Set<string>([
@@ -130,7 +134,7 @@ const fakeDrive = (calls: Calls): BranchDrive => ({
   published: (head) => Effect.sync(() => void calls.log.push(`published: ${head}`)),
   saveBranch: (message) =>
     Effect.sync(() => {
-      calls.log.push(`save: ${message}`);
+      calls.log.push(`save: ${message ?? "(summary)"}`);
       return message === "unsavable"
         ? { _tag: "not_saved", reason: "A merge is in progress here." }
         : { _tag: "saved", head: C1, lease: message === "Rebased" ? C1 : null };
@@ -203,46 +207,57 @@ const fakeClient = (calls: Calls): ContextClient => ({
   browserSignIn: () => Effect.die("The person's browser isn't part of these tests."),
 });
 
-const serve = Effect.gen(function* () {
-  const calls: Calls = { searches: [], log: [], published: [], answer: PUBLISHED, notes: [] };
-  const server = yield* startContextServer({ mountPoint: null });
-  yield* server.pin(fakeClient(calls));
-  yield* server.attachDrive(fakeDrive(calls));
-  const origin = server.mcpServers[CONTEXT_SERVER_NAME]!.replace(/\/mcp$/, "");
-  const dav = (method: string, path: string, headers: Record<string, string> = {}) =>
-    Effect.promise(async () => {
-      const response = await fetch(`${origin}/dav${path}`, { method, headers });
-      return { status: response.status, headers: response.headers, text: await response.text() };
+const serve = (
+  previewServices?: RunnerPreviewServices["Service"],
+  persistPreviewServices?: (services: ReadonlyArray<PreviewService>) => Effect.Effect<void>,
+  previewServicesReady?: Effect.Effect<void>,
+) =>
+  Effect.gen(function* () {
+    const calls: Calls = { searches: [], log: [], published: [], answer: PUBLISHED, notes: [] };
+    const server = yield* startContextServer({
+      mountPoint: null,
+      ...(previewServices === undefined ? {} : { previewServices }),
+      ...(persistPreviewServices === undefined ? {} : { persistPreviewServices }),
+      ...(previewServicesReady === undefined ? {} : { previewServicesReady }),
     });
-  let session: string | null = null;
-  let id = 0;
-  const mcp = (method: string, params: unknown) =>
-    Effect.promise(async () => {
-      const response = await fetch(server.mcpServers[CONTEXT_SERVER_NAME]!, {
-        method: "POST",
-        headers: {
-          "content-type": "application/json",
-          accept: "application/json, text/event-stream",
-          "mcp-protocol-version": "2025-06-18",
-          ...(session === null ? {} : { "mcp-session-id": session }),
-        },
-        body: JSON.stringify({ jsonrpc: "2.0", id: ++id, method, params }),
+    yield* server.pin(fakeClient(calls));
+    yield* server.attachDrive(fakeDrive(calls));
+    const origin = server.mcpServers[CONTEXT_SERVER_NAME]!.replace(/\/mcp$/, "");
+    const dav = (method: string, path: string, headers: Record<string, string> = {}) =>
+      Effect.promise(async () => {
+        const response = await fetch(`${origin}/dav${path}`, { method, headers });
+        return { status: response.status, headers: response.headers, text: await response.text() };
       });
-      session = response.headers.get("mcp-session-id") ?? session;
-      return (await response.json()) as { result?: any; error?: unknown };
+    let session: string | null = null;
+    let id = 0;
+    const mcp = (method: string, params: unknown) =>
+      Effect.promise(async () => {
+        const response = await fetch(server.mcpServers[CONTEXT_SERVER_NAME]!, {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            accept: "application/json, text/event-stream",
+            "mcp-protocol-version": "2025-06-18",
+            ...(session === null ? {} : { "mcp-session-id": session }),
+          },
+          body: JSON.stringify({ jsonrpc: "2.0", id: ++id, method, params }),
+        });
+        session = response.headers.get("mcp-session-id") ?? session;
+        return (await response.json()) as { result?: any; error?: unknown };
+      });
+    yield* mcp("initialize", {
+      protocolVersion: "2025-06-18",
+      capabilities: {},
+      clientInfo: { name: "test", version: "1" },
     });
-  yield* mcp("initialize", {
-    protocolVersion: "2025-06-18",
-    capabilities: {},
-    clientInfo: { name: "test", version: "1" },
+    const call = (name: string, args: Record<string, unknown>) =>
+      Effect.map(
+        mcp("tools/call", { name, arguments: args }),
+        (answer) =>
+          answer.result as { isError?: boolean; content: ReadonlyArray<{ text: string }> },
+      );
+    return { dav, mcp, call, searches: calls.searches, calls };
   });
-  const call = (name: string, args: Record<string, unknown>) =>
-    Effect.map(
-      mcp("tools/call", { name, arguments: args }),
-      (answer) => answer.result as { isError?: boolean; content: ReadonlyArray<{ text: string }> },
-    );
-  return { dav, mcp, call, searches: calls.searches, calls };
-});
 
 const hrefs = (xml: string) =>
   [...xml.matchAll(/<D:href>([^<]*)<\/D:href>/g)].map((match) => decodeURIComponent(match[1]!));
@@ -250,7 +265,7 @@ const hrefs = (xml: string) =>
 describe("context server (#141)", () => {
   it.effect("serves /drives as read-only WebDAV, by context, through shortcuts", () =>
     Effect.gen(function* () {
-      const { dav } = yield* serve;
+      const { dav } = yield* serve();
       expect(hrefs((yield* dav("PROPFIND", "/", { depth: "1" })).text)).toEqual([
         "/dav/",
         "/dav/Personal/",
@@ -300,7 +315,7 @@ describe("context server (#141)", () => {
 
   it.effect("serves the context tool over MCP", () =>
     Effect.gen(function* () {
-      const { mcp, call, searches } = yield* serve;
+      const { mcp, call, searches } = yield* serve();
       const tools = (yield* mcp("tools/list", {})).result.tools as ReadonlyArray<{
         name: string;
         annotations: { readOnlyHint: boolean };
@@ -371,9 +386,109 @@ describe("context server (#141)", () => {
     }),
   );
 
+  it.effect(
+    "starts and stops only declared preview services and waits for each declaration to save",
+    () =>
+      Effect.gen(function* () {
+        const declarations: Array<PreviewService> = [];
+        const persisted: Array<ReadonlyArray<PreviewService>> = [];
+        const services: RunnerPreviewServices["Service"] = {
+          start: (service) =>
+            Effect.sync(() => {
+              const index = declarations.findIndex((entry) => entry.port === service.port);
+              if (index >= 0) declarations.splice(index, 1);
+              declarations.push(service);
+            }),
+          stop: (port) =>
+            Effect.sync(
+              () =>
+                void declarations.splice(
+                  0,
+                  declarations.length,
+                  ...declarations.filter((service) => service.port !== port),
+                ),
+            ),
+          restore: (next) =>
+            Effect.sync(() => void declarations.splice(0, declarations.length, ...next)),
+          list: Effect.sync(() => [...declarations]),
+        };
+        const { mcp, call } = yield* serve(services, (next) =>
+          Effect.sync(() => persisted.push([...next])),
+        );
+        const tools = (yield* mcp("tools/list", {})).result.tools as ReadonlyArray<{
+          name: string;
+          annotations: { readOnlyHint: boolean };
+        }>;
+        expect(
+          tools.filter((tool) => tool.name.startsWith("preview_service_")).map((tool) => tool.name),
+        ).toEqual(["preview_service_start", "preview_service_stop"]);
+
+        const started = { port: 4173, command: "pnpm dev", cwd: "apps/web" };
+        const startResult = yield* call("preview_service_start", started);
+        expect(startResult.isError).toBeUndefined();
+        expect(startResult.content[0]?.text).toBe("Preview service declared on port 4173.");
+        expect(persisted).toEqual([[started]]);
+        const stopResult = yield* call("preview_service_stop", { port: 4173 });
+        expect(stopResult.isError).toBeUndefined();
+        expect(stopResult.content[0]?.text).toBe("Preview service stopped on port 4173.");
+        expect(persisted).toEqual([[started], []]);
+      }),
+  );
+
+  it.effect("waits for saved services to restore before starting another service", () =>
+    Effect.gen(function* () {
+      const saved = { port: 3000, command: "pnpm dev", cwd: "apps/web" };
+      const added = { port: 4173, command: "pnpm preview", cwd: "apps/web" };
+      const declarations: Array<PreviewService> = [];
+      const persisted: Array<ReadonlyArray<PreviewService>> = [];
+      const entered = yield* Deferred.make<void>();
+      const release = yield* Deferred.make<void>();
+      const services: RunnerPreviewServices["Service"] = {
+        start: (service) =>
+          Effect.sync(() => {
+            const index = declarations.findIndex((entry) => entry.port === service.port);
+            if (index >= 0) declarations.splice(index, 1);
+            declarations.push(service);
+          }),
+        stop: (port) =>
+          Effect.sync(
+            () =>
+              void declarations.splice(
+                0,
+                declarations.length,
+                ...declarations.filter((service) => service.port !== port),
+              ),
+          ),
+        restore: (next) =>
+          Effect.sync(() => void declarations.splice(0, declarations.length, ...next)),
+        list: Effect.sync(() => [...declarations]),
+      };
+      const ready = Deferred.succeed(entered, undefined).pipe(
+        Effect.andThen(Deferred.await(release)),
+      );
+      const { call } = yield* serve(
+        services,
+        (next) => Effect.sync(() => persisted.push([...next])),
+        ready,
+      );
+
+      const starting = yield* Effect.forkChild(call("preview_service_start", added));
+      yield* Deferred.await(entered);
+      yield* services.restore([saved]);
+      expect(declarations).toEqual([saved]);
+      expect(persisted).toEqual([]);
+
+      yield* Deferred.succeed(release, undefined);
+      const result = yield* Fiber.join(starting);
+      expect(result.isError).toBeUndefined();
+      expect(declarations).toEqual([saved, added]);
+      expect(persisted).toEqual([[saved, added]]);
+    }),
+  );
+
   it.effect("publishes the thread's branch: saves it first, then asks the cloud", () =>
     Effect.gen(function* () {
-      const { mcp, call, calls } = yield* serve;
+      const { mcp, call, calls } = yield* serve();
       const tools = (yield* mcp("tools/list", {})).result.tools as ReadonlyArray<{
         name: string;
         annotations: { readOnlyHint: boolean };
@@ -391,7 +506,8 @@ describe("context server (#141)", () => {
       });
       expect(opened.isError).toBeUndefined();
       // GitHub's copy of the branch is the pushed head now: the next push's lease.
-      expect(calls.log).toEqual(["save: Add dark mode", "publish: create_pr", `published: ${C1}`]);
+      // No commit message: the drive describes the change, never the pull request's title.
+      expect(calls.log).toEqual(["save: (summary)", "publish: create_pr", `published: ${C1}`]);
       expect(calls.published).toEqual([
         { action: "create_pr", title: "Add dark mode", body: "Adds a dark theme.", draft: true },
       ]);
@@ -442,7 +558,7 @@ describe("context server (#141)", () => {
 
   it.effect("writes the thread's status note through the cloud, in the cloud's words", () =>
     Effect.gen(function* () {
-      const { mcp, call, calls } = yield* serve;
+      const { mcp, call, calls } = yield* serve();
       const tools = (yield* mcp("tools/list", {})).result.tools as ReadonlyArray<{
         name: string;
         annotations: { readOnlyHint: boolean };

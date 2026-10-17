@@ -54,3 +54,10 @@ export const addSecrets = Effect.gen(function* () {
   yield* sql`ALTER TABLE folders ADD COLUMN secrets_environment_id TEXT`;
   yield* sql`ALTER TABLE folders_state ADD COLUMN secrets_environment_id TEXT`;
 });
+
+/** `UserStore`'s `0020` migration: each folder's phase (#677), its list as JSON and the current one. */
+export const addPhases = Effect.gen(function* () {
+  const sql = yield* SqlClient.SqlClient;
+  yield* sql`ALTER TABLE folders ADD COLUMN phases TEXT`;
+  yield* sql`ALTER TABLE folders ADD COLUMN phase TEXT`;
+});

@@ -1,13 +1,24 @@
 import type { ExecutionEnvironmentCapabilities } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { targetsSupporting } from "./signalboxSettingsTargets";
+import { targetsSupporting, targetsWithRepositoryIdentity } from "./signalboxSettingsTargets";
 
 function target(id: string, capabilities: Partial<ExecutionEnvironmentCapabilities>) {
   return {
     id,
     serverConfig: {
       environment: { capabilities: capabilities as ExecutionEnvironmentCapabilities },
+    },
+  };
+}
+
+function repositoryTarget(id: string, repositoryIdentity: boolean) {
+  return {
+    id,
+    serverConfig: {
+      environment: {
+        capabilities: { repositoryIdentity } as ExecutionEnvironmentCapabilities,
+      },
     },
   };
 }
@@ -25,5 +36,14 @@ describe("targetsSupporting", () => {
       selfHosted,
       mixed,
     ]);
+  });
+});
+
+describe("targetsWithRepositoryIdentity", () => {
+  it("keeps self-hosted environments and drops Cloud", () => {
+    const selfHosted = repositoryTarget("self-hosted", true);
+    const cloud = repositoryTarget("cloud", false);
+
+    expect(targetsWithRepositoryIdentity([selfHosted, cloud])).toEqual([selfHosted]);
   });
 });
