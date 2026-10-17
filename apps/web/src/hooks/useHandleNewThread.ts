@@ -84,6 +84,8 @@ export function useNewThreadHandler() {
         freshDraft?: boolean;
         /** signalbox: with `freshDraft`, create it without opening it (quick capture). */
         navigate?: boolean;
+        /** signalbox: with `freshDraft`, fills it the moment it exists, before it opens or can be replaced. */
+        seed?: (draftId: DraftId) => void;
       },
     ): Promise<{ draftId: DraftId; threadId: ThreadId } | null> => {
       const projects = readProjects();
@@ -405,6 +407,7 @@ export function useNewThreadHandler() {
         if (modelSelectionOverride) {
           setModelSelection(draftId, modelSelectionOverride, { replaceOptions: true });
         }
+        options?.seed?.(draftId); // signalbox
         if (options?.navigate === false) return { draftId, threadId }; // signalbox
         await router.navigate({
           to: "/draft/$draftId",

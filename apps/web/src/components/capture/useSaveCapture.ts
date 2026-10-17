@@ -11,16 +11,58 @@ import { useComposerDraftStore, type DraftId } from "../../composerDraftStore";
 import { useHandleNewThread } from "../../hooks/useHandleNewThread";
 import { useStartInFolder } from "../sidebar/folders/useStartInFolder";
 import { stackedThreadToast, toastManager } from "../ui/toast";
-import { prepareCaptureAttachments, type CaptureFile } from "./captureAttachments";
+import {
+  prepareCaptureAttachments,
+  type CaptureFile,
+  type PreparedCaptureAttachments,
+} from "./captureAttachments";
 import type { CaptureDestination } from "./captureDestinations";
 import { captureTitle } from "./captureText";
-import { openQuickCapture } from "./quickCaptureStore";
+import { restoreQuickCapture } from "./quickCaptureStore";
 
 export interface Capture {
   readonly text: string;
   readonly files: ReadonlyArray<CaptureFile>;
   /** Null when no folders have loaded; the draft then starts in the default project. */
   readonly destination: CaptureDestination | null;
+}
+
+/**
+ * Writes the capture into the draft the moment it exists, so it never sits
+ * empty (an empty draft can be replaced and dropped) and the draft page opens
+ * already filled. Returns the names the draft didn't take.
+ */
+function seedDraft(draftId: DraftId, text: string, prepared: PreparedCaptureAttachments) {
+  const store = useComposerDraftStore.getState();
+  if (text.length > 0) store.setPrompt(draftId, text);
+  const images = prepared.images.map((entry) => entry.image);
+  const acceptedImages = new Set(images.length > 0 ? store.addImages(draftId, images) : []);
+  const acceptedFiles = new Set(
+    prepared.files.length > 0
+      ? store.addFiles(draftId, prepared.files, { appendReference: true })
+      : [],
+  );
+  const persisted = prepared.images.flatMap(({ image, dataUrl }) =>
+    acceptedImages.has(image.id)
+      ? [
+          {
+            id: image.id,
+            name: image.name,
+            mimeType: image.mimeType,
+            sizeBytes: image.sizeBytes,
+            dataUrl,
+          },
+        ]
+      : [],
+  );
+  if (persisted.length > 0) void store.syncPersistedAttachments(draftId, persisted);
+  for (const image of images) {
+    if (!acceptedImages.has(image.id)) URL.revokeObjectURL(image.previewUrl);
+  }
+  return [
+    ...images.filter((image) => !acceptedImages.has(image.id)).map((image) => image.name),
+    ...prepared.files.filter((file) => !acceptedFiles.has(file.id)).map((file) => file.name),
+  ];
 }
 
 export function useSaveCapture() {
@@ -32,47 +74,60 @@ export function useSaveCapture() {
     async (capture: Capture, options: { readonly open: boolean }): Promise<boolean> => {
       const text = capture.text.trim();
       const { destination } = capture;
-      const [opened, attachments] = await Promise.all([
-        destination
-          ? startInFolder({
-              environmentId: destination.environmentId,
-              ownerProjectId: destination.ownerProjectId,
-              folderId: destination.folderId,
+      const prepared = await prepareCaptureAttachments(capture.files);
+      let rejected: string[] = [];
+      let seeded: DraftId | null = null;
+      const seed = (draftId: DraftId) => {
+        seeded = draftId;
+        rejected = seedDraft(draftId, text, prepared);
+      };
+      const opened = destination
+        ? await startInFolder({
+            environmentId: destination.environmentId,
+            ownerProjectId: destination.ownerProjectId,
+            folderId: destination.folderId,
+            navigate: options.open,
+            seed,
+          })
+        : defaultProjectRef
+          ? await handleNewThread(defaultProjectRef, {
+              freshDraft: true,
               navigate: options.open,
+              seed,
             })
-          : defaultProjectRef
-            ? handleNewThread(defaultProjectRef, {
-                freshDraft: true,
-                navigate: options.open,
-              }).catch(() => null)
-            : Promise.resolve(null),
-        prepareCaptureAttachments(capture.files),
-      ]);
-      const { images, files, skipped } = attachments;
-      if (opened === null) {
-        for (const image of images) URL.revokeObjectURL(image.previewUrl);
-        // Nothing is lost: it reopens with what was written.
+              .then((draft) => draft && { ...draft, filed: true })
+              .catch(() => null)
+          : null;
+      // Filled before a later step failed (opening it, filing it): it's saved, don't duplicate it.
+      const saved = opened ?? (seeded === null ? null : { draftId: seeded, filed: false });
+      if (saved === null) {
+        for (const { image } of prepared.images) URL.revokeObjectURL(image.previewUrl);
         toastManager.add({ type: "error", title: "Couldn't save the draft" });
-        openQuickCapture({ text: capture.text, destination });
+        // Nothing is lost: it reopens with what was written, files included.
+        restoreQuickCapture({ text: capture.text, files: capture.files, destination });
         return false;
       }
 
-      const store = useComposerDraftStore.getState();
-      if (text.length > 0) store.setPrompt(opened.draftId, text);
-      const accepted = new Set(images.length > 0 ? store.addImages(opened.draftId, images) : []);
-      for (const image of images) {
-        if (!accepted.has(image.id)) URL.revokeObjectURL(image.previewUrl);
-      }
-      if (files.length > 0) store.addFiles(opened.draftId, files, { appendReference: true });
-      if (skipped.length > 0) {
+      const notAttached = [...prepared.skipped, ...rejected];
+      if (notAttached.length > 0) {
         toastManager.add({
           type: "warning",
-          title: skipped.length === 1 ? "A file wasn't attached" : "Some files weren't attached",
-          description: skipped.join(", "),
+          title:
+            notAttached.length === 1 ? "A file wasn't attached" : "Some files weren't attached",
+          description: notAttached.join(", "),
         });
       }
-
-      if (!options.open) showSavedToast(opened.draftId, text, destination, navigate);
+      if (!saved.filed && destination) {
+        toastManager.add({
+          type: "warning",
+          title: `Couldn't file it ${destination.inPlace}`,
+          description:
+            "The draft was saved. Use Move thread to folder… in the command palette to file it.",
+        });
+      }
+      if (!options.open) {
+        showSavedToast(saved.draftId, text, saved.filed ? destination : null, navigate);
+      }
       return true;
     },
     [defaultProjectRef, handleNewThread, navigate, startInFolder],

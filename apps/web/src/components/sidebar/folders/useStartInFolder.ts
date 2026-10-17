@@ -36,11 +36,15 @@ export interface StartInFolder {
   readonly openFiles?: boolean;
   /** False creates the draft without opening it. */
   readonly navigate?: boolean;
+  /** Fills the draft the moment it exists, before it opens. */
+  readonly seed?: (draftId: DraftId) => void;
 }
 
 export interface StartedInFolder {
   readonly draftId: DraftId;
   readonly threadId: ThreadId;
+  /** False when filing it in the folder failed; it then lives where its project's threads do. */
+  readonly filed: boolean;
 }
 
 export function useStartInFolder() {
@@ -88,6 +92,7 @@ export function useStartInFolder() {
         handleNewThread(scopeProjectRef(input.environmentId, projectId), {
           freshDraft: true,
           ...(input.navigate === false ? { navigate: false } : {}),
+          ...(input.seed ? { seed: input.seed } : {}),
         }),
       );
       if (result._tag === "Failure") {
@@ -118,7 +123,7 @@ export function useStartInFolder() {
           .getState()
           .open(scopeThreadRef(input.environmentId, opened.threadId), "files");
       }
-      return opened;
+      return { ...opened, filed: filed !== null };
     },
     [commands, followPool, handleNewThread, registry],
   );

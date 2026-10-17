@@ -5,11 +5,13 @@
  */
 import { create } from "zustand";
 
+import type { CaptureFile } from "./captureAttachments";
 import type { CaptureDestination } from "./captureDestinations";
 
-/** What a reopened capture starts with, when saving it failed. */
+/** A capture whose save failed, reopened as it was. */
 export interface CaptureRestore {
   readonly text: string;
+  readonly files: ReadonlyArray<CaptureFile>;
   readonly destination: CaptureDestination | null;
 }
 
@@ -17,16 +19,33 @@ export interface CaptureRestore {
 export const useQuickCaptureStore = create<{
   readonly open: boolean;
   readonly openCount: number;
+  /** What the current opening starts with. */
   readonly restore: CaptureRestore | null;
-}>(() => ({ open: false, openCount: 0, restore: null }));
+  /** Failed saves that came back while another capture was open. */
+  readonly waiting: ReadonlyArray<CaptureRestore>;
+}>(() => ({ open: false, openCount: 0, restore: null, waiting: [] }));
 
 /** A no-op while it's open: reopening would remount it and drop what's typed. */
-export const openQuickCapture = (restore: CaptureRestore | null = null) =>
+export const openQuickCapture = () =>
   useQuickCaptureStore.setState((state) =>
-    state.open ? state : { open: true, openCount: state.openCount + 1, restore },
+    state.open ? state : { open: true, openCount: state.openCount + 1, restore: null },
   );
 
-export const closeQuickCapture = () => useQuickCaptureStore.setState({ open: false });
+/** Reopens a failed save now, or right after the capture that's open closes. */
+export const restoreQuickCapture = (restore: CaptureRestore) =>
+  useQuickCaptureStore.setState((state) =>
+    state.open
+      ? { waiting: [...state.waiting, restore] }
+      : { open: true, openCount: state.openCount + 1, restore },
+  );
+
+export const closeQuickCapture = () =>
+  useQuickCaptureStore.setState((state) => {
+    const [next, ...rest] = state.waiting;
+    return next === undefined
+      ? { open: false }
+      : { openCount: state.openCount + 1, restore: next, waiting: rest };
+  });
 
 /** For app-wide shortcut handlers, which stand down while it's open. */
 export const isQuickCaptureOpen = () => useQuickCaptureStore.getState().open;

@@ -17,6 +17,7 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import { formatAttachmentSize } from "@t3tools/client-runtime/state/attachments";
+import { PROVIDER_SEND_TURN_MAX_ATTACHMENTS } from "@t3tools/contracts";
 import {
   useMemo,
   useRef,
@@ -38,6 +39,7 @@ import {
 } from "../ui/command";
 import { shouldHandleComposerAttachmentPaste } from "../chat/composerAttachmentFiles";
 import { Kbd, KbdGroup } from "../ui/kbd";
+import { toastManager } from "../ui/toast";
 import type { CaptureFile } from "./captureAttachments";
 import { captureDestinations, type CaptureDestination } from "./captureDestinations";
 import {
@@ -60,7 +62,7 @@ export function QuickCaptureDialog(props: { readonly open: boolean }) {
   const [text, setText] = useState(restore?.text ?? "");
   const [caret, setCaret] = useState(restore?.text.length ?? 0);
   const [picked, setPicked] = useState<CaptureDestination | null>(restore?.destination ?? null);
-  const [files, setFiles] = useState<CaptureFile[]>([]);
+  const [files, setFiles] = useState<ReadonlyArray<CaptureFile>>(restore?.files ?? []);
   const [dragging, setDragging] = useState(false);
   const [activeIndex, setActiveIndex] = useState(0);
   // Esc hides the list for the tag being typed; typing another one re-arms it.
@@ -112,7 +114,17 @@ export function QuickCaptureDialog(props: { readonly open: boolean }) {
 
   const addFiles = (incoming: ReadonlyArray<File>) => {
     if (incoming.length === 0) return;
-    setFiles((current) => [...current, ...incoming.map((file) => ({ id: randomUUID(), file }))]);
+    if (files.length + incoming.length > PROVIDER_SEND_TURN_MAX_ATTACHMENTS) {
+      toastManager.add({
+        type: "warning",
+        title: `You can attach up to ${PROVIDER_SEND_TURN_MAX_ATTACHMENTS} files`,
+      });
+    }
+    // The cap is applied in the updater, so a drop and a paste in one tick can't pass it together.
+    setFiles((current) => {
+      const room = Math.max(PROVIDER_SEND_TURN_MAX_ATTACHMENTS - current.length, 0);
+      return [...current, ...incoming.slice(0, room).map((file) => ({ id: randomUUID(), file }))];
+    });
   };
 
   const handleKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {

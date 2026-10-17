@@ -372,4 +372,26 @@ describe("useNewThreadHandler with folders", () => {
     expect(testState.router.navigate).not.toHaveBeenCalled();
     expect(testState.router.state.location.href).toBe("/usage");
   });
+
+  it("fills a quick-capture draft before it opens, so it never sits empty and replaceable", async () => {
+    testState.reset(null);
+    const order: string[] = [];
+    testState.router.navigate.mockImplementationOnce(async () => {
+      order.push("navigate");
+    });
+    const pendingOpen = useNewThreadHandler()(
+      { environmentId: "environment-ssh", projectId: "project-remote" } as never,
+      {
+        freshDraft: true,
+        seed: (draftId) => {
+          order.push(`seed:${draftId}`);
+          expect(testState.draftStore.setLogicalProjectDraftThreadId).toHaveBeenCalled();
+        },
+      },
+    );
+    testState.completeProjectFileRead(null);
+    await pendingOpen;
+
+    expect(order).toEqual(["seed:draft-delayed", "navigate"]);
+  });
 });
