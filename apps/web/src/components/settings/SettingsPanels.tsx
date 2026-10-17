@@ -2132,6 +2132,8 @@ export function GeneralSettingsPanel() {
   const { scope, environment, connectedEnvironments, target } = useSettingsScope();
   const environmentId = environment?.environmentId ?? null;
   const isEnvironmentScope = scope.environmentIds.length === 1 && environmentId !== null;
+  // signalbox: without diagnostics the section only holds licenses.
+  const hasDiagnostics = !useUnsupportedSettingsCapabilities().has("localFilesystem");
   const hasServerTargets = connectedEnvironments.length > 0;
   const [backgroundActivityDialogOpen, setBackgroundActivityDialogOpen] = useState(false);
   const mixedResponseStreamingMode = useScopedSettingsMixed(["responseStreamingMode"]);
@@ -3311,7 +3313,7 @@ export function GeneralSettingsPanel() {
           }
         />
       </SettingsSection>
-      <SettingsSection title="Diagnostics">
+      <SettingsSection title={hasDiagnostics ? "Diagnostics" : "About"}>
         <SettingsCapability id="diagnostics">
           <SettingsRow
             {...searchableSetting("diagnostics")}

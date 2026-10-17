@@ -3,7 +3,7 @@ import { AuthSettingsWriteScope, type EnvironmentId, sessionGrantsScope } from "
 import { ChevronDownIcon, PlusIcon, RotateCcwIcon, XIcon } from "lucide-react";
 import * as Option from "effect/Option";
 import { AsyncResult, Atom } from "effect/reactivity";
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { cn } from "../../lib/utils";
 import { environmentPresentations } from "../../state/presentation";
@@ -636,7 +636,11 @@ function UsagePriceOverridesDialog({
 
 // signalbox: closes the editor as soon as no selected environment can save prices.
 export function UsagePriceOverrides(props: Parameters<typeof UsagePriceOverridesDialog>[0]) {
-  return useCanEditUsagePrices(props.initialSelectedEnvironmentIds) ? (
-    <UsagePriceOverridesDialog {...props} />
-  ) : null;
+  const canEdit = useCanEditUsagePrices(props.initialSelectedEnvironmentIds);
+  const { onOpenChange } = props;
+  // Close for real, so the editor can't reappear on its own if editing comes back.
+  useEffect(() => {
+    if (!canEdit) onOpenChange(false);
+  }, [canEdit, onOpenChange]);
+  return canEdit ? <UsagePriceOverridesDialog {...props} /> : null;
 }

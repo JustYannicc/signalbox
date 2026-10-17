@@ -1042,7 +1042,7 @@ export function ProviderInstanceCard({
           </span>
         </div>
         <span className="flex h-5 shrink-0 items-center gap-1">
-          {projectOverride?.value !== undefined ? (
+          {supportsServerSettingsWrite && projectOverride?.value !== undefined ? (
             <span className="flex items-center">
               <ProjectOverrideInheritance
                 projectEnabled={projectOverride.value}
@@ -1056,14 +1056,16 @@ export function ProviderInstanceCard({
               />
             </span>
           ) : null}
-          <Switch
-            checked={enabled}
-            disabled={
-              !canWriteProviderSettings || (projectOverride !== undefined && !canWriteSettings)
-            }
-            onCheckedChange={(checked) => updateEnabled(Boolean(checked))}
-            aria-label={`Enable ${displayName}`}
-          />
+          {supportsServerSettingsWrite ? ( // signalbox: a switch that can't save reads as broken
+            <Switch
+              checked={enabled}
+              disabled={
+                !canWriteProviderSettings || (projectOverride !== undefined && !canWriteSettings)
+              }
+              onCheckedChange={(checked) => updateEnabled(Boolean(checked))}
+              aria-label={`Enable ${displayName}`}
+            />
+          ) : null}
         </span>
       </div>
     );
@@ -1278,7 +1280,9 @@ export function ProviderInstanceCard({
             <p className="mb-3 text-xs text-muted-foreground">
               {showsEnvironmentUi // signalbox: one environment
                 ? "Model preferences and custom models are saved on the selected environment and shared across connected devices."
-                : "Model preferences and custom models are saved to your account and shared across your devices."}
+                : supportsServerSettingsWrite
+                  ? "Model preferences and custom models are saved to your account and shared across your devices."
+                  : "Model preferences are saved to your account and shared across your devices."}
             </p>
             <ProviderModelsSection
               canManageCustomModels={supportsServerSettingsWrite && !readOnly}

@@ -8,12 +8,14 @@ const PAGE_CAPABILITIES: Readonly<Record<string, SignalboxEnvironmentCapability>
 };
 
 const ITEM_CAPABILITIES: Readonly<Record<string, readonly SignalboxEnvironmentCapability[]>> = {
+  // Stand-in until the cloud serves diagnostics.* (it reports no host to inspect).
   diagnostics: ["localFilesystem"],
   "environment-identification": ["otherEnvironments"],
   "usage-providers": ["serverSettingsWrite"],
   "cursor-keychain-usage": ["serverSettingsWrite"],
   "provider-health-check-interval": ["serverSettingsWrite"],
   "github-accounts": ["serverSettingsWrite"],
+  // Stand-in until the cloud serves analytics.*; give it its own capability then.
   "product-analytics": ["serverSettingsWrite"],
   "project-actions": ["terminal", "serverSettingsWrite"],
 };

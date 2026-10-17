@@ -1598,7 +1598,9 @@ export function KeybindingsSettingsPanel() {
         <p className="text-xs text-muted-foreground">
           {connectedEnvironments.length === 0
             ? "Connect an environment to change keybindings."
-            : "This connection can view keybindings but cannot change them."}
+            : !supportsSettingsWrite // signalbox: the server can't store them, not a missing grant
+              ? "Keybindings can't be changed here yet."
+              : "This connection can view keybindings but cannot change them."}
         </p>
       ) : null}
       <div inert={!canWriteSettings && supportsSettingsWrite} className="flex flex-col gap-8">
