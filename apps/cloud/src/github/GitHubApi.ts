@@ -512,6 +512,16 @@ export const makeGitHubApi = (
         HttpClientRequest.post(`${api}${path}`).pipe(HttpClientRequest.bodyJsonUnsafe(body)),
         token,
       ),
+    /** A REST update with a JSON body; its answer as JSON text, null on 404. */
+    patch: (operation: string, token: string, path: string, body: unknown) =>
+      raw(
+        operation,
+        HttpClientRequest.patch(`${api}${path}`).pipe(HttpClientRequest.bodyJsonUnsafe(body)),
+        token,
+      ),
+    /** A REST deletion; its answer as JSON text, null on 404. */
+    delete: (operation: string, token: string, path: string) =>
+      raw(operation, HttpClientRequest.delete(`${api}${path}`), token),
     /** A download GitHub redirects to storage (logs, artifacts), as bytes; null on 404. */
     download: (operation: string, token: string, path: string) =>
       rawBytes(operation, HttpClientRequest.get(`${api}${path}`), token),

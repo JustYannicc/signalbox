@@ -1,6 +1,6 @@
 # Signalbox
 
-Signalbox is a fork of [T3 Code](https://github.com/pingdotgg/t3code), the open source "agent harness control surface". It controls the coding agents on your machine from a desktop app, a web app, and a mobile app, and keeps receiving upstream T3 Code updates.
+Signalbox is a fork of [T3 Code](https://github.com/pingdotgg/t3code), the open source "agent harness control surface". It controls the coding agents on your machine from a desktop app, a web app, and a mobile app.
 
 Works with your subscriptions on Claude Code, Codex, Cursor, Grok Build, OpenCode, and Google Antigravity. If they're set up on your computer, Signalbox can control them.
 
@@ -87,6 +87,6 @@ Checkout their getting started guide for more information: https://viteplus.dev/
 vp i
 ```
 
-Code identifiers, package names (`@t3tools/*`), env vars (`T3CODE_*`), and the `t3.json` project format stay upstream's so upstream patches apply cleanly. User-facing names are renamed in source by a codemod; [docs/operations/upstream-sync.md](./docs/operations/upstream-sync.md) explains how to merge upstream and re-run it.
+Code identifiers, package names (`@t3tools/*`), env vars (`T3CODE_*`), and the `t3.json` project format are still upstream's. A codemod renames user-facing names in source, including in upstream code a sync brings in; [docs/operations/upstream-sync.md](./docs/operations/upstream-sync.md) explains when we merge upstream and when we port its changes instead.
 
 Bugs in upstream behavior belong in [T3 Code's issues](https://github.com/pingdotgg/t3code/issues) once you've confirmed they reproduce there.
