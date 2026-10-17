@@ -17,7 +17,6 @@ export {
   CLAIM_OUTCOMES,
   RESET_CREDIT_FAILURES,
   claudeResetCreditsToContract,
-  liveClaudeResetGrants,
   type ClaudeResetGrant,
 } from "@t3tools/provider-core/server/resetCredits";
 

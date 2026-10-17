@@ -57,7 +57,7 @@ const isFutureTimestamp = (value: string, nowMs: number) => {
   );
 };
 
-export function liveClaudeResetGrants(
+function liveClaudeResetGrants(
   block: unknown,
   nowMs: number,
 ):
