@@ -255,6 +255,22 @@ describe("opening a thread preview", () => {
     expect(awakened.lastActiveAt).toBe(11_000);
   });
 
+  it("keeps a newly opened tab's hold while an older machine is released", async () => {
+    const f = fixture();
+    const signedIn = await f.signIn();
+    await f.tunnel();
+    await f.gateway.serve(
+      new Request(`${signedIn.origin}/__signalbox_preview/lease`, {
+        headers: { cookie: signedIn.cookie, upgrade: "websocket" },
+      }),
+    )!;
+    const view = [...f.sockets].find(([, tags]) => tags.includes("preview-view"))![0];
+    await f.gateway.release(1);
+    expect(view.readyState).toBe(WebSocket.OPEN);
+    expect(f.gateway.held).toBe(true);
+    expect(f.changes).toEqual([true]);
+  });
+
   it("rejects a stale machine's tunnel and does not let it change declared services", async () => {
     const f = fixture();
     await f.gateway.subscribe("member").then((stream) => stream!.cancel());

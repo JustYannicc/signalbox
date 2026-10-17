@@ -472,9 +472,8 @@ export class PreviewGateway {
 
   /** The lease of `generation` ended: its tunnel and every browser on it go. */
   async release(generation: number) {
-    for (const view of this.views())
-      tryClose(view, CLOSE.released, "The preview could not start. Try again.");
-    await this.holdMaybeChanged();
+    // A tab can open after the release decision. Its hold belongs to the thread,
+    // so it must survive this machine and request the next one.
     let ended = false;
     for (const socket of this.host.ctx.getWebSockets(TUNNEL_TAG)) {
       if (attachmentOf<TunnelAttachment>(socket)?.generation !== generation) continue;

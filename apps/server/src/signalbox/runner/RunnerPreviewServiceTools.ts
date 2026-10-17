@@ -7,8 +7,6 @@ import * as Schema from "effect/Schema";
 import { fail, register, ToolError } from "./RunnerContextTools.ts";
 import type { RunnerPreviewServices } from "./RunnerPreviewServices.ts";
 
-export const PREVIEW_SERVICE_TOOLS = ["preview_service_start", "preview_service_stop"] as const;
-
 /** The agent's explicit way to make its dev server survive a new Runner. */
 export const layerPreviewServiceTools = (
   services: RunnerPreviewServices,
