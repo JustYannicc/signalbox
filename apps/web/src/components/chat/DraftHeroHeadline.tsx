@@ -25,6 +25,8 @@ import {
 } from "~/sidebarProjectGrouping";
 import { useProjects, useThreadShells } from "~/state/entities";
 import { useEnvironments, usePrimaryEnvironmentId } from "~/state/environments";
+import { environmentPresentations } from "~/state/presentation";
+import { appAtomRegistry } from "~/rpc/atomRegistry";
 import { ProjectEnvironmentBadge } from "../ProjectEnvironmentBadge";
 import { ProjectFavicon } from "../ProjectFavicon";
 import { sortLogicalProjectsForSidebar } from "../Sidebar.logic";
@@ -210,7 +212,11 @@ export function DraftHeroHeadline({
             projectId: project.id,
             selection: defaultModelSelection ?? draftModelSelection(getComposerDraft(draftId)),
             providerInstances: environmentConfig.settings.providerInstances,
-            providers: environmentConfig.providers,
+            // Read at call time: provider status pushes would re-render the headline.
+            providers:
+              appAtomRegistry
+                .get(environmentPresentations.providersByEnvironmentAtom)
+                .get(project.environmentId) ?? [],
           })) ||
         defaultModelSelection;
       if (startingModelSelection) {
