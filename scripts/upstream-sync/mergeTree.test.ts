@@ -160,7 +160,7 @@ describe("introducedConflicts", () => {
 
   it("catches a new conflict in a file whose inherited conflict main already resolved", () => {
     const lines = Array.from({ length: 30 }, (_, index) => `line ${index + 1}`);
-    const contents = (first: string, twentieth = lines[19]) =>
+    const contents = (first: string, twentieth = "line 20") =>
       lines.with(0, first).with(19, twentieth).join("\n") + "\n";
     const root = commit({ "a.ts": contents("original") }, "long file");
     const upstreamOne = commit({ "a.ts": contents("upstream") }, "upstream edits line 1");
