@@ -37,7 +37,6 @@ jobs:
     env:
       GH_TOKEN: ${{ secrets.UPSTREAM_SYNC_TOKEN || github.token }}
       HEAD_BRANCH: automation/cliproxyapi-update
-      HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
     steps:
       - name: Checkout release sync tools
         uses: actions/checkout@v6
@@ -47,8 +46,9 @@ jobs:
       - name: Resolve the release PR and current check results
         id: gate
         run: |
+          # A late old completion can replace the current head's queued wakeup.
           pr_json="$(gh pr list --state open --head "$HEAD_BRANCH" --json number,headRefOid,labels)"
-          pr="$(jq -r --arg sha "$HEAD_SHA" '.[] | select($sha == "" or .headRefOid == $sha) | .number' <<< "$pr_json" | head -n1)"
+          pr="$(jq -r '.[0].number // empty' <<< "$pr_json")"
           if [[ -z "$pr" ]]; then
             echo "state=waiting" >> "$GITHUB_OUTPUT"
             exit 0

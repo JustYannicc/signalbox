@@ -7,6 +7,46 @@ from .workflow_test_support import BRANCH, WorkflowCase
 
 
 class WorkflowTests(WorkflowCase):
+    def test_late_old_completion_reconciles_the_current_rollback(self) -> None:
+        self.main_sha = self.commit({"version": "8.0.16"})
+        self.git("checkout", "--quiet", "-b", BRANCH)
+        old_head = self.commit({"version": "8.0.17"})
+        self.candidate_sha = self.commit({"version": "8.0.14", "holds": [hold()]})
+        self.publish_fixture()
+        gate = "Resolve the release PR and current check results"
+
+        pending = self.run_step(
+            "cliproxyapi-auto-merge.yml",
+            gate,
+            HEAD_SHA=self.candidate_sha,
+            CHECKS_PENDING="true",
+        )
+        self.assertEqual(pending["state"], "waiting")
+
+        # An older completion can replace the current head's pending workflow run.
+        ready = self.run_step("cliproxyapi-auto-merge.yml", gate, HEAD_SHA=old_head)
+        self.assertEqual(ready["state"], "ready")
+        self.assertEqual(ready["head_sha"], self.candidate_sha)
+        self.run_step(
+            "cliproxyapi-auto-merge.yml",
+            "Enable GitHub auto-merge",
+            PR="17",
+            BACKSTOP="false",
+        )
+        merges = [call for call in self.calls() if call[:2] == ["pr", "merge"]]
+        self.assertIn(
+            [
+                "pr",
+                "merge",
+                "17",
+                "--auto",
+                "--squash",
+                "--match-head-commit",
+                self.candidate_sha,
+            ],
+            merges,
+        )
+
     def test_normal_sync_preserves_unrelated_branch_changes(self) -> None:
         self.main_sha = self.commit({"version": "8.0.15"})
         self.git("checkout", "--quiet", "-b", BRANCH)

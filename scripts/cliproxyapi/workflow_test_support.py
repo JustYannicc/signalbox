@@ -81,9 +81,10 @@ class WorkflowCase(unittest.TestCase):
                 if os.environ.get("ADVANCE_MAIN_ON_CHECKS"):
                     subprocess.run(["git", "push", "--quiet", "origin",
                         os.environ["ADVANCE_MAIN_ON_CHECKS"] + ":refs/heads/main"], check=True)
+                bucket = "pending" if os.environ.get("CHECKS_PENDING") else "pass"
                 print(json.dumps([
-                    {"name": "Deploy preview cloud", "bucket": "pass"},
-                    {"name": "CLIProxyAPI container smoke", "bucket": "pass"}
+                    {"name": "Deploy preview cloud", "bucket": bucket},
+                    {"name": "CLIProxyAPI container smoke", "bucket": bucket}
                 ]))
             elif args[:2] == ["pr", "view"]:
                 field = args[args.index("--json") + 1]
