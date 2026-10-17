@@ -217,7 +217,18 @@ const makeFakeAdapter = Effect.gen(function* () {
     driver,
     openSession: () => Effect.sync(() => (opened.count++, session)),
   } as unknown as ProviderAdapterV2["Service"];
-  return { adapter, events, loaded, calls, started, opened, responses, failNextResponse, secondStarted, interrupted };
+  return {
+    adapter,
+    events,
+    loaded,
+    calls,
+    started,
+    opened,
+    responses,
+    failNextResponse,
+    secondStarted,
+    interrupted,
+  };
 });
 
 const startWithDependencies = (input: {
