@@ -1983,12 +1983,7 @@ describe("EnvironmentThreads", () => {
       expect((yield* Queue.take(harness.subscribed)).afterSequence).toBe(CACHED_SNAPSHOT_SEQUENCE);
 
       yield* Queue.offer(harness.inputs, new TestStreamDefect("Replayed event did not decode"));
-      for (let attempt = 0; attempt < 100; attempt += 1) {
-        if ((yield* Ref.get(harness.subscriptionCount)) >= 2) {
-          break;
-        }
-        yield* Effect.yieldNow;
-      }
+      expect((yield* Queue.take(harness.subscribed)).afterSequence).toBeUndefined();
       expect(yield* Ref.get(harness.subscriptionCount)).toBe(2);
       expect(yield* Ref.get(harness.lastSubscribeAfterSequence)).toBeUndefined();
 
@@ -2006,13 +2001,9 @@ describe("EnvironmentThreads", () => {
 
       // The reloaded cursor is past the failed event, so later sessions resume again.
       yield* harness.replaceSession;
-      for (let attempt = 0; attempt < 100; attempt += 1) {
-        if ((yield* Ref.get(harness.subscriptionCount)) >= 3) {
-          break;
-        }
-        yield* Effect.yieldNow;
-      }
-      expect(yield* Ref.get(harness.lastSubscribeAfterSequence)).toBe(CACHED_SNAPSHOT_SEQUENCE + 5);
+      expect((yield* Queue.take(harness.subscribed)).afterSequence).toBe(
+        CACHED_SNAPSHOT_SEQUENCE + 5,
+      );
     }),
   );
 
@@ -2025,9 +2016,7 @@ describe("EnvironmentThreads", () => {
         Option.isSome(value.error),
       );
       expect(Option.getOrThrow(failed.error)).toBe("Could not synchronize the thread.");
-      for (let index = 0; index < 20; index += 1) {
-        yield* Effect.yieldNow;
-      }
+      yield* TestClock.adjust("1 minute");
       expect(yield* Ref.get(harness.subscriptionCount)).toBe(1);
     }),
   );

@@ -21,7 +21,7 @@ import * as Schema from "effect/Schema";
 import * as Result from "effect/Result";
 import * as Stream from "effect/Stream";
 import { rpcInitialItems } from "./rpcInitialItems.ts";
-import { traceSynchronization } from "@t3tools/shared/synchronization";
+import { recordSynchronization } from "@t3tools/shared/synchronization";
 import { subscribeChatGptHandoff } from "./provider/CodexChatGptHandoff.ts";
 import { subscribeCodexAuthCallback } from "./provider/CodexAuthCallback.ts";
 import {
@@ -749,7 +749,7 @@ export const subscribeOrchestrationV2Thread = Effect.fn("ws.orchestrationV2.subs
     const threadManagement = yield* ThreadManagementService.ThreadManagementService;
     const applicationEvents = yield* OrchestrationEventStore.OrchestrationEventStore;
 
-    yield* traceSynchronization("connecting", {
+    yield* recordSynchronization("connecting", {
       side: "server",
       stream: "thread",
       threadId: input.threadId,
@@ -825,7 +825,7 @@ export const subscribeOrchestrationV2Thread = Effect.fn("ws.orchestrationV2.subs
     const completionMarker = (mode: "resume" | "snapshot") =>
       input.requestCompletionMarker === true
         ? Stream.fromEffect(
-            traceSynchronization("marker_emitted", {
+            recordSynchronization("marker_emitted", {
               side: "server",
               stream: "thread",
               threadId: input.threadId,
@@ -837,7 +837,7 @@ export const subscribeOrchestrationV2Thread = Effect.fn("ws.orchestrationV2.subs
     const snapshotThenLive = Effect.fn("ws.orchestrationV2.threadSnapshotThenLive")(function* (
       reason: string,
     ) {
-      yield* traceSynchronization("snapshot", {
+      yield* recordSynchronization("snapshot", {
         side: "server",
         stream: "thread",
         threadId: input.threadId,
@@ -883,7 +883,7 @@ export const subscribeOrchestrationV2Thread = Effect.fn("ws.orchestrationV2.subs
     // tail, so no event published during the replay window is lost; overlapping
     // events are deduped by sequence on the client.
     if (input.afterSequence !== undefined) {
-      yield* traceSynchronization("resuming", {
+      yield* recordSynchronization("resuming", {
         side: "server",
         stream: "thread",
         threadId: input.threadId,
@@ -952,7 +952,7 @@ export const subscribeOrchestrationV2Thread = Effect.fn("ws.orchestrationV2.subs
       if (plan.mode === "snapshot") {
         return yield* snapshotThenLive("resume_plan");
       }
-      yield* traceSynchronization("resuming", {
+      yield* recordSynchronization("resuming", {
         side: "server",
         stream: "thread",
         threadId: input.threadId,
