@@ -35,7 +35,7 @@ import { runnerOutputBatch } from "../commandOutput/runnerOutput.ts";
 import { traceIdOf } from "../diagnostics/traceId.ts";
 import { TurnDiagnostics } from "../diagnostics/TurnDiagnostics.ts";
 import { driveToken, isDriveToken } from "../../drive/driveToken.ts";
-import { gatewayProviderFor, poolIdOfInstance } from "../providerCatalog.ts";
+import { gatewayProviderFor, poolIdOfInstance } from "../../models/ModelRouting.ts";
 import { holdsNativeSession } from "../session/nativeSession.ts";
 import * as PreviewState from "../PreviewState.ts";
 import { steersOf } from "../steering.ts";
