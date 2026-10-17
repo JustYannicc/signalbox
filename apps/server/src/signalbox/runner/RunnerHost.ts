@@ -324,7 +324,9 @@ export const makeRunnerHost = Effect.fn("makeRunnerHost")(function* (config: Run
                 pinDrives: (access) =>
                   makeContextClient({ cloudUrl, access }).pipe(
                     Effect.provide(FetchHttpClient.layer),
-                    Effect.flatMap(context.pin),
+                    Effect.flatMap((client) =>
+                      context.pin(client).pipe(Effect.map(() => context.currentView())),
+                    ),
                   ),
               }),
           });
