@@ -4,13 +4,9 @@ import { RunId } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 
-import { makeModelAccess } from "../models/testing.ts";
-import type {
-  ModelAuthorization,
-  ModelForwardReply,
-  ModelPoolRoute,
-} from "../models/ModelProtocol.ts";
-import { handleModelRequest } from "./modelGateway.ts";
+import { makeModelAccess } from "./testing.ts";
+import type { ModelAuthorization, ModelForwardReply, ModelPoolRoute } from "./ModelProtocol.ts";
+import { handleModelRequest } from "./ModelGateway.ts";
 
 /**
  * #591: what the provider gets when a turn's tool printed a folder secret.

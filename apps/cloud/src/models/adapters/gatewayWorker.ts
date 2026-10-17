@@ -2,17 +2,17 @@
 import type { ModelGatewayProvider } from "@signalbox/runner-protocol/RunnerProtocol";
 import { defineWorkerFetch } from "evlog/workers";
 
-import * as Evlog from "../observability/evlogWorkers.ts";
-import type { ModelServeReply } from "../models/ModelProtocol.ts";
-import { handleModelRequest } from "./modelGateway.ts";
-import type { ModelGatewayRecord } from "./modelGatewayRecord.ts";
+import * as Evlog from "../../observability/evlogWorkers.ts";
+import type { ModelServeReply } from "../ModelProtocol.ts";
+import { handleModelRequest } from "../ModelGateway.ts";
+import type { ModelGatewayRecord } from "../ModelRecords.ts";
 
 /**
  * The ModelGateway Worker (`wrangler.model-gateway.jsonc`): the public origin
  * machines' harnesses call. It holds no keys, and never learns which pool a
  * turn runs on: the cloud's `ModelGrants` entrypoint, over a service binding,
  * checks each token and sends granted requests to the turn's pool. Each
- * record goes to its thread the same way. See `modelGateway.ts`.
+ * record goes to its thread the same way through `ModelGateway`.
  */
 
 export interface ModelGatewayEnv {

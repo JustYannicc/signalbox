@@ -16,7 +16,7 @@ vi.mock("../../evlog.config.ts", async () => {
   return { drain, default: defineEvlog({ silent: true, drain }) };
 });
 
-import worker, { type ModelGatewayEnv } from "./worker.ts";
+import worker, { type ModelGatewayEnv } from "./gatewayWorker.ts";
 
 const env: ModelGatewayEnv = {
   GRANTS: {
