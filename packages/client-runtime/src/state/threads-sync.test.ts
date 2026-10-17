@@ -2084,6 +2084,32 @@ describe("EnvironmentThreads", () => {
     }),
   );
 
+  it.effect.each(["session", "foreground"] as const)(
+    "recovers a mounted thread after terminal timeout on a new %s trigger",
+    (trigger) =>
+      Effect.gen(function* () {
+        const harness = yield* makeHarness({ cached: BASE_PROJECTION, completionMarker: true });
+        yield* Queue.take(harness.subscribed);
+        yield* TestClock.adjust("15 seconds");
+        yield* Queue.take(harness.subscribed);
+        yield* TestClock.adjust("15 seconds");
+        yield* awaitThreadState(harness.observed, (state) => Option.isSome(state.error));
+        yield* TestClock.adjust("10 minutes");
+        expect(yield* Ref.get(harness.subscriptionCount)).toBe(2);
+
+        if (trigger === "session") yield* harness.replaceSession;
+        else yield* Queue.offer(harness.wakeups, "application-active");
+        expect((yield* Queue.take(harness.subscribed)).afterSequence).toBe(
+          CACHED_SNAPSHOT_SEQUENCE,
+        );
+        yield* Queue.offerAll(harness.inputs, [snapshot(BASE_PROJECTION, 12), synchronized()]);
+        const live = yield* awaitThreadState(harness.observed, (state) => state.status === "live");
+        expect(Option.isNone(live.error)).toBe(true);
+        yield* TestClock.adjust("1 minute");
+        expect(yield* Ref.get(harness.subscriptionCount)).toBe(3);
+      }),
+  );
+
   it.effect("does not extend the marker deadline when replay events keep arriving", () =>
     Effect.gen(function* () {
       const harness = yield* makeHarness({ cached: BASE_PROJECTION, completionMarker: true });

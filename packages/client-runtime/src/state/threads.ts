@@ -795,6 +795,7 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
   const resumedAttempt = yield* Ref.make(false);
   const resumeFailed = yield* Ref.make(false);
   const snapshotRetry = yield* Ref.make(false);
+  const attemptSession = yield* Ref.make<Option.Option<RpcSession>>(Option.none());
 
   yield* markSynchronizing;
   const subscribeThread = (): Stream.Stream<
@@ -808,6 +809,7 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
     subscribeDynamicWithSession(
       ORCHESTRATION_V2_WS_METHODS.subscribeThread,
       Effect.fn("EnvironmentThreadState.makeSubscribeInput")(function* (session) {
+        yield* Ref.set(attemptSession, Option.some(session));
         yield* Ref.set(resumedAttempt, false);
         let current = yield* SubscriptionRef.get(state);
         // A prior definitive miss (or delete event) already cleared this thread.
@@ -938,7 +940,7 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
                     ? Effect.void
                     : setStreamError(
                         deadline
-                          ? "Message synchronization timed out. Reopen this thread to try again."
+                          ? "Message synchronization timed out. Reconnect or return to the app to try again."
                           : "Could not synchronize the thread.",
                       ),
                 ),
@@ -950,14 +952,27 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
         resubscribe: foregroundResubscriptions,
       },
     ).pipe(
-      // Retries only a failed resume. A defect on a snapshot attempt stays terminal.
-      Stream.catchCause((cause) =>
-        Stream.unwrap(
-          Ref.get(resumeFailed).pipe(
-            Effect.map((retry) => (retry ? subscribeThread() : Stream.failCause(cause))),
-          ),
-        ),
-      ),
+      Stream.catchCause((cause) => {
+        if (Cause.hasInterrupts(cause)) return Stream.failCause(cause);
+        return Stream.unwrap(
+          Effect.gen(function* () {
+            if (yield* Ref.get(resumeFailed)) return subscribeThread();
+            const failedSession = yield* Ref.get(attemptSession);
+            // Running threads stay mounted. Keep the error until an external
+            // trigger, rather than permanently ending their subscription fiber.
+            return Stream.merge(
+              SubscriptionRef.changes(supervisor.session).pipe(
+                Stream.filter(
+                  (session) =>
+                    Option.isSome(session) &&
+                    session.value !== Option.getOrUndefined(failedSession),
+                ),
+              ),
+              foregroundResubscriptions,
+            ).pipe(Stream.take(1), Stream.drain, Stream.concat(Stream.suspend(subscribeThread)));
+          }),
+        );
+      }),
     );
   yield* Effect.forkScoped(subscribeThread().pipe(Stream.runForEachArray(applyItems)));
 

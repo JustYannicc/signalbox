@@ -887,6 +887,8 @@ export const subscribeOrchestrationV2Thread = Effect.fn("ws.orchestrationV2.subs
         side: "server",
         stream: "thread",
         threadId: input.threadId,
+        mode: "resume",
+        reason: "cached_cursor",
         afterSequence: input.afterSequence,
       });
       const highWater = yield* applicationEvents.latestAgentSequence(input.threadId).pipe(
@@ -952,14 +954,6 @@ export const subscribeOrchestrationV2Thread = Effect.fn("ws.orchestrationV2.subs
       if (plan.mode === "snapshot") {
         return yield* snapshotThenLive("resume_plan");
       }
-      yield* recordSynchronization("resuming", {
-        side: "server",
-        stream: "thread",
-        threadId: input.threadId,
-        mode: "resume",
-        reason: "replay_ready",
-        afterSequence: input.afterSequence,
-      });
       return Stream.concat(
         Stream.concat(rpcInitialItems(replay), completionMarker("resume")),
         eventStreamFrom(highWater),
@@ -3159,7 +3153,6 @@ const layerWsRpc = (
 // RpcServer's default sends a socket-level Defect frame instead, and the client
 // ends every pending request on the socket with it.
 export const WS_RPC_SERVER_OPTIONS = {
-  disableTracing: true,
   disableFatalDefects: true,
 } as const;
 
