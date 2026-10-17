@@ -405,7 +405,16 @@ export const makeRunnerTurns = Effect.fn("makeRunnerTurns")(function* (input: {
     Effect.gen(function* () {
       outgrown.add(runId);
       yield* Effect.logInfo("the turn outgrew this machine", { runId, reason });
-      yield* drain;
+      const unsaved = yield* drain;
+      if (unsaved.length > 0) {
+        yield* interrupt(runId);
+        yield* input.emit({
+          kind: "turn.failed",
+          runId,
+          message: `This turn could not move to a larger machine because its state could not be saved. ${unsaved.join(" ")}`,
+        });
+        return;
+      }
       yield* input.emit({ kind: "machine.outgrown", runId, reason });
     });
   /** One turn readies the working directory at a time, even after a stop left one installing. */

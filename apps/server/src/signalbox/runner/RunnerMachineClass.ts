@@ -210,7 +210,8 @@ const heavyTool = (words: ReadonlyArray<string>): string | null => {
   if (found !== undefined) return `${tool} ${found}`;
   if (!["npm", "pnpm", "yarn", "bun", "vp"].includes(tool)) return null;
   const generic = args.find(
-    (word) => word === "run" || word === "exec" || word === "dlx" || word === "x",
+    (word) =>
+      word === "run" || word === "run-script" || word === "exec" || word === "dlx" || word === "x",
   );
   return generic === undefined ? null : `${tool} ${generic}`;
 };

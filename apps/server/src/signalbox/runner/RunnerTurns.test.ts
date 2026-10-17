@@ -237,7 +237,11 @@ const startWithDependencies = (input: {
               ...session,
               ...(input.resume === true
                 ? {
-                    resumeThread: (resumeInput) =>
+                    resumeThread: (
+                      resumeInput: Parameters<
+                        NonNullable<ProviderAdapterV2SessionRuntime["resumeThread"]>
+                      >[0],
+                    ) =>
                       Effect.sync(() => void order.push("resume thread")).pipe(
                         Effect.as(resumeInput.providerThread),
                       ),
@@ -1727,17 +1731,35 @@ describe("RunnerTurns", () => {
       };
 
       /** A light machine's turn with a drive, and everything it did in order. */
-      const lightTurn = (machineClass: "light" | "heavy") =>
+      const lightTurn = (machineClass: "light" | "heavy", saveFailure?: "drive" | "session") =>
         Effect.gen(function* () {
           const fake = yield* makeFakeAdapter;
           const log: Array<string> = [];
-          const { sessions } = yield* makeFakeSessions(log);
+          const reported: Array<RunnerItem> = [];
+          const original = yield* makeFakeSessions(log);
+          const sessions: RunnerSessions = {
+            ...original.sessions,
+            flush: (kind) =>
+              original.sessions
+                .flush(kind)
+                .pipe(
+                  Effect.map(() =>
+                    saveFailure === "session" ? "session store unavailable" : null,
+                  ),
+                ),
+          };
           const drive = {
             prepare: () => Effect.void,
             autosave: Effect.sync(() => void log.push("autosave")),
             flush: Effect.sync(() => void log.push("drive flush")),
             restoreDependencyEdits: Effect.void,
-            saveNow: Effect.sync(() => void log.push("drive save")),
+            saveNow: Effect.sync(() => void log.push("drive save")).pipe(
+              Effect.andThen(
+                saveFailure === "drive"
+                  ? Effect.fail(new RunnerGitError({ message: "file store unavailable" }))
+                  : Effect.void,
+              ),
+            ),
             changed: Effect.succeed(false),
           } as unknown as RunnerDrive;
           const turns = yield* makeRunnerTurns({
@@ -1747,12 +1769,10 @@ describe("RunnerTurns", () => {
             useModelToken: () => Effect.void,
             usage: Effect.succeed(unmeasured),
             emit: (item) =>
-              Effect.sync(
-                () =>
-                  void log.push(
-                    item.kind === "provider" ? `emit ${String(item.event.type)}` : item.kind,
-                  ),
-              ),
+              Effect.sync(() => {
+                reported.push(item);
+                log.push(item.kind === "provider" ? `emit ${String(item.event.type)}` : item.kind);
+              }),
             openDrive: () => Effect.succeed(drive),
             sessions,
             machineClass,
@@ -1766,8 +1786,33 @@ describe("RunnerTurns", () => {
           });
           yield* settle;
           log.length = 0;
-          return { fake, log };
+          return { fake, log, reported };
         });
+
+      it.effect.each(["drive", "session"] as const)(
+        "does not hand off when the %s cannot be saved",
+        (saveFailure) =>
+          Effect.scoped(
+            Effect.gen(function* () {
+              const { fake, log, reported } = yield* lightTurn("light", saveFailure);
+              yield* Queue.offer(fake.events, providerTurnStarted(1));
+              yield* Queue.offer(fake.events, command("running", "npm run build"));
+              for (let round = 0; round < 30; round++) yield* Effect.yieldNow;
+
+              expect(log).not.toContain("machine.outgrown");
+              expect(reported).toContainEqual({
+                kind: "turn.failed",
+                runId: RunId.make("run-1"),
+                message: expect.stringContaining(
+                  saveFailure === "drive"
+                    ? "Signalbox couldn't reach this thread's storage."
+                    : "session store unavailable",
+                ),
+              });
+              expect(fake.calls).toContain("interrupt native-1");
+            }),
+          ),
+      );
 
       it.effect("saves everything, then hands a build to a heavy machine and drops the rest", () =>
         Effect.scoped(

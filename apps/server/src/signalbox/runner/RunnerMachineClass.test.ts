@@ -36,6 +36,7 @@ describe("heavyCommand", () => {
 
   it("moves package scripts to heavy while keeping file work and shell data light", () => {
     expect(heavyCommand("npm run lint")).toBe("npm run");
+    expect(heavyCommand("npm run-script lint")).toBe("npm run-script");
     expect(heavyCommand('echo "run npm install first" >> notes.md')).toBeNull();
     expect(heavyCommand("printf '%s\\n' run exec dlx x")).toBeNull();
     expect(heavyCommand('git commit -m "make the build pass"')).toBeNull();

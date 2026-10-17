@@ -167,9 +167,9 @@ happy), with `CLOUD_URL` and `MODEL_GATEWAY_URL` set to the tunnels.
 ### Light and heavy machines
 
 A thread runs on one of two machine classes (#113,
-`apps/cloud/src/thread/runner/machineClass.ts`). A thread in a drive backed by
-a remote repo is heavy; every other thread (a chat, or a task in My Drive) is
-light.
+`apps/cloud/src/thread/runner/machineClass.ts`). Every new thread starts light,
+including one backed by a remote repo. Light turns skip dependency setup, so
+read-only questions do not wait for an install.
 
 - **Light:** a Cloudflare Container bound to the thread's own object
   (`THREADS` in `apps/cloud/alchemy.run.ts`, `basic`: ¼ vCPU, 1 GiB, 4 GB disk),
@@ -191,12 +191,16 @@ Runner host. The light class needs `CLOUD_URL` and `MODEL_GATEWAY_URL` like
 boat does.
 
 A light thread moves to the heavy class for good when its Runner sees a
-command it should not run there: a build, test, install or dev server
+command it should not run there: a build, test, install, dev server, package
+script/executor or Node command
 (`apps/server/src/signalbox/runner/RunnerMachineClass.ts`), or one killed for
 memory (exit 137). The Runner saves the turn's files and session rows, reports
 `machine.outgrown`, and the thread continues the run on a heavy machine the
 same way it continues one whose machine was lost (below): the command shows as
-interrupted and the agent runs it again there. A light container that runs out
+interrupted and the agent runs it again there. This command-start classifier is
+best effort; commands hidden behind an unrecognized wrapper can stay light.
+If files or session rows cannot be saved, the turn fails with that cause instead
+of continuing from stale state. A light container that runs out
 of memory mid-turn (exit 137) moves its run up too. Any other exit, including
 Cloudflare restarting the container for a deploy's rollout, is a lost machine:
 the run continues on a new light one.
@@ -244,8 +248,9 @@ request deletes the image, and the weekly preview sweep deletes leftovers
 Machines pull the image anonymously, so the package must be public: after its
 first publish, set its visibility once under the package's settings on GitHub.
 A machine follows `RUNNER_IMAGE` at its next wake. Bump the Runner protocol
-only together with a published image, since a machine on an older image is
-refused.
+only together with a published image. The cloud accepts versions between
+`MIN_RUNNER_PROTOCOL_VERSION` and `RUNNER_PROTOCOL_VERSION`; older images are
+refused, and a newer Runner needs a cloud deployment that understands it.
 
 ### Direct pack uploads
 
