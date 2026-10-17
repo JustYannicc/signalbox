@@ -210,25 +210,21 @@ describe("ThreadEngine", () => {
       yield* withObject(filename, (engine, store) =>
         Effect.gen(function* () {
           const { projection } = yield* engine.snapshot(owner);
-          const stored = yield* store.events(0);
           for (let cursor = 1; cursor <= head; cursor++) {
             const replay = yield* replayFrom(engine, cursor);
             const events = replay.flatMap((item) => (item.kind === "event" ? [item] : []));
+            // Nothing lost, nothing repeated: exactly the events after the cursor, in order.
             expect(events.map((item) => item.sequence)).toEqual(
-              stored.filter((item) => item.sequence > cursor).map((item) => item.sequence),
+              Array.from({ length: head - cursor }, (_, index) => cursor + index + 1),
             );
             expect(replay.at(-1)?.kind).toBe("synchronized");
           }
           // What a client held at any cursor, plus the replay after it, is the object's projection.
+          const all = (yield* store.events(0)).map((stored) => stored.event);
           for (let cursor = 1; cursor <= head; cursor++) {
             const replay = yield* replayFrom(engine, cursor);
             const tail = replay.flatMap((item) => (item.kind === "event" ? [item.event] : []));
-            expect(
-              applyEvents(null, [
-                ...stored.filter((item) => item.sequence <= cursor).map((item) => item.event),
-                ...tail,
-              ]),
-            ).toEqual(projection);
+            expect(applyEvents(null, [...all.slice(0, cursor), ...tail])).toEqual(projection);
           }
         }),
       );

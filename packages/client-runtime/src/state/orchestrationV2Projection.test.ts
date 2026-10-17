@@ -5,7 +5,6 @@ import {
   type OrchestrationV2Run,
   type OrchestrationV2ThreadProjection,
   type OrchestrationV2TurnItem,
-  EventId,
   MessageId,
   ProjectId,
   ProviderInstanceId,
@@ -107,29 +106,6 @@ const emptyProjection = {
 } as OrchestrationV2ThreadProjection;
 
 describe("applyOrchestrationV2ProjectionEvent", () => {
-  it("rebuilds the same item order from latest-state history as from every live update", () => {
-    const first = commandItem("first", "partial", 1);
-    const second = commandItem("second", "complete", 2);
-    const final = commandItem("first", "complete", 1);
-    const replay = (items: ReadonlyArray<OrchestrationV2TurnItem>) =>
-      items.reduce(
-        (projection, payload) =>
-          applyOrchestrationV2ProjectionEvent(projection, {
-            id: EventId.make(`item-event:${payload.id}`),
-            type: "turn-item.updated",
-            threadId,
-            occurredAt: now,
-            payload,
-          }),
-        { ...emptyProjection, runs: [run] } as OrchestrationV2ThreadProjection | null,
-      );
-    const live = replay([first, second, final]);
-    const history = replay([second, final]);
-    expect(history).toEqual(live);
-    expect(history?.turnItems.map((item) => item.id)).toEqual([first.id, second.id]);
-    expect(history?.visibleTurnItems.map((row) => row.item.id)).toEqual([first.id, second.id]);
-  });
-
   it("applies a compact PR sync without replacing other links or thread metadata", () => {
     const link = (number: number): ThreadPullRequestLink => ({
       host: "github.com",

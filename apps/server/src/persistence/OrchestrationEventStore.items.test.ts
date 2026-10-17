@@ -58,10 +58,16 @@ it.effect("retains one complete canonical item after 100 streamed updates with f
       emitted.push(stored);
     }
     const rows = yield* sql<{ count: number; bytes: number }>`
-      SELECT COUNT(*) AS count, SUM(length(payload_json)) AS bytes FROM orchestration_events
-      WHERE event_type = 'turn-item.updated'
+      SELECT COUNT(*) AS count, SUM(length(payload_json)) AS bytes FROM signalbox_turn_item_state
     `;
     assert.equal(rows[0]?.count, 1);
+    assert.deepEqual(yield* sql`SELECT COUNT(*) AS count FROM orchestration_events`, [
+      { count: 100 },
+    ]);
+    assert.deepEqual(
+      yield* sql`SELECT json_extract(payload_json, '$.output') AS output FROM signalbox_turn_item_state`,
+      [{ output: "output line\n".repeat(100) }],
+    );
     assert.isBelow(rows[0]!.bytes, 2500);
     assert.equal(new Set(emitted.map((stored) => stored.sequence)).size, 100);
     const last = emitted[99]!;
@@ -70,7 +76,10 @@ it.effect("retains one complete canonical item after 100 streamed updates with f
       const replay = yield* store
         .readAgentEvents({ threadId, afterSequence: cursor })
         .pipe(Stream.runCollect);
-      assert.deepEqual(replay, cursor === last.sequence ? [] : [last]);
+      assert.deepEqual(
+        replay,
+        emitted.filter((entry) => entry.sequence > cursor),
+      );
     }
   }).pipe(Effect.provide(Layer.fresh(testLayer))),
 );
@@ -89,21 +98,21 @@ it.effect("keeps distinct items and their original ordinals across interleaved u
       events: [update(0, "first", 1), detached, update(0, "second", 2), update(99, "first", 1)],
     });
     const replay = yield* store.readAgentEvents({ threadId }).pipe(Stream.runCollect);
-    assert.lengthOf(replay, 3);
+    assert.lengthOf(replay, 4);
     assert.deepEqual(
       replay.map((stored) => stored.event),
-      [detached, update(0, "second", 2), update(99, "first", 1)],
+      [update(0, "first", 1), detached, update(0, "second", 2), update(99, "first", 1)],
     );
     assert.deepEqual(
       yield* store
         .readAgentEvents({ threadId, afterSequence: 2, throughSequence: 3 })
         .pipe(Stream.runCollect),
-      [replay[1]],
+      [replay[2]],
     );
   }).pipe(Effect.provide(Layer.fresh(testLayer))),
 );
 
-it.effect("rolls replacement back atomically and keeps the prior cursor and complete payload", () =>
+it.effect("rolls dual writes back atomically and keeps the prior cursor and complete payload", () =>
   Effect.gen(function* () {
     const store = yield* OrchestrationEventStore.OrchestrationEventStore;
     const sql = yield* SqlClient.SqlClient;
@@ -115,7 +124,10 @@ it.effect("rolls replacement back atomically and keeps the prior cursor and comp
     assert.equal(attempt._tag, "Failure");
     assert.deepEqual(yield* store.readAgentEvents().pipe(Stream.runCollect), initial);
     const final = yield* store.appendAgentEvents({ events: [update(99)] });
-    assert.deepEqual(yield* store.readAgentEvents().pipe(Stream.runCollect), final);
+    assert.deepEqual(yield* store.readAgentEvents().pipe(Stream.runCollect), [
+      ...initial,
+      ...final,
+    ]);
     assert.isAbove(final[0]!.sequence, initial[0]!.sequence);
   }).pipe(Effect.provide(Layer.fresh(testLayer))),
 );

@@ -20,9 +20,10 @@ import type { SqlError } from "effect/sql/SqlError";
 
 import * as Migrations from "../storage/migrations.ts";
 import {
+  migrateCurrentItemExpansion,
   migrateCurrentItemHistory,
-  normalizeCurrentItemHistory,
-  retainCurrentItem,
+  backfillCurrentItemState,
+  recordCurrentItemState,
 } from "./currentItemHistory.ts";
 import { migrateDiagnostics } from "./diagnostics/DiagnosticsStore.ts";
 import { migrateBrowsing } from "./browsing/browsingTables.ts";
@@ -142,12 +143,6 @@ export class ThreadStore extends Context.Service<
     readonly owner: Effect.Effect<ThreadOwner | null, SqlError>;
     /** Events after `afterSequence` in order, at most `limit` of them when given. */
     readonly events: (
-      afterSequence: number,
-      limit?: number,
-    ) => Effect.Effect<ReadonlyArray<StoredEvent>, SqlError>;
-    readonly head: Effect.Effect<number, SqlError>;
-    /** Canonical events plus pending item transitions needed by automations. */
-    readonly eventsForDelivery: (
       afterSequence: number,
       limit?: number,
     ) => Effect.Effect<ReadonlyArray<StoredEvent>, SqlError>;
@@ -320,6 +315,7 @@ const migrations = Migrator.fromRecord({
   // The thread's status note and the runtime's cursor through ended runs (#670, `statusLine/`).
   "0011_status_note": migrateStatusNote,
   "0012_current_item_history": migrateCurrentItemHistory,
+  "0013_current_item_expansion": migrateCurrentItemExpansion,
 });
 
 /** Applies every migration not recorded yet (`storage/migrations.ts`). Never edit or rename a merged one. */
@@ -446,21 +442,6 @@ const make = Effect.gen(function* () {
       Effect.map((rows) => decodeEventRows(rows).map(toStoredEvent)),
     );
 
-  const head: ThreadStore["Service"]["head"] = sql<{ sequence: number }>`
-    SELECT sequence FROM event_sequence WHERE id = 1
-  `.pipe(Effect.map((rows) => rows[0]?.sequence ?? 0));
-
-  const eventsForDelivery: ThreadStore["Service"]["eventsForDelivery"] = (
-    afterSequence,
-    limit = -1,
-  ) =>
-    sql`SELECT sequence, format, event FROM events WHERE sequence > ${afterSequence}
-      UNION ALL
-      SELECT sequence, format, event FROM item_event_outbox WHERE sequence > ${afterSequence}
-      ORDER BY sequence LIMIT ${limit}`.pipe(
-      Effect.map((rows) => decodeEventRows(rows).map(toStoredEvent)),
-    );
-
   const receipt: ThreadStore["Service"]["receipt"] = (commandId) =>
     sql`SELECT status, result_sequence, message FROM receipts WHERE command_id = ${commandId}`.pipe(
       Effect.map((rows): CommandReceipt | null => {
@@ -494,12 +475,12 @@ const make = Effect.gen(function* () {
     input,
   ) {
     const now = yield* Clock.currentTimeMillis;
-    let sequence = Math.max(input.head, yield* head);
+    let sequence = input.head;
     for (const event of input.events) {
       sequence += 1;
       yield* sql`INSERT INTO events (sequence, command_id, format, event)
           VALUES (${sequence}, ${input.command?.id ?? null}, ${EVENT_FORMAT}, ${encodeEvent(event)})`;
-      yield* retainCurrentItem(sequence, event).pipe(
+      yield* recordCurrentItemState(sequence, event).pipe(
         Effect.provideService(SqlClient.SqlClient, sql),
       );
     }
@@ -564,12 +545,9 @@ const make = Effect.gen(function* () {
     );
 
   const acknowledgeEvents: ThreadStore["Service"]["acknowledgeEvents"] = (through) =>
-    sql.withTransaction(
-      Effect.gen(function* () {
-        yield* sql`INSERT INTO event_outbox (id, delivered) VALUES (1, ${through})
-        ON CONFLICT (id) DO UPDATE SET delivered = MAX(delivered, excluded.delivered)`;
-        yield* sql`DELETE FROM item_event_outbox WHERE sequence <= ${through}`;
-      }),
+    sql`INSERT INTO event_outbox (id, delivered) VALUES (1, ${through})
+      ON CONFLICT (id) DO UPDATE SET delivered = MAX(delivered, excluded.delivered)`.pipe(
+      Effect.asVoid,
     );
 
   const monitors: ThreadStore["Service"]["monitors"] =
@@ -600,14 +578,12 @@ const make = Effect.gen(function* () {
   return ThreadStore.of({
     initialized,
     initialize: migrate.pipe(
-      Effect.andThen(normalizeCurrentItemHistory),
+      Effect.andThen(backfillCurrentItemState),
       Effect.provideService(SqlClient.SqlClient, sql),
       Effect.asVoid,
     ),
     owner,
     events,
-    head,
-    eventsForDelivery,
     receipt,
     commit,
     recordRejection,

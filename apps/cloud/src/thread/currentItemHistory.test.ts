@@ -52,6 +52,7 @@ const todoId = TurnItemId.make("todo-current-item");
 const directories: Array<string> = [];
 const EventJson = Schema.fromJsonString(OrchestrationV2DomainEventJson);
 const encodeEvent = Schema.encodeSync(EventJson);
+const decodeEvent = Schema.decodeUnknownSync(EventJson);
 afterEach(() => {
   for (const directory of directories.splice(0)) NodeFS.rmSync(directory, { recursive: true });
 });
@@ -297,8 +298,8 @@ describe("current cloud item history", () => {
               AND json_extract(event, '$.payload.id') = ${toolId}
           `;
             const [toolStorage] = toolRows;
-            expect(toolStorage?.count).toBe(1);
-            expect(toolStorage?.bytes).toBeLessThan(finalOutput.length * 2);
+            expect(toolStorage?.count).toBe(100);
+            expect(toolStorage?.bytes).toBeGreaterThan(finalOutput.length);
 
             const secondRows = yield* sql<{ readonly count: number }>`
             SELECT COUNT(*) AS count FROM events
@@ -307,14 +308,33 @@ describe("current cloud item history", () => {
           `;
             expect(secondRows[0]?.count).toBe(1);
 
+            const canonical = yield* sql<{
+              readonly sequence: number;
+              readonly first_sequence: number;
+              readonly ordinal: number;
+              readonly event: string;
+            }>`
+              SELECT sequence, first_sequence, ordinal, event FROM signalbox_turn_item_state
+              WHERE item_id = ${toolId}
+            `;
+            expect(canonical).toHaveLength(1);
+            expect(canonical[0]?.sequence).toBe(headBefore + 101);
+            expect(canonical[0]?.first_sequence).toBe(headBefore + 1);
+            expect(canonical[0]?.ordinal).toBe(100);
+            expect(commandOutput(decodeEvent(canonical[0]?.event))).toBe(finalOutput);
+            expect(
+              yield* sql`SELECT item_id FROM signalbox_turn_item_state
+                WHERE item_id IN (${toolId}, ${secondToolId}) ORDER BY first_sequence`,
+            ).toEqual([{ item_id: toolId }, { item_id: secondToolId }]);
+
             const current = yield* store.events(0);
-            const saved = current.find(
+            const saved = current.findLast(
               (row) => row.event.type === "turn-item.updated" && row.event.payload.id === toolId,
             );
             expect(saved?.event.type).toBe("turn-item.updated");
             expect(commandOutput(saved?.event)).toBe(finalOutput);
 
-            const head = yield* store.head;
+            const head = current.at(-1)?.sequence ?? 0;
             expect(head).toBe(headBefore + 101);
             const rebuilt = applyEvents(
               null,
@@ -326,23 +346,23 @@ describe("current cloud item history", () => {
             expect(rebuiltTool?.type === "command_execution" ? rebuiltTool.output : null).toBe(
               finalOutput,
             );
-            expect(rebuilt?.turnItems.map((item) => item.ordinal)).toEqual(
+            expect(
               rebuilt?.turnItems
-                .map((item) => item.ordinal)
-                .toSorted((left, right) => left - right),
-            );
+                .filter((item) => item.id === toolId || item.id === secondToolId)
+                .map((item) => item.id),
+            ).toEqual([toolId, secondToolId]);
 
             const beforeUpdates = yield* replayFrom(engine, headBefore);
             const betweenUpdates = yield* replayFrom(engine, headBefore + 50);
             const afterUpdates = yield* replayFrom(engine, head);
             expect(
               eventsOf(beforeUpdates).filter((event) => event.type === "turn-item.updated"),
-            ).toHaveLength(2);
+            ).toHaveLength(101);
             const betweenItems = eventsOf(betweenUpdates).filter(
               (event) => event.type === "turn-item.updated",
             );
-            expect(betweenItems).toHaveLength(1);
-            expect(commandOutput(betweenItems[0])).toBe(finalOutput);
+            expect(betweenItems).toHaveLength(51);
+            expect(commandOutput(betweenItems.at(-1))).toBe(finalOutput);
             expect(eventsOf(afterUpdates)).toEqual([]);
             expect(afterUpdates.at(-1)?.kind).toBe("synchronized");
 
@@ -354,7 +374,7 @@ describe("current cloud item history", () => {
         const afterRestart = yield* withObject(filename, user.users, ({ engine, store }) =>
           Effect.gen(function* () {
             const snapshot = yield* engine.snapshot(owner);
-            const storedHead = yield* store.head;
+            const storedHead = (yield* store.events(0)).at(-1)?.sequence ?? 0;
             const current = yield* store.events(0);
             return {
               snapshot,
@@ -382,7 +402,8 @@ describe("current cloud item history", () => {
       return withObject(filename, user.users, ({ engine, store, deliver }) =>
         Effect.gen(function* () {
           const created = yield* launch(engine);
-          yield* engine.acknowledgeEvents(yield* store.head);
+          const initialHead = (yield* store.events(0)).at(-1)?.sequence ?? 0;
+          yield* engine.acknowledgeEvents(initialHead);
           const runId = runIdOf(created.projection);
 
           yield* applyItem(engine, (now) =>
@@ -409,13 +430,13 @@ describe("current cloud item history", () => {
             deliveredToolEvents.map(({ event }) =>
               event.type === "turn-item.updated" ? event.payload.status : null,
             ),
-          ).toEqual(["running", "completed"]);
+          ).toEqual(["running", "completed", "completed"]);
           expect(commandOutput(deliveredToolEvents.at(-1)?.event)).toBe(
             "complete output after retry",
           );
           expect(yield* engine.hasPendingEvents).toBe(false);
 
-          const afterAck = yield* store.head;
+          const afterAck = (yield* store.events(0)).at(-1)?.sequence ?? 0;
           yield* applyItem(engine, (now) =>
             commandItem(now, runId, toolId, 100, "completed", "output after ack"),
           );
@@ -453,39 +474,29 @@ describe("current cloud item history", () => {
           yield* engine.acknowledgeEvents(todoHead);
           expect(yield* engine.pendingEvents(50)).toBeNull();
 
-          // The delivery cursor is a high-water mark, independent of the smaller canonical history.
-          expect(yield* store.eventsForDelivery(todoHead)).toEqual([]);
+          // The full history stays available to the original automation reader.
+          expect(yield* store.events(todoHead)).toEqual([]);
         }),
       );
     },
   );
 
   it.effect(
-    "resumes legacy item normalization after the first page commits and the object restarts",
+    "resumes the additive backfill after a committed page without changing legacy history",
     () => {
       const filename = freshDatabase();
       const user = makeOwner();
       return Effect.gen(function* () {
-        const { head, finalOutput } = yield* withObject(
+        const { head, finalOutput, legacyLog } = yield* withObject(
           filename,
           user.users,
           ({ engine, store, sql }) =>
             Effect.gen(function* () {
               const created = yield* launch(engine);
               const runId = runIdOf(created.projection);
-              const head = yield* store.head;
+              const head = (yield* store.events(0)).at(-1)?.sequence ?? 0;
               expect(head).toBeLessThan(99);
               yield* engine.acknowledgeEvents(head);
-              yield* sql`DROP TRIGGER events_high_water`;
-              for (const table of [
-                "current_turn_items",
-                "item_event_outbox",
-                "event_sequence",
-                "item_history_normalization",
-              ]) {
-                yield* sql`DROP TABLE ${sql(table)}`;
-              }
-              yield* sql`DELETE FROM effect_sql_migrations WHERE migration_id = 12 AND name = 'current_item_history'`;
 
               const now = yield* DateTime.now;
               const finalOutput = "legacy final output\n".repeat(500);
@@ -502,19 +513,49 @@ describe("current cloud item history", () => {
                         index === 204 ? finalOutput : `partial:${index}`,
                       );
                 yield* sql`INSERT INTO events (sequence, command_id, format, event)
-                VALUES (${head + index + 1}, NULL, 1, ${encodeEvent(event)})`;
+                  VALUES (${head + index + 1}, NULL, 1, ${encodeEvent(event)})`;
               }
+              const legacyLog = yield* sql<{
+                readonly sequence: number;
+                readonly format: number;
+                readonly event: string;
+              }>`SELECT sequence, format, event FROM events ORDER BY sequence`;
+
+              // Model a preview that recorded the old 0012 but has not applied 0013.
+              yield* sql`DROP TABLE signalbox_turn_item_state`;
+              yield* sql`DROP TABLE signalbox_turn_item_backfill`;
+              yield* sql`DELETE FROM effect_sql_migrations
+                WHERE migration_id = 13 AND name = 'current_item_expansion'`;
+              yield* sql`CREATE TABLE current_turn_items (
+                item_id TEXT PRIMARY KEY, first_sequence INTEGER NOT NULL,
+                sequence INTEGER NOT NULL, ordinal INTEGER NOT NULL
+              )`;
+              yield* sql`CREATE TABLE item_event_outbox (
+                event_key TEXT PRIMARY KEY, sequence INTEGER NOT NULL UNIQUE,
+                format INTEGER NOT NULL, event TEXT NOT NULL
+              )`;
+              yield* sql`CREATE TABLE event_sequence (
+                id INTEGER PRIMARY KEY CHECK (id = 1), sequence INTEGER NOT NULL
+              )`;
+              yield* sql`INSERT INTO event_sequence SELECT 1, COALESCE(MAX(sequence), 0) FROM events`;
+              yield* sql`CREATE TRIGGER events_high_water AFTER INSERT ON events BEGIN
+                UPDATE event_sequence SET sequence = MAX(sequence, NEW.sequence) WHERE id = 1;
+              END`;
+              yield* sql`CREATE TABLE item_history_normalization (
+                id INTEGER PRIMARY KEY CHECK (id = 1), cursor INTEGER NOT NULL, done INTEGER NOT NULL
+              )`;
+              yield* sql`INSERT INTO item_history_normalization VALUES (1, 0, 0)`;
 
               const committed = yield* Deferred.make<void>();
-              // Observe the durable page outside the transaction, then suspend before the next page.
+              // Observe after the page transaction commits, then interrupt before page two.
               const withTransaction: SqlClient.SqlClient["withTransaction"] = (effect) =>
                 sql.withTransaction(effect).pipe(
                   Effect.tap(() =>
                     Effect.gen(function* () {
-                      const [state] = yield* sql<{ cursor: number; done: number }>`
-                  SELECT cursor, done FROM item_history_normalization WHERE id = 1
-                `;
-                      if (state?.cursor === 100 && state.done === 0) {
+                      const [state] = yield* sql<{ cursor: number }>`
+                        SELECT cursor FROM signalbox_turn_item_backfill WHERE id = 1
+                      `;
+                      if (state?.cursor === 100) {
                         yield* Deferred.succeed(committed, undefined);
                         yield* Effect.never;
                       }
@@ -525,7 +566,7 @@ describe("current cloud item history", () => {
                 get: (target, key, receiver) =>
                   key === "withTransaction" ? withTransaction : Reflect.get(target, key, receiver),
               });
-              const normalizing = yield* Effect.gen(function* () {
+              const backfilling = yield* Effect.gen(function* () {
                 const freshStore = yield* ThreadStore.ThreadStore;
                 yield* freshStore.initialize;
               }).pipe(
@@ -537,59 +578,100 @@ describe("current cloud item history", () => {
                 Effect.forkChild,
               );
               yield* Deferred.await(committed);
-              yield* Fiber.interrupt(normalizing);
-              expect(yield* sql`SELECT cursor, done FROM item_history_normalization`).toEqual([
-                { cursor: 100, done: 0 },
+              yield* Fiber.interrupt(backfilling);
+
+              expect(yield* sql`SELECT cursor FROM signalbox_turn_item_backfill`).toEqual([
+                { cursor: 100 },
               ]);
               expect(
-                yield* sql`SELECT first_sequence, sequence, ordinal FROM current_turn_items WHERE item_id = ${toolId}`,
-              ).toEqual([{ first_sequence: head + 1, sequence: 100, ordinal: 100 }]);
-              expect(
-                yield* sql`SELECT COUNT(*) AS count FROM events WHERE json_extract(event, '$.payload.id') = ${toolId}`,
-              ).toEqual([{ count: 1 + head + 205 - 100 }]);
-              expect(yield* sql`SELECT COUNT(*) AS count FROM item_event_outbox`).toEqual([
-                { count: 0 },
+                yield* sql`SELECT first_sequence, sequence, ordinal, event
+                  FROM signalbox_turn_item_state WHERE item_id = ${toolId}`,
+              ).toEqual([
+                {
+                  first_sequence: head + 1,
+                  sequence: 100,
+                  ordinal: 100,
+                  event: expect.any(String),
+                },
               ]);
-              expect(yield* store.head).toBe(head + 205);
+              const [partial] = yield* sql<{ readonly event: string }>`
+                SELECT event FROM signalbox_turn_item_state WHERE item_id = ${toolId}
+              `;
+              expect(commandOutput(decodeEvent(partial?.event))).toBe(`partial:${99 - head}`);
+              expect(
+                yield* sql`SELECT sequence, format, event FROM events ORDER BY sequence`,
+              ).toEqual(legacyLog);
+              expect(
+                yield* sql`SELECT COUNT(*) AS count FROM events
+                  WHERE json_extract(event, '$.payload.id') = ${toolId}`,
+              ).toEqual([{ count: 204 }]);
               expect(yield* store.eventsDelivered).toBe(head);
-              return { head, finalOutput };
+              return { head, finalOutput, legacyLog };
             }),
         );
 
-        // withObject has closed the first database connection and all services.
+        // Reopening the same SQLite file resumes from the durable cursor.
         yield* withObject(filename, user.users, ({ engine, store, sql }) =>
           Effect.gen(function* () {
-            expect(yield* sql`SELECT done FROM item_history_normalization`).toEqual([{ done: 1 }]);
-            const rows = yield* store.events(head);
-            expect(rows).toHaveLength(2);
-            expect(rows.map((row) => row.sequence)).toEqual([head + 2, head + 205]);
-            expect(commandOutput(rows[1]?.event)).toBe(finalOutput);
-            const snapshot = yield* engine.snapshot(owner);
-            const items = snapshot.projection.turnItems.filter(
-              (item) => item.id === toolId || item.id === secondToolId,
-            );
-            expect(items.map((item) => [item.id, item.ordinal])).toEqual([
-              [toolId, 100],
-              [secondToolId, 200],
+            expect(yield* sql`SELECT cursor FROM signalbox_turn_item_backfill`).toEqual([
+              { cursor: head + 205 },
             ]);
-            expect(snapshot.snapshotSequence).toBe(head + 205);
-            expect(yield* store.head).toBe(head + 205);
-            const pending = (yield* store.eventsForDelivery(head)).filter(
-              (row) => row.event.type === "turn-item.updated" && row.event.payload.id === toolId,
-            );
-            expect(pending.map((row) => row.sequence)).toEqual([head + 204, head + 205]);
+            const canonical = yield* sql<{
+              readonly item_id: string;
+              readonly first_sequence: number;
+              readonly sequence: number;
+              readonly ordinal: number;
+              readonly event: string;
+            }>`SELECT item_id, first_sequence, sequence, ordinal, event
+              FROM signalbox_turn_item_state ORDER BY first_sequence`;
             expect(
-              pending.map((row) =>
-                row.event.type === "turn-item.updated" ? row.event.payload.status : null,
-              ),
-            ).toEqual(["running", "completed"]);
-            expect(commandOutput(pending[1]?.event)).toBe(finalOutput);
-            expect(yield* store.eventsDelivered).toBe(head);
-            yield* engine.acknowledgeEvents(head + 205);
-            expect(yield* store.eventsForDelivery(head + 205)).toEqual([]);
-            expect(yield* sql`SELECT COUNT(*) AS count FROM item_event_outbox`).toEqual([
-              { count: 0 },
+              canonical
+                .filter(({ item_id }) => item_id === toolId || item_id === secondToolId)
+                .map(({ item_id, first_sequence, sequence, ordinal }) => [
+                  item_id,
+                  first_sequence,
+                  sequence,
+                  ordinal,
+                ]),
+            ).toEqual([
+              [toolId, head + 1, head + 205, 100],
+              [secondToolId, head + 2, head + 2, 200],
             ]);
+            const toolCanonical = canonical.find(({ item_id }) => item_id === toolId);
+            const finalEvent = decodeEvent(toolCanonical?.event);
+            expect(commandOutput(finalEvent)).toBe(finalOutput);
+            expect(
+              finalEvent.type === "turn-item.updated" ? finalEvent.payload.ordinal : null,
+            ).toBe(100);
+
+            const logAfterRestart = yield* sql<{
+              readonly sequence: number;
+              readonly format: number;
+              readonly event: string;
+            }>`SELECT sequence, format, event FROM events ORDER BY sequence`;
+            expect(logAfterRestart).toEqual(legacyLog);
+            const rows = yield* store.events(head);
+            expect(rows).toHaveLength(205);
+            expect(rows.map((row) => row.sequence)).toEqual(
+              Array.from({ length: 205 }, (_, index) => head + index + 1),
+            );
+            expect(commandOutput(rows.at(-1)?.event)).toBe(finalOutput);
+
+            const snapshot = yield* engine.snapshot(owner);
+            expect(snapshot.snapshotSequence).toBe(head + 205);
+            expect(
+              snapshot.projection.turnItems
+                .filter((item) => item.id === toolId || item.id === secondToolId)
+                .map((item) => item.id),
+            ).toEqual([toolId, secondToolId]);
+            const pending = yield* engine.pendingEvents(500);
+            expect(pending?.events).toHaveLength(205);
+            expect(pending?.events.at(-1)?.sequence).toBe(head + 205);
+            expect(commandOutput(pending?.events.at(-1)?.event)).toBe(finalOutput);
+            expect(yield* store.eventsDelivered).toBe(head);
+
+            yield* engine.acknowledgeEvents(head + 205);
+            expect(yield* engine.pendingEvents(50)).toBeNull();
             expect(yield* store.events(head)).toEqual(rows);
           }),
         );

@@ -44,7 +44,7 @@ const item = (id: string, ordinal: number) => ({
 });
 
 it.effect(
-  "resumes interrupted normalization after its first committed page with stable order and prompts",
+  "resumes additive backfill after a committed page and reconciles rollback writes without changing history",
   () =>
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
@@ -75,18 +75,19 @@ it.effect(
       }));
       yield* sql`INSERT INTO orchestration_events ${sql.insert(rows)}`;
       const before = yield* store.latestAgentSequence(threadId);
+      const originalRows = yield* sql`SELECT * FROM orchestration_events ORDER BY sequence`;
       const committed = yield* Deferred.make<void>();
       // The gate runs after withTransaction has committed and released its connection.
       const withTransaction: SqlClient.SqlClient["withTransaction"] = (effect) =>
         sql.withTransaction(effect).pipe(
           Effect.tap(() =>
             Effect.gen(function* () {
-              const [state] = yield* sql<{ phase: number; cursor: number }>`
-            SELECT phase, cursor FROM signalbox_item_history_normalization WHERE id = 1
+              const [state] = yield* sql<{ cursor: number }>`
+            SELECT cursor FROM signalbox_turn_item_backfill WHERE id = 1
           `;
-              if (state?.phase === 0 && state.cursor === 100) {
+              if (state?.cursor === 100) {
                 yield* Deferred.succeed(committed, undefined);
-                yield* Effect.never;
+                return yield* Effect.never;
               }
             }),
           ),
@@ -101,14 +102,14 @@ it.effect(
       );
       yield* Deferred.await(committed);
       yield* Fiber.interrupt(normalizing);
-      assert.deepEqual(yield* sql`SELECT phase, cursor FROM signalbox_item_history_normalization`, [
-        { phase: 0, cursor: 100 },
+      assert.deepEqual(yield* sql`SELECT cursor FROM signalbox_turn_item_backfill`, [
+        { cursor: 100 },
       ]);
       assert.deepEqual(yield* sql`SELECT COUNT(*) AS count FROM orchestration_events`, [
         { count: 205 },
       ]);
       assert.deepEqual(
-        yield* sql`SELECT first_sequence, sequence, ordinal FROM signalbox_current_turn_items ORDER BY first_sequence`,
+        yield* sql`SELECT first_sequence, sequence, ordinal FROM signalbox_turn_item_state ORDER BY first_sequence`,
         [
           { first_sequence: 1, sequence: 100, ordinal: 17 },
           { first_sequence: 2, sequence: 2, ordinal: 18 },
@@ -125,53 +126,99 @@ it.effect(
         const resumedStore = yield* OrchestrationEventStore.OrchestrationEventStore;
         return yield* resumedStore.readAgentEvents({ threadId }).pipe(Stream.runCollect);
       }).pipe(Effect.provide(Layer.fresh(OrchestrationEventStore.layer)));
-      assert.lengthOf(replay, 2);
+      assert.lengthOf(replay, 205);
       assert.equal(yield* store.latestAgentSequence(threadId), before);
       assert.deepEqual(
-        replay.map((stored) => stored.sequence),
-        [2, 205],
+        yield* sql`SELECT * FROM orchestration_events ORDER BY sequence`,
+        originalRows,
       );
-      for (const stored of replay) {
-        assert.equal(stored.event.type, "turn-item.updated");
-        if (stored.event.type !== "turn-item.updated" || stored.event.payload.type !== "subagent")
-          return;
-        assert.equal(stored.event.payload.prompt, prompt);
-        assert.equal(stored.event.payload.ordinal, stored.sequence === 2 ? 18 : 17);
-        assert.equal(
-          stored.event.payload.progress,
-          stored.sequence === 2 ? "starting" : "progress:204",
-        );
-      }
-      const [stats] = yield* sql<{ rows: number; bytes: number; refs: number }>`
-      SELECT COUNT(*) AS rows, SUM(length(payload_json)) AS bytes,
-        SUM(json_type(payload_json, '$.promptSequence') IS NOT NULL) AS refs
-      FROM orchestration_events
-    `;
-      assert.equal(stats?.rows, 2);
-      assert.equal(stats?.refs, 0);
-      assert.isBelow(stats!.bytes, prompt.length * 2 + 2000);
+      const expected = [
+        {
+          item_id: "first",
+          first_sequence: 1,
+          sequence: 205,
+          ordinal: 17,
+          prompt,
+          progress: "progress:204",
+        },
+        {
+          item_id: "second",
+          first_sequence: 2,
+          sequence: 2,
+          ordinal: 18,
+          prompt,
+          progress: "starting",
+        },
+      ];
+      const currentItems = sql`
+        SELECT item_id, first_sequence, sequence, ordinal,
+          json_extract(payload_json, '$.prompt') AS prompt,
+          json_extract(payload_json, '$.progress') AS progress
+        FROM signalbox_turn_item_state ORDER BY first_sequence
+      `;
+      assert.deepEqual(yield* currentItems, expected);
+      assert.deepEqual(yield* sql`SELECT COUNT(*) AS count FROM signalbox_turn_item_state`, [
+        { count: 2 },
+      ]);
       assert.deepEqual(
-        yield* sql`SELECT first_sequence, ordinal FROM signalbox_current_turn_items ORDER BY first_sequence`,
-        [
-          { first_sequence: 1, ordinal: 17 },
-          { first_sequence: 2, ordinal: 18 },
-        ],
+        yield* sql`SELECT COUNT(*) AS refs FROM signalbox_turn_item_state
+        WHERE json_type(payload_json, '$.promptSequence') IS NOT NULL`,
+        [{ refs: 0 }],
       );
-      yield* initializeCurrentTurnItemHistory;
-      const restarted = yield* Effect.gen(function* () {
-        const fresh = yield* OrchestrationEventStore.OrchestrationEventStore;
-        return yield* fresh.readAgentEvents().pipe(Stream.runCollect);
+
+      // This is the unchanged old writer's SQL shape: only orchestration_events,
+      // including its promptSequence anchor. It knows nothing about the side table.
+      yield* sql`INSERT INTO orchestration_events ${sql.insert({
+        ...rows[204]!,
+        event_id: "rollback-writer",
+        stream_version: 205,
+        payload_json: JSON.stringify({
+          ...item("first", 17),
+          prompt: "",
+          promptSequence: 1,
+          progress: "rollback final output",
+        }),
+      })}`;
+      assert.deepEqual(yield* currentItems, expected);
+      assert.equal(yield* store.latestAgentSequence(threadId), 206);
+      const rollbackRows = yield* sql`SELECT * FROM orchestration_events ORDER BY sequence`;
+      yield* Effect.gen(function* () {
+        yield* initializeCurrentTurnItemHistory;
+        const restarted = yield* OrchestrationEventStore.OrchestrationEventStore;
+        const restored = yield* restarted
+          .readAgentEvents({ afterSequence: 205 })
+          .pipe(Stream.runCollect);
+        assert.lengthOf(restored, 1);
+        const event = restored[0]!.event;
+        assert.equal(event.type, "turn-item.updated");
+        if (event.type !== "turn-item.updated" || event.payload.type !== "subagent") return;
+        assert.equal(event.payload.prompt, prompt);
+        assert.equal(event.payload.progress, "rollback final output");
       }).pipe(Effect.provide(Layer.fresh(OrchestrationEventStore.layer)));
-      assert.deepEqual(restarted, replay);
-      const last = replay[1]!;
-      const [next] = yield* store.appendAgentEvents({
-        events: [{ ...last.event, id: EventId.make("after-upgrade") }],
-      });
-      assert.isAbove(next!.sequence, before);
-      assert.lengthOf(yield* store.readAgentEvents().pipe(Stream.runCollect), 2);
+      assert.deepEqual(yield* currentItems, [
+        { ...expected[0]!, sequence: 206, progress: "rollback final output" },
+        expected[1]!,
+      ]);
       assert.deepEqual(
-        yield* store.readAgentEvents({ afterSequence: 204 }).pipe(Stream.runCollect),
-        [next],
+        yield* sql`SELECT * FROM orchestration_events ORDER BY sequence`,
+        rollbackRows,
+      );
+      assert.deepEqual(yield* sql`SELECT cursor FROM signalbox_turn_item_backfill`, [
+        { cursor: 206 },
+      ]);
+      yield* initializeCurrentTurnItemHistory;
+      assert.deepEqual(
+        yield* sql`SELECT * FROM orchestration_events ORDER BY sequence`,
+        rollbackRows,
+      );
+      const last = replay.at(-1)!;
+      const [next] = yield* store.appendAgentEvents({
+        events: [{ ...last.event, id: EventId.make("after-resume") }],
+      });
+      assert.equal(next!.sequence, 207);
+      assert.deepEqual(
+        yield* sql`SELECT sequence FROM signalbox_turn_item_state WHERE item_id = 'first'`,
+        [{ sequence: 207 }],
       );
     }).pipe(Effect.provide(Layer.fresh(testLayer))),
 );

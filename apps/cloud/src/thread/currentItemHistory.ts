@@ -1,4 +1,3 @@
-import { itemCandidates } from "@signalbox/automations/events/turnItems";
 import {
   OrchestrationV2DomainEventJson,
   type OrchestrationV2DomainEvent,
@@ -11,122 +10,155 @@ const EventJson = Schema.fromJsonString(OrchestrationV2DomainEventJson);
 const decode = Schema.decodeUnknownSync(EventJson);
 const encode = Schema.encodeSync(EventJson);
 
-export const migrateCurrentItemHistory = Effect.gen(function* () {
+const createCurrentItemExpansion = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
-  yield* sql`CREATE TABLE current_turn_items (
-    item_id TEXT PRIMARY KEY, first_sequence INTEGER NOT NULL,
-    sequence INTEGER NOT NULL, ordinal INTEGER NOT NULL
+  yield* sql`CREATE TABLE IF NOT EXISTS signalbox_turn_item_state (
+    item_id TEXT PRIMARY KEY,
+    first_sequence INTEGER NOT NULL,
+    sequence INTEGER NOT NULL,
+    ordinal INTEGER NOT NULL,
+    format INTEGER NOT NULL,
+    event TEXT NOT NULL
   )`;
-  yield* sql`CREATE TABLE item_event_outbox (
-    event_key TEXT PRIMARY KEY, sequence INTEGER NOT NULL UNIQUE,
-    format INTEGER NOT NULL, event TEXT NOT NULL
+  yield* sql`CREATE TABLE IF NOT EXISTS signalbox_turn_item_backfill (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    cursor INTEGER NOT NULL
   )`;
-  yield* sql`CREATE TABLE event_sequence (
-    id INTEGER PRIMARY KEY CHECK (id = 1), sequence INTEGER NOT NULL
-  )`;
-  yield* sql`INSERT INTO event_sequence SELECT 1, COALESCE(MAX(sequence), 0) FROM events`;
-  yield* sql`CREATE TRIGGER events_high_water AFTER INSERT ON events BEGIN
-    UPDATE event_sequence SET sequence = MAX(sequence, NEW.sequence) WHERE id = 1;
-  END`;
-  yield* sql`CREATE TABLE item_history_normalization (
-    id INTEGER PRIMARY KEY CHECK (id = 1), cursor INTEGER NOT NULL, done INTEGER NOT NULL
-  )`;
-  yield* sql`INSERT INTO item_history_normalization VALUES (1, 0, 0)`;
+  yield* sql`INSERT OR IGNORE INTO signalbox_turn_item_backfill (id, cursor) VALUES (1, 0)`;
 });
 
-function sameTodos(before: OrchestrationV2DomainEvent, after: OrchestrationV2DomainEvent) {
-  if (
-    before.type !== "turn-item.updated" ||
-    after.type !== "turn-item.updated" ||
-    before.payload.type !== "todo_list" ||
-    after.payload.type !== "todo_list"
-  )
-    return false;
-  return (
-    JSON.stringify([before.payload.steps, before.payload.explanation]) ===
-    JSON.stringify([after.payload.steps, after.payload.explanation])
-  );
-}
+// Migration 0012 was used in preview with a destructive implementation. Keep
+// its new definition additive, and repeat the schema in 0013 so previews that
+// already recorded the old 0012 still receive the expansion tables.
+export const migrateCurrentItemHistory = createCurrentItemExpansion;
+export const migrateCurrentItemExpansion = createCurrentItemExpansion;
 
-// Only pending semantic occurrences outlive replacement. Stable automation ids
-// bound tool starts/completions to one row each. Distinct todo changes are queued
-// until acknowledged; repeating their timestamp does not create another event.
-export const retainCurrentItem = Effect.fnUntraced(function* (
+const withStableOrdinal = (
+  event: Extract<OrchestrationV2DomainEvent, { readonly type: "turn-item.updated" }>,
+  ordinal: number,
+): OrchestrationV2DomainEvent =>
+  event.payload.ordinal === ordinal ? event : { ...event, payload: { ...event.payload, ordinal } };
+
+const storeCurrentItem = (
+  sequence: number,
+  firstSequence: number,
+  ordinal: number,
+  event: Extract<OrchestrationV2DomainEvent, { readonly type: "turn-item.updated" }>,
+) => {
+  const stableEvent = withStableOrdinal(event, ordinal);
+  return Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    yield* sql`INSERT INTO signalbox_turn_item_state
+      (item_id, first_sequence, sequence, ordinal, format, event)
+      VALUES (${event.payload.id}, ${firstSequence}, ${sequence}, ${ordinal}, 1,
+        ${encode(stableEvent)})
+      ON CONFLICT (item_id) DO UPDATE SET
+        first_sequence = MIN(signalbox_turn_item_state.first_sequence, excluded.first_sequence),
+        ordinal = CASE
+          WHEN excluded.first_sequence < signalbox_turn_item_state.first_sequence
+          THEN excluded.ordinal ELSE signalbox_turn_item_state.ordinal END,
+        sequence = CASE
+          WHEN excluded.sequence > signalbox_turn_item_state.sequence
+          THEN excluded.sequence ELSE signalbox_turn_item_state.sequence END,
+        format = CASE
+          WHEN excluded.sequence > signalbox_turn_item_state.sequence
+          THEN excluded.format ELSE signalbox_turn_item_state.format END,
+        event = CASE
+          WHEN excluded.sequence > signalbox_turn_item_state.sequence THEN
+            json_set(excluded.event, '$.payload.ordinal',
+              CASE
+                WHEN excluded.first_sequence < signalbox_turn_item_state.first_sequence
+                THEN excluded.ordinal ELSE signalbox_turn_item_state.ordinal END)
+          WHEN excluded.first_sequence < signalbox_turn_item_state.first_sequence THEN
+            json_set(signalbox_turn_item_state.event, '$.payload.ordinal', excluded.ordinal)
+          ELSE signalbox_turn_item_state.event END
+      WHERE excluded.sequence > signalbox_turn_item_state.sequence
+        OR excluded.first_sequence < signalbox_turn_item_state.first_sequence`;
+  });
+};
+
+/** Add a current full payload while leaving the versioned event log untouched. */
+export const recordCurrentItemState = Effect.fnUntraced(function* (
   sequence: number,
   event: OrchestrationV2DomainEvent,
 ) {
   if (event.type !== "turn-item.updated") return;
   const sql = yield* SqlClient.SqlClient;
-  const [previous] = yield* sql<{ sequence: number; ordinal: number }>`
-    SELECT sequence, ordinal FROM current_turn_items WHERE item_id = ${event.payload.id}
+  const [previous] = yield* sql<{ first_sequence: number; ordinal: number }>`
+    SELECT first_sequence, ordinal FROM signalbox_turn_item_state
+    WHERE item_id = ${event.payload.id}
   `;
-  if (previous !== undefined && previous.sequence !== sequence) {
-    const [pending] = yield* sql<{ event: string; format: number }>`
-      SELECT event, format FROM events WHERE sequence = ${previous.sequence}
-        AND sequence > (SELECT delivered FROM event_outbox WHERE id = 1)
-    `;
-    if (pending !== undefined) {
-      if (pending.format !== 1) return yield* Effect.die(new Error("Unknown item event format."));
-      const prior = decode(pending.event);
-      if (prior.type === "turn-item.updated" && !sameTodos(prior, event)) {
-        const currentIds = new Set(
-          itemCandidates(event.id, event.payload).map((candidate) => candidate.id),
-        );
-        const candidates = itemCandidates(prior.id, prior.payload).filter(
-          (candidate) => !currentIds.has(candidate.id),
-        );
-        if (candidates.length > 0) {
-          const key = JSON.stringify(candidates.map((candidate) => candidate.id));
-          // A tool start uses its input, never its growing output. Keep the
-          // schema-valid envelope so the existing automation normalizer owns it.
-          let delivery = prior;
-          if (prior.payload.type === "command_execution" && prior.payload.status === "running") {
-            const { output: _output, ...payload } = prior.payload;
-            delivery = { ...prior, payload };
-          }
-          yield* sql`INSERT OR IGNORE INTO item_event_outbox (event_key, sequence, format, event)
-            VALUES (${key}, ${previous.sequence}, ${pending.format}, ${encode(delivery)})`;
-        }
-      }
-    }
-    yield* sql`DELETE FROM events WHERE sequence = ${previous.sequence}`;
-  }
-  const ordinal = previous?.ordinal ?? event.payload.ordinal;
-  yield* sql`INSERT INTO current_turn_items (item_id, first_sequence, sequence, ordinal)
-    VALUES (${event.payload.id}, ${sequence}, ${sequence}, ${ordinal})
-    ON CONFLICT (item_id) DO UPDATE SET sequence = excluded.sequence`;
-  if (ordinal !== event.payload.ordinal) {
-    yield* sql`UPDATE events SET event = json_set(event, '$.payload.ordinal', ${ordinal})
-      WHERE sequence = ${sequence}`;
-  }
+  yield* storeCurrentItem(
+    sequence,
+    previous?.first_sequence ?? sequence,
+    previous?.ordinal ?? event.payload.ordinal,
+    event,
+  );
 });
 
-// Outside the schema migration transaction: each page commits its progress and
-// can resume after eviction. Only one item's full payload is read at a time.
-export const normalizeCurrentItemHistory = Effect.gen(function* () {
+// Backfill the additive table in committed pages. Each page copies only the
+// latest full event per item; the old log remains byte-for-byte authoritative.
+export const backfillCurrentItemState = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
   while (true) {
-    const done = yield* sql.withTransaction(
+    const hasNextPage = yield* sql.withTransaction(
       Effect.gen(function* () {
-        const [state] = yield* sql<{ cursor: number; done: number }>`
-        SELECT cursor, done FROM item_history_normalization WHERE id = 1
-      `;
-        if (state === undefined || state.done === 1) return true;
+        const [state] = yield* sql<{ cursor: number }>`
+          SELECT cursor FROM signalbox_turn_item_backfill WHERE id = 1
+        `;
+        if (state === undefined) return false;
+
         const page = yield* sql<{ sequence: number }>`
-        SELECT sequence FROM events WHERE sequence > ${state.cursor} ORDER BY sequence LIMIT 100
-      `;
-        for (const row of page) {
-          const [item] = yield* sql<{ event: string }>`SELECT event FROM events
-          WHERE sequence = ${row.sequence} AND format = 1 AND json_extract(event, '$.type') = 'turn-item.updated'`;
-          if (item !== undefined) yield* retainCurrentItem(row.sequence, decode(item.event));
-          yield* Effect.yieldNow;
+          SELECT sequence FROM events
+          WHERE sequence > ${state.cursor}
+          ORDER BY sequence LIMIT 100
+        `;
+        if (page.length === 0) return false;
+
+        const firstPageSequence = page[0]!.sequence;
+        const lastPageSequence = page.at(-1)!.sequence;
+        const items = yield* sql<{
+          readonly item_id: string;
+          readonly first_sequence: number;
+          readonly first_ordinal: number;
+          readonly sequence: number;
+          readonly format: number;
+          readonly event: string;
+        }>`
+          WITH page AS (
+            SELECT sequence, format, event FROM events
+            WHERE sequence >= ${firstPageSequence} AND sequence <= ${lastPageSequence}
+          ), item_bounds AS (
+            SELECT json_extract(event, '$.payload.id') AS item_id,
+              MIN(sequence) AS first_sequence, MAX(sequence) AS sequence
+            FROM page
+            WHERE format = 1
+              AND json_extract(event, '$.type') = 'turn-item.updated'
+            GROUP BY json_extract(event, '$.payload.id')
+          )
+          SELECT item_bounds.item_id, item_bounds.first_sequence,
+            (SELECT json_extract(event, '$.payload.ordinal') FROM page
+              WHERE sequence = item_bounds.first_sequence) AS first_ordinal,
+            item_bounds.sequence, latest.format, latest.event
+          FROM item_bounds
+          JOIN events AS latest ON latest.sequence = item_bounds.sequence
+          ORDER BY item_bounds.sequence
+        `;
+
+        for (const row of items) {
+          if (row.format !== 1) continue;
+          const event = decode(row.event);
+          if (event.type === "turn-item.updated") {
+            yield* storeCurrentItem(row.sequence, row.first_sequence, row.first_ordinal, event);
+          }
         }
-        yield* sql`UPDATE item_history_normalization SET cursor = ${page.at(-1)?.sequence ?? state.cursor},
-        done = ${page.length < 100 ? 1 : 0} WHERE id = 1`;
-        return page.length < 100;
+
+        yield* sql`UPDATE signalbox_turn_item_backfill
+          SET cursor = ${lastPageSequence} WHERE id = 1`;
+        return page.length === 100;
       }),
     );
-    if (done) break;
+    if (!hasNextPage) return;
     yield* Effect.yieldNow;
   }
 });

@@ -26,25 +26,6 @@ function upsertEntity<T extends { readonly id: unknown }>(
   return next;
 }
 
-// Canonical history replays each item's latest update, which can arrive after
-// newer items. The persisted ordinal carries first appearance across replay.
-function upsertTurnItem(
-  items: ReadonlyArray<OrchestrationV2TurnItem>,
-  item: OrchestrationV2TurnItem,
-): ReadonlyArray<OrchestrationV2TurnItem> {
-  const previous = items.find((candidate) => candidate.id === item.id);
-  if (previous?.ordinal === item.ordinal) return upsertEntity(items, item);
-  const next = items.filter((candidate) => candidate.id !== item.id);
-  const index = next.findIndex(
-    (candidate) =>
-      candidate.ordinal > item.ordinal ||
-      (candidate.ordinal === item.ordinal &&
-        String(candidate.id).localeCompare(String(item.id)) > 0),
-  );
-  next.splice(index === -1 ? next.length : index, 0, item);
-  return next;
-}
-
 function removeVisibleItem(
   rows: OrchestrationV2ThreadProjection["visibleTurnItems"],
   sourceItemId: OrchestrationV2TurnItem["id"],
@@ -319,7 +300,7 @@ export function applyOrchestrationV2ProjectionEvent(
       ) {
         return projection;
       }
-      const next = { ...base, turnItems: upsertTurnItem(base.turnItems, event.payload) };
+      const next = { ...base, turnItems: upsertEntity(base.turnItems, event.payload) };
       // Only interrupt requests can change another item's visibility. Streaming
       // text/tool updates must not recheck every row against every run.
       const previous = projection.turnItems.find((item) => item.id === event.payload.id);

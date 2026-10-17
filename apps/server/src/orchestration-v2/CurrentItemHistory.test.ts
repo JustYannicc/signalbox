@@ -152,7 +152,10 @@ it.effect(
       );
       assert.deepEqual(
         yield* sql`SELECT COUNT(*) AS count FROM orchestration_events WHERE event_type = 'turn-item.updated'`,
-        [{ count: 2 }],
+        [{ count: 101 }],
       );
+      assert.deepEqual(yield* sql`SELECT COUNT(*) AS count FROM signalbox_turn_item_state`, [
+        { count: 2 },
+      ]);
     }).pipe(Effect.provide(Layer.fresh(testLayer))),
 );
