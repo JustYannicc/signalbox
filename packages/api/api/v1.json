@@ -1808,7 +1808,7 @@
       "rpc": "signalbox.collaboration.send",
       "access": "write",
       "input": "4cdaa56c",
-      "output": "0b8d8e41"
+      "output": "466d524f"
     },
     {
       "name": "threads.collaboration.status",
@@ -1822,7 +1822,7 @@
       "rpc": "signalbox.collaboration.wait",
       "access": "read",
       "input": "69203ab0",
-      "output": "eef15095"
+      "output": "cda34068"
     },
     {
       "name": "threads.commandOutput",

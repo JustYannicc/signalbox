@@ -24,7 +24,11 @@ export const collaborationFailure = (cause: {
 }) => {
   if (isFailure(cause)) return cause;
   return new OrchestratorMcpFailure({
-    code: cause._tag === "ThreadNotFoundError" ? "thread_not_found" : "orchestration_error",
+    code:
+      cause._tag === "ThreadNotFoundError" ||
+      (cause._tag === "ThreadInboxError" && "code" in cause && cause.code === "not_found")
+        ? "thread_not_found"
+        : "orchestration_error",
     message:
       cause._tag === "ThreadNotFoundError"
         ? "Thread not found."

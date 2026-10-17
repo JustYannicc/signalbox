@@ -24,10 +24,12 @@ import { compileForCloud } from "@signalbox/automation-compiler/compileForCloud"
 import { compileWorkflow } from "@signalbox/automation-compiler/compileWorkflow";
 import * as Environment from "../environment.ts";
 import { makeMemoryCloud } from "../testing.ts";
+import * as ThreadInbox from "../thread/ThreadInbox.ts";
 import { scriptedModelSelection } from "../thread/scriptedProvider.ts";
 import * as CloudRpc from "../user/rpc.ts";
 import { CloudAutomations } from "./CloudAutomations.ts";
 import { CloudCompiler } from "./cloudCompiler.ts";
+import { ownerActor } from "./cloudThreads.ts";
 
 /**
  * #434: a user's automations run with no client connected, each run a
@@ -204,6 +206,21 @@ export default workflow(async (w, event: { threadId: string }) => {
       const { cloud, rpc, thread, tool, engine } = yield* setup;
       const agent = yield* thread("thread-waiter", "Wait for another thread");
       const finished = yield* thread("thread-finished", "Already finished");
+      const finishedInbox = yield* cloud.inUser(
+        userId,
+        Effect.gen(function* () {
+          const actor = yield* ownerActor;
+          const inbox = yield* ThreadInbox.make;
+          return yield* inbox.read(actor, finished);
+        }),
+      );
+      const finishedRun = finishedInbox.runs.toSorted(
+        (left, right) => right.ordinal - left.ordinal,
+      )[0]!;
+      const lastMessage = finishedInbox.messages.findLast(
+        (message) =>
+          message.runId === finishedRun.id && message.role === "assistant" && !message.streaming,
+      )!;
 
       const wait = (yield* tool(agent, "wait_for", {
         until: "the other thread to finish",
@@ -221,8 +238,11 @@ export default workflow(async (w, event: { threadId: string }) => {
         threadId: agent,
       });
       expect(
-        projection.messages.some((message) =>
-          message.text.startsWith("You were waiting for the other thread to finish."),
+        projection.messages.some(
+          (message) =>
+            message.text.startsWith("You were waiting for the other thread to finish.") &&
+            message.text.includes(`"sequence":${finishedInbox.sequence}`) &&
+            message.text.includes(`"lastMessage":${JSON.stringify(lastMessage.text)}`),
         ),
       ).toBe(true);
     }),

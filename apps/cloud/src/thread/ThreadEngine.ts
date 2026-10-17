@@ -695,6 +695,8 @@ const make = Effect.gen(function* () {
         }
         if (
           !isProviderNativeChild(appThread) ||
+          appThread.createdBy !== "agent" ||
+          appThread.modelSelection.instanceId !== appThread.providerInstanceId ||
           appThread.lineage.parentThreadId !== input.parentThreadId ||
           input.attestation.threadId !== input.parentThreadId ||
           input.attestation.runId !== input.parentRunId ||
@@ -716,6 +718,15 @@ const make = Effect.gen(function* () {
             owner.driveId !== input.owner.driveId ||
             childProjection.thread.projectId !== appThread.projectId ||
             childProjection.thread.lineage.rootThreadId !== appThread.lineage.rootThreadId ||
+            !isProviderNativeChild(childProjection.thread) ||
+            childProjection.thread.createdBy !== "agent" ||
+            childProjection.thread.modelSelection.instanceId !==
+              appThread.modelSelection.instanceId ||
+            childProjection.thread.lineage.parentThreadId !== appThread.lineage.parentThreadId ||
+            childProjection.thread.forkedFrom?.type !== "node" ||
+            childProjection.thread.forkedFrom.nodeId !== input.attestation.id ||
+            childProjection.thread.providerInstanceId !== appThread.providerInstanceId ||
+            childProjection.thread.activeProviderThreadId !== appThread.activeProviderThreadId ||
             childProjection.runs.length > 0
           ) {
             return yield* Effect.die(

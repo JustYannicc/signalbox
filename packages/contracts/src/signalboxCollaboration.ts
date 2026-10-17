@@ -6,7 +6,7 @@ import {
   AuthOrchestrationReadScope,
   EnvironmentAuthorizationError,
 } from "./auth.ts";
-import { ThreadId } from "./baseSchemas.ts";
+import { MessageId, ThreadId } from "./baseSchemas.ts";
 import {
   OrchestratorMcpCapabilitiesResult,
   OrchestratorMcpDelegateTaskInput,
@@ -56,17 +56,21 @@ export const COLLABORATION_TOOLS = {
   t3_thread_send: {
     method: "send",
     input: OrchestratorMcpThreadSendInput,
-    output: OrchestratorMcpThreadSendResult,
+    output: Schema.Struct({ ...OrchestratorMcpThreadSendResult.fields, sequence: Schema.Number }),
     summary:
-      "Send to another cloud thread. queue waits behind its active turn; steer and auto steer when supported and otherwise queue. Reuse clientRequestId when retrying a send.",
+      "Send to another cloud thread. queue waits behind its active turn; steer and auto steer when supported and otherwise queue. Reuse clientRequestId when retrying a send. Retries return the original run and acceptance sequence with its current status and delivery state.",
     writes: { destructive: true, openWorld: true },
   },
   t3_thread_wait: {
     method: "wait",
     input: OrchestratorMcpThreadWaitInput,
-    output: OrchestratorMcpThreadWaitResult,
+    output: Schema.Struct({
+      ...OrchestratorMcpThreadWaitResult.fields,
+      sequence: Schema.Number,
+      result: Schema.NullOr(Schema.Struct({ messageId: MessageId, text: Schema.String })),
+    }),
     summary:
-      "Wait for a cloud thread's run to finish or ask a question. timeoutMs only bounds this wait and never stops the run. The result names the run waited on.",
+      "Wait for a cloud thread's run to finish or ask a question. timeoutMs only bounds this wait and never stops the run. The result includes the run, journal sequence and result text from the same committed inbox state.",
     writes: false,
   },
   delegate_task: {

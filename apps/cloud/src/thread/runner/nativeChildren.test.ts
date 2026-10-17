@@ -255,6 +255,25 @@ describe("provider-native child history", () => {
                   ),
                 ),
               ).toBe(true);
+              const mismatched = {
+                ...lastBatch,
+                sequence: lastBatch.sequence + 101,
+                parentThreadId: ThreadId.make("different-parent"),
+                attestation: {
+                  ...lastBatch.attestation,
+                  threadId: ThreadId.make("different-parent"),
+                },
+                appThread: {
+                  ...lastBatch.appThread,
+                  lineage: {
+                    ...lastBatch.appThread.lineage,
+                    parentThreadId: ThreadId.make("different-parent"),
+                  },
+                },
+              };
+              expect(
+                Exit.isFailure(yield* Effect.exit(engine.recordNativeChildBatch(mismatched))),
+              ).toBe(true);
               expect((yield* snapshot(engine)).head).toBe(child.head);
               expect(yield* engine.hasTurnWork).toBe(false);
               const result = yield* Effect.exit(

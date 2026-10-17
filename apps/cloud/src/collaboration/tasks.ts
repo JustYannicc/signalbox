@@ -1,5 +1,6 @@
 import {
   CommandId,
+  MessageId,
   NodeId,
   ThreadId,
   type OrchestrationV2ThreadProjection,
@@ -10,6 +11,7 @@ import { runtimeModeWithin } from "@signalbox/automations/access";
 import type { CollaborationInput } from "@t3tools/contracts/signalboxCollaboration";
 import * as Effect from "effect/Effect";
 
+import type { ThreadInboxShape } from "../thread/ThreadInbox.ts";
 import { poolKindOfInstance } from "../thread/providerCatalog.ts";
 import { isLiveRun } from "../thread/runLifecycle.ts";
 import type { TaskRecords } from "./taskRecords.ts";
@@ -76,6 +78,7 @@ const taskResult = (
 
 export const makeTasks = (deps: {
   readonly access: CollaborationAccess;
+  readonly inbox: ThreadInboxShape;
   readonly key: (
     source: ThreadId,
     operation: string,
@@ -124,6 +127,19 @@ export const makeTasks = (deps: {
       if (existing !== null) {
         if (existing.projection.thread.lineage.parentThreadId !== source)
           return yield* refuse("Task not found.", "task_not_found");
+        // Creation may have committed before the initial delivery. Retry that same message.
+        yield* deps.inbox.post(caller.actor, {
+          type: "message.dispatch",
+          commandId: CommandId.make(`collaboration:${operation}`),
+          threadId: childId,
+          messageId: MessageId.make(`message:${operation}`),
+          text: input.task,
+          attachments: [],
+          createdBy: "agent",
+          creationSource: "mcp",
+          senderThreadId: source,
+          dispatchMode: { type: "queue_after_active" },
+        });
       } else {
         const parent = caller.projection.thread;
         let modelSelection = parent.modelSelection;
@@ -187,7 +203,7 @@ export const makeTasks = (deps: {
         yield* deps.records.record(source, childId);
         // File first: the very first turn must resolve the parent's complete home chain.
         yield* deps.access.folders.moveThread({ threadId: childId, folderId: caller.home });
-        yield* deps.access.threads.launchThread(
+        yield* deps.inbox.start(
           caller.actor,
           {
             commandId: CommandId.make(`collaboration:${operation}`),
@@ -199,7 +215,11 @@ export const makeTasks = (deps: {
             runtimeMode,
             interactionMode,
             workspaceStrategy: { type: "root" },
-            initialMessage: { text: input.task, attachments: [] },
+            initialMessage: {
+              messageId: MessageId.make(`message:${operation}`),
+              text: input.task,
+              attachments: [],
+            },
           },
           {
             parentThreadId: source,

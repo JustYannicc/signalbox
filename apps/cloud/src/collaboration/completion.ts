@@ -7,6 +7,7 @@ import {
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 
+import { make as makeInbox } from "../thread/ThreadInbox.ts";
 import { CloudThreadService } from "../thread/CloudThreadService.ts";
 import { UserDrives } from "../user/UserDrives.ts";
 
@@ -50,7 +51,8 @@ export const deliverCompletion = (
       messages.at(-1)?.text ??
       `The child ended with status ${run.status}. Read its activity for details.`;
     const id = `cloud-task-result:${childId}:${run.id}`;
-    yield* threads.value.dispatchCommand(
+    const inbox = yield* makeInbox;
+    yield* inbox.post(
       actor,
       {
         type: "message.dispatch",
@@ -68,5 +70,8 @@ export const deliverCompletion = (
     );
   }).pipe(
     // Losing access must not keep a child's outbox retrying a private result forever.
-    Effect.catchTags({ ThreadNotFoundError: () => Effect.void }),
+    Effect.catchTags({
+      ThreadNotFoundError: () => Effect.void,
+      ThreadInboxError: (error) => (error.code === "not_found" ? Effect.void : Effect.fail(error)),
+    }),
   );

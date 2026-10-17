@@ -3,11 +3,15 @@ import {
   automationEventMatches,
   type AutomationDefaults,
   type AutomationError,
+  type OrchestrationV2ConversationMessage,
+  type OrchestrationV2Run,
+  type OrchestrationV2ThreadShell,
   type WorkflowDuration,
   type WorkflowEventTrigger,
   type WorkflowSourceWatch,
 } from "@t3tools/contracts";
 import { parseChangeRequestUrl } from "@t3tools/shared/changeRequestUrl";
+import { subagentResultForRun } from "@t3tools/provider-core/server/subagentProjection";
 import {
   threadPullRequestKeyOf,
   threadPullRequestKeysEqual,
@@ -22,7 +26,7 @@ import type { CallbackLink } from "./host.ts";
 import { sourceWatchProblem, waitForEventProblem } from "./compiler/eventTriggers.ts";
 import type { AuthorizeAutomation } from "./catalog.ts";
 import type { Envelope } from "./events/eventTriggers.ts";
-import type { EventReads } from "./events/candidate.ts";
+import { cap, iso } from "./events/candidate.ts";
 import { runCandidates } from "./events/turns.ts";
 import { whereMatches } from "./events/subscriptions.ts";
 import { automationError, fail } from "./errors.ts";
@@ -89,6 +93,35 @@ export interface WaitAccess<E> {
   readonly authorize?: AuthorizeAutomation<E>;
   readonly builtInDefaults?: AutomationDefaults;
 }
+
+/** Cloud reads run state and the assistant result from one committed inbox sequence. */
+const turnFinishedFields = (
+  run: OrchestrationV2Run,
+  shell: OrchestrationV2ThreadShell,
+  messages: ReadonlyArray<OrchestrationV2ConversationMessage>,
+  sequence: number,
+) => {
+  const records = { messages, turnItems: [] };
+  const lastMessage = subagentResultForRun(records, { ...run, status: "completed" }).text;
+  const error =
+    run.status === "failed"
+      ? cap(subagentResultForRun(records, run).text) || "The turn failed."
+      : null;
+  return {
+    provider: run.providerInstanceId,
+    model: run.modelSelection.model,
+    status: run.status,
+    sequence,
+    lastMessage: cap(lastMessage),
+    error,
+    errorClass: shell.lastErrorClass ?? null,
+    usageLimitResetAt: shell.usageLimitResetAt ?? null,
+    branch: shell.branch,
+    worktreePath: shell.worktreePath,
+    startedAt: iso(run.startedAt),
+    finishedAt: iso(run.completedAt),
+  };
+};
 
 export const makeWaits = (deps: {
   readonly store: WorkflowStore;
@@ -208,14 +241,17 @@ export const makeWaits = (deps: {
       const shell = yield* deps.threads.getThreadShell(threadId);
       if (!shell || shell.projectId !== caller.projectId) return false;
 
-      const { runs } = yield* deps.threads.getThreadRecords(threadId, ["runs"]);
+      const inbox = deps.threads.readInbox ? yield* deps.threads.readInbox(threadId) : undefined;
+      const runs = inbox?.runs ?? (yield* deps.threads.getThreadRecords(threadId, ["runs"])).runs;
       const latest = runs.toSorted((left, right) => right.ordinal - left.ordinal)[0];
       if (!latest?.completedAt) return false;
 
       const candidate = runCandidates(latest).find((event) => event.name === "turn.finished");
       if (!candidate) return false;
-      const reads: EventReads = { shell: Effect.succeed(shell), threads: deps.threads };
-      const fields = yield* candidate.build(reads);
+      const fields =
+        inbox === undefined
+          ? yield* candidate.build({ shell: Effect.succeed(shell), threads: deps.threads })
+          : turnFinishedFields(latest, shell, inbox.messages, inbox.sequence);
       if (fields === null) return false;
 
       const event: Envelope = {

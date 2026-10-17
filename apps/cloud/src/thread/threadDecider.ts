@@ -138,6 +138,8 @@ function dispatchMessage(
   command: CommandOf<"message.dispatch">,
   ctx: DecisionContext,
 ): Decision {
+  // The inbox identifies delivery by message id, even when a retry has a new command id.
+  if (projection.messages.some((message) => message.id === command.messageId)) return accept([]);
   if (command.dispatchMode.type === "defer_start") {
     return reject("Deferred starts are not available in the cloud yet.");
   }
@@ -218,7 +220,7 @@ function dispatchMessage(
   };
   const recorded = messageEvent(ctx, message);
   if (live !== undefined) {
-    return accept([...updates, runEvent(ctx, "run.created", run), recorded]);
+    return accept([...updates, recorded, runEvent(ctx, "run.created", run)]);
   }
   const withMessage = applyEvents(projection, [...updates, recorded]) ?? projection;
   return accept([...updates, recorded, ...startRunEvents(withMessage, run, "turn_start", ctx)]);
