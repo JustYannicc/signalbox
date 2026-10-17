@@ -79,6 +79,27 @@ describe("classifyCatalogModels", () => {
   });
 });
 
+describe("catalogServerModel", () => {
+  it("carries pricing and automatic-selection policy into provider snapshots", () => {
+    const entry: ModelCatalog.ProviderCatalogModel = {
+      ...catalogModel("small", "current"),
+      pricing: { inputCostPerMillionTokens: 0, outputCostPerMillionTokens: 0 },
+      defaultSelection: "economical",
+    };
+    assert.deepStrictEqual(
+      ModelCatalog.catalogServerModel({ models: [entry], defaultChatModel: undefined }, entry),
+      {
+        slug: "small",
+        name: "small",
+        isCustom: false,
+        pricing: { inputCostPerMillionTokens: 0, outputCostPerMillionTokens: 0 },
+        defaultSelection: "economical",
+        capabilities: null,
+      },
+    );
+  });
+});
+
 describe("applyCatalogDefault", () => {
   it("moves the default flag and its aliases to the catalog's chat default", () => {
     const catalog: ModelCatalog.ProviderCatalog = {

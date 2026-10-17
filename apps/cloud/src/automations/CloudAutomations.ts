@@ -1,4 +1,11 @@
-import type { AutomationError, OrchestrationV2DomainEvent } from "@t3tools/contracts";
+import type {
+  AutomationError,
+  AutomationSaveInput,
+  AutomationSaveResult,
+  ModelSelection,
+  OrchestrationV2DomainEvent,
+  ProjectId,
+} from "@t3tools/contracts";
 import type {
   AutomationRunHost,
   HostStepStart,
@@ -53,6 +60,10 @@ export const hostOver = (
  * work it started here is done.
  */
 export interface CloudAutomationsShape {
+  readonly save: (
+    input: Omit<AutomationSaveInput, "defaults"> & { readonly compiled?: unknown },
+    newThreadModel: (projectId?: ProjectId) => Effect.Effect<ModelSelection | null>,
+  ) => Effect.Effect<AutomationSaveResult, AutomationError>;
   /**
    * Domain events of one of the user's threads with their sequence, in order
    * and at least once. Events at or before a sequence already taken from that

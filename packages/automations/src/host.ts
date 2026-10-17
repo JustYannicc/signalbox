@@ -68,7 +68,8 @@ export interface AutomationThreadLaunch {
   readonly commandId: CommandId;
   readonly projectId: ProjectId;
   readonly title: string;
-  readonly modelSelection: ModelSelection;
+  /** Omitted when the host should resolve the thread's current default on launch. */
+  readonly modelSelection?: ModelSelection;
   readonly runtimeMode: RuntimeMode;
   readonly interactionMode: ProviderInteractionMode;
   readonly workspace: AgentWorkspace;

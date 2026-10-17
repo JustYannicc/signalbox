@@ -8,17 +8,9 @@ import {
   type ModelSelection,
   type RuntimeMode,
   type ProviderInteractionMode,
-  type ServerSettings,
-  resolveProjectProviderInstanceEnabled,
 } from "@t3tools/contracts";
 import { parseMaxDeliveryAge } from "@t3tools/client-runtime/scheduled-task-webhook";
-
-import {
-  resolveProjectSettings,
-  type LegacyProjectSettingsFields,
-} from "@t3tools/shared/projectSettings";
-import { resolveInitialModelSelection } from "@t3tools/shared/defaultModelSelection";
-import type { ProviderInstanceEntry } from "../../providerInstances";
+import { resolveScheduledTaskDefaultModelSelection } from "../../lib/defaultModelSelectionPolicy"; // signalbox
 
 import type { ResolvedSettingsScope } from "./settingsScope";
 
@@ -177,46 +169,9 @@ export function taskToDraft(task: ScheduledTask): DraftState {
 }
 
 export function scheduledTaskDefaultModel(
-  settings: ServerSettings,
-  project: (LegacyProjectSettingsFields & { readonly id: ProjectId }) | null,
-  entries: readonly ProviderInstanceEntry[],
+  settings: Parameters<typeof resolveScheduledTaskDefaultModelSelection>[0],
+  project: Parameters<typeof resolveScheduledTaskDefaultModelSelection>[1],
+  entries: Parameters<typeof resolveScheduledTaskDefaultModelSelection>[2],
 ): ModelSelection | null {
-  const resolvedProjectSettings = resolveProjectSettings(settings, project?.id ?? null, project);
-  const personDefaultModelSelection = settings.defaultModelSelection;
-  const projectProviderSettings =
-    project?.id === undefined
-      ? undefined
-      : settings.projectSettingsOverrides[project.id]?.providerInstances;
-  const personDefaultHasExplicitProviderSettings =
-    personDefaultModelSelection !== null &&
-    (Object.hasOwn(settings.providerInstances, personDefaultModelSelection.instanceId) ||
-      Object.hasOwn(projectProviderSettings ?? {}, personDefaultModelSelection.instanceId));
-  return resolveInitialModelSelection({
-    projectDefault:
-      resolvedProjectSettings.sources.defaultModelSelection === "project"
-        ? resolvedProjectSettings.settings.defaultModelSelection
-        : null,
-    personDefault:
-      personDefaultModelSelection &&
-      !entries.some(
-        (entry) => entry.instanceId === personDefaultModelSelection.instanceId && !entry.enabled,
-      ) &&
-      (!personDefaultHasExplicitProviderSettings ||
-        resolveProjectProviderInstanceEnabled(
-          settings,
-          project?.id ?? null,
-          personDefaultModelSelection.instanceId,
-        ))
-        ? personDefaultModelSelection
-        : null,
-    providers: entries
-      .filter(
-        (entry) =>
-          entry.enabled &&
-          entry.installed &&
-          entry.isAvailable &&
-          entry.snapshot.auth.status !== "unauthenticated",
-      )
-      .map((entry) => entry.snapshot),
-  });
+  return resolveScheduledTaskDefaultModelSelection(settings, project, entries);
 }

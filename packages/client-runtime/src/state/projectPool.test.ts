@@ -27,6 +27,11 @@ const provider = (
       name: slug,
       isCustom: false,
       isDefault: index === 0,
+      defaultSelection: index === 0 ? "excluded" : "economical",
+      pricing:
+        index === 0
+          ? { inputCostPerMillionTokens: 20, outputCostPerMillionTokens: 100 }
+          : { inputCostPerMillionTokens: 1, outputCostPerMillionTokens: 2 },
       capabilities: null,
     })),
   }) as unknown as ServerProvider;
@@ -107,7 +112,17 @@ describe("project pools", () => {
         projectId: project,
         providerInstances,
         providers: [
-          provider("claude_hub_work", "claudeAgent", ["claude-fable-5-1", "claude-opus-5-5"]),
+          {
+            ...provider("claude_hub_work", "claudeAgent", []),
+            models: ["claude-fable-5-1", "claude-opus-5-5"].map((slug) => ({
+              slug,
+              name: slug,
+              isCustom: false,
+              defaultSelection: "excluded" as const,
+              pricing: { inputCostPerMillionTokens: 20, outputCostPerMillionTokens: 100 },
+              capabilities: null,
+            })),
+          },
         ],
       }),
     ).toBeNull();

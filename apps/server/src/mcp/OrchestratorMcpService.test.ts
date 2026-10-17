@@ -18,6 +18,7 @@ import {
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 
 import {
@@ -946,6 +947,139 @@ describe("OrchestratorMcpService provider resolution", () => {
         result.map((command) => command.modelSelection),
         [defaultSelection, { instanceId: codexInstanceId, model: "gpt-5.4" }],
       );
+    }),
+  );
+
+  it.effect("selects an eligible model inside a requested provider for new threads", () =>
+    Effect.gen(function* () {
+      const claudeInstanceId = ProviderInstanceId.make("claudeAgent");
+      const claudeDriver = ProviderDriverKind.make("claudeAgent");
+      const parentSelection = {
+        instanceId: codexInstanceId,
+        model: "gpt-5.4",
+      } as const;
+      const models: ServerProvider["models"] = [
+        {
+          slug: "claude-fable-5-5",
+          name: "Claude Fable",
+          isCustom: false,
+          defaultSelection: "excluded",
+          pricing: { inputCostPerMillionTokens: 10, outputCostPerMillionTokens: 50 },
+          capabilities: {
+            optionDescriptors: [
+              {
+                id: "reasoningEffort",
+                label: "Reasoning effort",
+                type: "select",
+                options: [{ id: "low", label: "Low" }],
+              },
+            ],
+          },
+        },
+        {
+          slug: "claude-haiku-5-5",
+          name: "Claude Haiku",
+          isCustom: false,
+          pricing: { inputCostPerMillionTokens: 1, outputCostPerMillionTokens: 2 },
+          capabilities: {
+            optionDescriptors: [
+              {
+                id: "reasoningEffort",
+                label: "Reasoning effort",
+                type: "select",
+                options: [
+                  { id: "low", label: "Low" },
+                  { id: "high", label: "High" },
+                ],
+              },
+            ],
+          },
+        },
+      ];
+      const claude = {
+        ...providerSnapshot({
+          instanceId: claudeInstanceId,
+          driver: claudeDriver,
+          model: "claude-fable-5-5",
+        }),
+        models,
+      };
+      const dispatched = yield* Ref.make<ReadonlyArray<unknown>>([]);
+      const layerDependencies = Layer.mergeAll(
+        NodeServices.layer,
+        Layer.mock(ThreadManagementService.ThreadManagementService)({
+          assertProviderInstanceEnabled: () => Effect.void,
+          isProviderInstanceEnabledForProject: () => Effect.succeed(true),
+          getThreadRecords: () => Effect.succeed(parentProjection([])),
+          dispatch: (command) =>
+            Ref.update(dispatched, (commands) => [...commands, command]).pipe(
+              Effect.as({ sequence: 1, storedEvents: [] } as never),
+            ),
+        }),
+        ServerSettings.layerTest({ defaultModelSelection: parentSelection }),
+        providerRegistryLayer([
+          providerSnapshot({
+            instanceId: codexInstanceId,
+            driver: ProviderDriverKind.make("codex"),
+            model: "gpt-5.4",
+          }),
+          claude,
+        ]),
+        adapterRegistryLayer([codexInstanceId, claudeInstanceId]),
+        Layer.mock(ProjectService.ProjectService)({
+          getById: () =>
+            Effect.succeed(Option.some({ defaultModelSelection: parentSelection } as never)),
+        }),
+        Layer.mock(SecretRequests.SecretRequests)({}),
+        Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
+      );
+      const serviceLayer = OrchestratorMcpService.layer.pipe(
+        Layer.provide(
+          Layer.mock(ThreadLaunchService.ThreadLaunchService)({
+            initialModelSelection: () => Effect.succeed(parentSelection),
+          }),
+        ),
+        Layer.provide(Layer.mock(GitVcsDriver.GitVcsDriver)({})),
+      );
+
+      yield* Effect.gen(function* () {
+        const service = yield* OrchestratorMcpService.OrchestratorMcpService;
+        yield* service.createThreads(scope, {
+          threads: [
+            {
+              prompt: "Use the requested instance.",
+              target: { providerInstanceId: claudeInstanceId },
+            },
+            {
+              prompt: "Use the requested driver.",
+              target: {
+                driverKind: claudeDriver,
+                options: [{ id: "reasoningEffort", value: "high" }],
+              },
+            },
+          ],
+          clientRequestId: "create-threads-provider-defaults",
+        });
+
+        const threadCreations = (yield* Ref.get(dispatched)).filter(
+          (command): command is { type: string; modelSelection: unknown } =>
+            typeof command === "object" &&
+            command !== null &&
+            "type" in command &&
+            (command as { type: string }).type === "thread.create",
+        );
+        assert.deepEqual(
+          threadCreations.map((command) => command.modelSelection),
+          [
+            { instanceId: claudeInstanceId, model: "claude-haiku-5-5" },
+            {
+              instanceId: claudeInstanceId,
+              model: "claude-haiku-5-5",
+              options: [{ id: "reasoningEffort", value: "high" }],
+            },
+          ],
+        );
+      }).pipe(Effect.provide(serviceLayer.pipe(Layer.provide(layerDependencies))));
     }),
   );
 

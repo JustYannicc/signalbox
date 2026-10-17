@@ -242,7 +242,13 @@ describe("scheduled task model defaults", () => {
         auth: { status: "authenticated" },
         models: [
           { slug: "first-model", name: "First", isCustom: false, capabilities: null },
-          { slug: "gpt-5.4-mini", name: "Economical", isCustom: false, capabilities: null },
+          {
+            slug: "gpt-5.4-mini",
+            name: "Economical",
+            isCustom: false,
+            capabilities: null,
+            pricing: { inputCostPerMillionTokens: 1, outputCostPerMillionTokens: 1 },
+          },
           {
             slug: "catalog-default",
             name: "Default",

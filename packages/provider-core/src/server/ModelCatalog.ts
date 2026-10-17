@@ -16,6 +16,8 @@ export interface ProviderCatalogModel {
   readonly aliases?: ReadonlyArray<string>;
   readonly status: "current" | "legacy";
   readonly badge?: "new";
+  readonly pricing?: ServerProviderModel["pricing"];
+  readonly defaultSelection?: ServerProviderModel["defaultSelection"];
   readonly capabilities: ModelCapabilities | null;
   readonly adapter: unknown;
   readonly profileAdapter: unknown;
@@ -47,6 +49,8 @@ export const catalogServerModel = (
   ...(entry.subProvider ? { subProvider: entry.subProvider } : {}),
   ...(entry.aliases ? { aliases: entry.aliases } : {}),
   ...(entry.badge ? { badge: entry.badge } : {}),
+  ...(entry.pricing ? { pricing: entry.pricing } : {}),
+  ...(entry.defaultSelection ? { defaultSelection: entry.defaultSelection } : {}),
   isCustom: false,
   ...(catalog.defaultChatModel === entry.slug ? { isDefault: true } : {}),
   ...(entry.status === "legacy" ? { isLegacy: true } : {}),

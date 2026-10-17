@@ -65,6 +65,7 @@ const makeOwner = () => {
   const received: Array<Delivery> = [];
   const state = { down: false };
   const automations = CloudAutomations.CloudAutomations.of({
+    save: () => Effect.die("not in these tests"),
     threadEvents: (input) =>
       state.down
         ? Effect.fail(new AutomationError({ message: "The engine is down." }))

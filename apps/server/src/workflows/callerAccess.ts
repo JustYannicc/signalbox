@@ -2,7 +2,6 @@ import {
   DEFAULT_RUNTIME_MODE,
   OrchestratorMcpFailure,
   type AutomationDefaults,
-  type ModelSelection,
   type ProjectId,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
@@ -14,7 +13,7 @@ import * as ProjectService from "../project/ProjectService.ts";
 import * as ThreadLaunch from "../orchestration-v2/ThreadLaunchService.ts";
 import type { AuthorizeAutomation } from "@signalbox/automations/catalog";
 import { automationError, fail } from "@signalbox/automations/errors";
-import * as WorkflowEngine from "@signalbox/automations/WorkflowEngine";
+import * as ProjectAutomations from "./ProjectAutomations.ts";
 
 /**
  * Automations saved, run or retried for an MCP caller: an agent's thread, or
@@ -52,7 +51,6 @@ const defaultModelSelection = Effect.fn("workflows.defaultModelSelection")(funct
     .pipe(
       Effect.mapError((cause) => automationError("Couldn't read the default model.", { cause })),
     );
-  if (selection === null) return yield* fail("Choose a default model for this folder or person.");
   return selection;
 });
 
@@ -105,35 +103,23 @@ export const saveForCaller = Effect.fn("workflows.saveForCaller")(function* (
     readonly draft?: boolean | undefined;
   },
 ) {
-  const named =
-    input.projectId !== undefined && input.projectId !== caller?.projectId
-      ? yield* requireProject(input.projectId)
-      : undefined;
-  let target: { readonly projectId: ProjectId; readonly modelSelection: ModelSelection };
-  if (caller !== undefined) {
-    target = { projectId: named?.id ?? caller.projectId, modelSelection: caller.modelSelection };
-  } else if (named !== undefined) {
-    target = { projectId: named.id, modelSelection: yield* defaultModelSelection(named) };
-  } else {
+  const projectId = input.projectId ?? caller?.projectId;
+  if (projectId === undefined) {
     return yield* new OrchestratorMcpFailure({
       code: "target_required",
       message:
         "Pass projectId: you're not calling from a Signalbox thread, so there's no project to save the automation in. t3_project_list lists the projects.",
     });
   }
-  const engine = yield* WorkflowEngine.WorkflowEngine;
-  return yield* engine.save(
-    {
-      source: input.source,
-      ...(input.automationId ? { automationId: input.automationId } : {}),
-      ...(input.draft ? { draft: input.draft } : {}),
-      projectId: target.projectId,
-      defaults: {
-        modelSelection: target.modelSelection,
-        runtimeMode: limits.runtimeMode,
-        interactionMode: limits.interactionMode,
-      },
-    },
-    withinLimits(limits),
-  );
+  const automations = yield* ProjectAutomations.ProjectAutomations;
+  return yield* automations.save({
+    source: input.source,
+    projectId,
+    ...(input.automationId === undefined ? {} : { automationId: input.automationId }),
+    ...(input.draft === undefined ? {} : { draft: input.draft }),
+    ...(caller === undefined ? {} : { callerModelSelection: caller.modelSelection }),
+    runtimeMode: limits.runtimeMode,
+    interactionMode: limits.interactionMode,
+    authorize: withinLimits(limits),
+  });
 });

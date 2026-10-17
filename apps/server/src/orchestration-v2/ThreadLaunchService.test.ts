@@ -107,7 +107,15 @@ const providerSnapshot = (
   auth: { status: "authenticated" },
   checkedAt: "2026-09-13T00:00:00.000Z",
   ...(availability === undefined ? {} : { availability }),
-  models: [{ slug: model, name: model, isCustom: false, capabilities: null }],
+  models: [
+    {
+      slug: model,
+      name: model,
+      isCustom: false,
+      capabilities: null,
+      pricing: { inputCostPerMillionTokens: 1, outputCostPerMillionTokens: 2 },
+    },
+  ],
   slashCommands: [],
   skills: [],
 });

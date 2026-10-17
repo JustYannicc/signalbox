@@ -150,16 +150,7 @@ export const harnessModels = (
   const ordered = own.toSorted(
     (left, right) => rank(left.id) - rank(right.id) || left.id.localeCompare(right.id),
   );
-  const defaultSlug = resolveInitialModelSelection({
-    providers: [
-      {
-        instanceId: harness.instanceId,
-        driver: harness.driver,
-        models: ordered.map((model) => ({ slug: model.id, name: model.id })),
-      },
-    ],
-  })?.model;
-  return ordered.map((model): ServerProviderModel => {
+  const models = ordered.map((model): ServerProviderModel => {
     const entry = entryOf(model.id);
     const profile = entry?.profile === undefined ? undefined : catalog?.profiles[entry.profile];
     return {
@@ -169,11 +160,19 @@ export const harnessModels = (
       ...(entry?.subProvider ? { subProvider: entry.subProvider } : {}),
       ...(entry?.aliases ? { aliases: entry.aliases } : {}),
       ...(entry?.badge ? { badge: entry.badge } : {}),
+      ...(entry?.pricing ? { pricing: entry.pricing } : {}),
+      ...(entry?.defaultSelection ? { defaultSelection: entry.defaultSelection } : {}),
+      ...(entry?.status === "legacy" ? { isLegacy: true } : {}),
       isCustom: false,
-      ...(model.id === defaultSlug ? { isDefault: true } : {}),
       capabilities: poolModelCapabilities(kind, model, profile?.capabilities),
     };
   });
+  const defaultSlug = resolveInitialModelSelection({
+    providers: [{ instanceId: harness.instanceId, driver: harness.driver, models }],
+  })?.model;
+  return models.map((model) =>
+    model.slug === defaultSlug ? { ...model, isDefault: true } : model,
+  );
 };
 
 /** What the cloud advertises besides the pools' instances: the scripted provider, when on. */

@@ -2,24 +2,35 @@ import { describe, expect, it } from "vite-plus/test";
 import { ProviderDriverKind, ProviderInstanceId } from "@t3tools/contracts";
 import { resolveInitialModelSelection } from "./defaultModelSelection.ts";
 
-const instanceId = ProviderInstanceId.make("claude_hub");
+const instanceId = ProviderInstanceId.make("provider");
 const providers = [
   {
     instanceId,
     driver: ProviderDriverKind.make("claudeAgent"),
     models: [
-      { slug: "claude-fable-5-1", name: "Fable", isDefault: true },
-      { slug: "claude-opus-5-5", name: "Opus" },
-      { slug: "claude-haiku-5-5", name: "Haiku" },
+      {
+        slug: "flagship",
+        isDefault: true,
+        defaultSelection: "excluded" as const,
+        pricing: { inputCostPerMillionTokens: 20, outputCostPerMillionTokens: 100 },
+      },
+      {
+        slug: "balanced",
+        pricing: { inputCostPerMillionTokens: 3, outputCostPerMillionTokens: 15 },
+      },
+      {
+        slug: "economy",
+        pricing: { inputCostPerMillionTokens: 1, outputCostPerMillionTokens: 5 },
+      },
     ],
   },
 ];
 const projectDefault = {
   instanceId,
-  model: "claude-opus-5-5",
+  model: "balanced",
   options: [{ id: "effort", value: "high" }],
 };
-const personDefault = { instanceId, model: "claude-fable-5-1" };
+const personDefault = { instanceId, model: "flagship" };
 
 describe("resolveInitialModelSelection", () => {
   it("honors the folder before the person, preserving explicit expensive choices and options", () => {
@@ -29,28 +40,59 @@ describe("resolveInitialModelSelection", () => {
     expect(resolveInitialModelSelection({ personDefault, providers })).toBe(personDefault);
   });
 
-  it("ignores catalog order and flagship default flags without preferences", () => {
-    expect(resolveInitialModelSelection({ providers })).toEqual({
-      instanceId,
-      model: "claude-haiku-5-5",
-    });
+  it("uses catalog prices instead of slug, order or provider default flags", () => {
+    const selected = { instanceId, model: "economy" };
+    expect(resolveInitialModelSelection({ providers })).toEqual(selected);
     expect(
       resolveInitialModelSelection({
-        providers: providers.map((p) => ({ ...p, models: p.models.toReversed() })),
+        providers: providers.map((provider) => ({
+          ...provider,
+          models: provider.models.toReversed(),
+        })),
       }),
-    ).toEqual({ instanceId, model: "claude-haiku-5-5" });
+    ).toEqual(selected);
   });
 
-  it("leaves selection empty if a catalog only has expensive or unknown models", () => {
+  it("discovers a new cheap or free model from metadata without a code release", () => {
+    const free = {
+      slug: "opencode/step-5-preview-free",
+      pricing: { inputCostPerMillionTokens: 0, outputCostPerMillionTokens: 0 },
+    };
+    const provider = {
+      ...providers[0]!,
+      driver: ProviderDriverKind.make("opencode"),
+      models: [...providers[0]!.models, free],
+    };
+    expect(resolveInitialModelSelection({ providers: [provider] })).toEqual({
+      instanceId,
+      model: free.slug,
+    });
+    const cheaper = {
+      slug: "future-economy",
+      pricing: { inputCostPerMillionTokens: 0.1, outputCostPerMillionTokens: 0.2 },
+    };
     expect(
       resolveInitialModelSelection({
-        providers: providers.map((p) => ({ ...p, models: p.models.slice(0, 2) })),
+        providers: [{ ...providers[0]!, models: [...providers[0]!.models, cheaper] }],
+      }),
+    ).toEqual({ instanceId, model: cheaper.slug });
+  });
+
+  it("requires a choice for excluded flagships or unknown prices", () => {
+    expect(
+      resolveInitialModelSelection({
+        providers: [
+          {
+            ...providers[0]!,
+            models: [providers[0]!.models[0]!, { slug: "unpriced", isDefault: true }],
+          },
+        ],
       }),
     ).toBeNull();
     expect(resolveInitialModelSelection({ providers: [] })).toBeNull();
   });
 
-  it("preserves preferences while a provider is offline or a custom model is absent", () => {
+  it("preserves saved preferences while a provider catalog is temporarily missing", () => {
     expect(resolveInitialModelSelection({ projectDefault, personDefault, providers: [] })).toBe(
       projectDefault,
     );
@@ -58,53 +100,35 @@ describe("resolveInitialModelSelection", () => {
 
   it("skips a retired folder default before considering the person", () => {
     const retired = { ...projectDefault, model: "retired" };
-    const catalog = providers.map((p) => ({
-      ...p,
-      models: [...p.models, { slug: "retired", name: "Retired", isLegacy: true }],
+    const catalog = providers.map((provider) => ({
+      ...provider,
+      models: [...provider.models, { slug: "retired", isLegacy: true }],
     }));
     expect(
       resolveInitialModelSelection({ projectDefault: retired, personDefault, providers: catalog }),
     ).toBe(personDefault);
   });
 
-  it.each([
-    ["cursor", "auto"],
-    ["pi", "default"],
-    ["muse", "default"],
-    ["acpRegistry", "default"],
-    ["antigravity", "antigravity-default"],
-    ["grok", "grok-build"],
-    ["opencode", "openai/gpt-5-mini"],
-  ])("uses %s's economical or user-configured default", (driver, model) => {
-    const provider = {
-      instanceId: ProviderInstanceId.make(driver),
-      driver: ProviderDriverKind.make(driver),
-      models: [
-        { slug: "flagship", name: "Flagship", isDefault: true },
-        { slug: model, name: model },
-      ],
-    };
-    expect(resolveInitialModelSelection({ providers: [provider] })).toEqual({
-      instanceId: provider.instanceId,
-      model,
-    });
+  it("can defer to a provider's explicitly configured session default", () => {
+    expect(
+      resolveInitialModelSelection({
+        providers: [
+          { ...providers[0]!, models: [{ slug: "session", defaultSelection: "configured" }] },
+        ],
+      }),
+    ).toEqual({ instanceId, model: "session" });
   });
 
-  it("uses Luna even when Codex advertises Astra as default", () => {
-    const codex = {
-      instanceId: ProviderInstanceId.make("codex"),
-      driver: ProviderDriverKind.make("codex"),
-      models: [
-        { slug: "gpt-6-astra", name: "Astra", isDefault: true },
-        { slug: "gpt-6-luna", name: "Luna" },
-      ],
-    };
-    expect(resolveInitialModelSelection({ providers: [codex] })).toEqual({
-      instanceId: codex.instanceId,
-      model: "gpt-6-luna",
-    });
+  it("uses maintained economical metadata while prices are unavailable", () => {
     expect(
-      resolveInitialModelSelection({ providers: [{ ...codex, models: codex.models.slice(0, 1) }] }),
-    ).toBeNull();
+      resolveInitialModelSelection({
+        providers: [
+          {
+            ...providers[0]!,
+            models: [{ slug: "offline-economy", defaultSelection: "economical" }],
+          },
+        ],
+      }),
+    ).toEqual({ instanceId, model: "offline-economy" });
   });
 });

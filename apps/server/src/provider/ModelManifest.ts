@@ -98,6 +98,8 @@ export function resolveProviderCatalog(
       ...(entry.subProvider ? { subProvider: entry.subProvider } : {}),
       ...(entry.aliases ? { aliases: entry.aliases } : {}),
       ...(entry.badge ? { badge: entry.badge } : {}),
+      ...(entry.pricing ? { pricing: entry.pricing } : {}),
+      ...(entry.defaultSelection ? { defaultSelection: entry.defaultSelection } : {}),
       status: entry.status,
       capabilities: profile?.capabilities ?? null,
       adapter: entry.adapter,

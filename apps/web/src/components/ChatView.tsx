@@ -48,6 +48,7 @@ import {
   TYPE_TO_FOCUS_FLOATING_LAYER_SELECTOR,
 } from "./chat/composerFocusRedirect";
 import { getTerminalLabel } from "@t3tools/shared/terminalLabels";
+import { configuredProjectModelSelection } from "../lib/composerModelPolicy"; // signalbox
 import * as Schema from "effect/Schema";
 import {
   AuthOrchestrationOperateScope,
@@ -58,7 +59,6 @@ import {
   type AssistantCitation,
   type ChatFileAttachment,
   CommandId,
-  DEFAULT_MODEL,
   isProviderNativeSubagentThread,
   type EnvironmentId,
   type MessageId,
@@ -2005,7 +2005,7 @@ export default function ChatView(props: ChatViewProps) {
     retryProjectClone,
     runProjectCloneActionStable,
   ]);
-  const activeProjectDefaultModelSelection = activeProjectSettings.settings.defaultModelSelection;
+  const activeProjectDefaultModelSelection = configuredProjectModelSelection(activeProjectSettings);
   const handleNewThreadInActiveProject = () => {
     startNewThreadForProject(activeProjectRef, handleNewThread);
   };
@@ -8785,7 +8785,6 @@ export default function ChatView(props: ChatViewProps) {
                               activeProjectDefaultModelSelection={
                                 activeProjectDefaultModelSelection
                               }
-                              activePersonDefaultModelSelection={settings.defaultModelSelection}
                               activeThreadModelSelection={activeThread?.modelSelection}
                               activeProjectId={activeProject?.id ?? null}
                               activeContextWindow={activeContextWindow}

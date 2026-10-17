@@ -1,11 +1,6 @@
 import type { DraftId } from "~/composerDraftStore";
 import { composerDraftHasUserContent, useComposerDraftStore } from "~/composerDraftStore";
-import {
-  DEFAULT_SERVER_SETTINGS,
-  resolveProjectProviderInstanceEnabled,
-  resolveEnvironmentMachineKind,
-  type ScopedProjectRef,
-} from "@t3tools/contracts";
+import { resolveEnvironmentMachineKind, type ScopedProjectRef } from "@t3tools/contracts";
 import { scopedProjectKey, scopeProjectRef } from "@t3tools/client-runtime/environment";
 import { isScratchProject } from "@t3tools/client-runtime/state/projects";
 import { FolderPlusIcon } from "lucide-react";
@@ -19,7 +14,7 @@ import { useNewThreadHandler } from "~/hooks/useHandleNewThread";
 import { useScratchProject } from "~/hooks/useScratchProject";
 import { useClientSettings } from "~/hooks/useSettings";
 import { hasExplicitComposerModelSelection } from "~/lib/chatThreadActions";
-import { resolveInitialModelSelection } from "@t3tools/shared/defaultModelSelection";
+import { resolveProjectDraftStartingModelSelection } from "~/lib/newThreadModelSelectionPolicy"; // signalbox
 import {
   deriveLogicalProjectKeyFromSettings,
   selectProjectGroupingSettings,
@@ -46,7 +41,6 @@ import {
 } from "../ui/combobox";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { InlineButton } from "../ui/button";
-import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import { useProjectPoolModelSelection } from "../../state/projectPool"; // signalbox
 import { useDraftHeroCopy } from "../sidebar/folders/useFolderCopy"; // signalbox
 
@@ -231,54 +225,13 @@ export function DraftHeroHeadline({
       draftId,
     );
     if (!hasExplicitComposerModelSelection(currentDraft)) {
-      const environmentConfig = environments.find(
-        (environment) => environment.environmentId === project.environmentId,
-      )?.serverConfig;
-      const environmentSettings = environmentConfig?.settings;
-      const resolvedSettings = resolveProjectSettings(
-        environmentSettings ?? DEFAULT_SERVER_SETTINGS,
-        project.id,
+      const startingModelSelection = resolveProjectDraftStartingModelSelection({
         project,
-      );
-      const projectDefaultModelSelection =
-        resolvedSettings.sources.defaultModelSelection === "project"
-          ? resolvedSettings.settings.defaultModelSelection
-          : null;
-      // signalbox: the draft starts on the pool its project runs on.
-      const initialModelSelection = resolveInitialModelSelection({
-        projectDefault: projectDefaultModelSelection,
-        personDefault:
-          environmentSettings?.defaultModelSelection &&
-          resolveProjectProviderInstanceEnabled(
-            resolvedSettings.settings,
-            project.id,
-            environmentSettings.defaultModelSelection.instanceId,
-          )
-            ? environmentSettings.defaultModelSelection
-            : null,
-        providers: (environmentConfig?.providers ?? []).filter(
-          (provider) =>
-            provider.enabled &&
-            provider.installed &&
-            provider.auth.status !== "unauthenticated" &&
-            provider.availability !== "unavailable" &&
-            resolveProjectProviderInstanceEnabled(
-              resolvedSettings.settings,
-              project.id,
-              provider.instanceId,
-            ),
-        ),
+        environmentConfig: environments.find(
+          (environment) => environment.environmentId === project.environmentId,
+        )?.serverConfig,
+        mapToPool: projectPool,
       });
-      const startingModelSelection =
-        (environmentConfig &&
-          projectPool({
-            environmentId: project.environmentId,
-            projectId: project.id,
-            selection: initialModelSelection,
-            providerInstances: environmentConfig.settings.providerInstances,
-            providers: environmentConfig.providers,
-          })) ||
-        initialModelSelection;
       if (startingModelSelection) {
         setModelSelection(draftId, startingModelSelection, {
           replaceOptions: true,

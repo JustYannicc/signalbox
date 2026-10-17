@@ -6,9 +6,8 @@ import type {
   RuntimeMode,
   ServerConfig as T3ServerConfig,
 } from "@t3tools/contracts";
-import { ProviderDriverKind, resolveProjectProviderInstanceEnabled } from "@t3tools/contracts";
+import { resolveProjectProviderInstanceEnabled } from "@t3tools/contracts";
 import { hubInstancePoolId } from "@t3tools/contracts/accountHub";
-import { resolveInitialModelSelection } from "@t3tools/shared/defaultModelSelection";
 import {
   buildExplicitProviderOptionSelectionsFromDescriptors,
   getProviderOptionDescriptors,
@@ -228,31 +227,17 @@ export function resolveDefaultableModelSelection(
 export function resolveNewTaskModelSelection(input: {
   readonly draftSelection: ModelSelection | null;
   readonly projectDefaultSelection: ModelSelection | null;
+  readonly stickySelection: ModelSelection | null;
   readonly modelOptions: ReadonlyArray<ModelOption>;
 }): ModelSelection | null {
-  const configured = input.draftSelection ?? input.projectDefaultSelection;
-  if (configured) return configured;
-
-  const providers = new Map<
-    ModelSelection["instanceId"],
-    {
-      instanceId: ModelSelection["instanceId"];
-      driver: T3ServerConfig["providers"][number]["driver"];
-      models: { slug: string; isLegacy: boolean }[];
-    }
-  >();
-  for (const option of input.modelOptions) {
-    if (option.isUnavailable) continue;
-    const instanceId = option.selection.instanceId;
-    const provider = providers.get(instanceId) ?? {
-      instanceId,
-      driver: ProviderDriverKind.make(option.providerDriver),
-      models: [],
-    };
-    provider.models.push({ slug: option.selection.model, isLegacy: option.isLegacy });
-    providers.set(instanceId, provider);
-  }
-  return resolveInitialModelSelection({ providers: [...providers.values()] });
+  return (
+    input.draftSelection ??
+    input.projectDefaultSelection ??
+    input.stickySelection ??
+    input.modelOptions.find((option) => option.isDefault && !option.isUnavailable)?.selection ??
+    input.modelOptions.find((option) => !option.isUnavailable)?.selection ??
+    null
+  );
 }
 
 export function buildModelOptions(

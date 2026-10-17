@@ -3,6 +3,7 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 
 import * as OpenCodeRuntime from "./OpenCodeRuntime.ts";
+import { openCodeModelPricing } from "./modelPricing.ts";
 import type { OpenCode2Model } from "./status.ts";
 
 /**
@@ -38,11 +39,13 @@ export const loadOpenCode2Catalog = (
       );
       return models.data.map((model) => {
         const providerName = providerNames.get(model.providerID);
+        const pricing = openCodeModelPricing(model.cost);
         return {
           providerID: model.providerID,
           id: model.id,
           name: model.name,
           ...(providerName ? { providerName } : {}),
+          ...(pricing ? { pricing } : {}),
           variants: model.variants.map((variant) => ({ id: variant.id })),
         };
       });

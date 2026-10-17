@@ -21,6 +21,7 @@ import {
   type ServerProviderDraft,
 } from "@t3tools/provider-core/server/snapshotProbe";
 import * as OpenCodeRuntime from "./OpenCodeRuntime.ts";
+import { openCodeModelPricing } from "./modelPricing.ts";
 import type { ProbedOpenCode } from "./versionProbe.ts";
 import type { Agent, ProviderListResponse } from "@opencode-ai/sdk/v2";
 import * as OpenCodeServerOwner from "./OpenCodeServerOwner.ts";
@@ -263,10 +264,12 @@ function flattenOpenCodeModels(
       }
 
       const subProvider = nonEmptyTrimmed(provider.name);
+      const pricing = openCodeModelPricing(model.cost);
       models.push({
         slug: `${provider.id}/${model.id}`,
         name,
         ...(subProvider ? { subProvider } : {}),
+        ...(pricing ? { pricing } : {}),
         isCustom: false,
         capabilities: openCodeCapabilitiesForModel({
           providerID: provider.id,
@@ -378,6 +381,7 @@ export interface OpenCode2Model {
   readonly id: string;
   readonly name: string;
   readonly providerName?: string;
+  readonly pricing?: ServerProviderModel["pricing"];
   readonly variants: ReadonlyArray<{ readonly id: string }>;
 }
 
@@ -552,6 +556,7 @@ const checkOpenCode2 = Effect.fn("checkOpenCode2")(function* (
           slug: `${model.providerID}/${model.id}`,
           name: model.name,
           ...(subProvider ? { subProvider } : {}),
+          ...(model.pricing ? { pricing: model.pricing } : {}),
           isCustom: false,
           capabilities: openCode2ModelCapabilities(model),
         };

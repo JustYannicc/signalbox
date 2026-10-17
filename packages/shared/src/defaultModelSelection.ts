@@ -1,23 +1,11 @@
-import {
-  DEFAULT_MODEL_BY_PROVIDER,
-  type ModelSelection,
-  type ProviderDriverKind,
-  type ServerProvider,
-} from "@t3tools/contracts";
-
-// Catalog order and provider-reported defaults can put a flagship first.
-// Only known economical models (or a provider's user-configured default) may
-// be selected without an explicit preference.
-const ECONOMICAL_MODELS: Readonly<Record<string, ReadonlyArray<string>>> = {
-  claudeAgent: ["claude-haiku-5-5", "claude-haiku-4-5", "claude-sonnet-5-5", "claude-sonnet-4-6"],
-  codex: ["gpt-6-luna", "gpt-6.1-sol", "gpt-5.4-mini", "gpt-5.1-codex-mini", "gpt-5-mini"],
-  cursor: ["auto", "composer-2"],
-  opencode: ["openai/gpt-5-mini", "openai/gpt-5.4-mini"],
-};
+import type { ModelSelection, ServerProvider } from "@t3tools/contracts";
 
 type InitialModelProvider = Pick<ServerProvider, "instanceId" | "driver"> & {
   readonly models: ReadonlyArray<
-    Pick<ServerProvider["models"][number], "slug" | "aliases" | "isLegacy">
+    Pick<
+      ServerProvider["models"][number],
+      "slug" | "aliases" | "isLegacy" | "isDefault" | "pricing" | "defaultSelection"
+    >
   >;
 };
 
@@ -34,20 +22,38 @@ export function resolveInitialModelSelection(input: {
     // Preserve a saved choice through sign-out or a temporarily missing catalog.
     if (model?.isLegacy !== true) return selection;
   }
-  for (const provider of input.providers) {
-    const preferred =
-      ECONOMICAL_MODELS[provider.driver] ?? providerDefaultCandidates(provider.driver);
-    for (const slug of preferred) {
-      const model = provider.models.find(
-        (model) => !model.isLegacy && (model.slug === slug || model.aliases?.includes(slug)),
-      );
-      if (model) return { instanceId: provider.instanceId, model: model.slug };
-    }
-  }
-  return null;
-}
 
-function providerDefaultCandidates(driver: ProviderDriverKind): ReadonlyArray<string> {
-  const model = DEFAULT_MODEL_BY_PROVIDER[driver];
-  return model === undefined ? [] : [model];
+  const candidates = input.providers.flatMap((provider) =>
+    provider.models.flatMap((model) => {
+      if (model.isLegacy || model.defaultSelection === "excluded") return [];
+      const pricing = model.pricing;
+      const price =
+        pricing &&
+        Number.isFinite(pricing.inputCostPerMillionTokens) &&
+        pricing.inputCostPerMillionTokens >= 0 &&
+        Number.isFinite(pricing.outputCostPerMillionTokens) &&
+        pricing.outputCostPerMillionTokens >= 0
+          ? pricing.inputCostPerMillionTokens + pricing.outputCostPerMillionTokens
+          : null;
+      if (
+        price === null &&
+        model.defaultSelection !== "configured" &&
+        model.defaultSelection !== "economical"
+      )
+        return [];
+      return [
+        {
+          selection: { instanceId: provider.instanceId, model: model.slug },
+          price: price ?? Number.POSITIVE_INFINITY,
+        },
+      ];
+    }),
+  );
+  candidates.sort(
+    (left, right) =>
+      left.price - right.price ||
+      left.selection.model.localeCompare(right.selection.model) ||
+      left.selection.instanceId.localeCompare(right.selection.instanceId),
+  );
+  return candidates[0]?.selection ?? null;
 }

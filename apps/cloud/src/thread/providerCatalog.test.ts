@@ -30,6 +30,49 @@ describe("runnerInstanceFor", () => {
 describe("harnessModels", () => {
   const served = (ownedBy: string, ...models: ReadonlyArray<[string, number | null]>) =>
     models.map(([id, created]) => ({ id, ownedBy, created }));
+
+  it("selects the cheapest served model from maintained pricing metadata", () => {
+    const models = harnessModels(
+      "codex",
+      served("openai", ["flagship", 3], ["new-economy", 2], ["balanced", 1]),
+      {
+        version: 1,
+        providers: {
+          codex: {
+            profiles: {},
+            models: [
+              {
+                slug: "flagship",
+                name: "Flagship",
+                status: "current",
+                defaultSelection: "excluded",
+                pricing: { inputCostPerMillionTokens: 20, outputCostPerMillionTokens: 100 },
+              },
+              {
+                slug: "new-economy",
+                name: "New economy",
+                status: "current",
+                pricing: { inputCostPerMillionTokens: 0.1, outputCostPerMillionTokens: 0.2 },
+              },
+              {
+                slug: "balanced",
+                name: "Balanced",
+                status: "current",
+                pricing: { inputCostPerMillionTokens: 3, outputCostPerMillionTokens: 15 },
+              },
+            ],
+          },
+        },
+      },
+    );
+    expect(models.filter((model) => model.isDefault).map((model) => model.slug)).toEqual([
+      "new-economy",
+    ]);
+    expect(models.find((model) => model.slug === "new-economy")?.pricing).toEqual({
+      inputCostPerMillionTokens: 0.1,
+      outputCostPerMillionTokens: 0.2,
+    });
+  });
   const claude = served(
     "anthropic",
     ["claude-sonnet-5-5", 1_790_553_600],
@@ -60,6 +103,7 @@ describe("harnessModels", () => {
       {
         slug: "gpt-6.1-sol",
         name: "GPT-6.1 Sol",
+        defaultSelection: "economical",
         isCustom: false,
         isDefault: true,
         capabilities: null,

@@ -91,15 +91,33 @@ export const layer = Layer.effect(
           );
           // Cloud folder model storage belongs to #811. Keep the person's
           // existing preference, on the folder's pool, until that setting exists.
+          const destinationProviders =
+            pool === null
+              ? providers
+              : providers.filter((provider) => poolIdOfInstance(provider.instanceId) === pool);
+          const preference =
+            saved.defaultModelSelection && pool
+              ? onPool(saved.defaultModelSelection, pool)
+              : saved.defaultModelSelection;
+          const supportedPreference =
+            preference &&
+            (pool === null ||
+              preference.instanceId === saved.defaultModelSelection?.instanceId ||
+              destinationProviders.some(
+                (provider) =>
+                  provider.instanceId === preference.instanceId &&
+                  provider.models.some(
+                    (model) =>
+                      !model.isLegacy &&
+                      (model.slug === preference.model ||
+                        model.aliases?.includes(preference.model)),
+                  ),
+              ))
+              ? preference
+              : null;
           return resolveInitialModelSelection({
-            personDefault:
-              saved.defaultModelSelection && pool
-                ? onPool(saved.defaultModelSelection, pool)
-                : saved.defaultModelSelection,
-            providers:
-              pool === null
-                ? providers
-                : providers.filter((provider) => poolIdOfInstance(provider.instanceId) === pool),
+            personDefault: supportedPreference,
+            providers: destinationProviders,
           });
         }).pipe(Effect.orDie),
       placeOfProject: (projectId) =>

@@ -104,6 +104,19 @@ export const ModelCapabilities = Schema.Struct({
 });
 export type ModelCapabilities = typeof ModelCapabilities.Type;
 
+const ModelTokenPrice = Schema.Number.check(Schema.isFinite(), Schema.isGreaterThanOrEqualTo(0));
+
+/** Public per-million-token pricing metadata for model selection and display. */
+export const ModelPricing = Schema.Struct({
+  inputCostPerMillionTokens: ModelTokenPrice,
+  outputCostPerMillionTokens: ModelTokenPrice,
+});
+export type ModelPricing = typeof ModelPricing.Type;
+
+/** How a model may participate in automatic initial selection without a price. */
+export const ModelDefaultSelection = Schema.Literals(["economical", "configured", "excluded"]);
+export type ModelDefaultSelection = typeof ModelDefaultSelection.Type;
+
 export const CustomModelEntry = Schema.Struct({
   slug: TrimmedNonEmptyString,
   name: Schema.optional(TrimmedNonEmptyString),

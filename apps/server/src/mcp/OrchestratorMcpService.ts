@@ -90,6 +90,7 @@ import * as ProjectService from "../project/ProjectService.ts";
 import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import * as ScheduledTaskService from "../scheduledTasks/ScheduledTaskService.ts";
 import * as ServerSettings from "../serverSettings.ts";
+import * as SignalboxMcpDefaultModels from "../signalbox/mcpDefaultModels.ts";
 import {
   clientRuntimeModeCeiling,
   type McpInvocationScope,
@@ -915,6 +916,7 @@ const make = Effect.gen(function* () {
           : Effect.succeed(selection),
       ),
     );
+
   const secretRequests = yield* SecretRequests.SecretRequests;
 
   const requireCapability = (scope: McpInvocationScope) =>
@@ -1140,6 +1142,9 @@ const make = Effect.gen(function* () {
     readonly parent: Pick<OrchestrationV2ThreadProjection, "thread">;
     readonly target: OrchestratorMcpTarget | undefined;
     readonly providers: ReadonlyArray<ServerProvider>;
+    readonly resolveOmittedModel?: (
+      provider: ServerProvider,
+    ) => Effect.Effect<ModelSelection | null, OrchestratorMcpFailure>;
     /**
      * Set only when the command that will dispatch this target already has a receipt: that
      * dispatch can only replay the recorded result, never start anything new, so filtering
@@ -1226,11 +1231,28 @@ const make = Effect.gen(function* () {
 
       const inheritedSelection = input.parent.thread.modelSelection;
       const requestedModel = input.target?.model;
+      const initialSelection =
+        requestedModel === undefined && input.resolveOmittedModel !== undefined
+          ? yield* input.resolveOmittedModel(provider)
+          : undefined;
+      if (initialSelection === null) {
+        return yield* failure(
+          "model_unavailable",
+          `No model is available for provider ${provider.instanceId}. Choose a model from orchestrator_capabilities.`,
+        );
+      }
+      if (initialSelection !== undefined && initialSelection.instanceId !== instanceId) {
+        return yield* failure(
+          "model_unavailable",
+          `No model is available for provider ${provider.instanceId}. Choose a model from orchestrator_capabilities.`,
+        );
+      }
       const model =
         requestedModel ??
+        initialSelection?.model ??
         (instanceId === inheritedSelection.instanceId
           ? inheritedSelection.model
-          : provider?.models[0]?.slug);
+          : provider.models[0]?.slug);
       if (model === undefined) {
         return yield* failure(
           "model_unavailable",
@@ -1249,7 +1271,7 @@ const make = Effect.gen(function* () {
         );
       }
 
-      const requestedOptions = input.target?.options;
+      const requestedOptions = input.target?.options ?? initialSelection?.options;
       if (requestedOptions !== undefined) {
         const descriptors = provider.models.find((candidate) => candidate.slug === model)
           ?.capabilities?.optionDescriptors;
@@ -1264,13 +1286,17 @@ const make = Effect.gen(function* () {
 
       return {
         modelSelection:
-          instanceId === inheritedSelection.instanceId &&
-          model === inheritedSelection.model &&
-          requestedOptions === undefined
-            ? inheritedSelection
-            : requestedOptions === undefined
-              ? { instanceId, model }
-              : { instanceId, model, options: requestedOptions },
+          initialSelection !== undefined
+            ? requestedOptions === undefined
+              ? initialSelection
+              : { ...initialSelection, options: requestedOptions }
+            : instanceId === inheritedSelection.instanceId &&
+                model === inheritedSelection.model &&
+                requestedOptions === undefined
+              ? inheritedSelection
+              : requestedOptions === undefined
+                ? { instanceId, model }
+                : { instanceId, model, options: requestedOptions },
         supportedRuntimeModes: provider.supportedRuntimeModes,
       };
     });
@@ -2243,6 +2269,24 @@ const make = Effect.gen(function* () {
                   parent,
                   target: request.target,
                   providers,
+                  ...(request.target?.model === undefined
+                    ? {
+                        resolveOmittedModel: (provider) =>
+                          SignalboxMcpDefaultModels.resolveForProvider({
+                            projectId: parent.thread.projectId,
+                            provider,
+                            project: requireProject(parent.thread.projectId),
+                            settings: serverSettings.getSettings.pipe(
+                              Effect.mapError((error) =>
+                                failure(
+                                  "orchestration_error",
+                                  `Unable to resolve a model: ${errorMessage(error)}`,
+                                ),
+                              ),
+                            ),
+                          }),
+                      }
+                    : {}),
                 });
               } else {
                 const initialSelection = yield* initialModelSelectionForProject(

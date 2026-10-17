@@ -72,6 +72,22 @@ describe("loadOpenCode2Catalog", () => {
     }),
   );
 
+  it.effect("preserves reported zero prices for free preview models", () =>
+    Effect.gen(function* () {
+      const models = yield* readCatalog({
+        "/api/model": MODELS_BODY,
+        "/api/provider": PROVIDERS_BODY,
+      });
+      assert.deepStrictEqual(
+        models.map((model) => model.pricing),
+        [
+          { inputCostPerMillionTokens: 0, outputCostPerMillionTokens: 0 },
+          { inputCostPerMillionTokens: 0, outputCostPerMillionTokens: 0 },
+        ],
+      );
+    }),
+  );
+
   it.effect("keeps the variants a model advertised", () =>
     Effect.gen(function* () {
       const models = yield* readCatalog({

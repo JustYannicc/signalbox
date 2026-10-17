@@ -84,7 +84,12 @@ import { delegatedTaskRun, hasPendingChildRuns } from "./OrchestratorMcpService.
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 
 const layerOrchestratorToolkit = McpHttpServer.layerOrchestratorToolkit.pipe(
-  Layer.provide(Layer.mock(ThreadLaunchService.ThreadLaunchService)({})),
+  Layer.provide(
+    Layer.mock(ThreadLaunchService.ThreadLaunchService)({
+      initialModelSelection: () =>
+        Effect.succeed({ instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" }),
+    }),
+  ),
   Layer.provide(Layer.mock(GitVcsDriver.GitVcsDriver)({})),
 );
 
@@ -177,6 +182,7 @@ function makeProviderSnapshot(input: {
         slug: input.model,
         name: input.model,
         isCustom: false,
+        pricing: { inputCostPerMillionTokens: 1, outputCostPerMillionTokens: 2 },
         capabilities:
           input.optionDescriptors === undefined
             ? null

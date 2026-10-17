@@ -1,6 +1,5 @@
 import type {
   ModelSelection,
-  ServerConfig,
   ProjectId,
   RuntimeMode,
   ScheduledTask,
@@ -8,48 +7,14 @@ import type {
   ScheduledTaskWebhookSignature,
 } from "@t3tools/contracts";
 
-import { DEFAULT_SERVER_SETTINGS, resolveProjectProviderInstanceEnabled } from "@t3tools/contracts";
 import { parseMaxDeliveryAge } from "@t3tools/client-runtime/scheduled-task-webhook";
-import {
-  resolveProjectSettings,
-  type LegacyProjectSettingsFields,
-} from "@t3tools/shared/projectSettings";
-import { resolveInitialModelSelection } from "@t3tools/shared/defaultModelSelection";
-import { resolveSelectableModelSelection } from "../../lib/modelOptions";
+import { resolveScheduledTaskDefaultModelSelection } from "../threads/new-task-model-selection-policy"; // signalbox
 
 export function scheduledTaskDefaultModel(
-  config: ServerConfig | null,
-  project: (LegacyProjectSettingsFields & { readonly id: ProjectId }) | null,
+  config: Parameters<typeof resolveScheduledTaskDefaultModelSelection>[0],
+  project: Parameters<typeof resolveScheduledTaskDefaultModelSelection>[1],
 ): ModelSelection | null {
-  const settings = config?.settings ?? DEFAULT_SERVER_SETTINGS;
-  const resolvedProjectSettings = resolveProjectSettings(settings, project?.id ?? null, project);
-  return resolveInitialModelSelection({
-    projectDefault:
-      resolvedProjectSettings.sources.defaultModelSelection === "project"
-        ? resolvedProjectSettings.settings.defaultModelSelection
-        : null,
-    personDefault:
-      settings.defaultModelSelection &&
-      resolveProjectProviderInstanceEnabled(
-        settings,
-        project?.id ?? null,
-        settings.defaultModelSelection.instanceId,
-      )
-        ? settings.defaultModelSelection
-        : null,
-    providers: (config?.providers ?? []).filter((provider) => {
-      const model = provider.models[0]?.slug ?? "";
-      return (
-        provider.availability !== "unavailable" &&
-        model.length > 0 &&
-        resolveSelectableModelSelection(
-          config,
-          { instanceId: provider.instanceId, model },
-          project?.id ?? null,
-        ) !== null
-      );
-    }),
-  });
+  return resolveScheduledTaskDefaultModelSelection(config, project);
 }
 
 export type ScheduleDraft = {

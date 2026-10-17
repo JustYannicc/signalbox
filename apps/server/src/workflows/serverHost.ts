@@ -28,6 +28,7 @@ import {
 import { Scheduler } from "../scheduling/Scheduler.ts";
 import { ServerActivation } from "../serverActivation.ts";
 import { makeCallbacks } from "./callbacks.ts";
+import * as ProjectAutomations from "./ProjectAutomations.ts";
 import { compileWorkflow } from "@signalbox/automation-compiler/compileWorkflow";
 import { automationError, fail } from "@signalbox/automations/errors";
 import * as ExecutorSettings from "./executorSettings.ts";
@@ -275,7 +276,7 @@ const layerHost = Layer.mergeAll(
 );
 
 /** The engine with the server as its host. */
-export const layer = layerSchedule.pipe(
+export const layer = Layer.merge(layerSchedule, ProjectAutomations.layer).pipe(
   Layer.provideMerge(WorkflowEngine.layer),
   Layer.provideMerge(layerHost),
 );

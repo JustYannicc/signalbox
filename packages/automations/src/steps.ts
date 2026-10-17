@@ -109,18 +109,35 @@ const modelFor = (options: Readonly<Record<string, unknown>>, defaults: Automati
     const provider = typeof options.provider === "string" ? options.provider : undefined;
     const model = typeof options.model === "string" ? options.model : undefined;
     const effort = typeof options.effort === "string" ? options.effort : undefined;
-    const switched = provider !== undefined && provider !== defaults.modelSelection.instanceId;
+    const inherited = defaults.modelSelection;
+    const switched = provider !== undefined && provider !== inherited?.instanceId;
     if (switched && !model) {
       return yield* fail(
         `Name the model to use with ${provider}: { provider: "${provider}", model: "…" }.`,
       );
     }
+    if (
+      inherited === null &&
+      provider === undefined &&
+      model === undefined &&
+      effort === undefined
+    ) {
+      return null;
+    }
+    if (inherited === null && (provider === undefined || model === undefined)) {
+      return yield* fail("Choose a default model, or name both a provider and model in this step.");
+    }
     let selections: ReadonlyArray<ProviderOptionSelection> = switched
       ? []
-      : (defaults.modelSelection.options ?? []);
+      : (inherited?.options ?? []);
     if (effort) {
-      const instanceId = provider ?? defaults.modelSelection.instanceId;
-      const modelSlug = model ?? defaults.modelSelection.model;
+      const instanceId = provider ?? inherited?.instanceId;
+      const modelSlug = model ?? inherited?.model;
+      if (instanceId === undefined || modelSlug === undefined) {
+        return yield* fail(
+          "Choose a default model, or name both a provider and model to set reasoning effort.",
+        );
+      }
       const option = yield* effortOption(instanceId, modelSlug);
       if (option === null) {
         return yield* fail(`${modelSlug} on ${instanceId} has no reasoning effort to set.`);
@@ -135,7 +152,14 @@ const modelFor = (options: Readonly<Record<string, unknown>>, defaults: Automati
         { id: option.id, value: effort },
       ];
     }
-    const { options: _inherited, ...base } = defaults.modelSelection;
+    const baseSelection =
+      inherited && !switched
+        ? inherited
+        : provider !== undefined && model !== undefined
+          ? { instanceId: ProviderInstanceId.make(provider), model }
+          : null;
+    if (baseSelection === null) return null;
+    const { options: _inherited, ...base } = baseSelection;
     const selection: ModelSelection = {
       ...base,
       ...(provider ? { instanceId: ProviderInstanceId.make(provider) } : {}),
@@ -194,7 +218,7 @@ export const launchAgent = (input: {
           messageId,
           text: prompt,
           attachments: [],
-          ...(switched ? { modelSelection } : {}),
+          ...(switched && modelSelection !== null ? { modelSelection } : {}),
           createdBy: "system",
           creationSource: "server",
         })
@@ -217,7 +241,7 @@ export const launchAgent = (input: {
         commandId,
         projectId: ProjectId.make(input.projectId),
         title: input.step.label,
-        modelSelection,
+        ...(modelSelection === null ? {} : { modelSelection }),
         runtimeMode: input.defaults.runtimeMode,
         interactionMode: input.interactionMode ?? input.defaults.interactionMode,
         workspace: workspaceFor(options.worktree),

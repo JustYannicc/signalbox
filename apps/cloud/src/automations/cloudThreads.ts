@@ -143,7 +143,7 @@ export const layer = Layer.effect(
               projectId: input.projectId,
               title: input.title,
               generateTitle: false,
-              modelSelection: input.modelSelection,
+              ...(input.modelSelection ? { modelSelection: input.modelSelection } : {}),
               runtimeMode: input.runtimeMode,
               interactionMode: input.interactionMode,
               workspaceStrategy: input.workspace,

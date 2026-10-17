@@ -4,12 +4,7 @@ import {
   scopeProjectRef,
   scopeThreadRef,
 } from "@t3tools/client-runtime/environment";
-import {
-  DEFAULT_SERVER_SETTINGS,
-  resolveProjectProviderInstanceEnabled,
-  type ScopedProjectRef,
-  type ThreadId,
-} from "@t3tools/contracts";
+import { DEFAULT_SERVER_SETTINGS, type ScopedProjectRef, type ThreadId } from "@t3tools/contracts";
 import { useParams, useRouter } from "@tanstack/react-router";
 import { useCallback, useMemo } from "react";
 import {
@@ -28,7 +23,6 @@ import {
   selectProjectGroupingSettings,
 } from "../logicalProject";
 import { resolveNewThreadEnvMode, resolveProjectSettings } from "@t3tools/shared/projectSettings";
-import { resolveInitialModelSelection } from "@t3tools/shared/defaultModelSelection";
 import {
   readProject,
   readProjects,
@@ -40,8 +34,11 @@ import {
 import {
   hasExplicitComposerModelSelection,
   resolveNewDraftStartFromOrigin,
-  resolveNewThreadModelSelectionOverride,
 } from "../lib/chatThreadActions";
+import {
+  explicitCarryModelSelection,
+  resolveNewThreadInitialModelSelection,
+} from "../lib/newThreadModelSelectionPolicy"; // signalbox
 import { readT3ProjectFile } from "../lib/t3ProjectFileDefaults";
 import { environmentServerConfigsAtom } from "../state/server";
 import { useProjectPoolModelSelection } from "../state/projectPool"; // signalbox
@@ -118,13 +115,7 @@ export function useNewThreadHandler() {
               : currentRouteTarget.draftId,
           )
         : null;
-      const composerActiveProvider = carrySourceComposer?.activeProvider ?? null;
-      const composerModelSelection = composerActiveProvider
-        ? (carrySourceComposer?.modelSelectionByProvider[composerActiveProvider] ?? null)
-        : null;
-      const explicitCarryModelSelection = hasExplicitComposerModelSelection(carrySourceComposer)
-        ? composerModelSelection
-        : null;
+      const explicitCarrySelection = explicitCarryModelSelection(carrySourceComposer);
       const carryInteractionMode =
         carrySourceComposer?.interactionMode ??
         carrySourceShell?.interactionMode ??
@@ -142,53 +133,21 @@ export function useNewThreadHandler() {
         project?.id ?? null,
         project,
       );
-      const projectDefaultModelSelection = projectSettings.settings.defaultModelSelection;
-      const configuredProjectDefault =
-        projectSettings.sources.defaultModelSelection === "project"
-          ? projectDefaultModelSelection
-          : null;
-      const configuredPersonModelSelection = targetServerSettings.defaultModelSelection ?? null;
-      const personDefaultModelSelection =
-        configuredPersonModelSelection &&
-        resolveProjectProviderInstanceEnabled(
-          projectSettings.settings,
-          project?.id ?? null,
-          configuredPersonModelSelection.instanceId,
-        )
-          ? configuredPersonModelSelection
-          : null;
-      const configuredDefaultModelSelection =
-        configuredProjectDefault ?? personDefaultModelSelection;
-      const initialModelSelection = resolveInitialModelSelection({
-        projectDefault: configuredProjectDefault,
-        personDefault: personDefaultModelSelection,
-        providers: (environmentServerConfigs.get(projectRef.environmentId)?.providers ?? []).filter(
-          (provider) =>
-            provider.enabled &&
-            provider.installed &&
-            provider.auth.status !== "unauthenticated" &&
-            provider.availability !== "unavailable" &&
-            resolveProjectProviderInstanceEnabled(
-              projectSettings.settings,
-              project?.id ?? null,
-              provider.instanceId,
-            ),
-        ),
-      });
       const defaultRuntimeMode = projectSettings.settings.defaultRuntimeMode;
       // signalbox: the thread starts on the pool its project runs on.
       const resolveModelSelectionOverride = (destinationDraftId: DraftId) => {
-        const carriedExplicitSelection =
-          configuredDefaultModelSelection === null
-            ? resolveNewThreadModelSelectionOverride({
-                projectDefaultSelection: null,
-                carrySelection: explicitCarryModelSelection,
-                carrySourceDraftId:
-                  currentRouteTarget?.kind === "draft" ? currentRouteTarget.draftId : null,
-                destinationDraftId,
-              })
-            : null;
-        const override = carriedExplicitSelection ?? initialModelSelection;
+        const override = resolveNewThreadInitialModelSelection({
+          projectDefaultIsConfigured: projectSettings.sources.defaultModelSelection === "project",
+          projectDefaultSelection: projectSettings.settings.defaultModelSelection,
+          personDefaultSelection: targetServerSettings.defaultModelSelection ?? null,
+          settings: projectSettings.settings,
+          projectId: project?.id ?? null,
+          providers: environmentServerConfigs.get(projectRef.environmentId)?.providers ?? [],
+          explicitCarrySelection,
+          carrySourceDraftId:
+            currentRouteTarget?.kind === "draft" ? currentRouteTarget.draftId : null,
+          destinationDraftId,
+        });
         return (
           projectPool({
             environmentId: projectRef.environmentId,

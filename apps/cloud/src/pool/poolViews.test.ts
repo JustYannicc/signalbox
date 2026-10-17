@@ -46,7 +46,15 @@ describe("poolFallbackModelSelection", () => {
       poolFallbackModelSelection([
         {
           ...provider(true),
-          models: [{ slug: "gpt-6-luna", name: "Luna", isCustom: false, capabilities: null }],
+          models: [
+            {
+              slug: "gpt-6-luna",
+              name: "Luna",
+              defaultSelection: "economical" as const,
+              isCustom: false,
+              capabilities: null,
+            },
+          ],
         },
       ]),
     ).toEqual({ instanceId: "personal-codex", model: "gpt-6-luna" });
@@ -71,7 +79,13 @@ describe("poolFallbackModelSelection", () => {
       ...expensive,
       models: [
         ...expensive.models,
-        { slug: "gpt-6-luna", name: "Luna", isCustom: false, capabilities: null },
+        {
+          slug: "gpt-6-luna",
+          name: "Luna",
+          defaultSelection: "economical" as const,
+          isCustom: false,
+          capabilities: null,
+        },
       ],
     };
     expect(poolDefaultModelSelection([withEconomical])).toEqual({

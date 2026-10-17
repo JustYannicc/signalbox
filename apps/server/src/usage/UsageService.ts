@@ -154,6 +154,8 @@ export class UsageService extends Context.Service<
   {
     readonly readSummary: (input: UsageSummaryInput) => Effect.Effect<UsageSummary, UsageReadError>;
     readonly refreshRates: Effect.Effect<UsagePricing>;
+    /** Rates already in memory or on disk. This never refreshes from the network. */
+    readonly cachedRates: Effect.Effect<RateTable>;
   }
 >()("t3/usage/UsageService") {}
 
@@ -180,6 +182,7 @@ const layerTest = Layer.succeed(
         scanDurationMs: 0,
       }),
     refreshRates: Effect.succeed(EMPTY_PRICING),
+    cachedRates: Effect.succeed(new Map() as RateTable),
   }),
 );
 
@@ -221,26 +224,32 @@ export const make = Effect.gen(function* () {
     knownModels: rates.size,
   });
 
+  const readCachedRates = Effect.fnUntraced(function* () {
+    if (ratesFetchedAtMs !== null) return rates;
+    const fromDisk = yield* fileSystem.readFileString(ratesCachePath).pipe(
+      Effect.flatMap((raw) => decodeRatesCache(raw)),
+      Effect.catchCause(() => Effect.succeed(null)),
+    );
+    if (fromDisk !== null) {
+      const parsed = parseRateTable(fromDisk.document);
+      if (parsed.size > 0) {
+        rates = parsed;
+        ratesFetchedAtMs = fromDisk.fetchedAtMs;
+        ratesStatus = "cached";
+      }
+    }
+    return rates;
+  });
+
+  const cachedRates = ratesLock.withPermit(readCachedRates());
+
   const loadRates = Effect.fn("UsageService.loadRates")(function* (force: boolean) {
     const now = yield* Clock.currentTimeMillis;
     const maxAgeMs = force ? RATES_REFRESH_FLOOR_MS : RATES_TTL_MS;
     if (ratesFetchedAtMs !== null && now - ratesFetchedAtMs < maxAgeMs) return;
 
-    if (ratesFetchedAtMs === null) {
-      const fromDisk = yield* fileSystem.readFileString(ratesCachePath).pipe(
-        Effect.flatMap((raw) => decodeRatesCache(raw)),
-        Effect.catchCause(() => Effect.succeed(null)),
-      );
-      if (fromDisk !== null) {
-        const parsed = parseRateTable(fromDisk.document);
-        if (parsed.size > 0) {
-          rates = parsed;
-          ratesFetchedAtMs = fromDisk.fetchedAtMs;
-          ratesStatus = "cached";
-          if (now - fromDisk.fetchedAtMs < maxAgeMs) return;
-        }
-      }
-    }
+    if (ratesFetchedAtMs === null) yield* readCachedRates();
+    if (ratesFetchedAtMs !== null && now - ratesFetchedAtMs < maxAgeMs) return;
 
     const fetched = yield* httpClient.get(LITELLM_RATES_URL).pipe(
       Effect.flatMap(HttpClientResponse.filterStatusOk),
@@ -826,7 +835,7 @@ export const make = Effect.gen(function* () {
     return yield* Deferred.await(deferred);
   });
 
-  return { readSummary, refreshRates, awaitPersisted } as const;
+  return { readSummary, refreshRates, cachedRates, awaitPersisted } as const;
 });
 
 export const layer = Layer.effect(UsageService, make);

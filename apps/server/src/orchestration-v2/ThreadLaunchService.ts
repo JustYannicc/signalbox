@@ -18,10 +18,9 @@ import {
   type RuntimeMode,
   type ScheduledTaskId,
   type ServerSettingsError,
-  resolveProjectProviderInstanceEnabled,
   ThreadId,
 } from "@t3tools/contracts";
-import { resolveInitialModelSelection } from "@t3tools/shared/defaultModelSelection";
+import * as SignalboxDefaultModels from "../signalbox/defaultModels.ts";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
@@ -224,40 +223,11 @@ const make = Effect.gen(function* () {
   const managedFolders = yield* ManagedProjectFolders.ManagedProjectFolders;
 
   const initialModelSelectionForProject = (projectId: ProjectId, project: Project) =>
-    Effect.gen(function* () {
-      const [settings, providers] = yield* Effect.all([
-        serverSettings.getSettings,
-        providerRegistry.getProviders,
-      ]);
-      const effective = resolveProjectSettings(settings, projectId, project);
-      const isUnavailableSavedDefault = (selection: ModelSelection | null | undefined) => {
-        if (selection == null) return false;
-        const provider = providers.find(
-          (candidate) => candidate.instanceId === selection.instanceId,
-        );
-        return (
-          provider !== undefined &&
-          (!provider.enabled ||
-            !resolveProjectProviderInstanceEnabled(settings, projectId, selection.instanceId) ||
-            provider.models.find((model) => model.slug === selection.model)?.isLegacy === true)
-        );
-      };
-      return resolveInitialModelSelection({
-        projectDefault: isUnavailableSavedDefault(effective.overrides.defaultModelSelection)
-          ? null
-          : effective.overrides.defaultModelSelection,
-        personDefault: isUnavailableSavedDefault(settings.defaultModelSelection)
-          ? null
-          : settings.defaultModelSelection,
-        providers: providers.filter(
-          (provider) =>
-            provider.enabled &&
-            provider.installed &&
-            provider.auth.status !== "unauthenticated" &&
-            provider.availability !== "unavailable" &&
-            resolveProjectProviderInstanceEnabled(settings, projectId, provider.instanceId),
-        ),
-      });
+    SignalboxDefaultModels.resolveForProject({
+      projectId,
+      project,
+      settings: serverSettings.getSettings,
+      providers: providerRegistry.getProviders,
     });
 
   const initialModelSelection: ThreadLaunchService["Service"]["initialModelSelection"] = (
