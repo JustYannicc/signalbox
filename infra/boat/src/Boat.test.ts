@@ -100,7 +100,9 @@ const stringField = (body: unknown, key: string) => {
 
 const stringArrayField = (body: unknown, key: string) => {
   const value = bodyRecord(body)[key];
-  return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
+  return Array.isArray(value)
+    ? value.filter((item): item is string => typeof item === "string")
+    : [];
 };
 
 const route = (method: string, path: string, body: unknown): { status: number; body: unknown } => {
@@ -135,7 +137,8 @@ const route = (method: string, path: string, body: unknown): { status: number; b
         state: "ready",
         desktopAvailable: false,
         snapshotAvailable: true,
-        setupStatus: request.setupScript === undefined ? null : fake.setupStatuses[0] ?? "pending",
+        setupStatus:
+          request.setupScript === undefined ? null : (fake.setupStatuses[0] ?? "pending"),
         setupError: fake.setupError ?? null,
       };
       fake.sandboxes.set(id, sandbox);
@@ -177,7 +180,13 @@ const route = (method: string, path: string, body: unknown): { status: number; b
         ok: true,
         type: "api_key.list",
         apiKeys: fake.inventoryHidden ? [] : [...fake.keys.values()],
-        catalog: { actions: [], presets: {}, defaultTtl: "90d", maxTtl: "365d", scopedCreationEnabled: true },
+        catalog: {
+          actions: [],
+          presets: {},
+          defaultTtl: "90d",
+          maxTtl: "365d",
+          scopedCreationEnabled: true,
+        },
       });
     case "POST /api-keys": {
       if (seg[1] === "scoped") {
@@ -188,11 +197,23 @@ const route = (method: string, path: string, body: unknown): { status: number; b
             : ["sandbox.read"],
         );
         fake.keys.set(created.id, created);
-        return ok({ ok: true, type: "api_key.created", apiKey: created, secret: `boat_live_new_${created.id}`, apiKeys: [] });
+        return ok({
+          ok: true,
+          type: "api_key.created",
+          apiKey: created,
+          secret: `boat_live_new_${created.id}`,
+          apiKeys: [],
+        });
       }
       const existing = fake.keys.get(seg[1]!);
       return existing
-        ? ok({ ok: true, type: "api_key.rotated", apiKey: existing, secret: `boat_live_rotated_${existing.id}`, apiKeys: [] })
+        ? ok({
+            ok: true,
+            type: "api_key.rotated",
+            apiKey: existing,
+            secret: `boat_live_rotated_${existing.id}`,
+            apiKeys: [],
+          })
         : notFound;
     }
     case "DELETE /api-keys":
@@ -382,27 +403,29 @@ describe("Boat.ApiKey", () => {
 });
 
 describe("Boat adoption", () => {
-  test.provider("keeps an adopted named snapshot and rebuilds it only on a buildVersion bump", (stack) =>
-    Effect.gen(function* () {
-      const existing = snapshot("signalbox-runner", "ready");
-      fake.snapshots.set("signalbox-runner", existing);
-      const image = (buildVersion?: number) =>
-        NamedSnapshot("RunnerImage", {
-          name: "signalbox-runner",
-          sandboxId: "bx_source",
-          ...(buildVersion !== undefined ? { buildVersion } : {}),
-        });
+  test.provider(
+    "keeps an adopted named snapshot and rebuilds it only on a buildVersion bump",
+    (stack) =>
+      Effect.gen(function* () {
+        const existing = snapshot("signalbox-runner", "ready");
+        fake.snapshots.set("signalbox-runner", existing);
+        const image = (buildVersion?: number) =>
+          NamedSnapshot("RunnerImage", {
+            name: "signalbox-runner",
+            sandboxId: "bx_source",
+            ...(buildVersion !== undefined ? { buildVersion } : {}),
+          });
 
-      const adopted = yield* stack.deploy(image().pipe(adopt(true)));
-      expect(adopted.snapshotId).toBe(existing.snapshotId);
-      expect(adopted.adopted).toBe(true);
-      yield* stack.deploy(image());
-      expect(fake.calls).toEqual([]);
+        const adopted = yield* stack.deploy(image().pipe(adopt(true)));
+        expect(adopted.snapshotId).toBe(existing.snapshotId);
+        expect(adopted.adopted).toBe(true);
+        yield* stack.deploy(image());
+        expect(fake.calls).toEqual([]);
 
-      const rebuilt = yield* stack.deploy(image(2));
-      expect(fake.calls).toEqual(["POST /named-snapshots"]);
-      expect(rebuilt.adopted).toBe(false);
-    }),
+        const rebuilt = yield* stack.deploy(image(2));
+        expect(fake.calls).toEqual(["POST /named-snapshots"]);
+        expect(rebuilt.adopted).toBe(false);
+      }),
   );
 
   test.provider("refuses to overwrite an adopted named snapshot that isn't ready", (stack) =>
@@ -420,31 +443,33 @@ describe("Boat adoption", () => {
     }),
   );
 
-  test.provider("creates a no-env runner environment and leaves the default one on destroy", (stack) =>
-    Effect.gen(function* () {
-      const base = environment("base", true);
-      fake.environments.set(base.id, base);
+  test.provider(
+    "creates a no-env runner environment and leaves the default one on destroy",
+    (stack) =>
+      Effect.gen(function* () {
+        const base = environment("base", true);
+        fake.environments.set(base.id, base);
 
-      const runner = yield* stack.deploy(
-        Effect.gen(function* () {
-          yield* Environment("Base", { name: "base" }).pipe(adopt(true));
-          return yield* Environment("RunnerEnvironment", {
-            name: "signalbox-runner",
-            safeForThirdParties: true,
-          });
-        }),
-      );
-      expect(runner.safeForThirdParties).toBe(true);
-      expect(fake.calls).toEqual([
-        "POST /environments",
-        `PUT /environments/${runner.environmentId}`,
-      ]);
+        const runner = yield* stack.deploy(
+          Effect.gen(function* () {
+            yield* Environment("Base", { name: "base" }).pipe(adopt(true));
+            return yield* Environment("RunnerEnvironment", {
+              name: "signalbox-runner",
+              safeForThirdParties: true,
+            });
+          }),
+        );
+        expect(runner.safeForThirdParties).toBe(true);
+        expect(fake.calls).toEqual([
+          "POST /environments",
+          `PUT /environments/${runner.environmentId}`,
+        ]);
 
-      fake.calls.length = 0;
-      yield* stack.destroy();
-      expect(fake.calls).toEqual([`DELETE /environments/${runner.environmentId}`]);
-      expect(fake.environments.has(base.id)).toBe(true);
-    }),
+        fake.calls.length = 0;
+        yield* stack.destroy();
+        expect(fake.calls).toEqual([`DELETE /environments/${runner.environmentId}`]);
+        expect(fake.environments.has(base.id)).toBe(true);
+      }),
   );
 });
 
@@ -485,9 +510,7 @@ describe("Boat snapshot builds", () => {
         "POST /named-snapshots",
         `DELETE /sandboxes/${built.sourceSandboxId}`,
       ]);
-      expect(fake.snapshots.get("signalbox-runner")?.sourceSandboxId).toBe(
-        built.sourceSandboxId,
-      );
+      expect(fake.snapshots.get("signalbox-runner")?.sourceSandboxId).toBe(built.sourceSandboxId);
       expect(fake.sandboxes.size).toBe(0);
     }),
   );
@@ -497,16 +520,11 @@ describe("Boat snapshot builds", () => {
       fake.setupStatuses.push("failed");
       fake.setupError = "exit status 1";
 
-      const result = yield* stack
-        .deploy(image({ setupScript: "exit 1" }))
-        .pipe(Effect.result);
+      const result = yield* stack.deploy(image({ setupScript: "exit 1" })).pipe(Effect.result);
 
       expect(Result.isFailure(result)).toBe(true);
       expect(fake.sandboxReads).toBe(1);
-      expect(fake.calls).toEqual([
-        "POST /sandboxes",
-        `DELETE /sandboxes/${fake.lastSandboxId}`,
-      ]);
+      expect(fake.calls).toEqual(["POST /sandboxes", `DELETE /sandboxes/${fake.lastSandboxId}`]);
       expect(fake.snapshots.size).toBe(0);
       expect(fake.sandboxes.size).toBe(0);
     }),
@@ -528,10 +546,7 @@ describe("Boat snapshot builds", () => {
 
       expect(Result.isFailure(result)).toBe(true);
       expect(fake.sandboxReads).toBeGreaterThan(1);
-      expect(fake.calls).toEqual([
-        "POST /sandboxes",
-        `DELETE /sandboxes/${fake.lastSandboxId}`,
-      ]);
+      expect(fake.calls).toEqual(["POST /sandboxes", `DELETE /sandboxes/${fake.lastSandboxId}`]);
       expect(fake.snapshots.size).toBe(0);
       expect(fake.sandboxes.size).toBe(0);
     }),

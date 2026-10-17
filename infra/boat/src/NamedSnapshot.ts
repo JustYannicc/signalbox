@@ -216,127 +216,126 @@ const awaitSaved = (name: string, saving?: { sandboxId: string; previous?: strin
   );
 
 const deleteSandbox = (sandboxId: string) =>
-  boat.deleteSandbox({ sandboxId, xAsciiConfirmDelete: sandboxId }).pipe(
-    Effect.asVoid,
-    Effect.catchTags({ NotFound: () => Effect.void }),
-  );
+  boat
+    .deleteSandbox({ sandboxId, xAsciiConfirmDelete: sandboxId })
+    .pipe(Effect.asVoid, Effect.catchTags({ NotFound: () => Effect.void }));
 
 export const NamedSnapshotProvider = () =>
   Provider.effect(
     NamedSnapshot,
     Effect.succeed({
-        stables: ["name"],
-        diff: Effect.fn(function* ({ id, olds, news, output }) {
-          if (!isResolved(news)) return undefined;
-          const name = output?.name ?? (yield* snapshotName(id, olds?.name));
-          if (news.name !== undefined && news.name !== name) {
-            return { action: "replace" } as const;
-          }
-        }),
-        read: Effect.fn(function* ({ id, olds, output }) {
-          const name = output?.name ?? (yield* snapshotName(id, olds?.name));
-          const snapshot = yield* observe(name);
-          if (!snapshot) return undefined;
-          const attrs = toAttrs(snapshot, output ?? UNKNOWN);
-          return output === undefined && olds?.name !== undefined ? Unowned(attrs) : attrs;
-        }),
-        reconcile: Effect.fn(function* ({ id, news, olds, output, session }) {
-          const name = yield* snapshotName(id, news.name ?? output?.name);
-          const sourceHash = yield* sourceHashOf(news);
-          const desiredVersion = news.buildVersion ?? 1;
-          const priorVersion = output?.buildVersion ?? olds?.buildVersion ?? 1;
-          if (
-            news.sandboxId === undefined &&
-            news.setupScript === undefined &&
-            news.from === undefined
-          ) {
-            return yield* new NamedSnapshotBuildFailed({
-              message: `Named snapshot ${name} needs a sandboxId, a setupScript or a from snapshot.`,
-            });
-          }
-
-          // Observe; let an in-flight save settle first.
-          let snapshot = yield* observe(name);
-          if (snapshot?.status === "saving") {
-            yield* session.note(`Waiting for named snapshot ${name} to finish saving...`);
-            // A failed save leaves the name in place; observe it as it is.
-            snapshot = yield* awaitSaved(name).pipe(
-              Effect.catchTags({ NamedSnapshotBuildFailed: () => observe(name) }),
-            );
-          }
-
-          const decision = buildDecision({
-            observed: snapshot?.status,
-            recordedHash: output?.sourceHash,
-            sourceHash,
-            rebuildRequested: desiredVersion > priorVersion,
+      stables: ["name"],
+      diff: Effect.fn(function* ({ id, olds, news, output }) {
+        if (!isResolved(news)) return undefined;
+        const name = output?.name ?? (yield* snapshotName(id, olds?.name));
+        if (news.name !== undefined && news.name !== name) {
+          return { action: "replace" } as const;
+        }
+      }),
+      read: Effect.fn(function* ({ id, olds, output }) {
+        const name = output?.name ?? (yield* snapshotName(id, olds?.name));
+        const snapshot = yield* observe(name);
+        if (!snapshot) return undefined;
+        const attrs = toAttrs(snapshot, output ?? UNKNOWN);
+        return output === undefined && olds?.name !== undefined ? Unowned(attrs) : attrs;
+      }),
+      reconcile: Effect.fn(function* ({ id, news, olds, output, session }) {
+        const name = yield* snapshotName(id, news.name ?? output?.name);
+        const sourceHash = yield* sourceHashOf(news);
+        const desiredVersion = news.buildVersion ?? 1;
+        const priorVersion = output?.buildVersion ?? olds?.buildVersion ?? 1;
+        if (
+          news.sandboxId === undefined &&
+          news.setupScript === undefined &&
+          news.from === undefined
+        ) {
+          return yield* new NamedSnapshotBuildFailed({
+            message: `Named snapshot ${name} needs a sandboxId, a setupScript or a from snapshot.`,
           });
-          if (decision === "refuse") {
-            return yield* new NamedSnapshotBuildFailed({
-              message: `Named snapshot ${name} exists with unknown inputs and is ${snapshot?.status}, not ready. Alchemy won't overwrite an artifact it didn't build: raise buildVersion to rebuild it.`,
-            });
-          }
-          if (decision === "keep") {
-            if (!output?.sourceHash) {
-              yield* session.note(`Adopting named snapshot ${name} as is; it is not rebuilt.`);
-            }
-            return toAttrs(snapshot!, {
-              sourceHash,
-              adopted: output?.adopted ?? true,
-              buildVersion: Math.max(desiredVersion, priorVersion),
-            });
-          }
+        }
 
-          // Ensure: save from the given sandbox, or build one and save it.
-          const previous = snapshot?.snapshotId;
-          const save = (sandboxId: string) =>
-            Effect.gen(function* () {
-              yield* session.note(`Saving named snapshot ${name} from ${sandboxId}...`);
-              yield* boat.saveNamedSnapshot({ sandboxId, name });
-              return yield* awaitSaved(name, { sandboxId, previous });
-            });
-          const saved =
-            news.sandboxId !== undefined
-              ? yield* save(news.sandboxId)
-              : yield* Effect.acquireUseRelease(
-                  Effect.gen(function* () {
-                    yield* session.note(`Creating build sandbox for named snapshot ${name}...`);
-                    const created = yield* boat.createSandbox({
-                      ...(news.type !== undefined ? { type: news.type } : {}),
-                      ...(news.from !== undefined ? { from: news.from } : {}),
-                      ...(news.setupScript !== undefined ? { setupScript: news.setupScript } : {}),
-                      noEnv: true,
-                      // Auto-stops a build sandbox a crashed deploy leaves behind.
-                      ttlSeconds: 7200,
-                    });
-                    return created.sandbox.id;
-                  }),
-                  (sandboxId) =>
-                    Effect.gen(function* () {
-                      yield* session.note(`Running the setup script on ${sandboxId}...`);
-                      yield* awaitBuilder(sandboxId, news.setupScript !== undefined);
-                      return yield* save(sandboxId);
-                    }),
-                  (sandboxId) => deleteSandbox(sandboxId).pipe(Effect.ignore),
-                );
-
-          return toAttrs(saved, { sourceHash, adopted: false, buildVersion: desiredVersion });
-        }),
-        delete: Effect.fn(function* ({ output }) {
-          yield* boat.deleteNamedSnapshot({ name: output.name }).pipe(
-            Effect.asVoid,
-            Effect.catchTags({ NotFound: () => Effect.void }),
-            // A save still in flight holds the name.
-            Effect.retry({
-              while: (e) => e._tag === "Conflict",
-              schedule: Schedule.spaced("5 seconds"),
-              times: 12,
-            }),
+        // Observe; let an in-flight save settle first.
+        let snapshot = yield* observe(name);
+        if (snapshot?.status === "saving") {
+          yield* session.note(`Waiting for named snapshot ${name} to finish saving...`);
+          // A failed save leaves the name in place; observe it as it is.
+          snapshot = yield* awaitSaved(name).pipe(
+            Effect.catchTags({ NamedSnapshotBuildFailed: () => observe(name) }),
           );
-        }),
-        list: Effect.fn(function* () {
-          const { snapshots } = yield* boat.listNamedSnapshots({});
-          return snapshots.map((snapshot) => toAttrs(snapshot, UNKNOWN));
-        }),
+        }
+
+        const decision = buildDecision({
+          observed: snapshot?.status,
+          recordedHash: output?.sourceHash,
+          sourceHash,
+          rebuildRequested: desiredVersion > priorVersion,
+        });
+        if (decision === "refuse") {
+          return yield* new NamedSnapshotBuildFailed({
+            message: `Named snapshot ${name} exists with unknown inputs and is ${snapshot?.status}, not ready. Alchemy won't overwrite an artifact it didn't build: raise buildVersion to rebuild it.`,
+          });
+        }
+        if (decision === "keep") {
+          if (!output?.sourceHash) {
+            yield* session.note(`Adopting named snapshot ${name} as is; it is not rebuilt.`);
+          }
+          return toAttrs(snapshot!, {
+            sourceHash,
+            adopted: output?.adopted ?? true,
+            buildVersion: Math.max(desiredVersion, priorVersion),
+          });
+        }
+
+        // Ensure: save from the given sandbox, or build one and save it.
+        const previous = snapshot?.snapshotId;
+        const save = (sandboxId: string) =>
+          Effect.gen(function* () {
+            yield* session.note(`Saving named snapshot ${name} from ${sandboxId}...`);
+            yield* boat.saveNamedSnapshot({ sandboxId, name });
+            return yield* awaitSaved(name, { sandboxId, previous });
+          });
+        const saved =
+          news.sandboxId !== undefined
+            ? yield* save(news.sandboxId)
+            : yield* Effect.acquireUseRelease(
+                Effect.gen(function* () {
+                  yield* session.note(`Creating build sandbox for named snapshot ${name}...`);
+                  const created = yield* boat.createSandbox({
+                    ...(news.type !== undefined ? { type: news.type } : {}),
+                    ...(news.from !== undefined ? { from: news.from } : {}),
+                    ...(news.setupScript !== undefined ? { setupScript: news.setupScript } : {}),
+                    noEnv: true,
+                    // Auto-stops a build sandbox a crashed deploy leaves behind.
+                    ttlSeconds: 7200,
+                  });
+                  return created.sandbox.id;
+                }),
+                (sandboxId) =>
+                  Effect.gen(function* () {
+                    yield* session.note(`Running the setup script on ${sandboxId}...`);
+                    yield* awaitBuilder(sandboxId, news.setupScript !== undefined);
+                    return yield* save(sandboxId);
+                  }),
+                (sandboxId) => deleteSandbox(sandboxId).pipe(Effect.ignore),
+              );
+
+        return toAttrs(saved, { sourceHash, adopted: false, buildVersion: desiredVersion });
+      }),
+      delete: Effect.fn(function* ({ output }) {
+        yield* boat.deleteNamedSnapshot({ name: output.name }).pipe(
+          Effect.asVoid,
+          Effect.catchTags({ NotFound: () => Effect.void }),
+          // A save still in flight holds the name.
+          Effect.retry({
+            while: (e) => e._tag === "Conflict",
+            schedule: Schedule.spaced("5 seconds"),
+            times: 12,
+          }),
+        );
+      }),
+      list: Effect.fn(function* () {
+        const { snapshots } = yield* boat.listNamedSnapshots({});
+        return snapshots.map((snapshot) => toAttrs(snapshot, UNKNOWN));
+      }),
     }),
   );
