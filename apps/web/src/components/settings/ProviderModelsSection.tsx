@@ -462,6 +462,7 @@ export function ProviderModelsSection({
               type="button"
               size="xs"
               variant="ghost-muted"
+              disabled={!canWritePreferences}
               onClick={() =>
                 onHiddenModelsChange(
                   nextHiddenModelsForBulkToggle(models, hiddenModels),
@@ -480,7 +481,7 @@ export function ProviderModelsSection({
             {hiddenCount > 0 ? ` · ${hiddenCount} hidden` : ""}
           </span>
         </div>
-        {driverKind !== "antigravity" && !isAdding ? (
+        {canManageCustomModels && driverKind !== "antigravity" && !isAdding ? (
           <Button
             type="button"
             size="xs"

@@ -58,6 +58,7 @@ export type ModelPickerKeybindingCommand = (typeof MODEL_PICKER_KEYBINDING_COMMA
 
 export const STATIC_KEYBINDING_COMMANDS = [
   "sidebar.toggle",
+  "sidebar.home",
   "navigation.back",
   "navigation.forward",
   "terminal.toggle",
@@ -100,6 +101,7 @@ export const STATIC_KEYBINDING_COMMANDS = [
   "composer.branch",
   "composer.toggleSendLock", // signalbox: send lock
   "chat.new",
+  "capture.open", // signalbox: quick capture
   "chat.newLocal",
   "chat.newWithoutProject",
   "chat.find",
@@ -151,8 +153,12 @@ export const KeybindingsConfig = Schema.Array(KeybindingRule).check(
 );
 export type KeybindingsConfig = typeof KeybindingsConfig.Type;
 
+// signalbox: a compiled shortcut's key is the literal KeyboardEvent.key, and "space" compiles to " ",
+// which trimming would empty. That one key stays literal; every other key decodes as a rule's does.
+export const KeybindingShortcutKey = Schema.Union([Schema.Literal(" "), KeybindingValue]);
+
 export const KeybindingShortcut = Schema.Struct({
-  key: KeybindingValue,
+  key: KeybindingShortcutKey, // signalbox: keeps a literal space, see KeybindingShortcutKey
   metaKey: Schema.Boolean,
   ctrlKey: Schema.Boolean,
   shiftKey: Schema.Boolean,

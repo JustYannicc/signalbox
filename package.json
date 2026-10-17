@@ -3,18 +3,22 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "prepare": "effect-tsgo patch && vp config --no-agent",
-    "dev": "node scripts/dev-runner.ts dev",
-    "dev:share": "node scripts/dev-runner.ts dev --share",
-    "dev:server": "node scripts/dev-runner.ts dev:server",
-    "dev:web": "node scripts/dev-runner.ts dev:web",
-    "dev:marketing": "vp run --filter @t3tools/marketing dev",
-    "dev:desktop": "node scripts/dev-runner.ts dev:desktop",
+    "prepare": "node scripts/prepare-effect-sdk.ts && vp config --no-agent",
+    "agents:run": "node packages/shared/src/agentProcesses/cli.ts run",
+    "agents:stop": "node packages/shared/src/agentProcesses/cli.ts stop",
+    "agents:status": "node packages/shared/src/agentProcesses/cli.ts status",
+    "agents:reap": "node packages/shared/src/agentProcesses/cli.ts reap",
+    "dev": "node packages/shared/src/agentProcesses/cli.ts run -- node scripts/dev-runner.ts dev",
+    "dev:share": "node packages/shared/src/agentProcesses/cli.ts run -- node scripts/dev-runner.ts dev --share",
+    "dev:server": "node packages/shared/src/agentProcesses/cli.ts run -- node scripts/dev-runner.ts dev:server",
+    "dev:web": "node packages/shared/src/agentProcesses/cli.ts run -- node scripts/dev-runner.ts dev:web",
+    "dev:marketing": "node packages/shared/src/agentProcesses/cli.ts run -- vp run --filter @t3tools/marketing dev",
+    "dev:desktop": "node packages/shared/src/agentProcesses/cli.ts run -- node scripts/dev-runner.ts dev:desktop",
     "migrate-dev-db": "node apps/server/scripts/migrate-dev-db.ts",
-    "start": "vp run --filter t3 start",
-    "start:desktop": "vp run --filter @t3tools/desktop start",
-    "start:marketing": "vp run --filter @t3tools/marketing preview",
-    "start:mock-update-server": "node scripts/mock-update-server.ts",
+    "start": "node packages/shared/src/agentProcesses/cli.ts run -- vp run --filter t3 start",
+    "start:desktop": "node packages/shared/src/agentProcesses/cli.ts run -- vp run --filter @t3tools/desktop start",
+    "start:marketing": "node packages/shared/src/agentProcesses/cli.ts run -- vp run --filter @t3tools/marketing preview",
+    "start:mock-update-server": "node packages/shared/src/agentProcesses/cli.ts run -- node scripts/mock-update-server.ts",
     "screenshots:mobile": "node scripts/mobile-showcase.ts",
     "icons:export": "node scripts/export-brand-icons.ts",
     "icons:check": "node scripts/export-brand-icons.ts --check",
@@ -49,7 +53,10 @@
     "dist:desktop:win:x64": "node scripts/build-desktop-artifact.ts --platform win --target nsis --arch x64",
     "release:smoke": "node scripts/release-smoke.ts",
     "clean": "rm -rf node_modules apps/*/node_modules packages/*/node_modules apps/*/dist apps/*/dist-electron packages/*/dist .vite-plus apps/*/.vite-plus packages/*/.vite-plus",
-    "sync:repos": "node scripts/sync-reference-repos.ts"
+    "sync:repos": "node scripts/sync-reference-repos.ts",
+    "typecheck:parity": "node scripts/typecheck-parity.ts",
+    "typecheck:benchmark": "node scripts/typecheck-benchmark.ts",
+    "test:lsp": "node scripts/tsc-rs-lsp-smoke.ts"
   },
   "devDependencies": {
     "@coderabbitai/config": "1.1.0",
@@ -64,5 +71,5 @@
   "engines": {
     "node": "^24.13.1"
   },
-  "packageManager": "pnpm@11.10.0"
+  "packageManager": "pnpm@11.28.6"
 }

@@ -58,17 +58,17 @@ export const makeGitHubImport = Effect.fn("makeGitHubImport")(function* () {
 
   const discover = Effect.gen(function* () {
     const account = yield* connection.account;
-    const hint =
-      github.pipes === null
-        ? "This cloud can't connect GitHub: it has no WorkOS API key."
-        : "Connect GitHub to import its repositories.";
+    const configured = yield* connection.configured;
+    const hint = !configured
+      ? "This cloud can't connect GitHub: it has no WorkOS API key."
+      : "Connect GitHub to import its repositories.";
     return {
       versionControlSystems: [],
       sourceControlProviders: [
         {
           kind: GITHUB,
           label: "GitHub",
-          status: github.pipes === null ? "missing" : "available",
+          status: configured ? "available" : "missing",
           version: Option.none(),
           installHint: hint,
           detail: Option.none(),

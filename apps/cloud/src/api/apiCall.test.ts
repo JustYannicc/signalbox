@@ -3,8 +3,10 @@ import {
   AuthOrchestrationOperateScope,
   AuthOrchestrationReadScope,
   AuthStandardClientScopes,
+  AuthSettingsWriteScope,
   type AuthEnvironmentScope,
   EnvironmentId,
+  ProviderInstanceId,
 } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
@@ -13,7 +15,9 @@ import * as Stream from "effect/Stream";
 import * as Environment from "../environment.ts";
 import { makeMemoryCloud } from "../testing.ts";
 import { scriptedModelSelection } from "../thread/scriptedProvider.ts";
+import * as UserModelSettings from "../user/UserModelSettings.ts";
 import { type ApiCaller, callOperation } from "./apiCall.ts";
+import { DEFAULT_RESOLVED_KEYBINDINGS } from "@t3tools/shared/keybindings";
 
 const identity = { environmentId: EnvironmentId.make("cloud-test"), label: "Cloud" };
 const userId = "user_1";
@@ -49,6 +53,58 @@ const json = (answer: Effect.Success<ReturnType<typeof callOperation>>) => {
 };
 
 describe("public API calls", () => {
+  it.effect("saves and removes a keybinding through the public reach map", () =>
+    Effect.gen(function* () {
+      const { call } = yield* setup;
+      const binding = {
+        key: "mod+shift+k",
+        command: "commandPalette.toggle",
+        when: "!terminalFocus",
+      };
+      expect(json(yield* call("keybindings.upsert", binding)).status).toBe(403);
+      const writer = person([AuthOrchestrationReadScope, AuthSettingsWriteScope]);
+      expect(json(yield* call("keybindings.upsert", binding, writer))).toMatchObject({
+        status: 200,
+        body: { issues: [] },
+      });
+      expect(json(yield* call("server.config", {}))).toMatchObject({
+        status: 200,
+        body: {
+          keybindings: expect.arrayContaining([
+            expect.objectContaining({
+              command: binding.command,
+              shortcut: expect.objectContaining({ shiftKey: true }),
+            }),
+          ]),
+        },
+      });
+      expect(json(yield* call("keybindings.remove", binding, writer))).toMatchObject({
+        status: 200,
+        body: { keybindings: DEFAULT_RESOLVED_KEYBINDINGS, issues: [] },
+      });
+    }),
+  );
+
+  it.effect("reads and saves analytics consent through the public reach map", () =>
+    Effect.gen(function* () {
+      const { call } = yield* setup;
+      expect(json(yield* call("analytics.get", {}))).toMatchObject({
+        status: 200,
+        body: { enabled: false, disabledByServer: false },
+      });
+      expect(json(yield* call("analytics.setEnabled", { enabled: true })).status).toBe(403);
+      const writer = person([AuthOrchestrationReadScope, AuthSettingsWriteScope]);
+      expect(json(yield* call("analytics.setEnabled", { enabled: true }, writer))).toMatchObject({
+        status: 200,
+        body: { enabled: true, disabledByServer: false },
+      });
+      expect(json(yield* call("analytics.get", {}))).toMatchObject({
+        status: 200,
+        body: { enabled: true, disabledByServer: false },
+      });
+    }),
+  );
+
   it.effect("creates a folder and lists it, through the same handlers as the app", () =>
     Effect.gen(function* () {
       const { call } = yield* setup;
@@ -92,6 +148,118 @@ describe("public API calls", () => {
       yield* cloud.settle;
       const threads = json(yield* call("threads.list", {}));
       expect(JSON.stringify(threads.body)).toContain('"title":"From the API"');
+    }),
+  );
+
+  it.effect(
+    "creates threads without a model using the person's saved choice, including an expensive one",
+    () =>
+      Effect.gen(function* () {
+        const { call, cloud } = yield* setup;
+        const preferred = {
+          instanceId: ProviderInstanceId.make("claude_hub"),
+          model: "claude-fable-5-1",
+        };
+        yield* UserModelSettings.UserModelSettings.use((settings) =>
+          settings.update(
+            { defaultModelSelection: preferred },
+            new Map([[preferred.instanceId, new Set([preferred.model])]]),
+          ),
+        ).pipe(Effect.provide(cloud.userObject(userId)));
+        const launched = json(
+          yield* call("threads.create", {
+            commandId: "launch-default",
+            projectId: Environment.SCRATCH_PROJECT_ID,
+            title: "Uses my default",
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            workspaceStrategy: { type: "root" },
+          }),
+        );
+        expect(launched.status).toBe(200);
+        expect(launched.body).toMatchObject({
+          projection: { thread: { modelSelection: preferred } },
+        });
+        const explicit = json(
+          yield* call("threads.create", {
+            commandId: "launch-explicit",
+            projectId: Environment.SCRATCH_PROJECT_ID,
+            title: "Explicit override",
+            modelSelection: scriptedModelSelection,
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            workspaceStrategy: { type: "root" },
+          }),
+        );
+        expect(explicit.status).toBe(200);
+        expect(explicit.body).toMatchObject({
+          projection: { thread: { modelSelection: scriptedModelSelection } },
+        });
+        yield* UserModelSettings.UserModelSettings.use((settings) =>
+          settings.update({ defaultModelSelection: null }, new Map()),
+        ).pipe(Effect.provide(cloud.userObject(userId)));
+        const replayed = json(
+          yield* call("threads.create", {
+            commandId: "launch-default",
+            projectId: Environment.SCRATCH_PROJECT_ID,
+            title: "Uses my default",
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            workspaceStrategy: { type: "root" },
+          }),
+        );
+        expect(replayed.status).toBe(200);
+        expect(replayed.body).toMatchObject({
+          resumed: true,
+          projection: { thread: { modelSelection: preferred } },
+        });
+      }),
+  );
+
+  it.effect("creates threads without a model on an economical pool model instead of Fable", () =>
+    Effect.gen(function* () {
+      const { call, cloud } = yield* setup;
+      yield* call("server.config", {}, person(AuthStandardClientScopes));
+      const pool = cloud.pools.directory.forPool(`${userId}:personal`);
+      const actor = { userId };
+      const login = yield* pool.startLogin(actor, "claude");
+      yield* pool.completeLogin(actor, `http://localhost/callback?code=c&state=${login.state}`);
+      yield* pool.loginStatus(actor, login.state);
+      yield* call("server.refreshProviders", {}, person(AuthStandardClientScopes));
+      const launched = json(
+        yield* call("threads.create", {
+          commandId: "launch-economical",
+          projectId: Environment.SCRATCH_PROJECT_ID,
+          title: "Economical default",
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          workspaceStrategy: { type: "root" },
+        }),
+      );
+      expect(launched.status).toBe(200);
+      expect(launched.body).toMatchObject({
+        projection: {
+          thread: { modelSelection: { instanceId: "claude_hub", model: "claude-sonnet-5-5" } },
+        },
+      });
+    }),
+  );
+
+  it.effect("refuses an omitted model when no preference or economical model exists", () =>
+    Effect.gen(function* () {
+      const { call } = yield* setup;
+      const answer = json(
+        yield* call("threads.create", {
+          commandId: "launch-no-model",
+          projectId: Environment.SCRATCH_PROJECT_ID,
+          title: "Choose a model",
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          workspaceStrategy: { type: "root" },
+        }),
+      );
+      expect(answer.status).not.toBe(200);
+      expect(JSON.stringify(answer.body)).toContain("No economical model is available");
     }),
   );
 

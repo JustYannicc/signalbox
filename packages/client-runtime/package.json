@@ -119,6 +119,10 @@
       "types": "./src/providerUpdateRequiredModels.ts",
       "default": "./src/providerUpdateRequiredModels.ts"
     },
+    "./poolModelStatus": {
+      "types": "./src/poolModelStatus.ts",
+      "default": "./src/poolModelStatus.ts"
+    },
     "./voice-input": {
       "types": "./src/voice-input/index.ts",
       "default": "./src/voice-input/index.ts"
@@ -302,6 +306,10 @@
     "./state/signalboxSignIn": {
       "types": "./src/state/signalboxSignIn.ts",
       "default": "./src/state/signalboxSignIn.ts"
+    },
+    "./state/signalboxPersonBrowser": {
+      "types": "./src/state/signalboxPersonBrowser.ts",
+      "default": "./src/state/signalboxPersonBrowser.ts"
     },
     "./state/signalboxPreviews": {
       "types": "./src/state/signalboxPreviews.ts",
@@ -578,6 +586,10 @@
     "./pull-request-markdown": {
       "types": "./src/pullRequestMarkdown.ts",
       "default": "./src/pullRequestMarkdown.ts"
+    },
+    "./pull-request-diff-revision": {
+      "types": "./src/pullRequestDiffRevision.ts",
+      "default": "./src/pullRequestDiffRevision.ts"
     }
   },
   "scripts": {

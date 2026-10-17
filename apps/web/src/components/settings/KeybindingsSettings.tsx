@@ -1,5 +1,6 @@
-import { useEnvironmentScope } from "../../state/session";
-import { useEnvironmentsWithScope, readEnvironmentScope } from "../../state/session";
+import { useEnvironmentScope, readEnvironmentScope } from "../../state/session";
+import { useAtomValue } from "@effect/atom-react";
+import { Atom } from "effect/reactivity";
 import {
   ChevronDownIcon,
   CircleXIcon,
@@ -24,13 +25,12 @@ import {
 } from "react";
 import {
   AuthOrchestrationOperateScope,
-  AuthSettingsWriteScope,
   type KeybindingCommand,
   type KeybindingWhenNode,
   type ServerRemoveKeybindingInput,
   type ServerUpsertKeybindingInput,
 } from "@t3tools/contracts";
-import { environmentSupports } from "@t3tools/contracts"; // signalbox
+import { environmentCanWriteKeybindings, environmentSupports } from "@t3tools/contracts"; // signalbox
 import { mergeWithDefaultKeybindings } from "@t3tools/shared/keybindings";
 import {
   isAtomCommandInterrupted,
@@ -55,9 +55,11 @@ import { Toggle } from "../ui/toggle";
 import { toastManager } from "../ui/toast";
 import {
   buildKeybindingRows,
+  filterKeybindingRowsForEnvironment,
   buildKeybindingCommandOptions,
   buildWhenVariableOptions,
   commandLabel,
+  keybindingWhenWithoutTerminal,
   DEFAULT_WHEN_VARIABLE,
   isKnownWhenVariable,
   keybindingConflictLabels,
@@ -78,6 +80,7 @@ import { keybindingSearchAnchorId, searchableSetting } from "./settingsSearch";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { keybindingCapability } from "./keybindingCapabilities"; // signalbox
+import { availableKeybindingWhenVariables } from "./keybindingSettingsCapabilities";
 import { useShowsEnvironmentUi } from "../../state/environmentCapabilities";
 
 function KeybindingPill({ value }: { value: string }) {
@@ -197,15 +200,21 @@ function setConditionNegated(node: KeybindingWhenNode, negated: boolean): Keybin
   return negated ? { type: "not", node: identifier } : identifier;
 }
 
-function defaultWhenCondition(): KeybindingWhenNode {
-  return { type: "identifier", name: DEFAULT_WHEN_VARIABLE };
+function defaultWhenCondition(variables: ReadonlyArray<WhenVariableOption>): KeybindingWhenNode {
+  return {
+    type: "identifier",
+    name: variables.includes(DEFAULT_WHEN_VARIABLE) ? DEFAULT_WHEN_VARIABLE : "true",
+  };
 }
 
-function defaultWhenGroup(operator: BooleanOperator = "and"): KeybindingWhenNode {
+function defaultWhenGroup(
+  operator: BooleanOperator,
+  variables: ReadonlyArray<WhenVariableOption>,
+): KeybindingWhenNode {
   return {
     type: operator,
-    left: defaultWhenCondition(),
-    right: { type: "not", node: defaultWhenCondition() },
+    left: defaultWhenCondition(variables),
+    right: { type: "not", node: defaultWhenCondition(variables) },
   };
 }
 
@@ -466,7 +475,7 @@ function WhenExpressionNodeEditor({
     if (nextNode) {
       onChange(nextNode);
     } else {
-      onChange(defaultWhenCondition());
+      onChange(defaultWhenCondition(variables));
     }
   };
 
@@ -477,7 +486,10 @@ function WhenExpressionNodeEditor({
   };
 
   const addCondition = () => {
-    const nextNode = buildWhenExpressionGroup([...children, defaultWhenCondition()], operator);
+    const nextNode = buildWhenExpressionGroup(
+      [...children, defaultWhenCondition(variables)],
+      operator,
+    );
     if (nextNode) onChange(nextNode);
   };
 
@@ -485,8 +497,8 @@ function WhenExpressionNodeEditor({
     const nestedOperator: BooleanOperator = operator === "and" ? "or" : "and";
     const group: KeybindingWhenNode = {
       type: nestedOperator,
-      left: defaultWhenCondition(),
-      right: { type: "not", node: defaultWhenCondition() },
+      left: defaultWhenCondition(variables),
+      right: { type: "not", node: defaultWhenCondition(variables) },
     };
     const nextNode = buildWhenExpressionGroup([...children, group], operator);
     if (nextNode) onChange(nextNode);
@@ -590,14 +602,14 @@ function WhenExpressionBuilder({
 
   const addRootCondition = () => {
     if (!value) {
-      updateExpressionValue(defaultWhenCondition());
+      updateExpressionValue(defaultWhenCondition(variables));
       return;
     }
-    updateExpressionValue({ type: "and", left: value, right: defaultWhenCondition() });
+    updateExpressionValue({ type: "and", left: value, right: defaultWhenCondition(variables) });
   };
 
   const addRootGroup = () => {
-    const group = defaultWhenGroup("or");
+    const group = defaultWhenGroup("or", variables);
     if (!value) {
       updateExpressionValue(group);
       return;
@@ -768,6 +780,9 @@ function useKeybindingRowEditor({
 type KeybindingRowEditor = ReturnType<typeof useKeybindingRowEditor>;
 
 interface KeybindingRowActions {
+  readOnly: boolean;
+  hasTerminal: boolean;
+  hasLocalFilesystem: boolean;
   allRows: ReadonlyArray<KeybindingRow>;
   variables: ReadonlyArray<WhenVariableOption>;
   onSave: (input: ServerUpsertKeybindingInput) => void;
@@ -936,11 +951,17 @@ function KeybindingSourceBadge({ source }: { source: KeybindingRow["source"] }) 
   );
 }
 
-function KeybindingRowTitle({ row }: { row: KeybindingRow }) {
+function KeybindingRowTitle({
+  row,
+  hasLocalFilesystem = true,
+}: {
+  row: KeybindingRow;
+  hasLocalFilesystem?: boolean;
+}) {
   return (
     <Tooltip>
       <TooltipTrigger render={<span className="flex items-center gap-2" />}>
-        {commandLabel(row.command)}
+        {commandLabel(row.command, hasLocalFilesystem)}
         <KeybindingSourceBadge source={row.source} />
       </TooltipTrigger>
       <TooltipPopup side="top">{row.command}</TooltipPopup>
@@ -986,14 +1007,39 @@ function KeybindingHoverRowMenu(props: {
 }
 
 function KeybindingSettingsRow(props: KeybindingRowProps) {
-  const { row, isSaving, anchorId, allRows, variables, onSave, onReset, onRemove } = props;
+  const {
+    row,
+    isSaving,
+    anchorId,
+    allRows,
+    variables,
+    onSave,
+    onReset,
+    onRemove,
+    readOnly,
+    hasTerminal,
+    hasLocalFilesystem,
+  } = props;
   const editor = useKeybindingRowEditor({ row, allRows, onSave });
+
+  if (readOnly) {
+    return (
+      <SettingsRow
+        id={anchorId}
+        title={<KeybindingRowTitle row={row} hasLocalFilesystem={hasLocalFilesystem} />}
+        description={
+          (hasTerminal ? row.when : keybindingWhenWithoutTerminal(row.binding.whenAst)) || undefined
+        }
+        control={row.key ? <KeybindingPill value={row.key} /> : "Unassigned"}
+      />
+    );
+  }
 
   return (
     <SettingsRow
       id={anchorId}
       className="group/row rounded-none"
-      title={<KeybindingRowTitle row={row} />}
+      title={<KeybindingRowTitle row={row} hasLocalFilesystem={hasLocalFilesystem} />}
       description={<KeybindingRowWhen row={row} editor={editor} variables={variables} />}
       control={
         <div className="flex flex-wrap items-center justify-end gap-1.5">
@@ -1271,10 +1317,35 @@ export function KeybindingsSettingsPanel() {
     primaryEnvironment?.environmentId ?? null,
     AuthOrchestrationOperateScope,
   );
-  const writableIds = useEnvironmentsWithScope(connectedEnvironments, AuthSettingsWriteScope);
-  const canWriteSettings =
-    connectedEnvironments.length > 0 &&
-    connectedEnvironments.every((target) => writableIds.has(target.environmentId));
+  const supportsSettingsWrite = connectedEnvironments.every((target) =>
+    environmentCanWriteKeybindings(target.serverConfig?.environment?.capabilities),
+  );
+  const hasTerminal =
+    connectedEnvironments.length === 0 ||
+    connectedEnvironments.some((target) =>
+      environmentSupports(target.serverConfig?.environment?.capabilities, "terminal"),
+    );
+  const hasLocalFilesystem =
+    connectedEnvironments.length === 0 ||
+    connectedEnvironments.some((target) =>
+      environmentSupports(target.serverConfig?.environment?.capabilities, "localFilesystem"),
+    );
+  const canWriteSettings = useAtomValue(
+    useMemo(
+      () =>
+        Atom.make(
+          (get) =>
+            connectedEnvironments.length > 0 &&
+            connectedEnvironments.every(
+              (target) =>
+                environmentCanWriteKeybindings(target.serverConfig?.environment?.capabilities) &&
+                get(serverEnvironment.upsertKeybinding.permissionAtom(target.environmentId)) &&
+                get(serverEnvironment.removeKeybinding.permissionAtom(target.environmentId)),
+            ),
+        ),
+      [connectedEnvironments],
+    ),
+  );
   const serverKeybindings = primaryEnvironment?.serverConfig?.keybindings;
   const keybindings = useMemo(
     () => mergeWithDefaultKeybindings(serverKeybindings ?? []),
@@ -1319,8 +1390,12 @@ export function KeybindingsSettingsPanel() {
     [connectedEnvironments, showsEnvironmentUi],
   );
   const rows = useMemo(
-    () => buildKeybindingRows(keybindings, query).filter((row) => isShownCommand(row.command)),
-    [keybindings, query, isShownCommand],
+    () =>
+      filterKeybindingRowsForEnvironment(buildKeybindingRows(keybindings, ""), query, {
+        localFilesystem: hasLocalFilesystem,
+        terminal: hasTerminal,
+      }).filter((row) => isShownCommand(row.command)),
+    [keybindings, query, isShownCommand, hasLocalFilesystem, hasTerminal],
   );
   const groups = useMemo(() => groupKeybindingRows(rows), [rows]);
   const anchorIds = useMemo(() => {
@@ -1344,7 +1419,10 @@ export function KeybindingsSettingsPanel() {
     () => buildKeybindingCommandOptions(keybindings).filter(isShownCommand),
     [keybindings, isShownCommand],
   );
-  const whenVariables = useMemo(() => buildWhenVariableOptions(), []);
+  const whenVariables = useMemo(
+    () => availableKeybindingWhenVariables(buildWhenVariableOptions(), hasTerminal),
+    [hasTerminal],
+  );
 
   const openKeybindingsFile = useCallback(() => {
     if (
@@ -1370,13 +1448,7 @@ export function KeybindingsSettingsPanel() {
 
   const saveKeybinding = useCallback(
     (input: ServerUpsertKeybindingInput) => {
-      if (
-        !primaryEnvironment ||
-        !connectedEnvironments.every((target) =>
-          readEnvironmentScope(target.environmentId, AuthSettingsWriteScope),
-        )
-      )
-        return;
+      if (!primaryEnvironment || !canWriteSettings) return;
       setSavingCommand(input.command);
       const payload: ServerUpsertKeybindingInput = {
         command: input.command,
@@ -1406,18 +1478,12 @@ export function KeybindingsSettingsPanel() {
         }
       })();
     },
-    [connectedEnvironments, primaryEnvironment, upsertKeybinding],
+    [canWriteSettings, connectedEnvironments, primaryEnvironment, upsertKeybinding],
   );
 
   const removeKeybinding = useCallback(
     (row: KeybindingRow) => {
-      if (
-        !primaryEnvironment ||
-        !connectedEnvironments.every((target) =>
-          readEnvironmentScope(target.environmentId, AuthSettingsWriteScope),
-        )
-      )
-        return;
+      if (!primaryEnvironment || !canWriteSettings) return;
       setSavingCommand(row.command);
       void (async () => {
         const results = await Promise.all(
@@ -1440,7 +1506,7 @@ export function KeybindingsSettingsPanel() {
         }
       })();
     },
-    [connectedEnvironments, primaryEnvironment, removeKeybindingMutation],
+    [canWriteSettings, connectedEnvironments, primaryEnvironment, removeKeybindingMutation],
   );
 
   const resetKeybinding = useCallback(
@@ -1463,6 +1529,9 @@ export function KeybindingsSettingsPanel() {
   const cancelAdd = useCallback(() => setIsAddingBinding(false), []);
 
   const rowActions: KeybindingRowActions = {
+    readOnly: !supportsSettingsWrite,
+    hasTerminal,
+    hasLocalFilesystem,
     allRows: rows,
     variables: whenVariables,
     onSave: saveKeybinding,
@@ -1478,15 +1547,17 @@ export function KeybindingsSettingsPanel() {
       >
         <div className="flex flex-wrap items-center gap-2 px-3 py-3 sm:px-4">
           <KeybindingsSearchInput query={query} onChange={setQuery} inputRef={searchInputRef} />
-          <Button
-            type="button"
-            variant="outline"
-            disabled={isAddingBinding || !canWriteSettings}
-            onClick={() => setIsAddingBinding(true)}
-          >
-            <PlusIcon aria-hidden className="size-4" />
-            Add keybinding
-          </Button>
+          {supportsSettingsWrite ? (
+            <Button
+              type="button"
+              variant="outline"
+              disabled={isAddingBinding || !canWriteSettings}
+              onClick={() => setIsAddingBinding(true)}
+            >
+              <PlusIcon aria-hidden className="size-4" />
+              Add keybinding
+            </Button>
+          ) : null}
           {canOpenKeybindingsJson ? (
             <Tooltip>
               <TooltipTrigger
@@ -1512,12 +1583,18 @@ export function KeybindingsSettingsPanel() {
       {!canWriteSettings ? (
         <p className="text-xs text-muted-foreground">
           {connectedEnvironments.length === 0
-            ? "Connect an environment to change keybindings."
-            : "This connection can view keybindings but cannot change them."}
+            ? showsEnvironmentUi
+              ? "Connect an environment to change keybindings."
+              : "Reconnect to Signalbox to change keybindings."
+            : !supportsSettingsWrite // signalbox: the server can't store them, not a missing grant
+              ? "Keybindings can't be changed here yet."
+              : showsEnvironmentUi
+                ? "This connection can view keybindings but cannot change them."
+                : "You can view keybindings but can't change them."}
         </p>
       ) : null}
-      <div inert={!canWriteSettings} className="flex flex-col gap-8">
-        {isAddingBinding ? (
+      <div inert={!canWriteSettings && supportsSettingsWrite} className="flex flex-col gap-8">
+        {isAddingBinding && canWriteSettings ? (
           <SettingsGroup>
             <NewKeybindingSettingsRow
               commandOptions={commandOptions}

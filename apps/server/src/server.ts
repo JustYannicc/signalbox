@@ -5,6 +5,8 @@ import * as Random from "effect/Random";
 import * as Semaphore from "effect/Semaphore";
 import * as DatabaseStorage from "./persistence/DatabaseStorage.ts";
 import * as StorageCleanup from "./storageCleanup.ts";
+import * as AgentCleanup from "./signalbox/agentCleanup.ts";
+import * as WorktreeCleanupGuard from "./signalbox/worktreeCleanupGuard.ts";
 import * as PullRequestSyncReactor from "./orchestration-v2/PullRequestSyncReactor.ts";
 import * as PullRequestWatchReactor from "./orchestration-v2/PullRequestWatchReactor.ts";
 import * as DelegatedTaskQuestionReactor from "./orchestration-v2/DelegatedTaskQuestionReactor.ts";
@@ -553,7 +555,11 @@ const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
   AutomationPush.layer, // signalbox: automations
   AutomationSkill.layer, // signalbox: automations
   layerThreadSettlementWorker,
-  StorageCleanup.layer.pipe(Layer.provide(ProjectionStoreV2.layer)),
+  StorageCleanup.layer.pipe(
+    Layer.provide(WorktreeCleanupGuard.layer),
+    Layer.provide(AgentCleanup.layer),
+    Layer.provide(ProjectionStoreV2.layer),
+  ),
   DatabaseStorage.layer.pipe(
     Layer.provide(ProjectionMaintenance.layer),
     Layer.provide(
@@ -728,7 +734,11 @@ const layerMakeRoutes = Layer.mergeAll(
   // Both transports consume the same service instance, so caches single-flight across clients
   // and mutations observed on WebSocket invalidate patches subsequently read over HTTP.
   Layer.provide(layerPullRequestService),
-  Layer.provide(ServerBrowser.layer.pipe(Layer.provide(DesktopBrowserChannel.layer))),
+  Layer.provide(
+    ServerBrowser.layer
+      .pipe(Layer.provide(DesktopBrowserChannel.layer))
+      .pipe(Layer.provide(ProjectionStoreV2.layer)),
+  ),
   Layer.provide(PreviewBrowser.layer),
   Layer.provide(PreviewAutomationBroker.layer),
   Layer.provide(ServerSelfUpdate.layer.pipe(Layer.provide(layerDesktopAppUpdate))),

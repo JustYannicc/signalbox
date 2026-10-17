@@ -40,6 +40,10 @@ on:
       - pnpm-lock.yaml
       - patches/alchemy@*.patch
       - .github/workflows/deploy-cloud.yml
+      - .github/scripts/cloudflare-preview-domains.cjs
+      - .github/scripts/delete-cloud-preview.sh
+      - .github/scripts/sweep-cloud-previews.sh
+      - .github/scripts/wait-own-certificate.cjs
       # Production's cleanup token is derived by this script. The other cleanup
       # scripts run from main's checkout when a PR closes, so they need no deploy.
       - .github/scripts/preview-cleanup-token.sh
@@ -121,6 +125,14 @@ jobs:
       APNS_KEY_ID: ${{ vars.APNS_KEY_ID }}
       APNS_PRIVATE_KEY: ${{ secrets.APNS_PRIVATE_KEY }}
       FCM_SERVICE_ACCOUNT: ${{ secrets.FCM_SERVICE_ACCOUNT }}
+      # Optional: where wide events and Worker traces go (apps/cloud/evlog.config.ts), tagged with this commit.
+      APP_VERSION: ${{ github.sha }}
+      SENTRY_DSN: ${{ secrets.SENTRY_DSN }}
+      POSTHOG_API_KEY: ${{ secrets.POSTHOG_API_KEY }}
+      POSTHOG_HOST: ${{ vars.POSTHOG_HOST }}
+      # Leave unset until #358 lands; credentials alone never enable sends.
+      SIGNALBOX_POSTHOG_ENABLED: ${{ vars.SIGNALBOX_POSTHOG_ENABLED }}
+      T3CODE_TELEMETRY_ENABLED: ${{ vars.T3CODE_TELEMETRY_ENABLED }}
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -175,6 +187,12 @@ jobs:
         name: Deploy
         working-directory: apps/cloud
         run: ./node_modules/.bin/alchemy deploy --stage "$STAGE" --yes --no-input
+
+      # One wide event saying the stage now runs this commit, through the Workers' drains.
+      - &release_event
+        name: Send the release event
+        working-directory: apps/cloud
+        run: SIGNALBOX_STAGE="$STAGE" node infra/release-event.ts
 
   # Whether the pull request or push changes what boat machines run (the
   # paths runner-image.yml builds on). Then a preview runs its own Runner
@@ -339,6 +357,9 @@ jobs:
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
       PR_NUMBER: ${{ github.event.pull_request.number }}
       STAGE: pr-${{ github.event.pull_request.number }}
+      E2E_SIGN_IN_SECRET: ${{ secrets.E2E_SIGN_IN_SECRET }}
+      E2E_WORKOS_CLIENT_ID: ${{ secrets.E2E_WORKOS_CLIENT_ID }}
+      E2E_WORKOS_API_KEY: ${{ secrets.E2E_WORKOS_API_KEY }}
       T3CODE_WORKOS_CLIENT_ID: ${{ vars.T3CODE_WORKOS_CLIENT_ID }}
       # The MCP authorization server (`apps/cloud/src/api/mcpRoutes.ts`); unset, MCP takes keys only.
       WORKOS_AUTHKIT_DOMAIN: ${{ vars.WORKOS_AUTHKIT_DOMAIN }}
@@ -362,6 +383,14 @@ jobs:
       APNS_KEY_ID: ${{ vars.APNS_KEY_ID }}
       APNS_PRIVATE_KEY: ${{ secrets.APNS_PRIVATE_KEY }}
       FCM_SERVICE_ACCOUNT: ${{ secrets.FCM_SERVICE_ACCOUNT }}
+      # Optional: where wide events and Worker traces go (apps/cloud/evlog.config.ts), tagged with the PR's head.
+      APP_VERSION: ${{ github.event.pull_request.head.sha }}
+      SENTRY_DSN: ${{ secrets.SENTRY_DSN }}
+      POSTHOG_API_KEY: ${{ secrets.POSTHOG_API_KEY }}
+      POSTHOG_HOST: ${{ vars.POSTHOG_HOST }}
+      # Leave unset until #358 lands; credentials alone never enable sends.
+      SIGNALBOX_POSTHOG_ENABLED: ${{ vars.SIGNALBOX_POSTHOG_ENABLED }}
+      T3CODE_TELEMETRY_ENABLED: ${{ vars.T3CODE_TELEMETRY_ENABLED }}
     steps:
       # Sparse checkout implicitly uses blob:none. A later merge can then need
       # blobs through a PR merge ref GitHub has already replaced (#842).
@@ -406,8 +435,7 @@ jobs:
       # token, which is enough to derive the cleanup token. Main's checkout isn't
       # a security boundary: it only means a reopen uses main's reviewed call,
       # not whatever the PR changed it to.
-      - name: Checkout trusted preview cleanup scripts
-        if: github.event.action == 'reopened'
+      - name: Checkout trusted preview scripts
         uses: actions/checkout@v6
         with:
           ref: ${{ github.event.repository.default_branch }}
@@ -417,6 +445,7 @@ jobs:
           # gitlink under .repos/ that has no .gitmodules entry.
           sparse-checkout: |
             /.github/scripts
+            /apps/cloud/infra/stage.ts
           sparse-checkout-cone-mode: false
 
       - name: Reopen production preview links
@@ -425,6 +454,10 @@ jobs:
 
       - *plan
       - *deploy
+      - *release_event
+
+      - name: Verify preview Worker domains
+        run: node .trusted-cleanup/.github/scripts/cloudflare-preview-domains.cjs verify
 
       # Until a new preview's hosts serve their own certificates, opening one
       # breaks app.signalbox.run and the other previews in that browser (#618,
@@ -464,53 +497,3 @@ jobs:
         run: |
           SESSION_SECRET=plan-only T3CODE_WORKOS_API_KEY=plan-only PREVIEW_CLEANUP_TOKEN=plan-only \
             bash infra/plan.sh production
-
-  # Destroys the preview's stage, then asks production to drop its drive packs
-  # and pool links.
-  delete_preview:
-    name: Delete preview cloud
-    if: >-
-      github.event_name == 'pull_request' &&
-      github.event.action == 'closed' &&
-      github.event.pull_request.head.repo.full_name == github.repository
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-    concurrency:
-      group: cloud-preview-${{ github.event.pull_request.number }}
-      cancel-in-progress: true
-    environment:
-      name: cloud-preview
-    permissions:
-      contents: read
-      # Deletes the preview's Runner image (pr-<number>).
-      packages: write
-    env:
-      CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
-      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-      GH_TOKEN: ${{ github.token }}
-      PR_NUMBER: ${{ github.event.pull_request.number }}
-    steps:
-      # Only main's code runs here: no PR code ever sees the token in this job.
-      - name: Checkout trusted cleanup
-        uses: actions/checkout@v6
-        with:
-          ref: ${{ github.event.repository.default_branch }}
-          # Keep the default persist-credentials: with false, checkout runs
-          # `git submodule foreach` in this step, which dies on the vendored
-          # gitlink under .repos/ that has no .gitmodules entry.
-          sparse-checkout: |
-            /*
-            !/.repos/
-          sparse-checkout-cone-mode: false
-
-      - name: Setup Vite+
-        uses: voidzero-dev/setup-vp@v1
-        with:
-          node-version-file: package.json
-          cache: true
-          run-install: |
-            args:
-              - --filter=@signalbox/cloud...
-
-      - name: Delete preview resources
-        run: bash .github/scripts/delete-cloud-preview.sh
