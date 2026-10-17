@@ -782,8 +782,14 @@ export function EnvironmentProviderSettings({
     const effectiveInstance: ProviderInstanceConfig = explicitInstance ?? { driver };
     const isDirty = explicitInstance !== undefined;
     const hasDefaultSlot = providerSettings.hasDefaultInstance || explicitInstance !== undefined;
+    // signalbox: a default slot nobody can configure and the server never reports isn't a provider.
+    const isPhantomSlot =
+      !supportsServerSettingsWrite &&
+      explicitInstance === undefined &&
+      !serverProviders.some((provider) => provider.instanceId === defaultInstanceId);
     if (
       hasDefaultSlot &&
+      !isPhantomSlot && // signalbox
       (driver === "codex" ||
         driver === "claudeAgent" ||
         isDirty ||
