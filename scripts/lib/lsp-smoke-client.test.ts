@@ -50,6 +50,7 @@ test.each(["missing-ack", "error-ack"])(
       const result = await client.shutdown();
       expect(result.responseReceived).toBe(false);
       expect(result.error).toBeTruthy();
+      expect(result.forcedTermination).toBe(mode === "error-ack");
     } finally {
       await client.terminate();
     }
@@ -62,7 +63,6 @@ test.each(["signal", "malformed"])("shutdown fails for %s after acknowledgement"
     const result = await client.shutdown();
     expect(result.responseReceived).toBe(true);
     expect(result.error).toBeTruthy();
-    if (mode === "error-ack") expect(result.forcedTermination).toBe(true);
   } finally {
     await client.terminate();
   }
