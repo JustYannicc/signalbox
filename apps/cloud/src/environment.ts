@@ -223,6 +223,10 @@ export const shellSnapshot = (input: {
   schemaVersion: SHELL_SCHEMA_VERSION,
   snapshotSequence: input.sequence,
   projects: input.projects,
-  threads: input.threads.filter((thread) => thread.archivedAt === null),
-  archivedThreads: input.threads.filter((thread) => thread.archivedAt !== null),
+  threads: input.threads.filter(
+    (thread) => thread.deletedAt === null && thread.archivedAt === null,
+  ),
+  archivedThreads: input.threads.filter(
+    (thread) => thread.deletedAt === null && thread.archivedAt !== null,
+  ),
 });

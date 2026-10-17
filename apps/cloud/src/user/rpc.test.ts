@@ -21,6 +21,7 @@ import * as Tracer from "effect/Tracer";
 import * as RpcTest from "effect/rpc/RpcTest";
 
 import { SignalboxContextId } from "@t3tools/contracts/signalboxContexts";
+import { SIGNALBOX_TRASH_WS_METHODS } from "@t3tools/contracts/signalboxTrash";
 
 import * as Environment from "../environment.ts";
 import { makeMemoryCloud } from "../testing.ts";
@@ -103,6 +104,62 @@ const sidebar = (rpc: Rpc) =>
   );
 
 describe("cloud RPC", () => {
+  it.effect.each([
+    { archived: false, state: "active" },
+    { archived: true, state: "archived" },
+  ])("removes a trashed $state thread from live and fresh shells", ({ archived }) =>
+    Effect.gen(function* () {
+      const { cloud, rpc } = yield* connect();
+      yield* launch(rpc);
+      yield* cloud.settle;
+      if (archived) {
+        yield* rpc[ORCHESTRATION_V2_WS_METHODS.dispatchCommand]({
+          type: "thread.archive",
+          commandId: CommandId.make("archive-before-trash"),
+          threadId,
+        });
+        yield* cloud.settle;
+      }
+      const before = yield* sidebar(rpc);
+      expect((archived ? before?.archivedThreads : before?.threads)?.map((row) => row.id)).toEqual([
+        threadId,
+      ]);
+      const caughtUp = yield* Deferred.make<void>();
+      const live = yield* rpc[ORCHESTRATION_V2_WS_METHODS.subscribeShell]({
+        requestCompletionMarker: true,
+      }).pipe(
+        Stream.tap((item) =>
+          item.kind === "synchronized" ? Deferred.succeed(caughtUp, undefined) : Effect.void,
+        ),
+        Stream.filter((item) => item.kind === "thread.updated" || item.kind === "thread.removed"),
+        Stream.take(1),
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+      yield* Deferred.await(caughtUp);
+      const trashed = yield* rpc[SIGNALBOX_TRASH_WS_METHODS.thread]({ threadId });
+      yield* cloud.settle;
+      expect(yield* Fiber.join(live)).toEqual([
+        {
+          kind: "thread.removed",
+          sequence: expect.any(Number),
+          location: archived ? "archive" : "active",
+          threadId,
+        },
+      ]);
+      const hidden = yield* sidebar(rpc);
+      expect(hidden?.threads).toEqual([]);
+      expect(hidden?.archivedThreads).toEqual([]);
+      const entry = trashed.entries.find((row) => row.targetId === threadId)!;
+      yield* rpc[SIGNALBOX_TRASH_WS_METHODS.restore]({ id: entry.id });
+      yield* cloud.settle;
+      const restored = yield* sidebar(rpc);
+      expect(
+        (archived ? restored?.archivedThreads : restored?.threads)?.map((row) => row.id),
+      ).toEqual([threadId]);
+    }).pipe(Effect.scoped),
+  );
+
   it.effect("emits resume transitions and its marker under the requesting trace", () =>
     Effect.gen(function* () {
       const spans: Array<Tracer.NativeSpan> = [];

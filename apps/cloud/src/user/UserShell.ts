@@ -25,14 +25,17 @@ import * as UserStore from "./UserStore.ts";
 /**
  * A user's sidebar, served from their object's thread index: the snapshot
  * `GET /api/orchestration/shell` and `subscribeShell` start from, and the
- * `thread.updated` items that follow as thread objects deliver summaries,
+ * thread updates and removals that follow as thread objects deliver summaries,
  * each of which may also push to the user's phones (`PushNotifier`).
  * Its projects are the drives of the user's contexts (see `contextProjects`);
  * when those change, open subscriptions get a fresh snapshot. Threads of a
  * context the user has left stay indexed but out of sight.
  */
 
-type ShellItem = Extract<OrchestrationV2ShellStreamItem, { readonly kind: "thread.updated" }>;
+type ShellItem = Extract<
+  OrchestrationV2ShellStreamItem,
+  { readonly kind: "thread.updated" | "thread.removed" }
+>;
 type ShellUpdate = ShellItem | { readonly kind: "projects.changed" };
 const PROJECTS_CHANGED: ShellUpdate = { kind: "projects.changed" };
 
@@ -106,12 +109,11 @@ const make = Effect.gen(function* () {
       : Effect.succeed(update);
 
   const publish = (summary: ThreadSummary, sequence: number) => {
-    const item: ShellItem = {
-      kind: "thread.updated",
-      sequence,
-      location: summary.shell.archivedAt === null ? "active" : "archive",
-      thread: summary.shell,
-    };
+    const location = summary.shell.archivedAt === null ? "active" : "archive";
+    const item: ShellItem =
+      summary.shell.deletedAt === null
+        ? { kind: "thread.updated", sequence, location, thread: summary.shell }
+        : { kind: "thread.removed", sequence, location, threadId: summary.threadId };
     return Effect.asVoid(PubSub.publish(updates, item));
   };
 

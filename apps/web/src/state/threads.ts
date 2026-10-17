@@ -9,17 +9,24 @@ import {
   type EnvironmentThreadState,
   createThreadEnvironmentAtoms,
 } from "@t3tools/client-runtime/state/threads";
+import { serverConfigSupportsSignalboxTrash } from "@t3tools/client-runtime/state/signalboxTrash";
 import type { EnvironmentId, OrchestrationV2ThreadShell, ThreadId } from "@t3tools/contracts";
 import * as Option from "effect/Option";
 import { AsyncResult, Atom } from "effect/reactivity";
 
 import { environmentCatalog } from "../connection/catalog";
-import { connectionAtomRuntime } from "../connection/runtime";
+import { connectionAtomRuntime, signalboxTrash } from "../connection/runtime";
 import { environmentSnapshotAtom } from "./shell";
+import { environmentServerConfigsAtom } from "./server";
 
 export const threadEnvironment = createThreadEnvironmentAtoms(
   connectionAtomRuntime,
   environmentSnapshotAtom,
+  (registry, environmentId) =>
+    serverConfigSupportsSignalboxTrash(
+      registry.get(environmentServerConfigsAtom).get(environmentId),
+    ),
+  signalboxTrash.thread,
 );
 const environmentThreads = createEnvironmentThreadStateAtoms(connectionAtomRuntime);
 export const environmentThreadDetails = createEnvironmentThreadDetailAtoms(

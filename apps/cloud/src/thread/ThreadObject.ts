@@ -317,6 +317,26 @@ export class ThreadObject extends DurableObject<ThreadObjectEnv> implements Thre
   }
 
   // Durable Object RPC dispatches to prototype methods, so each one is spelled out.
+  async trash(...args: Parameters<ThreadObjectApi["trash"]>) {
+    const reply = await this.api.trash(...args);
+    if (
+      reply._tag === "ok" &&
+      reply.value.state === "trashed" &&
+      reply.value.trashId === args[1].trashId
+    ) {
+      await this.gateway.closeForThreadTrash();
+    }
+    return reply;
+  }
+
+  restore(...args: Parameters<ThreadObjectApi["restore"]>) {
+    return this.api.restore(...args);
+  }
+
+  purge(...args: Parameters<ThreadObjectApi["purge"]>) {
+    return this.api.purge(...args);
+  }
+
   dispatch(...args: Parameters<ThreadObjectApi["dispatch"]>) {
     return this.api.dispatch(...args);
   }

@@ -8,6 +8,10 @@ import {
 } from "@t3tools/client-runtime/state/runtime";
 import { canSnooze, effectiveSnoozed } from "@t3tools/client-runtime/state/thread-settled";
 import {
+  serverConfigSupportsSignalboxTrash,
+  threadDeleteConfirmationMessage,
+} from "@t3tools/client-runtime/state/signalboxTrash";
+import {
   AuthOrchestrationOperateScope,
   type ScopedThreadRef,
   type ThreadId,
@@ -36,7 +40,7 @@ import {
   readThreadShell,
   useProjects,
 } from "../state/entities";
-import { usePrimaryEnvironmentId } from "../state/environments";
+import { useEnvironments, usePrimaryEnvironmentId } from "../state/environments";
 import { readLocalApi } from "../localApi";
 import {
   deriveLogicalProjectKeyFromSettings,
@@ -71,6 +75,11 @@ export function useThreadActionMenu(input: {
   const { threadRef, projectCwd, onStartRename } = input;
   const router = useRouter();
   const projects = useProjects();
+  const { environments } = useEnvironments();
+  const environmentById = useMemo(
+    () => new Map(environments.map((environment) => [environment.environmentId, environment])),
+    [environments],
+  );
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const projectGroupingSettings = useClientSettings(selectProjectGroupingSettings);
   const logicalProjectKeyByPhysicalKey = useMemo(
@@ -313,7 +322,15 @@ export function useThreadActionMenu(input: {
                 api.dialogs.confirm(
                   [
                     `Delete thread "${thread.title}"?`,
-                    "This permanently clears conversation history for this thread.",
+                    threadDeleteConfirmationMessage({
+                      cloud: serverConfigSupportsSignalboxTrash(
+                        environmentById.get(threadRef.environmentId)?.serverConfig,
+                      ),
+                      other: !serverConfigSupportsSignalboxTrash(
+                        environmentById.get(threadRef.environmentId)?.serverConfig,
+                      ),
+                      scope: "thread",
+                    }),
                   ].join("\n"),
                   { variant: "destructive" },
                 ),
@@ -347,6 +364,7 @@ export function useThreadActionMenu(input: {
       copyPathToClipboard,
       copyThreadIdToClipboard,
       deleteThread,
+      environmentById,
       handleNewThread,
       logicalProjectKeyByPhysicalKey,
       markThreadUnread,

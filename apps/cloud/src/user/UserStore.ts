@@ -25,10 +25,12 @@ import * as UserPreviewSetup from "../previewSetup/UserPreviewSetup.ts";
 import * as GitHubConnection from "../github/GitHubConnection.ts";
 import * as LocalKeys from "../localKeys/LocalKeys.ts";
 import * as NoteTables from "../notes/noteTables.ts";
+import { migrateTrash } from "../trash/trashTables.ts";
 import * as UserContexts from "./UserContexts.ts";
 import * as UserDriveIndex from "./UserDriveIndex.ts";
 import * as ResourceBindings from "./ResourceBindings.ts";
 import * as FolderTables from "./folderTables.ts";
+import * as FolderTrash from "./folderTrash.ts";
 import * as ThreadKindTables from "./threadKindTables.ts";
 import * as StatusNoteTables from "./statusNoteTables.ts";
 import * as OnePasswordAccount from "./OnePasswordAccount.ts";
@@ -227,6 +229,8 @@ const migrations = Migrator.fromRecord({
     )`;
   }),
   "0020_folder_phases": FolderTables.addPhases,
+  "0021_folder_trash": FolderTrash.createTables,
+  "0022_trash": migrateTrash,
   "0021_analytics_preference": UserAnalyticsPreference.createTables,
 });
 

@@ -33,7 +33,7 @@ import type {
   LinkedToken,
 } from "../connections/linkedConnections.ts";
 import type { ConnectResult, ConnectStart } from "../github/GitHubConnection.ts";
-import { API_HEADER, type ApiCredential, encodeApiCredential } from "../api/apiObject.ts";
+import { API_HEADER, type ApiCredential, encodeApiCredential } from "../api/apiCredential.ts";
 import type { CreatedKey, KeyOptions } from "../localKeys/LocalKeys.ts";
 import type { LocalKeysView } from "../localKeys/localModelAccess.ts";
 import type { LocalModelAuthorization } from "../models/ModelProtocol.ts";
@@ -96,6 +96,9 @@ export type PullRequestDiffReply =
 
 /** What a user's object answers. `UserObject` implements it method for method. */
 export interface UserObjectApi {
+  readonly trashProgress: (
+    id: string,
+  ) => Promise<import("../trash/TrashWorkflow.ts").TrashProgress>;
   readonly receiveHook: (request: HookRequest) => Promise<HookAnswer>;
   readonly recordSignIn: (profile: AccountProfile) => Promise<void>;
   readonly profile: () => Promise<AccountProfile | null>;
@@ -322,6 +325,7 @@ export class UserDirectory extends Context.Service<
 
 // A record, so adding a method to `UserObjectApi` without wrapping it fails to compile.
 const METHODS = Object.keys({
+  trashProgress: true,
   recordSignIn: true,
   profile: true,
   createSession: true,

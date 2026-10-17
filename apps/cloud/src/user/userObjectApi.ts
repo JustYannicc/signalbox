@@ -38,6 +38,7 @@ import * as UserShell from "./UserShell.ts";
 import * as UserStore from "./UserStore.ts";
 import * as UserThreadKinds from "./UserThreadKinds.ts";
 import * as UserThreadStatus from "./UserThreadStatus.ts";
+import { UserTrash } from "../trash/UserTrash.ts";
 
 const decodeDriveEvents = Schema.decodeUnknownSync(Schema.Array(DriveRefEvent));
 
@@ -70,6 +71,7 @@ export const makeUserObjectApi = (
       | PersonBrowsers.PersonBrowsers
       | SignInGrants.SignInGrants
       | LoginService.LoginService
+      | UserTrash
     >,
   ) => Promise<A>,
 ): UserObjectApi => {
@@ -92,6 +94,7 @@ export const makeUserObjectApi = (
         : f(automations.value),
     );
   return {
+    trashProgress: (id) => run(UserTrash.use((trash) => trash.progress(id))),
     receiveHook: (request) =>
       run(withAutomations((automations) => automations.receiveHook(request))),
     recordSignIn: (profile) => use((store) => store.recordSignIn(profile)),

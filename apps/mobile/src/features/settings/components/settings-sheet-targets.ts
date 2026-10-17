@@ -18,6 +18,7 @@ export type SettingsSheetTarget =
   | "SettingsScheduledTasks"
   | "SettingsConnectedServices" // signalbox: automations
   | "SettingsSignIn" // signalbox: sign-in grants
+  | "SettingsTrash" // signalbox: trash
   | "SettingsProjectGrouping"
   | "SettingsClientStorage"
   | "SettingsDiagnostics"

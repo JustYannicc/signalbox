@@ -15,7 +15,12 @@ import * as Stream from "effect/Stream";
 
 import { CloudAttachments } from "../../attachments/CloudAttachments.ts";
 import { remoteThreadWorktree } from "../../user/contextProjects.ts";
-import { ThreadContexts, type ThreadPlace, type ThreadTurn } from "../../user/threadContexts.ts";
+import {
+  ThreadContexts,
+  type ThreadFolderTrashedError,
+  type ThreadPlace,
+  type ThreadTurn,
+} from "../../user/threadContexts.ts";
 import { commandThreadId, unsupported } from "../threadDecider.ts";
 import * as ThreadDirectory from "../ThreadDirectory.ts";
 import { ThreadKindTurns, withLevel } from "../ThreadKindTurns.ts";
@@ -102,6 +107,14 @@ const PICKS_A_POOL: ReadonlySet<OrchestrationV2Command["type"]> = new Set([
 const messageOf = (command: OrchestrationV2Command) =>
   command.type === "message.dispatch" ? { text: command.text, title: command.titleSeed } : null;
 
+const rejectTrashedFolder = <A>(
+  effect: Effect.Effect<A, ThreadFolderTrashedError>,
+  command: { readonly id: string; readonly type: string },
+) =>
+  effect.pipe(
+    Effect.mapError((error) => ThreadCommandRejectedError.forCommand(command, error.message)),
+  );
+
 export const makeThreads = Effect.gen(function* () {
   const directory = yield* ThreadDirectory.ThreadDirectory;
   const crypto = yield* Crypto.Crypto;
@@ -114,11 +127,15 @@ export const makeThreads = Effect.gen(function* () {
     threadId: ThreadId,
     projectId: ProjectId | null,
     message: Parameters<ThreadKindTurns["Service"]["beforeTurn"]>[1],
+    command: { readonly id: string; readonly type: string },
   ) =>
     Effect.map(
       // A first message waits on its classifier; the chain resolves meanwhile.
       Effect.all(
-        [threadContexts.turn(threadId, projectId), kindTurns.beforeTurn(threadId, message)],
+        [
+          rejectTrashedFolder(threadContexts.turn(threadId, projectId), command),
+          kindTurns.beforeTurn(threadId, message),
+        ],
         { concurrency: 2 },
       ),
       ([turn, level]) => ({
@@ -140,7 +157,10 @@ export const makeThreads = Effect.gen(function* () {
       // thread object rejects a new thread without one, after replaying retries.
       const place =
         command.type === "thread.create"
-          ? yield* threadContexts.placeOfProject(command.projectId)
+          ? yield* rejectTrashedFolder(threadContexts.placeOfProject(command.projectId), {
+              id: command.commandId,
+              type: command.type,
+            })
           : null;
       // Resolved on every turn start, so a thread that moved runs on its new home's chain.
       const turn = PICKS_A_POOL.has(command.type)
@@ -148,6 +168,7 @@ export const makeThreads = Effect.gen(function* () {
             threadId,
             command.type === "thread.create" ? command.projectId : null,
             messageOf(command),
+            { id: command.commandId, type: command.type },
           )
         : null;
       const creation = placed(place, threadId, turn);
@@ -171,7 +192,10 @@ export const makeThreads = Effect.gen(function* () {
 
   const launchThread: Threads.Threads["Service"]["launch"] = (actor, input) =>
     Effect.gen(function* () {
-      const place = yield* threadContexts.placeOfProject(input.projectId);
+      const place = yield* rejectTrashedFolder(threadContexts.placeOfProject(input.projectId), {
+        id: input.commandId,
+        type: "thread.launch",
+      });
       // Receipts live in the thread's object, so a launch without an id needs
       // the same id on every retry: derive it from who launched and the command id.
       const threadId =
@@ -191,6 +215,7 @@ export const makeThreads = Effect.gen(function* () {
           threadId,
           input.projectId,
           message === undefined ? null : { text: message.text, title: input.title },
+          { id: input.commandId, type: "thread.launch" },
         ),
       );
       return yield* withClaimed(

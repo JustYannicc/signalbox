@@ -2,17 +2,19 @@ import type { ThreadId } from "@t3tools/contracts";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
-import { Atom } from "effect/reactivity";
+import { Atom, AtomRegistry } from "effect/reactivity";
 import {
   WS_METHODS,
   type EnvironmentId,
   type OrchestrationV2ShellSnapshot,
 } from "@t3tools/contracts";
+import type { TrashThreadInput } from "@t3tools/contracts/signalboxTrash";
 
 import { createOptimisticThreadLifecycle } from "./threadLifecycle.ts";
 import * as DateTime from "effect/DateTime";
 
 import {
+  type AtomCommandResult,
   createAtomCommandScheduler,
   createEnvironmentCommand,
   createEnvironmentRpcCommand,
@@ -139,15 +141,53 @@ export type {
   WatchThreadPullRequestInput,
 } from "../operations/commands.ts";
 
+export type SignalboxTrashCapability = (
+  registry: AtomRegistry.AtomRegistry,
+  environmentId: EnvironmentId,
+) => boolean;
+
+export type SignalboxTrashThreadCommand = {
+  readonly run: (
+    registry: AtomRegistry.AtomRegistry,
+    target: { readonly environmentId: EnvironmentId; readonly input: typeof TrashThreadInput.Type },
+  ) => Promise<AtomCommandResult<unknown, unknown>>;
+};
+
 export function createThreadEnvironmentAtoms<R, E>(
   runtime: Atom.AtomRuntime<EnvironmentRegistry | Crypto.Crypto | R, E>,
   snapshotAtom: (environmentId: EnvironmentId) => Atom.Atom<OrchestrationV2ShellSnapshot | null>,
+  supportsSignalboxTrash: SignalboxTrashCapability,
+  trashThreadCommand: SignalboxTrashThreadCommand,
 ) {
   const scheduler = createAtomCommandScheduler();
   const concurrency = {
     mode: "serial" as const,
     key: ({ environmentId, input }: { environmentId: string; input: { threadId: string } }) =>
       JSON.stringify([environmentId, input.threadId]),
+  };
+  const localDelete = createEnvironmentCommand(runtime, {
+    label: "environment-data:commands:thread:delete",
+    execute: (input: DeleteThreadInput) => deleteThread(input),
+    scheduler,
+    concurrency,
+  });
+  const deleteCommand = {
+    label: localDelete.label,
+    run: (
+      registry: AtomRegistry.AtomRegistry,
+      target: { readonly environmentId: EnvironmentId; readonly input: DeleteThreadInput },
+    ) =>
+      supportsSignalboxTrash(registry, target.environmentId)
+        ? trashThreadCommand.run(registry, {
+            environmentId: target.environmentId,
+            input: {
+              threadId: target.input.threadId,
+              ...(target.input.commandId === undefined
+                ? {}
+                : { commandId: target.input.commandId }),
+            },
+          })
+        : localDelete.run(registry, target),
   };
   const commands = {
     create: createEnvironmentCommand(runtime, {
@@ -156,12 +196,7 @@ export function createThreadEnvironmentAtoms<R, E>(
       scheduler,
       concurrency,
     }),
-    delete: createEnvironmentCommand(runtime, {
-      label: "environment-data:commands:thread:delete",
-      execute: (input: DeleteThreadInput) => deleteThread(input),
-      scheduler,
-      concurrency,
-    }),
+    delete: deleteCommand,
     archive: createEnvironmentCommand(runtime, {
       label: "environment-data:commands:thread:archive",
       execute: (input: ArchiveThreadInput) => archiveThread(input),

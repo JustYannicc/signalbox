@@ -42,7 +42,6 @@
     "cloud-entrypoints-across-modules | apps/cloud/src/user/clientSockets.ts | apps/cloud/src/thread/preview/previewHeaders.ts",
     "cloud-entrypoints-across-modules | apps/cloud/src/user/folderStatus.ts | apps/cloud/src/thread/statusLine/statusNotePolicy.ts",
     "cloud-entrypoints-across-modules | apps/cloud/src/user/rpc.ts | apps/cloud/src/thread/browsing/browsingRpc.ts",
-    "no-circular | apps/cloud/src/api/apiObject.ts | apps/cloud/src/http/credentials.ts",
     "no-circular | apps/cloud/src/context/contextSearch.ts | apps/cloud/src/context/ContextTool.ts",
     "no-circular | apps/cloud/src/drive/DriveDirectory.ts | apps/cloud/src/drive/DriveStore.ts",
     "no-circular | apps/cloud/src/drive/DriveReader.ts | apps/cloud/src/drive/DriveStore.ts",
