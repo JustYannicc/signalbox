@@ -17,6 +17,7 @@ import type {
   FolderLevel,
   FolderMoveInput,
   FolderSecrets,
+  FolderSetPhaseInput,
   SignalboxFoldersSnapshot,
 } from "@t3tools/contracts/signalboxFolders";
 import { useMemo } from "react";
@@ -69,6 +70,7 @@ export function useFolderCommands() {
   const setInstructions = useAtomCommand(signalboxFolders.setInstructions, {
     reportFailure: false,
   });
+  const setPhase = useAtomCommand(signalboxFolders.setPhase, { reportFailure: false });
   const setSecrets = useAtomCommand(signalboxFolders.setSecrets, { reportFailure: false });
   const setGitHubLend = useAtomCommand(signalboxFolders.setGitHubLend, { reportFailure: false });
   const setOnePassword = useAtomCommand(signalboxFolders.setOnePassword, {
@@ -121,6 +123,9 @@ export function useFolderCommands() {
           "Could not save instructions",
           setInstructions({ environmentId, input: { level, instructions } }),
         ),
+      /** Moves it to another phase, replaces its phases, or (`phases: null`) clears them. */
+      setPhase: (environmentId: EnvironmentId, input: FolderSetPhaseInput): Change =>
+        reported("Could not change this folder's phase", setPhase({ environmentId, input })),
       /** Null removes this source; updates replace the complete source settings. */
       setSecrets: (
         environmentId: EnvironmentId,
@@ -145,6 +150,7 @@ export function useFolderCommands() {
       setGitHubLend,
       setInstructions,
       setOnePassword,
+      setPhase,
       setSecrets,
       update,
     ],

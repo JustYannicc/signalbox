@@ -32,10 +32,10 @@ export function secretSourcesAbove(
   if (level._tag === "top") return [];
   const folder = snapshot.folders.find((candidate) => candidate.id === level.folderId);
   if (folder === undefined) return [];
-  const sources = folderPath(snapshot, folder.parentId)
-    .filter((above) => (above.secrets?.includeSubfolders?.length ?? 0) > 0)
-    .map((above) => `“${above.name}”`)
-    .toReversed();
+  const sources: Array<string> = [];
+  for (const above of folderPath(snapshot, folder.parentId)) {
+    if ((above.secrets?.includeSubfolders?.length ?? 0) > 0) sources.unshift(`“${above.name}”`);
+  }
   if ((snapshot.top.secrets?.includeSubfolders?.length ?? 0) > 0) sources.push("the top level");
   return sources;
 }
@@ -46,9 +46,7 @@ export function formatSecretSources(sources: ReadonlyArray<string>): string {
   return `${sources.slice(0, -1).join(", ")} and ${sources.at(-1)}`;
 }
 
-export function isSecretEnvironmentName(name: string): boolean {
-  return Schema.is(SecretEnvironmentName)(name);
-}
+export const isSecretEnvironmentName = Schema.is(SecretEnvironmentName);
 
 /** Adds a key name to the editor's local list; only included names are saved. */
 export function addSubfolderSecretName(

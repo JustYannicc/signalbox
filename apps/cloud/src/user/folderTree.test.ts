@@ -32,6 +32,7 @@ const folder = (
   driveId: null,
   instructions: null,
   secrets: null,
+  phase: null,
   ...extra,
 });
 

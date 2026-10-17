@@ -20,12 +20,12 @@ import {
 import { INSTRUCTIONS_MAX_BYTES, ROOT_MARKER } from "./RunnerInstructions.ts";
 
 /** Lands `files` on `drive`'s main through a thread of its own, as a person working in it would. */
-const land = (drive: FakeDrive, root: string, files: Record<string, string>, message: string) =>
+const land = (drive: FakeDrive, root: string, files: Record<string, string>) =>
   Effect.gen(function* () {
     const { runner, cwd } = yield* machine(drive, root, `author-${drive.id}`, `author-${drive.id}`);
     yield* runner.prepare(null);
     for (const [file, text] of Object.entries(files)) write(cwd, file, text);
-    const turn = yield* runner.finishTurn({ message });
+    const turn = yield* runner.finishTurn();
     expect(turn.outcome._tag).toBe("landed");
   });
 
@@ -53,10 +53,10 @@ describe("RunnerShortcuts", () => {
           const home = makeFakeDrive(root, { id: "home" });
           const code = makeFakeDrive(root, { id: "code" });
           const docs = makeFakeDrive(root, { id: "docs" });
-          yield* land(code, root, { "AGENTS.md": "CODE RULES\n", "src/app.ts": "one\n" }, "Code");
-          yield* land(code, root, { "src/app.ts": "two\n" }, "Code again");
-          yield* land(docs, root, { "AGENTS.md": "DOCS RULES\n", "guide.md": "read me\n" }, "Docs");
-          yield* land(home, root, { "AGENTS.md": "HOME RULES\n", "notes.md": "hi\n" }, "Home");
+          yield* land(code, root, { "AGENTS.md": "CODE RULES\n", "src/app.ts": "one\n" });
+          yield* land(code, root, { "src/app.ts": "two\n" });
+          yield* land(docs, root, { "AGENTS.md": "DOCS RULES\n", "guide.md": "read me\n" });
+          yield* land(home, root, { "AGENTS.md": "HOME RULES\n", "notes.md": "hi\n" });
           home.shortcuts.push(
             { path: "code", target: code, readable: true },
             { path: "team/docs", target: docs, readable: true },
@@ -68,7 +68,9 @@ describe("RunnerShortcuts", () => {
           expect(read(cwd, "code/src/app.ts")).toBe("two\n");
           expect(read(cwd, "team/docs/guide.md")).toBe("read me\n");
           // Its own history, not the drive's.
-          expect(git(NodePath.join(cwd, "code"), "log", "--format=%s")).toBe("Code again\nCode");
+          expect(git(NodePath.join(cwd, "code"), "log", "--format=%s")).toBe(
+            "Update app.ts\nAdd AGENTS.md and app.ts",
+          );
           expect(writable(NodePath.join(cwd, "code/src/app.ts"))).toBe(false);
           expect(writable(NodePath.join(cwd, "code/src"))).toBe(false);
           expect(writable(NodePath.join(cwd, "notes.md"))).toBe(true);
@@ -88,7 +90,7 @@ describe("RunnerShortcuts", () => {
 
           // A turn never saves anything under a shortcut.
           write(cwd, "notes.md", "changed\n");
-          const turn = yield* runner.finishTurn({ message: "Edit notes" });
+          const turn = yield* runner.finishTurn();
           expect(turn.outcome._tag).toBe("landed");
           expect(git(home.store, "ls-tree", "-r", "--name-only", home.refs("t1").main!)).toBe(
             "AGENTS.md\nnotes.md",
@@ -103,8 +105,8 @@ describe("RunnerShortcuts", () => {
         const home = makeFakeDrive(root, { id: "home" });
         const code = makeFakeDrive(root, { id: "code" });
         const docs = makeFakeDrive(root, { id: "docs" });
-        yield* land(code, root, { "AGENTS.md": "CODE RULES\n" }, "Code");
-        yield* land(docs, root, { "AGENTS.md": "DOCS RULES\n" }, "Docs");
+        yield* land(code, root, { "AGENTS.md": "CODE RULES\n" });
+        yield* land(docs, root, { "AGENTS.md": "DOCS RULES\n" });
         home.shortcuts.push(
           { path: "code", target: code, readable: true },
           { path: "team/docs", target: docs, readable: true },
@@ -113,7 +115,7 @@ describe("RunnerShortcuts", () => {
         const first = yield* runner.prepare("remote-token");
 
         // The target moves on: the mount follows, fetching only the new packs.
-        yield* land(code, root, { "AGENTS.md": "CODE RULES v2\n" }, "Code v2");
+        yield* land(code, root, { "AGENTS.md": "CODE RULES v2\n" });
         // One shortcut is removed, and the user loses access to the other's drive.
         home.shortcuts.splice(0, home.shortcuts.length, {
           path: "code",
@@ -146,7 +148,7 @@ describe("RunnerShortcuts", () => {
       Effect.gen(function* () {
         const home = makeFakeDrive(root, { id: "home" });
         const shared = makeFakeDrive(root, { id: "shared" });
-        yield* land(home, root, { "notes.md": "hi\n", "shared/plan.md": "v1\n" }, "Start");
+        yield* land(home, root, { "notes.md": "hi\n", "shared/plan.md": "v1\n" });
         const { runner, cwd } = yield* machine(home, root, "vm-1", "t1");
         yield* runner.prepare("remote-token");
         write(cwd, "shared/plan.md", "v2 from the thread\n");
@@ -155,13 +157,11 @@ describe("RunnerShortcuts", () => {
         yield* runner.flush;
 
         // Sharing the folder: it becomes its own drive, and main drops it for a shortcut.
-        yield* land(shared, root, { "plan.md": "v1\n" }, "Split");
+        yield* land(shared, root, { "plan.md": "v1\n" });
         const owner = yield* machine(home, root, "vm-owner", "owner");
         yield* owner.runner.prepare(null);
         NodeFS.rmSync(NodePath.join(owner.cwd, "shared"), { recursive: true });
-        expect((yield* owner.runner.finishTurn({ message: "Share shared/" })).outcome._tag).toBe(
-          "landed",
-        );
+        expect((yield* owner.runner.finishTurn()).outcome._tag).toBe("landed");
         home.shortcuts.push({ path: "shared", target: shared, readable: true });
 
         const next = yield* runner.prepare("remote-token");
@@ -170,7 +170,7 @@ describe("RunnerShortcuts", () => {
         ]);
         expect(read(cwd, "shared/plan.md")).toBe("v1\n");
         expect(NodeFS.existsSync(NodePath.join(cwd, "shared/new.md"))).toBe(false);
-        const turn = yield* runner.finishTurn({ message: "Carry on" });
+        const turn = yield* runner.finishTurn();
         expect(turn.outcome._tag).toBe("landed");
         const main = home.refs("t1").main!;
         expect(git(home.store, "ls-tree", "-r", "--name-only", main)).toBe("notes.md");
@@ -187,9 +187,9 @@ describe("RunnerShortcuts", () => {
         Effect.gen(function* () {
           const home = makeFakeDrive(root, { id: "home" });
           const code = makeFakeDrive(root, { id: "code" });
-          yield* land(home, root, { "notes.md": "hi\n", "plan/a.md": "a\n" }, "Home");
-          yield* land(code, root, { "AGENTS.md": "CODE RULES\n" }, "Code");
-          yield* land(code, root, { "src/app.ts": "one\n" }, "More code");
+          yield* land(home, root, { "notes.md": "hi\n", "plan/a.md": "a\n" });
+          yield* land(code, root, { "AGENTS.md": "CODE RULES\n" });
+          yield* land(code, root, { "src/app.ts": "one\n" });
           // A folder named `*` must not match every file of the drive.
           home.shortcuts.push({ path: "*", target: code, readable: true });
           const { runner, cwd } = yield* machine(home, root, "vm-1", "t1");
@@ -203,7 +203,7 @@ describe("RunnerShortcuts", () => {
           yield* runner.prepare("remote-token");
           expect(read(cwd, "again/src/app.ts")).toBe("one\n");
           write(cwd, "notes.md", "changed\n");
-          expect((yield* runner.finishTurn({ message: "Edit" })).outcome._tag).toBe("landed");
+          expect((yield* runner.finishTurn()).outcome._tag).toBe("landed");
           expect(git(home.store, "ls-tree", "-r", "--name-only", home.refs("t1").main!)).toBe(
             "notes.md\nplan/a.md",
           );
@@ -216,8 +216,8 @@ describe("RunnerShortcuts", () => {
       Effect.gen(function* () {
         const home = makeFakeDrive(root, { id: "home" });
         const big = makeFakeDrive(root, { id: "big" });
-        yield* land(home, root, { "AGENTS.md": "HOME RULES\n" }, "Home");
-        yield* land(big, root, { "AGENTS.md": `${"x".repeat(INSTRUCTIONS_MAX_BYTES)}\n` }, "Big");
+        yield* land(home, root, { "AGENTS.md": "HOME RULES\n" });
+        yield* land(big, root, { "AGENTS.md": `${"x".repeat(INSTRUCTIONS_MAX_BYTES)}\n` });
         home.shortcuts.push({ path: "big", target: big, readable: true });
         const { runner, cwd } = yield* machine(home, root, "vm-1", "t1");
 

@@ -212,6 +212,7 @@ export const makeRunnerHost = Effect.fn("makeRunnerHost")(function* (config: Run
                       client,
                       branch: threadRemoteBranch(request.threadId),
                       machine: { outside: outsideFolders(layout), trees: dependencies.trees },
+                      secretMask: mask,
                     }),
                   ).pipe(
                     // The agent's push and create_pr save the branch through it first.

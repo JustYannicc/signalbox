@@ -4,6 +4,7 @@ import type {
   FolderLevel,
   FolderResolvedPool,
   FolderSecrets,
+  FolderPhase,
   OnePasswordEnvironmentId,
   SecretEnvironmentName,
 } from "@t3tools/contracts/signalboxFolders";
@@ -37,6 +38,8 @@ export interface TreeFolder {
   readonly instructions: string | null;
   /** The 1Password Environment and names its threads get, if any. */
   readonly secrets: FolderSecrets | null;
+  /** Where it is in its life (`folderPhases.ts`), if it has a phase. */
+  readonly phase: FolderPhase | null;
 }
 
 export interface Tree {

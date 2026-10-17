@@ -58,6 +58,7 @@ export const toSnapshot = (current: FolderState): SignalboxFoldersSnapshot => {
                 includeSubfolders: folder.secrets.includeSubfolders ?? [],
               },
             }),
+        ...(folder.phase === null ? {} : { phase: folder.phase }),
         ...(githubLend === undefined ? {} : { githubLend }),
       };
     }),

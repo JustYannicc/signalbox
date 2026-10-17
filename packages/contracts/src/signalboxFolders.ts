@@ -25,7 +25,7 @@ import {
   EnvironmentAuthorizationError,
 } from "./auth.ts";
 import { NonNegativeInt, ProjectId, ThreadId, TrimmedNonEmptyString } from "./baseSchemas.ts";
-import { SignalboxContextId } from "./signalboxContexts.ts";
+import { type SignalboxContext, SignalboxContextId } from "./signalboxContexts.ts";
 
 export const SIGNALBOX_FOLDERS_WS_METHODS = {
   subscribe: "signalbox.folders.subscribe",
@@ -35,6 +35,7 @@ export const SIGNALBOX_FOLDERS_WS_METHODS = {
   delete: "signalbox.folders.delete",
   moveThread: "signalbox.folders.moveThread",
   setInstructions: "signalbox.folders.setInstructions",
+  setPhase: "signalbox.folders.setPhase",
   setSecrets: "signalbox.folders.setSecrets",
   setOnePassword: "signalbox.folders.setOnePassword",
   setGitHubLend: "signalbox.folders.setGitHubLend",
@@ -49,6 +50,7 @@ export const SIGNALBOX_FOLDERS_REQUIRED_SCOPES = {
   [SIGNALBOX_FOLDERS_WS_METHODS.delete]: AuthOrchestrationOperateScope,
   [SIGNALBOX_FOLDERS_WS_METHODS.moveThread]: AuthOrchestrationOperateScope,
   [SIGNALBOX_FOLDERS_WS_METHODS.setInstructions]: AuthOrchestrationOperateScope,
+  [SIGNALBOX_FOLDERS_WS_METHODS.setPhase]: AuthOrchestrationOperateScope,
   [SIGNALBOX_FOLDERS_WS_METHODS.setSecrets]: AuthOrchestrationOperateScope,
   [SIGNALBOX_FOLDERS_WS_METHODS.setOnePassword]: AuthOrchestrationOperateScope,
   [SIGNALBOX_FOLDERS_WS_METHODS.setGitHubLend]: AuthOrchestrationOperateScope,
@@ -91,6 +93,54 @@ export const FolderSecrets = Schema.Struct({
 });
 export type FolderSecrets = typeof FolderSecrets.Type;
 
+/** One stage a folder can be in, as people name it. */
+export const FOLDER_PHASE_NAME_MAX_LENGTH = 48;
+export const FolderPhaseName = TrimmedNonEmptyString.check(
+  Schema.isMaxLength(FOLDER_PHASE_NAME_MAX_LENGTH),
+);
+const FOLDER_PHASES_MAX = 12;
+
+/**
+ * Where a folder is in its life (#677): `current`, one of its own `phases`,
+ * which people edit freely. Separate from its threads' states.
+ */
+export const FolderPhase = Schema.Struct({
+  /** In order, names unique ignoring case. */
+  phases: Schema.Array(FolderPhaseName).check(
+    Schema.isMinLength(1),
+    Schema.isMaxLength(FOLDER_PHASES_MAX),
+  ),
+  current: FolderPhaseName,
+});
+export type FolderPhase = typeof FolderPhase.Type;
+
+/**
+ * The phases a new folder starts with, by the kind of tree it's in. A folder
+ * made for files that already exist starts with none.
+ */
+export const FOLDER_PHASE_TEMPLATES = {
+  organization: ["Proposal", "Initiative", "Implementation", "Testing", "Production"],
+  personal: ["Idea", "Doing", "Done"],
+} as const satisfies Record<SignalboxContext["kind"], ReadonlyArray<string>>;
+
+const phaseKey = (name: string) => name.trim().toLocaleLowerCase();
+
+/** `phases` as names, matched ignoring case: the one named `name`, if any. */
+export const findFolderPhase = (phases: ReadonlyArray<string>, name: string) =>
+  phases.find((phase) => phaseKey(phase) === phaseKey(name));
+
+/** Why `phases` (trimmed) can't be a folder's, for the user; null when they can. */
+export const folderPhasesProblem = (phases: ReadonlyArray<string>): string | null => {
+  if (phases.length === 0) return "Add at least one phase, or remove the phase.";
+  if (phases.length > FOLDER_PHASES_MAX)
+    return `A folder can have up to ${FOLDER_PHASES_MAX} phases.`;
+  if (phases.some((phase) => phase.length > FOLDER_PHASE_NAME_MAX_LENGTH)) {
+    return `Keep each phase to ${FOLDER_PHASE_NAME_MAX_LENGTH} characters.`;
+  }
+  if (new Set(phases.map(phaseKey)).size !== phases.length) return "Each phase needs its own name.";
+  return null;
+};
+
 /** A level of the tree: the top level, or a folder. */
 export const FolderLevel = Schema.Union([
   Schema.TaggedStruct("top", {}),
@@ -121,6 +171,8 @@ export const Folder = Schema.Struct({
   instructions: Schema.optionalKey(Instructions),
   /** Its own secrets; subfolders get only names in `includeSubfolders`. */
   secrets: Schema.optionalKey(FolderSecrets),
+  /** Its phase. Absent: none, as for a folder already in production. */
+  phase: Schema.optionalKey(FolderPhase),
   /**
    * The GitHub account the user lent to this folder: its automations' steps
    * on GitHub Actions run as it (#641). Absent: none lent, so they don't run.
@@ -184,6 +236,11 @@ export const FolderCreateInput = Schema.Struct({
   beforeId: Schema.optionalKey(FolderId),
   /** Whose tree a top-level folder goes in; Personal when absent. Inside a folder, its parent's. */
   ownerId: Schema.optionalKey(SignalboxContextId),
+  /**
+   * The phases it starts with, at the first. Absent: its tree's template
+   * (`FOLDER_PHASE_TEMPLATES`); null: none.
+   */
+  phases: Schema.optionalKey(Schema.NullOr(Schema.Array(FolderPhaseName))),
 });
 export type FolderCreateInput = typeof FolderCreateInput.Type;
 
@@ -229,6 +286,19 @@ export const FolderSetInstructionsInput = Schema.Struct({
   instructions: Instructions,
 });
 export type FolderSetInstructionsInput = typeof FolderSetInstructionsInput.Type;
+
+/**
+ * Changes a folder's phase. `current` alone moves it to one of its phases,
+ * matched ignoring case; skipping some is fine. `phases` replaces the list,
+ * keeping the current phase when it's still in it, else starting at the
+ * first. Null takes the phase away.
+ */
+export const FolderSetPhaseInput = Schema.Struct({
+  id: FolderId,
+  phases: Schema.optionalKey(Schema.NullOr(Schema.Array(FolderPhaseName))),
+  current: Schema.optionalKey(FolderPhaseName),
+});
+export type FolderSetPhaseInput = typeof FolderSetPhaseInput.Type;
 
 /** Replaces where a level's secrets come from; null stops loading secrets there. */
 export const FolderSetSecretsInput = Schema.Struct({
@@ -294,6 +364,7 @@ export const SIGNALBOX_FOLDERS_RPCS = [
   change(SIGNALBOX_FOLDERS_WS_METHODS.delete, FolderDeleteInput),
   change(SIGNALBOX_FOLDERS_WS_METHODS.moveThread, FolderMoveThreadInput),
   change(SIGNALBOX_FOLDERS_WS_METHODS.setInstructions, FolderSetInstructionsInput),
+  change(SIGNALBOX_FOLDERS_WS_METHODS.setPhase, FolderSetPhaseInput),
   change(SIGNALBOX_FOLDERS_WS_METHODS.setSecrets, FolderSetSecretsInput),
   change(SIGNALBOX_FOLDERS_WS_METHODS.setOnePassword, FolderSetOnePasswordInput),
   change(SIGNALBOX_FOLDERS_WS_METHODS.setGitHubLend, FolderSetGitHubLendInput),

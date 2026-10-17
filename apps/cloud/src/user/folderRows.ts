@@ -27,6 +27,9 @@ export const FolderRow = Schema.Struct({
   secrets_environment_id: Schema.optionalKey(Schema.NullOr(OnePasswordEnvironmentId)),
   // Optional: a cloud from before per-secret subfolder access sends none.
   secrets_include_subfolders: Schema.optionalKey(Schema.NullOr(SecretEnvironmentNames)),
+  // Optional: a cloud from before folder phases (#677) sends none.
+  phases: Schema.optionalKey(Schema.NullOr(Schema.String)),
+  phase: Schema.optionalKey(Schema.NullOr(Schema.String)),
 });
 export type FolderRow = typeof FolderRow.Type;
 
