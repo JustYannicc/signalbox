@@ -26,7 +26,7 @@ const serve = Effect.gen(function* () {
     hookId,
     token: token ?? "",
     method: request.method,
-    headers: request.headers,
+    headers: { ...request.headers },
     query: url.search.slice(1),
     body,
   });
@@ -39,8 +39,10 @@ const serve = Effect.gen(function* () {
   Effect.catchTags({
     HttpServerError: () =>
       Effect.succeed(HttpServerResponse.empty({ status: 413, headers: NO_STORE_HEADERS })),
-    UserObjectError: () =>
-      Effect.succeed(HttpServerResponse.empty({ status: 503, headers: NO_STORE_HEADERS })),
+    UserObjectError: (error) =>
+      Effect.logError("Cloud webhook acceptance failed", error.cause).pipe(
+        Effect.as(HttpServerResponse.empty({ status: 503, headers: NO_STORE_HEADERS })),
+      ),
   }),
 );
 
