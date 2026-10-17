@@ -489,9 +489,12 @@ const make = Effect.gen(function* () {
           const machine = yield* Effect.orDie(store.machine);
           // Replacing a legacy callback cannot deliver an answer committed during its drain.
           if (machine.status === "connected" && machine.runtimeResponses !== true) {
-            return yield* refuse("This machine is updating. Try your answer again shortly.", {
-              record: false,
-            });
+            return yield* refuse(
+              machine.runtimeResponsesUpgrade === true
+                ? "This machine couldn't update to support questions and approvals. Stop this turn before retrying."
+                : "This machine is updating. Try your answer again shortly.",
+              { record: false },
+            );
           }
         }
         // The receipt names the turn this command started, so a client's retry finds its trace.

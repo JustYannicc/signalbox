@@ -58,15 +58,22 @@ describe("native answer Runner upgrades", () => {
           const next = upgraded.ensure!;
           // An old image even after the update stays visible, rather than bumping forever.
           yield* runner.hello({ ...oldHello, generation: next.generation, token: next.token });
+          expect((yield* runner.work).needsUpkeep).toBe(true);
           expect((yield* runner.reconcile).ensure).toBeNull();
+          expect((yield* runner.work).needsUpkeep).toBe(false);
           expect((yield* store.machine).generation).toBe(next.generation);
           expect((yield* runner.work).turn).toBeNull();
           expect((yield* snapshot(engine)).projection.turnItems).toContainEqual(
             expect.objectContaining({
               type: "system_notice",
-              message: "Updating this machine so it can answer questions and approvals.",
+              runId: (yield* snapshot(engine)).projection.runs[0]!.id,
+              message:
+                "This machine couldn't update to support questions and approvals. Stop this turn before retrying.",
             }),
           );
+          const blockedHead = (yield* snapshot(engine)).head;
+          yield* runner.reconcile;
+          expect((yield* snapshot(engine)).head).toBe(blockedHead);
           // The upgraded process may reconnect after its new image is available.
           yield* runner.hello({ ...hello(next.generation, next.token), takenRunIds: [] });
           expect((yield* runner.work).turn).not.toBeNull();

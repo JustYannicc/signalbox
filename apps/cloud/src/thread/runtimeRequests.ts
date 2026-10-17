@@ -87,9 +87,18 @@ const hasPendingSecret = (projection: Projection, runId: string) =>
 /** Committed decisions are the answer outbox; reconnects replay only the matching live attempt. */
 export function runtimeResponses(
   projection: Projection,
+  runId: string,
 ): ReadonlyArray<Extract<ThreadMessage, { type: "runtime-request.respond" }>> {
+  const runNodes = new Set(
+    projection.nodes.filter((node) => node.runId === runId).map((node) => node.id),
+  );
   return projection.runtimeRequests.flatMap((request) => {
-    if (request.status !== "resolved" || request.responseCapability.type !== "live") return [];
+    if (
+      request.status !== "resolved" ||
+      request.responseCapability.type !== "live" ||
+      !runNodes.has(request.nodeId)
+    )
+      return [];
     const context = runtimeRequestContext(projection, request);
     if (context === null || context.session === null) return [];
     return [

@@ -13,6 +13,7 @@ import {
   TurnItemId,
 } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
+import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
@@ -22,6 +23,7 @@ import { unsupported } from "./threadDecider.ts";
 import { nodeEvent, runEvent, turnItemEvent } from "./threadEvents.ts";
 import { threadShellFromProjection } from "./threadProjection.ts";
 import { runtimeRequestContext } from "./runtimeRequests.ts";
+import { ThreadStore } from "./ThreadStore.ts";
 import {
   connect,
   freshDatabase,
@@ -165,6 +167,40 @@ const answer = (commandId = "answer-1") => ({
 });
 
 describe("cloud native runtime requests", () => {
+  it.effect.each([false, true])(
+    "preserves an answer for retry when the legacy machine's update attempt is %s",
+    (runtimeResponsesUpgrade) =>
+      withObject(freshDatabase(), (engine, runner, context) =>
+        Effect.gen(function* () {
+          yield* waiting(engine, runner);
+          const store = Context.get(context, ThreadStore);
+          const capable = yield* store.machine;
+          yield* store.saveMachine({
+            ...capable,
+            runtimeResponses: false,
+            runtimeResponsesUpgrade,
+          });
+          const before = yield* snapshot(engine);
+          const refused = yield* Effect.result(engine.dispatch(owner, answer(), personal));
+          expect(refused).toMatchObject({
+            _tag: "Failure",
+            failure: {
+              message: runtimeResponsesUpgrade
+                ? "This machine couldn't update to support questions and approvals. Stop this turn before retrying."
+                : "This machine is updating. Try your answer again shortly.",
+            },
+          });
+          expect((yield* snapshot(engine)).head).toBe(before.head);
+          expect((yield* snapshot(engine)).projection.runtimeRequests[0]?.status).toBe("pending");
+          yield* store.saveMachine(capable);
+          yield* engine.dispatch(owner, answer(), personal);
+          expect((yield* runner.work).runtimeResponses).toMatchObject([
+            { requestId, answers: { choice: "Blue" } },
+          ]);
+        }),
+      ),
+  );
+
   it.effect.each(["user_input", "command"] as const)(
     "keeps a live %s request resumable from a conflict helper",
     (kind) =>
