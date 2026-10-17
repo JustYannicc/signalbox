@@ -173,12 +173,17 @@ export function readStepDetail(
       const { detail, properties } = optionsDetail(source, second);
       const outcomesNode = properties?.get("outcomes");
       if (!outcomesNode) {
-        source.error(
-          call,
-          "w.judge needs outcomes.",
-          'w.judge("Real bug or noise?", { input: issue, outcomes: ["bug", "noise"] })',
-        );
-        return null;
+        if (
+          !ensure(
+            source,
+            call,
+            properties?.has("input"),
+            "w.judge needs input.",
+            'w.judge("Is it done?", { input: evidence })',
+          )
+        )
+          return null;
+        return { detail };
       }
       const outcomes = readOutcomes(source, outcomesNode, "Judge outcomes");
       if (!outcomes) return null;

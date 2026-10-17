@@ -6,6 +6,7 @@ import * as Path from "effect/Path";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 
+import { initializeCurrentTurnItemHistory } from "./CurrentTurnItemHistory.ts";
 import { runMigrations } from "./Migrations.ts";
 import { initializeV2Database } from "./initializeV2Database.ts";
 import * as ServerConfig from "../config.ts";
@@ -39,6 +40,8 @@ const layerSetup = Layer.effectDiscard(
     // largest size until the last connection closes.
     yield* sql.unsafe(`PRAGMA journal_size_limit = ${WAL_SIZE_LIMIT_BYTES};`);
     yield* runMigrations();
+    // signalbox: current item history is independent of upstream migration numbering.
+    yield* initializeCurrentTurnItemHistory;
     yield* sql`PRAGMA optimize = 0x10012;`;
     // A connection loads sqlite_stat1 only when it opens, so the server keeps
     // planning with the table sizes it started on. Started on near-empty tables,
