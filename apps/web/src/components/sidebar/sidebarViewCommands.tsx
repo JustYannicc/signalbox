@@ -40,7 +40,8 @@ export function useSidebarViewPaletteItems(): CommandPaletteActionItem[] {
       kind: "action",
       value: "action:go-home",
       title: "Go to Home",
-      searchTerms: ["view", "sidebar", "folders"],
+      // The palette matches searchTerms only, never the title.
+      searchTerms: ["go to home", "home", "view", "sidebar", "folders"],
       icon: <HouseIcon className={ITEM_ICON_CLASS} />,
       shortcutCommand: "sidebar.home",
       run: async () => changeView("home"),

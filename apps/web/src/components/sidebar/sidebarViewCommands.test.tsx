@@ -5,7 +5,7 @@ import {
   DEFAULT_RESOLVED_KEYBINDINGS,
   mergeWithDefaultKeybindings,
 } from "@t3tools/shared/keybindings";
-import { act, createContext, useContext, useMemo } from "react";
+import { act, createContext, useContext, useEffect, useMemo } from "react";
 import { create, type ReactTestRenderer } from "react-test-renderer";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
@@ -43,10 +43,16 @@ vi.mock("../../lib/terminalFocus", () => ({ isTerminalFocused: () => state.termi
 vi.mock("../../commandPaletteBus", () => ({ isCommandPaletteOpen: () => state.paletteOpen }));
 
 import { MainAppLocationTracker } from "./mainAppLocation";
+import { filterCommandPaletteGroups, type CommandPaletteActionItem } from "../CommandPalette.logic";
 import { SidebarViewShortcuts, useSidebarViewPaletteItems } from "./sidebarViewCommands";
+
+let paletteItems: CommandPaletteActionItem[] = [];
 
 function PaletteActions() {
   const items = useSidebarViewPaletteItems();
+  useEffect(() => {
+    paletteItems = items;
+  });
   return items.map((item) => (
     <button key={item.value} onClick={item.run}>
       {item.title}
@@ -139,6 +145,23 @@ describe("sidebar view commands", () => {
 
     expect(localStorage.getItem(storageKey)).toBe(JSON.stringify("home"));
     expect(state.navigate).toHaveBeenCalledExactlyOnceWith({ href: "/env/thread" });
+  });
+
+  it("is found when searching the palette for Home", () => {
+    act(() => {
+      renderer = create(<Harness />);
+    });
+    const search = (query: string) =>
+      filterCommandPaletteGroups({
+        activeGroups: [{ value: "actions", label: "Actions", items: paletteItems }],
+        query,
+        isInSubmenu: false,
+        projectSearchItems: [],
+        threadSearchItems: [],
+      }).flatMap((group) => group.items.map((item) => item.value));
+
+    expect(search("home")).toContain("action:go-home");
+    expect(search("go to home")).toContain("action:go-home");
   });
 
   it("uses the configured shortcut instead of the default", () => {
