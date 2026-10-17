@@ -24,6 +24,8 @@ const BoatSandbox = Schema.Struct({
   /** `provisioning`, `ready`, `archived`… Unknown future states stay strings. */
   state: Schema.String,
   error: Schema.optional(Schema.NullOr(Schema.String)),
+  /** Ready precedes hydration; Docker binds must wait for local storage. */
+  hydrated: Schema.optional(Schema.Boolean),
   /** Outcome of the create-time `setupScript`. */
   setupStatus: Schema.optional(Schema.NullOr(Schema.String)),
   /** Why the setup script failed, for the turn's diagnostics. */
@@ -33,6 +35,13 @@ const BoatSandbox = Schema.Struct({
 export type BoatSandbox = typeof BoatSandbox.Type;
 
 const decodeSandboxBody = Schema.decodeUnknownEffect(Schema.Struct({ sandbox: BoatSandbox }));
+const decodeCommandResult = Schema.decodeUnknownEffect(
+  Schema.Struct({
+    success: Schema.Boolean,
+    exitCode: Schema.NullOr(Schema.Number),
+    timedOut: Schema.Boolean,
+  }),
+);
 const decodeErrorBody = Schema.decodeUnknownOption(
   Schema.Struct({
     code: Schema.optional(Schema.String),
@@ -55,6 +64,8 @@ export interface BoatApi {
   ) => Effect.Effect<BoatSandbox, BoatApiError>;
   /** Null when boat no longer knows the sandbox. */
   readonly get: (id: string) => Effect.Effect<BoatSandbox | null, BoatApiError>;
+  /** Runs a bounded setup command; a nonzero exit is a failed operation. */
+  readonly execute: (id: string, command: string) => Effect.Effect<void, BoatApiError>;
   readonly resume: (id: string) => Effect.Effect<void, BoatApiError>;
   /** Sets the sandbox's auto-stop to `ttlSeconds` from now. */
   readonly setTtl: (id: string, ttlSeconds: number) => Effect.Effect<void, BoatApiError>;
@@ -144,6 +155,42 @@ export const makeBoatApi = (
         Effect.catchIf(
           (error) => error.status === 404,
           () => Effect.succeed(null),
+        ),
+      ),
+    execute: (id, command) =>
+      send(
+        "execute",
+        HttpClientRequest.post(sandboxPath(id, "/commands")).pipe(
+          HttpClientRequest.bodyJsonUnsafe({ command, timeoutSeconds: 120 }),
+        ),
+      ).pipe(
+        Effect.flatMap((body) =>
+          decodeCommandResult(body).pipe(
+            Effect.mapError(
+              (cause) =>
+                new BoatApiError({
+                  operation: "execute",
+                  status: 200,
+                  code: null,
+                  message: "boat sent an unreadable command result.",
+                  cause,
+                }),
+            ),
+          ),
+        ),
+        Effect.flatMap((result) =>
+          result.success && result.exitCode === 0 && !result.timedOut
+            ? Effect.void
+            : Effect.fail(
+                new BoatApiError({
+                  operation: "execute",
+                  status: 200,
+                  code: "command_failed",
+                  message: result.timedOut
+                    ? "The Runner setup command timed out."
+                    : `The Runner setup command failed (exit ${result.exitCode}).`,
+                }),
+              ),
         ),
       ),
     resume: (id) =>

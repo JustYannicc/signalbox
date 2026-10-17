@@ -3290,6 +3290,7 @@ export function GeneralSettingsPanel() {
             />
           </>
         )}
+        {/* signalbox: no Signalbox app in the stores yet; T3 Code's can't sign in to Signalbox Cloud */}
         <SettingsRow
           {...searchableSetting("privacy-policy")}
           description="How we handle your data, including the anonymous usage data Signalbox collects."

@@ -420,6 +420,7 @@ const MachineRecordJson = Schema.fromJsonString(
   Schema.Struct({
     machineId: Schema.NullOr(Schema.String),
     createKey: Schema.NullOr(Schema.String),
+    setupKey: Schema.optionalKey(Schema.String),
     desired: Schema.Literals(["running", "stopped", "destroyed"]),
     settled: Schema.Boolean,
   }),

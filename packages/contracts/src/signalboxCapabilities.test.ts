@@ -4,6 +4,7 @@ import * as Schema from "effect/Schema";
 import { ExecutionEnvironmentCapabilities } from "./environment.ts";
 import { SourceControlProviderKind } from "./sourceControl.ts";
 import {
+  environmentCanWriteModelSettings,
   environmentImportsFrom,
   environmentSupports,
   showsEnvironmentUi,
@@ -24,6 +25,29 @@ describe("environmentSupports", () => {
     expect(environmentSupports(capabilities, "terminal")).toBe(false);
     expect(environmentSupports(capabilities, "devices")).toBe(true);
     expect(environmentSupports(capabilities, "scheduledTasks")).toBe(true);
+  });
+});
+
+describe("environmentCanWriteModelSettings", () => {
+  it("keeps full settings writers and accepts the separate model settings capability", () => {
+    expect(environmentCanWriteModelSettings({})).toBe(true);
+    expect(environmentCanWriteModelSettings({ serverSettingsWrite: true })).toBe(true);
+    expect(
+      environmentCanWriteModelSettings({
+        serverSettingsWrite: false,
+        modelSettingsWrite: true,
+      }),
+    ).toBe(true);
+  });
+
+  it("rejects model writes when neither settings capability is available", () => {
+    expect(environmentCanWriteModelSettings({ serverSettingsWrite: false })).toBe(false);
+    expect(
+      environmentCanWriteModelSettings({
+        serverSettingsWrite: false,
+        modelSettingsWrite: false,
+      }),
+    ).toBe(false);
   });
 });
 

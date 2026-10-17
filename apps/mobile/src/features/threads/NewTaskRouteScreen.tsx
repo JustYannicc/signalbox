@@ -39,7 +39,11 @@ import { useIncomingShare } from "../sharing/IncomingShareProvider";
 import { useNewTaskFlow } from "./new-task-flow-provider";
 import { useFolderStartRedirect } from "../folders/use-folder-start-redirect"; // signalbox: folders
 import { useFolderCopy, useScratchCopy } from "../folders/use-folder-copy"; // signalbox: folders
-import { filterProjectScopes, getProjectScopeSelectionTarget } from "./new-task-project-selection";
+import {
+  filterProjectScopes,
+  getProjectScopeSelectionTarget,
+  projectScopeSubtitle,
+} from "./new-task-project-selection";
 
 type NewTaskRouteParams = {
   readonly incomingShareId?: string | string[];
@@ -472,10 +476,15 @@ export function NewTaskRouteScreen({ route }: StaticScreenProps<NewTaskRoutePara
               }
             >
               {visibleScopes.map((scope, scopeIndex) => {
-                const hasMultipleProjects = scope.projects.length > 1;
                 const selectionTarget = getProjectScopeSelectionTarget(
                   scope,
                   selectedEnvironmentId,
+                );
+                const subtitle = projectScopeSubtitle(
+                  scope,
+                  selectionTarget,
+                  serverConfigs.get(selectionTarget.environmentId)?.environment.capabilities
+                    .localFilesystem !== false,
                 );
                 if (Platform.OS === "android") {
                   return (
@@ -483,11 +492,7 @@ export function NewTaskRouteScreen({ route }: StaticScreenProps<NewTaskRoutePara
                       className="bg-grouped-card"
                       key={scope.key}
                       title={scope.title}
-                      subtitle={
-                        hasMultipleProjects
-                          ? `${scope.projects.length} workspaces`
-                          : selectionTarget.workspaceRoot
-                      }
+                      subtitle={subtitle ?? undefined}
                       subtitleNumberOfLines={1}
                       subtitleEllipsizeMode="middle"
                       disabled={reservedDestinationProject !== null}
@@ -531,15 +536,15 @@ export function NewTaskRouteScreen({ route }: StaticScreenProps<NewTaskRoutePara
                         <Text className={cn("text-base leading-snug", "font-t3-bold")}>
                           {scope.title}
                         </Text>
-                        <Text
-                          className="text-xs leading-snug text-foreground-muted"
-                          ellipsizeMode="middle"
-                          numberOfLines={1}
-                        >
-                          {hasMultipleProjects
-                            ? `${scope.projects.length} workspaces`
-                            : selectionTarget.workspaceRoot}
-                        </Text>
+                        {subtitle === null ? null : (
+                          <Text
+                            className="text-xs leading-snug text-foreground-muted"
+                            ellipsizeMode="middle"
+                            numberOfLines={1}
+                          >
+                            {subtitle}
+                          </Text>
+                        )}
                       </View>
                       <SymbolView
                         name="chevron.right"
