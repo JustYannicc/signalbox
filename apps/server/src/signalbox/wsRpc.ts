@@ -30,6 +30,7 @@ import { signalboxBrowsingWsHandlers } from "./browsing/rpc.ts";
 import { signalboxPushWsHandlers } from "./push/rpc.ts";
 import { signalboxKeysWsHandlers } from "./keys/rpc.ts";
 import { signalboxSignInWsHandlers } from "./signIn/rpc.ts";
+import { signalboxPersonBrowserWsHandlers } from "./personBrowser/rpc.ts";
 import { signalboxRepositoriesWsHandlers } from "./repositories/rpc.ts";
 import { signalboxThreadKindsWsHandlers } from "./threadKinds/rpc.ts";
 import { signalboxCollaborationWsHandlers } from "./collaboration/rpc.ts";
@@ -79,6 +80,7 @@ export const layer = (clientAnalyticsProps: Readonly<Record<string, unknown>>) =
           Effect.fail(new ThreadSearchError({ reason: "unavailable" })),
         ...signalboxKeysWsHandlers,
         ...signalboxSignInWsHandlers,
+        ...signalboxPersonBrowserWsHandlers,
         [WS_METHODS.accountPoolSubscribe]: () => pools.changes,
         [WS_METHODS.accountPoolSubscribeViews]: () => PoolAccess.poolViews,
         [WS_METHODS.accountPoolSubscribeAdvice]: () => poolUsage.advice,

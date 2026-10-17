@@ -19,6 +19,7 @@ import {
   SIGNALBOX_PREVIEWS_WS_METHODS,
 } from "./signalboxPreviews.ts"; // signalbox: previews
 import { SIGNALBOX_THREAD_KINDS_WS_METHODS } from "./signalboxThreadKinds.ts"; // signalbox: thread kinds
+import { SIGNALBOX_PERSON_BROWSER_WS_METHODS } from "./signalboxPersonBrowser.ts";
 import { SIGNALBOX_ANALYTICS_WS_METHODS } from "./signalboxAnalytics.ts";
 import { SIGNALBOX_COLLABORATION_OPERATE_SCOPES } from "./signalboxCollaboration.ts"; // signalbox: cloud collaboration
 
@@ -90,6 +91,7 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   [SIGNALBOX_NOTES_WS_METHODS.accept]: AuthOrchestrationOperateScope, // signalbox: notes
   [SIGNALBOX_SIGN_IN_WS_METHODS.grant]: AuthSettingsWriteScope, // signalbox: sign-in grants
   [SIGNALBOX_SIGN_IN_WS_METHODS.revoke]: AuthSettingsWriteScope, // signalbox: sign-in grants
+  [SIGNALBOX_PERSON_BROWSER_WS_METHODS.clearProfile]: AuthPreviewOperateScope,
 } as const;
 export type ClientGuardedRpcTag = keyof typeof CLIENT_GUARDED_RPC_SCOPES;
 

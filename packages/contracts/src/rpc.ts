@@ -62,6 +62,7 @@ import { SIGNALBOX_THREAD_STATUS_RPCS } from "./signalboxStatusLine.ts"; // sign
 import { SIGNALBOX_COLLABORATION_RPCS } from "./signalboxCollaboration.ts"; // signalbox: cloud collaboration
 import { SIGNALBOX_KEYS_RPCS } from "./signalboxKeys.ts"; // signalbox: personal keys
 import { SIGNALBOX_SIGN_IN_RPCS } from "./signalboxSignIn.ts"; // signalbox: sign-in grants
+import { SIGNALBOX_PERSON_BROWSER_RPCS } from "./signalboxPersonBrowser.ts"; // signalbox: person's cloud browser
 import {
   CodexAuthCallbackInput,
   CodexAuthCallbackState,
@@ -2035,6 +2036,7 @@ export const SIGNALBOX_WS_RPCS = [
   ...SIGNALBOX_COLLABORATION_RPCS,
   ...SIGNALBOX_KEYS_RPCS,
   ...SIGNALBOX_SIGN_IN_RPCS,
+  ...SIGNALBOX_PERSON_BROWSER_RPCS,
 ] as const;
 
 export const WsRpcGroup = RpcGroup.make(
