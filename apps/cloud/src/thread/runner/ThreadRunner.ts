@@ -30,7 +30,11 @@ import { type ModelPoolRoute, poolObjectName } from "../../pool/PoolDirectory.ts
 import { isRemoteToken, remoteToken } from "../../drive/remoteToken.ts";
 import type { UserObjectError } from "../../user/UserDirectory.ts";
 import { traceIdOf } from "../diagnostics/traceId.ts";
-import { failedPreparationEvents, readyPreparationEvents } from "../preparationCommands.ts";
+import {
+  failedPreparationEvents,
+  readyPreparationEvents,
+  WORKSPACE_PREPARATION_FAILURE_MESSAGE,
+} from "../preparationCommands.ts";
 import { TurnDiagnostics } from "../diagnostics/TurnDiagnostics.ts";
 import { driveToken, isDriveToken } from "../../drive/driveToken.ts";
 import { gatewayProviderFor, poolIdOfInstance } from "../providerCatalog.ts";
@@ -758,7 +762,7 @@ const make = Effect.gen(function* () {
       lease.status === "none" || lease.ensuredAt !== null ? null : { ...lease, ensuredAt: now },
     );
 
-  const preparationFailed: ThreadRunner["Service"]["preparationFailed"] = (generation, detail) =>
+  const preparationFailed: ThreadRunner["Service"]["preparationFailed"] = (generation, _detail) =>
     withLease(({ projection, lease, now }, ctx) => {
       const run = projection === null ? undefined : harnessRun(projection);
       if (
@@ -769,21 +773,29 @@ const make = Effect.gen(function* () {
       ) {
         return Effect.succeed(keep(IDLE));
       }
-      const events = failedPreparationEvents(projection, run.id, detail, ctx);
+      const events = failedPreparationEvents(projection, run.id, ctx);
       if (events === null) return Effect.succeed(keep(IDLE));
-      return Effect.as(sessionEnded(lease, { reason: "error", detail, runId: run.id, now }), {
-        events,
-        machine: {
-          ...released(lease),
-          retryPreparationReleaseGeneration: generation,
-        },
-        result: {
-          ...UNNEEDED,
-          release: generation,
+      return Effect.as(
+        sessionEnded(lease, {
+          reason: "error",
+          detail: WORKSPACE_PREPARATION_FAILURE_MESSAGE,
           runId: run.id,
-          retryPreparationReleaseGeneration: generation,
-        },
-      } satisfies ThreadEngine.EngineDecision<MachinePlan>);
+          now,
+        }),
+        {
+          events,
+          machine: {
+            ...released(lease),
+            retryPreparationReleaseGeneration: generation,
+          },
+          result: {
+            ...UNNEEDED,
+            release: generation,
+            runId: run.id,
+            retryPreparationReleaseGeneration: generation,
+          },
+        } satisfies ThreadEngine.EngineDecision<MachinePlan>,
+      );
     });
 
   const preparationReleaseSettled: ThreadRunner["Service"]["preparationReleaseSettled"] = (

@@ -17,7 +17,10 @@ import * as TestClock from "effect/testing/TestClock";
 
 import { UserObjectError } from "../../user/UserDirectory.ts";
 import { HARNESS_MODES_UNSUPPORTED } from "../threadDecider.ts";
-import { failedPreparationEvents } from "../preparationCommands.ts";
+import {
+  failedPreparationEvents,
+  WORKSPACE_PREPARATION_FAILURE_MESSAGE,
+} from "../preparationCommands.ts";
 import { CONNECT_TIMEOUT_MS, IDLE_TAIL_MS } from "./MachineBackend.ts";
 import * as MachineBackend from "./MachineBackend.ts";
 import * as PreparationRetryStop from "./preparationRetryStop.ts";
@@ -473,9 +476,7 @@ describe("ThreadRunner", () => {
           yield* engine.apply((projection, ctx) =>
             Effect.succeed({
               events:
-                projection === null
-                  ? []
-                  : (failedPreparationEvents(projection, runId, "Runner setup failed.", ctx) ?? []),
+                projection === null ? [] : (failedPreparationEvents(projection, runId, ctx) ?? []),
               result: undefined,
             }),
           );
@@ -558,6 +559,37 @@ describe("ThreadRunner", () => {
       { machines },
     );
   });
+
+  it.effect("doesn't persist raw machine setup details as preparation failures", () =>
+    withObject(freshDatabase(), (engine, runner) =>
+      Effect.gen(function* () {
+        yield* launch(engine);
+        const machine = yield* connect(runner);
+        const turn = yield* liveTurn(runner);
+        const rawDetail = "sandbox setup failed: token=secret-value";
+
+        const failed = yield* runner.preparationFailed(machine.generation, rawDetail);
+        expect(failed.release).toBe(machine.generation);
+
+        const { projection } = yield* snapshot(engine);
+        expect(projection.runs.find((run) => run.id === turn.runId)?.status).toBe("failed");
+        const persistedFailureText = projection.turnItems.flatMap((item) =>
+          item.runId !== turn.runId
+            ? []
+            : item.type === "command_execution"
+              ? [item.output]
+              : item.type === "error"
+                ? [item.failure.message]
+                : [],
+        );
+        expect(persistedFailureText).toEqual([
+          WORKSPACE_PREPARATION_FAILURE_MESSAGE,
+          WORKSPACE_PREPARATION_FAILURE_MESSAGE,
+        ]);
+        expect(persistedFailureText.join(" ")).not.toContain(rawDetail);
+      }),
+    ),
+  );
 
   it.effect("ignores a late preparation failure after the Runner has started its turn", () =>
     withObject(freshDatabase(), (engine, runner) =>

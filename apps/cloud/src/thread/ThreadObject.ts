@@ -58,6 +58,7 @@ import { THREAD_OBJECT_JURISDICTION, type ThreadObjectApi } from "./ThreadDirect
 import * as ThreadBrowsing from "./browsing/ThreadBrowsing.ts";
 import * as ThreadEngine from "./ThreadEngine.ts";
 import { makeThreadObjectApi } from "./threadObjectApi.ts";
+import { WORKSPACE_PREPARATION_FAILURE_MESSAGE } from "./preparationCommands.ts";
 import { type BrowserReply, wire } from "./threadWire.ts";
 import * as ThreadStore from "./ThreadStore.ts";
 import * as TurnModels from "./TurnModels.ts";
@@ -111,6 +112,7 @@ export interface ThreadObjectEnv
 const STEP_INTERVAL_MS = 120;
 /** Wait after the `failures`th failure in a row: 5 s, doubling, at most 5 min. */
 const retryDelay = (failures: number) => Math.min(5_000 * 2 ** (failures - 1), 300_000);
+const MACHINE_BACKEND_FAILURE_DETAIL = "Machine backend operation failed.";
 
 type MachineReport = Omit<
   Parameters<TurnDiagnostics.TurnDiagnostics["Service"]["machineReported"]>[0],
@@ -146,7 +148,14 @@ const noteMachine = (
       Effect.gen(function* () {
         const generation = input.generation ?? (yield* Effect.orDie(store.machine)).generation;
         const now = yield* Clock.currentTimeMillis;
-        yield* diagnostics.machineReported({ ...input, generation, now });
+        const safeInput =
+          input.status?.actual === "failed"
+            ? {
+                ...input,
+                status: { ...input.status, detail: MACHINE_BACKEND_FAILURE_DETAIL },
+              }
+            : input;
+        yield* diagnostics.machineReported({ ...safeInput, generation, now });
       }),
     ),
   );
@@ -702,10 +711,7 @@ export class ThreadObject extends DurableObject<ThreadObjectEnv> implements Thre
           yield* report({ operation: "ensure", status });
           if (status.actual === "failed") {
             const preparationFailurePlan = yield* ThreadRunner.ThreadRunner.use((runner) =>
-              runner.preparationFailed(
-                ensure.generation,
-                status.detail ?? "The machine failed during workspace preparation.",
-              ),
+              runner.preparationFailed(ensure.generation, WORKSPACE_PREPARATION_FAILURE_MESSAGE),
             );
             return { ok: true, preparationFailurePlan, retryWakeAt: null };
           }
@@ -717,12 +723,13 @@ export class ThreadObject extends DurableObject<ThreadObjectEnv> implements Thre
           return { ok: true, preparationFailurePlan: null, retryWakeAt: null };
         }).pipe(
           Effect.catchTags({
-            MachineBackendError: (error) =>
-              Effect.logError("machine request failed", error.message, error.cause).pipe(
+            MachineBackendError: () =>
+              Effect.logError("Machine backend request failed.").pipe(
+                Effect.annotateLogs({ operation }),
                 Effect.andThen(
                   noteMachine({
                     operation,
-                    error: error.message,
+                    error: MACHINE_BACKEND_FAILURE_DETAIL,
                     generation: ensure?.generation,
                     runId: plan.runId,
                   }),
@@ -739,8 +746,9 @@ export class ThreadObject extends DurableObject<ThreadObjectEnv> implements Thre
       // fenced preparation failure actually released its lease.
       if (preparationFailurePlan !== null && preparationFailurePlan.release !== null) {
         const failedPlan = preparationFailurePlan;
-        endRunners(this.ctx, failedPlan.release, "Workspace preparation failed.");
-        await this.gateway.release(failedPlan.release);
+        const release = failedPlan.release;
+        endRunners(this.ctx, release, "Workspace preparation failed.");
+        await this.gateway.release(release);
         const retryStop = await this.runtime.runPromise(
           Effect.gen(function* () {
             const backends = yield* MachineBackend.MachineBackend;
@@ -757,11 +765,11 @@ export class ThreadObject extends DurableObject<ThreadObjectEnv> implements Thre
             });
           }).pipe(
             Effect.catchTags({
-              MachineBackendError: (error) =>
-                Effect.logError(
-                  "machine stop after preparation failure failed",
-                  error.message,
-                ).pipe(Effect.as({ stopped: false, settled: false })),
+              MachineBackendError: () =>
+                Effect.logError("Machine backend request failed.").pipe(
+                  Effect.annotateLogs({ operation: "stop" }),
+                  Effect.as({ stopped: false, settled: false }),
+                ),
             }),
           ),
         );

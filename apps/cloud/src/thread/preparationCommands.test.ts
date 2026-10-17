@@ -228,7 +228,7 @@ describe("preparation retry command", () => {
       turnItems: [],
     });
 
-    const failed = failedPreparationEvents(starting, runId, "The Runner setup script failed.", ctx);
+    const failed = failedPreparationEvents(starting, runId, ctx);
     expect(failed).not.toBeNull();
     if (failed === null) throw new Error("expected preparation failure events");
     expect(failed).toContainEqual(

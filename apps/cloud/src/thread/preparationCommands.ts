@@ -29,6 +29,8 @@ type RetryCommand = Extract<OrchestrationV2Command, { readonly type: "prepared-r
 const PREPARATION_INPUT = "Preparing workspace";
 const PREPARATION_FAILURE_CODE = ORCHESTRATION_V2_WORKSPACE_PREPARATION_FAILURE_CODE;
 const PREPARATION_FAILURE_POSITION = 900_000;
+export const WORKSPACE_PREPARATION_FAILURE_MESSAGE =
+  "The machine failed during workspace preparation.";
 
 export type PreparationCommandDecision =
   | { readonly _tag: "accepted"; readonly events: ReadonlyArray<OrchestrationV2DomainEvent> }
@@ -54,7 +56,6 @@ const isBlockingRun = (run: Run) =>
 export function failedPreparationEvents(
   projection: Projection,
   runId: Run["id"],
-  message: string,
   ctx: DecisionContext,
 ): ReadonlyArray<OrchestrationV2DomainEvent> | null {
   const run = projection.runs.find((candidate) => candidate.id === runId);
@@ -86,7 +87,7 @@ export function failedPreparationEvents(
 
   const failure: OrchestrationV2ProviderFailure = {
     class: "validation_error",
-    message,
+    message: WORKSPACE_PREPARATION_FAILURE_MESSAGE,
     code: PREPARATION_FAILURE_CODE,
     retryable: false,
   };
@@ -136,7 +137,7 @@ export function failedPreparationEvents(
             ordinal: itemOrdinal(run.ordinal, 1),
             type: "command_execution",
             input: PREPARATION_INPUT,
-            output: message,
+            output: WORKSPACE_PREPARATION_FAILURE_MESSAGE,
             exitCode: 1,
           }),
         ]
@@ -144,7 +145,7 @@ export function failedPreparationEvents(
           turnItemEvent(ctx, {
             ...preparationItem,
             ...common,
-            output: message,
+            output: WORKSPACE_PREPARATION_FAILURE_MESSAGE,
             exitCode: 1,
           }),
         ]),
