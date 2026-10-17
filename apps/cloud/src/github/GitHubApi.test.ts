@@ -1,4 +1,5 @@
 import { expect, it } from "@effect/vitest";
+import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
 import * as Logger from "effect/Logger";
 import * as Base64 from "effect/encoding/Base64";
@@ -153,49 +154,57 @@ it.effect("omits missing response headers from diagnostics", () => {
   );
 });
 
-it.effect("keeps response headers when the response body cannot be read", () => {
-  const token = "github-read-failure-secret";
-  const lines: Array<string> = [];
-  const client = HttpClient.make((request) =>
-    Effect.succeed(
-      HttpClientResponse.fromWeb(
-        request,
-        new Response(
-          new ReadableStream<Uint8Array>({
-            start(controller) {
-              controller.error(new Error(token));
+it.effect(
+  "keeps response headers and rate-limit backoff when the response body cannot be read",
+  () => {
+    const token = "github-read-failure-secret";
+    const lines: Array<string> = [];
+    const client = HttpClient.make((request) =>
+      Effect.succeed(
+        HttpClientResponse.fromWeb(
+          request,
+          new Response(
+            new ReadableStream<Uint8Array>({
+              start(controller) {
+                controller.error(new Error(token));
+              },
+            }),
+            {
+              status: 429,
+              headers: {
+                "content-type": "application/problem+json",
+                "content-length": "42",
+                "retry-after": "120",
+              },
             },
-          }),
-          {
-            status: 502,
-            headers: {
-              "content-type": "application/problem+json",
-              "content-length": "42",
-            },
-          },
+          ),
         ),
       ),
-    ),
-  );
+    );
 
-  return Effect.gen(function* () {
-    const error = yield* makeGitHubApi(client).viewer(token).pipe(Effect.flip);
-    expect(error).toMatchObject({
-      operation: "viewer",
-      status: 502,
-      message: "GitHub's answer was cut off.",
-      responseContentType: "application/problem+json",
-      responseContentLength: "42",
-    });
-    expect(error.responseExcerpt).toBeUndefined();
-    const diagnostic = JSON.stringify(error) + lines.join("\n");
-    expect(lines.join("\n")).toContain('"responseContentType":"application/problem+json"');
-    expect(lines.join("\n")).toContain('"responseContentLength":"42"');
-    expect(diagnostic).not.toContain(token);
-  }).pipe(
-    Effect.provide(Logger.layer([Logger.map(Logger.formatJson, (line) => void lines.push(line))])),
-  );
-});
+    return Effect.gen(function* () {
+      const now = yield* Clock.currentTimeMillis;
+      const error = yield* makeGitHubApi(client).viewer(token).pipe(Effect.flip);
+      expect(error).toMatchObject({
+        operation: "viewer",
+        status: 429,
+        message: "GitHub's answer was cut off.",
+        responseContentType: "application/problem+json",
+        responseContentLength: "42",
+        retryAt: now + 120_000,
+      });
+      expect(error.responseExcerpt).toBeUndefined();
+      const diagnostic = JSON.stringify(error) + lines.join("\n");
+      expect(lines.join("\n")).toContain('"responseContentType":"application/problem+json"');
+      expect(lines.join("\n")).toContain('"responseContentLength":"42"');
+      expect(diagnostic).not.toContain(token);
+    }).pipe(
+      Effect.provide(
+        Logger.layer([Logger.map(Logger.formatJson, (line) => void lines.push(line))]),
+      ),
+    );
+  },
+);
 
 it.effect("redacts quoted opaque credentials and the bare git credential", () => {
   const token = "supplied-credential-canary";

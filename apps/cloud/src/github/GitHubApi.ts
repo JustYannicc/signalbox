@@ -272,14 +272,17 @@ export const makeGitHubApi = (
     token: string,
   ) =>
     response.text.pipe(
-      Effect.mapError(
-        () =>
-          new GitHubError({
+      Effect.catch(() =>
+        Effect.gen(function* () {
+          const retryAt = rateLimitRetryAt(response, yield* Clock.currentTimeMillis);
+          return yield* new GitHubError({
             operation,
             status: response.status,
             message: "GitHub's answer was cut off.",
             ...responseDiagnostics(requestKind, response, "", token),
-          }),
+            ...(retryAt === undefined ? {} : { retryAt }),
+          });
+        }),
       ),
       Effect.tapError(logResponseFailure),
     );
