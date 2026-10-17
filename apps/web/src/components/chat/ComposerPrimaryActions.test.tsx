@@ -191,4 +191,24 @@ describe("ComposerPrimaryActions stop pending state", () => {
     act(() => vi.advanceTimersByTime(10_000));
     expect(slot()).toMatchObject({ ariaLabel: "Stop generation", disabled: false });
   });
+
+  it("keeps repeat Stop clicks away from Resume when the stop lands after the timeout", () => {
+    clickStop();
+    act(() => vi.advanceTimersByTime(10_000));
+
+    render(false);
+    for (let i = 0; i < 20; i++) clickStop();
+    expect(onInterrupt).toHaveBeenCalledTimes(1);
+    expect(onResume).not.toHaveBeenCalled();
+    expect(slot()).toMatchObject({ ariaLabel: "Stopped", disabled: true });
+  });
+
+  it("sends Stop again after the timeout and waits for it to land", () => {
+    clickStop();
+    act(() => vi.advanceTimersByTime(10_000));
+
+    clickStop();
+    expect(onInterrupt).toHaveBeenCalledTimes(2);
+    expect(slot()).toMatchObject({ ariaLabel: "Stopping", disabled: true });
+  });
 });

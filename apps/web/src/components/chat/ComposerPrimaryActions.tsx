@@ -78,7 +78,8 @@ const formatPendingPrimaryActionLabel = (input: {
   return input.questionIndex > 0 ? "Submit answers" : "Submit answer";
 };
 
-// A stop can take seconds to land. Stop re-enables if it never lands.
+// A stop can take seconds to land. Stop re-enables if it never lands, but a late
+// landing still counts as landed so Resume does not take the Stop slot.
 const STOP_PENDING_MAX_MS = 10_000;
 
 const messageActionPillClassName =
@@ -119,14 +120,15 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
   onToggleKeepFullHistory,
 }: ComposerPrimaryActionsProps) {
   const environmentCopy = useOneEnvironmentCopy(); // signalbox
-  const [stopPhase, setStopPhase] = useState<"pending" | "landed" | null>(null);
+  const [stopPhase, setStopPhase] = useState<"pending" | "timedOut" | "landed" | null>(null);
   // Once the stop has landed, interruptible again means a new run started.
-  if (stopPhase === "pending" && !canInterrupt) setStopPhase("landed");
+  if ((stopPhase === "pending" || stopPhase === "timedOut") && !canInterrupt)
+    setStopPhase("landed");
   else if (stopPhase === "landed" && canInterrupt) setStopPhase(null);
-  const isStopping = stopPhase !== null;
+  const isStopping = stopPhase === "pending" || stopPhase === "landed";
   useEffect(() => {
     if (stopPhase !== "pending") return;
-    const timeout = setTimeout(() => setStopPhase(null), STOP_PENDING_MAX_MS);
+    const timeout = setTimeout(() => setStopPhase("timedOut"), STOP_PENDING_MAX_MS);
     return () => clearTimeout(timeout);
   }, [stopPhase]);
   const pointerFocusProps = preserveComposerFocusOnPointerDown
