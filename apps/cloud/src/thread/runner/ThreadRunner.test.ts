@@ -1,4 +1,8 @@
-import { type RunnerItem } from "@signalbox/runner-protocol/RunnerProtocol";
+import {
+  MIN_RUNNER_PROTOCOL_VERSION,
+  RUNNER_PROTOCOL_VERSION,
+  type RunnerItem,
+} from "@signalbox/runner-protocol/RunnerProtocol";
 import { CommandId, MessageId, ProjectId, ProviderInstanceId } from "@t3tools/contracts";
 import { PERSONAL_CONTEXT_ID, SignalboxContextId } from "@t3tools/contracts/signalboxContexts";
 import { OnePasswordEnvironmentId } from "@t3tools/contracts/signalboxFolders";
@@ -31,7 +35,7 @@ import {
   threadId,
   turnReport,
   withObject,
-} from "./runnerTestKit.ts";
+} from "../runnerTesting.ts";
 
 const POOL_CLAUDE = {
   instanceId: ProviderInstanceId.make("claude_hub"),
@@ -108,6 +112,28 @@ describe("ThreadRunner", () => {
       }),
   );
 
+  it.effect("accepts legacy runner images during rollout and refuses unsupported protocols", () =>
+    withObject(freshDatabase(), (engine, runner) =>
+      Effect.gen(function* () {
+        yield* launch(engine);
+        const plan = yield* runner.reconcile;
+        if (plan.ensure === null) throw new Error("Expected a machine request");
+        const request = hello(plan.ensure.generation, plan.ensure.token);
+        for (const protocolVersion of [
+          MIN_RUNNER_PROTOCOL_VERSION - 1,
+          RUNNER_PROTOCOL_VERSION + 1,
+        ]) {
+          expect(yield* runner.hello({ ...request, protocolVersion })).toMatchObject({
+            _tag: "refused",
+            reason: "protocol_version",
+          });
+        }
+        expect(
+          yield* runner.hello({ ...request, protocolVersion: MIN_RUNNER_PROTOCOL_VERSION }),
+        ).toMatchObject({ _tag: "welcome" });
+      }),
+    ),
+  );
   it.effect("answers for a thread that does not exist without touching storage", () =>
     withObject(freshDatabase(), (_engine, runner) =>
       Effect.gen(function* () {

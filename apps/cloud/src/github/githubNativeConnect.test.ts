@@ -9,6 +9,7 @@ import * as HttpEffect from "effect/http/HttpEffect";
 import * as TestClock from "effect/testing/TestClock";
 
 import * as CloudAccounts from "../account/CloudAccounts.ts";
+import * as IdentityProvider from "../account/IdentityProvider.ts";
 import * as CloudSessions from "../auth/CloudSessions.ts";
 import * as CloudTokens from "../auth/CloudTokens.ts";
 import * as AccountRoutes from "../http/accountRoutes.ts";
@@ -45,6 +46,7 @@ const setup = Effect.gen(function* () {
     CloudAccounts.layer.pipe(
       Layer.provideMerge(CloudSessions.layer),
       Layer.provideMerge(CloudTokens.layer),
+      Layer.provideMerge(IdentityProvider.layer),
       Layer.provideMerge(layerConfig()),
       Layer.provideMerge(Layer.succeed(UserDirectory.UserDirectory, cloud.userDirectory)),
       Layer.provideMerge(workosStubLayer({ native: { id: OWNER, email: "native@example.com" } })),
