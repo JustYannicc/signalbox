@@ -2,37 +2,17 @@ import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
-import * as Schema from "effect/Schema";
 
 import * as NativeArtifactCache from "./native-artifact-cache.ts";
+import * as NativeClientFingerprint from "./native-client-fingerprint.ts";
+import type { NativeBuildCommand } from "./native-client-build-host.ts";
 
-const ExpoFingerprintSource = Schema.Struct({
-  type: Schema.String,
-  filePath: Schema.String,
-  reasons: Schema.Array(Schema.String),
-  hash: Schema.String,
-  overrideHashKey: Schema.optional(Schema.String),
-});
-const ExpoFingerprint = Schema.Struct({
-  hash: Schema.String,
-  sources: Schema.Array(ExpoFingerprintSource),
-});
-export const decodeExpoFingerprint = Schema.decodeUnknownEffect(
-  Schema.fromJsonString(ExpoFingerprint),
-);
-export type ExpoFingerprintSnapshot = typeof ExpoFingerprint.Type;
+export const decodeExpoFingerprint = NativeClientFingerprint.decodeExpoFingerprint;
+export type ExpoFingerprintSnapshot = NativeClientFingerprint.ExpoFingerprintSnapshot;
 
 export type NativeDeviceTarget =
   | { readonly platform: "ios"; readonly runtime: string; readonly architecture: string }
   | { readonly platform: "android"; readonly abi: string; readonly apiLevel: string };
-
-type NativeBuildCommand<E, R> = (
-  program: string,
-  args: Array<string>,
-  inherit?: boolean,
-  cwd?: string,
-  includeStderr?: boolean,
-) => Effect.Effect<string, E, R>;
 
 const readDirectoryOrEmpty = Effect.fnUntraced(function* (directory: string) {
   const fs = yield* FileSystem.FileSystem;

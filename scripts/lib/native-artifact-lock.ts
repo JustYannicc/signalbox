@@ -28,8 +28,18 @@ export class NativeArtifactLockError extends Schema.TaggedError<NativeArtifactLo
 export interface NativeArtifactLockOptions<E = never, R = never> {
   readonly lockPath: string;
   readonly process: ProcessIdentityProbe<E, R>;
+  readonly acquisitionTimeoutMs?: number;
   readonly wait?: () => Effect.Effect<void, E, R>;
 }
+
+export const DEFAULT_LOCK_ACQUISITION_TIMEOUT_MS = 30 * 60 * 1_000;
+
+const formatTimeout = (timeoutMs: number) =>
+  timeoutMs % 60_000 === 0
+    ? `${timeoutMs / 60_000} minutes`
+    : timeoutMs % 1_000 === 0
+      ? `${timeoutMs / 1_000} seconds`
+      : `${timeoutMs} milliseconds`;
 
 const errorCode = (error: unknown): string | undefined => {
   if (typeof error !== "object" || error === null || !("reason" in error)) return undefined;
@@ -120,8 +130,7 @@ const withDirectoryLock = <A, E, R, EProcess, RProcess>(
       const path = yield* Path.Path;
       const fs = yield* FileSystem.FileSystem;
       yield* fs.makeDirectory(path.dirname(lockPath), { recursive: true });
-      const owner = yield* acquireDirectoryLock(lockPath, options);
-      yield* Effect.addFinalizer(() => releaseDirectory(lockPath, owner).pipe(Effect.ignore));
+      yield* acquireDirectoryLock(lockPath, options);
       return yield* use;
     }),
   );
@@ -145,35 +154,31 @@ const reclaimStaleDirectory = <E, R>(
     }),
   );
 
-const acquireDirectoryLock = <E, R>(lockPath: string, options: NativeArtifactLockOptions<E, R>) =>
-  Effect.gen(function* () {
-    const fs = yield* FileSystem.FileSystem;
-    yield* fs.makeDirectory(yield* pathParent(lockPath), { recursive: true });
+const acquireDirectoryLock = <E, R>(lockPath: string, options: NativeArtifactLockOptions<E, R>) => {
+  const acquire = Effect.gen(function* () {
     const owner = yield* options.process.current;
-    let ownerMetadataWaits = 0;
 
     while (true) {
-      if (yield* tryCreateDirectory(lockPath, owner)) return owner;
+      const claimed = yield* Effect.uninterruptibleMask(() =>
+        Effect.gen(function* () {
+          if (!(yield* tryCreateDirectory(lockPath, owner))) return false;
+          yield* Effect.addFinalizer(() => releaseDirectory(lockPath, owner).pipe(Effect.ignore));
+          return true;
+        }),
+      );
+      if (claimed) return;
 
       const existing = yield* readOwner(lockPath);
       if (existing._tag === "missing") {
-        // mkdir is the lock claim; its owner file may still be in the same atomic section.
-        // Wait for that write, but never reclaim a metadata-less lock.
-        ownerMetadataWaits += 1;
-        if (ownerMetadataWaits <= 10) {
-          yield* wait(options);
-          continue;
-        }
-        return yield* new NativeArtifactLockError({
-          message: `Lock owner metadata is missing or invalid at ${lockPath}; refusing to reclaim it.`,
-        });
+        // A creator writes metadata before leaving its masked claim section. Never guess ownership.
+        yield* wait(options);
+        continue;
       }
       if (existing._tag === "invalid") {
         return yield* new NativeArtifactLockError({
-          message: `Lock owner metadata is missing or invalid at ${lockPath}; refusing to reclaim it.`,
+          message: `Lock owner metadata is invalid at ${lockPath}; refusing to reclaim it.`,
         });
       }
-      ownerMetadataWaits = 0;
 
       const observation = yield* options.process.observe(existing.owner.pid);
       if (observation._tag === "unknown") {
@@ -190,7 +195,19 @@ const acquireDirectoryLock = <E, R>(lockPath: string, options: NativeArtifactLoc
     }
   });
 
-const pathParent = (lockPath: string) => Effect.map(Path.Path, (path) => path.dirname(lockPath));
+  const timeoutMs = options.acquisitionTimeoutMs ?? DEFAULT_LOCK_ACQUISITION_TIMEOUT_MS;
+  return acquire.pipe(
+    Effect.timeoutOrElse({
+      duration: timeoutMs,
+      orElse: () =>
+        Effect.fail(
+          new NativeArtifactLockError({
+            message: `Timed out after ${formatTimeout(timeoutMs)} waiting for native artifact lock at ${lockPath}.`,
+          }),
+        ),
+    }),
+  );
+};
 
 export const withNativeArtifactLock = <A, E, R, EProcess, RProcess>(
   options: NativeArtifactLockOptions<EProcess, RProcess>,

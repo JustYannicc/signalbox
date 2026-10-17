@@ -1,15 +1,20 @@
 import { assert, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Crypto from "effect/Crypto";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
+import * as TestClock from "effect/testing/TestClock";
 
 import * as NativeArtifactCache from "./native-artifact-cache.ts";
 import * as NativeArtifactLock from "./native-artifact-lock.ts";
+import * as NativeClientBuildIdentity from "./native-client-build-identity.ts";
+import * as NativeClientFingerprint from "./native-client-fingerprint.ts";
 
 type TestRequirements = FileSystem.FileSystem | Path.Path | Crypto.Crypto;
 type TestErrors = PlatformError.PlatformError | NativeArtifactCache.NativeArtifactCacheError;
@@ -97,6 +102,66 @@ const makeClient = (input: {
   });
 
 it.layer(NodeServices.layer)("native artifact cache", (it) => {
+  it.effect("preserves Expo source variants and nullable hashes in cache manifests", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "native-artifact-expo-sources-" });
+      const snapshot = yield* NativeClientBuildIdentity.decodeExpoFingerprint(
+        JSON.stringify({
+          hash: "a".repeat(40),
+          sources: [
+            {
+              type: "contents",
+              id: "expo-config",
+              contents: "must stay out of the cache manifest",
+              reasons: ["expoConfig"],
+              hash: null,
+            },
+            {
+              type: "file",
+              filePath: "app.json",
+              reasons: ["expoConfig"],
+              hash: "b".repeat(40),
+              overrideHashKey: "app-config",
+            },
+            {
+              type: "dir",
+              filePath: "assets",
+              reasons: ["assetFiles"],
+              hash: null,
+            },
+            {
+              type: "package",
+              name: "expo",
+              version: "54.0.0",
+              filePath: "node_modules/expo/package.json",
+              reasons: ["rootPackage"],
+              hash: "c".repeat(40),
+            },
+          ],
+        }),
+      );
+      const sources = snapshot.sources.map(NativeClientFingerprint.projectExpoFingerprintSource);
+      const buildIdentity = identity({ fingerprint: snapshot.hash, sources });
+      const request = yield* makeClient({
+        cacheRoot: root,
+        worktree: "expo-fingerprint-fixture",
+        device: "simulator-expo-sources",
+        identity: buildIdentity,
+        build: (artifactPath) => writeArtifact(buildIdentity, artifactPath, "expo-source-fixture"),
+      });
+      const built = yield* NativeArtifactCache.ensureNativeArtifact(request);
+      const manifestText = yield* fs.readFileString(
+        path.join(path.dirname(built.artifactPath), "manifest.json"),
+      );
+      const manifest = JSON.parse(manifestText);
+
+      assert.deepEqual(manifest.manifest.identity.sources, sources);
+      assert.isFalse(manifestText.includes("must stay out of the cache manifest"));
+    }),
+  );
+
   it.effect("reuses one verified artifact across worktrees and installs it per device", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
@@ -503,5 +568,99 @@ it.layer(NodeServices.layer)("native artifact cache", (it) => {
         unknownOwnerText,
       );
     }),
+  );
+
+  it.effect("releases lock claims cancelled during directory creation or owner publication", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "native-artifact-lock-cancel-" });
+
+      const cancelAt = (point: "directory" | "owner") =>
+        Effect.gen(function* () {
+          const lockPath = path.join(root, `${point}.lock`);
+          const ownerPath = path.join(lockPath, "owner.json");
+          const claimed = yield* Deferred.make<void>();
+          const continueClaim = yield* Deferred.make<void>();
+          let paused = false;
+
+          const pause = (shouldPause: boolean) => {
+            if (!shouldPause || paused) return Effect.void;
+            paused = true;
+            return Deferred.succeed(claimed, undefined).pipe(
+              Effect.andThen(Deferred.await(continueClaim)),
+            );
+          };
+          const interceptedFs: FileSystem.FileSystem = {
+            ...fs,
+            makeDirectory: (directory, options) =>
+              fs
+                .makeDirectory(directory, options)
+                .pipe(Effect.andThen(pause(point === "directory" && directory === lockPath))),
+            writeFileString: (filePath, contents, options) =>
+              fs
+                .writeFileString(filePath, contents, options)
+                .pipe(Effect.andThen(pause(point === "owner" && filePath === ownerPath))),
+          };
+
+          const worker = yield* NativeArtifactLock.withNativeArtifactLock(
+            { lockPath, process: processProbe(401) },
+            Effect.succeed("acquired"),
+          ).pipe(Effect.provideService(FileSystem.FileSystem, interceptedFs), Effect.forkChild);
+          yield* Deferred.await(claimed);
+          const cancelling = yield* Fiber.interrupt(worker).pipe(
+            Effect.forkChild({ startImmediately: true }),
+          );
+          yield* Deferred.succeed(continueClaim, undefined);
+          yield* Fiber.join(cancelling);
+
+          const result = yield* Fiber.await(worker);
+          assert.isTrue(Exit.isFailure(result));
+          assert.isFalse(yield* fs.exists(lockPath));
+        });
+
+      yield* cancelAt("directory");
+      yield* cancelAt("owner");
+    }),
+  );
+
+  it.effect("times out live-lock acquisition without reclaiming its owner", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "native-artifact-lock-timeout-" });
+      const lockPath = path.join(root, "live.lock");
+      const owner = { pid: 402, startTime: "live-owner" };
+      const ownerText = encodeLockOwner(owner);
+      const firstWait = yield* Deferred.make<void>();
+      yield* fs.makeDirectory(lockPath);
+      yield* fs.writeFileString(path.join(lockPath, "owner.json"), ownerText);
+
+      const worker = yield* NativeArtifactLock.withNativeArtifactLock(
+        {
+          lockPath,
+          process: {
+            current: Effect.succeed({ pid: 403, startTime: "contender" }),
+            observe: () => Effect.succeed({ _tag: "alive", startTime: owner.startTime }),
+          },
+          acquisitionTimeoutMs: 5_000,
+          wait: () =>
+            Deferred.succeed(firstWait, undefined).pipe(Effect.andThen(Effect.sleep("200 millis"))),
+        },
+        Effect.void,
+      ).pipe(Effect.result, Effect.forkChild);
+
+      yield* Deferred.await(firstWait);
+      yield* TestClock.adjust("10 seconds");
+      const result = yield* Fiber.join(worker);
+
+      assert.equal(result._tag, "Failure");
+      if (result._tag === "Failure") {
+        assert.instanceOf(result.failure, NativeArtifactLock.NativeArtifactLockError);
+        assert.include(result.failure.message, "Timed out after 5 seconds");
+      }
+      assert.isTrue(yield* fs.exists(lockPath));
+      assert.equal(yield* fs.readFileString(path.join(lockPath, "owner.json")), ownerText);
+    }).pipe(Effect.provide(TestClock.layer())),
   );
 });

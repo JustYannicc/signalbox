@@ -3,27 +3,15 @@ import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
-import * as PlatformError from "effect/PlatformError";
 
 import * as NativeArtifactCache from "./native-artifact-cache.ts";
 import * as NativeArtifactLock from "./native-artifact-lock.ts";
+import * as NativeClientBuildHost from "./native-client-build-host.ts";
 import type { NativeDeviceTarget } from "./native-client-build-identity.ts";
 
 export type NativePlatform = "ios" | "android";
 
-type NativeBuildCommand<E, R> = (
-  program: string,
-  args: Array<string>,
-  inherit?: boolean,
-  cwd?: string,
-  includeStderr?: boolean,
-) => Effect.Effect<string, E, R>;
-
-type BuilderErrors<E> =
-  | E
-  | NativeArtifactCache.NativeArtifactCacheError
-  | NativeArtifactLock.NativeArtifactLockError
-  | PlatformError.PlatformError;
+type BuilderErrors<E> = NativeClientBuildHost.NativeBuildErrors<E>;
 type BuilderRequirements<R> = R | FileSystem.FileSystem | Path.Path | Crypto.Crypto;
 
 export interface EnsureNativeClientArtifactOptions<E, R> {
@@ -34,101 +22,11 @@ export interface EnsureNativeClientArtifactOptions<E, R> {
   readonly identity: NativeArtifactCache.NativeArtifactIdentity;
   readonly repositoryRoot: string;
   readonly mobileRoot: string;
-  readonly command: NativeBuildCommand<E, R>;
+  readonly command: NativeClientBuildHost.NativeBuildCommand<E, R>;
   readonly currentIdentity: () => Effect.Effect<NativeArtifactCache.NativeArtifactIdentity, E, R>;
   readonly installedBinary: () => Effect.Effect<string | null, E, R>;
   readonly waitForWorktreeLock?: () => Effect.Effect<void, E, R>;
 }
-
-type ProcessPresence = "alive" | "dead" | "unknown";
-
-const processPresence = (pid: number): Effect.Effect<ProcessPresence> =>
-  Effect.sync(() => {
-    try {
-      // Signal 0 checks this exact PID and does not terminate it.
-      process.kill(pid, 0);
-      return "alive";
-    } catch (error) {
-      if (
-        typeof error === "object" &&
-        error !== null &&
-        "code" in error &&
-        error.code === "ESRCH"
-      ) {
-        return "dead";
-      }
-      return "unknown";
-    }
-  });
-
-const readProcessStartIdentity = <E, R>(pid: number, command: NativeBuildCommand<E, R>) =>
-  Effect.gen(function* () {
-    const platform = yield* HostProcess.Platform;
-    if (platform === "linux") {
-      const fs = yield* FileSystem.FileSystem;
-      const stat = yield* fs.readFileString(`/proc/${pid}/stat`).pipe(
-        Effect.catchIf(
-          (error) => error.reason._tag === "NotFound",
-          () => Effect.succeed(null),
-        ),
-      );
-      if (stat === null) return null;
-      const fields = stat
-        .slice(stat.lastIndexOf(")") + 1)
-        .trim()
-        .split(/\s+/);
-      return fields[19] ?? null;
-    }
-    if (platform === "darwin") {
-      return yield* command("ps", ["-p", String(pid), "-o", "lstart="]).pipe(
-        Effect.map((value) => value || null),
-        Effect.orElseSucceed(() => null),
-      );
-    }
-    if (platform === "win32") {
-      return yield* command("powershell.exe", [
-        "-NoProfile",
-        "-NonInteractive",
-        "-Command",
-        `(Get-Process -Id ${pid} -ErrorAction Stop).StartTime.ToUniversalTime().Ticks`,
-      ]).pipe(
-        Effect.map((value) => value || null),
-        Effect.orElseSucceed(() => null),
-      );
-    }
-    return null;
-  });
-
-const processProbe = <E, R>(
-  command: NativeBuildCommand<E, R>,
-): NativeArtifactLock.ProcessIdentityProbe<
-  BuilderErrors<E>,
-  R | FileSystem.FileSystem | Path.Path
-> => ({
-  current: Effect.gen(function* () {
-    const startTime = yield* readProcessStartIdentity(process.pid, command);
-    if (startTime === null)
-      return yield* new NativeArtifactLock.NativeArtifactLockError({
-        message: "Could not determine this process start identity for the native cache lock.",
-      });
-    return { pid: process.pid, startTime };
-  }),
-  observe: (pid: number) =>
-    Effect.gen(function* () {
-      const presence = yield* processPresence(pid);
-      if (presence === "dead") return { _tag: "dead" } as const;
-      if (presence === "unknown") return { _tag: "unknown" } as const;
-      const startTime = yield* readProcessStartIdentity(pid, command).pipe(
-        Effect.orElseSucceed(() => null),
-      );
-      if (startTime === null) {
-        return (yield* processPresence(pid)) === "dead"
-          ? ({ _tag: "dead" } as const)
-          : ({ _tag: "unknown" } as const);
-      }
-      return { _tag: "alive", startTime } as const;
-    }),
-});
 
 const digest = Effect.fn("nativeClientArtifactBuilder.digest")(function* (value: string) {
   const crypto = yield* Crypto.Crypto;
@@ -151,7 +49,7 @@ export const ensureNativeClientArtifact = <E, R>(
         message: "Native build target does not match the requested platform.",
       });
     }
-    const process = processProbe(options.command);
+    const process = NativeClientBuildHost.nativeProcessIdentityProbe(options.command);
     const cache = yield* NativeArtifactCache.ensureNativeArtifact({
       cacheRoot: options.cacheRoot,
       identity: options.identity,
@@ -267,26 +165,13 @@ export const ensureNativeClientArtifact = <E, R>(
       installedBinary: options.installedBinary,
       expectedInstalledBinary: (artifactPath) =>
         Effect.gen(function* () {
-          const artifactHash = yield* NativeArtifactCache.hashArtifact(artifactPath);
-          if (options.target.platform === "ios") return artifactHash;
-          const host = yield* HostProcess.Platform;
-          const output =
-            host === "darwin"
-              ? yield* options.command("shasum", ["-a", "256", artifactPath])
-              : host === "win32"
-                ? yield* options.command("powershell.exe", [
-                    "-NoProfile",
-                    "-NonInteractive",
-                    "-Command",
-                    `(Get-FileHash -Algorithm SHA256 -LiteralPath '${artifactPath.replace(/'/g, "''")}').Hash`,
-                  ])
-                : yield* options.command("sha256sum", ["-b", artifactPath]);
-          const binaryHash = output.match(/[a-f0-9]{64}/i)?.[0]?.toLowerCase();
-          if (!binaryHash)
-            return yield* new NativeArtifactCache.NativeArtifactCacheError({
-              message: "Could not hash the built Android APK.",
-            });
-          return yield* digest(binaryHash);
+          if (options.target.platform === "ios")
+            return yield* NativeArtifactCache.hashArtifact(artifactPath);
+          return yield* NativeClientBuildHost.hashAndroidApk({
+            host: yield* HostProcess.Platform,
+            artifactPath,
+            command: options.command,
+          });
         }),
     });
     return {

@@ -7,16 +7,10 @@ import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
 import * as NativeArtifactLock from "./native-artifact-lock.ts";
+import * as NativeClientFingerprint from "./native-client-fingerprint.ts";
 
 const NativePlatform = Schema.Literals(["ios", "android"]);
 const NativeArtifactKind = Schema.Literals(["app", "apk"]);
-const ExpoSource = Schema.Struct({
-  type: Schema.String,
-  filePath: Schema.String,
-  reasons: Schema.Array(Schema.String),
-  hash: Schema.String,
-  overrideHashKey: Schema.optional(Schema.String),
-});
 const NativeArtifactIdentitySchema = Schema.Struct({
   schemaVersion: Schema.Literal(1),
   platform: NativePlatform,
@@ -24,11 +18,11 @@ const NativeArtifactIdentitySchema = Schema.Struct({
   expoPlatforms: Schema.Array(NativePlatform),
   target: Schema.Record(Schema.String, Schema.String),
   toolchain: Schema.Record(Schema.String, Schema.Unknown),
-  sources: Schema.Array(ExpoSource),
+  sources: Schema.Array(NativeClientFingerprint.ExpoFingerprintSource),
   artifactKind: NativeArtifactKind,
 });
 export type NativeArtifactIdentity = typeof NativeArtifactIdentitySchema.Type;
-export type NativeArtifactSource = typeof ExpoSource.Type;
+export type NativeArtifactSource = NativeClientFingerprint.ExpoFingerprintSource;
 
 const NativeArtifactManifest = Schema.Struct({
   schemaVersion: Schema.Literal(1),

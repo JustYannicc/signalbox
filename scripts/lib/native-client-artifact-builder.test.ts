@@ -7,6 +7,7 @@ import * as Path from "effect/Path";
 
 import * as NativeArtifactCache from "./native-artifact-cache.ts";
 import * as NativeClientArtifactBuilder from "./native-client-artifact-builder.ts";
+import * as NativeClientBuildHost from "./native-client-build-host.ts";
 import * as NativeClientBuildIdentity from "./native-client-build-identity.ts";
 
 const makeIdentity = (abi: string): NativeArtifactCache.NativeArtifactIdentity =>
@@ -29,6 +30,70 @@ const makeIdentity = (abi: string): NativeArtifactCache.NativeArtifactIdentity =
   }) satisfies NativeArtifactCache.NativeArtifactIdentity;
 
 it.layer(NodeServices.layer)("native client artifact builder", (it) => {
+  it.effect("uses UTC and C locale for macOS process start identities", () =>
+    Effect.gen(function* () {
+      const readWithEnvironment = (ambient: Record<string, string>) =>
+        NativeClientBuildHost.readProcessStartIdentity(
+          55,
+          "darwin",
+          (program, args, _inherit, _cwd, _includeStderr, overrides) => {
+            assert.equal(program, "ps");
+            assert.deepEqual(args, ["-p", "55", "-o", "lstart="]);
+            const environment = { ...ambient, ...overrides };
+            return Effect.succeed(`${environment.TZ}/${environment.LC_ALL}`);
+          },
+        );
+      const [utc, zurich] = yield* Effect.all([
+        readWithEnvironment({ TZ: "UTC", LC_ALL: "C" }),
+        readWithEnvironment({ TZ: "Europe/Zurich", LC_ALL: "de_CH.UTF-8" }),
+      ]);
+
+      assert.equal(utc, "UTC/C");
+      assert.equal(zurich, "UTC/C");
+    }),
+  );
+
+  it.effect("keeps a live process observation unknown when its start time cannot be read", () =>
+    Effect.gen(function* () {
+      const probe = NativeClientBuildHost.nativeProcessIdentityProbe(
+        () => Effect.succeed(""),
+        "darwin",
+      );
+
+      assert.deepEqual(yield* probe.observe(process.pid), { _tag: "unknown" });
+    }),
+  );
+
+  it.effect("uses sha256sum for Linux APK verification", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const crypto = yield* Crypto.Crypto;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "native-builder-linux-hash-" });
+      const artifactPath = path.join(root, "app-debug.apk");
+      const contents = "linux-apk-content";
+      yield* fs.writeFileString(artifactPath, contents);
+      const rawBytes = yield* crypto.digest("SHA-256", new TextEncoder().encode(contents));
+      const rawHash = Array.from(rawBytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
+      const calls: Array<{ program: string; args: Array<string> }> = [];
+      const verifiedHash = yield* NativeClientBuildHost.hashAndroidApk({
+        host: "linux",
+        artifactPath,
+        command: (program, args) => {
+          calls.push({ program, args });
+          return Effect.succeed(`${rawHash} *${artifactPath}`);
+        },
+      });
+      const wrappedBytes = yield* crypto.digest("SHA-256", new TextEncoder().encode(rawHash));
+      const expected = Array.from(wrappedBytes, (byte) => byte.toString(16).padStart(2, "0")).join(
+        "",
+      );
+
+      assert.deepEqual(calls, [{ program: "sha256sum", args: ["-b", artifactPath] }]);
+      assert.equal(verifiedHash, expected);
+    }),
+  );
+
   it.effect("serializes different target builds that share one worktree", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
@@ -67,7 +132,7 @@ it.layer(NodeServices.layer)("native client artifact builder", (it) => {
             yield* fs.copyFile(args.at(-1)!, path.join(root, `${args[1]}.apk`));
             return "Success";
           }
-          if (program === "shasum") {
+          if (program === "shasum" || program === "sha256sum") {
             const contents = yield* fs.readFileString(args.at(-1)!);
             const bytes = yield* crypto.digest("SHA-256", new TextEncoder().encode(contents));
             return `${Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("")}  ${args.at(-1)}`;

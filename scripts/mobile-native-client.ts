@@ -15,6 +15,7 @@ import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import * as NativeArtifactCache from "./lib/native-artifact-cache.ts";
 import * as NativeClientArtifactBuilder from "./lib/native-client-artifact-builder.ts";
 import * as NativeClientBuildIdentity from "./lib/native-client-build-identity.ts";
+import * as NativeClientFingerprint from "./lib/native-client-fingerprint.ts";
 
 export type NativePlatform = "ios" | "android";
 const NativeClientRecord = Schema.Struct({
@@ -174,6 +175,7 @@ const command = Effect.fn("nativeClient.command")(function* (
   inherit = false,
   cwd?: string,
   includeStderr = false,
+  environmentOverrides?: Record<string, string>,
 ) {
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const environment = yield* HostProcess.Environment;
@@ -184,6 +186,7 @@ const command = Effect.fn("nativeClient.command")(function* (
       cwd: cwd ?? (yield* roots).mobile,
       env: {
         ...environment,
+        ...environmentOverrides,
         APP_VARIANT: "development",
         MOBILE_VERSION_POLICY: "appVersion",
         T3CODE_IOS_PERSONAL_TEAM: "0",
@@ -209,7 +212,8 @@ const command = Effect.fn("nativeClient.command")(function* (
 const fingerprint = Effect.fn("nativeClient.fingerprint")(function* (platform: NativePlatform) {
   const output = yield* command(yield* HostProcess.ExecutablePath, [
     "--eval",
-    `require('expo/fingerprint').createFingerprintAsync(process.cwd(), { platforms: [process.argv[1]], silent: true }).then(fp => console.log('T3_NATIVE_FINGERPRINT=' + JSON.stringify({ hash: fp.hash, sources: fp.sources.map(({ type, filePath, reasons, hash, overrideHashKey }) => ({ type, filePath, reasons, hash, overrideHashKey })) }))).catch(e => { console.error(e); process.exitCode = 1; });`,
+    `const projectExpoFingerprintSource = (${NativeClientFingerprint.projectExpoFingerprintSource.toString()});
+require('expo/fingerprint').createFingerprintAsync(process.cwd(), { platforms: [process.argv[1]], silent: true }).then(fp => console.log('T3_NATIVE_FINGERPRINT=' + JSON.stringify({ hash: fp.hash, sources: fp.sources.map(projectExpoFingerprintSource) }))).catch(e => { console.error(e); process.exitCode = 1; });`,
     platform,
   ]);
   const serialized = output
