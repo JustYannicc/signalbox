@@ -3,5 +3,5 @@
   "compilerOptions": {
     "types": []
   },
-  "include": ["src/table.ts", "src/definition.ts", "src/definition.test.ts", "type-tests/**/*.ts"]
+  "include": ["src/**/*.ts", "type-tests/**/*.ts"]
 }

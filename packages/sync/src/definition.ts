@@ -233,6 +233,15 @@ export type Input<Op extends OperationShape> = Op["input"]["Type"];
 export type Output<Op extends OperationShape> = Op["output"]["Type"];
 export type Failure<Op extends OperationShape> = Op["failure"]["Type"];
 
+/** Client reads use the authenticated channel's actor, rather than accepting one over the wire. */
+export interface SyncViewSource<Views extends HomeOperations["views"]> {
+  readonly view: <K extends keyof Views & string>(
+    operation: K,
+    input: Input<Views[K]>,
+    resume?: SyncCursor,
+  ) => Stream.Stream<ViewFrame<Output<Views[K]>>, Failure<Views[K]> | SyncFailure>;
+}
+
 /** Trusted ingress is a server capability supplied by the owning module, never public request data. */
 export interface SyncHome<
   Ingress,

@@ -139,6 +139,7 @@
       "entry": [
         "codegen-proof/lunora/{schema,counters}.ts",
         "codegen-proof/src/api-contract.ts",
+        "codegen-proof/tests/fixtures/*.ts",
         "type-tests/**/*.ts",
       ],
       // The generated shard uses Workers globals from the proof's own tsconfig.

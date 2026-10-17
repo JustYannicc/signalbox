@@ -58,6 +58,11 @@
         },
         "overrides": [
           {
+            // Lunora emits native engine contexts; their clock runs outside Effect.
+            "include": ["**/lunora/_generated/**/*.ts"],
+            "options": { "diagnosticSeverity": { "globalDate": "off" } }
+          },
+          {
             "include": ["**/*.test.ts", "**/*.test.tsx"],
             "options": { "diagnosticSeverity": { "preferSchemaOverJson": "off" } }
           }

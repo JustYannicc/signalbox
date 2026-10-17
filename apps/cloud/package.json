@@ -15,6 +15,7 @@
     "@signalbox/api": "workspace:*",
     "@signalbox/automations": "workspace:*",
     "@signalbox/runner-protocol": "workspace:*",
+    "@signalbox/sync": "workspace:*",
     "@t3tools/client-runtime": "workspace:*",
     "@t3tools/contracts": "workspace:*",
     "@t3tools/provider-core": "workspace:*",
@@ -27,6 +28,7 @@
     "evlog": "2.30.0",
     "fractional-indexing": "4.0.0",
     "jose": "catalog:",
+    "lunorash": "1.0.0-alpha.398",
     "tldts": "catalog:"
   },
   "devDependencies": {

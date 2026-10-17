@@ -4,20 +4,36 @@
   "type": "module",
   "exports": {
     "./table": "./src/table.ts",
-    "./definition": "./src/definition.ts"
+    "./definition": "./src/definition.ts",
+    "./adapters/lunoraHome": "./src/adapters/lunoraHome.ts",
+    "./adapters/lunoraSchema": "./src/adapters/lunoraSchema.ts",
+    "./adapters/lunoraClient": "./src/adapters/lunoraClient.ts",
+    "./adapters/evlog": "./src/adapters/evlog.ts",
+    "./atoms": "./src/atoms.ts",
+    "./adapters/lunoraReceipts": "./src/adapters/lunoraReceipts.ts",
+    "./adapters/lunoraSyncHome": "./src/adapters/lunoraSyncHome.ts",
+    "./adapters/lunoraContext": "./src/adapters/lunoraContext.ts",
+    "./adapters/lunoraWireValue": "./src/adapters/lunoraWireValue.ts",
+    "./adapters/lunoraHomeWire": "./src/adapters/lunoraHomeWire.ts",
+    "./adapters/lunoraFunctions": "./src/adapters/lunoraFunctions.ts",
+    "./adapters/lunoraRecovery": "./src/adapters/lunoraRecovery.ts"
   },
   "scripts": {
-    "test": "node ./codegen-proof/run.mjs && vp test run --dir . --maxWorkers=2",
+    "test": "node ./codegen-proof/run.mjs && vp test run --config ../../vite.config.ts --dir . --maxWorkers=2 && node ./recovery-proof/run.mjs && node ./recovery-proof/custody.mjs",
     "typecheck": "tsc --noEmit -p tsconfig.json"
   },
   "dependencies": {
     "effect": "catalog:",
+    "evlog": "2.30.0",
     "lunorash": "1.0.0-alpha.398"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20260604.1",
+    "@effect/vitest": "catalog:",
+    "@lunora/testing": "1.0.0-alpha.272",
     "@types/node": "catalog:",
     "typescript": "catalog:",
-    "vite-plus": "catalog:"
+    "vite-plus": "catalog:",
+    "wrangler": "^4.147.0"
   }
 }
