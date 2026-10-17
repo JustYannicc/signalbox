@@ -1,5 +1,6 @@
 import {
   type DeviceActionInput,
+  type DeviceCancelOpenInput,
   type DeviceCloseInput,
   type DeviceConfigureInput,
   type DeviceDetail,
@@ -31,6 +32,7 @@ import { ensureAgentDevice, ensureDeviceHub } from "./DeviceToolchain.ts";
 import * as ServerConfig from "../config.ts";
 import { agentDeviceConfigPath, writeAgentDeviceConfig } from "./AgentDeviceTarget.ts";
 import * as Context from "effect/Context";
+import * as Clock from "effect/Clock";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
@@ -57,6 +59,7 @@ import * as LocalDeviceHost from "./LocalDeviceHost.ts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import {
   DEVICE_CLEANUP_INTERVAL,
+  DEVICE_LEASE_WAIT_TIMEOUT_MS,
   DEVICE_LEASE_WAIT_INTERVAL,
   DEVICE_LEASE_WAIT_ATTEMPTS,
   deviceAliases,
@@ -85,6 +88,7 @@ export const DEVICE_HUB_ROUTE_PREFIX = "/api/device-hub";
 
 const BOOT_TIMEOUT = Duration.minutes(3);
 const SCREENSHOT_TIMEOUT = Duration.seconds(20);
+const OPEN_REQUEST_CANCEL_TTL_MS = DEVICE_LEASE_WAIT_TIMEOUT_MS * 2;
 
 const HubDevice = Schema.Struct({
   id: Schema.String,
@@ -164,6 +168,7 @@ export class DeviceService extends Context.Service<
       input: DeviceOpenInput,
       owner?: DeviceOpenOwner,
     ) => Effect.Effect<DeviceSession, DeviceError>;
+    readonly cancelOpen: (input: DeviceCancelOpenInput) => Effect.Effect<void, DeviceError>;
     readonly close: (
       input: DeviceCloseInput,
       owner?: DeviceOpenOwner,
@@ -195,6 +200,19 @@ export class DeviceService extends Context.Service<
 
 interface ServiceState {
   readonly state: DeviceServiceState;
+}
+
+interface DeviceOpenRequestState {
+  readonly requestId: string;
+  readonly threadId: ThreadId;
+  readonly hostId: DeviceHostId;
+  readonly deviceId: DeviceId;
+  readonly canReleaseOwner: boolean;
+  started: boolean;
+  cancelled: boolean;
+  cancelledAt?: number;
+  target?: DeviceLeaseTarget;
+  phase: "waiting" | "opening" | "renewing" | "committed";
 }
 
 const vendorPrefix = (platform: DevicePlatform) =>
@@ -251,6 +269,35 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
     ...(isProviderSessionLive === undefined ? {} : { isProviderSessionLive }),
   });
   const leases = yield* makeDeviceLeaseCoordinator({ access: leaseAccess });
+  const openRequests = new Map<string, DeviceOpenRequestState>();
+
+  const pruneOpenRequestCancellations = (now: number) => {
+    for (const [requestId, request] of openRequests) {
+      if (
+        !request.started &&
+        request.cancelled &&
+        request.cancelledAt !== undefined &&
+        now - request.cancelledAt > OPEN_REQUEST_CANCEL_TTL_MS
+      )
+        openRequests.delete(requestId);
+    }
+  };
+
+  const finishOpenRequest = (request: DeviceOpenRequestState | undefined) =>
+    Effect.sync(() => {
+      if (request && openRequests.get(request.requestId) === request) {
+        request.started = false;
+        if (!request.cancelled) openRequests.delete(request.requestId);
+      }
+    });
+
+  const openRequestMatches = (
+    request: DeviceOpenRequestState,
+    input: Pick<DeviceOpenInput | DeviceCancelOpenInput, "threadId" | "hostId" | "deviceId">,
+  ) =>
+    request.threadId === input.threadId &&
+    request.hostId === (input.hostId ?? LOCAL_DEVICE_HOST_ID) &&
+    request.deviceId === input.deviceId;
 
   const httpClient = (yield* HttpClient.HttpClient).pipe(HttpClient.withScope);
   const statePubSub = yield* PubSub.unbounded<DeviceServiceState>();
@@ -727,26 +774,75 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
 
   const open: DeviceService["Service"]["open"] = Effect.fn("DeviceService.open")(
     function* (input, requestedOwner) {
+      const requestId = requestedOwner?.kind === "agent" ? undefined : input.requestId;
       const owner = requestedOwner ?? { kind: "panel" as const };
-      const host = yield* resolveHost(input.hostId);
-      yield* ensurePlatform(host, input.platform);
-      const ready = yield* readiness(host.id);
-      const initialState = yield* refresh(ready);
-      const initialDevice =
-        findDevice(initialState, host.id, input.deviceId) ??
-        initialState.devices.find(
-          (candidate) =>
-            candidate.hostId === host.id &&
-            deviceAliases(leaseTarget(candidate)).includes(input.deviceId),
-        );
-      if (!initialDevice) {
-        return yield* new DeviceNotFoundError({ hostId: host.id, deviceId: input.deviceId });
-      }
-      const initialTarget = leaseTarget(initialDevice);
-      const queueEntry = { ...initialDevice, threadId: input.threadId };
       const panelSessionId =
         owner.kind === "panel" ? (owner.sessionId ?? input.sessionId) : undefined;
       const panelLeaseId = owner.kind === "panel" ? (owner.leaseId ?? input.leaseId) : undefined;
+      const canReleaseRequestOwner =
+        owner.kind === "panel" && panelSessionId === undefined && panelLeaseId === undefined;
+      let requestState: DeviceOpenRequestState | undefined;
+      if (requestId !== undefined) {
+        const now = yield* Clock.currentTimeMillis;
+        pruneOpenRequestCancellations(now);
+        const existing = openRequests.get(requestId);
+        if (existing && !openRequestMatches(existing, input)) {
+          return yield* new DeviceOperationError({
+            operation: "open",
+            reason: "invalid_payload",
+            cause: new Error("The open request ID is already bound to another target."),
+          });
+        }
+        if (existing?.cancelled) return yield* Effect.interrupt;
+        if (existing) {
+          return yield* new DeviceOperationError({
+            operation: "open",
+            reason: "busy",
+            cause: new Error("This device open request is already in progress."),
+          });
+        }
+        requestState = {
+          requestId,
+          threadId: input.threadId,
+          hostId: input.hostId ?? LOCAL_DEVICE_HOST_ID,
+          deviceId: input.deviceId,
+          canReleaseOwner: canReleaseRequestOwner,
+          started: true,
+          cancelled: false,
+          phase: "waiting",
+        };
+        openRequests.set(requestId, requestState);
+      }
+      const ensureRequestActive = () => (requestState?.cancelled ? Effect.interrupt : Effect.void);
+      const { host, ready, initialDevice, initialTarget } = yield* Effect.gen(function* () {
+        yield* ensureRequestActive();
+        const host = yield* resolveHost(input.hostId);
+        yield* ensureRequestActive();
+        yield* ensurePlatform(host, input.platform);
+        yield* ensureRequestActive();
+        const ready = yield* readiness(host.id);
+        yield* ensureRequestActive();
+        const initialState = yield* refresh(ready);
+        yield* ensureRequestActive();
+        const initialDevice =
+          findDevice(initialState, host.id, input.deviceId) ??
+          initialState.devices.find(
+            (candidate) =>
+              candidate.hostId === host.id &&
+              deviceAliases(leaseTarget(candidate)).includes(input.deviceId),
+          );
+        if (!initialDevice) {
+          return yield* new DeviceNotFoundError({ hostId: host.id, deviceId: input.deviceId });
+        }
+        const initialTarget = leaseTarget(initialDevice);
+        if (requestState) requestState.target = initialTarget;
+        return { host, ready, initialDevice, initialTarget };
+      }).pipe(
+        Effect.onExit((exit) =>
+          Exit.isFailure(exit) ? finishOpenRequest(requestState) : Effect.void,
+        ),
+      );
+      const queueEntry = { ...initialDevice, threadId: input.threadId };
       const caller: DeviceLeaseCaller =
         owner.kind === "agent"
           ? {
@@ -759,18 +855,21 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
               threadId: input.threadId,
               ...(panelSessionId === undefined ? {} : { sessionId: panelSessionId }),
               ...(panelLeaseId === undefined ? {} : { leaseId: panelLeaseId }),
+              ...(canReleaseRequestOwner && requestId !== undefined ? { requestId } : {}),
             };
-      const waiterId = yield* crypto.randomUUIDv4().pipe(
-        Effect.map(String),
-        Effect.mapError(
-          (cause) =>
-            new DeviceOperationError({
-              operation: "open",
-              reason: "request_failed",
-              cause,
-            }),
-        ),
-      );
+      const waiterId =
+        requestId ??
+        (yield* crypto.randomUUIDv4().pipe(
+          Effect.map(String),
+          Effect.mapError(
+            (cause) =>
+              new DeviceOperationError({
+                operation: "open",
+                reason: "request_failed",
+                cause,
+              }),
+          ),
+        ));
       let queueVisible = false;
       const markQueued = () => {
         if (queueVisible) return Effect.void;
@@ -881,6 +980,7 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
       const publishOpenedSession = (session: DeviceLeaseSession, target: DeviceLeaseTarget) =>
         sessionStateLock.withPermit(
           Effect.gen(function* () {
+            yield* ensureRequestActive();
             const currentOwner: DeviceLeaseCaller =
               caller.kind === "panel"
                 ? {
@@ -902,6 +1002,8 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
                 cause: new Error("Device ownership changed while the panel was opening."),
               });
             }
+            yield* ensureRequestActive();
+            if (requestState?.canReleaseOwner) requestState.phase = "committed";
             const publicSession = toDeviceSession(refreshed.session);
             yield* saveSession(publicSession);
             return publicSession;
@@ -917,6 +1019,7 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
       ) => {
         let cleanupTarget = target;
         return Effect.gen(function* () {
+          yield* ensureRequestActive();
           if (!created) {
             return yield* publishOpenedSession(reserved, target);
           }
@@ -967,6 +1070,7 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
               (device) => device.hostId === host.id && device.id === bootedId,
             ) ?? { ...deviceToOpen, id: bootedId, booted: true };
             cleanupTarget = leaseTarget(current);
+            yield* ensureRequestActive();
             session = yield* leases.finishOpen({
               key: reserved.leaseKey,
               sessionId: reserved.sessionId,
@@ -987,6 +1091,7 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
               ),
             );
           }
+          yield* ensureRequestActive();
           return yield* publishOpenedSession(session, target);
         }).pipe(
           Effect.onExit((exit) =>
@@ -1002,6 +1107,7 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
         | { readonly _tag: "Opened"; readonly session: DeviceSession };
       const waitForLease = (remaining: number): Effect.Effect<DeviceSession, DeviceError> =>
         Effect.gen(function* () {
+          yield* ensureRequestActive();
           if (hosts.get(host.id) !== host) {
             return yield* new DeviceHostUnavailableError({
               hostId: host.id,
@@ -1029,6 +1135,7 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
             return yield* new DeviceNotFoundError({ hostId: host.id, deviceId: input.deviceId });
           }
           const target = leaseTarget(deviceToOpen);
+          yield* ensureRequestActive();
           const result = yield* Effect.uninterruptibleMask((restore) =>
             Effect.acquireUseRelease(
               leases.acquire({
@@ -1039,6 +1146,10 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
               }),
               (acquired): Effect.Effect<DeviceLeaseOpenAttempt, DeviceError> => {
                 if (acquired._tag === "Waiting") return restore(Effect.succeed(acquired));
+                if (requestState) {
+                  requestState.phase = acquired.created ? "opening" : "renewing";
+                }
+                if (requestState?.cancelled) return restore(Effect.interrupt);
                 return restore(
                   performOpen(
                     acquired.session,
@@ -1056,6 +1167,10 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
             ),
           );
           if (result._tag === "Opened") return result.session;
+          if (requestState?.cancelled) {
+            yield* leases.cancelWaiter({ target, waiterId }).pipe(Effect.ignore);
+            return yield* Effect.interrupt;
+          }
           yield* markQueued();
           if (remaining <= 0) {
             return yield* new DeviceOperationError({
@@ -1075,6 +1190,7 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
             : leases.cancelWaiter({ target: initialTarget, waiterId }).pipe(Effect.ignore),
         ),
         Effect.ensuring(clearQueue()),
+        Effect.ensuring(finishOpenRequest(requestState)),
       );
     },
   );
@@ -1167,6 +1283,71 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
         { discard: true },
       ),
     );
+
+  const cancelOpen: DeviceService["Service"]["cancelOpen"] = Effect.fn("DeviceService.cancelOpen")(
+    function* (input) {
+      const now = yield* Clock.currentTimeMillis;
+      pruneOpenRequestCancellations(now);
+      const existing = openRequests.get(input.requestId);
+      if (existing && !openRequestMatches(existing, input)) {
+        return yield* new DeviceOperationError({
+          operation: "open",
+          reason: "invalid_payload",
+          cause: new Error("The open request ID is bound to another target."),
+        });
+      }
+      const request: DeviceOpenRequestState = existing ?? {
+        requestId: input.requestId,
+        threadId: input.threadId,
+        hostId: input.hostId,
+        deviceId: input.deviceId,
+        canReleaseOwner: true,
+        started: false,
+        cancelled: true,
+        cancelledAt: now,
+        phase: "waiting",
+      };
+      request.cancelled = true;
+      request.cancelledAt = now;
+      if (!existing) {
+        openRequests.set(input.requestId, request);
+      }
+
+      const claims = yield* sessionStateLock.withPermit(
+        Effect.gen(function* () {
+          if (request.target) {
+            yield* leases
+              .cancelWaiter({ target: request.target, waiterId: request.requestId })
+              .pipe(
+                Effect.tapError((cause) =>
+                  Effect.logWarning("Could not remove a cancelled device waiter", { cause }),
+                ),
+                Effect.ignore,
+              );
+          }
+          const canRelease =
+            request.canReleaseOwner && (!request.started || request.phase === "committed");
+          const released = canRelease
+            ? yield* leases.release({
+                threadId: request.threadId,
+                hostId: request.hostId,
+                deviceId: request.deviceId,
+                requestId: request.requestId,
+                caller: { kind: "panel", threadId: request.threadId },
+              })
+            : [];
+          yield* publish((state) => ({
+            ...state,
+            sessions: state.sessions.filter((session) => session.requestId !== request.requestId),
+          }));
+          return released;
+        }),
+      );
+      yield* withShutdownClaims(claims, () =>
+        Effect.forEach(claims, runShutdownClaim, { discard: true }),
+      );
+    },
+  );
 
   const close: DeviceService["Service"]["close"] = Effect.fn("DeviceService.close")(
     function* (input, requestedCaller) {
@@ -1471,6 +1652,7 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
       configure,
       list,
       open,
+      cancelOpen,
       close,
       shutdown,
       janitor,

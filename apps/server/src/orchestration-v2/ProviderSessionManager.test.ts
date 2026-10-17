@@ -40,7 +40,6 @@ import * as DeviceAgentLiveness from "../device/DeviceAgentLiveness.ts";
 import { makeDeviceLeaseAccess } from "../device/DeviceLeaseAccess.ts";
 import { makeMemoryDeviceLeaseStore } from "../device/DeviceLeaseStore.ts";
 import type { DeviceLeaseRecord } from "../device/DeviceLease.ts";
-import * as RuntimeLayer from "./runtimeLayer.ts";
 import * as McpProviderSession from "@t3tools/provider-core/server/mcpSession";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as McpSessionRegistry from "../mcp/McpSessionRegistry.ts";
@@ -2872,7 +2871,7 @@ it.effect("DeviceAgentLiveness tracks the composed provider session manager", ()
       record: () => Effect.void,
     });
     const effect = Effect.gen(function* () {
-      yield* RuntimeLayer.bindDeviceAgentLiveness;
+      yield* DeviceAgentLiveness.bindProviderSessionManager;
       const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
       const liveness = yield* DeviceAgentLiveness.DeviceAgentLiveness;
       const { threadId, providerSessionId } = yield* openSessionWithBackgroundCommand(

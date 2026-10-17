@@ -3,19 +3,18 @@ import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Ref from "effect/Ref";
+import * as ProviderSessionManager from "../orchestration-v2/ProviderSessionManager.ts";
 
 export type DeviceAgentSessionLiveness = (
   providerSessionId: ProviderSessionId,
 ) => Effect.Effect<boolean | null>;
 
-export interface DeviceAgentLivenessShape {
-  readonly bind: (query: DeviceAgentSessionLiveness) => Effect.Effect<void>;
-  readonly isLive: DeviceAgentSessionLiveness;
-}
-
 export class DeviceAgentLiveness extends Context.Service<
   DeviceAgentLiveness,
-  DeviceAgentLivenessShape
+  {
+    readonly bind: (query: DeviceAgentSessionLiveness) => Effect.Effect<void>;
+    readonly isLive: DeviceAgentSessionLiveness;
+  }
 >()("t3/device/DeviceAgentLiveness") {}
 
 export const layer = Layer.effect(
@@ -35,3 +34,11 @@ export const layer = Layer.effect(
     });
   }),
 );
+
+export const bindProviderSessionManager = Effect.gen(function* () {
+  const providerSessions = yield* ProviderSessionManager.ProviderSessionManagerV2;
+  const deviceAgentLiveness = yield* DeviceAgentLiveness;
+  yield* deviceAgentLiveness.bind(providerSessions.isLive);
+});
+
+export const layerBindProviderSessionManager = Layer.effectDiscard(bindProviderSessionManager);

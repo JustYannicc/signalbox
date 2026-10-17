@@ -307,6 +307,7 @@ import {
 } from "./preview.ts";
 import {
   DeviceActionInput,
+  DeviceCancelOpenInput,
   DeviceCloseInput,
   DeviceConfigureInput,
   DeviceDetail,
@@ -320,7 +321,6 @@ import {
   DeviceSession,
   DeviceShutdownInput,
 } from "./device.ts";
-import {} from "./previewAutomation.ts";
 import {
   ServerConfigStreamEvent,
   DesktopUpdateCommitInput,
@@ -515,6 +515,7 @@ export const WS_METHODS = {
   deviceList: "device.list",
   deviceTestHost: "device.testHost",
   deviceOpen: "device.open",
+  deviceCancelOpen: "device.cancelOpen",
   deviceClose: "device.close",
   deviceShutdown: "device.shutdown",
   deviceDetail: "device.detail",
@@ -1721,6 +1722,11 @@ const WsDeviceOpenRpc = Rpc.make(WS_METHODS.deviceOpen, {
   error: Schema.Union([DeviceError, EnvironmentAuthorizationError]),
 });
 
+const WsDeviceCancelOpenRpc = Rpc.make(WS_METHODS.deviceCancelOpen, {
+  payload: DeviceCancelOpenInput,
+  error: Schema.Union([DeviceError, EnvironmentAuthorizationError]),
+});
+
 const WsDeviceCloseRpc = Rpc.make(WS_METHODS.deviceClose, {
   payload: DeviceCloseInput,
   error: Schema.Union([DeviceError, EnvironmentAuthorizationError]),
@@ -2204,6 +2210,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsDeviceListRpc,
   WsDeviceTestHostRpc,
   WsDeviceOpenRpc,
+  WsDeviceCancelOpenRpc,
   WsDeviceCloseRpc,
   WsDeviceShutdownRpc,
   WsDeviceDetailRpc,

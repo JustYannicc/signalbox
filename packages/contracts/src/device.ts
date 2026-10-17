@@ -89,6 +89,8 @@ export type DeviceHostStatus = typeof DeviceHostStatus.Type;
 export const DeviceSession = Schema.Struct({
   sessionId: Schema.String,
   leaseId: Schema.String,
+  /** Correlates the panel's initial open request so cancellation can release only that owner. */
+  requestId: Schema.optional(Schema.String),
   ownerKind: Schema.Literals(["panel", "agent"]),
   /** Observer panels can watch an agent's device, but cannot send input. */
   observer: Schema.optional(Schema.Boolean),
@@ -152,6 +154,8 @@ export const DeviceOpenInput = Schema.Struct({
   hostId: Schema.optional(DeviceHostId),
   deviceId: DeviceId,
   platform: DevicePlatform,
+  /** Unique to this client open attempt; used to reconcile a cancelled response. */
+  requestId: Schema.optional(Schema.String),
   /** Boot the simulator or emulator when it is not running. Defaults to true. */
   boot: Schema.optional(Schema.Boolean),
   /** Supplying both IDs renews this exact panel owner; stale IDs cannot claim a later walk. */
@@ -159,6 +163,14 @@ export const DeviceOpenInput = Schema.Struct({
   leaseId: Schema.optional(Schema.String),
 });
 export type DeviceOpenInput = typeof DeviceOpenInput.Type;
+
+export const DeviceCancelOpenInput = Schema.Struct({
+  threadId: ThreadId,
+  hostId: DeviceHostId,
+  deviceId: DeviceId,
+  requestId: Schema.String,
+});
+export type DeviceCancelOpenInput = typeof DeviceCancelOpenInput.Type;
 
 export const DeviceCloseInput = Schema.Struct({
   hostId: Schema.optional(DeviceHostId),

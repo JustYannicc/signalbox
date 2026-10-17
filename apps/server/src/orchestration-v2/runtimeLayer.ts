@@ -1,7 +1,6 @@
 import * as UsageLimitRecoveryWorker from "./UsageLimitRecoveryWorker.ts";
 import * as Scheduler from "../scheduling/Scheduler.ts";
 import * as Layer from "effect/Layer";
-import * as Effect from "effect/Effect";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as OrchestrationCommandReceipts from "../persistence/OrchestrationCommandReceipts.ts";
 import * as OrchestrationEventStore from "../persistence/OrchestrationEventStore.ts";
@@ -56,7 +55,6 @@ import * as ScheduledTaskService from "../scheduledTasks/ScheduledTaskService.ts
 import * as SecretRequests from "../secrets/SecretRequests.ts";
 import * as ServerAutomations from "../workflows/serverHost.ts"; // signalbox: automations
 import * as AutomationConnections from "../workflows/connectionSettings.ts"; // signalbox: automations
-import * as DeviceAgentLiveness from "../device/DeviceAgentLiveness.ts";
 
 export const layerEventInfrastructure = Layer.mergeAll(
   OrchestrationEventStore.layer,
@@ -381,11 +379,3 @@ export const layerProduction = Layer.mergeAll(
   layerAgentSessionImporterProvided,
   EffectOutbox.layerPruneWorker.pipe(Layer.provide(EffectOutbox.layer)),
 ).pipe(Layer.provide(Scheduler.layer), Layer.provideMerge(layerEventInfrastructure));
-
-export const bindDeviceAgentLiveness = Effect.gen(function* () {
-  const providerSessions = yield* ProviderSessionManager.ProviderSessionManagerV2;
-  const deviceAgentLiveness = yield* DeviceAgentLiveness.DeviceAgentLiveness;
-  yield* deviceAgentLiveness.bind(providerSessions.isLive);
-});
-
-export const layerBindDeviceAgentLiveness = Layer.effectDiscard(bindDeviceAgentLiveness);

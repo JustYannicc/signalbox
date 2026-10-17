@@ -42,6 +42,12 @@ describe("RPC authorization scopes", () => {
     );
   });
 
+  it("requires operate access to cancel a device open", () => {
+    expect(requiredScopeForRpcMethod(WS_METHODS.deviceCancelOpen)).toBe(
+      AuthOrchestrationOperateScope,
+    );
+  });
+
   it("authorizes background policy reporting and observation deliberately", () => {
     expect(requiredScopeForRpcMethod(WS_METHODS.serverReportClientActivity)).toBe(
       AuthOrchestrationReadScope,

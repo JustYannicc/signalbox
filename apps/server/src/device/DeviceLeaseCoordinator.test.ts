@@ -3,11 +3,19 @@ import { expect, it } from "@effect/vitest";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
+import * as TestClock from "effect/testing/TestClock";
 
 import { makeDeviceLeaseAccess } from "./DeviceLeaseAccess.ts";
 import { makeDeviceLeaseCoordinator, type DeviceLeaseCaller } from "./DeviceLeaseCoordinator.ts";
 import { makeDeviceLeaseJanitor } from "./DeviceLeaseJanitor.ts";
-import { canonicalDeviceId, deviceLeaseKey, type DeviceLeaseTarget } from "./DeviceLease.ts";
+import {
+  canonicalDeviceId,
+  deviceLeaseKey,
+  DEVICE_LEASE_WAITER_IDLE_TIMEOUT_MS,
+  type DeviceLeaseRecord,
+  type DeviceLeaseTarget,
+  type DeviceOwnerLiveness,
+} from "./DeviceLease.ts";
 import { makeMemoryDeviceLeaseStore } from "./DeviceLeaseStore.ts";
 
 const target: DeviceLeaseTarget = {
@@ -22,6 +30,7 @@ const target: DeviceLeaseTarget = {
 const makeRuntime = (
   isProviderSessionLive: (id: ProviderSessionId) => Effect.Effect<boolean | null> = () =>
     Effect.succeed(true),
+  isOwnerProcessLive: (pid: number, identity: string) => DeviceOwnerLiveness = () => "live",
 ) =>
   Effect.gen(function* () {
     const store = yield* makeMemoryDeviceLeaseStore;
@@ -29,7 +38,7 @@ const makeRuntime = (
       store,
       processId: 41,
       processIdentity: "server-start-41",
-      isOwnerProcessLive: () => "live",
+      isOwnerProcessLive,
       isProviderSessionLive,
     });
     const coordinator = yield* makeDeviceLeaseCoordinator({ access });
@@ -106,6 +115,28 @@ it.effect("lets a same-walk panel attach in either direction without stealing th
     record = yield* reverseStore.read(deviceLeaseKey(target));
     expect(record?.owners.map((owner) => owner.kind).toSorted()).toEqual(["agent", "panel"]);
     expect(reversePanel._tag === "Acquired" && reversePanel.session.observer).toBe(true);
+  }).pipe(Effect.scoped),
+);
+
+it.effect("reuses the same panel owner when its open response is retried", () =>
+  Effect.gen(function* () {
+    const { store, coordinator } = yield* makeRuntime();
+    const caller = {
+      kind: "panel",
+      threadId: ThreadId.make("open-request-retry"),
+      requestId: "open-request-retry-id",
+    } as const;
+    const first = yield* coordinator.acquire(open(caller, caller.requestId));
+    expect(first._tag).toBe("Acquired");
+    if (first._tag !== "Acquired") return;
+
+    const retried = yield* coordinator.acquire(open(caller, caller.requestId));
+    expect(retried).toMatchObject({
+      _tag: "Acquired",
+      created: false,
+      session: { sessionId: first.session.sessionId, requestId: caller.requestId },
+    });
+    expect((yield* store.read(deviceLeaseKey(target)))?.owners).toHaveLength(1);
   }).pipe(Effect.scoped),
 );
 
@@ -220,15 +251,94 @@ it.effect("prunes dead FIFO tickets but preserves live waiters past the client d
     const key = deviceLeaseKey(target);
     const record = yield* store.read(key);
     if (!record?.waiters) throw new Error("Expected a persisted waiter.");
-    const now = yield* Clock.currentTimeMillis;
-    yield* store.write(key, {
-      ...record,
-      waiters: record.waiters.map((waiter) => ({ ...waiter, queuedAt: now - 300_001 })),
-    });
+    const originalQueuedAt = record.waiters.find(
+      (waiter) => waiter.waiterId === "live-old",
+    )?.queuedAt;
+    if (originalQueuedAt === undefined) throw new Error("Expected the live FIFO waiter.");
+    for (let index = 0; index < 3; index++) {
+      yield* TestClock.adjust("5 minutes");
+      expect((yield* coordinator.acquire(open(liveOldWaiter, "live-old")))._tag).toBe("Waiting");
+    }
 
     expect((yield* coordinator.acquire(open(current, "current")))._tag).toBe("Waiting");
+    const updated = yield* store.read(key);
+    expect(updated?.waiters?.map((waiter) => waiter.waiterId)).toEqual(["live-old", "current"]);
+    expect(updated?.waiters?.[0]?.queuedAt).toBe(originalQueuedAt);
+    expect(updated?.waiters?.[0]?.lastPolledAt).toBeGreaterThan(originalQueuedAt);
+  }).pipe(Effect.scoped),
+);
+
+it.effect("reaps an abandoned request even while its server process is still alive", () =>
+  Effect.gen(function* () {
+    const { store, coordinator } = yield* makeRuntime();
+    const firstCaller = agent("abandoned-request-1", "provider-abandoned-1");
+    const abandoned = agent("abandoned-request-2", "provider-abandoned-2");
+    const current = agent("abandoned-request-3", "provider-abandoned-3");
+    const first = yield* coordinator.acquire(open(firstCaller, "first"));
+    expect(first._tag).toBe("Acquired");
+    if (first._tag !== "Acquired") return;
+    expect((yield* coordinator.acquire(open(abandoned, "abandoned")))._tag).toBe("Waiting");
+
+    const key = deviceLeaseKey(target);
+    const record = yield* store.read(key);
+    const now = yield* Clock.currentTimeMillis;
+    if (!record?.waiters) throw new Error("Expected the abandoned waiter to be persisted.");
+    yield* store.write(key, {
+      ...record,
+      waiters: record.waiters.map((waiter) => {
+        if (waiter.waiterId !== "abandoned") return waiter;
+        const { lastPolledAt: _lastPolledAt, ...legacyWaiter } = waiter;
+        return {
+          ...legacyWaiter,
+          queuedAt: now - DEVICE_LEASE_WAITER_IDLE_TIMEOUT_MS - 1,
+        };
+      }),
+    });
+    expect((yield* coordinator.acquire(open(current, "current")))._tag).toBe("Waiting");
     expect((yield* store.read(key))?.waiters?.map((waiter) => waiter.waiterId)).toEqual([
-      "live-old",
+      "current",
+    ]);
+  }).pipe(Effect.scoped),
+);
+
+it.effect("keeps a fresh waiter when process and provider liveness are unknown", () =>
+  Effect.gen(function* () {
+    const { store, coordinator } = yield* makeRuntime(
+      () => Effect.succeed(null),
+      () => "unknown",
+    );
+    const first = yield* coordinator.acquire(
+      open(agent("unknown-waiter-1", "provider-unknown-1"), "first"),
+    );
+    expect(first._tag).toBe("Acquired");
+    if (first._tag !== "Acquired") return;
+    const key = deviceLeaseKey(target);
+    const record = yield* store.read(key);
+    if (!record) throw new Error("Expected the active lease to be persisted.");
+    const now = yield* Clock.currentTimeMillis;
+    const foreignProvider = ProviderSessionId.make("provider-unknown-foreign");
+    yield* store.write(key, {
+      ...record,
+      waiters: [
+        {
+          waiterId: "foreign-unknown",
+          threadId: ThreadId.make("foreign-unknown-waiter"),
+          kind: "agent",
+          providerSessionId: foreignProvider,
+          processId: 90,
+          processIdentity: "foreign-server-start",
+          queuedAt: now,
+          lastPolledAt: now,
+        },
+      ],
+    });
+
+    expect(
+      (yield* coordinator.acquire(open(agent("unknown-waiter-3", "provider-unknown-3"), "current")))
+        ._tag,
+    ).toBe("Waiting");
+    expect((yield* store.read(key))?.waiters?.map((waiter) => waiter.waiterId)).toEqual([
+      "foreign-unknown",
       "current",
     ]);
   }).pipe(Effect.scoped),
@@ -407,6 +517,85 @@ it.effect("keeps a booted device for queued walks when an interrupted open is ab
       open(waitingCaller, "waiting", { ...target, id: "emulator-5554", booted: true }, true),
     );
     expect(next).toMatchObject({ _tag: "Acquired", shouldBoot: false });
+  }).pipe(Effect.scoped),
+);
+
+it.effect("does not reset another shutdown claim during a stale second open abort", () =>
+  Effect.gen(function* () {
+    const deadWaiterId = ProviderSessionId.make("provider-dead-shutdown-waiter");
+    const liveWaiterId = ProviderSessionId.make("provider-live-shutdown-waiter");
+    const { store, coordinator } = yield* makeRuntime((id) => Effect.succeed(id === liveWaiterId));
+    const key = deviceLeaseKey(target);
+    const claimId = "different-in-progress-claim";
+    const record: DeviceLeaseRecord = {
+      version: 1,
+      leaseId: "lease-being-shut-down",
+      state: "shutting_down",
+      deviceBooted: true,
+      hostId: LOCAL_DEVICE_HOST_ID,
+      platform: target.platform,
+      canonicalDeviceId: canonicalDeviceId(target),
+      deviceId: target.id,
+      aliases: [...new Set([target.id, canonicalDeviceId(target), target.name])],
+      deviceName: target.name,
+      physical: false,
+      bootedBySignalbox: true,
+      lastDeviceActivityAt: 100,
+      owners: [],
+      waiters: [
+        {
+          waiterId: "dead-waiter",
+          threadId: ThreadId.make("dead-shutdown-waiter"),
+          kind: "agent",
+          providerSessionId: deadWaiterId,
+          processId: 41,
+          processIdentity: "server-start-41",
+          queuedAt: 1,
+          lastPolledAt: 1,
+        },
+        {
+          waiterId: "live-waiter",
+          threadId: ThreadId.make("live-shutdown-waiter"),
+          kind: "agent",
+          providerSessionId: liveWaiterId,
+          processId: 41,
+          processIdentity: "server-start-41",
+          queuedAt: 2,
+          lastPolledAt: 2,
+        },
+      ],
+      shutdownOwner: {
+        processId: 90,
+        processIdentity: "another-shutdown-worker",
+        claimId,
+      },
+    };
+    yield* store.write(key, record);
+
+    expect(
+      yield* coordinator.abortOpen({
+        key,
+        sessionId: "already-removed-owner",
+        leaseId: record.leaseId,
+        target: { ...target, booted: false },
+      }),
+    ).toBeUndefined();
+    expect(yield* store.read(key)).toEqual(record);
+
+    const waiting = yield* coordinator.acquire(
+      open(agent("live-shutdown-waiter", liveWaiterId), "live-waiter", {
+        ...target,
+        booted: true,
+      }),
+    );
+    expect(waiting._tag).toBe("Waiting");
+    expect(yield* store.read(key)).toMatchObject({
+      state: "shutting_down",
+      deviceBooted: true,
+      owners: [],
+      waiters: [{ waiterId: "live-waiter" }],
+      shutdownOwner: { claimId },
+    });
   }).pipe(Effect.scoped),
 );
 

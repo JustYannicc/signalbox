@@ -486,7 +486,7 @@ const layerScheduledTaskWebhookOrigin = Layer.effect(
   }),
 );
 
-const layerOrchestrationV2Runtime = RuntimeLayer.layerBindDeviceAgentLiveness.pipe(
+const layerOrchestrationV2Runtime = DeviceAgentLiveness.layerBindProviderSessionManager.pipe(
   Layer.provideMerge(
     RuntimeLayer.layerProduction.pipe(
       Layer.provide(layerScheduledTaskWebhookOrigin),

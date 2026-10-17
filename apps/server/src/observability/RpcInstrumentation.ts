@@ -202,6 +202,7 @@ const RPC_AGGREGATES = {
   [WS_METHODS.deviceTestHost]: "device",
   [WS_METHODS.deviceList]: "device",
   [WS_METHODS.deviceOpen]: "device",
+  [WS_METHODS.deviceCancelOpen]: "device",
   [WS_METHODS.deviceClose]: "device",
   [WS_METHODS.deviceShutdown]: "device",
   [WS_METHODS.deviceDetail]: "device",

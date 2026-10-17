@@ -35,6 +35,7 @@ import { useEnvironmentQuery } from "../../state/query";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
 import { DeviceStreamWebView, type DeviceStreamRef } from "./DeviceStreamWebView";
+import { uuidv4 } from "../../lib/uuid";
 import {
   selectedThreadDevicePreview,
   threadDevicePreviews,
@@ -88,6 +89,7 @@ function DevicePreviewScreen({
   const [controlsVisible, setControlsVisible] = useState(true);
   const retryHost = useAtomCommand(deviceEnvironment.list);
   const openDevice = useAtomCommand(deviceEnvironment.open, { reportFailure: false });
+  const cancelDeviceOpen = useAtomCommand(deviceEnvironment.cancelOpen, { reportFailure: false });
   const closeDevice = useAtomCommand(deviceEnvironment.close, { reportFailure: false });
   const [panelSession, setPanelSession] = useState<DeviceSession | null>(null);
   const panelSessionRef = useRef<DeviceSession | null>(null);
@@ -117,19 +119,38 @@ function DevicePreviewScreen({
       return;
     let cancelled = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
+    let openRequest: { readonly controller: AbortController; readonly requestId: string } | null =
+      null;
     let owner: DeviceSession | null = null;
     const heartbeat = async () => {
-      const result = await openDevice({
-        environmentId,
-        input: {
-          threadId,
-          hostId: previewHostId,
-          deviceId: previewDeviceId,
-          platform: previewPlatform,
-          ...(owner === null ? {} : { sessionId: owner.sessionId, leaseId: owner.leaseId }),
+      const controller = new AbortController();
+      const requestId = uuidv4();
+      openRequest = { controller, requestId };
+      const result = await openDevice(
+        {
+          environmentId,
+          input: {
+            threadId,
+            hostId: previewHostId,
+            deviceId: previewDeviceId,
+            platform: previewPlatform,
+            requestId,
+            ...(owner === null ? {} : { sessionId: owner.sessionId, leaseId: owner.leaseId }),
+          },
         },
-      });
+        controller.signal,
+      );
+      if (openRequest?.requestId === requestId) openRequest = null;
       if (cancelled) {
+        void cancelDeviceOpen({
+          environmentId,
+          input: {
+            threadId,
+            hostId: previewHostId,
+            deviceId: previewDeviceId,
+            requestId,
+          },
+        });
         if (result._tag === "Success") {
           void closeDevice({
             environmentId,
@@ -155,6 +176,19 @@ function DevicePreviewScreen({
     return () => {
       cancelled = true;
       if (timer !== undefined) clearTimeout(timer);
+      if (openRequest !== null) {
+        openRequest.controller.abort();
+        void cancelDeviceOpen({
+          environmentId,
+          input: {
+            threadId,
+            hostId: previewHostId,
+            deviceId: previewDeviceId,
+            requestId: openRequest.requestId,
+          },
+        });
+        openRequest = null;
+      }
       if (owner !== null) {
         void closeDevice({
           environmentId,
@@ -171,6 +205,7 @@ function DevicePreviewScreen({
     };
   }, [
     closeDevice,
+    cancelDeviceOpen,
     environmentId,
     foreground,
     focused,

@@ -16,6 +16,7 @@ import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as NetService from "@t3tools/shared/Net";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
+import * as Clock from "effect/Clock";
 import * as Deferred from "effect/Deferred";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
@@ -99,6 +100,7 @@ const fixture = Effect.fn("fixture")(function* (
   productionConfigBaseDir?: string,
   hostHomeDirectory?: string,
   onShutdown: Effect.Effect<void> = Effect.void,
+  onDeviceHostReady: Effect.Effect<void> = Effect.void,
 ) {
   const settings = yield* Ref.make(DEFAULT_SERVER_SETTINGS);
   const starts: string[] = [];
@@ -139,6 +141,7 @@ const fixture = Effect.fn("fixture")(function* (
       Effect.gen(function* () {
         if (runtimeFailure && runtimeFailure._tag !== "AgentDeviceStartError")
           return yield* runtimeFailure;
+        yield* onDeviceHostReady;
         starts.push("start");
         yield* onPhase("installing", "Updating device hub from 0.9.0 to 0.10.1…");
         return ready;
@@ -463,6 +466,179 @@ it.effect("cancels a queued open without leaving a panel status behind", () =>
       },
       firstOwner,
     );
+  }).pipe(Effect.scoped),
+);
+
+it.effect("cancels only the committed open request while its client response is unavailable", () =>
+  Effect.gen(function* () {
+    const committed = yield* Deferred.make<void>();
+    const sendResponse = yield* Deferred.make<void>();
+    const { service } = yield* fixture();
+    yield* service.configure({ enabled: true });
+    const threadId = ThreadId.make("device-open-response-unavailable");
+    const hostId = LOCAL_DEVICE_HOST_ID;
+    const deviceId = DeviceId.make("Pixel_API_35");
+    const firstRequestId = "open-request-first";
+    const opening = yield* Effect.forkChild(
+      service
+        .open({
+          threadId,
+          hostId,
+          deviceId,
+          platform: "android",
+          requestId: firstRequestId,
+        })
+        .pipe(
+          Effect.tap(() => Deferred.succeed(committed, undefined)),
+          Effect.tap(() => Deferred.await(sendResponse)),
+        ),
+    );
+    yield* Deferred.await(committed);
+    const first = (yield* service.state).sessions.find(
+      (session) => session.requestId === firstRequestId,
+    );
+    expect(first).toBeDefined();
+
+    const second = yield* service.open({
+      threadId,
+      hostId,
+      deviceId: first!.deviceId,
+      platform: "android",
+      requestId: "open-request-second",
+    });
+    const agent = yield* service.open(
+      {
+        threadId,
+        hostId,
+        deviceId: first!.deviceId,
+        platform: "android",
+      },
+      { kind: "agent", providerSessionId: ProviderSessionId.make("device-open-agent") },
+    );
+
+    yield* service.cancelOpen({ threadId, hostId, deviceId, requestId: firstRequestId });
+    const surviving = (yield* service.state).sessions;
+    expect(surviving.some((session) => session.requestId === firstRequestId)).toBe(false);
+    expect(surviving.some((session) => session.sessionId === second.sessionId)).toBe(true);
+    expect(surviving.some((session) => session.sessionId === agent.sessionId)).toBe(true);
+
+    yield* Deferred.succeed(sendResponse, undefined);
+    const lateResponse = yield* Fiber.join(opening);
+    expect(lateResponse.requestId).toBe(firstRequestId);
+    yield* service.close({
+      threadId,
+      hostId,
+      deviceId: lateResponse.deviceId,
+      sessionId: lateResponse.sessionId,
+      leaseId: lateResponse.leaseId,
+    });
+    expect((yield* service.state).sessions.map((session) => session.sessionId).toSorted()).toEqual(
+      [second.sessionId, agent.sessionId].toSorted(),
+    );
+  }).pipe(Effect.scoped),
+);
+
+it.effect("fences a late device open after cancellation arrived before dispatch", () =>
+  Effect.gen(function* () {
+    const { service, starts, requests } = yield* fixture();
+    const input = {
+      threadId: ThreadId.make("device-open-cancel-before-dispatch"),
+      hostId: LOCAL_DEVICE_HOST_ID,
+      deviceId: DeviceId.make("Pixel_API_35"),
+      platform: "android" as const,
+      requestId: "open-request-cancel-before-dispatch",
+    };
+    yield* service.cancelOpen({ ...input, requestId: input.requestId });
+    const result = yield* Effect.exit(service.open(input));
+    const retry = yield* Effect.exit(service.open(input));
+
+    expect(Exit.isFailure(result)).toBe(true);
+    expect(Exit.isFailure(retry)).toBe(true);
+    expect(starts).toEqual([]);
+    expect(requests).toEqual([]);
+    expect((yield* service.state).sessions).toEqual([]);
+  }).pipe(Effect.scoped),
+);
+
+it.effect("keeps cancellation while host readiness is delayed", () =>
+  Effect.gen(function* () {
+    const deviceListStarted = yield* Deferred.make<void>();
+    const finishDeviceList = yield* Deferred.make<void>();
+    let delayHostReady = false;
+    const onDeviceHostReady = Effect.gen(function* () {
+      if (!delayHostReady) return;
+      delayHostReady = false;
+      yield* Deferred.succeed(deviceListStarted, undefined);
+      yield* Deferred.await(finishDeviceList);
+    });
+    const { service, requests } = yield* fixture(
+      Effect.void,
+      undefined,
+      false,
+      undefined,
+      false,
+      undefined,
+      {},
+      true,
+      undefined,
+      undefined,
+      undefined,
+      onDeviceHostReady,
+    );
+    yield* service.configure({ enabled: true });
+    const requestsBeforeOpen = requests.length;
+    delayHostReady = true;
+    const input = {
+      threadId: ThreadId.make("device-open-cancel-during-discovery"),
+      hostId: LOCAL_DEVICE_HOST_ID,
+      deviceId: DeviceId.make("Pixel_API_35"),
+      platform: "android" as const,
+      requestId: "open-request-cancel-during-discovery",
+    };
+    const opening = yield* Effect.forkChild(service.open(input));
+    yield* Deferred.await(deviceListStarted);
+
+    yield* service.cancelOpen({ ...input, requestId: input.requestId });
+    const cancelledAt = yield* Clock.currentTimeMillis;
+    yield* TestClock.adjust("11 minutes");
+    expect(yield* Clock.currentTimeMillis).toBeGreaterThanOrEqual(cancelledAt + 11 * 60_000);
+    yield* Deferred.succeed(finishDeviceList, undefined);
+    const result = yield* Fiber.await(opening);
+
+    expect(Exit.isFailure(result)).toBe(true);
+    expect((yield* service.state).sessions).toEqual([]);
+    expect(requests).toHaveLength(requestsBeforeOpen);
+    expect(requests.some((request) => request.endsWith("/boot"))).toBe(false);
+  }).pipe(Effect.scoped),
+);
+
+it.effect("shuts down a provisional device when its panel request is cancelled during boot", () =>
+  Effect.gen(function* () {
+    const bootStarted = yield* Deferred.make<void>();
+    const finishBoot = yield* Deferred.make<void>();
+    const onBoot = Effect.gen(function* () {
+      yield* Deferred.succeed(bootStarted, undefined);
+      yield* Deferred.await(finishBoot);
+    });
+    const { service, requests } = yield* fixture(onBoot);
+    yield* service.configure({ enabled: true });
+    const input = {
+      threadId: ThreadId.make("device-open-cancel-during-boot"),
+      hostId: LOCAL_DEVICE_HOST_ID,
+      deviceId: DeviceId.make("Pixel_API_35"),
+      platform: "android" as const,
+      requestId: "open-request-cancel-during-boot",
+    };
+    const opening = yield* Effect.forkChild(service.open(input));
+    yield* Deferred.await(bootStarted);
+
+    yield* service.cancelOpen({ ...input, requestId: input.requestId });
+    yield* Deferred.succeed(finishBoot, undefined);
+    const result = yield* Fiber.await(opening);
+
+    expect(Exit.isFailure(result)).toBe(true);
+    expect((yield* service.state).sessions).toEqual([]);
+    expect(requests.some((url) => url.endsWith("/api/devices/shutdown"))).toBe(true);
   }).pipe(Effect.scoped),
 );
 

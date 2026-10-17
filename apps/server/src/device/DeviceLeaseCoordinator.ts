@@ -26,6 +26,7 @@ export interface DeviceLeaseCaller {
   readonly kind: "panel" | "agent";
   readonly threadId: ThreadId;
   readonly providerSessionId?: ProviderSessionId;
+  readonly requestId?: string;
   readonly sessionId?: string;
   readonly leaseId?: string;
 }
@@ -83,6 +84,7 @@ export interface DeviceLeaseCoordinator {
     readonly threadId: ThreadId;
     readonly sessionId?: string;
     readonly leaseId?: string;
+    readonly requestId?: string;
     readonly caller?: DeviceLeaseCaller;
     readonly shutdown?: boolean;
   }) => Effect.Effect<ReadonlyArray<DeviceLeaseShutdownClaim>, DeviceOperationError>;
@@ -107,6 +109,7 @@ export const makeDeviceLeaseCoordinator = (options: { readonly access: DeviceLea
     ): DeviceLeaseSession => ({
       sessionId: owner.sessionId,
       leaseId: lease.leaseId,
+      ...(owner.requestId === undefined ? {} : { requestId: owner.requestId }),
       ownerKind: owner.kind,
       ...(owner.kind === "panel" ? { observer: owner.observer === true } : {}),
       ...(owner.providerSessionId === undefined
@@ -132,6 +135,9 @@ export const makeDeviceLeaseCoordinator = (options: { readonly access: DeviceLea
       threadId: request.caller.threadId,
       kind: request.caller.kind,
       ...(request.caller.kind === "panel" && observer ? { observer: true } : {}),
+      ...(request.caller.kind === "panel" && request.caller.requestId !== undefined
+        ? { requestId: request.caller.requestId }
+        : {}),
       ...(request.caller.kind === "agent" && request.caller.providerSessionId !== undefined
         ? { providerSessionId: request.caller.providerSessionId }
         : {}),
@@ -176,12 +182,25 @@ export const makeDeviceLeaseCoordinator = (options: { readonly access: DeviceLea
             const queue = lease?.waiters ?? [];
             const existingWaiter = queue.find((waiter) => waiter.waiterId === request.waiterId);
             const enqueue = (current: DeviceLeaseRecord) => {
-              if (existingWaiter) return current;
-              const queuedAt = Math.max(now, ...queue.map((waiter) => waiter.queuedAt + 1));
+              const currentWaiters = current.waiters ?? [];
+              if (existingWaiter) {
+                return {
+                  ...current,
+                  waiters: currentWaiters.map((waiter) =>
+                    waiter.waiterId === request.waiterId
+                      ? { ...waiter, lastPolledAt: now }
+                      : waiter,
+                  ),
+                };
+              }
+              const queuedAt = Math.max(
+                now,
+                ...currentWaiters.map((waiter) => waiter.queuedAt + 1),
+              );
               return {
                 ...current,
                 waiters: [
-                  ...queue,
+                  ...currentWaiters,
                   {
                     waiterId: request.waiterId,
                     threadId: request.caller.threadId,
@@ -193,6 +212,7 @@ export const makeDeviceLeaseCoordinator = (options: { readonly access: DeviceLea
                     processId: options.access.processId,
                     processIdentity: options.access.processIdentity,
                     queuedAt,
+                    lastPolledAt: now,
                   },
                 ],
               };
@@ -238,15 +258,24 @@ export const makeDeviceLeaseCoordinator = (options: { readonly access: DeviceLea
               });
             }
 
-            const idempotentOwner = lease?.owners.find((owner) =>
-              request.caller.kind === "agent"
-                ? owner.kind === "agent" &&
+            const idempotentOwner = lease?.owners.find((owner) => {
+              if (request.caller.kind === "agent") {
+                return (
+                  owner.kind === "agent" &&
                   owner.threadId === request.caller.threadId &&
                   owner.providerSessionId === request.caller.providerSessionId
-                : requestHasExactPanelOwner &&
-                  owner.sessionId === request.caller.sessionId &&
-                  owner.leaseId === request.caller.leaseId,
-            );
+                );
+              }
+              return (
+                owner.kind === "panel" &&
+                owner.threadId === request.caller.threadId &&
+                (requestHasExactPanelOwner
+                  ? owner.sessionId === request.caller.sessionId &&
+                    owner.leaseId === request.caller.leaseId
+                  : request.caller.requestId !== undefined &&
+                    owner.requestId === request.caller.requestId)
+              );
+            });
             if (lease && idempotentOwner) {
               if (lease.state === "opening") return { _tag: "Waiting" as const };
               const observer =
@@ -436,21 +465,26 @@ export const makeDeviceLeaseCoordinator = (options: { readonly access: DeviceLea
         return yield* withLocks(target, "open", () =>
           Effect.gen(function* () {
             const current = yield* store.read(input.key);
-            if (!current || current.leaseId !== input.leaseId) return undefined;
+            if (
+              !current ||
+              current.leaseId !== input.leaseId ||
+              current.state === "shutting_down" ||
+              !current.owners.some(
+                (owner) => owner.sessionId === input.sessionId && owner.leaseId === input.leaseId,
+              )
+            )
+              return undefined;
             const now = yield* Clock.currentTimeMillis;
             const ownership = yield* withoutDeadOwners(current, now);
             const waiterState = yield* withoutDeadWaiters(ownership.lease, now);
             const owners = waiterState.lease.owners.filter(
               (owner) => owner.sessionId !== input.sessionId || owner.leaseId !== input.leaseId,
             );
-            const changed =
-              owners.length !== current.owners.length || ownership.changed || waiterState.changed;
-            if (!changed) return undefined;
             const ready: DeviceLeaseRecord = {
               ...waiterState.lease,
               state: "ready",
-              deviceBooted: target.booted,
-              deviceId: target.id,
+              deviceBooted: target.booted || current.deviceBooted,
+              deviceId: target.booted ? target.id : current.deviceId,
               aliases: [...new Set([...waiterState.lease.aliases, ...deviceAliases(target)])],
               deviceName: target.name,
               physical: target.physical,
@@ -508,17 +542,21 @@ export const makeDeviceLeaseCoordinator = (options: { readonly access: DeviceLea
           )
             return [];
           const matches = lease.owners.some((owner) =>
-            input.sessionId !== undefined
-              ? owner.sessionId === input.sessionId &&
-                owner.leaseId === input.leaseId &&
-                owner.threadId === input.threadId &&
-                owner.kind === (input.caller?.kind ?? "panel") &&
-                (input.caller === undefined ||
-                  owner.providerSessionId === input.caller.providerSessionId)
-              : owner.threadId === input.threadId &&
-                (input.caller?.kind ?? "panel") === owner.kind &&
-                (input.caller === undefined ||
-                  owner.providerSessionId === input.caller.providerSessionId),
+            input.requestId !== undefined
+              ? owner.kind === "panel" &&
+                owner.requestId === input.requestId &&
+                owner.threadId === input.threadId
+              : input.sessionId !== undefined
+                ? owner.sessionId === input.sessionId &&
+                  owner.leaseId === input.leaseId &&
+                  owner.threadId === input.threadId &&
+                  owner.kind === (input.caller?.kind ?? "panel") &&
+                  (input.caller === undefined ||
+                    owner.providerSessionId === input.caller.providerSessionId)
+                : owner.threadId === input.threadId &&
+                  (input.caller?.kind ?? "panel") === owner.kind &&
+                  (input.caller === undefined ||
+                    owner.providerSessionId === input.caller.providerSessionId),
           );
           return matches ? [{ key: entry.key, lease }] : [];
         });
@@ -542,17 +580,21 @@ export const makeDeviceLeaseCoordinator = (options: { readonly access: DeviceLea
               const ownership = yield* withoutDeadOwners(current, now);
               const waiterState = yield* withoutDeadWaiters(ownership.lease, now);
               const closing = ownership.lease.owners.filter((owner) =>
-                input.sessionId !== undefined
-                  ? owner.sessionId === input.sessionId &&
-                    owner.leaseId === input.leaseId &&
-                    owner.threadId === input.threadId &&
-                    owner.kind === (input.caller?.kind ?? "panel") &&
-                    (input.caller === undefined ||
-                      owner.providerSessionId === input.caller.providerSessionId)
-                  : owner.threadId === input.threadId &&
-                    (input.caller?.kind ?? "panel") === owner.kind &&
-                    (input.caller === undefined ||
-                      owner.providerSessionId === input.caller.providerSessionId),
+                input.requestId !== undefined
+                  ? owner.kind === "panel" &&
+                    owner.requestId === input.requestId &&
+                    owner.threadId === input.threadId
+                  : input.sessionId !== undefined
+                    ? owner.sessionId === input.sessionId &&
+                      owner.leaseId === input.leaseId &&
+                      owner.threadId === input.threadId &&
+                      owner.kind === (input.caller?.kind ?? "panel") &&
+                      (input.caller === undefined ||
+                        owner.providerSessionId === input.caller.providerSessionId)
+                    : owner.threadId === input.threadId &&
+                      (input.caller?.kind ?? "panel") === owner.kind &&
+                      (input.caller === undefined ||
+                        owner.providerSessionId === input.caller.providerSessionId),
               );
               if (closing.length === 0) return undefined;
               const remaining = waiterState.lease.owners.filter(

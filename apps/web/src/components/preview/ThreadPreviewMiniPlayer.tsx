@@ -266,6 +266,7 @@ function DeviceMiniPlayer({
 }: Props & { readonly source: Extract<PreviewMiniPlayerSource, { kind: "device" }> }) {
   const { state: deviceState } = useDeviceState(threadRef.environmentId);
   const openDeviceLease = useAtomCommand(deviceEnvironment.open, { reportFailure: false });
+  const cancelDeviceOpen = useAtomCommand(deviceEnvironment.cancelOpen, { reportFailure: false });
   const closeDeviceLease = useAtomCommand(deviceEnvironment.close, { reportFailure: false });
   const preserveLease = useRef(false);
   const [screen, setScreen] = useState<DeviceScreenSize | null>(null);
@@ -326,7 +327,7 @@ function DeviceMiniPlayer({
       const settlement = await settleDeviceOpenForSurface({
         signal: controller.signal,
         isCurrent: () => !cancelled,
-        open: (signal) =>
+        open: (signal, requestId) =>
           openDeviceLease(
             {
               environmentId: threadRef.environmentId,
@@ -335,11 +336,22 @@ function DeviceMiniPlayer({
                 hostId: source.hostId,
                 deviceId: source.deviceId,
                 platform: source.platform,
+                requestId,
                 ...(owner === null ? {} : owner),
               },
             },
             signal,
           ),
+        cancel: (requestId) =>
+          cancelDeviceOpen({
+            environmentId: threadRef.environmentId,
+            input: {
+              threadId: threadRef.threadId,
+              hostId: source.hostId,
+              deviceId: source.deviceId,
+              requestId,
+            },
+          }),
         release: (session) =>
           closeDeviceLease({
             environmentId: threadRef.environmentId,
@@ -404,6 +416,7 @@ function DeviceMiniPlayer({
       }
     };
   }, [
+    cancelDeviceOpen,
     closeDeviceLease,
     openDeviceLease,
     sourceOwnerKey,

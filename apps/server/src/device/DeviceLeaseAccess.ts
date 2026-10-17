@@ -9,6 +9,7 @@ import {
   deviceAliases,
   leaseMatchesDevice,
   ownerLiveness,
+  DEVICE_LEASE_WAITER_IDLE_TIMEOUT_MS,
   type DeviceLeaseRecord,
   type DeviceLeaseTarget,
   type DeviceOwnerLiveness,
@@ -187,7 +188,7 @@ export const makeDeviceLeaseAccess = (options: DeviceLeaseAccessOptions): Device
       })),
     );
 
-  const withoutDeadWaiters: DeviceLeaseAccess["withoutDeadWaiters"] = (lease, _now) =>
+  const withoutDeadWaiters: DeviceLeaseAccess["withoutDeadWaiters"] = (lease, now) =>
     Effect.forEach(lease.waiters ?? [], (waiter) =>
       (waiter.kind === "agent" &&
       waiter.providerSessionId &&
@@ -199,10 +200,18 @@ export const makeDeviceLeaseAccess = (options: DeviceLeaseAccessOptions): Device
       ).pipe(
         Effect.map((providerLive) => ({
           waiter,
-          status:
-            providerLive === false
+          status: (() => {
+            const processStatus = options.isOwnerProcessLive(
+              waiter.processId,
+              waiter.processIdentity,
+            );
+            const lastPolledAt = waiter.lastPolledAt ?? waiter.queuedAt;
+            return providerLive === false ||
+              processStatus === "dead" ||
+              now - lastPolledAt > DEVICE_LEASE_WAITER_IDLE_TIMEOUT_MS
               ? ("dead" as const)
-              : options.isOwnerProcessLive(waiter.processId, waiter.processIdentity),
+              : processStatus;
+          })(),
         })),
       ),
     ).pipe(

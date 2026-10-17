@@ -46,6 +46,7 @@ export function DevicePanel(props: {
   const { state, loaded } = useDeviceState(environmentId);
   const list = useAtomCommand(deviceEnvironment.list, { reportFailure: false });
   const open = useAtomCommand(deviceEnvironment.open);
+  const cancelOpen = useAtomCommand(deviceEnvironment.cancelOpen);
   const close = useAtomCommand(deviceEnvironment.close);
   const [operationError, setOperationError] = useState<string | null>(null);
   const [pendingDevice, setPendingDevice] = useState<DeviceSummary | null>(null);
@@ -111,7 +112,7 @@ export function DevicePanel(props: {
       const settlement = await settleDeviceOpenForSurface({
         signal: controller.signal,
         isCurrent: () => !cancelled,
-        open: (signal) =>
+        open: (signal, requestId) =>
           open(
             {
               environmentId,
@@ -120,6 +121,7 @@ export function DevicePanel(props: {
                 hostId: target.hostId,
                 deviceId: target.deviceId,
                 platform: target.platform,
+                requestId,
                 ...(owner !== null
                   ? { sessionId: owner.sessionId, leaseId: owner.leaseId }
                   : !targetLeaseConsumed.current &&
@@ -131,6 +133,16 @@ export function DevicePanel(props: {
             },
             signal,
           ),
+        cancel: (requestId) =>
+          cancelOpen({
+            environmentId,
+            input: {
+              threadId,
+              hostId: target.hostId,
+              deviceId: target.deviceId,
+              requestId,
+            },
+          }),
         release: (session) =>
           close({
             environmentId,
@@ -213,7 +225,7 @@ export function DevicePanel(props: {
         setPanelSession(null);
       }
     };
-  }, [close, environmentId, open, props.surface.target, props.visible, threadId]);
+  }, [cancelOpen, close, environmentId, open, props.surface.target, props.visible, threadId]);
 
   useEffect(() => {
     selectionGenerationRef.current++;
@@ -245,7 +257,7 @@ export function DevicePanel(props: {
       await settleDeviceOpenForSurface({
         signal: controller.signal,
         isCurrent: () => generation === selectionGenerationRef.current,
-        open: (signal) =>
+        open: (signal, requestId) =>
           open(
             {
               environmentId,
@@ -254,10 +266,21 @@ export function DevicePanel(props: {
                 hostId: device.hostId,
                 deviceId: device.id,
                 platform: device.platform,
+                requestId,
               },
             },
             signal,
           ),
+        cancel: (requestId) =>
+          cancelOpen({
+            environmentId,
+            input: {
+              threadId,
+              hostId: device.hostId,
+              deviceId: device.id,
+              requestId,
+            },
+          }),
         release: (session) =>
           close({
             environmentId,

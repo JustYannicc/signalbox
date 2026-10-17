@@ -43,6 +43,11 @@ export function createDeviceEnvironmentAtoms<R, E>(
       scheduler,
       concurrency,
     }),
+    // Cancellation must remain dispatchable while open is still running.
+    cancelOpen: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:device:cancel-open",
+      tag: WS_METHODS.deviceCancelOpen,
+    }),
     close: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:device:close",
       tag: WS_METHODS.deviceClose,

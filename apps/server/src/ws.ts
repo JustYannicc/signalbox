@@ -2945,6 +2945,7 @@ const layerWsRpc = (
                     : deviceService.list,
               ),
         [WS_METHODS.deviceOpen]: (input) => deviceService.open(input),
+        [WS_METHODS.deviceCancelOpen]: (input) => deviceService.cancelOpen(input),
         [WS_METHODS.deviceClose]: (input) => deviceService.close(input),
         [WS_METHODS.deviceShutdown]: (input) => deviceService.shutdown(input),
         [WS_METHODS.deviceDetail]: (input) => deviceService.detail(input),

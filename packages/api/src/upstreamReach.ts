@@ -197,6 +197,7 @@ export const UPSTREAM_RPC_REACH = {
   "device.list": read(),
   "device.testHost": write(),
   "device.open": write(),
+  "device.cancelOpen": write(),
   "device.close": write(),
   "device.shutdown": write(),
   "device.detail": read(),
