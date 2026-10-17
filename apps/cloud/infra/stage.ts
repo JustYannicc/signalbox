@@ -141,7 +141,7 @@ export const cloudStage = (stage: string): CloudStage => {
     gatewayDomain,
     previewHost: previews,
     poolContainer: { name: `signalbox-cloud-pr-${number}-pools`, maxInstances: 2 },
-    threadContainer: { name: `signalbox-cloud-pr-${number}-threads`, maxInstances: 2 },
+    threadContainer: { name: `signalbox-cloud-pr-${number}-threads`, maxInstances: 4 },
     // Previews never touch production's packs; each keeps its own prefix.
     drivePacksBucket: PREVIEW_DRIVE_PACKS_BUCKET,
     automationWorkflow: `signalbox-cloud-pr-${number}-automations`,
