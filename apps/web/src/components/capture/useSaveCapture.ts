@@ -4,11 +4,16 @@
  * folder's "+" opens. Saving never takes you anywhere; opening goes straight
  * to the draft page. Routing a capture to the assistant instead is #53.
  */
+import { RegistryContext } from "@effect/atom-react";
+import { clampFileAttachmentUploadBytes } from "@t3tools/client-runtime/state/attachments";
+import type { EnvironmentId } from "@t3tools/contracts";
 import { useNavigate } from "@tanstack/react-router";
-import { useCallback } from "react";
+import { useCallback, useContext } from "react";
 
 import { useComposerDraftStore, type DraftId } from "../../composerDraftStore";
 import { useHandleNewThread } from "../../hooks/useHandleNewThread";
+import { startAttachmentUpload } from "../../lib/attachmentUploadQueue";
+import { environmentServerConfigsAtom } from "../../state/server";
 import { useStartInFolder } from "../sidebar/folders/useStartInFolder";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import {
@@ -27,12 +32,22 @@ export interface Capture {
   readonly destination: CaptureDestination | null;
 }
 
+interface Seeded {
+  readonly draftId: DraftId;
+  /** Names the draft didn't take. */
+  readonly rejected: ReadonlyArray<string>;
+  readonly acceptedImageIds: ReadonlyArray<string>;
+  readonly persisting: Promise<void>;
+}
+
 /**
- * Adds prepared attachments to the draft. Returns the names it didn't take,
- * for example over the limit or because the draft is gone.
+ * Fills a fresh draft with everything at once, the moment it exists: it never
+ * sits empty (an empty draft can be replaced), opens already filled, and
+ * nothing arrives late to race with what the user does next.
  */
-function attachToDraft(draftId: DraftId, prepared: PreparedCaptureAttachments) {
+function seedDraft(draftId: DraftId, text: string, prepared: PreparedCaptureAttachments): Seeded {
   const store = useComposerDraftStore.getState();
+  if (text.length > 0) store.setPrompt(draftId, text);
   const images = prepared.images.map((entry) => entry.image);
   const acceptedImages = new Set(images.length > 0 ? store.addImages(draftId, images) : []);
   const acceptedFiles = new Set(
@@ -40,6 +55,7 @@ function attachToDraft(draftId: DraftId, prepared: PreparedCaptureAttachments) {
       ? store.addFiles(draftId, prepared.files, { appendReference: true })
       : [],
   );
+  // A fresh draft has no persisted images yet, so this list is all of them.
   const persisted = prepared.images.flatMap(({ image, dataUrl }) =>
     acceptedImages.has(image.id)
       ? [
@@ -53,37 +69,57 @@ function attachToDraft(draftId: DraftId, prepared: PreparedCaptureAttachments) {
         ]
       : [],
   );
-  if (persisted.length > 0) void store.syncPersistedAttachments(draftId, persisted);
+  const persisting =
+    persisted.length > 0 ? store.syncPersistedAttachments(draftId, persisted) : Promise.resolve();
   for (const image of images) {
     if (!acceptedImages.has(image.id)) URL.revokeObjectURL(image.previewUrl);
   }
-  return [
-    ...images.filter((image) => !acceptedImages.has(image.id)).map((image) => image.name),
-    ...prepared.files.filter((file) => !acceptedFiles.has(file.id)).map((file) => file.name),
-  ];
+  return {
+    draftId,
+    rejected: [
+      ...images.filter((image) => !acceptedImages.has(image.id)).map((image) => image.name),
+      ...prepared.files.filter((file) => !acceptedFiles.has(file.id)).map((file) => file.name),
+    ],
+    acceptedImageIds: [...acceptedImages],
+    persisting,
+  };
 }
 
 export function useSaveCapture() {
   const navigate = useNavigate();
+  const registry = useContext(RegistryContext);
   const startInFolder = useStartInFolder();
   const { defaultProjectRef, handleNewThread } = useHandleNewThread();
+
+  /** Starts the uploads an ordinary draft's composer would, so attachments outlive a reload. */
+  const startUploads = useCallback(
+    (environmentId: EnvironmentId, draftId: DraftId) => {
+      const capabilities = registry.get(environmentServerConfigsAtom).get(environmentId)
+        ?.environment.capabilities;
+      if (capabilities?.attachmentUploads !== true) return;
+      const advertised = capabilities.fileAttachments?.maxUploadBytes ?? null;
+      const maxFileBytes = advertised === null ? null : clampFileAttachmentUploadBytes(advertised);
+      const draft = useComposerDraftStore.getState().getComposerDraft(draftId);
+      if (!draft) return;
+      const files =
+        maxFileBytes === null ? [] : draft.files.filter((file) => file.sizeBytes <= maxFileBytes);
+      for (const attachment of [...draft.images, ...files]) {
+        startAttachmentUpload({ environmentId, image: attachment, draftTarget: draftId });
+      }
+    },
+    [registry],
+  );
 
   return useCallback(
     async (capture: Capture, options: { readonly open: boolean }): Promise<boolean> => {
       const text = capture.text.trim();
       const { destination } = capture;
-      // Text is written the instant the draft exists, before any image work, so a reload
-      // mid-save never loses it; attachments follow once prepared. With no text, the draft
-      // waits for them instead, so it never sits empty (an empty draft can be replaced).
-      const preparing = prepareCaptureAttachments(capture.files);
-      const prepared = text.length > 0 ? null : await preparing;
-      let rejected: string[] = [];
-      let seeded: DraftId | null = null;
+      const prepared = await prepareCaptureAttachments(capture.files);
+      let seeded: Seeded | null = null;
       const seed = (draftId: DraftId) => {
-        seeded = draftId;
-        if (text.length > 0) useComposerDraftStore.getState().setPrompt(draftId, text);
-        if (prepared) rejected = attachToDraft(draftId, prepared);
+        seeded = seedDraft(draftId, text, prepared);
       };
+      const environmentId = destination?.environmentId ?? defaultProjectRef?.environmentId ?? null;
       const opened = destination
         ? await startInFolder({
             environmentId: destination.environmentId,
@@ -101,19 +137,20 @@ export function useSaveCapture() {
               .then((draft) => draft && { ...draft, filed: true })
               .catch(() => null)
           : null;
-      // Filled before a later step failed (opening it, filing it): it's saved, don't duplicate it.
-      const saved = opened ?? (seeded === null ? null : { draftId: seeded, filed: false });
-      const attachments = prepared ?? (await preparing);
-      if (saved === null) {
-        for (const { image } of attachments.images) URL.revokeObjectURL(image.previewUrl);
+      // Assigned inside the callback, which TypeScript can't follow.
+      const filled = seeded as Seeded | null;
+      if (filled === null) {
+        for (const { image } of prepared.images) URL.revokeObjectURL(image.previewUrl);
         toastManager.add({ type: "error", title: "Couldn't save the draft" });
         // Nothing is lost: it reopens with what was written, files included.
         restoreQuickCapture({ text: capture.text, files: capture.files, destination });
         return false;
       }
+      // A draft filled before a later step failed (opening it, filing it) is saved, not retried.
+      const filed = opened?.filed ?? false;
+      if (environmentId !== null) startUploads(environmentId, filled.draftId);
 
-      if (prepared === null) rejected = attachToDraft(saved.draftId, attachments);
-      const notAttached = [...attachments.skipped, ...rejected];
+      const notAttached = [...prepared.skipped, ...filled.rejected];
       if (notAttached.length > 0) {
         toastManager.add({
           type: "warning",
@@ -122,7 +159,7 @@ export function useSaveCapture() {
           description: notAttached.join(", "),
         });
       }
-      if (!saved.filed && destination) {
+      if (!filed && destination) {
         toastManager.add({
           type: "warning",
           title: `Couldn't file it ${destination.inPlace}`,
@@ -131,11 +168,23 @@ export function useSaveCapture() {
         });
       }
       if (!options.open) {
-        showSavedToast(saved.draftId, text, saved.filed ? destination : null, navigate);
+        showSavedToast(filled.draftId, text, filed ? destination : null, navigate);
+      }
+      await filled.persisting.catch(() => undefined);
+      const notPersisted = new Set(
+        useComposerDraftStore.getState().getComposerDraft(filled.draftId)?.nonPersistedImageIds ??
+          [],
+      );
+      if (filled.acceptedImageIds.some((id) => notPersisted.has(id))) {
+        toastManager.add({
+          type: "warning",
+          title: "Images in this draft won't survive a reload",
+          description: "The browser's storage is full. Open the draft and send it to keep them.",
+        });
       }
       return true;
     },
-    [defaultProjectRef, handleNewThread, navigate, startInFolder],
+    [defaultProjectRef, handleNewThread, navigate, startInFolder, startUploads],
   );
 }
 

@@ -68,8 +68,10 @@ export function QuickCaptureDialog(props: { readonly open: boolean }) {
   // Esc hides the list for the tag being typed; typing another one re-arms it.
   const [dismissedAt, setDismissedAt] = useState<number | null>(null);
   const [isMac] = useState(() => isMacPlatform(navigator.platform));
-  // A second Enter during the exit animation must not save a second draft.
+  // A second Enter (or a dismiss) during saving or the exit animation must not save twice.
   const savedRef = useRef(false);
+  // Preparing attached files takes a moment; the bar stays up until the draft has them.
+  const [saving, setSaving] = useState(false);
   const saveCapture = useSaveCapture();
 
   const trees = useAtomValue(folderTreesAtom);
@@ -88,11 +90,19 @@ export function QuickCaptureDialog(props: { readonly open: boolean }) {
 
   /** `open`: go to the draft page, even with nothing written; otherwise only something written is kept. */
   const finish = (open: boolean) => {
-    if (!savedRef.current && (open || hasContent)) {
-      void saveCapture({ text, files, destination }, { open });
-    }
+    if (savedRef.current) return;
     savedRef.current = true;
-    closeQuickCapture();
+    if (!open && !hasContent) {
+      closeQuickCapture();
+      return;
+    }
+    const saved = saveCapture({ text, files, destination }, { open });
+    if (files.length === 0) {
+      closeQuickCapture();
+      return;
+    }
+    setSaving(true);
+    void saved.finally(closeQuickCapture);
   };
 
   const updateText = (next: string, nextCaret: number) => {
@@ -241,6 +251,7 @@ export function QuickCaptureDialog(props: { readonly open: boolean }) {
               aria-activedescendant={
                 trigger && suggestions.length > 0 ? `${SUGGESTIONS_ID}-${highlighted}` : undefined
               }
+              readOnly={saving}
               placeholder="What's on your mind?"
               className="field-sizing-content max-h-48 min-h-12 w-full resize-none bg-transparent text-base text-foreground outline-none placeholder:text-placeholder"
             />
@@ -263,16 +274,22 @@ export function QuickCaptureDialog(props: { readonly open: boolean }) {
             )}
           </div>
           <CommandFooter>
-            <span className="min-w-0 truncate text-xs">
-              {destination ? `Draft ${destination.inPlace}` : "Draft"}
-              <span className="text-muted-foreground/70"> · # to pick a folder</span>
+            <span className="min-w-0 truncate text-xs" aria-live="polite">
+              {saving ? (
+                "Saving…"
+              ) : (
+                <>
+                  {destination ? `Draft ${destination.inPlace}` : "Draft"}
+                  <span className="text-muted-foreground/70"> · # to pick a folder</span>
+                </>
+              )}
             </span>
             <span className="flex shrink-0 items-center gap-1">
-              <CommandFooterAction type="submit" disabled={!hasContent}>
+              <CommandFooterAction type="submit" disabled={!hasContent || saving}>
                 <Kbd>↵</Kbd>
                 Save
               </CommandFooterAction>
-              <CommandFooterAction type="button" onClick={() => finish(true)}>
+              <CommandFooterAction type="button" disabled={saving} onClick={() => finish(true)}>
                 <KbdGroup>
                   <Kbd>{modKey}</Kbd>
                   <Kbd>↵</Kbd>
