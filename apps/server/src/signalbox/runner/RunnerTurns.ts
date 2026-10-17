@@ -6,6 +6,7 @@ import {
   type RunnerItem,
   type RunnerLogLevel,
   type RunnerMessageInput,
+  type RunnerRuntimeResponse,
   type RunnerTurn,
 } from "@signalbox/runner-protocol/RunnerProtocol";
 import type { SecretValue } from "@signalbox/runner-protocol/SecretScrubber";
@@ -66,6 +67,7 @@ import {
 } from "./RunnerTurnDrive.ts";
 import { SAVED_AGAIN_NOTICE, watchChanges } from "./RunnerDriveWatch.ts";
 import { isUnmeasured } from "./RunnerUsage.ts";
+import { makeRunnerRuntimeRequests } from "./RunnerRuntimeRequests.ts";
 
 /**
  * Drives one thread's turns through the provider adapters, the way the
@@ -133,6 +135,7 @@ export interface RunnerTurns {
    * has named it. Each message is taken once, so the thread can repeat itself.
    */
   readonly steer: (runId: RunId, message: RunnerMessageInput) => Effect.Effect<void>;
+  readonly respondToRuntimeRequest: (response: RunnerRuntimeResponse) => Effect.Effect<void>;
   /** Stops every turn but `runId`, the one the thread still considers live. */
   readonly keepOnly: (runId: RunId | null) => Effect.Effect<void>;
   /**
@@ -289,6 +292,7 @@ export const makeRunnerTurns = Effect.fn("makeRunnerTurns")(function* (input: {
   const logAnnotations = yield* References.CurrentLogAnnotations;
   const sessions = new Map<ProviderInstanceId, OpenSession>();
   const turns = new Map<RunId, Turn>();
+  const runtimeRequests = makeRunnerRuntimeRequests();
   /** Runs this machine already took, so a repeated `turn.start` starts nothing. */
   const taken = new Set<RunId>();
   /** `turn` is off this machine: whatever waits for it to wind down goes on. */
@@ -713,6 +717,9 @@ export const makeRunnerTurns = Effect.fn("makeRunnerTurns")(function* (input: {
       Stream.runForEach((event) =>
         Effect.gen(function* () {
           if (latestRunId !== null && outgrown.has(latestRunId)) return;
+          if (event.type === "runtime_request.updated")
+            runtimeRequests.observe(runtime, event.runtimeRequest);
+          if (event.type === "turn.terminal") runtimeRequests.expire(runtime, event.providerTurnId);
           if (yield* holdForDrive(event, (held, runId) => deliver(held, runId))) return;
           yield* track(event);
           yield* deliver(event);
@@ -740,6 +747,7 @@ export const makeRunnerTurns = Effect.fn("makeRunnerTurns")(function* (input: {
       // and a stopped turn on it has nothing left to wind down.
       Effect.ensuring(
         Effect.sync(() => {
+          runtimeRequests.close(runtime);
           if (sessions.get(instanceId)?.runtime === runtime) sessions.delete(instanceId);
           for (const [runId, turn] of turns) {
             if (turn.session === runtime && turn.status === "stopped") forget(runId, turn);
@@ -1202,6 +1210,28 @@ export const makeRunnerTurns = Effect.fn("makeRunnerTurns")(function* (input: {
       },
     );
 
+  const respondToRuntimeRequest: RunnerTurns["respondToRuntimeRequest"] = (response) =>
+    Effect.gen(function* () {
+      const turn = turns.get(response.runId);
+      const session = turn?.session;
+      if (
+        turn === undefined ||
+        turn.status !== "running" ||
+        session == null ||
+        turn.providerTurnId !== response.providerTurnId ||
+        sessions.get(turn.turn.modelSelection.instanceId)?.runtime !== session ||
+        !(yield* runtimeRequests.respond(session, response))
+      ) {
+        yield* input.emit(
+          log(
+            response.runId,
+            "warning",
+            "The native request could not be answered on its original live session.",
+          ),
+        );
+      }
+    });
+
   // Rows that stop being saved stop the turn that writes them, and say why.
   if (input.sessions !== undefined) {
     yield* Queue.take(input.sessions.failures).pipe(
@@ -1243,6 +1273,7 @@ export const makeRunnerTurns = Effect.fn("makeRunnerTurns")(function* (input: {
     start,
     interrupt,
     steer,
+    respondToRuntimeRequest,
     keepOnly,
     drain,
     taken: Effect.sync(() => [...taken]),

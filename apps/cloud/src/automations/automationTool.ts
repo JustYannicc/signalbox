@@ -15,7 +15,7 @@ export const automationTool = (threadId: string, name: string, input: unknown) =
     if (name === LIST_NOTES_TOOL) return yield* listNotesTool(threadId);
     const automations = yield* Effect.serviceOption(CloudAutomations);
     if (Option.isNone(automations)) {
-      return { _tag: "failed", message: "Automations aren't running in this cloud yet." };
+      return { _tag: "failed" as const, message: "Automations aren't running in this cloud yet." };
     }
     return yield* automations.value.tool({ threadId }, name, input).pipe(
       Effect.map((result) => ({ _tag: "ok" as const, result })),

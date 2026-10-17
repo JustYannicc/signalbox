@@ -127,6 +127,7 @@ import { ComposerErrorNotice } from "./ComposerErrorNotice";
 import { ComposerFeedback } from "./ComposerFeedback";
 import { ComposerUsageLimits } from "./ComposerUsageLimits";
 import { PendingUserInputCard } from "./PendingUserInputCard";
+import { SignalboxAsksCard } from "./SignalboxAsksCard";
 import { ProviderSubagentBar } from "./ProviderSubagentBar";
 import { ThreadCreationFailedCard } from "./ThreadCreationFailedCard";
 import {
@@ -1223,6 +1224,11 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
                     key={props.selectedThread.latestRun?.runId}
                     thread={props.selectedThread}
                     environmentId={props.environmentId}
+                  />
+                  <SignalboxAsksCard
+                    threadRef={props.selectedThreadDetailRef}
+                    maxHeight={Math.max(120, pendingUserInputMaxHeight - COMPOSER_EXPANDED_CHROME)}
+                    onInputFocusChange={handleOwnedInputFocusChange}
                   />
                   {props.feedbackSubmissions.map((submission) => (
                     <ComposerFeedback

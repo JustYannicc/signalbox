@@ -78,8 +78,7 @@ const byOrdinalDesc = (left: OrchestrationV2Run, right: OrchestrationV2Run) =>
 
 /**
  * The thread's sidebar row. Follows upstream's `threadShellFromProjection` for
- * everything a cloud thread can have; runtime requests and goals never occur
- * here yet, so they stay empty. Its only background work is `monitors`, the
+ * everything a cloud thread can have. Its only background work is `monitors`, the
  * automation runs attached to it, which show and hold it in Working exactly
  * as upstream's monitors do.
  */
@@ -123,7 +122,22 @@ export function threadShellFromProjection(
     activityRunStartedAt:
       activityRun === null ? null : orchestrationV2RunWorkStartedAt(activityRun),
     status: latestRun?.status ?? "idle",
-    pendingRuntimeRequest: null,
+    asks: thread.asks?.filter((ask) => ask.status === "pending"),
+    pendingRuntimeRequest: (() => {
+      const request = projection.runtimeRequests
+        .filter(
+          (entry) =>
+            entry.status === "pending" &&
+            (entry.kind !== "user_input" || entry.responseCapability.type === "live"),
+        )
+        .toSorted(
+          (left, right) =>
+            DateTime.toEpochMillis(right.createdAt) - DateTime.toEpochMillis(left.createdAt),
+        )[0];
+      return request === undefined
+        ? null
+        : { id: request.id, kind: request.kind, createdAt: request.createdAt };
+    })(),
     latestVisibleMessage: null,
     latestUserMessageAt: userMessages[0]?.updatedAt ?? null,
     latestUserAuthoredMessageAt:

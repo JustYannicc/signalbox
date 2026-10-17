@@ -1,6 +1,6 @@
+import { ThreadCommand } from "./threadCommands.ts";
 import {
   NonNegativeInt,
-  OrchestrationV2Command,
   OrchestrationV2DomainEventJson,
   OrchestrationV2SubscribeThreadInput,
   OrchestrationV2ThreadLaunchInput,
@@ -79,7 +79,7 @@ export type ThreadMonitor = typeof ThreadMonitorWire.Type;
 
 export const wire = {
   summary: jsonCodec(ThreadSummaryWire),
-  command: jsonCodec(OrchestrationV2Command),
+  command: jsonCodec(ThreadCommand),
   launchInput: jsonCodec(LaunchInputWire),
   launchResult: jsonCodec(OrchestrationV2ThreadLaunchResult),
   snapshot: jsonCodec(ThreadSnapshotWire),

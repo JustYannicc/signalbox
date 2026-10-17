@@ -1,7 +1,10 @@
+import { type ThreadCommand } from "./threadCommands.ts";
+import { decideAsk } from "./threadAsks.ts";
+import { runtimeResponseEvents } from "./runtimeResponses.ts";
+import { isHarnessInstance } from "./providerCatalog.ts";
 import {
   MessageId,
   type OrchestrationV2AppThread,
-  type OrchestrationV2Command,
   type OrchestrationV2ConversationMessage,
   type OrchestrationV2DomainEvent,
   type OrchestrationV2Run,
@@ -11,7 +14,6 @@ import {
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 
-import { isHarnessInstance } from "./providerCatalog.ts";
 import { pullRequestLinkEvents } from "./pullRequests/pullRequestLinks.ts";
 import {
   activeRun,
@@ -21,7 +23,14 @@ import {
 } from "./runLifecycle.ts";
 import { interruptRunEvents } from "./scriptedTurn.ts";
 import { canSteer, steerEvents, steerTarget } from "./steering.ts";
-import { type DecisionContext, ids, messageEvent, runEvent, threadEvent } from "./threadEvents.ts";
+import {
+  type Decision,
+  type DecisionContext,
+  ids,
+  messageEvent,
+  runEvent,
+  threadEvent,
+} from "./threadEvents.ts";
 import { applyEvents } from "./threadProjection.ts";
 
 /**
@@ -32,10 +41,6 @@ import { applyEvents } from "./threadProjection.ts";
  * followed here rather than its code.
  */
 
-export type Decision =
-  | { readonly _tag: "accepted"; readonly events: ReadonlyArray<OrchestrationV2DomainEvent> }
-  | { readonly _tag: "rejected"; readonly message: string };
-
 const accept = (events: ReadonlyArray<OrchestrationV2DomainEvent>): Decision => ({
   _tag: "accepted",
   events,
@@ -43,13 +48,7 @@ const accept = (events: ReadonlyArray<OrchestrationV2DomainEvent>): Decision => 
 const reject = (message: string): Decision => ({ _tag: "rejected", message });
 
 type Projection = OrchestrationV2ThreadProjection;
-type CommandOf<T extends OrchestrationV2Command["type"]> = Extract<
-  OrchestrationV2Command,
-  { readonly type: T }
->;
-
-export const HARNESS_MODES_UNSUPPORTED =
-  "Claude and Codex in the cloud run with full access and without plan mode for now: approvals can't reach cloud machines yet.";
+type CommandOf<T extends ThreadCommand["type"]> = Extract<ThreadCommand, { readonly type: T }>;
 
 /** A thread's own branch, and the path clients address its working tree by. */
 export interface ThreadWorktree {
@@ -61,8 +60,16 @@ export interface ThreadWorktree {
 export const unsupported = (commandType: string) =>
   `${commandType} is not available in the cloud yet.`;
 
+export const HARNESS_MODES_UNSUPPORTED =
+  "Claude and Codex in the cloud run with full access and without plan mode until all selected runners support approval responses.";
+
 const CLOUD_COMMAND_TYPES = [
   "thread.create",
+  "thread.ask.raise",
+  "thread.ask.answer",
+  "thread.ask.withdraw",
+  "thread.ask.sync",
+  "runtime-request.respond",
   "message.dispatch",
   "run.interrupt",
   "queue.resume",
@@ -78,22 +85,20 @@ const CLOUD_COMMAND_TYPES = [
   "thread.pull-request-link.sync",
   "thread.archive",
   "thread.unarchive",
-] as const satisfies ReadonlyArray<OrchestrationV2Command["type"]>;
+] as const satisfies ReadonlyArray<ThreadCommand["type"]>;
 type CloudCommand = CommandOf<(typeof CLOUD_COMMAND_TYPES)[number]>;
 
 /**
  * The commands `decide` serves; its switch is exhaustive over them. The public
  * API lists the rest as gaps (`api/cloudCoverage.ts`).
  */
-export const CLOUD_COMMANDS: ReadonlySet<OrchestrationV2Command["type"]> = new Set(
-  CLOUD_COMMAND_TYPES,
-);
+export const CLOUD_COMMANDS: ReadonlySet<ThreadCommand["type"]> = new Set(CLOUD_COMMAND_TYPES);
 
-const isCloudCommand = (command: OrchestrationV2Command): command is CloudCommand =>
+const isCloudCommand = (command: ThreadCommand): command is CloudCommand =>
   CLOUD_COMMANDS.has(command.type);
 
 /** The thread a command addresses. Commands without a single target thread are not served. */
-export function commandThreadId(command: OrchestrationV2Command) {
+export function commandThreadId(command: ThreadCommand) {
   return "threadId" in command ? command.threadId : null;
 }
 
@@ -158,8 +163,8 @@ function dispatchMessage(
     updates.push(threadEvent(ctx, "thread.model-selection-updated", current));
   }
 
-  // Cloud machines have no way to answer an approval or a question yet, so a
-  // harness turn that could stop to ask would wait until someone pressed Stop.
+  // Older runners cannot deliver approval responses. Keep the existing mode limit
+  // until runner selection enforces runtimeRequestResponses (#410).
   if (
     isHarnessInstance(current.providerInstanceId) &&
     (current.runtimeMode !== "full-access" || current.interactionMode === "plan")
@@ -234,10 +239,10 @@ function updateThread(
  */
 export function decide(
   projection: Projection | null,
-  command: OrchestrationV2Command,
+  command: ThreadCommand,
   ctx: DecisionContext,
   /** `idleSinceMs`: archive only a thread unchanged since then (the idle-chat sweep's). */
-  expected: { readonly idleSinceMs?: number } = {},
+  expected: { readonly idleSinceMs?: number; readonly personId?: string } = {},
 ): Decision {
   if (!isCloudCommand(command)) return reject(unsupported(command.type));
   if (command.type === "thread.create") {
@@ -246,6 +251,18 @@ export function decide(
   if (projection === null) return reject("This thread does not exist.");
   if (projection.thread.deletedAt !== null) return reject("This thread was deleted.");
   switch (command.type) {
+    case "thread.ask.raise":
+    case "thread.ask.answer":
+    case "thread.ask.withdraw":
+    case "thread.ask.sync":
+      return decideAsk(projection, command, ctx, dispatchMessage, (state, response, at) =>
+        runtimeResponseEvents(state, response, at, dispatchMessage),
+      );
+    case "runtime-request.respond":
+      return runtimeResponseEvents(projection, command, ctx, dispatchMessage, {
+        kind: "person",
+        personId: expected.personId ?? "thread-owner",
+      });
     case "message.dispatch":
       return dispatchMessage(projection, command, ctx);
     case "run.interrupt": {

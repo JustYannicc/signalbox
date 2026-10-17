@@ -123,6 +123,13 @@ export const layer = Layer.effect(
       );
 
     return AutomationThreads.of({
+      syncAsk: (threadId, ask) =>
+        owner.pipe(
+          Effect.flatMap((actor) => threads.syncAutomationAsk(actor, threadId, ask)),
+          Effect.asVoid,
+          Effect.mapError(hostError("Couldn't sync the automation ask")),
+        ),
+      askAnswerer: owner.pipe(Effect.map((actor) => ({ kind: "person", personId: actor.userId }))),
       getThreadShell: (threadId) =>
         projection(threadId).pipe(
           Effect.map(threadShellFromProjection),

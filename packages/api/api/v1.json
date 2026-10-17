@@ -172,7 +172,7 @@
       "rpc": "automations.customize",
       "access": "write",
       "input": "91eb786d",
-      "output": "2e94ba08"
+      "output": "f1041388"
     },
     {
       "name": "automations.delete",
@@ -187,7 +187,7 @@
       "rpc": "automations.discardDraft",
       "access": "write",
       "input": "e4926bda",
-      "output": "2e94ba08"
+      "output": "f1041388"
     },
     {
       "name": "automations.disconnect",
@@ -202,7 +202,7 @@
       "access": "read",
       "stream": "snapshot",
       "input": "e4926bda",
-      "output": "3af231ca"
+      "output": "6973b524"
     },
     {
       "name": "automations.githubSubscriptions",
@@ -217,7 +217,7 @@
       "access": "read",
       "stream": "snapshot",
       "input": "03c2b661",
-      "output": "86625594"
+      "output": "66f23a44"
     },
     {
       "name": "automations.notices",
@@ -232,14 +232,14 @@
       "rpc": "automations.publish",
       "access": "write",
       "input": "b3f469e7",
-      "output": "2e94ba08"
+      "output": "f1041388"
     },
     {
       "name": "automations.rotateWebhook",
       "rpc": "automations.rotateWebhook",
       "access": "write",
       "input": "e4926bda",
-      "output": "2e94ba08"
+      "output": "f1041388"
     },
     {
       "name": "automations.run",
@@ -261,7 +261,7 @@
       "access": "read",
       "stream": "snapshot",
       "input": "5b9c822a",
-      "output": "022797fa"
+      "output": "a6a5ec4a"
     },
     {
       "name": "automations.runs.retry",
@@ -276,21 +276,21 @@
       "access": "write",
       "compiles": true,
       "input": "e4a20fc8",
-      "output": "4a3e4ebe"
+      "output": "760f148c"
     },
     {
       "name": "automations.setEnabled",
       "rpc": "automations.setEnabled",
       "access": "write",
       "input": "a3f5fcc8",
-      "output": "2e94ba08"
+      "output": "f1041388"
     },
     {
       "name": "automations.setWebhookSecret",
       "rpc": "automations.setWebhookSecret",
       "access": "write",
       "input": "2af82751",
-      "output": "2e94ba08"
+      "output": "f1041388"
     },
     {
       "name": "automations.stopAttached",
@@ -1761,6 +1761,30 @@
       "output": "aebf4e45"
     },
     {
+      "name": "threads.asks.answer",
+      "rpc": "orchestration.dispatchCommand",
+      "command": "thread.ask.answer",
+      "access": "write",
+      "input": "fda7ede6",
+      "output": "aebf4e45"
+    },
+    {
+      "name": "threads.asks.raise",
+      "rpc": "orchestration.dispatchCommand",
+      "command": "thread.ask.raise",
+      "access": "write",
+      "input": "f65558db",
+      "output": "aebf4e45"
+    },
+    {
+      "name": "threads.asks.withdraw",
+      "rpc": "orchestration.dispatchCommand",
+      "command": "thread.ask.withdraw",
+      "access": "write",
+      "input": "d4a9a92a",
+      "output": "aebf4e45"
+    },
+    {
       "name": "threads.autoSettle.set",
       "rpc": "orchestration.dispatchCommand",
       "command": "thread.auto-settle.set",
@@ -1781,7 +1805,7 @@
       "rpc": "orchestration.launchThread",
       "access": "write",
       "input": "49ccbbaa",
-      "output": "1f509429"
+      "output": "1a76d486"
     },
     {
       "name": "threads.delete",
@@ -1814,7 +1838,7 @@
       "rpc": "orchestration.getThreadProjection",
       "access": "read",
       "input": "1276a316",
-      "output": "493e2671"
+      "output": "834c7b58"
     },
     {
       "name": "threads.getFullThreadDiff",
@@ -1835,7 +1859,7 @@
       "rpc": "orchestration.getTurnItem",
       "access": "read",
       "input": "049d9a37",
-      "output": "150d0e5e"
+      "output": "5c9063b1"
     },
     {
       "name": "threads.getWorkflowScript",
@@ -1866,14 +1890,14 @@
       "access": "read",
       "stream": "snapshot",
       "input": "9b1960e6",
-      "output": "96399a4c"
+      "output": "2f1a35bd"
     },
     {
       "name": "threads.listArchived",
       "rpc": "orchestration.getArchivedShellSnapshot",
       "access": "read",
       "input": "03c2b661",
-      "output": "99b6eac5"
+      "output": "632d53d2"
     },
     {
       "name": "threads.markRead",
@@ -2094,7 +2118,7 @@
       "access": "read",
       "stream": "snapshot",
       "input": "438e44e7",
-      "output": "b7ddde4c"
+      "output": "b37dbe15"
     },
     {
       "name": "threads.subscribeArchived",
@@ -2102,7 +2126,7 @@
       "access": "read",
       "stream": "snapshot",
       "input": "03c2b661",
-      "output": "118e49b8"
+      "output": "09dfd69e"
     },
     {
       "name": "threads.switchProvider",

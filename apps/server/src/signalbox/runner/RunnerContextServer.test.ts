@@ -329,6 +329,8 @@ describe("context server (#141)", () => {
         "drive_diff",
         "list_drives",
         "read_drive_file",
+        "t3_ask_list",
+        "t3_ask_read",
       ]);
 
       const found = yield* call("search_context", {
@@ -497,7 +499,7 @@ describe("context server (#141)", () => {
         tools
           .filter((tool) => !tool.annotations.readOnlyHint && !AUTOMATION_SIDE.has(tool.name))
           .map((tool) => tool.name),
-      ).toEqual(["push", "create_pr"]);
+      ).toEqual(["push", "create_pr", "t3_ask_raise", "t3_ask_answer", "t3_ask_withdraw"]);
 
       const opened = yield* call("create_pr", {
         title: "Add dark mode",

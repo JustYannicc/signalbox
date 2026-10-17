@@ -1,3 +1,4 @@
+import type { SignalboxAsk, SignalboxAskAnswerCommand } from "@t3tools/contracts/signalboxAsks";
 import {
   type OrchestrationV2Command,
   type OrchestrationV2SubscribeThreadInput,
@@ -49,6 +50,16 @@ type Batch = ReadonlyArray<OrchestrationV2ThreadStreamItem>;
 export class CloudThreadService extends Context.Service<
   CloudThreadService,
   {
+    readonly syncAutomationAsk: (
+      actor: Actor,
+      threadId: ThreadId,
+      ask: SignalboxAsk,
+    ) => Effect.Effect<{ readonly sequence: number }, CloudThreadError>;
+    readonly answerAskAsAssistant: (
+      actor: Actor,
+      caller: ThreadId,
+      command: typeof SignalboxAskAnswerCommand.Type,
+    ) => Effect.Effect<{ readonly sequence: number }, CloudThreadError>;
     readonly dispatchCommand: (
       actor: Actor,
       command: OrchestrationV2Command,
@@ -228,6 +239,8 @@ const make = Effect.gen(function* () {
     );
 
   return CloudThreadService.of({
+    syncAutomationAsk: threads.syncAutomationAsk,
+    answerAskAsAssistant: threads.answerAskAsAssistant,
     canSee,
     previews,
     browsing,

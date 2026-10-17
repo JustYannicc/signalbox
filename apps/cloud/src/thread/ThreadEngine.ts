@@ -1,7 +1,10 @@
+import { type ThreadCommand } from "./threadCommands.ts";
+import { expireRuntimeRequests } from "./expireRuntimeRequests.ts";
+import { compactAskEvents } from "@t3tools/shared/signalboxAsks";
+import { mirrorNativeAskEvents } from "@t3tools/shared/signalboxNativeAsks";
 import {
   type CommandId,
   EventId,
-  type OrchestrationV2Command,
   type OrchestrationV2DomainEvent,
   type OrchestrationV2SubscribeThreadInput,
   type OrchestrationV2ThreadLaunchInput,
@@ -32,7 +35,8 @@ import * as Stream from "effect/Stream";
 
 import { traceIdOf } from "./diagnostics/traceId.ts";
 import { hasPendingTurnWork, scriptedStep } from "./scriptedTurn.ts";
-import { type Decision, decide, decideLaunch, type ThreadWorktree } from "./threadDecider.ts";
+import { decide, decideLaunch, type ThreadWorktree } from "./threadDecider.ts";
+import type { Decision } from "./threadEvents.ts";
 import type { DecisionContext } from "./threadEvents.ts";
 import { applyEvents, threadShellFromProjection, workStartedAt } from "./threadProjection.ts";
 import { noteKey, noteRunId, supersedes } from "./statusLine/statusNotePolicy.ts";
@@ -125,7 +129,7 @@ export class ThreadEngine extends Context.Service<
   {
     readonly dispatch: (
       actor: Actor,
-      command: OrchestrationV2Command,
+      command: ThreadCommand,
       creation: ThreadCreation,
     ) => Effect.Effect<
       { readonly sequence: number },
@@ -325,7 +329,18 @@ const make = Effect.gen(function* () {
   }) {
     const current = yield* Ref.get(state);
     const owner = current.thread?.owner ?? input.owner;
-    const events = yield* stamp(input.events);
+    const events = yield* stamp(
+      current.thread === null
+        ? input.events
+        : compactAskEvents(
+            current.thread.projection.thread.id,
+            current.thread.projection.thread.asks,
+            mirrorNativeAskEvents(
+              current.thread.projection,
+              expireRuntimeRequests(current.thread.projection, input.events),
+            ),
+          ),
+    );
     const projection = applyEvents(current.thread?.projection ?? null, events);
     if (owner === undefined || projection === null) {
       return yield* Effect.die("A thread's first commit must create it.");
@@ -503,7 +518,9 @@ const make = Effect.gen(function* () {
       },
       (projection, ctx, pool) => {
         const onItsPool =
-          typeof pool === "string" ? commandOnPool(command, projection, pool) : command;
+          typeof pool === "string" && command.type !== "thread.ask.sync"
+            ? commandOnPool(command, projection, pool)
+            : command;
         return decide(
           projection,
           onItsPool.type === "thread.create" && creation.worktree
@@ -514,7 +531,10 @@ const make = Effect.gen(function* () {
               }
             : onItsPool,
           ctx,
-          creation.idleSinceMs === undefined ? {} : { idleSinceMs: creation.idleSinceMs },
+          {
+            ...(creation.idleSinceMs === undefined ? {} : { idleSinceMs: creation.idleSinceMs }),
+            personId: actor.userId,
+          },
         );
       },
     ).pipe(Effect.map(({ sequence }) => ({ sequence })));

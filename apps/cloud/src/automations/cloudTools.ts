@@ -188,6 +188,7 @@ export const makeCloudTools = (deps: {
               .pipe(Effect.orElseSucceed(() => null)))?.projectId
           : (text(input, "projectId") ?? caller.projectId);
         const run = yield* engine.startRun({
+          originThreadId: caller.id,
           automationId,
           input: input.input,
           trigger: "manual",

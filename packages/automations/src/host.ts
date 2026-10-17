@@ -24,6 +24,7 @@ import * as Effect from "effect/Effect";
 import type * as Scope from "effect/Scope";
 import type * as Stream from "effect/Stream";
 import type { DrainContext } from "evlog";
+import type { SignalboxAsk, SignalboxAskAnswerer } from "@t3tools/contracts/signalboxAsks";
 
 import type { WorkflowCompileResult } from "./compiled.ts";
 import type { LaunchRun } from "./engineTypes.ts";
@@ -98,6 +99,11 @@ export interface ThreadMonitor {
 }
 
 export interface AutomationThreadsShape {
+  readonly syncAsk?: (
+    threadId: ThreadId,
+    ask: SignalboxAsk,
+  ) => Effect.Effect<void, AutomationError>;
+  readonly askAnswerer?: Effect.Effect<SignalboxAskAnswerer, AutomationError>;
   readonly getThreadShell: (
     threadId: ThreadId,
   ) => Effect.Effect<OrchestrationV2ThreadShell | null, AutomationError>;

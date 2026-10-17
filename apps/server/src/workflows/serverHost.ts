@@ -1,4 +1,5 @@
 import {
+  CommandId,
   ProjectId,
   type AutomationError,
   type OrchestrationV2ServerCommand,
@@ -69,6 +70,17 @@ const layerThreads = Layer.effect(
       (monitors.get(threadId) ?? []).map((monitor) => ({ ...monitor, kind: "monitor" as const })),
     );
     return AutomationThreads.of({
+      syncAsk: (threadId, ask) =>
+        threads
+          .dispatch({
+            type: "thread.ask.sync",
+            threadId,
+            ask,
+            commandId: CommandId.make(
+              `automation-ask:${ask.id}:${ask.updatedAt}:${ask.status}:${ask.rounds.at(-1)?.number}`,
+            ),
+          })
+          .pipe(Effect.asVoid, Effect.mapError(hostError("Couldn't sync the automation ask"))),
       getThreadShell: (threadId) =>
         threads.getThreadShell(threadId).pipe(Effect.mapError(hostError(""))),
       getThreadRecords: (threadId, fields, filter) =>

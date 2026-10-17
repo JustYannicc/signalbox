@@ -1,8 +1,8 @@
+import { type ThreadCommand } from "./threadCommands.ts";
 import type { PreviewPort } from "@signalbox/runner-protocol/PreviewTunnel";
 import type { ModelGatewayProvider } from "@signalbox/runner-protocol/RunnerProtocol";
 import type { StatusNoteView } from "@signalbox/runner-protocol/StatusLineProtocol";
 import type {
-  OrchestrationV2Command,
   OrchestrationV2SubscribeThreadInput,
   OrchestrationV2ThreadLaunchResult,
   OrchestrationV2ThreadStreamItem,
@@ -165,7 +165,7 @@ type CommandFailure = ThreadNotFoundError | ThreadCommandRejectedError | ThreadO
 export interface ThreadHandle {
   readonly dispatch: (
     actor: Actor,
-    command: OrchestrationV2Command,
+    command: ThreadCommand,
     creation: ThreadCreation,
   ) => Effect.Effect<{ readonly sequence: number }, CommandFailure>;
   readonly launch: (

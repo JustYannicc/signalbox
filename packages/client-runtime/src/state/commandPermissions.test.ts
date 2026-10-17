@@ -14,6 +14,7 @@ import {
   EnvironmentId,
   ScheduledTaskId,
   WS_METHODS,
+  ORCHESTRATION_V2_WS_METHODS,
   type AuthSessionState,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
@@ -24,6 +25,7 @@ import * as TestClock from "effect/testing/TestClock";
 import { Atom, AtomRegistry, AsyncResult } from "effect/reactivity";
 import { EnvironmentRegistry } from "../connection/registry.ts";
 import { createCommandPermissions } from "./commandPermissions.ts";
+import { createSignalboxAskCommand } from "./signalboxAsks.ts";
 import { createEnvironmentRpcCommand } from "./runtime.ts";
 import { SIGNALBOX_ANALYTICS_WS_METHODS } from "@t3tools/contracts/signalboxAnalytics";
 
@@ -60,6 +62,26 @@ const setup = Effect.gen(function* () {
 });
 
 describe("command permissions", () => {
+  it.effect("requires an operate grant to answer durable asks", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const registry = yield* setup;
+        const asks = createCommandPermissions(runtime, ORCHESTRATION_V2_WS_METHODS.dispatchCommand);
+        const input = { type: "thread.ask.answer" };
+        registry.set(sessions(env), AsyncResult.success(grant(false)));
+        expect(registry.get(createSignalboxAskCommand(runtime).permissionAtom(env))).toBe(false);
+        expect(registry.get(asks.permissionAtom(env, { type: "thread.snooze" }))).toBe(true);
+        expect(registry.get(asks.permissionAtom(env, input))).toBe(false);
+        expect((yield* asks.authorize(registry, env, input).pipe(Effect.flip))._tag).toBe(
+          "EnvironmentAuthorizationError",
+        );
+        registry.set(sessions(env), AsyncResult.success(grant(true)));
+        expect(registry.get(asks.permissionAtom(env, input))).toBe(true);
+        yield* asks.authorize(registry, env, input);
+      }),
+    ),
+  );
+
   it.effect("requires the destination settings grant to save analytics consent", () =>
     Effect.scoped(
       Effect.gen(function* () {

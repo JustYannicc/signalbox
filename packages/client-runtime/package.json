@@ -267,6 +267,10 @@
       "types": "./src/state/orchestrationV2Projection.ts",
       "default": "./src/state/orchestrationV2Projection.ts"
     },
+    "./state/orchestration-v2-test-fixtures": {
+      "types": "./src/state/orchestrationV2TestFixtures.ts",
+      "default": "./src/state/orchestrationV2TestFixtures.ts"
+    },
     "./state/presentation": {
       "types": "./src/state/presentation.ts",
       "default": "./src/state/presentation.ts"
@@ -330,6 +334,10 @@
     "./state/threadStatusLine": {
       "types": "./src/state/threadStatusLine.ts",
       "default": "./src/state/threadStatusLine.ts"
+    },
+    "./state/signalboxAsks": {
+      "types": "./src/state/signalboxAsks.ts",
+      "default": "./src/state/signalboxAsks.ts"
     },
     "./state/signalboxThreadKinds": {
       "types": "./src/state/signalboxThreadKinds.ts",

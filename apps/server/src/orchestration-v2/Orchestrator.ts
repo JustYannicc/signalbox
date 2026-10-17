@@ -1,3 +1,7 @@
+import {
+  dispatchSignalboxAskCommand,
+  dispatchSignalboxNativeAnswer,
+} from "./SignalboxAskCommands.ts"; // signalbox: handle durable and native ask answers
 import type {
   OrchestrationV2SearchThreadInput,
   OrchestrationV2SearchThreadResult,
@@ -447,6 +451,10 @@ function commandThreadId(command: OrchestrationV2ServerCommand): ThreadId {
     case "thread.interaction-mode.set":
     case "thread.model-selection.set":
     case "provider-session.detach":
+    case "thread.ask.raise": // signalbox: scope durable ask commands to their thread
+    case "thread.ask.answer":
+    case "thread.ask.withdraw":
+    case "thread.ask.sync":
     case "message.dispatch":
     case "notification.delivery.accept":
     case "prepared-run.release":
@@ -461,6 +469,7 @@ function commandThreadId(command: OrchestrationV2ServerCommand): ThreadId {
     case "queued-run.cancel":
     case "queued-run.edit":
     case "runtime-request.respond":
+    case "thread.native-ask.respond":
     case "thread.user-input.dismiss":
     case "checkpoint.rollback":
     case "checkpoint.rollback.fail":
@@ -10640,6 +10649,46 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         }
       | undefined;
     switch (command.type) {
+      case "thread.ask.raise": // signalbox: scope durable ask commands to their thread
+      case "thread.ask.answer":
+      case "thread.ask.withdraw":
+      case "thread.ask.sync": {
+        yield* dispatchSignalboxAskCommand({
+          // signalbox: commit ask answers and message delivery together
+          command,
+          loadProjection: () =>
+            projectionStore
+              .getThreadRecords(
+                command.threadId,
+                ["runtimeRequests", "providerSessions", "turnItems"],
+                { turnItemTypes: ["user_input_request"] },
+              )
+              .pipe(mapDispatchError(command)),
+          now: DateTime.now,
+          dispatchDelivery: (delivery) =>
+            delivery.type === "message.dispatch"
+              ? dispatchMessage(delivery, events, effects)
+              : dispatchRuntimeRequestRespond(delivery, events, effects),
+          pendingEvents: () => Ref.get(events),
+          emitAskUpdate: (thread, asks, now) =>
+            emit(
+              events,
+              command,
+            )({
+              type: "thread.metadata-updated",
+              threadId: command.threadId,
+              occurredAt: now,
+              payload: { ...thread, asks, updatedAt: now },
+            }).pipe(Effect.asVoid),
+          dispatchError: (cause) =>
+            new OrchestratorDispatchError({
+              commandId: command.commandId,
+              commandType: command.type,
+              cause,
+            }),
+        });
+        break;
+      }
       case "thread.create":
         yield* dispatchThreadCreate(command, events);
         break;
@@ -10776,6 +10825,19 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         break;
       case "runtime-request.respond":
         yield* dispatchRuntimeRequestRespond(command, events, effects);
+        break;
+      case "thread.native-ask.respond":
+        yield* dispatchSignalboxNativeAnswer({
+          command,
+          events,
+          respond: (response) => dispatchRuntimeRequestRespond(response, events, effects),
+          loadProjection: (threadId) =>
+            projectionStore
+              .getThreadRecords(threadId, ["runtimeRequests", "providerSessions", "turnItems"], {
+                turnItemTypes: ["user_input_request"],
+              })
+              .pipe(mapDispatchError(command)),
+        });
         break;
       case "thread.user-input.dismiss":
         yield* dispatchThreadUserInputDismiss(command, events, effects);

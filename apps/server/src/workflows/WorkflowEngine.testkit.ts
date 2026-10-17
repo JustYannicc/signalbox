@@ -75,6 +75,7 @@ export function fakeThreads() {
     deleted: new Set<string>(),
     /** Make reading threads fail, like a broken projection. */
     broken: false,
+    failAskSync: false,
     dispatched: [] as string[],
     /** Follow-ups sent to existing threads, and which of their runs have finished. */
     sends: [] as Array<{
@@ -85,6 +86,7 @@ export function fakeThreads() {
     finishedSends: new Set<string>(),
     /** Per-thread shell fields over the defaults, e.g. another project or a system thread. */
     shells: {} as Record<string, Record<string, unknown>>,
+    missing: new Set<string>(),
     /** Per-thread runs, replacing the default ones. */
     threadRuns: {} as Record<string, ReadonlyArray<Record<string, unknown>>>,
   };
@@ -164,21 +166,31 @@ export function fakeThreads() {
   });
   const management = Layer.mock(ThreadManagementService)({
     streamDomainEvents: domainEvents as never,
-    dispatch: ((command: { type: string }) => {
+    dispatch: ((command: { type: string; threadId?: string; ask?: unknown }) => {
       state.dispatched.push(command.type);
+      if (command.type === "thread.ask.sync" && state.failAskSync)
+        return Effect.fail(new AutomationError({ message: "Thread temporarily unavailable" }));
+      if (command.type === "thread.ask.sync" && command.threadId && command.ask) {
+        const shell = state.shells[command.threadId] ?? {};
+        state.shells[command.threadId] = { ...shell, asks: [command.ask] };
+      }
       return Effect.succeed({ sequence: 1 });
     }) as never,
     getThreadShell: ((threadId: string) =>
-      Effect.succeed({
-        projectId: PROJECT,
-        deletedAt: state.deleted.has(threadId) ? "2026-10-05T09:00:00.000Z" : null,
-        branch: `branch-of-${threadId}`,
-        worktreePath: `/worktrees/${threadId}`,
-        branchPullRequest: null,
-        title: `Title of ${threadId}`,
-        createdBy: "user",
-        ...state.shells[threadId],
-      })) as never,
+      Effect.succeed(
+        state.missing.has(threadId)
+          ? null
+          : {
+              projectId: PROJECT,
+              deletedAt: state.deleted.has(threadId) ? "2026-10-05T09:00:00.000Z" : null,
+              branch: `branch-of-${threadId}`,
+              worktreePath: `/worktrees/${threadId}`,
+              branchPullRequest: null,
+              title: `Title of ${threadId}`,
+              createdBy: "user",
+              ...state.shells[threadId],
+            },
+      )) as never,
     sendToThread: ((input: { threadId: string; text: string }) => {
       const runId = `sent-${state.sends.length + 1}`;
       state.sends.push({ threadId: input.threadId, text: input.text, runId });

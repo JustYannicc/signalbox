@@ -7,6 +7,10 @@
   ],
   "type": "module",
   "exports": {
+    "./signalboxAskTools": {
+      "types": "./src/signalboxAskTools.ts",
+      "import": "./src/signalboxAskTools.ts"
+    },
     ".": {
       "types": "./src/index.ts",
       "import": "./src/index.ts"
@@ -86,6 +90,10 @@
     "./signalboxRepositories": {
       "types": "./src/signalboxRepositories.ts",
       "import": "./src/signalboxRepositories.ts"
+    },
+    "./signalboxAsks": {
+      "types": "./src/signalboxAsks.ts",
+      "import": "./src/signalboxAsks.ts"
     }
   },
   "scripts": {

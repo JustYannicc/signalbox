@@ -7,6 +7,7 @@ import {
   MessageId,
   NodeId,
   OrchestrationV2TurnItem,
+  type OrchestrationV2RuntimeRequest,
   type OrchestrationV2ProviderThread,
   ProviderDriverKind,
   ProviderInstanceId,
@@ -15,6 +16,7 @@ import {
   ProviderTurnId,
   RunAttemptId,
   RunId,
+  RuntimeRequestId,
   ThreadId,
   TurnItemId,
 } from "@t3tools/contracts";
@@ -29,6 +31,7 @@ import * as TestClock from "effect/testing/TestClock";
 
 import type {
   ProviderAdapterV2Event,
+  ProviderAdapterV2RuntimeRequestResponseInput,
   ProviderAdapterV2SessionRuntime,
   ProviderAdapterV2,
 } from "@t3tools/provider-core/server/ProviderAdapter";
@@ -137,6 +140,7 @@ const makeFakeAdapter = Effect.gen(function* () {
     readonly nativeThreadRef: unknown;
   }> = [];
   const opened = { count: 0 };
+  const runtimeResponses: Array<ProviderAdapterV2RuntimeRequestResponseInput> = [];
   const session = {
     providerSessionId: ProviderSessionId.make("session-1"),
     providerSession: {},
@@ -171,16 +175,79 @@ const makeFakeAdapter = Effect.gen(function* () {
       Effect.sync(
         () => void calls.push(`steer ${input.providerTurnId} ${input.message.messageId}`),
       ),
+    respondToRuntimeRequest: (response: ProviderAdapterV2RuntimeRequestResponseInput) =>
+      Effect.sync(() => void runtimeResponses.push(response)),
   } as unknown as ProviderAdapterV2SessionRuntime;
   const adapter = {
     instanceId,
     driver,
     openSession: () => Effect.sync(() => (opened.count++, session)),
   } as unknown as ProviderAdapterV2["Service"];
-  return { adapter, events, loaded, calls, started, opened };
+  return { adapter, events, loaded, calls, started, opened, runtimeResponses };
 });
 
 describe("RunnerTurns", () => {
+  it.effect("answers the live native callback and ignores its reconnect replay", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fake = yield* makeFakeAdapter;
+        const request: OrchestrationV2RuntimeRequest = {
+          id: RuntimeRequestId.make("question-1"),
+          nodeId: NodeId.make("node-1"),
+          providerTurnId: ProviderTurnId.make("native-1"),
+          nativeRequestRef: null,
+          kind: "user_input",
+          status: "pending",
+          responseCapability: {
+            type: "live",
+            providerSessionId: ProviderSessionId.make("session-1"),
+          },
+          createdAt: DateTime.makeUnsafe(0),
+          resolvedAt: null,
+        };
+        const observed = yield* Deferred.make<void>();
+        const turns = yield* makeRunnerTurns({
+          threadId,
+          adapters: new Map([[instanceId, fake.adapter]]),
+          cwd: "/tmp",
+          useModelToken: () => Effect.void,
+          usage: Effect.succeed(unmeasured),
+          emit: (item) =>
+            item.kind === "provider" && item.event.type === "runtime_request.updated"
+              ? Deferred.succeed(observed, undefined).pipe(Effect.asVoid)
+              : Effect.void,
+        });
+        yield* Deferred.succeed(fake.loaded, undefined);
+        yield* turns.start({ turn: turnFor(1), modelToken: "token-1" });
+        yield* Queue.offer(fake.events, providerTurnStarted(1));
+        yield* Queue.offer(fake.events, {
+          type: "runtime_request.updated",
+          driver,
+          runtimeRequest: request,
+        });
+        yield* Deferred.await(observed);
+        const response = {
+          runId: RunId.make("run-1"),
+          requestId: request.id,
+          providerSessionId: ProviderSessionId.make("session-1"),
+          providerTurnId: ProviderTurnId.make("native-1"),
+          answers: { answer: "continue" },
+        };
+        yield* turns.respondToRuntimeRequest(response);
+        yield* turns.respondToRuntimeRequest(response);
+        expect(fake.runtimeResponses).toEqual([
+          { requestId: request.id, answers: response.answers },
+        ]);
+        yield* turns.interrupt(response.runId);
+        yield* turns.respondToRuntimeRequest({
+          ...response,
+          requestId: RuntimeRequestId.make("stale"),
+        });
+        expect(fake.runtimeResponses).toHaveLength(1);
+      }),
+    ),
+  );
+
   it.effect(
     "interrupts a stopped turn once the harness names it, even after the next one starts",
     () =>
