@@ -282,6 +282,99 @@ export default workflow(async (_w) => "legacy");`;
     }),
   );
 
+  it.effect("preserves each duplicate cron's zone across live and draft resaves", () =>
+    Effect.gen(function* () {
+      vi.useFakeTimers({ toFake: ["Date"] });
+      vi.setSystemTime(new Date("2026-10-17T06:00:00.000Z"));
+      yield* TestClock.setTime(Date.now());
+      const { rpc, settingsRpc, thread, tool, engine } = yield* setup;
+      const writer = yield* thread("thread-duplicate-zones", "Keep both scheduled times");
+      yield* settingsRpc[PERSON_TIMEZONE_WS_METHODS.set]({ timezone: "Europe/Zurich" });
+      const source = `export const meta = { name: "Two mornings", triggers: [{ cron: "0 9 * * *", timezone: "UTC" }, { cron: "0 9 * * *" }] } as const;
+export default workflow(async (_w) => "morning");`;
+      const saved = yield* rpc[AUTOMATION_WS_METHODS.automationsSave]({
+        source,
+        projectId: Environment.SCRATCH_PROJECT_ID,
+        compiled: compiledOf(source),
+      });
+      if (!saved.ok) return yield* Effect.die(saved.diagnostics);
+      const automationId = saved.automation.id;
+      const expected = [
+        { cron: "0 9 * * *", timezone: "UTC" },
+        { cron: "0 9 * * *", timezone: "Europe/Zurich" },
+      ];
+      yield* settingsRpc[PERSON_TIMEZONE_WS_METHODS.set]({ timezone: "Asia/Tokyo" });
+      for (const draft of [false, true]) {
+        yield* tool(writer, "automation_save", {
+          source,
+          compiled: compiledOf(source),
+          automationId,
+          draft,
+        });
+        if (draft) {
+          // The second save must use the saved draft's zones too.
+          yield* tool(writer, "automation_save", {
+            source,
+            compiled: compiledOf(source),
+            automationId,
+            draft,
+          });
+          yield* tool(writer, "automation_publish", { automationId });
+        }
+        const current = (yield* engine((workflow) => workflow.get(automationId))).automation;
+        expect(current.triggers).toEqual(expected);
+        expect(current.nextRunAt).toBe("2026-10-17T07:00:00.000Z");
+      }
+    }),
+  );
+
+  it.effect("keeps local time across DST and a non-hour timezone offset", () =>
+    Effect.gen(function* () {
+      vi.useFakeTimers({ toFake: ["Date"] });
+      const { rpc, settingsRpc } = yield* setup;
+      const cases = [
+        {
+          zone: "Europe/Zurich",
+          from: "2026-03-28T06:00:00.000Z",
+          next: "2026-03-28T08:00:00.000Z",
+        },
+        {
+          zone: "Europe/Zurich",
+          from: "2026-03-29T06:00:00.000Z",
+          next: "2026-03-29T07:00:00.000Z",
+        },
+        {
+          zone: "Europe/Zurich",
+          from: "2026-10-24T06:00:00.000Z",
+          next: "2026-10-24T07:00:00.000Z",
+        },
+        {
+          zone: "Europe/Zurich",
+          from: "2026-10-25T06:00:00.000Z",
+          next: "2026-10-25T08:00:00.000Z",
+        },
+        {
+          zone: "Asia/Kathmandu",
+          from: "2026-10-17T00:00:00.000Z",
+          next: "2026-10-17T03:15:00.000Z",
+        },
+      ];
+      for (const [index, { zone, from, next }] of cases.entries()) {
+        vi.setSystemTime(new Date(from));
+        yield* TestClock.setTime(Date.now());
+        yield* settingsRpc[PERSON_TIMEZONE_WS_METHODS.set]({ timezone: zone });
+        const source = `export const meta = { name: "Local morning ${index}", triggers: [{ cron: "0 9 * * *" }] } as const;
+export default workflow(async (_w) => "morning");`;
+        const saved = yield* rpc[AUTOMATION_WS_METHODS.automationsSave]({
+          source,
+          compiled: compiledOf(source),
+          projectId: Environment.SCRATCH_PROJECT_ID,
+        });
+        expect(saved.ok && saved.automation.nextRunAt).toBe(next);
+      }
+    }),
+  );
+
   it.effect("an event trigger runs on a thread's turn with no client open", () =>
     Effect.gen(function* () {
       const { thread, save, engine } = yield* setup;

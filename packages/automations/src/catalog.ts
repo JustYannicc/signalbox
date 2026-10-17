@@ -58,6 +58,13 @@ const withDefaultCronTimezones = (
     zones.push(trigger.timezone ?? "UTC");
     previousZones.set(trigger.cron, zones);
   }
+  // Explicit occurrences must not leave their old zones for identical implicit crons to take.
+  for (const trigger of meta.triggers) {
+    if (!("cron" in trigger) || trigger.timezone === undefined) continue;
+    const zones = previousZones.get(trigger.cron);
+    const index = zones?.indexOf(trigger.timezone) ?? -1;
+    if (index !== -1) zones?.splice(index, 1);
+  }
   return {
     ...meta,
     triggers: meta.triggers.map((trigger) => {
