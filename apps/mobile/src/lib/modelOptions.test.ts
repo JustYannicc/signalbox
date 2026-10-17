@@ -63,6 +63,73 @@ describe("mobile model options", () => {
     ]);
   });
 
+  it("uses served hub models as exact built-ins and marks missing saved IDs unavailable", () => {
+    const instanceId = ProviderInstanceId.make("codex_hub");
+    const servedModel = "gpt-5.4";
+    const aliasLikeMissingModel = "gpt-5-codex";
+    const poolCapabilities = {
+      optionDescriptors: [{ id: "pool-effort", label: "Pool effort", type: "boolean" }],
+    };
+    const config = {
+      settings: {
+        ...DEFAULT_SERVER_SETTINGS,
+        providerInstances: {
+          [instanceId]: {
+            driver: ProviderDriverKind.make("codex"),
+            config: { setupMode: "hub" },
+          },
+        },
+      },
+      providers: [
+        {
+          instanceId,
+          driver: "codex",
+          enabled: true,
+          installed: true,
+          auth: { status: "authenticated" },
+          models: [
+            {
+              slug: servedModel,
+              name: "Pool model",
+              isCustom: true,
+              capabilities: poolCapabilities,
+            },
+          ],
+        },
+      ],
+    } as unknown as ServerConfig;
+
+    const options = buildModelOptions(
+      config,
+      { instanceId, model: aliasLikeMissingModel },
+      instanceId,
+      null,
+    );
+
+    expect(options).toMatchObject([
+      {
+        selection: { model: servedModel },
+        canHide: true,
+        capabilities: poolCapabilities,
+      },
+      {
+        selection: { model: aliasLikeMissingModel },
+        isUnavailable: true,
+      },
+    ]);
+    expect(options[0]?.isUnavailable).not.toBe(true);
+    expect(
+      isModelSelectionUnavailable(config, { instanceId, model: aliasLikeMissingModel }, null),
+    ).toBe(true);
+    expect(
+      resolveSelectableModelSelection(config, { instanceId, model: aliasLikeMissingModel }, null),
+    ).toEqual({ instanceId, model: aliasLikeMissingModel });
+    expect(
+      describeUnavailableModelSelection(config, { instanceId, model: aliasLikeMissingModel }, null)
+        .title,
+    ).toBe("Model unavailable");
+  });
+
   it("carries configured ACP identity into model and provider catalogs", () => {
     const iconUrl = "https://cdn.agentclientprotocol.com/registry/v1/latest/antigravity-acp.svg";
     const config = {

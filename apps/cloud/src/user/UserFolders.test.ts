@@ -432,7 +432,8 @@ describe("UserFolders", () => {
       yield* sql`DROP TABLE folders_state`;
       yield* sql`DROP TABLE folder_trash`;
       yield* sql`DROP TABLE onepassword_account`;
-      yield* sql`DELETE FROM effect_sql_migrations WHERE migration_id IN (13, 15, 20, 21)`;
+      yield* sql`DELETE FROM effect_sql_migrations
+        WHERE migration_id IN (13, 15, 21) OR (migration_id = 20 AND name = 'folder_phases')`;
       yield* sql`INSERT INTO sections (id, context_id, parent_id, name, position) VALUES
         ('work', 'personal', NULL, 'Work', 0),
         ('clients', 'personal', 'work', 'Clients', 0),
@@ -449,6 +450,9 @@ describe("UserFolders", () => {
       yield* indexThread(clientThread, PERSONAL_CONTEXT_ID, projectIdForDrive(CLIENT_DRIVE));
 
       yield* UserStore.migrate;
+      const sameId = yield* sql<{ name: string }>`SELECT name FROM effect_sql_migrations
+        WHERE migration_id = 20 ORDER BY name`;
+      expect(sameId.map((row) => row.name)).toEqual(["folder_phases", "model_settings"]);
       const folders = yield* UserFolders.UserFolders;
       const snapshot = yield* folders.snapshot;
 

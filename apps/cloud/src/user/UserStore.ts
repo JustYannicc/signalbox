@@ -220,6 +220,13 @@ const migrations = Migrator.fromRecord({
   // Each thread's latest status note (#670, `UserThreadStatus`).
   "0019_status_notes": StatusNoteTables.createTables,
   "0019_notes": NoteTables.createTables,
+  "0020_model_settings": Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    yield* sql`CREATE TABLE user_model_settings (
+      id INTEGER PRIMARY KEY CHECK (id = 1),
+      value TEXT NOT NULL
+    )`;
+  }),
   "0020_folder_phases": FolderTables.addPhases,
   "0021_folder_trash": FolderTrash.createTables,
   "0022_trash": migrateTrash,

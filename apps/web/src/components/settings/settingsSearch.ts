@@ -3,6 +3,7 @@ import { isElectron } from "~/env";
 import { isMacPlatform, isWindowsPlatform, normalizeSearchText } from "~/lib/utils";
 import { STATIC_KEYBINDING_COMMANDS, type KeybindingCommand } from "@t3tools/contracts";
 import {
+  environmentCanWriteModelSettings,
   environmentSupports,
   SignalboxEnvironmentCapabilityFields,
   type EnvironmentId,
@@ -217,7 +218,7 @@ export const SETTINGS_SEARCH_ITEMS = [
   },
   {
     id: "default-model",
-    capability: "serverSettingsWrite",
+    capability: "modelSettingsWrite",
     title: "Default model",
     to: "/settings/general",
     scope: "project-defaults",
@@ -1239,7 +1240,9 @@ export function unsupportedSettingsCapabilities(
       return (
         candidates.length > 0 &&
         !candidates.some((environment) =>
-          environmentSupports(environment.serverConfig?.environment.capabilities, capability),
+          capability === "modelSettingsWrite"
+            ? environmentCanWriteModelSettings(environment.serverConfig?.environment.capabilities)
+            : environmentSupports(environment.serverConfig?.environment.capabilities, capability),
         )
       );
     }),
