@@ -109,6 +109,148 @@ describe("CloudAttachments", () => {
     ],
   };
 
+  it.live("keeps another owner's recreated bytes when a different layer sweeps a stale list", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const objects = makeMemoryObjects();
+        const seeded = Promise.withResolvers<void>();
+        let writes = 0;
+        const ownerObjects = {
+          ...objects,
+          put: (...args: Parameters<typeof objects.put>) => {
+            writes++;
+            return objects.put(...args);
+          },
+          list: async (...args: Parameters<typeof objects.list>) => {
+            const snapshot = await objects.list(...args);
+            seeded.resolve();
+            return snapshot;
+          },
+        };
+        const owner = Context.get(
+          yield* Layer.build(layerAttachments(ownerObjects)),
+          CloudAttachments,
+        );
+        const saved = yield* owner.persistImages(userId, retryInput);
+        yield* Effect.promise(() => seeded.promise);
+        const key = attachmentKey("", saved.attachments[0]!.id);
+        const otherUser = "user_2";
+        const sentinel = attachmentKey("", "pending-00000000-0000-4000-8000-000000000001");
+        const orphan = attachmentKey("", "pending-00000000-0000-4000-8000-000000000002");
+        yield* Effect.promise(() =>
+          objects.put(sentinel, PNG, { customMetadata: { owner: otherUser } }),
+        );
+        yield* Effect.promise(() => objects.put(orphan, PNG, { customMetadata: {} }));
+        for (const expired of [key, sentinel, orphan]) objects.age(expired, 25 * 60 * 60_000);
+        const listed = Promise.withResolvers<void>();
+        const release = Promise.withResolvers<void>();
+        const swept = Promise.withResolvers<void>();
+        const deleted: string[] = [];
+        const sweepingObjects = {
+          ...objects,
+          list: async (...args: Parameters<typeof objects.list>) => {
+            const snapshot = await objects.list(...args);
+            listed.resolve();
+            await release.promise;
+            return snapshot;
+          },
+          delete: async (keys: string | string[]) => {
+            deleted.push(...(typeof keys === "string" ? [keys] : keys));
+            await objects.delete(keys);
+            if (keys.includes(sentinel)) swept.resolve();
+          },
+        };
+        const sweeper = Context.get(
+          yield* Layer.build(layerAttachments(sweepingObjects)),
+          CloudAttachments,
+        );
+        yield* Effect.gen(function* () {
+          yield* sweeper.issueUpload(otherUser, {
+            name: "shot.png",
+            mimeType: "image/png",
+            sizeBytes: PNG.length,
+          });
+          yield* Effect.promise(() => listed.promise);
+          expect(yield* owner.persistImages(userId, retryInput)).toEqual(saved);
+          expect(writes).toBe(2);
+          const open = () =>
+            owner.open({
+              userId,
+              attachmentId: saved.attachments[0]!.id,
+              canSee: () => Effect.succeed(false),
+            });
+          const before = yield* open();
+          expect(before).not.toBeNull();
+          expect(yield* bytesOf(before!.body)).toEqual(PNG);
+          release.resolve();
+          yield* Effect.promise(() => swept.promise);
+          const file = yield* open();
+          expect(file).not.toBeNull();
+          expect(yield* bytesOf(file!.body)).toEqual(PNG);
+          expect(deleted).toEqual([sentinel]);
+          expect(objects.keys()).toContain(orphan);
+          const claimed = yield* owner.claim({
+            userId,
+            threadId: retryInput.threadId,
+            commandId: "send-after-other-owner-sweep",
+            attachments: saved.attachments,
+          });
+          expect(claimed.attachments[0]?.id).toMatch(/^expired-retry-thread-/);
+        }).pipe(Effect.ensuring(Effect.sync(() => release.resolve())));
+      }),
+    ),
+  );
+
+  it.live("throttles sweeps per owner when callers share a layer", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const objects = makeMemoryObjects();
+        const owners = [userId, "user_2"];
+        const keys = owners.map((_, index) =>
+          attachmentKey("", `pending-00000000-0000-4000-8000-00000000000${index}`),
+        );
+        for (const [index, owner] of owners.entries()) {
+          const key = keys[index]!;
+          yield* Effect.promise(() => objects.put(key, PNG, { customMetadata: { owner } }));
+          objects.age(key, 25 * 60 * 60_000);
+        }
+        const swept = owners.map(() => Promise.withResolvers<void>());
+        let lists = 0;
+        const tracked = {
+          ...objects,
+          list: (...args: Parameters<typeof objects.list>) => {
+            lists++;
+            return objects.list(...args);
+          },
+          delete: async (deleted: string | string[]) => {
+            await objects.delete(deleted);
+            for (const [index, key] of keys.entries()) {
+              if (deleted.includes(key)) swept[index]!.resolve();
+            }
+          },
+        };
+        const service = Context.get(
+          yield* Layer.build(layerAttachments(tracked)),
+          CloudAttachments,
+        );
+        const issue = (owner: string) =>
+          service.issueUpload(owner, {
+            name: "shot.png",
+            mimeType: "image/png",
+            sizeBytes: PNG.length,
+          });
+        yield* issue(userId);
+        yield* Effect.promise(() => swept[0]!.promise);
+        expect(objects.keys()).toEqual([keys[1]]);
+        yield* issue(userId);
+        yield* issue("user_2");
+        yield* Effect.promise(() => swept[1]!.promise);
+        expect(lists).toBe(2);
+        expect(objects.keys()).toEqual([]);
+      }),
+    ),
+  );
+
   it.live("recreates expired pending bytes without a delayed sweep deleting the retry", () =>
     Effect.gen(function* () {
       const objects = makeMemoryObjects();
@@ -128,7 +270,9 @@ describe("CloudAttachments", () => {
       const key = attachmentKey("", saved.attachments[0]!.id);
       // This expired key makes sweep deletion observable even when the retry is fresh.
       const sentinel = attachmentKey("", "pending-00000000-0000-4000-8000-000000000000");
-      yield* Effect.promise(() => objects.put(sentinel, PNG, { customMetadata: {} }));
+      yield* Effect.promise(() =>
+        objects.put(sentinel, PNG, { customMetadata: { owner: userId } }),
+      );
       objects.age(key, 25 * 60 * 60_000);
       objects.age(sentinel, 25 * 60 * 60_000);
       const listed = Promise.withResolvers<void>();

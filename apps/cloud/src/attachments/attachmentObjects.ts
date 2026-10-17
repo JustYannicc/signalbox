@@ -27,8 +27,13 @@ export interface AttachmentObjects {
     readonly prefix: string;
     readonly cursor?: string;
     readonly limit?: number;
+    readonly include?: Array<"customMetadata">;
   }) => Promise<{
-    readonly objects: ReadonlyArray<{ readonly key: string; readonly uploaded: Date }>;
+    readonly objects: ReadonlyArray<{
+      readonly key: string;
+      readonly uploaded: Date;
+      readonly customMetadata?: Record<string, string>;
+    }>;
     readonly truncated: boolean;
     readonly cursor?: string;
   }>;

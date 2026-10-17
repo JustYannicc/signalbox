@@ -50,10 +50,14 @@ export const makeMemoryObjects = (): AttachmentObjects & {
     delete: async (keys) => {
       for (const key of typeof keys === "string" ? [keys] : keys) objects.delete(key);
     },
-    list: async ({ prefix }) => ({
+    list: async ({ prefix, include }) => ({
       objects: [...objects.entries()]
         .filter(([key]) => key.startsWith(prefix))
-        .map(([key, object]) => ({ key, uploaded: object.uploaded })),
+        .map(([key, object]) => ({
+          key,
+          uploaded: object.uploaded,
+          customMetadata: include?.includes("customMetadata") ? { ...object.customMetadata } : {},
+        })),
       truncated: false,
     }),
   };

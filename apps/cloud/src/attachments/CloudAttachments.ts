@@ -209,49 +209,58 @@ export const layer = ({ objects, prefix }: AttachmentStorage) =>
     Effect.gen(function* () {
       const tokens = yield* CloudTokens.CloudTokens;
       const crypto = yield* Crypto.Crypto;
-      // Failed retries and stale sweep lists must not delete a later successful write.
+      // Sweep snapshots/deletion and deterministic retries must share this layer's lock.
       const persisting = yield* Semaphore.make(1);
       const uuid = Effect.orDie(crypto.randomUUIDv4());
       const keyOf = (id: string) => attachmentKey(prefix, id);
-      let lastSweep = Number.NEGATIVE_INFINITY;
+      const lastSweeps = new Map<string, number>();
 
-      /** Deletes pending uploads older than a day, at most every 15 min. */
-      const sweep = Effect.gen(function* () {
-        const now = yield* Clock.currentTimeMillis;
-        let cursor: string | undefined;
-        let deleted = 0;
-        for (let page = 0; page < SWEEP_MAX_PAGES; page++) {
-          const listed = yield* storage("list", () =>
-            objects.list({
-              prefix: pendingPrefix(prefix),
-              limit: 1000,
-              ...(cursor === undefined ? {} : { cursor }),
-            }),
-          );
-          const stale = listed.objects
-            .filter((object) => now - object.uploaded.getTime() > PENDING_MAX_AGE_MS)
-            .map((object) => object.key);
-          if (stale.length > 0) yield* storage("delete", () => objects.delete(stale));
-          deleted += stale.length;
-          if (!listed.truncated || listed.cursor === undefined) break;
-          cursor = listed.cursor;
-        }
-        if (deleted > 0) yield* Effect.logInfo("removed expired attachment uploads", { deleted });
-      }).pipe(
-        persisting.withPermits(1),
-        Effect.catchTags({
-          AttachmentStorageError: (failure) =>
-            Effect.logWarning("attachment sweep failed", failure),
-        }),
-      );
+      /** Deletes this owner's pending uploads older than a day. */
+      const sweep = (userId: string) =>
+        Effect.gen(function* () {
+          const now = yield* Clock.currentTimeMillis;
+          let cursor: string | undefined;
+          let deleted = 0;
+          for (let page = 0; page < SWEEP_MAX_PAGES; page++) {
+            const listed = yield* storage("list", () =>
+              objects.list({
+                prefix: pendingPrefix(prefix),
+                limit: 1000,
+                include: ["customMetadata"],
+                ...(cursor === undefined ? {} : { cursor }),
+              }),
+            );
+            const stale = listed.objects
+              // Other owners can recreate their keys concurrently in their own UserObject.
+              .filter(
+                (object) =>
+                  object.customMetadata?.owner === userId &&
+                  now - object.uploaded.getTime() > PENDING_MAX_AGE_MS,
+              )
+              .map((object) => object.key);
+            if (stale.length > 0) yield* storage("delete", () => objects.delete(stale));
+            deleted += stale.length;
+            if (!listed.truncated || listed.cursor === undefined) break;
+            cursor = listed.cursor;
+          }
+          if (deleted > 0) yield* Effect.logInfo("removed expired attachment uploads", { deleted });
+        }).pipe(
+          persisting.withPermits(1),
+          Effect.catchTags({
+            AttachmentStorageError: (failure) =>
+              Effect.logWarning("attachment sweep failed", failure),
+          }),
+        );
 
       /** Schedules a detached sweep when one is due. */
-      const sweepWhenDue = Effect.gen(function* () {
-        const now = yield* Clock.currentTimeMillis;
-        if (now - lastSweep < SWEEP_INTERVAL_MS) return;
-        lastSweep = now;
-        yield* Effect.forkDetach(sweep);
-      });
+      const sweepWhenDue = (userId: string) =>
+        Effect.gen(function* () {
+          const now = yield* Clock.currentTimeMillis;
+          if (now - (lastSweeps.get(userId) ?? Number.NEGATIVE_INFINITY) < SWEEP_INTERVAL_MS)
+            return;
+          lastSweeps.set(userId, now);
+          yield* Effect.forkDetach(sweep(userId));
+        });
 
       const issueUpload = Effect.fn("CloudAttachments.issueUpload")(function* (
         userId: string,
@@ -263,7 +272,7 @@ export const layer = ({ objects, prefix }: AttachmentStorage) =>
           "attachment.type": type,
           "attachment.bytes": input.sizeBytes,
         });
-        yield* sweepWhenDue;
+        yield* sweepWhenDue(userId);
         const attachmentId = Ids.pendingId(
           yield* uuid,
           type === "file" ? Ids.fileExtension(input.name) : null,
@@ -500,7 +509,7 @@ export const layer = ({ objects, prefix }: AttachmentStorage) =>
       const persistImages: CloudAttachments["Service"]["persistImages"] = (userId, input) =>
         Effect.gen(function* () {
           const images = yield* decodeLegacyImages(input);
-          yield* sweepWhenDue;
+          yield* sweepWhenDue(userId);
           const pending = yield* Effect.forEach(images, ({ attachment, bytes }, index) =>
             Effect.gen(function* () {
               const hash = yield* crypto.digest("SHA-256", bytes).pipe(Effect.orDie);
