@@ -15,6 +15,7 @@
 import * as Alchemy from "alchemy";
 import * as Cloudflare from "alchemy/Cloudflare";
 import * as Config from "effect/Config";
+import { searchSettings } from "./src/search/searchSettings.ts";
 import * as Effect from "effect/Effect";
 import * as Redacted from "effect/Redacted";
 
@@ -34,6 +35,7 @@ import type {
   PoolObject,
   PreviewLinkRegistry,
   ThreadObject,
+  SearchIndexObject,
   UserObject,
 } from "./src/worker.ts";
 
@@ -113,7 +115,13 @@ export default Alchemy.Stack(
 /** Vars and secrets from CI's environment, next to the stage's own vars. */
 function workerEnv(target: CloudStage) {
   return Effect.gen(function* () {
+    const search = searchSettings({
+      SEARCH_INDEX_GENERATION: yield* optional("SEARCH_INDEX_GENERATION"),
+      SEARCH_INDEX_DISABLED: yield* optional("SEARCH_INDEX_DISABLED"),
+    });
     const shared = {
+      SEARCH_INDEX_GENERATION: search.generation,
+      SEARCH_INDEX_DISABLED: search.disabled ? "1" : "0",
       T3CODE_WORKOS_CLIENT_ID: yield* Config.String("T3CODE_WORKOS_CLIENT_ID"),
       MACHINE_BACKEND: yield* optional("MACHINE_BACKEND"),
       // Optional: the MCP authorization server (`src/api/mcpRoutes.ts`); unset, MCP takes keys only.
@@ -206,6 +214,7 @@ function deploy(
         AUTOMATION_HOOK_ORIGIN: `https://${target.cloudDomain}`,
         // Binding and class names are the Durable Objects' identity.
         USERS: Cloudflare.DurableObject<UserObject>(DO.USERS),
+        SEARCH_INDEX: Cloudflare.DurableObject<SearchIndexObject>(DO.SEARCH_INDEX),
         DRIVES: Cloudflare.DurableObject<DriveObject>(DO.DRIVES),
         PREVIEW_LINKS: Cloudflare.DurableObject<PreviewLinkRegistry>(DO.PREVIEW_LINKS),
         // A managed pool's CLIProxyAPI, pinned in containers/cliproxyapi/release.json.

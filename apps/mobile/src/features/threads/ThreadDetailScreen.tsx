@@ -103,6 +103,7 @@ import { editPendingThreadMessage } from "../../state/edit-pending-thread-messag
 import { deviceEnvironment } from "../../state/device";
 import { useEnvironmentQuery } from "../../state/query";
 import { threadDevicePreviews } from "../devices/threadDevicePreviews";
+import { ThreadFindBar } from "./find/ThreadFindBar"; // signalbox: thread find
 import { ThreadBrowserFloat } from "../browser/ThreadBrowserFloat";
 import { useThreadServerBrowserTabs } from "../../state/preview";
 import { useThreadBrowsingTabCount } from "../../state/browsing";
@@ -154,6 +155,7 @@ import { useThreadQueuedCount } from "./ThreadQueueControl";
 import type { ThreadContentPresentation } from "./threadContentPresentation";
 import { resolveThreadFeedSubmissionAnchor } from "./thread-feed-live-follow";
 import { useGlobalVoiceInput } from "../voice-input/VoiceInputProvider";
+import type { ThreadFindRevealRequest } from "./find/thread-find-model";
 
 export interface ThreadDetailScreenProps {
   readonly worktreeSetup?: WorktreeSetupCardProps | null;
@@ -408,6 +410,11 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
   const controlInsets = deriveBottomControlInsets(nativeMetrics);
   const agentLabel = `${props.selectedThread.modelSelection.instanceId} agent`;
   const selectedThreadKey = scopedThreadKey(props.environmentId, props.selectedThread.id);
+  const [findRevealRequest, setFindRevealRequest] = useState<ThreadFindRevealRequest | null>(null);
+  const handleFindRevealRequestChange = useCallback(
+    (request: ThreadFindRevealRequest | null) => setFindRevealRequest(request),
+    [],
+  );
   const childThreadInputs = useChildThreadInputs({
     environmentId: props.environmentId,
     threadId: props.selectedThread.id,
@@ -1086,6 +1093,7 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
               threadId={props.selectedThread.id}
               workspaceRoot={props.threadCwd}
               feed={props.selectedThreadFeed}
+              findRevealRequest={findRevealRequest}
               pendingHandoff={props.pendingHandoff}
               worktreeSetup={props.worktreeSetup}
               setupWorkingStartedAt={props.setupWorkingStartedAt}
@@ -1126,6 +1134,15 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
         <View className="flex-1" />
       )}
 
+      {showContent ? ( // signalbox: thread find (#792)
+        <ThreadFindBar
+          key={`find:${selectedThreadKey}`}
+          environmentId={props.environmentId}
+          threadId={props.selectedThread.id}
+          onRevealRequestChange={handleFindRevealRequestChange}
+          top={navigationHeaderHeight}
+        />
+      ) : null}
       {showContent ? (
         <ThreadBrowserFloat
           key={selectedThreadKey}

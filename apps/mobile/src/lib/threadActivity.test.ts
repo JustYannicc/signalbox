@@ -562,7 +562,7 @@ describe("buildThreadFeed", () => {
   );
 
   it.each(["pending", "running", "completed"] as const)(
-    "omits %s task progress without hiding adjacent conversation items",
+    "keeps %s task progress accessible without hiding adjacent conversation items",
     (stepStatus) => {
       const todoItem = {
         ...base("item-tasks", "2026-06-20T00:00:02.500Z", 2),
@@ -574,9 +574,15 @@ describe("buildThreadFeed", () => {
       const tool = projected(command(), 1);
       const assistant = projected(assistantMessage(), 3);
 
-      expect(buildThreadFeed([user, tool, projected(todoItem, 2), assistant])).toEqual(
-        buildThreadFeed([user, tool, assistant]),
+      const feed = buildThreadFeed([user, tool, projected(todoItem, 2), assistant]);
+      expect(feed.filter((entry) => entry.type === "message")).toEqual(
+        buildThreadFeed([user, assistant]),
       );
+      const tasks = feed
+        .flatMap((entry) => (entry.type === "activity-group" ? entry.activities : []))
+        .find((activity) => activity.projectedItem.item.id === todoItem.id);
+      expect(tasks?.canExpand).toBe(true);
+      expect(tasks?.getFullDetail()).toBe(`Verify the change (${stepStatus})`);
     },
   );
 

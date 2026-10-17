@@ -1,5 +1,6 @@
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import type { EnvironmentShellStatus } from "@t3tools/client-runtime/state/shell";
+import type { EnvironmentThreadStatus } from "@t3tools/client-runtime/state/threads";
 import type { EnvironmentId, ScopedThreadRef, ThreadId } from "@t3tools/contracts";
 import type { DraftId } from "./composerDraftStore";
 
@@ -19,7 +20,7 @@ type DraftThreadRouteState = {
   promotedTo?: ScopedThreadRef | null;
 };
 
-export type ThreadRouteRenderState = "loading" | "ready" | "missing";
+export type ThreadRouteRenderState = "loading" | "ready" | "missing" | "error";
 
 export function isThreadRouteSnapshotAuthoritative(
   status: EnvironmentShellStatus | undefined,
@@ -32,14 +33,41 @@ export function resolveThreadRouteRenderState(input: {
   serverThreadExists: boolean;
   serverThreadDeleted: boolean;
   draftThreadExists: boolean;
+  detailStatus?: EnvironmentThreadStatus;
+  detailExists?: boolean;
+  detailDeleted?: boolean;
+  detailError?: string | null;
 }): ThreadRouteRenderState {
-  if (input.draftThreadExists || (input.serverThreadExists && !input.serverThreadDeleted)) {
+  if (input.draftThreadExists) {
     return "ready";
   }
-  if (!input.bootstrapComplete) {
-    return "loading";
+  if (input.serverThreadExists) {
+    if (!input.serverThreadDeleted) {
+      return "ready";
+    }
+    return input.bootstrapComplete ? "missing" : "loading";
   }
-  return "missing";
+  if (input.detailStatus === "deleted") {
+    return "missing";
+  }
+  if (input.detailStatus === "live" && input.detailExists === true) {
+    return input.detailDeleted === true ? "missing" : "ready";
+  }
+  if (input.detailError?.trim()) {
+    return "error";
+  }
+  return "loading";
+}
+
+// signalbox: archived deep links need detail without an active-shell row.
+export function resolveThreadRouteDetailRef(
+  target: ThreadRouteTarget | null,
+  input: { serverThreadExists: boolean; pendingDraftThreadExists: boolean },
+): ScopedThreadRef | null {
+  if (target?.kind !== "server" || input.serverThreadExists || input.pendingDraftThreadExists) {
+    return null;
+  }
+  return target.threadRef;
 }
 
 export function buildThreadRouteParams(ref: ScopedThreadRef): {

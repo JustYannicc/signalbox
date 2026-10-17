@@ -27,6 +27,7 @@
   "durable_objects": {
     "bindings": [
       { "name": "USERS", "class_name": "UserObject" },
+      { "name": "SEARCH_INDEX", "class_name": "SearchIndexObject" },
       { "name": "THREADS", "class_name": "ThreadObject" },
       { "name": "POOLS", "class_name": "PoolObject" },
       { "name": "DRIVES", "class_name": "DriveObject" },
@@ -39,6 +40,7 @@
     { "tag": "v3", "new_sqlite_classes": ["DriveObject"] },
     { "tag": "v4", "new_sqlite_classes": ["PoolObject"] },
     { "tag": "v5", "new_sqlite_classes": ["PreviewLinkRegistry"] },
+    { "tag": "search-index-v1", "new_sqlite_classes": ["SearchIndexObject"] },
   ],
   // Containers bound to Durable Objects. One entry per class: each object of
   // `class_name` gets its own container from `image`, started and stopped
@@ -108,6 +110,7 @@
       "durable_objects": {
         "bindings": [
           { "name": "USERS", "class_name": "UserObject" },
+          { "name": "SEARCH_INDEX", "class_name": "SearchIndexObject" },
           { "name": "THREADS", "class_name": "ThreadObject" },
           { "name": "POOLS", "class_name": "PoolObject" },
           { "name": "DRIVES", "class_name": "DriveObject" },

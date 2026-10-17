@@ -7,6 +7,8 @@ import {
   type SourceControlProviderKind,
   type ServerAuthSessionMethod,
 } from "@t3tools/contracts";
+import type { ThreadSearchInput, ThreadSearchResult } from "@t3tools/contracts/signalboxSearch";
+import type * as ThreadSearch from "../search/ThreadSearch.ts";
 import type { WorkOSOrganization } from "@signalbox/account/WorkOSClient";
 import type { ToolResult } from "@signalbox/runner-protocol/AutomationProtocol";
 import type { PublishRequest, PublishResult } from "@signalbox/runner-protocol/BranchProtocol";
@@ -96,6 +98,15 @@ export type PullRequestDiffReply =
 
 /** What a user's object answers. `UserObject` implements it method for method. */
 export interface UserObjectApi {
+  readonly searchThreads: (
+    actor: ThreadSearch.SearchActor,
+    input: ThreadSearchInput,
+  ) => Promise<ThreadSearchResult>;
+  readonly readSearchItem: (
+    actor: ThreadSearch.SearchActor,
+    threadId: Parameters<ThreadSearch.ThreadSearch["Service"]["readItem"]>[1],
+    itemId: string,
+  ) => Promise<Effect.Success<ReturnType<ThreadSearch.ThreadSearch["Service"]["readItem"]>>>;
   readonly receiveHook: (request: HookRequest) => Promise<HookAnswer>;
   readonly recordSignIn: (profile: AccountProfile) => Promise<void>;
   readonly profile: () => Promise<AccountProfile | null>;
@@ -322,6 +333,8 @@ export class UserDirectory extends Context.Service<
 
 // A record, so adding a method to `UserObjectApi` without wrapping it fails to compile.
 const METHODS = Object.keys({
+  searchThreads: true,
+  readSearchItem: true,
   recordSignIn: true,
   profile: true,
   createSession: true,

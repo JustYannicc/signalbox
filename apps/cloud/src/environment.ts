@@ -78,6 +78,7 @@ export interface CloudEnvironmentIdentity {
   readonly scripted?: boolean;
   /** Whether threads take pasted screenshots and files (`attachments/`): the cloud has a bucket. */
   readonly attachments?: boolean;
+  readonly searchDisabled?: boolean;
 }
 
 export const authDescriptor: ServerAuthDescriptor = {
@@ -100,6 +101,7 @@ export const descriptor = (identity: CloudEnvironmentIdentity): ExecutionEnviron
     // Folders live in each user's object (`user/UserFolders.ts`); older clients read them as sections.
     sections: true,
     folders: true,
+    threadContentSearch: identity.searchDisabled !== true,
     // Notes on each level's pad, read by its assistant or agent (`notes/UserNotes.ts`).
     notes: true,
     // Standing sign-in grants, in each user's object (`signIn/SignInGrants.ts`).
@@ -202,6 +204,7 @@ export const serverConfig = (
     },
     shellResumeCompletionMarker: true,
     threadResumeCompletionMarker: true,
+    threadFind: true,
     scratchWorkspaceRoot: SCRATCH_ROOT,
   };
 };

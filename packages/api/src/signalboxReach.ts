@@ -2,6 +2,10 @@ import { exempt, read, type Reach, write, type WsRpcMethod } from "./reach.ts";
 
 /** Signalbox's own RPC groups (`SIGNALBOX_WS_RPCS` in contracts' rpc.ts). */
 export const SIGNALBOX_RPC_REACH = {
+  "signalbox.search.query": read({
+    name: "threads.query",
+    summary: "Search thread items across the folders you can see, with anchors and index coverage.",
+  }),
   "signalbox.analytics.getSettings": read({ name: "analytics.get" }),
   "signalbox.analytics.setEnabled": write({ name: "analytics.setEnabled" }),
   "signalbox.analytics.recordClientEvent": exempt(

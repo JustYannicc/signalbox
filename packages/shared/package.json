@@ -3,6 +3,10 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./keywordSearch": {
+      "types": "./src/keywordSearch.ts",
+      "import": "./src/keywordSearch.ts"
+    },
     "./pnpmVirtualStore": {
       "types": "./src/pnpmVirtualStore.ts",
       "import": "./src/pnpmVirtualStore.ts",

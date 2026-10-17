@@ -43,6 +43,9 @@ const EMPTY_THREAD_PROJECTION_ATOM = Atom.make<EnvironmentThread | null>(null).p
 const EMPTY_THREAD_STATUS_ATOM = Atom.make<EnvironmentThreadStatus>("empty").pipe(
   Atom.withLabel("web-thread-status:empty"),
 );
+const EMPTY_THREAD_ERROR_ATOM = Atom.make<string | null>(null).pipe(
+  Atom.withLabel("web-thread-error:empty"),
+);
 const EMPTY_VISIBLE_TURN_ITEMS_ATOM = Atom.make(EMPTY_VISIBLE_TURN_ITEMS).pipe(
   Atom.withLabel("web-thread-visible-turn-items:empty"),
 );
@@ -130,6 +133,13 @@ export function useThreadProjection(ref: ScopedThreadRef | null): EnvironmentThr
 export function useThreadStatus(ref: ScopedThreadRef | null): EnvironmentThreadStatus {
   return useAtomValue(
     ref === null ? EMPTY_THREAD_STATUS_ATOM : environmentThreadDetails.statusAtom(ref),
+  );
+}
+
+// signalbox: detail-only archived routes must expose failed loads for retry.
+export function useThreadError(ref: ScopedThreadRef | null): string | null {
+  return useAtomValue(
+    ref === null ? EMPTY_THREAD_ERROR_ATOM : environmentThreadDetails.errorAtom(ref),
   );
 }
 
