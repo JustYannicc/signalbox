@@ -1,7 +1,9 @@
 import { ThreadId } from "@t3tools/contracts";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as SqlClient from "effect/sql/SqlClient";
 import type { SqlError } from "effect/sql/SqlError";
@@ -53,12 +55,19 @@ const make = Effect.gen(function* () {
       thread_id TEXT NOT NULL, activation TEXT NOT NULL, complete INTEGER NOT NULL,
       PRIMARY KEY (thread_id, activation)
     )`;
+    yield* sql`CREATE INDEX IF NOT EXISTS search_backfill_requests_activation_complete_thread
+      ON search_backfill_requests (activation, complete, thread_id)`;
     yield* sql`CREATE TABLE IF NOT EXISTS search_backfill_registration_cursor (
       id INTEGER PRIMARY KEY CHECK (id = 1), sequence INTEGER NOT NULL
     )`;
     yield* sql`INSERT INTO search_backfill_registration_cursor (id, sequence)
       VALUES (1, 0) ON CONFLICT(id) DO NOTHING`;
   });
+  // Table setup is lazy so optional summary observation can fail without blocking its ack.
+  // Cache only success: a transient SQL failure must be retried on this object.
+  const ensureTablesOnce = yield* Effect.cachedWithTTL(ensureTables, (exit) =>
+    Exit.isSuccess(exit) ? Duration.infinity : Duration.zero,
+  );
   const readState = sql<{
     readonly active_generation: string;
     readonly activation: number;
@@ -68,7 +77,7 @@ const make = Effect.gen(function* () {
   }>`SELECT active_generation, activation, after_id, complete, disabled_generation
     FROM search_backfill_state WHERE id = 1`;
   const ensureCurrentState = Effect.gen(function* () {
-    yield* ensureTables;
+    yield* ensureTablesOnce;
     const stored = yield* readState;
     const previous = stored[0];
     const generation = index.generation;
@@ -145,9 +154,45 @@ const make = Effect.gen(function* () {
         yield* alarm.by(now + 1_000);
       }
     });
+  const isCurrentActivation = (current: NonNullable<Effect.Success<typeof ensureCurrentState>>) =>
+    sql<{ readonly id: number }>`SELECT id FROM search_backfill_state
+      WHERE id = 1 AND active_generation = ${current.generation}
+        AND activation = ${current.activation}
+        AND (disabled_generation IS NULL OR disabled_generation <> ${current.generation})`.pipe(
+      Effect.map(
+        (rows) => rows.length > 0 && !index.disabled && index.generation === current.generation,
+      ),
+    );
+  const pruneObsoleteRequests = (current: NonNullable<Effect.Success<typeof ensureCurrentState>>) =>
+    sql.withTransaction(
+      Effect.gen(function* () {
+        const before = yield* sql<{ readonly rowid: number }>`DELETE FROM search_backfill_requests
+          WHERE rowid IN (
+            SELECT rowid FROM search_backfill_requests
+            WHERE activation < ${current.requestKey}
+            ORDER BY activation, complete, thread_id LIMIT 32
+          ) AND EXISTS (
+            SELECT 1 FROM search_backfill_state
+            WHERE id = 1 AND active_generation = ${current.generation}
+              AND activation = ${current.activation}
+          ) RETURNING rowid`;
+        const after = yield* sql<{ readonly rowid: number }>`DELETE FROM search_backfill_requests
+          WHERE rowid IN (
+            SELECT rowid FROM search_backfill_requests
+            WHERE activation > ${current.requestKey}
+            ORDER BY activation, complete, thread_id LIMIT 32
+          ) AND EXISTS (
+            SELECT 1 FROM search_backfill_state
+            WHERE id = 1 AND active_generation = ${current.generation}
+              AND activation = ${current.activation}
+          ) RETURNING rowid`;
+        return { before: before.length, after: after.length };
+      }),
+    );
   const step = Effect.gen(function* () {
     const current = yield* ensureCurrentState;
     if (current === null) return;
+    const pruned = yield* pruneObsoleteRequests(current);
     const actor = { userId: current.profile.id, contextIds: yield* contexts.contextIds };
     // Membership is committed with the summary. This cursor recovers a lost enqueue
     // and registrations inserted behind the initial scan's lexical position.
@@ -186,6 +231,7 @@ const make = Effect.gen(function* () {
       FROM search_backfill_requests WHERE activation = ${current.requestKey} AND complete = 0
       ORDER BY thread_id LIMIT 8`;
     for (const row of pending) {
+      if (!(yield* isCurrentActivation(current))) break;
       // A generation activation replays the source snapshot even when retained
       // destination progress says this thread was complete before the switch.
       yield* threads
@@ -193,12 +239,25 @@ const make = Effect.gen(function* () {
         .backfill(actor, current.requestKey)
         .pipe(Effect.catchTags({ ThreadNotFoundError: () => Effect.void }));
       yield* sql`UPDATE search_backfill_requests SET complete = 1
-        WHERE thread_id = ${row.thread_id} AND activation = ${current.requestKey}`;
+        WHERE thread_id = ${row.thread_id} AND activation = ${current.requestKey}
+          AND EXISTS (
+            SELECT 1 FROM search_backfill_state
+            WHERE id = 1 AND active_generation = ${current.generation}
+              AND activation = ${current.activation}
+              AND (disabled_generation IS NULL OR disabled_generation <> ${current.generation})
+          )`;
     }
     const remaining = yield* sql`SELECT 1 FROM search_backfill_requests
       WHERE activation = ${current.requestKey} AND complete = 0 LIMIT 1`;
     const now = yield* Clock.currentTimeMillis;
-    if (more || remaining.length > 0 || registrations.length === 8) yield* alarm.by(now + 1_000);
+    if (
+      more ||
+      remaining.length > 0 ||
+      registrations.length === 8 ||
+      pruned.before === 32 ||
+      pruned.after === 32
+    )
+      yield* alarm.by(now + 1_000);
   }).pipe(
     Effect.catchCause((cause) =>
       index.disabled

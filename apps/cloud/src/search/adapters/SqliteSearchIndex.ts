@@ -130,7 +130,8 @@ const migrations = Migrator.fromRecord({
       activation TEXT NOT NULL,
       revision INTEGER NOT NULL,
       final_page INTEGER,
-      complete INTEGER NOT NULL DEFAULT 0
+      complete INTEGER NOT NULL DEFAULT 0,
+      covered_revision INTEGER NOT NULL DEFAULT 0
     )`;
     yield* sql`CREATE TABLE search_snapshot_pages (
       thread_id TEXT NOT NULL,
@@ -146,6 +147,10 @@ const migrations = Migrator.fromRecord({
       revision INTEGER NOT NULL,
       item_id TEXT NOT NULL,
       PRIMARY KEY (thread_id, activation, revision, item_id)
+    )`;
+    yield* sql`CREATE TABLE search_thread_coverage_gaps (
+      thread_id TEXT PRIMARY KEY,
+      revision INTEGER NOT NULL
     )`;
   }),
 });
@@ -169,8 +174,26 @@ const make = (home: SearchIndex.SearchHome) =>
         yield* sql`DELETE FROM search_document_conversion WHERE document_id = ${documentId}`;
       });
 
+    const recordReceipt = (delivery: SearchIndex.SearchDelivery) =>
+      sql`INSERT INTO search_delivery_receipts (delivery_id, thread_id, revision)
+        VALUES (${delivery.deliveryId}, ${delivery.thread.threadId}, ${delivery.revision})`;
+
     const deliver = (delivery: SearchIndex.SearchDelivery) => {
       if (!matchesHome(home, delivery.home)) return Effect.fail(failHome("deliver"));
+      if (
+        delivery.coverageGap === true &&
+        (delivery.documents.length > 0 ||
+          (delivery.parts?.length ?? 0) > 0 ||
+          delivery.removed.length > 0 ||
+          delivery.snapshot !== undefined)
+      ) {
+        return Effect.fail(
+          new SearchIndex.SearchIndexError({
+            operation: "deliver",
+            cause: new Error("A coverage gap must not contain search document data."),
+          }),
+        );
+      }
       if (
         delivery.documents.some((document) => document.threadId !== delivery.thread.threadId) ||
         (delivery.parts ?? []).some((part) => part.threadId !== delivery.thread.threadId)
@@ -189,6 +212,12 @@ const make = (home: SearchIndex.SearchHome) =>
             FROM search_delivery_receipts
             WHERE thread_id = ${delivery.thread.threadId} AND delivery_id = ${delivery.deliveryId}`;
             if (receipts.length > 0) return;
+
+            if (delivery.coverageGap === true) {
+              yield* SqliteSearchSnapshots.recordCoverageGap(sql, delivery);
+              yield* recordReceipt(delivery);
+              return;
+            }
 
             const current = yield* sql<{ readonly revision: number }>`SELECT revision
             FROM search_threads WHERE thread_id = ${delivery.thread.threadId}`;
@@ -300,8 +329,7 @@ const make = (home: SearchIndex.SearchHome) =>
               }
             }
 
-            yield* sql`INSERT INTO search_delivery_receipts (delivery_id, thread_id, revision)
-            VALUES (${delivery.deliveryId}, ${delivery.thread.threadId}, ${delivery.revision})`;
+            yield* recordReceipt(delivery);
           }),
         )
         .pipe(
@@ -328,18 +356,20 @@ const make = (home: SearchIndex.SearchHome) =>
         readonly revision: number;
         readonly complete: number;
         readonly snapshotComplete: number | null;
+        readonly hasCoverageGap: number | null;
         readonly activation: string | null;
       }>`SELECT t.thread_id AS threadId, t.revision, t.complete,
-          s.complete AS snapshotComplete, s.activation
+          s.complete AS snapshotComplete, s.activation, g.revision AS hasCoverageGap
         FROM search_threads t
         LEFT JOIN search_thread_snapshots s ON s.thread_id = t.thread_id
+        LEFT JOIN search_thread_coverage_gaps g ON g.thread_id = t.thread_id
         WHERE t.thread_id IN (SELECT value FROM json_each(${encodeStrings(threadIds)}))
         ORDER BY t.thread_id COLLATE BINARY`.pipe(
         Effect.map((rows) =>
           rows.map((row) => ({
             threadId: row.threadId,
             revision: row.revision,
-            complete: (row.snapshotComplete ?? row.complete) === 1,
+            complete: row.hasCoverageGap === null && (row.snapshotComplete ?? row.complete) === 1,
             ...(row.activation === null ? {} : { activation: row.activation }),
           })),
         ),

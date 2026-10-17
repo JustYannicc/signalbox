@@ -9,6 +9,7 @@ import * as SqlClient from "effect/sql/SqlClient";
 import type * as Scope from "effect/Scope";
 
 import * as SearchIndex from "../search/SearchIndex.ts";
+import * as SqliteSearchIndex from "../search/adapters/SqliteSearchIndex.ts";
 import * as ThreadEngine from "./ThreadEngine.ts";
 import * as ThreadStore from "./ThreadStore.ts";
 import { deliverPendingSearch } from "./searchOutbox.ts";
@@ -364,6 +365,11 @@ describe("ThreadStore search outbox", () => {
             ],
           });
           expect(yield* store.hasUnpackageableSearch).toBe(true);
+          expect(yield* store.hasPendingSearchDelivery).toBe(true);
+          const gap = yield* store.pendingSearchDelivery;
+          expect(gap?.coverageGap).toBe(true);
+          yield* store.acknowledgeSearchDelivery(gap!.revision, gap!.deliveryId);
+          expect(yield* store.hasUnpackageableSearch).toBe(true);
           expect(yield* store.hasPendingSearchDelivery).toBe(false);
           expect(yield* store.pendingSearchDelivery).toBeNull();
           expect(yield* sql`SELECT reason FROM search_outbox_unpackageable`).toHaveLength(1);
@@ -378,6 +384,9 @@ describe("ThreadStore search outbox", () => {
             requestKey: "search-backfill:user_1:5:1",
           });
           expect(blockedBackfill.backfillRequested).toBe(false);
+          const blockedGap = yield* store.pendingSearchDelivery;
+          expect(blockedGap?.coverageGap).toBe(true);
+          yield* store.acknowledgeSearchDelivery(blockedGap!.revision, blockedGap!.deliveryId);
           expect(yield* store.hasPendingSearchDelivery).toBe(false);
           expect(yield* store.hasUnpackageableSearch).toBe(true);
 
@@ -394,6 +403,129 @@ describe("ThreadStore search outbox", () => {
           yield* store.acknowledgeSearchDelivery(final!.revision, final!.deliveryId);
           expect(yield* store.hasUnpackageableSearch).toBe(false);
           expect((yield* store.searchOutbox).backfillComplete).toBe(true);
+        }),
+      ),
+  );
+
+  it.effect("invalidates completed coverage for oversized live item identities and removals", () =>
+    withStore((store, restart, sql) =>
+      Effect.gen(function* () {
+        const indexContext = yield* Layer.build(
+          SqliteSearchIndex.layer(home).pipe(
+            Layer.provideMerge(NodeSqliteClient.layer({ filename: ":memory:" })),
+          ),
+        );
+        yield* SqliteSearchIndex.initialize(home).pipe(
+          Effect.provide(Layer.succeedContext(indexContext)),
+        );
+        const index = Context.get(indexContext, SearchIndex.SearchIndex);
+        const progress = index.progress(home, [thread.threadId]);
+        const replay = (requestKey: string) =>
+          store.requestSearchBackfill({
+            home,
+            thread,
+            documents: [document("kept-item", 1, "current searchable evidence")],
+            sourceSequence: 0,
+            requestKey,
+          });
+        const deliverNext = (source: Store) =>
+          Effect.gen(function* () {
+            const pending = yield* source.pendingSearchDelivery;
+            expect(pending).not.toBeNull();
+            yield* index.deliver(pending!);
+            yield* source.acknowledgeSearchDelivery(pending!.revision, pending!.deliveryId);
+            return pending!;
+          });
+        yield* replay("search-backfill:initial");
+        yield* deliverNext(store);
+        expect((yield* progress)[0]?.complete).toBe(true);
+
+        const oversized = "identity".repeat(40_000);
+        // Both failures can happen after an initial snapshot was fully accepted.
+        for (const removed of [false, true]) {
+          yield* store.commit({
+            head: 0,
+            events: [],
+            summaryChanged: false,
+            searchDeliveries: [
+              {
+                home,
+                thread,
+                documents: removed ? [] : [{ ...document(oversized, 1, "x"), entryId: oversized }],
+                removed: removed ? [oversized] : [],
+                complete: true,
+                sourceSequence: 0,
+              },
+            ],
+          });
+          const restarted = yield* restart();
+          const gap = yield* deliverNext(restarted);
+          expect(gap.coverageGap).toBe(true);
+          expect(gap.documents).toEqual([]);
+          expect(gap.removed).toEqual([]);
+          expect(JSON.stringify(gap)).not.toContain(oversized);
+          expect((yield* progress)[0]?.complete).toBe(false);
+          expect(yield* restarted.hasUnpackageableSearch).toBe(true);
+          expect(yield* restarted.hasPendingSearchDelivery).toBe(false);
+          expect(yield* restarted.pendingSearchDelivery).toBeNull();
+          const [row] = yield* sql<{ readonly backfill_complete: number }>`SELECT backfill_complete
+            FROM search_outbox_state WHERE id = 1`;
+          expect(row?.backfill_complete).toBe(0);
+
+          yield* replay(`search-backfill:repair-${removed}`);
+          yield* deliverNext(restarted);
+          expect((yield* progress)[0]?.complete).toBe(true);
+          expect(yield* restarted.hasUnpackageableSearch).toBe(false);
+          expect((yield* restarted.searchOutbox).backfillComplete).toBe(true);
+          const result = yield* index.query({
+            home,
+            threadIds: [thread.threadId],
+            query: "evidence",
+            mode: "keyword",
+            after: null,
+            limit: 10,
+          });
+          expect(result.candidates[0]?.title).toBe(thread.title);
+        }
+      }),
+    ),
+  );
+
+  it.effect(
+    "retains an untransportable home identity locally without blocking source commits",
+    () =>
+      withStore((store) =>
+        Effect.gen(function* () {
+          const oversizedHome = { ...home, projectId: "home".repeat(70_000) };
+          yield* store.commit({
+            head: 0,
+            events: [
+              {
+                id: EventId.make("event-untransportable-home"),
+                type: "run.background-work-cancelled",
+                threadId: ThreadId.make(thread.threadId),
+                runId: RunId.make("run-1"),
+                occurredAt: DateTime.makeUnsafe("2026-10-17T00:00:00.000Z"),
+                payload: { runId: RunId.make("run-1"), restartCancelledBackgroundWork: [] },
+              },
+            ],
+            summaryChanged: false,
+            searchDeliveries: [
+              {
+                home: oversizedHome,
+                thread,
+                documents: [document("item", 1, "source retained")],
+                removed: [],
+                complete: true,
+                sourceSequence: 0,
+              },
+            ],
+          });
+          expect(yield* store.events(0)).toHaveLength(1);
+          expect(yield* store.hasUnpackageableSearch).toBe(true);
+          expect(yield* store.hasPendingSearchDelivery).toBe(false);
+          expect(yield* store.pendingSearchDelivery).toBeNull();
+          expect((yield* store.searchOutbox).backfillComplete).toBe(false);
         }),
       ),
   );

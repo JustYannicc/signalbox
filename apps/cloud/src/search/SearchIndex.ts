@@ -49,6 +49,8 @@ export interface SearchDelivery {
   readonly parts?: ReadonlyArray<SearchDocumentPart>;
   readonly removed: ReadonlyArray<string>;
   readonly complete: boolean;
+  /** A source revision could not be packaged. Only a later full snapshot restores coverage. */
+  readonly coverageGap?: boolean;
   /** Only a complete authoritative snapshot may settle its generation activation. */
   readonly snapshot?: {
     readonly activation: string;

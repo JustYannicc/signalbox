@@ -9,6 +9,30 @@ type Snapshot = NonNullable<SearchIndex.SearchDelivery["snapshot"]> & {
   readonly revision: number;
 };
 
+/** Records an uncovered source revision without replacing cached thread metadata. */
+export const recordCoverageGap = (sql: SqlClient.SqlClient, delivery: SearchIndex.SearchDelivery) =>
+  Effect.gen(function* () {
+    const [coverage] = yield* sql<{
+      readonly coveredRevision: number;
+    }>`SELECT covered_revision AS coveredRevision FROM search_thread_snapshots
+      WHERE thread_id = ${delivery.thread.threadId}`;
+    if (delivery.revision <= (coverage?.coveredRevision ?? 0)) return;
+
+    yield* sql`INSERT INTO search_threads
+      (thread_id, title, archived, deleted, revision, source_sequence, complete,
+        updated_at, complete_requested)
+      VALUES (${delivery.thread.threadId}, '', ${delivery.thread.archived ? 1 : 0},
+        ${delivery.thread.deleted ? 1 : 0}, ${delivery.revision}, ${delivery.sourceSequence},
+        0, '', 0)
+      ON CONFLICT(thread_id) DO UPDATE SET
+        revision = MAX(search_threads.revision, excluded.revision),
+        source_sequence = MAX(search_threads.source_sequence, excluded.source_sequence)`;
+    yield* sql`INSERT INTO search_thread_coverage_gaps (thread_id, revision)
+      VALUES (${delivery.thread.threadId}, ${delivery.revision})
+      ON CONFLICT(thread_id) DO UPDATE SET
+        revision = MAX(search_thread_coverage_gaps.revision, excluded.revision)`;
+  });
+
 /** Starts a newer source snapshot and fences pages from older activations. */
 export const acceptActivation = (sql: SqlClient.SqlClient, threadId: string, snapshot: Snapshot) =>
   Effect.gen(function* () {
@@ -149,9 +173,12 @@ export const commitIfCovered = (sql: SqlClient.SqlClient, threadId: string, snap
         SELECT item_id FROM search_snapshot_items WHERE thread_id = ${threadId}
           AND activation = ${snapshot.activation} AND revision = ${snapshot.revision})`;
     yield* sql`DELETE FROM search_documents AS d WHERE ${absent}`;
-    yield* sql`UPDATE search_thread_snapshots SET complete = 1
+    yield* sql`UPDATE search_thread_snapshots SET complete = 1,
+      covered_revision = MAX(covered_revision, ${snapshot.revision})
       WHERE thread_id = ${threadId} AND activation = ${snapshot.activation}
         AND revision = ${snapshot.revision} AND final_page = ${finalPage}`;
+    yield* sql`DELETE FROM search_thread_coverage_gaps
+      WHERE thread_id = ${threadId} AND revision <= ${snapshot.revision}`;
     yield* sql`UPDATE search_threads SET complete = 1, complete_requested = 1
       WHERE thread_id = ${threadId}`;
     return true;

@@ -1,4 +1,9 @@
-import { describe, expect, it } from "@effect/vitest";
+// @effect-diagnostics nodeBuiltinImport:off - the coverage-gap test reopens a SQLite file.
+import * as NodeFS from "node:fs";
+import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
+
+import { afterAll, describe, expect, it } from "@effect/vitest";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -8,6 +13,19 @@ import * as SearchIndex from "../SearchIndex.ts";
 import * as SqliteSearchIndex from "./SqliteSearchIndex.ts";
 
 const home = { ownerId: "owner-1", projectId: "project-1" };
+const databaseDirectories: Array<string> = [];
+
+afterAll(() => {
+  for (const directory of databaseDirectories.splice(0)) {
+    NodeFS.rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+const freshDatabase = () => {
+  const directory = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "signalbox-search-gap-"));
+  databaseDirectories.push(directory);
+  return NodePath.join(directory, "search.sqlite");
+};
 
 const document = (
   threadId: string,
@@ -36,6 +54,7 @@ const delivery = (input: {
   readonly removed?: ReadonlyArray<string>;
   readonly complete?: boolean;
   readonly updatedAt?: string;
+  readonly coverageGap?: boolean;
   readonly snapshot?: NonNullable<SearchIndex.SearchDelivery["snapshot"]>;
 }): SearchIndex.SearchDelivery => ({
   home,
@@ -53,13 +72,14 @@ const delivery = (input: {
   ...(input.parts === undefined ? {} : { parts: input.parts }),
   removed: input.removed ?? [],
   complete: input.complete ?? false,
+  ...(input.coverageGap === undefined ? {} : { coverageGap: input.coverageGap }),
   ...(input.snapshot === undefined ? {} : { snapshot: input.snapshot }),
 });
 
-const layerForTest = () =>
-  SqliteSearchIndex.layer(home).pipe(
-    Layer.provideMerge(NodeSqliteClient.layer({ filename: ":memory:" })),
-  );
+const layerForDatabase = (filename: string) =>
+  SqliteSearchIndex.layer(home).pipe(Layer.provideMerge(NodeSqliteClient.layer({ filename })));
+
+const layerForTest = () => layerForDatabase(":memory:");
 
 const deliver = (value: SearchIndex.SearchDelivery) =>
   SearchIndex.SearchIndex.use((index) => index.deliver(value));
@@ -1155,5 +1175,149 @@ describe("SQLite search index", () => {
       expect(stale.candidates).toEqual([]);
       expect(current.candidates.map(({ itemId }) => itemId)).toEqual(["live"]);
     }).pipe(Effect.provide(layerForTest())),
+  );
+
+  it.effect(
+    "keeps an uncovered gap across restarts and clears it only with a covering snapshot",
+    () =>
+      Effect.gen(function* () {
+        const filename = freshDatabase();
+        const threadId = "thread-coverage-gap";
+        const gap = {
+          ...delivery({
+            id: "gap-at-12",
+            threadId,
+            revision: 12,
+            coverageGap: true,
+            title: "",
+          }),
+          thread: { threadId, title: "", archived: false, deleted: false },
+        };
+
+        yield* Effect.gen(function* () {
+          yield* SqliteSearchIndex.initialize(home);
+          yield* deliver(
+            delivery({
+              id: "snapshot-at-10",
+              threadId,
+              revision: 10,
+              complete: true,
+              title: "Cached thread title",
+              updatedAt: "2026-10-17T10:00:00.000Z",
+              documents: [document(threadId, "source-item", "surviving searchable text")],
+              snapshot: { activation: "activation-10", page: 0, final: true },
+            }),
+          );
+          yield* deliver(gap);
+          yield* deliver(gap);
+          yield* deliver(
+            delivery({
+              id: "older-gap-at-11",
+              threadId,
+              revision: 11,
+              coverageGap: true,
+              title: "",
+            }),
+          );
+
+          const progress = yield* SearchIndex.SearchIndex.use((index) =>
+            index.progress(home, [threadId]),
+          );
+          const hits = yield* query({ threadIds: [threadId], query: "surviving", mode: "keyword" });
+          const sql = yield* SqlClient.SqlClient;
+          const [gapState] = yield* sql<{ readonly revision: number }>`SELECT revision
+          FROM search_thread_coverage_gaps WHERE thread_id = ${threadId}`;
+          expect(progress).toEqual([
+            { threadId, revision: 12, complete: false, activation: "activation-10" },
+          ]);
+          expect(
+            hits.candidates.map(({ title, threadUpdatedAt }) => [title, threadUpdatedAt]),
+          ).toEqual([["Cached thread title", "2026-10-17T10:00:00.000Z"]]);
+          expect(gapState?.revision).toBe(12);
+        }).pipe(Effect.provide(layerForDatabase(filename)));
+
+        // A new SQLite layer over the same file simulates the index object waking after eviction.
+        yield* Effect.gen(function* () {
+          yield* SqliteSearchIndex.initialize(home);
+          const beforeLive = yield* SearchIndex.SearchIndex.use((index) =>
+            index.progress(home, [threadId]),
+          );
+          expect(beforeLive).toEqual([
+            { threadId, revision: 12, complete: false, activation: "activation-10" },
+          ]);
+          yield* deliver(
+            delivery({
+              id: "live-after-restart",
+              threadId,
+              revision: 13,
+              complete: true,
+              documents: [document(threadId, "live-item", "newer live text")],
+            }),
+          );
+          const afterLive = yield* SearchIndex.SearchIndex.use((index) =>
+            index.progress(home, [threadId]),
+          );
+          expect(afterLive).toEqual([
+            { threadId, revision: 13, complete: false, activation: "activation-10" },
+          ]);
+        }).pipe(Effect.provide(layerForDatabase(filename)));
+
+        yield* Effect.gen(function* () {
+          yield* SqliteSearchIndex.initialize(home);
+          yield* deliver(
+            delivery({
+              id: "older-snapshot-at-11",
+              threadId,
+              revision: 11,
+              complete: true,
+              documents: [document(threadId, "source-item", "older snapshot text")],
+              snapshot: { activation: "activation-11", page: 0, final: true },
+            }),
+          );
+          const stillPending = yield* SearchIndex.SearchIndex.use((index) =>
+            index.progress(home, [threadId]),
+          );
+          const live = yield* query({
+            threadIds: [threadId],
+            query: "newer live",
+            mode: "keyword",
+          });
+          expect(stillPending).toEqual([
+            { threadId, revision: 13, complete: false, activation: "activation-11" },
+          ]);
+          expect(live.candidates.map(({ itemId }) => itemId)).toEqual(["live-item"]);
+
+          yield* deliver(
+            delivery({
+              id: "covering-snapshot-at-14",
+              threadId,
+              revision: 14,
+              complete: true,
+              documents: [document(threadId, "live-item", "newer live text")],
+              snapshot: { activation: "activation-14", page: 0, final: true },
+            }),
+          );
+          yield* deliver(gap);
+          yield* deliver(
+            delivery({
+              id: "stale-gap-at-12-after-coverage",
+              threadId,
+              revision: 12,
+              coverageGap: true,
+              title: "",
+            }),
+          );
+          const recovered = yield* SearchIndex.SearchIndex.use((index) =>
+            index.progress(home, [threadId]),
+          );
+          const sql = yield* SqlClient.SqlClient;
+          const remainingGaps = yield* sql<{ readonly count: number }>`SELECT COUNT(*) AS count
+          FROM search_thread_coverage_gaps WHERE thread_id = ${threadId}`;
+          expect(recovered).toEqual([
+            { threadId, revision: 14, complete: true, activation: "activation-14" },
+          ]);
+          expect(remainingGaps[0]?.count).toBe(0);
+        }).pipe(Effect.provide(layerForDatabase(filename)));
+      }),
   );
 });

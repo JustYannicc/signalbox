@@ -157,6 +157,37 @@ export const searchDeliveryBytes = (
 export const searchDeliveryWithinLimit = (size: SearchDeliveryBaseSize): boolean =>
   size.envelope <= SEARCH_DELIVERY_MAX_BYTES && size.row <= SEARCH_DELIVERY_MAX_BYTES;
 
+/** Invalidates coverage without transporting the failed item's unbounded identity or body. */
+export const encodeSearchCoverageGap = (
+  source: Pick<SearchDelivery, "home" | "thread" | "sourceSequence">,
+  revision: number,
+  page: number,
+  encodeDelivery: (delivery: SearchDelivery) => string,
+): { readonly delivery: SearchDelivery; readonly encoded: string } | null => {
+  const delivery: SearchDelivery = {
+    home: source.home,
+    thread: {
+      threadId: source.thread.threadId,
+      title: "",
+      archived: source.thread.archived,
+      deleted: source.thread.deleted,
+    },
+    revision,
+    sourceSequence: source.sourceSequence,
+    deliveryId: `coverage-gap:${revision}:${page}`,
+    documents: [],
+    removed: [],
+    complete: false,
+    coverageGap: true,
+  };
+  const encoded = encodeDelivery(delivery);
+  return utf8Bytes(encoded) <= SEARCH_DELIVERY_MAX_BYTES &&
+    searchDeliveryRowBytes(revision, page, delivery.deliveryId, encoded) <=
+      SEARCH_DELIVERY_MAX_BYTES
+    ? { delivery, encoded }
+    : null;
+};
+
 export const searchPartEscapedBytes = (part: SearchDocumentPart): number =>
   escapedJsonContentBytes(encodePart(part));
 

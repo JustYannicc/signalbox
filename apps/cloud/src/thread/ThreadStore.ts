@@ -41,6 +41,7 @@ import { type ThreadMonitor, ThreadMonitorWire } from "./threadWire.ts";
 import {
   SEARCH_DELIVERY_MAX_BYTES,
   boundSearchThreadMetadata,
+  encodeSearchCoverageGap,
   boundedSearchDocumentParts,
   searchDeliveryBaseSize,
   searchDeliveryBytes,
@@ -508,6 +509,7 @@ const SearchDeliveryJson = Schema.fromJsonString(
     parts: Schema.optionalKey(Schema.Array(SearchDocumentPartSchema)),
     removed: Schema.Array(Schema.String),
     complete: Schema.Boolean,
+    coverageGap: Schema.optionalKey(Schema.Boolean),
     snapshot: Schema.optionalKey(
       Schema.Struct({
         activation: Schema.String,
@@ -695,24 +697,56 @@ const make = Effect.gen(function* () {
     sql`INSERT INTO machine_record (id, record) VALUES (1, ${encodeMachineRecord(record)})
       ON CONFLICT (id) DO UPDATE SET record = excluded.record`.pipe(Effect.asVoid);
 
-  const markSearchUnpackageable = (revision: number, backfill = false) =>
+  const markSearchUnpackageable = (
+    revision: number,
+    backfill = false,
+    control?: Pick<SearchDelivery, "home" | "thread" | "sourceSequence"> & {
+      readonly page: number;
+    },
+  ) =>
     Effect.gen(function* () {
       const existing = yield* sql`SELECT revision FROM search_outbox_unpackageable
         WHERE revision = ${revision}`;
-      if (existing.length > 0) return;
-      yield* sql`INSERT INTO search_outbox_unpackageable (revision, reason)
-        VALUES (${revision}, 'identity_metadata_exceeds_delivery_limit')`;
-      yield* Effect.logWarning(
-        "Search delivery cannot fit its outbox; source state is retained and search stays pending.",
-        {
-          revision,
-        },
-      );
+      if (existing.length === 0) {
+        yield* sql`INSERT INTO search_outbox_unpackageable (revision, reason)
+          VALUES (${revision}, 'identity_metadata_exceeds_delivery_limit')`;
+        yield* Effect.logWarning(
+          "Search delivery cannot fit its outbox; source state is retained and search stays pending.",
+          { revision },
+        );
+      }
+      yield* sql`UPDATE search_outbox_state SET backfill_complete = 0 WHERE id = 1`;
       if (backfill) {
         yield* sql`UPDATE search_outbox_state SET backfill_requested = 0, backfill_complete = 0
           WHERE id = 1 AND backfill_revision = ${revision}`;
       }
+      if (control === undefined) return;
+      const marker = encodeSearchCoverageGap(control, revision, control.page, encodeSearchDelivery);
+      if (marker === null) {
+        // An untransportable home/thread identity cannot address the destination.
+        // Retain the local failure without retrying an impossible envelope.
+        yield* Effect.logWarning("Search coverage marker identity exceeds its delivery limit.", {
+          revision,
+        });
+        return;
+      }
+      yield* sql`INSERT OR IGNORE INTO search_outbox (revision, page, delivery_id, delivery)
+        VALUES (${revision}, ${control.page}, ${marker.delivery.deliveryId}, ${marker.encoded})`;
     });
+
+  const markBackfillUnpackageable = (state: SearchOutboxState) =>
+    markSearchUnpackageable(
+      state.backfillRevision,
+      true,
+      state.backfillHome === null || state.backfillThread === null
+        ? undefined
+        : {
+            home: state.backfillHome,
+            thread: state.backfillThread,
+            sourceSequence: state.backfillSourceSequence,
+            page: -1,
+          },
+    );
 
   const commit: ThreadStore["Service"]["commit"] = Effect.fn("ThreadStore.commit")(function* (
     input,
@@ -741,6 +775,15 @@ const make = Effect.gen(function* () {
     for (const draft of input.searchDeliveries ?? []) {
       // The full title is in the thread search document; this copy is repeated in every row.
       const cachedThread = boundSearchThreadMetadata(draft.thread);
+      const markUnpackageable = Effect.gen(function* () {
+        yield* markSearchUnpackageable(searchRevision, false, {
+          home: draft.home,
+          thread: cachedThread,
+          sourceSequence: sequence,
+          page: 1_000_000 + page,
+        });
+        page += 1;
+      });
       const parts = [
         ...(draft.parts ?? []),
         ...draft.documents.flatMap((document) => splitSearchDocument(document)),
@@ -779,7 +822,7 @@ const make = Effect.gen(function* () {
       };
       recalculateBase();
       if (!searchDeliveryWithinLimit(baseSize)) {
-        yield* markSearchUnpackageable(searchRevision);
+        yield* markUnpackageable;
         continue;
       }
       const emit = Effect.fnUntraced(function* (complete: boolean) {
@@ -825,7 +868,7 @@ const make = Effect.gen(function* () {
           }
           const split = splitSearchDocumentPart(part);
           if (split === null) {
-            yield* markSearchUnpackageable(searchRevision);
+            yield* markUnpackageable;
             unpackageable = true;
             break;
           }
@@ -862,12 +905,12 @@ const make = Effect.gen(function* () {
               searchRemovedItemEscapedBytes(itemId),
             );
             if (!searchDeliveryWithinLimit(bytesAlone)) {
-              yield* markSearchUnpackageable(searchRevision);
+              yield* markUnpackageable;
               unpackageable = true;
               break;
             }
           } else {
-            yield* markSearchUnpackageable(searchRevision);
+            yield* markUnpackageable;
             unpackageable = true;
             break;
           }
@@ -1172,7 +1215,7 @@ const make = Effect.gen(function* () {
             SEARCH_DELIVERY_MAX_BYTES / 2,
           );
           if (converted.blocked) {
-            yield* markSearchUnpackageable(state.backfillRevision, true);
+            yield* markBackfillUnpackageable(state);
             return null;
           }
           let finished = document.text.length === 0 || converted.nextOffset >= document.text.length;
@@ -1232,7 +1275,7 @@ const make = Effect.gen(function* () {
       };
       const baseSize = searchDeliveryBaseSize(base, encodeSearchDelivery, page);
       if (!searchDeliveryWithinLimit(baseSize)) {
-        yield* markSearchUnpackageable(state.backfillRevision, true);
+        yield* markBackfillUnpackageable(state);
         return null;
       }
       let partsBytes = 0;
@@ -1252,7 +1295,7 @@ const make = Effect.gen(function* () {
           if (parts.length === 0) {
             const split = splitSearchDocumentPart(part);
             if (split === null) {
-              yield* markSearchUnpackageable(state.backfillRevision, true);
+              yield* markBackfillUnpackageable(state);
               return null;
             }
             yield* sql`DELETE FROM search_backfill_document_parts
@@ -1335,7 +1378,10 @@ const make = Effect.gen(function* () {
         row.delivery.snapshot?.final === true &&
         revision === decodeSearchOutboxState(yield* readSearchOutboxState).backfillRevision
       ) {
-        yield* sql`UPDATE search_outbox_state SET backfill_requested = 0, backfill_complete = 1,
+        yield* sql`UPDATE search_outbox_state SET backfill_requested = 0,
+          backfill_complete = CASE WHEN EXISTS (
+            SELECT 1 FROM search_outbox_unpackageable WHERE revision > ${revision}
+          ) THEN 0 ELSE 1 END,
           cursor_position = NULL, cursor_item_id = NULL, backfill_home_owner = NULL,
           cursor_offset = NULL, backfill_home_project = NULL, backfill_thread = NULL WHERE id = 1`;
         yield* sql`DELETE FROM search_backfill_documents`;
@@ -1372,7 +1418,12 @@ const make = Effect.gen(function* () {
           yield* sql`INSERT INTO search_backfill_activations (request_key, revision, generation)
           VALUES (${input.requestKey}, ${revision}, ${generation})`;
         }
-        yield* markSearchUnpackageable(revision, true);
+        yield* markSearchUnpackageable(revision, true, {
+          home: input.home,
+          thread: cachedThread,
+          sourceSequence: input.sourceSequence,
+          page: -1,
+        });
         return {
           revision,
           delivered: state.delivered,

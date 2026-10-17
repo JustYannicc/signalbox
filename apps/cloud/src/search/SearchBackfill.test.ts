@@ -10,6 +10,7 @@ import { describe, expect, it } from "@effect/vitest";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as SqlClient from "effect/sql/SqlClient";
 
@@ -88,13 +89,15 @@ const makeHarness = (options: {
   readonly signedIn?: boolean;
   readonly completeProgress?: ReadonlySet<string>;
   readonly failFirstBackfill?: string;
+  readonly failFirstTableInit?: boolean;
 }) =>
   Effect.gen(function* () {
     const cloud = makeMemoryCloud();
     const userServices = cloud.userObject(userId);
-    const { store } = yield* Effect.all({ store: UserStore.UserStore }).pipe(
-      Effect.provide(userServices),
-    );
+    const { store, sql } = yield* Effect.all({
+      store: UserStore.UserStore,
+      sql: SqlClient.SqlClient,
+    }).pipe(Effect.provide(userServices));
     if (options.signedIn !== false)
       yield* store.recordSignIn({ id: userId, email: "person@example.com" });
     yield* store.replaceThreadIndex(options.summaries);
@@ -103,6 +106,8 @@ const makeHarness = (options: {
     const alarms: Array<number> = [];
     let registryReads = 0;
     let progressCalls = 0;
+    let initQueryCount = 0;
+    let initFailurePending = options.failFirstTableInit ?? false;
     let activeGeneration = options.generation ?? "1";
     let indexDisabled = options.disabled ?? false;
     const delivered = new Set<string>();
@@ -167,10 +172,29 @@ const makeHarness = (options: {
         store.threadIndex,
       ),
     };
+    const observedSql = new Proxy(sql, {
+      apply(target, thisArg, args) {
+        const statement = Array.isArray(args[0]) ? args[0].join("") : "";
+        if (
+          statement.includes("CREATE TABLE IF NOT EXISTS search_backfill_") ||
+          statement.includes("CREATE INDEX IF NOT EXISTS search_backfill_requests_") ||
+          statement.includes("INSERT INTO search_backfill_registration_cursor")
+        )
+          initQueryCount++;
+        if (
+          initFailurePending &&
+          statement.includes("CREATE TABLE IF NOT EXISTS search_backfill_state")
+        ) {
+          initFailurePending = false;
+          return Effect.die("temporary search table initialization failure");
+        }
+        return Reflect.apply(target, thisArg, args);
+      },
+    });
     const storage = Layer.mergeAll(
       Layer.succeed(UserStore.UserStore, observedStore),
       Layer.effect(UserContexts.UserContexts, UserContexts.UserContexts),
-      Layer.effect(SqlClient.SqlClient, SqlClient.SqlClient),
+      Layer.succeed(SqlClient.SqlClient, observedSql),
     ).pipe(Layer.provide(userServices));
     const layer = SearchBackfill.layer.pipe(
       Layer.provide(
@@ -205,6 +229,11 @@ const makeHarness = (options: {
       alarms,
       store,
       userServices,
+      layer,
+      sql: observedSql,
+      get initQueryCount() {
+        return initQueryCount;
+      },
       get progressCalls() {
         return progressCalls;
       },
@@ -224,6 +253,9 @@ const makeHarness = (options: {
         SearchBackfill.SearchBackfill.use((service) => service.observeThread(threadId)).pipe(
           Effect.provide(Layer.fresh(layer)),
         ),
+      withService: <A, E>(
+        use: (service: SearchBackfill.SearchBackfill["Service"]) => Effect.Effect<A, E>,
+      ) => SearchBackfill.SearchBackfill.use(use).pipe(Effect.provide(layer)),
     };
   });
 
@@ -376,20 +408,12 @@ describe("SearchBackfill", () => {
     "recovers a thread after the optional shell enqueue fails and the service restarts",
     () =>
       Effect.gen(function* () {
-        const harness = yield* makeHarness({ summaries: [] });
+        const harness = yield* makeHarness({ summaries: [], failFirstTableInit: true });
         const context = yield* Layer.build(harness.userServices);
-        const failedObserver = SearchBackfill.SearchBackfill.of({
-          activation: Effect.succeed(null),
-          ready: Effect.succeed(false),
-          observeThread: () => Effect.die("temporary enqueue failure"),
-          step: Effect.void,
-        });
-        const dependencies = Context.add(
-          Context.omit(SearchBackfill.SearchBackfill)(context),
-          SearchBackfill.SearchBackfill,
-          failedObserver,
+        const dependencies = Context.omit(SearchBackfill.SearchBackfill)(context);
+        const userShell = UserShell.layer.pipe(
+          Layer.provideMerge(Layer.mergeAll(harness.layer, Layer.succeedContext(dependencies))),
         );
-        const userShell = UserShell.layer.pipe(Layer.provide(Layer.succeedContext(dependencies)));
         const recoveredSummary = summary("thread-recovered");
 
         yield* UserShell.UserShell.use((service) =>
@@ -400,6 +424,7 @@ describe("SearchBackfill", () => {
         expect(indexed.threads.map((entry) => entry.shell.id)).toEqual(["thread-recovered"]);
         expect(yield* harness.store.threadMembers).toEqual([ThreadId.make("thread-recovered")]);
         expect(harness.attempts).toEqual([]);
+        expect(harness.initQueryCount).toBe(1);
 
         // A new SearchBackfill layer uses the same SQLite store; no summary redelivery is needed.
         yield* harness.step();
@@ -407,6 +432,108 @@ describe("SearchBackfill", () => {
           { threadId: "thread-recovered", requestKey: "search-backfill:user_1:1:1" },
         ]);
         expect((yield* harness.store.threadIndex).threads).toHaveLength(1);
+        expect(harness.initQueryCount).toBe(7);
+      }),
+  );
+
+  it.effect(
+    "retries failed table initialization and caches its first success per service layer",
+    () =>
+      Effect.gen(function* () {
+        const harness = yield* makeHarness({
+          summaries: [summary("thread-a")],
+          failFirstTableInit: true,
+        });
+
+        yield* harness.withService((service) =>
+          Effect.gen(function* () {
+            const failed = yield* Effect.exit(service.activation);
+            expect(Exit.isFailure(failed)).toBe(true);
+            expect(harness.initQueryCount).toBe(1);
+
+            expect(yield* service.activation).toBe("search-backfill:user_1:1:1");
+            expect(harness.initQueryCount).toBe(7);
+            expect(yield* service.ready).toBe(true);
+            yield* service.observeThread(ThreadId.make("thread-a"));
+            yield* service.observeThread(ThreadId.make("thread-a"));
+            expect(yield* service.activation).toBe("search-backfill:user_1:1:1");
+            expect(harness.initQueryCount).toBe(7);
+
+            harness.setGeneration("2");
+            expect(yield* service.activation).toBe("search-backfill:user_1:2:2");
+            expect(harness.initQueryCount).toBe(7);
+          }),
+        );
+      }),
+  );
+
+  it.effect(
+    "prunes obsolete requests in bounded indexed batches without rereading a completed registry",
+    () =>
+      Effect.gen(function* () {
+        const harness = yield* makeHarness({ summaries: [summary("thread-z")] });
+        const obsoleteKey = "search-backfill:user_1:1:1";
+        const countFor = (key: string) =>
+          harness.sql<{ readonly request_count: number }>`SELECT COUNT(*) AS request_count
+          FROM search_backfill_requests WHERE activation = ${key}`.pipe(
+            Effect.map((rows) => rows[0]?.request_count ?? 0),
+          );
+
+        yield* harness.withService((service) =>
+          Effect.forEach(
+            Array.from({ length: 70 }, (_, index) => ThreadId.make(`pending-${index}`)),
+            service.observeThread,
+          ),
+        );
+        expect(yield* countFor(obsoleteKey)).toBe(70);
+
+        harness.setGeneration("2");
+        const activeKey = "search-backfill:user_1:2:2";
+        yield* harness.observeThread(ThreadId.make("thread-current-2"));
+
+        const [olderPlan, newerPlan, pendingPlan] = yield* Effect.all([
+          harness.sql<{ readonly detail: string }>`EXPLAIN QUERY PLAN
+          SELECT rowid FROM search_backfill_requests WHERE activation < ${activeKey}
+          ORDER BY activation, complete, thread_id LIMIT 32`,
+          harness.sql<{ readonly detail: string }>`EXPLAIN QUERY PLAN
+          SELECT rowid FROM search_backfill_requests WHERE activation > ${activeKey}
+          ORDER BY activation, complete, thread_id LIMIT 32`,
+          harness.sql<{ readonly detail: string }>`EXPLAIN QUERY PLAN
+          SELECT thread_id FROM search_backfill_requests
+          WHERE activation = ${activeKey} AND complete = 0 ORDER BY thread_id LIMIT 8`,
+        ]);
+        for (const plan of [olderPlan, newerPlan, pendingPlan]) {
+          expect(plan.map((row) => row.detail).join(" ")).toContain(
+            "SEARCH search_backfill_requests USING COVERING INDEX search_backfill_requests_activation_complete_thread",
+          );
+        }
+
+        const alarmsBeforePruning = harness.alarms.length;
+        yield* harness.step();
+        expect(yield* countFor(obsoleteKey)).toBe(38);
+        expect(yield* countFor(activeKey)).toBeGreaterThan(0);
+        expect(harness.alarms).toHaveLength(alarmsBeforePruning + 1);
+
+        yield* harness.step();
+        expect(yield* countFor(obsoleteKey)).toBe(6);
+        expect(harness.alarms).toHaveLength(alarmsBeforePruning + 2);
+
+        yield* harness.step();
+        expect(yield* countFor(obsoleteKey)).toBe(0);
+        expect(harness.alarms).toHaveLength(alarmsBeforePruning + 2);
+        expect(harness.registryReads).toBe(1);
+
+        harness.setGeneration("1");
+        const nextKey = "search-backfill:user_1:1:3";
+        yield* harness.observeThread(ThreadId.make("thread-current-1"));
+        yield* harness.step();
+
+        expect(yield* countFor(activeKey)).toBe(0);
+        expect(yield* countFor(nextKey)).toBeGreaterThan(0);
+        expect(harness.attempts).toContainEqual({
+          threadId: "thread-current-1",
+          requestKey: nextKey,
+        });
       }),
   );
 
