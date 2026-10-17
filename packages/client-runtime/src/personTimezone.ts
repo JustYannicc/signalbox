@@ -1,4 +1,5 @@
 import type { EnvironmentId, ExecutionEnvironmentCapabilities } from "@t3tools/contracts";
+import * as Cause from "effect/Cause";
 import { Atom } from "effect/reactivity";
 
 type IntlWithTimezoneValues = typeof Intl & {
@@ -32,6 +33,22 @@ export function supportsPersonTimezone(
   capabilities: Pick<ExecutionEnvironmentCapabilities, "personTimezone"> | null | undefined,
 ): boolean {
   return capabilities?.personTimezone === true;
+}
+
+export function personTimezoneErrorMessage(cause: Cause.Cause<unknown>, fallback: string): string {
+  if (Cause.hasInterruptsOnly(cause)) return fallback;
+  const error = Cause.squash(cause);
+  if (error instanceof Error && error.message.trim()) return error.message;
+  if (
+    typeof error === "object" &&
+    error !== null &&
+    "message" in error &&
+    typeof error.message === "string" &&
+    error.message.trim()
+  ) {
+    return error.message;
+  }
+  return fallback;
 }
 
 interface PersonTimezoneEnvironmentCandidate<Id extends string> {

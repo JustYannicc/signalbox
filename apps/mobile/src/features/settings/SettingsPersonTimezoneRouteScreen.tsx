@@ -2,6 +2,7 @@ import { useAtomValue } from "@effect/atom-react";
 import { LegendList } from "@legendapp/list/react-native";
 import {
   detectDeviceTimezone,
+  personTimezoneErrorMessage,
   supportedTimezones,
   supportsPersonTimezone,
 } from "@t3tools/client-runtime/personTimezone";
@@ -103,7 +104,12 @@ function PersonTimezoneChoices({ environmentId }: { readonly environmentId: Envi
     ? describeTimezone(settings)
     : settingsResult.waiting
       ? "Loading time zone…"
-      : "Couldn't read the time zone from this connection.";
+      : AsyncResult.isFailure(settingsResult)
+        ? personTimezoneErrorMessage(
+            settingsResult.cause,
+            "Couldn't read the time zone from this connection.",
+          )
+        : "Couldn't read the time zone from this connection.";
   const status = error
     ? error
     : settingsResult.waiting && settings === null
@@ -125,16 +131,27 @@ function PersonTimezoneChoices({ environmentId }: { readonly environmentId: Envi
         }
         const report = await reportTimezone({ environmentId, input: { timezone } });
         if (AsyncResult.isFailure(report)) {
-          setError("Couldn't report this device's time zone. Try again.");
+          setError(
+            personTimezoneErrorMessage(
+              report.cause,
+              "Couldn't report this device's time zone. Try again.",
+            ),
+          );
           return;
         }
         const result = await setTimezone({ environmentId, input: { timezone: null } });
-        if (AsyncResult.isFailure(result)) setError("Couldn't restore automatic time zone.");
+        if (AsyncResult.isFailure(result)) {
+          setError(
+            personTimezoneErrorMessage(result.cause, "Couldn't restore automatic time zone."),
+          );
+        }
         return;
       }
 
       const result = await setTimezone({ environmentId, input: { timezone: choice.value } });
-      if (AsyncResult.isFailure(result)) setError("Couldn't save this time zone.");
+      if (AsyncResult.isFailure(result)) {
+        setError(personTimezoneErrorMessage(result.cause, "Couldn't save this time zone."));
+      }
     } finally {
       setSaving(false);
     }

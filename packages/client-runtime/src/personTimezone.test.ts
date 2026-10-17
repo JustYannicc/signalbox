@@ -1,10 +1,12 @@
 import { describe, expect, it } from "@effect/vitest";
 import type { ExecutionEnvironmentCapabilities } from "@t3tools/contracts";
+import * as Cause from "effect/Cause";
 
 import {
   connectedPersonTimezoneEnvironmentIds,
   DeviceTimezoneReportCache,
   detectDeviceTimezone,
+  personTimezoneErrorMessage,
   permittedPersonTimezoneEnvironmentIds,
   PersonTimezoneReportCoordinator,
   supportedTimezones,
@@ -26,6 +28,16 @@ describe("person timezone client helpers", () => {
     expect(supportsPersonTimezone(undefined)).toBe(false);
     expect(supportsPersonTimezone({ personTimezone: false })).toBe(false);
     expect(supportsPersonTimezone({ personTimezone: true })).toBe(true);
+  });
+
+  it("shows a backend error message and falls back for failures without one", () => {
+    expect(
+      personTimezoneErrorMessage(Cause.fail({ message: "Timezone unavailable" }), "Try again"),
+    ).toBe("Timezone unavailable");
+    expect(personTimezoneErrorMessage(Cause.interrupt(), "Try again")).toBe("Try again");
+    expect(personTimezoneErrorMessage(Cause.fail("untyped failure"), "Try again")).toBe(
+      "Try again",
+    );
   });
 
   it("selects only connected cloud environments with report permission", () => {
