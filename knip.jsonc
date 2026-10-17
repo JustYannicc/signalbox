@@ -139,6 +139,15 @@
       // signalbox: retain upstream's lifecycle adapter so its patches merge cleanly.
       "ignore": ["src/state/threadLifecycle.ts"],
     },
+    "packages/sync": {
+      "entry": [
+        "codegen-proof/lunora/{schema,counters}.ts",
+        "codegen-proof/src/api-contract.ts",
+        "type-tests/**/*.ts",
+      ],
+      // The generated shard uses Workers globals from the proof's own tsconfig.
+      "ignoreDependencies": ["@cloudflare/workers-types"],
+    },
     "packages/effect-acp": {
       "includeEntryExports": true,
       "entry": ["test/fixtures/*.ts"],
