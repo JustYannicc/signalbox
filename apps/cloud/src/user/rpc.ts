@@ -115,6 +115,11 @@ import { AUTOMATION_RPC_SCOPES } from "@signalbox/automations/rpcScopes";
 import { makePushHandlers } from "../push/pushRpc.ts";
 import { makeKeysHandlers } from "./keysRpc.ts";
 import { makeSignInHandlers } from "../signIn/signInRpc.ts";
+import {
+  ANALYTICS_METHODS,
+  ANALYTICS_REQUIRED_SCOPES,
+  makeAnalyticsHandlers,
+} from "./analyticsRpc.ts";
 import { makeNotesHandlers, NOTES_METHODS } from "../notes/notesRpc.ts";
 import { DriveShortcuts } from "./DriveShortcuts.ts";
 import * as UserContexts from "./UserContexts.ts";
@@ -240,6 +245,7 @@ const SERVED = [
   ...POOL_METHODS,
   // The user's automations (`automations/`), run on this object.
   ...AUTOMATION_METHODS,
+  ...ANALYTICS_METHODS,
 ] as const;
 type ServedTag = (typeof SERVED)[number];
 type WsRpcs = RpcGroup.Rpcs<typeof WsRpcGroup>;
@@ -260,6 +266,7 @@ const REQUIRED_SCOPES = {
   [WS_METHODS.subscribeServerConfig]: AuthOrchestrationReadScope,
   [WS_METHODS.serverGetConfig]: AuthOrchestrationReadScope,
   [WS_METHODS.serverUpdateSettings]: AuthSettingsWriteScope,
+  ...ANALYTICS_REQUIRED_SCOPES,
   [WS_METHODS.serverProbe]: AuthOrchestrationReadScope,
   [WS_METHODS.serverReportClientActivity]: AuthOrchestrationReadScope,
   [WS_METHODS.subscribeServerLifecycle]: AuthOrchestrationReadScope,
@@ -556,6 +563,7 @@ export const layerHandlers = (input: {
         scopes: input.scopes ?? AuthStandardClientScopes,
       });
       const signIn = yield* makeSignInHandlers({ userId });
+      const analytics = yield* makeAnalyticsHandlers;
       return {
         ...pools.handlers,
         ...pushes,
@@ -563,6 +571,7 @@ export const layerHandlers = (input: {
         ...notes,
         ...keys,
         ...signIn,
+        ...analytics,
         [WS_METHODS.subscribeServerConfig]: (request) => pools.configStream(request),
         [WS_METHODS.serverGetConfig]: () => pools.configNow,
         [WS_METHODS.serverProbe]: () => Effect.succeed({}),
