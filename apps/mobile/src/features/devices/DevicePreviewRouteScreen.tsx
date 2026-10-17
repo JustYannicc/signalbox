@@ -5,7 +5,12 @@ import {
   deviceToolUpdatePolicy,
 } from "@t3tools/client-runtime/state/device";
 import { useIsFocused, useNavigation, type StaticScreenProps } from "@react-navigation/native";
-import { EnvironmentId, ThreadId } from "@t3tools/contracts";
+import {
+  EnvironmentId,
+  ThreadId,
+  deviceSessionRequiresReadOnlyPanel,
+  type DeviceSession,
+} from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import { useCallback, useEffect, useMemo, useRef, useState, type RefObject } from "react";
 import * as Haptics from "expo-haptics";
@@ -82,7 +87,10 @@ function DevicePreviewScreen({
   const [shuttingDown, setShuttingDown] = useState(false);
   const [controlsVisible, setControlsVisible] = useState(true);
   const retryHost = useAtomCommand(deviceEnvironment.list);
-  const shutdown = useAtomCommand(deviceEnvironment.shutdown, { reportFailure: false });
+  const openDevice = useAtomCommand(deviceEnvironment.open, { reportFailure: false });
+  const closeDevice = useAtomCommand(deviceEnvironment.close, { reportFailure: false });
+  const [panelSession, setPanelSession] = useState<DeviceSession | null>(null);
+  const panelSessionRef = useRef<DeviceSession | null>(null);
   const streamRef = useRef<DeviceStreamRef>(null);
   const state = useEnvironmentQuery(deviceEnvironment.state({ environmentId, input: {} }));
   const previews = useMemo(
@@ -90,6 +98,89 @@ function DevicePreviewScreen({
     [state.data, threadId],
   );
   const preview = selectedThreadDevicePreview(previews, selectedKey);
+  const observer =
+    (preview !== null && deviceSessionRequiresReadOnlyPanel(preview.session)) ||
+    panelSession?.observer === true;
+  const previewKey = preview?.key;
+  const previewHostId = preview?.session.hostId;
+  const previewDeviceId = preview?.session.deviceId;
+  const previewPlatform = preview?.session.platform;
+  useEffect(() => {
+    if (
+      !focused ||
+      !foreground ||
+      previewKey === undefined ||
+      previewHostId === undefined ||
+      previewDeviceId === undefined ||
+      previewPlatform === undefined
+    )
+      return;
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let owner: DeviceSession | null = null;
+    const heartbeat = async () => {
+      const result = await openDevice({
+        environmentId,
+        input: {
+          threadId,
+          hostId: previewHostId,
+          deviceId: previewDeviceId,
+          platform: previewPlatform,
+          ...(owner === null ? {} : { sessionId: owner.sessionId, leaseId: owner.leaseId }),
+        },
+      });
+      if (cancelled) {
+        if (result._tag === "Success") {
+          void closeDevice({
+            environmentId,
+            input: {
+              threadId,
+              hostId: result.value.hostId,
+              deviceId: result.value.deviceId,
+              sessionId: result.value.sessionId,
+              leaseId: result.value.leaseId,
+            },
+          });
+        }
+        return;
+      }
+      if (result._tag === "Success") {
+        owner = result.value;
+        panelSessionRef.current = owner;
+        setPanelSession(owner);
+      }
+      timer = setTimeout(() => void heartbeat(), 60_000);
+    };
+    void heartbeat();
+    return () => {
+      cancelled = true;
+      if (timer !== undefined) clearTimeout(timer);
+      if (owner !== null) {
+        void closeDevice({
+          environmentId,
+          input: {
+            threadId,
+            hostId: owner.hostId,
+            deviceId: owner.deviceId,
+            sessionId: owner.sessionId,
+            leaseId: owner.leaseId,
+          },
+        });
+      }
+      panelSessionRef.current = null;
+    };
+  }, [
+    closeDevice,
+    environmentId,
+    foreground,
+    focused,
+    openDevice,
+    previewDeviceId,
+    previewHostId,
+    previewKey,
+    previewPlatform,
+    threadId,
+  ]);
   const onInputConnected = useCallback(async (connected: boolean) => {
     setInputConnected(connected);
     if (connected) setControlsVisible(false);
@@ -125,18 +216,26 @@ function DevicePreviewScreen({
 
   const shutDownDevice = async () => {
     if (!preview || shuttingDown) return;
+    const session = panelSessionRef.current ?? panelSession;
+    if (!session) return;
     setShuttingDown(true);
     try {
-      const result = await shutdown({
+      const result = await closeDevice({
         environmentId,
         input: {
-          hostId: preview.session.hostId,
-          deviceId: preview.session.deviceId,
-          platform: preview.session.platform,
+          threadId,
+          hostId: session.hostId,
+          deviceId: session.deviceId,
+          sessionId: session.sessionId,
+          leaseId: session.leaseId,
+          shutdown: true,
         },
       });
       if (result._tag === "Failure") {
         Dialog.alert("Could not shut down device", String(Cause.squash(result.cause)));
+      } else {
+        panelSessionRef.current = null;
+        setPanelSession(null);
       }
     } finally {
       setShuttingDown(false);
@@ -144,19 +243,22 @@ function DevicePreviewScreen({
   };
 
   const controls: AppBarMenuItem[] = [
-    ...(state.data?.hosts
-      .filter(
-        (host) =>
-          state.data?.supportsHostRetry && state.data.hostStatuses[host.id]?.status === "failed",
-      )
-      .map((host) => ({
-        id: `retry-${host.id}`,
-        title: `Retry ${host.label}`,
-        icon: "arrow.clockwise" as const,
-        onPress: () => {
-          void retryHost({ environmentId, input: { retryHostId: host.id } });
-        },
-      })) ?? []),
+    ...(!observer
+      ? (state.data?.hosts
+          .filter(
+            (host) =>
+              state.data?.supportsHostRetry &&
+              state.data.hostStatuses[host.id]?.status === "failed",
+          )
+          .map((host) => ({
+            id: `retry-${host.id}`,
+            title: `Retry ${host.label}`,
+            icon: "arrow.clockwise" as const,
+            onPress: () => {
+              void retryHost({ environmentId, input: { retryHostId: host.id } });
+            },
+          })) ?? [])
+      : []),
     ...(state.data?.supportsToolInspection
       ? [
           {
@@ -202,7 +304,7 @@ function DevicePreviewScreen({
         setStreamAttempt((attempt) => attempt + 1);
       },
     },
-    ...(preview?.session.platform === "android"
+    ...(!observer && preview?.session.platform === "android"
       ? [
           {
             id: "back",
@@ -213,14 +315,18 @@ function DevicePreviewScreen({
           },
         ]
       : []),
-    {
-      id: "app-switcher",
-      title: "App switcher",
-      icon: "square.on.square",
-      disabled: !inputConnected,
-      onPress: () => streamRef.current?.appSwitcher(),
-    },
-    ...(preview?.session.platform === "ios"
+    ...(!observer
+      ? [
+          {
+            id: "app-switcher",
+            title: "App switcher",
+            icon: "square.on.square",
+            disabled: !inputConnected,
+            onPress: () => streamRef.current?.appSwitcher(),
+          },
+        ]
+      : []),
+    ...(!observer && preview?.session.platform === "ios"
       ? [
           {
             id: "rotate",
@@ -231,13 +337,17 @@ function DevicePreviewScreen({
           },
         ]
       : []),
-    {
-      id: "shutdown",
-      title: shuttingDown ? "Shutting down…" : "Shut down device",
-      icon: "power",
-      disabled: !preview || shuttingDown,
-      onPress: () => void shutDownDevice(),
-    },
+    ...(!observer
+      ? [
+          {
+            id: "shutdown",
+            title: shuttingDown ? "Shutting down…" : "Shut down device",
+            icon: "power",
+            disabled: !preview || !panelSession || shuttingDown,
+            onPress: () => void shutDownDevice(),
+          },
+        ]
+      : []),
   ];
   const pressHome = () => streamRef.current?.home();
   const menuItems: AppBarMenuItem[] = [
@@ -269,6 +379,7 @@ function DevicePreviewScreen({
           preview={preview}
           streamRef={streamRef}
           onInputConnected={onInputConnected}
+          observer={observer}
         />
       ) : (
         <View className="flex-1 items-center justify-center gap-4 px-6">
@@ -317,7 +428,7 @@ function DevicePreviewScreen({
               <ControlPill
                 accessibilityLabel="Home"
                 icon="house"
-                disabled={!inputConnected}
+                disabled={!inputConnected || observer}
                 onPress={pressHome}
               />
               <DeviceOptionsMenu items={menuItems} />
@@ -368,11 +479,13 @@ function OpenDevicePreview({
   preview,
   streamRef,
   onInputConnected,
+  observer,
 }: {
   readonly environmentId: EnvironmentId;
   readonly preview: ThreadDevicePreview;
   readonly streamRef: RefObject<DeviceStreamRef | null>;
   readonly onInputConnected: (connected: boolean) => Promise<void>;
+  readonly observer: boolean;
 }) {
   const { session } = preview;
   const { themeVariables } = useAppearancePreferences();
@@ -386,22 +499,36 @@ function OpenDevicePreview({
     return () => void onInputConnected(false);
   }, [environmentId, onInputConnected]);
   return access ? (
-    <DeviceStreamWebView
-      ref={streamRef}
-      access={access}
-      platform={session.platform}
-      deviceId={session.deviceId}
-      colors={{
-        background: themeVariables["--color-sheet-solid"],
-        foreground: themeVariables["--color-foreground"],
-        muted: themeVariables["--color-foreground-muted"],
-        buttonBackground: themeVariables["--color-secondary"],
-        buttonForeground: themeVariables["--color-secondary-foreground"],
-        buttonBorder: themeVariables["--color-secondary-border"],
-      }}
-      onUnauthorized={onUnauthorized}
-      onInputConnected={onInputConnected}
-    />
+    <View className="flex-1">
+      <DeviceStreamWebView
+        ref={streamRef}
+        access={access}
+        platform={session.platform}
+        deviceId={session.deviceId}
+        colors={{
+          background: themeVariables["--color-sheet-solid"],
+          foreground: themeVariables["--color-foreground"],
+          muted: themeVariables["--color-foreground-muted"],
+          buttonBackground: themeVariables["--color-secondary"],
+          buttonForeground: themeVariables["--color-secondary-foreground"],
+          buttonBorder: themeVariables["--color-secondary-border"],
+        }}
+        onUnauthorized={onUnauthorized}
+        onInputConnected={onInputConnected}
+      />
+      {observer ? (
+        <View
+          accessibilityLabel="Watching the agent's device; touch input is disabled"
+          accessibilityRole="text"
+          className="absolute inset-0 items-center justify-end pb-10"
+          pointerEvents="auto"
+        >
+          <AppText className="rounded-full bg-black/70 px-3 py-2 text-xs text-white">
+            Watching the agent's device
+          </AppText>
+        </View>
+      ) : null}
+    </View>
   ) : (
     <View className="flex-1 items-center justify-center gap-4 px-6">
       {error ? (

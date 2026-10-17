@@ -21,6 +21,7 @@ import {
   type SshDeviceHostConfig,
   type DeviceHostSummary,
   LOCAL_DEVICE_HOST_ID,
+  type ProviderSessionId,
   type ThreadId,
 } from "@t3tools/contracts";
 import * as FileSystem from "effect/FileSystem";
@@ -28,17 +29,14 @@ import { resolveNodeExecutable, nodeRuntimeUnavailableMessage } from "@t3tools/s
 import * as Path from "effect/Path";
 import { ensureAgentDevice, ensureDeviceHub } from "./DeviceToolchain.ts";
 import * as ServerConfig from "../config.ts";
-import {
-  agentDeviceConfigPath,
-  agentDeviceSession,
-  writeAgentDeviceConfig,
-} from "./AgentDeviceTarget.ts";
+import { agentDeviceConfigPath, writeAgentDeviceConfig } from "./AgentDeviceTarget.ts";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as PubSub from "effect/PubSub";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
@@ -56,6 +54,33 @@ import * as DeviceHost from "./DeviceHost.ts";
 import * as SshDeviceHost from "./SshDeviceHost.ts";
 import * as Exit from "effect/Exit";
 import * as LocalDeviceHost from "./LocalDeviceHost.ts";
+import * as HostProcess from "@t3tools/shared/HostProcess";
+import {
+  DEVICE_CLEANUP_INTERVAL,
+  DEVICE_LEASE_WAIT_INTERVAL,
+  DEVICE_LEASE_WAIT_ATTEMPTS,
+  deviceAliases,
+  type DeviceLeaseTarget,
+  type DeviceOwnerLiveness,
+} from "./DeviceLease.ts";
+import {
+  makeDeviceLeaseCoordinator,
+  type DeviceLeaseCaller,
+  type DeviceLeaseShutdownClaim,
+  type DeviceLeaseSession,
+} from "./DeviceLeaseCoordinator.ts";
+import { makeDeviceLeaseAccess } from "./DeviceLeaseAccess.ts";
+import { makeDeviceLeaseJanitor, type DeviceJanitorItem } from "./DeviceLeaseJanitor.ts";
+import {
+  type DeviceLeaseStore,
+  currentDeviceLeaseProcessId,
+  currentDeviceLeaseProcessIdentity,
+  deviceLeaseProcessLiveness,
+  deviceLeaseDirectory,
+  makeFileDeviceLeaseStore,
+  makeMemoryDeviceLeaseStore,
+} from "./DeviceLeaseStore.ts";
+import * as ProviderSessionManager from "../orchestration-v2/ProviderSessionManager.ts";
 
 export const DEVICE_HUB_ROUTE_PREFIX = "/api/device-hub";
 
@@ -95,6 +120,22 @@ export interface DeviceAgentReadiness extends DeviceReadiness {
   readonly agentDevice: DeviceHost.AgentDeviceEndpoint;
 }
 
+export type DeviceOpenOwner =
+  | { readonly kind: "panel"; readonly sessionId?: string; readonly leaseId?: string }
+  | { readonly kind: "agent"; readonly providerSessionId: ProviderSessionId };
+
+export interface DeviceLeaseRuntime {
+  readonly store?: DeviceLeaseStore;
+  readonly processId?: number;
+  readonly processIdentity?: string;
+  readonly isOwnerProcessLive?: (processId: number, processIdentity: string) => DeviceOwnerLiveness;
+  readonly isProviderSessionLive?: (
+    providerSessionId: ProviderSessionId,
+  ) => Effect.Effect<boolean | null>;
+  readonly waitForLeaseRetry?: () => Effect.Effect<void>;
+  readonly automaticCleanup?: boolean;
+}
+
 export class DeviceService extends Context.Service<
   DeviceService,
   {
@@ -106,7 +147,11 @@ export class DeviceService extends Context.Service<
       threadId: ThreadId;
       hostId: DeviceHostId;
       deviceId: DeviceId;
-    }) => Effect.Effect<ReadonlyArray<string>, DeviceError>;
+      sessionId: string;
+    }) => Effect.Effect<
+      { readonly args: ReadonlyArray<string>; readonly sessionId: string },
+      DeviceError
+    >;
     readonly state: Effect.Effect<DeviceServiceState>;
     readonly subscribe: Effect.Effect<PubSub.Subscription<DeviceServiceState>, never, Scope.Scope>;
     readonly configure: (
@@ -116,9 +161,21 @@ export class DeviceService extends Context.Service<
     readonly updateTool: (tool: "hub" | "agent") => Effect.Effect<DeviceServiceState, DeviceError>;
     readonly inspect: Effect.Effect<DeviceServiceState>;
     readonly retryHost: (hostId: DeviceHostId) => Effect.Effect<DeviceServiceState, DeviceError>;
-    readonly open: (input: DeviceOpenInput) => Effect.Effect<DeviceSession, DeviceError>;
-    readonly close: (input: DeviceCloseInput) => Effect.Effect<void, DeviceError>;
+    readonly open: (
+      input: DeviceOpenInput,
+      owner?: DeviceOpenOwner,
+    ) => Effect.Effect<DeviceSession, DeviceError>;
+    readonly close: (
+      input: DeviceCloseInput,
+      owner?: DeviceOpenOwner,
+    ) => Effect.Effect<void, DeviceError>;
     readonly shutdown: (input: DeviceShutdownInput) => Effect.Effect<void, DeviceError>;
+    /** Exact-ID maintenance seam used by the operator CLI. */
+    readonly janitor: (input: {
+      readonly hostId: DeviceHostId;
+      readonly deviceId: DeviceId;
+      readonly apply: boolean;
+    }) => Effect.Effect<ReadonlyArray<DeviceJanitorItem>, DeviceError>;
     readonly detail: (input: DeviceDetailInput) => Effect.Effect<DeviceDetail, DeviceError>;
     readonly action: (input: DeviceActionInput) => Effect.Effect<DeviceDetail, DeviceError>;
     readonly screenshot: (input: {
@@ -164,10 +221,12 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
       }),
     ),
   installTool?: (tool: "hub" | "agent") => Effect.Effect<unknown, DeviceError>,
+  leaseRuntime: DeviceLeaseRuntime = {},
 ) {
   const settings = yield* ServerSettings.ServerSettingsService;
   const crypto = yield* Crypto.Crypto;
   const lifecycleLock = yield* Semaphore.make(1);
+  const sessionStateLock = yield* Semaphore.make(1);
   const readDeviceSettings = settings.getSettings.pipe(
     Effect.map((value) => ({
       enabled: value.enableDeviceSupport,
@@ -180,6 +239,20 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
     ),
   );
   const initialSettings = yield* readDeviceSettings;
+  const leaseStore = leaseRuntime.store ?? (yield* makeMemoryDeviceLeaseStore);
+  const processId = leaseRuntime.processId ?? currentDeviceLeaseProcessId;
+  const processIdentity = leaseRuntime.processIdentity ?? currentDeviceLeaseProcessIdentity;
+  const isOwnerProcessLive = leaseRuntime.isOwnerProcessLive ?? deviceLeaseProcessLiveness;
+  const isProviderSessionLive = leaseRuntime.isProviderSessionLive;
+  const leaseAccess = makeDeviceLeaseAccess({
+    store: leaseStore,
+    processId,
+    processIdentity,
+    isOwnerProcessLive,
+    ...(isProviderSessionLive === undefined ? {} : { isProviderSessionLive }),
+  });
+  const leases = yield* makeDeviceLeaseCoordinator({ access: leaseAccess });
+  const deviceJanitor = makeDeviceLeaseJanitor(leaseAccess);
 
   const httpClient = (yield* HttpClient.HttpClient).pipe(HttpClient.withScope);
   const statePubSub = yield* PubSub.unbounded<DeviceServiceState>();
@@ -564,6 +637,15 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
   ): DeviceSummary | undefined =>
     state.devices.find((device) => device.hostId === hostId && device.id === deviceId);
 
+  const leaseTarget = (device: DeviceSummary): DeviceLeaseTarget => ({
+    hostId: device.hostId,
+    platform: device.platform,
+    id: device.id,
+    name: device.name,
+    booted: device.booted,
+    physical: device.physical,
+  });
+
   const ensurePlatform = Effect.fn("DeviceService.ensurePlatform")(function* (
     host: DeviceHost.DeviceHost["Service"],
     platform: DevicePlatform,
@@ -627,93 +709,344 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
     return result.serial ?? result.id ?? device.id;
   });
 
-  const open: DeviceService["Service"]["open"] = Effect.fn("DeviceService.open")(function* (input) {
-    const host = yield* resolveHost(input.hostId);
-    yield* ensurePlatform(host, input.platform);
-    const ready = yield* readiness(host.id);
-    let state = yield* refresh(ready);
-    let device = findDevice(state, host.id, input.deviceId);
-    if (!device) {
-      return yield* new DeviceNotFoundError({ hostId: host.id, deviceId: input.deviceId });
-    }
-    if (!device.booted && input.boot !== false) {
-      const booting = { ...device, threadId: input.threadId };
-      yield* publish((current) => ({
-        ...current,
-        bootingDevices: [
-          ...(current.bootingDevices ?? []).filter(
-            (entry) => entry.hostId !== booting.hostId || entry.id !== booting.id,
-          ),
-          booting,
-        ],
-      }));
-      const bootedId = yield* boot(ready, device).pipe(
-        Effect.ensuring(
-          publish((current) => ({
-            ...current,
-            bootingDevices: (current.bootingDevices ?? []).filter(
-              (entry) => entry.hostId !== booting.hostId || entry.id !== booting.id,
-            ),
-          })),
-        ),
-      );
-      state = yield* refresh(ready);
-      device = findDevice(state, host.id, bootedId) ?? findDevice(state, host.id, device.id);
-      if (!device) {
-        return yield* new DeviceNotFoundError({ hostId: host.id, deviceId: bootedId });
+  const open: DeviceService["Service"]["open"] = Effect.fn("DeviceService.open")(
+    function* (input, requestedOwner) {
+      const owner = requestedOwner ?? { kind: "panel" as const };
+      const host = yield* resolveHost(input.hostId);
+      yield* ensurePlatform(host, input.platform);
+      const ready = yield* readiness(host.id);
+      const initialState = yield* refresh(ready);
+      const initialDevice =
+        findDevice(initialState, host.id, input.deviceId) ??
+        initialState.devices.find(
+          (candidate) =>
+            candidate.hostId === host.id &&
+            deviceAliases(leaseTarget(candidate)).includes(input.deviceId),
+        );
+      if (!initialDevice) {
+        return yield* new DeviceNotFoundError({ hostId: host.id, deviceId: input.deviceId });
       }
-    } else if (device.platform === "ios" && device.booted) {
-      yield* HttpClientRequest.post(
-        `${ready.hub.origin}${vendorPrefix("ios")}/grid/api/start`,
-      ).pipe(
-        HttpClientRequest.bodyJson({ udid: device.id }),
+      const initialTarget = leaseTarget(initialDevice);
+      const queueEntry = { ...initialDevice, threadId: input.threadId };
+      const panelSessionId =
+        owner.kind === "panel" ? (owner.sessionId ?? input.sessionId) : undefined;
+      const panelLeaseId = owner.kind === "panel" ? (owner.leaseId ?? input.leaseId) : undefined;
+      const caller: DeviceLeaseCaller =
+        owner.kind === "agent"
+          ? {
+              kind: "agent" as const,
+              threadId: input.threadId,
+              providerSessionId: owner.providerSessionId,
+            }
+          : {
+              kind: "panel" as const,
+              threadId: input.threadId,
+              ...(panelSessionId === undefined ? {} : { sessionId: panelSessionId }),
+              ...(panelLeaseId === undefined ? {} : { leaseId: panelLeaseId }),
+            };
+      const waiterId = yield* crypto.randomUUIDv4().pipe(
+        Effect.map(String),
         Effect.mapError(
           (cause) =>
-            new DeviceOperationError({ operation: "open", reason: "invalid_payload", cause }),
-        ),
-        Effect.flatMap((request) =>
-          hubJson(request, HubActionResult, "attach stream", BOOT_TIMEOUT),
+            new DeviceOperationError({
+              operation: "open",
+              reason: "request_failed",
+              cause,
+            }),
         ),
       );
-    }
-    if (hosts.get(host.id) !== host)
-      return yield* new DeviceHostUnavailableError({
-        hostId: host.id,
-        reason: "Host configuration changed. Retry the operation.",
-      });
-    const openedAt = DateTime.formatIso(yield* DateTime.now);
-    const session: DeviceSession = {
-      threadId: input.threadId,
-      hostId: host.id,
-      deviceId: device.id,
-      platform: device.platform,
-      openedAt,
-    };
-    yield* lifecycleLock.withPermit(
-      Effect.gen(function* () {
-        if (!(yield* readDeviceSettings).enabled)
-          return yield* new DeviceHostUnavailableError({
-            hostId: host.id,
-            reason: "Device support was turned off while the device was opening.",
-          });
-        yield* publish((current) => ({
-          ...current,
-          sessions: [
-            ...current.sessions.filter(
-              (existing) =>
-                !(
-                  existing.threadId === session.threadId &&
-                  existing.hostId === session.hostId &&
-                  existing.deviceId === session.deviceId
-                ),
+      let queueVisible = false;
+      const markQueued = () => {
+        if (queueVisible) return Effect.void;
+        queueVisible = true;
+        return publish((state) => ({
+          ...state,
+          queuedDevices: [
+            ...(state.queuedDevices ?? []).filter(
+              (entry) =>
+                entry.hostId !== queueEntry.hostId ||
+                entry.id !== queueEntry.id ||
+                entry.threadId !== queueEntry.threadId,
             ),
+            queueEntry,
+          ],
+        }));
+      };
+
+      const clearQueue = () =>
+        publish((state) => ({
+          ...state,
+          queuedDevices: (state.queuedDevices ?? []).filter(
+            (entry) =>
+              entry.hostId !== queueEntry.hostId ||
+              entry.id !== queueEntry.id ||
+              entry.threadId !== queueEntry.threadId,
+          ),
+        }));
+      const toDeviceSession = ({
+        leaseKey: _leaseKey,
+        ...session
+      }: DeviceLeaseSession): DeviceSession => session;
+      const saveSession = (session: DeviceSession) =>
+        publish((state) => ({
+          ...state,
+          sessions: [
+            ...state.sessions
+              .filter((existing) => existing.sessionId !== session.sessionId)
+              .map((existing) =>
+                session.ownerKind === "agent" &&
+                existing.ownerKind === "panel" &&
+                existing.threadId === session.threadId &&
+                existing.hostId === session.hostId &&
+                existing.deviceId === session.deviceId
+                  ? { ...existing, observer: true }
+                  : existing,
+              ),
             session,
           ],
         }));
-      }),
-    );
-    return session;
-  });
+
+      const cleanupProvisional = (session: DeviceLeaseSession, target: DeviceLeaseTarget) => {
+        const currentTarget = target.booted
+          ? Effect.succeed(target)
+          : refresh(ready).pipe(
+              Effect.map((state) => {
+                const aliases = new Set(deviceAliases(target));
+                const current = state.devices.find(
+                  (device) =>
+                    device.hostId === host.id &&
+                    device.booted &&
+                    deviceAliases(leaseTarget(device)).some((alias) => aliases.has(alias)),
+                );
+                return current ? leaseTarget(current) : target;
+              }),
+              Effect.orElseSucceed(() => target),
+            );
+        return currentTarget.pipe(
+          Effect.flatMap((shutdownTarget) =>
+            leases.abortOpen({
+              key: session.leaseKey,
+              sessionId: session.sessionId,
+              leaseId: session.leaseId,
+              target: shutdownTarget,
+            }),
+          ),
+          Effect.flatMap((claim) =>
+            claim === undefined
+              ? Effect.void
+              : shutdownDevice(
+                  claim.target.hostId,
+                  claim.target.id as DeviceId,
+                  claim.target.platform,
+                ).pipe(
+                  Effect.tap(() => leases.finishShutdown(claim, true)),
+                  Effect.catch((error) =>
+                    leases
+                      .finishShutdown(claim, false)
+                      .pipe(
+                        Effect.andThen(
+                          Effect.logWarning("Could not clean up a failed device open", { error }),
+                        ),
+                      ),
+                  ),
+                ),
+          ),
+          Effect.andThen(
+            publish((state) => ({
+              ...state,
+              sessions: state.sessions.filter(
+                (existing) => existing.sessionId !== session.sessionId,
+              ),
+            })),
+          ),
+        );
+      };
+
+      const publishOpenedSession = (session: DeviceLeaseSession, target: DeviceLeaseTarget) =>
+        sessionStateLock.withPermit(
+          Effect.gen(function* () {
+            const currentOwner: DeviceLeaseCaller =
+              caller.kind === "panel"
+                ? {
+                    ...caller,
+                    sessionId: session.sessionId,
+                    leaseId: session.leaseId,
+                  }
+                : caller;
+            const refreshed = yield* leases.acquire({
+              target,
+              caller: currentOwner,
+              waiterId,
+              shouldBoot: false,
+            });
+            if (refreshed._tag === "Waiting") {
+              return yield* new DeviceOperationError({
+                operation: "open",
+                reason: "busy",
+                cause: new Error("Device ownership changed while the panel was opening."),
+              });
+            }
+            const publicSession = toDeviceSession(refreshed.session);
+            yield* saveSession(publicSession);
+            return publicSession;
+          }),
+        );
+
+      const performOpen = (
+        reserved: DeviceLeaseSession,
+        shouldBoot: boolean,
+        created: boolean,
+        deviceToOpen: DeviceSummary,
+        target: DeviceLeaseTarget,
+      ) => {
+        let cleanupTarget = target;
+        return Effect.gen(function* () {
+          if (!created) {
+            return yield* publishOpenedSession(reserved, target);
+          }
+          if (hosts.get(host.id) !== host) {
+            return yield* new DeviceHostUnavailableError({
+              hostId: host.id,
+              reason: "Host configuration changed. Retry the operation.",
+            });
+          }
+          if (!(yield* readDeviceSettings).enabled) {
+            return yield* new DeviceHostUnavailableError({
+              hostId: host.id,
+              reason: "Device support was turned off while the device was opening.",
+            });
+          }
+          let session = reserved;
+          if (shouldBoot) {
+            const booting = { ...deviceToOpen, threadId: input.threadId };
+            yield* publish((state) => ({
+              ...state,
+              bootingDevices: [
+                ...(state.bootingDevices ?? []).filter(
+                  (entry) => entry.hostId !== booting.hostId || entry.id !== booting.id,
+                ),
+                booting,
+              ],
+            }));
+            const bootedId = yield* boot(ready, deviceToOpen).pipe(
+              Effect.ensuring(
+                publish((state) => ({
+                  ...state,
+                  bootingDevices: (state.bootingDevices ?? []).filter(
+                    (entry) => entry.hostId !== booting.hostId || entry.id !== booting.id,
+                  ),
+                })),
+              ),
+            );
+            cleanupTarget = { ...target, id: bootedId, booted: true };
+            if (hosts.get(host.id) !== host || !(yield* readDeviceSettings).enabled) {
+              return yield* new DeviceHostUnavailableError({
+                hostId: host.id,
+                reason:
+                  "Device support changed while the device was starting. Retry the operation.",
+              });
+            }
+            yield* refresh(ready);
+            const current = (yield* SynchronizedRef.get(stateRef)).state.devices.find(
+              (device) => device.hostId === host.id && device.id === bootedId,
+            ) ?? { ...deviceToOpen, id: bootedId, booted: true };
+            cleanupTarget = leaseTarget(current);
+            session = yield* leases.finishOpen({
+              key: reserved.leaseKey,
+              sessionId: reserved.sessionId,
+              leaseId: reserved.leaseId,
+              target: leaseTarget(current),
+            });
+          } else if (deviceToOpen.platform === "ios" && deviceToOpen.booted) {
+            yield* HttpClientRequest.post(
+              `${ready.hub.origin}${vendorPrefix("ios")}/grid/api/start`,
+            ).pipe(
+              HttpClientRequest.bodyJson({ udid: deviceToOpen.id }),
+              Effect.mapError(
+                (cause) =>
+                  new DeviceOperationError({ operation: "open", reason: "invalid_payload", cause }),
+              ),
+              Effect.flatMap((request) =>
+                hubJson(request, HubActionResult, "attach stream", BOOT_TIMEOUT),
+              ),
+            );
+          }
+          return yield* publishOpenedSession(session, target);
+        }).pipe(
+          Effect.onExit((exit) =>
+            Exit.isFailure(exit) && created
+              ? cleanupProvisional(reserved, cleanupTarget)
+              : Effect.void,
+          ),
+        );
+      };
+
+      const waitForLease = (remaining: number): Effect.Effect<DeviceSession, DeviceError> =>
+        Effect.gen(function* () {
+          if (hosts.get(host.id) !== host) {
+            return yield* new DeviceHostUnavailableError({
+              hostId: host.id,
+              reason: "Host configuration changed. Retry the operation.",
+            });
+          }
+          const enabled = yield* readDeviceSettings;
+          if (!enabled.enabled) {
+            return yield* new DeviceHostUnavailableError({
+              hostId: host.id,
+              reason: "Device support was turned off while the device was opening.",
+            });
+          }
+          const currentState = yield* refresh(ready);
+          const deviceToOpen =
+            findDevice(currentState, host.id, input.deviceId) ??
+            currentState.devices.find(
+              (candidate) =>
+                candidate.hostId === host.id &&
+                deviceAliases(leaseTarget(candidate)).some((alias) =>
+                  deviceAliases(initialTarget).includes(alias),
+                ),
+            );
+          if (!deviceToOpen) {
+            return yield* new DeviceNotFoundError({ hostId: host.id, deviceId: input.deviceId });
+          }
+          const target = leaseTarget(deviceToOpen);
+          const result = yield* leases.acquire({
+            target,
+            caller,
+            waiterId,
+            shouldBoot: !deviceToOpen.booted && !deviceToOpen.physical && input.boot !== false,
+          });
+          if (result._tag === "Acquired") {
+            return yield* performOpen(
+              result.session,
+              result.shouldBoot,
+              result.created,
+              deviceToOpen,
+              target,
+            );
+          }
+          yield* markQueued();
+          if (remaining <= 0) {
+            return yield* new DeviceOperationError({
+              operation: "open",
+              reason: "busy",
+              cause: new Error("Another live walk still owns this device."),
+            });
+          }
+          yield* leaseRuntime.waitForLeaseRetry?.() ?? Effect.sleep(DEVICE_LEASE_WAIT_INTERVAL);
+          return yield* waitForLease(remaining - 1);
+        });
+
+      return yield* waitForLease(DEVICE_LEASE_WAIT_ATTEMPTS).pipe(
+        Effect.onExit((exit) =>
+          Exit.isSuccess(exit)
+            ? Effect.void
+            : leases.cancelWaiter({ target: initialTarget, waiterId }).pipe(Effect.ignore),
+        ),
+        Effect.ensuring(clearQueue()),
+      );
+    },
+  );
 
   const shutdownDevice = Effect.fn("DeviceService.shutdownDevice")(function* (
     hostId: DeviceHostId,
@@ -778,42 +1111,217 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
     );
   });
 
+  const runShutdownClaim = (claim: DeviceLeaseShutdownClaim) =>
+    shutdownDevice(claim.target.hostId, claim.target.id as DeviceId, claim.target.platform).pipe(
+      Effect.onExit((exit) => leases.finishShutdown(claim, Exit.isSuccess(exit))),
+    );
+
+  const withShutdownClaims = <A, E>(
+    claims: ReadonlyArray<DeviceLeaseShutdownClaim>,
+    use: () => Effect.Effect<A, E>,
+  ) =>
+    Effect.acquireUseRelease(Effect.succeed(claims), use, (pending) =>
+      Effect.forEach(
+        pending,
+        (claim) =>
+          leases.finishShutdown(claim, false).pipe(
+            Effect.catch((cause) =>
+              Effect.logWarning("Could not release an unfinished device shutdown claim", {
+                hostId: claim.target.hostId,
+                deviceId: claim.target.id,
+                cause,
+              }),
+            ),
+          ),
+        { discard: true },
+      ),
+    );
+
   const close: DeviceService["Service"]["close"] = Effect.fn("DeviceService.close")(
-    function* (input) {
-      const { state } = yield* SynchronizedRef.get(stateRef);
-      const closing = state.sessions.filter(
-        (session) =>
-          session.threadId === input.threadId &&
-          (input.hostId === undefined || session.hostId === input.hostId) &&
-          (input.deviceId === undefined || session.deviceId === input.deviceId),
-      );
-      if (closing.length === 0) return;
-      yield* publish((current) => ({
-        ...current,
-        sessions: current.sessions.filter((session) => !closing.includes(session)),
-      }));
-      if (input.shutdown) {
-        yield* Effect.forEach(
-          closing,
-          (session) => shutdownDevice(session.hostId, session.deviceId, session.platform),
-          { discard: true },
-        );
+    function* (input, requestedCaller) {
+      if (input.sessionId !== undefined && input.leaseId === undefined) {
+        return yield* new DeviceOperationError({
+          operation: "close",
+          reason: "stale_session",
+          cause: new Error("Both sessionId and leaseId are required for exact release."),
+        });
       }
+      const caller =
+        requestedCaller === undefined
+          ? undefined
+          : {
+              kind: requestedCaller.kind,
+              threadId: input.threadId,
+              ...(requestedCaller.kind === "agent"
+                ? { providerSessionId: requestedCaller.providerSessionId }
+                : {}),
+              ...(requestedCaller.kind === "panel" && requestedCaller.sessionId !== undefined
+                ? { sessionId: requestedCaller.sessionId }
+                : {}),
+              ...(requestedCaller.kind === "panel" && requestedCaller.leaseId !== undefined
+                ? { leaseId: requestedCaller.leaseId }
+                : {}),
+            };
+      const ownerKind = requestedCaller?.kind ?? "panel";
+      yield* Effect.uninterruptibleMask((restore) =>
+        leases
+          .release({
+            threadId: input.threadId,
+            ...(input.hostId === undefined ? {} : { hostId: input.hostId }),
+            ...(input.deviceId === undefined ? {} : { deviceId: input.deviceId }),
+            ...(input.sessionId === undefined ? {} : { sessionId: input.sessionId }),
+            ...(input.leaseId === undefined ? {} : { leaseId: input.leaseId }),
+            ...(caller === undefined ? {} : { caller }),
+            ...(input.shutdown === undefined ? {} : { shutdown: input.shutdown }),
+          })
+          .pipe(
+            Effect.flatMap((claims) =>
+              withShutdownClaims(claims, () =>
+                Effect.gen(function* () {
+                  yield* publish((state) => ({
+                    ...state,
+                    sessions: state.sessions.filter((session) => {
+                      if (input.sessionId !== undefined) {
+                        return (
+                          session.sessionId !== input.sessionId || session.leaseId !== input.leaseId
+                        );
+                      }
+                      return (
+                        session.threadId !== input.threadId ||
+                        (input.hostId !== undefined && session.hostId !== input.hostId) ||
+                        (input.deviceId !== undefined && session.deviceId !== input.deviceId) ||
+                        session.ownerKind !== ownerKind ||
+                        (requestedCaller?.kind === "agent" &&
+                          session.providerSessionId !== requestedCaller.providerSessionId)
+                      );
+                    }),
+                  }));
+                  for (const claim of claims) yield* restore(runShutdownClaim(claim));
+                }),
+              ),
+            ),
+          ),
+      );
     },
   );
 
   const shutdown: DeviceService["Service"]["shutdown"] = Effect.fn("DeviceService.shutdown")(
     function* (input) {
       const host = yield* resolveHost(input.hostId);
-      yield* shutdownDevice(host.id, input.deviceId, input.platform);
-      yield* publish((current) => ({
-        ...current,
-        sessions: current.sessions.filter(
+      const { device } = yield* resolveDevice(host.id, input.deviceId);
+      if (device.platform !== input.platform) {
+        return yield* new DeviceOperationError({
+          operation: "shutdown",
+          reason: "invalid_payload",
+          cause: new Error("The requested platform does not match the device."),
+        });
+      }
+      const leaseId = yield* crypto.randomUUIDv4().pipe(
+        Effect.map(String),
+        Effect.mapError(
+          (cause) =>
+            new DeviceOperationError({ operation: "shutdown", reason: "request_failed", cause }),
+        ),
+      );
+      yield* Effect.uninterruptibleMask((restore) =>
+        deviceJanitor
+          .prepareExplicitShutdown({
+            target: leaseTarget(device),
+            leaseId,
+          })
+          .pipe(
+            Effect.flatMap((claim) =>
+              withShutdownClaims([claim], () => restore(runShutdownClaim(claim))),
+            ),
+          ),
+      );
+      yield* publish((state) => ({
+        ...state,
+        sessions: state.sessions.filter(
           (session) => !(session.hostId === host.id && session.deviceId === input.deviceId),
         ),
       }));
     },
   );
+
+  const sweepIdleDevices = Effect.fn("DeviceService.sweepIdleDevices")(function* () {
+    const reported = new Set<string>();
+    yield* Effect.uninterruptibleMask((restore) =>
+      Effect.gen(function* () {
+        while (true) {
+          const items = yield* deviceJanitor.planIdleCleanup({ apply: true });
+          const pending = items.find((item) => item.claim !== undefined);
+          for (const item of items) {
+            if (item.reason === undefined) continue;
+            const key = `${item.hostId}\u0000${item.deviceId}\u0000${item.reason}`;
+            if (reported.has(key)) continue;
+            reported.add(key);
+            yield* Effect.logInfo("Device janitor skipped a lease", {
+              hostId: item.hostId,
+              deviceId: item.deviceId,
+              reason: item.reason,
+            });
+          }
+          if (!pending?.claim) return;
+          const claim = pending.claim;
+          const succeeded = yield* withShutdownClaims([claim], () =>
+            restore(runShutdownClaim(claim)).pipe(
+              Effect.as(true),
+              Effect.catch((cause) =>
+                Effect.logWarning("Device idle cleanup left the device for the next sweep", {
+                  hostId: pending.hostId,
+                  deviceId: pending.deviceId,
+                  cause,
+                }).pipe(Effect.as(false)),
+              ),
+            ),
+          );
+          if (!succeeded) return;
+        }
+      }),
+    );
+  });
+
+  const janitor: DeviceService["Service"]["janitor"] = Effect.fn("DeviceService.janitor")(
+    function* (input) {
+      return yield* Effect.uninterruptibleMask((restore) =>
+        deviceJanitor.planIdleCleanup(input).pipe(
+          Effect.flatMap((items) => {
+            if (items.length === 0) {
+              return Effect.succeed([
+                {
+                  hostId: input.hostId,
+                  deviceId: input.deviceId,
+                  status: "skipped" as const,
+                  reason: "not_found" as const,
+                },
+              ]);
+            }
+            const claims = items.flatMap((item) => (item.claim === undefined ? [] : [item.claim]));
+            return withShutdownClaims(claims, () =>
+              Effect.forEach(items, (item) =>
+                item.claim === undefined
+                  ? Effect.succeed(item)
+                  : restore(runShutdownClaim(item.claim)).pipe(
+                      Effect.as({
+                        hostId: item.hostId,
+                        deviceId: item.deviceId,
+                        status: "shutdown" as const,
+                      }),
+                    ),
+              ),
+            );
+          }),
+        ),
+      );
+    },
+  );
+
+  if (leaseRuntime.automaticCleanup !== false) {
+    yield* Effect.forever(
+      Effect.sleep(DEVICE_CLEANUP_INTERVAL).pipe(Effect.andThen(sweepIdleDevices)),
+    ).pipe(Effect.forkScoped);
+  }
 
   const screenshot: DeviceService["Service"]["screenshot"] = Effect.fn("DeviceService.screenshot")(
     function* (input) {
@@ -922,12 +1430,10 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
               return yield* configureAgent(input.hostId, ready);
             }),
           );
-          const session = yield* agentDeviceSession(
-            input.threadId,
-            input.hostId,
-            input.deviceId,
-          ).pipe(Effect.provideService(Crypto.Crypto, crypto));
-          return ["--config", configPath, "--session", session];
+          return {
+            args: ["--config", configPath, "--session", input.sessionId],
+            sessionId: input.sessionId,
+          };
         }),
       state: SynchronizedRef.get(stateRef).pipe(Effect.map(({ state }) => state)),
       subscribe: PubSub.subscribe(statePubSub),
@@ -936,6 +1442,7 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
       open,
       close,
       shutdown,
+      janitor,
       detail,
       action,
       screenshot,
@@ -967,190 +1474,233 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
 
 /** @public */
 /** @public Service construction is part of the canonical Effect module API. */
-export const make = Effect.gen(function* () {
-  const localHost = yield* DeviceHost.DeviceHost;
-  const config = yield* ServerConfig.ServerConfig;
-  const fs = yield* FileSystem.FileSystem;
-  const path = yield* Path.Path;
-  const runner = yield* ProcessRunner.ProcessRunner;
-  const settings = yield* ServerSettings.ServerSettingsService;
-  const scope = yield* Scope.Scope;
-  const hosts = new Map<DeviceHostId, DeviceHost.DeviceHost["Service"]>([
-    [localHost.id, localHost],
-  ]);
-  const crypto = yield* Crypto.Crypto;
-  const configPath = (hostId: DeviceHostId) =>
-    agentDeviceConfigPath(config.stateDir, hostId, path).pipe(
-      Effect.provideService(Crypto.Crypto, crypto),
+export const make = (
+  options: {
+    readonly automaticCleanup?: boolean;
+    readonly waitForLeaseRetry?: () => Effect.Effect<void>;
+  } = {},
+) =>
+  Effect.gen(function* () {
+    const localHost = yield* DeviceHost.DeviceHost;
+    const config = yield* ServerConfig.ServerConfig;
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const runner = yield* ProcessRunner.ProcessRunner;
+    const settings = yield* ServerSettings.ServerSettingsService;
+    const providerSessions = yield* Effect.serviceOption(
+      ProviderSessionManager.ProviderSessionManagerV2,
     );
-  const configureAgent = (hostId: DeviceHostId, ready: DeviceHost.DeviceHostAgentReady) =>
-    Effect.gen(function* () {
-      const file = yield* configPath(hostId);
-      yield* writeAgentDeviceConfig(file, ready.agentDevice);
-      return file;
-    }).pipe(
-      Effect.provideService(FileSystem.FileSystem, fs),
-      Effect.provideService(Path.Path, path),
-      Effect.mapError(
-        (cause) =>
-          new DeviceOperationError({
-            operation: "configure agent",
-            reason: "settings_failed",
-            cause,
-          }),
-      ),
-    );
-  const probeContext =
-    yield* Effect.context<Effect.Services<ReturnType<typeof SshDeviceHost.probe>>>();
-  const localTargetContext =
-    yield* Effect.context<Effect.Services<ReturnType<typeof isLocalSshDeviceHost>>>();
-  const service = yield* makeWithHosts(
-    hosts,
-    (host) =>
+    const scope = yield* Scope.Scope;
+    const hosts = new Map<DeviceHostId, DeviceHost.DeviceHost["Service"]>([
+      [localHost.id, localHost],
+    ]);
+    const crypto = yield* Crypto.Crypto;
+    const configPath = (hostId: DeviceHostId) =>
+      agentDeviceConfigPath(config.stateDir, hostId, path).pipe(
+        Effect.provideService(Crypto.Crypto, crypto),
+      );
+    const configureAgent = (hostId: DeviceHostId, ready: DeviceHost.DeviceHostAgentReady) =>
       Effect.gen(function* () {
-        if (yield* isLocalSshDeviceHost(host).pipe(Effect.provide(localTargetContext))) {
-          return yield* localHost.summary;
-        }
-        return yield* SshDeviceHost.probe(host).pipe(Effect.provide(probeContext));
+        const file = yield* configPath(hostId);
+        yield* writeAgentDeviceConfig(file, ready.agentDevice);
+        return file;
       }).pipe(
-        Effect.mapError(
-          (error) =>
-            new DeviceOperationError({
-              operation: "probe host",
-              reason: "request_failed",
-              cause: error,
-            }),
-        ),
-      ),
-    configureAgent,
-    (tool) =>
-      (tool === "hub" ? ensureDeviceHub(config.baseDir) : ensureAgentDevice(config.baseDir)).pipe(
         Effect.provideService(FileSystem.FileSystem, fs),
         Effect.provideService(Path.Path, path),
-        Effect.provideService(ProcessRunner.ProcessRunner, runner),
         Effect.mapError(
           (cause) =>
             new DeviceOperationError({
-              operation: "update device tool",
-              reason: "command_failed",
+              operation: "configure agent",
+              reason: "settings_failed",
               cause,
             }),
         ),
-      ),
-  );
-  const hostContext =
-    yield* Effect.context<Effect.Services<ReturnType<typeof SshDeviceHost.make>>>();
-  const configured = new Map<string, { config: SshDeviceHostConfig; scope: Scope.Closeable }>();
-  const reconcile = (configuredHosts: ReadonlyArray<SshDeviceHostConfig>) =>
-    Effect.gen(function* () {
-      const next = yield* remoteSshDeviceHosts(configuredHosts).pipe(
-        Effect.provide(localTargetContext),
       );
-      const removed = yield* service.withLifecycleLock(
+    const probeContext =
+      yield* Effect.context<Effect.Services<ReturnType<typeof SshDeviceHost.probe>>>();
+    const localTargetContext =
+      yield* Effect.context<Effect.Services<ReturnType<typeof isLocalSshDeviceHost>>>();
+    const service = yield* makeWithHosts(
+      hosts,
+      (host) =>
         Effect.gen(function* () {
-          const removed: Array<{ id: string; scope: Scope.Closeable }> = [];
-          for (const [id, previous] of configured) {
-            if (
-              next.some(
-                (host) =>
-                  host.id === id &&
-                  host.label === previous.config.label &&
-                  host.target === previous.config.target &&
-                  host.port === previous.config.port &&
-                  host.identityFile === previous.config.identityFile,
-              )
-            )
-              continue;
-            hosts.delete(id);
-            configured.delete(id);
-            removed.push({ id, scope: previous.scope });
+          if (yield* isLocalSshDeviceHost(host).pipe(Effect.provide(localTargetContext))) {
+            return yield* localHost.summary;
           }
-          if (removed.length > 0) yield* service.refreshHosts;
-          return removed;
-        }),
-      );
-      // Stop old writers before deleting config files or publishing replacements, without blocking healthy hosts.
-      yield* Effect.forEach(
-        removed,
-        ({ id, scope }) =>
+          return yield* SshDeviceHost.probe(host).pipe(Effect.provide(probeContext));
+        }).pipe(
+          Effect.mapError(
+            (error) =>
+              new DeviceOperationError({
+                operation: "probe host",
+                reason: "request_failed",
+                cause: error,
+              }),
+          ),
+        ),
+      configureAgent,
+      (tool) =>
+        (tool === "hub" ? ensureDeviceHub(config.baseDir) : ensureAgentDevice(config.baseDir)).pipe(
+          Effect.provideService(FileSystem.FileSystem, fs),
+          Effect.provideService(Path.Path, path),
+          Effect.provideService(ProcessRunner.ProcessRunner, runner),
+          Effect.mapError(
+            (cause) =>
+              new DeviceOperationError({
+                operation: "update device tool",
+                reason: "command_failed",
+                cause,
+              }),
+          ),
+        ),
+      {
+        store: makeFileDeviceLeaseStore(deviceLeaseDirectory(yield* HostProcess.HomeDirectory)),
+        ...(Option.isSome(providerSessions)
+          ? {
+              isProviderSessionLive: (providerSessionId: ProviderSessionId) =>
+                providerSessions.value.isLive(providerSessionId),
+            }
+          : {}),
+        ...(options.automaticCleanup === undefined
+          ? {}
+          : { automaticCleanup: options.automaticCleanup }),
+        ...(options.waitForLeaseRetry === undefined
+          ? {}
+          : { waitForLeaseRetry: options.waitForLeaseRetry }),
+      },
+    );
+    const hostContext =
+      yield* Effect.context<Effect.Services<ReturnType<typeof SshDeviceHost.make>>>();
+    const configured = new Map<string, { config: SshDeviceHostConfig; scope: Scope.Closeable }>();
+    const reconcile = (configuredHosts: ReadonlyArray<SshDeviceHostConfig>) =>
+      Effect.gen(function* () {
+        const next = yield* remoteSshDeviceHosts(configuredHosts).pipe(
+          Effect.provide(localTargetContext),
+        );
+        const removed = yield* service.withLifecycleLock(
           Effect.gen(function* () {
-            yield* Scope.close(scope, Exit.void);
-            yield* fs.remove(yield* configPath(id), { force: true }).pipe(Effect.ignore);
+            const removed: Array<{ id: string; scope: Scope.Closeable }> = [];
+            for (const [id, previous] of configured) {
+              if (
+                next.some(
+                  (host) =>
+                    host.id === id &&
+                    host.label === previous.config.label &&
+                    host.target === previous.config.target &&
+                    host.port === previous.config.port &&
+                    host.identityFile === previous.config.identityFile,
+                )
+              )
+                continue;
+              hosts.delete(id);
+              configured.delete(id);
+              removed.push({ id, scope: previous.scope });
+            }
+            if (removed.length > 0) yield* service.refreshHosts;
+            return removed;
           }),
-        { concurrency: 4, discard: true },
-      );
-      yield* service.withLifecycleLock(
-        Effect.gen(function* () {
-          let added = false;
-          for (const host of next) {
-            if (configured.has(host.id)) continue;
-            added = true;
-            const hostScope = yield* Scope.fork(scope);
-            const instance = yield* SshDeviceHost.make(
-              host,
-              (ready) =>
-                configureAgent(host.id, ready).pipe(
-                  Effect.asVoid,
-                  Effect.mapError(
-                    (error) =>
-                      new DeviceHost.DeviceHostError({
-                        hostId: host.id,
-                        step: "configuring agent access",
-                        cause: error,
-                      }),
-                  ),
-                ),
-              (status, detail) =>
-                service
-                  .setHostStatus(host.id, { status, ...(detail ? { detail } : {}) })
-                  .pipe(Effect.asVoid),
-            ).pipe(Effect.provideService(Scope.Scope, hostScope), Effect.provide(hostContext));
-            hosts.set(host.id, instance);
-            configured.set(host.id, { config: host, scope: hostScope });
-          }
-          // Refresh again after removed scopes closed so a late status write from an old host cannot linger.
-          if (added || removed.length > 0) yield* service.refreshHosts;
-        }),
-      );
-    });
-  const changes = yield* settings.subscribeChanges;
-  yield* reconcile((yield* settings.getSettings).deviceHosts);
-  yield* changes.pipe(
-    Stream.runForEach((value) => reconcile(value.deviceHosts)),
-    Effect.forkIn(scope),
-  );
-  yield* Effect.addFinalizer(() =>
-    Effect.forEach(configured.values(), (value) => Scope.close(value.scope, Exit.void), {
-      discard: true,
-      concurrency: 4,
-    }),
-  );
-  return {
-    ...service,
-    agentCli: resolveNodeExecutable("Device automation").pipe(
-      Effect.andThen(ensureAgentDevice(config.baseDir)),
-      Effect.provideService(FileSystem.FileSystem, fs),
-      Effect.provideService(Path.Path, path),
-      Effect.provideService(ProcessRunner.ProcessRunner, runner),
-      Effect.map((tool) => tool.entryPath),
-      Effect.mapError((error) =>
-        error._tag === "NodeRuntimeUnavailableError"
-          ? new DeviceHostUnavailableError({
-              hostId: LOCAL_DEVICE_HOST_ID,
-              reason: nodeRuntimeUnavailableMessage("Device automation"),
-              cause: error,
-            })
-          : new DeviceOperationError({
-              operation: "install agent CLI",
-              reason: "command_failed",
-              cause: error,
+        );
+        // Stop old writers before deleting config files or publishing replacements, without blocking healthy hosts.
+        yield* Effect.forEach(
+          removed,
+          ({ id, scope }) =>
+            Effect.gen(function* () {
+              yield* Scope.close(scope, Exit.void);
+              yield* fs.remove(yield* configPath(id), { force: true }).pipe(Effect.ignore);
             }),
+          { concurrency: 4, discard: true },
+        );
+        yield* service.withLifecycleLock(
+          Effect.gen(function* () {
+            let added = false;
+            for (const host of next) {
+              if (configured.has(host.id)) continue;
+              added = true;
+              const hostScope = yield* Scope.fork(scope);
+              const instance = yield* SshDeviceHost.make(
+                host,
+                (ready) =>
+                  configureAgent(host.id, ready).pipe(
+                    Effect.asVoid,
+                    Effect.mapError(
+                      (error) =>
+                        new DeviceHost.DeviceHostError({
+                          hostId: host.id,
+                          step: "configuring agent access",
+                          cause: error,
+                        }),
+                    ),
+                  ),
+                (status, detail) =>
+                  service
+                    .setHostStatus(host.id, { status, ...(detail ? { detail } : {}) })
+                    .pipe(Effect.asVoid),
+              ).pipe(Effect.provideService(Scope.Scope, hostScope), Effect.provide(hostContext));
+              hosts.set(host.id, instance);
+              configured.set(host.id, { config: host, scope: hostScope });
+            }
+            // Refresh again after removed scopes closed so a late status write from an old host cannot linger.
+            if (added || removed.length > 0) yield* service.refreshHosts;
+          }),
+        );
+      });
+    const changes = yield* settings.subscribeChanges;
+    yield* reconcile((yield* settings.getSettings).deviceHosts);
+    yield* changes.pipe(
+      Stream.runForEach((value) => reconcile(value.deviceHosts)),
+      Effect.forkIn(scope),
+    );
+    yield* Effect.addFinalizer(() =>
+      Effect.forEach(configured.values(), (value) => Scope.close(value.scope, Exit.void), {
+        discard: true,
+        concurrency: 4,
+      }),
+    );
+    return {
+      ...service,
+      agentCli: resolveNodeExecutable("Device automation").pipe(
+        Effect.andThen(ensureAgentDevice(config.baseDir)),
+        Effect.provideService(FileSystem.FileSystem, fs),
+        Effect.provideService(Path.Path, path),
+        Effect.provideService(ProcessRunner.ProcessRunner, runner),
+        Effect.map((tool) => tool.entryPath),
+        Effect.mapError((error) =>
+          error._tag === "NodeRuntimeUnavailableError"
+            ? new DeviceHostUnavailableError({
+                hostId: LOCAL_DEVICE_HOST_ID,
+                reason: nodeRuntimeUnavailableMessage("Device automation"),
+                cause: error,
+              })
+            : new DeviceOperationError({
+                operation: "install agent CLI",
+                reason: "command_failed",
+                cause: error,
+              }),
+        ),
       ),
-    ),
-  };
+    };
+  });
+
+export const layer = Layer.effect(DeviceService, make()).pipe(Layer.provide(LocalDeviceHost.layer));
+
+export const makeForJanitor = Effect.gen(function* () {
+  const localHost = yield* DeviceHost.DeviceHost;
+  const homeDirectory = yield* HostProcess.HomeDirectory;
+  return yield* makeWithHosts(
+    new Map([[localHost.id, localHost]]),
+    undefined,
+    undefined,
+    undefined,
+    {
+      store: makeFileDeviceLeaseStore(deviceLeaseDirectory(homeDirectory)),
+      automaticCleanup: false,
+    },
+  );
 });
 
-export const layer = Layer.effect(DeviceService, make).pipe(Layer.provide(LocalDeviceHost.layer));
+export const maintenanceLayer = Layer.effect(DeviceService, makeForJanitor).pipe(
+  Layer.provide(LocalDeviceHost.layer),
+);
 
 export const stateStream = (service: DeviceService["Service"]): Stream.Stream<DeviceServiceState> =>
   Stream.unwrap(

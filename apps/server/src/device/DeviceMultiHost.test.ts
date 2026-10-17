@@ -93,7 +93,12 @@ it.effect("keeps hosts independent when serials collide and another host fails",
     expect(state.hostStatuses.a?.status).toBe("ready");
     expect(state.hostStatuses.offline?.status).toBe("failed");
     const targeting = yield* service
-      .agentTarget({ threadId, hostId: "b", deviceId: "emulator-5554" })
+      .agentTarget({
+        threadId,
+        hostId: "b",
+        deviceId: "emulator-5554",
+        sessionId: "explicit-device-session",
+      })
       .pipe(Effect.forkChild);
     yield* Deferred.await(writeStarted);
     const replacing = yield* service

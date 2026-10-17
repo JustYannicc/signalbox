@@ -16,6 +16,7 @@ export function DeviceWorkspace(props: {
   hostLabel: string;
   hostDiagnostics: string | undefined;
   visible: boolean;
+  observer: boolean;
   onFloat: () => void;
   onClose: () => void;
   onPowerOff: () => void;
@@ -78,6 +79,11 @@ export function DeviceWorkspace(props: {
   return (
     <>
       <div className="relative flex min-h-0 min-w-0 flex-1 flex-col">
+        {props.observer ? (
+          <p role="status" className="px-3 py-2 text-xs text-muted-foreground">
+            Watching the agent's device. Input is disabled while the agent is using it.
+          </p>
+        ) : null}
         {screenshotError || (controls.error && !toolsOpen) ? (
           <p role="alert" className="px-3 py-2 text-xs text-destructive">
             {screenshotError ?? controls.error}
@@ -92,24 +98,29 @@ export function DeviceWorkspace(props: {
             deviceId={props.device.id}
             hostId={props.device.hostId}
             visible={props.visible}
+            readOnly={props.observer}
             axOverlay={axOverlay}
-            allowPhoneView
+            allowPhoneView={!props.observer}
             onHandle={setHandle}
-            renderControls={(view) => (
-              <DeviceControlsRail
-                platform={props.device.platform}
-                handle={handle}
-                view={view}
-                controls={controls}
-                screenshotPending={screenshotPending}
-                onScreenshot={() => void saveScreenshot()}
-                toolsOpen={toolsOpen}
-                onTools={() => setToolsOpen(!toolsOpen)}
-                onFloat={props.onFloat}
-                onClose={props.onClose}
-                onPowerOff={props.onPowerOff}
-              />
-            )}
+            {...(!props.observer
+              ? {
+                  renderControls: (view) => (
+                    <DeviceControlsRail
+                      platform={props.device.platform}
+                      handle={handle}
+                      view={view}
+                      controls={controls}
+                      screenshotPending={screenshotPending}
+                      onScreenshot={() => void saveScreenshot()}
+                      toolsOpen={toolsOpen}
+                      onTools={() => setToolsOpen(!toolsOpen)}
+                      onFloat={props.onFloat}
+                      onClose={props.onClose}
+                      onPowerOff={props.onPowerOff}
+                    />
+                  ),
+                }
+              : {})}
           />
         </div>
       </div>

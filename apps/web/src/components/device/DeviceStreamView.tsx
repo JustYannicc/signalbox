@@ -52,6 +52,7 @@ export function DeviceStreamView(props: {
   readonly deviceDescription?: string;
   readonly visible: boolean;
   readonly hostId: string;
+  readonly readOnly?: boolean;
   readonly allowPhoneView?: boolean;
   readonly renderControls?: (view: DeviceViewControls) => ReactNode;
   readonly axOverlay?: boolean;
@@ -186,6 +187,7 @@ export function DeviceStreamView(props: {
     status === "connecting" && hasFrame && inputState.connected && screen !== null;
   const showPhone =
     props.allowPhoneView &&
+    !props.readOnly &&
     (status === "streaming" || retainingFrame) &&
     props.visible &&
     presentation === "phone" &&
@@ -280,6 +282,11 @@ export function DeviceStreamView(props: {
   }, [access, props.axOverlay, props.deviceId, props.platform, props.visible]);
 
   const pointerActive = useRef(false);
+  useEffect(() => {
+    if (!props.readOnly || !pointerActive.current) return;
+    pointerActive.current = false;
+    clientRef.current?.sendTouch("end", 0, 0);
+  }, [props.readOnly]);
   const normalizedPoint = (event: React.PointerEvent<HTMLElement>) => {
     const rect = event.currentTarget.getBoundingClientRect();
     const x = (event.clientX - rect.left) / rect.width;
@@ -373,24 +380,31 @@ export function DeviceStreamView(props: {
           "relative flex min-h-0 min-w-0 flex-1 items-center justify-center overflow-hidden outline-none",
           controlsInset && "pr-14",
         )}
-        tabIndex={0}
+        tabIndex={props.readOnly ? -1 : 0}
         role="application"
         aria-label={`${props.platform === "ios" ? "iOS Simulator" : "Android Emulator"} screen`}
         onKeyDown={(event) => {
+          if (props.readOnly) return;
           if (event.target !== event.currentTarget) return;
           if (event.metaKey && !["r", "R"].includes(event.key)) return;
           event.preventDefault();
           clientRef.current?.sendKey(event.nativeEvent, "down");
         }}
         onKeyUp={(event) => {
+          if (props.readOnly) return;
           if (event.target !== event.currentTarget) return;
           clientRef.current?.sendKey(event.nativeEvent, "up");
         }}
       >
         <div
-          className={cn("relative select-none", showPhone && "invisible pointer-events-none")}
+          className={cn(
+            "relative select-none",
+            showPhone && "invisible pointer-events-none",
+            props.readOnly && "pointer-events-none",
+          )}
           style={{ width: frame.width, height: frame.height }}
           onPointerDown={(event) => {
+            if (props.readOnly) return;
             event.currentTarget.setPointerCapture(event.pointerId);
             (event.currentTarget.parentElement as HTMLElement | null)?.focus();
             pointerActive.current = true;
@@ -398,17 +412,20 @@ export function DeviceStreamView(props: {
             clientRef.current?.sendTouch("begin", x, y);
           }}
           onPointerMove={(event) => {
+            if (props.readOnly) return;
             if (!pointerActive.current) return;
             const { x, y } = normalizedPoint(event);
             clientRef.current?.sendTouch("move", x, y);
           }}
           onPointerUp={(event) => {
+            if (props.readOnly) return;
             if (!pointerActive.current) return;
             pointerActive.current = false;
             const { x, y } = normalizedPoint(event);
             clientRef.current?.sendTouch("end", x, y);
           }}
           onPointerCancel={(event) => {
+            if (props.readOnly) return;
             if (!pointerActive.current) return;
             pointerActive.current = false;
             const { x, y } = normalizedPoint(event);

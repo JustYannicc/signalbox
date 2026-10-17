@@ -1,6 +1,10 @@
 "use client";
 
-import { FILL_PREVIEW_VIEWPORT, type ScopedThreadRef } from "@t3tools/contracts";
+import {
+  FILL_PREVIEW_VIEWPORT,
+  deviceSessionRequiresReadOnlyPanel,
+  type ScopedThreadRef,
+} from "@t3tools/contracts";
 import { PanelRightIcon, PictureInPicture2, XIcon } from "lucide-react";
 import {
   type PointerEvent as ReactPointerEvent,
@@ -43,7 +47,8 @@ import {
   usePreviewMiniPlayerStore,
 } from "~/previewMiniPlayerStore";
 import { useRightPanelStore } from "~/rightPanelStore";
-import { useDeviceState } from "~/state/device";
+import { deviceEnvironment, useDeviceState } from "~/state/device";
+import { useAtomCommand } from "~/state/use-atom-command";
 
 import { DeviceStreamView } from "../device/DeviceStreamView";
 import type { DeviceScreenSize } from "@t3tools/client-runtime/device/stream";
@@ -257,10 +262,20 @@ function DeviceMiniPlayer({
   miniPlayer,
 }: Props & { readonly source: Extract<PreviewMiniPlayerSource, { kind: "device" }> }) {
   const { state: deviceState } = useDeviceState(threadRef.environmentId);
+  const openDeviceLease = useAtomCommand(deviceEnvironment.open, { reportFailure: false });
+  const closeDeviceLease = useAtomCommand(deviceEnvironment.close, { reportFailure: false });
+  const preserveLease = useRef(false);
   const [screen, setScreen] = useState<DeviceScreenSize | null>(null);
   const sourceSize = resolveDeviceMiniPlayerSourceSize(source.platform, screen);
   const device = deviceState.devices.find(
     (entry) => entry.hostId === source.hostId && entry.id === source.deviceId,
+  );
+  const observer = deviceState.sessions.some(
+    (session) =>
+      session.threadId === threadRef.threadId &&
+      session.hostId === source.hostId &&
+      session.deviceId === source.deviceId &&
+      deviceSessionRequiresReadOnlyPanel(session),
   );
   const hostLabel =
     deviceState.hosts.find((host) => host.id === source.hostId)?.label ?? "Device host";
@@ -269,13 +284,87 @@ function DeviceMiniPlayer({
     [source.platform],
   );
 
+  useEffect(() => {
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let owner =
+      source.sessionId !== undefined && source.leaseId !== undefined
+        ? { sessionId: source.sessionId, leaseId: source.leaseId }
+        : null;
+    const heartbeat = async () => {
+      const result = await openDeviceLease({
+        environmentId: threadRef.environmentId,
+        input: {
+          threadId: threadRef.threadId,
+          hostId: source.hostId,
+          deviceId: source.deviceId,
+          platform: source.platform,
+          ...(owner === null ? {} : owner),
+        },
+      });
+      if (cancelled) {
+        if (result._tag === "Success") {
+          void closeDeviceLease({
+            environmentId: threadRef.environmentId,
+            input: {
+              threadId: threadRef.threadId,
+              hostId: source.hostId,
+              deviceId: source.deviceId,
+              sessionId: result.value.sessionId,
+              leaseId: result.value.leaseId,
+            },
+          });
+        }
+        return;
+      }
+      if (result._tag === "Success") {
+        owner = { sessionId: result.value.sessionId, leaseId: result.value.leaseId };
+      }
+      timer = setTimeout(() => void heartbeat(), 60_000);
+    };
+    void heartbeat();
+    return () => {
+      cancelled = true;
+      if (timer !== undefined) clearTimeout(timer);
+      const released = owner;
+      if (preserveLease.current) {
+        preserveLease.current = false;
+      } else if (released !== null) {
+        void closeDeviceLease({
+          environmentId: threadRef.environmentId,
+          input: {
+            threadId: threadRef.threadId,
+            hostId: source.hostId,
+            deviceId: source.deviceId,
+            sessionId: released.sessionId,
+            leaseId: released.leaseId,
+          },
+        });
+      }
+    };
+  }, [
+    closeDeviceLease,
+    openDeviceLease,
+    source.deviceId,
+    source.hostId,
+    source.leaseId,
+    source.platform,
+    source.sessionId,
+    threadRef.environmentId,
+    threadRef.threadId,
+  ]);
+
   const openInPanel = () => {
+    preserveLease.current = true;
     usePreviewMiniPlayerStore.getState().close(threadRef);
     useRightPanelStore.getState().openDevice(threadRef, {
       hostId: source.hostId,
       deviceId: source.deviceId,
       platform: source.platform,
       name: source.name,
+      ...(source.sessionId === undefined || source.leaseId === undefined
+        ? {}
+        : { sessionId: source.sessionId, leaseId: source.leaseId }),
     });
   };
 
@@ -301,6 +390,7 @@ function DeviceMiniPlayer({
             deviceName={device?.name ?? source.name}
             deviceDescription={`${hostLabel} · ${device?.version ?? source.platform}`}
             visible
+            readOnly={observer}
             onScreen={setScreen}
           />
         </div>

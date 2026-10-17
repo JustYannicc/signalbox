@@ -20,6 +20,8 @@ export type PreviewMiniPlayerSource =
       readonly deviceId: string;
       readonly platform: DevicePlatform;
       readonly name: string;
+      readonly sessionId?: string;
+      readonly leaseId?: string;
     };
 
 export interface PreviewMiniPlayerState {

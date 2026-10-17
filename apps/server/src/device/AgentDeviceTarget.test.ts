@@ -8,11 +8,7 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import { ensureAgentDeviceShim } from "./AgentDeviceShim.ts";
-import {
-  agentDeviceConfigPath,
-  agentDeviceSession,
-  writeAgentDeviceConfig,
-} from "./AgentDeviceTarget.ts";
+import { agentDeviceConfigPath, writeAgentDeviceConfig } from "./AgentDeviceTarget.ts";
 
 const exec = NodeUtil.promisify(NodeChildProcess.execFile);
 
@@ -71,9 +67,6 @@ if (process.env.AGENT_DEVICE_DAEMON_BASE_URL) process.exit(2);`,
       });
       expect((yield* Effect.promise(() => invoke(files[0]!))).daemonAuthToken).toBe("new");
       expect(yield* fs.readFileString(files[1]!)).toBe(second);
-      expect(yield* agentDeviceSession("thread", "mini", "same-id")).not.toBe(
-        yield* agentDeviceSession("thread", "android", "same-id"),
-      );
       for (const args of [
         ["snapshot"],
         ["snapshot", "--config", files[0]!],

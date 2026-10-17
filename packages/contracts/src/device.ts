@@ -1,6 +1,6 @@
 import { Schema } from "effect";
 
-import { ThreadId, TrimmedNonEmptyString } from "./baseSchemas.ts";
+import { ProviderSessionId, ThreadId, TrimmedNonEmptyString } from "./baseSchemas.ts";
 
 export const DevicePlatform = Schema.Literals(["ios", "android"]);
 export type DevicePlatform = typeof DevicePlatform.Type;
@@ -87,6 +87,12 @@ export const DeviceHostStatus = Schema.Literals([
 export type DeviceHostStatus = typeof DeviceHostStatus.Type;
 
 export const DeviceSession = Schema.Struct({
+  sessionId: Schema.String,
+  leaseId: Schema.String,
+  ownerKind: Schema.Literals(["panel", "agent"]),
+  /** Observer panels can watch an agent's device, but cannot send input. */
+  observer: Schema.optional(Schema.Boolean),
+  providerSessionId: Schema.optional(ProviderSessionId),
   threadId: ThreadId,
   hostId: DeviceHostId,
   deviceId: DeviceId,
@@ -94,6 +100,9 @@ export const DeviceSession = Schema.Struct({
   openedAt: Schema.String,
 });
 export type DeviceSession = typeof DeviceSession.Type;
+
+export const deviceSessionRequiresReadOnlyPanel = (session: DeviceSession): boolean =>
+  session.ownerKind === "agent" || session.observer === true;
 
 export const DeviceServiceState = Schema.Struct({
   supportsHostRetry: Schema.optional(Schema.Boolean),
@@ -112,6 +121,9 @@ export const DeviceServiceState = Schema.Struct({
   devices: Schema.Array(DeviceSummary),
   sessions: Schema.Array(DeviceSession),
   bootingDevices: Schema.optional(
+    Schema.Array(Schema.Struct({ ...DeviceSummary.fields, threadId: ThreadId })),
+  ),
+  queuedDevices: Schema.optional(
     Schema.Array(Schema.Struct({ ...DeviceSummary.fields, threadId: ThreadId })),
   ),
   onboardingCompleted: Schema.Boolean,
@@ -142,6 +154,9 @@ export const DeviceOpenInput = Schema.Struct({
   platform: DevicePlatform,
   /** Boot the simulator or emulator when it is not running. Defaults to true. */
   boot: Schema.optional(Schema.Boolean),
+  /** Supplying both IDs renews this exact panel owner; stale IDs cannot claim a later walk. */
+  sessionId: Schema.optional(Schema.String),
+  leaseId: Schema.optional(Schema.String),
 });
 export type DeviceOpenInput = typeof DeviceOpenInput.Type;
 
@@ -150,6 +165,10 @@ export const DeviceCloseInput = Schema.Struct({
   threadId: ThreadId,
   /** Omit to close every device session for the thread. */
   deviceId: Schema.optional(DeviceId),
+  /** Release this exact panel owner when supplied by a client surface. */
+  sessionId: Schema.optional(Schema.String),
+  /** Ownership generation paired with sessionId to reject stale release requests. */
+  leaseId: Schema.optional(Schema.String),
   /** Also shut the simulator or emulator down. Defaults to false. */
   shutdown: Schema.optional(Schema.Boolean),
 });
@@ -372,6 +391,8 @@ export class DeviceOperationError extends Schema.TaggedError<DeviceOperationErro
   {
     operation: Schema.String,
     reason: Schema.Literals([
+      "busy",
+      "stale_session",
       "command_failed",
       "request_failed",
       "invalid_payload",
@@ -384,6 +405,8 @@ export class DeviceOperationError extends Schema.TaggedError<DeviceOperationErro
 ) {
   override get message(): string {
     const explanation = {
+      busy: "This device is reserved by another live walk. Wait for that walk to release it.",
+      stale_session: "This device session has expired. Open the device again.",
       command_failed: `The device command failed${this.exitCode === undefined ? "" : ` (exit code ${this.exitCode})`}.`,
       request_failed: "Could not communicate with device support. Try refreshing devices.",
       invalid_payload: "The device request could not be encoded.",
@@ -449,6 +472,8 @@ export const DeviceToolOpenInput = Schema.Struct({
 export type DeviceToolOpenInput = typeof DeviceToolOpenInput.Type;
 
 export const DeviceToolOpenResult = Schema.Struct({
+  sessionId: Schema.String,
+  leaseId: Schema.String,
   device: DeviceSummary,
   agentDevice: Schema.Struct({
     command: Schema.String,

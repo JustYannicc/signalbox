@@ -30,6 +30,8 @@ export interface DeviceTabTarget {
   deviceId: string;
   platform: "ios" | "android";
   name: string;
+  sessionId?: string;
+  leaseId?: string;
 }
 
 export type RightPanelSurface =

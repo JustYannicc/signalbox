@@ -1,12 +1,14 @@
 import { DeviceHostUpdates } from "./DeviceHostUpdates";
+import { deviceSessionRequiresReadOnlyPanel } from "@t3tools/contracts";
 import type {
   DevicePlatform,
+  DeviceSession,
   DeviceServiceState,
   DeviceSummary,
   ScopedThreadRef,
 } from "@t3tools/contracts";
 import { Smartphone, X } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import { usePreviewMiniPlayerStore } from "~/previewMiniPlayerStore";
 import { useRightPanelStore, type RightPanelSurface } from "~/rightPanelStore";
@@ -44,6 +46,10 @@ export function DevicePanel(props: {
   const close = useAtomCommand(deviceEnvironment.close);
   const [operationError, setOperationError] = useState<string | null>(null);
   const [pendingDevice, setPendingDevice] = useState<DeviceSummary | null>(null);
+  const [panelSession, setPanelSession] = useState<DeviceSession | null>(null);
+  const panelSessionRef = useRef<DeviceSession | null>(null);
+  const preserveLeaseForFloat = useRef(false);
+  const targetLeaseConsumed = useRef(false);
   const pendingDeviceKey = pendingDevice ? deviceKey(pendingDevice) : null;
 
   const hostDisabled = state.hostStatus === "disabled";
@@ -58,18 +64,119 @@ export function DevicePanel(props: {
     () => state.sessions.filter((session) => session.threadId === threadId),
     [state.sessions, threadId],
   );
-  const activeSession = props.surface.target
-    ? sessions.find(
+  const targetSession = props.surface.target
+    ? sessions.filter(
         (session) =>
           session.deviceId === props.surface.target?.deviceId &&
           session.hostId === props.surface.target.hostId,
       )
-    : undefined;
+    : [];
+  const activeSession =
+    targetSession.find(
+      (session) =>
+        session.sessionId === panelSession?.sessionId && session.leaseId === panelSession?.leaseId,
+    ) ??
+    targetSession.find((session) => session.ownerKind === "panel") ??
+    targetSession[0] ??
+    (panelSession?.threadId === threadId &&
+    panelSession.hostId === props.surface.target?.hostId &&
+    panelSession.deviceId === props.surface.target?.deviceId
+      ? panelSession
+      : undefined);
   const activeDevice = activeSession
     ? state.devices.find(
         (device) => device.hostId === activeSession.hostId && device.id === activeSession.deviceId,
       )
     : undefined;
+
+  useEffect(() => {
+    const target = props.surface.target;
+    if (!props.visible || !target) return;
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let owner = panelSessionRef.current;
+    if (
+      owner &&
+      (owner.threadId !== threadId ||
+        owner.hostId !== target.hostId ||
+        owner.deviceId !== target.deviceId)
+    )
+      owner = null;
+    const heartbeat = async () => {
+      const result = await open({
+        environmentId,
+        input: {
+          threadId,
+          hostId: target.hostId,
+          deviceId: target.deviceId,
+          platform: target.platform,
+          ...(owner !== null
+            ? { sessionId: owner.sessionId, leaseId: owner.leaseId }
+            : !targetLeaseConsumed.current &&
+                target.sessionId !== undefined &&
+                target.leaseId !== undefined
+              ? { sessionId: target.sessionId, leaseId: target.leaseId }
+              : {}),
+        },
+      });
+      if (cancelled) {
+        if (result._tag === "Success") {
+          void close({
+            environmentId,
+            input: {
+              threadId,
+              hostId: target.hostId,
+              deviceId: target.deviceId,
+              sessionId: result.value.sessionId,
+              leaseId: result.value.leaseId,
+            },
+          });
+        }
+        return;
+      }
+      if (result._tag === "Success") {
+        owner = result.value;
+        panelSessionRef.current = owner;
+        targetLeaseConsumed.current = true;
+        setPanelSession(owner);
+      } else if (owner === null) {
+        if (!targetLeaseConsumed.current && target.sessionId !== undefined) {
+          targetLeaseConsumed.current = true;
+          timer = setTimeout(() => void heartbeat(), 0);
+          return;
+        }
+        setOperationError(formatEnvironmentQueryError(result.cause));
+      }
+      timer = setTimeout(() => void heartbeat(), 60_000);
+    };
+    void heartbeat();
+    return () => {
+      cancelled = true;
+      if (timer !== undefined) clearTimeout(timer);
+      const released = owner;
+      if (preserveLeaseForFloat.current) {
+        preserveLeaseForFloat.current = false;
+        targetLeaseConsumed.current = true;
+      } else if (released !== null) {
+        void close({
+          environmentId,
+          input: {
+            threadId,
+            hostId: released.hostId,
+            deviceId: released.deviceId,
+            sessionId: released.sessionId,
+            leaseId: released.leaseId,
+          },
+        });
+        panelSessionRef.current = null;
+        setPanelSession(null);
+        targetLeaseConsumed.current = true;
+      } else {
+        targetLeaseConsumed.current = true;
+        setPanelSession(null);
+      }
+    };
+  }, [close, environmentId, open, props.surface.target, props.visible, threadId]);
 
   const grouped = useMemo(() => groupDevices(state), [state]);
 
@@ -89,13 +196,18 @@ export function DevicePanel(props: {
         },
       });
       if (result._tag === "Failure") setOperationError(formatEnvironmentQueryError(result.cause));
-      else
+      else {
+        panelSessionRef.current = result.value;
+        setPanelSession(result.value);
         useRightPanelStore.getState().openDevice(props.threadRef, {
           hostId: result.value.hostId,
           deviceId: result.value.deviceId,
           platform: device.platform,
           name: device.name,
+          sessionId: result.value.sessionId,
+          leaseId: result.value.leaseId,
         });
+      }
     } finally {
       setPendingDevice(null);
     }
@@ -103,12 +215,15 @@ export function DevicePanel(props: {
 
   const floatActive = () => {
     if (!activeDevice) return;
+    const session = panelSessionRef.current;
+    preserveLeaseForFloat.current = true;
     usePreviewMiniPlayerStore.getState().open(props.threadRef, {
       kind: "device",
       hostId: activeDevice.hostId,
       deviceId: activeDevice.id,
       platform: activeDevice.platform,
       name: activeDevice.name,
+      ...(session === null ? {} : { sessionId: session.sessionId, leaseId: session.leaseId }),
     });
     useRightPanelStore.getState().close(props.threadRef);
   };
@@ -118,24 +233,40 @@ export function DevicePanel(props: {
       useRightPanelStore.getState().closeSurface(props.threadRef, props.surface.id);
       return;
     }
-    if (!activeSession) return;
+    const session =
+      panelSessionRef.current ?? (activeSession?.ownerKind === "panel" ? activeSession : undefined);
+    if (!session) return;
     setOperationError(null);
     void close({
       environmentId,
       input: {
         threadId,
-        hostId: activeSession.hostId,
-        deviceId: activeSession.deviceId,
+        hostId: session.hostId,
+        deviceId: session.deviceId,
+        sessionId: session.sessionId,
+        leaseId: session.leaseId,
         shutdown: powerOff,
       },
     }).then((result) => {
       if (result._tag === "Failure") setOperationError(formatEnvironmentQueryError(result.cause));
-      else useRightPanelStore.getState().closeSurface(props.threadRef, props.surface.id);
+      else {
+        panelSessionRef.current = null;
+        setPanelSession(null);
+        useRightPanelStore.getState().closeSurface(props.threadRef, props.surface.id);
+      }
     });
   };
 
   const bootingDevices =
     state.bootingDevices?.filter((device) => device.threadId === threadId) ?? [];
+  const waitingForDevice =
+    pendingDevice !== null &&
+    (state.queuedDevices ?? []).some(
+      (device) =>
+        device.hostId === pendingDevice.hostId &&
+        device.id === pendingDevice.id &&
+        device.threadId === threadId,
+    );
   const { ready: hostReady, busy: hostBusy } = deviceHubReadiness(state);
   const unavailablePlatforms = state.hosts.flatMap((host) =>
     host.platforms
@@ -201,6 +332,7 @@ export function DevicePanel(props: {
             }
             hostDiagnostics={state.hostStatusDetail}
             visible={props.visible}
+            observer={deviceSessionRequiresReadOnlyPanel(activeSession)}
             onFloat={floatActive}
             onClose={() => closeActive(false)}
             onPowerOff={() => closeActive(true)}
@@ -215,13 +347,15 @@ export function DevicePanel(props: {
             }
             stage="opening"
             message={
-              pendingDevice
-                ? pendingDevice.booted
-                  ? "Opening device…"
-                  : "Starting device…"
-                : state.hostStatus === "installing"
-                  ? (state.hostStatusDetail ?? "Installing device support…")
-                  : "Finding devices…"
+              waitingForDevice
+                ? `Waiting for ${pendingDevice?.name ?? "device"} to become available…`
+                : pendingDevice
+                  ? pendingDevice.booted
+                    ? "Opening device…"
+                    : "Starting device…"
+                  : state.hostStatus === "installing"
+                    ? (state.hostStatusDetail ?? "Installing device support…")
+                    : "Finding devices…"
             }
           />
         ) : (

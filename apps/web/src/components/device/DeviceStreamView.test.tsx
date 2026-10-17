@@ -56,7 +56,7 @@ afterEach(async () => {
   vi.unstubAllGlobals();
 });
 
-async function setup(h264 = false) {
+async function setup(h264 = false, readOnly = false) {
   vi.useFakeTimers();
   vi.stubGlobal("window", globalThis);
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
@@ -98,6 +98,7 @@ async function setup(h264 = false) {
     return Promise.resolve(new Response("prime"));
   });
   const sockets: Array<{ onmessage?: (event: { data: ArrayBuffer }) => void }> = [];
+  const sentMessages: Array<unknown> = [];
   vi.stubGlobal(
     "WebSocket",
     class {
@@ -107,7 +108,9 @@ async function setup(h264 = false) {
         sockets.push(this);
       }
       onmessage?: (event: { data: ArrayBuffer }) => void;
-      send() {}
+      send(payload: unknown) {
+        sentMessages.push(payload);
+      }
       close() {}
     },
   );
@@ -127,6 +130,7 @@ async function setup(h264 = false) {
       platform="ios"
       visible={visible}
       allowPhoneView={h264}
+      readOnly={readOnly}
     />
   );
   await act(async () => {
@@ -147,6 +151,7 @@ async function setup(h264 = false) {
   });
   return {
     images,
+    sentMessages,
     view,
     configure() {
       const json = new TextEncoder().encode(
@@ -206,6 +211,33 @@ it("starts exactly one new stream per Reconnect press", async () => {
   expect(primes).toBe(1);
   await act(async () => renderer!.root.findByType("button").props.onClick());
   expect(primes).toBe(2);
+});
+
+it("does not send keyboard or touch input from an observer view", async () => {
+  const { sentMessages } = await setup(false, true);
+  const sentBeforeInput = sentMessages.length;
+  const host = renderer!.root.findByProps({ role: "application" });
+  const touchSurface = renderer!.root.find(
+    (node) => typeof node.props.onPointerDown === "function",
+  );
+  const preventDefault = vi.fn();
+  const keyEvent = {
+    target: host,
+    currentTarget: host,
+    nativeEvent: { key: "a" } as KeyboardEvent,
+    key: "a",
+    metaKey: false,
+    preventDefault,
+  };
+  await act(async () => {
+    (host.props.onKeyDown as (event: typeof keyEvent) => void)(keyEvent);
+    (host.props.onKeyUp as (event: typeof keyEvent) => void)(keyEvent);
+    (touchSurface.props.onPointerDown as (event: object) => void)({});
+    (touchSurface.props.onPointerMove as (event: object) => void)({});
+    (touchSurface.props.onPointerUp as (event: object) => void)({});
+  });
+  expect(sentMessages).toHaveLength(sentBeforeInput);
+  expect(preventDefault).not.toHaveBeenCalled();
 });
 
 it("keeps the 3D viewer mounted across iOS video recovery and releases it when hidden", async () => {

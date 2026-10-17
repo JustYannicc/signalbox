@@ -4,6 +4,7 @@ import {
   DeviceId,
   DeviceOperationError,
   LOCAL_DEVICE_HOST_ID,
+  ProviderSessionId,
   ThreadId,
   type DeviceServiceState,
   type ServerSettings as Settings,
@@ -11,6 +12,7 @@ import {
 } from "@t3tools/contracts";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as NetService from "@t3tools/shared/Net";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
@@ -18,12 +20,14 @@ import * as Deferred from "effect/Deferred";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Path from "effect/Path";
 import * as PubSub from "effect/PubSub";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import { HttpClient, HttpClientResponse } from "effect/http";
 import * as ServerConfig from "../config.ts";
@@ -33,6 +37,7 @@ import * as DeviceHost from "./DeviceHost.ts";
 import { NodeRuntimeUnavailableError } from "@t3tools/shared/nodeRuntime";
 
 import * as DeviceService from "./DeviceService.ts";
+import { deviceLeaseDirectory, makeFileDeviceLeaseStore } from "./DeviceLeaseStore.ts";
 
 const decodeJson = Schema.decodeUnknownSync(Schema.fromJsonString(Schema.Unknown));
 
@@ -83,13 +88,18 @@ const fixture = Effect.fn("fixture")(function* (
     | DeviceHost.AgentDeviceStartError,
   inspectError = false,
   installTool?: Parameters<typeof DeviceService.makeWithHosts>[3],
+  leaseRuntime: DeviceService.DeviceLeaseRuntime = {},
+  initiallyBooted = false,
+  productionConfigBaseDir?: string,
+  hostHomeDirectory?: string,
+  onShutdown: Effect.Effect<void> = Effect.void,
 ) {
   const settings = yield* Ref.make(DEFAULT_SERVER_SETTINGS);
   const starts: string[] = [];
   const agentStarts: string[] = [];
   const agentStops: string[] = [];
   const requests: string[] = [];
-  let booted = false;
+  let booted = initiallyBooted;
   let shutDown = false;
   const ready: DeviceHost.DeviceHostReady = {
     nodePath: process.execPath,
@@ -145,89 +155,102 @@ const fixture = Effect.fn("fixture")(function* (
       starts.push("stop");
     }),
   };
-  const service = yield* DeviceService.makeWithHosts(
-    new Map([[host.id, host]]),
-    undefined,
-    undefined,
-    installTool,
-  ).pipe(
-    Effect.provide(NodeCrypto.layer),
-    Effect.provideService(DeviceHost.DeviceHost, host),
-    Effect.provideService(
-      ServerSettings.ServerSettingsService,
-      ServerSettings.ServerSettingsService.of({
-        updateProviderInstance: () => Effect.die("Unexpected provider mutation"),
-        withSettingsSnapshot: (use) => Effect.flatMap(Ref.get(settings), use),
-        start: Effect.void,
-        ready: Effect.void,
-        getSettings: Ref.get(settings),
-        updateSettings: (patch) =>
-          Ref.updateAndGet(settings, (current) => ({
-            ...current,
-            enableDeviceSupport: patch.enableDeviceSupport ?? current.enableDeviceSupport,
-            enableAgentDeviceAccess:
-              patch.enableAgentDeviceAccess ?? current.enableAgentDeviceAccess,
-            deviceOnboardingCompleted:
-              patch.deviceOnboardingCompleted ?? current.deviceOnboardingCompleted,
-          })),
-        streamChanges: Stream.empty,
-        subscribeChanges: Effect.succeed(Stream.empty),
-      }),
-    ),
-    Effect.provideService(
-      HttpClient.HttpClient,
-      HttpClient.make((request) =>
-        Effect.gen(function* () {
-          requests.push(request.url);
-          if (request.url.includes("/api/screenshot")) {
-            return HttpClientResponse.fromWeb(
-              request,
-              new Response(new Uint8Array([137, 80, 78, 71])),
-            );
-          }
-          if (request.url.endsWith("/shutdown")) {
-            shutDown = true;
-            booted = false;
-            return HttpClientResponse.fromWeb(request, Response.json({ ok: true }));
-          }
-          if (shutDown && failListAfterShutdown) {
-            return HttpClientResponse.fromWeb(
-              request,
-              new Response("Discovery busy", { status: 503 }),
-            );
-          }
-          if (request.url.endsWith("/boot")) {
-            yield* onBoot;
-            booted = true;
-            return HttpClientResponse.fromWeb(
-              request,
-              Response.json(
-                bootError ? { ok: false, error: bootError } : { ok: true, serial: "emulator-5554" },
-              ),
-            );
-          }
-          return HttpClientResponse.fromWeb(
-            request,
-            Response.json({
-              simulators: [],
-              emulators: booted
-                ? [
-                    {
-                      id: "emulator-5554",
-                      name: "Pixel_API_35",
-                      platform: "android",
-                      version: "Android 15",
-                      booted: true,
-                      physical: false,
-                    },
-                  ]
-                : [],
-            }),
-          );
+  const settingsService = ServerSettings.ServerSettingsService.of({
+    updateProviderInstance: () => Effect.die("Unexpected provider mutation"),
+    withSettingsSnapshot: (use) => Effect.flatMap(Ref.get(settings), use),
+    start: Effect.void,
+    ready: Effect.void,
+    getSettings: Ref.get(settings),
+    updateSettings: (patch) =>
+      Ref.updateAndGet(settings, (current) => ({
+        ...current,
+        enableDeviceSupport: patch.enableDeviceSupport ?? current.enableDeviceSupport,
+        enableAgentDeviceAccess: patch.enableAgentDeviceAccess ?? current.enableAgentDeviceAccess,
+        deviceOnboardingCompleted:
+          patch.deviceOnboardingCompleted ?? current.deviceOnboardingCompleted,
+      })),
+    streamChanges: Stream.empty,
+    subscribeChanges: Effect.succeed(Stream.empty),
+  });
+  const http = HttpClient.make((request) =>
+    Effect.gen(function* () {
+      requests.push(request.url);
+      if (request.url.includes("/api/screenshot")) {
+        return HttpClientResponse.fromWeb(request, new Response(new Uint8Array([137, 80, 78, 71])));
+      }
+      if (request.url.endsWith("/shutdown")) {
+        yield* onShutdown;
+        shutDown = true;
+        booted = false;
+        return HttpClientResponse.fromWeb(request, Response.json({ ok: true }));
+      }
+      if (shutDown && failListAfterShutdown) {
+        return HttpClientResponse.fromWeb(request, new Response("Discovery busy", { status: 503 }));
+      }
+      if (request.url.endsWith("/boot")) {
+        yield* onBoot;
+        booted = true;
+        return HttpClientResponse.fromWeb(
+          request,
+          Response.json(
+            bootError ? { ok: false, error: bootError } : { ok: true, serial: "emulator-5554" },
+          ),
+        );
+      }
+      return HttpClientResponse.fromWeb(
+        request,
+        Response.json({
+          simulators: [],
+          emulators: booted
+            ? [
+                {
+                  id: "emulator-5554",
+                  name: "Pixel_API_35",
+                  platform: "android",
+                  version: "Android 15",
+                  booted: true,
+                  physical: false,
+                },
+              ]
+            : [],
         }),
-      ),
-    ),
+      );
+    }),
   );
+  let service: DeviceService.DeviceService["Service"];
+  if (productionConfigBaseDir === undefined) {
+    service = yield* DeviceService.makeWithHosts(
+      new Map([[host.id, host]]),
+      undefined,
+      undefined,
+      installTool,
+      leaseRuntime,
+    ).pipe(
+      Effect.provide(NodeCrypto.layer),
+      Effect.provideService(DeviceHost.DeviceHost, host),
+      Effect.provideService(ServerSettings.ServerSettingsService, settingsService),
+      Effect.provideService(HttpClient.HttpClient, http),
+    );
+  } else {
+    const runtimeLayer = Layer.mergeAll(
+      NodeCrypto.layer,
+      Layer.succeed(DeviceHost.DeviceHost, host),
+      Layer.succeed(ServerSettings.ServerSettingsService, settingsService),
+      Layer.succeed(ProcessRunner.ProcessRunner, {
+        run: () => Effect.die("Unexpected process"),
+      }),
+      Layer.succeed(HttpClient.HttpClient, http),
+      ServerConfig.layerTest(process.cwd(), productionConfigBaseDir),
+      NetService.layer,
+      Layer.succeed(HostProcess.HomeDirectory, hostHomeDirectory ?? process.cwd()),
+    ).pipe(Layer.provideMerge(NodeServices.layer));
+    service = yield* DeviceService.make({
+      automaticCleanup: leaseRuntime.automaticCleanup ?? false,
+      ...(leaseRuntime.waitForLeaseRetry === undefined
+        ? {}
+        : { waitForLeaseRetry: leaseRuntime.waitForLeaseRetry }),
+    }).pipe(Effect.provide(runtimeLayer));
+  }
   return { service, starts, agentStarts, agentStops, requests, settings };
 });
 
@@ -368,6 +391,242 @@ describe("device setup consent", () => {
   );
 });
 
+it.effect("cancels a queued open without leaving a panel status behind", () =>
+  Effect.gen(function* () {
+    const { service } = yield* fixture();
+    yield* service.configure({ enabled: true });
+    const threadId = ThreadId.make("queued-open-cancel");
+    const firstOwner = {
+      kind: "agent" as const,
+      providerSessionId: ProviderSessionId.make("provider-first-walk"),
+    };
+    const secondOwner = {
+      kind: "agent" as const,
+      providerSessionId: ProviderSessionId.make("provider-second-walk"),
+    };
+    const first = yield* service.open(
+      {
+        threadId,
+        hostId: LOCAL_DEVICE_HOST_ID,
+        deviceId: DeviceId.make("Pixel_API_35"),
+        platform: "android",
+      },
+      firstOwner,
+    );
+    const queuedState = yield* DeviceService.stateStream(service).pipe(
+      Stream.filter(
+        (state) => state.queuedDevices?.some((entry) => entry.threadId === threadId) === true,
+      ),
+      Stream.runHead,
+      Effect.forkChild,
+    );
+    const waitingOpen = yield* Effect.forkChild(
+      service.open(
+        {
+          threadId,
+          hostId: LOCAL_DEVICE_HOST_ID,
+          deviceId: first.deviceId,
+          platform: "android",
+        },
+        secondOwner,
+      ),
+    );
+    const status = yield* Fiber.join(queuedState);
+    expect(status._tag).toBe("Some");
+
+    yield* Fiber.interrupt(waitingOpen);
+    const interrupted = yield* Fiber.await(waitingOpen);
+    expect(Exit.isFailure(interrupted)).toBe(true);
+    expect((yield* service.state).queuedDevices ?? []).toEqual([]);
+
+    yield* service.close(
+      {
+        threadId,
+        hostId: LOCAL_DEVICE_HOST_ID,
+        deviceId: first.deviceId,
+        sessionId: first.sessionId,
+        leaseId: first.leaseId,
+      },
+      firstOwner,
+    );
+  }).pipe(Effect.scoped),
+);
+
+it.effect("keeps one device lease across production services and worktree state dirs", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const homeDirectory = yield* fs.makeTempDirectoryScoped({ prefix: "device-host-home-" });
+    const path = yield* Path.Path;
+    const firstBaseDir = path.join(homeDirectory, "worktree-one", ".t3");
+    const secondBaseDir = path.join(homeDirectory, "worktree-two", ".t3");
+    const firstStateDir = path.join(firstBaseDir, "userdata");
+    const secondStateDir = path.join(secondBaseDir, "userdata");
+    const sharedLeaseDirectory = deviceLeaseDirectory(homeDirectory);
+    const retryWaiting = yield* Deferred.make<void>();
+    const resumeRetry = yield* Deferred.make<void>();
+    expect(firstStateDir).not.toBe(secondStateDir);
+    expect(sharedLeaseDirectory).not.toBe(path.join(firstStateDir, "device-leases"));
+    expect(sharedLeaseDirectory).not.toBe(path.join(secondStateDir, "device-leases"));
+
+    const firstFixture = yield* fixture(
+      Effect.void,
+      undefined,
+      false,
+      undefined,
+      false,
+      undefined,
+      {},
+      true,
+      firstBaseDir,
+      homeDirectory,
+    );
+    const secondFixture = yield* fixture(
+      Effect.void,
+      undefined,
+      false,
+      undefined,
+      false,
+      undefined,
+      {
+        waitForLeaseRetry: () =>
+          Effect.gen(function* () {
+            yield* Deferred.succeed(retryWaiting, undefined);
+            yield* Deferred.await(resumeRetry);
+          }),
+      },
+      true,
+      secondBaseDir,
+      homeDirectory,
+    );
+    const observerStore = makeFileDeviceLeaseStore(sharedLeaseDirectory);
+    yield* firstFixture.service.configure({ enabled: true });
+    yield* secondFixture.service.configure({ enabled: true });
+
+    const firstThreadId = ThreadId.make("first-worktree-walk");
+    const secondThreadId = ThreadId.make("second-worktree-walk");
+    const firstOwner = {
+      kind: "agent" as const,
+      providerSessionId: ProviderSessionId.make("first-production-provider"),
+    };
+    const secondOwner = {
+      kind: "agent" as const,
+      providerSessionId: ProviderSessionId.make("second-production-provider"),
+    };
+    const firstSession = yield* firstFixture.service.open(
+      {
+        threadId: firstThreadId,
+        hostId: LOCAL_DEVICE_HOST_ID,
+        deviceId: DeviceId.make("emulator-5554"),
+        platform: "android",
+      },
+      firstOwner,
+    );
+    const queuedState = yield* DeviceService.stateStream(secondFixture.service).pipe(
+      Stream.filter(
+        (state) => state.queuedDevices?.some((entry) => entry.threadId === secondThreadId) === true,
+      ),
+      Stream.runHead,
+      Effect.forkChild,
+    );
+    const secondOpen = yield* Effect.forkChild(
+      secondFixture.service.open(
+        {
+          threadId: secondThreadId,
+          hostId: LOCAL_DEVICE_HOST_ID,
+          deviceId: DeviceId.make("Pixel_API_35"),
+          platform: "android",
+        },
+        secondOwner,
+      ),
+    );
+    expect((yield* Fiber.join(queuedState))._tag).toBe("Some");
+    expect(secondOpen.pollUnsafe()).toBeUndefined();
+
+    const activeLease = (yield* observerStore.list)[0]?.lease;
+    expect(activeLease?.owners).toHaveLength(1);
+    expect(activeLease?.owners[0]?.providerSessionId).toBe(firstOwner.providerSessionId);
+    expect(activeLease?.waiters).toMatchObject([
+      { providerSessionId: secondOwner.providerSessionId },
+    ]);
+    yield* Deferred.await(retryWaiting);
+    expect(secondOpen.pollUnsafe()).toBeUndefined();
+
+    yield* firstFixture.service.close(
+      {
+        threadId: firstThreadId,
+        hostId: LOCAL_DEVICE_HOST_ID,
+        deviceId: firstSession.deviceId,
+        sessionId: firstSession.sessionId,
+        leaseId: firstSession.leaseId,
+      },
+      firstOwner,
+    );
+    yield* Deferred.succeed(resumeRetry, undefined);
+    const secondSession = yield* Fiber.join(secondOpen);
+    expect(secondSession.providerSessionId).toBe(secondOwner.providerSessionId);
+    const transferredLease = (yield* observerStore.list)[0]?.lease;
+    expect(transferredLease?.owners).toHaveLength(1);
+    expect(transferredLease?.owners[0]?.providerSessionId).toBe(secondOwner.providerSessionId);
+
+    yield* secondFixture.service.close(
+      {
+        threadId: secondThreadId,
+        hostId: LOCAL_DEVICE_HOST_ID,
+        deviceId: secondSession.deviceId,
+        sessionId: secondSession.sessionId,
+        leaseId: secondSession.leaseId,
+      },
+      secondOwner,
+    );
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+it.effect("automatically shuts down an idle device after its provider session ends", () =>
+  Effect.gen(function* () {
+    const shutdownStarted = yield* Deferred.make<void>();
+    const { service, requests } = yield* fixture(
+      Effect.void,
+      undefined,
+      false,
+      undefined,
+      false,
+      undefined,
+      { isProviderSessionLive: () => Effect.succeed(false) },
+      false,
+      undefined,
+      undefined,
+      Deferred.succeed(shutdownStarted, undefined),
+    );
+    yield* service.configure({ enabled: true });
+    const threadId = ThreadId.make("idle-cleanup-walk");
+    const session = yield* service.open(
+      {
+        threadId,
+        hostId: LOCAL_DEVICE_HOST_ID,
+        deviceId: DeviceId.make("Pixel_API_35"),
+        platform: "android",
+      },
+      {
+        kind: "agent",
+        providerSessionId: ProviderSessionId.make("idle-cleanup-provider"),
+      },
+    );
+    const releasedSession = yield* DeviceService.stateStream(service).pipe(
+      Stream.filter(
+        (state) => !state.sessions.some((candidate) => candidate.sessionId === session.sessionId),
+      ),
+      Stream.runHead,
+      Effect.forkChild,
+    );
+    expect(requests.some((url) => url.endsWith("/api/devices/shutdown"))).toBe(false);
+
+    yield* TestClock.adjust("35 minutes");
+    yield* Deferred.await(shutdownStarted);
+    expect(requests.filter((url) => url.endsWith("/api/devices/shutdown"))).toHaveLength(1);
+    expect((yield* Fiber.join(releasedSession))._tag).toBe("Some");
+  }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, TestClock.layer()))),
+);
+
 it.effect("publishes boot progress and does not restore sessions after support is disabled", () =>
   Effect.gen(function* () {
     const started = yield* Deferred.make<void>();
@@ -459,90 +718,105 @@ it.effect("keeps shutdown successful when subsequent discovery fails", () =>
   }).pipe(Effect.scoped),
 );
 
-it.effect.each(["shutdown", "close"] as const)(
-  "%s releases iOS capture so reopening uses a fresh session",
-  (operation) =>
-    Effect.gen(function* () {
-      const deviceId = DeviceId.make("11111111-1111-1111-1111-111111111111");
-      const threadId = ThreadId.make("capture-recovery");
-      let booted = true;
-      let capture: number | null = null;
-      let generation = 0;
-      const ready: DeviceHost.DeviceHostReady = {
-        nodePath: process.execPath,
-        hub: { origin: "http://device.test" },
-        helpers: { serveSimAxSettings: null, serveSimCli: null },
-        run: () => Effect.succeed({ code: 0, stdout: "", stderr: "" }),
-      };
-      const host: DeviceHost.DeviceHost["Service"] = {
+it.effect("closing releases iOS capture so reopening uses a fresh session", () =>
+  Effect.gen(function* () {
+    const deviceId = DeviceId.make("11111111-1111-1111-1111-111111111111");
+    const threadId = ThreadId.make("capture-recovery");
+    let booted = true;
+    let capture: number | null = null;
+    let generation = 0;
+    const ready: DeviceHost.DeviceHostReady = {
+      nodePath: process.execPath,
+      hub: { origin: "http://device.test" },
+      helpers: { serveSimAxSettings: null, serveSimCli: null },
+      run: () => Effect.succeed({ code: 0, stdout: "", stderr: "" }),
+    };
+    const host: DeviceHost.DeviceHost["Service"] = {
+      id: LOCAL_DEVICE_HOST_ID,
+      summary: Effect.succeed({
         id: LOCAL_DEVICE_HOST_ID,
-        summary: Effect.succeed({
-          id: LOCAL_DEVICE_HOST_ID,
-          kind: "local",
-          label: "Simulator host",
-          platforms: [{ platform: "ios", available: true }],
-          hubInstalled: true,
-          agentDeviceInstalled: false,
-        }),
-        platformAvailability: (platform) => Effect.succeed({ platform, available: true }),
-        ensureReady: () => Effect.succeed(ready),
-        ensureAgentReady: () => Effect.die("Agent access is not used in this test"),
-        current: Effect.succeed(ready),
-        stopAgent: Effect.void,
-        stop: Effect.void,
-      };
-      const http = HttpClient.make((request) =>
-        Effect.sync(() => {
-          const path = new URL(request.url).pathname;
-          if (path === "/api/devices") {
-            return HttpClientResponse.fromWeb(
-              request,
-              Response.json({
-                emulators: [],
-                simulators: [
-                  {
-                    id: deviceId,
-                    name: "iPhone",
-                    platform: "ios",
-                    version: "26",
-                    physical: false,
-                    booted,
-                  },
-                ],
-              }),
-            );
-          }
-          if (path === "/vendor/serve-sim/grid/api/start") capture ??= ++generation;
-          else if (path === "/vendor/serve-sim/grid/api/shutdown") {
-            if (request.body._tag !== "Uint8Array") throw new Error("Missing shutdown body");
-            expect(decodeJson(new TextDecoder().decode(request.body.body))).toEqual({
-              udid: deviceId,
-            });
-            capture = null;
-            booted = false;
-          } else if (path === "/api/devices/shutdown") {
-            // This route powers off without releasing serve-sim's cached capture.
-            booted = false;
-          } else if (path === "/api/devices/boot") booted = true;
-          else throw new Error(`Unexpected hub path: ${path}`);
-          return HttpClientResponse.fromWeb(request, Response.json({ ok: true, id: deviceId }));
-        }),
-      );
-      const service = yield* DeviceService.makeWithHosts(new Map([[host.id, host]])).pipe(
-        Effect.provide(NodeCrypto.layer),
-        Effect.provideService(HttpClient.HttpClient, http),
-      );
-      const input = { threadId, deviceId, platform: "ios" as const };
-      yield* service.open(input);
-      expect(capture).toBe(1);
-      if (operation === "shutdown") yield* service.shutdown(input);
-      else yield* service.close({ threadId, deviceId, shutdown: true });
-      expect(capture).toBeNull();
-      expect((yield* service.state).sessions).toEqual([]);
-      yield* service.open(input);
-      expect(capture).toBe(2);
-      expect((yield* service.state).sessions).toHaveLength(1);
-    }).pipe(Effect.provide(ServerSettings.layerTest({ enableDeviceSupport: true })), Effect.scoped),
+        kind: "local",
+        label: "Simulator host",
+        platforms: [{ platform: "ios", available: true }],
+        hubInstalled: true,
+        agentDeviceInstalled: false,
+      }),
+      platformAvailability: (platform) => Effect.succeed({ platform, available: true }),
+      ensureReady: () => Effect.succeed(ready),
+      ensureAgentReady: () => Effect.die("Agent access is not used in this test"),
+      current: Effect.succeed(ready),
+      stopAgent: Effect.void,
+      stop: Effect.void,
+    };
+    const http = HttpClient.make((request) =>
+      Effect.sync(() => {
+        const path = new URL(request.url).pathname;
+        if (path === "/api/devices") {
+          return HttpClientResponse.fromWeb(
+            request,
+            Response.json({
+              emulators: [],
+              simulators: [
+                {
+                  id: deviceId,
+                  name: "iPhone",
+                  platform: "ios",
+                  version: "26",
+                  physical: false,
+                  booted,
+                },
+              ],
+            }),
+          );
+        }
+        if (path === "/vendor/serve-sim/grid/api/start") capture ??= ++generation;
+        else if (path === "/vendor/serve-sim/grid/api/shutdown") {
+          if (request.body._tag !== "Uint8Array") throw new Error("Missing shutdown body");
+          expect(decodeJson(new TextDecoder().decode(request.body.body))).toEqual({
+            udid: deviceId,
+          });
+          capture = null;
+          booted = false;
+        } else if (path === "/api/devices/shutdown") {
+          // This route powers off without releasing serve-sim's cached capture.
+          booted = false;
+        } else if (path === "/api/devices/boot") booted = true;
+        else throw new Error(`Unexpected hub path: ${path}`);
+        return HttpClientResponse.fromWeb(request, Response.json({ ok: true, id: deviceId }));
+      }),
+    );
+    const service = yield* DeviceService.makeWithHosts(new Map([[host.id, host]])).pipe(
+      Effect.provide(NodeCrypto.layer),
+      Effect.provideService(HttpClient.HttpClient, http),
+    );
+    const input = { threadId, deviceId, platform: "ios" as const };
+    yield* service.open(input);
+    expect(capture).toBe(1);
+    yield* service.close({ threadId, deviceId, shutdown: true });
+    expect(capture).toBeNull();
+    expect((yield* service.state).sessions).toEqual([]);
+    yield* service.open(input);
+    expect(capture).toBe(2);
+    expect((yield* service.state).sessions).toHaveLength(1);
+  }).pipe(Effect.provide(ServerSettings.layerTest({ enableDeviceSupport: true })), Effect.scoped),
+);
+
+it.effect("refuses unowned shutdown while a device lease is active", () =>
+  Effect.gen(function* () {
+    const { service, requests } = yield* fixture();
+    yield* service.configure({ enabled: true });
+    const session = yield* service.open({
+      threadId: ThreadId.make("explicit-shutdown"),
+      deviceId: "Pixel_API_35",
+      platform: "android",
+    });
+    const result = yield* Effect.exit(
+      service.shutdown({ deviceId: session.deviceId, platform: session.platform }),
+    );
+    expect(Exit.isFailure(result)).toBe(true);
+    expect((yield* service.state).sessions).toHaveLength(1);
+    expect(requests.some((url) => url.endsWith("/api/devices/shutdown"))).toBe(false);
+  }).pipe(Effect.scoped),
 );
 
 it.effect.each([
@@ -808,7 +1082,7 @@ it.effect("reconciles SSH host settings without publishing no-op changes", () =>
       stop: Effect.void,
       stopAgent: Effect.void,
     };
-    const service = yield* DeviceService.make.pipe(
+    const service = yield* DeviceService.make().pipe(
       Effect.provideService(DeviceHost.DeviceHost, localHost),
       Effect.provideService(ServerSettings.ServerSettingsService, {
         ...settings,
