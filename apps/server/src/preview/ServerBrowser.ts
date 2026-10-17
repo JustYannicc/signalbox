@@ -38,6 +38,7 @@ import {
   type PreviewNavStatus,
   type PreviewSessionSnapshot,
   type PreviewViewportSetting,
+  type OrchestrationV2ThreadShell,
   ThreadId,
   SERVER_BROWSER_AUTOMATION_CLIENT_ID,
   type PreviewAppearancePreference,
@@ -79,12 +80,14 @@ import * as ServerConfig from "../config.ts";
 import { resolveRootCliCommand } from "../cli/invocation.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as PreviewAutomationBroker from "../mcp/PreviewAutomationBroker.ts";
+import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import * as DesktopBrowserChannel from "./DesktopBrowserChannel.ts";
 import * as PreviewManager from "./Manager.ts";
 import * as ServerBrowserPage from "./ServerBrowserPage.ts";
 import * as PreviewBrowser from "./PreviewBrowser.ts";
 import * as PreviewBrowserHost from "./PreviewBrowserHost.ts";
 import { presentAsChrome, ServerBrowserContexts } from "./ServerBrowserContexts.ts";
+import * as ServerBrowserTabCleanup from "./ServerBrowserTabCleanup.ts";
 import { BrowserControlInterrupted, SessionControl } from "./SessionControl.ts";
 
 const SERVER_HOST_CLIENT_ID = SERVER_BROWSER_AUTOMATION_CLIENT_ID;
@@ -343,8 +346,18 @@ const READ_OPERATIONS: ReadonlySet<PreviewAutomationRequest["operation"]> = new 
 
 const AGENT_TAB_LIMIT = 8;
 const SERVER_TAB_LIMIT = 32;
-const AGENT_TAB_IDLE_MS = 30 * 60 * 1000;
 const IDLE_SWEEP_INTERVAL = "1 minute";
+const cleanupBlockReasonKeys = {
+  "human-controlled": "humanControlled",
+  visible: "visible",
+  "active-operation": "activeOperation",
+  loading: "loading",
+  "pending-interaction": "pendingInteraction",
+  recording: "recording",
+  "lifecycle-unavailable": "lifecycleUnavailable",
+  "active-thread": "activeThread",
+  "idle-window": "idleWindow",
+} as const;
 
 const DOWNLOAD_LIMIT = 20;
 const ABORTED_NAVIGATION_DOWNLOAD_WAIT_MS = 5_000;
@@ -457,10 +470,14 @@ const make = Effect.gen(function* () {
   const host = { platform: yield* HostProcess.Platform, arch: yield* HostProcess.Architecture };
   const manager = yield* PreviewManager.PreviewManager;
   const broker = yield* PreviewAutomationBroker.PreviewAutomationBroker;
+  const projections = Option.getOrUndefined(
+    yield* Effect.serviceOption(ProjectionStore.ProjectionStoreV2),
+  );
   const environment = yield* ServerEnvironment.ServerEnvironment;
   const previewBrowser = yield* PreviewBrowser.PreviewBrowser;
   const desktopChannel = yield* DesktopBrowserChannel.DesktopBrowserChannel;
   const runFork = Effect.runForkWith(yield* Effect.context<never>());
+  const runPromise = Effect.runPromiseWith(yield* Effect.context<never>());
   const launchServices = yield* Effect.context<ChildProcessSpawner.ChildProcessSpawner>();
   const setupCommand = yield* resolveRootCliCommand(PreviewBrowserHost.SETUP_SUBCOMMAND);
 
@@ -470,6 +487,23 @@ const make = Effect.gen(function* () {
   const closedPendingTabs = new Set<string>();
   const adoptedPages = new Map<string, { readonly page: Page; readonly openerTabId: string }>();
   const closedSessions = new Set<string>();
+  const activeRequestsByThread = new Map<string, number>();
+  let cleanupInProgress: Promise<void> | null = null;
+  let lastCleanup = {
+    closed: 0,
+    unreadableThreads: 0,
+    blocked: {
+      humanControlled: 0,
+      visible: 0,
+      activeOperation: 0,
+      loading: 0,
+      pendingInteraction: 0,
+      recording: 0,
+      lifecycleUnavailable: 0,
+      activeThread: 0,
+      idleWindow: 0,
+    },
+  };
   let hostConnectionId: string | null = null;
   let viewerResizeOrder = 0;
 
@@ -1245,17 +1279,103 @@ const make = Effect.gen(function* () {
   const assertTabCapacity = (agentSessionId: string) => {
     if (atTabLimit(agentSessionId))
       throw new BrowserControlInterrupted(
-        `Too many server browser tabs are open (${AGENT_TAB_LIMIT} per agent session, ${SERVER_TAB_LIMIT} per server). Close one with t3_preview_close or reuse one from preview_status tabs.`,
+        `Too many server browser tabs are open (${AGENT_TAB_LIMIT} per agent session, ${SERVER_TAB_LIMIT} per server) after automatic cleanup. Inspect serverTabCapacity in preview_status, reuse a tab, or close one you own.`,
         "tabLimit",
       );
   };
 
-  const closeIdleAgentTabs = () => {
-    const cutoff = Date.now() - AGENT_TAB_IDLE_MS;
-    for (const tab of tabs.values()) {
-      if (tab.control.agentId !== null && !seen(tab) && tab.usedAt < cutoff) dropTab(tab, true);
+  const cleanupAgentTabs = async () => {
+    if (cleanupInProgress) return cleanupInProgress;
+    const cleanup = (async () => {
+      const candidates = [...tabs.values()].filter((tab) => tab.control.agentId !== null);
+      const threadIds = [...new Set(candidates.map((tab) => tab.threadId))];
+      const lifecycle = new Map<string, OrchestrationV2ThreadShell | null | undefined>();
+      let unreadableThreads = projections === undefined ? threadIds.length : 0;
+      if (projections === undefined) {
+        for (const threadId of threadIds) lifecycle.set(threadId, undefined);
+      } else {
+        await Promise.all(
+          threadIds.map(async (threadId) => {
+            try {
+              lifecycle.set(
+                threadId,
+                await runPromise(projections.getThreadShell(ThreadId.make(threadId))),
+              );
+            } catch {
+              lifecycle.set(threadId, undefined);
+              unreadableThreads += 1;
+            }
+          }),
+        );
+      }
+
+      const now = Date.now();
+      let closed = 0;
+      const blocked = {
+        humanControlled: 0,
+        visible: 0,
+        activeOperation: 0,
+        loading: 0,
+        pendingInteraction: 0,
+        recording: 0,
+        lifecycleUnavailable: 0,
+        activeThread: 0,
+        idleWindow: 0,
+      };
+      for (const tab of candidates) {
+        const key = tabKey(tab.threadId, tab.tabId);
+        // A close event can replace the tab while lifecycle reads are in flight.
+        if (tabs.get(key) !== tab) continue;
+        const { cleanupReason, blockedBy } = ServerBrowserTabCleanup.assessTab({
+          agentOwned: tab.control.agentId !== null,
+          humanControlled: tab.control.controller !== null,
+          visible: seen(tab),
+          activeOperation: (activeRequestsByThread.get(tab.threadId) ?? 0) > 0,
+          loading: tab.loading,
+          pendingInteraction: tab.dialog !== null || tab.fileChooser !== null,
+          recording: tab.recording !== null || tab.recordingStart !== null || tab.capturing > 0,
+          usedAt: tab.usedAt,
+          now,
+          thread: lifecycle.get(tab.threadId),
+        });
+        if (cleanupReason === null) {
+          if (blockedBy !== null) blocked[cleanupBlockReasonKeys[blockedBy]] += 1;
+          continue;
+        }
+        dropTab(tab, true);
+        closed += 1;
+      }
+      lastCleanup = { closed, unreadableThreads, blocked };
+    })();
+    cleanupInProgress = cleanup;
+    try {
+      await cleanup;
+    } finally {
+      if (cleanupInProgress === cleanup) cleanupInProgress = null;
     }
   };
+
+  const beginActiveRequest = (threadId: string) =>
+    activeRequestsByThread.set(threadId, (activeRequestsByThread.get(threadId) ?? 0) + 1);
+  const finishActiveRequest = (threadId: string) => {
+    const remaining = (activeRequestsByThread.get(threadId) ?? 1) - 1;
+    if (remaining > 0) activeRequestsByThread.set(threadId, remaining);
+    else activeRequestsByThread.delete(threadId);
+  };
+
+  const serverTabCapacity = () => ({
+    used: tabs.size + pendingTabs.size,
+    limit: SERVER_TAB_LIMIT,
+    agentOwned: [...tabs.values()].filter((tab) => tab.control.agentId !== null).length,
+    humanControlled: [...tabs.values()].filter((tab) => tab.control.controller !== null).length,
+    unclaimed: [...tabs.values()].filter(
+      (tab) => tab.control.agentId === null && tab.control.controller === null,
+    ).length,
+    pendingOpens: pendingTabs.size,
+    lastCleanupClosed: lastCleanup.closed,
+    lastCleanupUnreadableThreads: lastCleanup.unreadableThreads,
+    lastCleanupBlocked: lastCleanup.blocked,
+  });
 
   const latestThreadTab = (threadId: string, agentSessionId?: string) => {
     const threadTabs = [...tabs.values()].filter((tab) => tab.threadId === threadId);
@@ -1367,6 +1487,7 @@ const make = Effect.gen(function* () {
         url: null,
         title: null,
         loading: false,
+        serverTabCapacity: serverTabCapacity(),
         ...profileStatus(),
       };
     }
@@ -1379,6 +1500,7 @@ const make = Effect.gen(function* () {
       url: url === "about:blank" ? null : url,
       title: null,
       loading: tab.loading,
+      serverTabCapacity: serverTabCapacity(),
       control: {
         owner: tabOwner(tab),
         ownedByCaller: tab.control.agentId === agentSessionId,
@@ -1766,7 +1888,7 @@ const make = Effect.gen(function* () {
         const navigationTimeout = Math.min(request.timeoutMs, NAVIGATION_TIMEOUT_MS);
         const profileId = existing ? undefined : resolveOpenProfile(open.profileId);
         if (!existing) {
-          closeIdleAgentTabs();
+          await cleanupAgentTabs();
           assertTabCapacity(request.agentSessionId);
         }
         const tab =
@@ -1996,7 +2118,15 @@ const make = Effect.gen(function* () {
 
   const handleRequest = (connectionId: string, request: PreviewAutomationRequest) =>
     Effect.tryPromise({
-      try: () => runOperation(request).finally(() => markUsed(request)),
+      try: () => {
+        const tracksActiveOperation =
+          request.operation !== "open" && request.operation !== "status";
+        if (tracksActiveOperation) beginActiveRequest(request.threadId);
+        return runOperation(request).finally(() => {
+          markUsed(request);
+          if (tracksActiveOperation) finishActiveRequest(request.threadId);
+        });
+      },
       catch: ServerBrowserPage.toOperationError,
     }).pipe(
       Effect.match({
@@ -2463,7 +2593,7 @@ const make = Effect.gen(function* () {
     Stream.runForEach(() => Effect.sync(reportLiveTabs)),
     Effect.forkScoped,
   );
-  yield* Effect.sync(closeIdleAgentTabs).pipe(
+  yield* Effect.promise(cleanupAgentTabs).pipe(
     Effect.repeat(Schedule.spaced(IDLE_SWEEP_INTERVAL)),
     Effect.forkScoped,
   );

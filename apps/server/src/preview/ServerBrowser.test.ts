@@ -4,6 +4,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it } from "@effect/vitest";
 import {
   EnvironmentId,
+  type OrchestrationV2ThreadShell,
   PreviewTabId,
   ProviderInstanceId,
   ThreadId,
@@ -11,6 +12,7 @@ import {
   type PreviewAutomationStatus,
 } from "@t3tools/contracts";
 import * as Clock from "effect/Clock";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
@@ -24,6 +26,7 @@ import { beforeEach, expect, vi } from "vite-plus/test";
 
 import * as ServerConfig from "../config.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
+import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import * as Broker from "../mcp/PreviewAutomationBroker.ts";
 import * as DesktopChannel from "./DesktopBrowserChannel.ts";
 import * as Manager from "./Manager.ts";
@@ -193,6 +196,27 @@ const desktopRenders = (tabId: string) => {
 const desktopVisibleTabs = new Set<string>();
 const releasedDesktopTabs: Array<string> = [];
 const desktopConnections: Array<{ endpoint: string; context: ReturnType<typeof makeContext> }> = [];
+const threadShells = new Map<string, OrchestrationV2ThreadShell>();
+const threadShellReadGates = new Map<
+  string,
+  { readonly started: PromiseWithResolvers<void>; readonly release: PromiseWithResolvers<void> }
+>();
+const threadShell = (
+  threadId: string,
+  overrides: Partial<OrchestrationV2ThreadShell> = {},
+): OrchestrationV2ThreadShell =>
+  ({
+    id: ThreadId.make(threadId),
+    archivedAt: null,
+    settledAt: null,
+    settledOverride: null,
+    status: "idle",
+    activeRunId: null,
+    activityRunStatus: null,
+    pendingRuntimeRequest: null,
+    pendingBackgroundTasks: [],
+    ...overrides,
+  }) as unknown as OrchestrationV2ThreadShell;
 const testThread = {
   threadId: ThreadId.make("browser-test-thread"),
   providerSessionId: "agent-a",
@@ -210,10 +234,25 @@ const asSession = (providerSessionId: string) => ({
   ...scope,
   thread: { ...testThread, providerSessionId },
 });
+const forThread = (threadId: string, providerSessionId: string) => ({
+  ...scope,
+  thread: { ...testThread, threadId: ThreadId.make(threadId), providerSessionId },
+});
 const dependenciesAt = (home: string | { readonly prefix: string }) =>
   Layer.mergeAll(
     Broker.layer,
     Manager.layer,
+    Layer.mock(ProjectionStore.ProjectionStoreV2)({
+      getThreadShell: (threadId) => {
+        const gate = threadShellReadGates.get(threadId);
+        if (!gate) return Effect.succeed(threadShells.get(threadId) ?? null);
+        threadShellReadGates.delete(threadId);
+        return Effect.promise(() => {
+          gate.started.resolve();
+          return gate.release.promise;
+        }).pipe(Effect.map(() => threadShells.get(threadId) ?? null));
+      },
+    }),
     Layer.succeed(ServerEnvironment.ServerEnvironment, {
       getEnvironmentId: Effect.succeed(scope.environmentId),
       getDescriptor: Effect.die("unused descriptor"),
@@ -295,6 +334,8 @@ const viewerInput = (tabId: string, canOperate: boolean) => ({
 
 beforeEach(() => {
   contexts.length = 0;
+  threadShells.clear();
+  threadShellReadGates.clear();
   contextRequests.length = 0;
   contextGate = null;
   contextFailure = null;
@@ -1292,6 +1333,268 @@ it.live("an agent's tabs stop at the limit until an unwatched idle tab closes", 
       expect(sessions.map((session) => session.tabId).toSorted()).toEqual(
         [tabId, reopened.tabId].toSorted(),
       );
+    }),
+  ).pipe(Effect.provide(layer)),
+);
+
+it.live(
+  "reclaims settled and archived agent tabs before rejecting an open at server capacity",
+  () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const broker = yield* Broker.PreviewAutomationBroker;
+        yield* Effect.yieldNow;
+        const groups = [
+          { threadId: "settled-preview-thread", agentId: "settled-agent" },
+          { threadId: "archived-preview-thread", agentId: "archived-agent" },
+          { threadId: "active-preview-thread-a", agentId: "active-agent-a" },
+          { threadId: "active-preview-thread-b", agentId: "active-agent-b" },
+        ];
+        for (const group of groups) {
+          for (let index = 0; index < 8; index += 1) {
+            yield* broker.invoke({
+              scope: forThread(group.threadId, group.agentId),
+              operation: "open",
+              input: { reuseExistingTab: false, show: false },
+            });
+          }
+        }
+
+        threadShells.set(
+          "settled-preview-thread",
+          threadShell("settled-preview-thread", { settledOverride: "settled" }),
+        );
+        threadShells.set(
+          "archived-preview-thread",
+          threadShell("archived-preview-thread", {
+            archivedAt: DateTime.makeUnsafe("2026-10-17T00:00:00.000Z"),
+          }),
+        );
+        for (const group of groups.slice(2))
+          threadShells.set(group.threadId, threadShell(group.threadId, { status: "running" }));
+
+        const opened = yield* broker.invoke<PreviewAutomationStatus>({
+          scope: forThread("new-preview-thread", "new-agent"),
+          operation: "open",
+          input: { reuseExistingTab: false, show: false },
+        });
+        expect(opened.available).toBe(true);
+        expect(opened.serverTabCapacity).toEqual({
+          used: 17,
+          limit: 32,
+          agentOwned: 17,
+          humanControlled: 0,
+          unclaimed: 0,
+          pendingOpens: 0,
+          lastCleanupClosed: 16,
+          lastCleanupUnreadableThreads: 0,
+          lastCleanupBlocked: {
+            humanControlled: 0,
+            visible: 0,
+            activeOperation: 0,
+            loading: 0,
+            pendingInteraction: 0,
+            recording: 0,
+            lifecycleUnavailable: 0,
+            activeThread: 16,
+            idleWindow: 0,
+          },
+        });
+
+        const manager = yield* Manager.PreviewManager;
+        const settled = yield* manager.list({ threadId: ThreadId.make("settled-preview-thread") });
+        const archived = yield* manager.list({
+          threadId: ThreadId.make("archived-preview-thread"),
+        });
+        expect(settled.sessions).toHaveLength(0);
+        expect(archived.sessions).toHaveLength(0);
+      }),
+    ).pipe(Effect.provide(layer)),
+);
+
+it.live("preserves tabs while their thread is active, even after the tab idle window", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const broker = yield* Broker.PreviewAutomationBroker;
+      const threadId = "active-preview-thread";
+      const agentId = "active-preview-agent";
+      yield* Effect.yieldNow;
+      for (let index = 0; index < 8; index += 1) {
+        yield* broker.invoke({
+          scope: forThread(threadId, agentId),
+          operation: "open",
+          input: { reuseExistingTab: false, show: false },
+        });
+      }
+      threadShells.set(threadId, threadShell(threadId, { status: "running" }));
+      const clock = vi.spyOn(Date, "now").mockReturnValue(1_893_456_000_000);
+      yield* Effect.addFinalizer(() => Effect.sync(() => clock.mockRestore()));
+
+      const failure = yield* broker
+        .invoke<PreviewAutomationStatus>({
+          scope: forThread(threadId, agentId),
+          operation: "open",
+          input: { reuseExistingTab: false, show: false },
+        })
+        .pipe(Effect.flip);
+      expect(failure).toMatchObject({ reason: "tabLimit" });
+
+      const manager = yield* Manager.PreviewManager;
+      const { sessions } = yield* manager.list({ threadId: ThreadId.make(threadId) });
+      expect(sessions).toHaveLength(8);
+    }),
+  ).pipe(Effect.provide(layer)),
+);
+
+it.live("preserves a human-controlled agent tab during idle cleanup", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const broker = yield* Broker.PreviewAutomationBroker;
+      const browser = yield* ServerBrowser.ServerBrowser;
+      const threadId = "human-preview-thread";
+      const agentId = "human-preview-agent";
+      yield* Effect.yieldNow;
+      const opened = yield* broker.invoke<PreviewAutomationStatus>({
+        scope: forThread(threadId, agentId),
+        operation: "open",
+        input: { reuseExistingTab: false, show: false },
+      });
+      const viewer = yield* browser.attachViewer({
+        ...viewerInput(opened.tabId!, true),
+        threadId: ThreadId.make(threadId),
+      });
+      yield* viewer.input({ type: "takeControl" });
+      const clock = vi.spyOn(Date, "now").mockReturnValue(1_893_456_000_000);
+      yield* Effect.addFinalizer(() => Effect.sync(() => clock.mockRestore()));
+
+      yield* broker.invoke({
+        scope: forThread("human-cleanup-trigger", "trigger-agent"),
+        operation: "open",
+        input: { reuseExistingTab: false, show: false },
+      });
+      const status = yield* broker.invoke<PreviewAutomationStatus>({
+        scope: forThread(threadId, agentId),
+        tabId: opened.tabId!,
+        operation: "status",
+        input: {},
+      });
+      expect(status.available).toBe(true);
+      expect(status.control?.owner).toBe("human");
+      yield* viewer.input({ type: "releaseControl" });
+    }),
+  ).pipe(Effect.provide(layer)),
+);
+
+it.live("does not idle-close a tab while its automation request is still running", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const broker = yield* Broker.PreviewAutomationBroker;
+      const threadId = "inflight-preview-thread";
+      const agentId = "inflight-preview-agent";
+      yield* Effect.yieldNow;
+      const opened = yield* broker.invoke<PreviewAutomationStatus>({
+        scope: forThread(threadId, agentId),
+        operation: "open",
+        input: { reuseExistingTab: false, show: false },
+      });
+      const page = contexts[0]!.page;
+      const started = Promise.withResolvers<void>();
+      const resume = Promise.withResolvers<void>();
+      const originalGoto = page.goto.getMockImplementation()!;
+      page.goto.mockImplementationOnce(async (url) => {
+        started.resolve();
+        await resume.promise;
+        await originalGoto(url);
+      });
+      const clock = vi.spyOn(Date, "now").mockReturnValue(1_893_456_000_000);
+      yield* Effect.addFinalizer(() =>
+        Effect.sync(() => {
+          clock.mockRestore();
+          resume.resolve();
+        }),
+      );
+      const navigation = yield* broker
+        .invoke({
+          scope: forThread(threadId, agentId),
+          tabId: opened.tabId!,
+          operation: "navigate",
+          input: { url: "http://example.com" },
+        })
+        .pipe(Effect.forkScoped);
+      yield* Effect.promise(() => started.promise);
+
+      yield* broker.invoke({
+        scope: forThread("inflight-cleanup-trigger", "trigger-agent"),
+        operation: "open",
+        input: { reuseExistingTab: false, show: false },
+      });
+      const manager = yield* Manager.PreviewManager;
+      const { sessions } = yield* manager.list({ threadId: ThreadId.make(threadId) });
+      expect(sessions.map((session) => session.tabId)).toContain(opened.tabId);
+
+      resume.resolve();
+      yield* Fiber.join(navigation);
+    }),
+  ).pipe(Effect.provide(layer)),
+);
+
+it.live("does not close a replacement tab when cleanup finishes an older lifecycle read", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const broker = yield* Broker.PreviewAutomationBroker;
+      const manager = yield* Manager.PreviewManager;
+      const browser = yield* ServerBrowser.ServerBrowser;
+      const threadId = "replacement-preview-thread";
+      const agentId = "replacement-preview-agent";
+      yield* Effect.yieldNow;
+      const original = yield* broker.invoke<PreviewAutomationStatus>({
+        scope: forThread(threadId, agentId),
+        operation: "open",
+        input: { reuseExistingTab: false, show: false },
+      });
+      threadShells.set(threadId, threadShell(threadId, { settledOverride: "settled" }));
+      const gate = {
+        started: Promise.withResolvers<void>(),
+        release: Promise.withResolvers<void>(),
+      };
+      threadShellReadGates.set(threadId, gate);
+
+      const trigger = yield* broker
+        .invoke<PreviewAutomationStatus>({
+          scope: forThread("replacement-cleanup-trigger", "trigger-agent"),
+          operation: "open",
+          input: { reuseExistingTab: false, show: false },
+        })
+        .pipe(Effect.forkScoped);
+      yield* Effect.addFinalizer(() => Effect.sync(() => gate.release.resolve()));
+      yield* Effect.promise(() => gate.started.promise);
+
+      yield* broker.invoke({
+        scope: forThread(threadId, agentId),
+        tabId: original.tabId!,
+        operation: "close",
+        input: {},
+      });
+      const replacement = yield* manager.open({
+        threadId: ThreadId.make(threadId),
+        runtime: "server",
+        reveal: false,
+        automationOwner: agentId,
+      });
+      yield* browser.attachViewer({
+        ...viewerInput(replacement.tabId, false),
+        threadId: ThreadId.make(threadId),
+      });
+
+      gate.release.resolve();
+      yield* Fiber.join(trigger);
+      const status = yield* broker.invoke<PreviewAutomationStatus>({
+        scope: forThread(threadId, agentId),
+        tabId: replacement.tabId,
+        operation: "status",
+        input: {},
+      });
+      expect(status.available).toBe(true);
     }),
   ).pipe(Effect.provide(layer)),
 );
