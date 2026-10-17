@@ -73,6 +73,7 @@ import type {
   FileChooser,
   Frame,
   Page,
+  Request,
 } from "playwright-core";
 
 import { PENDING_ATTACHMENT_THREAD_SEGMENT } from "../attachmentStore.ts";
@@ -108,6 +109,67 @@ const AGENT_CURSOR_CLICK_LEAD_MS = 40;
 
 const sleepUntil = (deadline: number) =>
   new Promise<void>((resolve) => setTimeout(resolve, Math.max(0, deadline - Date.now())));
+
+const trackPopupInitialLoad = (page: Page) => {
+  let settled = false;
+  let releaseGuard: (() => void) | undefined;
+  let onSettled: (() => void) | undefined;
+  let resolveSettled!: () => void;
+  const settledPromise = new Promise<void>((resolve) => {
+    resolveSettled = resolve;
+  });
+  const removeListeners = () => {
+    page.off("load", finish);
+    page.off("requestfailed", onRequestFailed);
+    page.off("close", finish);
+    page.off("crash", finish);
+  };
+  const finish = () => {
+    if (settled) return;
+    settled = true;
+    removeListeners();
+    onSettled?.();
+    releaseGuard?.();
+    resolveSettled();
+  };
+  const onRequestFailed = (request: Request) => {
+    if (!request.isNavigationRequest()) return;
+    try {
+      if (request.frame() === page.mainFrame()) finish();
+    } catch {
+      // A closing page settles through its close event.
+    }
+  };
+
+  page.on("load", finish);
+  page.on("requestfailed", onRequestFailed);
+  page.on("close", finish);
+  page.on("crash", finish);
+  if (page.isClosed()) finish();
+
+  const boundedWait = page.waitForLoadState("load", { timeout: NAVIGATION_TIMEOUT_MS }).then(
+    () => {
+      if (page.url() !== "about:blank") finish();
+    },
+    (cause: unknown) => {
+      if (!(cause instanceof Error && cause.name === "TimeoutError")) finish();
+    },
+  );
+
+  return {
+    wait: Promise.race([settledPromise, boundedWait]),
+    isSettled: () => settled,
+    onSettled: (callback: () => void) => {
+      if (settled) callback();
+      else onSettled = callback;
+    },
+    setReleaseGuard: (release: () => void) => {
+      releaseGuard = release;
+      if (settled) release();
+    },
+    dispose: finish,
+  };
+};
 
 const EDITABLE_AT_POINT_SCRIPT = `(x, y) => {
   let element = document.elementFromPoint(x, y);
@@ -485,7 +547,14 @@ const make = Effect.gen(function* () {
   const cleanupLock = yield* Semaphore.make(1);
 
   const closedPendingTabs = new Set<string>();
-  const adoptedPages = new Map<string, { readonly page: Page; readonly openerTabId: string }>();
+  const adoptedPages = new Map<
+    string,
+    {
+      readonly page: Page;
+      readonly openerTabId: string;
+      readonly initialLoad: ReturnType<typeof trackPopupInitialLoad>;
+    }
+  >();
   const closedSessions = new Set<string>();
   let lastCleanup = {
     closed: 0,
@@ -807,7 +876,7 @@ const make = Effect.gen(function* () {
       setting: snapshot.viewport ?? FILL_PREVIEW_VIEWPORT,
       colorScheme: "system",
       zoomFactor: 1,
-      loading: false,
+      loading: adopted !== undefined && !adopted.initialLoad.isSettled(),
       closing: false,
       recording: null,
       recordingStart: null,
@@ -920,6 +989,9 @@ const make = Effect.gen(function* () {
     page.on("close", () => dropTab(tab, true));
     page.on("crash", () => dropTab(tab, true));
     tabs.set(key, tab);
+    adopted?.initialLoad.onSettled(() => {
+      tab.loading = false;
+    });
     reportLiveTabs();
     // A popup is already loading its own URL, and the desktop loads its tab's.
     if (!adopted && !desktop && snapshot.navStatus._tag === "Loading") {
@@ -1206,15 +1278,13 @@ const make = Effect.gen(function* () {
     const agentId = opener.control.agentId;
     const openerKey = tabKey(opener.threadId, opener.tabId);
     const releaseOpener = beginActiveOperation(openerKey);
-    let releasePopup: (() => void) | undefined;
+    const initialLoad = trackPopupInitialLoad(popup);
+    let retainPopupGuard = false;
     const controller = [...opener.viewers].find(
       (viewer) => viewer.id === opener.control.controller,
     );
     try {
-      // Popups start navigating before the server can install its page listeners.
-      const initialLoad = popup
-        .waitForLoadState("load", { timeout: NAVIGATION_TIMEOUT_MS })
-        .catch(constVoid);
+      // Popups navigate before createTab installs its normal request listeners.
       if (opener.closing || tabs.get(openerKey) !== opener) {
         await popup.close().catch(constVoid);
         return;
@@ -1236,21 +1306,25 @@ const make = Effect.gen(function* () {
           ...(opener.profileId === undefined ? {} : { profileId: opener.profileId }),
           ...(agentId === null ? {} : { automationOwner: agentId, reveal: false }),
           beforePublish: (opened) => {
-            releasePopup = beginActiveOperation(tabKey(opened.threadId, opened.tabId));
+            initialLoad.setReleaseGuard(
+              beginActiveOperation(tabKey(opened.threadId, opened.tabId)),
+            );
             adoptedPages.set(tabKey(opened.threadId, opened.tabId), {
               page: popup,
               openerTabId: opener.tabId,
+              initialLoad,
             });
           },
         }),
       );
       if (agentId === null) controller?.push({ _tag: "popup", tabId: snapshot.tabId });
       await ensureTab(snapshot);
-      await initialLoad;
+      await initialLoad.wait;
+      retainPopupGuard = !initialLoad.isSettled();
     } catch {
       await popup.close().catch(constVoid);
     } finally {
-      releasePopup?.();
+      if (!retainPopupGuard) initialLoad.dispose();
       releaseOpener();
     }
   };
@@ -1935,7 +2009,9 @@ const make = Effect.gen(function* () {
         tab = yield* Effect.tryPromise({
           try: () => ensureTab(snapshot),
           catch: (cause) =>
-            isTabNotFound(cause) ? cause : new ServerBrowserLaunchError({ cause }),
+            isTabNotFound(cause) || isHostSetupError(cause)
+              ? cause
+              : new ServerBrowserLaunchError({ cause }),
         });
       }
 
@@ -2688,17 +2764,19 @@ const make = Effect.gen(function* () {
     )
     .pipe(
       Effect.flatMap((events) =>
-        events.pipe(
-          Stream.runForEach((event) => {
-            if (event.type === "connected") {
-              hostConnectionId = event.connectionId;
-              return Effect.sync(reportLiveTabs);
-            }
-            return handleRequest(event.connectionId, event.request).pipe(
-              Effect.forkChild,
-              Effect.asVoid,
-            );
-          }),
+        Effect.scoped(
+          events.pipe(
+            Stream.runForEach((event) => {
+              if (event.type === "connected") {
+                hostConnectionId = event.connectionId;
+                return Effect.sync(reportLiveTabs);
+              }
+              return handleRequest(event.connectionId, event.request).pipe(
+                Effect.forkScoped,
+                Effect.asVoid,
+              );
+            }),
+          ),
         ),
       ),
     );

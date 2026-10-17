@@ -5,14 +5,20 @@ import { it } from "@effect/vitest";
 import {
   EnvironmentId,
   type OrchestrationV2ThreadShell,
+  PreviewAutomationConnectionId,
   PreviewTabId,
   ProviderInstanceId,
   ThreadId,
+  type PreviewAutomationRequest,
+  type PreviewAutomationResponse,
   type PreviewAutomationSnapshot,
   type PreviewAutomationStatus,
+  type PreviewAutomationStreamEvent,
 } from "@t3tools/contracts";
+import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
 import * as DateTime from "effect/DateTime";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
@@ -21,6 +27,7 @@ import * as Option from "effect/Option";
 import * as PubSub from "effect/PubSub";
 import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
 import type { BrowserContext, Page } from "playwright-core";
 import { beforeEach, expect, vi } from "vite-plus/test";
 
@@ -32,6 +39,7 @@ import * as DesktopChannel from "./DesktopBrowserChannel.ts";
 import * as Manager from "./Manager.ts";
 import * as ServerBrowser from "./ServerBrowser.ts";
 import * as PreviewBrowser from "./PreviewBrowser.ts";
+import * as PreviewBrowserHost from "./PreviewBrowserHost.ts";
 
 vi.mock("./ServerBrowserContexts.ts", () => ({
   presentAsChrome: async () => {},
@@ -244,9 +252,9 @@ const forThread = (threadId: string, providerSessionId: string) => ({
   ...scope,
   thread: { ...testThread, threadId: ThreadId.make(threadId), providerSessionId },
 });
-const dependenciesAt = (home: string | { readonly prefix: string }) =>
+const dependenciesAt = (home: string | { readonly prefix: string }, brokerLayer = Broker.layer) =>
   Layer.mergeAll(
-    Broker.layer,
+    brokerLayer,
     Manager.layer,
     Layer.mock(ProjectionStore.ProjectionStoreV2)({
       getThreadShell: (threadId) => {
@@ -362,6 +370,126 @@ beforeEach(() => {
   desktopCloseGates.clear();
   desktopConnections.length = 0;
 });
+
+it.live("cancels requests with a disconnected preview host before reconnecting", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      type HostConnection = {
+        readonly connectionId: ReturnType<typeof PreviewAutomationConnectionId.make>;
+        readonly events: Queue.Queue<PreviewAutomationStreamEvent, Cause.Done>;
+      };
+
+      const connections = yield* Queue.unbounded<HostConnection>();
+      const endedConnections = yield* Queue.unbounded<string>();
+      const responses = yield* Queue.unbounded<PreviewAutomationResponse>();
+      let connectionSequence = 0;
+      const controlledBroker = Layer.mock(Broker.PreviewAutomationBroker)({
+        connect: () =>
+          Effect.gen(function* () {
+            const connectionId = PreviewAutomationConnectionId.make(
+              `server-host-${++connectionSequence}`,
+            );
+            const events = yield* Queue.unbounded<PreviewAutomationStreamEvent, Cause.Done>();
+            yield* Queue.offer(connections, { connectionId, events });
+            yield* Queue.offer(events, { type: "connected", connectionId });
+            return Stream.fromQueue(events).pipe(
+              Stream.ensuring(Queue.offer(endedConnections, connectionId).pipe(Effect.asVoid)),
+            );
+          }),
+        focusHost: () => Effect.void,
+        respond: (response) => Queue.offer(responses, response).pipe(Effect.asVoid),
+        invoke: () => Effect.die("The controlled broker does not invoke preview clients."),
+      });
+      const serviceLayer = ServerBrowser.layer.pipe(
+        Layer.provideMerge(
+          dependenciesAt({ prefix: "t3-server-browser-reconnect-" }, controlledBroker),
+        ),
+      );
+      const threadId = ThreadId.make("browser-reconnect-thread");
+      const makeOpenRequest = (requestId: string): PreviewAutomationRequest => ({
+        requestId,
+        threadId,
+        tabIdExplicit: false,
+        agentSessionId: "browser-reconnect-agent",
+        operation: "open",
+        input: { reuseExistingTab: false, show: false },
+        timeoutMs: 1_000,
+      });
+      const sendOpen = (connection: HostConnection, requestId: string) =>
+        Queue.offer(connection.events, {
+          type: "request",
+          connectionId: connection.connectionId,
+          request: makeOpenRequest(requestId),
+        });
+
+      yield* Effect.gen(function* () {
+        yield* ServerBrowser.ServerBrowser;
+        const manager = yield* Manager.PreviewManager;
+        yield* Effect.yieldNow;
+        const firstConnection = yield* Queue.take(connections);
+        yield* sendOpen(firstConnection, "initial-open");
+        expect(yield* Queue.take(responses)).toMatchObject({ requestId: "initial-open", ok: true });
+
+        threadShells.set(threadId, threadShell(threadId, { status: "running" }));
+        const gate = {
+          started: Promise.withResolvers<void>(),
+          release: Promise.withResolvers<void>(),
+          interrupted: Promise.withResolvers<void>(),
+          resumed: Promise.withResolvers<void>(),
+        };
+        threadShellReadGates.set(threadId, gate);
+        yield* Effect.addFinalizer(() => Effect.sync(() => gate.release.resolve()));
+
+        yield* sendOpen(firstConnection, "blocked-open");
+        yield* Effect.promise(() => gate.started.promise);
+        const interruptedFiber = yield* Effect.promise(() => gate.interrupted.promise).pipe(
+          Effect.as(true),
+          Effect.timeoutOption(Duration.millis(1)),
+          Effect.forkScoped,
+        );
+        yield* Queue.end(firstConnection.events);
+        expect(yield* Queue.take(endedConnections)).toBe(firstConnection.connectionId);
+        yield* Effect.yieldNow;
+        yield* Effect.yieldNow;
+        yield* TestClock.adjust(Duration.millis(1));
+        const interrupted = yield* Fiber.join(interruptedFiber);
+
+        const reconnectFiber = yield* Queue.take(connections).pipe(Effect.forkScoped);
+        yield* Effect.yieldNow;
+        yield* Effect.yieldNow;
+        yield* TestClock.adjust("1 second");
+        const secondConnection = yield* Fiber.join(reconnectFiber);
+        yield* sendOpen(secondConnection, "reconnected-open");
+        const reconnectedResponseFiber = yield* Queue.take(responses).pipe(
+          Effect.timeoutOption(Duration.millis(50)),
+          Effect.forkScoped,
+        );
+        yield* Effect.yieldNow;
+        yield* TestClock.adjust(Duration.millis(50));
+        const reconnectedResponse = yield* Fiber.join(reconnectedResponseFiber);
+
+        gate.release.resolve();
+        yield* Effect.yieldNow;
+        const staleResponseFiber = yield* Queue.take(responses).pipe(
+          Effect.timeoutOption(Duration.millis(50)),
+          Effect.forkScoped,
+        );
+        yield* Effect.yieldNow;
+        yield* TestClock.adjust(Duration.millis(50));
+        const staleResponse = yield* Fiber.join(staleResponseFiber);
+        const { sessions } = yield* manager.list({ threadId });
+
+        expect(Option.isSome(interrupted)).toBe(true);
+        expect(reconnectedResponse).toMatchObject({
+          _tag: "Some",
+          value: { requestId: "reconnected-open", ok: true },
+        });
+        expect(Option.isSome(staleResponse)).toBe(false);
+        expect(sessions).toHaveLength(2);
+      }).pipe(Effect.provide(Layer.merge(TestClock.layer(), serviceLayer)));
+    }),
+  ),
+);
 
 it.live("readiness none responds immediately but takeover input waits for navigation commit", () =>
   Effect.scoped(
@@ -916,6 +1044,122 @@ it.live("reclaiming an isolated opener keeps its human-controlled popup context 
           yield* viewer.input({ type: "releaseControl" });
         }),
       );
+    }),
+  ).pipe(Effect.provide(layer)),
+);
+
+it.live.each(["load", "failure", "close"] as const)(
+  "keeps an adopted popup protected after the load timeout until $0",
+  (terminal) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const { broker, tabId: openerTabId } = yield* ready;
+        const manager = yield* Manager.PreviewManager;
+        const popupContext = makeContext();
+        const timeout = new Error("popup load wait timed out");
+        timeout.name = "TimeoutError";
+        popupContext.page.waitForLoadState.mockRejectedValueOnce(timeout);
+        const popupPrepared = Promise.withResolvers<void>();
+        popupContext.page.setDefaultTimeout.mockImplementationOnce(() => {
+          popupPrepared.resolve();
+        });
+
+        const events = yield* manager.subscribeEvents;
+        const popupOpened = yield* Effect.gen(function* () {
+          while (true) {
+            const event = yield* PubSub.take(events);
+            if (
+              event.type === "opened" &&
+              event.snapshot.threadId === scope.thread.threadId &&
+              event.snapshot.tabId !== openerTabId
+            )
+              return event.snapshot;
+          }
+        }).pipe(Effect.forkScoped);
+        contexts[0]!.page.emit("popup", popupContext.page);
+        const snapshot = yield* Fiber.join(popupOpened);
+        yield* Effect.promise(() => popupPrepared.promise);
+
+        const pending = yield* broker.invoke<PreviewAutomationStatus>({
+          scope,
+          tabId: snapshot.tabId,
+          operation: "status",
+          input: {},
+        });
+        expect(pending).toMatchObject({ available: true, loading: true });
+        threadShells.set(
+          scope.thread.threadId,
+          threadShell(scope.thread.threadId, { settledOverride: "settled" }),
+        );
+
+        const cleanupWhileLoading = yield* broker.invoke<PreviewAutomationStatus>({
+          scope,
+          operation: "open",
+          input: { reuseExistingTab: false, show: false },
+        });
+        expect(cleanupWhileLoading.serverTabCapacity?.lastCleanupBlocked.activeOperation).toBe(1);
+        expect(
+          (yield* manager.list({ threadId: scope.thread.threadId })).sessions.some(
+            (session) => session.tabId === snapshot.tabId,
+          ),
+        ).toBe(true);
+        expect(popupContext.page.isClosed()).toBe(false);
+
+        if (terminal === "load") {
+          popupContext.page.emit("load");
+        } else if (terminal === "failure") {
+          popupContext.page.emit("requestfailed", {
+            isNavigationRequest: () => true,
+            frame: () => popupContext.page,
+            failure: () => ({ errorText: "net::ERR_FAILED" }),
+            method: () => "GET",
+            url: () => "https://example.test/popup",
+          });
+        } else {
+          yield* Effect.promise(() => popupContext.page.close());
+        }
+
+        if (terminal === "close") {
+          expect(popupContext.page.isClosed()).toBe(true);
+        } else {
+          const afterTerminal = yield* broker.invoke<PreviewAutomationStatus>({
+            scope,
+            tabId: snapshot.tabId,
+            operation: "status",
+            input: {},
+          });
+          expect(afterTerminal).toMatchObject({ available: true, loading: false });
+        }
+
+        const cleanupAfterTerminal = yield* broker.invoke<PreviewAutomationStatus>({
+          scope,
+          operation: "open",
+          input: { reuseExistingTab: false, show: false },
+        });
+        expect(cleanupAfterTerminal.serverTabCapacity?.lastCleanupBlocked.activeOperation).toBe(0);
+      }),
+    ).pipe(Effect.provide(layer)),
+);
+
+it.live("preview_open preserves host setup instructions when the browser cannot start", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { broker } = yield* ready;
+      const setupCommand = "vp run browser:allow-sandbox";
+      const setupError = new PreviewBrowserHost.PreviewBrowserSandboxError({ setupCommand });
+      contextFailure = setupError;
+
+      const error = yield* broker
+        .invoke<void>({
+          scope,
+          operation: "open",
+          input: { reuseExistingTab: false, show: false },
+        })
+        .pipe(Effect.flip);
+
+      expect(error._tag).toBe("PreviewAutomationExecutionError");
+      expect(error.message).toContain(setupError.message);
+      expect(error.message).toContain(setupCommand);
     }),
   ).pipe(Effect.provide(layer)),
 );
