@@ -1,5 +1,5 @@
 // @effect-diagnostics nodeBuiltinImport:off - Exercise the probe against an owned fixture subprocess.
-import * as NodePath from "node:path";
+import * as NodeURL from "node:url";
 import * as NodePerfHooks from "node:perf_hooks";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { expect, test } from "vite-plus/test";
@@ -8,7 +8,7 @@ import { LspSmokeClient } from "./lsp-smoke-client.ts";
 function spawnServer(mode: string) {
   return LspSmokeClient.spawn(
     process.execPath,
-    [NodePath.join(import.meta.dirname, "fixtures/lsp-shutdown-server.mjs"), mode],
+    [NodeURL.fileURLToPath(new URL("./fixtures/lsp-shutdown-server.mjs", import.meta.url)), mode],
     process.cwd(),
     HostProcess.Platform.defaultValue(),
     NodePerfHooks.performance.now() + 10_000,
