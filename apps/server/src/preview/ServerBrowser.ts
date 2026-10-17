@@ -131,7 +131,7 @@ const sleepUntil = (deadline: number) =>
 
 const trackPopupInitialLoad = (page: Page) => {
   const navigation = makePageNavigationState();
-  let initialNavigationGeneration: number | null = null;
+  let settledNavigationGeneration: number | null = null;
   let settled = false;
   let releaseGuard: (() => void) | undefined;
   let onSettled: (() => void) | undefined;
@@ -149,6 +149,7 @@ const trackPopupInitialLoad = (page: Page) => {
   const finish = () => {
     if (settled) return;
     settled = true;
+    settledNavigationGeneration = navigation.current;
     removeListeners();
     onSettled?.();
     releaseGuard?.();
@@ -163,7 +164,6 @@ const trackPopupInitialLoad = (page: Page) => {
   const onRequest = (request: Request) => {
     if (!isMainNavigationRequest(page, request)) return;
     const generation = ++navigation.current;
-    initialNavigationGeneration ??= generation;
     navigation.requests.set(request, generation);
   };
 
@@ -187,7 +187,7 @@ const trackPopupInitialLoad = (page: Page) => {
 
   return {
     navigation,
-    isInitialNavigationCurrent: () => navigation.current === (initialNavigationGeneration ?? 0),
+    isSettledNavigationCurrent: () => settledNavigationGeneration === navigation.current,
     wait: Promise.race([settledPromise, boundedWait]),
     isSettled: () => settled,
     onSettled: (callback: () => void) => {
@@ -1020,7 +1020,7 @@ const make = Effect.gen(function* () {
     page.on("crash", () => dropTab(tab, true));
     tabs.set(key, tab);
     adopted?.initialLoad.onSettled(() => {
-      if (adopted.initialLoad.isInitialNavigationCurrent()) tab.loading = false;
+      if (adopted.initialLoad.isSettledNavigationCurrent()) tab.loading = false;
     });
     reportLiveTabs();
     // A popup is already loading its own URL, and the desktop loads its tab's.
