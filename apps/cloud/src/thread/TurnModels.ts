@@ -6,7 +6,7 @@ import * as Schema from "effect/Schema";
 
 import * as PoolDirectory from "../pool/PoolDirectory.ts";
 import type { PoolRejectedError } from "../pool/PoolEngine.ts";
-import { poolKindOfInstance, servesModel } from "./providerCatalog.ts";
+import { poolKindOfInstance, servesModel } from "../models/ModelRouting.ts";
 import { SCRIPTED_INSTANCE_ID } from "./scriptedProvider.ts";
 
 /**
