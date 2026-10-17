@@ -22,6 +22,7 @@ import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
+import type { ModelAuthorization } from "../models/ModelProtocol.ts";
 import type { ModelGatewayRecord } from "../modelGateway/modelGatewayRecord.ts";
 import type { ThreadContextTurns, ThreadMatch } from "../context/threadContext.ts";
 import type {
@@ -34,11 +35,7 @@ import type { BrowsingDispatched } from "./browsing/ThreadBrowsing.ts";
 import { browsingWire } from "./browsing/browsingWire.ts";
 import { ThreadObjectError } from "./ThreadAccess.ts";
 import type { PreviewLinkResult } from "./preview/PreviewGateway.ts";
-import type {
-  DriveAuthorization,
-  ModelAuthorization,
-  RemoteAuthorization,
-} from "./runner/ThreadRunner.ts";
+import type { DriveAuthorization, RemoteAuthorization } from "./ThreadAuthorization.ts";
 import {
   type Actor,
   ThreadCommandRejectedError,
