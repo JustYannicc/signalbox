@@ -21,6 +21,7 @@ import { connectionAtomRuntime } from "../connection/runtime";
 import { useDebouncedValue } from "./queries";
 import { environmentContextsAtom } from "./signalboxContexts";
 import { environmentFoldersAtom } from "./signalboxFolders";
+import { environmentServerConfigsAtom } from "./server";
 import {
   classifySearchFailure,
   summarizeSearchCoverage,
@@ -164,8 +165,15 @@ const retrySearchPages = Atom.fn((key: string, get) =>
 
 /** Environments whose threads the search service answers for. */
 export function useContentSearchEnvironmentIds(): ReadonlyArray<EnvironmentId> {
-  const folders = useAtomValue(environmentFoldersAtom);
-  return useMemo(() => [...folders.keys()].toSorted(), [folders]);
+  const configs = useAtomValue(environmentServerConfigsAtom);
+  return useMemo(
+    () =>
+      [...configs]
+        .filter(([, config]) => config.environment.capabilities.threadContentSearch === true)
+        .map(([environmentId]) => environmentId)
+        .toSorted(),
+    [configs],
+  );
 }
 
 export interface ContentSearchView extends ContentSearchState {

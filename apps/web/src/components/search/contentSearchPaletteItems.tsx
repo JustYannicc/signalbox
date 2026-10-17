@@ -26,7 +26,11 @@ import { useMemo } from "react";
 
 import { environmentContextsAtom } from "../../state/signalboxContexts";
 import { environmentFoldersAtom } from "../../state/signalboxFolders";
-import { useContentSearch, type ContentSearchView } from "../../state/signalboxSearch";
+import {
+  useContentSearch,
+  useContentSearchEnvironmentIds,
+  type ContentSearchView,
+} from "../../state/signalboxSearch";
 import {
   findQueryForHit,
   mergeHomeSearchResults,
@@ -167,6 +171,7 @@ export function useContentSearchPalette<T extends SearchTitleThread>(input: {
 }): ContentSearchPalette {
   const query = input.query.startsWith(">") ? "" : input.query;
   const search = useContentSearch(query);
+  const contentEnvironmentIds = useContentSearchEnvironmentIds();
   const folders = useAtomValue(environmentFoldersAtom);
   const contexts = useAtomValue(environmentContextsAtom);
   const threadByKey = useMemo(
@@ -181,8 +186,11 @@ export function useContentSearchPalette<T extends SearchTitleThread>(input: {
     [search.hits, threadByKey],
   );
   const legacyEnvironmentIds = useMemo(
-    () => input.environmentIds.filter((environmentId) => !folders.has(environmentId)),
-    [folders, input.environmentIds],
+    () =>
+      input.environmentIds.filter(
+        (environmentId) => !contentEnvironmentIds.includes(environmentId),
+      ),
+    [contentEnvironmentIds, input.environmentIds],
   );
 
   const openResult = (result: HomeSearchResult<T>) => async () => {

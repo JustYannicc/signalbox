@@ -125,6 +125,35 @@ const replayFrom = (engine: ThreadEngine.ThreadEngine["Service"], afterSequence:
   );
 
 describe("ThreadEngine", () => {
+  it.effect("folds streaming into the final search row and keeps its Find anchor", () =>
+    withObject(freshDatabase(), (engine, store) =>
+      Effect.gen(function* () {
+        yield* launch(engine);
+        yield* engine.step;
+        const beforeChunk = (yield* store.searchOutbox).revision;
+        yield* engine.step;
+        expect((yield* store.searchOutbox).revision).toBe(beforeChunk);
+        yield* runToIdle(engine);
+        const documents = [];
+        for (
+          let delivery = yield* engine.pendingSearchDelivery;
+          delivery !== null;
+          delivery = yield* engine.pendingSearchDelivery
+        ) {
+          documents.push(...delivery.documents.filter((item) => item.kind === "assistant"));
+          yield* engine.acknowledgeSearchDelivery(delivery.revision, delivery.deliveryId);
+        }
+        expect(documents.map((item) => item.text)).toEqual([scriptedReply("Hello cloud")]);
+        const found = yield* engine.find(owner, { threadId, query: "Hello cloud" });
+        expect(found.totalMatches).toBeGreaterThanOrEqual(2);
+        expect(found.match?.entryId).toBe("message-1");
+        expect((yield* engine.searchDocuments(owner, [documents[0]!.itemId]))?.documents).toEqual(
+          documents,
+        );
+      }),
+    ),
+  );
+
   it.effect("launches a thread whose scripted reply streams in chunks and completes", () =>
     withObject(freshDatabase(), (engine) =>
       Effect.gen(function* () {

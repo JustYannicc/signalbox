@@ -166,7 +166,7 @@ const retrySearchPages = Atom.fn((key: string, get) =>
 
 const contentSearchEnvironmentIdsAtom = Atom.make((get) => {
   const ids = [...get(environmentServerConfigsAtom)]
-    .filter(([, config]) => config.environment.capabilities.folders === true)
+    .filter(([, config]) => config.environment.capabilities.threadContentSearch === true)
     .map(([environmentId]) => environmentId)
     .sort();
   const previous = Option.getOrUndefined(get.self<ReadonlyArray<EnvironmentId>>());
