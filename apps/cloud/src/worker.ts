@@ -1,10 +1,12 @@
 import type { ModelGatewayProvider } from "@signalbox/runner-protocol/RunnerProtocol";
 import { isDevProxiedPath } from "@t3tools/shared/devProxy";
 import { WorkerEntrypoint } from "cloudflare:workers";
+import { withEvlog } from "evlog/workers";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
 import { type CloudApp, layerServices, makeCloudApp } from "./app.ts";
+import * as Evlog from "./observability/Evlog.ts";
 import { isPoolLinkPath, routePoolLink } from "./pool/poolLink.ts";
 import type { PoolObjectEnv } from "./pool/PoolObject.ts";
 import { isPreviewHost, labelOfHost, previewSettings } from "./thread/preview/previewHost.ts";
@@ -44,7 +46,10 @@ export { AutomationHost, AutomationWorkflow } from "./automations/automationWork
 
 export interface CloudEnv
   extends UserObjectEnv, ThreadObjectEnv, PoolObjectEnv, PreviewCleanupEnv, AutomationWorkflowEnv {
+  readonly CLIENT_TRACE_LIMITER?: Pick<RateLimit, "limit">;
   readonly ASSETS: { readonly fetch: (request: Request) => Promise<Response> };
+  readonly TRACE_EXPORT?: Fetcher;
+  readonly TRACE_EXPORT_TOKEN?: string;
 }
 
 /** Plain string vars and secrets, for the config provider. Bindings are objects. */
@@ -59,24 +64,72 @@ const LOOPBACK_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]"]);
 const isLoopback = (hostname: string) =>
   LOOPBACK_HOSTS.has(hostname) || hostname.endsWith(".localhost");
 
-let app: CloudApp | undefined;
+let cloudApp: CloudApp | undefined;
 
 const appFor = (env: CloudEnv) => {
-  app ??= makeCloudApp(
+  cloudApp ??= makeCloudApp(
     layerServices({
       vars: stringVars(env),
+      ...(env.TRACE_EXPORT ? { traceExport: env.TRACE_EXPORT } : {}),
+      ...(env.CLIENT_TRACE_LIMITER ? { traceLimiter: env.CLIENT_TRACE_LIMITER } : {}),
       users: env.USERS,
       threads: env.THREADS,
       localWorkerd: env.LOCAL_WORKERD === "1",
       attachments: attachmentStorage(env),
     }),
   );
-  return app;
+  return cloudApp;
 };
 
+Evlog.init();
+
+/** Everything but preview origins: one wide event per request, whose `route` says which part served it. */
+const app = withEvlog<CloudEnv>((request, env, _ctx, log) => {
+  const { pathname } = new URL(request.url);
+  const routed = <A>(route: Evlog.Route, response: A) => {
+    log.set({ route } satisfies Evlog.CloudFields);
+    return response;
+  };
+  const localWorkerd = env.LOCAL_WORKERD === "1";
+  const cloud = appFor(env);
+  if (pathname === "/ws") return routed("socket", cloud.webSocket(request, log));
+  if (isRunnerSocketPath(pathname)) {
+    return routed("runner", connectRunner(env.THREADS, request, { localWorkerd }));
+  }
+  if (isSessionApiPath(pathname)) {
+    return routed("session", forwardSessionRequest(env.THREADS, request, { localWorkerd }));
+  }
+  if (pathname === PREVIEW_CLEANUP_PATH) {
+    return routed("preview-cleanup", handlePreviewCleanup(request, env));
+  }
+  if (isPoolLinkPath(pathname)) {
+    return routed("pool-link", routePoolLink(env.POOLS, request, { localWorkerd }));
+  }
+  if (isDriveApiPath(pathname)) {
+    return routed(
+      "drive",
+      env.DRIVES === undefined || env.DRIVE_PACKS === undefined
+        ? new Response("This cloud stores no drives.", { status: 404 })
+        : handleDriveRequest(
+            { ...env, DRIVES: env.DRIVES, DRIVE_PACKS: env.DRIVE_PACKS },
+            request,
+            {
+              localWorkerd,
+            },
+          ),
+    );
+  }
+  if (isApiPath(pathname)) return routed("api", cloud.api(request, log));
+  if (pathname === MCP_PATH || PROTECTED_RESOURCE_PATHS.has(pathname)) {
+    return routed("mcp", cloud.mcp(request, log));
+  }
+  if (isDevProxiedPath(pathname)) return routed("http", cloud.http(request, log));
+  return routed("assets", env.ASSETS.fetch(request));
+}, Evlog.requestOptions);
+
 export default {
-  fetch(request, env) {
-    const { hostname, pathname } = new URL(request.url);
+  fetch(request, env, ctx) {
+    const { hostname } = new URL(request.url);
     // The local switch drops the EU jurisdiction. A deployment carrying it by
     // mistake serves nothing rather than storing anyone's data elsewhere.
     const localWorkerd = env.LOCAL_WORKERD === "1";
@@ -84,33 +137,14 @@ export default {
       return new Response("LOCAL_WORKERD is set on a non-local host", { status: 503 });
     }
     // A preview origin serves the thread's dev server and nothing of the app.
+    // A dev server's every module request is no unit of Signalbox's work, so it has no event.
     const previews = previewSettings(env);
     if (previews !== null && isPreviewHost(previews, hostname)) {
       return labelOfHost(previews, hostname) === null
         ? new Response("Not found", { status: 404 })
         : routePreview(env.THREADS, request, { localWorkerd });
     }
-    const app = appFor(env);
-    if (pathname === "/ws") return app.webSocket(request);
-    if (isRunnerSocketPath(pathname)) return connectRunner(env.THREADS, request, { localWorkerd });
-    if (isSessionApiPath(pathname)) {
-      return forwardSessionRequest(env.THREADS, request, { localWorkerd });
-    }
-    if (pathname === PREVIEW_CLEANUP_PATH) return handlePreviewCleanup(request, env);
-    if (isPoolLinkPath(pathname)) return routePoolLink(env.POOLS, request, { localWorkerd });
-    if (isDriveApiPath(pathname)) {
-      return env.DRIVES === undefined || env.DRIVE_PACKS === undefined
-        ? new Response("This cloud stores no drives.", { status: 404 })
-        : handleDriveRequest(
-            { ...env, DRIVES: env.DRIVES, DRIVE_PACKS: env.DRIVE_PACKS },
-            request,
-            { localWorkerd },
-          );
-    }
-    if (isApiPath(pathname)) return app.api(request);
-    if (pathname === MCP_PATH || PROTECTED_RESOURCE_PATHS.has(pathname)) return app.mcp(request);
-    if (isDevProxiedPath(pathname)) return app.http(request);
-    return env.ASSETS.fetch(request);
+    return app.fetch(request, env, ctx);
   },
 } satisfies ExportedHandler<CloudEnv>;
 

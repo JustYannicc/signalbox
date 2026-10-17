@@ -50,6 +50,13 @@ test("docs skip expensive jobs", () => {
   }
 });
 
+test("native SDK selection keeps compiler parity instead of being inert editor config", () => {
+  const gates = detect([".vscode/settings.json"]);
+  assert.equal(gates.typecheck, "true");
+  assert.equal(gates.test, "true");
+  assert.match(gates.test_packages, /@t3tools\/scripts/);
+});
+
 test("web sources keep web, desktop build and scripts tests without server shards", () => {
   const gates = detect(["apps/web/src/components/ChatView.tsx"]);
   for (const key of ["typecheck", "build", "test", "test_web"])

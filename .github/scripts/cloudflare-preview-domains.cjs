@@ -32,6 +32,20 @@ function expectedPreviewBindings(value) {
   ];
 }
 
+function cleanupPreviewBindings(value) {
+  const number = parsePullRequestNumber(value);
+  const stage = cloudStage(`pr-${number}`);
+  return [
+    ...expectedPreviewBindings(number),
+    {
+      kind: "traces",
+      hostname: `traces-${stage.cloudDomain}`,
+      service: `${stage.cloudWorker}-traces`,
+      zone_id: SIGNALBOX_ZONE_ID,
+    },
+  ];
+}
+
 const isEnabled = (domain) =>
   domain.enabled === true && !["disabled", "inactive"].includes(domain.status);
 
@@ -74,7 +88,7 @@ function verifyPreviewBindings(domains, value) {
 
 function matchingPreviewBindings(domains, value) {
   const number = parsePullRequestNumber(value);
-  const bindings = expectedPreviewBindings(number);
+  const bindings = cleanupPreviewBindings(number);
   const mismatches = bindings
     .map((binding) => bindingMismatch(domains, binding, { required: false }))
     .filter(Boolean);
@@ -103,7 +117,7 @@ function managedPreviewNumber(domain) {
     const number = Number(candidate);
     if (
       Number.isSafeInteger(number) &&
-      expectedPreviewBindings(number).some(
+      cleanupPreviewBindings(number).some(
         (binding) => binding.hostname === domain.hostname && binding.service === domain.service,
       )
     ) {

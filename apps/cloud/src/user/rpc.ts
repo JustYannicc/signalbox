@@ -1,4 +1,5 @@
 import {
+  type ProjectId,
   type AuthEnvironmentScope,
   AuthFilesystemReadScope,
   AuthOrchestrationOperateScope,
@@ -65,6 +66,11 @@ import {
   SIGNALBOX_SIGN_IN_WS_METHODS,
 } from "@t3tools/contracts/signalboxSignIn";
 import {
+  SIGNALBOX_PERSON_BROWSER_REQUIRED_SCOPES,
+  SIGNALBOX_PERSON_BROWSER_WS_METHODS,
+  SignalboxPersonBrowserError,
+} from "@t3tools/contracts/signalboxPersonBrowser";
+import {
   SIGNALBOX_REPOSITORIES_REQUIRED_SCOPES,
   SIGNALBOX_REPOSITORIES_WS_METHODS,
 } from "@t3tools/contracts/signalboxRepositories";
@@ -103,11 +109,13 @@ import type { BrowserReply } from "../thread/threadWire.ts";
 import { DriveSharing } from "./DriveSharing.ts";
 import { makePoolHandlers, POOL_METHODS, POOL_REQUIRED_SCOPES } from "./poolRpc.ts";
 import { AUTOMATION_METHODS, makeAutomationHandlers } from "../automations/automationRpc.ts";
-import { poolFallbackModelSelection } from "../pool/poolViews.ts";
+import { ThreadContexts } from "./threadContexts.ts";
+import { scriptedModelSelection } from "../thread/scriptedProvider.ts";
 import { AUTOMATION_RPC_SCOPES } from "@signalbox/automations/rpcScopes";
 import { makePushHandlers } from "../push/pushRpc.ts";
 import { makeKeysHandlers } from "./keysRpc.ts";
 import { makeSignInHandlers } from "../signIn/signInRpc.ts";
+import * as LoginService from "../signIn/LoginService.ts";
 import {
   ANALYTICS_METHODS,
   ANALYTICS_REQUIRED_SCOPES,
@@ -180,6 +188,8 @@ const SERVED = [
   WS_METHODS.projectsReadFile,
   WS_METHODS.projectsSearchEntries,
   WS_METHODS.reviewGetDiffPreview,
+  WS_METHODS.reviewGetDiffFileContents,
+  WS_METHODS.vcsListRefs,
   ORCHESTRATION_V2_WS_METHODS.getTurnDiff,
   ORCHESTRATION_V2_WS_METHODS.getFullThreadDiff,
   // Pasted screenshots and files (`attachments/CloudAttachments.ts`).
@@ -230,6 +240,7 @@ const SERVED = [
   ...Object.values(SIGNALBOX_THREAD_STATUS_WS_METHODS),
   ...Object.values(SIGNALBOX_KEYS_WS_METHODS),
   ...Object.values(SIGNALBOX_SIGN_IN_WS_METHODS),
+  ...Object.values(SIGNALBOX_PERSON_BROWSER_WS_METHODS),
   ...SECTION_METHODS,
   ...POOL_METHODS,
   // The user's automations (`automations/`), run on this object.
@@ -272,6 +283,8 @@ const REQUIRED_SCOPES = {
   [WS_METHODS.projectsReadFile]: AuthFilesystemReadScope,
   [WS_METHODS.projectsSearchEntries]: AuthFilesystemReadScope,
   [WS_METHODS.reviewGetDiffPreview]: AuthFilesystemReadScope,
+  [WS_METHODS.reviewGetDiffFileContents]: AuthFilesystemReadScope,
+  [WS_METHODS.vcsListRefs]: AuthOrchestrationReadScope,
   [ORCHESTRATION_V2_WS_METHODS.getTurnDiff]: AuthOrchestrationReadScope,
   [ORCHESTRATION_V2_WS_METHODS.getFullThreadDiff]: AuthOrchestrationReadScope,
   [WS_METHODS.attachmentsCreateUploadUrl]: AuthOrchestrationOperateScope,
@@ -326,6 +339,7 @@ const REQUIRED_SCOPES = {
   ...SIGNALBOX_THREAD_STATUS_REQUIRED_SCOPES,
   ...SIGNALBOX_KEYS_REQUIRED_SCOPES,
   ...SIGNALBOX_SIGN_IN_REQUIRED_SCOPES,
+  ...SIGNALBOX_PERSON_BROWSER_REQUIRED_SCOPES,
   // The same scopes a self-hosted server requires (`apps/server/src/sections/rpcScopes.ts`).
   [WS_METHODS.sectionsSubscribe]: AuthOrchestrationReadScope,
   [WS_METHODS.sectionsCreate]: AuthOrchestrationOperateScope,
@@ -418,6 +432,17 @@ const kindsCall = <A>(effect: Effect.Effect<A, SqlError>) =>
           ),
         ),
     }),
+  );
+
+const personBrowserCall = <A, E>(
+  effect: Effect.Effect<A, E>,
+  message: string,
+): Effect.Effect<A, SignalboxPersonBrowserError> =>
+  effect.pipe(
+    Effect.tapError((cause) =>
+      Effect.logError("cloud browser profile operation failed", { cause }),
+    ),
+    Effect.mapError(() => new SignalboxPersonBrowserError({ message })),
   );
 
 const storageFailed = (cause: unknown) =>
@@ -531,12 +556,15 @@ export const layerHandlers = (input: {
       const shortcutsCall = withDrives(shortcuts);
       const pools = yield* makePoolHandlers({ identity, actor: { userId } });
       const pushes = yield* makePushHandlers(input.sid);
-      const newThreadModel = pools.configNow.pipe(
-        Effect.map(
-          (config) =>
-            config.settings.defaultModelSelection ?? poolFallbackModelSelection(config.providers),
-        ),
-      );
+      const threadContexts = yield* ThreadContexts;
+      const newThreadModel = (projectId?: ProjectId) =>
+        threadContexts
+          .initialModelSelection(projectId ?? null)
+          .pipe(
+            Effect.map(
+              (selection) => selection ?? (identity.scripted ? scriptedModelSelection : null),
+            ),
+          );
       const automations = yield* makeAutomationHandlers({
         personReviews: input.via === "client",
         newThreadModel,
@@ -547,6 +575,7 @@ export const layerHandlers = (input: {
         scopes: input.scopes ?? AuthStandardClientScopes,
       });
       const signIn = yield* makeSignInHandlers({ userId });
+      const personBrowser = yield* LoginService.LoginService;
       const analytics = yield* makeAnalyticsHandlers;
       return {
         ...pools.handlers,
@@ -555,6 +584,16 @@ export const layerHandlers = (input: {
         ...notes,
         ...keys,
         ...signIn,
+        [SIGNALBOX_PERSON_BROWSER_WS_METHODS.profileStatus]: () =>
+          personBrowserCall(
+            personBrowser.profileStatus,
+            "Cloud browser availability could not be checked. Try again.",
+          ),
+        [SIGNALBOX_PERSON_BROWSER_WS_METHODS.clearProfile]: () =>
+          personBrowserCall(
+            personBrowser.clearProfile,
+            "Cloud browser sign-ins could not be cleared. Try again.",
+          ),
         ...analytics,
         [WS_METHODS.subscribeServerConfig]: (request) => pools.configStream(request),
         [WS_METHODS.serverGetConfig]: () => pools.configNow,
@@ -694,6 +733,20 @@ export const layerHandlers = (input: {
                 }),
             ),
           ),
+        [WS_METHODS.reviewGetDiffFileContents]: (request) =>
+          drives.diffFileContents(request).pipe(
+            Effect.mapError(
+              (detail) =>
+                new GitCommandError({
+                  operation: "review.getDiffFileContents",
+                  command: "drive read",
+                  cwd: request.cwd,
+                  detail,
+                }),
+            ),
+          ),
+        [WS_METHODS.vcsListRefs]: (request) =>
+          Effect.flatMap(actorNow, (actor) => branches.listRefs(actor, request)),
         [WS_METHODS.reviewGetDiffPreview]: (request) => drives.reviewPreview(request),
         [ORCHESTRATION_V2_WS_METHODS.getTurnDiff]: (request) =>
           drives

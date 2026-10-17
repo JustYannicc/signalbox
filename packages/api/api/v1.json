@@ -643,15 +643,15 @@
       "name": "keybindings.remove",
       "rpc": "server.removeKeybinding",
       "access": "write",
-      "input": "cf448475",
-      "output": "0fc24e3a"
+      "input": "c5599a9e",
+      "output": "364842b6"
     },
     {
       "name": "keybindings.upsert",
       "rpc": "server.upsertKeybinding",
       "access": "write",
-      "input": "67081024",
-      "output": "0fc24e3a"
+      "input": "e570ce3e",
+      "output": "364842b6"
     },
     {
       "name": "keys.create",
@@ -725,6 +725,21 @@
       "access": "write",
       "input": "73e0bcf6",
       "output": "aae409c1"
+    },
+    {
+      "name": "personBrowser.clearProfile",
+      "rpc": "signalbox.personBrowser.clearProfile",
+      "access": "write",
+      "destructive": true,
+      "input": "03c2b661",
+      "output": "794c92c1"
+    },
+    {
+      "name": "personBrowser.profileStatus",
+      "rpc": "signalbox.personBrowser.profileStatus",
+      "access": "read",
+      "input": "03c2b661",
+      "output": "52714e01"
     },
     {
       "name": "pools.addApiKey",
@@ -1528,21 +1543,21 @@
       "rpc": "server.getConfig",
       "access": "read",
       "input": "03c2b661",
-      "output": "c40b69c5"
+      "output": "26e783d1"
     },
     {
       "name": "server.refreshProviders",
       "rpc": "server.refreshProviders",
       "access": "read",
       "input": "54bdce9d",
-      "output": "a332da1e"
+      "output": "4e87a982"
     },
     {
       "name": "server.updateProvider",
       "rpc": "server.updateProvider",
       "access": "write",
       "input": "9c17fa1f",
-      "output": "a332da1e"
+      "output": "4e87a982"
     },
     {
       "name": "server.updateServer",
@@ -1565,7 +1580,7 @@
       "access": "read",
       "stream": "snapshot",
       "input": "240ec835",
-      "output": "de7391b2"
+      "output": "5cf1e626"
     },
     {
       "name": "settings.get",
@@ -1780,7 +1795,7 @@
       "name": "threads.create",
       "rpc": "orchestration.launchThread",
       "access": "write",
-      "input": "49ccbbaa",
+      "input": "d5a4dd19",
       "output": "1f509429"
     },
     {

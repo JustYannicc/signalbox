@@ -37,6 +37,17 @@ export const SettingsSnapshot = Schema.Struct({
 });
 export type SettingsSnapshot = typeof SettingsSnapshot.Type;
 
+export const SettingsState = Schema.Union([
+  Schema.TaggedStruct("Ready", { snapshot: SettingsSnapshot }),
+  Schema.TaggedStruct("LocalRepairRequired", {
+    localRevision: SettingsLocalRevision,
+    resolution: SettingsResolution,
+    canWrite: Schema.Boolean,
+  }),
+  Schema.TaggedStruct("InheritedUnavailable", {}),
+]);
+export type SettingsState = typeof SettingsState.Type;
+
 export const SettingsView = strictJsonCodec(
   Schema.Struct({
     type: Schema.Literal("settings"),
@@ -89,11 +100,16 @@ export class SettingsPortError extends Schema.TaggedError<SettingsPortError>()(
 
 /** Actor comes from server authentication; it is never decoded from a settings request. */
 export interface WorkSettingsPort<Actor> {
+  /**
+   * Catalog resolves and authorizes the current target and chain before classifying it.
+   * Unavailable states remain subscribed to ancestor repairs, topology and access changes.
+   * Revoked clears every state; recovery emits a fresh state rather than a partial fold.
+   */
   readonly view: (
     actor: Actor,
     query: SettingsView,
     resume?: SyncCursor,
-  ) => Stream.Stream<ViewFrame<SettingsSnapshot>, SettingsPortError>;
+  ) => Stream.Stream<ViewFrame<SettingsState>, SettingsPortError>;
   readonly change: (
     actor: Actor,
     command: SettingsChange,
