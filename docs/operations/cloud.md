@@ -270,13 +270,13 @@ committed. These come from 1Password through the Alchemy stack (#348, #298).
 
 Each account pool is a `PoolObject` (`apps/cloud/src/pool/`), and a managed
 pool runs its own CLIProxyAPI in a Cloudflare Container bound to that object:
-the image in `apps/cloud/containers/cliproxyapi/` (CLIProxyAPI's static
-release build on distroless, about 24 MB), `lite` instances, started by the
-first request and stopped two minutes after the object goes idle. The
-container's disk is thrown away every time; CLIProxyAPI keeps its config and
-accounts in its object-store backend, which is served from the pool object's
-own SQLite through a host only that container can reach. A pool connected to
-an admin's own CLIProxyAPI never starts a container.
+the image in `apps/cloud/containers/cliproxyapi/` (a static build from the
+pinned upstream source with managed-pool carry patches, on distroless), `lite`
+instances, started by the first request and stopped two minutes after the object
+goes idle. The container's disk is thrown away every time; CLIProxyAPI keeps its
+config and accounts in its object-store backend, which is served from the pool
+object's own SQLite through a host only that container can reach. A pool
+connected to an admin's own CLIProxyAPI never starts a container.
 
 The model picker offers what each pool's CLIProxyAPI serves (`GET /v1/models`,
 which lists only what its enabled accounts can run). Its v8 management catalog
@@ -306,11 +306,14 @@ own MCP sign-in (`/mcp` in Claude Code, `codex mcp login signalbox`), and
 
 The `CLIProxyAPI release sync` workflow checks upstream daily. The shared
 manifest at `apps/cloud/containers/cliproxyapi/release.json` holds the version,
-the six self-hosted assets and their sizes and SHA-256 checksums, plus the
-managed-pool image asset. The Docker build reads it from its build context, and
-the account-hub installer imports the same file. The updater verifies every
-asset against the release metadata and `checksums.txt`, then edits only this
-manifest.
+the exact upstream source commit, and six self-hosted binary assets with their
+sizes and SHA-256 checksums. It also retains the upstream no-plugin container
+archive record for a future binary restore. The active managed-pool image builds
+from source and does not use that archive. Docker checks the cloned release tag
+against the source commit before applying the managed-pool carry patches. The
+account-hub installer imports the same manifest for its official binary. The
+updater verifies each asset against the release metadata and `checksums.txt`,
+resolves the source commit from the release tag, then edits only this manifest.
 
 Each release gets one pull request with a link to the release notes. GitHub
 auto-merges it after the container smoke test, Cloud preview deploy, and all
@@ -319,6 +322,30 @@ asset keeps the release from merging and opens or updates one issue labelled
 `cli-proxyapi-update-needs-hand`. The next clean sync or green release PR closes
 that issue. The updater uses the existing `UPSTREAM_SYNC_TOKEN`, so GitHub runs
 the PR checks and preview as `JustYannicc`.
+
+The managed-pool image builds the pinned source commit and applies two checked-in
+patches. CLIProxyAPI#6715 adds Codex device login. The local Claude patch carries
+the approach proposed in [upstream PR #4830](https://github.com/router-for-me/CLIProxyAPI/pull/4830)
+for the [closed headless-host issue #6553](https://github.com/router-for-me/CLIProxyAPI/issues/6553).
+Release sync requires both patches to apply before preparing an update. The
+smoke build runs fake-auth tests for the device login, Claude manual flow, and
+Claude's local callback, plus v8 management API and `/v1/models` checks. It does
+not start a real login. While both patches apply, the binary's `main.Commit`
+ends in `-signalbox-6715-723`. The account-hub installer on a self-hosted server
+still downloads the checksummed upstream binary, so these login changes apply
+to managed cloud pools only.
+
+When an upstream release includes CLIProxyAPI#6715, remove
+`apps/cloud/containers/cliproxyapi/cliproxyapi-6715.patch`, its Go test filter
+and assertion, and `6715` from the `main.Commit` suffix. Keep the Claude patch
+and its tests until upstream ships an equivalent or we remove that support.
+Update the suffix and smoke success text to name only the patches and checks
+that remain. The shared patch check and apply helper stay while any carry patch
+remains. Once no carry patches remain, remove the source clone and patch check
+from release sync, remove the source-commit field and updater input, remove the
+source-build test flag, and restore the managed image's checksummed no-plugin
+archive build. Until a patch applies or is deliberately removed, release sync
+must fail for maintainer review.
 
 To roll back a merged update, revert its sync commit and let the normal main
 deployment rebuild the prior pins. This restores the previous executable; it
@@ -759,6 +786,10 @@ Alchemy keeps its state in the account (`Cloudflare.state()`: an
 `alchemy-state-store` Worker and the account's Secrets Store). It manages
 Durable Object migrations itself, so new Durable Object classes go in the stack
 as a new binding; the `migrations` in `wrangler.jsonc` are for `wrangler dev`.
+
+Roll back a bad deploy of an Alchemy-managed Worker with `wrangler rollback`
+to an earlier version, never by reverting the merge: a revert deploys again
+and replays the legacy migration tags.
 
 Closing a pull request also deletes its R2 prefix and removes its pool links
 from production. The close workflow destroys the preview's stage first (and

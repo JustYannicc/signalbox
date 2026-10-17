@@ -9,6 +9,7 @@
       // Keep vendored reference repositories outside the root project.
       "project": ["*.{js,mjs,cjs,ts,mts,cts}", ".github/**/*.cjs"],
       "entry": [
+        ".dependency-cruiser.cjs",
         // CodeRabbit loads its configuration by filename.
         ".coderabbit.config.ts",
         ".github/scripts/thread-transfer-report.cjs",
@@ -24,9 +25,14 @@
         "mobile-native-client.ts",
         "setup-worktree.ts",
         "workload-cost-replay.ts", // signalbox: workload analytics
+        "boundaries/check.mjs", // signalbox: module boundaries
+        "boundaries/tests.mjs", // signalbox: module boundaries
       ],
       // The `t3` npm package's files: copied into the package, never imported.
-      "ignore": ["npm-launcher/**"],
+      "ignore": [
+        "npm-launcher/**",
+        "upstream-sync/automations/**", // signalbox: prod automation sources, run by the cloud, never imported
+      ],
     },
     "apps/server": {
       // Vite+ pack entries and the launcher used by installed background services.
@@ -59,9 +65,14 @@
       ],
     },
     "apps/cloud": {
-      // The ModelGateway Worker's entry, the Alchemy stack the deploy runs, and
-      // the plan guard CI runs with node.
-      "entry": ["src/modelGateway/worker.ts!", "alchemy.run.ts!", "infra/check-plan.ts"],
+      // Workers and Alchemy stacks load these entries by filename.
+      "entry": [
+        "src/modelGateway/worker.ts!",
+        "src/boxdSpike/worker.ts!",
+        "alchemy.run.ts!",
+        "infra/boxd-spike.alchemy.ts!",
+        "infra/check-plan.ts",
+      ],
       // `cloudflare:workers` is a Workers runtime module, not a package.
       "ignoreDependencies": ["cloudflare"],
     },
@@ -131,6 +142,15 @@
     "packages/*": {
       // These workspace packages are private to this monorepo.
       "includeEntryExports": true,
+    },
+    "packages/sync": {
+      "entry": [
+        "codegen-proof/lunora/{schema,counters}.ts",
+        "codegen-proof/src/api-contract.ts",
+        "type-tests/**/*.ts",
+      ],
+      // The generated shard uses Workers globals from the proof's own tsconfig.
+      "ignoreDependencies": ["@cloudflare/workers-types"],
     },
     "packages/effect-acp": {
       "includeEntryExports": true,

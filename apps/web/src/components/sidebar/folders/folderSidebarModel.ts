@@ -7,8 +7,10 @@
 import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { arrayElementsEqual } from "@t3tools/client-runtime/state/entities";
 import {
+  folderPath,
   folderTree,
   ownerFilesProject,
+  ownerLevelName,
   ownerLevels,
   type FolderNode,
   type ThreadFolderChoice,
@@ -38,6 +40,28 @@ export function folderOwners(
     filesProjectId: ownerFilesProject(context),
     roots: folderTree(snapshot, context.id),
   }));
+}
+
+/** Which owner holds each project. */
+export function projectOwners(owners: ReadonlyArray<FolderOwner>): Map<ProjectId, FolderOwner> {
+  const ownerOf = new Map<ProjectId, FolderOwner>();
+  for (const owner of owners) {
+    for (const projectId of owner.context.projectIds) ownerOf.set(projectId, owner);
+  }
+  return ownerOf;
+}
+
+/**
+ * Where something lives, as headers name it: the folder path ("Work / Clients"),
+ * or the level it sits at the top of ("Top level", an organization's name).
+ */
+export function homeLabel(
+  snapshot: SignalboxFoldersSnapshot,
+  owner: SignalboxContext,
+  home: FolderId | null,
+): string {
+  const path = folderPath(snapshot, home);
+  return path.length === 0 ? ownerLevelName(owner) : path.map((folder) => folder.name).join(" / ");
 }
 
 /** Collapse key of an owner's group. */
@@ -103,14 +127,11 @@ export function folderListOfThreads(
   homeOf: (thread: FolderResident) => FolderId | null,
   residents: ReadonlyArray<FolderResident>,
 ): ReadonlyMap<string, FolderListKey> {
-  const ownerOf = new Map<ProjectId, SignalboxContextId>();
-  for (const owner of owners) {
-    for (const projectId of owner.context.projectIds) ownerOf.set(projectId, owner.context.id);
-  }
+  const ownerOf = projectOwners(owners);
   const lists = new Map<string, FolderListKey>();
   for (const thread of residents) {
     if (thread.environmentId !== environmentId || thread.archivedAt !== null) continue;
-    const ownerId = ownerOf.get(thread.projectId);
+    const ownerId = ownerOf.get(thread.projectId)?.context.id;
     if (ownerId === undefined) continue;
     lists.set(
       scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
