@@ -244,6 +244,9 @@ importers:
       '@signalbox/runner-protocol':
         specifier: workspace:*
         version: link:../../packages/runner-protocol
+      '@signalbox/sync':
+        specifier: workspace:*
+        version: link:../../packages/sync
       '@t3tools/client-runtime':
         specifier: workspace:*
         version: link:../../packages/client-runtime
