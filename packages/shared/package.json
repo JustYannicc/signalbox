@@ -20,6 +20,14 @@
       "types": "./src/nativeElicitation.ts",
       "import": "./src/nativeElicitation.ts"
     },
+    "./agentProcesses": {
+      "types": "./src/agentProcesses/registry.ts",
+      "import": "./src/agentProcesses/registry.ts"
+    },
+    "./agentProcessSessions": {
+      "types": "./src/agentProcessSessions.ts",
+      "import": "./src/agentProcessSessions.ts"
+    },
     "./synchronization": {
       "types": "./src/synchronization.ts",
       "import": "./src/synchronization.ts"
@@ -547,6 +555,18 @@
     "./poolUsage": {
       "types": "./src/poolUsage.ts",
       "import": "./src/poolUsage.ts"
+    },
+    "./agentProcessInspection": {
+      "types": "./src/agentProcesses/processOps.ts",
+      "import": "./src/agentProcesses/processOps.ts"
+    },
+    "./agentProcessRun": {
+      "types": "./src/agentProcesses/run.ts",
+      "import": "./src/agentProcesses/run.ts"
+    },
+    "./agentProcessEnvironment": {
+      "types": "./src/agentProcesses/environment.ts",
+      "import": "./src/agentProcesses/environment.ts"
     }
   },
   "scripts": {
