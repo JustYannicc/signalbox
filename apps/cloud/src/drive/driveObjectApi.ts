@@ -1,8 +1,9 @@
-import type * as Effect from "effect/Effect";
+import * as Effect from "effect/Effect";
 
 import type { DriveObjectApi } from "./DriveDirectory.ts";
 import type * as DriveEvents from "./DriveEvents.ts";
 import * as DriveMembers from "./DriveMembers.ts";
+import * as DrivePacks from "./DrivePacks.ts";
 import * as DriveStore from "./DriveStore.ts";
 
 /**
@@ -11,17 +12,22 @@ import * as DriveStore from "./DriveStore.ts";
  * membership changes or ref moves (`DriveEvents`) to deliver.
  */
 export const makeDriveObjectApi = (
+  driveId: string,
   run: <A, E>(
     effect: Effect.Effect<
       A,
       E,
-      DriveStore.DriveStore | DriveMembers.DriveMembers | DriveEvents.DriveEvents
+      | DriveStore.DriveStore
+      | DriveMembers.DriveMembers
+      | DriveEvents.DriveEvents
+      | DrivePacks.DrivePacks
     >,
   ) => Promise<A>,
   afterOutboxChange: () => Promise<void> = async () => {},
 ): DriveObjectApi => {
   const store = DriveStore.DriveStore;
   const members = DriveMembers.DriveMembers;
+  const packs = DrivePacks.DrivePacks;
   const changingOutbox = async <A>(result: Promise<A>) => {
     const value = await result;
     await afterOutboxChange();
@@ -63,5 +69,56 @@ export const makeDriveObjectApi = (
     share: (by, person, role) => changingOutbox(run(members.use((m) => m.share(by, person, role)))),
     unshare: (by, userId) => changingOutbox(run(members.use((m) => m.unshare(by, userId)))),
     pendingAccess: () => run(members.use((m) => m.pendingAccess)),
+    purgeThread: (input) =>
+      run(
+        Effect.gen(function* () {
+          const receipt = yield* store.use((s) => s.purgeThread(input));
+          yield* packs.use((p) =>
+            p.writePurgeManifest({
+              driveId,
+              purgeId: input.purgeId,
+              stage: "purge",
+              contents: new TextEncoder().encode(
+                JSON.stringify({ schemaVersion: 1, stage: "purge", receipt }),
+              ),
+            }),
+          );
+          return receipt;
+        }),
+      ),
+    collectPurgedPacks: (purgeId, now, limit) =>
+      run(
+        Effect.gen(function* () {
+          const names = yield* store.use((s) => s.claimPurgedPacks(purgeId, now, limit));
+          if (names === null) return null;
+          if (names.length > 0) {
+            yield* packs
+              .use((p) => p.remove(driveId, names))
+              .pipe(
+                Effect.catchCause((cause) =>
+                  store
+                    .use((s) => s.releasePurgedPacks(purgeId, names))
+                    .pipe(Effect.andThen(Effect.failCause(cause))),
+                ),
+              );
+          }
+          const receipt =
+            names.length === 0
+              ? yield* store.use((s) => s.purgeReceipt(purgeId))
+              : yield* store.use((s) => s.finishPurgedPacks(purgeId, names));
+          if (receipt === null) return null;
+          yield* packs.use((p) =>
+            p.writePurgeManifest({
+              driveId,
+              purgeId,
+              stage: "gc",
+              contents: new TextEncoder().encode(
+                JSON.stringify({ schemaVersion: 1, stage: "gc", receipt }),
+              ),
+            }),
+          );
+          return receipt;
+        }),
+      ),
   };
 };

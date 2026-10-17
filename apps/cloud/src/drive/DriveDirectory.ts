@@ -9,6 +9,7 @@ import type { Oid } from "./git/gitObjects.ts";
 import type { AccessDelivery, DrivePerson, MembershipChange } from "./DriveMembers.ts";
 import type {
   DriveWriter,
+  DrivePurgeReceipt,
   ObjectLocation,
   PackRegistration,
   PromisedFile,
@@ -98,6 +99,19 @@ export interface DriveObjectApi {
   ) => Promise<{ readonly _tag: "ok" } | { readonly _tag: "refused"; readonly reason: string }>;
   /** Membership changes not yet in their people's indexes. */
   readonly pendingAccess: () => Promise<ReadonlyArray<AccessDelivery>>;
+  /** Permanently removes a thread's drive refs and records delayed private-pack GC. */
+  readonly purgeThread: (input: {
+    readonly purgeId: string;
+    readonly threadId: string;
+    readonly purgedAt: number;
+    readonly gcAfter: number;
+  }) => Promise<DrivePurgeReceipt>;
+  /** Deletes at most `limit` due private packs from R2 and records the exact removals. */
+  readonly collectPurgedPacks: (
+    purgeId: string,
+    now: number,
+    limit: number,
+  ) => Promise<DrivePurgeReceipt | null>;
 }
 
 export class DriveObjectError extends Schema.TaggedError<DriveObjectError>()("DriveObjectError", {
@@ -153,6 +167,8 @@ export function handleFor(api: DriveObjectApi): DriveHandle {
     share: wrap("share"),
     unshare: wrap("unshare"),
     pendingAccess: wrap("pendingAccess"),
+    purgeThread: wrap("purgeThread"),
+    collectPurgedPacks: wrap("collectPurgedPacks"),
   } as DriveHandle;
 }
 

@@ -10,6 +10,7 @@ import { deliverAccess } from "./driveAccessOutbox.ts";
 import { deliverDriveEvents } from "./driveEventOutbox.ts";
 import { DRIVE_OBJECT_JURISDICTION, type DriveObjectApi } from "./DriveDirectory.ts";
 import { makeDriveObjectApi } from "./driveObjectApi.ts";
+import * as DrivePacks from "./DrivePacks.ts";
 import * as DriveStore from "./DriveStore.ts";
 
 /**
@@ -28,7 +29,21 @@ export interface DriveObjectEnv {
   /** Set by `vp run dev` only. Local workerd has no jurisdictions. */
   readonly LOCAL_WORKERD?: string;
   readonly USERS: UserDirectory.UserObjectNamespace;
+  readonly DRIVE_PACKS?: DrivePacks.PackBucket;
+  readonly DRIVE_PACKS_PREFIX?: string;
 }
+
+const unavailablePacks: DrivePacks.PackBucket = {
+  put: async () => {
+    throw new Error("Drive pack storage is unavailable.");
+  },
+  get: async () => {
+    throw new Error("Drive pack storage is unavailable.");
+  },
+  delete: async () => {
+    throw new Error("Drive pack storage is unavailable.");
+  },
+};
 
 /** Wait after the `failures`th failed delivery in a row: 5 s, doubling, at most 5 min. */
 const retryDelay = (failures: number) => Math.min(5_000 * 2 ** (failures - 1), 300_000);
@@ -39,6 +54,9 @@ const makeRuntime = (storage: DurableObjectStorage, driveId: string, env: DriveO
     DriveStore.layer(driveId).pipe(
       Layer.provideMerge(
         UserDirectory.layerDurableObjects(env.USERS, { localWorkerd: env.LOCAL_WORKERD === "1" }),
+      ),
+      Layer.provideMerge(
+        DrivePacks.layerBucket(env.DRIVE_PACKS ?? unavailablePacks, env.DRIVE_PACKS_PREFIX),
       ),
       Layer.provideMerge(SqliteClient.layer({ storage })),
     ),
@@ -62,6 +80,7 @@ export class DriveObject extends DurableObject<DriveObjectEnv> implements DriveO
     this.driveId = driveId;
     this.runtime = makeRuntime(ctx.storage, driveId, env);
     this.api = makeDriveObjectApi(
+      driveId,
       (effect) => this.runtime.runPromise(effect),
       () => this.armAlarm(),
     );
@@ -210,5 +229,13 @@ export class DriveObject extends DurableObject<DriveObjectEnv> implements DriveO
 
   pendingAccess() {
     return this.api.pendingAccess();
+  }
+
+  purgeThread(...args: Parameters<DriveObjectApi["purgeThread"]>) {
+    return this.api.purgeThread(...args);
+  }
+
+  collectPurgedPacks(...args: Parameters<DriveObjectApi["collectPurgedPacks"]>) {
+    return this.api.collectPurgedPacks(...args);
   }
 }

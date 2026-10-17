@@ -17,8 +17,17 @@ work organization you belong to shows inside it as a level of its own. You don't
 and organizations you join show up the next time you sign in. Your top level and each organization
 have their own folders, nested as deep as you like. Choose **New folder** at the bottom of Home or
 inside an organization, or **New folder inside** in a folder's menu; the command palette has **New
-folder** too. A folder's menu also renames, moves, reorders, and deletes it. Deleting a folder moves its
-folders and threads up a level. No thread or file is deleted.
+folder** too. A folder's menu also renames, moves, reorders, and deletes it. Deleting a folder moves it
+to Trash with every folder and thread inside it.
+
+### Trash
+
+In Signalbox Cloud, threads and folders you delete go to **Settings → Trash**. **Restore** puts one
+back where it was, with everything that was inside it and a folder's instructions and settings.
+Everything stays restorable for 30 days. Where your server deletes for good, **Empty Trash**, or
+selecting items and choosing **Delete forever**, removes them with their history and files right
+away; this can't be undone. On a phone, tap an item in Trash to restore it or delete it forever.
+While your server doesn't delete for good, Trash says so and nothing in it is removed.
 
 ### Where threads live
 

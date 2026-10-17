@@ -99,6 +99,9 @@ import * as UserThreadStatus from "./user/UserThreadStatus.ts";
 import * as UserStore from "./user/UserStore.ts";
 import * as UserThreadKinds from "./user/UserThreadKinds.ts";
 import * as ChatArchive from "./user/chatArchive.ts";
+import * as UserTrash from "./trash/UserTrash.ts";
+import * as TrashResourcesLive from "./trash/trashResourcesLive.ts";
+import { TrashAlarm, TrashWorkflow } from "./trash/TrashWorkflow.ts";
 
 /** Test wiring: fixed config, a fake WorkOS, and user objects on in-memory SQLite. */
 
@@ -279,8 +282,8 @@ const makeUserRuntime = (
   kernel: KernelApi | null,
   logins: { readonly kernel: KernelAuth | null; readonly executor: ExecutorLogins | null },
   noteReader: Layer.Layer<NoteReader.NoteReader>,
-) =>
-  ManagedRuntime.make(
+) => {
+  const services =
     // The user's automations, on the same services the object gives them.
     CloudEngine.layer.pipe(
       Layer.provide(Layer.mergeAll(runner, alarm)),
@@ -349,8 +352,20 @@ const makeUserRuntime = (
         ),
       ),
       Layer.merge(automations),
+    );
+  return ManagedRuntime.make(
+    UserTrash.layer.pipe(
+      Layer.provideMerge(TrashResourcesLive.layer),
+      Layer.provideMerge(
+        Layer.mergeAll(
+          Layer.succeed(TrashAlarm, { armBy: () => Effect.void }),
+          Layer.succeed(TrashWorkflow, { enabled: true, start: () => Effect.void }),
+        ),
+      ),
+      Layer.provideMerge(services),
     ),
   );
+};
 
 /**
  * The cloud's objects in memory: a user object per user id and a thread

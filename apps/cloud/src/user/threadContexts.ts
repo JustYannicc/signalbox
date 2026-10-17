@@ -3,6 +3,7 @@ import type { SignalboxContextId } from "@t3tools/contracts/signalboxContexts";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Schema from "effect/Schema";
 
 import { canWrite, parseDriveId } from "../drive/driveAccess.ts";
 import { DriveDirectory } from "../drive/DriveDirectory.ts";
@@ -26,6 +27,16 @@ export interface ThreadTurn {
   readonly secrets: TurnSecrets;
 }
 
+/** A thread's home is hidden, so the user needs to restore it before a turn can start. */
+export class ThreadFolderTrashedError extends Schema.TaggedError<ThreadFolderTrashedError>()(
+  "ThreadFolderTrashedError",
+  {},
+) {
+  override get message(): string {
+    return "This thread's folder is in Trash.";
+  }
+}
+
 /**
  * What `CloudThreadService` needs to know about the user's tree: where a new
  * thread works, and what its turns run on and follow.
@@ -38,12 +49,17 @@ export class ThreadContexts extends Context.Service<
      * acts as, or null when the project is none of the acting user's or they
      * can't change files in its drive.
      */
-    readonly placeOfProject: (projectId: ProjectId) => Effect.Effect<ThreadPlace | null>;
+    readonly placeOfProject: (
+      projectId: ProjectId,
+    ) => Effect.Effect<ThreadPlace | null, ThreadFolderTrashedError>;
     /**
      * The thread's turn now, resolved from its home's chain (`folderTree.ts`).
      * `projectId`: the thread's, when the caller knows it (a create does).
      */
-    readonly turn: (threadId: ThreadId, projectId: ProjectId | null) => Effect.Effect<ThreadTurn>;
+    readonly turn: (
+      threadId: ThreadId,
+      projectId: ProjectId | null,
+    ) => Effect.Effect<ThreadTurn, ThreadFolderTrashedError>;
   }
 >()("@signalbox/cloud/user/threadContexts") {}
 
@@ -63,17 +79,23 @@ export const layer = Layer.effect(
           if (driveId === null || parsed === null) return null;
           // `access` also says whether the user is still in the drive's context.
           if (!canWrite(yield* drives.access(driveId))) return null;
+          if (yield* folders.driveIsTrashed(driveId)) {
+            return yield* Effect.fail(new ThreadFolderTrashedError());
+          }
           // A My Drive is always its own home; any other drive says whether a remote is.
           const remote =
             parsed.kind !== "my" &&
             directory._tag === "Some" &&
             (yield* directory.value.forDrive(driveId).remote()) !== null;
           return { contextId: parsed.contextId, driveId, remote };
-        }).pipe(
-          // A storage or drive failure is a bug or an outage, not a rejected command.
-          Effect.orDie,
+        }).pipe(Effect.catchTags({ SqlError: Effect.die, DriveObjectError: Effect.die })),
+      turn: (threadId, projectId) =>
+        folders.turn({ threadId, projectId }).pipe(
+          Effect.catchTags({
+            ThreadHomeTrashedError: () => Effect.fail(new ThreadFolderTrashedError()),
+            SqlError: Effect.die,
+          }),
         ),
-      turn: (threadId, projectId) => Effect.orDie(folders.turn({ threadId, projectId })),
     });
   }),
 );

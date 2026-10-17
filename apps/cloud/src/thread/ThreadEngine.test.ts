@@ -169,6 +169,79 @@ describe("ThreadEngine", () => {
     ),
   );
 
+  it.effect("hides a trashed thread and restores its conversation", () =>
+    withObject(freshDatabase(), (engine, store) =>
+      Effect.gen(function* () {
+        const original = yield* launch(engine);
+        const deletedAt = Date.now();
+        const input = {
+          trashId: "trash-1",
+          deletedAt,
+          purgeAfter: deletedAt + 30 * 24 * 60 * 60 * 1000,
+        };
+
+        const trashed = yield* engine.trash(owner, input);
+        expect(trashed).toMatchObject({ trashId: input.trashId, state: "trashed", ready: true });
+        expect(yield* engine.canSee(owner)).toBe(false);
+        expect((yield* Effect.flip(engine.snapshot(owner)))._tag).toBe("ThreadNotFoundError");
+        expect(yield* engine.hasTurnWork).toBe(false);
+
+        const eventCount = (yield* store.events(0)).length;
+        expect(yield* engine.trash(owner, input)).toEqual(trashed);
+        expect((yield* store.events(0)).length).toBe(eventCount);
+
+        const restoredReceipt = yield* engine.restoreTrash(owner, input.trashId);
+        expect(restoredReceipt.state).toBe("restored");
+        expect(yield* engine.canSee(owner)).toBe(true);
+        const restored = yield* engine.snapshot(owner);
+        expect(restored.projection.thread.deletedAt).toBeNull();
+        expect(restored.projection.messages).toEqual(original.projection.messages);
+        expect(restored.projection.runs.map((run) => run.status)).toEqual(["interrupted"]);
+      }),
+    ),
+  );
+
+  it.effect("keeps attachment keys queued until purge records their removal", () =>
+    withObject(freshDatabase(), (engine, store) =>
+      Effect.gen(function* () {
+        yield* launch(engine);
+        const deletedAt = Date.now();
+        const trashId = "trash-attachments";
+        yield* engine.trash(owner, {
+          trashId,
+          deletedAt,
+          purgeAfter: deletedAt + 30 * 24 * 60 * 60 * 1000,
+        });
+        const purged = yield* engine.purgeTrash(owner, { trashId, empty: true });
+        expect(purged.state).toBe("purged");
+
+        yield* store.queueTrashAttachments({
+          trashId,
+          keys: ["thread/attachment-b", "thread/attachment-a"],
+        });
+        expect(yield* store.pendingTrashAttachments(trashId)).toEqual([
+          "thread/attachment-a",
+          "thread/attachment-b",
+        ]);
+
+        const recorded = yield* store.finishTrashAttachment({
+          trashId,
+          key: "thread/attachment-a",
+        });
+        expect(recorded?.removals).toContainEqual({
+          kind: "attachment",
+          id: "thread/attachment-a",
+        });
+        expect(yield* store.pendingTrashAttachments(trashId)).toEqual(["thread/attachment-b"]);
+
+        yield* store.finishTrashAttachment({ trashId, key: "thread/attachment-a" });
+        expect((yield* store.trashReceipt(trashId))?.removals).toEqual([
+          { kind: "attachment", id: "thread/attachment-a" },
+        ]);
+      }),
+    ),
+  );
+
   it.effect("remembers a rejection instead of deciding the command again", () =>
     withObject(freshDatabase(), (engine) =>
       Effect.gen(function* () {

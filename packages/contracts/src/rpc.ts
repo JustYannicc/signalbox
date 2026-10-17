@@ -52,6 +52,7 @@ import { SIGNALBOX_CONTEXTS_RPCS } from "./signalboxContexts.ts"; // signalbox: 
 import { SIGNALBOX_DRIVES_RPCS } from "./signalboxDrives.ts"; // signalbox: drives
 import { SIGNALBOX_FOLDERS_RPCS } from "./signalboxFolders.ts"; // signalbox: folders
 import { SIGNALBOX_NOTES_RPCS } from "./signalboxNotes.ts"; // signalbox: notes
+import { SIGNALBOX_TRASH_RPCS } from "./signalboxTrash.ts"; // signalbox: trash
 import { SIGNALBOX_PREVIEWS_RPCS } from "./signalboxPreviews.ts"; // signalbox: previews
 import { SIGNALBOX_BROWSING_RPCS } from "./signalboxBrowsing.ts"; // signalbox: browsing
 import { SIGNALBOX_PUSH_RPCS } from "./signalboxPush.ts"; // signalbox: push devices
@@ -2023,6 +2024,7 @@ export const SIGNALBOX_WS_RPCS = [
   ...SIGNALBOX_DRIVES_RPCS,
   ...SIGNALBOX_FOLDERS_RPCS,
   ...SIGNALBOX_NOTES_RPCS,
+  ...SIGNALBOX_TRASH_RPCS,
   ...SIGNALBOX_PREVIEWS_RPCS,
   ...SIGNALBOX_BROWSING_RPCS,
   ...SIGNALBOX_PUSH_RPCS,

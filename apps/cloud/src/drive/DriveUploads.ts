@@ -5,7 +5,7 @@ import * as Schema from "effect/Schema";
 import { DriveDirectory } from "./DriveDirectory.ts";
 import { DrivePacks } from "./DrivePacks.ts";
 import type { StoredCommit } from "./DriveStore.ts";
-import { parseCommit, parseTree } from "./git/gitObjects.ts";
+import { parseCommit, parseTree, referencedOids } from "./git/gitObjects.ts";
 import { PackError, type VerifiedPack, verifyPack } from "./git/gitPack.ts";
 import type { Bytes, Oid } from "./git/gitObjects.ts";
 
@@ -129,11 +129,15 @@ export const acceptPack = Effect.fn("DriveUploads.acceptPack")(function* <
       message: commit.message,
     });
   }
+  const objectEdges = [...pack.structure].flatMap(([oid, object]) =>
+    referencedOids(object.type, object.content).map((dependencyOid) => ({ oid, dependencyOid })),
+  );
   const registered = yield* drive.registerPack({
     name: pack.name,
     size: input.size,
     threadId: input.threadId,
     objects: pack.objects,
+    objectEdges,
     commits,
     external,
     ...(privateTo === null ? {} : { privateTo }),

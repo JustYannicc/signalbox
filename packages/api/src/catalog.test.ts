@@ -85,6 +85,7 @@ describe("API parity", () => {
         ...(operation.stream === undefined ? {} : { stream: operation.stream }),
         ...(operation.humanOnly ? { humanOnly: true } : {}),
         ...(operation.destructive ? { destructive: true } : {}),
+        ...(operation.destructive && operation.agentCallable ? { agentCallable: true } : {}),
         ...(operation.compiles ? { compiles: true } : {}),
         input: fingerprint(jsonSchemaOf(operation.input)),
         output: fingerprint(jsonSchemaOf(operation.output)),
@@ -119,5 +120,38 @@ describe("default names", () => {
     expect(defaultCommandName("thread.archive")).toBe("threads.archive");
     expect(defaultCommandName("queued-run.cancel")).toBe("threads.queuedRun.cancel");
     expect(defaultCommandName("thread.auto-settle.set")).toBe("threads.autoSettle.set");
+  });
+});
+
+describe("Trash API reach", () => {
+  const byName = new Map(operations.map((operation) => [operation.name, operation]));
+
+  it("exposes Trash to agents with accurate destructive metadata", () => {
+    expect(byName.get("trash.list")).toMatchObject({
+      access: "read",
+      destructive: false,
+      humanOnly: false,
+    });
+    expect(byName.get("trash.restore")).toMatchObject({
+      access: "write",
+      destructive: false,
+      humanOnly: false,
+    });
+    expect(byName.get("trash.empty")).toMatchObject({
+      access: "write",
+      destructive: true,
+      humanOnly: false,
+      agentCallable: true,
+    });
+  });
+
+  it("marks moving a thread or folder into Trash as destructive", () => {
+    for (const name of ["trash.thread", "trash.folder"]) {
+      expect(byName.get(name)).toMatchObject({
+        access: "write",
+        destructive: true,
+        agentCallable: true,
+      });
+    }
   });
 });

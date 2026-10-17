@@ -87,10 +87,54 @@ export interface ThreadPreviews {
   readonly browsed: boolean;
 }
 
+export interface ThreadLifecycleReceipt {
+  readonly trashId: string;
+  readonly deletedAt: number | null;
+  readonly purgeAfter: number | null;
+  readonly state: "trashed" | "restored" | "purged";
+  readonly ready: boolean;
+  readonly removals: ReadonlyArray<{ readonly kind: string; readonly id: string }>;
+}
+
+export interface ThreadTrashInput {
+  readonly trashId: string;
+  readonly deletedAt: number;
+  readonly purgeAfter: number;
+}
+
+export interface ThreadRestoreInput {
+  readonly trashId: string;
+}
+
+export interface ThreadPurgeInput {
+  readonly trashId: string;
+  readonly empty?: boolean;
+}
+
 const isBehind = Schema.is(BrowserWatchBehind);
+const ThreadLifecycleReceiptWire = Schema.Struct({
+  trashId: Schema.String,
+  deletedAt: Schema.NullOr(Schema.Number),
+  purgeAfter: Schema.NullOr(Schema.Number),
+  state: Schema.Literals(["trashed", "restored", "purged"]),
+  ready: Schema.Boolean,
+  removals: Schema.Array(Schema.Struct({ kind: Schema.String, id: Schema.String })),
+});
 
 /** What a thread object answers. `ThreadObject` implements it method for method. */
 export interface ThreadObjectApi {
+  readonly trash: (
+    actor: Actor,
+    input: ThreadTrashInput,
+  ) => Promise<ThreadObjectReply<ThreadLifecycleReceipt>>;
+  readonly restore: (
+    actor: Actor,
+    input: ThreadRestoreInput,
+  ) => Promise<ThreadObjectReply<ThreadLifecycleReceipt>>;
+  readonly purge: (
+    actor: Actor,
+    input: ThreadPurgeInput,
+  ) => Promise<ThreadObjectReply<ThreadLifecycleReceipt>>;
   readonly dispatch: (
     actor: Actor,
     command: unknown,
@@ -166,6 +210,27 @@ export interface ThreadObjectApi {
 type CommandFailure = ThreadNotFoundError | ThreadCommandRejectedError | ThreadObjectError;
 
 export interface ThreadHandle {
+  readonly trash: (
+    actor: Actor,
+    input: ThreadTrashInput,
+  ) => Effect.Effect<
+    ThreadLifecycleReceipt,
+    ThreadNotFoundError | ThreadCommandRejectedError | ThreadObjectError
+  >;
+  readonly restore: (
+    actor: Actor,
+    input: ThreadRestoreInput,
+  ) => Effect.Effect<
+    ThreadLifecycleReceipt,
+    ThreadNotFoundError | ThreadCommandRejectedError | ThreadObjectError
+  >;
+  readonly purge: (
+    actor: Actor,
+    input: ThreadPurgeInput,
+  ) => Effect.Effect<
+    ThreadLifecycleReceipt,
+    ThreadNotFoundError | ThreadCommandRejectedError | ThreadObjectError
+  >;
   readonly dispatch: (
     actor: Actor,
     command: OrchestrationV2Command,
@@ -321,7 +386,20 @@ const lines = <A>(
 
 /** Wraps any `ThreadObjectApi` (a Durable Object stub, or a test double) as Effects. */
 export function handleFor(api: ThreadObjectApi): ThreadHandle {
+  const lifecycle = (
+    operation: "trash" | "restore" | "purge",
+    run: () => Promise<ThreadObjectReply<unknown>>,
+  ) =>
+    call(operation, run).pipe(
+      Effect.flatMap(fromReply),
+      Effect.flatMap((value) =>
+        decodeIn(operation, () => Schema.decodeUnknownSync(ThreadLifecycleReceiptWire)(value)),
+      ),
+    );
   return {
+    trash: (actor, input) => lifecycle("trash", () => api.trash(actor, input)),
+    restore: (actor, input) => lifecycle("restore", () => api.restore(actor, input)),
+    purge: (actor, input) => lifecycle("purge", () => api.purge(actor, input)),
     dispatch: (actor, command, creation) =>
       call("dispatch", () => api.dispatch(actor, wire.command.encode(command), creation)).pipe(
         Effect.flatMap(fromReply),

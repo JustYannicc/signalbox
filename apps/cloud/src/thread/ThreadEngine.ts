@@ -38,6 +38,9 @@ import type { DecisionContext } from "./threadEvents.ts";
 import { applyEvents, threadShellFromProjection, workStartedAt } from "./threadProjection.ts";
 import { noteKey, noteRunId, supersedes } from "./statusLine/statusNotePolicy.ts";
 import * as ThreadStore from "./ThreadStore.ts";
+import * as ThreadTrash from "./threadTrash.ts";
+import { MachineBackend } from "./runner/MachineBackend.ts";
+import { destroyTrashMachines } from "./runner/MachineTrash.ts";
 import * as TurnModels from "./TurnModels.ts";
 import {
   commandOnPool,
@@ -99,6 +102,8 @@ export interface Actor {
   readonly userId: string;
   readonly contextIds: ReadonlyArray<SignalboxContextId>;
 }
+
+export type ThreadLifecycleReceipt = Omit<ThreadStore.ThreadTrashReceipt, "generation" | "purging">;
 
 /**
  * Fixed when a thread is created: the context it acts as and the drive it
@@ -177,6 +182,28 @@ export class ThreadEngine extends Context.Service<
       OrchestrationV2ThreadLaunchResult,
       ThreadNotFoundError | ThreadCommandRejectedError
     >;
+    readonly trash: (
+      actor: Actor,
+      input: { readonly trashId: string; readonly deletedAt: number; readonly purgeAfter: number },
+    ) => Effect.Effect<
+      ThreadStore.ThreadTrashReceipt,
+      ThreadNotFoundError | ThreadCommandRejectedError
+    >;
+    readonly restoreTrash: (
+      actor: Actor,
+      trashId: string,
+    ) => Effect.Effect<
+      ThreadStore.ThreadTrashReceipt,
+      ThreadNotFoundError | ThreadCommandRejectedError
+    >;
+    readonly purgeTrash: (
+      actor: Actor,
+      input: { readonly trashId: string; readonly empty?: boolean | undefined },
+    ) => Effect.Effect<
+      ThreadStore.ThreadTrashReceipt,
+      ThreadNotFoundError | ThreadCommandRejectedError
+    >;
+    readonly reconcileTrash: Effect.Effect<ThreadStore.ThreadTrashReceipt | null>;
     readonly snapshot: (actor: Actor) => Effect.Effect<ThreadSnapshot, ThreadNotFoundError>;
     /**
      * `subscribeThread`: a snapshot or the events after the client's cursor,
@@ -296,6 +323,7 @@ const toStreamItem = (stored: ThreadStore.StoredEvent): OrchestrationV2ThreadStr
 
 const make = Effect.gen(function* () {
   const store = yield* ThreadStore.ThreadStore;
+  const machineBackends = yield* Effect.serviceOption(MachineBackend);
   const crypto = yield* Crypto.Crypto;
   const turnModels = yield* TurnModels.TurnModels;
   const lock = yield* Semaphore.make(1);
@@ -410,7 +438,7 @@ const make = Effect.gen(function* () {
   const readable = (actor: Actor) =>
     Effect.flatMap(Ref.get(state), (current) => {
       const thread = visibleTo(current, actor);
-      return thread === null
+      return thread === null || thread.projection.thread.deletedAt !== null
         ? Effect.fail(new ThreadNotFoundError())
         : Effect.succeed({ head: current.head, projection: thread.projection });
     });
@@ -449,6 +477,9 @@ const make = Effect.gen(function* () {
         if (receipt?._tag === "accepted") return { sequence: receipt.sequence, replayed: true };
         if (receipt?._tag === "rejected") {
           return yield* ThreadCommandRejectedError.forCommand(command, receipt.message);
+        }
+        if (current.thread !== null && current.thread.projection.thread.deletedAt !== null) {
+          return yield* ThreadCommandRejectedError.forCommand(command, "This thread is in Trash.");
         }
         const { place } = creation;
         if (current.thread === null && place === null) {
@@ -581,6 +612,145 @@ const make = Effect.gen(function* () {
       return { threadId: input.threadId, projection, resumed: result.replayed };
     });
 
+  const trash: ThreadEngine["Service"]["trash"] = (actor, input) =>
+    serialized(
+      Effect.gen(function* () {
+        const current = yield* Ref.get(state);
+        const thread = visibleTo(current, actor);
+        if (thread === null) return yield* new ThreadNotFoundError();
+        const receipt = yield* Effect.orDie(store.beginTrash(input));
+        if (receipt.trashId !== input.trashId) {
+          return yield* ThreadCommandRejectedError.forCommand(
+            { id: input.trashId, type: "thread.trash" },
+            "A different trash entry already owns this thread.",
+          );
+        }
+        if (
+          receipt.state === "trashed" &&
+          receipt.trashId === input.trashId &&
+          thread.projection.thread.deletedAt === null
+        ) {
+          yield* commit({ events: ThreadTrash.trashEvents(thread.projection, input.deletedAt) });
+        }
+        return (yield* reconcileTrashUnsafe(receipt)) ?? receipt;
+      }),
+    );
+
+  const restoreTrash: ThreadEngine["Service"]["restoreTrash"] = (actor, trashId) =>
+    serialized(
+      Effect.gen(function* () {
+        const current = yield* Ref.get(state);
+        const thread = visibleTo(current, actor);
+        if (thread === null) return yield* new ThreadNotFoundError();
+        const receipt = yield* Effect.orDie(store.restoreTrash(trashId));
+        const active = yield* Effect.orDie(store.currentTrash);
+        if (receipt.trashId !== trashId || active?.trashId !== trashId) {
+          return yield* ThreadCommandRejectedError.forCommand(
+            { id: trashId, type: "thread.restore" },
+            "That trash entry no longer owns this thread.",
+          );
+        }
+        if (
+          receipt.state === "restored" &&
+          receipt.trashId === trashId &&
+          active?.trashId === trashId &&
+          thread.projection.thread.deletedAt !== null
+        ) {
+          const events = ThreadTrash.restoreEvents(thread.projection, yield* DateTime.now);
+          if (events.length > 0) yield* commit({ events });
+        }
+        return receipt;
+      }),
+    );
+
+  const reconcileTrashUnsafe = (receipt: ThreadStore.ThreadTrashReceipt) =>
+    Effect.gen(function* () {
+      if (receipt.state !== "trashed" || receipt.ready) return receipt;
+      const machine = yield* Effect.orDie(store.machine);
+      if (machine.status !== "none" || (machine.generation !== 0 && machine.drainSaved !== true))
+        return receipt;
+      return yield* Effect.orDie(
+        store.markTrashReady({ trashId: receipt.trashId, generation: receipt.generation }),
+      );
+    });
+
+  const reconcileTrash: ThreadEngine["Service"]["reconcileTrash"] = serialized(
+    Effect.gen(function* () {
+      const receipt = yield* Effect.orDie(store.currentTrash);
+      if (receipt === null) return null;
+      return yield* reconcileTrashUnsafe(receipt);
+    }),
+  );
+
+  const purgeTrash: ThreadEngine["Service"]["purgeTrash"] = (actor, input) =>
+    serialized(
+      Effect.gen(function* () {
+        const current = yield* Ref.get(state);
+        const thread = visibleTo(current, actor);
+        if (thread === null) return yield* new ThreadNotFoundError();
+        const now = yield* DateTime.now;
+        const receipt = yield* Effect.orDie(
+          store.beginPurge({
+            trashId: input.trashId,
+            now: DateTime.toEpochMillis(now),
+            empty: input.empty === true,
+          }),
+        );
+        if (receipt === null) {
+          return yield* ThreadCommandRejectedError.forCommand(
+            { id: input.trashId, type: "thread.purge" },
+            "That trash entry no longer owns this thread.",
+          );
+        }
+        if (receipt.state === "trashed" && receipt.purging) {
+          const destroyed =
+            machineBackends._tag === "Some"
+              ? yield* destroyTrashMachines(
+                  store,
+                  machineBackends.value,
+                  thread.projection.thread.id,
+                  input.trashId,
+                )
+              : (yield* Effect.orDie(store.machine)).generation === 0;
+          if (!destroyed) return receipt;
+          const machines = yield* Effect.orDie(store.trashMachines(input.trashId));
+          const finished = yield* Effect.orDie(
+            store.finishPurge({
+              trashId: input.trashId,
+              removals: machines.map(({ backend, machineId }) => ({
+                kind: "machine",
+                id: `${backend}:${machineId}`,
+              })),
+            }),
+          );
+          if (finished !== null) {
+            yield* replaceWithPurgeTombstone;
+            return finished;
+          }
+        }
+        if (receipt.state === "purged") yield* replaceWithPurgeTombstone;
+        return receipt;
+      }),
+    );
+
+  const replaceWithPurgeTombstone = Effect.gen(function* () {
+    const stored = yield* Effect.orDie(store.events(0));
+    const projection = applyEvents(
+      null,
+      stored.map((item) => item.event),
+    );
+    if (projection === null) return yield* Effect.die("A purged thread lost its tombstone.");
+    const current = yield* Ref.get(state);
+    if (current.thread === null) return;
+    yield* Ref.set(state, {
+      ...current,
+      thread: { ...current.thread, projection },
+      monitors: [],
+      statusNote: null,
+      summaryKey: summaryKey(projection, [], null),
+    });
+  });
+
   const snapshot: ThreadEngine["Service"]["snapshot"] = (actor) =>
     Effect.map(readable(actor), ({ head, projection }) => ({ snapshotSequence: head, projection }));
 
@@ -630,7 +800,8 @@ const make = Effect.gen(function* () {
   const step: ThreadEngine["Service"]["step"] = serialized(
     Effect.gen(function* () {
       const current = yield* Ref.get(state);
-      if (current.thread === null) return false;
+      if (current.thread === null || current.thread.projection.thread.deletedAt !== null)
+        return false;
       const events = scriptedStep(current.thread.projection, yield* context);
       if (events.length > 0) yield* commit({ events });
       const after = yield* Ref.get(state);
@@ -645,7 +816,10 @@ const make = Effect.gen(function* () {
 
   const hasTurnWork: ThreadEngine["Service"]["hasTurnWork"] = Effect.map(
     Ref.get(state),
-    (current) => current.thread !== null && hasPendingTurnWork(current.thread.projection),
+    (current) =>
+      current.thread !== null &&
+      current.thread.projection.thread.deletedAt === null &&
+      hasPendingTurnWork(current.thread.projection),
   );
 
   const summaryOf = (
@@ -763,12 +937,19 @@ const make = Effect.gen(function* () {
     Effect.orDie(store.acknowledgeEvents(through));
 
   const canSee: ThreadEngine["Service"]["canSee"] = (actor) =>
-    Effect.map(Ref.get(state), (current) => visibleTo(current, actor) !== null);
+    Effect.map(Ref.get(state), (current) => {
+      const thread = visibleTo(current, actor);
+      return thread !== null && thread.projection.thread.deletedAt === null;
+    });
 
   return ThreadEngine.of({
     canSee,
     dispatch,
     launch,
+    trash,
+    restoreTrash,
+    purgeTrash,
+    reconcileTrash,
     snapshot,
     subscribe,
     apply,

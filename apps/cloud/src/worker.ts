@@ -32,6 +32,7 @@ export { DriveObject } from "./drive/DriveObject.ts";
 export { ThreadObject } from "./thread/ThreadObject.ts";
 export { UserObject } from "./user/UserObject.ts";
 export { AutomationHost, AutomationWorkflow } from "./automations/automationWorkflow.ts";
+export { TrashPurgeWorkflow } from "./trash/trashWorkflowEntrypoint.ts";
 
 /**
  * Signalbox Cloud: an environment that runs on Cloudflare. Clients connect to

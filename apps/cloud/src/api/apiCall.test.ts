@@ -9,11 +9,17 @@ import {
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Stream from "effect/Stream";
+import * as Schema from "effect/Schema";
+import { SignalboxFoldersSnapshot } from "@t3tools/contracts/signalboxFolders";
+import { TrashSnapshot } from "@t3tools/contracts/signalboxTrash";
 
 import * as Environment from "../environment.ts";
 import { makeMemoryCloud } from "../testing.ts";
 import { scriptedModelSelection } from "../thread/scriptedProvider.ts";
 import { type ApiCaller, callOperation } from "./apiCall.ts";
+
+const decodeFolders = Schema.decodeUnknownSync(SignalboxFoldersSnapshot);
+const decodeTrash = Schema.decodeUnknownSync(TrashSnapshot);
 
 const identity = { environmentId: EnvironmentId.make("cloud-test"), label: "Cloud" };
 const userId = "user_1";
@@ -49,6 +55,89 @@ const json = (answer: Effect.Success<ReturnType<typeof callOperation>>) => {
 };
 
 describe("public API calls", () => {
+  it.effect(
+    "restores a trashed thread and keeps an old delete command inert after restoration",
+    () =>
+      Effect.gen(function* () {
+        const { call, cloud } = yield* setup;
+        expect(
+          json(
+            yield* call("threads.create", {
+              commandId: "launch-trash-roundtrip",
+              threadId: "trash-roundtrip",
+              projectId: Environment.SCRATCH_PROJECT_ID,
+              title: "Retained conversation",
+              modelSelection: scriptedModelSelection,
+              runtimeMode: "full-access",
+              interactionMode: "default",
+              workspaceStrategy: { type: "root" },
+            }),
+          ).status,
+        ).toBe(200);
+        yield* cloud.settle;
+        const first = decodeTrash(
+          json(
+            yield* call("trash.thread", {
+              threadId: "trash-roundtrip",
+              commandId: "delete-roundtrip",
+            }),
+          ).body,
+        ).entries[0]!;
+        expect(first.status).toBe("trashed");
+        expect(json(yield* call("trash.restore", { id: first.id })).status).toBe(200);
+        yield* cloud.settle;
+        expect(JSON.stringify(json(yield* call("threads.list", {})).body)).toContain(
+          "Retained conversation",
+        );
+        const replayed = decodeTrash(
+          json(
+            yield* call("trash.thread", {
+              threadId: "trash-roundtrip",
+              commandId: "delete-roundtrip",
+            }),
+          ).body,
+        );
+        expect(replayed.entries).toHaveLength(1);
+        expect(replayed.entries[0]?.status).toBe("restored");
+      }),
+  );
+
+  it.effect(
+    "trashes, restores and empties a folder through the agent API, while scopes still apply",
+    () =>
+      Effect.gen(function* () {
+        const { call } = yield* setup;
+        const agent: ApiCaller = { ...person(), kind: "agent" };
+        const created = json(
+          yield* call("folders.create", { name: "Trash round trip", parentId: null }),
+        );
+        const folder = decodeFolders(created.body).folders[0]!;
+        const trashed = json(yield* call("trash.folder", { folderId: folder.id }, agent));
+        expect(trashed.status).toBe(200);
+        const entry = decodeTrash(trashed.body).entries[0]!;
+        expect(decodeFolders(json(yield* call("folders.list", {})).body).folders).toEqual([]);
+        const denied = json(
+          yield* call("trash.restore", { id: entry.id }, person([AuthOrchestrationReadScope])),
+        );
+        expect(denied.status).toBe(403);
+        const restored = json(yield* call("trash.restore", { id: entry.id }, agent));
+        expect(restored.status).toBe(200);
+        expect(decodeFolders(json(yield* call("folders.list", {})).body).folders[0]?.id).toBe(
+          folder.id,
+        );
+        const second = decodeTrash(
+          json(yield* call("trash.folder", { folderId: folder.id }, agent)).body,
+        ).entries.find((row) => row.status === "trashed")!;
+        expect(second.id).not.toBe(entry.id);
+        const emptied = json(yield* call("trash.empty", { ids: [second.id] }, agent));
+        expect(emptied.status).toBe(200);
+        expect(decodeTrash(emptied.body).entries.find((row) => row.id === second.id)).toMatchObject(
+          { status: "purged", removals: [{ kind: "folder", id: folder.id }] },
+        );
+        expect(json(yield* call("trash.restore", { id: second.id }, agent)).status).toBe(422);
+      }),
+  );
+
   it.effect("creates a folder and lists it, through the same handlers as the app", () =>
     Effect.gen(function* () {
       const { call } = yield* setup;

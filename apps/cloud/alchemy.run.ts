@@ -20,6 +20,7 @@ import * as Redacted from "effect/Redacted";
 
 import {
   AUTOMATION_BINDINGS as AUTOMATION,
+  TRASH_BINDINGS,
   COMPATIBILITY_DATE,
   type CloudStage,
   cloudStage,
@@ -234,6 +235,10 @@ function deploy(
         AUTOMATION_RUNS: Cloudflare.Workflow("AutomationRuns", {
           className: AUTOMATION.workflowClass,
           workflowName: target.automationWorkflow,
+        }),
+        TRASH_PURGES: Cloudflare.Workflow("TrashPurges", {
+          className: TRASH_BINDINGS.workflowClass,
+          workflowName: target.trashWorkflow,
         }),
         // Each automation version runs as a Dynamic Worker, loaded by its
         // stable version ID (`LOADER.get`, never `load`: each load bills anew).

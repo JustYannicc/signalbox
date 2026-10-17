@@ -385,7 +385,12 @@ const modelGrantFor = (
  * Mirrors `reconcile`: true exactly when it would act or needs to schedule a
  * check. `live`: a harness run is live; `previewHeld`: a preview is open.
  */
-const needsUpkeep = (lease: ThreadStore.MachineLease, live: boolean, previewHeld: boolean) => {
+const needsUpkeep = (
+  lease: ThreadStore.MachineLease,
+  live: boolean,
+  previewHeld: boolean,
+  trashed: boolean,
+) => {
   const held = live || previewHeld;
   switch (lease.status) {
     case "none":
@@ -396,6 +401,7 @@ const needsUpkeep = (lease: ThreadStore.MachineLease, live: boolean, previewHeld
       return (
         lease.disconnectedAt !== null ||
         lease.drain?._tag === "answered" ||
+        (trashed && lease.drain === undefined) ||
         (held ? lease.idleSince !== null : lease.idleSince === null)
       );
   }
@@ -615,11 +621,15 @@ const make = Effect.gen(function* () {
       );
     });
 
-  const released = (lease: ThreadStore.MachineLease): ThreadStore.MachineLease => ({
+  const released = (
+    lease: ThreadStore.MachineLease,
+    drainSaved = false,
+  ): ThreadStore.MachineLease => ({
     ...ThreadStore.NO_MACHINE,
     generation: lease.generation,
     machineClass: lease.machineClass,
     movedUp: lease.movedUp,
+    drainSaved,
   });
 
   /** Ends the lease's machine session in the diagnostics. */
@@ -795,7 +805,12 @@ const make = Effect.gen(function* () {
       const driveId = turn === null || !drivesEnabled ? null : yield* driveOf;
       return keep<RunnerWork>({
         generation: lease.generation,
-        needsUpkeep: needsUpkeep(lease, run !== undefined, yield* previews.held),
+        needsUpkeep: needsUpkeep(
+          lease,
+          run !== undefined,
+          yield* previews.held,
+          projection !== null && projection.thread.deletedAt !== null,
+        ),
         drain: lease.drain?._tag === "asked" ? lease.drain.id : null,
         turn,
         modelToken:
@@ -998,6 +1013,7 @@ const make = Effect.gen(function* () {
         const backend = backends[classOf(lease)];
         const run = projection === null ? undefined : harnessRun(projection);
         const runId = run?.id ?? null;
+        const trashed = projection !== null && projection.thread.deletedAt !== null;
         /**
          * Lets the machine go. `failure` fails the live run with it; `recover`
          * continues it on the next machine (`runRecovery.ts`), and then the
@@ -1010,6 +1026,7 @@ const make = Effect.gen(function* () {
           readonly recover?: boolean;
           readonly lost?: boolean;
           readonly idleSince?: number;
+          readonly drainSaved?: boolean;
         }) => {
           const events =
             projection === null || run === undefined
@@ -1025,7 +1042,7 @@ const make = Effect.gen(function* () {
             projection === null ? Effect.void : sessionEnded(lease, { ...input, runId, now }),
             {
               events,
-              machine: released(lease),
+              machine: released(lease, input.drainSaved === true),
               result: {
                 ...UNNEEDED,
                 release: lease.generation,
@@ -1096,7 +1113,7 @@ const make = Effect.gen(function* () {
             recover: run !== undefined,
           });
         }
-        if (run !== undefined || (yield* previews.held)) {
+        if (!trashed && (run !== undefined || (yield* previews.held))) {
           const busy = { ...BUSY, runId };
           // Needed again: a drain under way no longer leads anywhere.
           return lease.idleSince === null && lease.drain === undefined
@@ -1110,7 +1127,7 @@ const make = Effect.gen(function* () {
         const idleSince = lease.idleSince ?? now;
         // An open preview pushes the tail out to its last traffic.
         const tailFrom = Math.max(idleSince, (yield* previews.lastActiveAt) ?? 0);
-        if (now - tailFrom >= backend.idleTailMs) {
+        if (trashed || now - tailFrom >= backend.idleTailMs) {
           const idle = `Idle for ${formatDuration(now - tailFrom)}.`;
           // The machine saves everything it wrote before its tokens go (#493);
           // a Runner from before drains is let go as it always was.
@@ -1126,6 +1143,7 @@ const make = Effect.gen(function* () {
                   ? idle
                   : `${idle} Not everything it wrote was saved: ${unsaved.map((reason) => `- ${reason}`).join("\n")}`,
               idleSince: tailFrom,
+              drainSaved: unsaved.length === 0,
             });
           }
           if (lease.drain === undefined) {

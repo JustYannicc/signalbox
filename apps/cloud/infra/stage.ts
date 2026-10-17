@@ -58,6 +58,11 @@ export const AUTOMATION_BINDINGS = {
   loader: "LOADER",
 } as const;
 
+export const TRASH_BINDINGS = {
+  workflow: "TRASH_PURGES",
+  workflowClass: "TrashPurgeWorkflow",
+} as const;
+
 export interface CloudStage {
   readonly production: boolean;
   readonly cloudWorker: string;
@@ -72,6 +77,7 @@ export interface CloudStage {
   readonly drivePacksBucket: string;
   /** The automation runs' Workflow. Workflow names are account-global. */
   readonly automationWorkflow: string;
+  readonly trashWorkflow: string;
   /** Plain-text vars fixed by the stage. CI adds the rest. */
   readonly vars: Readonly<Record<string, string>>;
 }
@@ -113,12 +119,14 @@ export const cloudStage = (stage: string): CloudStage => {
       threadContainer: { name: "signalbox-cloud-threadobject", maxInstances: 200 },
       drivePacksBucket: "signalbox-drives",
       automationWorkflow: "signalbox-cloud-automations",
+      trashWorkflow: "signalbox-cloud-trash",
       vars: {
         // Production identity. Never reuse it for another deployment.
         ENVIRONMENT_ID: "4bfb70e5-7954-458a-9b75-4834c0ab4e13",
         ENVIRONMENT_LABEL: "Signalbox Cloud",
         ...urls("app.signalbox.run", "gateway.signalbox.run"),
         PREVIEW_DOMAIN: previews,
+        TRASH_PURGE_ENABLED: "0",
         // Previews that may take a signed-in user's setup (`src/previewSetup/`).
         PREVIEW_SETUP_ORIGINS: "https://preview-*.signalbox.run",
       },
@@ -143,11 +151,13 @@ export const cloudStage = (stage: string): CloudStage => {
     // Previews never touch production's packs; each keeps its own prefix.
     drivePacksBucket: PREVIEW_DRIVE_PACKS_BUCKET,
     automationWorkflow: `signalbox-cloud-pr-${number}-automations`,
+    trashWorkflow: `signalbox-cloud-pr-${number}-trash`,
     vars: {
       ENVIRONMENT_ID: `cloud-preview-${number}`,
       ENVIRONMENT_LABEL: `Signalbox Cloud (PR #${number})`,
       ...urls(cloudDomain, gatewayDomain),
       PREVIEW_DOMAIN: previews,
+      TRASH_PURGE_ENABLED: "1",
       DRIVE_PACKS_PREFIX: `pr-${number}/`,
       // Where a preview takes each user's setup from (`src/previewSetup/`).
       PREVIEW_SETUP_SOURCE: "https://app.signalbox.run",

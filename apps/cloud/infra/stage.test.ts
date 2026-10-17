@@ -9,6 +9,7 @@ import { previewLabel, previewOrigin, previewSettings } from "../src/thread/prev
 import { parseJsonc } from "../../../scripts/cloud-migrations/check.ts";
 import {
   AUTOMATION_BINDINGS,
+  TRASH_BINDINGS,
   COMPATIBILITY_DATE,
   cloudStage,
   DURABLE_OBJECT_BINDINGS,
@@ -133,6 +134,11 @@ describe("wrangler.jsonc", () => {
           binding: AUTOMATION_BINDINGS.workflow,
           name: cloudStage("production").automationWorkflow,
           class_name: AUTOMATION_BINDINGS.workflowClass,
+        },
+        {
+          binding: TRASH_BINDINGS.workflow,
+          name: cloudStage("production").trashWorkflow,
+          class_name: TRASH_BINDINGS.workflowClass,
         },
       ]);
       expect(config.worker_loaders).toEqual([{ binding: AUTOMATION_BINDINGS.loader }]);

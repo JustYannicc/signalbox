@@ -21,6 +21,7 @@ import { canWrite, myDriveId } from "../drive/driveAccess.ts";
 import type { ModelGatewayRecord } from "../modelGateway/modelGatewayRecord.ts";
 import type { DriveObjectNamespace } from "../drive/DriveDirectory.ts";
 import { type AttachmentObjects, attachmentStorage } from "../attachments/attachmentObjects.ts";
+import { threadSegment } from "../attachments/attachmentIds.ts";
 import {
   isRunnerAttachmentsPath,
   serveRunnerAttachments,
@@ -306,6 +307,30 @@ export class ThreadObject extends DurableObject<ThreadObjectEnv> implements Thre
   }
 
   // Durable Object RPC dispatches to prototype methods, so each one is spelled out.
+  async trash(...args: Parameters<ThreadObjectApi["trash"]>) {
+    const reply = await this.api.trash(...args);
+    if (reply._tag === "ok") await this.gateway.closeForThreadTrash();
+    return reply;
+  }
+
+  restore(...args: Parameters<ThreadObjectApi["restore"]>) {
+    return this.api.restore(...args);
+  }
+
+  async purge(...args: Parameters<ThreadObjectApi["purge"]>) {
+    const [actor, input] = args;
+    const reply = await this.api.purge(actor, input);
+    if (reply._tag !== "ok" || reply.value.state !== "purged") return reply;
+
+    await this.deleteThreadAttachments(input.trashId);
+    const receipt = await this.runtime.runPromise(
+      ThreadStore.ThreadStore.use((store) => store.trashReceipt(input.trashId)),
+    );
+    return receipt === null
+      ? reply
+      : { ...reply, value: { ...reply.value, removals: receipt.removals } };
+  }
+
   dispatch(...args: Parameters<ThreadObjectApi["dispatch"]>) {
     return this.api.dispatch(...args);
   }
@@ -811,6 +836,76 @@ export class ThreadObject extends DurableObject<ThreadObjectEnv> implements Thre
     return name as ThreadId;
   }
 
+  private async deleteThreadAttachments(trashId: string) {
+    const id = this.threadId();
+    const { objects, prefix } = attachmentStorage(this.env);
+    const listPrefix = `${prefix}attachments/${threadSegment(id)}-`;
+    const processQueued = async () => {
+      for (;;) {
+        const keys = await this.runtime.runPromise(
+          ThreadStore.ThreadStore.use((store) => store.pendingTrashAttachments(trashId)),
+        );
+        if (keys.length === 0) return;
+
+        const owned: Array<string> = [];
+        for (const key of keys) {
+          const meta = await objects.head(key);
+          if (meta !== null && meta.customMetadata?.thread !== id) {
+            await this.runtime.runPromise(
+              ThreadStore.ThreadStore.use((store) =>
+                store.discardTrashAttachment({ trashId, key }),
+              ),
+            );
+          } else {
+            owned.push(key);
+          }
+        }
+        if (owned.length === 0) continue;
+
+        // The keys are durable before deletion. If the request dies after R2
+        // accepts this, the next attempt retries the same idempotent delete.
+        await objects.delete(owned);
+        for (const key of owned) {
+          const receipt = await this.runtime.runPromise(
+            ThreadStore.ThreadStore.use((store) => store.finishTrashAttachment({ trashId, key })),
+          );
+          if (receipt === null || receipt.state !== "purged") {
+            throw new Error("Attachment cleanup lost its purged thread receipt.");
+          }
+        }
+      }
+    };
+
+    await processQueued();
+    let cursor: string | undefined;
+    do {
+      const page = await objects.list({
+        prefix: listPrefix,
+        limit: 1000,
+        ...(cursor === undefined ? {} : { cursor }),
+      });
+      const owned: Array<string> = [];
+      for (const item of page.objects) {
+        const meta = await objects.head(item.key);
+        // Thread segments are shortened for storage keys, so metadata is the exact owner check.
+        if (meta?.customMetadata?.thread === id) owned.push(item.key);
+      }
+      if (owned.length > 0) {
+        const receipt = await this.runtime.runPromise(
+          ThreadStore.ThreadStore.use((store) =>
+            store.queueTrashAttachments({ trashId, keys: owned }),
+          ),
+        );
+        if (receipt === null || receipt.state !== "purged") {
+          throw new Error("Attachment cleanup lost its purged thread receipt.");
+        }
+        await processQueued();
+      }
+      cursor = page.truncated ? page.cursor : undefined;
+    } while (cursor !== undefined);
+    await processQueued();
+  }
+
   /**
    * One provider step, then the outboxes and upkeep. Failures back off instead of
    * throwing: Cloudflare stops retrying a failing alarm after a few attempts,
@@ -857,6 +952,13 @@ export class ThreadObject extends DurableObject<ThreadObjectEnv> implements Thre
       await this.runtime.runPromise(Effect.logError("machine upkeep failed", String(cause)));
       return now + retryDelay(1);
     });
+    await this.runtime.runPromise(
+      ThreadEngine.ThreadEngine.use((engine) => engine.reconcileTrash).pipe(
+        Effect.catchCause((cause) =>
+          Effect.logError("trash readiness check failed", Cause.pretty(cause)),
+        ),
+      ),
+    );
     const diagnosticsWakeAt = await this.tendDiagnostics(now);
     // A turn that ended without its status note gets one written (#670).
     const statusNoteWakeAt = await this.runtime.runPromise(

@@ -43,6 +43,18 @@ export class DrivePacks extends Context.Service<
       offset: number,
       length: number,
     ) => Effect.Effect<Bytes, DrivePackError>;
+    /** Removes both files for each immutable pack. Safe to repeat after a partial R2 delete. */
+    readonly remove: (
+      driveId: string,
+      names: ReadonlyArray<string>,
+    ) => Effect.Effect<void, DrivePackError>;
+    /** Stores an immutable purge/tombstone snapshot in R2. Identical retries use the same key. */
+    readonly writePurgeManifest: (input: {
+      readonly driveId: string;
+      readonly purgeId: string;
+      readonly stage: "purge" | "gc";
+      readonly contents: Bytes;
+    }) => Effect.Effect<void, DrivePackError>;
   }
 >()("@signalbox/cloud/drive/DrivePacks") {}
 
@@ -57,6 +69,21 @@ export const drivePackPrefix = (value: string | undefined) => {
 
 export const drivePackKey = (driveId: string, name: string, file: PackFile, prefix = "") =>
   `${prefix}${driveId}/packs/pack-${name}.${file}`;
+
+/** Purge ids are encoded byte-for-byte so they cannot add path segments to an R2 key. */
+export const safePurgeId = (purgeId: string) =>
+  Array.from(new TextEncoder().encode(purgeId), (byte) => byte.toString(16).padStart(2, "0")).join(
+    "",
+  );
+
+/** A content-addressed snapshot; future R2 rebuilds must replay these tombstones after refs (#494). */
+export const drivePurgeManifestKey = (
+  driveId: string,
+  purgeId: string,
+  stage: "purge" | "gc",
+  sha256: string,
+  prefix = "",
+) => `${prefix}${driveId}/purges/${safePurgeId(purgeId)}/${stage}-${sha256}.json`;
 
 /** The slice of an R2 bucket binding drives use. */
 export interface PackBucket {
@@ -106,6 +133,27 @@ export const layerBucket = (bucket: PackBucket, prefixValue?: string) => {
           const object = await read(driveId, name, "pack", { range: { offset, length } });
           if (object === null) throw new Error(`Pack ${name} is missing.`);
           return new Uint8Array(await object.arrayBuffer());
+        }),
+      remove: (driveId, names) =>
+        attempt("remove", async () => {
+          const keys = names.flatMap((name) => [
+            drivePackKey(driveId, name, "pack", prefix),
+            drivePackKey(driveId, name, "idx", prefix),
+            ...(prefix === ""
+              ? []
+              : [drivePackKey(driveId, name, "pack"), drivePackKey(driveId, name, "idx")]),
+          ]);
+          // R2 accepts at most 1,000 keys per bulk delete request.
+          for (let at = 0; at < keys.length; at += 1_000) {
+            await bucket.delete(keys.slice(at, at + 1_000));
+          }
+        }),
+      writePurgeManifest: ({ driveId, purgeId, stage, contents }) =>
+        attempt("writePurgeManifest", async () => {
+          const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", contents));
+          const hash = Array.from(digest, (byte) => byte.toString(16).padStart(2, "0")).join("");
+          const key = drivePurgeManifestKey(driveId, purgeId, stage, hash, prefix);
+          await bucket.put(key, contents);
         }),
     }),
   );

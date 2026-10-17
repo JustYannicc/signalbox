@@ -397,6 +397,17 @@ export class PreviewGateway {
     await this.holdMaybeChanged();
   }
 
+  /** A trashed thread has no open previews; a restored thread can open fresh ones. */
+  async closeForThreadTrash() {
+    for (const socket of this.host.ctx.getWebSockets(TUNNEL_TAG)) {
+      tryClose(socket, CLOSE.released, "This thread is in Trash.");
+    }
+    this.failAll("This thread is in Trash.");
+    if (this.tunnel() === null) this.mirror.disconnected();
+    this.notify();
+    await this.holdMaybeChanged();
+  }
+
   private clientFor(stream: number): WebSocket | null {
     for (const socket of this.host.ctx.getWebSockets(CLIENT_TAG)) {
       if (attachmentOf<ClientAttachment>(socket)?.stream === stream) return socket;

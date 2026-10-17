@@ -6,6 +6,20 @@ self-hosted server, and one User Durable Object per WorkOS user, always in the
 EU jurisdiction. It serves the web app from its own origin. The design is in
 issue #110.
 
+## Trash purge rollout
+
+Deleted threads and folders can be restored for 30 days in Settings → Trash.
+`TRASH_PURGE_ENABLED=0` keeps permanent deletion off in production, including
+Empty Trash. Expired items remain stored but cannot be restored through the app.
+Enable `TRASH_PURGE_ENABLED=1` only after approving permanent deletion of real
+data. Pull request previews enable it for verification with isolated data.
+
+The `TRASH_PURGES` Workflow binding runs each deletion's cleanup and retries
+failed resource owners. The user's Trash RPC returns its status, last error and
+removal receipts. An item stays `purging` until all resource owners confirm;
+unreferenced drive packs have another 30-day grace period before collection.
+Shared drive objects remain when surviving refs or pack dependencies need them.
+
 ## Local development
 
 ```sh

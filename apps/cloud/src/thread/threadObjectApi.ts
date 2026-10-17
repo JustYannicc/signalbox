@@ -7,7 +7,7 @@ import { matchThread, threadTurns } from "../context/threadContext.ts";
 import { browsingWire, encodeBrowsingLine } from "./browsing/browsingWire.ts";
 import { ThreadBrowsing } from "./browsing/ThreadBrowsing.ts";
 import { TurnReports } from "./diagnostics/TurnReports.ts";
-import type { ThreadObjectApi } from "./ThreadDirectory.ts";
+import type { ThreadLifecycleReceipt, ThreadObjectApi } from "./ThreadDirectory.ts";
 import * as ThreadEngine from "./ThreadEngine.ts";
 import { encodeBatchLine, type ThreadObjectReply, wire } from "./threadWire.ts";
 
@@ -54,7 +54,41 @@ export const makeThreadObjectApi = (
       ),
     );
   const engine = ThreadEngine.ThreadEngine;
+  const lifecycle = (
+    effect: Effect.Effect<
+      ThreadEngine.ThreadLifecycleReceipt,
+      ThreadEngine.ThreadNotFoundError | ThreadEngine.ThreadCommandRejectedError,
+      ThreadEngine.ThreadEngine
+    >,
+  ) =>
+    reply(
+      Effect.map(effect, (receipt): ThreadLifecycleReceipt => ({
+        trashId: receipt.trashId,
+        deletedAt: receipt.deletedAt,
+        purgeAfter: receipt.purgeAfter,
+        state: receipt.state,
+        ready: receipt.ready,
+        removals: receipt.removals,
+      })),
+    );
   return {
+    trash: async (actor, input) => {
+      const result = await lifecycle(engine.use((service) => service.trash(actor, input)));
+      await afterChange();
+      return result;
+    },
+    restore: async (actor, input) => {
+      const result = await lifecycle(
+        engine.use((service) => service.restoreTrash(actor, input.trashId)),
+      );
+      await afterChange();
+      return result;
+    },
+    purge: async (actor, input) => {
+      const result = await lifecycle(engine.use((service) => service.purgeTrash(actor, input)));
+      await afterChange();
+      return result;
+    },
     dispatch: async (actor, command, creation) => {
       const result = await reply(
         engine.use((service) => service.dispatch(actor, wire.command.decode(command), creation)),

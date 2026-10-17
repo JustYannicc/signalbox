@@ -37,6 +37,7 @@ export const makeMemoryDrives = (
     const runtime = ManagedRuntime.make(
       DriveStore.layer(driveId).pipe(
         Layer.provideMerge(NodeSqliteClient.layer({ filename: ":memory:" })),
+        Layer.provideMerge(DrivePacks.layerBucket(bucket)),
       ),
     );
     let ready: Promise<void> | undefined;
@@ -44,14 +45,17 @@ export const makeMemoryDrives = (
       effect: Effect.Effect<
         A,
         E,
-        DriveStore.DriveStore | DriveMembers.DriveMembers | DriveEvents.DriveEvents
+        | DriveStore.DriveStore
+        | DriveMembers.DriveMembers
+        | DriveEvents.DriveEvents
+        | DrivePacks.DrivePacks
       >,
     ) => {
       ready ??= runtime.runPromise(DriveStore.DriveStore.use((store) => store.initialize));
       await ready;
       return runtime.runPromise(effect);
     };
-    const api = makeDriveObjectApi(run, async () => {
+    const api = makeDriveObjectApi(driveId, run, async () => {
       const users = options.users;
       if (users === undefined) return;
       await run(

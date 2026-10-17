@@ -1,0 +1,155 @@
+import {
+  SIGNALBOX_TRASH_WS_METHODS,
+  TRASH_RETENTION_DAYS,
+  type TrashEntry,
+  type TrashSnapshot,
+} from "@t3tools/contracts/signalboxTrash";
+import type { EnvironmentId } from "@t3tools/contracts";
+import * as Effect from "effect/Effect";
+import type { Atom, AtomRegistry } from "effect/reactivity";
+
+import type { EnvironmentRegistry } from "../connection/registry.ts";
+import {
+  type AtomCommandResult,
+  createEnvironmentRpcCommand,
+  createEnvironmentRpcQueryAtomFamily,
+  isAtomCommandInterrupted,
+  squashAtomCommandFailure,
+} from "./runtime.ts";
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * Signalbox Cloud's Trash (#474): recently deleted threads and folders, kept
+ * restorable for 30 days. Every change answers the whole Trash; `list` is
+ * fetched again after each one so every view of it agrees.
+ */
+export function createSignalboxTrashAtoms<R, E>(
+  runtime: Atom.AtomRuntime<EnvironmentRegistry | R, E>,
+) {
+  const list = createEnvironmentRpcQueryAtomFamily(runtime, {
+    label: "environment-data:signalbox-trash:list",
+    tag: SIGNALBOX_TRASH_WS_METHODS.list,
+    // Deletes from any client land here, so opening Trash always asks again.
+    staleTimeMs: 0,
+  });
+  // On failure too: a refused restore can still have changed an entry's status.
+  const refreshList = (
+    target: { readonly environmentId: EnvironmentId },
+    registry: AtomRegistry.AtomRegistry,
+  ) =>
+    Effect.sync(() => registry.refresh(list({ environmentId: target.environmentId, input: {} })));
+  return {
+    list,
+    restore: createEnvironmentRpcCommand(runtime, {
+      label: "signalbox-trash:restore",
+      tag: SIGNALBOX_TRASH_WS_METHODS.restore,
+      onSettled: refreshList,
+    }),
+    /** Deletes the given entries for good, or every entry without `ids`. */
+    empty: createEnvironmentRpcCommand(runtime, {
+      label: "signalbox-trash:empty",
+      tag: SIGNALBOX_TRASH_WS_METHODS.empty,
+      onSettled: refreshList,
+    }),
+    thread: createEnvironmentRpcCommand(runtime, {
+      label: "signalbox-trash:thread",
+      tag: SIGNALBOX_TRASH_WS_METHODS.thread,
+      onSettled: refreshList,
+    }),
+    folder: createEnvironmentRpcCommand(runtime, {
+      label: "signalbox-trash:folder",
+      tag: SIGNALBOX_TRASH_WS_METHODS.folder,
+      onSettled: refreshList,
+    }),
+  };
+}
+
+/** What Trash shows: everything still in it, newest first. Restored and purged entries are gone. */
+export function trashEntriesShown(snapshot: TrashSnapshot): ReadonlyArray<TrashEntry> {
+  return snapshot.entries
+    .filter((entry) => entry.status !== "restored" && entry.status !== "purged")
+    .sort((left, right) => right.deletedAt - left.deletedAt || left.id.localeCompare(right.id));
+}
+
+/** Whether an entry is mid-restore or mid-purge, so the list should be fetched again shortly. */
+export function trashHasPendingWork(snapshot: TrashSnapshot): boolean {
+  return snapshot.entries.some(
+    (entry) => entry.status === "restoring" || entry.status === "purging",
+  );
+}
+
+/** Only an entry that's simply sitting in Trash can be restored or deleted for good. */
+export const trashEntryIsIdle = (entry: TrashEntry) => entry.status === "trashed";
+
+/** What Trash keeps and for how long, said once above the list. */
+export function trashExplanation(purgeEnabled: boolean): string {
+  return purgeEnabled
+    ? `Deleted threads and folders stay here for ${TRASH_RETENTION_DAYS} days, then are deleted for good. Restoring one puts it back where it was.`
+    : `Deleted threads and folders can be restored for ${TRASH_RETENTION_DAYS} days. Deleting for good isn't switched on for this server yet, so nothing here is removed.`;
+}
+
+/** "Folder · 3 threads", plus when it goes for good while that's on. */
+export function trashEntrySummary(entry: TrashEntry, purgeEnabled: boolean, now: number): string {
+  const parts: string[] = [entry.kind === "folder" ? "Folder" : "Thread"];
+  if (entry.kind === "folder") {
+    const count = entry.threadIds.length;
+    parts.push(count === 1 ? "1 thread" : `${count} threads`);
+  }
+  if (purgeEnabled && entry.status === "trashed") {
+    const days = Math.ceil((entry.purgeAfter - now) / DAY_MS);
+    parts.push(
+      days <= 0
+        ? "Deleted for good soon"
+        : `Deleted for good in ${days === 1 ? "1 day" : `${days} days`}`,
+    );
+  }
+  return parts.join(" · ");
+}
+
+/** The entry's state when it isn't simply waiting in Trash; null when it is. */
+export function trashEntryState(
+  entry: TrashEntry,
+): { readonly text: string; readonly failed: boolean } | null {
+  if (entry.error !== null) return { text: entry.error, failed: true };
+  if (entry.status === "restoring") return { text: "Restoring…", failed: false };
+  if (entry.status === "purging") return { text: "Deleting for good…", failed: false };
+  return null;
+}
+
+/** The confirmation for deleting `entries` for good; `all` when it empties the whole Trash. */
+export function trashEmptyConfirmation(
+  entries: ReadonlyArray<TrashEntry>,
+  all: boolean,
+): { readonly title: string; readonly message: string; readonly confirmText: string } {
+  const only = entries.length === 1 ? entries[0] : undefined;
+  const threads = entries.reduce(
+    (sum, entry) => sum + (entry.kind === "folder" ? entry.threadIds.length : 1),
+    0,
+  );
+  const what =
+    only === undefined
+      ? `${entries.length} items${threads > 0 ? `, with ${threads === 1 ? "1 thread" : `${threads} threads`},` : ""}`
+      : only.kind === "folder"
+        ? `“${only.title}” and everything in it`
+        : `“${only.title}”`;
+  const title = all
+    ? "Empty Trash?"
+    : only === undefined
+      ? `Delete ${entries.length} items forever?`
+      : `Delete “${only.title}” forever?`;
+  return {
+    title,
+    message: `${what} will be deleted for good, including history and files. This can't be undone.`,
+    confirmText: all ? "Empty Trash" : "Delete forever",
+  };
+}
+
+/** Why a Trash change failed, in the server's words; null when it worked or was cut off. */
+export function trashFailureMessage<A, E>(result: AtomCommandResult<A, E>): string | null {
+  if (result._tag === "Success" || isAtomCommandInterrupted(result)) return null;
+  const error = squashAtomCommandFailure(result);
+  return typeof error === "object" && error !== null && "message" in error
+    ? String(error.message)
+    : "Something went wrong. Try again.";
+}

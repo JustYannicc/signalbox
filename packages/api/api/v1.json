@@ -2154,6 +2154,47 @@
       "output": "259e0077"
     },
     {
+      "name": "trash.empty",
+      "rpc": "signalbox.trash.empty",
+      "access": "write",
+      "destructive": true,
+      "agentCallable": true,
+      "input": "6b3c9036",
+      "output": "331b519a"
+    },
+    {
+      "name": "trash.folder",
+      "rpc": "signalbox.trash.folder",
+      "access": "write",
+      "destructive": true,
+      "agentCallable": true,
+      "input": "fc93b206",
+      "output": "331b519a"
+    },
+    {
+      "name": "trash.list",
+      "rpc": "signalbox.trash.list",
+      "access": "read",
+      "input": "03c2b661",
+      "output": "331b519a"
+    },
+    {
+      "name": "trash.restore",
+      "rpc": "signalbox.trash.restore",
+      "access": "write",
+      "input": "a3ac90c6",
+      "output": "331b519a"
+    },
+    {
+      "name": "trash.thread",
+      "rpc": "signalbox.trash.thread",
+      "access": "write",
+      "destructive": true,
+      "agentCallable": true,
+      "input": "1236b61d",
+      "output": "331b519a"
+    },
+    {
       "name": "usage.refreshRates",
       "rpc": "server.refreshUsageRates",
       "access": "read",

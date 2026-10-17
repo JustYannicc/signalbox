@@ -87,12 +87,18 @@
       "name": "signalbox-cloud-automations",
       "class_name": "AutomationWorkflow",
     },
+    {
+      "binding": "TRASH_PURGES",
+      "name": "signalbox-cloud-trash",
+      "class_name": "TrashPurgeWorkflow",
+    },
   ],
   "worker_loaders": [{ "binding": "LOADER" }],
   "vars": {
     // Production identity. Never reuse it for another deployment.
     "ENVIRONMENT_ID": "4bfb70e5-7954-458a-9b75-4834c0ab4e13",
     "ENVIRONMENT_LABEL": "Signalbox Cloud",
+    "TRASH_PURGE_ENABLED": "0",
     // Previews that may take a signed-in user's setup (`src/previewSetup/`).
     "PREVIEW_SETUP_ORIGINS": "https://preview-*.signalbox.run",
   },
@@ -138,6 +144,11 @@
           "binding": "AUTOMATION_RUNS",
           "name": "signalbox-cloud-automations",
           "class_name": "AutomationWorkflow",
+        },
+        {
+          "binding": "TRASH_PURGES",
+          "name": "signalbox-cloud-trash",
+          "class_name": "TrashPurgeWorkflow",
         },
       ],
       "worker_loaders": [{ "binding": "LOADER" }],
