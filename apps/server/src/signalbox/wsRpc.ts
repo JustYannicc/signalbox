@@ -6,6 +6,7 @@
  *
  * @module signalbox/wsRpc
  */
+import { PERSON_TIMEZONE_WS_METHODS, PersonTimezoneError } from "@t3tools/contracts/personTimezone";
 import { RpcScopeAuthorization, SIGNALBOX_WS_RPCS, WS_METHODS } from "@t3tools/contracts";
 import { AccountHubRpcError } from "@t3tools/contracts/accountHub";
 import * as Effect from "effect/Effect";
@@ -49,6 +50,13 @@ export const SIGNALBOX_WS_RPC_TAGS = SIGNALBOX_WS_RPCS.map((rpc) => rpc._tag);
 /** Hub errors mapped for the wire. */
 const hubFailure = (error: AccountHubError) => new AccountHubRpcError({ detail: error.detail });
 
+const cloudTimezoneUnavailable = () =>
+  Effect.fail(
+    new PersonTimezoneError({
+      message: "Person timezone settings require Signalbox Cloud.",
+    }),
+  );
+
 /** Handlers for one connection; `clientAnalyticsProps` are its client dimensions. */
 export const layer = (clientAnalyticsProps: Readonly<Record<string, unknown>>) =>
   SignalboxWsRpcGroup.toLayer(
@@ -61,6 +69,9 @@ export const layer = (clientAnalyticsProps: Readonly<Record<string, unknown>>) =
       const sections = yield* makeSectionsWsHandlers;
       return SignalboxWsRpcGroup.of({
         ...analytics,
+        [PERSON_TIMEZONE_WS_METHODS.get]: cloudTimezoneUnavailable,
+        [PERSON_TIMEZONE_WS_METHODS.set]: cloudTimezoneUnavailable,
+        [PERSON_TIMEZONE_WS_METHODS.report]: cloudTimezoneUnavailable,
         ...automationRpcHandlers(automations),
         ...sections,
         ...signalboxContextsWsHandlers,

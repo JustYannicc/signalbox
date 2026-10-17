@@ -1,4 +1,9 @@
 import {
+  PERSON_TIMEZONE_REQUIRED_SCOPES,
+  PERSON_TIMEZONE_WS_METHODS,
+} from "@t3tools/contracts/personTimezone";
+import { makeTimezoneHandlers } from "./timezoneRpc.ts";
+import {
   type ProjectId,
   type AuthEnvironmentScope,
   AuthFilesystemReadScope,
@@ -246,6 +251,7 @@ const SERVED = [
   // The user's automations (`automations/`), run on this object.
   ...AUTOMATION_METHODS,
   ...ANALYTICS_METHODS,
+  ...Object.values(PERSON_TIMEZONE_WS_METHODS),
 ] as const;
 type ServedTag = (typeof SERVED)[number];
 type WsRpcs = RpcGroup.Rpcs<typeof WsRpcGroup>;
@@ -267,6 +273,7 @@ const REQUIRED_SCOPES = {
   [WS_METHODS.serverGetConfig]: AuthOrchestrationReadScope,
   [WS_METHODS.serverUpdateSettings]: AuthSettingsWriteScope,
   ...ANALYTICS_REQUIRED_SCOPES,
+  ...PERSON_TIMEZONE_REQUIRED_SCOPES,
   [WS_METHODS.serverProbe]: AuthOrchestrationReadScope,
   [WS_METHODS.serverReportClientActivity]: AuthOrchestrationReadScope,
   [WS_METHODS.subscribeServerLifecycle]: AuthOrchestrationReadScope,
@@ -577,6 +584,7 @@ export const layerHandlers = (input: {
       const signIn = yield* makeSignInHandlers({ userId });
       const personBrowser = yield* LoginService.LoginService;
       const analytics = yield* makeAnalyticsHandlers;
+      const timezone = yield* makeTimezoneHandlers;
       return {
         ...pools.handlers,
         ...pushes,
@@ -595,6 +603,7 @@ export const layerHandlers = (input: {
             "Cloud browser sign-ins could not be cleared. Try again.",
           ),
         ...analytics,
+        ...timezone,
         [WS_METHODS.subscribeServerConfig]: (request) => pools.configStream(request),
         [WS_METHODS.serverGetConfig]: () => pools.configNow,
         [WS_METHODS.serverProbe]: () => Effect.succeed({}),

@@ -9,7 +9,9 @@ import {
   type AutomationSaveResult,
   type AutomationSourceStatus,
   type WorkflowDiagnostic,
+  WorkflowMeta,
   type WorkflowSourceWatch,
+  type WorkflowTrigger,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -34,9 +36,37 @@ import type { AutomationRow, WorkflowStore } from "./WorkflowStore.ts";
  */
 
 const decodeGraph = Schema.decodeSync(Schema.fromJsonString(WorkflowGraph));
+const decodeMeta = Schema.decodeSync(Schema.fromJsonString(WorkflowMeta));
 const RUN_HISTORY = 20;
 /** Versions never change, so their decoded file and diagram are kept for the views that show them. */
 const VERSION_CACHE = 64;
+
+/**
+ * Save cron zones with the version's metadata. A cron that stays unchanged
+ * keeps its saved zone across edits; legacy implicit crons were UTC in cloud.
+ */
+const withDefaultCronTimezones = (
+  meta: WorkflowMeta,
+  defaultTimezone: string,
+  previous: ReadonlyArray<WorkflowTrigger>,
+) => {
+  if (!meta.triggers) return meta;
+  const previousZones = new Map<string, Array<string>>();
+  for (const trigger of previous) {
+    if (!("cron" in trigger)) continue;
+    const zones = previousZones.get(trigger.cron) ?? [];
+    zones.push(trigger.timezone ?? "UTC");
+    previousZones.set(trigger.cron, zones);
+  }
+  return {
+    ...meta,
+    triggers: meta.triggers.map((trigger) => {
+      if (!("cron" in trigger) || trigger.timezone !== undefined) return trigger;
+      const zone = previousZones.get(trigger.cron)?.shift() ?? defaultTimezone;
+      return { ...trigger, timezone: zone };
+    }),
+  };
+};
 
 interface VersionView {
   readonly version: number;
@@ -59,6 +89,8 @@ export interface CatalogShape extends DraftsShape {
     input: AutomationSaveInput,
     authorize?: AuthorizeAutomation<E>,
     approvedBy?: "signalbox",
+    /** Zone to snapshot into omitted cron fields; unchanged saved crons keep their old zone. */
+    defaultTimezone?: string,
   ) => Effect.Effect<AutomationSaveResult, AutomationError | E>;
   readonly list: () => Effect.Effect<ReadonlyArray<Automation>, AutomationError>;
   readonly get: (automationId: string) => Effect.Effect<AutomationDetail, AutomationError>;
@@ -120,12 +152,12 @@ export const makeCatalog = (deps: {
       : { ok: false, diagnostics: compiled.diagnostics };
   };
 
-  const save: CatalogShape["save"] = (input, authorize, approvedBy) =>
+  const save: CatalogShape["save"] = (input, authorize, approvedBy, defaultTimezone) =>
     Effect.gen(function* () {
       const compiled = compile(input.source);
       if (!compiled.ok) return { ok: false, diagnostics: compiled.diagnostics } as const;
-      const { meta, graph, script, runModule, workerModule } = compiled.workflow;
-      const byName = yield* store.getAutomationByName(input.projectId, meta.name);
+      const { meta: compiledMeta, graph, script, runModule, workerModule } = compiled.workflow;
+      const byName = yield* store.getAutomationByName(input.projectId, compiledMeta.name);
       const existing = input.automationId ? yield* requireAutomation(input.automationId) : byName;
       if (existing && existing.project_id !== input.projectId) {
         return yield* fail(
@@ -134,9 +166,25 @@ export const makeCatalog = (deps: {
         );
       }
       if (byName && existing && byName.automation_id !== existing.automation_id) {
-        return yield* fail(`Another automation in this project is already called "${meta.name}".`);
+        return yield* fail(
+          `Another automation in this project is already called "${compiledMeta.name}".`,
+        );
       }
       if (existing && authorize) yield* authorize(automationDefaults(existing));
+      let meta = compiledMeta;
+      if (defaultTimezone !== undefined) {
+        let previousTriggers = existing ? automationTriggers(existing) : [];
+        if (input.draft && existing && existing.draft_version !== null) {
+          const previousDraft = yield* store.getVersion(
+            existing.automation_id,
+            existing.draft_version,
+          );
+          if (previousDraft?.meta_json) {
+            previousTriggers = decodeMeta(previousDraft.meta_json).triggers ?? [];
+          }
+        }
+        meta = withDefaultCronTimezones(compiledMeta, defaultTimezone, previousTriggers);
+      }
       const defaults = existing ? automationDefaults(existing) : input.defaults;
       const now = yield* DateTime.now;
       const nowText = DateTime.formatIso(now);
