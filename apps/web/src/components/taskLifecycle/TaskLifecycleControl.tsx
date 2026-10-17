@@ -120,9 +120,7 @@ function TaskLifecycleTaskRow(props: {
     threadKind?.kind ?? null,
   );
   const automationList = useEnvironmentQuery(
-    kind === "task" && shell.settledAt !== null
-      ? automationState.list({ environmentId, input: {} })
-      : null,
+    kind === "task" ? automationState.list({ environmentId, input: {} }) : null,
   );
   const canOperate = readEnvironmentScope(environmentId, AuthOrchestrationOperateScope);
   const supportsSettlement = serverConfig?.environment.capabilities.threadSettlement === true;
@@ -160,13 +158,7 @@ function TaskLifecycleTaskRow(props: {
   }, [environmentId, key, kind, runLifecycle, threadId]);
 
   useEffect(() => {
-    if (
-      kind !== "task" ||
-      shell.settledAt === null ||
-      automationList.dataUpdatedAt === 0 ||
-      recordThreadKey !== key
-    )
-      return;
+    if (kind !== "task" || automationList.dataUpdatedAt === 0 || recordThreadKey !== key) return;
     let current = true;
     void (async () => {
       const result = await runLifecycle({ environmentId, input: { threadId, action: "read" } });
@@ -185,7 +177,6 @@ function TaskLifecycleTaskRow(props: {
     kind,
     recordThreadKey,
     runLifecycle,
-    shell.settledAt,
     threadId,
   ]);
 

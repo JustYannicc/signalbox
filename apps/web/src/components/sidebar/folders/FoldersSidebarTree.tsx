@@ -21,6 +21,7 @@ import type { FolderId } from "@t3tools/contracts/signalboxFolders";
 import { useParams } from "@tanstack/react-router";
 import {
   Building2Icon,
+  ChevronRightIcon,
   FolderClosedIcon,
   FolderOpenIcon,
   FolderPlusIcon,
@@ -35,7 +36,6 @@ import {
   useMemo,
   useRef,
   useState,
-  type KeyboardEvent,
   type ReactNode,
 } from "react";
 import { effectiveThreadKind } from "@t3tools/contracts/signalboxThreadKinds";
@@ -46,6 +46,7 @@ import {
 import { presentThreadShell } from "@t3tools/client-runtime/state/shell";
 
 import { useComposerDraftStore } from "../../../composerDraftStore";
+import { cn } from "../../../lib/utils";
 import {
   folderEditableEnvironmentsAtom,
   retryEnvironmentFolders,

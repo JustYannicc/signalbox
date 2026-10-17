@@ -86,7 +86,7 @@ export function TaskLifecycleControl(props: {
   const settled =
     shell.archivedAt !== null || shell.settledAt !== null || shell.settledOverride === "settled";
   const automationList = useEnvironmentQuery(
-    settled ? automationState.list({ environmentId, input: {} }) : null,
+    kind === "task" ? automationState.list({ environmentId, input: {} }) : null,
   );
   const [record, setRecord] = useState<TaskLifecycleRecord | null>(null);
   const [recordThreadKey, setRecordThreadKey] = useState<string | null>(null);
@@ -121,7 +121,7 @@ export function TaskLifecycleControl(props: {
   }, [environmentId, key, kind, runLifecycle, threadId]);
 
   useEffect(() => {
-    if (kind !== "task" || !settled || automationList.data === null || !recordReady) return;
+    if (kind !== "task" || automationList.data === null || !recordReady) return;
     let current = true;
     void (async () => {
       const result = await runLifecycle({ environmentId, input: { threadId, action: "read" } });
@@ -133,7 +133,7 @@ export function TaskLifecycleControl(props: {
     return () => {
       current = false;
     };
-  }, [automationList.data, environmentId, key, kind, recordReady, runLifecycle, settled, threadId]);
+  }, [automationList.data, environmentId, key, kind, recordReady, runLifecycle, threadId]);
 
   const openEditor = () => {
     const value = conditionEditorValue(recordReady ? record : null, hasPullRequest);
