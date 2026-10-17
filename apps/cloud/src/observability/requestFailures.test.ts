@@ -3,9 +3,15 @@ import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Logger from "effect/Logger";
+import * as Schema from "effect/Schema";
 import { HttpRouter, HttpServerError, HttpServerRequest, HttpServerResponse } from "effect/http";
 import * as HttpEffect from "effect/http/HttpEffect";
+import * as HttpApi from "effect/http-api/HttpApi";
+import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
+import * as HttpApiEndpoint from "effect/http-api/HttpApiEndpoint";
+import * as HttpApiGroup from "effect/http-api/HttpApiGroup";
 
+import * as Platform from "../platform.ts";
 import { logRequestFailure } from "./requestFailures.ts";
 
 const request = HttpServerRequest.fromWeb(new Request("https://cloud.test/api/.env?secret=x"));
@@ -31,12 +37,14 @@ describe("cloud request failure logging", () => {
       );
       for (const status of [400, 401, 403, 404, 409, 413, 429, 499]) {
         yield* record(Cause.fail(HttpServerResponse.empty({ status })));
+        yield* record(Cause.die(HttpServerResponse.empty({ status })));
       }
       yield* record(Cause.interrupt());
       expect(events).toHaveLength(0);
 
       yield* record(Cause.die(new Error("private content")));
       yield* record(Cause.fail(HttpServerResponse.empty({ status: 500 })));
+      yield* record(Cause.die(HttpServerResponse.empty({ status: 500 })));
       yield* record(Cause.fail({ _tag: "RouteNotFound" }));
       yield* record(Cause.combine(Cause.fail(notFound), Cause.die("private content")));
       yield* record(
@@ -46,7 +54,7 @@ describe("cloud request failure logging", () => {
           }),
         ),
       );
-      expect(events).toHaveLength(5);
+      expect(events).toHaveLength(6);
       expect(events.every((event) => event.logLevel === "Error")).toBe(true);
       expect(JSON.stringify(events.map((event) => event.message))).not.toContain("private content");
     }),
@@ -80,6 +88,54 @@ describe("cloud request failure logging", () => {
 
       const bug = yield* Effect.promise(() => handler(new Request("https://cloud.test/bug")));
       expect(bug.status).toBe(500);
+      expect(events).toHaveLength(1);
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("keeps typed API request decoding quiet and reports response encoding bugs", () =>
+    Effect.gen(function* () {
+      const events: Array<unknown> = [];
+      const logger = Logger.layer([Logger.make((event) => events.push(event))]);
+      const api = HttpApi.make("test").add(
+        HttpApiGroup.make("decode").add(
+          HttpApiEndpoint.post("decode", "/decode", {
+            payload: Schema.Struct({ count: Schema.Number }),
+            success: Schema.Number,
+          }),
+          HttpApiEndpoint.get("badEncoding", "/bad-encoding", {
+            success: Schema.Number.check(Schema.isFinite()),
+          }),
+        ),
+      );
+      const group = HttpApiBuilder.group(api, "decode", (handlers) =>
+        handlers
+          .handle("decode", ({ payload }) => Effect.succeed(payload.count))
+          .handle("badEncoding", () => Effect.succeed(Number.NaN)),
+      );
+      const router = yield* HttpRouter.toHttpEffect(
+        HttpApiBuilder.layer(api).pipe(Layer.provide(group), Layer.provide(Platform.layerHttp)),
+      );
+      const handler = HttpEffect.toWebHandler(
+        router.pipe(Effect.tapCause(logRequestFailure), Effect.provide(logger)),
+      );
+      for (const body of ["{not json", '{"a":1}']) {
+        const response = yield* Effect.promise(() =>
+          handler(
+            new Request("https://cloud.test/decode", {
+              method: "POST",
+              headers: { "content-type": "application/json" },
+              body,
+            }),
+          ),
+        );
+        expect(response.status).toBe(400);
+      }
+      expect(events).toHaveLength(0);
+
+      const response = yield* Effect.promise(() =>
+        handler(new Request("https://cloud.test/bad-encoding")),
+      );
+      expect(response.status).toBe(500);
       expect(events).toHaveLength(1);
     }).pipe(Effect.scoped),
   );
