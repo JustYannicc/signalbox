@@ -1,4 +1,4 @@
-import { ProviderInstanceId } from "@t3tools/contracts";
+import { PersistChatAttachmentsResult, ProviderInstanceId } from "@t3tools/contracts";
 import { afterEach, describe, expect, it } from "@effect/vitest";
 import * as ConfigProvider from "effect/ConfigProvider";
 import * as Effect from "effect/Effect";
@@ -14,6 +14,7 @@ import { layerConfig, makeMemoryCloud } from "../testing.ts";
 import * as UserDirectory from "../user/UserDirectory.ts";
 import * as UserModelSettings from "../user/UserModelSettings.ts";
 import * as Environment from "../environment.ts";
+import { scriptedModelSelection } from "../thread/scriptedProvider.ts";
 import { handleMcpRequest, protectedResourceMetadata } from "./mcpRoutes.ts";
 
 const userId = "user_1";
@@ -36,6 +37,9 @@ const SearchAnswer = Schema.Struct({
 });
 const decodeAnswer = Schema.decodeUnknownSync(Schema.fromJsonString(JsonRpcAnswer));
 const decodeToolResult = Schema.decodeUnknownEffect(ToolResult);
+const decodeAttachments = Schema.decodeUnknownEffect(
+  Schema.fromJsonString(PersistChatAttachmentsResult),
+);
 const decodeToolList = Schema.decodeUnknownEffect(ToolList);
 const decodeSearch = Schema.decodeUnknownEffect(Schema.fromJsonString(SearchAnswer));
 
@@ -101,6 +105,58 @@ const connect = Effect.gen(function* () {
 });
 
 describe("Signalbox's MCP", () => {
+  it.effect("persists legacy image metadata before the thread exists and claims it on launch", () =>
+    Effect.gen(function* () {
+      const { tool } = yield* connect;
+      const input = {
+        threadId: "mcp-image-thread",
+        messageId: "mcp-image-message",
+        attachments: [
+          {
+            type: "image",
+            name: "shot.png",
+            mimeType: "image/png",
+            sizeBytes: 3,
+            dataUrl: "data:image/png;base64,AQID",
+          },
+        ],
+      };
+      const saved = yield* tool("signalbox_call", {
+        operation: "assets.persistChatAttachments",
+        input,
+      });
+      expect(saved.isError ?? false).toBe(false);
+      const parsed = yield* decodeAttachments(saved.content[0]!.text);
+      expect(parsed.attachments[0]?.id).toMatch(/^pending-/);
+      expect(saved.content[0]!.text).not.toContain("data:image/");
+      const launched = yield* tool("signalbox_call", {
+        operation: "threads.create",
+        input: {
+          commandId: "mcp-image-launch",
+          threadId: input.threadId,
+          projectId: Environment.SCRATCH_PROJECT_ID,
+          title: "Image via MCP",
+          modelSelection: scriptedModelSelection,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          workspaceStrategy: { type: "root" },
+          initialMessage: {
+            messageId: input.messageId,
+            text: "Look",
+            attachments: parsed.attachments,
+          },
+        },
+      });
+      expect(launched.isError ?? false).toBe(false);
+      expect(launched.content[0]!.text).toContain("mcp-image-thread-");
+      const repeated = yield* tool("signalbox_call", {
+        operation: "assets.persistChatAttachments",
+        input,
+      });
+      expect(yield* decodeAttachments(repeated.content[0]!.text)).toEqual(parsed);
+    }),
+  );
+
   it.effect("says where clients get a token for this cloud", () =>
     Effect.gen(function* () {
       const response = yield* protectedResourceMetadata(

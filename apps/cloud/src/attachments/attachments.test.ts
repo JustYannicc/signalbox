@@ -419,7 +419,15 @@ describe("the machine's attachments", () => {
             ],
           }),
         ).pipe(Effect.provide(layerAttachments(objects)));
-        const id = persisted.attachments[0]!.id;
+        const claimed = yield* CloudAttachments.use((attachments) =>
+          attachments.claim({
+            userId,
+            threadId,
+            commandId: "launch-1",
+            attachments: persisted.attachments,
+          }),
+        ).pipe(Effect.provide(layerAttachments(objects)));
+        const id = claimed.attachments[0]!.id;
         yield* engine.launch(
           actor,
           {

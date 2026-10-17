@@ -551,15 +551,7 @@ export const layer = ({ objects, prefix }: AttachmentStorage) =>
               };
             }),
           );
-          const claimed = yield* claim({
-            userId,
-            threadId: input.threadId,
-            commandId: `legacy:${input.messageId}`,
-            attachments: pending,
-          }).pipe(
-            Effect.mapError((error) => new PersistChatAttachmentsError({ message: error.reason })),
-          );
-          return { attachments: claimed.attachments };
+          return { attachments: pending };
         });
 
       return CloudAttachments.of({

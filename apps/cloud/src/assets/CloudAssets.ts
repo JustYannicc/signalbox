@@ -8,7 +8,7 @@ import {
   AssetWorkspaceContextNotFoundError,
   type PersistChatAttachmentsInput,
   type PersistChatAttachmentsResult,
-  PersistChatAttachmentsError,
+  type PersistChatAttachmentsError,
   ThreadId,
   TurnItemId,
 } from "@t3tools/contracts";
@@ -222,10 +222,9 @@ const make = Effect.gen(function* () {
     });
 
   const persistChatAttachments: CloudAssets["Service"]["persistChatAttachments"] = (actor, input) =>
-    threads.threadSnapshot(actor, input.threadId).pipe(
-      Effect.mapError(() => new PersistChatAttachmentsError({ message: "Thread unavailable." })),
-      Effect.andThen(attachments.persistImages(actor.userId, input)),
-    );
+    // Persistence precedes thread creation. Uploads stay private to the caller until
+    // the normal launch/send command authorizes the thread and claims its copies.
+    attachments.persistImages(actor.userId, input);
 
   return CloudAssets.of({ createUrl, verify, read, openAttachment, persistChatAttachments });
 });

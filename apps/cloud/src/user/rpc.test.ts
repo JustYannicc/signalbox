@@ -3,6 +3,7 @@ import {
   AuthOrchestrationReadScope,
   AuthPreviewOperateScope,
   type AuthEnvironmentScope,
+  type ChatAttachment,
   CommandId,
   EnvironmentId,
   MessageId,
@@ -43,16 +44,17 @@ const connect = (
     AuthOrchestrationReadScope,
     AuthOrchestrationOperateScope,
   ],
+  cloud = makeMemoryCloud(),
+  callerId = userId,
 ) =>
   Effect.gen(function* () {
-    const cloud = makeMemoryCloud();
-    yield* cloud.userDirectory.forUser(userId).recordSignIn({ id: userId, email: "a@b.c" });
+    yield* cloud.userDirectory.forUser(callerId).recordSignIn({ id: callerId, email: "a@b.c" });
     const rpc = yield* RpcTest.makeClient(CloudRpc.CloudRpcGroup).pipe(
       Effect.provide(
         Layer.mergeAll(
-          CloudRpc.layerHandlers({ identity, userId, sid: "test-session" }),
+          CloudRpc.layerHandlers({ identity, userId: callerId, sid: "test-session" }),
           CloudRpc.layerScopeAuthorization(scopes),
-        ).pipe(Layer.provide(cloud.layerFor(userId))),
+        ).pipe(Layer.provide(cloud.layerFor(callerId))),
       ),
     );
     return { cloud, rpc };
@@ -63,7 +65,11 @@ const client = (scopes?: ReadonlyArray<AuthEnvironmentScope>) =>
 
 type Rpc = Effect.Success<ReturnType<typeof client>>;
 
-const launch = (rpc: Rpc, commandId = "launch-1") =>
+const launch = (
+  rpc: Rpc,
+  commandId = "launch-1",
+  attachments: ReadonlyArray<ChatAttachment> = [],
+) =>
   rpc[ORCHESTRATION_V2_WS_METHODS.launchThread]({
     commandId: CommandId.make(commandId),
     threadId,
@@ -73,10 +79,15 @@ const launch = (rpc: Rpc, commandId = "launch-1") =>
     runtimeMode: "full-access",
     interactionMode: "default",
     workspaceStrategy: { type: "root" },
-    initialMessage: { messageId: MessageId.make("message-1"), text: "Hello", attachments: [] },
+    initialMessage: { messageId: MessageId.make("message-1"), text: "Hello", attachments },
   });
 
-const send = (rpc: Rpc, commandId: string, text: string) =>
+const send = (
+  rpc: Rpc,
+  commandId: string,
+  text: string,
+  attachments: ReadonlyArray<ChatAttachment> = [],
+) =>
   rpc[ORCHESTRATION_V2_WS_METHODS.dispatchCommand]({
     type: "message.dispatch",
     commandId: CommandId.make(commandId),
@@ -85,7 +96,7 @@ const send = (rpc: Rpc, commandId: string, text: string) =>
     threadId,
     messageId: MessageId.make(`message-${commandId}`),
     text,
-    attachments: [],
+    attachments,
     dispatchMode: { type: "start_immediately" },
     deliveryIntent: "auto",
   });
@@ -108,10 +119,9 @@ const sidebar = (rpc: Rpc) =>
   );
 
 describe("cloud RPC", () => {
-  it.effect("persists legacy images through the public operation and enforces write scope", () =>
+  it.effect("persists before launch and authorizes the thread when claiming images", () =>
     Effect.gen(function* () {
-      const rpc = yield* client();
-      yield* launch(rpc);
+      const { rpc, cloud } = yield* connect();
       const input = {
         threadId,
         messageId: MessageId.make("image-message"),
@@ -128,15 +138,20 @@ describe("cloud RPC", () => {
       const result = yield* rpc[WS_METHODS.assetsPersistChatAttachments](input);
       expect(isPersisted(result)).toBe(true);
       expect(result.attachments).toHaveLength(1);
+      expect(result.attachments[0]?.id).toMatch(/^pending-/);
+      const launched = yield* launch(rpc, "launch-1", result.attachments);
+      const kept = launched.projection.messages[0]?.attachments[0];
+      expect(kept?.id).toMatch(/^thread-1-/);
       expect(yield* rpc[WS_METHODS.assetsPersistChatAttachments](input)).toEqual(result);
+      const stranger = (yield* connect(undefined, cloud, "user_2")).rpc;
+      const privateUpload = yield* stranger[WS_METHODS.assetsPersistChatAttachments](input);
+      expect(privateUpload.attachments[0]?.id).not.toBe(result.attachments[0]?.id);
       expect(
-        (yield* Effect.flip(
-          rpc[WS_METHODS.assetsPersistChatAttachments]({
-            ...input,
-            threadId: ThreadId.make("someone-elses-thread"),
-          }),
-        ))._tag,
-      ).toBe("PersistChatAttachmentsError");
+        (yield* Effect.flip(send(stranger, "unauthorized-send", "Look", privateUpload.attachments)))
+          ._tag,
+      ).toBe("OrchestrationV2DispatchCommandError");
+      const snapshot = yield* rpc[ORCHESTRATION_V2_WS_METHODS.getThreadProjection]({ threadId });
+      expect(snapshot.messages.flatMap((message) => message.attachments)).toEqual([kept]);
       const readOnly = yield* client([AuthOrchestrationReadScope]);
       expect(
         (yield* Effect.flip(readOnly[WS_METHODS.assetsPersistChatAttachments](input)))._tag,

@@ -52,6 +52,45 @@ const json = (answer: Effect.Success<ReturnType<typeof callOperation>>) => {
 };
 
 describe("public API calls", () => {
+  it.effect("persists legacy images through the API before creating their thread", () =>
+    Effect.gen(function* () {
+      const { call } = yield* setup;
+      const input = {
+        threadId: "api-image-thread",
+        messageId: "api-image-message",
+        attachments: [
+          {
+            type: "image",
+            name: "shot.png",
+            mimeType: "image/png",
+            sizeBytes: 3,
+            dataUrl: "data:image/png;base64,AQID",
+          },
+        ],
+      };
+      const saved = json(yield* call("assets.persistChatAttachments", input));
+      expect(saved).toMatchObject({
+        status: 200,
+        body: {
+          attachments: [
+            {
+              type: "image",
+              name: "shot.png",
+              mimeType: "image/png",
+              sizeBytes: 3,
+            },
+          ],
+        },
+      });
+      expect(json(yield* call("assets.persistChatAttachments", input))).toEqual(saved);
+      expect(
+        json(
+          yield* call("assets.persistChatAttachments", input, person([AuthOrchestrationReadScope])),
+        ).status,
+      ).toBe(403);
+    }),
+  );
+
   it.effect("reads and saves analytics consent through the public reach map", () =>
     Effect.gen(function* () {
       const { call } = yield* setup;

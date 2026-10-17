@@ -140,7 +140,7 @@ describe("legacy image persistence", () => {
         const assets = yield* CloudAssets.CloudAssets;
         const result = yield* assets.persistChatAttachments(actor(owner), legacyInput);
         expect(isPersisted(result)).toBe(true);
-        expect(result.attachments[0]?.id).toMatch(/^thread-1-/);
+        expect(result.attachments[0]?.id).toMatch(/^pending-/);
         const again = yield* assets.persistChatAttachments(actor(owner), legacyInput);
         expect(again).toEqual(result);
         const fresh = yield* CloudAssets.CloudAssets.pipe(Effect.provide(layer));
@@ -160,12 +160,30 @@ describe("legacy image persistence", () => {
       }).pipe(Effect.provide(layer)),
   );
 
-  it.effect("rejects unauthorized threads and invalid payloads", () =>
+  it.effect("keeps staged images private to their uploader", () =>
     Effect.gen(function* () {
       const assets = yield* CloudAssets.CloudAssets;
+      const own = yield* assets.persistChatAttachments(actor(owner), legacyInput);
+      const other = yield* assets.persistChatAttachments(actor(stranger), legacyInput);
+      expect(other.attachments[0]?.id).not.toBe(own.attachments[0]?.id);
       expect(
-        (yield* Effect.flip(assets.persistChatAttachments(actor(stranger), legacyInput)))._tag,
-      ).toBe("PersistChatAttachmentsError");
+        yield* assets.openAttachment(actor(stranger), {
+          _tag: "attachment",
+          attachmentId: own.attachments[0]!.id,
+        }),
+      ).toBeNull();
+      expect(
+        yield* assets.openAttachment(actor(owner), {
+          _tag: "attachment",
+          attachmentId: other.attachments[0]!.id,
+        }),
+      ).toBeNull();
+    }).pipe(Effect.provide(layer)),
+  );
+
+  it.effect("rejects invalid payloads", () =>
+    Effect.gen(function* () {
+      const assets = yield* CloudAssets.CloudAssets;
       for (const patch of [
         { dataUrl: "data:image/png;base64,!!!!" },
         { dataUrl: "data:image/png;base64,AAAA=AAA" },
