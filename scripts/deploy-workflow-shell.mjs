@@ -8,11 +8,12 @@ const timeoutPrefix = String.raw`(?:timeout[ \t]+(?:--preserve-status[ \t]+)?[0-
 const environmentPrefix = String.raw`(?:env[ \t]+)?${assignments}(?:env[ \t]+)?`;
 const commandPrefix = String.raw`${commandBoundary}(?:if[ \t]+)?!?[ \t]*${timeoutPrefix}${environmentPrefix}`;
 const runnerPrefix = String.raw`(?:(?:npx[ \t]+|vp[ \t]+exec[ \t]+|(?:pnpm|npm|yarn)[ \t]+exec[ \t]+))?`;
-const nodeOptions = String.raw`(?:--(?:import|require|loader|conditions|env-file|input-type|experimental-loader)(?:=[^\s;|&()]+|[ \t]+[^\s;|&()]+)|--[A-Za-z][A-Za-z0-9-]*(?:=[^\s;|&()]+)?|-[A-Za-z][A-Za-z0-9-]*(?:=[^\s;|&()]+)?)[ \t]+`;
+const nodeOptions = String.raw`(?:--(?:import|require|loader|conditions|env-file|input-type|experimental-loader)(?:=[^\s;|&()]+|[ \t]+[^\s;|&()]+)|-r(?:=[^\s;|&()]+|[ \t]+[^\s;|&()]+)|--[A-Za-z][A-Za-z0-9-]*(?:=[^\s;|&()]+)?|-[A-Za-z][A-Za-z0-9-]*(?:=[^\s;|&()]+)?)[ \t]+`;
 
 // Recognized commands are node/tsx/bash/sh/source/./python/ruby and direct relative paths. Wrappers
 // are env assignments, numeric timeout durations, npx, and vp/pnpm/npm/yarn exec without extra flags.
-// This does not expand variables or eval, or interpret shell functions and runner-specific flags.
+// This rejects nested conditionals in file guards; otherwise it does not expand variables or eval,
+// or interpret shell functions and runner-specific flags.
 
 export function maskShellComments(source) {
   const characters = source.split("");
@@ -22,6 +23,24 @@ export function maskShellComments(source) {
 
   for (let index = 0; index < characters.length; index += 1) {
     const character = characters[index];
+    if (character === "\\" && quote !== "'" && characters[index + 1] === "\n") {
+      characters[index] = " ";
+      characters[index + 1] = " ";
+      index += 1;
+      continue;
+    }
+    if (
+      character === "\\" &&
+      quote !== "'" &&
+      characters[index + 1] === "\r" &&
+      characters[index + 2] === "\n"
+    ) {
+      characters[index] = " ";
+      characters[index + 1] = " ";
+      characters[index + 2] = " ";
+      index += 2;
+      continue;
+    }
     if (inComment) {
       if (character === "\r" || character === "\n") {
         inComment = false;
@@ -47,7 +66,7 @@ export function maskShellComments(source) {
 
     if (character === "\\") escaped = true;
     else if (character === "'" || character === '"') quote = character;
-    else if (character === "#" && (index === 0 || /[\s;|&(){}\x60]/.test(characters[index - 1]))) {
+    else if (character === "#" && (index === 0 || /[\s;|&()<>\x60]/.test(characters[index - 1]))) {
       inComment = true;
       characters[index] = " ";
     }
@@ -90,7 +109,7 @@ export function findFileScriptCalls(source) {
   }
 
   const nodeLoadOptionPattern = new RegExp(
-    `${commandPrefix}${runnerPrefix}node[ \\t]+(?:${nodeOptions})*?--(?:import|require|loader|experimental-loader)(?:=|[ \\t]+)(?:"([^"]+)"|'([^']+)'|([^\\s;|&()\\x60]+))`,
+    `${commandPrefix}${runnerPrefix}node[ \\t]+(?:${nodeOptions})*?(?:--(?:import|require|loader|experimental-loader)|-r)(?:=|[ \\t]+)(?:"([^"]+)"|'([^']+)'|([^\\s;|&()\\x60]+))`,
     "g",
   );
   for (const match of source.matchAll(nodeLoadOptionPattern)) {
@@ -148,10 +167,11 @@ export function findRequiredCalls(source) {
 
 export function findFileGuards(source, workingDirectory) {
   const pattern =
-    /\bif\s+(?:\[\[\s+-f\s+(?<double>"[^"]+"|'[^']+'|[^\s;]+)\s+\]\]|\[\s+-f\s+(?<single>"[^"]+"|'[^']+'|[^\s\]]+)\s+\]|test\s+-f\s+(?<test>"[^"]+"|'[^']+'|[^\s;]+))\s*;?\s*then\b(?<thenBody>[\s\S]*?)(?:\b(?:elif|else)\b[\s\S]*?)?\bfi\b/g;
+    /\bif\s+(?:\[\[\s+-f\s+(?<double>"[^"]+"|'[^']+'|[^\s;]+)\s+\]\]|\[\s+-f\s+(?<single>"[^"]+"|'[^']+'|[^\s\]]+)\s+\]|test\s+-f\s+(?<test>"[^"]+"|'[^']+'|[^\s;]+))\s*;?\s*then\b(?<thenBody>[\s\S]*?)(?:\b(?:elif|else)\b(?<otherBody>[\s\S]*?))?\bfi\b/g;
   return [...source.matchAll(pattern)].map((match) => {
     const thenBody = match.groups.thenBody;
     const thenStart = match.index + match[0].indexOf(thenBody);
+    const guardedBody = `${thenBody}${match.groups.otherBody ?? ""}`;
     return {
       file: repoPath(
         match.groups.double ?? match.groups.single ?? match.groups.test,
@@ -160,6 +180,9 @@ export function findFileGuards(source, workingDirectory) {
       start: match.index,
       thenEnd: thenStart + thenBody.length,
       blockEnd: match.index + match[0].length,
+      nested: /(?:^|[\n;&|()])[ \t]*if[ \t]+|\b(?:then|do|else|elif)[ \t]+if[ \t]+/.test(
+        guardedBody,
+      ),
     };
   });
 }

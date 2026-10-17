@@ -104,6 +104,11 @@ export function auditDeployWorkflow(source, repoRoot = root) {
       const source = maskShellComments(step.run);
       const calls = findFileScriptCalls(source);
       const guards = findFileGuards(source, workingDirectory ?? ".");
+      if (guards.some(({ nested }) => nested)) {
+        problems.push(
+          `${jobName}/${step.name ?? `step ${stepIndex + 1}`} uses nested conditionals inside file-existence guards, which are unsupported; flatten the guard or move operational code into a trusted script`,
+        );
+      }
 
       for (const call of calls) {
         const script = workingDirectory === null ? null : repoPath(call.file, workingDirectory);

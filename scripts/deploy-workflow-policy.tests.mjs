@@ -2,6 +2,7 @@ import * as NodeAssert from "node:assert/strict";
 import * as NodeTest from "node:test";
 
 import { assertDeployWorkflowPolicy, currentDeployWorkflow } from "./deploy-workflow-policy.mjs";
+import { findFileScriptCalls, maskShellComments } from "./deploy-workflow-shell.mjs";
 
 const prCheckout = `      - uses: actions/checkout@v6
         with:
@@ -93,6 +94,29 @@ NodeTest.test("commented-out guards and script calls do not affect policy", () =
   );
 });
 
+NodeTest.test("quoted hashes stay data and cannot create a fake guard", () => {
+  const workflow = fixture(`      - name: Release event
+        run: |
+          echo "value # if [[ -f scripts/release.ts ]]; then node scripts/release.ts; fi"
+          echo '\${#ARGS} # if [[ -f scripts/release.ts ]]; then node scripts/release.ts; fi'
+          node scripts/release.ts
+`);
+  NodeAssert.throws(
+    () => assertDeployWorkflowPolicy(workflow),
+    /PR-head script scripts\/release\.ts/,
+  );
+});
+
+NodeTest.test("escaped CRLF continuations are masked without shifting call offsets", () => {
+  const source = "node \\\r\n  scripts/release.ts";
+  const masked = maskShellComments(source);
+  NodeAssert.equal(masked.length, source.length);
+  NodeAssert.deepEqual(
+    findFileScriptCalls(masked).map(({ file }) => file),
+    ["scripts/release.ts"],
+  );
+});
+
 NodeTest.test("comments do not break a valid optional script guard", () => {
   const workflow = fixture(`      - name: Release event
         working-directory: apps/cloud
@@ -106,10 +130,102 @@ NodeTest.test("comments do not break a valid optional script guard", () => {
   NodeAssert.doesNotThrow(() => assertDeployWorkflowPolicy(workflow));
 });
 
+NodeTest.test("Bash parameter length expansion does not hide a same-line script", () => {
+  const workflow = fixture(`      - name: Release event
+        run: |
+          if (( \${#ARGS} > 0 )); then echo x; fi; node scripts/release.ts
+`);
+  NodeAssert.throws(
+    () => assertDeployWorkflowPolicy(workflow),
+    /PR-head script scripts\/release\.ts/,
+  );
+});
+
+NodeTest.test("Bash parameter length expansion cannot extend an optional guard", () => {
+  const workflow = fixture(`      - name: Release event
+        run: |
+          if [[ -f scripts/release.ts ]]; then echo \${#X}; fi
+          node scripts/release.ts
+          if [[ -f other ]]; then echo; fi
+`);
+  NodeAssert.throws(
+    () => assertDeployWorkflowPolicy(workflow),
+    /PR-head script scripts\/release\.ts/,
+  );
+});
+
+NodeTest.test("Bash parameter length expansion cannot hide required build or deploy steps", () => {
+  const build = fixture(`      - name: Build
+        run: |
+          if [[ -f scripts/release.ts ]]; then echo \${#X}; vp run build; fi
+`);
+  NodeAssert.throws(() => assertDeployWorkflowPolicy(build), /guards a required package script/);
+
+  const deploy = fixture(`      - name: Deploy
+        working-directory: apps/cloud
+        run: |
+          if [[ -f scripts/release.ts ]]; then echo \${#X}; ./node_modules/.bin/alchemy deploy; fi
+`);
+  NodeAssert.throws(() => assertDeployWorkflowPolicy(deploy), /guards a required local binary/);
+});
+
+NodeTest.test("an escaped line break cannot hide an unguarded script", () => {
+  const workflow = fixture(`      - name: Release event
+        run: |
+          node \\
+            scripts/release.ts
+`);
+  NodeAssert.throws(
+    () => assertDeployWorkflowPolicy(workflow),
+    /PR-head script scripts\/release\.ts/,
+  );
+});
+
+NodeTest.test("an escaped line break preserves a matching file guard", () => {
+  const workflow = fixture(`      - name: Release event
+        run: |
+          if [[ -f scripts/release.ts ]]; then
+            node \\
+              scripts/release.ts
+          fi
+`);
+  NodeAssert.doesNotThrow(() => assertDeployWorkflowPolicy(workflow));
+});
+
+NodeTest.test("nested conditionals inside a file guard fail closed", () => {
+  const workflow = fixture(`      - name: Build
+        run: |
+          if [[ -f scripts/release.ts ]]; then
+            if true; then echo nested; fi
+            vp run build
+          fi
+`);
+  NodeAssert.throws(
+    () => assertDeployWorkflowPolicy(workflow),
+    /uses nested conditionals inside file-existence guards, which are unsupported/,
+  );
+
+  const nestedElse = fixture(`      - name: Build
+        run: |
+          if [[ -f scripts/release.ts ]]; then
+            echo optional
+          else
+            if true; then echo nested; fi
+            vp run build
+          fi
+`);
+  NodeAssert.throws(
+    () => assertDeployWorkflowPolicy(nestedElse),
+    /uses nested conditionals inside file-existence guards, which are unsupported/,
+  );
+});
+
 NodeTest.test("common Node and shell wrappers cannot hide PR scripts", () => {
   const commands = [
     "node --experimental-strip-types scripts/release.ts",
     "node --import tsx scripts/release.ts",
+    "node -r dotenv/config scripts/release.ts",
+    "node -r=dotenv/config scripts/release.ts",
     "env RELEASE_STAGE=preview node scripts/release.ts",
     "timeout 60 node scripts/release.ts",
     "tsx scripts/release.ts",
@@ -135,6 +251,8 @@ NodeTest.test("common Node and shell wrappers allow a matching file guard", () =
   const commands = [
     "node --experimental-strip-types scripts/release.ts",
     "node --import tsx scripts/release.ts",
+    "node -r dotenv/config scripts/release.ts",
+    "node -r=dotenv/config scripts/release.ts",
     "env RELEASE_STAGE=preview node scripts/release.ts",
     "timeout 60 node scripts/release.ts",
     "tsx scripts/release.ts",
@@ -159,16 +277,38 @@ NodeTest.test("common Node and shell wrappers allow a matching file guard", () =
 });
 
 NodeTest.test("Node module hook scripts are checked independently from the main script", () => {
-  const workflow = fixture(`      - name: Release event
+  const mainScriptIsGuarded = fixture(`      - name: Release event
         run: |
-          if [[ -f scripts/release.ts ]]; then
-            node --import ./scripts/preload.ts scripts/release.ts
+          if [[ -f scripts/preload.cjs ]]; then
+            node -r ./scripts/preload.cjs scripts/release.ts
           fi
 `);
   NodeAssert.throws(
-    () => assertDeployWorkflowPolicy(workflow),
-    (error) => error.message.includes("PR-head script scripts/preload.ts"),
+    () => assertDeployWorkflowPolicy(mainScriptIsGuarded),
+    (error) => error.message.includes("PR-head script scripts/release.ts"),
   );
+
+  const shortOption = fixture(`      - name: Release event
+        run: |
+          if [[ -f scripts/release.ts ]]; then
+            node -r ./scripts/preload.cjs scripts/release.ts
+          fi
+`);
+  NodeAssert.throws(
+    () => assertDeployWorkflowPolicy(shortOption),
+    (error) => error.message.includes("PR-head script scripts/preload.cjs"),
+  );
+});
+
+NodeTest.test("Node require options identify preload and main scripts separately", () => {
+  for (const option of ["-r ./scripts/preload.cjs", "-r=./scripts/preload.cjs"]) {
+    const calls = findFileScriptCalls(maskShellComments(`node ${option} scripts/release.ts`));
+    NodeAssert.deepEqual(
+      calls.map(({ file }) => file).sort(),
+      ["./scripts/preload.cjs", "scripts/release.ts"],
+      option,
+    );
+  }
 });
 
 NodeTest.test("Node module hook scripts can use a matching file guard", () => {
@@ -176,6 +316,8 @@ NodeTest.test("Node module hook scripts can use a matching file guard", () => {
     ["node --import ./scripts/preload.ts", "scripts/preload.ts"],
     ["node --require=./scripts/preload.cjs", "scripts/preload.cjs"],
     ["node --loader ./scripts/preload.mjs", "scripts/preload.mjs"],
+    ["node -r ./scripts/preload.cjs", "scripts/preload.cjs"],
+    ["node -r=./scripts/preload.cjs", "scripts/preload.cjs"],
   ];
   for (const [command, script] of commands) {
     const workflow = fixture(`      - name: Release event

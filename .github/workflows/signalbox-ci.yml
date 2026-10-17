@@ -188,6 +188,7 @@ jobs:
       - name: Test preview certificate wait
         run: node --test .github/scripts/wait-own-certificate.test.cjs
 
+      # Use Node directly so workflow and infra-only changes still exercise these checks without Vitest discovery.
       - name: Check deploy workflow script sources
         run: node --test scripts/deploy-workflow-policy.tests.mjs scripts/deploy-plan.tests.mjs
 
