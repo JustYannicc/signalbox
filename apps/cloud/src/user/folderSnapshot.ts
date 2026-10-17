@@ -12,7 +12,7 @@ import type { FolderState } from "./UserFolders.ts";
 
 /**
  * The tree as `signalbox.folders.*` sends it: every folder, filed thread,
- * project home, pool and secrets reference.
+ * project home, pool, secrets reference and GitHub lend.
  */
 export const toSnapshot = (current: FolderState): SignalboxFoldersSnapshot => {
   const { tree } = current;
@@ -33,6 +33,7 @@ export const toSnapshot = (current: FolderState): SignalboxFoldersSnapshot => {
     folders: byPosition(tree.folders).map((folder): Folder => {
       const files = filesProjectOf(folder, given);
       const poolId = placed.get(folder.id);
+      const githubLend = current.githubLends.get(folder.id);
       return {
         id: folder.id,
         name: folder.name,
@@ -43,6 +44,7 @@ export const toSnapshot = (current: FolderState): SignalboxFoldersSnapshot => {
         ...(poolId === undefined ? {} : { poolId }),
         ...(folder.instructions === null ? {} : { instructions: folder.instructions }),
         ...(folder.secrets === null ? {} : { secrets: { environmentId: folder.secrets } }),
+        ...(githubLend === undefined ? {} : { githubLend }),
       };
     }),
     threadHomes: [...tree.filed].flatMap(([threadId, folderId]) =>

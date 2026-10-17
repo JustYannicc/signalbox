@@ -124,7 +124,7 @@ describe("starting a task in a folder", () => {
   it("starts at an owner's top level in its own files", () => {
     expect(folderStart(snapshot, owners, ENVIRONMENT, top(PERSONAL))).toMatchObject({
       folderId: null,
-      name: "Personal",
+      name: "Top level",
       projectId: PERSONAL_FILES,
       file: false,
     });

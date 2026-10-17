@@ -1,7 +1,8 @@
-import type { ToolResult } from "@signalbox/runner-protocol/AutomationProtocol";
+import { LIST_NOTES_TOOL, type ToolResult } from "@signalbox/runner-protocol/AutomationProtocol";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 
+import { listNotesTool } from "../notes/notesTool.ts";
 import { CloudAutomations } from "./CloudAutomations.ts";
 
 /**
@@ -11,6 +12,7 @@ import { CloudAutomations } from "./CloudAutomations.ts";
  */
 export const automationTool = (threadId: string, name: string, input: unknown) =>
   Effect.gen(function* (): Effect.fn.Return<ToolResult> {
+    if (name === LIST_NOTES_TOOL) return yield* listNotesTool(threadId);
     const automations = yield* Effect.serviceOption(CloudAutomations);
     if (Option.isNone(automations)) {
       return { _tag: "failed", message: "Automations aren't running in this cloud yet." };

@@ -2766,7 +2766,7 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
         // macOS 26 offers Messages/Mail codes in every text field unless opted out.
         NSAutoFillRequiresTextContentTypeForOneTimeCodeOnMac: true,
         NSLocalNetworkUsageDescription:
-          "Signalbox connects to devices on your local network for remote environments and commands run by terminals and coding agents.",
+          "Signalbox connects to devices on your local network when you open them in its browser.",
         NSScreenCaptureUsageDescription:
           "Signalbox captures the active window when you use the window capture shortcut.",
         // macOS lists an app under Default web browser only when it opens web
@@ -2835,7 +2835,7 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
       executableName: "signalbox",
       icon: "icons",
       category: "Development",
-      synopsis: "Desktop GUI for coding agents",
+      synopsis: "One app for working with AI",
       maintainer: "T3 Tools <hello@t3.codes>",
       // signalbox:// OAuth callbacks to the app.
       protocols: [

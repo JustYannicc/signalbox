@@ -16,6 +16,7 @@ import { makeMemoryCloud } from "../testing.ts";
 import * as UserPools from "../user/UserPools.ts";
 import * as UserFolders from "../user/UserFolders.ts";
 import * as CloudThreadService from "./CloudThreadService.ts";
+import { STATUS_LINE_INSTRUCTIONS } from "./statusLine/statusInstructions.ts";
 
 /**
  * Turns run on the pool the thread's chain resolves to, never one the client
@@ -193,6 +194,7 @@ describe("turn pools", () => {
         expect(yield* cloud.runInstructions(threadId, projection.runs[0]!.id)).toEqual([
           { label: "Top level", text: "Be brief." },
           { label: "Work", text: "End every reply with BANANA." },
+          STATUS_LINE_INSTRUCTIONS,
         ]);
         yield* cloud.settle;
       }),
@@ -243,10 +245,12 @@ describe("turn pools", () => {
         { label: "Top level", text: "Be brief." },
         { label: "Work", text: "Use British spelling." },
         { label: "Work / Clients", text: "End every reply with BANANA." },
+        STATUS_LINE_INSTRUCTIONS,
       ]);
       expect(yield* cloud.runInstructions(threadId, second!.id)).toEqual([
         { label: "Top level", text: "Be brief." },
         { label: "Home", text: "End every reply with APPLE." },
+        STATUS_LINE_INSTRUCTIONS,
       ]);
       yield* cloud.settle;
     }),

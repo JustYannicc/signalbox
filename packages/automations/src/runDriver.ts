@@ -7,6 +7,7 @@ import type * as Scope from "effect/Scope";
 import type { Attachments } from "./attachments.ts";
 import type { EndRun, EngineServices, LaunchRun, RunOutcome, Settlement } from "./engineTypes.ts";
 import type { EventTriggers } from "./events/eventTriggers.ts";
+import type { ExternalRuns } from "./external.ts";
 import type { RunWaits } from "./events/runWaits.ts";
 import type { AutomationFunctions, AutomationThreads } from "./host.ts";
 import type { Change } from "./liveFeed.ts";
@@ -50,6 +51,7 @@ export interface EngineInternals {
   readonly threads: AutomationThreads["Service"];
   readonly services: Context.Context<EngineServices>;
   readonly functions: AutomationFunctions["Service"];
+  readonly external: ExternalRuns;
   readonly runLogs: RunLogs;
   readonly runWaits: RunWaits;
   readonly attachments: Attachments;

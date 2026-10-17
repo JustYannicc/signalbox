@@ -3,7 +3,11 @@
  * another folder of its owner, and make a new folder.
  */
 import { useAtomValue } from "@effect/atom-react";
-import { homeOfThread, threadFolderChoices } from "@t3tools/client-runtime/state/signalboxFolders";
+import {
+  homeOfThread,
+  ownerLevelName,
+  threadFolderChoices,
+} from "@t3tools/client-runtime/state/signalboxFolders";
 import { useParams } from "@tanstack/react-router";
 import { FolderInputIcon, FolderPlusIcon } from "lucide-react";
 
@@ -75,7 +79,13 @@ export function useFolderPaletteItems(): Array<
         title: "Move thread to folder…",
         icon: <FolderInputIcon className={ITEM_ICON_CLASS} />,
         addonIcon: <FolderInputIcon className={ADDON_ICON_CLASS} />,
-        groups: [{ value: "folders", label: owner.name, items: destinations }],
+        groups: [
+          {
+            value: "folders",
+            label: owner.kind === "personal" ? "Folders" : owner.name,
+            items: destinations,
+          },
+        ],
       });
     }
   }
@@ -97,8 +107,8 @@ export function useFolderPaletteItems(): Array<
       items: environmentContexts.contexts.map((context): CommandPaletteActionItem => ({
         kind: "action",
         value: `new-folder:${environmentId}:${context.id}`,
-        searchTerms: [context.name],
-        title: context.name,
+        searchTerms: [context.name, ownerLevelName(context)],
+        title: ownerLevelName(context),
         icon: <FolderPlusIcon className={ITEM_ICON_CLASS} />,
         run: async () =>
           openFolderDialog({

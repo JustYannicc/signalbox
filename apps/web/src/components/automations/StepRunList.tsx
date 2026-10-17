@@ -1,7 +1,8 @@
 /**
  * What one diagram node did in a run: each of its steps (a loop runs a node
  * many times) with status, duration, error and result, a way into the agent
- * thread that did the work, and the answer buttons for a waiting question.
+ * thread or the external run (GitHub Actions) that did the work, and the
+ * answer buttons for a waiting question.
  */
 import {
   workflowStepKeyCall,
@@ -20,29 +21,16 @@ import { stepDisplayStatus } from "@t3tools/client-runtime/automations/status";
 import { formatDuration } from "@t3tools/shared/orchestrationTiming";
 import { Link } from "@tanstack/react-router";
 import { MessageSquareIcon } from "lucide-react";
-import type { ReactNode } from "react";
 
 import { Button } from "../ui/button";
 import { AskAnswer } from "./AskAnswer";
+import { CodeBlock } from "./CodeBlock";
+import { ExternalRunView } from "./ExternalRunView";
 import { ErrorHelp } from "./RunDiagnostics";
 import { StatusLabel } from "./RunStatus";
 
 /** Most recent steps shown per node; a long loop keeps the panel cheap. */
 const MAX_STEPS = 20;
-
-export function CodeBlock(props: { children: ReactNode; tone?: "error" }) {
-  return (
-    <pre
-      className={
-        props.tone === "error"
-          ? "max-h-48 overflow-auto rounded-md bg-destructive/8 px-2.5 py-2 font-mono text-xs whitespace-pre-wrap text-destructive-foreground"
-          : "max-h-48 overflow-auto rounded-md bg-muted/50 px-2.5 py-2 font-mono text-xs whitespace-pre-wrap text-foreground"
-      }
-    >
-      {props.children}
-    </pre>
-  );
-}
 
 /** Opens the agent thread that did a step's work. Nothing for steps that don't run in one. */
 export function AgentThreadButton(props: {
@@ -94,6 +82,7 @@ function StepRun(props: { environmentId: EnvironmentId; runId: string; step: Aut
           <span className="ms-auto text-muted-foreground tabular-nums">{formatDuration(ms)}</span>
         ) : null}
       </div>
+      {step.external ? <ExternalRunView run={step.external} /> : null}
       {step.error ? <CodeBlock tone="error">{step.error}</CodeBlock> : null}
       {step.error ? <ErrorHelp detail={step.errorDetail} /> : null}
       {question ? (

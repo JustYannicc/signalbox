@@ -69,7 +69,9 @@ export function resolveEnvironmentUiState(input: {
 let cachedServedByAnEnvironment: boolean | undefined;
 function servedByAnEnvironment(): boolean {
   cachedServedByAnEnvironment ??=
-    !isLocalEnvironmentDisabled() && !isHostedStaticApp(new URL(window.location.href));
+    typeof window !== "undefined" &&
+    !isLocalEnvironmentDisabled() &&
+    !isHostedStaticApp(new URL(window.location.href));
   return cachedServedByAnEnvironment;
 }
 
@@ -86,6 +88,11 @@ const environmentUiStateAtom = Atom.make((get): EnvironmentUiState => {
 /** For routes that redirect away: wait while `unknown` rather than bounce a self-hosted link. */
 export function useEnvironmentUiState(): EnvironmentUiState {
   return useAtomValue(environmentUiStateAtom);
+}
+
+/** `useShowsEnvironmentUi` outside React, for toasts and thrown errors. */
+export function readShowsEnvironmentUi(): boolean {
+  return appAtomRegistry.get(environmentUiStateAtom) === "shown";
 }
 
 export function useShowsEnvironmentUi(): boolean {

@@ -3,6 +3,7 @@
  * and edit a level's instructions (its AGENTS.md) or secrets. Mounted once with the app
  * shell; `folderDialogStore` says which is open.
  */
+import { PERSONAL_CONTEXT_ID } from "@t3tools/contracts/signalboxContexts";
 import { FOLDER_INSTRUCTIONS_MAX_LENGTH } from "@t3tools/contracts/signalboxFolders";
 import { useState, type FormEvent } from "react";
 
@@ -71,7 +72,9 @@ function NameDialog(props: { dialog: Extract<FolderDialog, { kind: "create" | "r
             ? `Choose a new name for “${dialog.folder.name}”.`
             : dialog.parent
               ? `Inside “${dialog.parent.name}”.`
-              : `At the top of ${dialog.ownerName}.`}
+              : dialog.ownerId === PERSONAL_CONTEXT_ID
+                ? "At the top level."
+                : `At the top of ${dialog.ownerName}.`}
         </DialogDescription>
       </DialogHeader>
       <DialogPanel>

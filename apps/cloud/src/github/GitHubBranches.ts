@@ -132,6 +132,25 @@ type Status = {
   readonly remote: VcsStatusRemoteResult | null;
 };
 
+/** A folder that isn't a repository: no branch, nothing to commit, push or open. */
+const NOT_A_REPOSITORY: Status = {
+  local: {
+    isRepo: false,
+    hasPrimaryRemote: false,
+    isDefaultRef: false,
+    refName: null,
+    hasWorkingTreeChanges: false,
+    workingTree: { files: [], insertions: 0, deletions: 0 },
+  },
+  remote: null,
+};
+
+const snapshotOf = (status: Status): VcsStatusStreamEvent => ({
+  _tag: "snapshot",
+  local: status.local,
+  remote: status.remote,
+});
+
 const toChangeRequest = (pr: GitHubPullRequest): VcsStatusRemoteResult["pr"] => ({
   number: pr.number,
   title: pr.title,
@@ -345,19 +364,34 @@ const make = Effect.gen(function* () {
       };
     });
 
+  /**
+   * `cwd`'s working tree, or null when it isn't a repository (Scratch, a context, a drive
+   * without a remote). The git panel reads that as a status, the way a self-hosted server
+   * answers a plain folder, so clients hide version control there instead of failing.
+   */
+  const resolveRepository = (actor: Actor, cwd: string) =>
+    resolve(actor, cwd).pipe(
+      Effect.catchIf(
+        (error) => error.reason === "not_a_repository",
+        () => Effect.succeed(null),
+      ),
+      Effect.mapError(asManagerError(cwd, "status")),
+    );
+
   const status: GitHubBranches["Service"]["status"] = (actor, cwd, includeRemote) =>
-    Effect.flatMap(
-      resolve(actor, cwd).pipe(Effect.mapError(asManagerError(cwd, "status"))),
-      (target) => statusOf(target, cwd, includeRemote),
+    Effect.flatMap(resolveRepository(actor, cwd), (target) =>
+      target === null ? Effect.succeed(NOT_A_REPOSITORY) : statusOf(target, cwd, includeRemote),
     );
 
   const watch: GitHubBranches["Service"]["watch"] = (actor, cwd, includeRemote) =>
     Stream.unwrap(
       Effect.gen(function* () {
         // The thread and its branch never change, so they are looked up once.
-        const target = yield* resolve(actor, cwd).pipe(
-          Effect.mapError(asManagerError(cwd, "status")),
-        );
+        const target = yield* resolveRepository(actor, cwd);
+        if (target === null) {
+          // Nothing turns a folder into a repository here, so the answer holds.
+          return Stream.concat(Stream.make(snapshotOf(NOT_A_REPOSITORY)), Stream.never);
+        }
         const first = yield* statusOf(target, cwd, includeRemote);
         const subscription = yield* PubSub.subscribe(moved);
         const later = Stream.merge(
@@ -380,11 +414,7 @@ const make = Effect.gen(function* () {
         return Stream.concat(Stream.make(first), later).pipe(
           // Unchanged recomputations send nothing.
           Stream.changesWith((a, b) => JSON.stringify(a) === JSON.stringify(b)),
-          Stream.map((current): VcsStatusStreamEvent => ({
-            _tag: "snapshot",
-            local: current.local,
-            remote: current.remote,
-          })),
+          Stream.map(snapshotOf),
         );
       }),
     );

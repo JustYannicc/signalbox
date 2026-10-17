@@ -9,6 +9,10 @@ import {
   folderThreadCounts,
   threadHomeLookup,
 } from "@t3tools/client-runtime/state/signalboxFolders";
+import {
+  threadStatusOf,
+  type FolderStatusCounts,
+} from "@t3tools/client-runtime/state/threadStatusLine";
 import type { EnvironmentId } from "@t3tools/contracts";
 import type { FolderId, SignalboxFoldersSnapshot } from "@t3tools/contracts/signalboxFolders";
 import type { SignalboxContextsSnapshot } from "@t3tools/contracts/signalboxContexts";
@@ -29,6 +33,7 @@ import {
   type FolderOwner,
   type FolderResident,
 } from "./folderSidebarModel";
+import { folderStatusCountsByNode, type FolderStatusResident } from "./folderStatus";
 
 export interface FolderEnvironmentTree {
   readonly environmentId: EnvironmentId;
@@ -123,6 +128,40 @@ export const folderCountsAtom = Atom.make((get) => {
   }
   return previous !== undefined && sameEntries(previous, counts) ? previous : counts;
 }).pipe(Atom.withLabel("web-folder-counts"));
+
+/**
+ * signalbox: each folder's threads by state (#670), by folder node key. Every
+ * shell update recounts, but a folder whose counts held keeps its object.
+ */
+const folderStatusCountsMapAtom = Atom.make((get) => {
+  const folders = get(environmentFoldersAtom);
+  const residents = get(environmentThreadShells.threadShellsAtom).flatMap(
+    (thread): ReadonlyArray<FolderStatusResident> =>
+      folders.has(thread.environmentId)
+        ? [
+            {
+              environmentId: thread.environmentId,
+              id: thread.id,
+              projectId: thread.projectId,
+              state: threadStatusOf(thread.source).state,
+              updatedAt: thread.updatedAt,
+            },
+          ]
+        : [],
+  );
+  return folderStatusCountsByNode(
+    get(folderTreesAtom).values(),
+    residents,
+    Option.getOrUndefined(get.self<ReadonlyMap<string, FolderStatusCounts>>()),
+  );
+}).pipe(Atom.withLabel("web-folder-status-counts"));
+
+/** One folder's counts by state; null while no live thread is in it or below. */
+export const folderStatusCountsAtom = Atom.family((nodeKey: string) =>
+  Atom.make((get) => get(folderStatusCountsMapAtom).get(nodeKey) ?? null).pipe(
+    Atom.withLabel(`web-folder-status-counts:${nodeKey}`),
+  ),
+);
 
 /** Every list's threads, by list key. */
 export const folderThreadSlicesAtom = Atom.make((get) =>

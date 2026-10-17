@@ -24,6 +24,14 @@ export class GitHubError extends Schema.TaggedError<GitHubError>()("GitHubError"
   retryAt: Schema.optional(Schema.Number),
 }) {}
 
+/** An answer GitHub sent that doesn't decode as expected. */
+export const unreadable = (operation: string) =>
+  new GitHubError({
+    operation,
+    status: 200,
+    message: "GitHub sent an answer Signalbox does not understand.",
+  });
+
 /**
  * When a refused request may be retried: `retry-after` (secondary limits), or
  * the window's reset once none are left. Undefined for any other refusal.
@@ -152,16 +160,13 @@ export const makeGitHubApi = (
 
   const send = (operation: string, request: HttpClientRequest.HttpClientRequest) =>
     client.execute(request.pipe(HttpClientRequest.setHeader("user-agent", "signalbox-cloud"))).pipe(
-      // The request (with tokens or the App's secret) stays out of the error, which gets logged;
-      // only why it failed is.
-      Effect.tapError((error) => {
-        const cause = "cause" in error.reason ? error.reason.cause : undefined;
-        return Effect.logWarning("GitHub request failed", {
+      // Requests and underlying errors can contain credentials; log only the failure category.
+      Effect.tapError((error) =>
+        Effect.logWarning("GitHub request failed", {
           operation,
           reason: error.reason._tag,
-          cause: cause instanceof Error ? `${cause.name}: ${cause.message}` : String(cause),
-        });
-      }),
+        }),
+      ),
       Effect.mapError(
         () => new GitHubError({ operation, status: 0, message: "GitHub did not answer." }),
       ),
@@ -500,6 +505,16 @@ export const makeGitHubApi = (
         HttpClientRequest.get(`${api}${path}`).pipe(HttpClientRequest.setUrlParams(params)),
         token,
       ),
+    /** A REST write with a JSON body; its answer as JSON text, null on 404. `path` starts with `/`. */
+    post: (operation: string, token: string, path: string, body: unknown) =>
+      raw(
+        operation,
+        HttpClientRequest.post(`${api}${path}`).pipe(HttpClientRequest.bodyJsonUnsafe(body)),
+        token,
+      ),
+    /** A download GitHub redirects to storage (logs, artifacts), as bytes; null on 404. */
+    download: (operation: string, token: string, path: string) =>
+      rawBytes(operation, HttpClientRequest.get(`${api}${path}`), token),
     /** The host links to this GitHub's pull requests name, e.g. `github.com`. */
     host: new URL(web).host.toLowerCase(),
     /** Where git's smart HTTP for `repository` lives, for the drive's fetch proxy. */
