@@ -269,9 +269,9 @@ function PullRequestCodeTab({
         cursor !== null &&
         slices.some((slice) => !samePullRequestDiffRevision(slice.revision, next.revision))
       ) {
-        // A continuation from another comparison cannot be combined with the pages already on
-        // screen. Restart at the first page, which establishes the snapshot for the new chain.
-        return { key: scopeKey, cursor: null, slices: NO_SLICES };
+        // The server restarts a stale cursor with the new first page. Keep it under this request
+        // cursor so the cached response is recognized as processed and its next cursor can load.
+        return { key: scopeKey, cursor, slices: [next] };
       }
       const index = slices.findIndex((slice) => slice.cursor === cursor);
       if (index === -1) {

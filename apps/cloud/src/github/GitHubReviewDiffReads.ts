@@ -324,8 +324,15 @@ export const pullRequestDiff = (
           page = suppliedCursor.page;
           filesRead = suppliedCursor.filesRead;
         } else {
-          // A cursor whose PR moved starts a new first slice so clients can discard stale pages.
           resolved = yield* resolvePullRequestDiffFromRefs(api, token, repository, beforeRefs);
+          if (
+            resolved.revision.baseSha.toLowerCase() === suppliedCursor.baseSha.toLowerCase() &&
+            resolved.revision.headSha.toLowerCase() === suppliedCursor.headSha.toLowerCase()
+          ) {
+            // The base ref moved, but the immutable comparison did not; continue without replaying page one.
+            page = suppliedCursor.page;
+            filesRead = suppliedCursor.filesRead;
+          }
         }
       } else {
         const beforeRefs = yield* readPullRequestRefs(api, token, repository, number);

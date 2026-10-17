@@ -93,21 +93,12 @@ export function useGuideDiffFiles({
           stale: true,
         };
       }
-      if (cursor !== null && !samePullRequestDiffRevision(base.revision, data.revision)) {
-        // A continuation from another snapshot has no place in this page chain. Start over.
-        return {
-          key,
-          cursor: null,
-          done: false,
-          files: NO_FILES,
-          revision: undefined,
-          stale: false,
-        };
-      }
       const parsed = getRenderablePatch(
         data.patch,
         `pull-request-guide:${key}:${cursor ?? "first"}`,
       );
+      // The server can restart a stale continuation with a new first page; drop prior snapshot
+      // files before following that response's next cursor.
       const files = samePullRequestDiffRevision(base.revision, data.revision)
         ? new Map(base.files)
         : new Map<string, FileDiffMetadata>();

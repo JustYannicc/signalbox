@@ -17,8 +17,9 @@ export function retainPullRequestDiffPage(
     cursor !== null &&
     pages.some((page) => !samePullRequestDiffRevision(page.result.revision, result.revision))
   ) {
-    // A continuation can only be combined with pages from the comparison that issued its cursor.
-    return [];
+    // The server restarts a stale cursor with the new first page. Keep this response as the new
+    // chain's seed under the request cursor so its cached result can be continued exactly once.
+    return [{ cursor, result }];
   }
   const index = pages.findIndex((page) => page.cursor === cursor);
   if (index === -1) return [...pages, { cursor, result }];

@@ -98,6 +98,38 @@ it.effect("paginates a pull-request diff while binding every slice to the same r
   }),
 );
 
+it.effect("continues paging when the source base moves but the immutable comparison does not", () =>
+  Effect.gen(function* () {
+    const movedSourceBase = "e".repeat(40);
+    const { api, calls } = mockApi({
+      pullRequestDiffRefs: [
+        pullRequestRefs(),
+        pullRequestRefs(),
+        pullRequestRefs(movedSourceBase),
+        pullRequestRefs(movedSourceBase),
+      ],
+      pullRequestDiffMergeBase: [compareRefs(), compareRefs(movedSourceBase, mergeBaseSha)],
+      pullRequestDiff: [Array.from({ length: 100 }, (_, index) => file(index)), [file(100)]],
+    });
+
+    const first = yield* pullRequestDiff(api, "token", "acme/web", 7, pullRequestRef);
+    if (first?.nextCursor == null) throw new Error("expected another diff slice");
+
+    const continued = yield* pullRequestDiff(api, "token", "acme/web", 7, {
+      ...pullRequestRef,
+      cursor: first.nextCursor,
+    });
+
+    expect(continued?.revision).toEqual({ baseSha: mergeBaseSha, headSha });
+    expect(continued?.patch).toContain("src/file-100.ts");
+    expect(continued?.patch).not.toContain("src/file-0.ts");
+    expect(continued?.nextCursor).toBeNull();
+    expect(
+      calls.filter((call) => call.operation === "pullRequestDiff").map((call) => call.query?.page),
+    ).toEqual(["1", "2"]);
+  }),
+);
+
 it.effect(
   "returns page one for a changed cursor revision and fails cleanly on a mid-page move",
   () =>

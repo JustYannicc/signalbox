@@ -7,7 +7,6 @@ import {
 import { useAtomRefresh } from "@effect/atom-react";
 import { useCallback, useMemo, useState } from "react";
 
-import { samePullRequestDiffRevision } from "@t3tools/client-runtime/pull-request-diff-revision";
 import { composerPullRequests } from "../../state/pull-requests";
 import { useEnvironmentQuery } from "../../state/query";
 import { usePullToRefresh } from "../../state/use-pull-to-refresh";
@@ -66,17 +65,12 @@ export function usePullRequestDiff(params: PullRequestDiffParams) {
     }),
   );
   const data = query.data;
-  const continuationMoved =
-    cursor !== null &&
-    data !== null &&
-    state.key === key &&
-    state.pages.some((page) => !samePullRequestDiffRevision(page.result.revision, data.revision));
   const pages = useMemo(() => {
     const loaded = state.key === key ? state.pages : NO_PAGES;
     return data ? retainPullRequestDiffPage(loaded, cursor, data) : loaded;
   }, [cursor, data, key, state.key, state.pages]);
-  if (state.key !== key || state.pages !== pages || continuationMoved) {
-    setState({ key, cursor: continuationMoved ? null : cursor, pages });
+  if (state.key !== key || state.pages !== pages) {
+    setState({ key, cursor, pages });
   }
 
   const [parseCache] = useState(() => new WeakMap<PullRequestDiffResult, ReviewParsedDiff>());

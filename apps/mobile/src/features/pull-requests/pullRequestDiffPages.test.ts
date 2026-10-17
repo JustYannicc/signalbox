@@ -46,19 +46,37 @@ describe("paged mobile pull request diffs", () => {
     expect(refreshed[0]?.result.patch).toContain("changed.ts");
   });
 
-  it("discards continuations from a different immutable comparison", () => {
+  it("seeds and continues a restarted snapshot from the cached continuation response", () => {
     const firstRevision = { baseSha: "a".repeat(40), headSha: "b".repeat(40) };
     const movedRevision = { baseSha: "c".repeat(40), headSha: "d".repeat(40) };
-    const pages = retainPullRequestDiffPage(
-      retainPullRequestDiffPage([], null, {
-        ...diff("first.ts", firstRevision),
-        nextCursor: "second",
-      }),
-      "second",
-      diff("second.ts", firstRevision),
+    const oldFirst = { ...diff("first.ts", firstRevision), nextCursor: "old-second" };
+    const oldPages = retainPullRequestDiffPage(
+      retainPullRequestDiffPage([], null, oldFirst),
+      "old-second",
+      diff("old-second.ts", firstRevision),
     );
+    const restartedFirst = { ...diff("first.ts", movedRevision), nextCursor: "new-second" };
+    const restarted = retainPullRequestDiffPage(oldPages, "old-second", restartedFirst);
 
-    expect(retainPullRequestDiffPage(pages, "second", diff("moved.ts", movedRevision))).toEqual([]);
+    expect(restarted).toEqual([{ cursor: "old-second", result: restartedFirst }]);
+    expect(oldPages[0]?.result).toBe(oldFirst);
+
+    const repeated = retainPullRequestDiffPage(restarted, "old-second", restartedFirst);
+    expect(repeated).toBe(restarted);
+
+    const continued = retainPullRequestDiffPage(
+      repeated,
+      "new-second",
+      diff("new-second.ts", movedRevision),
+    );
+    const combined = combinePullRequestDiffPages(
+      continued,
+      new WeakMap<PullRequestDiffResult, ReviewParsedDiff>(),
+      "pr",
+    );
+    expect(combined.kind).toBe("files");
+    if (combined.kind !== "files") throw new Error("Expected structured diff");
+    expect(combined.files.map((file) => file.path)).toEqual(["first.ts", "new-second.ts"]);
   });
 
   it("resets later pages when the first page's revision moves even if its patch is unchanged", () => {
