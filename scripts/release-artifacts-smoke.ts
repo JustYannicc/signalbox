@@ -93,9 +93,27 @@ try {
   const expectedArchives = [
     cliArchiveFileName("9.9.9-smoke.0", "mac", "arm64"),
     cliArchiveFileName("9.9.9-smoke.0", "win", "x64"),
+    cliArchiveFileName("9.9.9-smoke.0", "linux", "arm64"),
+    cliArchiveFileName("9.9.9-smoke.0", "linux", "x64"),
   ];
   for (const archive of expectedArchives) {
     NodeFS.writeFileSync(NodePath.join(releaseAssets, archive), `fixture:${archive}`);
+  }
+  const wslGlob = matchRequired(
+    desktopWorkflow,
+    /--wsl-runtime "\$GITHUB_WORKSPACE"\/wsl-runtime\/([^\n)]+)\)/,
+    "Windows WSL runtime archive selector",
+  );
+  for (const architecture of ["arm64", "x64"] as const) {
+    NodeAssert.deepEqual(
+      [
+        ...NodeFS.globSync(wslGlob.replaceAll("${{ inputs.arch }}", architecture), {
+          cwd: releaseAssets,
+        }),
+      ],
+      [cliArchiveFileName("9.9.9-smoke.0", "linux", architecture)],
+      "The WSL runtime selector must match the archive built for its architecture.",
+    );
   }
   NodeFS.writeFileSync(NodePath.join(releaseAssets, "t3-9.9.9-smoke.0-linux-x64.tar.gz"), "old");
   NodeFS.writeFileSync(NodePath.join(releaseAssets, "signalbox-not-an-archive.txt"), "other");
