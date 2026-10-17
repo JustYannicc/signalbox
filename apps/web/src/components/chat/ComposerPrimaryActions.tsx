@@ -390,7 +390,8 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
   );
   // Repeat Stop clicks can outlast any cooldown, so the stopped button keeps its slot
   // and Resume appears beside it.
-  if (showResume && stopPhase === "landed") {
+  if (showResume && stopPhase === "landed" && !sendLock?.locked) {
+    // signalbox: send lock
     return (
       <div className="flex items-center gap-2">
         {submit}
