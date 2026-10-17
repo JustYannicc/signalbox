@@ -27,7 +27,7 @@ vi.mock("../../lib/syntaxHighlighting", () => {
     codeToTokens: (text: string) => {
       let offset = 0;
       return {
-        tokens: text.split("\n").map((line) => {
+        tokens: text.split(/\r?\n/u).map((line) => {
           const tokens = Array.from(line, (content) => {
             const token = { content, offset, color: "#000000" };
             offset += content.length;
@@ -151,6 +151,18 @@ describe("dynamic tool input Find in the actual inspector", () => {
     expect(collectThreadFindRanges(host, "café").map(({ occurrence }) => occurrence)).toEqual([
       0, 1, 2,
     ]);
+  });
+
+  it("preserves CRLF input positions across highlighted code lines", async () => {
+    await render({ code: "// x\r\ncafé" }, "js");
+    const input = host.querySelector('[data-thread-find-text="tool-input"]')!;
+    expect(input.textContent).toBe("code // x\r\ncafé");
+    const ranges = collectThreadFindRanges(host, "café");
+    expect(ranges.map(({ occurrence, range }) => [occurrence, range.toString()])).toEqual([
+      [0, "café"],
+      [1, "café"],
+    ]);
+    expect(input.contains(ranges[0]!.range.startContainer)).toBe(true);
   });
 
   it("renders all indexed input array fields and keeps repeated value ordinals", async () => {

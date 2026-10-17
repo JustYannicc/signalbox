@@ -43,7 +43,8 @@ function jsonLeaves(
       let index = 0;
       while (cursor < text.length && text[cursor] !== closing) {
         const token = object ? stringToken() : null;
-        const key: string | number = token ? JSON.parse(text.slice(token.start, cursor)) : index++;
+        const key: unknown = token ? JSON.parse(text.slice(token.start, cursor)) : index++;
+        if (typeof key !== "string" && typeof key !== "number") return;
         if (object) {
           whitespace();
           cursor += 1;

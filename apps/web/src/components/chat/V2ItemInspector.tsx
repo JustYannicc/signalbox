@@ -63,8 +63,10 @@ function SyntaxTokens({
       }),
     [highlighter, text, language, resolvedTheme],
   );
+  // signalbox: Find offsets refer to original input, including CRLF separators Shiki removes.
+  const lineEndings = text.match(/\r?\n/gu) ?? [];
   return tokens.flatMap((line, lineIndex) => [
-    lineIndex > 0 ? "\n" : "",
+    lineIndex > 0 ? (lineEndings[lineIndex - 1] ?? "\n") : "",
     ...line.map((token) => (
       <span key={token.offset} style={{ color: token.color }}>
         {token.content}

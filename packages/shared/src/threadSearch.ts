@@ -1,6 +1,7 @@
 export const THREAD_TOOL_SEARCH_OUTPUT_EDGE = 320;
 export const THREAD_TOOL_SEARCH_COMMAND_LIMIT = 1_000;
 
+// signalbox: Find must scan the same clipped windows as the cloud tool corpus.
 export function threadToolSearchWindows(text: string, kind: "command" | "output") {
   const start = text.length - text.trimStart().length;
   const end = text.trimEnd().length;

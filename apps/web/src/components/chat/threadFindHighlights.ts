@@ -28,6 +28,7 @@ export function collectThreadFindRanges(container: HTMLElement, query: string): 
       scope.closest("[data-timeline-row-id]")?.getAttribute("data-timeline-row-id");
     if (!rowId) continue;
 
+    // signalbox: Indexed input offsets keep keys and secrets out of Find ordinals.
     if (scope.getAttribute("data-thread-find-text") === "tool-input") {
       for (const range of collectThreadFindInputRanges(scope, query)) {
         const occurrence = occurrenceByRowId.get(rowId) ?? 0;
