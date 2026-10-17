@@ -1,4 +1,4 @@
-import { AuthSettingsWriteScope } from "@t3tools/contracts";
+import { AuthSettingsWriteScope, type SignalboxEnvironmentCapability } from "@t3tools/contracts";
 import { useEnvironmentsWithScope } from "../../state/session";
 import {
   requiredScopesForServerSettingsPatch,
@@ -9,8 +9,8 @@ import * as Cause from "effect/Cause";
 import { AsyncResult } from "effect/reactivity";
 import {
   DEFAULT_SERVER_SETTINGS,
+  ServerSettings,
   type ProjectScopedServerSettingKey,
-  type ServerSettings,
   type UnifiedSettings,
 } from "@t3tools/contracts";
 import { useCallback, useMemo } from "react";
@@ -21,12 +21,19 @@ import {
   useClientSettings,
   useMigrateModelPreferences,
 } from "../../hooks/useSettings";
-import { useEnvironmentSupports } from "../../state/environmentCapabilities";
+import {
+  useEnvironmentCanWriteModelSettings,
+  useEnvironmentSupports,
+} from "../../state/environmentCapabilities";
 import { usePrimaryEnvironmentId } from "../../state/environments";
 import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { toastManager } from "../ui/toast";
-import { acceptsServerSettings, serverSettingsWritable } from "./signalboxServerSettings";
+import {
+  acceptsServerSettingsPatch,
+  modelSettingsWritable,
+  serverSettingsWritable,
+} from "./signalboxServerSettings";
 import { useOptionalSettingsScope, useSettingsScope } from "./SettingsScopeContext";
 import {
   persistScopedSettingsPatch,
@@ -118,8 +125,14 @@ export function useUpdateScopedSettings() {
   const { scope, environments } = useSettingsScope();
   const run = useRunScopedPlan();
   return useCallback(
-    (patch: ScopedSettingsPatch) =>
-      run(planScopedSettingsPatch(scope, environments.filter(acceptsServerSettings), patch)),
+    (patch: ScopedSettingsPatch) => {
+      const serverKeys = Object.keys(patch).filter((key) =>
+        Object.hasOwn(ServerSettings.fields, key),
+      );
+      const acceptsPatch = (environment: (typeof environments)[number]) =>
+        acceptsServerSettingsPatch(environment, serverKeys);
+      return run(planScopedSettingsPatch(scope, environments.filter(acceptsPatch), patch));
+    },
     [environments, run, scope],
   );
 }
@@ -130,7 +143,15 @@ export function useClearScopedSettings() {
   return useCallback(
     (keys: readonly ProjectScopedServerSettingKey[]) => {
       if (context === null) return;
-      run(planScopedSettingsClear(context.scope, context.environments, keys));
+      run(
+        planScopedSettingsClear(
+          context.scope,
+          context.environments.filter((environment) =>
+            acceptsServerSettingsPatch(environment, keys),
+          ),
+          keys,
+        ),
+      );
     },
     [context, run],
   );
@@ -144,7 +165,9 @@ export function useClearProjectOverrides() {
       if (context === null) return;
       run(
         planProjectOverridesClear(
-          context.environments.filter(acceptsServerSettings),
+          context.environments.filter((environment) =>
+            acceptsServerSettingsPatch(environment, keys),
+          ),
           entries,
           keys,
         ),
@@ -166,12 +189,17 @@ export function useScopedSettingsWriteAllowed() {
 /**
  * signalbox: whether server-scoped settings can be saved where they would be
  * written: the selected environments, or the primary one outside a settings
- * scope. Gate server-scoped rows and sections on it so environments that don't
- * serve `server.updateSettings` (Signalbox Cloud) never show them.
+ * scope. Cloud supports model settings while other server settings remain read-only.
  */
-export function useServerSettingsWritable(): boolean {
+export function useServerSettingsWritable(
+  capability: SignalboxEnvironmentCapability = "serverSettingsWrite",
+): boolean {
   const context = useOptionalSettingsScope();
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const primaryWritable = useEnvironmentSupports(primaryEnvironmentId, "serverSettingsWrite");
+  const primaryModelWritable = useEnvironmentCanWriteModelSettings(primaryEnvironmentId);
+  if (capability === "modelSettingsWrite") {
+    return context ? modelSettingsWritable(context.connectedEnvironments) : primaryModelWritable;
+  }
   return context ? serverSettingsWritable(context.connectedEnvironments) : primaryWritable;
 }

@@ -56,7 +56,7 @@ describe("harnessModels", () => {
     ["claude-fable-5-1", 1_788_220_800],
   );
 
-  it("offers what the pool serves for the harness, named and given options by the manifest", () => {
+  it("offers only the pool's models, with fallback names and a served default", () => {
     const models = harnessModels(
       "claude",
       [...claude, ...served("openai", ["gpt-6.1-sol", 1_790_640_000])],
@@ -68,12 +68,6 @@ describe("harnessModels", () => {
       ["claude-sonnet-5-5", "Claude Sonnet 5.5", false],
       ["claude-fable-5-1", "Claude Fable 5.1", true],
     ]);
-    const effort = models[0]?.capabilities?.optionDescriptors?.find(
-      (option) => option.id === "effort",
-    );
-    expect(effort?.type === "select" && effort.options.map((option) => option.id)).toContain(
-      "xhigh",
-    );
     // Codex gets what its accounts serve, which the hardcoded list missed.
     expect(
       harnessModels(
@@ -109,7 +103,7 @@ describe("harnessModels", () => {
     ]);
   });
 
-  it("hides legacy models, and unknown ones older than every current model", () => {
+  it("keeps every served model even when the manifest calls it old or does not know it", () => {
     const models = harnessModels(
       "claude",
       [
@@ -126,6 +120,87 @@ describe("harnessModels", () => {
       "claude-opus-5-5",
       "claude-sonnet-5-5",
       "claude-fable-5-1",
+      "claude-3-7-sonnet-20250219",
+      "claude-opus-5",
     ]);
+  });
+
+  it("maps a new pool model's name and reasoning levels to the harness options", () => {
+    const models = harnessModels(
+      "codex",
+      [
+        {
+          id: "new-research-model",
+          ownedBy: "openai",
+          created: 1,
+          provider: "codex",
+          displayName: "New research model",
+          reasoningEfforts: ["low", "medium", "future-effort"],
+        },
+      ],
+      BUNDLED_MODEL_CATALOGS,
+    );
+    expect(models).toEqual([
+      {
+        slug: "new-research-model",
+        name: "New research model",
+        isCustom: false,
+        isDefault: true,
+        capabilities: {
+          optionDescriptors: [
+            {
+              id: "reasoningEffort",
+              label: "Reasoning",
+              type: "select",
+              currentValue: "medium",
+              options: [
+                { id: "low", label: "Low" },
+                { id: "medium", label: "Medium", isDefault: true },
+                { id: "future-effort", label: "future-effort" },
+              ],
+            },
+          ],
+        },
+      },
+    ]);
+  });
+
+  it("uses the Claude harness's effort key and keeps its established fast control", () => {
+    const [model] = harnessModels(
+      "claude",
+      [
+        {
+          id: "claude-opus-5-5",
+          ownedBy: "anthropic",
+          created: null,
+          reasoningEfforts: ["low", "high"],
+        },
+      ],
+      BUNDLED_MODEL_CATALOGS,
+    );
+    expect(model?.capabilities?.optionDescriptors).toEqual([
+      {
+        id: "effort",
+        label: "Reasoning",
+        type: "select",
+        currentValue: "low",
+        options: [
+          { id: "low", label: "Low", isDefault: true },
+          { id: "high", label: "High" },
+        ],
+      },
+      { id: "fastMode", label: "Fast Mode", type: "boolean" },
+    ]);
+  });
+
+  it("never adds a manifest model the pool does not serve", () => {
+    const models = harnessModels(
+      "codex",
+      served("openai", ["new-research-model", 1]),
+      BUNDLED_MODEL_CATALOGS,
+    );
+    expect(models.map((model) => model.slug)).toEqual(["new-research-model"]);
+    expect(models[0]?.isDefault).toBe(true);
+    expect(harnessModels("claude", [], BUNDLED_MODEL_CATALOGS)).toEqual([]);
   });
 });

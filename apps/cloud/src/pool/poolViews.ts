@@ -9,7 +9,6 @@ import {
   poolSourceId,
 } from "@t3tools/contracts/accountHub";
 import {
-  DEFAULT_MODEL_BY_PROVIDER,
   type ModelSelection,
   type ProviderDriverKind,
   type ProviderInstanceConfig,
@@ -185,11 +184,13 @@ export const poolProviders = (
   pools.flatMap(({ pool, source, models }) =>
     CLOUD_POOL_KINDS.map((kind) => {
       const [instanceId, config] = instanceOf(kind, pool);
+      const signedIn = canRun(source, POOL_INSTANCE_KINDS[kind].driver);
       return poolServerProvider({
         kind,
         instanceId,
         displayName: config.displayName ?? POOL_INSTANCE_KINDS[kind].displayName,
-        signedIn: canRun(source, POOL_INSTANCE_KINDS[kind].driver),
+        signedIn,
+        ...(source.error ? { unavailableReason: source.error } : {}),
         models: harnessModels(kind, models, manifest),
         checkedAt,
       });
@@ -214,18 +215,15 @@ export const poolDefaultModelSelection = (
 };
 
 /**
- * What an automation saved with no calling thread runs on when no pool can run
- * anything right now: the first pool instance on its harness's default model,
- * as a self-hosted server falls back to Codex's. Saving shouldn't wait on an
- * account; a model step meets the account problem when it runs, as a thread
- * would. Null without a pool.
+ * An automation may use an unavailable provider's cached model, but a default
+ * must still be one that the pool lists.
  */
 export const poolFallbackModelSelection = (
   providers: ReadonlyArray<ServerProvider>,
 ): ModelSelection | null => {
   for (const provider of providers) {
-    const model = DEFAULT_MODEL_BY_PROVIDER[provider.driver];
-    if (model) return { instanceId: provider.instanceId, model };
+    const model = provider.models.find((candidate) => candidate.isDefault) ?? provider.models[0];
+    if (model) return { instanceId: provider.instanceId, model: model.slug };
   }
   return null;
 };

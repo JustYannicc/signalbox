@@ -11,6 +11,7 @@ import {
 import type { ModelManifestCatalogs } from "@t3tools/shared/modelManifest";
 
 import type { ServedModel } from "../pool/cliProxyApi.ts";
+import { poolModelCapabilities } from "./poolModelCapabilities.ts";
 import {
   SCRIPTED_DRIVER,
   SCRIPTED_INSTANCE_ID,
@@ -25,8 +26,8 @@ import {
  *
  * Instance ids match a self-hosted server's, so a thread's model selection
  * means the same thing in either environment. A pool's instance offers the
- * models its CLIProxyAPI serves for the harness's provider, named and given
- * their options by the model manifest (`ModelManifest.ts`).
+ * models and reasoning levels its CLIProxyAPI serves for the harness's
+ * provider. `ModelManifest.ts` supplies a small fallback for missing metadata.
  */
 
 const CLAUDE_DRIVER = ProviderDriverKind.make("claudeAgent");
@@ -126,12 +127,8 @@ export const servesModel = (
   );
 
 /**
- * What a pool offers on the harness of `kind`: the models it serves for the
- * harness's provider, named and given options by the manifest, without the
- * ones the manifest calls legacy. A model the manifest doesn't know yet shows
- * under its slug, with no options. One older than every current model it
- * serves is no newcomer (CLIProxyAPI's catalog reaches back years), so it
- * counts as legacy too.
+ * What a pool offers on the harness of `kind`. Only the pool decides which
+ * models exist; the manifest supplies fallback labels and defaults.
  */
 export const harnessModels = (
   kind: CloudPoolKind,
@@ -148,18 +145,9 @@ export const harnessModels = (
   );
   const entryOf = (slug: string) => entries.get(slug)?.entry;
   const own = served.filter((model) => model.ownedBy === harness.gatewayProvider);
-  const currentDates = own.flatMap((model) =>
-    entryOf(model.id)?.status === "current" && model.created !== null ? [model.created] : [],
-  );
-  const oldestCurrent = currentDates.length > 0 ? Math.min(...currentDates) : null;
-  const offered = own.filter((model) => {
-    const entry = entryOf(model.id);
-    if (entry !== undefined) return entry.status === "current";
-    return oldestCurrent === null || model.created === null || model.created >= oldestCurrent;
-  });
   // Known models in the manifest's order, then newcomers by slug.
   const rank = (slug: string) => entries.get(slug)?.index ?? Number.MAX_SAFE_INTEGER;
-  const ordered = offered.toSorted(
+  const ordered = own.toSorted(
     (left, right) => rank(left.id) - rank(right.id) || left.id.localeCompare(right.id),
   );
   const slugs = ordered.map((model) => model.id);
@@ -172,14 +160,14 @@ export const harnessModels = (
     const profile = entry?.profile === undefined ? undefined : catalog?.profiles[entry.profile];
     return {
       slug: model.id,
-      name: entry?.name ?? model.id,
+      name: model.displayName ?? entry?.name ?? model.id,
       ...(entry?.shortName ? { shortName: entry.shortName } : {}),
       ...(entry?.subProvider ? { subProvider: entry.subProvider } : {}),
       ...(entry?.aliases ? { aliases: entry.aliases } : {}),
       ...(entry?.badge ? { badge: entry.badge } : {}),
       isCustom: false,
       ...(model.id === defaultSlug ? { isDefault: true } : {}),
-      capabilities: profile?.capabilities ?? null,
+      capabilities: poolModelCapabilities(kind, model, profile?.capabilities),
     };
   });
 };
@@ -204,11 +192,17 @@ export const poolServerProvider = (input: {
   readonly instanceId: ProviderInstanceId;
   readonly displayName: string;
   readonly signedIn: boolean;
+  readonly unavailableReason?: string | undefined;
   readonly models: ReadonlyArray<ServerProviderModel>;
   readonly checkedAt: string;
 }): ServerProvider => {
   const harness = harnessByPoolKind.get(input.kind)!;
   const ready = input.signedIn && input.models.length > 0;
+  const message =
+    input.unavailableReason ??
+    (input.signedIn && !ready
+      ? "This pool's accounts serve no models right now. Try again shortly."
+      : undefined);
   return {
     instanceId: input.instanceId,
     driver: harness.driver,
@@ -220,12 +214,25 @@ export const poolServerProvider = (input: {
     enabled: true,
     installed: true,
     version: null,
-    // Signed out, clients say to add an account to the pool (`ProviderStatusBanner`).
-    status: ready ? "ready" : input.signedIn ? "warning" : "error",
-    ...(input.signedIn && !ready
-      ? { message: "This pool's accounts serve no models right now. Try again shortly." }
-      : {}),
-    auth: { status: input.signedIn ? "authenticated" : "unauthenticated" },
+    // An accounts read can fail while cached accounts still serve the cached models.
+    status:
+      ready && input.unavailableReason === undefined
+        ? "ready"
+        : input.signedIn
+          ? "warning"
+          : "error",
+    ...(message === undefined ? {} : { message }),
+    auth: {
+      status:
+        !input.signedIn && input.unavailableReason
+          ? "unknown"
+          : input.signedIn
+            ? "authenticated"
+            : "unauthenticated",
+    },
+    ...(input.unavailableReason === undefined
+      ? {}
+      : { unavailableReason: input.unavailableReason }),
     checkedAt: input.checkedAt,
     availability: "available",
     models: input.signedIn ? input.models : [],
