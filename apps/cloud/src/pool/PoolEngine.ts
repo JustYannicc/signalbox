@@ -153,10 +153,16 @@ export class PoolEngine extends Context.Service<
     readonly accounts: (actor: PoolActor) => Effect.Effect<PoolAccounts, Failure>;
     /**
      * The models the pool serves, for the check at turn start. A pool whose
-     * list was never read reads it now, waking its container: the turn is
-     * about to anyway.
+     * models were never attempted reads them now, waking its container: the
+     * turn is about to anyway. Failed first reads back off for five minutes.
      */
     readonly models: (actor: PoolActor) => Effect.Effect<PoolModels.PoolModels, Failure>;
+    /** Reads the last catalog without refreshing it, for a pool link's metadata endpoint. */
+    readonly cachedModels: (actor: PoolActor) => Effect.Effect<PoolModels.PoolModels, Failure>;
+    /** Refreshes a stale catalog from an alarm without waking a managed pool. */
+    readonly refreshModelsAtAlarm: () => Effect.Effect<void, SqlError>;
+    /** The next catalog refresh alarm, when this pool can be read without waking its container. */
+    readonly nextModelsRefreshAt: () => Effect.Effect<number | null, SqlError>;
     readonly startLogin: (
       actor: PoolActor,
       provider: CliProxyApi.PoolLoginProvider,
@@ -292,6 +298,7 @@ const migrations = Migrator.fromRecord({
     yield* sql`ALTER TABLE managed_config ADD COLUMN routing TEXT`;
   }),
   "0008_thread_accounts": ThreadAccounts.createTables,
+  "0009_model_metadata": PoolModels.addMetadata,
 });
 
 /** Applies every migration not recorded yet (`storage/migrations.ts`). Never edit or rename a merged one. */
@@ -323,7 +330,13 @@ interface AccountRow {
 const MANAGED_CONFIG_RETRY_MS = 5 * 60_000;
 
 /** How old the account list may get before a read asks the CLIProxyAPI again. */
-const ACCOUNTS_FRESH_MS = 30_000;
+export const ACCOUNTS_FRESH_MS = 30_000;
+
+/** CLIProxyAPI refreshes its model registry every three hours. */
+export const MODELS_REFRESH_MS = 3 * 60 * 60_000;
+
+/** A failed catalog read may retry after five minutes, not on every read or alarm. */
+const MODELS_REFRESH_RETRY_MS = 5 * 60_000;
 
 /** The account names a sign-in started with. */
 const KnownAccounts = Schema.fromJsonString(Schema.Array(Schema.String));
@@ -824,17 +837,19 @@ const make = Effect.gen(function* () {
   /**
    * The first read of the models of a pool whose accounts were cached before
    * its models were (a pool from before the cache kept them). Wakes its
-   * container once; a failed read counts too, so a pool that can't answer
-   * isn't woken again on every look.
+   * container; failed reads back off so a broken pool isn't woken on every look.
    */
   const firstModelsRead = (row: PoolRow) =>
     Effect.gen(function* () {
       const { accounts: held } = yield* cachedAccounts;
-      if (held.length === 0 || (yield* cachedModels).checkedAt > 0) return;
+      const cached = yield* cachedModels;
+      if (held.length === 0 || cached.checkedAt > 0) return;
+      const now = yield* Clock.currentTimeMillis;
+      if (cached.attemptedAt > 0 && now - cached.attemptedAt < MODELS_REFRESH_RETRY_MS) return;
+      // Account-list failures happen before `refreshAccounts` reads models.
+      yield* withSql(PoolModels.markAttempted(now));
       yield* refreshAccounts(row).pipe(
-        Effect.tapError(() =>
-          Effect.flatMap(Clock.currentTimeMillis, (now) => withSql(PoolModels.markTried(now))),
-        ),
+        Effect.tapError(() => withSql(PoolModels.markAttempted(now))),
       );
     });
 
@@ -853,6 +868,47 @@ const make = Effect.gen(function* () {
       const read = yield* refreshAccounts(row, undefined, { passive: true }).pipe(Effect.result);
       return read._tag === "Success" ? yield* cachedAccounts : cached;
     });
+
+  /** Whether a catalog can be refreshed without starting this pool's container. */
+  const canRefreshModels = (row: PoolRow): Effect.Effect<boolean> =>
+    row.backing === "external" ? Effect.succeed(row.external_url !== null) : container.running;
+
+  const modelRefreshDue = (cached: PoolModels.PoolModels, now: number) => {
+    if (cached.checkedAt > 0 && now - cached.checkedAt < MODELS_REFRESH_MS) return false;
+    return cached.attemptedAt === 0 || now - cached.attemptedAt >= MODELS_REFRESH_RETRY_MS;
+  };
+
+  /** Reads the provider catalog using a passive container peek, never a cold start. */
+  const refreshModelCatalog = (row: PoolRow) =>
+    Effect.gen(function* () {
+      const now = yield* Clock.currentTimeMillis;
+      // Record the attempt first so a crash or failed response cannot cause an alarm loop.
+      yield* withSql(PoolModels.markAttempted(now));
+      const endpoint = endpointOf(row, { passive: true });
+      const models = endpoint.link
+        ? yield* CliProxyApi.listPoolLinkModels(endpoint)
+        : yield* CliProxyApi.listModels(endpoint);
+      if (models === null) {
+        yield* Effect.logWarning("linked pool model cache is unavailable");
+        return;
+      }
+      yield* withSql(PoolModels.store(models, now));
+    }).pipe(
+      Effect.catchTags({
+        PoolBackendError: (error) =>
+          Effect.logWarning("pool model list refresh failed", error.detail, error.cause),
+      }),
+    );
+
+  const refreshingModels = yield* Semaphore.make(1);
+  const refreshModelsIfDue = (row: PoolRow) =>
+    refreshingModels.withPermits(1)(
+      Effect.gen(function* () {
+        const cached = yield* cachedModels;
+        const now = yield* Clock.currentTimeMillis;
+        if (modelRefreshDue(cached, now)) yield* refreshModelCatalog(row);
+      }),
+    );
 
   /** The cached accounts with the windows last read for each. */
   const withLimits = (
@@ -878,7 +934,7 @@ const make = Effect.gen(function* () {
       ),
     );
 
-  // From the cache, as the picker sees it: a turn start never waits on a refresh.
+  // A turn start may make its first read; later refreshes are passive.
   const models: PoolEngine["Service"]["models"] = (actor) =>
     Effect.gen(function* () {
       const { row } = yield* access(actor, "member", {
@@ -886,7 +942,39 @@ const make = Effect.gen(function* () {
         denied: "You no longer have access to this thread's pool. Pick another pool for it.",
       });
       yield* firstModelsRead(row);
+      const before = yield* cachedModels;
+      if (yield* canRefreshModels(row)) {
+        const now = yield* Clock.currentTimeMillis;
+        if (modelRefreshDue(before, now)) yield* refreshModelsIfDue(row);
+      }
       return yield* cachedModels;
+    });
+
+  const cachedModelsForActor: PoolEngine["Service"]["cachedModels"] = (actor) =>
+    Effect.as(access(actor, "member"), undefined).pipe(Effect.andThen(cachedModels));
+
+  const refreshModelsAtAlarm: PoolEngine["Service"]["refreshModelsAtAlarm"] = () =>
+    Effect.gen(function* () {
+      const row = yield* poolRow;
+      if (row === null || !(yield* canRefreshModels(row))) return;
+      yield* refreshModelsIfDue(row);
+    });
+
+  const nextModelsRefreshAt: PoolEngine["Service"]["nextModelsRefreshAt"] = () =>
+    Effect.gen(function* () {
+      const row = yield* poolRow;
+      if (row === null || !(yield* canRefreshModels(row))) return null;
+      const cached = yield* cachedModels;
+      const now = yield* Clock.currentTimeMillis;
+      const next =
+        cached.attemptedAt > cached.checkedAt
+          ? cached.attemptedAt + MODELS_REFRESH_RETRY_MS
+          : cached.checkedAt > 0
+            ? cached.checkedAt + MODELS_REFRESH_MS
+            : cached.attemptedAt > 0
+              ? cached.attemptedAt + MODELS_REFRESH_RETRY_MS
+              : now;
+      return Math.max(now, next);
     });
 
   const startLogin: PoolEngine["Service"]["startLogin"] = (actor, provider) =>
@@ -1080,6 +1168,9 @@ const make = Effect.gen(function* () {
     prepareDelete,
     accounts,
     models,
+    cachedModels: cachedModelsForActor,
+    refreshModelsAtAlarm,
+    nextModelsRefreshAt,
     startLogin,
     loginStatus,
     completeLogin,

@@ -71,6 +71,7 @@ import * as UserShell from "./UserShell.ts";
 import * as UserStore from "./UserStore.ts";
 import * as UserThreadKinds from "./UserThreadKinds.ts";
 import * as UserThreadStatus from "./UserThreadStatus.ts";
+import * as UserModelSettings from "./UserModelSettings.ts";
 import * as ChatArchive from "./chatArchive.ts";
 
 /**
@@ -258,7 +259,7 @@ const makeRuntime = (storage: DurableObjectStorage, env: UserObjectEnv) => {
           ),
           Layer.provideMerge(LegacySections.layer),
           Layer.provideMerge(UserFolders.layer),
-          Layer.provideMerge(ModelManifest.layer.pipe(Layer.provide(FetchHttpClient.layer))),
+          Layer.provideMerge(ModelManifest.layer),
           Layer.provideMerge(
             GitHub.layer(GitHub.gitHubPipesConfig(env), GitHub.gitHubEndpoints(env)).pipe(
               Layer.provide(FetchHttpClient.layer),
@@ -268,6 +269,7 @@ const makeRuntime = (storage: DurableObjectStorage, env: UserObjectEnv) => {
           Layer.provideMerge(
             Layer.mergeAll(
               UserStore.layer,
+              UserModelSettings.layer,
               UserContexts.layerWithDrives,
               ResourceBindings.layer,
               OnePasswordAccount.layer,

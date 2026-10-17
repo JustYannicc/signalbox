@@ -51,6 +51,7 @@ import { useAtomCommand } from "~/state/use-atom-command";
 import { useTheme } from "./useTheme";
 import { environmentSession, readEnvironmentScope, useEnvironmentScope } from "~/state/session";
 import { appAtomRegistry } from "~/rpc/atomRegistry";
+import { readEnvironmentCanWriteModelSettings } from "~/state/environmentCapabilities";
 
 const CLIENT_SETTINGS_PERSISTENCE_ERROR_SCOPE = "[CLIENT_SETTINGS]";
 
@@ -404,7 +405,8 @@ export function useUpdateEnvironmentModelPreferences(environmentId: EnvironmentI
   const save = useAtomCommand(serverEnvironment.updateSettings, "model preferences update");
   return useCallback(
     async (patch: ServerSettingsPatch) => {
-      if (!environmentId || !settings) return;
+      if (!environmentId || !settings || !readEnvironmentCanWriteModelSettings(environmentId))
+        return;
       let prepared: ServerSettingsPatch;
       try {
         prepared = await prepareModelPreferencesPatch(settings, patch);
@@ -431,7 +433,7 @@ export function useToggleEnvironmentModelFavorite(environmentId: EnvironmentId |
   const save = useUpdateEnvironmentModelPreferences(environmentId);
   return useCallback(
     async (provider: ProviderInstanceId, model: string) => {
-      if (!environmentId) return;
+      if (!environmentId || !readEnvironmentCanWriteModelSettings(environmentId)) return;
       const settingsAtom = serverEnvironment.settingsValueAtom(environmentId);
       const settings = registry.get(settingsAtom);
       if (!settings) return;

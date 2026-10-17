@@ -1,4 +1,4 @@
-import { DEFAULT_MODEL, ProviderInstanceId } from "@t3tools/contracts";
+import { ProviderInstanceId } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
 
 import { poolServerProvider } from "../thread/providerCatalog.ts";
@@ -15,13 +15,21 @@ const provider = (signedIn: boolean) =>
   });
 
 describe("poolFallbackModelSelection", () => {
-  it("names a pool's default model even when its accounts need attention", () => {
+  it("never invents a model when the pool has no served models", () => {
     const providers = [provider(false)];
     expect(poolDefaultModelSelection(providers)).toBeNull();
-    expect(poolFallbackModelSelection(providers)).toEqual({
-      instanceId: "personal-codex",
-      model: DEFAULT_MODEL,
-    });
+    expect(poolFallbackModelSelection(providers)).toBeNull();
+  });
+
+  it("uses a listed model when the provider is temporarily unavailable", () => {
+    expect(
+      poolFallbackModelSelection([
+        {
+          ...provider(true),
+          models: [{ slug: "new-model", name: "New model", isCustom: false, capabilities: null }],
+        },
+      ]),
+    ).toEqual({ instanceId: "personal-codex", model: "new-model" });
   });
 
   it("has nothing to name without a pool", () => {

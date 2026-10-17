@@ -26,6 +26,7 @@ import * as SqlClient from "effect/sql/SqlClient";
 import type { SqlError } from "effect/sql/SqlError";
 
 import type { PoolActor, PoolRejectedError } from "../pool/PoolEngine.ts";
+import { ACCOUNTS_FRESH_MS } from "../pool/PoolEngine.ts";
 import * as PoolDirectory from "../pool/PoolDirectory.ts";
 import { encodeLinkToken } from "../pool/poolLink.ts";
 import * as UserFolders from "./UserFolders.ts";
@@ -44,8 +45,7 @@ import {
  * authority on its name, accounts and grants; this list is the user's index
  * of them. Personal is created on first use.
  *
- * The pools with their accounts are read once per change and shared by every
- * subscription on every connection.
+ * Pool changes and expiring reads refresh the index shared by every subscription.
  *
  * Which pool a thread runs on is placed in the user's tree (`UserFolders`,
  * `poolChain.ts`); deleting a pool takes it off every level there.
@@ -57,7 +57,7 @@ export type PoolsState = ReadonlyArray<PoolEntry>;
 export class UserPools extends Context.Service<
   UserPools,
   {
-    /** The pools now, read once and then shared until something changes. */
+    /** The pools now, sharing a fresh index across connections. */
     readonly state: (actor: PoolActor) => Effect.Effect<PoolsState, AccountHubRpcError>;
     /** The pools now, then again after every change to them or their accounts. */
     readonly changes: (actor: PoolActor) => Stream.Stream<PoolsState, AccountHubRpcError>;
@@ -174,8 +174,9 @@ const make = Effect.gen(function* () {
   const newPoolId = Effect.map(Effect.orDie(crypto.randomUUIDv4()), (uuid) =>
     uuid.replaceAll("-", "").slice(0, 8),
   );
-  // None until the first read; reads take turns so a change is read once.
-  const current = yield* SubscriptionRef.make(Option.none<PoolsState>());
+  const current = yield* SubscriptionRef.make(
+    Option.none<{ readonly state: PoolsState; readonly checkedAt: number }>(),
+  );
   const reading = yield* Semaphore.make(1);
 
   const rows = sql<PoolRow>`SELECT id, object_name, name, personal, backing_url FROM pools
@@ -253,15 +254,25 @@ const make = Effect.gen(function* () {
               ),
           { concurrency: "unbounded" },
         );
-        yield* SubscriptionRef.set(current, Option.some(state));
+        yield* SubscriptionRef.set(current, Option.some({ state, checkedAt: now }));
         return state;
       }),
     );
 
   const state: UserPools["Service"]["state"] = (actor) =>
-    Effect.flatMap(SubscriptionRef.get(current), (known) =>
-      Option.isSome(known) ? Effect.succeed(known.value) : refresh(actor),
-    );
+    Effect.gen(function* () {
+      const known = yield* SubscriptionRef.get(current);
+      const now = yield* Clock.currentTimeMillis;
+      // Pool alarms update their own catalog; a reconnect must not reuse this index forever.
+      if (
+        Option.isSome(known) &&
+        now >= known.value.checkedAt &&
+        now - known.value.checkedAt < ACCOUNTS_FRESH_MS
+      ) {
+        return known.value.state;
+      }
+      return yield* refresh(actor);
+    });
 
   const changes: UserPools["Service"]["changes"] = (actor) =>
     Stream.unwrap(
@@ -269,7 +280,7 @@ const make = Effect.gen(function* () {
         state(actor),
         SubscriptionRef.changes(current).pipe(
           Stream.filter(Option.isSome),
-          Stream.map((known) => known.value),
+          Stream.map((known) => known.value.state),
         ),
       ),
     );

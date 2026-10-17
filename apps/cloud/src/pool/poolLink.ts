@@ -1,5 +1,5 @@
 import type { ModelGatewayProvider } from "@signalbox/runner-protocol/RunnerProtocol";
-import { POOL_LINK_PATH, PoolLinkMoveRequest } from "@t3tools/contracts/accountHub";
+import { POOL_LINK_PATH, PoolLinkModels, PoolLinkMoveRequest } from "@t3tools/contracts/accountHub";
 import * as Effect from "effect/Effect";
 import * as Base64Url from "effect/encoding/Base64Url";
 import * as Result from "effect/Result";
@@ -95,6 +95,11 @@ export const handleLinkRequest = (secret: string, request: Request) =>
     }
     if (path === "" && request.method === "GET") {
       return Response.json(yield* engine.linkInfo(actor));
+    }
+    if (path === "/models" && request.method === "GET") {
+      const cached = yield* engine.cachedModels(actor);
+      const models = { models: cached.models } satisfies typeof PoolLinkModels.Type;
+      return Response.json(models);
     }
     if (path === "/v0/management/config" && request.method === "GET") {
       yield* engine.info(actor);
