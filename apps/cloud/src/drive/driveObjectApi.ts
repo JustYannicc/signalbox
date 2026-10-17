@@ -32,6 +32,8 @@ export const makeDriveObjectApi = (
       run(store.use((s) => s.beginPublication(userId, request))),
     markPublicationCreating: (userId, id) =>
       run(store.use((s) => s.markPublicationCreating(userId, id))),
+    releasePublicationCreating: (userId, id) =>
+      run(store.use((s) => s.releasePublicationCreating(userId, id))),
     recordPublicationCreated: (userId, request) =>
       run(store.use((s) => s.recordPublicationCreated(userId, request))),
     bindPublication: (userId, request) => run(store.use((s) => s.bindPublication(userId, request))),

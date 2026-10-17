@@ -146,6 +146,7 @@ export const makeUserObjectApi = (
     rebuildThreadIndex: () => shell((service) => service.rebuildThreadIndex),
     beginGitHubConnect: (input) => github((service) => service.begin(input)),
     completeGitHubConnect: (grantId) => github((service) => service.complete(grantId)),
+    cancelGitHubConnect: (grantId) => github((service) => service.cancel(grantId)),
     abortGitHubConnect: (grantId) => github((service) => service.abort(grantId)),
     disconnectGitHub: () => github((service) => service.disconnect),
     githubAccessToken: () => github((service) => service.accessToken),

@@ -50,6 +50,10 @@ export interface DriveObjectApi {
     request: DrivePublicationRequest,
   ) => Promise<DrivePublicationResult>;
   readonly markPublicationCreating: (userId: string, id: string) => Promise<DrivePublicationResult>;
+  readonly releasePublicationCreating: (
+    userId: string,
+    id: string,
+  ) => Promise<DrivePublicationResult>;
   readonly recordPublicationCreated: (
     userId: string,
     request: RecordPublicationCreatedRequest,
@@ -176,6 +180,7 @@ export function handleFor(api: DriveObjectApi): DriveHandle {
   return {
     beginPublication: wrap("beginPublication"),
     markPublicationCreating: wrap("markPublicationCreating"),
+    releasePublicationCreating: wrap("releasePublicationCreating"),
     recordPublicationCreated: wrap("recordPublicationCreated"),
     bindPublication: wrap("bindPublication"),
     finishPublication: wrap("finishPublication"),

@@ -153,27 +153,247 @@ describe("drive publication receipts", () => {
     }),
   );
 
-  it.effect("refuses a different manager or GitHub account even while reserved", () =>
+  it.effect("allows account switching while reserved and fences the former attempt", () =>
+    Effect.gen(function* () {
+      const handle = handleFor(makeMemoryDrives().apiFor(DRIVE));
+      publication(yield* handle.beginPublication(USER, request));
+      const switched = {
+        ...request,
+        operationId: RETRY_ID,
+        githubAccountId: 999,
+        githubAccountLogin: "other",
+      };
+      expect((yield* handle.beginPublication(USER, { ...switched, operationId: ID }))._tag).toBe(
+        "refused",
+      );
+      const replacement = publication(yield* handle.beginPublication(USER, switched));
+      expect(replacement).toMatchObject({
+        id: RETRY_ID,
+        userId: USER,
+        phase: "reserved",
+        request: switched,
+      });
+      expect((yield* handle.markPublicationCreating(USER, ID))._tag).toBe("refused");
+      expect((yield* handle.releasePublicationCreating(USER, ID))._tag).toBe("refused");
+      expect((yield* handle.bindPublication(USER, { id: ID, expectedMain: null }))._tag).toBe(
+        "refused",
+      );
+      expect((yield* handle.beginPublication(USER, request))._tag).toBe("refused");
+      publication(yield* handle.markPublicationCreating(USER, RETRY_ID));
+      expect(
+        (yield* handle.beginPublication(USER, {
+          ...request,
+          operationId: "d8be7589-e303-4ca3-bc1f-8fa3e00e3150",
+        }))._tag,
+      ).toBe("refused");
+    }),
+  );
+
+  it.effect("lets a current manager replace a revoked manager's reservation", () =>
     Effect.gen(function* () {
       const handle = handleFor(makeMemoryDrives().apiFor("shared/personal/team"));
+      const original = { userId: USER, email: "manager@example.com", name: null };
+      const other = { userId: "other", email: "other@example.com", name: null };
       yield* handle.setup({
         name: "Team",
         members: [
-          { userId: USER, email: "manager@example.com", name: null, role: "manager" },
-          { userId: "other", email: "other@example.com", name: null, role: "manager" },
+          { ...original, role: "manager" },
+          { ...other, role: "manager" },
         ],
       });
-      const original = publication(yield* handle.beginPublication(USER, request));
-      const renamed = { ...request, operationId: RETRY_ID, name: "available" };
-      expect((yield* handle.beginPublication("other", renamed))._tag).toBe("refused");
+      publication(yield* handle.beginPublication(USER, request));
+      yield* handle.share(other, original, "content_manager");
       expect(
-        (yield* handle.beginPublication(USER, { ...renamed, githubAccountId: 999 }))._tag,
+        (yield* handle.beginPublication(USER, { ...request, operationId: RETRY_ID }))._tag,
       ).toBe("refused");
+      expect((yield* handle.beginPublication("other", request))._tag).toBe("refused");
+      const next = {
+        ...request,
+        operationId: RETRY_ID,
+        githubAccountId: 999,
+        githubAccountLogin: "other",
+        name: "available",
+      };
+      const replacement = publication(yield* handle.beginPublication("other", next));
+      expect(replacement).toMatchObject({
+        id: RETRY_ID,
+        userId: "other",
+        phase: "reserved",
+        request: next,
+      });
+      yield* handle.share(other, original, "manager");
+      expect((yield* handle.markPublicationCreating(USER, ID))._tag).toBe("refused");
+      expect((yield* handle.releasePublicationCreating(USER, ID))._tag).toBe("refused");
+      expect((yield* handle.bindPublication(USER, { id: ID, expectedMain: null }))._tag).toBe(
+        "refused",
+      );
+      expect((yield* handle.beginPublication(USER, request))._tag).toBe("refused");
+      expect(publication(yield* handle.markPublicationCreating("other", RETRY_ID)).phase).toBe(
+        "creating",
+      );
       expect(
-        (yield* handle.beginPublication(USER, { ...renamed, githubAccountLogin: "other" }))._tag,
+        (yield* handle.beginPublication(USER, {
+          ...request,
+          operationId: "d8be7589-e303-4ca3-bc1f-8fa3e00e3150",
+        }))._tag,
       ).toBe("refused");
-      expect(publication(yield* handle.beginPublication(USER, request))).toEqual(original);
     }),
+  );
+
+  it.effect("releases only the initiating current manager's sole unrecorded creation attempt", () =>
+    Effect.gen(function* () {
+      const handle = handleFor(makeMemoryDrives().apiFor("shared/personal/team"));
+      const original = { userId: USER, email: "manager@example.com", name: null };
+      const other = { userId: "other", email: "other@example.com", name: null };
+      yield* handle.setup({
+        name: "Team",
+        members: [
+          { ...original, role: "manager" },
+          { ...other, role: "manager" },
+        ],
+      });
+      expect((yield* handle.releasePublicationCreating(USER, ID))._tag).toBe("refused");
+      const reserved = publication(yield* handle.beginPublication(USER, request));
+      expect((yield* handle.releasePublicationCreating(USER, ID))._tag).toBe("refused");
+      publication(yield* handle.markPublicationCreating(USER, ID));
+      expect((yield* handle.releasePublicationCreating(USER, RETRY_ID))._tag).toBe("refused");
+      expect((yield* handle.releasePublicationCreating("other", ID))._tag).toBe("refused");
+      yield* handle.share(other, original, "content_manager");
+      expect((yield* handle.releasePublicationCreating(USER, ID))._tag).toBe("refused");
+      yield* handle.share(other, original, "manager");
+      expect(publication(yield* handle.releasePublicationCreating(USER, ID))).toEqual(reserved);
+      expect((yield* handle.releasePublicationCreating(USER, ID))._tag).toBe("refused");
+      // A new request has its own first attempt; the abandoned id stays fenced.
+      publication(
+        yield* handle.beginPublication(USER, {
+          ...request,
+          operationId: RETRY_ID,
+          name: "available",
+        }),
+      );
+      expect((yield* handle.markPublicationCreating(USER, ID))._tag).toBe("refused");
+      publication(yield* handle.markPublicationCreating(USER, RETRY_ID));
+      expect(publication(yield* handle.releasePublicationCreating(USER, RETRY_ID)).phase).toBe(
+        "reserved",
+      );
+    }),
+  );
+
+  it.effect("never releases after concurrent or prior additional creation claims", () =>
+    Effect.gen(function* () {
+      const handle = handleFor(makeMemoryDrives().apiFor(DRIVE));
+      publication(yield* handle.beginPublication(USER, request));
+      const claims = yield* Effect.all(
+        [handle.markPublicationCreating(USER, ID), handle.markPublicationCreating(USER, ID)],
+        { concurrency: "unbounded" },
+      );
+      expect(claims.map(publication).map((receipt) => receipt.phase)).toEqual([
+        "creating",
+        "creating",
+      ]);
+      expect((yield* handle.releasePublicationCreating(USER, ID))._tag).toBe("refused");
+      expect(
+        (yield* handle.beginPublication(USER, {
+          ...request,
+          operationId: RETRY_ID,
+          name: "available",
+        }))._tag,
+      ).toBe("refused");
+      expect(
+        publication(yield* handle.recordPublicationCreated(USER, { id: ID, repository })).phase,
+      ).toBe("created");
+    }),
+  );
+
+  it.effect(
+    "releases consecutive definitive failures on the same receipt before changing requests",
+    () =>
+      Effect.gen(function* () {
+        const handle = handleFor(makeMemoryDrives().apiFor(DRIVE));
+        const reserved = publication(yield* handle.beginPublication(USER, request));
+        for (let attempt = 0; attempt < 2; attempt++) {
+          expect(publication(yield* handle.beginPublication(USER, request))).toEqual(reserved);
+          expect(publication(yield* handle.markPublicationCreating(USER, ID)).phase).toBe(
+            "creating",
+          );
+          expect(publication(yield* handle.releasePublicationCreating(USER, ID))).toEqual(reserved);
+        }
+        const changed = publication(
+          yield* handle.beginPublication(USER, {
+            ...request,
+            operationId: RETRY_ID,
+            name: "available",
+          }),
+        );
+        expect(changed).toMatchObject({
+          id: RETRY_ID,
+          phase: "reserved",
+          request: { name: "available" },
+        });
+        expect((yield* handle.markPublicationCreating(USER, ID))._tag).toBe("refused");
+      }),
+  );
+
+  it.effect("a concurrent new claim prevents renaming even if release wins the race", () =>
+    Effect.gen(function* () {
+      const handle = handleFor(makeMemoryDrives().apiFor(DRIVE));
+      publication(yield* handle.beginPublication(USER, request));
+      publication(yield* handle.markPublicationCreating(USER, ID));
+      const [, claiming] = yield* Effect.all(
+        [handle.releasePublicationCreating(USER, ID), handle.markPublicationCreating(USER, ID)],
+        { concurrency: "unbounded" },
+      );
+      expect(publication(claiming).phase).toBe("creating");
+      expect(publication(yield* handle.beginPublication(USER, request)).phase).toBe("creating");
+      expect(
+        (yield* handle.beginPublication(USER, {
+          ...request,
+          operationId: RETRY_ID,
+          name: "available",
+        }))._tag,
+      ).toBe("refused");
+    }),
+  );
+
+  it.effect(
+    "migrates legacy creating receipts as unknown attempts and reserved receipts as unstarted",
+    () =>
+      Effect.gen(function* () {
+        for (const initialPhase of ["reserved", "creating"] as const) {
+          yield* Effect.gen(function* () {
+            const s = yield* DriveStore;
+            const sql = yield* SqlClient.SqlClient;
+            yield* s.initialize;
+            publication(yield* s.beginPublication(USER, request));
+            if (initialPhase === "creating")
+              publication(yield* s.markPublicationCreating(USER, ID));
+            yield* sql`ALTER TABLE drive_repository_publication DROP COLUMN creation_attempts`;
+            yield* sql`DROP TABLE drive_publication_ids`;
+            yield* sql`DELETE FROM effect_sql_migrations
+            WHERE migration_id = 11 AND name = 'drive_publication_creation_attempts'`;
+            yield* s.initialize;
+            expect(publication(yield* s.beginPublication(USER, request)).phase).toBe(initialPhase);
+            const [attempts] = yield* sql<{ readonly creation_attempts: number | null }>`
+            SELECT creation_attempts FROM drive_repository_publication WHERE singleton = 1`;
+            expect(attempts?.creation_attempts).toBe(initialPhase === "reserved" ? 0 : null);
+            publication(yield* s.markPublicationCreating(USER, ID));
+            const released = yield* s.releasePublicationCreating(USER, ID);
+            if (initialPhase === "reserved") expect(publication(released).phase).toBe("reserved");
+            else {
+              expect(released._tag).toBe("refused");
+              expect(
+                publication(yield* s.recordPublicationCreated(USER, { id: ID, repository })).phase,
+              ).toBe("created");
+            }
+          }).pipe(
+            Effect.provide(
+              layer(DRIVE).pipe(
+                Layer.provideMerge(NodeSqliteClient.layer({ filename: ":memory:" })),
+              ),
+            ),
+          );
+        }
+      }),
   );
 
   it.effect("serializes replacement against creation so only one attempt can proceed", () =>
@@ -225,6 +445,7 @@ describe("drive publication receipts", () => {
         yield* handle.recordPublicationCreated(USER, { id: ID, repository }),
       );
       expect(recorded.phase).toBe("created");
+      expect((yield* handle.releasePublicationCreating(USER, ID))._tag).toBe("refused");
       expect(
         (yield* handle.beginPublication(USER, { ...request, operationId: RETRY_ID, name: "other" }))
           ._tag,
@@ -243,6 +464,7 @@ describe("drive publication receipts", () => {
         yield* handle.bindPublication(USER, { id: ID, expectedMain: null }),
       );
       expect(bound).toMatchObject({ phase: "bound", head: null, repository });
+      expect((yield* handle.releasePublicationCreating(USER, ID))._tag).toBe("refused");
       expect(
         (yield* handle.beginPublication(USER, { ...request, operationId: RETRY_ID, name: "other" }))
           ._tag,
@@ -252,6 +474,7 @@ describe("drive publication receipts", () => {
       ).toEqual(bound);
       const complete = publication(yield* handle.finishPublication(USER, ID));
       expect(complete.phase).toBe("complete");
+      expect((yield* handle.releasePublicationCreating(USER, ID))._tag).toBe("refused");
       expect(
         (yield* handle.beginPublication(USER, { ...request, operationId: RETRY_ID, name: "other" }))
           ._tag,

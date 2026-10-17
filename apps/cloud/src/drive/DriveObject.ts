@@ -112,6 +112,10 @@ export class DriveObject extends DurableObject<DriveObjectEnv> implements DriveO
     return this.api.markPublicationCreating(...args);
   }
 
+  releasePublicationCreating(...args: Parameters<DriveObjectApi["releasePublicationCreating"]>) {
+    return this.api.releasePublicationCreating(...args);
+  }
+
   recordPublicationCreated(...args: Parameters<DriveObjectApi["recordPublicationCreated"]>) {
     return this.api.recordPublicationCreated(...args);
   }

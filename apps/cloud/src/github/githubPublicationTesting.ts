@@ -94,12 +94,14 @@ export const publicationFixture = (
     const settings = {
       accountId: 1,
       accountLogin: "octo",
+      createFailureStatus: null as number | null,
       loseCreateReply: false,
       losePushReply: false,
       loseRecoveryHead: false,
       failPush: false,
       failCleanup: false,
       failRepositoryReads: false,
+      failAllRepositoryReads: false,
       failBranchReads: false,
       branchConflict: null as string | null,
     };
@@ -129,6 +131,8 @@ export const publicationFixture = (
           ) {
             const input = JSON.parse(new TextDecoder().decode(body)) as Record<string, unknown>;
             creations.push({ path: url.pathname, input });
+            if (settings.createFailureStatus !== null)
+              return json({ message: "Creation refused" }, settings.createFailureStatus);
             const owner =
               url.pathname === "/user/repos" ? settings.accountLogin : url.pathname.split("/")[2]!;
             const name = `${owner}/${input.name}`;
@@ -140,7 +144,11 @@ export const publicationFixture = (
           const name = url.pathname.slice("/repos/".length);
           if (url.pathname.startsWith("/repos/") && name.split("/").length === 2) {
             if (method === "GET") {
-              if (settings.failRepositoryReads && repositories.has(name)) return unavailable();
+              if (
+                settings.failAllRepositoryReads ||
+                (settings.failRepositoryReads && repositories.has(name))
+              )
+                return unavailable();
               return repositories.has(name)
                 ? json(repositories.get(name))
                 : json({ message: "Not Found" }, 404);

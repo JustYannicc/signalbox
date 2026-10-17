@@ -49,7 +49,12 @@ import {
   type TurnSecrets,
 } from "./turnPool.ts";
 import { poolErrorMessage } from "../pool/PoolDirectory.ts";
-import type { ThreadMonitor, ThreadSnapshotWire, ThreadSummaryWire } from "./threadWire.ts";
+import type {
+  ThreadMonitor,
+  ThreadSnapshotWire,
+  ThreadSummaryWire,
+  ThreadWorkspace,
+} from "./threadWire.ts";
 
 /**
  * One thread's orchestration, inside its Durable Object. Commands and provider
@@ -142,6 +147,7 @@ export class ThreadEngine extends Context.Service<
       ThreadNotFoundError | ThreadCommandRejectedError
     >;
     readonly snapshot: (actor: Actor) => Effect.Effect<ThreadSnapshot, ThreadNotFoundError>;
+    readonly workspace: (actor: Actor) => Effect.Effect<ThreadWorkspace, ThreadNotFoundError>;
     /**
      * `subscribeThread`: a snapshot or the events after the client's cursor,
      * the completion marker when asked for, then live batches as they commit.
@@ -589,6 +595,13 @@ const make = Effect.gen(function* () {
   const snapshot: ThreadEngine["Service"]["snapshot"] = (actor) =>
     Effect.map(readable(actor), ({ head, projection }) => ({ snapshotSequence: head, projection }));
 
+  const workspace: ThreadEngine["Service"]["workspace"] = (actor) =>
+    Effect.map(readable(actor), ({ projection: { thread } }) => ({
+      projectId: thread.projectId,
+      branch: thread.branch,
+      worktreePath: thread.worktreePath,
+    }));
+
   const subscribe: ThreadEngine["Service"]["subscribe"] = (actor, input) =>
     serialized(
       Effect.gen(function* () {
@@ -775,6 +788,7 @@ const make = Effect.gen(function* () {
     dispatch,
     launch,
     snapshot,
+    workspace,
     subscribe,
     apply,
     projection,

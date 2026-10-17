@@ -201,8 +201,8 @@ const callbackRoute = HttpRouter.add(
       }
       // Backing out on GitHub's page lands here too, with nothing connected.
       if (url.searchParams.has("error")) {
-        yield* users.forUser(owner).abortGitHubConnect(grantId);
-        return back("cancelled");
+        const cancelled = yield* users.forUser(owner).cancelGitHubConnect(grantId);
+        return back(cancelled ? "cancelled" : "failed");
       }
       const result = yield* users.forUser(owner).completeGitHubConnect(grantId);
       if (result._tag === "failed")

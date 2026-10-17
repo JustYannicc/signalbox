@@ -19,7 +19,13 @@ export interface PublicationOperations {
     userId: string,
     request: DrivePublicationRequest,
   ) => Effect.Effect<DrivePublicationResult, SqlError>;
+  /** Claim immediately before every create POST; each call counts as another possible POST. */
   readonly markPublicationCreating: (
+    userId: string,
+    id: string,
+  ) => Effect.Effect<DrivePublicationResult, SqlError>;
+  /** Only after this caller's own POST definitively failed; never replay a past release after another claim. */
+  readonly releasePublicationCreating: (
     userId: string,
     id: string,
   ) => Effect.Effect<DrivePublicationResult, SqlError>;
@@ -43,6 +49,17 @@ export const createTables = Effect.gen(function* () {
     singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
     receipt_json TEXT NOT NULL
   )`;
+});
+
+export const addCreationAttempts = Effect.gen(function* () {
+  const sql = yield* SqlClient.SqlClient;
+  yield* sql`ALTER TABLE drive_repository_publication ADD COLUMN creation_attempts INTEGER DEFAULT 0`;
+  // Legacy creating receipts may already have several outstanding or ambiguous POSTs.
+  yield* sql`UPDATE drive_repository_publication SET creation_attempts = NULL
+    WHERE json_extract(receipt_json, '$.phase') <> 'reserved'`;
+  yield* sql`CREATE TABLE drive_publication_ids (operation_id TEXT PRIMARY KEY)`;
+  yield* sql`INSERT INTO drive_publication_ids (operation_id)
+    SELECT lower(json_extract(receipt_json, '$.id')) FROM drive_repository_publication`;
 });
 
 const receiptCodec = Schema.fromJsonString(DrivePublication);
@@ -92,10 +109,11 @@ export const makeOperations = (input: {
     FROM drive_repository_publication WHERE singleton = 1`.pipe(
     Effect.map(([row]) => (row === undefined ? null : decodeReceipt(row.receipt_json))),
   );
-  const save = (publication: DrivePublication) =>
+  const save = (publication: DrivePublication, resetAttempts = false) =>
     sql`INSERT INTO drive_repository_publication (singleton, receipt_json)
       VALUES (1, ${encodeReceipt(publication)})
-      ON CONFLICT (singleton) DO UPDATE SET receipt_json = excluded.receipt_json`.pipe(
+      ON CONFLICT (singleton) DO UPDATE SET receipt_json = excluded.receipt_json,
+        creation_attempts = CASE WHEN ${resetAttempts ? 1 : 0} THEN 0 ELSE creation_attempts END`.pipe(
       Effect.as(ok(publication)),
     );
   const manages = (userId: string) => Effect.map(input.role(userId), canManageDrive);
@@ -119,15 +137,9 @@ export const makeOperations = (input: {
       )
         return refused("The publication needs a GitHub account, repository and remote name.");
       const existing = yield* read;
-      if (
+      const changedRequest =
         existing !== null &&
-        (existing.userId !== userId ||
-          existing.request.githubAccountId !== normalized.githubAccountId ||
-          existing.request.githubAccountLogin !== normalized.githubAccountLogin)
-      ) {
-        return refused("This drive already has a publication for a different user or account.");
-      }
-      const changedRequest = existing !== null && !sameRequest(existing.request, normalized);
+        (existing.userId !== userId || !sameRequest(existing.request, normalized));
       if (changedRequest && existing.phase !== "reserved") {
         return refused("Repository creation has started. Resume the original publication request.");
       }
@@ -139,14 +151,22 @@ export const makeOperations = (input: {
         return unrelatedRemote();
       }
       if (existing !== null && !changedRequest) return ok(existing);
-      return yield* save({
-        id: normalized.operationId,
-        userId,
-        request: normalized,
-        phase: "reserved",
-        repository: null,
-        head: null,
-      });
+      const reused = yield* sql`SELECT operation_id FROM drive_publication_ids
+        WHERE operation_id = ${normalized.operationId.toLowerCase()}`;
+      if (reused.length > 0)
+        return refused("That publication operation id has already been replaced.");
+      yield* sql`INSERT INTO drive_publication_ids (operation_id) VALUES (${normalized.operationId.toLowerCase()})`;
+      return yield* save(
+        {
+          id: normalized.operationId,
+          userId,
+          request: normalized,
+          phase: "reserved",
+          repository: null,
+          head: null,
+        },
+        true,
+      );
     }).pipe(sql.withTransaction);
 
   const change = (
@@ -169,9 +189,31 @@ export const makeOperations = (input: {
     beginPublication,
     markPublicationCreating: (userId, id) =>
       change(userId, id, (publication) =>
-        publication.phase === "reserved"
-          ? save({ ...publication, phase: "creating" })
-          : Effect.succeed(ok(publication)),
+        Effect.gen(function* () {
+          if (publication.phase !== "reserved" && publication.phase !== "creating")
+            return ok(publication);
+          // Each successful claim permits one POST. NULL preserves unknown legacy attempts.
+          yield* sql`UPDATE drive_repository_publication
+            SET creation_attempts = creation_attempts + 1 WHERE singleton = 1`;
+          return yield* save({ ...publication, phase: "creating" });
+        }),
+      ),
+    releasePublicationCreating: (userId, id) =>
+      change(userId, id, (publication) =>
+        Effect.gen(function* () {
+          if (publication.phase !== "creating" || publication.repository !== null) {
+            return refused("Only an unrecorded creating publication can be released.");
+          }
+          const [row] = yield* sql<{ readonly creation_attempts: number | null }>`
+            SELECT creation_attempts FROM drive_repository_publication WHERE singleton = 1`;
+          if (row?.creation_attempts !== 1) {
+            return refused(
+              "Other or unknown creation attempts may still create this repository. Resume this publication.",
+            );
+          }
+          // The caller must prove its sole POST definitively failed before releasing it.
+          return yield* save({ ...publication, phase: "reserved" }, true);
+        }),
       ),
     recordPublicationCreated: (userId, request) =>
       change(userId, request.id, (publication) =>

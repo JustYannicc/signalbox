@@ -28,7 +28,7 @@ export const ensurePublicationRepository = (input: {
 }) =>
   Effect.gen(function* () {
     const github = yield* GitHub;
-    const { publication } = input;
+    let publication = input.publication;
     const request = publication.request;
     const name = `${request.owner}/${request.name}`;
     const fail = (message: string) => new DriveReadError({ message });
@@ -39,30 +39,49 @@ export const ensurePublicationRepository = (input: {
         return yield* fail(
           "A repository with this name already exists. Choose a new repository name.",
         );
-      const started = yield* input.drive.markPublicationCreating(input.userId, publication.id);
-      if (started._tag === "refused") return yield* fail(started.reason);
     }
     if (existing === null) {
       if (publication.repository !== null)
         return yield* fail(
           "The published repository is no longer available. Nothing was recreated.",
         );
-      // GitHub has no creation idempotency key. Its creation marker proves ownership after a lost reply.
-      existing = yield* github.api
-        .createRepository(input.token, {
-          owner: request.owner,
-          name: request.name,
-          personal: request.owner.toLowerCase() === input.login.toLowerCase(),
-          private: request.visibility === "private",
-          description: markerOf(publication),
-        })
-        .pipe(
-          Effect.catch((error) =>
-            Effect.flatMap(read(), (recovered) =>
-              recovered === null ? Effect.fail(error) : Effect.succeed(recovered),
+      const started = yield* input.drive.markPublicationCreating(input.userId, publication.id);
+      if (started._tag === "refused") return yield* fail(started.reason);
+      publication = started.publication;
+      if (publication.phase !== "creating") {
+        existing = yield* read();
+      } else {
+        // GitHub has no creation idempotency key. Its marker recovers a lost reply.
+        existing = yield* github.api
+          .createRepository(input.token, {
+            owner: request.owner,
+            name: request.name,
+            personal: request.owner.toLowerCase() === input.login.toLowerCase(),
+            private: request.visibility === "private",
+            description: markerOf(publication),
+          })
+          .pipe(
+            Effect.catch((error) =>
+              Effect.gen(function* () {
+                const recovered = yield* read();
+                if (recovered !== null && validate(publication, recovered)) return recovered;
+                // A missing repository alone cannot rule out another POST still in flight.
+                // Storage only releases the sole claimed attempt after a definite rejection.
+                if ([400, 401, 403, 404, 422].includes(error.status)) {
+                  const released = yield* input.drive.releasePublicationCreating(
+                    input.userId,
+                    publication.id,
+                  );
+                  if (released._tag === "refused") return yield* fail(released.reason);
+                  return yield* fail(
+                    "GitHub refused to create this repository. Check your access or choose another owner or name, then try again.",
+                  );
+                }
+                return yield* error;
+              }),
             ),
-          ),
-        );
+          );
+      }
     }
     if (existing === null || !validate(publication, existing)) {
       return yield* fail(

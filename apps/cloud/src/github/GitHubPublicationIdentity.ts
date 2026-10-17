@@ -21,7 +21,13 @@ export const publicationIdentity = Effect.gen(function* () {
   if (token === null) return yield* fail("Connect GitHub to publish this folder.");
   const viewer = yield* github.api
     .viewer(token)
-    .pipe(Effect.mapError((error) => fail(error.message)));
+    .pipe(
+      Effect.catch((error) =>
+        Effect.logWarning("Checking the publication GitHub account failed", { error }).pipe(
+          Effect.andThen(Effect.fail(fail("GitHub could not confirm your account. Try again."))),
+        ),
+      ),
+    );
   if (viewer === null) return yield* fail("Reconnect GitHub to publish this folder.");
   return { token, id: viewer.id, login: viewer.login };
 });

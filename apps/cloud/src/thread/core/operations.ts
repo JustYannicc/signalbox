@@ -110,12 +110,12 @@ export const makeThreads = Effect.gen(function* () {
   const attachments = yield* CloudAttachments;
   const kindTurns = yield* ThreadKindTurns;
 
-  const refreshedSnapshot = makeWorkspaceRefresh({ directory, threadContexts, crypto });
+  const refreshWorkspace = makeWorkspaceRefresh({ directory, threadContexts, crypto });
 
   const refreshRemoteWorkspace: Threads.Threads["Service"]["refreshRemoteWorkspace"] = (
     actor,
     threadId,
-  ) => Effect.asVoid(refreshedSnapshot(actor, threadId));
+  ) => Effect.asVoid(refreshWorkspace(actor, threadId));
 
   /** The thread's turn from its home's chain, with its kind's level and the status line's last on it. */
   const turnOf = (
@@ -237,9 +237,12 @@ export const makeThreads = Effect.gen(function* () {
 
   const threadSnapshot: Threads.Threads["Service"]["snapshot"] = (actor, threadId) =>
     Effect.map(
-      refreshedSnapshot(actor, threadId).pipe(
-        Effect.catchTags({ ThreadCommandRejectedError: Effect.die }),
-      ),
+      Effect.gen(function* () {
+        const handle = directory.forThread(threadId);
+        const snapshot = yield* handle.snapshot(actor);
+        const adopted = yield* refreshWorkspace(actor, threadId, snapshot.projection.thread);
+        return adopted ? yield* handle.snapshot(actor) : snapshot;
+      }).pipe(Effect.catchTags({ ThreadCommandRejectedError: Effect.die })),
       ({ snapshotSequence, projection }) => ({
         snapshotSequence,
         projection,

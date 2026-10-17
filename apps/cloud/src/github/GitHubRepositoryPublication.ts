@@ -10,6 +10,8 @@ import * as Effect from "effect/Effect";
 
 import { DriveDirectory } from "../drive/DriveDirectory.ts";
 import { DrivePacks } from "../drive/DrivePacks.ts";
+import { DriveReadError } from "../drive/DriveReader.ts";
+import { PushRefused } from "../drive/gitPush.ts";
 import { MAIN_REF } from "../drive/DriveStore.ts";
 import { parseDriveId } from "../drive/driveAccess.ts";
 import type { DrivePublication } from "../drive/DrivePublicationTypes.ts";
@@ -136,14 +138,15 @@ export const makeRepositoryPublication = (
         }
         return resultOf(publication);
       }).pipe(
-        Effect.mapError((error) =>
-          error instanceof SourceControlRepositoryError
-            ? error
-            : failed(
-                error instanceof Error
-                  ? error.message
-                  : "The folder could not be published. Retry to continue.",
-              ),
-        ),
+        Effect.catch((error) => {
+          if (error instanceof SourceControlRepositoryError) return Effect.fail(error);
+          if (error instanceof DriveReadError || error instanceof PushRefused)
+            return Effect.fail(failed(error.message));
+          return Effect.logWarning("Cloud folder publication failed", { error }).pipe(
+            Effect.andThen(
+              Effect.fail(failed("The folder could not be published. Retry to continue.")),
+            ),
+          );
+        }),
       );
   });

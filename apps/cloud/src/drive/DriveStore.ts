@@ -404,6 +404,7 @@ const migrations = Migrator.fromRecord({
   "0008_drive_restore_snapshots": DriveRevisions.createRestoreTables,
   "0009_ref_deletions": DriveEvents.allowDeletedRefs,
   "0010_drive_repository_publication": DriveRepositoryPublication.createTables,
+  "0011_drive_publication_creation_attempts": DriveRepositoryPublication.addCreationAttempts,
 });
 
 /** Applies every migration not recorded yet (`storage/migrations.ts`). Never edit or rename a merged one. */

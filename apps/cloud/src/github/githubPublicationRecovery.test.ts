@@ -4,6 +4,39 @@ import * as Effect from "effect/Effect";
 import { publicationFixture } from "./githubPublicationTesting.ts";
 
 describe("cloud publication recovery", () => {
+  it.effect.each([403, 422])(
+    "allows changing owner and name after a definite create %s",
+    (status) =>
+      Effect.gen(function* () {
+        const f = yield* publicationFixture();
+        f.settings.createFailureStatus = status;
+        expect(
+          (yield* f.publish({ repository: "an-org/refused" }).pipe(Effect.flip)).message,
+        ).toContain("choose another owner or name");
+        expect(yield* f.drive.remote()).toBeNull();
+        expect(f.repositories.size).toBe(0);
+        f.settings.createFailureStatus = null;
+        expect((yield* f.publish()).status).toBe("pushed");
+        expect(f.github.head("main")).toBe(f.main);
+        expect(f.creations).toHaveLength(2);
+      }),
+  );
+
+  it.effect("keeps ambiguous create failures fenced to the original request", () =>
+    Effect.gen(function* () {
+      const f = yield* publicationFixture();
+      f.settings.createFailureStatus = 503;
+      expect((yield* f.publish().pipe(Effect.result))._tag).toBe("Failure");
+      f.settings.createFailureStatus = null;
+      expect(
+        (yield* f.publish({ repository: "octo/another" }).pipe(Effect.flip)).message,
+      ).toContain("Resume the original");
+      expect(f.creations).toHaveLength(1);
+      expect((yield* f.publish()).status).toBe("pushed");
+      expect(f.creations).toHaveLength(2);
+    }),
+  );
+
   it.effect("retries after both the accepted push reply and its head read are lost", () =>
     Effect.gen(function* () {
       const f = yield* publicationFixture();

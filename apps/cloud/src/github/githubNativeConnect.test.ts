@@ -26,11 +26,19 @@ const cookie = (token: string) => ({ cookie: `signalbox_cloud_session=${token}` 
 const location = (response: Response) => response.headers.get("location") ?? "";
 
 const setup = Effect.gen(function* () {
+  let callbackUrl: string | undefined;
   // These cases only use Pipes and /user; the fake's git operations are never reached.
   const github = makeFakeGitHub({
     bare: "/unused",
     repository: "owner/repo",
     defaultBranch: "main",
+    more: (method, url, body) => {
+      if (method === "POST" && url.pathname === "/data-integrations/github/authorize") {
+        callbackUrl = (JSON.parse(new TextDecoder().decode(body)) as { return_to: string })
+          .return_to;
+      }
+      return null;
+    },
   });
   const cloud = makeMemoryCloud({ github: github.layer });
   const context = yield* Layer.build(
@@ -73,18 +81,23 @@ const setup = Effect.gen(function* () {
       fetch: (input, init) => handler(new Request(input, init)),
     }),
   );
-  const begin = Effect.gen(function* () {
+  const pending = Effect.gen(function* () {
     const url = yield* startUrl;
     expect((yield* request(url, { headers: cookie(browser.token) })).status).toBe(302);
-    const callback = github.authorize(OWNER);
-    expect(callback).not.toBeNull();
-    return { url, callback: callback! };
+    expect(callbackUrl).toBeDefined();
+    return { url, callback: callbackUrl! };
+  });
+  const begin = Effect.gen(function* () {
+    const attempt = yield* pending;
+    expect(github.authorize(OWNER)).toBe(attempt.callback);
+    return attempt;
   });
   return {
     request,
     start,
     startUrl,
     begin,
+    pending,
     sessions,
     tokens,
     owner,
@@ -190,10 +203,64 @@ describe("native GitHub connect", () => {
     }),
   );
 
+  it.effect("preserves an existing connection when its owner cancels another attempt", () =>
+    Effect.gen(function* () {
+      const { begin, pending, request, browser, owner, github } = yield* setup;
+      const connected = yield* begin;
+      yield* request(connected.callback, { headers: cookie(browser.token) });
+      expect(yield* owner.githubAccessToken()).toBe(`gho_${OWNER}`);
+      const author = yield* owner.githubCommitAuthor();
+      const { url, callback } = yield* pending;
+      const before = github.calls.length;
+      expect(
+        location(
+          yield* request(`${callback}&error=access_denied`, { headers: cookie(browser.token) }),
+        ),
+      ).toBe(`${RETURN_URL}?github=cancelled`);
+      expect(github.calls).toHaveLength(before);
+      expect(github.isConnected(OWNER)).toBe(true);
+      expect(yield* owner.githubCommitAuthor()).toEqual(author);
+      expect(yield* owner.githubAccessToken()).toBe(`gho_${OWNER}`);
+      expect((yield* request(url, { headers: cookie(browser.token) })).status).toBe(400);
+      expect(location(yield* request(callback, { headers: cookie(browser.token) }))).toBe(
+        `${RETURN_URL}?github=failed`,
+      );
+      expect(
+        location(
+          yield* request(`${callback}&error=access_denied`, { headers: cookie(browser.token) }),
+        ),
+      ).toBe(`${RETURN_URL}?github=failed`);
+      // The connection also survives after the token cache expires.
+      yield* TestClock.adjust("6 minutes");
+      expect(yield* owner.githubAccessToken()).toBe(`gho_${OWNER}`);
+      expect(yield* owner.githubCommitAuthor()).toEqual(author);
+    }),
+  );
+
+  it.effect("still aborts a wrong-browser callback arriving after cancellation", () =>
+    Effect.gen(function* () {
+      const { begin, pending, request, browser, other, owner, github } = yield* setup;
+      const connected = yield* begin;
+      yield* request(connected.callback, { headers: cookie(browser.token) });
+      const { callback } = yield* pending;
+      yield* request(`${callback}&error=access_denied`, { headers: cookie(browser.token) });
+      // Pipes can finish later in the foreign browser, after the owner backed out.
+      expect(github.authorize(OWNER)).toBe(callback);
+      expect(
+        location(
+          yield* request(`${callback}&error=access_denied`, { headers: cookie(other.token) }),
+        ),
+      ).toBe(`${RETURN_URL}?github=failed`);
+      expect(github.isConnected(OWNER)).toBe(false);
+      expect(yield* owner.githubAccessToken()).toBeNull();
+      expect(yield* owner.githubCommitAuthor()).toBeNull();
+    }),
+  );
+
   it.effect("returns cancellation to native and prevents restarting the cancelled state", () =>
     Effect.gen(function* () {
-      const { begin, request, browser, github } = yield* setup;
-      const { url, callback } = yield* begin;
+      const { pending, request, browser, github } = yield* setup;
+      const { url, callback } = yield* pending;
       const result = yield* request(`${callback}&error=access_denied`, {
         headers: cookie(browser.token),
       });

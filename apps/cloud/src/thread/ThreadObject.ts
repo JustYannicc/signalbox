@@ -329,6 +329,10 @@ export class ThreadObject extends DurableObject<ThreadObjectEnv> implements Thre
     return this.api.snapshot(...args);
   }
 
+  workspace(...args: Parameters<ThreadObjectApi["workspace"]>) {
+    return this.api.workspace(...args);
+  }
+
   subscribe(...args: Parameters<ThreadObjectApi["subscribe"]>) {
     return this.api.subscribe(...args);
   }
