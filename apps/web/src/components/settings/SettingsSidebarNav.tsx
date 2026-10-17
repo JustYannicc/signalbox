@@ -58,7 +58,7 @@ import {
 } from "./useAvailableSettingsSearchItems";
 import { validateSettingsScopeSearch } from "./settingsScope";
 import { useSignInGrantsEnvironmentId } from "../../state/signalboxSignIn"; // signalbox: sign-in grants
-import { useTrashEnvironmentId } from "../../state/signalboxTrash"; // signalbox: trash
+import { useTrashEnvironments } from "../../state/signalboxTrash"; // signalbox: trash
 
 const SnapShotIcon = createLucideIcon("snap-shot", [
   [
@@ -128,7 +128,7 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
   const scopeSearch = useMemo(() => validateSettingsScopeSearch(currentSearch), [currentSearch]);
   const unsupportedCapabilities = useUnsupportedSettingsCapabilities(scopeSearch);
   const signInGrants = useSignInGrantsEnvironmentId() !== null; // signalbox: sign-in grants
-  const trash = useTrashEnvironmentId() !== null; // signalbox: trash
+  const trash = useTrashEnvironments().length > 0; // signalbox: trash
   const navItems = SETTINGS_NAV_ITEMS.filter(
     (item) =>
       (item.to !== "/settings/projects" || isSettingsOverviewVisible(scopeSearch)) &&
