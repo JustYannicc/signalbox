@@ -5,7 +5,8 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
 import type { PoolEntry } from "../pool/poolViews.ts";
-import * as ModelManifest from "../thread/ModelManifest.ts";
+import * as ModelManifest from "../models/ModelManifest.ts";
+import * as ModelCatalog from "../models/ModelCatalog.ts";
 import * as ThreadContexts from "./threadContexts.ts";
 import * as ThreadContextLayers from "./threadContextLayers.ts";
 import * as UserDrives from "./UserDrives.ts";
@@ -65,7 +66,7 @@ const resolveOnWorkPool = (
                 defaultModelSelection: selection,
               }),
             }),
-            ModelManifest.layerBundled,
+            ModelCatalog.layer.pipe(Layer.provide(ModelManifest.layerBundled)),
           ),
         ),
       ),

@@ -12,8 +12,8 @@ import {
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 
+import { isHarnessInstance } from "../models/ModelRouting.ts";
 import { decideQueuedRunCommand } from "./queuedRunCommands.ts";
-import { isHarnessInstance } from "./providerCatalog.ts";
 import { pullRequestLinkEvents } from "./pullRequests/pullRequestLinks.ts";
 import {
   activeRun,
