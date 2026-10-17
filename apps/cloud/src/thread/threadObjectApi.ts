@@ -64,6 +64,46 @@ export const makeThreadObjectApi = (
     );
   const engine = ThreadEngine.ThreadEngine;
   return {
+    subscribePreparation: (actor) =>
+      run(
+        engine.use((service) =>
+          service.subscribePreparation(actor).pipe(
+            Effect.map((stream) =>
+              stream.pipe(
+                Stream.map((snapshot) =>
+                  new TextEncoder().encode(
+                    `${JSON.stringify(wire.preparation.encode(snapshot))}\n`,
+                  ),
+                ),
+                Stream.toReadableStream(),
+              ),
+            ),
+            Effect.catchTags({ ThreadNotFoundError: () => Effect.succeed(null) }),
+          ),
+        ),
+      ),
+    cancelPreparation: async (actor, input) => {
+      const result = await reply(
+        engine.use((service) =>
+          service.cancelPreparation(actor, input).pipe(
+            Effect.catchTags({
+              WorktreeSetupError: (error) =>
+                Effect.fail(
+                  ThreadEngine.ThreadCommandRejectedError.forCommand(
+                    {
+                      id: `preparation:${input.runId}:${input.preparationGeneration}`,
+                      type: "worktreeSetup.cancel",
+                    },
+                    error.message,
+                  ),
+                ),
+            }),
+          ),
+        ),
+      );
+      await afterChange();
+      return result;
+    },
     dispatch: async (actor, command, creation) => {
       const result = await reply(
         engine.use((service) => service.dispatch(actor, wire.command.decode(command), creation)),

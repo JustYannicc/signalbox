@@ -27,6 +27,7 @@ interface Attachment {
   readonly connection: number;
   /** The run this socket's Runner was handed, until it ends or is stopped. */
   readonly sentRunId: RunId | null;
+  readonly sentPreparationGeneration?: number | undefined;
   /** The drain this socket's Runner was asked for (#493); absent: none. */
   readonly sentDrainId?: number | undefined;
   /** This socket's Runner takes `steer` (#562), as its `hello` said. */
@@ -107,7 +108,11 @@ export async function pushRunnerWork(host: RunnerSocketHost): Promise<ThreadRunn
     handedOut !== null &&
     host.ctx.getWebSockets(RUNNER_TAG).some((socket) => {
       const attachment = attachmentOf(socket);
-      return attachment?.generation === work.generation && attachment.sentRunId !== handedOut;
+      return (
+        attachment?.generation === work.generation &&
+        (attachment.sentRunId !== handedOut ||
+          attachment.sentPreparationGeneration !== turn?.turn.preparationGeneration)
+      );
     });
   // Asked only when a turn is handed out, and before the sends: it's a call to the owner's
   // object, and nothing may run between reading a socket's attachment and writing it back.
@@ -132,13 +137,21 @@ export async function pushRunnerWork(host: RunnerSocketHost): Promise<ThreadRunn
     const attachment = attachmentOf(socket);
     if (attachment === null || attachment.generation !== work.generation) continue;
     let sentRunId = attachment.sentRunId;
+    let sentPreparationGeneration = attachment.sentPreparationGeneration;
     let sentSteers = attachment.sentSteers ?? 0;
     if (sentRunId !== null && sentRunId !== work.activeRunId) {
-      send(socket, { type: "interrupt", runId: sentRunId });
+      if (work.preparation?.runId !== sentRunId || work.preparation.snapshot.turnStarted === true) {
+        send(socket, { type: "interrupt", runId: sentRunId });
+      }
       sentRunId = null;
+      sentPreparationGeneration = undefined;
       sentSteers = 0;
     }
-    if (turn !== null && sentRunId !== turn.turn.runId) {
+    if (
+      turn !== null &&
+      (sentRunId !== turn.turn.runId ||
+        sentPreparationGeneration !== turn.turn.preparationGeneration)
+    ) {
       send(socket, {
         type: "turn.start",
         turn: freshSessionText === null ? turn.turn : { ...turn.turn, freshSessionText },
@@ -151,7 +164,32 @@ export async function pushRunnerWork(host: RunnerSocketHost): Promise<ThreadRunn
           : { secrets: { token: secretsToken, environments: work.secrets } }),
       });
       sentRunId = turn.turn.runId;
+      sentPreparationGeneration = turn.turn.preparationGeneration;
       sentSteers = 0;
+    }
+    const preparation = work.preparation;
+    if (
+      preparation !== undefined &&
+      preparation !== null &&
+      preparation.machineGeneration === work.generation
+    ) {
+      if (preparation.status === "cancelling") {
+        send(socket, {
+          type: "preparation.cancel",
+          runId: preparation.runId,
+          preparationGeneration: preparation.generation,
+        });
+      } else if (
+        preparation.status === "handoff" &&
+        sentPreparationGeneration === preparation.generation &&
+        sentRunId === preparation.runId
+      ) {
+        send(socket, {
+          type: "preparation.handoff",
+          runId: preparation.runId,
+          preparationGeneration: preparation.generation,
+        });
+      }
     }
     // Steers count from the oldest, so the ones not handed out yet are the tail.
     if (attachment.steers === true && sentRunId !== null && sentRunId === work.activeRunId) {
@@ -168,12 +206,14 @@ export async function pushRunnerWork(host: RunnerSocketHost): Promise<ThreadRunn
     }
     if (
       sentRunId !== attachment.sentRunId ||
+      sentPreparationGeneration !== attachment.sentPreparationGeneration ||
       sentDrainId !== attachment.sentDrainId ||
       sentSteers !== (attachment.sentSteers ?? 0)
     ) {
       socket.serializeAttachment({
         ...attachment,
         sentRunId,
+        sentPreparationGeneration,
         sentDrainId,
         sentSteers,
       } satisfies Attachment);
@@ -213,6 +253,9 @@ export async function onRunnerMessage(
         generation: result.generation,
         connection: result.connection,
         sentRunId: result.heldRunId,
+        sentPreparationGeneration: message.takenPreparations?.find(
+          (attempt) => attempt.runId === result.heldRunId,
+        )?.preparationGeneration,
         steers: message.steers === true,
       } satisfies Attachment);
       send(socket, {

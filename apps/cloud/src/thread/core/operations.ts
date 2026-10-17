@@ -285,6 +285,17 @@ export const makeThreads = Effect.gen(function* () {
     );
 
   return Threads.Threads.of({
+    subscribePreparation: (actor, threadId) =>
+      Stream.unwrap(
+        resuming({
+          operation: "subscribePreparation",
+          threadId,
+          open: directory.forThread(threadId).subscribePreparation(actor),
+          delivered: () => Effect.void,
+        }),
+      ),
+    cancelPreparation: (actor, input) =>
+      directory.forThread(input.threadId).cancelPreparation(actor, input),
     launch: launchThread,
     dispatch: dispatchCommand,
     snapshot: threadSnapshot,

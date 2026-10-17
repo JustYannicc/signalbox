@@ -60,6 +60,24 @@ const setup = Effect.gen(function* () {
 });
 
 describe("command permissions", () => {
+  it.effect("requires the destination's orchestration grant to cancel preparation", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const registry = yield* setup;
+        const cancel = createCommandPermissions(runtime, WS_METHODS.worktreeSetupCancel);
+        registry.set(sessions(other), AsyncResult.success(grant(true)));
+        registry.set(sessions(env), AsyncResult.success(grant(false)));
+        expect(registry.get(cancel.permissionAtom(env))).toBe(false);
+        expect((yield* cancel.authorize(registry, env).pipe(Effect.flip)).requiredScope).toBe(
+          AuthOrchestrationOperateScope,
+        );
+        registry.set(sessions(env), AsyncResult.success(grant(true)));
+        expect(registry.get(cancel.permissionAtom(env))).toBe(true);
+        yield* cancel.authorize(registry, env);
+      }),
+    ),
+  );
+
   it.effect("requires the destination settings grant to save analytics consent", () =>
     Effect.scoped(
       Effect.gen(function* () {

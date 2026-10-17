@@ -38,6 +38,7 @@ import { Atom, AsyncResult } from "effect/reactivity";
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import { environmentThreadDetails } from "../state/threads";
 
+import { resolveWorktreeSetupActions } from "@t3tools/client-runtime/worktree-setup";
 import type { Thread, TurnDiffSummary } from "../types";
 import { makeThreadFixture, makeThreadProjectionFixture } from "../test-fixtures";
 import {
@@ -49,6 +50,7 @@ import {
   restorePlanFollowUpComposer,
   resolveComposerProviderSelection,
   resolveProactiveTurnDiffAction,
+  resolveComposerStop,
   resolveDraftHeroState,
   resolveWorktreeSetupProgress,
   isPaintOnlyThreadTimeline,
@@ -2037,6 +2039,54 @@ describe("worktree setup visibility", () => {
       ).toEqual({ snapshot, isPreparingWorktree: false });
     },
   );
+
+  describe("composer stop before the agent handoff", () => {
+    const cloud: WorktreeSetupSnapshot = {
+      ...base,
+      runId: RunId.make("setup-run"),
+      preparationGeneration: 1,
+      turnStarted: false,
+      cancellationRequested: false,
+    };
+    const stop = (input: {
+      snapshot: WorktreeSetupSnapshot | null;
+      awaiting?: boolean;
+      canCancel?: boolean;
+      canInterrupt?: boolean;
+    }) => {
+      const cancel = input.snapshot
+        ? resolveWorktreeSetupActions(input.snapshot, null).cancel
+        : null;
+      return resolveComposerStop({
+        setupSnapshot: input.snapshot,
+        awaitingSetupSnapshot: input.awaiting ?? false,
+        setupCancel: cancel === "available" && input.canCancel === false ? null : cancel,
+        canInterrupt: input.canInterrupt ?? true,
+      });
+    };
+
+    it("offers no stop while preparation waits for its first snapshot", () => {
+      expect(stop({ snapshot: null, awaiting: true })).toBeNull();
+    });
+
+    it("cancels the named attempt instead of interrupting the run", () => {
+      expect(stop({ snapshot: cloud })).toBe("cancel-setup");
+      const { runId: _r, preparationGeneration: _g, ...selfHosted } = cloud;
+      expect(stop({ snapshot: selfHosted })).toBe("cancel-setup");
+    });
+
+    it("offers no stop while a cancel is pending or the stop is not granted", () => {
+      expect(stop({ snapshot: { ...cloud, cancellationRequested: true } })).toBeNull();
+      expect(stop({ snapshot: cloud, canCancel: false })).toBeNull();
+    });
+
+    it("interrupts the provider once setup has handed off or never ran", () => {
+      expect(stop({ snapshot: { ...cloud, turnStarted: true } })).toBe("interrupt");
+      expect(stop({ snapshot: { ...cloud, phase: "cancelled" } })).toBe("interrupt");
+      expect(stop({ snapshot: null })).toBe("interrupt");
+      expect(stop({ snapshot: null, canInterrupt: false })).toBeNull();
+    });
+  });
 
   it("reads the settled snapshot back from the thread's activities", () => {
     const activities = [

@@ -9,6 +9,7 @@ import {
   OrchestrationV2ThreadShell,
   OrchestrationV2ThreadStreamItem,
   ThreadId,
+  WorktreeSetupStreamEvent,
 } from "@t3tools/contracts";
 import { SignalboxContextId } from "@t3tools/contracts/signalboxContexts";
 import {
@@ -78,6 +79,7 @@ export const ThreadMonitorWire = Schema.Struct({
 export type ThreadMonitor = typeof ThreadMonitorWire.Type;
 
 export const wire = {
+  preparation: jsonCodec(WorktreeSetupStreamEvent),
   summary: jsonCodec(ThreadSummaryWire),
   command: jsonCodec(OrchestrationV2Command),
   launchInput: jsonCodec(LaunchInputWire),

@@ -19,6 +19,7 @@ import * as SqlClient from "effect/sql/SqlClient";
 import type { SqlError } from "effect/sql/SqlError";
 
 import * as Migrations from "../storage/migrations.ts";
+import { PreparationState } from "./preparation/preparationState.ts";
 import { migrateDiagnostics } from "./diagnostics/DiagnosticsStore.ts";
 import { migrateBrowsing } from "./browsing/browsingTables.ts";
 import { migratePullRequestPolls } from "./pullRequests/PullRequestPolls.ts";
@@ -94,6 +95,7 @@ export interface MachineLease {
   readonly drains?: boolean | undefined;
   /** This generation's Runner takes `steer` (#562), as its `hello` said. */
   readonly steers?: boolean | undefined;
+  readonly preparations?: boolean | undefined;
   /**
    * The idle machine was asked to save everything before it goes (#493), at
    * `id` (when it was asked), and whether it answered and what it couldn't save.
@@ -159,6 +161,7 @@ export class ThreadStore extends Context.Service<
       readonly summaryChanged: boolean;
       /** The machine lease as of these events, such as a Runner batch's acknowledgement. */
       readonly machine?: MachineLease;
+      readonly preparation?: PreparationState;
       /** The instructions of the thread's chain, for the run these events start. */
       readonly instructions?: {
         readonly runId: string;
@@ -193,6 +196,7 @@ export class ThreadStore extends Context.Service<
       readonly note: ThreadStatusNote;
       readonly summaryChanged: boolean;
     }) => Effect.Effect<void, SqlError>;
+    readonly preparation: Effect.Effect<PreparationState | null, SqlError>;
     readonly machine: Effect.Effect<MachineLease, SqlError>;
     readonly saveMachine: (machine: MachineLease) => Effect.Effect<void, SqlError>;
     /** The machine backend's record of the thread's machine (`MachineBackend.ts`). */
@@ -308,6 +312,10 @@ const migrations = Migrator.fromRecord({
   "0010_browsing": migrateBrowsing,
   // The thread's status note and the runtime's cursor through ended runs (#670, `statusLine/`).
   "0011_status_note": migrateStatusNote,
+  "0012_preparation": Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    yield* sql`CREATE TABLE preparation (id INTEGER PRIMARY KEY CHECK (id = 1), state TEXT NOT NULL)`;
+  }),
 });
 
 /** Applies every migration not recorded yet (`storage/migrations.ts`). Never edit or rename a merged one. */
@@ -374,6 +382,7 @@ const MachineLeaseJson = Schema.fromJsonString(
     movedUp: Schema.optional(Schema.Boolean),
     drains: Schema.optional(Schema.Boolean),
     steers: Schema.optional(Schema.Boolean),
+    preparations: Schema.optional(Schema.Boolean),
     drain: Schema.optional(
       Schema.Union([
         Schema.Struct({ _tag: Schema.Literal("asked"), id: Schema.Number }),
@@ -385,6 +394,11 @@ const MachineLeaseJson = Schema.fromJsonString(
       ]),
     ),
   }),
+);
+const PreparationJson = Schema.fromJsonString(PreparationState);
+const encodePreparation = Schema.encodeSync(PreparationJson);
+const decodePreparationRows = Schema.decodeUnknownSync(
+  Schema.Array(Schema.Struct({ state: PreparationJson })),
 );
 const encodeMachine = Schema.encodeSync(MachineLeaseJson);
 const decodeMachineRows = Schema.decodeUnknownSync(
@@ -445,6 +459,11 @@ const make = Effect.gen(function* () {
       }),
     );
 
+  const preparation: ThreadStore["Service"]["preparation"] =
+    sql`SELECT state FROM preparation WHERE id = 1`.pipe(
+      Effect.map((rows) => decodePreparationRows(rows)[0]?.state ?? null),
+    );
+
   const machine: ThreadStore["Service"]["machine"] =
     sql`SELECT lease FROM machine WHERE id = 1`.pipe(
       Effect.map((rows) => decodeMachineRows(rows)[0]?.lease ?? NO_MACHINE),
@@ -488,6 +507,10 @@ const make = Effect.gen(function* () {
       yield* sql`UPDATE outbox SET revision = MAX(${sequence}, revision + 1) WHERE id = 1`;
     }
     if (input.machine) yield* saveMachine(input.machine);
+    if (input.preparation) {
+      yield* sql`INSERT INTO preparation (id, state) VALUES (1, ${encodePreparation(input.preparation)})
+        ON CONFLICT (id) DO UPDATE SET state = excluded.state`;
+    }
     if (input.instructions) {
       yield* sql`INSERT INTO run_instructions (run_id, levels)
           VALUES (${input.instructions.runId}, ${encodeInstructions(input.instructions.levels)})
@@ -565,6 +588,7 @@ const make = Effect.gen(function* () {
     );
 
   return ThreadStore.of({
+    preparation,
     initialized,
     initialize: Effect.asVoid(migrate.pipe(Effect.provideService(SqlClient.SqlClient, sql))),
     owner,

@@ -26,7 +26,10 @@ import {
   type RunId,
   type WorktreeSetupSnapshot,
 } from "@t3tools/contracts";
-import { worktreeSetupAgentStarted } from "@t3tools/client-runtime/worktree-setup";
+import {
+  worktreeSetupAgentStarted,
+  type WorktreeSetupActionStatus,
+} from "@t3tools/client-runtime/worktree-setup";
 import * as DateTime from "effect/DateTime";
 import { parseScopedThreadKey } from "@t3tools/client-runtime/environment";
 import { resolveAssetUrl } from "@t3tools/client-runtime/state/assets";
@@ -282,6 +285,25 @@ export function resolveWorktreeSetupProgress(input: {
       input.runStatus === "preparing" ||
       (snapshot?.phase === "running" && !worktreeSetupAgentStarted(snapshot)),
   };
+}
+
+/**
+ * What the composer's stop and the stop shortcut do. Before the agent handoff
+ * stop belongs to setup: it cancels the attempt a snapshot names, or does
+ * nothing until one does. A run interrupt there would end the attempt as
+ * unretryable, and Cloud rejects an unguarded setup cancel.
+ */
+export function resolveComposerStop(input: {
+  setupSnapshot: WorktreeSetupSnapshot | null;
+  awaitingSetupSnapshot: boolean;
+  setupCancel: WorktreeSetupActionStatus | null;
+  canInterrupt: boolean;
+}): "cancel-setup" | "interrupt" | null {
+  const setupHoldsThread = input.setupSnapshot
+    ? input.setupSnapshot.phase === "running" && !worktreeSetupAgentStarted(input.setupSnapshot)
+    : input.awaitingSetupSnapshot;
+  if (setupHoldsThread) return input.setupCancel === "available" ? "cancel-setup" : null;
+  return input.canInterrupt ? "interrupt" : null;
 }
 
 export function resolveDraftHeroState(input: {

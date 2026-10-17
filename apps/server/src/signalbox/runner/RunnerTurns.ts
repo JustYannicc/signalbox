@@ -11,6 +11,7 @@ import {
 import type { SecretValue } from "@signalbox/runner-protocol/SecretScrubber";
 import type { SecretsAccess } from "@signalbox/runner-protocol/SecretsProtocol";
 import type { SessionAccess } from "@signalbox/runner-protocol/SessionProtocol";
+import { makeRunnerPreparations, type RunnerPreparationState } from "./RunnerPreparations.ts";
 import {
   MessageId,
   type OrchestrationV2ProviderThread,
@@ -128,6 +129,11 @@ export interface RunnerTurns {
   }) => Effect.Effect<void>;
   /** Stops `runId`, wherever it is: loading, or running on the harness. */
   readonly interrupt: (runId: RunId) => Effect.Effect<void>;
+  readonly cancelPreparation: (runId: RunId, generation: number) => Effect.Effect<void>;
+  readonly handoffPreparation: (runId: RunId, generation: number) => Effect.Effect<void>;
+  readonly preparationsTaken: Effect.Effect<
+    ReadonlyArray<{ readonly runId: RunId; readonly preparationGeneration: number }>
+  >;
   /**
    * Hands `message` to `runId`'s turn on the harness (#562), once the harness
    * has named it. Each message is taken once, so the thread can repeat itself.
@@ -166,10 +172,9 @@ interface Held {
 }
 
 /** A run this machine was handed, until the harness ends its turn. */
-interface Turn {
+interface Turn extends RunnerPreparationState {
   readonly turn: RunnerTurn;
   readonly attemptId: RunAttemptId;
-  status: "loading" | "running" | "stopped";
   session: ProviderAdapterV2SessionRuntime | null;
   providerThread: OrchestrationV2ProviderThread | null;
   providerTurnId: ProviderTurnId | null;
@@ -183,6 +188,8 @@ interface Turn {
   /** The view this run pinned while its checkout and session loaded. */
   pinnedContext: Fiber.Fiber<CheckpointViews["context"], never> | null;
 }
+
+const isStopped = (turn: Turn) => turn.status === "stopped";
 
 const encodeAdapterEvent = Schema.encodeUnknownSync(Schema.toCodecJson(ProviderAdapterV2Event));
 
@@ -296,6 +303,13 @@ export const makeRunnerTurns = Effect.fn("makeRunnerTurns")(function* (input: {
     if (turns.get(runId) === turn) turns.delete(runId);
     Deferred.doneUnsafe(turn.ended, Exit.void);
   };
+  const preparations = makeRunnerPreparations({
+    find: (runId) => turns.get(runId),
+    forget,
+    taken,
+    emit: input.emit,
+    scope,
+  });
   /** The run adapter events belong to: the latest one started. */
   let latestRunId: RunId | null = null;
   let latestTraceId: string | null = null;
@@ -380,11 +394,23 @@ export const makeRunnerTurns = Effect.fn("makeRunnerTurns")(function* (input: {
     );
 
   /** Installs only on a machine that can keep the turn; a light machine moves up on demand. */
-  const prepareDependencies = (runId: RunId) => {
+  const prepareDependencies = (runId: RunId, preparation?: Turn) => {
     if (input.dependencies === undefined || input.machineClass === "light") return Effect.void;
     return input.dependencies.prepare(
       () => Effect.void,
-      (update) => input.emit({ kind: "dependencies.progress", runId, ...update }),
+      (update) =>
+        Effect.suspend(() =>
+          preparation?.status === "stopped"
+            ? Effect.void
+            : input.emit({
+                kind: "dependencies.progress",
+                runId,
+                ...update,
+                ...(preparation?.turn.preparationGeneration === undefined
+                  ? {}
+                  : { preparationGeneration: preparation.turn.preparationGeneration }),
+              }),
+        ),
     );
   };
 
@@ -1050,6 +1076,18 @@ export const makeRunnerTurns = Effect.fn("makeRunnerTurns")(function* (input: {
                     turn.restartContinuationOfRunId === undefined
                       ? (turn.appThread.pullRequests ?? [])
                       : [],
+                    (stage, status) =>
+                      Effect.suspend(() =>
+                        state.status === "stopped" || turn.preparationGeneration === undefined
+                          ? Effect.void
+                          : input.emit({
+                              kind: "preparation.progress",
+                              runId: turn.runId,
+                              preparationGeneration: turn.preparationGeneration,
+                              stage,
+                              status,
+                            }),
+                      ),
                   )
                   .pipe(
                     Effect.mapError((error) =>
@@ -1057,7 +1095,8 @@ export const makeRunnerTurns = Effect.fn("makeRunnerTurns")(function* (input: {
                     ),
                   )
               : null;
-          yield* prepareDependencies(turn.runId);
+          if (isStopped(state)) return yield* Effect.interrupt;
+          yield* prepareDependencies(turn.runId, state);
           // Edits the thread made inside dependency trees, once the trees are rebuilt (#490).
           if (opened !== null && input.machineClass !== "light") {
             yield* opened.restoreDependencyEdits;
@@ -1100,6 +1139,7 @@ export const makeRunnerTurns = Effect.fn("makeRunnerTurns")(function* (input: {
           return { drive, secrets };
         }),
       );
+      if (isStopped(state)) return yield* Effect.interrupt;
       yield* input.useModelToken(modelToken).pipe(Effect.mapError(machineStateError));
       // The harness loads its session as last saved: on a new machine, from the store.
       if (input.sessions !== undefined && sessionAccess !== null) {
@@ -1117,8 +1157,17 @@ export const makeRunnerTurns = Effect.fn("makeRunnerTurns")(function* (input: {
                 // Its message says why, naming the turn's own files when they're the reason.
                 .pipe(Effect.mapError((error) => new RunnerTurnError({ message: error.message }))),
             );
+      if (turn.preparationGeneration !== undefined) {
+        yield* input.emit({
+          kind: "preparation.ready",
+          runId: turn.runId,
+          preparationGeneration: turn.preparationGeneration,
+        });
+        yield* Deferred.await(state.handoff);
+      }
+      if (isStopped(state)) return yield* Effect.interrupt;
       // A turn already stopped never waits on, or restarts, the session the next one runs on.
-      if (state.status !== "stopped") yield* windDown(adapter.instanceId, turn.runId);
+      yield* windDown(adapter.instanceId, turn.runId);
       const session = yield* sessionFor(adapter, turn, runtimePolicy, {
         instructions: prepared.drive?.instructions ?? "",
         secrets: prepared.secrets,
@@ -1145,6 +1194,9 @@ export const makeRunnerTurns = Effect.fn("makeRunnerTurns")(function* (input: {
           yield* input.emit({
             kind: "turn.started",
             runId: turn.runId,
+            ...(turn.preparationGeneration === undefined
+              ? {}
+              : { preparationGeneration: turn.preparationGeneration }),
             providerSession: session.providerSession,
             providerThread,
           });
@@ -1180,17 +1232,38 @@ export const makeRunnerTurns = Effect.fn("makeRunnerTurns")(function* (input: {
       Effect.catchCause((cause) =>
         ordered.withPermits(1)(
           Effect.gen(function* () {
+            if (state.status === "stopped") {
+              forget(turn.runId, state);
+              return;
+            }
             yield* Effect.logError("turn failed to start", Cause.pretty(cause));
             forget(turn.runId, state);
             if (runningRunId === turn.runId) runningRunId = null;
             yield* input.emit(
-              log(turn.runId, "error", failureLine("turn failed to start", cause, stderrMark)),
+              log(
+                turn.runId,
+                "error",
+                turn.preparationGeneration !== undefined && !state.handedOff
+                  ? "Preparing this thread failed. You can try again."
+                  : failureLine("turn failed to start", cause, stderrMark),
+              ),
             );
-            yield* input.emit({
-              kind: "turn.failed",
-              runId: turn.runId,
-              message: failureMessage(cause),
-            });
+            if (turn.preparationGeneration !== undefined && !state.handedOff) {
+              yield* input.emit({
+                kind: "preparation.failed",
+                runId: turn.runId,
+                preparationGeneration: turn.preparationGeneration,
+              });
+            } else {
+              yield* input.emit({
+                kind: "turn.failed",
+                runId: turn.runId,
+                message: failureMessage(cause),
+                ...(turn.preparationGeneration === undefined
+                  ? {}
+                  : { preparationGeneration: turn.preparationGeneration }),
+              });
+            }
           }),
         ),
       ),
@@ -1206,12 +1279,14 @@ export const makeRunnerTurns = Effect.fn("makeRunnerTurns")(function* (input: {
     secrets: secretsAccess = null,
   }) =>
     Effect.suspend(() => {
-      if (taken.has(turn.runId)) return Effect.void;
-      taken.add(turn.runId);
+      if (!preparations.take(turn)) return Effect.void;
       const state: Turn = {
         turn,
         attemptId: turn.attemptId,
         status: "loading",
+        preparationFiber: null,
+        handoff: Deferred.makeUnsafe<void>(),
+        handedOff: turn.preparationGeneration === undefined,
         session: null,
         providerThread: null,
         providerTurnId: null,
@@ -1228,6 +1303,11 @@ export const makeRunnerTurns = Effect.fn("makeRunnerTurns")(function* (input: {
         Effect.andThen(
           run(turn, modelToken, access, sessionAccess, secretsAccess, state).pipe(
             Effect.forkIn(scope),
+            Effect.tap((fiber) =>
+              Effect.sync(() => {
+                state.preparationFiber = fiber;
+              }),
+            ),
           ),
         ),
         Effect.asVoid,
@@ -1312,6 +1392,9 @@ export const makeRunnerTurns = Effect.fn("makeRunnerTurns")(function* (input: {
 
   return {
     start,
+    cancelPreparation: preparations.cancel,
+    handoffPreparation: preparations.handoff,
+    preparationsTaken: preparations.taken,
     interrupt,
     steer,
     keepOnly,

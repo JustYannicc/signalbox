@@ -35,6 +35,7 @@ const item = (label: string): RunnerItem => ({
  */
 const makeFakeThread = Effect.gen(function* () {
   const committed = yield* Ref.make<ReadonlyArray<RunnerItem>>([]);
+  const connected = yield* Deferred.make<void>();
   const acked = yield* Ref.make(0);
   const hellos = yield* Ref.make<ReadonlyArray<number>>([]);
   /** The runs each `hello` said its process holds. */
@@ -66,6 +67,7 @@ const makeFakeThread = Effect.gen(function* () {
                 ackedSequence: yield* Ref.get(acked),
                 activeRunId: runId,
               });
+              yield* Deferred.succeed(connected, undefined);
               return;
             case "batch": {
               const last = yield* Ref.get(acked);
@@ -91,13 +93,18 @@ const makeFakeThread = Effect.gen(function* () {
       inbox === null ? Effect.void : Effect.asVoid(Queue.offer(inbox, message)),
     );
 
-  return { transport, committed, acked, hellos, helloRuns, dropAfterCommit, toCurrent };
+  return { transport, committed, acked, hellos, helloRuns, dropAfterCommit, toCurrent, connected };
 });
 
 /** A harness whose reports the test writes by hand. */
 const makeFakeTurns = Effect.gen(function* () {
   const emitRef = yield* Deferred.make<(item: RunnerItem) => Effect.Effect<void>>();
   const startedTurns = yield* Ref.make<ReadonlyArray<RunId>>([]);
+  const preparationCommands = yield* Queue.unbounded<{
+    readonly type: string;
+    readonly runId: RunId;
+    readonly generation: number;
+  }>();
   /** How often everything was saved for a drain, and what each drain says it couldn't save. */
   const drains = yield* Ref.make(0);
   const unsaved = yield* Ref.make<ReadonlyArray<string>>([]);
@@ -105,6 +112,11 @@ const makeFakeTurns = Effect.gen(function* () {
     Effect.as(Deferred.succeed(emitRef, emit), {
       start: (next) => Ref.update(startedTurns, (all) => [...all, next.turn.runId]),
       interrupt: () => Effect.void,
+      cancelPreparation: (runId, generation) =>
+        Effect.asVoid(Queue.offer(preparationCommands, { type: "cancel", runId, generation })),
+      handoffPreparation: (runId, generation) =>
+        Effect.asVoid(Queue.offer(preparationCommands, { type: "handoff", runId, generation })),
+      preparationsTaken: Effect.succeed([]),
       keepOnly: () => Effect.void,
       steer: () => Effect.void,
       drain: Ref.update(drains, (count) => count + 1).pipe(Effect.andThen(Ref.get(unsaved))),
@@ -112,7 +124,7 @@ const makeFakeTurns = Effect.gen(function* () {
     } satisfies RunnerTurns);
   const emit = (reported: RunnerItem) =>
     Effect.flatMap(Deferred.await(emitRef), (send) => send(reported));
-  return { make, emit, startedTurns, drains, unsaved };
+  return { make, emit, startedTurns, drains, unsaved, preparationCommands };
 });
 
 /** Lets the session's fibers run until `done` holds, advancing the test clock past reconnect waits. */
@@ -142,6 +154,29 @@ const sessionOf = (
   });
 
 describe("RunnerSession", () => {
+  it.effect("routes addressed preparation cancellation and handoff to the turn driver", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const thread = yield* makeFakeThread;
+        const turns = yield* makeFakeTurns;
+        yield* sessionOf(thread, turns);
+        yield* Deferred.await(thread.connected);
+        yield* thread.toCurrent({ type: "preparation.cancel", runId, preparationGeneration: 2 });
+        expect(yield* Queue.take(turns.preparationCommands)).toEqual({
+          type: "cancel",
+          runId,
+          generation: 2,
+        });
+        yield* thread.toCurrent({ type: "preparation.handoff", runId, preparationGeneration: 3 });
+        expect(yield* Queue.take(turns.preparationCommands)).toEqual({
+          type: "handoff",
+          runId,
+          generation: 3,
+        });
+      }),
+    ),
+  );
+
   it.effect("answers a drain once it saved everything, saying what it couldn't", () =>
     Effect.scoped(
       Effect.gen(function* () {

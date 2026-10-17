@@ -414,6 +414,7 @@ export const makeMemoryCloud = (
           A,
           E,
           | ThreadEngine.ThreadEngine
+          | ThreadRunner.ThreadRunner
           | ThreadStore.ThreadStore
           | UserDirectory.UserDirectory
           | ThreadBrowsing.ThreadBrowsing
@@ -515,6 +516,7 @@ export const makeMemoryCloud = (
         A,
         E,
         | ThreadEngine.ThreadEngine
+        | ThreadRunner.ThreadRunner
         | ThreadStore.ThreadStore
         | UserDirectory.UserDirectory
         | TurnReports.TurnReports
@@ -592,6 +594,15 @@ export const makeMemoryCloud = (
   return {
     userDirectory,
     threadDirectory,
+    /** Runner reports enter the same thread runtime that production API calls address. */
+    inThread: <A>(
+      threadId: string,
+      effect: Effect.Effect<
+        A,
+        never,
+        ThreadRunner.ThreadRunner | ThreadEngine.ThreadEngine | ThreadStore.ThreadStore
+      >,
+    ) => Effect.promise(() => threadFor(threadId).run(effect)),
     /** Runs `effect` in a user object, with its automations. */
     inUser: <A, E>(
       userId: string,

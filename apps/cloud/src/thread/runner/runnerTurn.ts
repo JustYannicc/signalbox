@@ -258,6 +258,11 @@ function itemEvents(
   // A report about a run that already ended (stopped, or failed for want of a machine).
   if (run === undefined || run.id !== item.runId) return [];
   switch (item.kind) {
+    case "preparation.progress":
+    case "preparation.ready":
+    case "preparation.cancelled":
+    case "preparation.failed":
+      return [];
     case "turn.started":
       return startedEvents(projection, run, item, ctx);
     case "turn.failed":

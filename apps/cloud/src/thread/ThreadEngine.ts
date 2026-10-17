@@ -9,6 +9,9 @@ import {
   type OrchestrationV2ThreadProjection,
   type OrchestrationV2ThreadStreamItem,
   type ThreadId,
+  type WorktreeSetupSnapshot,
+  type WorktreeSetupCancelInput,
+  WorktreeSetupError,
 } from "@t3tools/contracts";
 import type { SignalboxContextId } from "@t3tools/contracts/signalboxContexts";
 import type {
@@ -29,6 +32,14 @@ import * as Ref from "effect/Ref";
 import * as Scope from "effect/Scope";
 import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
+
+import { isHarnessInstance } from "./providerCatalog.ts";
+import {
+  beginPreparation,
+  changePreparation,
+  preparationEvents,
+  type PreparationState,
+} from "./preparation/preparationState.ts";
 
 import { traceIdOf } from "./diagnostics/traceId.ts";
 import { hasPendingTurnWork, scriptedStep } from "./scriptedTurn.ts";
@@ -112,6 +123,7 @@ export type ThreadSnapshot = typeof ThreadSnapshotWire.Type;
 export interface EngineDecision<A> {
   readonly events: ReadonlyArray<OrchestrationV2DomainEvent>;
   readonly machine?: ThreadStore.MachineLease;
+  readonly preparation?: PreparationState;
   readonly result: A;
 }
 
@@ -140,6 +152,14 @@ export class ThreadEngine extends Context.Service<
       OrchestrationV2ThreadLaunchResult,
       ThreadNotFoundError | ThreadCommandRejectedError
     >;
+    readonly preparation: Effect.Effect<PreparationState | null>;
+    readonly subscribePreparation: (
+      actor: Actor,
+    ) => Effect.Effect<Stream.Stream<WorktreeSetupSnapshot | null>, ThreadNotFoundError>;
+    readonly cancelPreparation: (
+      actor: Actor,
+      input: WorktreeSetupCancelInput,
+    ) => Effect.Effect<{ readonly cancelled: boolean }, ThreadNotFoundError | WorktreeSetupError>;
     readonly snapshot: (actor: Actor) => Effect.Effect<ThreadSnapshot, ThreadNotFoundError>;
     /**
      * `subscribeThread`: a snapshot or the events after the client's cursor,
@@ -224,6 +244,7 @@ interface Thread {
 interface State {
   readonly head: number;
   readonly thread: Thread | null;
+  readonly preparation: PreparationState | null;
   /** The automation runs attached to the thread, kept outside its log. */
   readonly monitors: ReadonlyArray<ThreadMonitor>;
   /** The status note, kept outside its log like the monitors. */
@@ -263,6 +284,7 @@ const make = Effect.gen(function* () {
   const turnModels = yield* TurnModels.TurnModels;
   const lock = yield* Semaphore.make(1);
   const published = yield* PubSub.unbounded<Batch>();
+  const preparationPublished = yield* PubSub.unbounded<WorktreeSetupSnapshot | null>();
 
   // Storage failures inside an object are fatal for the request; the caller sees a defect.
   // An object whose thread was never created has no tables, and reads nothing.
@@ -276,10 +298,11 @@ const make = Effect.gen(function* () {
             owner: store.owner,
             monitors: store.monitors,
             statusNote: store.statusNote,
+            preparation: store.preparation,
           }),
         ),
       )
-    : { events: [], owner: null, monitors: [], statusNote: null };
+    : { events: [], owner: null, monitors: [], statusNote: null, preparation: null };
   const initialProjection = applyEvents(
     null,
     initial.events.map((stored) => stored.event),
@@ -292,6 +315,7 @@ const make = Effect.gen(function* () {
         : { owner: initial.owner, projection: initialProjection },
     monitors: initial.monitors,
     statusNote: initial.statusNote,
+    preparation: initial.preparation,
     summaryKey: summaryKey(initialProjection, initial.monitors, initial.statusNote),
   });
 
@@ -315,6 +339,7 @@ const make = Effect.gen(function* () {
     /** Set by the commit that creates the thread. */
     readonly owner?: ThreadStore.ThreadOwner;
     readonly machine?: ThreadStore.MachineLease;
+    readonly preparation?: PreparationState;
     /** The chain's instructions for the run this commit starts. */
     readonly instructions?: {
       readonly runId: string;
@@ -333,6 +358,16 @@ const make = Effect.gen(function* () {
     // The thread's first commit creates its storage.
     if (current.thread === null) yield* Effect.orDie(store.initialize);
     const nextKey = summaryKey(projection, current.monitors, current.statusNote);
+    const startingRun = projection.runs.find(
+      (run) =>
+        (run.status === "starting" || run.status === "preparing") &&
+        isHarnessInstance(run.providerInstanceId),
+    );
+    const preparation =
+      input.preparation ??
+      (startingRun !== undefined && current.preparation?.runId !== startingRun.id
+        ? beginPreparation(projection, startingRun.id, 0, current.preparation, yield* context)
+        : current.preparation);
     const head = yield* Effect.orDie(
       store.commit({
         head: current.head,
@@ -342,10 +377,19 @@ const make = Effect.gen(function* () {
         ...(input.secrets === undefined ? {} : { secrets: input.secrets }),
         ...(current.thread === null ? { owner } : {}),
         ...(input.machine ? { machine: input.machine } : {}),
+        ...(preparation === current.preparation || preparation === null ? {} : { preparation }),
         summaryChanged: nextKey !== current.summaryKey,
       }),
     );
-    yield* Ref.set(state, { ...current, head, thread: { owner, projection }, summaryKey: nextKey });
+    yield* Ref.set(state, {
+      ...current,
+      head,
+      thread: { owner, projection },
+      summaryKey: nextKey,
+      preparation,
+    });
+    if (preparation?.snapshot !== current.preparation?.snapshot)
+      yield* PubSub.publish(preparationPublished, preparation?.snapshot ?? null);
     if (events.length > 0) {
       yield* PubSub.publish(
         published,
@@ -398,6 +442,7 @@ const make = Effect.gen(function* () {
       ctx: DecisionContext,
       /** The pool the thread's turns run on; null when its chain has none. Undefined: unresolved. */
       pool: string | null | undefined,
+      preparation: PreparationState | null,
     ) => Decision,
   ) =>
     serialized(
@@ -422,7 +467,12 @@ const make = Effect.gen(function* () {
           creation.pools === null || projectId === undefined
             ? undefined
             : forThread(creation.pools, projectId);
-        const decision = decideWith(current.thread?.projection ?? null, yield* context, pool);
+        const decision = decideWith(
+          current.thread?.projection ?? null,
+          yield* context,
+          pool,
+          current.preparation,
+        );
         const refuse = (message: string, options: { readonly record: boolean }) =>
           Effect.gen(function* () {
             // Only a thread that exists keeps receipts; an unknown id leaves no trace.
@@ -462,6 +512,7 @@ const make = Effect.gen(function* () {
         }
         const sequence = yield* commit({
           events: decision.events,
+          ...(decision.preparation === undefined ? {} : { preparation: decision.preparation }),
           command: {
             ...command,
             ...(started === undefined
@@ -501,7 +552,7 @@ const make = Effect.gen(function* () {
         createsThread: command.type === "thread.create",
         ...(command.type === "thread.create" ? { projectId: command.projectId } : {}),
       },
-      (projection, ctx, pool) => {
+      (projection, ctx, pool, preparation) => {
         const onItsPool =
           typeof pool === "string" ? commandOnPool(command, projection, pool) : command;
         return decide(
@@ -514,7 +565,10 @@ const make = Effect.gen(function* () {
               }
             : onItsPool,
           ctx,
-          creation.idleSinceMs === undefined ? {} : { idleSinceMs: creation.idleSinceMs },
+          {
+            ...(creation.idleSinceMs === undefined ? {} : { idleSinceMs: creation.idleSinceMs }),
+            preparation,
+          },
         );
       },
     ).pipe(Effect.map(({ sequence }) => ({ sequence })));
@@ -543,6 +597,73 @@ const make = Effect.gen(function* () {
       const { projection } = yield* readable(actor);
       return { threadId: input.threadId, projection, resumed: result.replayed };
     });
+
+  const preparation: ThreadEngine["Service"]["preparation"] = Effect.map(
+    Ref.get(state),
+    (current) => current.preparation,
+  );
+
+  const subscribePreparation: ThreadEngine["Service"]["subscribePreparation"] = (actor) =>
+    serialized(
+      Effect.gen(function* () {
+        yield* readable(actor);
+        const current = yield* preparation;
+        const scope = yield* Scope.make();
+        const subscription = yield* PubSub.subscribe(preparationPublished).pipe(
+          Scope.provide(scope),
+        );
+        return Stream.concat(
+          Stream.make(current?.snapshot ?? null),
+          Stream.fromSubscription(subscription),
+        ).pipe(Stream.ensuring(Scope.close(scope, Exit.void)));
+      }),
+    );
+
+  const cancelPreparation: ThreadEngine["Service"]["cancelPreparation"] = (actor, input) =>
+    serialized(
+      Effect.gen(function* () {
+        const { projection } = yield* readable(actor);
+        const current = yield* preparation;
+        if (
+          input.threadId !== projection.thread.id ||
+          input.runId === undefined ||
+          input.preparationGeneration === undefined ||
+          current === null ||
+          input.runId !== current.runId ||
+          input.preparationGeneration !== current.generation
+        ) {
+          return yield* new WorktreeSetupError({
+            message: "This preparation attempt is missing or out of date.",
+          });
+        }
+        if (current.status !== "preparing" && current.status !== "cancelling") {
+          return yield* new WorktreeSetupError({
+            message: "This preparation can no longer be cancelled.",
+          });
+        }
+        const run = projection.runs.find((candidate) => candidate.id === current.runId);
+        if (
+          run === undefined ||
+          run.startedAt !== null ||
+          (run.status !== "starting" && run.status !== "preparing")
+        ) {
+          return yield* new WorktreeSetupError({
+            message: "This preparation can no longer be cancelled.",
+          });
+        }
+        if (current.status === "preparing") {
+          const lease = yield* Effect.orDie(store.machine);
+          const stopped =
+            current.machineGeneration === 0 ||
+            lease.status === "none" ||
+            lease.generation !== current.machineGeneration;
+          const ctx = yield* context;
+          const next = changePreparation(current, stopped ? "cancelled" : "cancelling", ctx);
+          yield* commit({ events: preparationEvents(projection, next, ctx), preparation: next });
+        }
+        return { cancelled: true };
+      }),
+    );
 
   const snapshot: ThreadEngine["Service"]["snapshot"] = (actor) =>
     Effect.map(readable(actor), ({ head, projection }) => ({ snapshotSequence: head, projection }));
@@ -578,10 +699,11 @@ const make = Effect.gen(function* () {
       Effect.gen(function* () {
         const current = yield* Ref.get(state);
         const decision = yield* decideWith(current.thread?.projection ?? null, yield* context);
-        if (decision.events.length > 0) {
+        if (decision.events.length > 0 || decision.preparation !== undefined) {
           yield* commit({
             events: decision.events,
             ...(decision.machine ? { machine: decision.machine } : {}),
+            ...(decision.preparation === undefined ? {} : { preparation: decision.preparation }),
           });
         } else if (decision.machine) {
           yield* Effect.orDie(store.saveMachine(decision.machine));
@@ -729,6 +851,9 @@ const make = Effect.gen(function* () {
     Effect.map(Ref.get(state), (current) => visibleTo(current, actor) !== null);
 
   return ThreadEngine.of({
+    preparation,
+    subscribePreparation,
+    cancelPreparation,
     canSee,
     dispatch,
     launch,

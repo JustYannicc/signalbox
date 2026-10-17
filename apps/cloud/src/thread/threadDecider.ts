@@ -11,6 +11,12 @@ import {
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 
+import {
+  beginPreparation,
+  type PreparationState,
+  retryPreparationEvents,
+} from "./preparation/preparationState.ts";
+
 import { isHarnessInstance } from "./providerCatalog.ts";
 import { pullRequestLinkEvents } from "./pullRequests/pullRequestLinks.ts";
 import {
@@ -33,7 +39,11 @@ import { applyEvents } from "./threadProjection.ts";
  */
 
 export type Decision =
-  | { readonly _tag: "accepted"; readonly events: ReadonlyArray<OrchestrationV2DomainEvent> }
+  | {
+      readonly _tag: "accepted";
+      readonly events: ReadonlyArray<OrchestrationV2DomainEvent>;
+      readonly preparation?: PreparationState;
+    }
   | { readonly _tag: "rejected"; readonly message: string };
 
 const accept = (events: ReadonlyArray<OrchestrationV2DomainEvent>): Decision => ({
@@ -65,6 +75,7 @@ const CLOUD_COMMAND_TYPES = [
   "thread.create",
   "message.dispatch",
   "run.interrupt",
+  "prepared-run.retry",
   "queue.resume",
   "queued-run.cancel",
   "queued-message.promote-to-steer",
@@ -237,7 +248,7 @@ export function decide(
   command: OrchestrationV2Command,
   ctx: DecisionContext,
   /** `idleSinceMs`: archive only a thread unchanged since then (the idle-chat sweep's). */
-  expected: { readonly idleSinceMs?: number } = {},
+  expected: { readonly idleSinceMs?: number; readonly preparation?: PreparationState | null } = {},
 ): Decision {
   if (!isCloudCommand(command)) return reject(unsupported(command.type));
   if (command.type === "thread.create") {
@@ -246,6 +257,33 @@ export function decide(
   if (projection === null) return reject("This thread does not exist.");
   if (projection.thread.deletedAt !== null) return reject("This thread was deleted.");
   switch (command.type) {
+    case "prepared-run.retry": {
+      const current = expected.preparation;
+      const run = projection.runs.find((candidate) => candidate.id === command.runId);
+      if (
+        command.preparationGeneration === undefined ||
+        current == null ||
+        current.runId !== command.runId ||
+        current.generation !== command.preparationGeneration ||
+        (current.status !== "failed" && current.status !== "cancelled") ||
+        current.snapshot.turnStarted === true ||
+        run === undefined ||
+        run.startedAt !== null ||
+        (run.status !== "failed" && run.status !== "interrupted") ||
+        projection.thread.archivedAt !== null ||
+        activeRun(projection) !== undefined ||
+        projection.runs.some(
+          (candidate) => candidate.ordinal > run.ordinal && candidate.status !== "queued",
+        )
+      ) {
+        return reject("This preparation attempt is missing, out of date, or cannot be retried.");
+      }
+      return {
+        _tag: "accepted",
+        events: retryPreparationEvents(projection, run.id, ctx),
+        preparation: beginPreparation(projection, run.id, 0, current, ctx),
+      };
+    }
     case "message.dispatch":
       return dispatchMessage(projection, command, ctx);
     case "run.interrupt": {

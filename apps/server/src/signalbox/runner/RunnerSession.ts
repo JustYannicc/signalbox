@@ -194,6 +194,10 @@ export const makeRunnerSession = Effect.fn("makeRunnerSession")(function* (
         return acknowledge(message.sequence);
       case "turn.start":
         return turns.start(message);
+      case "preparation.cancel":
+        return turns.cancelPreparation(message.runId, message.preparationGeneration);
+      case "preparation.handoff":
+        return turns.handoffPreparation(message.runId, message.preparationGeneration);
       case "interrupt":
         return turns.interrupt(message.runId);
       case "steer":
@@ -233,6 +237,7 @@ export const makeRunnerSession = Effect.fn("makeRunnerSession")(function* (
         steers: true,
         // A started run missing here went with an earlier process on this machine.
         takenRunIds: yield* turns.taken,
+        takenPreparations: yield* turns.preparationsTaken,
       });
       const answer = yield* connection.receive;
       if (answer.type === "refused") {

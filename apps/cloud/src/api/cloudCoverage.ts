@@ -56,7 +56,6 @@ export const CLOUD_UNSERVED: Readonly<Record<string, Unserved>> = {
   "threads.queuedRun.reorder": gap("#439"),
   "threads.switchProvider": gap("#439"),
   "threads.stopSubagent": gap("#439"),
-  "threads.retryPreparation": gap("#439"),
   "threads.subscribeArchived": gap("#439"),
   "threads.commandOutput": gap("#439"),
   "threads.getTurnItem": gap("#439"),
@@ -139,7 +138,6 @@ export const CLOUD_UNSERVED: Readonly<Record<string, Unserved>> = {
   "vcs.createWorktree": ownBranch,
   "vcs.removeWorktree": ownBranch,
   "vcs.init": githubImports,
-  "worktreeSetup.*": ownBranch,
 };
 
 /** Whether `name` falls under `key`, an operation name or a `prefix.*`. */

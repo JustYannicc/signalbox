@@ -239,6 +239,7 @@ import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
 import { Spinner } from "../ui/spinner";
 import { Tooltip, TooltipPopup, TooltipTrigger, TooltipScrollDismissArea } from "../ui/tooltip";
 import { WorktreeSetupCard } from "./WorktreeSetupCard";
+import type { WorktreeSetupActions } from "./useWorktreeSetup";
 import {
   ContextChipPopover as UserMessageContextPopover,
   ContextChipShell,
@@ -343,7 +344,7 @@ interface TimelineRowSharedState {
   openPullRequest: (event: MouseEvent<HTMLElement>, url: string) => void;
   onToggleWorkGroup: (groupId: string, anchorKey: string) => void;
   onToggleWorkEntry: (anchorKey: string, collapsed: boolean) => void;
-  onCancelWorktreeSetup: (() => void) | null;
+  worktreeSetupActions: WorktreeSetupActions | null;
   retryableWorkspacePreparationRunIds: ReadonlySet<RunId>;
   onRetryWorkspacePreparation: ((runId: RunId) => void) | null;
   onWorktreeSetupWorkLocally: (() => void) | null;
@@ -430,7 +431,7 @@ interface MessagesTimelineProps {
   activeTurnInProgress: boolean;
   activeTurnStartedAt?: string | null;
   worktreeSetup?: WorktreeSetupSnapshot | null;
-  onCancelWorktreeSetup?: () => void;
+  worktreeSetupActions?: WorktreeSetupActions | null;
   retryableWorkspacePreparationRunIds?: ReadonlySet<RunId>;
   onRetryWorkspacePreparation?: (runId: RunId) => void;
   onWorktreeSetupWorkLocally?: () => void;
@@ -532,7 +533,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
   activeTurnStartedAt = null,
   worktreeSetup = null,
   footer = null,
-  onCancelWorktreeSetup,
+  worktreeSetupActions = null,
   retryableWorkspacePreparationRunIds = EMPTY_RUN_IDS,
   onRetryWorkspacePreparation,
   onWorktreeSetupWorkLocally,
@@ -1306,7 +1307,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
       onToggleAttemptFold,
       onToggleWorkGroup,
       onToggleWorkEntry: suspendEndScrollMaintenanceForDisclosure,
-      onCancelWorktreeSetup: onCancelWorktreeSetup ?? null,
+      worktreeSetupActions,
       retryableWorkspacePreparationRunIds,
       onRetryWorkspacePreparation: onRetryWorkspacePreparation ?? null,
       onWorktreeSetupWorkLocally: onWorktreeSetupWorkLocally ?? null,
@@ -1344,7 +1345,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
       onToggleAttemptFold,
       onToggleWorkGroup,
       suspendEndScrollMaintenanceForDisclosure,
-      onCancelWorktreeSetup,
+      worktreeSetupActions,
       retryableWorkspacePreparationRunIds,
       onRetryWorkspacePreparation,
       onWorktreeSetupWorkLocally,
@@ -2120,9 +2121,14 @@ function WorktreeSetupTimelineRow({
     <WorktreeSetupCard
       snapshot={row.snapshot}
       embedded={row.embedded}
-      onCancel={row.embedded ? null : ctx.onCancelWorktreeSetup}
+      actions={row.embedded ? null : ctx.worktreeSetupActions}
       onWorkLocally={
-        !row.embedded && row.snapshot.phase === "running" ? ctx.onWorktreeSetupWorkLocally : null
+        // Working locally cancels first, so it needs the same stop the card offers.
+        !row.embedded &&
+        row.snapshot.phase === "running" &&
+        ctx.worktreeSetupActions?.cancel === "available"
+          ? ctx.onWorktreeSetupWorkLocally
+          : null
       }
       onOpenTerminal={onOpenTerminal}
     />
@@ -3757,7 +3763,7 @@ function BackgroundWorktreeSetupChip({ snapshot }: { snapshot: WorktreeSetupSnap
         <WorktreeSetupCard
           snapshot={snapshot}
           embedded
-          onCancel={null}
+          actions={null}
           onWorkLocally={null}
           onOpenTerminal={onOpenTerminal}
         />

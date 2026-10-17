@@ -5,7 +5,6 @@ import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
 import {
-  RUNNER_PROTOCOL_VERSION,
   type RunnerItem,
   type ThreadMessage,
   threadFrame,
@@ -160,9 +159,10 @@ export const saveSession = (context: Context.Context<SessionRows.SessionRows>, n
     rows: [JSON.stringify({ type: "user", uuid: "row-1" })],
   });
 
+/** Existing execution fixtures exercise the v6 rollout path; preparation tests opt into v7. */
 export const hello = (generation: number, token: string) => ({
   type: "hello" as const,
-  protocolVersion: RUNNER_PROTOCOL_VERSION,
+  protocolVersion: 6,
   imageVersion: "test",
   machineId: "machine-1",
   threadId,

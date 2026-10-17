@@ -10,6 +10,7 @@ import {
   CircleIcon,
   LaptopIcon,
   MinusIcon,
+  RotateCcwIcon,
   TerminalIcon,
   XIcon,
 } from "lucide-react";
@@ -23,10 +24,12 @@ import { MiddleTruncate } from "../ui/middle-truncate";
 import { observeVisibleAnimation } from "~/lib/visibleAnimation";
 import { cn } from "~/lib/utils";
 import { WorkLogRow } from "./WorkLog";
+import type { WorktreeSetupActions } from "./useWorktreeSetup";
 
 interface WorktreeSetupCardProps {
   snapshot: WorktreeSetupSnapshot;
-  onCancel: (() => void) | null;
+  // Null when the server would refuse: after the agent handoff, or without the grant.
+  actions: WorktreeSetupActions | null;
   onWorkLocally: (() => void) | null;
   onOpenTerminal: (() => void) | null;
 }
@@ -309,7 +312,7 @@ function CollapsedSummaryRow({
 
 export function WorktreeSetupCard({
   snapshot,
-  onCancel,
+  actions,
   onWorkLocally,
   onOpenTerminal,
   embedded = false,
@@ -355,7 +358,7 @@ export function WorktreeSetupCard({
         </div>
       )}
 
-      {snapshot.phase === "failed" && snapshot.error ? (
+      {(snapshot.phase === "failed" || snapshot.phase === "cancelled") && snapshot.error ? (
         <p className="mt-1 ml-8 text-xs text-muted-foreground">{snapshot.error}</p>
       ) : null}
 
@@ -384,10 +387,32 @@ export function WorktreeSetupCard({
             Work locally
           </Button>
         ) : null}
-        {onCancel && running ? (
-          <Button type="button" size="xs" variant="ghost-muted" onClick={onCancel}>
-            <XIcon aria-hidden />
-            Cancel
+        {actions?.retry ? (
+          <Button
+            type="button"
+            size="xs"
+            variant="ghost-muted"
+            disabled={actions.retry === "pending"}
+            onClick={actions.onRetry}
+          >
+            {actions.retry === "pending" ? (
+              <Spinner aria-hidden="true" />
+            ) : (
+              <RotateCcwIcon aria-hidden />
+            )}
+            {actions.retry === "pending" ? "Retrying…" : "Retry"}
+          </Button>
+        ) : null}
+        {actions?.cancel && running ? (
+          <Button
+            type="button"
+            size="xs"
+            variant="ghost-muted"
+            disabled={actions.cancel === "pending"}
+            onClick={actions.onCancel}
+          >
+            {actions.cancel === "pending" ? <Spinner aria-hidden="true" /> : <XIcon aria-hidden />}
+            {actions.cancel === "pending" ? "Cancelling…" : "Cancel"}
           </Button>
         ) : null}
       </div>

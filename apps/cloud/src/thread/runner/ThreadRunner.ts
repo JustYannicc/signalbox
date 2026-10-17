@@ -25,6 +25,14 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import { formatDuration } from "@t3tools/shared/orchestrationTiming";
 
+import {
+  beginPreparation,
+  changePreparation,
+  preparationEvents,
+  type PreparationState,
+} from "../preparation/preparationState.ts";
+import { preparationBatch } from "../preparation/preparationBatch.ts";
+
 import type { DriveAuthorization, RemoteAuthorization } from "../ThreadAuthorization.ts";
 import { myDriveId } from "../../drive/driveAccess.ts";
 import { poolObjectName } from "../../pool/PoolDirectory.ts";
@@ -195,6 +203,7 @@ export interface MachinePlan {
 /** What the connected Runner should be doing right now. */
 export interface RunnerWork {
   readonly generation: number;
+  readonly preparation?: PreparationState | null;
   /** Whether `reconcile` has something to do now: ask, retry, time out or start the idle tail. */
   readonly needsUpkeep: boolean;
   /** A drain asked for and not answered yet (#493): asked again of each connection. */
@@ -489,6 +498,7 @@ const make = Effect.gen(function* () {
           disconnectedAt: null,
           drains: hello.drains === true,
           steers: hello.steers === true,
+          preparations: hello.protocolVersion >= 7,
         },
         result: {
           _tag: "welcome",
@@ -502,64 +512,84 @@ const make = Effect.gen(function* () {
     });
 
   const batch: ThreadRunner["Service"]["batch"] = (input) =>
-    withLease(({ projection, lease, now }, ctx) => {
-      if (
-        projection === null ||
-        lease.status !== "connected" ||
-        input.generation !== lease.generation
-      ) {
-        return Effect.succeed(keep<BatchResult>({ _tag: "stale" }));
-      }
-      if (input.sequence <= lease.ackedSequence) {
-        return Effect.succeed(keep<BatchResult>({ _tag: "ack", sequence: input.sequence }));
-      }
-      if (input.sequence !== lease.ackedSequence + 1) {
-        return Effect.succeed(
-          keep<BatchResult>({ _tag: "out_of_order", ackedSequence: lease.ackedSequence }),
+    withLease(({ projection, lease, now }, ctx) =>
+      Effect.gen(function* () {
+        if (
+          projection === null ||
+          lease.status !== "connected" ||
+          input.generation !== lease.generation
+        ) {
+          return keep<BatchResult>({ _tag: "stale" });
+        }
+        if (input.sequence <= lease.ackedSequence) {
+          return keep<BatchResult>({ _tag: "ack", sequence: input.sequence });
+        }
+        if (input.sequence !== lease.ackedSequence + 1) {
+          return keep<BatchResult>({ _tag: "out_of_order", ackedSequence: lease.ackedSequence });
+        }
+        const currentPreparation = yield* engine.preparation;
+        const prepared = preparationBatch(
+          projection,
+          currentPreparation,
+          lease.generation,
+          input.items,
+          ctx,
+          lease.preparations === true,
         );
-      }
-      const { events, undecodable, outgrown, drained } = runnerBatchEvents(
-        projection,
-        input.items,
-        ctx,
-        lease.steers === true,
-      );
-      const recorded = Effect.andThen(
-        diagnostics.batch({
-          ...input,
-          liveRunId: harnessRun(projection)?.id ?? null,
-          runs: projection.runs,
-          now,
-        }),
-        undecodable.length === 0
-          ? Effect.void
-          : Effect.logWarning("dropped Runner events this build cannot read", { undecodable }),
-      );
-      const acked = { _tag: "ack", sequence: input.sequence } as const;
-      // The Runner saved everything and stopped reporting: its machine is done
-      // either way, and only a light one's run moves up.
-      if (outgrown !== null) {
-        return Effect.andThen(
-          recorded,
-          Effect.map(
-            machineGone({ projection, lease, now, ctx, detail: outgrown, moveUp: true, events }),
-            (gone) => ({ ...gone, result: acked }),
-          ),
+        const {
+          events: runnerEvents,
+          undecodable,
+          outgrown,
+          drained,
+        } = runnerBatchEvents(
+          applyEvents(projection, prepared.events) ?? projection,
+          prepared.items,
+          ctx,
+          lease.steers === true,
         );
-      }
-      return Effect.as(recorded, {
-        events,
-        machine: {
-          ...lease,
-          ackedSequence: input.sequence,
-          // Only an answer to a drain still asked for lets the machine go.
-          ...(drained !== null && lease.drain?._tag === "asked" && lease.drain.id === drained.id
-            ? { drain: { _tag: "answered", id: drained.id, unsaved: drained.unsaved } as const }
-            : {}),
-        },
-        result: acked,
-      });
-    });
+        const events = [...prepared.events, ...runnerEvents];
+        const preparation =
+          prepared.preparation === currentPreparation || prepared.preparation === null
+            ? {}
+            : { preparation: prepared.preparation };
+        const recorded = Effect.andThen(
+          diagnostics.batch({
+            ...input,
+            liveRunId: harnessRun(projection)?.id ?? null,
+            runs: projection.runs,
+            now,
+          }),
+          undecodable.length === 0
+            ? Effect.void
+            : Effect.logWarning("dropped Runner events this build cannot read", { undecodable }),
+        );
+        const acked = { _tag: "ack", sequence: input.sequence } as const;
+        // The Runner saved everything and stopped reporting: its machine is done
+        // either way, and only a light one's run moves up.
+        if (outgrown !== null) {
+          return yield* Effect.andThen(
+            recorded,
+            Effect.map(
+              machineGone({ projection, lease, now, ctx, detail: outgrown, moveUp: true, events }),
+              (gone) => ({ ...gone, ...preparation, result: acked }),
+            ),
+          );
+        }
+        return yield* Effect.as(recorded, {
+          events,
+          ...preparation,
+          machine: {
+            ...lease,
+            ackedSequence: input.sequence,
+            // Only an answer to a drain still asked for lets the machine go.
+            ...(drained !== null && lease.drain?._tag === "asked" && lease.drain.id === drained.id
+              ? { drain: { _tag: "answered", id: drained.id, unsaved: drained.unsaved } as const }
+              : {}),
+          },
+          result: acked,
+        });
+      }),
+    );
 
   /** Updates the lease when it is still at `generation`. */
   const updateLease = (
@@ -612,29 +642,42 @@ const make = Effect.gen(function* () {
     readonly detail: string;
     readonly moveUp: boolean;
     readonly events?: ReadonlyArray<OrchestrationV2DomainEvent>;
-  }) => {
-    const { lease, ctx, detail, events = [] } = input;
-    const after = events.length === 0 ? input.projection : applyEvents(input.projection, events);
-    const run = after === null ? undefined : harnessRun(after);
-    const moves = input.moveUp && run !== undefined && classOf(lease) === "light";
-    return Effect.as(
-      sessionEnded(lease, {
-        reason: moves ? "outgrown" : "error",
-        detail,
-        runId: run?.id ?? null,
-        now: input.now,
-      }),
-      {
-        events: [
-          ...events,
-          ...(after === null || run === undefined
-            ? []
-            : recoverRunEvents(after, run, ctx, moves ? { reason: detail } : undefined)),
-        ],
-        machine: { ...released(lease), movedUp: lease.movedUp === true || moves },
-      },
-    );
-  };
+  }) =>
+    Effect.gen(function* () {
+      const { lease, ctx, detail, events = [] } = input;
+      const preparation = yield* engine.preparation;
+      const settledPreparation =
+        preparation !== null && preparation.machineGeneration === lease.generation
+          ? preparation.status === "cancelling"
+            ? changePreparation(preparation, "cancelled", ctx)
+            : preparation.status === "preparing"
+              ? changePreparation(preparation, "failed", ctx)
+              : null
+          : null;
+      const after = events.length === 0 ? input.projection : applyEvents(input.projection, events);
+      const run = after === null ? undefined : harnessRun(after);
+      const moves = input.moveUp && run !== undefined && classOf(lease) === "light";
+      return yield* Effect.as(
+        sessionEnded(lease, {
+          reason: moves ? "outgrown" : "error",
+          detail,
+          runId: run?.id ?? null,
+          now: input.now,
+        }),
+        {
+          events: [
+            ...events,
+            ...(after === null || run === undefined
+              ? []
+              : settledPreparation?.status === "cancelled"
+                ? preparationEvents(after, settledPreparation, ctx)
+                : recoverRunEvents(after, run, ctx, moves ? { reason: detail } : undefined)),
+          ],
+          machine: { ...released(lease), movedUp: lease.movedUp === true || moves },
+          ...(settledPreparation === null ? {} : { preparation: settledPreparation }),
+        },
+      );
+    });
 
   const ended: ThreadRunner["Service"]["ended"] = (generation, reason) =>
     withLease(({ projection, lease, now }, ctx) => {
@@ -741,18 +784,49 @@ const make = Effect.gen(function* () {
       return held ? turn : freshSessionTurn(projection, turn);
     });
 
-  const work: ThreadRunner["Service"]["work"] = withLease(({ projection, lease }) =>
+  const work: ThreadRunner["Service"]["work"] = withLease(({ projection, lease }, ctx) =>
     Effect.gen(function* () {
       const untraced = projection === null ? null : yield* turnFor(projection);
+      let preparation = yield* engine.preparation;
+      const previous = preparation;
+      if (projection !== null && untraced !== null && lease.status === "connected") {
+        if (preparation === null || preparation.runId !== untraced.runId) {
+          preparation = beginPreparation(
+            projection,
+            untraced.runId,
+            lease.generation,
+            preparation,
+            ctx,
+          );
+        } else if (preparation.machineGeneration === 0) {
+          preparation = { ...preparation, machineGeneration: lease.generation };
+        }
+        if (preparation.status === "cancelling" && previous?.machineGeneration === 0) {
+          preparation = changePreparation(preparation, "cancelled", ctx);
+        } else if (lease.preparations !== true && preparation.status === "preparing") {
+          preparation = changePreparation(preparation, "handoff", ctx);
+        }
+      }
+      const eligible =
+        preparation === null ||
+        preparation.status === "preparing" ||
+        preparation.status === "handoff";
       const turn =
-        untraced === null
+        untraced === null || !eligible
           ? null
-          : { ...untraced, traceId: yield* withCrypto(traceIdOf(untraced.runId)) };
+          : {
+              ...untraced,
+              ...(lease.preparations === true && preparation !== null
+                ? { preparationGeneration: preparation.generation }
+                : {}),
+              traceId: yield* withCrypto(traceIdOf(untraced.runId)),
+            };
       const grant = projection === null ? undefined : modelGrantFor(projection, yield* ownerId);
       const run = projection === null ? undefined : harnessRun(projection);
       const driveId = turn === null || !drivesEnabled ? null : yield* driveOf;
-      return keep<RunnerWork>({
+      const result: RunnerWork = {
         generation: lease.generation,
+        preparation,
         needsUpkeep: needsUpkeep(lease, run !== undefined, yield* previews.held),
         drain: lease.drain?._tag === "asked" ? lease.drain.id : null,
         turn,
@@ -785,7 +859,14 @@ const make = Effect.gen(function* () {
           projection === null || run?.status !== "running" || lease.steers !== true
             ? []
             : steersOf(projection, run).map(runnerMessageOf),
-      });
+      };
+      return preparation === previous || preparation === null
+        ? keep(result)
+        : {
+            events: projection === null ? [] : preparationEvents(projection, preparation, ctx),
+            preparation,
+            result,
+          };
     }),
   );
 
@@ -972,6 +1053,13 @@ const make = Effect.gen(function* () {
         const backend = backends[classOf(lease)];
         const run = projection === null ? undefined : harnessRun(projection);
         const runId = run?.id ?? null;
+        const preparation = yield* engine.preparation;
+        const cancelled =
+          preparation?.status === "cancelling" &&
+          (preparation.machineGeneration === 0 ||
+            preparation.machineGeneration === lease.generation)
+            ? changePreparation(preparation, "cancelled", ctx)
+            : null;
         /**
          * Lets the machine go. `failure` fails the live run with it; `recover`
          * continues it on the next machine (`runRecovery.ts`), and then the
@@ -985,14 +1073,24 @@ const make = Effect.gen(function* () {
           readonly lost?: boolean;
           readonly idleSince?: number;
         }) => {
+          const settledPreparation =
+            cancelled ??
+            (preparation?.status === "preparing" &&
+            (input.failure !== undefined || input.recover === true) &&
+            (preparation.machineGeneration === 0 ||
+              preparation.machineGeneration === lease.generation)
+              ? changePreparation(preparation, "failed", ctx)
+              : null);
           const events =
             projection === null || run === undefined
               ? []
-              : input.recover === true
-                ? recoverRunEvents(projection, run, ctx)
-                : input.failure === undefined
-                  ? []
-                  : failRunEvents(projection, run, unknownFailure(input.failure), ctx);
+              : cancelled !== null
+                ? preparationEvents(projection, cancelled, ctx)
+                : input.recover === true
+                  ? recoverRunEvents(projection, run, ctx)
+                  : input.failure === undefined
+                    ? []
+                    : failRunEvents(projection, run, unknownFailure(input.failure), ctx);
           const after = projection === null ? null : applyEvents(projection, events);
           const continues = after !== null && harnessRun(after) !== undefined;
           return Effect.as(
@@ -1000,6 +1098,7 @@ const make = Effect.gen(function* () {
             {
               events,
               machine: released(lease),
+              ...(settledPreparation === null ? {} : { preparation: settledPreparation }),
               result: {
                 ...UNNEEDED,
                 release: lease.generation,

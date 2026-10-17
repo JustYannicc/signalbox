@@ -147,6 +147,10 @@ export interface RunnerDrive {
     author?: CommitAuthor,
     folders?: ReadonlyArray<FolderInstructions>,
     pullRequests?: ReadonlyArray<ThreadPullRequestLink>,
+    progress?: (
+      stage: "fetch" | "checkout",
+      status: "running" | "done" | "skipped",
+    ) => Effect.Effect<void>,
   ) => Effect.Effect<PreparedDrive, RunnerDriveError | RunnerInstructionsError>;
   /** Starts an auto-save, or queues one behind the running one. Never fails. */
   readonly autosave: Effect.Effect<void>;
@@ -675,9 +679,11 @@ export const makeRunnerDrive = Effect.fn("makeRunnerDrive")(function* (input: {
     author = DRIVE_COMMIT_AUTHOR,
     folders = [],
     pullRequests = [],
+    progress = () => Effect.void,
   ) =>
     exclusive(
       Effect.gen(function* () {
+        yield* progress("fetch", "running");
         const existed = yield* fs.exists(gitDir);
         yield* fs.makeDirectory(input.cwd, { recursive: true });
         if (!existed) yield* git.run(["init", "-q", `--initial-branch=signalbox`]);
@@ -713,6 +719,8 @@ export const makeRunnerDrive = Effect.fn("makeRunnerDrive")(function* (input: {
           if (fetched !== null) yield* syncRemote(fetched);
           if (fetched?._tag === "fetched") fetchedMain = fetched.head;
         }
+        yield* progress("fetch", remote === null || remoteToken === null ? "skipped" : "done");
+        yield* progress("checkout", "running");
         const state = yield* drive.open;
         pinnedContinuation = state.pinnedViews !== null;
         const revisionFile = path.join(gitDir, "signalbox-revision");
@@ -796,8 +804,10 @@ export const makeRunnerDrive = Effect.fn("makeRunnerDrive")(function* (input: {
         const mounts = yield* shortcuts.mount(remoteToken, state.pinnedViews !== null);
         mounted = new Set(mounts.mounted.map((mount) => mount.path));
         mountedShortcuts = mounts.mounted;
+        const composed = yield* instructions.compose(mounts.mounted, folders);
+        yield* progress("checkout", "done");
         return {
-          instructions: yield* instructions.compose(mounts.mounted, folders),
+          instructions: composed,
           notices: [...notices, ...mounts.notices],
           ...(mainConflict === undefined ? {} : { mainConflict }),
         } satisfies PreparedDrive;
