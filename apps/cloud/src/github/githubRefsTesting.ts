@@ -179,7 +179,12 @@ export const fixture = Effect.gen(function* () {
     }),
   );
   const directory = Layer.succeed(DriveDirectory, { forDrive: () => drive });
-  const listRefs = yield* makeGitHubRefs.pipe(Effect.provide(Layer.merge(dependencies, directory)));
-  const withoutDirectory = yield* makeGitHubRefs.pipe(Effect.provide(dependencies));
+  const make = Effect.gen(function* () {
+    const drives = yield* UserDrives;
+    const threads = yield* CloudThreadService;
+    return yield* makeGitHubRefs({ drive: drives.access, threadSnapshot: threads.threadSnapshot });
+  });
+  const listRefs = yield* make.pipe(Effect.provide(Layer.merge(dependencies, directory)));
+  const withoutDirectory = yield* make.pipe(Effect.provide(dependencies));
   return { state, listRefs, withoutDirectory };
 });

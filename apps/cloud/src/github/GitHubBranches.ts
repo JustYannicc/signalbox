@@ -205,11 +205,14 @@ export class GitHubBranches extends Context.Service<
 >()("@signalbox/cloud/github/GitHubBranches") {}
 
 const make = Effect.gen(function* () {
-  const listRefs = yield* makeGitHubRefs;
   const github = yield* GitHub;
   const connection = yield* GitHubConnection;
   const userDrives = yield* UserDrives.UserDrives;
   const threads = yield* CloudThreadService.CloudThreadService;
+  const listRefs = yield* makeGitHubRefs({
+    drive: userDrives.access,
+    threadSnapshot: threads.threadSnapshot,
+  });
   const crypto = yield* Crypto.Crypto;
   const directory = yield* Effect.serviceOption(DriveDirectory);
   const packs = yield* Effect.serviceOption(DrivePacks);
