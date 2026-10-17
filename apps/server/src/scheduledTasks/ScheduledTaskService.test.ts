@@ -22,6 +22,10 @@ import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as ScheduledTaskService from "./ScheduledTaskService.ts";
 
 const isScheduledTaskError = Schema.is(ScheduledTaskError);
+const NOW = "2026-09-09T12:00:00.000Z";
+
+const layerSqliteAt = (time: number) =>
+  Layer.unwrap(TestClock.setTime(time).pipe(Effect.as(SqlitePersistence.layerMemory)));
 
 const insertRow = (
   sql: SqlClient.SqlClient,
@@ -61,7 +65,7 @@ const insertRow = (
 it.effect("loads only due tasks and skips corrupt due rows without decoding settled tasks", () =>
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
-    const now = "2026-09-09T12:00:00.000Z";
+    const now = NOW;
     const secret = "PROMPT-SECRET-DO-NOT-LOG";
     const credential = "CREDENTIAL-SECRET-DO-NOT-LOG";
     for (const row of [
@@ -154,7 +158,7 @@ it.effect(
   () =>
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
-      const now = "2026-09-09T12:00:00.000Z";
+      const now = NOW;
       const hugeInterval = '{"type":"interval","everyMs":9000000000000000}';
       for (const row of [
         { id: "stuck-valid", next: now, status: "running" },
@@ -170,9 +174,6 @@ it.effect(
         yield* insertRow(sql, { ...row, enabled: 1 }, now);
       }
 
-      // it.effect freezes the clock; pin it just past the seeded due time so
-      // the poll sees the rows as due.
-      yield* TestClock.setTime(Date.parse(now) + 1_000);
       const dispatched = yield* Ref.make(0);
       const lastDispatched = yield* Deferred.make<void>();
       const releaseLast = yield* Deferred.make<void>();
@@ -245,7 +246,7 @@ it.effect(
       assert.isNull(byId.get("due-huge")?.next_run_at);
       assert.equal(byId.get("due-bad-date")?.last_run_status, "never");
       assert.equal(byId.get("due-bad-date")?.run_count, 0);
-    }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
+    }).pipe(Effect.provide(layerSqliteAt(Date.parse(NOW) + 1_000))),
 );
 
 it.effect(
@@ -253,7 +254,7 @@ it.effect(
   () =>
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
-      const now = "2026-09-09T12:00:00.000Z";
+      const now = NOW;
       for (const row of [
         { id: "run-a", next: now, status: "never" },
         { id: "run-b-victim", next: now, status: "never" },
@@ -262,7 +263,6 @@ it.effect(
       ]) {
         yield* insertRow(sql, { ...row, enabled: 1 }, now);
       }
-      yield* TestClock.setTime(Date.parse(now) + 1_000);
       const dispatched = yield* Ref.make(0);
       const lastDispatched = yield* Deferred.make<void>();
       const releaseLast = yield* Deferred.make<void>();
@@ -319,5 +319,5 @@ it.effect(
           yield* Deferred.succeed(releaseLast, undefined);
         }),
       );
-    }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
+    }).pipe(Effect.provide(layerSqliteAt(Date.parse(NOW) + 1_000))),
 );

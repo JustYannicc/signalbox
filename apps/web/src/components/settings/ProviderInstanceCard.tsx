@@ -578,6 +578,7 @@ interface ProviderInstanceCardProps {
   readonly onSelect?: (() => void) | undefined;
   readonly readOnly?: boolean | undefined;
   readonly canWriteSettings?: boolean;
+  readonly supportsServerSettingsWrite?: boolean;
   readonly canWriteModelPreferences?: boolean;
   readonly onUpdate: (nextInstance: ProviderInstanceConfig) => void;
   readonly onDelete?: (() => void) | undefined;
@@ -629,7 +630,8 @@ export function ProviderInstanceCard({
   onSelect,
   readOnly = false,
   canWriteSettings = true,
-  canWriteModelPreferences = canWriteSettings,
+  supportsServerSettingsWrite = true,
+  canWriteModelPreferences = supportsServerSettingsWrite && canWriteSettings,
   onUpdate,
   onDelete,
   headerAction,
@@ -651,6 +653,7 @@ export function ProviderInstanceCard({
   projectOverride,
 }: ProviderInstanceCardProps) {
   const showsEnvironmentUi = useShowsEnvironmentUi(); // signalbox: one environment
+  const canWriteProviderSettings = supportsServerSettingsWrite && !readOnly;
   const enabled = projectOverride?.effectiveEnabled ?? resolveProviderInstanceEnabled(instance);
   const compatibility = enabled ? liveProvider?.compatibilityAdvisory : undefined;
   const statusKey: ProviderStatusKey = enabled
@@ -726,6 +729,7 @@ export function ProviderInstanceCard({
     customModels,
   });
   const updateDisplayName = (value: string) => {
+    if (!canWriteProviderSettings) return;
     const trimmed = value.trim();
     const { displayName: _omit, ...rest } = instance;
     onUpdate(
@@ -736,6 +740,7 @@ export function ProviderInstanceCard({
   };
 
   const updateEnabled = (value: boolean) => {
+    if (!canWriteProviderSettings) return;
     if (projectOverride) {
       projectOverride.onChange(value);
       return;
@@ -744,6 +749,7 @@ export function ProviderInstanceCard({
   };
 
   const updateAccentColor = (value: string) => {
+    if (!canWriteProviderSettings) return;
     const normalized = normalizeProviderAccentColor(value);
     const { accentColor: _omit, ...rest } = instance;
     onUpdate(
@@ -754,6 +760,7 @@ export function ProviderInstanceCard({
   };
 
   const updateConfig = (nextConfig: Record<string, unknown> | undefined) => {
+    if (!canWriteProviderSettings) return;
     const { config: _omit, ...rest } = instance;
     onUpdate(
       nextConfig !== undefined
@@ -773,6 +780,7 @@ export function ProviderInstanceCard({
   };
 
   const updateEnvironment = (environment: ReadonlyArray<ProviderInstanceEnvironmentVariable>) => {
+    if (!canWriteProviderSettings) return;
     const cleaned = environment.filter((variable) => variable.name.trim().length > 0);
     const { environment: _omit, ...rest } = instance;
     onUpdate(
@@ -1034,7 +1042,7 @@ export function ProviderInstanceCard({
           </span>
         </div>
         <span className="flex h-5 shrink-0 items-center gap-1">
-          {projectOverride?.value !== undefined ? (
+          {supportsServerSettingsWrite && projectOverride?.value !== undefined ? (
             <span className="flex items-center">
               <ProjectOverrideInheritance
                 projectEnabled={projectOverride.value}
@@ -1048,12 +1056,16 @@ export function ProviderInstanceCard({
               />
             </span>
           ) : null}
-          <Switch
-            checked={enabled}
-            disabled={readOnly || (projectOverride !== undefined && !canWriteSettings)}
-            onCheckedChange={(checked) => updateEnabled(Boolean(checked))}
-            aria-label={`Enable ${displayName}`}
-          />
+          {supportsServerSettingsWrite ? ( // signalbox: a switch that can't save reads as broken
+            <Switch
+              checked={enabled}
+              disabled={
+                !canWriteProviderSettings || (projectOverride !== undefined && !canWriteSettings)
+              }
+              onCheckedChange={(checked) => updateEnabled(Boolean(checked))}
+              aria-label={`Enable ${displayName}`}
+            />
+          ) : null}
         </span>
       </div>
     );
@@ -1114,7 +1126,7 @@ export function ProviderInstanceCard({
     <>
       <SettingsSection title={displayName} icon={titleIconNode} headerAction={editorHeaderAction}>
         <SettingsRow
-          title="Display name"
+          title={supportsServerSettingsWrite ? "Display name" : "Provider"}
           status={
             <>
               <ProviderStatusDiagnostic detail={statusDiagnostic}>
@@ -1151,36 +1163,38 @@ export function ProviderInstanceCard({
             </>
           }
           control={
-            <div
-              inert={readOnly}
-              aria-disabled={readOnly || undefined}
-              className={cn(
-                "flex w-full min-w-0 items-center justify-end gap-2 @min-[32rem]/settings-row:w-auto",
-                readOnly && "opacity-50 select-none",
-              )}
-            >
-              <ProviderAccentColorPicker
-                layout="inline"
-                displayName={displayName}
-                value={accentColor}
-                onCommit={updateAccentColor}
-                commitDelayMs={120}
-              />
-              <DraftInput
-                id={`provider-instance-${instanceId}-display-name`}
-                size="sm"
-                className="min-w-0 flex-1 @min-[32rem]/settings-row:w-56"
-                value={instance.displayName ?? ""}
-                onCommit={updateDisplayName}
-                placeholder={driverOption?.label ?? "Instance label"}
-                spellCheck={false}
-              />
-            </div>
+            supportsServerSettingsWrite ? (
+              <div
+                inert={readOnly}
+                aria-disabled={readOnly || undefined}
+                className={cn(
+                  "flex w-full min-w-0 items-center justify-end gap-2 @min-[32rem]/settings-row:w-auto",
+                  readOnly && "opacity-50 select-none",
+                )}
+              >
+                <ProviderAccentColorPicker
+                  layout="inline"
+                  displayName={displayName}
+                  value={accentColor}
+                  onCommit={updateAccentColor}
+                  commitDelayMs={120}
+                />
+                <DraftInput
+                  id={`provider-instance-${instanceId}-display-name`}
+                  size="sm"
+                  className="min-w-0 flex-1 @min-[32rem]/settings-row:w-56"
+                  value={instance.displayName ?? ""}
+                  onCommit={updateDisplayName}
+                  placeholder={driverOption?.label ?? "Instance label"}
+                  spellCheck={false}
+                />
+              </div>
+            ) : undefined
           }
         />
       </SettingsSection>
 
-      {setup || environmentFields.length > 0 ? (
+      {setup || (supportsServerSettingsWrite && environmentFields.length > 0) ? (
         <SettingsSection title="Setup">
           {setup}
           <div
@@ -1188,7 +1202,7 @@ export function ProviderInstanceCard({
             aria-disabled={readOnly || undefined}
             className={readOnly ? "opacity-50 select-none" : undefined}
           >
-            {environmentFields.length > 0 ? (
+            {supportsServerSettingsWrite && environmentFields.length > 0 ? (
               <>
                 {environmentFields.map((field) => (
                   <ProviderEnvironmentFieldRow
@@ -1206,7 +1220,9 @@ export function ProviderInstanceCard({
         </SettingsSection>
       ) : null}
 
-      {instance.driver === "codex" && readCodexSetupMode(instance.config) === "managed" ? (
+      {supportsServerSettingsWrite &&
+      instance.driver === "codex" &&
+      readCodexSetupMode(instance.config) === "managed" ? (
         <div
           inert={readOnly}
           aria-disabled={readOnly || undefined}
@@ -1221,7 +1237,8 @@ export function ProviderInstanceCard({
             {runtime ?? runtimeFields}
           </FoldedSettingsSection>
         </div>
-      ) : !driverOption || deriveProviderSettingsFields(driverOption).length > 0 ? (
+      ) : supportsServerSettingsWrite &&
+        (!driverOption || deriveProviderSettingsFields(driverOption).length > 0) ? (
         <SettingsSection
           title="Runtime"
           inert={readOnly}
@@ -1232,18 +1249,22 @@ export function ProviderInstanceCard({
         </SettingsSection>
       ) : null}
 
-      <SettingsSection
-        title="Environment"
-        inert={readOnly}
-        aria-disabled={readOnly || undefined}
-        className={readOnly ? "opacity-50 select-none" : undefined}
-      >
-        <ProviderEnvironmentSection
-          environment={genericEnvironment}
-          onChange={updateGenericEnvironment}
-        />
-      </SettingsSection>
-      {environmentId !== undefined && liveProvider?.driver === "acpRegistry" ? (
+      {supportsServerSettingsWrite ? (
+        <SettingsSection
+          title="Environment"
+          inert={readOnly}
+          aria-disabled={readOnly || undefined}
+          className={readOnly ? "opacity-50 select-none" : undefined}
+        >
+          <ProviderEnvironmentSection
+            environment={genericEnvironment}
+            onChange={updateGenericEnvironment}
+          />
+        </SettingsSection>
+      ) : null}
+      {supportsServerSettingsWrite &&
+      environmentId !== undefined &&
+      liveProvider?.driver === "acpRegistry" ? (
         <AcpSessionManagementSection
           environmentId={environmentId}
           instanceId={instanceId}
@@ -1259,10 +1280,12 @@ export function ProviderInstanceCard({
             <p className="mb-3 text-xs text-muted-foreground">
               {showsEnvironmentUi // signalbox: one environment
                 ? "Model preferences and custom models are saved on the selected environment and shared across connected devices."
-                : "Model preferences and custom models are saved to your account and shared across your devices."}
+                : supportsServerSettingsWrite
+                  ? "Model preferences and custom models are saved to your account and shared across your devices."
+                  : "Model preferences are saved to your account and shared across your devices."}
             </p>
             <ProviderModelsSection
-              canManageCustomModels={!readOnly}
+              canManageCustomModels={supportsServerSettingsWrite && !readOnly}
               canWritePreferences={canWriteModelPreferences}
               instanceId={instanceId}
               driverKind={driverKind}
