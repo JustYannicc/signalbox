@@ -9,6 +9,7 @@ import {
   type OrchestrationV2DomainEvent,
   type OrchestrationV2SubscribeThreadInput,
   type OrchestrationV2ThreadLaunchInput,
+  type ModelSelection,
   type OrchestrationV2ThreadLaunchResult,
   type OrchestrationV2ThreadProjection,
   type OrchestrationV2ThreadStreamItem,
@@ -146,7 +147,10 @@ export class ThreadEngine extends Context.Service<
     /** Creates the thread and starts its first turn as one command. */
     readonly launch: (
       actor: Actor,
-      input: OrchestrationV2ThreadLaunchInput & { readonly threadId: ThreadId },
+      input: OrchestrationV2ThreadLaunchInput & {
+        readonly threadId: ThreadId;
+        readonly modelSelection: ModelSelection;
+      },
       creation: ThreadCreation,
     ) => Effect.Effect<
       OrchestrationV2ThreadLaunchResult,

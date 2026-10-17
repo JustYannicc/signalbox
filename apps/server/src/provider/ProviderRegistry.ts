@@ -22,6 +22,7 @@ import * as Stream from "effect/Stream";
 import * as Semaphore from "effect/Semaphore";
 
 import * as ModelManifest from "./ModelManifest.ts";
+import { makeProviderModelMetadataEnricher } from "./providerModelMetadata.ts"; // signalbox: enrich provider snapshots with pricing and default-selection metadata
 import { applyProviderCompatibility } from "./providerCompatibility.ts";
 import * as ServerConfig from "../config.ts";
 import * as ProviderInstanceRegistry from "./ProviderInstanceRegistry.ts";
@@ -344,6 +345,7 @@ export const layer = Layer.effect(
   Effect.gen(function* () {
     const instanceRegistry = yield* ProviderInstanceRegistry.ProviderInstanceRegistry;
     const manifestService = yield* ModelManifest.ModelManifest;
+    const enrichProviders = yield* makeProviderModelMetadataEnricher; // signalbox: Enrich catalog entries before selecting economical defaults.
     const serviceScope = yield* Effect.scope;
     const config = yield* ServerConfig.ServerConfig;
     const fileSystem = yield* FileSystem.FileSystem;
@@ -420,8 +422,9 @@ export const layer = Layer.effect(
         manifest.compatibility,
         ModelManifest.BUNDLED_MODEL_MANIFEST.compatibility,
       );
+    const initialProviders = yield* enrichProviders(cachedProviders, initialManifest); // signalbox: restore catalog metadata on cached providers at startup
     const providersRef = yield* Ref.make<ReadonlyArray<ServerProvider>>(
-      cachedProviders.map((provider) => classifyCompatibility(provider, initialManifest)),
+      initialProviders.map((provider) => classifyCompatibility(provider, initialManifest)),
     );
     const workspaceRefreshesRef = yield* Ref.make<
       ReadonlyMap<ProviderInstance, ReadonlySet<string>>
@@ -479,8 +482,9 @@ export const layer = Layer.effect(
       },
     ) {
       const manifest = yield* manifestService.current;
+      const nextProvidersWithMetadata = yield* enrichProviders(nextProviders, manifest); // signalbox: refresh prices and selection policy with provider snapshots
       const nextProvidersWithUpdateState = yield* Effect.forEach(
-        nextProviders,
+        nextProvidersWithMetadata,
         applyProviderUpdateState,
         {
           concurrency: "unbounded",
