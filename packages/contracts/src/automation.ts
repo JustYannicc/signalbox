@@ -43,7 +43,8 @@ export type AutomationRetryVersion = typeof AutomationRetryVersion.Type;
 
 /** What agent steps run with unless the code names a provider and model. Captured when saved. */
 export const AutomationDefaults = Schema.Struct({
-  modelSelection: ModelSelection,
+  /** Null defers model selection until an agent step runs. */
+  modelSelection: Schema.NullOr(ModelSelection),
   runtimeMode: RuntimeMode,
   interactionMode: ProviderInteractionMode,
 });

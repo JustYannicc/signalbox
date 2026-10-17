@@ -1,3 +1,4 @@
+import { ProviderInstanceId } from "@t3tools/contracts";
 import { afterEach, describe, expect, it } from "@effect/vitest";
 import * as ConfigProvider from "effect/ConfigProvider";
 import * as Effect from "effect/Effect";
@@ -11,6 +12,8 @@ import * as CloudTokens from "../auth/CloudTokens.ts";
 import { signLocalKey } from "../localKeys/LocalKeys.ts";
 import { layerConfig, makeMemoryCloud } from "../testing.ts";
 import * as UserDirectory from "../user/UserDirectory.ts";
+import * as UserModelSettings from "../user/UserModelSettings.ts";
+import * as Environment from "../environment.ts";
 import { handleMcpRequest, protectedResourceMetadata } from "./mcpRoutes.ts";
 import { PERSONAL_CONTEXT_ID } from "@t3tools/contracts/signalboxContexts";
 import { ThreadId } from "@t3tools/contracts";
@@ -218,6 +221,37 @@ describe("Signalbox's MCP", () => {
       expect(created.isError ?? false).toBe(false);
       const listed = yield* tool("signalbox_call", { operation: "folders.list" });
       expect(listed.content[0]!.text).toContain("Via MCP");
+    }),
+  );
+
+  it.effect("creates a thread without a model using the person's saved default", () =>
+    Effect.gen(function* () {
+      const { tool, cloud } = yield* connect;
+      const preferred = {
+        instanceId: ProviderInstanceId.make("claude_hub"),
+        model: "claude-haiku-5-5",
+      };
+      yield* UserModelSettings.UserModelSettings.use((settings) =>
+        settings.update(
+          { defaultModelSelection: preferred },
+          new Map([[preferred.instanceId, new Set([preferred.model])]]),
+        ),
+      ).pipe(Effect.provide(cloud.userObject(userId)));
+      const result = yield* tool("signalbox_call", {
+        operation: "threads.create",
+        input: {
+          commandId: "mcp-default",
+          projectId: Environment.SCRATCH_PROJECT_ID,
+          title: "From MCP",
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          workspaceStrategy: { type: "root" },
+        },
+      });
+      expect(result.isError ?? false).toBe(false);
+      expect(JSON.parse(result.content[0]!.text)).toMatchObject({
+        projection: { thread: { modelSelection: preferred } },
+      });
     }),
   );
 

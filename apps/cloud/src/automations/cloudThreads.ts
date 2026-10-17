@@ -25,6 +25,7 @@ import { threadShellFromProjection } from "../thread/threadProjection.ts";
 import * as UserDrives from "../user/UserDrives.ts";
 import * as UserStore from "../user/UserStore.ts";
 import * as UserThreadKinds from "../user/UserThreadKinds.ts";
+import { ThreadContexts } from "../user/threadContexts.ts";
 import { isTerminalRunStatus } from "@signalbox/automations/runs";
 
 /**
@@ -113,6 +114,7 @@ export const layer = Layer.effect(
     const drives = yield* UserDrives.UserDrives;
     const kinds = yield* UserThreadKinds.UserThreadKinds;
     const feed = yield* ThreadEventFeed;
+    const contexts = yield* ThreadContexts;
 
     const owner = ownerActor.pipe(
       Effect.provideService(UserStore.UserStore, store),
@@ -156,6 +158,7 @@ export const layer = Layer.effect(
           Effect.map((read) => recordsOf(read, fields, filter)),
           Effect.mapError(hostError("Couldn't read the thread")),
         ),
+      initialModelSelection: (projectId) => contexts.initialModelSelection(projectId),
       launch: (input) =>
         owner.pipe(
           Effect.flatMap((actor) =>
@@ -165,7 +168,7 @@ export const layer = Layer.effect(
               projectId: input.projectId,
               title: input.title,
               generateTitle: false,
-              modelSelection: input.modelSelection,
+              ...(input.modelSelection ? { modelSelection: input.modelSelection } : {}),
               runtimeMode: input.runtimeMode,
               interactionMode: input.interactionMode,
               workspaceStrategy: input.workspace,
