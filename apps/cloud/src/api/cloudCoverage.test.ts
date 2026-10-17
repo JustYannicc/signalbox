@@ -4,6 +4,13 @@ import { describe, expect, it } from "vite-plus/test";
 import { CLOUD_UNSERVED, cloudServes, cloudUnserved, coverageKeyMatches } from "./cloudCoverage.ts";
 
 describe("cloud API coverage", () => {
+  it("serves pool advice through the API and MCP reach entry", () => {
+    const advice = operations.find((operation) => operation.name === "pools.advice");
+    expect(advice).toBeDefined();
+    expect(advice?.rpc).toBe("accountPool.subscribeAdvice");
+    expect(cloudServes(advice!)).toBe(true);
+    expect(cloudUnserved(advice!)).toBeUndefined();
+  });
   it("serves analytics preferences instead of leaving Settings with unknown RPCs", () => {
     const analytics = operations.filter((operation) => operation.name.startsWith("analytics."));
     expect(analytics.map((operation) => operation.name).sort()).toEqual([

@@ -99,7 +99,6 @@ export const CLOUD_UNSERVED: Readonly<Record<string, Unserved>> = {
   "assets.persistChatAttachments": gap("#813"),
 
   // Pools: the cloud signs in Claude and ChatGPT accounts only.
-  "pools.advice": gap("#819"),
   "provider.auth.respond": gap("#205"),
   "provider.auth.logout": gap("#205"),
   "provider.chatgpt.*": exempt("A self-hosted server's ChatGPT desktop handoff."),

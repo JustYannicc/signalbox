@@ -6,7 +6,7 @@ import {
   accountWindowKey,
   HOUR_MS,
   recordRead,
-} from "./poolUsageRecording.ts";
+} from "@t3tools/shared/poolUsageRecording";
 
 const at = (time: string) => Date.parse(`2026-10-05T${time}:00.000Z`);
 const hourOf = (time: string) => Math.floor(at(time) / HOUR_MS);

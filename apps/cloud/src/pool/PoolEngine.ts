@@ -4,6 +4,7 @@ import type {
 } from "@t3tools/contracts";
 import {
   type AccountPoolSetRoutingInput,
+  type AccountPoolProviderAdvice,
   DEFAULT_POOL_ROUTING,
   isCloudPoolAccountType,
   POOL_LINK_PATH,
@@ -32,6 +33,7 @@ import * as PoolContainer from "./PoolContainer.ts";
 import * as PoolLimits from "./poolLimits.ts";
 import * as PoolLinks from "./PoolLinks.ts";
 import * as PoolModels from "./poolModels.ts";
+import * as PoolUsageHistory from "./poolUsageHistory.ts";
 import * as PoolStore from "./poolStore.ts";
 import * as ThreadAccounts from "./threadAccounts.ts";
 
@@ -153,6 +155,9 @@ export class PoolEngine extends Context.Service<
      */
     readonly prepareDelete: (actor: PoolActor) => Effect.Effect<void, Failure>;
     readonly accounts: (actor: PoolActor) => Effect.Effect<PoolAccounts, Failure>;
+    readonly advice: (
+      actor: PoolActor,
+    ) => Effect.Effect<ReadonlyArray<AccountPoolProviderAdvice> | null, Failure>;
     /**
      * The models the pool serves, for the check at turn start. A pool whose
      * models were never attempted reads them now, waking its container: the
@@ -305,6 +310,7 @@ const migrations = Migrator.fromRecord({
   }),
   "0008_thread_accounts": ThreadAccounts.createTables,
   "0009_model_metadata": PoolModels.addMetadata,
+  "0010_usage_history": PoolUsageHistory.createTables,
 });
 
 /** Applies every migration not recorded yet (`storage/migrations.ts`). Never edit or rename a merged one. */
@@ -1027,6 +1033,20 @@ const make = Effect.gen(function* () {
       ),
     );
 
+  const advice: PoolEngine["Service"]["advice"] = (actor) =>
+    Effect.gen(function* () {
+      const { role } = yield* access(actor, "member");
+      // Account counts and plans are admin-only, checked again on each read.
+      if (role !== "admin") return null;
+      const read = yield* Effect.flatMap(cachedAccounts, withLimits);
+      return yield* withSql(
+        PoolUsageHistory.advice(
+          PoolUsageHistory.accountsWithQuota(read.accounts),
+          yield* Clock.currentTimeMillis,
+        ),
+      );
+    });
+
   // A turn start may make its first read; later refreshes are passive.
   const models: PoolEngine["Service"]["models"] = (actor) =>
     Effect.gen(function* () {
@@ -1261,6 +1281,7 @@ const make = Effect.gen(function* () {
     setBacking,
     prepareDelete,
     accounts,
+    advice,
     models,
     cachedModels: cachedModelsForActor,
     refreshModelsAtAlarm,

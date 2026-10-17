@@ -169,6 +169,10 @@ export class PoolObject
     return this.api.accounts(...args);
   }
 
+  advice(...args: Parameters<PoolObjectApi["advice"]>) {
+    return this.api.advice(...args);
+  }
+
   models(...args: Parameters<PoolObjectApi["models"]>) {
     return this.api.models(...args);
   }

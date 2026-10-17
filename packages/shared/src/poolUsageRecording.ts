@@ -9,7 +9,7 @@
  * Units are share of one account's window: 100 is one account's whole
  * weekly (or session) allowance, summed over the pool's accounts.
  *
- * @module accountHub/poolUsageRecording
+ * @module shared/poolUsageRecording
  */
 import type { ServerProviderUsageWindow, UsageLimitSourceAccount } from "@t3tools/contracts";
 

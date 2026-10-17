@@ -2,7 +2,10 @@ import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
-import type { AccountPoolSetRoutingInput } from "@t3tools/contracts/accountHub";
+import type {
+  AccountPoolSetRoutingInput,
+  AccountPoolProviderAdvice,
+} from "@t3tools/contracts/accountHub";
 
 import type { ModelForwardReply } from "../models/ModelProtocol.ts";
 import type {
@@ -68,6 +71,9 @@ export interface PoolObjectApi {
   /** Stops the pool's container and erases the pool. */
   readonly delete: (actor: PoolActor) => Promise<PoolReply<null>>;
   readonly accounts: (actor: PoolActor) => Promise<PoolReply<PoolAccounts>>;
+  readonly advice: (
+    actor: PoolActor,
+  ) => Promise<PoolReply<ReadonlyArray<AccountPoolProviderAdvice> | null>>;
   /** The models the pool serves, for the check at turn start (`thread/TurnModels.ts`). */
   readonly models: (actor: PoolActor) => Promise<PoolReply<PoolModels>>;
   readonly startLogin: (
@@ -133,6 +139,7 @@ const METHODS = Object.keys({
   setBacking: true,
   delete: true,
   accounts: true,
+  advice: true,
   models: true,
   startLogin: true,
   loginStatus: true,

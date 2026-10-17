@@ -47,6 +47,7 @@ import * as UserModelSettings from "./UserModelSettings.ts";
 export const POOL_METHODS = [
   WS_METHODS.accountPoolSubscribe,
   WS_METHODS.accountPoolSubscribeViews,
+  WS_METHODS.accountPoolSubscribeAdvice,
   WS_METHODS.accountPoolCreate,
   WS_METHODS.accountPoolRename,
   WS_METHODS.accountPoolDelete,
@@ -70,6 +71,7 @@ export const POOL_METHODS = [
 export const POOL_REQUIRED_SCOPES = {
   [WS_METHODS.accountPoolSubscribe]: AuthProvidersManageScope,
   [WS_METHODS.accountPoolSubscribeViews]: AuthOrchestrationReadScope,
+  [WS_METHODS.accountPoolSubscribeAdvice]: AuthProvidersManageScope,
   [WS_METHODS.accountPoolCreate]: AuthProvidersManageScope,
   [WS_METHODS.accountPoolRename]: AuthProvidersManageScope,
   [WS_METHODS.accountPoolDelete]: AuthProvidersManageScope,
@@ -317,6 +319,7 @@ export const makePoolHandlers = (input: {
       });
 
     const handlers = {
+      [WS_METHODS.accountPoolSubscribeAdvice]: () => pools.advice(actor),
       [WS_METHODS.accountPoolSubscribe]: () =>
         followPools(pools, actor).pipe(
           Stream.map((state) => state.map((entry) => accountPool(entry.pool, entry.routing))),

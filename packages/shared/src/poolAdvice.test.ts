@@ -2,8 +2,8 @@ import { ProviderDriverKind, type UsageLimitSourceAccount } from "@t3tools/contr
 import { describe, expect, it } from "@effect/vitest";
 import * as DateTime from "effect/DateTime";
 
-import { advisePool, paceFrom } from "./poolAdvice.ts";
-import { HOUR_MS } from "./poolUsageRecording.ts";
+import { advisePool, paceFrom } from "@t3tools/shared/poolAdvice";
+import { HOUR_MS } from "@t3tools/shared/poolUsageRecording";
 
 const DAY_MS = 24 * HOUR_MS;
 // A Monday, 08:00 UTC.

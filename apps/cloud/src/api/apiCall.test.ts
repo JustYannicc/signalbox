@@ -2,6 +2,7 @@ import { operations } from "@signalbox/api/catalog";
 import {
   AuthOrchestrationOperateScope,
   AuthOrchestrationReadScope,
+  AuthProvidersManageScope,
   AuthStandardClientScopes,
   AuthSettingsWriteScope,
   type AuthEnvironmentScope,
@@ -52,6 +53,18 @@ const json = (answer: Effect.Success<ReturnType<typeof callOperation>>) => {
 };
 
 describe("public API calls", () => {
+  it.effect("serves a pool advice snapshot only with provider-management access", () =>
+    Effect.gen(function* () {
+      const { call } = yield* setup;
+      expect(json(yield* call("pools.advice", {})).status).toBe(403);
+      expect(
+        json(yield* call("pools.advice", {}, person([AuthProvidersManageScope]))),
+      ).toMatchObject({
+        status: 200,
+        body: [{ poolId: "personal", providers: [] }],
+      });
+    }),
+  );
   it.effect("reads and saves analytics consent through the public reach map", () =>
     Effect.gen(function* () {
       const { call } = yield* setup;
