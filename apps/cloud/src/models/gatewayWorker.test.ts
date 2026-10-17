@@ -1,13 +1,24 @@
 import { RunId } from "@t3tools/contracts";
-import { describe, expect, it } from "@effect/vitest";
+import { afterEach, beforeEach, describe, expect, it } from "@effect/vitest";
+import type { WideEvent } from "evlog";
 import { vi } from "vite-plus/test";
 
 import type { ModelGatewayRecord } from "./ModelRecords.ts";
 import type { ModelServeReply } from "./ModelProtocol.ts";
 
+const state = vi.hoisted(() => ({ events: new Array<WideEvent>() }));
+
 vi.mock("../../evlog.config.ts", async () => {
   const { defineEvlog } = await import("evlog");
-  return { drain: undefined, default: defineEvlog({ silent: true }) };
+  return {
+    drain: undefined,
+    default: defineEvlog({
+      silent: true,
+      drain: ({ event }) => {
+        state.events.push(event);
+      },
+    }),
+  };
 });
 
 import GatewayWorker, { type ModelGatewayEnv } from "./gatewayWorker.ts";
@@ -30,6 +41,13 @@ const makeContext = () => {
 };
 
 describe("public model gateway worker", () => {
+  beforeEach(() => {
+    state.events.length = 0;
+    vi.useFakeTimers();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
   it("streams the completed response before its background report resolves", async () => {
     let sendChunk: ((chunk: string) => void) | undefined;
     let closeStream: (() => void) | undefined;
@@ -96,8 +114,25 @@ describe("public model gateway worker", () => {
       outcome: "complete",
     });
 
+    expect(state.events).toMatchObject([
+      {
+        route: "model",
+        provider: "anthropic",
+        status: 200,
+        thread: { id: "thread-a" },
+        turn: { id: runId, traceId },
+        modelGateway: { outcome: "complete", status: 200 },
+      },
+    ]);
+    let released = false;
+    const lifetime = Promise.all(ctx.waitUntil).then(() => {
+      released = true;
+    });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(released).toBe(false);
     finishReport?.();
-    await Promise.all(ctx.waitUntil);
+    await lifetime;
+    expect(released).toBe(true);
   });
 
   it("reports usage from a completed local-key response to the key owner", async () => {
@@ -155,6 +190,19 @@ describe("public model gateway worker", () => {
       },
     ]);
     await Promise.all(ctx.waitUntil);
+    expect(state.events).toMatchObject([
+      {
+        route: "model",
+        provider: "anthropic",
+        status: 200,
+        model: "claude",
+        person: { id: "user-1" },
+        modelGateway: {
+          outcome: "complete",
+          usage: { input: 5, output: 7, cacheRead: 0, cacheWrite: 0 },
+        },
+      },
+    ]);
   });
 
   it("swallows a rejected report and never reports denied or unsuccessful local requests", async () => {
@@ -211,6 +259,22 @@ describe("public model gateway worker", () => {
 
     expect(reports).toEqual([]);
     await Promise.all(ctx.waitUntil);
+    expect(state.events).toMatchObject([
+      {
+        route: "model",
+        provider: "anthropic",
+        status: 401,
+        thread: { id: "thread-a" },
+        modelGateway: { status: 401 },
+      },
+      {
+        route: "model",
+        provider: "anthropic",
+        status: 503,
+        person: { id: "user-1" },
+        modelGateway: { status: 503 },
+      },
+    ]);
 
     const rejectedReports: Array<ModelGatewayRecord> = [];
     const reportEnv: ModelGatewayEnv = {
