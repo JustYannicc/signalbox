@@ -19,6 +19,54 @@ import {
 
 describe("cloud lifecycle machine release", () => {
   it.effect.each(["thread.archive", "thread.settle"] as const)(
+    "%s waits for a preview-only machine to connect and save",
+    (type) => {
+      const previews = { held: false, lastActiveAt: null };
+      return withObject(
+        freshDatabase(),
+        (engine, runner) =>
+          Effect.gen(function* () {
+            yield* launch(engine);
+            const first = yield* connect(runner);
+            const turn = yield* liveTurn(runner);
+            const report = turnReport(turn.runId, turn.runOrdinal, turn.providerThread);
+            yield* runner.batch({
+              generation: first.generation,
+              sequence: 1,
+              items: [report.started, report.full, report.terminal],
+            });
+            yield* runner.ended(first.generation, "The first machine stopped.");
+            previews.held = true;
+            const requested = yield* runner.reconcile;
+            const machine = requested.ensure!;
+            yield* runner.ensured(machine.generation);
+            expect(yield* runner.previewDrive).not.toBeNull();
+            yield* engine.dispatch(
+              owner,
+              { type, commandId: CommandId.make("close-preview-boot"), threadId },
+              personal,
+            );
+            yield* TestClock.adjust(120_000);
+            const waiting = yield* runner.reconcile;
+            expect(waiting.release).toBeNull();
+            expect(waiting.stop).toBe(false);
+            expect(yield* runner.leaseToken(machine.generation)).toBe(machine.token);
+            yield* runner.hello(hello(machine.generation, machine.token));
+            const asked = yield* runner.reconcile;
+            expect(asked.drain).toMatchObject({ generation: machine.generation });
+            yield* runner.batch({
+              generation: machine.generation,
+              sequence: 1,
+              items: [{ kind: "machine.drained", id: asked.drain!.id, unsaved: [] }],
+            });
+            expect((yield* runner.reconcile).release).toBe(machine.generation);
+            expect((yield* runner.reconcile).ensure).toBeNull();
+          }),
+        { previews, drives: true },
+      );
+    },
+  );
+  it.effect.each(["thread.archive", "thread.settle"] as const)(
     "%s keeps a disconnected machine until its save is confirmed",
     (type) =>
       withObject(freshDatabase(), (engine, runner) =>

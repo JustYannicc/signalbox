@@ -1098,6 +1098,17 @@ const make = Effect.gen(function* () {
           };
         }
         if (lease.status === "requested") {
+          // A preview can open its writable checkout before the main hello.
+          // Let that Runner connect and drain before closing its machine.
+          if (closing) {
+            const token = lease.ensuredAt === null ? lease.token : null;
+            return keep<MachinePlan>({
+              ...IDLE,
+              ensure: token === null ? null : { generation: lease.generation, token },
+              wakeAt: now + (token === null ? DRAIN_TIMEOUT_MS : ENSURE_RETRY_MS),
+              runId,
+            });
+          }
           // A preview can keep the request alive without a run to fail.
           const previewHeld = !closing && (yield* previews.held);
           if (run === undefined && !previewHeld) {
