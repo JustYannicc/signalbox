@@ -17,6 +17,8 @@ import {
 } from "./internal/catalog/poolProviders.ts";
 import { initialSelection } from "./internal/catalog/initialSelection.ts";
 
+export { cloudProviders, cloudProviderInstances } from "./internal/catalog/providerCatalog.ts";
+
 export interface ModelCatalogView {
   readonly providers: ReadonlyArray<ServerProvider>;
   readonly instances: Record<ProviderInstanceId, ProviderInstanceConfig>;
@@ -62,5 +64,3 @@ const make = Effect.gen(function* () {
 });
 
 export const layer = Layer.effect(ModelCatalog, make);
-
-export { cloudProviders, cloudProviderInstances } from "./internal/catalog/providerCatalog.ts";

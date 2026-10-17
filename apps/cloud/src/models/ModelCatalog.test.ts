@@ -1,4 +1,4 @@
-import { ProviderInstanceId, type ServerProvider } from "@t3tools/contracts";
+import { ProviderInstanceId, type ModelSelection, type ServerProvider } from "@t3tools/contracts";
 import { POOL_INSTANCE_KINDS, poolSourceId } from "@t3tools/contracts/accountHub";
 import type { ModelManifestCatalogs } from "@t3tools/shared/modelManifest";
 import { describe, expect, it } from "@effect/vitest";
@@ -68,9 +68,7 @@ const view = (pools: ReadonlyArray<PoolEntry>, catalogs?: ModelManifestCatalogs)
 const initialSelection = (
   pools: ReadonlyArray<PoolEntry>,
   poolId: string | null,
-  personDefault: Parameters<
-    ModelCatalog.ModelCatalog["Service"]["initialSelection"]
-  >[0]["personDefault"],
+  personDefault: ModelSelection | null,
   catalogs?: ModelManifestCatalogs,
 ) =>
   Effect.gen(function* () {

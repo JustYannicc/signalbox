@@ -11,8 +11,8 @@ completion spans. This path does not substitute secrets into the supplied text.
 `ModelCatalog` builds provider views from pool snapshots and resolves an omitted model
 on the destination pool. The user object keeps pool reads, settings and subscriptions;
 metadata never adds models a pool does not serve. `ModelRouting` keeps harness and pool
-identity rules separate from those reads. `ModelManifest` retains its existing service
-identity so callers and test layers resolve the same metadata after the move.
+identity rules separate from those reads. `ModelManifest` keeps its service key stable
+so callers and test layers resolve the same metadata.
 
 `ModelProtocol` holds the platform-free request and authorization types;
 `ModelRecords` owns the request and usage schemas. `ModelGateway` serves provider
