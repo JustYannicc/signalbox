@@ -99,10 +99,13 @@ type LearnerJevService = LearnerJev["Service"];
 const clip = (value: string) => Array.from(value).slice(0, MAX_TEXT_CHARS).join("");
 
 const classificationReasons = {
-  confirmed: "The person's action confirms the agent's draft.",
-  countermanded: "The person's action changes the agent's draft.",
-  overridden: "The person chose a different outcome from the draft.",
-  ambiguous: "The paired events do not establish a clear decision.",
+  confirmed: "The person approves or carries out the draft without a material change.",
+  countermanded:
+    "The person explicitly rejects, cancels, or blocks the proposed action, including 'do not' or 'wait instead'. Choose this even if they also give an alternative.",
+  overridden:
+    "The person makes a different choice or materially revises the draft, without explicitly rejecting, cancelling, or blocking its proposed action.",
+  ambiguous:
+    "There is no clear decision or the action's relationship to the draft cannot be determined.",
 } satisfies Record<SignalboxLearnerClassification, string>;
 
 const requestFor = (settings: LearnerJevSettings, state: unknown, questions: unknown) =>
