@@ -64,11 +64,14 @@ export function usePullRequestDiff(params: PullRequestDiffParams) {
       input: { ...target.input, ...(cursor ? { cursor } : {}) },
     }),
   );
+  const data = query.data;
   const pages = useMemo(() => {
     const loaded = state.key === key ? state.pages : NO_PAGES;
-    return query.data ? retainPullRequestDiffPage(loaded, cursor, query.data) : loaded;
-  }, [cursor, key, query.data, state.key, state.pages]);
-  if (state.key !== key || state.pages !== pages) setState({ key, cursor, pages });
+    return data ? retainPullRequestDiffPage(loaded, cursor, data) : loaded;
+  }, [cursor, data, key, state.key, state.pages]);
+  if (state.key !== key || state.pages !== pages) {
+    setState({ key, cursor, pages });
+  }
 
   const [parseCache] = useState(() => new WeakMap<PullRequestDiffResult, ReviewParsedDiff>());
   const parsed = useMemo(

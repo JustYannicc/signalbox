@@ -1,10 +1,18 @@
 import type { FileDiffMetadata } from "@pierre/diffs";
-import { EnvironmentId, type ReviewDiffFileContentsResult } from "@t3tools/contracts";
+import {
+  EnvironmentId,
+  ProjectId,
+  type PullRequestDiffFileContentsInput,
+  type ReviewDiffFileContentsResult,
+} from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import { AsyncResult } from "effect/reactivity";
 import { describe, expect, it, vi } from "vite-plus/test";
 
-import { createGitDiffFileContentsLoader } from "./diffFileContents";
+import {
+  createGitDiffFileContentsLoader,
+  createPullRequestDiffFileContentsLoader,
+} from "./diffFileContents";
 
 const SOURCE = {
   environmentId: EnvironmentId.make("environment-1"),
@@ -13,6 +21,16 @@ const SOURCE = {
   baseRef: "main",
   headRef: "feature",
   cacheKey: "comparison-1",
+};
+
+const PR_REVISION = {
+  baseSha: "a".repeat(40),
+  headSha: "b".repeat(40),
+};
+
+const MOVED_PR_REVISION = {
+  baseSha: "c".repeat(40),
+  headSha: "d".repeat(40),
 };
 
 function fileDiff(type: FileDiffMetadata["type"] = "rename-changed"): FileDiffMetadata {
@@ -76,5 +94,53 @@ describe("createGitDiffFileContentsLoader", () => {
     const load = createGitDiffFileContentsLoader(getDiffFileContents, SOURCE);
 
     await expect(load(fileDiff())).rejects.toBe(failure);
+  });
+});
+
+describe("createPullRequestDiffFileContentsLoader", () => {
+  it("keeps an expansion on the displayed revision after the pull request moves", async () => {
+    const getDiffFileContents = vi.fn(
+      async ({ input }: { input: PullRequestDiffFileContentsInput }) =>
+        AsyncResult.success({
+          oldContents: `before ${input.revision?.headSha ?? "latest"}\n`,
+          newContents: `after ${input.revision?.headSha ?? "latest"}\n`,
+        }),
+    );
+    const source = {
+      environmentId: EnvironmentId.make("environment-1"),
+      reference: {
+        projectId: ProjectId.make("project-1"),
+        repository: "owner/repo",
+        number: 42,
+      },
+      commit: null,
+      cacheKey: "pull-request:42",
+    };
+    const oldSnapshotLoader = createPullRequestDiffFileContentsLoader(getDiffFileContents, {
+      ...source,
+      revision: PR_REVISION,
+    });
+    const newSnapshotLoader = createPullRequestDiffFileContentsLoader(getDiffFileContents, {
+      ...source,
+      revision: MOVED_PR_REVISION,
+    });
+
+    const oldSnapshot = await oldSnapshotLoader(fileDiff());
+    const newSnapshot = await newSnapshotLoader(fileDiff());
+
+    expect(getDiffFileContents).toHaveBeenNthCalledWith(1, {
+      environmentId: "environment-1",
+      input: {
+        ...source.reference,
+        revision: PR_REVISION,
+        changeType: "rename-changed",
+        oldPath: "src/old-name.ts",
+        newPath: "src/new-name.ts",
+      },
+    });
+    expect(oldSnapshot.oldFile?.contents).toBe(`before ${PR_REVISION.headSha}\n`);
+    expect(newSnapshot.oldFile?.contents).toBe(`before ${MOVED_PR_REVISION.headSha}\n`);
+    expect(oldSnapshot.oldFile?.cacheKey).not.toBe(newSnapshot.oldFile?.cacheKey);
+    expect(oldSnapshot.newFile.cacheKey).not.toBe(newSnapshot.newFile.cacheKey);
   });
 });

@@ -343,6 +343,10 @@ export class ThreadObject extends DurableObject<ThreadObjectEnv> implements Thre
     return this.api.diagnostics(...args);
   }
 
+  requestPullRequestSync(...args: Parameters<ThreadObjectApi["requestPullRequestSync"]>) {
+    return this.api.requestPullRequestSync(...args);
+  }
+
   /** The thread's container stopped on its own: its lease is over (see `ThreadRunner.machineExited`). */
   private async machineExited(exit: MachineBackend.MachineExit, generation: number) {
     await this.runtime.runPromise(
