@@ -1,5 +1,6 @@
 import {
   PlanId,
+  MessageId,
   RunId,
   ThreadId,
   TurnItemId,
@@ -34,9 +35,9 @@ const base = {
   updatedAt: timestamp,
 };
 
-function projection(item: OrchestrationV2TurnItem): OrchestrationV2ProjectedTurnItem {
+function projection(item: OrchestrationV2TurnItem, position = 0): OrchestrationV2ProjectedTurnItem {
   return {
-    position: 0,
+    position,
     visibility: "inherited",
     sourceThreadId: ThreadId.make("source-thread"),
     sourceItemId: item.id,
@@ -110,8 +111,8 @@ describe("Find targets through native feed conversion", () => {
       const action = threadFindRevealAction(expandedGroup, feed, target, {
         [rowAction.rowId]: true,
       });
-      expect(action.type).toBe("scroll");
-      if (action.type !== "scroll") throw new Error("Missing task-list target");
+      expect(action.type).toBe("scroll-work-row");
+      if (action.type !== "scroll-work-row") throw new Error("Missing inner task-list target");
       const row = expandedGroup[action.index];
       expect(row?.type).toBe("activity-group");
       if (row?.type !== "activity-group") throw new Error("Missing task-list row");
@@ -119,6 +120,77 @@ describe("Find targets through native feed conversion", () => {
       expect(activity?.canExpand).toBe(true);
       expect(activity?.getFullDetail()).toBe(
         explanationOnly ? "Résumé review" : "Résumé review\nCheck the café plan (running)",
+      );
+    },
+  );
+
+  it.each([false, true])(
+    "reveals a runless task list after many activities, synthetic fold: %s",
+    (withPrompt) => {
+      const commands: OrchestrationV2TurnItem[] = Array.from({ length: 24 }, (_, index) => ({
+        ...base,
+        id: TurnItemId.make(`command-${index}`),
+        ordinal: index + 1,
+        runId: null,
+        type: "command_execution",
+        input: `check-${index}`,
+        output: "checked",
+      }));
+      const todo: OrchestrationV2TurnItem = {
+        ...base,
+        ordinal: 25,
+        runId: null,
+        type: "todo_list",
+        planId: PlanId.make("runless-plan"),
+        steps: [
+          { id: "last-step", text: "The target after twenty-four commands", status: "pending" },
+        ],
+      };
+      const prompt: OrchestrationV2TurnItem = {
+        ...base,
+        id: TurnItemId.make("prompt-item"),
+        runId: null,
+        type: "user_message",
+        messageId: MessageId.make("runless-prompt"),
+        createdBy: "user",
+        creationSource: "mobile",
+        inputIntent: "turn_start",
+        text: "Check the plan",
+        attachments: [],
+      };
+      const feed = buildThreadFeed(
+        [...(withPrompt ? [prompt] : []), ...commands, todo].map(projection),
+      );
+      const target = { entryId: todo.id, runId: null };
+      const expandedRuns = new Set<RunId>();
+      const collapsed = deriveThreadFeedPresentation(feed, null, expandedRuns);
+      if (withPrompt) {
+        const action = threadFindRevealAction(collapsed, feed, target);
+        expect(action).toEqual({ type: "expand-run", runId: "runless:runless-prompt" });
+        if (action.type !== "expand-run") throw new Error("Missing owning synthetic fold");
+        expandedRuns.add(RunId.make(action.runId));
+      }
+      const expandedRun = deriveThreadFeedPresentation(feed, null, expandedRuns);
+      const group = threadFindRevealAction(expandedRun, feed, target);
+      expect(group.type).toBe("expand-work-group");
+      if (group.type !== "expand-work-group") throw new Error("Missing runless work group");
+      const expandedGroup = deriveThreadFeedPresentation(
+        feed,
+        null,
+        expandedRuns,
+        new Set([group.groupId]),
+      );
+      const row = threadFindRevealAction(expandedGroup, feed, target);
+      expect(row.type).toBe("expand-work-row");
+      if (row.type !== "expand-work-row") throw new Error("Missing task row");
+      const action = threadFindRevealAction(expandedGroup, feed, target, { [row.rowId]: true });
+      expect(action).toMatchObject({ type: "scroll-work-row", rowId: row.rowId });
+      if (action.type !== "scroll-work-row") throw new Error("Missing inner scroll");
+      const workGroup = expandedGroup[action.index];
+      if (workGroup?.type !== "activity-group") throw new Error("Missing revealed group");
+      expect(workGroup.activities.findIndex((activity) => activity.id === action.rowId)).toBe(24);
+      expect(workGroup.activities[24]?.getFullDetail()).toBe(
+        "The target after twenty-four commands (pending)",
       );
     },
   );

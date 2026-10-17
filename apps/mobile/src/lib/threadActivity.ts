@@ -222,6 +222,7 @@ type ThreadFeedEntryContent =
       readonly runId: RunId;
       readonly label: string;
       readonly expanded: boolean;
+      readonly hiddenEntryIds: ReadonlySet<string>; // signalbox: Find resolves the owning fold for runless items too.
     }
   | {
       readonly type: "thinking";
@@ -1289,7 +1290,9 @@ export function deriveThreadFeedPresentation(
         row.runId !== fold.runId ||
         row.createdAt !== fold.createdAt ||
         row.label !== fold.label ||
-        row.expanded !== expanded
+        row.expanded !== expanded ||
+        row.hiddenEntryIds.size !== fold.hiddenEntryIds.size || // signalbox: preserve exact fold ownership as history loads.
+        [...fold.hiddenEntryIds].some((id) => !row?.hiddenEntryIds.has(id))
       ) {
         row = {
           type: "run-fold",
@@ -1298,6 +1301,7 @@ export function deriveThreadFeedPresentation(
           runId: fold.runId,
           label: fold.label,
           expanded,
+          hiddenEntryIds: fold.hiddenEntryIds, // signalbox: use presentation ownership instead of guessing from an item's run ID.
         };
         runFoldRowsCache.set(entry, row);
       }

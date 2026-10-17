@@ -14,8 +14,20 @@ export interface ThreadFindRevealRequest {
   readonly target: ThreadFindTarget;
 }
 
+export interface ThreadFindWorkRowRevealRequest {
+  readonly key: string;
+  readonly rowId: string;
+  readonly anchorKey: string;
+}
+
 export type ThreadFindRevealAction =
   | { readonly type: "scroll"; readonly index: number }
+  | {
+      readonly type: "scroll-work-row";
+      readonly index: number;
+      readonly rowId: string;
+      readonly anchorKey: string;
+    }
   | { readonly type: "expand-run"; readonly runId: string }
   | { readonly type: "expand-work-row"; readonly rowId: string; readonly anchorKey: string }
   | {
@@ -33,6 +45,7 @@ interface FeedRowLike {
   readonly runId?: unknown;
   readonly groupId?: unknown;
   readonly expanded?: unknown;
+  readonly hiddenEntryIds?: ReadonlySet<string>;
   readonly message?: { readonly projectedItem?: { readonly item?: FeedItemLike } };
   readonly activities?: ReadonlyArray<FeedActivityLike>;
 }
@@ -40,6 +53,7 @@ interface FeedRowLike {
 interface FeedActivityLike {
   readonly id?: unknown;
   readonly prominent?: unknown;
+  readonly groupedToolDetail?: unknown;
   readonly projectedItem?: { readonly item?: FeedItemLike };
 }
 
@@ -93,13 +107,31 @@ export function threadFindRevealAction(
     ) {
       return { type: "expand-work-row", rowId: activity.id, anchorKey: row.id };
     }
+    if (
+      activity?.groupedToolDetail === true &&
+      typeof activity.id === "string" &&
+      typeof row?.id === "string"
+    ) {
+      return { type: "scroll-work-row", index, rowId: activity.id, anchorKey: row.id };
+    }
     return { type: "scroll", index };
   }
-  if (target.runId === null) return { type: "missing" };
 
-  const runFold = findFeedRow(rows, (row) => row.type === "run-fold" && row.runId === target.runId);
-  if (runFold && runFold.expanded !== true) {
-    return { type: "expand-run", runId: target.runId };
+  const source = findFeedRow(sourceFeed, (row) => rowHolds(row, target.entryId));
+  const owningFold = findFeedRow(
+    rows,
+    (row) =>
+      row.type === "run-fold" &&
+      typeof source?.id === "string" &&
+      row.hiddenEntryIds?.has(source.id) === true,
+  );
+  const runFold =
+    owningFold ??
+    (target.runId !== null
+      ? findFeedRow(rows, (row) => row.type === "run-fold" && row.runId === target.runId)
+      : null);
+  if (runFold && runFold.expanded !== true && typeof runFold.runId === "string") {
+    return { type: "expand-run", runId: runFold.runId };
   }
 
   const groupId = workGroupIdForTarget(sourceFeed, target.entryId);
