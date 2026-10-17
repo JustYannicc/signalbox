@@ -27,7 +27,11 @@ export function SettingsCapabilityBoundary({ children }: { children: ReactNode }
       ? { machine: scope.environment.environmentId }
       : scope?.search,
   );
-  const gate = settingsPathGate(pathname, unsupported, useEnvironmentCapabilitiesKnown());
+  const configKnown = useEnvironmentCapabilitiesKnown();
+  // Connections' route guards itself on the environment UI state, which a signed-out desktop
+  // gateway knows without any config; waiting here would leave it blank forever.
+  if (pathname === "/settings/connections") return children;
+  const gate = settingsPathGate(pathname, unsupported, configKnown);
   if (gate === "wait") return null;
   return gate === "show" ? children : <Navigate to="/settings/general" replace />;
 }
