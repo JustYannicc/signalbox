@@ -162,6 +162,14 @@ describe("folderSidebarModel", () => {
       folderThreadListKey(ENV, PERSONAL, null),
       folderThreadListKey(ENV, PERSONAL, FolderId.make("notes")),
     ]);
+    // Your top level has no row to fold: a fold saved from the old Personal header changes nothing.
+    expect(lists([folderOwnerKey(ENV, PERSONAL)])).toEqual(lists([]));
+    // Member levels follow your own, as the tree draws them, whatever order the contexts come in.
+    expect(
+      visibleFolderLists([{ environmentId: ENV, owners: [...owners].reverse() }], new Set()).map(
+        (list) => list.listKey,
+      ),
+    ).toEqual(lists([]));
   });
 
   it("offers a thread every other place in its owner's tree, and reads the choice back", () => {

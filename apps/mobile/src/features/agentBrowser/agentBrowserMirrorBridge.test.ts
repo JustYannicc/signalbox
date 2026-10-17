@@ -50,4 +50,11 @@ describe("agentBrowserMirrorPageUrl", () => {
     expect(isAgentBrowserMirrorPage("https://cloud.example.com/", page)).toBe(false);
     expect(isAgentBrowserMirrorPage("https://evil.example/agent-browser.html", page)).toBe(false);
   });
+
+  it("follows the host's redirect to the page's extensionless path", () => {
+    const page = "https://cloud.example.com/agent-browser.html";
+    expect(isAgentBrowserMirrorPage("https://cloud.example.com/agent-browser", page)).toBe(true);
+    expect(isAgentBrowserMirrorPage("https://cloud.example.com/agent-browser-x", page)).toBe(false);
+    expect(isAgentBrowserMirrorPage("https://evil.example/agent-browser", page)).toBe(false);
+  });
 });

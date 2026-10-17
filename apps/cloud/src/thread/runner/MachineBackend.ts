@@ -117,7 +117,18 @@ export interface MachineBackendShape {
  */
 export interface MachineHost {
   readonly container?: Container | undefined;
-  readonly onExit?: (detail: string, generation: number) => void;
+  readonly onExit?: (exit: MachineExit, generation: number) => void;
+}
+
+/**
+ * How a machine stopped on its own. Only running out of memory says the thread
+ * outgrew its class; a crash or the platform restarting it (a deploy's rollout,
+ * #555) is a lost machine.
+ */
+export interface MachineExit {
+  /** For logs and the lease's diagnostics. */
+  readonly detail: string;
+  readonly outOfMemory: boolean;
 }
 
 /** What a thread asks a backend for. */

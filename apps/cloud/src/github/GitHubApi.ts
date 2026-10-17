@@ -1,3 +1,4 @@
+import type { PullRequestMergeMethod } from "@t3tools/contracts";
 import { parseGitHubRepositoryNameWithOwnerFromRemoteUrl } from "@t3tools/shared/git";
 import { retryAtFromHeader } from "@t3tools/source-control-core/server/SourceControlRateLimit";
 import * as Clock from "effect/Clock";
@@ -21,6 +22,14 @@ export class GitHubError extends Schema.TaggedError<GitHubError>()("GitHubError"
   /** When GitHub's rate limit lets the caller ask again (epoch ms), when it said. */
   retryAt: Schema.optional(Schema.Number),
 }) {}
+
+/** An answer GitHub sent that doesn't decode as expected. */
+export const unreadable = (operation: string) =>
+  new GitHubError({
+    operation,
+    status: 200,
+    message: "GitHub sent an answer Signalbox does not understand.",
+  });
 
 /**
  * When a refused request may be retried: `retry-after` (secondary limits), or
@@ -101,6 +110,7 @@ const toPull = (body: typeof PullBody.Type): GitHubPullRequest => ({
 
 const RefBody = Schema.Struct({ object: Schema.Struct({ sha: Schema.String }) });
 const CommitBody = Schema.Struct({ sha: Schema.String });
+const MergeBody = Schema.Struct({ merged: Schema.Boolean });
 const TreeBody = Schema.Struct({
   tree: Schema.Array(
     Schema.Struct({
@@ -384,6 +394,27 @@ export const makeGitHubApi = (
             : Effect.succeed(toPull(body)),
         ),
       ),
+    /**
+     * Merges a pull request. With `sha`, GitHub merges only while that is its
+     * head and answers 409 otherwise. Null when the pull request isn't there.
+     */
+    mergePull: (
+      token: string,
+      repository: string,
+      number: number,
+      input: { readonly sha?: string; readonly method?: PullRequestMergeMethod },
+    ) =>
+      json(
+        "mergePull",
+        MergeBody,
+        HttpClientRequest.put(`${api}/repos/${repository}/pulls/${number}/merge`).pipe(
+          HttpClientRequest.bodyJsonUnsafe({
+            ...(input.sha === undefined ? {} : { sha: input.sha }),
+            ...(input.method === undefined ? {} : { merge_method: input.method }),
+          }),
+        ),
+        token,
+      ),
     /** One `git-receive-pack` request (`gitPush.ts` builds it); answers the raw result. */
     receivePack: (token: string, repository: string, body: Uint8Array) =>
       send(
@@ -464,6 +495,16 @@ export const makeGitHubApi = (
         HttpClientRequest.get(`${api}${path}`).pipe(HttpClientRequest.setUrlParams(params)),
         token,
       ),
+    /** A REST write with a JSON body; its answer as JSON text, null on 404. `path` starts with `/`. */
+    post: (operation: string, token: string, path: string, body: unknown) =>
+      raw(
+        operation,
+        HttpClientRequest.post(`${api}${path}`).pipe(HttpClientRequest.bodyJsonUnsafe(body)),
+        token,
+      ),
+    /** A download GitHub redirects to storage (logs, artifacts), as bytes; null on 404. */
+    download: (operation: string, token: string, path: string) =>
+      rawBytes(operation, HttpClientRequest.get(`${api}${path}`), token),
     /** The host links to this GitHub's pull requests name, e.g. `github.com`. */
     host: new URL(web).host.toLowerCase(),
     /** Where git's smart HTTP for `repository` lives, for the drive's fetch proxy. */

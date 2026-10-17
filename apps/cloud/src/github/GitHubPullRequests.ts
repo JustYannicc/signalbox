@@ -16,7 +16,7 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
 import type { SnapshotFields } from "../thread/pullRequests/pullRequestLinks.ts";
-import { type GitHubApi, GitHubError } from "./GitHubApi.ts";
+import { type GitHubApi, unreadable } from "./GitHubApi.ts";
 
 /**
  * A pull request as the cloud reads it from GitHub, with the user's token:
@@ -31,14 +31,7 @@ import { type GitHubApi, GitHubError } from "./GitHubApi.ts";
 const PAGE_LIMIT = 10;
 const PER_PAGE = 100;
 
-const unreadable = (operation: string) =>
-  new GitHubError({
-    operation,
-    status: 200,
-    message: "GitHub sent an answer Signalbox does not understand.",
-  });
-
-const ownerAndName = (repository: string) => {
+export const ownerAndName = (repository: string) => {
   const [owner, name] = repository.split("/");
   return { owner, name };
 };
@@ -98,8 +91,12 @@ export const pullRequestSnapshot = (
     return snapshot;
   });
 
-/** Every check on the head commit, deduped the way upstream's detail reads them; null when gone. */
-export const pullRequestChecks = (
+/**
+ * Every check on the head commit, deduped the way upstream's detail reads
+ * them, with the commit they're for (null unless they were read whole for
+ * one commit); null when gone.
+ */
+export const pullRequestChecksAtHead = (
   api: GitHubApi,
   token: string,
   repository: string,
@@ -107,6 +104,7 @@ export const pullRequestChecks = (
 ) =>
   Effect.gen(function* () {
     const contexts: Array<GitHubCheckContext> = [];
+    let headSha: string | null = null;
     let after: string | null = null;
     for (let page = 0; page < PAGE_LIMIT; page += 1) {
       const text: string | null = yield* api.graphql(
@@ -121,12 +119,29 @@ export const pullRequestChecks = (
       if (Option.isNone(decoded)) return yield* unreadable("pullRequestChecks");
       const page = toPullRequestCheckContextsPage(decoded.value.data);
       if (page === null) return null;
+      // Pages of two heads (a push between them) are about no one commit.
+      if (headSha !== null && page.headSha !== headSha) return { headSha: null, checks: [] };
+      headSha = page.headSha;
       contexts.push(...page.contexts);
       after = page.nextCursor;
       if (after === null) break;
     }
-    return pullRequestChecksFromContexts(contexts).checks satisfies ReadonlyArray<PullRequestCheck>;
+    // A list cut short isn't all the head's checks, so it names no commit.
+    if (after !== null) headSha = null;
+    const checks: ReadonlyArray<PullRequestCheck> = pullRequestChecksFromContexts(contexts).checks;
+    return { headSha, checks };
   });
+
+/** Every check on the head commit; null when gone. */
+export const pullRequestChecks = (
+  api: GitHubApi,
+  token: string,
+  repository: string,
+  number: number,
+) =>
+  Effect.map(pullRequestChecksAtHead(api, token, repository, number), (read) =>
+    read === null ? null : read.checks,
+  );
 
 /** A comment or review as GitHub's REST API lists it; only the fields used. */
 const RestUser = Schema.NullOr(Schema.Struct({ login: Schema.String }));

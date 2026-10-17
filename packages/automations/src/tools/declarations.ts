@@ -60,10 +60,11 @@ export const AUTOMATION_TOOLS = {
   automation_reference: declare({
     title: "Automation reference",
     description:
-      "The signalbox-automations skill, for harnesses that don't load skills: how to write, save, run and fix an automation. Read it before writing or changing one. No topic returns the main page; topics: steps, control-flow, triggers, runs, patterns, or an example file name such as work-through-tickets.",
+      "The signalbox-automations skill, for harnesses that don't load skills: how to write, save, run and fix an automation. Read it before writing or changing one. No topic returns the main page; topics: steps, control-flow, triggers, runs, patterns, github-actions, or an example file name such as work-through-tickets.",
     parameters: Schema.Struct({
       topic: Schema.optional(Schema.String).annotate({
-        description: "steps, control-flow, triggers, runs, patterns, or an example's file name.",
+        description:
+          "steps, control-flow, triggers, runs, patterns, github-actions, or an example's file name.",
       }),
     }),
     success: Schema.Struct({ reference: Schema.String }),
@@ -287,11 +288,16 @@ export const AUTOMATION_TOOLS = {
   merge_pull_request: declare({
     title: "Merge pull request",
     description:
-      "Ask to merge a pull request you own, then end your turn. The folder's merge gate decides: by default a person approves it as a needs-you, then Signalbox merges it, deletes its branch and wakes you with the outcome; if they say not yet, you're told why. Call it once checks pass and the work is done, and never merge any other way (no gh pr merge). The pull request has to be linked to this thread and still open.",
+      "Ask to merge a pull request you own, then end your turn. The folder's merge gate decides and wakes you with the outcome. By default it reads the pull request's evidence at its head commit: if checks failed or still run, review threads are open, changes were requested, it's a draft or it conflicts, you're told what to fix and nothing reaches a person. When it's ready and easy to undo, Signalbox merges it and deletes its branch. A change that's hard to undo (a migration, sign-in or access control, deleting data) or that you say needs a decision goes to a person with the evidence first. Call it when the work is done and checked, and never merge any other way (no gh pr merge). The pull request has to be linked to this thread and still open.",
     parameters: Schema.Struct({
       url: Schema.String.annotate({ description: "The pull request's URL." }),
       note: Schema.optional(Schema.String).annotate({
-        description: "What the person deciding should know: what changed and how you checked it.",
+        description:
+          "What a person deciding should know: what changed, how you checked it, the preview you walked.",
+      }),
+      askBecause: Schema.optional(Schema.String).annotate({
+        description:
+          "Only when a person should decide this one, why: a product question the issue leaves open, or a change that's hard to undo the gate wouldn't spot (it deletes or rewrites data). The gate asks instead of merging.",
       }),
     }),
     success: Schema.Struct({

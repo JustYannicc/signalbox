@@ -20,11 +20,14 @@ const FAKE_PIPES = {
   apiBaseUrl: WORKOS,
 };
 const ENDPOINTS = { web: "https://github.test", api: "https://api.github.test" };
+const REPOSITORY_ID = "R_fake";
 
 export const makeFakeGitHub = (options: {
   readonly bare: string;
   readonly repository: string;
   readonly defaultBranch: string;
+  /** More of GitHub's API (e.g. `actionsTesting.ts`): an answer, or null to fall through. */
+  readonly more?: (method: string, url: URL, body: Uint8Array) => Response | null;
 }) => {
   const env = { ...process.env, GIT_CONFIG_GLOBAL: "/dev/null", GIT_CONFIG_NOSYSTEM: "1" };
   const git = (args: ReadonlyArray<string>, input?: Uint8Array) =>
@@ -64,6 +67,14 @@ export const makeFakeGitHub = (options: {
     mergeable?: "MERGEABLE" | "CONFLICTING" | "UNKNOWN";
     /** The conversation: comments, line comments and reviews. */
     remarks?: Array<FakeRemark>;
+    /** Changed paths, as GitHub lists the pull request's files. */
+    files?: Array<string>;
+    /** Review threads nobody resolved. */
+    openThreads?: number;
+    /** The head commit when it merged, as GitHub keeps it after the branch moves or goes. */
+    headOid?: string;
+    /** The head branch's repository when it isn't this one: a fork. */
+    headRepository?: string;
   }> = [];
   const calls: Array<string> = [];
   /** Changes made through `update`, so each moves `updatedAt` a minute on. */
@@ -147,6 +158,85 @@ export const makeFakeGitHub = (options: {
       return json({
         data: { repository: { pullRequest: pull === undefined ? null : summaryJson(pull) } },
       });
+    }
+    if (query.startsWith("query PullRequestMergeEvidence(")) {
+      if (pull === undefined) return json({ data: { repository: { pullRequest: null } } });
+      return json({
+        data: {
+          repository: {
+            pullRequest: {
+              title: pull.title,
+              state: pull.merged ? "MERGED" : pull.state === "open" ? "OPEN" : "CLOSED",
+              isDraft: pull.draft === true,
+              mergeable: pull.mergeable ?? "MERGEABLE",
+              reviewDecision: null,
+              headRefOid: head(pull.head) ?? "0".repeat(40),
+              headRefName: pull.head,
+              baseRefName: pull.base,
+              headRepository: { nameWithOwner: pull.headRepository ?? options.repository },
+              reviewThreads: {
+                nodes: Array.from({ length: pull.openThreads ?? 0 }, () => ({ isResolved: false })),
+                pageInfo: { hasNextPage: false },
+              },
+              files: {
+                nodes: (pull.files ?? []).map((path) => ({ path })),
+                pageInfo: { hasNextPage: false, endCursor: null },
+              },
+            },
+          },
+        },
+      });
+    }
+    if (query.startsWith("query PullRequestBranchToDelete(")) {
+      return json({
+        data: {
+          repository: {
+            pullRequest:
+              pull === undefined
+                ? null
+                : {
+                    state: pull.merged ? "MERGED" : pull.state === "open" ? "OPEN" : "CLOSED",
+                    headRefName: pull.head,
+                    baseRefName: pull.base,
+                    headRefOid: pull.headOid ?? head(pull.head),
+                    headRepository: { id: REPOSITORY_ID },
+                  },
+          },
+        },
+      });
+    }
+    if (query.startsWith("query PullRequestSourceBranch(")) {
+      const { ref } = JSON.parse(text).variables as { ref: string };
+      const oid = head(ref.slice("refs/heads/".length));
+      return json({
+        data: {
+          node: {
+            __typename: "Repository",
+            defaultBranchRef: { name: options.defaultBranch },
+            ref: oid === null ? null : { target: { __typename: "Commit", oid } },
+          },
+        },
+      });
+    }
+    if (query.startsWith("query PullRequestBranchUsers(")) {
+      const { branch } = JSON.parse(text).variables as { branch: string };
+      const open = pulls.filter((candidate) => candidate.state === "open");
+      const count = (side: "base" | "head") => ({
+        totalCount: open.filter((candidate) => candidate[side] === branch).length,
+      });
+      const users = { asBase: count("base"), asHead: count("head") };
+      return json({ data: { repository: users, node: users } });
+    }
+    if (query.startsWith("mutation DeletePullRequestBranch(")) {
+      const { input } = JSON.parse(text).variables as {
+        input: { refUpdates: Array<{ name: string; beforeOid: string }> };
+      };
+      for (const update of input.refUpdates) {
+        if (head(update.name.slice("refs/heads/".length)) !== update.beforeOid)
+          return json({ data: { updateRefs: null }, errors: [{ message: "ref moved" }] });
+        git(["update-ref", "-d", update.name]);
+      }
+      return json({ data: { updateRefs: { clientMutationId: null } } });
     }
     if (query.startsWith("query PullRequestCheckContexts(")) {
       if (pull === undefined) return json({ data: { repository: { pullRequest: null } } });
@@ -316,6 +406,21 @@ export const makeFakeGitHub = (options: {
         ? json({ sha })
         : json({ message: "Not Found" }, 404);
     }
+    const merging = new RegExp(`^/repos/${options.repository}/pulls/(\\d+)/merge$`).exec(path);
+    if (method === "PUT" && merging !== null) {
+      const pull = pulls.find((candidate) => candidate.number === Number(merging[1]));
+      if (pull === undefined) return json({ message: "Not Found" }, 404);
+      if (pull.state !== "open") return json({ message: "Pull Request is not mergeable" }, 405);
+      const { sha } = JSON.parse(text || "{}") as { sha?: string };
+      if (sha !== undefined && sha !== head(pull.head))
+        return json({ message: "Head branch was modified. Review and try the merge again." }, 409);
+      mergePull(pull.number);
+      return json({
+        sha: head(pull.base),
+        merged: true,
+        message: "Pull Request successfully merged",
+      });
+    }
     const refPrefix = `/repos/${options.repository}/git/ref/heads/`;
     if (method === "GET" && path.startsWith(refPrefix)) {
       const oid = head(decodeURIComponent(path.slice(refPrefix.length)));
@@ -346,13 +451,26 @@ export const makeFakeGitHub = (options: {
     return json({ message: "Not Found" }, 404);
   };
 
+  /** Merges a pull request the way GitHub's merge button fast-forwards. */
+  const mergePull = (number: number) => {
+    const pull = pulls.find((candidate) => candidate.number === number)!;
+    pull.headOid = head(pull.head)!;
+    git(["update-ref", `refs/heads/${pull.base}`, pull.headOid]);
+    pull.state = "closed";
+    pull.merged = true;
+    pull.updatedAt = "2026-10-08T01:00:00Z";
+  };
+
   const client = HttpClient.make((request) =>
     Effect.sync(() => {
       const url = new URL(request.url);
       const host = url.origin === WORKOS ? "workos" : url.origin === ENDPOINTS.web ? "web" : "api";
       calls.push(`${request.method} ${host}${url.pathname}`);
       const body = request.body._tag === "Uint8Array" ? request.body.body : new Uint8Array();
-      return HttpClientResponse.fromWeb(request, answer(request.method, url, body));
+      return HttpClientResponse.fromWeb(
+        request,
+        options.more?.(request.method, url, body) ?? answer(request.method, url, body),
+      );
     }),
   );
 
@@ -372,13 +490,27 @@ export const makeFakeGitHub = (options: {
     /** The user revokes Signalbox on GitHub; Pipes notices on the next refresh. */
     revoke: (userId: string) => connected.set(userId, { state: "needs_reauthorization" }),
     isConnected: (userId: string) => connected.has(userId),
-    /** Merges a pull request the way GitHub's merge button fast-forwards. */
-    merge: (number: number) => {
-      const pull = pulls.find((candidate) => candidate.number === number)!;
-      git(["update-ref", `refs/heads/${pull.base}`, head(pull.head)!]);
-      pull.state = "closed";
-      pull.merged = true;
-      pull.updatedAt = "2026-10-08T01:00:00Z";
+    merge: mergePull,
+    /** Someone pushes a commit to `branch` on GitHub. */
+    pushEmptyCommit: (branch: string) => {
+      const parent = head(branch)!;
+      const commit = NodeChildProcess.execFileSync(
+        "git",
+        ["commit-tree", `${parent}^{tree}`, "-p", parent, "-m", "Pushed by someone else"],
+        {
+          cwd: options.bare,
+          env: {
+            ...env,
+            GIT_AUTHOR_NAME: "Someone",
+            GIT_AUTHOR_EMAIL: "someone@example.invalid",
+            GIT_COMMITTER_NAME: "Someone",
+            GIT_COMMITTER_EMAIL: "someone@example.invalid",
+          },
+        },
+      )
+        .toString()
+        .trim();
+      git(["update-ref", `refs/heads/${branch}`, commit]);
     },
     /** Changes a pull request on GitHub's side, and moves its `updatedAt` as GitHub would. */
     update: (number: number, change: Partial<(typeof pulls)[number]>) => {

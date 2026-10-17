@@ -1,4 +1,4 @@
-import type { RunnerTurn } from "@signalbox/runner-protocol/RunnerProtocol";
+import { onFreshSession, type RunnerTurn } from "@signalbox/runner-protocol/RunnerProtocol";
 import type { OrchestrationV2ThreadProjection } from "@t3tools/contracts";
 
 import { cut } from "../../context/threadContext.ts";
@@ -10,6 +10,9 @@ import { cut } from "../../context/threadContext.ts";
  * starts a new session, and the turn's prompt carries what the thread said so
  * far, so the agent picks up the conversation rather than a bare "Continue
  * where you left off.". The thread shows the prompt as the user sent it.
+ *
+ * A turn that does resume carries the same prompt (`freshSessionText`), for
+ * the Runner to start fresh on should the resume fail on the machine (#653).
  */
 
 type Turn = Omit<RunnerTurn, "traceId">;
@@ -64,21 +67,15 @@ export function transcriptBefore(projection: OrchestrationV2ThreadProjection, tu
   return lines.join("\n\n");
 }
 
+/** `turn`'s message on a new harness session, with the conversation so far before it. */
+export function freshSessionText(projection: OrchestrationV2ThreadProjection, turn: Turn): string {
+  const transcript = transcriptBefore(projection, turn);
+  return transcript === ""
+    ? turn.message.text
+    : `${transcript}\n\nUser message:\n${turn.message.text}`;
+}
+
 /** `turn` on a new harness session, with the conversation so far in its prompt. */
 export function freshSessionTurn(projection: OrchestrationV2ThreadProjection, turn: Turn): Turn {
-  // A continuation resumes a session natively; a new one has nothing to continue.
-  const { restartContinuationOfRunId: _continued, ...rest } = turn;
-  const transcript = transcriptBefore(projection, turn);
-  return {
-    ...rest,
-    providerTurnOrdinal: 1,
-    providerThread: { ...turn.providerThread, nativeThreadRef: null },
-    message: {
-      ...turn.message,
-      text:
-        transcript === ""
-          ? turn.message.text
-          : `${transcript}\n\nUser message:\n${turn.message.text}`,
-    },
-  };
+  return onFreshSession(turn, freshSessionText(projection, turn));
 }

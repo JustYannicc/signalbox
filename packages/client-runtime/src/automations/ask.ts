@@ -29,6 +29,7 @@ export function askFromQuestion(question: AutomationWaitingQuestion): Automation
     multi: question.multi,
     fields: question.fields,
     onTimeout: null,
+    open: question.open ?? null,
   };
 }
 
@@ -50,6 +51,7 @@ export function questionFromStep(
     options: ask.options,
     multi: ask.multi,
     fields: ask.fields,
+    open: ask.open,
     since: step.startedAt,
   };
 }

@@ -33,6 +33,23 @@ any other, or ask the agent to stop it. Some steps don't run in the cloud yet: w
 (`w.hook`), calls to connected services, `w.run` functions, and model steps (`w.llm`, `w.judge`,
 `w.extract`). Use a self-hosted server for automations that need them.
 
+### Steps on GitHub Actions
+
+In a folder added from GitHub, a step can run on the repository's GitHub Actions runners, with its
+CI machines, secrets and environments. Ask the agent to run the step "on GitHub Actions". The
+first time, the agent opens a pull request that adds Signalbox's step workflow
+(`.github/workflows/signalbox-step.yml`); merge it.
+
+These steps run as your GitHub account, so you lend it to the folder first: in the folder's ⋯
+menu, turn on **Lend my GitHub to CI steps**. The switch then names the account the folder's CI
+steps run as. Turn it off to stop; steps started after that fail and say how to lend it again,
+while runs already going finish. If you connect a different GitHub account, lend it again. When
+folders get their own GitHub App, steps will run as the App instead.
+
+While a step runs, it shows the GitHub run's jobs and steps live, whose GitHub it runs as, the end
+of each job's log and a link to the run on GitHub. Its result goes on to the next step. Cancelling
+the automation run cancels the GitHub run.
+
 ## Connect your services
 
 Automations reach your accounts, like Gmail, GitHub or Linear, through
@@ -96,10 +113,16 @@ invoice being paid in a connected service, or tomorrow morning, and it ends its 
 keeps waking it on failed checks, other people's comments and reviews, and conflicts until it
 merges.
 
-When the work is done, the agent asks to merge instead of merging. You get a needs-you, "Merge
-acme/app#12?", showing the commit it would merge: **merge** merges that commit and deletes its
-branch, **not yet** sends the agent your reason. If new commits land after you approve, nothing
-merges and the agent asks again. To have a project merge on its own when checks pass, have an agent
+When the work is done, the agent asks to merge instead of merging, and the folder's **Merge gate**
+decides. Until checks pass at the latest commit, review threads are resolved and nothing conflicts,
+the agent is sent back with what's missing and you hear nothing. A ready change that's easy to undo
+merges by itself, and its branch is deleted. You get a needs-you, "Merge acme/app#12?", only for a
+change that's hard to undo (a database migration, sign-in or access control, deleting data) or one
+the agent says needs a decision. It shows the commit, the checks, the review state and why it's
+asking: **merge** merges that commit, **not yet** sends the agent your reason. If new commits land
+after the gate read them, nothing merges and the agent asks again.
+
+To have a folder ask you about every merge, or to add its own hard-to-undo paths, have an agent
 customize the built-in **Merge gate** there as a draft, then publish it yourself.
 
 **Thread details → Waiting on** lists what the thread waits for. Open a row to see the run behind
@@ -123,7 +146,7 @@ jumps to its line.
 
 When an automation needs a decision, it waits and notifies you. Answer from either place:
 
-- **Automations waiting on you** at the top of **Pipeline**.
+- **Automations waiting on you** at the top of **Home**.
 - The **Automations** page, which lists every question waiting on you and every automation whose
   last run failed.
 - The waiting step in the run, or on the diagram.

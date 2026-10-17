@@ -188,7 +188,17 @@ it.effect(
               ran.push(input);
             }),
       detail: () =>
-        Effect.succeed({ state: "merged", title: "Fix login", headSha: "abc" } as never),
+        Effect.succeed({
+          state: "merged",
+          title: "Fix login",
+          headSha: "abc",
+          headBranch: "fix/login",
+          baseBranch: "main",
+          headRepositoryNameWithOwner: "fork/app",
+          isDraft: false,
+          mergeability: "unknown",
+          checks: [{ name: "test", status: "success", description: null, url: null }],
+        } as never),
     });
     return Effect.gen(function* () {
       yield* Layer.build(
@@ -273,6 +283,15 @@ it.effect(
         title: "Fix login",
         state: "merged",
         headSha: "abc",
+        headBranch: "fix/login",
+        baseBranch: "main",
+        headRepository: "fork/app",
+        isDraft: false,
+        mergeability: "unknown",
+        reviewDecision: null,
+        checks: [{ name: "test", status: "success", url: null, required: null }],
+        openThreads: null,
+        files: null,
       });
     }).pipe(Effect.scoped);
   },

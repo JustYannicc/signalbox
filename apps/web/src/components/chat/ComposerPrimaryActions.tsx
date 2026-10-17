@@ -18,6 +18,7 @@ import {
   alternateComposerDispatchAction,
   resolveComposerDispatchMode,
 } from "@t3tools/client-runtime/state/composer-dispatch";
+import { useOneEnvironmentCopy } from "~/state/oneEnvironmentCopy"; // signalbox
 
 interface PendingActionState {
   questionIndex: number;
@@ -34,6 +35,7 @@ interface ComposerPrimaryActionsProps {
   isRunning: boolean;
   canInterrupt: boolean;
   followUpBehavior?: "queue" | "steer";
+  canSteer?: boolean;
   alternateShortcutLabel?: string | null;
   showPlanFollowUpPrompt: boolean;
   promptHasText: boolean;
@@ -90,6 +92,7 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
   isRunning,
   canInterrupt,
   followUpBehavior = "steer",
+  canSteer = true,
   alternateShortcutLabel = null,
   showPlanFollowUpPrompt,
   promptHasText,
@@ -112,6 +115,7 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
   keepFullHistory = false,
   onToggleKeepFullHistory,
 }: ComposerPrimaryActionsProps) {
+  const environmentCopy = useOneEnvironmentCopy(); // signalbox
   const pointerFocusProps = preserveComposerFocusOnPointerDown
     ? { onPointerDown: preventPointerFocus }
     : undefined;
@@ -122,6 +126,7 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
     resolveComposerDispatchMode({
       running: isRunning,
       activeTurnDefault: followUpBehavior,
+      canSteer,
       alternateModifier: shortcutModifiers.metaKey || shortcutModifiers.ctrlKey,
     }) === "queue";
   const alternateAction = alternateComposerDispatchAction(followUpBehavior);
@@ -287,7 +292,7 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
             ? "Steer message"
             : "Submit message";
   const submitStatus = isEnvironmentUnavailable
-    ? "Environment disconnected"
+    ? environmentCopy("Environment disconnected")
     : (sendDisabledReason ??
       (isConnecting
         ? "Connecting"
@@ -302,7 +307,7 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
     submitStatus ??
     (compactsBeforeSend
       ? `Summarize ${compactTokens} tokens of history, then send`
-      : isRunning && !isEditingQueuedMessage
+      : isRunning && !isEditingQueuedMessage && canSteer
         ? `Click to ${followUpBehavior}, Ctrl/⌘-click${alternateShortcutLabel ? ` or ${alternateShortcutLabel}` : ""} to ${alternateAction}`
         : submitLabel);
 
