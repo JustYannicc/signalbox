@@ -133,3 +133,41 @@ test("does not delete a domain bound to the wrong zone or service", async () => 
     /Cannot safely detach Worker domains/,
   );
 });
+
+test("discovers and deletes an orphan trace domain after its Worker is gone", async () => {
+  const traces = {
+    id: "closed-traces",
+    hostname: `traces-${bindings[0].hostname}`,
+    service: `${bindings[0].service}-traces`,
+    zone_id: bindings[0].zone_id,
+  };
+  const otherPreview = {
+    ...traces,
+    id: "other-traces",
+    hostname: "traces-preview-914.signalbox.run",
+    service: "signalbox-cloud-pr-914-traces",
+  };
+  const production = {
+    ...traces,
+    id: "production-traces",
+    hostname: "traces-app.signalbox.run",
+    service: "signalbox-cloud-traces",
+  };
+  assert.equal(managedPreviewNumber(traces), 913);
+  assert.equal(managedPreviewNumber(production), null);
+  assert.equal(managedPreviewNumber({ ...traces, service: otherPreview.service }), null);
+  let rows = [traces, otherPreview, production];
+  const deleted = [];
+  const fetcher = async (input, init = {}) => {
+    if (init.method === "DELETE") {
+      const id = new URL(input).pathname.split("/").at(-1);
+      deleted.push(id);
+      rows = rows.filter((row) => row.id !== id);
+      return Response.json({ success: true, result: { success: true } });
+    }
+    return Response.json({ success: true, result: rows, result_info: { total_pages: 1 } });
+  };
+  assert.equal(await detachClosedPreviewDomains("account", "token", 913, fetcher), 1);
+  assert.deepEqual(deleted, [traces.id]);
+  assert.deepEqual(rows, [otherPreview, production]);
+});

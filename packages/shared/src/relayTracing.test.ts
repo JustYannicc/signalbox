@@ -2,12 +2,18 @@ import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
 import * as Tracer from "effect/Tracer";
 import { FetchHttpClient } from "effect/http";
 import { vi } from "vite-plus/test";
 
 import { RelayClientTracer, withLocalTracing, withRelayClientTracing } from "./relayTracing.ts";
 import * as RelayTracing from "./relayTracing.ts";
+
+class OAuthCallbackFailure extends Schema.TaggedError<OAuthCallbackFailure>()(
+  "OAuthCallbackFailure",
+  { cause: Schema.Unknown },
+) {}
 
 function collectingTracer(spans: Array<string>): Tracer.Tracer {
   return Tracer.make({
@@ -96,6 +102,75 @@ describe("withRelayClientTracing", () => {
           expect(payload).toContain("relay socket closed");
           expect(payload).toContain('"key":"service.name","value":{"stringValue":"relay-test"}');
           expect(payload).toContain('"key":"service.namespace","value":{"stringValue":"t3code"}');
+        }),
+      ),
+    );
+  });
+
+  it.effect("scrubs URLs from span, event, link and failure telemetry", () => {
+    const fetchFn = vi.fn<typeof fetch>(async () => new Response(null, { status: 202 }));
+    const layerHttpClient = FetchHttpClient.layer.pipe(
+      Layer.provide(Layer.succeed(FetchHttpClient.Fetch, fetchFn)),
+    );
+    const layerTracing = RelayTracing.layer(
+      {
+        tracesUrl: "https://api.axiom.test/v1/traces",
+        tracesDataset: "relay-traces",
+        tracesToken: "public-ingest-token",
+      },
+      {
+        serviceName: "relay-test",
+        runtime: "test",
+        client: "test",
+      },
+    ).pipe(Layer.provide(layerHttpClient));
+    const linkedSpan = Tracer.externalSpan({ spanId: "linked-span", traceId: "linked-trace" });
+    const callbackUrl = "https://auth.example.test/callback?code=oauth-code&state=oauth-state";
+    const attributes = {
+      "url.full": callbackUrl,
+      "url.query":
+        "token=oauth-token&access_token=access-token&refresh_token=refresh-token&id_token=id-token",
+      "http.url": "https://auth.example.test/connect?ticket=one-time-ticket&api_key=api-key",
+      nested: { "url.full": "https://auth.example.test/?client_secret=nested-secret" },
+      "request.id": "request-123",
+    };
+    const layerTracedApplication = Layer.effectDiscard(
+      Effect.gen(function* () {
+        const span = yield* Effect.currentSpan;
+        span.event("oauth.callback", 1n, attributes);
+        span.addLinks([{ span: linkedSpan, attributes }]);
+        return yield* new OAuthCallbackFailure({
+          cause: new Error(`OAuth callback failed at ${callbackUrl}`),
+        });
+      }).pipe(
+        Effect.withSpan("relay.oauth.callback", { attributes }),
+        withRelayClientTracing,
+        Effect.exit,
+      ),
+    ).pipe(Layer.provide(layerTracing));
+
+    return Layer.build(layerTracedApplication).pipe(
+      Effect.scoped,
+      Effect.andThen(
+        Effect.sync(() => {
+          expect(fetchFn).toHaveBeenCalledOnce();
+          const payload = new TextDecoder().decode(fetchFn.mock.calls[0]?.[1]?.body as Uint8Array);
+          expect(payload).toContain("https://auth.example.test/callback");
+          expect(payload).toContain('"key":"request.id","value":{"stringValue":"request-123"}');
+          expect(payload).toContain("linked-span");
+          for (const secret of [
+            "oauth-code",
+            "oauth-state",
+            "oauth-token",
+            "access-token",
+            "refresh-token",
+            "id-token",
+            "one-time-ticket",
+            "api-key",
+            "nested-secret",
+          ]) {
+            expect(payload).not.toContain(secret);
+          }
         }),
       ),
     );

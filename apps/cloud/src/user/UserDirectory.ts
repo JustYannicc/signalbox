@@ -79,6 +79,12 @@ export class UserObjectError extends Schema.TaggedError<UserObjectError>()("User
 /** The shell crosses Durable Object RPC in its JSON encoding, which keeps its dates. */
 export const shellSnapshotWire = jsonCodec(OrchestrationV2ShellSnapshot);
 
+export interface ClientTraceDimension {
+  readonly threadId: string;
+  readonly folderId: string | null;
+  readonly orgId: string | null;
+}
+
 /** A PR diff response that keeps service failures typed across Durable Object RPC. */
 export type PullRequestDiffReply =
   | { readonly _tag: "success"; readonly value: PullRequestDiffResult }
@@ -211,6 +217,10 @@ export interface UserObjectApi {
   readonly onePasswordToken: () => Promise<string | null>;
   /** The user's current contexts, which every thread call acts within. */
   readonly contextIds: () => Promise<ReadonlyArray<SignalboxContextId>>;
+  /** Resolves trusted, currently visible context and folder ids for telemetry threads. */
+  readonly clientTraceDimensions: (
+    threadIds: ReadonlyArray<string>,
+  ) => Promise<ReadonlyArray<ClientTraceDimension>>;
   /** A drive object's membership delivery (`drive/driveAccessOutbox.ts`). Idempotent. */
   readonly recordDriveAccess: (entry: DriveAccessEntry) => Promise<void>;
   /** The user's role in a drive right now, or null when they can't open it (`UserDrives`). */
@@ -361,6 +371,7 @@ const METHODS = Object.keys({
   pullRequestDiff: true,
   onePasswordToken: true,
   contextIds: true,
+  clientTraceDimensions: true,
   recordDriveAccess: true,
   driveAccess: true,
   readableDrives: true,

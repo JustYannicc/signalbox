@@ -3,6 +3,10 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./clientTraceSafety": {
+      "types": "./src/clientTraceSafety.ts",
+      "import": "./src/clientTraceSafety.ts"
+    },
     "./pnpmVirtualStore": {
       "types": "./src/pnpmVirtualStore.ts",
       "import": "./src/pnpmVirtualStore.ts",
@@ -323,6 +327,10 @@
     "./relayTracing": {
       "types": "./src/relayTracing.ts",
       "import": "./src/relayTracing.ts"
+    },
+    "./traceUrlScrubbing": {
+      "types": "./src/traceUrlScrubbing.ts",
+      "import": "./src/traceUrlScrubbing.ts"
     },
     "./preview": {
       "types": "./src/preview.ts",
