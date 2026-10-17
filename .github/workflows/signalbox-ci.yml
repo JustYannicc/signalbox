@@ -206,7 +206,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3, 4, 5, 6]
+        # Every shard still covers its share of the full suite. Small PRs need
+        # fewer runner startups; main and larger diffs keep the faster split.
+        shard: ${{ fromJSON(github.event_name == 'pull_request' && github.event.pull_request.changed_files > 0 && github.event.pull_request.changed_files <= 10 && '[1,2,3]' || '[1,2,3,4,5,6]') }}
     steps:
       - name: Checkout
         uses: actions/checkout@v6
