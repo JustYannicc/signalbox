@@ -179,7 +179,8 @@ export default workflow(async (w, event: { threadId: string }) => {
         until: "an hour from now",
         at: new Date(at).toISOString(),
         message: "Look at the build again.",
-      })) as { readonly waitId: string };
+      })) as { readonly waitId: string; readonly alreadySatisfied: boolean };
+      expect(wait.alreadySatisfied).toBe(false);
       yield* cloud.settle;
       // The instance sleeps; the object's alarm is only for crons.
       expect(cloud.workflows.instance(wait.waitId)?.workflows.blocked()).toEqual([
@@ -194,6 +195,35 @@ export default workflow(async (w, event: { threadId: string }) => {
       });
       expect(
         projection.messages.some((message) => message.text.includes("Look at the build again.")),
+      ).toBe(true);
+    }),
+  );
+
+  it.effect("wait_for matches a thread that already finished without leaving a wait", () =>
+    Effect.gen(function* () {
+      const { cloud, rpc, thread, tool, engine } = yield* setup;
+      const agent = yield* thread("thread-waiter", "Wait for another thread");
+      const finished = yield* thread("thread-finished", "Already finished");
+
+      const wait = (yield* tool(agent, "wait_for", {
+        until: "the other thread to finish",
+        on: "turn.finished",
+        where: { threadId: finished },
+        timeout: { seconds: 20 },
+      })) as { readonly waitId: string; readonly alreadySatisfied: boolean };
+      expect(wait.alreadySatisfied).toBe(true);
+      yield* cloud.settle;
+
+      const run = yield* engine((workflow) => workflow.getRun(wait.waitId));
+      expect(run.run.status).toBe("succeeded");
+      expect(yield* tool(agent, "list_waits", {})).toEqual({ waits: [] });
+      const projection = yield* rpc[ORCHESTRATION_V2_WS_METHODS.getThreadProjection]({
+        threadId: agent,
+      });
+      expect(
+        projection.messages.some((message) =>
+          message.text.startsWith("You were waiting for the other thread to finish."),
+        ),
       ).toBe(true);
     }),
   );

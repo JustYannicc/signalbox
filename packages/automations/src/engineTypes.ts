@@ -37,9 +37,14 @@ export interface Launch {
   /** Defaults to the live version. */
   readonly version?: number;
   /** The thread it's attached to and the run it continues (see runLinkStore.ts). */
-  readonly link?: Omit<RunLinkRow, "run_id" | "started_at" | "lineage_id"> & {
+  readonly link?: Omit<
+    RunLinkRow,
+    "run_id" | "started_at" | "lineage_id" | "event_patterns_json"
+  > & {
     /** Defaults to the new run itself. */
     readonly lineage_id?: string;
+    /** Events a host has to listen for before the run reaches its computed wait step. */
+    readonly event_patterns_json?: string;
   };
   /** The trigger the code gets, as stored, when a restart carries the previous run's over. */
   readonly triggerJson?: string;

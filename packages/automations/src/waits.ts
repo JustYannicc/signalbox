@@ -1,8 +1,10 @@
 import {
   ThreadId,
+  automationEventMatches,
   type AutomationDefaults,
   type AutomationError,
   type WorkflowDuration,
+  type WorkflowEventTrigger,
   type WorkflowSourceWatch,
 } from "@t3tools/contracts";
 import { parseChangeRequestUrl } from "@t3tools/shared/changeRequestUrl";
@@ -12,12 +14,17 @@ import {
   threadPullRequestsOf,
   visibleThreadPullRequests,
 } from "@t3tools/shared/threadPullRequests";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 
 import type { Attachments } from "./attachments.ts";
 import type { CallbackLink } from "./host.ts";
 import { sourceWatchProblem, waitForEventProblem } from "./compiler/eventTriggers.ts";
 import type { AuthorizeAutomation } from "./catalog.ts";
+import type { Envelope } from "./events/eventTriggers.ts";
+import type { EventReads } from "./events/candidate.ts";
+import { runCandidates } from "./events/turns.ts";
+import { whereMatches } from "./events/subscriptions.ts";
 import { automationError, fail } from "./errors.ts";
 import type { AutomationThreads } from "./host.ts";
 import type { RunLinkStore } from "./runLinkStore.ts";
@@ -49,8 +56,13 @@ export interface WaitRequest {
   readonly timeout?: WorkflowDuration | undefined;
 }
 
+const eventPatterns = (on: WaitRequest["on"]): ReadonlyArray<string> =>
+  typeof on === "string" ? [on] : (on ?? []);
+
 export interface WaitStarted {
   readonly waitId: string;
+  /** True when the requested event already matched current state at registration. */
+  readonly alreadySatisfied: boolean;
   /** For `callback: true`: where the third party calls. */
   readonly callback: CallbackLink | null;
 }
@@ -88,6 +100,7 @@ export const makeWaits = (deps: {
     input: {
       readonly automationId: string;
       readonly input: unknown;
+      readonly eventPatterns: ReadonlyArray<string>;
       readonly attach: {
         readonly threadId: ThreadId;
         readonly key: string;
@@ -99,6 +112,8 @@ export const makeWaits = (deps: {
     runId: string,
     hookId: string,
   ) => Effect.Effect<CallbackLink, AutomationError>;
+  /** Delivers a historical event to this wait only, using the normal run inbox. */
+  readonly deliverCurrent: (runId: string, event: Envelope) => Effect.Effect<void, AutomationError>;
   readonly cancel: (runId: string) => Effect.Effect<boolean, AutomationError>;
 }) => {
   const start = <E = never>(request: WaitRequest, access: WaitAccess<E>) =>
@@ -150,6 +165,7 @@ export const makeWaits = (deps: {
           at: request.at,
           timeout: request.timeout,
         },
+        eventPatterns: eventPatterns(request.on),
         attach: {
           threadId: ThreadId.make(request.threadId),
           key: id,
@@ -163,7 +179,58 @@ export const makeWaits = (deps: {
             .callback(run.id, hookId)
             .pipe(Effect.onError(() => deps.cancel(run.id).pipe(Effect.ignore)))
         : null;
-      return { waitId: run.id, callback } satisfies WaitStarted;
+      const alreadySatisfied = yield* deliverCurrentTurn(run.id, request).pipe(
+        Effect.onError(() => deps.cancel(run.id).pipe(Effect.ignore)),
+      );
+      return { waitId: run.id, callback, alreadySatisfied } satisfies WaitStarted;
+    });
+
+  /** A wait on one named thread also sees that thread's latest completed turn. */
+  const deliverCurrentTurn = (waitRunId: string, request: WaitRequest) =>
+    Effect.gen(function* () {
+      if (
+        request.watch !== undefined ||
+        !eventPatterns(request.on).some((pattern) =>
+          automationEventMatches(pattern, "turn.finished"),
+        )
+      )
+        return false;
+
+      // A historical read needs one explicit target; scanning a folder would expose unrelated
+      // private threads and turn a broad event subscription into a historical query.
+      const target = request.where?.threadId;
+      if (typeof target !== "string") return false;
+
+      const caller = yield* deps.threads.getThreadShell(ThreadId.make(request.threadId));
+      if (!caller) return false;
+
+      const threadId = ThreadId.make(target);
+      const shell = yield* deps.threads.getThreadShell(threadId);
+      if (!shell || shell.projectId !== caller.projectId) return false;
+
+      const { runs } = yield* deps.threads.getThreadRecords(threadId, ["runs"]);
+      const latest = runs.toSorted((left, right) => right.ordinal - left.ordinal)[0];
+      if (!latest?.completedAt) return false;
+
+      const candidate = runCandidates(latest).find((event) => event.name === "turn.finished");
+      if (!candidate) return false;
+      const reads: EventReads = { shell: Effect.succeed(shell), threads: deps.threads };
+      const fields = yield* candidate.build(reads);
+      if (fields === null) return false;
+
+      const event: Envelope = {
+        event: candidate.name,
+        id: candidate.id,
+        at: DateTime.formatIso(latest.completedAt),
+        projectId: shell.projectId,
+        threadId,
+        runId: latest.id,
+        threadTitle: shell.title,
+        ...fields,
+      };
+      if (!whereMatches(request.where as WorkflowEventTrigger["where"], event)) return false;
+      yield* deps.deliverCurrent(waitRunId, event);
+      return true;
     });
 
   /** The thread's waits: every run attached to it. */

@@ -170,6 +170,7 @@ export const layer = McpToolAccess.toLayer(
             );
             return {
               waitId: started.waitId,
+              alreadySatisfied: started.alreadySatisfied,
               callbackUrl: started.callback
                 ? (started.callback.url ?? started.callback.path)
                 : null,
