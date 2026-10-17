@@ -256,14 +256,15 @@ export const makeDriveClient = Effect.fn("makeDriveClient")(function* (input: {
         HttpClientRequest.bodyFile(file, { contentType: "application/octet-stream" }),
         Effect.mapError(fileError(label)),
       );
-      const response = yield* (yield* HttpClient.HttpClient)
-        .execute(request)
-        .pipe(
-          Effect.mapError(
-            (error) =>
-              new DriveClientError({ message: `${label}: ${error.message}`, retryable: true }),
-          ),
-        );
+      const response = yield* (yield* HttpClient.HttpClient).execute(request).pipe(
+        Effect.mapError(
+          () =>
+            new DriveClientError({
+              message: `${label}: storage could not be reached.`,
+              retryable: true,
+            }),
+        ),
+      );
       if (response.status < 200 || response.status >= 300) {
         return yield* new DriveClientError({
           message: `${label} failed with HTTP ${response.status}`,

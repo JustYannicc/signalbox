@@ -1,4 +1,5 @@
 import { OnePasswordEnvironmentId } from "@t3tools/contracts/signalboxFolders";
+import { RunId } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 
 import { jsonCodec } from "./jsonCodec.ts";
@@ -27,9 +28,10 @@ export const SecretsAccess = Schema.Struct({
   /** Top level first; a nearer folder's variable replaces one of the same name from above. */
   environments: Schema.Array(OnePasswordEnvironmentId),
   /**
-   * The machine's sends pass the thread's egress check (#592), which asks the
-   * person before a secret goes to a new host: only then does the Runner fill
-   * placeholders in what the agent writes or runs. Absent: it doesn't.
+   * This machine's outbound requests pass through the thread's egress check
+   * (#592), which asks before a secret goes to a new host. Only on a guarded
+   * machine can its broker resolve placeholders; local files and commands
+   * keep them literal. Absent: placeholders stay literal everywhere.
    */
   guarded: Schema.optionalKey(Schema.Boolean),
 });
@@ -41,7 +43,12 @@ export type SecretsAccess = typeof SecretsAccess.Type;
  * one it was given, since an old value may still sit in the conversation.
  */
 export const SecretsRegistration = Schema.Struct({
+  /** The turn this registration belongs to; session tokens live across turns. */
+  runId: RunId,
+  /** Every hidden value read for this turn, added to the thread's redaction history. */
   secrets: Schema.Array(SecretValue),
+  /** The nearest hidden value for each name, used for outbound placeholders only. */
+  current: Schema.Array(SecretValue),
   /**
    * The Environment each secret came from right now, nearest folder winning:
    * what the person's "always send" answers are kept against (#592). Absent

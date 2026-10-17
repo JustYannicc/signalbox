@@ -418,6 +418,19 @@ export class ThreadObject extends DurableObject<ThreadObjectEnv> implements Thre
     return this.runtime.runPromise(ThreadStore.ThreadStore.use((store) => store.secretValues));
   }
 
+  egressUploadDrive() {
+    return this.runtime.runPromise(
+      ThreadRunner.ThreadRunner.use((runner) =>
+        Effect.gen(function* () {
+          const access = yield* runner.previewDrive;
+          if (access === null) return null;
+          const authorization = yield* runner.authorizeDrive(access.token);
+          return authorization._tag === "granted" ? authorization.driveId : null;
+        }),
+      ),
+    );
+  }
+
   /** The machine's egress check: whether a request may take its secrets to its host. */
   authorizeSend(input: ThreadSends.SendRequest) {
     return this.runtime.runPromise(ThreadSends.ThreadSends.use((sends) => sends.authorize(input)));

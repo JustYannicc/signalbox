@@ -21,12 +21,14 @@ export const makeEgressDispatch = (
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
     const store = yield* ThreadStore;
-    const send = options.send ?? ((request: Request) => fetch(request));
+    // The broker decodes HTTP compression itself; Workers must not decode it first.
+    const send =
+      options.send ?? ((request: Request) => fetch(request, { encodeResponseBody: "manual" }));
     return (request: Request, revision: number): Effect.Effect<EgressDispatchAnswer> =>
       Effect.gen(function* () {
         const started = yield* Effect.gen(function* () {
-          const current = yield* store.secretValues;
-          if (current.revision !== revision) return { _tag: "stale" } as const;
+          const current = yield* store.secretRevision;
+          if (current !== revision) return { _tag: "stale" } as const;
           return yield* Effect.sync(() => {
             try {
               // Do not await: a slow destination must not block secret rotation.

@@ -284,6 +284,8 @@ describe("folder secrets", () => {
           const work = yield* runner.work;
           const modelToken = work.modelToken ?? "";
           const sessionToken = work.sessions?.token ?? "";
+          const runId = work.turn?.runId;
+          if (runId === undefined) throw new Error("expected the active run");
           expect(work.secrets).toEqual(environments);
 
           // Before the machine says what to hide, the provider gets nothing.
@@ -292,9 +294,17 @@ describe("folder secrets", () => {
             reason: "This machine hasn't registered the folder's secrets to hide them yet.",
           });
           // Only the machine holding the lease may register, and only readable lists.
-          const body = JSON.stringify({ secrets: [{ name: "FAKE_SECRET", value }] });
+          const body = JSON.stringify({
+            runId,
+            secrets: [{ name: "FAKE_SECRET", value }],
+            current: [{ name: "FAKE_SECRET", value }],
+          });
           expect((yield* register(`${sessionToken}x`, body)).status).toBe(403);
-          const unreadable = JSON.stringify({ secrets: [{ name: "not a name", value }] });
+          const unreadable = JSON.stringify({
+            runId,
+            secrets: [{ name: "not a name", value }],
+            current: [{ name: "not a name", value }],
+          });
           expect((yield* register(sessionToken, unreadable)).status).toBe(400);
           expect((yield* register(sessionToken, body)).status).toBe(200);
 
@@ -303,7 +313,12 @@ describe("folder secrets", () => {
             secrets: [{ name: "FAKE_SECRET", value }],
           });
           // Values only join: a later load without it still hides it.
-          expect((yield* register(sessionToken, JSON.stringify({ secrets: [] }))).status).toBe(200);
+          expect(
+            (yield* register(
+              sessionToken,
+              JSON.stringify({ runId, secrets: [], current: [], sources: [] }),
+            )).status,
+          ).toBe(200);
           expect(yield* runner.authorizeModel(modelToken, "anthropic")).toMatchObject({
             secrets: [{ name: "FAKE_SECRET", value }],
           });

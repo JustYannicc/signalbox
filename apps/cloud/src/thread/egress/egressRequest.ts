@@ -5,13 +5,15 @@ import {
   placeholderNames,
   secretsIn,
 } from "@signalbox/runner-protocol/SecretPlaceholders";
-import type { SecretValue } from "@signalbox/runner-protocol/SecretScrubber";
+import { secretForms, type SecretValue } from "@signalbox/runner-protocol/SecretScrubber";
 
 /** Reads the entire request before any byte may leave the machine's egress broker. */
 export const MAX_READ_BODY = 1024 * 1024;
 
 const TEXT_BODY =
   /^\s*(application\/(([\w.+-]*\+)?json|x-www-form-urlencoded|(([\w.+-]*\+)?xml)|graphql|javascript)|text\/)/i;
+// Git clone/fetch sends UTF-8 packet metadata; this does not admit binary Git push packs.
+const GIT_FETCH_BODY = /^\s*application\/x-git-upload-pack-request\s*(?:;|$)/i;
 const FORM_BODY = /^\s*application\/x-www-form-urlencoded/i;
 
 const BASIC = /^\s*basic\s+([A-Za-z0-9+/=]+)\s*$/i;
@@ -37,29 +39,14 @@ export interface EgressRequest {
 const decodedPlaceholders = (text: string) =>
   text.replace(ENCODED_PLACEHOLDER, (_, name: string) => `{{secret:${name}}}`);
 
-/** Buffers only bounded UTF-8 text; all other bodies fail closed. */
-const readBody = async (
-  request: Request,
+/** Both compressed Git metadata and its decoded form must fit the inspection limit. */
+const readBytes = async (
+  stream: ReadableStream<Uint8Array>,
 ): Promise<
   | { readonly _tag: "read"; readonly bytes: Uint8Array<ArrayBuffer> }
   | { readonly _tag: "refused"; readonly reason: string }
 > => {
-  if (request.body === null) return { _tag: "read", bytes: new Uint8Array() };
-  const encoding = (request.headers.get("content-encoding") ?? "").trim().toLowerCase();
-  const length = Number(request.headers.get("content-length") ?? Number.NaN);
-  if (
-    (encoding !== "" && encoding !== "identity") ||
-    length > MAX_READ_BODY ||
-    !TEXT_BODY.test(request.headers.get("content-type") ?? "text/plain")
-  ) {
-    await request.body.cancel();
-    return {
-      _tag: "refused",
-      reason:
-        "This thread has secrets, so outbound bodies must be uncompressed UTF-8 text no larger than 1 MiB.",
-    };
-  }
-  const reader = request.body.getReader();
+  const reader = stream.getReader();
   const chunks: Array<Uint8Array> = [];
   let size = 0;
   try {
@@ -90,6 +77,56 @@ const readBody = async (
   }
 };
 
+/** Git fetch may compress its UTF-8 negotiation. Binary pack uploads remain refused. */
+const readBody = async (
+  request: Request,
+): Promise<
+  | {
+      readonly _tag: "read";
+      readonly bytes: Uint8Array<ArrayBuffer>;
+      readonly inspection: Uint8Array<ArrayBuffer>;
+    }
+  | { readonly _tag: "refused"; readonly reason: string }
+> => {
+  if (request.body === null) {
+    const bytes = new Uint8Array();
+    return { _tag: "read", bytes, inspection: bytes };
+  }
+  const encoding = (request.headers.get("content-encoding") ?? "").trim().toLowerCase();
+  const compression =
+    encoding === "gzip" || encoding === "x-gzip"
+      ? "gzip"
+      : encoding === "deflate"
+        ? "deflate"
+        : null;
+  const length = Number(request.headers.get("content-length") ?? Number.NaN);
+  const type = request.headers.get("content-type") ?? "text/plain";
+  const git = GIT_FETCH_BODY.test(type);
+  if (
+    (encoding !== "" && encoding !== "identity" && (!git || compression === null)) ||
+    length > MAX_READ_BODY ||
+    (!TEXT_BODY.test(type) && !git)
+  ) {
+    await request.body.cancel();
+    return {
+      _tag: "refused",
+      reason:
+        "This thread has secrets, so outbound bodies must be inspectable UTF-8 text no larger than 1 MiB. Only Git fetch metadata may use HTTP compression.",
+    };
+  }
+  const read = await readBytes(request.body);
+  if (read._tag === "refused") return read;
+  if (compression === null) return { ...read, inspection: read.bytes };
+  try {
+    const decoded = await readBytes(
+      new Blob([read.bytes]).stream().pipeThrough(new DecompressionStream(compression)),
+    );
+    return decoded._tag === "refused" ? decoded : { ...read, inspection: decoded.bytes };
+  } catch {
+    return { _tag: "refused", reason: "This Git request could not be decompressed safely." };
+  }
+};
+
 export async function readEgressRequest(
   request: Request,
   secretValues: ReadonlyArray<SecretValue>,
@@ -111,6 +148,16 @@ export async function readEgressRequest(
 
   const url = new URL(request.url);
   const filledUrl = fill(decodedPlaceholders(request.url), urlValues);
+  const rawAuthority = request.url.match(/^[A-Za-z][A-Za-z0-9+.-]*:\/\/([^/?#]*)/)?.[1] ?? "";
+  const destination = `${rawAuthority}\n${url.username}\n${url.password}\n${url.host}`;
+  const destinationSecrets = new Set(secretsIn(destination, scrubber));
+  // Hostnames are case-insensitive, so URL parsing lowercases encoded forms too.
+  const foldedDestination = destination.toLowerCase();
+  for (const { name, value } of redactions) {
+    if (secretForms(value).some((form) => foldedDestination.includes(form.toLowerCase()))) {
+      destinationSecrets.add(name);
+    }
+  }
 
   const headers = new Headers();
   for (const [name, value] of request.headers) {
@@ -137,7 +184,7 @@ export async function readEgressRequest(
   if (read._tag === "read") {
     let text: string | null = null;
     try {
-      text = new TextDecoder("utf-8", { fatal: true }).decode(read.bytes);
+      text = new TextDecoder("utf-8", { fatal: true }).decode(read.inspection);
     } catch {
       refusal = "This thread has secrets, so a body that is not UTF-8 cannot be sent unchecked.";
       text = null;
@@ -148,6 +195,7 @@ export async function readEgressRequest(
       if (filled !== text) {
         body = filled;
         headers.delete("content-length");
+        headers.delete("content-encoding");
       }
     }
   }
@@ -155,9 +203,11 @@ export async function readEgressRequest(
   return {
     host: url.host,
     refusal:
-      new URL(filledUrl).origin !== url.origin
-        ? "A secret cannot change the request destination."
-        : refusal,
+      destinationSecrets.size > 0
+        ? "A secret cannot appear in the request destination."
+        : new URL(filledUrl).origin !== url.origin
+          ? "A secret cannot change the request destination."
+          : refusal,
     https: url.protocol === "https:",
     secrets,
     unknown,

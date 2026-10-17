@@ -11,5 +11,8 @@ export const serveWithFakeNetwork = (
     ...input,
     dispatch:
       input.dispatch ??
-      (async (outgoing) => ({ _tag: "sent", response: await input.send(outgoing) })),
+      (async (outgoing, revision) => {
+        if ((await input.thread.secrets()).revision !== revision) return { _tag: "stale" };
+        return { _tag: "sent", response: await input.send(outgoing) };
+      }),
   });

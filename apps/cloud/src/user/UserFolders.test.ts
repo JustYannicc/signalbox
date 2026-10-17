@@ -297,10 +297,14 @@ describe("UserFolders", () => {
 
       yield* folders.keepSends([grantB]);
       snapshot = yield* folders.snapshot;
-      expect(snapshot.secretSends).toMatchObject([grantA, grantB]);
+      expect(snapshot.secretSends).toHaveLength(2);
+      expect(snapshot.secretSends).toEqual(
+        expect.arrayContaining([expect.objectContaining(grantA), expect.objectContaining(grantB)]),
+      );
 
       snapshot = yield* folders.revokeSecretSend(grantB);
-      expect(snapshot.secretSends).toMatchObject([grantA]);
+      expect(snapshot.secretSends).toHaveLength(1);
+      expect(snapshot.secretSends).toEqual([expect.objectContaining(grantA)]);
       expect([...(yield* folders.allowedSends(send.host, [grantA]))]).toEqual(["API_KEY"]);
       expect([...(yield* folders.allowedSends(send.host, [grantB]))]).toEqual([]);
     }).pipe(Effect.provide(layerMemoryStore)),

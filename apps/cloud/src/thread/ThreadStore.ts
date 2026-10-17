@@ -2,6 +2,7 @@ import { FolderInstructions } from "@signalbox/runner-protocol/DriveProtocol";
 import { MachineClass } from "@signalbox/runner-protocol/RunnerProtocol";
 import {
   CommandId,
+  type RunId,
   type OrchestrationV2DomainEvent,
   OrchestrationV2DomainEventJson,
 } from "@t3tools/contracts";
@@ -21,14 +22,21 @@ import type { SqlError } from "effect/sql/SqlError";
 import * as Migrations from "../storage/migrations.ts";
 import { migrateDiagnostics } from "./diagnostics/DiagnosticsStore.ts";
 import { migrateBrowsing } from "./browsing/browsingTables.ts";
-import { migrateSecretSends, migrateSecretSendFolderScope } from "./egress/secretSendTables.ts";
+import {
+  migrateSecretSends,
+  migrateSecretSendFolderScope,
+  saveSecretSources,
+} from "./egress/secretSendTables.ts";
 import { migratePullRequestPolls } from "./pullRequests/PullRequestPolls.ts";
 import { migrateStatusNote, readNote, writeNote } from "./statusLine/statusNoteTables.ts";
 import { type MachineRecord, MachineRecords, NO_MACHINE_RECORD } from "./runner/MachineBackend.ts";
 import {
   migrateSecretValues,
   migrateCurrentSecretValues,
+  migrateSecretRunIdentity,
   readSecretValues,
+  readSecretRevision,
+  beginSecretRun as startSecretRun,
   registerSecretValues,
   type SecretValues,
 } from "./runner/secretValues.ts";
@@ -161,6 +169,8 @@ export class ThreadStore extends Context.Service<
       readonly summaryChanged: boolean;
       /** The machine lease as of these events, such as a Runner batch's acknowledgement. */
       readonly machine?: MachineLease;
+      /** The run that owns current secret substitutions after these events, or null when none does. */
+      readonly secretRun?: { readonly generation: number; readonly runId: RunId | null };
       /** The instructions of the thread's chain, for the run these events start. */
       readonly instructions?: {
         readonly runId: string;
@@ -212,11 +222,17 @@ export class ThreadStore extends Context.Service<
     readonly secrets: Effect.Effect<ReadonlyArray<OnePasswordEnvironmentId>, SqlError>;
     /** Their values, as the machine registered them (`runner/secretValues.ts`). Never log them. */
     readonly secretValues: Effect.Effect<SecretValues, SqlError>;
+    /** A compact fence for concurrent egress decisions; changes with current values or sources. */
+    readonly secretRevision: Effect.Effect<number, SqlError>;
+    /** Clears current values and sources when a new run or machine takes over. */
+    readonly beginSecretRun: (generation: number, runId: RunId) => Effect.Effect<void, SqlError>;
     /** Run it in the transaction that checks `generation` still holds the lease. */
     readonly registerSecretValues: (
       generation: number,
+      runId: RunId,
       secrets: ReadonlyArray<SecretValue>,
-    ) => Effect.Effect<void, SqlError>;
+      current: ReadonlyArray<SecretValue>,
+    ) => Effect.Effect<boolean, SqlError>;
   }
 >()("@signalbox/cloud/thread/ThreadStore") {}
 
@@ -314,6 +330,7 @@ const migrations = Migrator.fromRecord({
   "0011_status_note": migrateStatusNote,
   "0012_current_secret_values": migrateCurrentSecretValues,
   "0012_secret_send_folder_scope": migrateSecretSendFolderScope,
+  "0013_secret_run_identity": migrateSecretRunIdentity,
 });
 
 /** Applies every migration not recorded yet (`storage/migrations.ts`). Never edit or rename a merged one. */
@@ -422,6 +439,11 @@ const toStoredEvent = (row: typeof EventRow.Type): StoredEvent => {
 
 const make = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
+  const withSql = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+    Effect.provideService(effect, SqlClient.SqlClient, sql);
+  const startRun = (generation: number, runId: RunId | null) =>
+    withSql(startSecretRun(generation, runId));
+  const clearSources = () => withSql(saveSecretSources([]));
 
   const owner: ThreadStore["Service"]["owner"] =
     sql`SELECT user_id, context_id, drive_id FROM owner`.pipe(
@@ -456,9 +478,23 @@ const make = Effect.gen(function* () {
       Effect.map((rows) => decodeMachineRows(rows)[0]?.lease ?? NO_MACHINE),
     );
 
-  const saveMachine: ThreadStore["Service"]["saveMachine"] = (lease) =>
+  const writeMachine = (lease: MachineLease) =>
     sql`INSERT INTO machine (id, lease) VALUES (1, ${encodeMachine(lease)})
       ON CONFLICT (id) DO UPDATE SET lease = excluded.lease`.pipe(Effect.asVoid);
+
+  const clearSecretsForGeneration = (generation: number) =>
+    Effect.gen(function* () {
+      const changed = yield* startRun(generation, null);
+      if (changed) yield* clearSources();
+    });
+
+  const saveMachine: ThreadStore["Service"]["saveMachine"] = (lease) =>
+    Effect.gen(function* () {
+      const previous = yield* machine;
+      yield* writeMachine(lease);
+      if (previous.generation !== lease.generation)
+        yield* clearSecretsForGeneration(lease.generation);
+    }).pipe(sql.withTransaction);
 
   const machineRecord: ThreadStore["Service"]["machineRecord"] =
     sql`SELECT record FROM machine_record WHERE id = 1`.pipe(
@@ -493,7 +529,17 @@ const make = Effect.gen(function* () {
       // Past a revision its attached runs moved beyond the head, too.
       yield* sql`UPDATE outbox SET revision = MAX(${sequence}, revision + 1) WHERE id = 1`;
     }
-    if (input.machine) yield* saveMachine(input.machine);
+    const previousMachine = yield* machine;
+    if (input.machine) yield* writeMachine(input.machine);
+    if (input.secretRun) {
+      const changed = yield* startRun(input.secretRun.generation, input.secretRun.runId);
+      if (changed) yield* clearSources();
+    } else if (
+      input.machine !== undefined &&
+      input.machine.generation !== previousMachine.generation
+    ) {
+      yield* clearSecretsForGeneration(input.machine.generation);
+    }
     if (input.instructions) {
       yield* sql`INSERT INTO run_instructions (run_id, levels)
           VALUES (${input.instructions.runId}, ${encodeInstructions(input.instructions.levels)})
@@ -593,8 +639,14 @@ const make = Effect.gen(function* () {
     instructions,
     secrets,
     secretValues: readSecretValues.pipe(Effect.provideService(SqlClient.SqlClient, sql)),
-    registerSecretValues: (generation, values) =>
-      registerSecretValues(generation, values).pipe(
+    secretRevision: readSecretRevision.pipe(Effect.provideService(SqlClient.SqlClient, sql)),
+    beginSecretRun: (generation, runId) =>
+      Effect.gen(function* () {
+        const changed = yield* startRun(generation, runId);
+        if (changed) yield* clearSources();
+      }).pipe(sql.withTransaction, Effect.provideService(SqlClient.SqlClient, sql)),
+    registerSecretValues: (generation, runId, values, current) =>
+      registerSecretValues(generation, runId, values, current).pipe(
         Effect.provideService(SqlClient.SqlClient, sql),
       ),
     saveMachineRecord,

@@ -33,38 +33,48 @@ describe("RunnerSecretFill", () => {
     });
   });
 
-  it("refuses a name the thread has no secret for, and any fill on an unguarded machine", () => {
-    expect(fillToolInput("Write", { content: "{{secret:NOPE}}" }, guarded)).toEqual({
-      _tag: "refused",
-      reason: "This thread has no secret called NOPE. It has: KEY.",
-    });
-    const refused = fillToolInput(
-      "Bash",
-      { command: "echo {{secret:KEY}}" },
-      { ...guarded, guarded: false },
-    );
-    expect(refused._tag).toBe("refused");
-    expect(JSON.stringify(refused)).not.toContain(KEY);
-  });
-
-  it("never passes resolved input to Claude Code's PreToolUse hook", async () => {
-    const [hook] = secretFillHook(() => guarded).hooks;
+  it("lets local tools keep an unknown placeholder literal", async () => {
+    const [hook] = secretFillHook(() => ({ ...guarded, guarded: false })).hooks;
     const signal = new AbortController().signal;
     const base = { session_id: "s", transcript_path: "t", cwd: "/w" } as const;
-
-    const filled = await hook!(
+    const toolInput = {
+      file_path: "docs/notes.md",
+      content: "Use {{secret:NOT_CONFIGURED}} here.",
+    };
+    const output = await hook!(
       {
         ...base,
         hook_event_name: "PreToolUse",
         tool_name: "Write",
-        tool_input: { file_path: ".env", content: "KEY={{secret:KEY}}\n" },
-        tool_use_id: "toolu_1",
+        tool_input: toolInput,
+        tool_use_id: "toolu_3",
       },
-      "toolu_1",
+      "toolu_3",
       { signal },
     );
+
+    expect(output).toEqual({});
+    expect(toolInput.content).toBe("Use {{secret:NOT_CONFIGURED}} here.");
+    expect(JSON.stringify({ toolInput, output })).not.toContain(KEY);
+  });
+
+  it("keeps a valid placeholder literal in Claude Code's PreToolUse input", async () => {
+    const [hook] = secretFillHook(() => guarded).hooks;
+    const signal = new AbortController().signal;
+    const base = { session_id: "s", transcript_path: "t", cwd: "/w" } as const;
+    const toolInput = { file_path: ".env", content: "KEY={{secret:KEY}}\n" };
+    const event = {
+      ...base,
+      hook_event_name: "PreToolUse" as const,
+      tool_name: "Write",
+      tool_input: toolInput,
+      tool_use_id: "toolu_1",
+    };
+
+    const filled = await hook!(event, "toolu_1", { signal });
     expect(filled).toEqual({});
-    expect(JSON.stringify(filled)).not.toContain(KEY);
+    expect(event.tool_input).toEqual({ file_path: ".env", content: "KEY={{secret:KEY}}\n" });
+    expect(JSON.stringify({ event, filled })).not.toContain(KEY);
     const denied = await hook!(
       {
         ...base,
@@ -76,8 +86,6 @@ describe("RunnerSecretFill", () => {
       "toolu_2",
       { signal },
     );
-    expect(denied).toMatchObject({
-      hookSpecificOutput: { permissionDecision: "deny" },
-    });
+    expect(denied).toEqual({});
   });
 });

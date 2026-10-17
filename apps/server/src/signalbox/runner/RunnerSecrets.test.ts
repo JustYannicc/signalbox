@@ -86,6 +86,7 @@ const reporter = (refuse?: string) => {
   const notices: Array<string> = [];
   const lines: Array<string> = [];
   const registered: Array<ReadonlyArray<SecretValue>> = [];
+  const current: Array<ReadonlyArray<SecretValue>> = [];
   const sources: Array<SecretsRegistration["sources"]> = [];
   const report: SecretsReport = {
     notice: (message) => Effect.sync(() => void notices.push(message)),
@@ -94,11 +95,12 @@ const reporter = (refuse?: string) => {
       refuse === undefined
         ? Effect.sync(() => {
             registered.push(registration.secrets);
+            current.push(registration.current);
             sources.push(registration.sources);
           })
         : Effect.fail(new SecretsRegisterError({ message: refuse })),
   };
-  return { report, notices, lines, registered, sources };
+  return { report, notices, lines, registered, current, sources };
 };
 
 /** The turn's session token, which registers its secrets with the thread. */
@@ -136,43 +138,103 @@ describe("RunnerSecrets", () => {
     }),
   );
 
-  it.effect(
-    "fills placeholders with each name's nearest hidden value, only on a guarded machine",
-    () =>
-      Effect.gen(function* () {
-        const account = fakeOnePassword({
-          [top]: [variable("SHARED", "top-shared-value"), variable("PLAIN", "not-hidden", false)],
-          [folder]: [
-            variable("SHARED", "folder-shared-value"),
-            variable("API_KEY", "folder-api-key"),
-          ],
-        });
-        const secrets = makeRunnerSecrets({
-          onePassword: account.onePassword,
-          mask: makeSecretMask(),
-          reserved: () => new Set(),
-        });
-        const { report, sources } = reporter();
+  it.effect("fills only the nearest hidden values, only on a guarded machine", () =>
+    Effect.gen(function* () {
+      const account = fakeOnePassword({
+        [top]: [
+          variable("SHARED", "top-shared-value"),
+          variable("PUBLIC_OVERRIDE", "ancestor-hidden"),
+          variable("PLAIN", "not-hidden", false),
+        ],
+        [folder]: [
+          variable("SHARED", "folder-shared-value"),
+          variable("PUBLIC_OVERRIDE", "public-value", false),
+          variable("API_KEY", "folder-api-key"),
+        ],
+      });
+      const secrets = makeRunnerSecrets({
+        onePassword: account.onePassword,
+        mask: makeSecretMask(),
+        reserved: () => new Set(),
+      });
+      const { report, registered, current, sources } = reporter();
 
-        yield* secrets.load({ ...access([top, folder]), guarded: true }, report);
+      yield* secrets.load({ ...access([top, folder]), guarded: true }, report);
 
-        expect([...secrets.fillable().values]).toEqual([
-          ["SHARED", "folder-shared-value"],
-          ["PLAIN", "not-hidden"],
-          ["API_KEY", "folder-api-key"],
-        ]);
-        expect(secrets.fillable().guarded).toBe(true);
-        expect(sources).toEqual([
-          [
-            { name: "SHARED", environment: folder },
-            { name: "API_KEY", environment: folder },
-          ],
-        ]);
-        // Nothing to read again; only whether the machine is guarded changed.
-        yield* secrets.load(access([top, folder]), report);
-        expect(secrets.fillable().guarded).toBe(false);
-        expect(secrets.fillable().values.size).toBe(3);
-      }),
+      expect([...secrets.fillable().values]).toEqual([
+        ["SHARED", "folder-shared-value"],
+        ["API_KEY", "folder-api-key"],
+      ]);
+      expect(secrets.environment()).toEqual({
+        SHARED: "folder-shared-value",
+        PUBLIC_OVERRIDE: "public-value",
+        PLAIN: "not-hidden",
+        API_KEY: "folder-api-key",
+      });
+      expect(registered).toEqual([
+        [
+          { name: "SHARED", value: "top-shared-value" },
+          { name: "PUBLIC_OVERRIDE", value: "ancestor-hidden" },
+          { name: "SHARED", value: "folder-shared-value" },
+          { name: "API_KEY", value: "folder-api-key" },
+        ],
+      ]);
+      expect(current).toEqual([
+        [
+          { name: "SHARED", value: "folder-shared-value" },
+          { name: "API_KEY", value: "folder-api-key" },
+        ],
+      ]);
+      expect(secrets.fillable().guarded).toBe(true);
+      expect(sources).toEqual([
+        [
+          { name: "SHARED", environment: folder },
+          { name: "API_KEY", environment: folder },
+        ],
+      ]);
+      // Nothing to read again; only whether the machine is guarded changed.
+      yield* secrets.load(access([top, folder]), report);
+      expect(secrets.fillable().guarded).toBe(false);
+      expect(secrets.fillable().values.size).toBe(2);
+    }),
+  );
+
+  it.effect("clears a prior turn before a failed refresh registers", () =>
+    Effect.gen(function* () {
+      const account = fakeOnePassword({
+        [top]: [variable("API_KEY", "old-folder-key")],
+        [folder]: "access denied",
+      });
+      const secrets = makeRunnerSecrets({
+        onePassword: account.onePassword,
+        mask: makeSecretMask(),
+        reserved: () => new Set(),
+      });
+      yield* secrets.load(access([top]), reporter().report);
+
+      const beforeRegistration: Array<{
+        readonly environment: Readonly<Record<string, string>>;
+        readonly fillable: ReadonlyArray<ReadonlyArray<string>>;
+      }> = [];
+      const failedRefresh: SecretsReport = {
+        notice: () => Effect.void,
+        info: () => Effect.void,
+        register: (registration) =>
+          Effect.sync(() => {
+            if (registration.secrets.length === 0) {
+              beforeRegistration.push({
+                environment: secrets.environment(),
+                fillable: [...secrets.fillable().values],
+              });
+            }
+          }),
+      };
+      yield* secrets.load(access([folder]), failedRefresh);
+
+      expect(beforeRegistration).toEqual([{ environment: {}, fillable: [] }]);
+      expect(secrets.environment()).toEqual({});
+      expect(secrets.fillable().values.size).toBe(0);
+    }),
   );
 
   it.effect(
@@ -188,7 +250,7 @@ describe("RunnerSecrets", () => {
           mask: makeSecretMask(),
           reserved: () => new Set(),
         });
-        const { report, notices } = reporter();
+        const { report, notices, registered } = reporter();
 
         expect(yield* secrets.load(access([top]), report)).toBe(0);
         expect(notices).toEqual([
@@ -199,6 +261,7 @@ describe("RunnerSecrets", () => {
         expect(yield* secrets.load(access([top]), report)).toBe(1);
         // Nothing changed: no read, same version, so the open harness session stays.
         expect(yield* secrets.load(access([top]), report)).toBe(1);
+        expect(registered[2]).toEqual(registered[1]);
         // The thread moved to a folder with its own Environment.
         environments[folder] = [variable("OTHER", "other-value")];
         expect(yield* secrets.load(access([top, folder]), report)).toBe(2);
@@ -217,6 +280,7 @@ describe("RunnerSecrets", () => {
           "read envtop",
           "read envfolder",
         ]);
+        expect(registered).toHaveLength(5);
       }),
   );
 
@@ -308,6 +372,30 @@ describe("RunnerSecrets", () => {
       expect(notices).toHaveLength(1);
       expect(notices[0]).toContain("no 1Password service account is connected");
     }),
+  );
+
+  it.effect(
+    "registers an empty set when a turn has no environments and keeps old values masked",
+    () =>
+      Effect.gen(function* () {
+        const account = fakeOnePassword({ [top]: [variable("API_KEY", "old-folder-key")] });
+        const mask = makeSecretMask();
+        const secrets = makeRunnerSecrets({
+          onePassword: account.onePassword,
+          mask,
+          reserved: () => new Set(),
+        });
+        const { report, registered, current } = reporter();
+
+        yield* secrets.load(access([top]), report);
+        yield* secrets.load(access([], null), report);
+
+        expect(registered).toEqual([[{ name: "API_KEY", value: "old-folder-key" }], []]);
+        expect(current).toEqual([[{ name: "API_KEY", value: "old-folder-key" }], []]);
+        expect(secrets.environment()).toEqual({});
+        expect(secrets.fillable().values.size).toBe(0);
+        expect(mask.text("old-folder-key")).toBe(secretPlaceholder("API_KEY"));
+      }),
   );
 
   it.effect(

@@ -49,13 +49,25 @@ export async function serveEgress(
     readonly send?: (request: Request) => Promise<Response>;
     /** Production dispatch runs in the thread object under the registration lock. */
     readonly dispatch?: (request: Request, revision: number) => Promise<EgressDispatchAnswer>;
+    /** A narrowly validated platform upload capability, when one is bound. */
+    readonly platformUpload?: (request: Request) => Promise<Response | null>;
   },
 ): Promise<Response> {
   const send =
     input.send ??
     ((outgoing: Request) =>
-      isWebSocketUpgrade(outgoing) ? bridgeWebSocket(outgoing) : fetch(outgoing));
+      isWebSocketUpgrade(outgoing)
+        ? bridgeWebSocket(outgoing)
+        : fetch(outgoing, { encodeResponseBody: "manual" }));
   if (input.ownHosts.has(new URL(request.url).host)) return send(request);
+  if (input.platformUpload !== undefined) {
+    try {
+      const response = await input.platformUpload(request);
+      if (response !== null) return response;
+    } catch {
+      return refused("Signalbox refused this platform upload safely.");
+    }
+  }
   let secrets = await input.thread.secrets();
   if (secrets.current.length === 0 && secrets.values.length === 0) return send(request);
   if (isWebSocketUpgrade(request) || request.method === "TRACE") {
@@ -64,7 +76,7 @@ export async function serveEgress(
     );
   }
   let pending = request;
-  // Re-read after approval. Nothing resolved before the person answered may be reused.
+  // Dispatch rejects a stale revision; the non-atomic test fallback re-reads after approval.
   for (let attempt = 0; attempt < 3; attempt += 1) {
     const read = await readEgressRequest(pending, secrets.current, secrets.values).catch(
       () => null,
@@ -102,16 +114,18 @@ export async function serveEgress(
       if (answer._tag !== "allowed")
         return refused(`Signalbox didn't send this request: ${answer.message}`);
     }
-    const current = await input.thread.secrets();
-    if (secrets.revision !== current.revision) {
-      secrets = current;
-      pending = read.original();
-      continue;
+    if (input.dispatch === undefined) {
+      const current = await input.thread.secrets();
+      if (secrets.revision !== current.revision) {
+        secrets = current;
+        pending = read.original();
+        continue;
+      }
     }
     if (read.secrets.size > 0 && input.dispatch === undefined) {
       return refused("Signalbox didn't send this request: atomic secret dispatch is unavailable.");
     }
-    // No await between confirming the current registration and starting the send.
+    // Production checks and starts under the registration lock; fallback checked immediately above.
     try {
       const dispatched =
         input.dispatch === undefined
@@ -123,9 +137,7 @@ export async function serveEgress(
         continue;
       }
       const response = dispatched.response;
-      return read.secrets.size === 0
-        ? response
-        : await redactEgressResponse(response, secrets.values);
+      return await redactEgressResponse(response, secrets.values);
     } catch {
       // Fetch and header errors can quote a filled URL or value. Never propagate them.
       return refused("Signalbox could not send or redact this request safely.");

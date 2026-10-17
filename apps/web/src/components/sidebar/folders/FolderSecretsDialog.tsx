@@ -139,8 +139,10 @@ export function FolderSecretsDialog(props: { dialog: Extract<FolderDialog, { kin
           {dialog.name === null
             ? "Every thread gets this 1Password Environment's variables when it starts."
             : "Threads in this folder and below get this 1Password Environment's variables when they start."}{" "}
-          Values never show in Signalbox: agents write <code>{"{{secret:NAME}}"}</code>, and the
-          first time one goes somewhere new, the thread asks you.
+          Values marked hidden in 1Password and longer than 6 characters are masked in thread
+          history and model requests. On light machines, agents use <code>{"{{secret:NAME}}"}</code>{" "}
+          in HTTPS requests; new destinations need your approval. Repository machines leave
+          placeholders unchanged.
         </DialogDescription>
       </DialogHeader>
       <DialogPanel>

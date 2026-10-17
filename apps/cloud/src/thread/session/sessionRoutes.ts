@@ -121,10 +121,16 @@ export const serveSessionRequest = (input: SessionRequest) =>
       const sql = yield* SqlClient.SqlClient;
       const store = yield* ThreadStore;
       const registered = yield* Effect.gen(function* () {
-        // A newer machine took the lease after the token was checked.
+        // A newer machine or turn took over after the token was checked.
         const lease = yield* store.machine;
         if (lease.status === "none" || lease.generation !== verdict.generation) return false;
-        yield* store.registerSecretValues(verdict.generation, registration.secrets);
+        const currentRun = yield* store.registerSecretValues(
+          verdict.generation,
+          registration.runId,
+          registration.secrets,
+          registration.current,
+        );
+        if (!currentRun) return false;
         // A Runner from before #592 says nothing of where they came from.
         yield* saveSecretSources(registration.sources ?? []);
         return true;

@@ -71,6 +71,7 @@ describe("Runner secret persistence boundary", () => {
                 thread: {
                   secrets: async () => ({
                     registered: 1,
+                    registeredRunId: "test-run",
                     revision: 1,
                     current: [{ name: "KEY", value }],
                     values: [{ name: "KEY", value }],

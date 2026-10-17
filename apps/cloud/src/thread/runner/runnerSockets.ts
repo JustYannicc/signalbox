@@ -146,15 +146,11 @@ export async function pushRunnerWork(host: RunnerSocketHost): Promise<ThreadRunn
         drive,
         sessions: turn.sessions,
         // The owner's 1Password token rides only in this frame; never log it.
-        ...(work.secrets.length === 0
-          ? {}
-          : {
-              secrets: {
-                token: secretsToken,
-                environments: work.secrets,
-                ...(work.guarded ? { guarded: true } : {}),
-              },
-            }),
+        secrets: {
+          token: secretsToken,
+          environments: work.secrets,
+          ...(work.guarded ? { guarded: true } : {}),
+        },
       });
       sentRunId = turn.turn.runId;
       sentSteers = 0;

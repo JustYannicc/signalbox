@@ -45,7 +45,14 @@ const compatibility = {
   flags: ["nodejs_compat", "legacy_module_registry"],
 };
 
-const workerObservability = { enabled: true, logs: { enabled: true, invocationLogs: true } };
+const workerObservability = {
+  enabled: true,
+  logs: {
+    enabled: true,
+    // Invocation logs include request metadata and URLs, which can carry auth material.
+    invocationLogs: false,
+  },
+};
 
 /** A Durable Object class's container, placed as wrangler placed it: tiers 1 and 2, EU only. */
 const euContainer = <Shape>(

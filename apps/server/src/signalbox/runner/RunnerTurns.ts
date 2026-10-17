@@ -998,7 +998,10 @@ export const makeRunnerTurns = Effect.fn("makeRunnerTurns")(function* (input: {
                               message: "this machine can't reach the thread to register them",
                             }),
                           )
-                        : input.registerSecrets(sessionAccess.token, registration),
+                        : input.registerSecrets(sessionAccess.token, {
+                            ...registration,
+                            runId: turn.runId,
+                          }),
                   })
                   .pipe(
                     Effect.mapError(

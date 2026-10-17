@@ -143,6 +143,10 @@ describe("runnerSockets", () => {
         holds = false;
         yield* Effect.promise(() => pushRunnerWork(host));
         expect(socket.sent.map((message) => message.type)).toEqual(["welcome", "turn.start"]);
+        expect(socket.sent.find((message) => message.type === "turn.start")).toMatchObject({
+          type: "turn.start",
+          secrets: { token: null, environments: [] },
+        });
       }),
     ),
   );

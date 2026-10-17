@@ -1,11 +1,14 @@
 // @effect-diagnostics cryptoRandomUUID:off - generated throwaway values, never vault credentials.
 import { describe, expect, it } from "vite-plus/test";
+import { serveEgress as serveProductionEgress } from "./egress.ts";
 import { serveWithFakeNetwork as serveEgress } from "./egressTestKit.ts";
 import { MAX_READ_BODY } from "./egressRequest.ts";
 
 const value = `sk-throwaway-${crypto.randomUUID()}`;
+const authoritySecret = `sk-${crypto.randomUUID()}`;
 const registration = (value: string, revision = 1) => ({
   registered: 1,
+  registeredRunId: "test-run",
   revision,
   current: [{ name: "KEY", value }],
   values: [{ name: "KEY", value }],
@@ -34,6 +37,72 @@ const fixtures = [
 ];
 
 describe("egress security boundary", () => {
+  it.each([
+    ["raw", authoritySecret],
+    [
+      "base64url encoded",
+      btoa(authoritySecret).replaceAll("+", "-").replaceAll("/", "_").replace(/=+$/, ""),
+    ],
+  ])("refuses a %s secret in the destination before asking or sending", async (_kind, host) => {
+    let approvals = 0;
+    let sends = 0;
+    const response = await serveEgress(
+      new Request(`https://${host}.untrusted.example:8443/upload`),
+      {
+        ownHosts: new Set(),
+        thread: {
+          secrets: async () => registration(authoritySecret),
+          authorize: async () => {
+            approvals++;
+            return { _tag: "allowed" };
+          },
+        },
+        send: async () => {
+          sends++;
+          return new Response("ok");
+        },
+      },
+    );
+
+    expect(response.status).toBe(403);
+    expect(approvals).toBe(0);
+    expect(sends).toBe(0);
+    const refusal = await response.text();
+    expect(refusal).not.toContain(authoritySecret);
+    expect(refusal).not.toContain(host);
+  });
+
+  it("refuses a secret in URL userinfo before asking or sending", async () => {
+    let approvals = 0;
+    let sends = 0;
+    // Fetch normally rejects userinfo URLs; keep the egress boundary defensive if one arrives.
+    const request = {
+      url: `https://${authoritySecret}@untrusted.example:8443/upload`,
+      method: "GET",
+      headers: new Headers(),
+      body: null,
+    } as Request;
+    const response = await serveEgress(request, {
+      ownHosts: new Set(),
+      thread: {
+        secrets: async () => registration(authoritySecret),
+        authorize: async () => {
+          approvals++;
+          return { _tag: "allowed" };
+        },
+      },
+      send: async () => {
+        sends++;
+        return new Response("ok");
+      },
+    });
+
+    expect(response.status).toBe(403);
+    expect(approvals).toBe(0);
+    expect(sends).toBe(0);
+    expect((await response.text()).includes(authoritySecret)).toBe(false);
+  });
+
   it.each(fixtures)("never forwards a $kind body over HTTP or HTTPS", async ({ headers, body }) => {
     const sent: Array<Request> = [];
     for (const protocol of ["http", "https"]) {
@@ -102,6 +171,94 @@ describe("egress security boundary", () => {
     );
     expect(response.headers.get("x-echo")).toBe("{{secret:KEY}}");
     expect(await response.text()).toBe(JSON.stringify({ authorization: "Bearer {{secret:KEY}}" }));
+  });
+
+  it("scrubs stored secret values echoed by a request that carried no secret", async () => {
+    const response = await serveEgress(new Request("https://approved.example/health"), {
+      ownHosts: new Set(),
+      thread: {
+        secrets: async () => registration(value),
+        authorize: async () => ({ _tag: "allowed" }),
+      },
+      send: async () =>
+        new Response(value, { headers: { "content-type": "text/plain; charset=utf-8" } }),
+    });
+
+    expect(response.status).toBe(200);
+    expect(await response.text()).toBe("{{secret:KEY}}");
+  });
+
+  it("scrubs known values from compressed text responses to secret-free requests", async () => {
+    const body = new Blob([value]).stream().pipeThrough(new CompressionStream("gzip"));
+    const response = await serveEgress(new Request("https://approved.example/health"), {
+      ownHosts: new Set(),
+      thread: {
+        secrets: async () => registration(value),
+        authorize: async () => ({ _tag: "allowed" }),
+      },
+      send: async () =>
+        new Response(body, {
+          headers: {
+            "content-encoding": "gzip",
+            "content-type": "text/plain; charset=utf-8",
+          },
+        }),
+    });
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("content-encoding")).toBeNull();
+    expect(await response.text()).toBe("{{secret:KEY}}");
+  });
+
+  it("stops a binary response on a matching value before any secret byte returns", async () => {
+    const response = await serveEgress(new Request("https://approved.example/archive"), {
+      ownHosts: new Set(),
+      thread: {
+        secrets: async () => registration(value),
+        authorize: async () => ({ _tag: "allowed" }),
+      },
+      send: async () =>
+        new Response(new TextEncoder().encode(value), {
+          headers: { "content-type": "application/octet-stream" },
+        }),
+    });
+
+    const received: Array<Uint8Array> = [];
+    let failure: unknown;
+    try {
+      for await (const chunk of response.body!) received.push(chunk);
+    } catch (error) {
+      failure = error;
+    }
+    expect(failure).toBeInstanceOf(Error);
+    expect(String(failure)).toContain("KEY");
+    expect(String(failure)).not.toContain(value);
+    expect(
+      new TextDecoder().decode(Uint8Array.from(received.flatMap((chunk) => [...chunk]))),
+    ).not.toContain(value);
+  });
+
+  it("does not fetch a second secret snapshot before production dispatch", async () => {
+    let secretReads = 0;
+    let dispatches = 0;
+    const response = await serveProductionEgress(new Request("https://approved.example/health"), {
+      ownHosts: new Set(),
+      thread: {
+        secrets: async () => {
+          secretReads++;
+          return registration(value);
+        },
+        authorize: async () => ({ _tag: "refused", message: "unexpected approval" }),
+      },
+      dispatch: async () => {
+        dispatches++;
+        return { _tag: "sent", response: new Response("ok") };
+      },
+    });
+
+    expect(response.status).toBe(200);
+    expect(secretReads).toBe(1);
+    expect(dispatches).toBe(1);
   });
 
   it("still checks retired values against approval and HTTPS", async () => {

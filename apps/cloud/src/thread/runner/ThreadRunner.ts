@@ -796,6 +796,10 @@ const make = Effect.gen(function* () {
           : { ...untraced, traceId: yield* withCrypto(traceIdOf(untraced.runId)) };
       const grant = projection === null ? undefined : modelGrantFor(projection, yield* ownerId);
       const run = projection === null ? undefined : harnessRun(projection);
+      if (turn !== null && lease.status === "connected") {
+        // Repairs the active run marker when this turn predates run-scoped registrations.
+        yield* Effect.orDie(store.beginSecretRun(lease.generation, turn.runId));
+      }
       const driveId = turn === null || !drivesEnabled ? null : yield* driveOf;
       return keep<RunnerWork>({
         generation: lease.generation,
@@ -875,7 +879,7 @@ const make = Effect.gen(function* () {
       const secrets = yield* Effect.orDie(store.secretValues);
       if (
         (yield* Effect.orDie(store.secrets)).length > 0 &&
-        secrets.registered !== current.generation
+        (secrets.registered !== current.generation || secrets.registeredRunId !== grant.runId)
       ) {
         return {
           _tag: "unregistered",

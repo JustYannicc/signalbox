@@ -1,6 +1,9 @@
 import type { ThreadId } from "@t3tools/contracts";
 import { WorkerEntrypoint } from "cloudflare:workers";
 
+import type { DirectUploadsEnv } from "../../drive/directStorage.ts";
+import { makePlatformUpload } from "./egressUpload.ts";
+
 import type { MachineBackendEnv } from "../runner/MachineBackend.ts";
 import { type ThreadObjectNamespace, threadObjectStub } from "../ThreadDirectory.ts";
 import { serveEgress } from "./egress.ts";
@@ -11,7 +14,8 @@ import { serveEgress } from "./egress.ts";
  * only ever be checked against that thread's secrets and answers.
  */
 
-export interface ThreadEgressEnv extends MachineBackendEnv {
+export interface ThreadEgressEnv extends MachineBackendEnv, DirectUploadsEnv {
+  readonly DRIVE_PACKS_PREFIX?: string;
   readonly LOCAL_WORKERD?: string;
   readonly THREADS: ThreadObjectNamespace;
 }
@@ -49,6 +53,10 @@ export class ThreadEgress extends WorkerEntrypoint<ThreadEgressEnv, ThreadEgress
         authorize: (input) => thread.authorizeSend(input),
       },
       ownHosts: ownHostsOf(this.env),
+      platformUpload: makePlatformUpload({
+        env: this.env,
+        drive: () => thread.egressUploadDrive(),
+      }),
       dispatch: (outgoing, revision) => thread.dispatchSend(outgoing, revision),
     });
   }

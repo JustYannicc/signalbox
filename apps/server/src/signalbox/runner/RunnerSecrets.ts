@@ -40,7 +40,6 @@ import type { SecretMask } from "./secretMask.ts";
  * stops the turn, since the gateway serves none of its requests until then.
  *
  * Registration also supplies outbound-only placeholder substitution (#592).
- * `RunnerSecretFill.ts` validates references without resolving tool inputs.
  * Existing raw environment variables remain available to local programs.
  */
 
@@ -56,9 +55,11 @@ export interface SecretsReport {
   readonly info: (message: string) => Effect.Effect<void>;
   /** Hands the thread every value to hide from the model, and where each came from (`SecretsProtocol.ts`). */
   readonly register: (
-    registration: SecretsRegistration,
+    registration: Omit<SecretsRegistration, "runId">,
   ) => Effect.Effect<void, SecretsRegisterError>;
 }
+
+type SecretRegistration = Omit<SecretsRegistration, "runId">;
 
 /** The name the 1Password service account token is masked under: 1Password's own variable. */
 const TOKEN_NAME = "OP_SERVICE_ACCOUNT_TOKEN";
@@ -120,11 +121,20 @@ export const makeRunnerSecrets = (input: {
   let fillable: SecretFillable = { values: new Map(), guarded: false };
   /** What was last read in full; null after a read that fell short, or none. */
   let read: { readonly token: string; readonly environments: ReadonlyArray<string> } | null = null;
+  /** Reused when a new turn has the same folder chain; the cloud still needs each run's registration. */
+  let registration: SecretRegistration | null = null;
 
   const use = (next: Readonly<Record<string, string>>) => {
     if (sameVariables(variables, next)) return;
     variables = next;
     version += 1;
+  };
+
+  const clear = (guarded: boolean) => {
+    read = null;
+    registration = null;
+    use({});
+    fillable = { values: new Map(), guarded };
   };
 
   const load: RunnerSecrets["load"] = (access, report) =>
@@ -133,26 +143,36 @@ export const makeRunnerSecrets = (input: {
       const guarded = access?.guarded === true;
       fillable = { ...fillable, guarded };
       if (environments.length === 0) {
-        read = null;
-        use({});
-        fillable = { values: new Map(), guarded };
+        clear(guarded);
+        const empty = { secrets: [], current: [], sources: [] } satisfies SecretRegistration;
+        yield* report.register(empty);
+        registration = empty;
         return version;
       }
       const token = access?.token ?? null;
       if (token === null) {
-        read = null;
-        use({});
-        fillable = { values: new Map(), guarded };
+        clear(guarded);
         yield* report.notice(
           "This folder's secrets come from 1Password, but no 1Password service account is connected, so none loaded. Connect one in the folder's Secrets.",
         );
         // None to hide, which the gateway waits to hear before it serves the turn.
-        yield* report.register({ secrets: [], sources: [] });
+        const empty = { secrets: [], current: [], sources: [] } satisfies SecretRegistration;
+        yield* report.register(empty);
+        registration = empty;
         return version;
       }
       if (read !== null && read.token === token && sameStrings(read.environments, environments)) {
+        if (registration === null) {
+          throw new Error("a cached 1Password read has no secret registration");
+        }
+        yield* report
+          .register(registration)
+          .pipe(Effect.tapError(() => Effect.sync(() => clear(guarded))));
         return version;
       }
+      read = null;
+      registration = null;
+      fillable = { values: new Map(), guarded };
       input.mask.add([{ name: TOKEN_NAME, value: token }]);
       const failures: Array<string> = [];
       const next: Record<string, string> = {};
@@ -187,8 +207,8 @@ export const makeRunnerSecrets = (input: {
               { concurrency: "unbounded" },
             );
       // Top level first: a nearer folder's variable replaces one from above.
-      const sources = new Map<string, OnePasswordEnvironmentId>();
-      /** Each name's nearest value: what placeholders fill with. */
+      const currentSources = new Map<string, OnePasswordEnvironmentId>();
+      /** Each name's nearest hidden value: what outbound placeholders can use. */
       const current = new Map<string, string>();
       for (const { environmentId, variables } of found) {
         for (const variable of variables) {
@@ -202,33 +222,35 @@ export const makeRunnerSecrets = (input: {
             continue;
           }
           next[variable.name] = variable.value;
-          sources.set(variable.name, environmentId);
-          current.set(variable.name, variable.value);
-          if (variable.masked) hidden.push({ name: variable.name, value: variable.value });
+          if (variable.masked) {
+            current.set(variable.name, variable.value);
+            currentSources.set(variable.name, environmentId);
+            hidden.push({ name: variable.name, value: variable.value });
+          } else {
+            current.delete(variable.name);
+            currentSources.delete(variable.name);
+          }
         }
       }
       input.mask.add(hidden);
+      const nextRegistration = {
+        secrets: hidden,
+        current: [...current].map(([name, value]) => ({ name, value })),
+        sources: [...currentSources].map(([name, environment]) => ({ name, environment })),
+      } satisfies SecretRegistration;
+      // A partial refresh must drop stale machine values before this run can use them.
+      if (failures.length > 0) use(next);
       // The model must never see them, so the harness gets none the gateway doesn't know.
-      yield* report
-        .register({
-          secrets: hidden,
-          // Only the hidden ones are asked about before they leave: the others aren't secret.
-          sources: [...new Set(hidden.map(({ name }) => name))].flatMap((name) => {
-            const environment = sources.get(name);
-            return environment === undefined ? [] : [{ name, environment }];
+      yield* report.register(nextRegistration).pipe(
+        Effect.tapError(() =>
+          Effect.sync(() => {
+            clear(guarded);
           }),
-        })
-        .pipe(
-          Effect.tapError(() =>
-            Effect.sync(() => {
-              read = null;
-              use({});
-              fillable = { values: new Map(), guarded };
-            }),
-          ),
-        );
+        ),
+      );
+      registration = nextRegistration;
+      if (failures.length === 0) use(next);
       read = failures.length === 0 ? { token, environments } : null;
-      use(next);
       fillable = { values: current, guarded };
       const count = Object.keys(next).length;
       yield* report.info(

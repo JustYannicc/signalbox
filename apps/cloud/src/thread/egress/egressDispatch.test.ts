@@ -1,5 +1,6 @@
 // @effect-diagnostics cryptoRandomUUID:off - throwaway secrets only.
 import { expect, it } from "@effect/vitest";
+import { RunId } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -11,6 +12,7 @@ import { ThreadStore } from "../ThreadStore.ts";
 import { makeEgressDispatch } from "./egressDispatch.ts";
 
 const oldValue = `sk-old-${crypto.randomUUID()}`;
+const runId = RunId.make("dispatch-test-run");
 const nextValue = `sk-next-${crypto.randomUUID()}`;
 
 it.effect(
@@ -21,8 +23,14 @@ it.effect(
         yield* launch(engine);
         const sql = Context.get(context, SqlClient.SqlClient);
         const store = Context.get(context, ThreadStore);
+        yield* store.beginSecretRun(1, runId);
         yield* store
-          .registerSecretValues(1, [{ name: "KEY", value: oldValue }])
+          .registerSecretValues(
+            1,
+            runId,
+            [{ name: "KEY", value: oldValue }],
+            [{ name: "KEY", value: oldValue }],
+          )
           .pipe(sql.withTransaction);
         const before = yield* store.secretValues;
         let sends = 0;
@@ -35,7 +43,12 @@ it.effect(
         const written = yield* Deferred.make<void>();
         const commit = yield* Deferred.make<void>();
         const rotation = yield* Effect.gen(function* () {
-          yield* store.registerSecretValues(1, [{ name: "KEY", value: nextValue }]);
+          yield* store.registerSecretValues(
+            1,
+            runId,
+            [{ name: "KEY", value: nextValue }],
+            [{ name: "KEY", value: nextValue }],
+          );
           yield* Deferred.succeed(written, undefined);
           yield* Deferred.await(commit);
         }).pipe(sql.withTransaction, Effect.forkChild);
@@ -64,8 +77,14 @@ it.effect("allows rotation while an already-dispatched request waits on its dest
       yield* launch(engine);
       const sql = Context.get(context, SqlClient.SqlClient);
       const store = Context.get(context, ThreadStore);
+      yield* store.beginSecretRun(1, runId);
       yield* store
-        .registerSecretValues(1, [{ name: "KEY", value: oldValue }])
+        .registerSecretValues(
+          1,
+          runId,
+          [{ name: "KEY", value: oldValue }],
+          [{ name: "KEY", value: oldValue }],
+        )
         .pipe(sql.withTransaction);
       const before = yield* store.secretValues;
       const started = Promise.withResolvers<void>();
@@ -83,7 +102,12 @@ it.effect("allows rotation while an already-dispatched request waits on its dest
       yield* Effect.promise(() => started.promise);
       // This must finish without the remote host replying first.
       yield* store
-        .registerSecretValues(1, [{ name: "KEY", value: nextValue }])
+        .registerSecretValues(
+          1,
+          runId,
+          [{ name: "KEY", value: nextValue }],
+          [{ name: "KEY", value: nextValue }],
+        )
         .pipe(sql.withTransaction);
       const rotated = yield* store.secretValues;
       expect(rotated.revision).toBe(before.revision + 1);

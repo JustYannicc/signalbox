@@ -201,4 +201,37 @@ describe("session API", () => {
       }),
     ),
   );
+
+  it.effect("refuses a secret registration from a replaced machine generation", () =>
+    withThread(({ engine, runner, call }) =>
+      Effect.gen(function* () {
+        yield* send(engine, 1);
+        const old = yield* connect(runner);
+        const oldTurn = (yield* runner.work).turn;
+        if (oldTurn === null) throw new Error("expected the old turn");
+        const secret = "fake-old-generation-value";
+        expect(
+          (yield* call(old.token, SESSION_PATHS.secrets, {
+            runId: oldTurn.runId,
+            secrets: [{ name: "KEY", value: secret }],
+            current: [{ name: "KEY", value: secret }],
+          })).status,
+        ).toBe(200);
+
+        yield* runner.ended(old.generation, "test");
+        yield* send(engine, 2);
+        const current = yield* connect(runner);
+        const currentTurn = (yield* runner.work).turn;
+        if (currentTurn === null) throw new Error("expected the current turn");
+        expect(current.generation).toBe(old.generation + 1);
+
+        const late = yield* call(old.token, SESSION_PATHS.secrets, {
+          runId: oldTurn.runId,
+          secrets: [{ name: "KEY", value: secret }],
+          current: [{ name: "KEY", value: secret }],
+        });
+        expect(late.status).toBe(403);
+      }),
+    ),
+  );
 });

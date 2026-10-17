@@ -455,6 +455,7 @@ export interface ThreadObjectNamespace {
     readonly authorizeRemote: (token: string) => Promise<RemoteAuthorization>;
     /** The machine's egress check (#592, `egress/`): the values to look for, and the decision. */
     readonly egressSecrets: () => Promise<SecretValues>;
+    readonly egressUploadDrive: () => Promise<string | null>;
     readonly authorizeSend: (input: SendRequest) => Promise<SendAnswer>;
     readonly dispatchSend: (request: Request, revision: number) => Promise<EgressDispatchAnswer>;
     /** The thread's status line for its agent (`statusLineJson.read`); null before it exists. */

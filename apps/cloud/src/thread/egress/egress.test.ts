@@ -20,7 +20,13 @@ const harness = (answer: SendAnswer = { _tag: "allowed" }) => {
   const serve = (request: Request, own: ReadonlyArray<string> = ["app.signalbox.run"]) =>
     serveEgress(request, {
       thread: {
-        secrets: async () => ({ current: secrets, values: secrets, registered: 1, revision: 1 }),
+        secrets: async () => ({
+          current: secrets,
+          values: secrets,
+          registered: 1,
+          registeredRunId: "test-run",
+          revision: 1,
+        }),
         authorize: async ({ host, names }) => {
           asked.push({ host, names });
           return answer;
@@ -113,6 +119,122 @@ describe("egress", () => {
     expect(plain.status).toBe(403);
     expect(await plain.text()).toContain("over plain HTTP");
     expect(sent).toHaveLength(1);
+  });
+
+  it("inspects Git fetch negotiation without changing its packet bytes", async () => {
+    const { serve, asked, sent } = harness();
+    const body = "0014command=ls-refs\n0015agent=git/2.50.1\n00010009peel\n000csymrefs\n0000";
+    const response = await serve(
+      new Request("https://git.example.test/project.git/git-upload-pack", {
+        method: "POST",
+        headers: {
+          "content-type": "application/x-git-upload-pack-request",
+          "git-protocol": "version=2",
+        },
+        body,
+      }),
+    );
+
+    expect(response.status).toBe(200);
+    expect(asked).toEqual([]);
+    expect(await sent[0]!.text()).toBe(body);
+    expect(sent[0]!.headers.get("content-type")).toBe("application/x-git-upload-pack-request");
+  });
+
+  it("keeps Git negotiation subject to secret approval, HTTPS and bounded UTF-8 inspection", async () => {
+    const { serve, asked, sent } = harness({ _tag: "refused", message: "not approved" });
+    for (const protocol of ["http", "https"]) {
+      const response = await serve(
+        new Request(`${protocol}://git.example.test/project.git/git-upload-pack`, {
+          method: "POST",
+          headers: { "content-type": "application/x-git-upload-pack-request" },
+          body: `want ${KEY}\n`,
+        }),
+      );
+      expect(response.status).toBe(403);
+    }
+    const binary = await serve(
+      new Request("https://git.example.test/project.git/git-upload-pack", {
+        method: "POST",
+        headers: { "content-type": "application/x-git-upload-pack-request" },
+        body: new Uint8Array([0xff, ...new TextEncoder().encode(KEY)]),
+      }),
+    );
+    expect(binary.status).toBe(403);
+    expect(asked).toEqual([{ host: "git.example.test", names: ["KEY"] }]);
+    expect(sent).toEqual([]);
+  });
+
+  it("inspects compressed Git negotiation and preserves its original bytes", async () => {
+    const compress = async (text: string, format: "gzip" | "deflate") =>
+      new Uint8Array(
+        await new Response(
+          new Blob([text]).stream().pipeThrough(new CompressionStream(format)),
+        ).arrayBuffer(),
+      );
+    for (const format of ["gzip", "deflate"] as const) {
+      const { serve, asked, sent } = harness();
+      const packed = await compress("0014command=ls-refs\n0000", format);
+      const response = await serve(
+        new Request("https://git.example.test/project.git/git-upload-pack", {
+          method: "POST",
+          headers: {
+            "content-type": "application/x-git-upload-pack-request",
+            "content-encoding": format,
+          },
+          body: packed,
+        }),
+      );
+      expect(response.status).toBe(200);
+      expect(asked).toEqual([]);
+      expect(new Uint8Array(await sent[0]!.arrayBuffer())).toEqual(packed);
+      expect(sent[0]!.headers.get("content-encoding")).toBe(format);
+
+      const denied = harness({ _tag: "refused", message: "not approved" });
+      const secret = await denied.serve(
+        new Request("https://git.example.test/project.git/git-upload-pack", {
+          method: "POST",
+          headers: {
+            "content-type": "application/x-git-upload-pack-request",
+            "content-encoding": format,
+          },
+          body: await compress(`want ${KEY}\n`, format),
+        }),
+      );
+      expect(secret.status).toBe(403);
+      expect(denied.asked).toEqual([{ host: "git.example.test", names: ["KEY"] }]);
+      expect(denied.sent).toEqual([]);
+    }
+
+    const filled = harness();
+    const substituted = await filled.serve(
+      new Request("https://git.example.test/project.git/git-upload-pack", {
+        method: "POST",
+        headers: {
+          "content-type": "application/x-git-upload-pack-request",
+          "content-encoding": "gzip",
+        },
+        body: await compress("{{secret:KEY}}", "gzip"),
+      }),
+    );
+    expect(substituted.status).toBe(200);
+    expect(await filled.sent[0]!.text()).toBe(KEY);
+    expect(filled.sent[0]!.headers.get("content-encoding")).toBeNull();
+    expect(filled.sent[0]!.headers.get("content-length")).toBeNull();
+
+    const { serve, sent } = harness();
+    const tooLarge = await serve(
+      new Request("https://git.example.test/project.git/git-upload-pack", {
+        method: "POST",
+        headers: {
+          "content-type": "application/x-git-upload-pack-request",
+          "content-encoding": "gzip",
+        },
+        body: await compress("x".repeat(MAX_READ_BODY + 1), "gzip"),
+      }),
+    );
+    expect(tooLarge.status).toBe(403);
+    expect(sent).toEqual([]);
   });
 
   it("refuses an unknown-length body that exceeds the inspection limit", async () => {
