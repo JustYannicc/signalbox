@@ -7,9 +7,10 @@
  *   node scripts/rebrand/rebrand.ts --check   exit 1 if anything would change
  *
  * Only text users read or type is touched: string literals, template text,
- * and JSX text in JS/TS (comments and identifiers keep upstream's names, so
- * upstream patches still apply), and prose in docs. Code identifiers, env
- * vars, package names, and the t3.json format stay upstream's on purpose.
+ * and JSX text in JS/TS, and prose in docs. Comments, identifiers, env vars,
+ * package names, and the t3.json format are out of scope: renaming one of those
+ * is a deliberate change, and adds a rule here when upstream code we still merge
+ * uses the old name.
  * Idempotent: a second run changes nothing. See docs/operations/upstream-sync.md.
  */
 import * as NodeChildProcess from "node:child_process";

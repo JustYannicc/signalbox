@@ -204,7 +204,7 @@ describe("a pool's limits", () => {
       const { pool, cliProxyApi } = makePool();
       yield* pool.create(alice, { name: "Work", personal: false });
       const login = yield* pool.startLogin(alice, "codex");
-      yield* pool.completeLogin(alice, `http://x/cb?code=c&state=${login.state}`);
+      cliProxyApi.authorizeDevice(login.user_code!);
       const [refused] = [...cliProxyApi.accounts.keys()];
       cliProxyApi.accounts.get(refused!)!.usage = { status: 401, body: "{}" };
       yield* pool.loginStatus(alice, login.state);
