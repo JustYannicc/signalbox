@@ -6,13 +6,14 @@ import {
   compileResolvedKeybindingsConfig,
   DEFAULT_RESOLVED_KEYBINDINGS,
   matchesKeybindingShortcut,
-} from "./keybindings.ts";
+} from "@t3tools/shared/keybindings";
 
 const encodeResolved = Schema.encodeSync(ResolvedKeybindingsConfig);
 const decodeResolved = Schema.decodeUnknownSync(ResolvedKeybindingsConfig);
 const decodeRule = Schema.decodeUnknownSync(KeybindingRule);
+const decodeShortcut = Schema.decodeUnknownSync(KeybindingShortcut);
 const decodeShortcutKey = (key: string) =>
-  Schema.decodeUnknownSync(KeybindingShortcut)({
+  decodeShortcut({
     key,
     metaKey: false,
     ctrlKey: false,
