@@ -8,7 +8,7 @@ import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { isRpcClientError } from "../rpc/client.ts";
 
-export const RESUME_COMPLETION_DEADLINE_MS = 15_000;
+const RESUME_COMPLETION_DEADLINE_MS = 15_000;
 const isEnvironmentAuthorizationError = Schema.is(EnvironmentAuthorizationError);
 
 export class ResumeCompletionError extends Schema.TaggedError<ResumeCompletionError>()(
