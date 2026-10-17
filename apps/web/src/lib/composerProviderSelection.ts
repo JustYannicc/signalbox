@@ -1,4 +1,8 @@
-import { ProviderDriverKind, type ProviderInstanceId } from "@t3tools/contracts";
+import {
+  ProviderDriverKind,
+  type ProviderInstanceId,
+  type ServerSettings,
+} from "@t3tools/contracts";
 
 import {
   NO_PROVIDER_MODEL_SELECTION,
@@ -8,6 +12,7 @@ import {
 
 export function resolveComposerProviderSelection(input: {
   entries: ReadonlyArray<ProviderInstanceEntry>;
+  providerInstances?: ServerSettings["providerInstances"];
   candidateInstanceIds: ReadonlyArray<ProviderInstanceId | null | undefined>;
   lockedProvider: ProviderDriverKind | null;
   lockedInstanceId: ProviderInstanceId | null | undefined;
@@ -46,8 +51,9 @@ export function resolveComposerProviderSelection(input: {
     resolveSelectableProviderInstanceEntry(
       compatibleEntries.filter((entry) => entry.driverKind === requestedDriverKind),
       undefined,
+      input.providerInstances,
     ) ??
-    resolveSelectableProviderInstanceEntry(compatibleEntries, undefined);
+    resolveSelectableProviderInstanceEntry(compatibleEntries, undefined, input.providerInstances);
   const unavailableProviderInstanceId = selectedProviderEntry
     ? undefined
     : input.lockedProvider

@@ -103,6 +103,7 @@ export function resolveComposerDefaultModelPolicy(input: {
   const selectedProviderSelection = useFreshDefault
     ? resolveComposerProviderSelection({
         entries: providerSelection.providerInstanceEntries,
+        providerInstances: settings.providerInstances,
         candidateInstanceIds: [initialModelSelection?.instanceId],
         lockedProvider,
         lockedInstanceId: null,

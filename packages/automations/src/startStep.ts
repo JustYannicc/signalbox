@@ -25,8 +25,8 @@ import { retryAfterMs, retryPolicy, stepTimeoutMs } from "./stepPolicy.ts";
 import {
   httpRequest,
   isRetryableStatus,
+  completionModelFor,
   launchAgent,
-  modelFor,
   wakeAt,
   type StepStart,
 } from "./steps.ts";
@@ -102,7 +102,7 @@ export const makeStartStep =
           label: step.label,
           options,
           complete: (prompt) =>
-            modelFor(options, defaults()).pipe(
+            completionModelFor(options, defaults(), automation.project_id).pipe(
               Effect.flatMap((modelSelection) =>
                 models.complete({
                   projectId: automation.project_id,
