@@ -31,6 +31,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v6
         with:
+          fetch-depth: 0
           sparse-checkout: |
             /*
             !/.repos/
@@ -53,6 +54,14 @@ jobs:
 
       - name: Ensure Electron runtime is installed
         run: vp run --filter @t3tools/desktop ensure:electron
+
+      - name: Check module boundaries
+        env:
+          BOUNDARIES_BASE: ${{ github.event.pull_request.base.sha || github.event.before || 'origin/main' }}
+        run: |
+          git fetch --no-tags https://github.com/pingdotgg/t3code.git main:refs/remotes/upstream/main
+          node --test scripts/boundaries/tests.mjs
+          vp run lint:boundaries --base "$BOUNDARIES_BASE"
 
       - name: Check unused code
         run: vp run knip:check
