@@ -64,7 +64,7 @@ export function rememberOpenedTerminalGeneration(
   threadGenerations.set(terminalId, generation);
 }
 
-export function forgetOpenedTerminalGeneration(
+function forgetOpenedTerminalGeneration(
   generations: OpenedTerminalGenerations,
   threadRef: ScopedThreadRef,
   terminalId: string,
