@@ -103,13 +103,7 @@ export interface MachineLease {
 
 export type MachineDrain =
   | { readonly _tag: "asked"; readonly id: number }
-  | {
-      readonly _tag: "answered";
-      readonly id: number;
-      readonly unsaved: ReadonlyArray<string>;
-      /** Retry an incomplete finalization drain without busy-looping the object. */
-      readonly retryAt?: number | undefined;
-    };
+  | { readonly _tag: "answered"; readonly id: number; readonly unsaved: ReadonlyArray<string> };
 
 export const NO_MACHINE: MachineLease = {
   generation: 0,
@@ -387,7 +381,6 @@ const MachineLeaseJson = Schema.fromJsonString(
           _tag: Schema.Literal("answered"),
           id: Schema.Number,
           unsaved: Schema.Array(Schema.String),
-          retryAt: Schema.optional(Schema.Number),
         }),
       ]),
     ),

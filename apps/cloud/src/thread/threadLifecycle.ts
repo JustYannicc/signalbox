@@ -6,49 +6,27 @@ import type {
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 
+import {
+  accept,
+  decideLifecycleCommand,
+  type LifecycleDecision,
+  reject,
+} from "./lifecycleCommands.ts";
 import { activeRun } from "./runLifecycle.ts";
 import { interruptRunEvents } from "./scriptedTurn.ts";
 import type { DecisionContext } from "./threadEvents.ts";
 import { runEvent, threadEvent } from "./threadEvents.ts";
 import { applyEvents } from "./threadProjection.ts";
 
-type SettleCommand = Extract<
-  OrchestrationV2Command,
-  { readonly type: "thread.settle" | "thread.auto-settle" }
->;
+export type { LifecycleDecision };
 
-export type LifecycleDecision =
-  | { readonly _tag: "accepted"; readonly events: ReadonlyArray<OrchestrationV2DomainEvent> }
-  | { readonly _tag: "rejected"; readonly message: string };
+type SettleCommand = Extract<OrchestrationV2Command, { readonly type: "thread.settle" }>;
 
-const accept = (events: ReadonlyArray<OrchestrationV2DomainEvent> = []): LifecycleDecision => ({
-  _tag: "accepted",
-  events,
-});
-const reject = (message: string): LifecycleDecision => ({ _tag: "rejected", message });
+const settledAndArchived = (thread: OrchestrationV2AppThread) =>
+  thread.archivedAt !== null && thread.settledOverride === "settled";
 
-const settledBlocker = (projection: OrchestrationV2ThreadProjection, skipQueued = false) => {
-  if (
-    projection.runs.some(
-      (run) =>
-        run.status === "preparing" ||
-        run.status === "starting" ||
-        run.status === "running" ||
-        run.status === "waiting",
-    )
-  ) {
-    return "This thread is still working. Stop it or let it finish, then settle it.";
-  }
-  if (!skipQueued && projection.runs.some((run) => run.status === "queued")) {
-    return "This thread has a queued message. Send it or remove it from the queue before settling.";
-  }
-  return null;
-};
-
-const stopForEarlySettlement = (
-  projection: OrchestrationV2ThreadProjection,
-  ctx: DecisionContext,
-): ReadonlyArray<OrchestrationV2DomainEvent> => {
+/** Early settlement stops the live run and holds what is queued behind it. */
+const stopEvents = (projection: OrchestrationV2ThreadProjection, ctx: DecisionContext) => {
   const run = activeRun(projection);
   if (run !== undefined) return interruptRunEvents(projection, run, ctx, true);
   return projection.runs
@@ -56,76 +34,77 @@ const stopForEarlySettlement = (
     .map((candidate) => runEvent(ctx, "run.updated", { ...candidate, queueHeld: true }));
 };
 
-/** Settlement is a thread event; cloud records archive on the thread itself. */
-export function settle(
+/**
+ * A person settling a task (#671) also archives it, and may stop its work first.
+ * A done-condition's settle (`snapshotAt`) quietly does nothing when the task
+ * changed after it looked, or can't settle now.
+ */
+function settle(
   projection: OrchestrationV2ThreadProjection,
   command: SettleCommand,
   ctx: DecisionContext,
 ): LifecycleDecision {
-  if (command.type === "thread.auto-settle") {
-    if (projection.thread.settledOverride !== null) {
-      return reject("This thread has an explicit settlement override.");
-    }
-    if (projection.thread.archivedAt !== null) {
-      return reject("This thread is already archived.");
-    }
-  }
+  const { snapshotAt } = command;
+  if (settledAndArchived(projection.thread)) return accept();
   if (
-    command.snapshotAt !== undefined &&
-    DateTime.toEpochMillis(projection.updatedAt) > DateTime.toEpochMillis(command.snapshotAt)
+    snapshotAt !== undefined &&
+    DateTime.toEpochMillis(projection.updatedAt) > DateTime.toEpochMillis(snapshotAt)
   ) {
-    if (command.type === "thread.settle") return accept();
-    return reject("This thread changed before its done-condition held.");
+    return accept();
   }
-  const earlyStop =
-    command.type === "thread.settle" &&
-    command.stopWork === true &&
-    command.snapshotAt === undefined;
-  const stopEvents = earlyStop ? stopForEarlySettlement(projection, ctx) : [];
-  const stoppedProjection =
-    stopEvents.length === 0 ? projection : (applyEvents(projection, stopEvents) ?? projection);
-  const blocker = settledBlocker(stoppedProjection, earlyStop);
-  if (blocker !== null) {
-    return command.type === "thread.settle" && command.snapshotAt !== undefined
+  const stopped = command.stopWork === true && snapshotAt === undefined;
+  const stops = stopped ? stopEvents(projection, ctx) : [];
+  const current = stops.length === 0 ? projection : (applyEvents(projection, stops) ?? projection);
+  const decision = decideLifecycleCommand(current, command, ctx, { archive: true, stopped });
+  if (decision?._tag !== "accepted") {
+    return snapshotAt !== undefined
       ? accept()
-      : reject(blocker);
+      : (decision ?? reject("This thread can't be settled."));
   }
-
-  const existing = stoppedProjection.thread;
-  const alreadySettled =
-    existing.settledOverride === "settled" &&
-    existing.settledAt !== null &&
-    existing.archivedAt !== null;
-  const settledAt = alreadySettled ? existing.settledAt : (command.settledAt ?? ctx.now);
-  const thread: OrchestrationV2AppThread = {
-    ...existing,
-    archivedAt: existing.archivedAt ?? settledAt,
-    settledOverride: "settled",
-    settledAt,
-    unsettledAt: null,
-    updatedAt: alreadySettled ? existing.updatedAt : ctx.now,
-  };
-  return accept([...stopEvents, threadEvent(ctx, "thread.settled", thread)]);
+  return accept([...stops, ...decision.events]);
 }
 
-/** A person reopening a settled task opts out of the old completion signal. */
-export function unsettle(
+/** Reopening a settled task brings it out of the archive; its work stays as it was. */
+const reopenSettled = (thread: OrchestrationV2AppThread, ctx: DecisionContext) =>
+  threadEvent(ctx, "thread.unsettled", {
+    ...thread,
+    archivedAt: null,
+    settledOverride: "active",
+    settledAt: null,
+    unsettledAt: ctx.now,
+    updatedAt: ctx.now,
+  });
+
+/** Thread lifecycle commands: task behavior here, everything generic in `decideLifecycleCommand`. */
+export function decide(
   projection: OrchestrationV2ThreadProjection,
+  command: OrchestrationV2Command,
   ctx: DecisionContext,
-): LifecycleDecision {
-  if (projection.thread.settledOverride !== "settled") {
-    return reject("This thread is not settled.");
+): LifecycleDecision | undefined {
+  const { thread } = projection;
+  switch (command.type) {
+    case "thread.settle":
+      return settle(projection, command, ctx);
+    case "thread.unsettle":
+    case "thread.unarchive":
+      if (settledAndArchived(thread)) return accept([reopenSettled(thread, ctx)]);
+      return command.type === "thread.unsettle"
+        ? decideLifecycleCommand(projection, command, ctx)
+        : undefined;
+    case "thread.pin": {
+      // Pinning promotes a settled task back into the list, so it leaves the archive first.
+      if (!settledAndArchived(thread)) return decideLifecycleCommand(projection, command, ctx);
+      const reopened = reopenSettled(thread, ctx);
+      const decision = decideLifecycleCommand(
+        applyEvents(projection, [reopened]) ?? projection,
+        command,
+        ctx,
+      );
+      return decision?._tag === "accepted" ? accept([reopened, ...decision.events]) : decision;
+    }
+    default:
+      return decideLifecycleCommand(projection, command, ctx);
   }
-  return accept([
-    threadEvent(ctx, "thread.unsettled", {
-      ...projection.thread,
-      archivedAt: null,
-      settledOverride: "active",
-      settledAt: null,
-      unsettledAt: ctx.now,
-      updatedAt: ctx.now,
-    }),
-  ]);
 }
 
 /** Reopens the thread before a new message is recorded, preserving its work. */
@@ -136,7 +115,7 @@ export function reopenForMessage(
   readonly thread: OrchestrationV2AppThread;
   readonly event: OrchestrationV2DomainEvent;
 } | null {
-  if (thread.settledOverride !== null) {
+  if (thread.settledOverride !== null || thread.settledAt !== null) {
     const reopened = {
       ...thread,
       archivedAt: null,

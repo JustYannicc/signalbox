@@ -165,16 +165,12 @@ describe("ThreadRunner task lifecycle", () => {
           });
           expect((yield* runner.work).needsUpkeep).toBe(true);
 
-          const cooldown = yield* runner.reconcile;
-          expect(cooldown).toMatchObject({ release: null, drain: null, stop: false });
-          expect(cooldown.wakeAt).toBe(firstId + DRAIN_TIMEOUT_MS);
-          expect((yield* runner.work).needsUpkeep).toBe(false);
-          expect(yield* runner.leaseToken(machine.generation)).toBe(machine.token);
-
-          yield* TestClock.adjust(DRAIN_TIMEOUT_MS);
-          expect((yield* runner.work).needsUpkeep).toBe(true);
+          // Unsaved work keeps the machine: it is asked to drain again, not released.
+          yield* TestClock.adjust(1_000);
           const retry = yield* runner.reconcile;
-          expect(retry.drain?.id).toBe(firstId + DRAIN_TIMEOUT_MS);
+          expect(retry).toMatchObject({ release: null, stop: false });
+          expect(retry.drain?.id).toBeGreaterThan(firstId);
+          expect(yield* runner.leaseToken(machine.generation)).toBe(machine.token);
           yield* saveSession(context, "claude-session-1");
           yield* runner.batch({
             generation: machine.generation,
@@ -212,18 +208,11 @@ describe("ThreadRunner task lifecycle", () => {
         const drain = yield* runner.reconcile;
         expect(drain.drain?.generation).toBe(machine.generation);
         yield* TestClock.adjust(DRAIN_TIMEOUT_MS);
-        expect(yield* runner.reconcile).toMatchObject({
-          release: null,
-          drain: null,
-          stop: false,
-          wakeAt: drain.drain!.id + 2 * DRAIN_TIMEOUT_MS,
-        });
-        expect(yield* runner.leaseToken(machine.generation)).toBe(machine.token);
-        expect((yield* runner.work).needsUpkeep).toBe(false);
-
-        yield* TestClock.adjust(DRAIN_TIMEOUT_MS);
+        // An unanswered drain never lets a settled machine go: it is asked again.
         const retry = yield* runner.reconcile;
-        expect(retry.drain?.id).toBe(drain.drain!.id + 2 * DRAIN_TIMEOUT_MS);
+        expect(retry).toMatchObject({ release: null, stop: false });
+        expect(retry.drain?.id).toBe(drain.drain!.id + DRAIN_TIMEOUT_MS);
+        expect(yield* runner.leaseToken(machine.generation)).toBe(machine.token);
       }),
     ),
   );

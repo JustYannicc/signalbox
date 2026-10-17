@@ -25,7 +25,7 @@ type TaskRecord = {
 type Lifecycle = {
   kind: "chat" | "task";
   thread: Thread;
-  messages: Array<{ role: string; text: string }>;
+  messages: Array<{ id?: string; role: string; text: string }>;
   runs: Array<{ id: string; status: string }>;
   record: TaskRecord | null;
   applied: boolean;
@@ -71,6 +71,9 @@ export default workflow(async (w, input: { threadId?: string }) => {
     action: "read",
     includeContext: true,
   });
+  // A model step's own thread settles when the step ends; reading it here would start another step.
+  if (before.messages.find((message) => message.role === "user")?.id?.startsWith("automation:"))
+    return "The parent automation owns this helper thread.";
   if (before.kind !== "task" || !isSettled(before.thread)) return "This is not a settled task.";
   if (before.record && before.record.outcome !== null) return "The task already has an outcome.";
   const expectedGeneration = before.record?.generation ?? 0;

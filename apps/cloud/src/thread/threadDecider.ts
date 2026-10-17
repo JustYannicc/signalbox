@@ -83,6 +83,9 @@ const CLOUD_COMMAND_TYPES = [
   "thread.auto-settle",
   "thread.unsettle",
   "thread.auto-settle.set",
+  "thread.pin",
+  "thread.unpin",
+  "thread.pin.reorder",
 ] as const satisfies ReadonlyArray<OrchestrationV2Command["type"]>;
 type CloudCommand = CommandOf<(typeof CLOUD_COMMAND_TYPES)[number]>;
 
@@ -260,6 +263,18 @@ export function decide(
   if (projection === null) return reject("This thread does not exist.");
   if (projection.thread.deletedAt !== null) return reject("This thread was deleted.");
   switch (command.type) {
+    case "thread.settle":
+    case "thread.auto-settle":
+    case "thread.unsettle":
+    case "thread.auto-settle.set":
+    case "thread.pin":
+    case "thread.unpin":
+    case "thread.pin.reorder": {
+      const decision = threadLifecycle.decide(projection, command, ctx);
+      return decision === undefined
+        ? reject(unsupported(command.type))
+        : lifecycleDecision(decision);
+    }
     case "message.dispatch":
       return dispatchMessage(projection, command, ctx);
     case "run.interrupt": {
@@ -346,28 +361,13 @@ export function decide(
         return reject("This thread changed since it went idle.");
       }
       return updateThread(projection, "thread.archived", { archivedAt: ctx.now }, ctx);
-    case "thread.unarchive":
-      if (projection.thread.settledOverride === "settled") {
-        return lifecycleDecision(threadLifecycle.unsettle(projection, ctx));
-      }
+    case "thread.unarchive": {
+      // Unarchiving a settled task reopens it.
+      const reopened = threadLifecycle.decide(projection, command, ctx);
+      if (reopened !== undefined) return lifecycleDecision(reopened);
       if (projection.thread.archivedAt === null) return reject("This thread is not archived.");
       return updateThread(projection, "thread.unarchived", { archivedAt: null }, ctx);
-    case "thread.settle":
-    case "thread.auto-settle":
-      return lifecycleDecision(threadLifecycle.settle(projection, command, ctx));
-    case "thread.unsettle":
-      return lifecycleDecision(threadLifecycle.unsettle(projection, ctx));
-    case "thread.auto-settle.set":
-      return updateThread(
-        projection,
-        "thread.auto-settle-set",
-        {
-          autoSettleDisabledAt: command.enabled
-            ? null
-            : (projection.thread.autoSettleDisabledAt ?? ctx.now),
-        },
-        ctx,
-      );
+    }
     case "thread.model-selection.set":
       return updateThread(
         projection,

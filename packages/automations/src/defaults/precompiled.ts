@@ -2916,10 +2916,10 @@ export const PRECOMPILED_BUILT_INS: Readonly<Record<string, CompiledWorkflow>> =
         {
           type: "branch",
           id: "s4",
-          line: 70,
+          line: 71,
           source: "condition",
           label: {
-            text: 'before.kind !== "task" || !isSettled(before.thread)',
+            text: "A model step's own thread settles when the step ends; reading it here would start another step.",
             dynamic: false,
           },
           arms: [
@@ -2929,7 +2929,7 @@ export const PRECOMPILED_BUILT_INS: Readonly<Record<string, CompiledWorkflow>> =
                 {
                   type: "end",
                   id: "s5",
-                  line: 70,
+                  line: 72,
                   exit: "workflow",
                 },
               ],
@@ -2943,7 +2943,34 @@ export const PRECOMPILED_BUILT_INS: Readonly<Record<string, CompiledWorkflow>> =
         {
           type: "branch",
           id: "s6",
-          line: 71,
+          line: 73,
+          source: "condition",
+          label: {
+            text: 'before.kind !== "task" || !isSettled(before.thread)',
+            dynamic: false,
+          },
+          arms: [
+            {
+              label: "Yes",
+              body: [
+                {
+                  type: "end",
+                  id: "s7",
+                  line: 73,
+                  exit: "workflow",
+                },
+              ],
+            },
+            {
+              label: "No",
+              body: [],
+            },
+          ],
+        },
+        {
+          type: "branch",
+          id: "s8",
+          line: 74,
           source: "condition",
           label: {
             text: "before.record && before.record.outcome !== null",
@@ -2955,8 +2982,8 @@ export const PRECOMPILED_BUILT_INS: Readonly<Record<string, CompiledWorkflow>> =
               body: [
                 {
                   type: "end",
-                  id: "s7",
-                  line: 71,
+                  id: "s9",
+                  line: 74,
                   exit: "workflow",
                 },
               ],
@@ -2969,8 +2996,8 @@ export const PRECOMPILED_BUILT_INS: Readonly<Record<string, CompiledWorkflow>> =
         },
         {
           type: "step",
-          id: "s8",
-          line: 74,
+          id: "s10",
+          line: 77,
           verb: "llm",
           label: {
             text: "Understand why the task was settled",
@@ -2989,8 +3016,8 @@ export const PRECOMPILED_BUILT_INS: Readonly<Record<string, CompiledWorkflow>> =
         },
         {
           type: "step",
-          id: "s9",
-          line: 92,
+          id: "s11",
+          line: 95,
           verb: "call",
           label: {
             text: "Recheck the task state",
@@ -3008,8 +3035,8 @@ export const PRECOMPILED_BUILT_INS: Readonly<Record<string, CompiledWorkflow>> =
         },
         {
           type: "branch",
-          id: "s10",
-          line: 96,
+          id: "s12",
+          line: 99,
           source: "condition",
           label: {
             text: 'current.kind !== "task" || !isSettled(current.thread) || (current.record?.gener…',
@@ -3021,8 +3048,8 @@ export const PRECOMPILED_BUILT_INS: Readonly<Record<string, CompiledWorkflow>> =
               body: [
                 {
                   type: "end",
-                  id: "s11",
-                  line: 101,
+                  id: "s13",
+                  line: 104,
                   exit: "workflow",
                 },
               ],
@@ -3035,8 +3062,8 @@ export const PRECOMPILED_BUILT_INS: Readonly<Record<string, CompiledWorkflow>> =
         },
         {
           type: "step",
-          id: "s12",
-          line: 103,
+          id: "s14",
+          line: 106,
           verb: "call",
           label: {
             text: "Record the settle reason",
@@ -3055,8 +3082,8 @@ export const PRECOMPILED_BUILT_INS: Readonly<Record<string, CompiledWorkflow>> =
         },
         {
           type: "branch",
-          id: "s13",
-          line: 111,
+          id: "s15",
+          line: 114,
           source: "condition",
           label: {
             text: "!recorded.applied || !recorded.record",
@@ -3068,8 +3095,8 @@ export const PRECOMPILED_BUILT_INS: Readonly<Record<string, CompiledWorkflow>> =
               body: [
                 {
                   type: "end",
-                  id: "s14",
-                  line: 111,
+                  id: "s16",
+                  line: 114,
                   exit: "workflow",
                 },
               ],
@@ -3082,8 +3109,8 @@ export const PRECOMPILED_BUILT_INS: Readonly<Record<string, CompiledWorkflow>> =
         },
         {
           type: "branch",
-          id: "s15",
-          line: 115,
+          id: "s17",
+          line: 118,
           source: "condition",
           label: {
             text: "guess.uncertain",
@@ -3095,8 +3122,8 @@ export const PRECOMPILED_BUILT_INS: Readonly<Record<string, CompiledWorkflow>> =
               body: [
                 {
                   type: "step",
-                  id: "s16",
-                  line: 116,
+                  id: "s18",
+                  line: 119,
                   verb: "ask",
                   label: {
                     text: "Why did you settle this task?",
@@ -3115,8 +3142,8 @@ export const PRECOMPILED_BUILT_INS: Readonly<Record<string, CompiledWorkflow>> =
                 },
                 {
                   type: "step",
-                  id: "s17",
-                  line: 125,
+                  id: "s19",
+                  line: 128,
                   verb: "call",
                   label: {
                     text: "Record your answer",
@@ -3135,8 +3162,8 @@ export const PRECOMPILED_BUILT_INS: Readonly<Record<string, CompiledWorkflow>> =
                 },
                 {
                   type: "branch",
-                  id: "s18",
-                  line: 133,
+                  id: "s20",
+                  line: 136,
                   source: "condition",
                   label: {
                     text: "!correction.applied || !correction.record",
@@ -3148,8 +3175,8 @@ export const PRECOMPILED_BUILT_INS: Readonly<Record<string, CompiledWorkflow>> =
                       body: [
                         {
                           type: "end",
-                          id: "s19",
-                          line: 133,
+                          id: "s21",
+                          line: 136,
                           exit: "workflow",
                         },
                       ],
@@ -3170,8 +3197,8 @@ export const PRECOMPILED_BUILT_INS: Readonly<Record<string, CompiledWorkflow>> =
         },
         {
           type: "branch",
-          id: "s20",
-          line: 137,
+          id: "s22",
+          line: 140,
           source: "condition",
           label: {
             text: 'reason === "dropped"',
@@ -3183,8 +3210,8 @@ export const PRECOMPILED_BUILT_INS: Readonly<Record<string, CompiledWorkflow>> =
               body: [
                 {
                   type: "end",
-                  id: "s21",
-                  line: 137,
+                  id: "s23",
+                  line: 140,
                   exit: "workflow",
                 },
               ],
@@ -3197,8 +3224,8 @@ export const PRECOMPILED_BUILT_INS: Readonly<Record<string, CompiledWorkflow>> =
         },
         {
           type: "step",
-          id: "s22",
-          line: 139,
+          id: "s24",
+          line: 142,
           verb: "call",
           label: {
             text: "Confirm the task is still settled",
@@ -3216,8 +3243,8 @@ export const PRECOMPILED_BUILT_INS: Readonly<Record<string, CompiledWorkflow>> =
         },
         {
           type: "branch",
-          id: "s23",
-          line: 143,
+          id: "s25",
+          line: 146,
           source: "condition",
           label: {
             text: 'latest.kind !== "task" || !isSettled(latest.thread) || latest.record === null |…',
@@ -3229,8 +3256,8 @@ export const PRECOMPILED_BUILT_INS: Readonly<Record<string, CompiledWorkflow>> =
               body: [
                 {
                   type: "end",
-                  id: "s24",
-                  line: 149,
+                  id: "s26",
+                  line: 152,
                   exit: "workflow",
                 },
               ],
@@ -3243,8 +3270,8 @@ export const PRECOMPILED_BUILT_INS: Readonly<Record<string, CompiledWorkflow>> =
         },
         {
           type: "step",
-          id: "s25",
-          line: 151,
+          id: "s27",
+          line: 154,
           verb: "agent",
           label: {
             text: "Pave behind the settled task",
@@ -3260,10 +3287,10 @@ export const PRECOMPILED_BUILT_INS: Readonly<Record<string, CompiledWorkflow>> =
       ],
     },
     script:
-      'export const meta = {\n\tname: "Settle task",\n\tdescription: "Records why a task was settled early, starts a narrow finishing pass when it is done enough, and asks quietly when the reason is unclear.",\n\tintent: "when a task is settled early, record why, and finish only when it is done enough",\n\ttriggers: [{ on: "thread.settled" }]\n};\nconst UNCLEAR_OUTCOME = "Task settled; the reason was unclear.";\nfunction isSettled(thread) {\n\treturn thread.archivedAt !== null || thread.settledAt !== null || thread.settledOverride === "settled";\n}\nfunction parseGuess(answer) {\n\ttry {\n\t\tconst parsed = JSON.parse(answer);\n\t\tconst reason = parsed.reason === "dropped" || parsed.reason === "done-enough" ? parsed.reason : "done-enough";\n\t\tconst rawOutcome = typeof parsed.outcome === "string" ? parsed.outcome.trim() : "";\n\t\tconst finishing = typeof parsed.finishing === "string" ? parsed.finishing.trim() : "";\n\t\tconst uncertain = typeof parsed.uncertain === "boolean" ? parsed.uncertain : true;\n\t\tconst outcome = rawOutcome ? rawOutcome.split("\\n").join(" ").split("\\r").join(" ").slice(0, 400) : UNCLEAR_OUTCOME;\n\t\treturn {\n\t\t\treason,\n\t\t\toutcome,\n\t\t\tfinishing: finishing.slice(0, 1200),\n\t\t\tuncertain: reason !== parsed.reason || !rawOutcome || typeof parsed.finishing !== "string" || uncertain\n\t\t};\n\t} catch {\n\t\treturn {\n\t\t\treason: "done-enough",\n\t\t\toutcome: UNCLEAR_OUTCOME,\n\t\t\tfinishing: "",\n\t\t\tuncertain: true\n\t\t};\n\t}\n}\nexport default workflow(async (w, input) => {\n\tconst threadId = input.threadId;\n\tif (!threadId) {\n\t\tw.$arm("s1", 0);\n\t\treturn "No thread was attached to this settle event.";\n\t} else {\n\t\tw.$arm("s1", 1);\n\t}\n\tconst before = await w.call("s3", "Read the task that settled", "signalbox.task_lifecycle", {\n\t\tthreadId,\n\t\taction: "read",\n\t\tincludeContext: true\n\t});\n\tif (before.kind !== "task" || !isSettled(before.thread)) {\n\t\tw.$arm("s4", 0);\n\t\treturn "This is not a settled task.";\n\t} else {\n\t\tw.$arm("s4", 1);\n\t}\n\tif (before.record && before.record.outcome !== null) {\n\t\tw.$arm("s6", 0);\n\t\treturn "The task already has an outcome.";\n\t} else {\n\t\tw.$arm("s6", 1);\n\t}\n\tconst expectedGeneration = before.record?.generation ?? 0;\n\tconst answer = await w.llm("s8", "Understand why the task was settled", {\n\t\tprompt: [\n\t\t\t"You are the person\'s assistant. Read this task and infer why the person settled it early.",\n\t\t\t"Return only JSON with reason exactly \\"dropped\\" or \\"done-enough\\", outcome as one line, uncertain as a boolean, and finishing as a short note for a folder agent.",\n\t\t\t"Use \\"dropped\\" only when the work is no longer needed. Use \\"done-enough\\" when the useful work is complete but cleanup, tests, docs, or hardening remain.",\n\t\t\t"Set uncertain true whenever the conversation does not make the reason clear. Do not use a classifier that cannot read the conversation.",\n\t\t\t"If the reason is unclear, still give your best provisional reason. The task stays settled while its low-priority question waits for an answer."\n\t\t].join("\\n\\n"),\n\t\tinput: {\n\t\t\tthread: before.thread,\n\t\t\tdoneCondition: before.record?.condition,\n\t\t\tmessages: before.messages,\n\t\t\truns: before.runs\n\t\t}\n\t});\n\tconst guess = parseGuess(answer);\n\t// A new message can reopen the thread while the model is reading it.\n\tconst current = await w.call("s9", "Recheck the task state", "signalbox.task_lifecycle", {\n\t\tthreadId,\n\t\taction: "read"\n\t});\n\tif (current.kind !== "task" || !isSettled(current.thread) || (current.record?.generation ?? 0) !== expectedGeneration || current.record !== null && current.record.outcome !== null) {\n\t\tw.$arm("s10", 0);\n\t\treturn "The task changed while I was reading it.";\n\t} else {\n\t\tw.$arm("s10", 1);\n\t}\n\tconst recorded = await w.call("s12", "Record the settle reason", "signalbox.task_lifecycle", {\n\t\tthreadId,\n\t\taction: "record-settle",\n\t\treason: guess.reason,\n\t\toutcome: guess.outcome,\n\t\tuncertain: guess.uncertain,\n\t\texpectedGeneration\n\t});\n\tif (!recorded.applied || !recorded.record) {\n\t\tw.$arm("s13", 0);\n\t\treturn "The task changed before I could record the reason.";\n\t} else {\n\t\tw.$arm("s13", 1);\n\t}\n\tlet reason = guess.reason;\n\tlet settledRecord = recorded.record;\n\tif (guess.uncertain) {\n\t\tw.$arm("s15", 0);\n\t\tconst answer = await w.ask("s16", "Why did you settle this task?", {\n\t\t\tquestion: [`I guessed "${guess.reason}": ${guess.outcome}`, "Which reason fits? The task stays settled while this waits."].join("\\n\\n"),\n\t\t\toptions: ["dropped", "done-enough"],\n\t\t\timportance: "low"\n\t\t});\n\t\treason = answer === "dropped" ? "dropped" : "done-enough";\n\t\tconst correction = await w.call("s17", "Record your answer", "signalbox.task_lifecycle", {\n\t\t\tthreadId,\n\t\t\taction: "record-settle",\n\t\t\treason,\n\t\t\toutcome: guess.outcome,\n\t\t\tuncertain: false,\n\t\t\texpectedGeneration: settledRecord.generation\n\t\t});\n\t\tif (!correction.applied || !correction.record) {\n\t\t\tw.$arm("s18", 0);\n\t\t\treturn "The task changed before I could record your answer.";\n\t\t} else {\n\t\t\tw.$arm("s18", 1);\n\t\t}\n\t\tsettledRecord = correction.record;\n\t} else {\n\t\tw.$arm("s15", 1);\n\t}\n\tif (reason === "dropped") {\n\t\tw.$arm("s20", 0);\n\t\treturn {\n\t\t\treason,\n\t\t\toutcome: guess.outcome,\n\t\t\tfinishing: "skipped"\n\t\t};\n\t} else {\n\t\tw.$arm("s20", 1);\n\t}\n\tconst latest = await w.call("s22", "Confirm the task is still settled", "signalbox.task_lifecycle", {\n\t\tthreadId,\n\t\taction: "read"\n\t});\n\tif (latest.kind !== "task" || !isSettled(latest.thread) || latest.record === null || latest.record?.generation !== settledRecord.generation || latest.record.outcome === null) {\n\t\tw.$arm("s23", 0);\n\t\treturn "The task reopened before the finishing pass started.";\n\t} else {\n\t\tw.$arm("s23", 1);\n\t}\n\tconst finished = await w.agent("s25", "Pave behind the settled task", { prompt: [\n\t\t"You are this folder\'s finishing agent. You represent this project folder, not the user. Work in this folder\'s project and use the supplied task as your scope.",\n\t\t"Make a narrow finishing pass on work that is already useful: cleanup, tests, docs, and hardening. Do not expand the task or reopen it.",\n\t\t"Before changing files, read the task lifecycle. If this task is no longer settled with the recorded outcome, stop without changing anything.",\n\t\t`Task thread: ${threadId} (${before.thread.title}).`,\n\t\t`Done condition: ${before.record?.condition?.summary ?? "none recorded"}.`,\n\t\t`Recorded outcome: ${guess.outcome}.`,\n\t\t`Finishing context: ${guess.finishing || "Read the task conversation and decide whether a small finishing pass is warranted."}`\n\t].join("\\n\\n") });\n\treturn {\n\t\treason,\n\t\toutcome: guess.outcome,\n\t\tfinishing: finished.threadId\n\t};\n});\n',
+      'export const meta = {\n\tname: "Settle task",\n\tdescription: "Records why a task was settled early, starts a narrow finishing pass when it is done enough, and asks quietly when the reason is unclear.",\n\tintent: "when a task is settled early, record why, and finish only when it is done enough",\n\ttriggers: [{ on: "thread.settled" }]\n};\nconst UNCLEAR_OUTCOME = "Task settled; the reason was unclear.";\nfunction isSettled(thread) {\n\treturn thread.archivedAt !== null || thread.settledAt !== null || thread.settledOverride === "settled";\n}\nfunction parseGuess(answer) {\n\ttry {\n\t\tconst parsed = JSON.parse(answer);\n\t\tconst reason = parsed.reason === "dropped" || parsed.reason === "done-enough" ? parsed.reason : "done-enough";\n\t\tconst rawOutcome = typeof parsed.outcome === "string" ? parsed.outcome.trim() : "";\n\t\tconst finishing = typeof parsed.finishing === "string" ? parsed.finishing.trim() : "";\n\t\tconst uncertain = typeof parsed.uncertain === "boolean" ? parsed.uncertain : true;\n\t\tconst outcome = rawOutcome ? rawOutcome.split("\\n").join(" ").split("\\r").join(" ").slice(0, 400) : UNCLEAR_OUTCOME;\n\t\treturn {\n\t\t\treason,\n\t\t\toutcome,\n\t\t\tfinishing: finishing.slice(0, 1200),\n\t\t\tuncertain: reason !== parsed.reason || !rawOutcome || typeof parsed.finishing !== "string" || uncertain\n\t\t};\n\t} catch {\n\t\treturn {\n\t\t\treason: "done-enough",\n\t\t\toutcome: UNCLEAR_OUTCOME,\n\t\t\tfinishing: "",\n\t\t\tuncertain: true\n\t\t};\n\t}\n}\nexport default workflow(async (w, input) => {\n\tconst threadId = input.threadId;\n\tif (!threadId) {\n\t\tw.$arm("s1", 0);\n\t\treturn "No thread was attached to this settle event.";\n\t} else {\n\t\tw.$arm("s1", 1);\n\t}\n\tconst before = await w.call("s3", "Read the task that settled", "signalbox.task_lifecycle", {\n\t\tthreadId,\n\t\taction: "read",\n\t\tincludeContext: true\n\t});\n\t// A model step\'s own thread settles when the step ends; reading it here would start another step.\n\tif (before.messages.find((message) => message.role === "user")?.id?.startsWith("automation:")) {\n\t\tw.$arm("s4", 0);\n\t\treturn "The parent automation owns this helper thread.";\n\t} else {\n\t\tw.$arm("s4", 1);\n\t}\n\tif (before.kind !== "task" || !isSettled(before.thread)) {\n\t\tw.$arm("s6", 0);\n\t\treturn "This is not a settled task.";\n\t} else {\n\t\tw.$arm("s6", 1);\n\t}\n\tif (before.record && before.record.outcome !== null) {\n\t\tw.$arm("s8", 0);\n\t\treturn "The task already has an outcome.";\n\t} else {\n\t\tw.$arm("s8", 1);\n\t}\n\tconst expectedGeneration = before.record?.generation ?? 0;\n\tconst answer = await w.llm("s10", "Understand why the task was settled", {\n\t\tprompt: [\n\t\t\t"You are the person\'s assistant. Read this task and infer why the person settled it early.",\n\t\t\t"Return only JSON with reason exactly \\"dropped\\" or \\"done-enough\\", outcome as one line, uncertain as a boolean, and finishing as a short note for a folder agent.",\n\t\t\t"Use \\"dropped\\" only when the work is no longer needed. Use \\"done-enough\\" when the useful work is complete but cleanup, tests, docs, or hardening remain.",\n\t\t\t"Set uncertain true whenever the conversation does not make the reason clear. Do not use a classifier that cannot read the conversation.",\n\t\t\t"If the reason is unclear, still give your best provisional reason. The task stays settled while its low-priority question waits for an answer."\n\t\t].join("\\n\\n"),\n\t\tinput: {\n\t\t\tthread: before.thread,\n\t\t\tdoneCondition: before.record?.condition,\n\t\t\tmessages: before.messages,\n\t\t\truns: before.runs\n\t\t}\n\t});\n\tconst guess = parseGuess(answer);\n\t// A new message can reopen the thread while the model is reading it.\n\tconst current = await w.call("s11", "Recheck the task state", "signalbox.task_lifecycle", {\n\t\tthreadId,\n\t\taction: "read"\n\t});\n\tif (current.kind !== "task" || !isSettled(current.thread) || (current.record?.generation ?? 0) !== expectedGeneration || current.record !== null && current.record.outcome !== null) {\n\t\tw.$arm("s12", 0);\n\t\treturn "The task changed while I was reading it.";\n\t} else {\n\t\tw.$arm("s12", 1);\n\t}\n\tconst recorded = await w.call("s14", "Record the settle reason", "signalbox.task_lifecycle", {\n\t\tthreadId,\n\t\taction: "record-settle",\n\t\treason: guess.reason,\n\t\toutcome: guess.outcome,\n\t\tuncertain: guess.uncertain,\n\t\texpectedGeneration\n\t});\n\tif (!recorded.applied || !recorded.record) {\n\t\tw.$arm("s15", 0);\n\t\treturn "The task changed before I could record the reason.";\n\t} else {\n\t\tw.$arm("s15", 1);\n\t}\n\tlet reason = guess.reason;\n\tlet settledRecord = recorded.record;\n\tif (guess.uncertain) {\n\t\tw.$arm("s17", 0);\n\t\tconst answer = await w.ask("s18", "Why did you settle this task?", {\n\t\t\tquestion: [`I guessed "${guess.reason}": ${guess.outcome}`, "Which reason fits? The task stays settled while this waits."].join("\\n\\n"),\n\t\t\toptions: ["dropped", "done-enough"],\n\t\t\timportance: "low"\n\t\t});\n\t\treason = answer === "dropped" ? "dropped" : "done-enough";\n\t\tconst correction = await w.call("s19", "Record your answer", "signalbox.task_lifecycle", {\n\t\t\tthreadId,\n\t\t\taction: "record-settle",\n\t\t\treason,\n\t\t\toutcome: guess.outcome,\n\t\t\tuncertain: false,\n\t\t\texpectedGeneration: settledRecord.generation\n\t\t});\n\t\tif (!correction.applied || !correction.record) {\n\t\t\tw.$arm("s20", 0);\n\t\t\treturn "The task changed before I could record your answer.";\n\t\t} else {\n\t\t\tw.$arm("s20", 1);\n\t\t}\n\t\tsettledRecord = correction.record;\n\t} else {\n\t\tw.$arm("s17", 1);\n\t}\n\tif (reason === "dropped") {\n\t\tw.$arm("s22", 0);\n\t\treturn {\n\t\t\treason,\n\t\t\toutcome: guess.outcome,\n\t\t\tfinishing: "skipped"\n\t\t};\n\t} else {\n\t\tw.$arm("s22", 1);\n\t}\n\tconst latest = await w.call("s24", "Confirm the task is still settled", "signalbox.task_lifecycle", {\n\t\tthreadId,\n\t\taction: "read"\n\t});\n\tif (latest.kind !== "task" || !isSettled(latest.thread) || latest.record === null || latest.record?.generation !== settledRecord.generation || latest.record.outcome === null) {\n\t\tw.$arm("s25", 0);\n\t\treturn "The task reopened before the finishing pass started.";\n\t} else {\n\t\tw.$arm("s25", 1);\n\t}\n\tconst finished = await w.agent("s27", "Pave behind the settled task", { prompt: [\n\t\t"You are this folder\'s finishing agent. You represent this project folder, not the user. Work in this folder\'s project and use the supplied task as your scope.",\n\t\t"Make a narrow finishing pass on work that is already useful: cleanup, tests, docs, and hardening. Do not expand the task or reopen it.",\n\t\t"Before changing files, read the task lifecycle. If this task is no longer settled with the recorded outcome, stop without changing anything.",\n\t\t`Task thread: ${threadId} (${before.thread.title}).`,\n\t\t`Done condition: ${before.record?.condition?.summary ?? "none recorded"}.`,\n\t\t`Recorded outcome: ${guess.outcome}.`,\n\t\t`Finishing context: ${guess.finishing || "Read the task conversation and decide whether a small finishing pass is warranted."}`\n\t].join("\\n\\n") });\n\treturn {\n\t\treason,\n\t\toutcome: guess.outcome,\n\t\tfinishing: finished.threadId\n\t};\n});\n',
     runModule: null,
     workerModule:
-      'export function load(workflow) {\nconst meta = {\n\tname: "Settle task",\n\tdescription: "Records why a task was settled early, starts a narrow finishing pass when it is done enough, and asks quietly when the reason is unclear.",\n\tintent: "when a task is settled early, record why, and finish only when it is done enough",\n\ttriggers: [{ on: "thread.settled" }]\n};\nconst UNCLEAR_OUTCOME = "Task settled; the reason was unclear.";\nfunction isSettled(thread) {\n\treturn thread.archivedAt !== null || thread.settledAt !== null || thread.settledOverride === "settled";\n}\nfunction parseGuess(answer) {\n\ttry {\n\t\tconst parsed = JSON.parse(answer);\n\t\tconst reason = parsed.reason === "dropped" || parsed.reason === "done-enough" ? parsed.reason : "done-enough";\n\t\tconst rawOutcome = typeof parsed.outcome === "string" ? parsed.outcome.trim() : "";\n\t\tconst finishing = typeof parsed.finishing === "string" ? parsed.finishing.trim() : "";\n\t\tconst uncertain = typeof parsed.uncertain === "boolean" ? parsed.uncertain : true;\n\t\tconst outcome = rawOutcome ? rawOutcome.split("\\n").join(" ").split("\\r").join(" ").slice(0, 400) : UNCLEAR_OUTCOME;\n\t\treturn {\n\t\t\treason,\n\t\t\toutcome,\n\t\t\tfinishing: finishing.slice(0, 1200),\n\t\t\tuncertain: reason !== parsed.reason || !rawOutcome || typeof parsed.finishing !== "string" || uncertain\n\t\t};\n\t} catch {\n\t\treturn {\n\t\t\treason: "done-enough",\n\t\t\toutcome: UNCLEAR_OUTCOME,\n\t\t\tfinishing: "",\n\t\t\tuncertain: true\n\t\t};\n\t}\n}\nconst __signalboxWorkflow = workflow(async (w, input) => {\n\tconst threadId = input.threadId;\n\tif (!threadId) {\n\t\tw.$arm("s1", 0);\n\t\treturn "No thread was attached to this settle event.";\n\t} else {\n\t\tw.$arm("s1", 1);\n\t}\n\tconst before = await w.call("s3", "Read the task that settled", "signalbox.task_lifecycle", {\n\t\tthreadId,\n\t\taction: "read",\n\t\tincludeContext: true\n\t});\n\tif (before.kind !== "task" || !isSettled(before.thread)) {\n\t\tw.$arm("s4", 0);\n\t\treturn "This is not a settled task.";\n\t} else {\n\t\tw.$arm("s4", 1);\n\t}\n\tif (before.record && before.record.outcome !== null) {\n\t\tw.$arm("s6", 0);\n\t\treturn "The task already has an outcome.";\n\t} else {\n\t\tw.$arm("s6", 1);\n\t}\n\tconst expectedGeneration = before.record?.generation ?? 0;\n\tconst answer = await w.llm("s8", "Understand why the task was settled", {\n\t\tprompt: [\n\t\t\t"You are the person\'s assistant. Read this task and infer why the person settled it early.",\n\t\t\t"Return only JSON with reason exactly \\"dropped\\" or \\"done-enough\\", outcome as one line, uncertain as a boolean, and finishing as a short note for a folder agent.",\n\t\t\t"Use \\"dropped\\" only when the work is no longer needed. Use \\"done-enough\\" when the useful work is complete but cleanup, tests, docs, or hardening remain.",\n\t\t\t"Set uncertain true whenever the conversation does not make the reason clear. Do not use a classifier that cannot read the conversation.",\n\t\t\t"If the reason is unclear, still give your best provisional reason. The task stays settled while its low-priority question waits for an answer."\n\t\t].join("\\n\\n"),\n\t\tinput: {\n\t\t\tthread: before.thread,\n\t\t\tdoneCondition: before.record?.condition,\n\t\t\tmessages: before.messages,\n\t\t\truns: before.runs\n\t\t}\n\t});\n\tconst guess = parseGuess(answer);\n\t// A new message can reopen the thread while the model is reading it.\n\tconst current = await w.call("s9", "Recheck the task state", "signalbox.task_lifecycle", {\n\t\tthreadId,\n\t\taction: "read"\n\t});\n\tif (current.kind !== "task" || !isSettled(current.thread) || (current.record?.generation ?? 0) !== expectedGeneration || current.record !== null && current.record.outcome !== null) {\n\t\tw.$arm("s10", 0);\n\t\treturn "The task changed while I was reading it.";\n\t} else {\n\t\tw.$arm("s10", 1);\n\t}\n\tconst recorded = await w.call("s12", "Record the settle reason", "signalbox.task_lifecycle", {\n\t\tthreadId,\n\t\taction: "record-settle",\n\t\treason: guess.reason,\n\t\toutcome: guess.outcome,\n\t\tuncertain: guess.uncertain,\n\t\texpectedGeneration\n\t});\n\tif (!recorded.applied || !recorded.record) {\n\t\tw.$arm("s13", 0);\n\t\treturn "The task changed before I could record the reason.";\n\t} else {\n\t\tw.$arm("s13", 1);\n\t}\n\tlet reason = guess.reason;\n\tlet settledRecord = recorded.record;\n\tif (guess.uncertain) {\n\t\tw.$arm("s15", 0);\n\t\tconst answer = await w.ask("s16", "Why did you settle this task?", {\n\t\t\tquestion: [`I guessed "${guess.reason}": ${guess.outcome}`, "Which reason fits? The task stays settled while this waits."].join("\\n\\n"),\n\t\t\toptions: ["dropped", "done-enough"],\n\t\t\timportance: "low"\n\t\t});\n\t\treason = answer === "dropped" ? "dropped" : "done-enough";\n\t\tconst correction = await w.call("s17", "Record your answer", "signalbox.task_lifecycle", {\n\t\t\tthreadId,\n\t\t\taction: "record-settle",\n\t\t\treason,\n\t\t\toutcome: guess.outcome,\n\t\t\tuncertain: false,\n\t\t\texpectedGeneration: settledRecord.generation\n\t\t});\n\t\tif (!correction.applied || !correction.record) {\n\t\t\tw.$arm("s18", 0);\n\t\t\treturn "The task changed before I could record your answer.";\n\t\t} else {\n\t\t\tw.$arm("s18", 1);\n\t\t}\n\t\tsettledRecord = correction.record;\n\t} else {\n\t\tw.$arm("s15", 1);\n\t}\n\tif (reason === "dropped") {\n\t\tw.$arm("s20", 0);\n\t\treturn {\n\t\t\treason,\n\t\t\toutcome: guess.outcome,\n\t\t\tfinishing: "skipped"\n\t\t};\n\t} else {\n\t\tw.$arm("s20", 1);\n\t}\n\tconst latest = await w.call("s22", "Confirm the task is still settled", "signalbox.task_lifecycle", {\n\t\tthreadId,\n\t\taction: "read"\n\t});\n\tif (latest.kind !== "task" || !isSettled(latest.thread) || latest.record === null || latest.record?.generation !== settledRecord.generation || latest.record.outcome === null) {\n\t\tw.$arm("s23", 0);\n\t\treturn "The task reopened before the finishing pass started.";\n\t} else {\n\t\tw.$arm("s23", 1);\n\t}\n\tconst finished = await w.agent("s25", "Pave behind the settled task", { prompt: [\n\t\t"You are this folder\'s finishing agent. You represent this project folder, not the user. Work in this folder\'s project and use the supplied task as your scope.",\n\t\t"Make a narrow finishing pass on work that is already useful: cleanup, tests, docs, and hardening. Do not expand the task or reopen it.",\n\t\t"Before changing files, read the task lifecycle. If this task is no longer settled with the recorded outcome, stop without changing anything.",\n\t\t`Task thread: ${threadId} (${before.thread.title}).`,\n\t\t`Done condition: ${before.record?.condition?.summary ?? "none recorded"}.`,\n\t\t`Recorded outcome: ${guess.outcome}.`,\n\t\t`Finishing context: ${guess.finishing || "Read the task conversation and decide whether a small finishing pass is warranted."}`\n\t].join("\\n\\n") });\n\treturn {\n\t\treason,\n\t\toutcome: guess.outcome,\n\t\tfinishing: finished.threadId\n\t};\n});\n\nreturn __signalboxWorkflow;\n}\n',
+      'export function load(workflow) {\nconst meta = {\n\tname: "Settle task",\n\tdescription: "Records why a task was settled early, starts a narrow finishing pass when it is done enough, and asks quietly when the reason is unclear.",\n\tintent: "when a task is settled early, record why, and finish only when it is done enough",\n\ttriggers: [{ on: "thread.settled" }]\n};\nconst UNCLEAR_OUTCOME = "Task settled; the reason was unclear.";\nfunction isSettled(thread) {\n\treturn thread.archivedAt !== null || thread.settledAt !== null || thread.settledOverride === "settled";\n}\nfunction parseGuess(answer) {\n\ttry {\n\t\tconst parsed = JSON.parse(answer);\n\t\tconst reason = parsed.reason === "dropped" || parsed.reason === "done-enough" ? parsed.reason : "done-enough";\n\t\tconst rawOutcome = typeof parsed.outcome === "string" ? parsed.outcome.trim() : "";\n\t\tconst finishing = typeof parsed.finishing === "string" ? parsed.finishing.trim() : "";\n\t\tconst uncertain = typeof parsed.uncertain === "boolean" ? parsed.uncertain : true;\n\t\tconst outcome = rawOutcome ? rawOutcome.split("\\n").join(" ").split("\\r").join(" ").slice(0, 400) : UNCLEAR_OUTCOME;\n\t\treturn {\n\t\t\treason,\n\t\t\toutcome,\n\t\t\tfinishing: finishing.slice(0, 1200),\n\t\t\tuncertain: reason !== parsed.reason || !rawOutcome || typeof parsed.finishing !== "string" || uncertain\n\t\t};\n\t} catch {\n\t\treturn {\n\t\t\treason: "done-enough",\n\t\t\toutcome: UNCLEAR_OUTCOME,\n\t\t\tfinishing: "",\n\t\t\tuncertain: true\n\t\t};\n\t}\n}\nconst __signalboxWorkflow = workflow(async (w, input) => {\n\tconst threadId = input.threadId;\n\tif (!threadId) {\n\t\tw.$arm("s1", 0);\n\t\treturn "No thread was attached to this settle event.";\n\t} else {\n\t\tw.$arm("s1", 1);\n\t}\n\tconst before = await w.call("s3", "Read the task that settled", "signalbox.task_lifecycle", {\n\t\tthreadId,\n\t\taction: "read",\n\t\tincludeContext: true\n\t});\n\t// A model step\'s own thread settles when the step ends; reading it here would start another step.\n\tif (before.messages.find((message) => message.role === "user")?.id?.startsWith("automation:")) {\n\t\tw.$arm("s4", 0);\n\t\treturn "The parent automation owns this helper thread.";\n\t} else {\n\t\tw.$arm("s4", 1);\n\t}\n\tif (before.kind !== "task" || !isSettled(before.thread)) {\n\t\tw.$arm("s6", 0);\n\t\treturn "This is not a settled task.";\n\t} else {\n\t\tw.$arm("s6", 1);\n\t}\n\tif (before.record && before.record.outcome !== null) {\n\t\tw.$arm("s8", 0);\n\t\treturn "The task already has an outcome.";\n\t} else {\n\t\tw.$arm("s8", 1);\n\t}\n\tconst expectedGeneration = before.record?.generation ?? 0;\n\tconst answer = await w.llm("s10", "Understand why the task was settled", {\n\t\tprompt: [\n\t\t\t"You are the person\'s assistant. Read this task and infer why the person settled it early.",\n\t\t\t"Return only JSON with reason exactly \\"dropped\\" or \\"done-enough\\", outcome as one line, uncertain as a boolean, and finishing as a short note for a folder agent.",\n\t\t\t"Use \\"dropped\\" only when the work is no longer needed. Use \\"done-enough\\" when the useful work is complete but cleanup, tests, docs, or hardening remain.",\n\t\t\t"Set uncertain true whenever the conversation does not make the reason clear. Do not use a classifier that cannot read the conversation.",\n\t\t\t"If the reason is unclear, still give your best provisional reason. The task stays settled while its low-priority question waits for an answer."\n\t\t].join("\\n\\n"),\n\t\tinput: {\n\t\t\tthread: before.thread,\n\t\t\tdoneCondition: before.record?.condition,\n\t\t\tmessages: before.messages,\n\t\t\truns: before.runs\n\t\t}\n\t});\n\tconst guess = parseGuess(answer);\n\t// A new message can reopen the thread while the model is reading it.\n\tconst current = await w.call("s11", "Recheck the task state", "signalbox.task_lifecycle", {\n\t\tthreadId,\n\t\taction: "read"\n\t});\n\tif (current.kind !== "task" || !isSettled(current.thread) || (current.record?.generation ?? 0) !== expectedGeneration || current.record !== null && current.record.outcome !== null) {\n\t\tw.$arm("s12", 0);\n\t\treturn "The task changed while I was reading it.";\n\t} else {\n\t\tw.$arm("s12", 1);\n\t}\n\tconst recorded = await w.call("s14", "Record the settle reason", "signalbox.task_lifecycle", {\n\t\tthreadId,\n\t\taction: "record-settle",\n\t\treason: guess.reason,\n\t\toutcome: guess.outcome,\n\t\tuncertain: guess.uncertain,\n\t\texpectedGeneration\n\t});\n\tif (!recorded.applied || !recorded.record) {\n\t\tw.$arm("s15", 0);\n\t\treturn "The task changed before I could record the reason.";\n\t} else {\n\t\tw.$arm("s15", 1);\n\t}\n\tlet reason = guess.reason;\n\tlet settledRecord = recorded.record;\n\tif (guess.uncertain) {\n\t\tw.$arm("s17", 0);\n\t\tconst answer = await w.ask("s18", "Why did you settle this task?", {\n\t\t\tquestion: [`I guessed "${guess.reason}": ${guess.outcome}`, "Which reason fits? The task stays settled while this waits."].join("\\n\\n"),\n\t\t\toptions: ["dropped", "done-enough"],\n\t\t\timportance: "low"\n\t\t});\n\t\treason = answer === "dropped" ? "dropped" : "done-enough";\n\t\tconst correction = await w.call("s19", "Record your answer", "signalbox.task_lifecycle", {\n\t\t\tthreadId,\n\t\t\taction: "record-settle",\n\t\t\treason,\n\t\t\toutcome: guess.outcome,\n\t\t\tuncertain: false,\n\t\t\texpectedGeneration: settledRecord.generation\n\t\t});\n\t\tif (!correction.applied || !correction.record) {\n\t\t\tw.$arm("s20", 0);\n\t\t\treturn "The task changed before I could record your answer.";\n\t\t} else {\n\t\t\tw.$arm("s20", 1);\n\t\t}\n\t\tsettledRecord = correction.record;\n\t} else {\n\t\tw.$arm("s17", 1);\n\t}\n\tif (reason === "dropped") {\n\t\tw.$arm("s22", 0);\n\t\treturn {\n\t\t\treason,\n\t\t\toutcome: guess.outcome,\n\t\t\tfinishing: "skipped"\n\t\t};\n\t} else {\n\t\tw.$arm("s22", 1);\n\t}\n\tconst latest = await w.call("s24", "Confirm the task is still settled", "signalbox.task_lifecycle", {\n\t\tthreadId,\n\t\taction: "read"\n\t});\n\tif (latest.kind !== "task" || !isSettled(latest.thread) || latest.record === null || latest.record?.generation !== settledRecord.generation || latest.record.outcome === null) {\n\t\tw.$arm("s25", 0);\n\t\treturn "The task reopened before the finishing pass started.";\n\t} else {\n\t\tw.$arm("s25", 1);\n\t}\n\tconst finished = await w.agent("s27", "Pave behind the settled task", { prompt: [\n\t\t"You are this folder\'s finishing agent. You represent this project folder, not the user. Work in this folder\'s project and use the supplied task as your scope.",\n\t\t"Make a narrow finishing pass on work that is already useful: cleanup, tests, docs, and hardening. Do not expand the task or reopen it.",\n\t\t"Before changing files, read the task lifecycle. If this task is no longer settled with the recorded outcome, stop without changing anything.",\n\t\t`Task thread: ${threadId} (${before.thread.title}).`,\n\t\t`Done condition: ${before.record?.condition?.summary ?? "none recorded"}.`,\n\t\t`Recorded outcome: ${guess.outcome}.`,\n\t\t`Finishing context: ${guess.finishing || "Read the task conversation and decide whether a small finishing pass is warranted."}`\n\t].join("\\n\\n") });\n\treturn {\n\t\treason,\n\t\toutcome: guess.outcome,\n\t\tfinishing: finished.threadId\n\t};\n});\n\nreturn __signalboxWorkflow;\n}\n',
   },
   "watch-pull-request": {
     meta: {

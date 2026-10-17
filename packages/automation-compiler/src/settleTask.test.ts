@@ -25,6 +25,7 @@ function fixture(
     readonly staleAfterRead?: boolean;
     readonly alreadyRecorded?: boolean;
     readonly malformedGuess?: boolean;
+    readonly helperThread?: boolean;
   } = {},
 ) {
   let generation = 4;
@@ -46,7 +47,13 @@ function fixture(
       settledOverride: settled ? "settled" : null,
       archivedAt: null,
     },
-    messages: [{ role: "user", text: "This is useful; please polish it." }],
+    messages: [
+      {
+        ...(options.helperThread ? { id: "automation:run-1:step-2:message" } : {}),
+        role: "user",
+        text: "This is useful; please polish it.",
+      },
+    ],
     runs: [],
     record: {
       generation,
@@ -125,6 +132,13 @@ describe("Settle task automation", () => {
     expect(test.calls.filter((call) => call.action === "record-settle")).toHaveLength(1);
     expect(test.agents).toEqual([]);
     expect(test.asks).toEqual([]);
+  });
+
+  it("leaves a model step's own settled thread alone, so settling it can't recurse", async () => {
+    const test = fixture({ helperThread: true });
+    await test.run();
+    expect(test.llmCalls).toBe(0);
+    expect(test.calls.map((call) => call.action)).toEqual(["read"]);
   });
 
   it("skips automatic completion records", async () => {

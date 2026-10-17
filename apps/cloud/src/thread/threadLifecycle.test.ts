@@ -92,6 +92,10 @@ const stableThreadFields = (thread: ThreadEngine.ThreadSnapshot["projection"]["t
     settledAt: _settledAt,
     unsettledAt: _unsettledAt,
     updatedAt: _updatedAt,
+    // Settling unpins a thread and takes it out of the active order.
+    pinnedAt: _pinnedAt,
+    pinOrderKey: _pinOrderKey,
+    activeOrderKey: _activeOrderKey,
     ...stable
   } = thread;
   return stable;
@@ -182,6 +186,48 @@ describe("cloud thread lifecycle", () => {
     ),
   );
 
+  it.effect("pinning a settled task brings it out of the archive and pins it", () =>
+    withEngine((engine, store) =>
+      Effect.gen(function* () {
+        yield* launch(engine);
+        yield* runToIdle(engine);
+        yield* dispatch(engine, {
+          type: "thread.settle",
+          commandId: makeId("pin-settle"),
+          threadId,
+        });
+        yield* dispatch(engine, { type: "thread.pin", commandId: makeId("pin"), threadId });
+        const pinned = yield* snapshot(engine);
+        expect(pinned.thread.archivedAt).toBeNull();
+        expect(pinned.thread.settledOverride).toBe("active");
+        expect(pinned.thread.pinnedAt).not.toBeNull();
+        expect(applyEvents(null, yield* events(store))).toEqual(pinned);
+      }),
+    ),
+  );
+
+  it.effect("settles an archived thread in place, keeping when it was archived", () =>
+    withEngine((engine) =>
+      Effect.gen(function* () {
+        yield* TestClock.setTime(Date.parse("2026-10-17T12:00:00Z"));
+        yield* launch(engine);
+        yield* runToIdle(engine);
+        yield* dispatch(engine, { type: "thread.archive", commandId: makeId("archive"), threadId });
+        const archivedAt = (yield* snapshot(engine)).thread.archivedAt;
+        yield* TestClock.setTime(Date.parse("2026-10-17T12:05:00Z"));
+        yield* dispatch(engine, {
+          type: "thread.settle",
+          commandId: makeId("archived-settle"),
+          threadId,
+        });
+        const settled = yield* snapshot(engine);
+        expect(settled.thread.settledOverride).toBe("settled");
+        expect(settled.thread.archivedAt).toEqual(archivedAt);
+        expect(settled.thread.settledAt).toEqual(DateTime.makeUnsafe("2026-10-17T12:05:00Z"));
+      }),
+    ),
+  );
+
   it.effect("guards automatic settlement against changed, overridden, and busy threads", () =>
     withEngine((engine, store) =>
       Effect.gen(function* () {
@@ -204,7 +250,7 @@ describe("cloud thread lifecycle", () => {
           snapshotAt: idle.updatedAt,
         }).pipe(Effect.flip);
         if (stale._tag !== "ThreadCommandRejectedError") throw stale;
-        expect(stale.reason).toBe("This thread changed before its done-condition held.");
+        expect(stale.reason).toBe(`Thread ${threadId} changed before automatic settlement.`);
 
         const eventsBeforeStaleComplete = (yield* events(store)).length;
         yield* dispatch(engine, {
@@ -228,7 +274,8 @@ describe("cloud thread lifecycle", () => {
           snapshotAt: current.updatedAt,
         }).pipe(Effect.flip);
         if (overridden._tag !== "ThreadCommandRejectedError") throw overridden;
-        expect(overridden.reason).toBe("This thread has an explicit settlement override.");
+        // A person's settle archives the task, so the sweep can't settle it again.
+        expect(overridden.reason).toBe(`Thread ${threadId} is archived.`);
 
         yield* dispatch(engine, {
           type: "message.dispatch",
@@ -251,7 +298,7 @@ describe("cloud thread lifecycle", () => {
         }).pipe(Effect.flip);
         if (activeSettle._tag !== "ThreadCommandRejectedError") throw activeSettle;
         expect(activeSettle.reason).toBe(
-          "This thread is still working. Stop it or let it finish, then settle it.",
+          `Thread ${threadId} is still running. Stop it before settling.`,
         );
         expect(yield* events(store)).toHaveLength(eventsBeforeBusySettle);
 
