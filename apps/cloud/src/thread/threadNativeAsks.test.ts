@@ -28,9 +28,11 @@ describe("cloud native asks", () => {
     {
       secret: false,
       nonBlocking: false,
+      expiresBetweenRounds: false,
       name: "resolves a complete public answer through the live callback",
     },
     {
+      expiresBetweenRounds: false,
       secret: true,
       nonBlocking: false,
       name: "queues the public answer without resolving a mixed secret callback",
@@ -38,9 +40,16 @@ describe("cloud native asks", () => {
     {
       secret: false,
       nonBlocking: true,
+      expiresBetweenRounds: false,
       name: "keeps message-capability questions out of native needs-you",
     },
-  ])("$name", ({ secret, nonBlocking }) =>
+    {
+      secret: false,
+      nonBlocking: false,
+      expiresBetweenRounds: true,
+      name: "delivers held answers after the provider turn dies between rounds",
+    },
+  ])("$name", ({ secret, nonBlocking, expiresBetweenRounds }) =>
     withObject(freshDatabase(), (engine, runner) =>
       Effect.gen(function* () {
         yield* launch(engine, "launch", personal, undefined, {
@@ -127,6 +136,9 @@ describe("cloud native asks", () => {
                       options: [],
                       native: { isBlocking: !nonBlocking },
                     },
+                    ...(expiresBetweenRounds
+                      ? [{ id: "second", header: "Region", question: "Which region?", options: [] }]
+                      : []),
                     ...(secret
                       ? [
                           {
@@ -154,6 +166,7 @@ describe("cloud native asks", () => {
             commandId: CommandId.make("answer-native"),
             threadId,
             askId: `native:${requestId}`,
+            ...(expiresBetweenRounds ? { comment: "Keep the first choice" } : {}),
             round: 1,
             answers: [{ questionId: "public", value: "Zurich" }],
             deferredQuestionIds: [],
@@ -161,6 +174,55 @@ describe("cloud native asks", () => {
           },
           personal,
         );
+        if (expiresBetweenRounds) {
+          const held = (yield* snapshot(engine)).projection;
+          expect(held.messages.filter((message) => message.text.includes("Zurich"))).toHaveLength(
+            0,
+          );
+          expect(held.runtimeRequests.find((entry) => entry.id === requestId)?.status).toBe(
+            "pending",
+          );
+          yield* engine.apply((projection, ctx) =>
+            Effect.succeed({
+              result: undefined,
+              events: [
+                {
+                  id: unstampedEventId,
+                  threadId,
+                  occurredAt: ctx.now,
+                  type: "provider-turn.updated",
+                  payload: {
+                    ...projection!.providerTurns.find((entry) => entry.id === providerTurnId)!,
+                    status: "interrupted",
+                    completedAt: ctx.now,
+                  },
+                },
+              ],
+            }),
+          );
+          yield* engine.dispatch(
+            owner,
+            {
+              type: "thread.ask.answer",
+              commandId: CommandId.make("finish-expired-native"),
+              threadId,
+              askId: `native:${requestId}`,
+              round: 2,
+              answers: [{ questionId: "second", value: "Central" }],
+              deferredQuestionIds: [],
+              answeredBy: { kind: "person", personId: owner.userId },
+              comment: "Finish the rest",
+            },
+            personal,
+          );
+          const resumed = (yield* snapshot(engine)).projection;
+          const message = resumed.messages.find((entry) => entry.text.includes("Central"))?.text;
+          expect(message).toContain("Answer: Zurich");
+          expect(message).toContain("Keep the first choice");
+          expect(message).toContain("Finish the rest");
+          expect(resumed.thread.asks?.[0]?.status).toBe("answered");
+          return;
+        }
         const { projection } = yield* snapshot(engine);
         const request = projection.runtimeRequests.find((entry) => entry.id === requestId);
         expect(request?.status).toBe(secret || nonBlocking ? "pending" : "resolved");

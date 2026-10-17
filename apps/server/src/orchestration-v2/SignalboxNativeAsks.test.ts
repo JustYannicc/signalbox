@@ -346,3 +346,59 @@ it.effect("holds partial native rounds without queuing a stale message behind th
     expect((yield* orchestrator.getThreadProjection(threadId)).messages).toEqual([]);
   }).pipe(Effect.provide(layer)),
 );
+
+it.effect("resumes held native answers after the provider session dies between rounds", () =>
+  Effect.gen(function* () {
+    const orchestrator = yield* create;
+    const sink = yield* EventSink.EventSinkV2;
+    const now = yield* DateTime.now;
+    const { request, events } = native(now, "held-then-expired");
+    yield* sink.write({
+      events: events.map((event) =>
+        event.type !== "turn-item.updated" || event.payload.type !== "user_input_request"
+          ? event
+          : {
+              ...event,
+              payload: {
+                ...event.payload,
+                questions: [
+                  ...event.payload.questions,
+                  { ...event.payload.questions[0]!, id: "b" },
+                ],
+              },
+            },
+      ),
+    });
+    const command = { ...answer(`native:${request.id}`), comment: "Keep the first choice" };
+    yield* orchestrator.dispatch(command);
+    expect((yield* orchestrator.getThreadProjection(threadId)).messages).toEqual([]);
+    const session = (yield* orchestrator.getThreadProjection(threadId)).providerSessions[0]!;
+    yield* sink.write({
+      events: [
+        {
+          type: "provider-session.updated",
+          id: EventId.make("stop-held-session"),
+          threadId,
+          occurredAt: now,
+          payload: { ...session, status: "stopped", updatedAt: now },
+        },
+      ],
+    });
+    const maintenance = yield* ProjectionMaintenance.ProjectionMaintenanceV2;
+    yield* maintenance.rebuild;
+    yield* orchestrator.dispatch({
+      ...command,
+      commandId: CommandId.make("finish-after-session-loss"),
+      round: 2,
+      comment: "Finish the rest",
+      answers: [{ questionId: "b", value: ["B"] }],
+    });
+    const projection = yield* orchestrator.getThreadProjection(threadId);
+    const reply = projection.messages.at(-1)?.text;
+    expect(reply).toContain("Answer: yes");
+    expect(reply).toContain('Answer: ["B"]');
+    expect(reply).toContain("Keep the first choice");
+    expect(reply).toContain("Finish the rest");
+    expect(projection.thread.asks?.[0]?.status).toBe("answered");
+  }).pipe(Effect.provide(layer)),
+);

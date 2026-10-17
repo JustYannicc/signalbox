@@ -11,7 +11,7 @@ import type {
   SignalboxAskServerCommand,
   SignalboxNativeAskRespondCommand,
 } from "@t3tools/contracts/signalboxAsks";
-import { applyAskCommand } from "@t3tools/shared/signalboxAsks";
+import { applyAskCommand, nativeAskAnswerMessage } from "@t3tools/shared/signalboxAsks";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Ref from "effect/Ref";
@@ -131,7 +131,10 @@ function planAskCommand(
         commandId: command.commandId,
         threadId: command.threadId,
         messageId: MessageId.make(`ask-answer:${command.commandId}`),
-        text: answered.message,
+        text:
+          answered.ask.source.kind === "native" && request?.status !== "resolved"
+            ? nativeAskAnswerMessage(answered.ask)
+            : answered.message,
         attachments: [],
         createdBy: "user",
         creationSource: "server",

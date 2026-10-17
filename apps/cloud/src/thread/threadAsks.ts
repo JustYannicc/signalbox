@@ -5,7 +5,7 @@ import {
   type OrchestrationV2ThreadProjection,
 } from "@t3tools/contracts";
 import type { SignalboxAskServerCommand } from "@t3tools/contracts/signalboxAsks";
-import { applyAskCommand } from "@t3tools/shared/signalboxAsks";
+import { applyAskCommand, nativeAskAnswerMessage } from "@t3tools/shared/signalboxAsks";
 import * as DateTime from "effect/DateTime";
 
 import type { Decision } from "./threadDecider.ts";
@@ -110,7 +110,12 @@ export function decideAsk(
       commandId: command.commandId,
       threadId: thread.id,
       messageId: MessageId.make(`ask-answer:${command.commandId}`),
-      text: answered.message,
+      text:
+        source.kind === "native" &&
+        projection.runtimeRequests.find((entry) => entry.id === source.requestId)?.status !==
+          "resolved"
+          ? nativeAskAnswerMessage(answered.ask)
+          : answered.message,
       attachments: [],
       createdBy:
         command.type === "thread.ask.answer" && command.answeredBy.kind === "person"

@@ -231,3 +231,24 @@ export function clientAskCommand(
 }
 
 export { compactAskEvents, threadWithAsk } from "./signalboxAskEvents.ts";
+
+/** A dead native callback never received the held rounds, so resume with their full context. */
+export function nativeAskAnswerMessage(ask: SignalboxAsk) {
+  const lines = [`Answers to ${ask.kind} ask ${ask.id}.`];
+  for (const round of ask.rounds) {
+    if (!round.answers.length && !round.comment?.trim()) continue;
+    lines.push(`Round ${round.number}:`);
+    for (const answer of round.answers) {
+      const question = ask.questions.find((entry) => entry.id === answer.questionId);
+      if (!question) continue;
+      lines.push(
+        `[${question.id}] ${question.question}\nWhy: ${question.why}\nUnblocks: ${question.unblocks}\nAnswer: ${answerText(answer.value)}${answer.comment ? `\nComment: ${answer.comment}` : ""}`,
+      );
+    }
+    if (round.comment?.trim()) lines.push(`Comment: ${round.comment}`);
+  }
+  const pending = pendingAskQuestions(ask);
+  if (pending.length)
+    lines.push(`Still pending: ${pending.map((question) => question.id).join(", ")}.`);
+  return lines.join("\n\n");
+}
