@@ -8,6 +8,7 @@ import {
   AuthOrchestrationOperateScope,
   AuthOrchestrationReadScope,
   AuthSourceControlWriteScope,
+  AuthStandardClientScopes,
   CommandId,
   EnvironmentId,
   ORCHESTRATION_V2_WS_METHODS,
@@ -19,6 +20,7 @@ import { afterEach, expect } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as RpcTest from "effect/rpc/RpcTest";
+import { operations } from "@signalbox/api/catalog";
 
 import { branchJson } from "@signalbox/runner-protocol/BranchProtocol";
 
@@ -28,6 +30,7 @@ import { threadRef } from "../drive/DriveStore.ts";
 import { makeRepo } from "../drive/driveTesting.ts";
 import { uploadPack } from "../drive/DriveUploads.ts";
 import type { Bytes } from "../drive/git/gitObjects.ts";
+import { type ApiCaller, callOperation } from "../api/apiCall.ts";
 import { makeMemoryCloud } from "../testing.ts";
 import { scriptedModelSelection } from "../thread/scriptedProvider.ts";
 import { UserDirectory } from "../user/UserDirectory.ts";
@@ -113,7 +116,7 @@ export const makePullRequestThread = () => {
     const rpc = yield* RpcTest.makeClient(CloudRpc.CloudRpcGroup).pipe(
       Effect.provide(
         Layer.mergeAll(
-          CloudRpc.layerHandlers({ identity, userId, sid: "test-session" }),
+          CloudRpc.layerHandlers({ identity, userId, sid: "test-session", via: "client" }),
           CloudRpc.layerScopeAuthorization([
             AuthOrchestrationReadScope,
             AuthOrchestrationOperateScope,
@@ -200,5 +203,15 @@ export const makePullRequestThread = () => {
       Effect.provideService(UserDirectory, cloud.userDirectory),
     );
 
-  return { cloud, github, open, tool, getRun, messages, run };
+  /** A public API call (a key, the CLI, or MCP when `kind` is an agent), as the user. */
+  const api = (name: string, body: unknown, kind: ApiCaller["kind"]) =>
+    callOperation({
+      operation: operations.find((operation) => operation.name === name)!,
+      body,
+      follow: false,
+      caller: { userId, kind, scopes: AuthStandardClientScopes, credentialId: "key-1" },
+      identity,
+    }).pipe(Effect.provide(cloud.layerFor(userId)));
+
+  return { cloud, github, open, tool, getRun, messages, api, run };
 };

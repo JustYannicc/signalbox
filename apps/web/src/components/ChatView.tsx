@@ -395,6 +395,7 @@ import {
   type TerminalContextDraft,
   type TerminalContextSelection,
 } from "../lib/terminalContext";
+import { environmentCopy } from "~/state/oneEnvironmentCopy"; // signalbox
 import {
   ensureInlineContextReferences,
   removeInlineContextReference,
@@ -2757,7 +2758,7 @@ export default function ChatView(props: ChatViewProps) {
       toastManager.add(
         stackedThreadToast({
           type: "error",
-          title: "Could not reconnect environment",
+          title: environmentCopy("Could not reconnect environment"),
           description: error instanceof Error ? error.message : "Failed to reconnect.",
         }),
       );
@@ -2769,7 +2770,10 @@ export default function ChatView(props: ChatViewProps) {
   const disconnectDelayElapsed = useEnvironmentDisconnectDelay(
     activeEnvironmentUnavailable ? activeEnvironment.environmentId : null,
   );
+  // signalbox: disconnecting the one environment would empty the app.
+  const environmentUiShown = useShowsEnvironmentUi();
   const canDisconnectActiveEnvironment =
+    environmentUiShown &&
     disconnectDelayElapsed &&
     activeEnvironment !== null &&
     activeEnvironment.entry.target._tag !== "PrimaryConnectionTarget" &&
@@ -3140,7 +3144,9 @@ export default function ChatView(props: ChatViewProps) {
         id: `environment-unavailable:${activeEnvironmentUnavailableState.environmentId}`,
         variant: unavailableConnection.phase === "error" ? "error" : "warning",
         icon: <WifiOffIcon />,
-        title: `${activeEnvironmentUnavailableState.label} is ${environmentReconnecting ? "reconnecting" : "offline"}`,
+        title: environmentCopy(
+          `${activeEnvironmentUnavailableState.label} is ${environmentReconnecting ? "reconnecting" : "offline"}`,
+        ),
         actions: (
           <>
             {!environmentReconnecting ? (
@@ -3736,7 +3742,10 @@ export default function ChatView(props: ChatViewProps) {
   const downloadFileAttachment = async (attachment: ChatFileAttachment) => {
     const connection = readPreparedConnection(environmentId);
     if (!connection) {
-      toastManager.add({ type: "error", title: "The environment is not connected." });
+      toastManager.add({
+        type: "error",
+        title: environmentCopy("The environment is not connected."),
+      });
       return;
     }
 
@@ -4135,12 +4144,19 @@ export default function ChatView(props: ChatViewProps) {
     DEFAULT_RESOLVED_KEYBINDINGS;
   const availableEditors = useAtomValue(primaryServerAvailableEditorsAtom);
   const remoteOpenState = useRemoteOpenState(activeThread?.environmentId ?? environmentId);
-  const showOpenInPicker = shouldShowOpenInPicker({
-    activeProjectName: activeProject?.title,
-    activeThreadEnvironmentId: activeThread?.environmentId ?? environmentId,
-    primaryEnvironmentId,
-    remoteOpenMode: remoteOpenState.mode,
-  });
+  // signalbox: an editor can only open paths on a machine the user reaches.
+  const threadHasLocalFilesystem = useEnvironmentSupports(
+    activeThread?.environmentId ?? environmentId,
+    "localFilesystem",
+  );
+  const showOpenInPicker =
+    threadHasLocalFilesystem &&
+    shouldShowOpenInPicker({
+      activeProjectName: activeProject?.title,
+      activeThreadEnvironmentId: activeThread?.environmentId ?? environmentId,
+      primaryEnvironmentId,
+      remoteOpenMode: remoteOpenState.mode,
+    });
   useOpenFavoriteEditorShortcut({
     enabled: showOpenInPicker,
     environmentId: activeThread?.environmentId ?? environmentId,
@@ -6697,7 +6713,7 @@ export default function ChatView(props: ChatViewProps) {
   });
   const localCheckoutBranchMismatch = useMemo(
     () =>
-      isServerThread
+      isServerThread && worktreesSupported // signalbox: an own branch never moves under a thread
         ? resolveLocalCheckoutBranchMismatch({
             effectiveEnvMode: envMode,
             activeWorktreePath,
@@ -6705,7 +6721,14 @@ export default function ChatView(props: ChatViewProps) {
             currentGitBranch: gitStatusQuery.data?.refName ?? null,
           })
         : null,
-    [activeThreadBranch, activeWorktreePath, envMode, gitStatusQuery.data?.refName, isServerThread],
+    [
+      activeThreadBranch,
+      activeWorktreePath,
+      envMode,
+      gitStatusQuery.data?.refName,
+      isServerThread,
+      worktreesSupported,
+    ],
   );
   const publishComposerOverlayHeight = (height: number) => {
     const nextHeight = Math.ceil(height);
@@ -8148,7 +8171,7 @@ export default function ChatView(props: ChatViewProps) {
         throw new Error("Wait for attachments to finish preparing before rewinding.");
       }
       const connection = readPreparedConnection(environmentId);
-      if (!connection) throw new Error("The environment is not connected.");
+      if (!connection) throw new Error(environmentCopy("The environment is not connected."));
       const files = await prepareRevertedMessageAttachments({
         message,
         environmentId,
@@ -8468,7 +8491,9 @@ export default function ChatView(props: ChatViewProps) {
         ...stackedThreadToast({
           type: "warning",
           title: "Not connected: message not sent",
-          description: "Reconnecting to the environment. Try again once it is connected.",
+          description: environmentCopy(
+            "Reconnecting to the environment. Try again once it is connected.",
+          ),
         }),
         id: `chat-send-environment-unavailable:${toastSlot}`,
       });
@@ -11266,6 +11291,7 @@ export default function ChatView(props: ChatViewProps) {
                                 isLocalDraftThread && activeProject === null
                               }
                               phase={phase}
+                              isCompacting={isCompacting}
                               canInterrupt={canInterruptRunningThread}
                               isConnecting={isConnecting}
                               isSendBusy={

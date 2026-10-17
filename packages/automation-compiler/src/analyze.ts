@@ -1,8 +1,9 @@
-import type {
-  WorkflowArm,
-  WorkflowLabel,
-  WorkflowNode,
-  WorkflowStepVerb,
+import {
+  ExternalRunSystem,
+  type WorkflowArm,
+  type WorkflowLabel,
+  type WorkflowNode,
+  type WorkflowStepVerb,
 } from "@t3tools/contracts";
 import type {
   ArrowFunctionExpression,
@@ -97,6 +98,10 @@ const CALLBACK_HINT =
   "Use w.each to run steps per item (with a concurrency limit), w.parallel for named concurrent branches, or a plain for loop.";
 const RUN_HINT =
   'Define it at the top level of this file, e.g. async function parsePdf(url: string) { … }, then await w.run("Parse the PDF", parsePdf, url).';
+/** Where `w.run` can send a function besides the host. */
+const RUNNERS: ReadonlySet<string> = new Set(ExternalRunSystem.literals);
+const RUN_ON_HINT =
+  'Leave the options out to run on the host, or run on the folder repository\'s CI: await w.run("Build and test", { on: "github-actions" }, buildAndTest).';
 const SLEEP_LOOP = "A loop that sleeps is a reminder loop, and every pass is billed as a step.";
 const SLEEP_LOOP_HINT =
   "Use a schedule trigger (triggers: [{ cron: … }]) for repeats, or w.waitFor with a timeout to wait on something.";
@@ -1085,8 +1090,10 @@ export class WorkflowAnalyzer {
     const site = this.site(call);
     const label = this.label(call);
     const runTarget = verb === "run" ? this.runTarget(call) : null;
-    for (const argument of call.arguments.slice(verb === "run" ? 2 : 1))
-      this.scan(argument, scope, null, out);
+    // `w.run`'s function is checked above; its options and arguments are code like any other.
+    const fnIndex = verb === "run" ? (runTarget ? runTarget.argsFrom - 1 : 1) : -1;
+    for (const [index, argument] of call.arguments.entries())
+      if (index > 0 && index !== fnIndex) this.scan(argument, scope, null, out);
     const detail = readStepDetail(this.source, verb, call);
     this.tagSite(call, site);
     if (!label || !detail || (verb === "run" && !runTarget)) return;
@@ -1099,15 +1106,38 @@ export class WorkflowAnalyzer {
       line: this.source.line(call),
       verb,
       label,
-      ...(detail.service ? { service: detail.service } : {}),
-      detail: runTarget ? { function: { literal: runTarget } } : detail.detail,
+      ...((runTarget?.on ?? detail.service) ? { service: runTarget?.on ?? detail.service } : {}),
+      detail: runTarget
+        ? {
+            function: { literal: runTarget.name },
+            ...(runTarget.on ? { on: { literal: runTarget.on } } : {}),
+          }
+        : detail.detail,
       ...(detail.outcomes ? { outcomes: detail.outcomes } : {}),
     });
   }
 
-  /** `w.run(label, fn, …args)`: `fn` must be a top-level function, which runs outside the sandbox. */
+  /**
+   * `w.run(label, fn, …args)`: `fn` must be a top-level function, which runs
+   * outside the sandbox. `w.run(label, { on: "github-actions" }, fn, …args)`
+   * runs it on one of the folder repository's GitHub Actions runners instead.
+   */
   private runTarget(call: CallExpression) {
-    const target = call.arguments[1] ? unwrap(call.arguments[1]) : null;
+    const options = call.arguments[1] ? objectProperties(call.arguments[1]) : null;
+    let on: string | undefined;
+    if (options) {
+      on = readString(options.get("on")) ?? undefined;
+      if (!on || !RUNNERS.has(on)) {
+        this.source.error(
+          options.get("on") ?? call.arguments[1]!,
+          'w.run options name where the function runs: { on: "github-actions" }.',
+          RUN_ON_HINT,
+        );
+        return null;
+      }
+    }
+    const index = options ? 2 : 1;
+    const target = call.arguments[index] ? unwrap(call.arguments[index]) : null;
     if (target?.type !== "Identifier" || !this.moduleFunctions.has(target.name)) {
       this.source.error(
         target ?? call,
@@ -1122,7 +1152,7 @@ export class WorkflowAnalyzer {
       end: target.end,
       text: JSON.stringify(target.name),
     });
-    return target.name;
+    return { name: target.name, on, argsFrom: index + 1 };
   }
 
   /** The callback a loop or parallel branch runs, with its receiver parameter. */

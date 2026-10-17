@@ -50,7 +50,11 @@ export const SIGNALBOX_RPC_REACH = {
   "automations.stopAttached": write(),
   "automations.cancelRun": write({ name: "automations.runs.cancel" }),
   "automations.retryRun": write({ name: "automations.runs.retry" }),
-  "automations.publish": write(),
+  // Only the app's publish vouches for the code (`apps/cloud/src/automations/automationRpc.ts`).
+  "automations.publish": write({
+    summary:
+      "Make an automation's draft live. It doesn't vouch for the code: tools only a person-published version may use need a person to publish it in the app.",
+  }),
   "automations.discardDraft": write(),
   // A run waiting on `w.ask` is a decision gate (#335 decision 4).
   "automations.answer": write({
@@ -104,6 +108,22 @@ export const SIGNALBOX_RPC_REACH = {
   "signalbox.folders.setInstructions": write(),
   "signalbox.folders.setSecrets": write(),
   "signalbox.folders.setOnePassword": write(),
+  "signalbox.folders.setGitHubLend": write({
+    summary: "Lend your connected GitHub to a folder's CI steps, or stop lending it.",
+  }),
+
+  "signalbox.notes.subscribe": read({
+    name: "notes.list",
+    summary: "Your notes on every pad, with what was made of them and the tasks they became.",
+  }),
+  "signalbox.notes.create": write({ summary: "Jot a note on a folder's pad or the top level's." }),
+  "signalbox.notes.update": write({ summary: "Change a note's words or who may read it." }),
+  "signalbox.notes.delete": write({ destructive: true }),
+  "signalbox.notes.readAgain": write(),
+  "signalbox.notes.dismissReading": write(),
+  "signalbox.notes.accept": write({
+    summary: "Turn a note's offer into a task in its folder, starting with the note's words.",
+  }),
 
   "signalbox.threadKinds.subscribe": read({
     name: "threadKinds.list",
@@ -115,6 +135,11 @@ export const SIGNALBOX_RPC_REACH = {
   }),
   "signalbox.threadKinds.setArchiveChatsAfterDays": write({
     name: "threadKinds.setArchiveChatsAfterDays",
+  }),
+
+  "signalbox.threadStatus.subscribe": read({
+    name: "threadStatus.list",
+    summary: "Each thread's status note: the next step, and where the work got to.",
   }),
 
   "signalbox.previews.subscribe": read({ name: "previews.list" }),

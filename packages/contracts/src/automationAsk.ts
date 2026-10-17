@@ -1,5 +1,7 @@
 import * as Schema from "effect/Schema";
 
+import { ThreadId } from "./baseSchemas.ts";
+
 /**
  * What a `w.ask` step asks for and what counts as an answer. The compiler
  * checks literal specs with `askFieldProblems`, the engine parses the
@@ -33,6 +35,17 @@ export const AutomationAskField = Schema.Struct({
 });
 export type AutomationAskField = typeof AutomationAskField.Type;
 
+/**
+ * `open`: what the person can open beside the question, a thread or its
+ * agent's live browser (`view: "browser"`), e.g. to finish a payment the
+ * agent handed them (#579).
+ */
+export const AutomationAskOpen = Schema.Struct({
+  threadId: ThreadId,
+  view: Schema.Literals(["thread", "browser"]),
+});
+export type AutomationAskOpen = typeof AutomationAskOpen.Type;
+
 /** What `w.ask` offers when the code names no options and no fields. */
 export const AUTOMATION_ASK_DEFAULT_OPTIONS: ReadonlyArray<string> = ["approve", "reject"];
 /** The one action of an ask with fields and no options. */
@@ -47,6 +60,7 @@ export interface AutomationAsk {
   readonly fields: ReadonlyArray<AutomationAskField>;
   /** `onTimeout`: an option, `"fail"`, or null when the code gave none. */
   readonly onTimeout: string | null;
+  readonly open: AutomationAskOpen | null;
 }
 
 /** What a person sent: the option they picked (or several for `multi`) and the form's values. */
@@ -198,6 +212,22 @@ function readOptions(value: unknown, problems: string[]): string[] | null {
   return options;
 }
 
+function readOpen(value: unknown, problems: string[]): AutomationAskOpen | null {
+  if (value === undefined || value === null) return null;
+  const open = record(value);
+  const threadId = open?.threadId;
+  const view = open?.view ?? "thread";
+  if (
+    typeof threadId !== "string" ||
+    !threadId.trim() ||
+    (view !== "thread" && view !== "browser")
+  ) {
+    problems.push('open must be { threadId, view?: "thread" | "browser" }.');
+    return null;
+  }
+  return { threadId: ThreadId.make(threadId), view };
+}
+
 /**
  * The ask behind a step's options object (`args[0]`). `problems` lists what
  * makes it unanswerable; the engine fails the step on any.
@@ -250,6 +280,7 @@ export function parseAutomationAsk(input: unknown): {
       multi,
       fields,
       onTimeout: typeof options.onTimeout === "string" ? options.onTimeout : null,
+      open: readOpen(options.open, problems),
     },
     problems,
   };

@@ -14,7 +14,6 @@ import { environmentSections } from "../../state/sections";
 import type { SectionNavigationEnvironment } from "./sectionNavigationTypes";
 import { SectionNodeRow, ProjectRow } from "./SectionNavigationRows";
 import { useSectionActions } from "./use-section-actions";
-import { ContextSections } from "../contexts/ContextSections"; // signalbox: contexts
 import { useEnvironmentContexts } from "../../state/signalboxContexts"; // signalbox: contexts
 import { useNavigationPanelCopy, withFolderTrees } from "../folders/FolderPanelParts"; // signalbox: folders
 
@@ -191,50 +190,39 @@ function SectionTreeEnvironment(props: {
           Projects without a section stay at the top level.
         </AppText>
       ) : null}
-      {/* signalbox: a cloud environment groups its sections by context */}
-      <ContextSections
-        contexts={contexts}
-        roots={sectionsSupported ? tree.roots : []}
-        projects={rootProjects}
-        tree={tree}
-        onCreateSection={(contextId) => requestCreateSection(null, contextId)}
-        renderSection={(node) => (
-          <SectionNodeRow
-            key={node.section.id}
-            node={node}
-            depth={0}
-            ancestorPath=""
-            environmentId={environmentId}
-            snapshot={snapshot}
-            selectedProjectKey={props.selectedProjectKey}
-            collapsedSections={collapsedSections}
-            onProjectChange={props.onProjectChange}
-            onToggle={toggleSection}
-            onSectionAction={onSectionAction}
-            onProjectAction={onProjectAction}
-            pools={pools}
-          />
-        )}
-        renderProjects={(groupProjects, contextId) =>
-          groupProjects.map((project, siblingIndex) => (
-            <ProjectRow
-              key={project.id}
-              project={project}
-              environmentId={environmentId}
-              depth={0}
-              siblingIndex={siblingIndex}
-              siblingCount={groupProjects.length}
-              sectionId={null}
-              sectionPath=""
-              snapshot={sectionsSupported ? snapshot : null}
-              {...(contextId === undefined ? {} : { contextId })}
-              selectedProjectKey={props.selectedProjectKey}
-              onSelect={props.onProjectChange}
-              onAction={onProjectAction}
-            />
-          ))
-        }
-      />
+      {(sectionsSupported ? tree.roots : []).map((node) => (
+        <SectionNodeRow
+          key={node.section.id}
+          node={node}
+          depth={0}
+          ancestorPath=""
+          environmentId={environmentId}
+          snapshot={snapshot}
+          selectedProjectKey={props.selectedProjectKey}
+          collapsedSections={collapsedSections}
+          onProjectChange={props.onProjectChange}
+          onToggle={toggleSection}
+          onSectionAction={onSectionAction}
+          onProjectAction={onProjectAction}
+          pools={pools}
+        />
+      ))}
+      {rootProjects.map((project, siblingIndex) => (
+        <ProjectRow
+          key={project.id}
+          project={project}
+          environmentId={environmentId}
+          depth={0}
+          siblingIndex={siblingIndex}
+          siblingCount={rootProjects.length}
+          sectionId={null}
+          sectionPath=""
+          snapshot={sectionsSupported ? snapshot : null}
+          selectedProjectKey={props.selectedProjectKey}
+          onSelect={props.onProjectChange}
+          onAction={onProjectAction}
+        />
+      ))}
     </View>
   );
 }

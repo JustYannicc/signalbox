@@ -9,8 +9,9 @@ import * as SqlClient from "effect/sql/SqlClient";
 import type { SqlError } from "effect/sql/SqlError";
 
 /**
- * What sits at each level of the user's tree: a resource (only pools so far),
- * placed at the top level or a folder, with its reach. `here` serves only its
+ * What sits at each level of the user's tree: a resource (a pool, or the
+ * user's GitHub connection lent for CI steps), placed at the top level or a
+ * folder, with its reach. `here` serves only its
  * level; `below` serves its level and everything under it. What a thread runs
  * on follows from these (`poolChain.ts`). Storage only: `UserFolders` makes
  * every change and tells subscribers.
@@ -21,6 +22,14 @@ import type { SqlError } from "effect/sql/SqlError";
  */
 
 type Reach = "here" | "below";
+
+/** The binding kind for a GitHub account the user lent to a folder; its resource is the login. */
+const GITHUB_LEND = "github-actions";
+
+export interface GitHubLend {
+  readonly login: string;
+  readonly lentAt: number;
+}
 
 export interface PoolBinding {
   readonly level: FolderLevel;
@@ -44,6 +53,16 @@ export class ResourceBindings extends Context.Service<
     ) => Effect.Effect<{ readonly known: boolean; readonly changed: boolean }, SqlError>;
     /** Takes a deleted pool off every level. True when it was placed anywhere. */
     readonly forgetPool: (poolId: string) => Effect.Effect<boolean, SqlError>;
+    /** The folders the user lent a GitHub account to (#641): which, and since when. */
+    readonly githubLends: Effect.Effect<ReadonlyMap<FolderId, GitHubLend>, SqlError>;
+    /**
+     * Lends GitHub account `login` to a folder for its CI steps, replacing
+     * another account lent there; null stops lending. True when it changed.
+     */
+    readonly setGitHubLend: (
+      folderId: FolderId,
+      login: string | null,
+    ) => Effect.Effect<boolean, SqlError>;
     /** Every row as stored: what a preview takes along (`previewSetup/`). */
     readonly rows: Effect.Effect<ReadonlyArray<BindingRow>, SqlError>;
     /** Adds bindings another of this user's clouds holds, at levels that have none here. */
@@ -151,6 +170,38 @@ const make = Effect.gen(function* () {
       (removed) => removed.length > 0,
     );
 
+  // Reach `here`: a lend covers the folder's own repository, not the folders under it.
+  const githubLends: ResourceBindings["Service"]["githubLends"] = Effect.map(
+    sql`SELECT level_kind, level_id, kind, resource_id, reach, created_at FROM resource_bindings
+      WHERE kind = ${GITHUB_LEND} AND level_kind = 'folder'`,
+    (rows) =>
+      new Map(
+        decodeRows(rows).map((row) => [
+          FolderId.make(row.level_id),
+          { login: row.resource_id, lentAt: row.created_at },
+        ]),
+      ),
+  );
+
+  const setGitHubLend: ResourceBindings["Service"]["setGitHubLend"] = (folderId, login) =>
+    Effect.gen(function* () {
+      const current = decodeRows(
+        yield* sql`SELECT level_kind, level_id, kind, resource_id, reach, created_at
+          FROM resource_bindings
+          WHERE kind = ${GITHUB_LEND} AND level_kind = 'folder' AND level_id = ${folderId}`,
+      );
+      if (login === null ? current.length === 0 : current[0]?.resource_id === login) return false;
+      yield* sql`DELETE FROM resource_bindings
+        WHERE kind = ${GITHUB_LEND} AND level_kind = 'folder' AND level_id = ${folderId}`;
+      if (login !== null) {
+        const now = yield* Clock.currentTimeMillis;
+        yield* sql`INSERT INTO resource_bindings
+            (level_kind, level_id, kind, resource_id, reach, created_at)
+          VALUES ('folder', ${folderId}, ${GITHUB_LEND}, ${login}, 'here', ${now})`;
+      }
+      return true;
+    });
+
   const rows: ResourceBindings["Service"]["rows"] = Effect.map(
     sql`SELECT level_kind, level_id, kind, resource_id, reach, created_at FROM resource_bindings`,
     decodeRows,
@@ -174,6 +225,8 @@ const make = Effect.gen(function* () {
     pools,
     setPool,
     forgetPool,
+    githubLends,
+    setGitHubLend,
     rows,
     adopt,
   });

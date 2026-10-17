@@ -12,7 +12,7 @@ import {
   folderCopy,
   folderWording,
   scratchCopy,
-  scratchLevelName,
+  scratchLevel,
   withFolderFilterActionsCopy,
   withFolderFilterMenuCopy,
   withScratchScopeTitles,
@@ -132,25 +132,26 @@ describe("starting without a project", () => {
   };
 
   it("keeps upstream's No project without folders", () => {
-    expect(scratchLevelName(null, scratchId)).toBeNull();
+    expect(scratchLevel(null, scratchId)).toBeNull();
     expect(scratchCopy(null).title).toBe("No project");
   });
 
   it("names the owner whose scratch project it is", () => {
-    expect(scratchLevelName(owners, scratchId)).toBe("Acme");
+    expect(scratchLevel(owners, scratchId)?.name).toBe("Acme");
   });
 
-  it("names Personal before the scratch project exists", () => {
-    expect(scratchLevelName(owners, null)).toBe("Personal");
+  it("names your top level before the scratch project exists", () => {
+    expect(scratchLevel(owners, null)?.kind).toBe("personal");
   });
 
   it("starts at that level rather than without a home", () => {
-    expect(scratchCopy("Personal")).toEqual({
-      title: "Personal",
-      subtitle: "Start a task in Personal",
-      start: "Start in Personal",
-      failed: "Could not start in Personal",
+    expect(scratchCopy(owners.contexts[0]!)).toEqual({
+      title: "Top level",
+      subtitle: "Start a task at the top level",
+      start: "Start at the top level",
+      failed: "Could not start at the top level",
     });
+    expect(scratchCopy(owners.contexts[1]!).start).toBe("Start in Acme");
   });
 });
 
@@ -171,9 +172,9 @@ describe("the thread list's group for threads without a project", () => {
     representative: { environmentId, id: ProjectId.make("drive") },
   };
 
-  it("takes its owner's name where folders exist", () => {
+  it("takes its level's name where folders exist", () => {
     expect(withScratchScopeTitles([scratch, drive], () => owners).map((s) => s.title)).toEqual([
-      "Personal",
+      "Top level",
       "No project",
     ]);
   });

@@ -18,26 +18,22 @@ it.effect(
       const threadId = ThreadId.make("ask-tool-thread");
       const user = cloud.userDirectory.forUser(userId);
       yield* user.recordSignIn({ id: userId, email: "ask@example.test" });
-      yield* cloud.inUser(
-        userId,
-        CloudThreadService.use((threads) =>
-          threads.launchThread(actor, {
-            commandId: CommandId.make("ask-tool-launch"),
-            threadId,
-            projectId: Environment.SCRATCH_PROJECT_ID,
-            title: "Ask tool",
-            modelSelection: scriptedModelSelection,
-            runtimeMode: "full-access",
-            interactionMode: "default",
-            workspaceStrategy: { type: "root" },
-            initialMessage: {
-              messageId: MessageId.make("ask-tool-message"),
-              text: "Work",
-              attachments: [],
-            },
-          }),
-        ),
-      );
+      const threads = yield* CloudThreadService.pipe(Effect.provide(cloud.layerFor(userId)));
+      yield* threads.launchThread(actor, {
+        commandId: CommandId.make("ask-tool-launch"),
+        threadId,
+        projectId: Environment.SCRATCH_PROJECT_ID,
+        title: "Ask tool",
+        modelSelection: scriptedModelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        workspaceStrategy: { type: "root" },
+        initialMessage: {
+          messageId: MessageId.make("ask-tool-message"),
+          text: "Work",
+          attachments: [],
+        },
+      });
       yield* cloud.settle;
       const question = {
         id: "destination",
@@ -72,10 +68,7 @@ it.effect(
           answeredBy: { kind: "person", personId: "spoofed" },
         }),
       ).toMatchObject({ _tag: "ok" });
-      const { projection } = yield* cloud.inUser(
-        userId,
-        CloudThreadService.use((threads) => threads.threadSnapshot(actor, threadId)),
-      );
+      const { projection } = yield* threads.threadSnapshot(actor, threadId);
       expect(projection.thread.asks).toHaveLength(1);
       expect(projection.thread.asks?.[0]?.rounds[0]?.answers[0]).toMatchObject({
         answeredBy: { kind: "assistant", personId: userId, assistantThreadId: threadId },

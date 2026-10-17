@@ -91,6 +91,8 @@ const TABLES = [
     ask_json TEXT,
     ask_synced_at TEXT,
     ask_receipts_json TEXT NOT NULL DEFAULT '[]',
+    external_json TEXT,
+    poll_at TEXT,
     PRIMARY KEY (run_id, step_key)
   )`,
   `CREATE TABLE IF NOT EXISTS signalbox_automation_memory (
@@ -211,6 +213,8 @@ const ADDED_COLUMNS: ReadonlyArray<readonly [string, string, string]> = [
   ["signalbox_automation_steps", "ask_json", "TEXT"],
   ["signalbox_automation_steps", "ask_synced_at", "TEXT"],
   ["signalbox_automation_steps", "ask_receipts_json", "TEXT NOT NULL DEFAULT '[]'"],
+  ["signalbox_automation_steps", "external_json", "TEXT"],
+  ["signalbox_automation_steps", "poll_at", "TEXT"],
 ];
 
 /** Indexes go last: some cover added columns. */
@@ -222,6 +226,8 @@ const INDEXES = [
     ON signalbox_automation_runs (parent_run_id)`,
   `CREATE INDEX IF NOT EXISTS signalbox_automation_steps_by_status
     ON signalbox_automation_steps (status, verb)`,
+  `CREATE INDEX IF NOT EXISTS signalbox_automation_steps_by_poll
+    ON signalbox_automation_steps (status, poll_at)`,
   `CREATE INDEX IF NOT EXISTS signalbox_automation_steps_by_thread
     ON signalbox_automation_steps (thread_id)`,
   `CREATE INDEX IF NOT EXISTS signalbox_automation_steps_by_event

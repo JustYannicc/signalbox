@@ -3,12 +3,12 @@
  * collapses; collapsing the sidebar hides only the panel beside it (the
  * sidebar's `icon` collapse, whose icon width is the rail's width).
  *
- * Home is upstream's project tree and Pipeline is upstream's attention-ordered
- * list, both rendered unchanged apart from their titlebar row, which this
- * layout owns (see SidebarRailContext). New is pinned above every view, and
- * automations waiting on the user sit on top of Pipeline. Settings keeps the
- * rail and shows its own navigation in the panel. Picking a view from a
- * utility page (settings, usage, pull requests) returns to the last thread.
+ * Home is upstream's project tree, rendered unchanged apart from its titlebar
+ * row, which this layout owns (see SidebarRailContext). New is pinned above
+ * every view, and automations waiting on the user sit on top of Home. Settings
+ * keeps the rail and shows its own navigation in the panel. Picking a view
+ * from a utility page (settings, usage, pull requests) returns to the last
+ * thread.
  */
 import { useLocation } from "@tanstack/react-router";
 import { useCallback, type ReactNode } from "react";
@@ -25,10 +25,9 @@ import { useSidebarView, type SidebarView } from "./sidebarView";
 
 const VIEW_TITLES: Record<SidebarView, string> = {
   home: "Home",
-  pipeline: "Pipeline",
 };
 
-function SidebarViewPanel(props: { view: SidebarView; home: ReactNode; pipeline: ReactNode }) {
+function SidebarViewPanel(props: { view: SidebarView; home: ReactNode }) {
   return (
     <>
       <SidebarNewButton />
@@ -37,14 +36,8 @@ function SidebarViewPanel(props: { view: SidebarView; home: ReactNode; pipeline:
           {VIEW_TITLES[props.view]}
         </h2>
       </div>
-      {props.view === "home" ? (
-        props.home
-      ) : (
-        <>
-          <AutomationsWaitingGroup />
-          {props.pipeline}
-        </>
-      )}
+      <AutomationsWaitingGroup />
+      {props.home}
     </>
   );
 }
@@ -52,8 +45,6 @@ function SidebarViewPanel(props: { view: SidebarView; home: ReactNode; pipeline:
 export function SidebarViews(props: {
   /** Upstream's project-tree sidebar. */
   home: ReactNode;
-  /** Upstream's attention-ordered sidebar. */
-  pipeline: ReactNode;
   /** Replaces the view panel, e.g. the settings navigation. */
   panelOverride?: ReactNode;
 }) {
@@ -98,9 +89,7 @@ export function SidebarViews(props: {
             className="relative flex min-h-0 flex-1 flex-col overflow-hidden rounded-tl-xl border-t border-l border-sidebar-border bg-sidebar"
             data-sidebar-view={view}
           >
-            {props.panelOverride ?? (
-              <SidebarViewPanel view={view} home={props.home} pipeline={props.pipeline} />
-            )}
+            {props.panelOverride ?? <SidebarViewPanel view={view} home={props.home} />}
           </div>
         </div>
       </div>

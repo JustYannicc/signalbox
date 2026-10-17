@@ -9,7 +9,7 @@ import {
   folderCopy,
   folderWording,
   scratchCopy,
-  scratchLevelName,
+  scratchLevel,
   withScratchScopeTitles,
 } from "./folder-copy";
 
@@ -36,8 +36,8 @@ export function useScratchCopy(environmentId: EnvironmentId | null) {
   const scratchProjectId =
     projects.find((project) => project.environmentId === environmentId && project.isScratch)?.id ??
     null;
-  const levelName = scratchLevelName(owners, scratchProjectId);
-  return useMemo(() => scratchCopy(levelName), [levelName]);
+  const level = scratchLevel(owners, scratchProjectId);
+  return useMemo(() => scratchCopy(level), [level]);
 }
 
 /** Thread-list scopes with the "No project" group named after its owner where folders exist. */

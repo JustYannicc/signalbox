@@ -6,24 +6,13 @@ import { useAtomValue } from "@effect/atom-react";
 import type { EnvironmentId } from "@t3tools/contracts";
 
 import { appAtomRegistry } from "../../../rpc/atomRegistry";
-import { environmentContextsAtom } from "../../../state/signalboxContexts";
 import { serverEnvironment } from "../../../state/server";
 import { draftHeroCopy, projectSettingsLabel, type DraftHeroCopy } from "./folderCopy";
 
-/**
- * The new-thread hero's words on `environmentId`. A thread without a project
- * there starts in Personal's own folder, so the hero names it.
- */
+/** The new-thread hero's words on `environmentId`. */
 export function useDraftHeroCopy(environmentId: EnvironmentId | null): DraftHeroCopy {
   const config = useAtomValue(serverEnvironment.configValueAtom(environmentId));
-  const contexts = useAtomValue(environmentContextsAtom);
-  if (environmentId === null || config?.environment.capabilities.folders !== true) {
-    return draftHeroCopy(null);
-  }
-  const personal = contexts
-    .get(environmentId)
-    ?.contexts.find((context) => context.kind === "personal");
-  return draftHeroCopy(personal?.name ?? "Personal");
+  return draftHeroCopy(environmentId !== null && config?.environment.capabilities.folders === true);
 }
 
 /** What opening a project's settings is called on `environmentId`, read when a menu opens. */

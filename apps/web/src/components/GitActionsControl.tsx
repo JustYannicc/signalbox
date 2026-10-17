@@ -119,6 +119,11 @@ import { getSourceControlPresentation, sourceControlIcon } from "~/sourceControl
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 import { formatDiffCount } from "@t3tools/client-runtime/diff-count";
 import { useOpenLink } from "~/browser/useOpenLink";
+import { useEnvironmentSupports } from "~/state/environmentCapabilities"; // signalbox
+import {
+  ownBranchMenuItems,
+  ownBranchQuickAction,
+} from "@t3tools/client-runtime/state/signalboxOwnBranch"; // signalbox
 
 interface GitActionsControlProps {
   presentation?: "toolbar" | "menu";
@@ -243,7 +248,7 @@ function getMenuActionDisabledReason({
 
   if (item.id === "commit") {
     if (!hasChanges) {
-      return "Worktree is clean. Make changes before committing.";
+      return "No changes to commit yet.";
     }
     return "Commit is currently unavailable.";
   }
@@ -262,7 +267,7 @@ function getMenuActionDisabledReason({
       return 'Add an "origin" remote before pushing.';
     }
     if (!isAhead) {
-      return "No local commits to push.";
+      return "No new commits to push.";
     }
     return "Push is currently unavailable.";
   }
@@ -274,7 +279,7 @@ function getMenuActionDisabledReason({
     return `Add an "origin" remote before creating a ${terminology.singular}.`;
   }
   if ((gitStatus.aheadOfDefaultCount ?? gitStatus.aheadCount) <= 0) {
-    return `No local commits to include in a ${terminology.singular}.`;
+    return `No new commits to include in a ${terminology.singular}.`;
   }
   if (isBehind) {
     return `Branch is behind upstream. Pull/rebase before creating a ${terminology.singular}.`;
@@ -998,6 +1003,8 @@ export default function GitActionsControl({
     "thread branch metadata update",
   );
   const activeEnvironmentId = activeThreadRef?.environmentId ?? null;
+  // signalbox: a thread on its own branch commits from its turns, never from here.
+  const ownBranch = !useEnvironmentSupports(activeEnvironmentId, "worktrees");
   const successScopeKey = `${activeEnvironmentId ?? ""}\u0000${gitCwd ?? ""}`;
   const canWriteSourceControl = useEnvironmentScope(
     activeEnvironmentId,
@@ -1180,15 +1187,19 @@ export default function GitActionsControl({
     return gitStatusForActions?.isDefaultRef ?? false;
   }, [gitStatusForActions?.isDefaultRef]);
 
-  const gitActionMenuItems = useMemo(
-    () => buildMenuItems(gitStatusForActions, isGitActionRunning, hasPrimaryRemote),
-    [gitStatusForActions, hasPrimaryRemote, isGitActionRunning],
-  );
-  const quickAction = useMemo(
-    () =>
-      resolveQuickAction(gitStatusForActions, isGitActionRunning, isDefaultRef, hasPrimaryRemote),
-    [gitStatusForActions, hasPrimaryRemote, isDefaultRef, isGitActionRunning],
-  );
+  const gitActionMenuItems = useMemo(() => {
+    const items = buildMenuItems(gitStatusForActions, isGitActionRunning, hasPrimaryRemote);
+    return ownBranch ? ownBranchMenuItems(items) : items; // signalbox
+  }, [gitStatusForActions, hasPrimaryRemote, isGitActionRunning, ownBranch]);
+  const quickAction = useMemo(() => {
+    const action = resolveQuickAction(
+      gitStatusForActions,
+      isGitActionRunning,
+      isDefaultRef,
+      hasPrimaryRemote,
+    );
+    return ownBranch ? ownBranchQuickAction(action) : action; // signalbox
+  }, [gitStatusForActions, hasPrimaryRemote, isDefaultRef, isGitActionRunning, ownBranch]);
   const quickActionDisabledReason = !canWriteSourceControl
     ? "This connection cannot change source control."
     : quickAction.disabled

@@ -1,7 +1,8 @@
 import * as Schema from "effect/Schema";
 
-import { AutomationAskField } from "./automationAsk.ts";
+import { AutomationAskField, AutomationAskOpen } from "./automationAsk.ts";
 import { IsoDateTime, ProjectId, ThreadId, TrimmedNonEmptyString } from "./baseSchemas.ts";
+import { ExternalRun } from "./externalRun.ts";
 import { ModelSelection } from "./modelSelection.ts";
 import { ProviderInteractionMode, RuntimeMode } from "./providerPolicy.ts";
 import { ScheduledTaskWebhookEndpoint } from "./scheduledTask.ts";
@@ -14,6 +15,7 @@ import {
 } from "./workflow.ts";
 
 export * from "./automationAsk.ts";
+export * from "./externalRun.ts";
 
 /**
  * Automations as users and agents see them: saved workflow files, their runs,
@@ -91,6 +93,8 @@ export const AutomationWaitingQuestion = Schema.Struct({
   multi: Schema.Boolean,
   /** The form to fill in before answering. */
   fields: Schema.Array(AutomationAskField),
+  /** What to open beside it: a thread, or its agent's live browser. */
+  open: Schema.optionalKey(Schema.NullOr(AutomationAskOpen)),
   since: IsoDateTime,
   commonAsk: Schema.optional(SignalboxAsk),
 });
@@ -143,6 +147,8 @@ export const AutomationStep = Schema.Struct({
   startedAt: IsoDateTime,
   finishedAt: Schema.NullOr(IsoDateTime),
   commonAsk: Schema.optional(SignalboxAsk),
+  /** The run in another system this step started, e.g. on GitHub Actions, as last read. */
+  external: Schema.optional(Schema.NullOr(ExternalRun)),
 });
 export type AutomationStep = typeof AutomationStep.Type;
 

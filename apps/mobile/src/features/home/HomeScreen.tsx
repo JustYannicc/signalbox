@@ -204,7 +204,7 @@ function deriveEmptyState(props: {
 
   return {
     title: "No threads yet",
-    detail: "Create a task to start a new coding runtime in one of your connected projects.",
+    detail: "Start a task and an agent gets to work on it.",
     loading: false,
   };
 }
@@ -994,7 +994,7 @@ export function HomeScreen(props: HomeScreenProps) {
     ) : (
       <EmptyState
         title="No threads yet"
-        detail="Create a task to start a new coding session."
+        detail="Start a task and an agent gets to work on it."
         variant={Platform.OS === "android" ? "plain" : undefined}
       />
     );

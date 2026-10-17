@@ -95,6 +95,7 @@ The run's start time is \`trigger.at\` (an ISO string), the same on every replay
 | Schedules, webhooks, app events, manual input | \`references/triggers.md\` |
 | Reading a run, fixing and retrying it, drafts | \`references/runs.md\` |
 | Proven shapes: supervising agents and threads, polling, approvals, CLIs | \`references/patterns.md\` |
+| Running steps on the repository's GitHub Actions runners | \`references/github-actions.md\` |
 | Complete automations to start from | \`references/examples/\` |
 
 In a harness without these files, \`automation_reference\` returns the same content: call it with no topic for this page, or \`{ topic: "steps" }\` and so on.

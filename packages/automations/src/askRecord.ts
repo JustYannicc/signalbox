@@ -17,11 +17,13 @@ export function automationAskRecord(automation: AutomationRow, step: StepRow): S
   const options = asRecord(stepArgs(step)[0]);
   // Customizations keep the gate's registered name after clearing builtin_slug.
   const gate = automation.builtin_slug === "merge-gate" || automation.name === "Merge gate";
+  // Payment hands unfinished checkout to the person.
+  const payment = automation.builtin_slug === "payment" || automation.name === "Payment";
   const text = (key: string, fallback: string) =>
     typeof options[key] === "string" && options[key].trim() ? options[key] : fallback;
   return {
     id: `automation:${step.run_id}:${step.step_key}`,
-    kind: gate ? "ready" : "blocker",
+    kind: payment ? "blocker" : gate ? "ready" : "blocker",
     source: { kind: "automation", runId: step.run_id, stepKey: step.step_key },
     status: "pending",
     createdAt: step.started_at,

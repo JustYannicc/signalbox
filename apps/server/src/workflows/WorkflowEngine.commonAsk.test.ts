@@ -38,6 +38,63 @@ export default workflow(async (w) => w.ask("What should we bring?", {
   fields: { guests: { type: "number", required: true }, note: { type: "text", default: "hello" } },
 }));`;
 
+it.effect("the Payment built-in asks for unfinished checkout work as a Blocker", () => {
+  const threads = fakeThreads();
+  return withEngine(
+    { threads, http: fakeHttp() },
+    Effect.gen(function* () {
+      const engine = yield* WorkflowEngine;
+      const run = yield* engine.startRun({
+        automationId: "builtin:payment",
+        input: { threadId: THREAD, site: "shop.test", note: "Kettle, 12 CHF" },
+        attach: { threadId: THREAD },
+        trigger: "manual",
+        projectId: PROJECT,
+        builtInDefaults: DEFAULTS,
+      });
+      yield* engine.drain;
+      const step = (yield* engine.getRun(run.id)).steps.find((entry) => entry.verb === "ask")!;
+      const ask = step.commonAsk!;
+      expect(step.status).toBe("waiting");
+      expect(ask).toMatchObject({
+        kind: "blocker",
+        status: "pending",
+        source: { kind: "automation", runId: run.id, stepKey: step.key },
+        questions: [
+          {
+            question: "Finish the payment on shop.test",
+            blocking: true,
+            surface: {
+              kind: "kit",
+              component: "automation",
+              props: {
+                options: ["done", "failed"],
+                fields: [{ name: "note", type: "text" }],
+                open: { threadId: THREAD, view: "browser" },
+              },
+            },
+          },
+        ],
+      });
+      expect(threads.state.shells[THREAD]?.asks).toEqual([ask]);
+      yield* engine.answerSignalboxAsk(
+        answer(ask, { choice: "done", values: { note: "Paid by Twint" } }),
+        ask,
+      );
+      yield* engine.drain;
+      const done = yield* engine.getRun(run.id);
+      expect(done).toMatchObject({
+        run: { status: "succeeded" },
+        output: { outcome: "done", note: "Paid by Twint" },
+      });
+      expect(done.steps.find((entry) => entry.key === step.key)?.commonAsk).toMatchObject({
+        kind: "blocker",
+        status: "answered",
+      });
+    }),
+  );
+});
+
 it.effect("keeps one common ask through deferred rounds and validated workflow answers", () => {
   const threads = fakeThreads();
   return withEngine(

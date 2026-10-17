@@ -24,6 +24,7 @@ import * as DriveFiles from "../drive/DriveFiles.ts";
 import * as DrivePacks from "../drive/DrivePacks.ts";
 import * as Environment from "../environment.ts";
 import * as GitHub from "../github/GitHub.ts";
+import * as GitHubActions from "../github/GitHubActions.ts";
 import * as GitHubBranches from "../github/GitHubBranches.ts";
 import * as ConnectionLinks from "../connections/ConnectionLinks.ts";
 import * as GitHubConnection from "../github/GitHubConnection.ts";
@@ -31,6 +32,8 @@ import { API_HEADER, decodeApiCredential, serveApiRequest } from "../api/apiObje
 import { MCP_PATH, makeMcpHandler } from "../api/mcpObject.ts";
 import * as LocalKeys from "../localKeys/LocalKeys.ts";
 import * as LoginService from "../signIn/LoginService.ts";
+import * as NoteReader from "../notes/NoteReader.ts";
+import * as UserNotes from "../notes/UserNotes.ts";
 import * as SignInGrants from "../signIn/SignInGrants.ts";
 import * as Platform from "../platform.ts";
 import * as PoolDirectory from "../pool/PoolDirectory.ts";
@@ -67,6 +70,7 @@ import * as UserFolders from "./UserFolders.ts";
 import * as UserShell from "./UserShell.ts";
 import * as UserStore from "./UserStore.ts";
 import * as UserThreadKinds from "./UserThreadKinds.ts";
+import * as UserThreadStatus from "./UserThreadStatus.ts";
 import * as ChatArchive from "./chatArchive.ts";
 
 /**
@@ -195,14 +199,26 @@ const makeRuntime = (storage: DurableObjectStorage, env: UserObjectEnv) => {
       Layer.provideMerge(
         Layer.mergeAll(
           GitHubBranches.layer,
+          GitHubActions.layer,
           UserPreviewSetup.layer,
           CloudAssets.layer,
           // Agents' sign-ins (#576): Kernel's Managed Auth, answered from 1Password through Executor.
           LoginService.layerFromEnv(env).pipe(Layer.provide(FetchHttpClient.layer)),
+          // Notes (#318), read on each level's pool.
+          UserNotes.layer.pipe(
+            Layer.provide(
+              NoteReader.layer((objectName) =>
+                PoolDirectory.poolObjectStub(env.POOLS, objectName, {
+                  localWorkerd: env.LOCAL_WORKERD === "1",
+                }),
+              ),
+            ),
+          ),
         ).pipe(
           Layer.provideMerge(
             Layer.mergeAll(
               UserShell.layer,
+              UserThreadStatus.layer,
               CloudThreadService.layer,
               PoolSignIns.layer,
               drives.services,
@@ -505,6 +521,10 @@ export class UserObject extends DurableObject<UserObjectEnv> implements UserObje
 
   automationTool(threadId: string, name: string, input: unknown) {
     return this.api.automationTool(threadId, name, input);
+  }
+
+  folderStatus(threadId: string) {
+    return this.api.folderStatus(threadId);
   }
 
   browserSession(input: Parameters<UserObjectApi["browserSession"]>[0]) {

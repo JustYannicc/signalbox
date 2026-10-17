@@ -89,7 +89,7 @@ describe("requestThreadUnpinConfirmation", () => {
     });
 
     expect(message).toBe(
-      'Unpin thread "Release prep"?\nThis will move the thread out of your pinned section.',
+      'Unpin thread "Release prep"?\nIt will no longer stay above your active work.',
     );
     expect(result).toMatchObject({ _tag: "Success", value: false });
   });

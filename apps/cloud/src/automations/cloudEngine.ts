@@ -1,5 +1,6 @@
 import { AutomationError, ThreadId, type AutomationNotice } from "@t3tools/contracts";
 import { ExecutorSettingsStore } from "@signalbox/automations/executorConnection";
+import { explained } from "@signalbox/automations/runLog";
 import {
   AutomationFunctions,
   AutomationIngress,
@@ -35,6 +36,7 @@ import { driveEvent, makeChangedFiles } from "./driveChanges.ts";
 import * as CloudCompilerModule from "./cloudCompiler.ts";
 import * as CloudThreads from "./cloudThreads.ts";
 import { callTool, makeCloudTools } from "./cloudTools.ts";
+import { makeGitHubActionsRunner } from "./githubActionsRunner.ts";
 
 /**
  * The user's automations on their Durable Object (#434). Each run is a
@@ -42,9 +44,9 @@ import { callTool, makeCloudTools } from "./cloudTools.ts";
  * (`automationWorkflow.ts`); Cloudflare journals, replays, sleeps and waits.
  * The object keeps the engine's records on its SQLite, starts steps when an
  * instance asks, runs agents in the user's cloud threads, and sends a waiting
- * step's outcome to its instance as an event. Its alarm only starts crons.
- * Hooks, Executor calls and `w.run` aren't here yet; they fail with a clear
- * message instead of hanging.
+ * step's outcome to its instance as an event. Its alarm starts crons and
+ * reads steps' runs on GitHub Actions. Hooks, Executor calls and `w.run` on
+ * the host aren't here yet; they fail with a clear message instead of hanging.
  */
 
 const unavailable = (what: string) =>
@@ -57,7 +59,12 @@ const layerUnhosted = Layer.mergeAll(
   Layer.succeed(
     AutomationFunctions,
     AutomationFunctions.of({
-      run: () => unavailable("w.run functions"),
+      run: () =>
+        Effect.fail(
+          explained("w.run can't run functions on Signalbox Cloud's servers yet.", {
+            fix: 'Run it on the folder repository\'s CI instead: w.run(label, { on: "github-actions" }, fn, ...args).',
+          }),
+        ),
       remove: () => Effect.void,
       prune: () => Effect.void,
     }),
@@ -125,6 +132,7 @@ const make = Effect.gen(function* () {
   const changedFiles = yield* makeChangedFiles;
   yield* engine.registerBuiltinTools(makeCloudBuiltinTools({ threads, service, owner, merges }));
   yield* engine.registerPullRequestReads(yield* PullRequestReadsModule.PullRequestReads);
+  yield* engine.registerExternalRunner("github-actions", yield* makeGitHubActionsRunner);
   const tools = makeCloudTools({ engine, compiler, threads });
 
   // Notices queue up while the engine works and go out before the request ends.
@@ -142,11 +150,12 @@ const make = Effect.gen(function* () {
     yield* engine.drain;
     for (const notice of yield* Queue.clear(notices)) yield* push.automationNotice(notice);
   });
-  /** The alarm goes off for the next cron, or sooner to tell an instance an outcome again. */
+  /** The next scheduled work, including outcome delivery, ask sync and external runs. */
   const nextAlarmAt = Effect.all([
     runs.nextCronAt,
     runs.nextRedeliveryAt,
     engine.nextAskSyncAt,
+    engine.nextExternalPollAt,
   ]).pipe(
     Effect.map((times) => {
       const pending = times.filter((at): at is number => at !== null);
@@ -268,9 +277,9 @@ const make = Effect.gen(function* () {
           return yield* new AutomationError({ message: "That run isn't this version's." });
         yield* annotateOwner;
         // A step that failed to start may still have started work (a thread, a notice).
-        // Host calls never change crons, so the alarm stays as it is.
+        // A step on GitHub Actions is read on the alarm, so it's armed for that too.
         return yield* hostCall(call).pipe(
-          Effect.ensuring(drainAndPush.pipe(Effect.catchCause(Effect.logWarning))),
+          Effect.ensuring(flush.pipe(Effect.catchCause(Effect.logWarning))),
         );
       }).pipe(
         Effect.withSpan("CloudAutomations.host", {
