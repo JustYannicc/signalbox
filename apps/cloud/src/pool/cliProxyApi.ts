@@ -484,15 +484,91 @@ export const servedBy = (response: Response) =>
 const LoginStart = Schema.Struct({
   url: Schema.String,
   state: Schema.String,
+  flow: Schema.optional(Schema.Literals(["manual"])),
   user_code: Schema.optional(Schema.String),
+  expires_in: Schema.optional(Schema.Int.check(Schema.isGreaterThan(0))),
+});
+const ManualLoginStart = Schema.Struct({
+  flow: Schema.Literals(["manual"]),
+  url: Schema.NonEmptyString,
+  state: Schema.NonEmptyString,
+  user_code: Schema.optional(Schema.String),
+  expires_in: Schema.optional(Schema.Int.check(Schema.isGreaterThan(0))),
+});
+const DeviceLoginStart = Schema.Struct({
+  url: Schema.NonEmptyString,
+  state: Schema.NonEmptyString,
+  user_code: Schema.NonEmptyString,
+  expires_in: Schema.Int.check(Schema.isGreaterThan(0)),
 });
 export type LoginStart = typeof LoginStart.Type;
+export type PoolLoginFlow = "browser" | "manual";
+export type LoginCallback = string | { readonly state: string; readonly code: string };
+export const CLAUDE_MANUAL_REDIRECT = "https://platform.claude.com/oauth/code/callback";
 
-export const startLogin = (endpoint: PoolEndpoint, provider: PoolLoginProvider) =>
-  management(endpoint, "GET", `oauth/auth-url?provider=${provider}`).pipe(
-    Effect.flatMap((response) =>
-      decodeOr(LoginStart, "The pool's CLIProxyAPI could not start sign-in.")(response.json),
+const isManualClaudeLogin = (login: typeof ManualLoginStart.Type) => {
+  try {
+    const authorization = new URL(login.url);
+    const redirectUris = authorization.searchParams.getAll("redirect_uri");
+    return (
+      authorization.protocol === "https:" &&
+      !authorization.username &&
+      !authorization.password &&
+      authorization.searchParams.getAll("state").length === 1 &&
+      authorization.searchParams.get("state") === login.state &&
+      redirectUris.length === 1 &&
+      redirectUris[0] === CLAUDE_MANUAL_REDIRECT
+    );
+  } catch {
+    return false;
+  }
+};
+
+export const startLogin = (
+  endpoint: PoolEndpoint,
+  provider: PoolLoginProvider,
+  flow: PoolLoginFlow = "browser",
+) =>
+  management(
+    endpoint,
+    "GET",
+    `oauth/auth-url?provider=${provider}${provider === "codex" ? "&flow=device" : flow === "manual" ? "&flow=manual" : ""}`,
+  ).pipe(
+    Effect.tap(
+      expectOk(endpoint, () =>
+        provider === "codex"
+          ? "could not start device sign-in. Update it to a build with Codex device login support."
+          : flow === "manual"
+            ? "could not start Claude manual sign-in. Update it to a build with manual Claude code support."
+            : "could not start sign-in.",
+      ),
     ),
+    Effect.flatMap((response) => {
+      if (provider === "codex") {
+        return decodeOr(
+          DeviceLoginStart,
+          "The pool's CLIProxyAPI could not start device sign-in. Update it to a build with Codex device login support.",
+        )(response.json);
+      }
+      if (flow === "manual") {
+        return decodeOr(
+          ManualLoginStart,
+          "The pool's CLIProxyAPI could not start Claude manual sign-in. Update it to a build with manual Claude code support.",
+        )(response.json).pipe(
+          Effect.flatMap((login) =>
+            isManualClaudeLogin(login)
+              ? Effect.succeed(login)
+              : Effect.fail(
+                  new PoolBackendError({
+                    detail:
+                      "The pool's CLIProxyAPI returned an unsupported Claude sign-in redirect. Update it to a build with manual Claude code support.",
+                  }),
+                ),
+          ),
+        );
+      }
+      return decodeOr(LoginStart, "The pool's CLIProxyAPI could not start sign-in.")(response.json);
+    }),
   );
 
 const LoginStatus = Schema.Struct({
@@ -520,27 +596,40 @@ export const loginStatus = (
     ),
   );
 
-/** Hands over the address the provider redirected to, for a login finished on another device. */
-export const completeLogin = (endpoint: PoolEndpoint, redirectUrl: string) =>
+/** Hands over a provider callback or a code already bound to this login's state. */
+export const completeLogin = (endpoint: PoolEndpoint, callback: LoginCallback) =>
   Effect.gen(function* () {
-    // CLIProxyAPI reads the provider from the login's state, which the URL carries.
-    const response = yield* management(endpoint, "POST", "oauth/callback", {
-      redirect_url: redirectUrl,
-    });
+    const body =
+      typeof callback === "string"
+        ? { redirect_url: callback }
+        : { state: callback.state, code: callback.code };
+    const response = yield* management(endpoint, "POST", "oauth/callback", body);
     const status =
       response.json !== null && typeof response.json === "object" && "status" in response.json
         ? response.json.status
         : null;
     if (response.status >= 300 || status === "error") {
       return yield* new PoolBackendError({
-        detail: "That URL does not belong to this sign-in. Copy the full address and try again.",
+        detail:
+          typeof callback === "string"
+            ? "That URL does not belong to this sign-in. Copy the full address and try again."
+            : "That code does not belong to this sign-in. Check it and try again.",
       });
     }
   });
 
+const LoginCancellation = Schema.Struct({ cancelled: Schema.Boolean });
+
 export const cancelLogin = (endpoint: PoolEndpoint, state: string) =>
   management(endpoint, "DELETE", `oauth/session?state=${encodeURIComponent(state)}`).pipe(
-    Effect.ignore,
+    Effect.tap(expectOk(endpoint, () => "could not cancel sign-in.")),
+    Effect.flatMap((response) =>
+      decodeOr(
+        LoginCancellation,
+        "The pool's CLIProxyAPI could not confirm whether sign-in was cancelled. Update it and try again.",
+      )(response.json),
+    ),
+    Effect.map((result) => result.cancelled),
   );
 
 /** One local retry restriction CLIProxyAPI holds an account in (its `cooldowns` view). */

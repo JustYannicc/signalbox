@@ -212,9 +212,10 @@ export function HostedBrowserWebview(props: {
   // The server tells agents whether a person sees the page it drives.
   useEffect(() => {
     const bridge = window.desktopBridge?.preview;
-    if (!bridge || !serverDriven) return;
+    // The desktop tab only exists once settings hydrate, so wait for that too.
+    if (!bridge || !serverDriven || !clientSettingsHydrated) return;
     withDesktopTab(runtimeTabId, () => bridge.setVisible(runtimeTabId, active));
-  }, [active, runtimeTabId, serverDriven]);
+  }, [active, clientSettingsHydrated, runtimeTabId, serverDriven]);
   useEffect(() => {
     const bridge = window.desktopBridge?.preview;
     if (!bridge || !serverDriven) return;
