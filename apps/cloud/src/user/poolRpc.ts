@@ -17,19 +17,10 @@ import * as Effect from "effect/Effect";
 import * as Schedule from "effect/Schedule";
 import * as Stream from "effect/Stream";
 
-import type { ModelManifestCatalogs } from "@t3tools/shared/modelManifest";
-
 import * as Environment from "../environment.ts";
-import {
-  accountPool,
-  limitsSource,
-  overview,
-  poolDefaultModelSelection,
-  poolProviderInstances,
-  poolProviders,
-} from "../pool/poolViews.ts";
+import { accountPool, limitsSource, overview } from "../pool/poolViews.ts";
 import type { PoolActor } from "../pool/PoolEngine.ts";
-import * as ModelManifest from "../thread/ModelManifest.ts";
+import * as ModelCatalog from "../models/ModelCatalog.ts";
 import * as PoolSignIns from "./PoolSignIns.ts";
 import * as UserPools from "./UserPools.ts";
 import * as UserModelSettings from "./UserModelSettings.ts";
@@ -95,21 +86,6 @@ const notYet = (what: string) =>
 
 const now = Effect.map(DateTime.now, DateTime.formatIso);
 
-/** The server config with the user's pools in it. */
-const configOf = (
-  identity: Environment.CloudEnvironmentIdentity,
-  state: UserPools.PoolsState,
-  checkedAt: string,
-  manifest: ModelManifestCatalogs,
-) => {
-  const providers = poolProviders(state, checkedAt, manifest);
-  return Environment.serverConfig(identity, checkedAt, {
-    providers,
-    instances: poolProviderInstances(state.map((entry) => entry.pool)),
-    defaultModelSelection: poolDefaultModelSelection(providers),
-  });
-};
-
 const NO_POOLS: UserPools.PoolsState = [];
 
 const availableModelsOf = (providers: ReadonlyArray<ServerProvider>) =>
@@ -124,7 +100,7 @@ const serverSettingsError = (operation: "normalize" | "write-file" = "normalize"
   new ServerSettingsError({ settingsPath: "cloud model settings", operation });
 
 /** What settings say about the pools: their instances, named after them, and the default model. */
-const settingsKey = (config: ReturnType<typeof configOf>) =>
+const settingsKey = (config: ReturnType<typeof Environment.serverConfig>) =>
   JSON.stringify([
     config.settings.providerInstances,
     config.settings.defaultModelSelection,
@@ -178,15 +154,17 @@ export const makePoolHandlers = (input: {
   Effect.gen(function* () {
     const pools = yield* UserPools.UserPools;
     const signIns = yield* PoolSignIns.PoolSignIns;
-    const manifest = yield* ModelManifest.ModelManifest;
+    const catalog = yield* ModelCatalog.ModelCatalog;
     const modelSettings = yield* UserModelSettings.UserModelSettings;
     const { actor, identity } = input;
     const configNowOf = (state: UserPools.PoolsState) =>
-      Effect.all([now, manifest.current]).pipe(
-        Effect.map(([checkedAt, catalogs]) => configOf(identity, state, checkedAt, catalogs)),
+      Effect.flatMap(now, (checkedAt) =>
+        Effect.map(catalog.view({ pools: state, checkedAt }), (view) =>
+          Environment.serverConfig(identity, checkedAt, view),
+        ),
       );
     const withModelSettings = (
-      config: ReturnType<typeof configOf>,
+      config: ReturnType<typeof Environment.serverConfig>,
       saved: UserModelSettings.ModelSettingsSnapshot,
     ) => {
       const filtered = UserModelSettings.filterAvailableModels(
