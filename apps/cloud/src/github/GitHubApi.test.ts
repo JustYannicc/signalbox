@@ -200,3 +200,19 @@ it.effect("fails unreadable refs instead of silently omitting branches", () =>
     }
   }),
 );
+
+it.effect("lists no refs for an empty GitHub repository but retains unrelated conflicts", () =>
+  Effect.gen(function* () {
+    expect(
+      yield* makeGitHubApi(responseClient({ message: "Git Repository is empty." }, 409)).listRefs(
+        "token",
+        "owner/empty",
+      ),
+    ).toEqual([]);
+    const error = yield* makeGitHubApi(responseClient({ message: "A different conflict." }, 409))
+      .listRefs("token", "owner/repository")
+      .pipe(Effect.flip);
+    expect(error.status).toBe(409);
+    expect(error.message).toBe("A different conflict.");
+  }),
+);

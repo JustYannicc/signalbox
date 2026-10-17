@@ -457,6 +457,11 @@ export const makeGitHubApi = (
         RefsBody,
         HttpClientRequest.get(`${api}/repos/${repository}/git/matching-refs/heads/`),
         token,
+      ).pipe(
+        Effect.catchIf(
+          (error) => error.status === 409 && /^Git Repository is empty\.?$/i.test(error.message),
+          () => Effect.succeed([]),
+        ),
       ),
     /** The newest pull request from `branch` in the same repository, in any state. */
     pullForBranch: (token: string, repository: string, branch: string) => {

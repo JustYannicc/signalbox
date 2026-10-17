@@ -2,6 +2,7 @@ import { describe, expect, it } from "@effect/vitest";
 import { VcsListRefsResult } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
+import * as TestClock from "effect/testing/TestClock";
 
 import { actor, current, fixture, root } from "./githubRefsTesting.ts";
 
@@ -202,7 +203,7 @@ describe("cloud refs", () => {
       const unmatched = yield* listRefs(actor, { cwd: root, query: "missing" });
       expect(unmatched).toMatchObject({ refs: [], totalCount: 0, nextCursor: null, isRepo: true });
       state.branches = [];
-      const empty = yield* listRefs(actor, { cwd: root });
+      const empty = yield* listRefs(actor, { cwd: root, refresh: true });
       expect(empty).toMatchObject({
         refs: [],
         isRepo: true,
@@ -210,6 +211,34 @@ describe("cloud refs", () => {
         totalCount: 0,
       });
     }),
+  );
+
+  it.effect(
+    "reuses branch snapshots for paging and search, refreshes explicitly and expires them",
+    () =>
+      Effect.gen(function* () {
+        const { listRefs, state } = yield* fixture;
+        yield* listRefs(actor, { cwd: root, limit: 1 });
+        state.branches = ["main", "fresh"];
+        const page = yield* listRefs(actor, { cwd: root, cursor: 1, query: "release" });
+        expect(page.totalCount).toBe(1);
+        expect(
+          state.requests.filter((request) => request.url.includes("matching-refs")),
+        ).toHaveLength(1);
+        const refreshed = yield* listRefs(actor, { cwd: root, refresh: true });
+        expect(refreshed.refs.map((ref) => ref.name)).toContain("origin/fresh");
+        state.branches = ["main", "newer"];
+        yield* TestClock.adjust("16 seconds");
+        const expired = yield* listRefs(actor, { cwd: root });
+        expect(expired.refs.map((ref) => ref.name)).toContain("origin/newer");
+        expect(
+          state.requests.filter((request) => request.url.includes("matching-refs")),
+        ).toHaveLength(3);
+        expect(state.folderChecks).toBe(4);
+        expect(
+          state.requests.filter((request) => !request.url.includes("matching-refs")),
+        ).toHaveLength(4);
+      }),
   );
 
   it.effect("does not interpret host directories as repositories", () =>

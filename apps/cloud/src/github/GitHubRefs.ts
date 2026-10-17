@@ -5,7 +5,11 @@ import {
   type VcsRef,
 } from "@t3tools/contracts";
 import { dedupeRemoteBranchesWithLocalMatches } from "@t3tools/shared/git";
+import * as Cache from "effect/Cache";
+import * as Data from "effect/Data";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 
 import { DriveDirectory } from "../drive/DriveDirectory.ts";
 import * as CloudThreadService from "../thread/CloudThreadService.ts";
@@ -30,12 +34,22 @@ const notARepository: VcsListRefsResult = {
   totalCount: 0,
 };
 
+class RefKey extends Data.Class<{ readonly repository: string; readonly token: string }> {}
+
 export const makeGitHubRefs = Effect.gen(function* () {
   const github = yield* GitHub;
   const connection = yield* GitHubConnection;
   const userDrives = yield* UserDrives.UserDrives;
   const threads = yield* CloudThreadService.CloudThreadService;
   const directory = yield* Effect.serviceOption(DriveDirectory);
+  const refPages = yield* Cache.makeWith(
+    (key: RefKey) => github.api.listRefs(key.token, key.repository),
+    {
+      capacity: 16,
+      timeToLive: (exit) =>
+        Exit.isSuccess(exit) && exit.value !== null ? "15 seconds" : Duration.zero,
+    },
+  );
 
   return (
     actor: Actor,
@@ -90,9 +104,12 @@ export const makeGitHubRefs = Effect.gen(function* () {
         .repository(token, remote.repository)
         .pipe(Effect.mapError((error) => fail(error.message)));
       if (repository === null) return yield* fail("You can't open this repository on GitHub.");
-      const remoteRefs = yield* github.api
-        .listRefs(token, remote.repository)
-        .pipe(Effect.mapError((error) => fail(error.message)));
+      // Search and paging reuse branch data; the repository check above still runs every time.
+      const key = new RefKey({ repository: remote.repository, token });
+      if (input.refresh === true) yield* Cache.invalidate(refPages, key);
+      const remoteRefs = yield* Cache.get(refPages, key).pipe(
+        Effect.mapError((error) => fail(error.message)),
+      );
       if (remoteRefs === null) return yield* fail("You can't open this repository on GitHub.");
 
       const refs = yield* drive
