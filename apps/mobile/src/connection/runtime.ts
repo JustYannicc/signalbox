@@ -11,11 +11,24 @@ import { Atom } from "effect/reactivity";
 import type { FoundationHotModule } from "../lib/foundation-fast-refresh";
 import { hotSwappableAtomRuntime } from "../lib/hot-swappable-atom-runtime";
 import * as Runtime from "../lib/runtime";
+import * as Tracing from "../features/observability/tracing";
 import { appAtomRegistry } from "../state/atom-registry";
 import * as BackgroundActivity from "./background-activity";
 import * as ConnectionPlatform from "./platform";
 
 declare const module: { readonly hot?: FoundationHotModule } | undefined;
+
+Tracing.configureCloudTraceConnectionProvider(async () => {
+  // These projections depend on this runtime, so resolve them only when a trace is exported.
+  const [{ environmentServerConfigsAtom }, { savedConnectionsByIdAtom }] = await Promise.all([
+    import("../state/server"),
+    import("../state/use-remote-environment-registry"),
+  ]);
+  return Tracing.resolvePrimaryCloudTraceConnection(
+    appAtomRegistry.get(environmentServerConfigsAtom),
+    appAtomRegistry.get(savedConnectionsByIdAtom),
+  );
+});
 
 const layerProvidedConnectionPlatform = ConnectionPlatform.layer.pipe(Layer.provide(Runtime.layer));
 

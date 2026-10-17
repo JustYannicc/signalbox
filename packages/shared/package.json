@@ -3,6 +3,10 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./clientTraceSafety": {
+      "types": "./src/clientTraceSafety.ts",
+      "import": "./src/clientTraceSafety.ts"
+    },
     "./signalboxAppUrl": {
       "types": "./src/signalboxAppUrl.ts",
       "import": "./src/signalboxAppUrl.ts"

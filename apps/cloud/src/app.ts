@@ -21,6 +21,8 @@ import {
   HttpServerResponse,
 } from "effect/http";
 
+import * as ClientTraceIntake from "./observability/ClientTraceIntake.ts";
+import * as ClientTraceRoutes from "./observability/clientTraceRoutes.ts";
 import * as CloudAccounts from "./account/CloudAccounts.ts";
 import * as AssetRoutes from "./assets/assetRoutes.ts";
 import * as CloudAssets from "./assets/CloudAssets.ts";
@@ -88,7 +90,7 @@ export const layerServices = (input: {
   /** The drives bucket and its preview prefix, where attachments live. */
   readonly attachments: AttachmentStorage;
 }) =>
-  CloudAssets.layer.pipe(
+  Layer.merge(CloudAssets.layer, ClientTraceIntake.layer).pipe(
     Layer.provideMerge(
       Layer.mergeAll(
         CloudAccounts.layer,
@@ -124,6 +126,7 @@ type Services = Layer.Success<ReturnType<typeof layerServices>>;
 // Raw account routes resolve services per request, from the context the web
 // handler is built with; the API groups take them when the router is built.
 const routes = Layer.mergeAll(
+  ClientTraceRoutes.layer,
   EnvironmentApi.layer,
   AccountRoutes.layer,
   PreviewOpenRoutes.layer,
