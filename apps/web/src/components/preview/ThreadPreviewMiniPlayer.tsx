@@ -53,6 +53,7 @@ import * as Cause from "effect/Cause";
 import * as Option from "effect/Option";
 
 import { DeviceStreamView } from "../device/DeviceStreamView";
+import { settleDeviceOpenForSurface } from "../device/deviceOpenSurfaceRequest";
 import type { DeviceScreenSize } from "@t3tools/client-runtime/device/stream";
 import type { PreviewStreamViewport } from "@t3tools/client-runtime/preview/server-browser-stream";
 import { previewBridge } from "./previewBridge";
@@ -282,6 +283,7 @@ function DeviceMiniPlayer({
     owner: sourceOwner,
     verified: false,
   }));
+  const leaseOwnershipRef = useRef(leaseOwnership);
   const currentOwnership =
     leaseOwnership.key === sourceOwnerKey
       ? leaseOwnership
@@ -312,39 +314,53 @@ function DeviceMiniPlayer({
   useEffect(() => {
     let cancelled = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
+    let requestController: AbortController | null = null;
     let owner =
       source.sessionId !== undefined && source.leaseId !== undefined
         ? { sessionId: source.sessionId, leaseId: source.leaseId }
         : null;
+    leaseOwnershipRef.current = { key: sourceOwnerKey, owner, verified: false };
     const heartbeat = async () => {
-      const result = await openDeviceLease({
-        environmentId: threadRef.environmentId,
-        input: {
-          threadId: threadRef.threadId,
-          hostId: source.hostId,
-          deviceId: source.deviceId,
-          platform: source.platform,
-          ...(owner === null ? {} : owner),
-        },
-      });
-      if (cancelled) {
-        if (result._tag === "Success") {
-          void closeDeviceLease({
+      const controller = new AbortController();
+      requestController = controller;
+      const settlement = await settleDeviceOpenForSurface({
+        signal: controller.signal,
+        isCurrent: () => !cancelled,
+        open: (signal) =>
+          openDeviceLease(
+            {
+              environmentId: threadRef.environmentId,
+              input: {
+                threadId: threadRef.threadId,
+                hostId: source.hostId,
+                deviceId: source.deviceId,
+                platform: source.platform,
+                ...(owner === null ? {} : owner),
+              },
+            },
+            signal,
+          ),
+        release: (session) =>
+          closeDeviceLease({
             environmentId: threadRef.environmentId,
             input: {
               threadId: threadRef.threadId,
-              hostId: source.hostId,
-              deviceId: source.deviceId,
-              sessionId: result.value.sessionId,
-              leaseId: result.value.leaseId,
+              hostId: session.hostId,
+              deviceId: session.deviceId,
+              sessionId: session.sessionId,
+              leaseId: session.leaseId,
             },
-          });
-        }
-        return;
-      }
+          }),
+        accept: () => undefined,
+      });
+      if (requestController === controller) requestController = null;
+      if (settlement._tag === "Cancelled") return;
+      const result = settlement.result;
       if (result._tag === "Success") {
         owner = { sessionId: result.value.sessionId, leaseId: result.value.leaseId };
-        setLeaseOwnership({ key: sourceOwnerKey, owner, verified: true });
+        const verifiedOwnership = { key: sourceOwnerKey, owner, verified: true };
+        leaseOwnershipRef.current = verifiedOwnership;
+        setLeaseOwnership(verifiedOwnership);
       } else {
         const failure = Option.getOrNull(Cause.findErrorOption(result.cause));
         const staleSession =
@@ -356,7 +372,9 @@ function DeviceMiniPlayer({
           failure.reason === "stale_session";
         if (owner !== null && staleSession) {
           owner = null;
-          setLeaseOwnership({ key: sourceOwnerKey, owner: null, verified: false });
+          const staleOwnership = { key: sourceOwnerKey, owner: null, verified: false };
+          leaseOwnershipRef.current = staleOwnership;
+          setLeaseOwnership(staleOwnership);
           timer = setTimeout(() => void heartbeat(), 0);
           return;
         }
@@ -367,6 +385,8 @@ function DeviceMiniPlayer({
     return () => {
       cancelled = true;
       if (timer !== undefined) clearTimeout(timer);
+      requestController?.abort();
+      requestController = null;
       const released = owner;
       if (preserveLease.current) {
         preserveLease.current = false;
@@ -397,16 +417,17 @@ function DeviceMiniPlayer({
   ]);
 
   const openInPanel = () => {
-    preserveLease.current = true;
+    const ownership =
+      leaseOwnershipRef.current.key === sourceOwnerKey ? leaseOwnershipRef.current : null;
+    const transferredOwner = ownership?.verified ? ownership.owner : null;
+    preserveLease.current = transferredOwner !== null;
     usePreviewMiniPlayerStore.getState().close(threadRef);
     useRightPanelStore.getState().openDevice(threadRef, {
       hostId: source.hostId,
       deviceId: source.deviceId,
       platform: source.platform,
       name: source.name,
-      ...(source.sessionId === undefined || source.leaseId === undefined
-        ? {}
-        : { sessionId: source.sessionId, leaseId: source.leaseId }),
+      ...(transferredOwner === null ? {} : transferredOwner),
     });
   };
 

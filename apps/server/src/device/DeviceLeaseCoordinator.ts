@@ -53,6 +53,7 @@ export type DeviceLeaseAcquireResult =
 export interface DeviceLeaseShutdownClaim {
   readonly key: string;
   readonly leaseId: string;
+  readonly claimId: string;
   readonly target: DeviceLeaseTarget;
 }
 
@@ -436,29 +437,43 @@ export const makeDeviceLeaseCoordinator = (options: { readonly access: DeviceLea
           Effect.gen(function* () {
             const current = yield* store.read(input.key);
             if (!current || current.leaseId !== input.leaseId) return undefined;
-            const owners = current.owners.filter(
+            const now = yield* Clock.currentTimeMillis;
+            const ownership = yield* withoutDeadOwners(current, now);
+            const waiterState = yield* withoutDeadWaiters(ownership.lease, now);
+            const owners = waiterState.lease.owners.filter(
               (owner) => owner.sessionId !== input.sessionId || owner.leaseId !== input.leaseId,
             );
-            if (owners.length === current.owners.length) return undefined;
-            if (owners.length > 0) {
-              yield* store.write(input.key, { ...current, owners });
+            const changed =
+              owners.length !== current.owners.length || ownership.changed || waiterState.changed;
+            if (!changed) return undefined;
+            const ready: DeviceLeaseRecord = {
+              ...waiterState.lease,
+              state: "ready",
+              deviceBooted: target.booted,
+              deviceId: target.id,
+              aliases: [...new Set([...waiterState.lease.aliases, ...deviceAliases(target)])],
+              deviceName: target.name,
+              physical: target.physical,
+              owners,
+              shutdownOwner: undefined,
+            };
+            if (owners.length > 0 || ready.waiters?.length || !current.bootedBySignalbox) {
+              yield* store.write(input.key, ready);
               return undefined;
             }
-            if (!current.bootedBySignalbox) {
-              yield* store.write(input.key, { ...current, state: "ready", owners: [] });
-              return undefined;
-            }
+            const claimId = options.access.createShutdownClaimId();
             const pending = {
-              ...current,
+              ...ready,
               state: "shutting_down" as const,
               owners: [],
               shutdownOwner: {
                 processId: options.access.processId,
                 processIdentity: options.access.processIdentity,
+                claimId,
               },
             };
             yield* store.write(input.key, pending);
-            return { key: input.key, leaseId: input.leaseId, target };
+            return { key: input.key, leaseId: input.leaseId, claimId, target };
           }).pipe(Effect.mapError((cause) => mapStoreError("open", cause))),
         );
       });
@@ -543,17 +558,14 @@ export const makeDeviceLeaseCoordinator = (options: { readonly access: DeviceLea
               const remaining = waiterState.lease.owners.filter(
                 (owner) => !closing.some((closed) => ownerKey(closed) === ownerKey(owner)),
               );
-              if (input.shutdown && (remaining.length > 0 || waiterState.lease.waiters?.length)) {
-                return yield* new DeviceOperationError({
-                  operation: "close",
-                  reason: "busy",
-                  cause: new Error("Another owner or queued walk still depends on this device."),
-                });
-              }
               const nextLease = { ...waiterState.lease, owners: remaining };
               if (remaining.length === 0 && waiterState.lease.waiters?.length) {
                 yield* store
-                  .write(candidate.key, { ...nextLease, state: "ready" })
+                  .write(candidate.key, {
+                    ...nextLease,
+                    state: "ready",
+                    shutdownOwner: undefined,
+                  })
                   .pipe(Effect.mapError((cause) => mapStoreError("close", cause)));
                 return undefined;
               }
@@ -562,6 +574,7 @@ export const makeDeviceLeaseCoordinator = (options: { readonly access: DeviceLea
                 waiterState.lease.deviceBooted &&
                 (waiterState.lease.bootedBySignalbox || input.shutdown)
               ) {
+                const claimId = options.access.createShutdownClaimId();
                 const pending: DeviceLeaseRecord = {
                   ...nextLease,
                   state: "shutting_down",
@@ -569,6 +582,7 @@ export const makeDeviceLeaseCoordinator = (options: { readonly access: DeviceLea
                   shutdownOwner: {
                     processId: options.access.processId,
                     processIdentity: options.access.processIdentity,
+                    claimId,
                   },
                 };
                 yield* store
@@ -577,6 +591,7 @@ export const makeDeviceLeaseCoordinator = (options: { readonly access: DeviceLea
                 return {
                   key: candidate.key,
                   leaseId: ownership.lease.leaseId,
+                  claimId,
                   target,
                 } satisfies DeviceLeaseShutdownClaim;
               }
@@ -600,7 +615,12 @@ export const makeDeviceLeaseCoordinator = (options: { readonly access: DeviceLea
       withLocks(claim.target, "shutdown", () =>
         Effect.gen(function* () {
           const current = yield* store.read(claim.key);
-          if (!current || current.state !== "shutting_down" || current.leaseId !== claim.leaseId)
+          if (
+            !current ||
+            current.state !== "shutting_down" ||
+            current.leaseId !== claim.leaseId ||
+            current.shutdownOwner?.claimId !== claim.claimId
+          )
             return;
           if (succeeded) {
             yield* store.write(

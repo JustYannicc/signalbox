@@ -37,13 +37,13 @@ import * as DeviceHost from "./DeviceHost.ts";
 import { NodeRuntimeUnavailableError } from "@t3tools/shared/nodeRuntime";
 
 import * as DeviceService from "./DeviceService.ts";
+import * as DeviceAgentLiveness from "./DeviceAgentLiveness.ts";
 import {
   deviceLeaseDirectory,
   makeFileDeviceLeaseStore,
   makeMemoryDeviceLeaseStore,
   type DeviceLeaseStore,
 } from "./DeviceLeaseStore.ts";
-import * as ProviderSessionManager from "../orchestration-v2/ProviderSessionManager.ts";
 
 const decodeJson = Schema.decodeUnknownSync(Schema.fromJsonString(Schema.Unknown));
 
@@ -250,13 +250,12 @@ const fixture = Effect.fn("fixture")(function* (
       NetService.layer,
       Layer.succeed(HostProcess.HomeDirectory, hostHomeDirectory ?? process.cwd()),
       Layer.succeed(
-        ProviderSessionManager.ProviderSessionManagerV2,
-        ProviderSessionManager.ProviderSessionManagerV2.of({
+        DeviceAgentLiveness.DeviceAgentLiveness,
+        DeviceAgentLiveness.DeviceAgentLiveness.of({
+          bind: () => Effect.void,
           isLive: (providerSessionId: ProviderSessionId) =>
-            (leaseRuntime.isProviderSessionLive?.(providerSessionId) ?? Effect.succeed(true)).pipe(
-              Effect.map((live) => live === true),
-            ),
-        } as unknown as ProviderSessionManager.ProviderSessionManagerV2["Service"]),
+            leaseRuntime.isProviderSessionLive?.(providerSessionId) ?? Effect.succeed(true),
+        }),
       ),
     ).pipe(Layer.provideMerge(NodeServices.layer));
     service = yield* DeviceService.make({
@@ -1227,10 +1226,11 @@ it.effect("reconciles SSH host settings without publishing no-op changes", () =>
         run: () => Effect.die("Unexpected helper launch"),
       }),
       Effect.provideService(
-        ProviderSessionManager.ProviderSessionManagerV2,
-        ProviderSessionManager.ProviderSessionManagerV2.of({
+        DeviceAgentLiveness.DeviceAgentLiveness,
+        DeviceAgentLiveness.DeviceAgentLiveness.of({
+          bind: () => Effect.void,
           isLive: () => Effect.succeed(true),
-        } as unknown as ProviderSessionManager.ProviderSessionManagerV2["Service"]),
+        }),
       ),
       Effect.provideService(
         HttpClient.HttpClient,

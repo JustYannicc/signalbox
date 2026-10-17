@@ -76,6 +76,7 @@ import * as McpHttpServer from "./mcp/McpHttpServer.ts";
 import * as McpSessionRegistry from "./mcp/McpSessionRegistry.ts";
 import * as PreviewAutomationBroker from "./mcp/PreviewAutomationBroker.ts";
 import * as DeviceService from "./device/DeviceService.ts";
+import * as DeviceAgentLiveness from "./device/DeviceAgentLiveness.ts";
 import * as DeviceHubProxy from "./device/DeviceHubProxy.ts";
 import * as PreviewManager from "./preview/Manager.ts";
 import * as PortScanner from "./preview/PortScanner.ts";
@@ -426,7 +427,6 @@ const layerDevice = DeviceService.layer.pipe(
   Layer.provide(layerServerSettings),
   Layer.provide(ProcessRunner.layer),
   Layer.provide(NetService.layer),
-  Layer.provide(RuntimeLayer.layerProviderSessionManagerProvided),
 );
 
 const layerWorkspaceEntries = WorkspaceEntries.layer.pipe(Layer.provide(WorkspacePaths.layer));
@@ -486,17 +486,21 @@ const layerScheduledTaskWebhookOrigin = Layer.effect(
   }),
 );
 
-const layerOrchestrationV2Runtime = RuntimeLayer.layerProduction.pipe(
-  Layer.provide(layerScheduledTaskWebhookOrigin),
-  Layer.provide(ProviderEventIngestor.layerAnalytics),
-  Layer.provide(layerCheckpointStore),
-  Layer.provide(layerGitWorkflow),
-  Layer.provide(ResourceCleanupService.layer),
-  Layer.provide(
-    RunFinalizationService.layerObserver.pipe(
-      Layer.provide(ProjectionStoreV2.layer),
-      Layer.provide(layerPullRequestService),
-      Layer.provide(RuntimeLayer.layerProjectService),
+const layerOrchestrationV2Runtime = RuntimeLayer.layerBindDeviceAgentLiveness.pipe(
+  Layer.provideMerge(
+    RuntimeLayer.layerProduction.pipe(
+      Layer.provide(layerScheduledTaskWebhookOrigin),
+      Layer.provide(ProviderEventIngestor.layerAnalytics),
+      Layer.provide(layerCheckpointStore),
+      Layer.provide(layerGitWorkflow),
+      Layer.provide(ResourceCleanupService.layer),
+      Layer.provide(
+        RunFinalizationService.layerObserver.pipe(
+          Layer.provide(ProjectionStoreV2.layer),
+          Layer.provide(layerPullRequestService),
+          Layer.provide(RuntimeLayer.layerProjectService),
+        ),
+      ),
     ),
   ),
 );
@@ -681,6 +685,7 @@ const layerRuntimeDependencies = layerRuntimeCoreDependencies.pipe(
   Layer.provideMerge(DirectEndpoints.layer),
   Layer.provideMerge(ServerLifecycleEvents.layer),
   Layer.provide(NetService.layer),
+  Layer.provideMerge(DeviceAgentLiveness.layer),
 );
 
 const layerCommandReadiness = HttpRouter.middleware(

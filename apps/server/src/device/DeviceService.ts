@@ -46,6 +46,7 @@ import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http";
 
 import * as ServerSettings from "../serverSettings.ts";
 import { isLocalSshDeviceHost, remoteSshDeviceHosts } from "./localSshDeviceHost.ts";
+import * as DeviceAgentLiveness from "./DeviceAgentLiveness.ts";
 
 import { readDeviceDetail, runDeviceAction } from "./DeviceActions.ts";
 import * as ProcessRunner from "../processRunner.ts";
@@ -79,7 +80,6 @@ import {
   makeFileDeviceLeaseStore,
   makeMemoryDeviceLeaseStore,
 } from "./DeviceLeaseStore.ts";
-import * as ProviderSessionManager from "../orchestration-v2/ProviderSessionManager.ts";
 
 export const DEVICE_HUB_ROUTE_PREFIX = "/api/device-hub";
 
@@ -1029,7 +1029,6 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
             return yield* new DeviceNotFoundError({ hostId: host.id, deviceId: input.deviceId });
           }
           const target = leaseTarget(deviceToOpen);
-          let cleanupRegistered = false;
           const result = yield* Effect.uninterruptibleMask((restore) =>
             Effect.acquireUseRelease(
               leases.acquire({
@@ -1041,23 +1040,17 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
               (acquired): Effect.Effect<DeviceLeaseOpenAttempt, DeviceError> => {
                 if (acquired._tag === "Waiting") return restore(Effect.succeed(acquired));
                 return restore(
-                  Effect.suspend((): Effect.Effect<DeviceLeaseOpenAttempt, DeviceError> => {
-                    cleanupRegistered = true;
-                    return performOpen(
-                      acquired.session,
-                      acquired.shouldBoot,
-                      acquired.created,
-                      deviceToOpen,
-                      target,
-                    ).pipe(Effect.map((session) => ({ _tag: "Opened" as const, session })));
-                  }),
+                  performOpen(
+                    acquired.session,
+                    acquired.shouldBoot,
+                    acquired.created,
+                    deviceToOpen,
+                    target,
+                  ).pipe(Effect.map((session) => ({ _tag: "Opened" as const, session }))),
                 );
               },
               (acquired, exit) =>
-                acquired._tag === "Acquired" &&
-                acquired.created &&
-                !cleanupRegistered &&
-                Exit.isFailure(exit)
+                acquired._tag === "Acquired" && acquired.created && Exit.isFailure(exit)
                   ? cleanupProvisional(acquired.session, target)
                   : Effect.void,
             ),
@@ -1525,7 +1518,7 @@ export const make = (
     const path = yield* Path.Path;
     const runner = yield* ProcessRunner.ProcessRunner;
     const settings = yield* ServerSettings.ServerSettingsService;
-    const providerSessions = yield* ProviderSessionManager.ProviderSessionManagerV2;
+    const agentLiveness = yield* DeviceAgentLiveness.DeviceAgentLiveness;
     const scope = yield* Scope.Scope;
     const hosts = new Map<DeviceHostId, DeviceHost.DeviceHost["Service"]>([
       [localHost.id, localHost],
@@ -1591,8 +1584,7 @@ export const make = (
         ),
       {
         store: makeFileDeviceLeaseStore(deviceLeaseDirectory(yield* HostProcess.HomeDirectory)),
-        isProviderSessionLive: (providerSessionId: ProviderSessionId) =>
-          providerSessions.isLive(providerSessionId),
+        isProviderSessionLive: agentLiveness.isLive,
         ...(options.automaticCleanup === undefined
           ? {}
           : { automaticCleanup: options.automaticCleanup }),

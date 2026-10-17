@@ -54,91 +54,122 @@ it.effect("shares lease records between independent stores using the same root",
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 
-it.effect(
-  "serializes stale reapers across two stores and fences release to its lock generation",
-  () =>
-    Effect.gen(function* () {
-      const root = yield* Effect.promise(() =>
-        NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "device-lease-reaper-")),
-      );
-      const key = `${LOCAL_DEVICE_HOST_ID}\u0000avd:signalbox-pixel`;
-      const operationLock = `${root}/${Buffer.from(key).toString("base64url")}.operation.lock`;
-      const bothReapers = yield* Deferred.make<void>();
-      const reapingAllowed = yield* Deferred.make<void>();
-      const entered = yield* Deferred.make<void>();
-      const criticalSectionMayFinish = yield* Deferred.make<void>();
-      let reaperCount = 0;
-      let active = 0;
-      let peak = 0;
+it.effect("fences a delayed stale reaper from moving a replacement lock across two stores", () =>
+  Effect.gen(function* () {
+    const root = yield* Effect.promise(() =>
+      NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "device-lease-reaper-")),
+    );
+    const key = `${LOCAL_DEVICE_HOST_ID}\u0000avd:signalbox-pixel`;
+    const operationLock = `${root}/${Buffer.from(key).toString("base64url")}.operation.lock`;
+    const bothVerified = yield* Deferred.make<void>();
+    const firstMayReap = yield* Deferred.make<void>();
+    const secondMayReap = yield* Deferred.make<void>();
+    const firstEntered = yield* Deferred.make<void>();
+    const secondEntered = yield* Deferred.make<void>();
+    const secondReapAttempted = yield* Deferred.make<void>();
+    const finishFirst = yield* Deferred.make<void>();
+    const finishSecond = yield* Deferred.make<void>();
+    let verifiedCount = 0;
+    let reapAttemptCount = 0;
+    let entryCount = 0;
+    let secondReapMoved: boolean | undefined;
+    let active = 0;
+    let peak = 0;
 
-      yield* Effect.ensuring(
-        Effect.gen(function* () {
-          yield* Effect.promise(async () => {
+    yield* Effect.ensuring(
+      Effect.gen(function* () {
+        yield* Effect.promise(async () => {
+          await NodeFSP.mkdir(operationLock);
+          await NodeFSP.writeFile(
+            `${operationLock}/owner.json`,
+            JSON.stringify({
+              pid: 2_147_483_647,
+              processIdentity: "dead-owner",
+              token: "generation-a",
+            }),
+          );
+        });
+        const options = {
+          waitAttempts: 20,
+          waitInterval: 0,
+          onDeadOwnerGenerationVerified: () =>
+            Effect.gen(function* () {
+              const ordinal = ++verifiedCount;
+              if (ordinal === 2) yield* Deferred.succeed(bothVerified, undefined);
+              yield* Deferred.await(ordinal === 1 ? firstMayReap : secondMayReap);
+            }),
+          onDeadOwnerReapAttempted: (moved: boolean) =>
+            Effect.gen(function* () {
+              reapAttemptCount++;
+              if (reapAttemptCount === 2) {
+                secondReapMoved = moved;
+                yield* Deferred.succeed(secondReapAttempted, undefined);
+              }
+            }),
+        };
+        const first = makeFileDeviceLeaseStore(root, options);
+        const second = makeFileDeviceLeaseStore(root, options);
+        const criticalSection = Effect.gen(function* () {
+          active++;
+          peak = Math.max(peak, active);
+          const ordinal = ++entryCount;
+          if (ordinal === 1) {
+            yield* Deferred.succeed(firstEntered, undefined);
+            yield* Deferred.await(finishFirst);
+          } else {
+            yield* Deferred.succeed(secondEntered, undefined);
+            yield* Deferred.await(finishSecond);
+          }
+          active--;
+        });
+        const firstLock = yield* Effect.forkChild(first.withLock(key, criticalSection));
+        const secondLock = yield* Effect.forkChild(second.withLock(key, criticalSection));
+        yield* Deferred.await(bothVerified);
+        expect(verifiedCount).toBe(2);
+        yield* Deferred.succeed(firstMayReap, undefined);
+        yield* Deferred.await(firstEntered);
+        expect(peak).toBe(1);
+        yield* Deferred.succeed(secondMayReap, undefined);
+        yield* Deferred.await(secondReapAttempted);
+        expect(secondReapMoved).toBe(false);
+        expect(yield* Deferred.isDone(secondEntered)).toBe(false);
+        const replacementOwner = JSON.parse(
+          yield* Effect.promise(() => NodeFSP.readFile(`${operationLock}/owner.json`, "utf8")),
+        ) as { token: string };
+        expect(replacementOwner.token).not.toBe("generation-a");
+
+        yield* Deferred.succeed(finishFirst, undefined);
+        yield* Deferred.await(secondEntered);
+        expect(peak).toBe(1);
+        yield* Deferred.succeed(finishSecond, undefined);
+        yield* Fiber.join(firstLock);
+        yield* Fiber.join(secondLock);
+        expect(peak).toBe(1);
+
+        yield* first.withLock(
+          key,
+          Effect.promise(async () => {
+            await NodeFSP.rm(operationLock, { recursive: true, force: true });
             await NodeFSP.mkdir(operationLock);
             await NodeFSP.writeFile(
               `${operationLock}/owner.json`,
               JSON.stringify({
-                pid: 2_147_483_647,
-                processIdentity: "dead-owner",
-                token: "generation-a",
+                pid: process.pid,
+                processIdentity: currentDeviceLeaseProcessIdentity,
+                token: "generation-b",
               }),
             );
-          });
-          const options = {
-            waitAttempts: 20,
-            waitInterval: 0,
-            onDeadOwnerObserved: () =>
-              Effect.gen(function* () {
-                reaperCount++;
-                if (reaperCount === 2) yield* Deferred.succeed(bothReapers, undefined);
-                yield* Deferred.await(reapingAllowed);
-              }),
-          };
-          const first = makeFileDeviceLeaseStore(root, options);
-          const second = makeFileDeviceLeaseStore(root, options);
-          const criticalSection = Effect.gen(function* () {
-            active++;
-            peak = Math.max(peak, active);
-            yield* Deferred.succeed(entered, undefined);
-            yield* Deferred.await(criticalSectionMayFinish);
-            active--;
-          });
-          const firstLock = yield* Effect.forkChild(first.withLock(key, criticalSection));
-          const secondLock = yield* Effect.forkChild(second.withLock(key, criticalSection));
-          yield* Deferred.await(bothReapers);
-          expect(reaperCount).toBe(2);
-          yield* Deferred.succeed(reapingAllowed, undefined);
-          yield* Deferred.await(entered);
-          expect(peak).toBe(1);
-          yield* Deferred.succeed(criticalSectionMayFinish, undefined);
-          yield* Fiber.join(firstLock);
-          yield* Fiber.join(secondLock);
-          expect(peak).toBe(1);
-
-          yield* first.withLock(
-            key,
-            Effect.promise(async () => {
-              await NodeFSP.rm(operationLock, { recursive: true, force: true });
-              await NodeFSP.mkdir(operationLock);
-              await NodeFSP.writeFile(
-                `${operationLock}/owner.json`,
-                JSON.stringify({
-                  pid: process.pid,
-                  processIdentity: currentDeviceLeaseProcessIdentity,
-                  token: "generation-b",
-                }),
-              );
-            }),
-          );
-          const replacementJson = yield* Effect.promise(() =>
-            NodeFSP.readFile(`${operationLock}/owner.json`, "utf8"),
-          );
-          const replacement = JSON.parse(replacementJson) as { token: string };
-          expect(replacement.token).toBe("generation-b");
-        }),
-        Effect.promise(() => NodeFSP.rm(root, { recursive: true, force: true })),
-      );
-    }),
+          }),
+        );
+        const replacementJson = yield* Effect.promise(() =>
+          NodeFSP.readFile(`${operationLock}/owner.json`, "utf8"),
+        );
+        const replacement = JSON.parse(replacementJson) as { token: string };
+        expect(replacement.token).toBe("generation-b");
+      }),
+      Effect.promise(() => NodeFSP.rm(root, { recursive: true, force: true })),
+    );
+  }),
 );
 
 it("keeps process start identity stable when the caller timezone changes", () => {

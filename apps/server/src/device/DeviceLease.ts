@@ -4,8 +4,10 @@ import * as Schema from "effect/Schema";
 export const DEVICE_IDLE_TIMEOUT_MS = 30 * 60_000;
 export const DEVICE_CLEANUP_INTERVAL = "5 minutes";
 export const DEVICE_LEASE_WAIT_INTERVAL = "250 millis";
-export const DEVICE_LEASE_WAIT_ATTEMPTS = 1_200;
 export const DEVICE_LEASE_WAIT_TIMEOUT_MS = 5 * 60_000;
+export const DEVICE_LEASE_WAIT_INTERVAL_MS = 250;
+export const DEVICE_LEASE_WAIT_ATTEMPTS =
+  DEVICE_LEASE_WAIT_TIMEOUT_MS / DEVICE_LEASE_WAIT_INTERVAL_MS;
 export const DEVICE_OWNER_HEARTBEAT_TIMEOUT_MS = 15 * 60_000;
 export const DEVICE_OWNER_HEARTBEAT_INTERVAL_MS = 60_000;
 
@@ -38,6 +40,7 @@ export type DeviceLeaseWaiter = typeof DeviceLeaseWaiter.Type;
 export const DeviceLeaseShutdownOwner = Schema.Struct({
   processId: Schema.Int,
   processIdentity: Schema.String,
+  claimId: Schema.optional(Schema.String),
 });
 export type DeviceLeaseShutdownOwner = typeof DeviceLeaseShutdownOwner.Type;
 

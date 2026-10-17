@@ -1,3 +1,6 @@
+// @effect-diagnostics nodeBuiltinImport:off - Shutdown claims need a per-claim generation ID.
+import * as NodeCrypto from "node:crypto";
+
 import { DeviceOperationError, ProviderSessionId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
@@ -6,7 +9,6 @@ import {
   deviceAliases,
   leaseMatchesDevice,
   ownerLiveness,
-  DEVICE_LEASE_WAIT_TIMEOUT_MS,
   type DeviceLeaseRecord,
   type DeviceLeaseTarget,
   type DeviceOwnerLiveness,
@@ -25,12 +27,14 @@ export interface DeviceLeaseAccessOptions {
   readonly processIdentity: string;
   readonly isOwnerProcessLive: (pid: number, identity: string) => DeviceOwnerLiveness;
   readonly isProviderSessionLive?: (sessionId: ProviderSessionId) => Effect.Effect<boolean | null>;
+  readonly createShutdownClaimId?: () => string;
 }
 
 export interface DeviceLeaseAccess {
   readonly store: DeviceLeaseStore;
   readonly processId: number;
   readonly processIdentity: string;
+  readonly createShutdownClaimId: () => string;
   readonly isOwnerProcessLive: (pid: number, identity: string) => DeviceOwnerLiveness;
   readonly mapStoreError: (operation: string, cause: DeviceLeaseStoreError) => DeviceOperationError;
   readonly withLocks: <A, E>(
@@ -183,7 +187,7 @@ export const makeDeviceLeaseAccess = (options: DeviceLeaseAccessOptions): Device
       })),
     );
 
-  const withoutDeadWaiters: DeviceLeaseAccess["withoutDeadWaiters"] = (lease, now) =>
+  const withoutDeadWaiters: DeviceLeaseAccess["withoutDeadWaiters"] = (lease, _now) =>
     Effect.forEach(lease.waiters ?? [], (waiter) =>
       (waiter.kind === "agent" &&
       waiter.providerSessionId &&
@@ -204,10 +208,7 @@ export const makeDeviceLeaseAccess = (options: DeviceLeaseAccessOptions): Device
     ).pipe(
       Effect.map((waiters) => {
         const remaining = waiters
-          .filter(
-            (entry) =>
-              entry.status !== "dead" && entry.waiter.queuedAt > now - DEVICE_LEASE_WAIT_TIMEOUT_MS,
-          )
+          .filter((entry) => entry.status !== "dead")
           .map((entry) => entry.waiter);
         return {
           lease: { ...lease, ...(lease.waiters === undefined ? {} : { waiters: remaining }) },
@@ -220,6 +221,7 @@ export const makeDeviceLeaseAccess = (options: DeviceLeaseAccessOptions): Device
     store: options.store,
     processId: options.processId,
     processIdentity: options.processIdentity,
+    createShutdownClaimId: options.createShutdownClaimId ?? NodeCrypto.randomUUID,
     isOwnerProcessLive: options.isOwnerProcessLive,
     mapStoreError,
     withLocks,

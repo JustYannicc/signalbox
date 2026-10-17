@@ -110,6 +110,9 @@ const isMissing = (cause: unknown): boolean =>
 const isExists = (cause: unknown): boolean =>
   typeof cause === "object" && cause !== null && "code" in cause && cause.code === "EEXIST";
 
+const isNotEmpty = (cause: unknown): boolean =>
+  typeof cause === "object" && cause !== null && "code" in cause && cause.code === "ENOTEMPTY";
+
 export const currentDeviceLeaseProcessId = NodeProcess.pid;
 
 export const deviceLeaseProcessIdentity = (pid: number): string | undefined => {
@@ -185,6 +188,8 @@ export const makeFileDeviceLeaseStore = (
     readonly waitAttempts?: number;
     readonly waitInterval?: Duration.Input;
     readonly onDeadOwnerObserved?: () => Effect.Effect<void>;
+    readonly onDeadOwnerGenerationVerified?: () => Effect.Effect<void>;
+    readonly onDeadOwnerReapAttempted?: (moved: boolean) => Effect.Effect<void>;
   } = {},
 ): DeviceLeaseStore => {
   const recordPath = (key: string) => NodePath.join(rootDirectory, `${safeSegment(key)}.json`);
@@ -236,7 +241,6 @@ export const makeFileDeviceLeaseStore = (
   ): Effect.Effect<string, DeviceLeaseStoreError> => {
     const token = NodeCrypto.randomUUID();
     const ownerFile = (lock: string) => NodePath.join(lock, "owner.json");
-    const reapGuardPath = lockPath(key, "reap");
     const boundedWait = (retry: () => Effect.Effect<string, DeviceLeaseStoreError>) =>
       remaining <= 1
         ? Effect.fail(
@@ -295,52 +299,41 @@ export const makeFileDeviceLeaseStore = (
             if (
               reapDeadOwner &&
               owner !== undefined &&
+              owner.token !== undefined &&
+              owner.token.length > 0 &&
               deviceLeaseProcessLiveness(owner.pid, owner.processIdentity) === "dead"
             ) {
               yield* options.onDeadOwnerObserved?.() ?? Effect.void;
-              // Only one contender may decide whether a dead operation lock is still the
-              // generation it observed. The guard is fail-closed when its owner is unknown.
-              const reapToken = NodeCrypto.randomUUID();
-              const guardAttempt = yield* acquireOnce(reapGuardPath, reapToken).pipe(
-                Effect.map((guard) => ({ _tag: "Guard" as const, guard })),
-                Effect.catchTags({
-                  LockBusyError: () => Effect.succeed({ _tag: "Busy" as const }),
-                }),
-              );
-              if (guardAttempt._tag === "Busy") {
-                return yield* boundedWait(() => acquire(key, path, remaining - 1, reapDeadOwner));
-              }
-              return yield* Effect.acquireUseRelease(
-                Effect.succeed(guardAttempt.guard),
-                () =>
-                  Effect.gen(function* () {
-                    const current = Option.getOrUndefined(yield* readLockOwner(path));
-                    if (
-                      current !== undefined &&
-                      current.token === owner.token &&
-                      current.pid === owner.pid &&
-                      current.processIdentity === owner.processIdentity &&
-                      deviceLeaseProcessLiveness(current.pid, current.processIdentity) === "dead"
-                    ) {
-                      const expiredPath = `${path}.expired.${NodeCrypto.randomUUID()}`;
-                      yield* Effect.tryPromise({
-                        try: async () => {
-                          await NodeFSP.rename(path, expiredPath);
-                          await NodeFSP.rm(expiredPath, { recursive: true, force: true });
-                        },
-                        catch: (cause) =>
-                          new DeviceLeaseStoreError({ key, reason: "write_failed", cause }),
-                      }).pipe(
-                        Effect.catchTags({
-                          DeviceLeaseStoreError: (error) =>
-                            isMissing(error.cause) ? Effect.void : Effect.fail(error),
-                        }),
-                      );
+              const current = Option.getOrUndefined(yield* readLockOwner(path));
+              if (
+                current !== undefined &&
+                current.token === owner.token &&
+                current.pid === owner.pid &&
+                current.processIdentity === owner.processIdentity &&
+                deviceLeaseProcessLiveness(current.pid, current.processIdentity) === "dead"
+              ) {
+                yield* options.onDeadOwnerGenerationVerified?.() ?? Effect.void;
+                const expiredPath = `${path}.expired.${safeSegment(owner.token)}`;
+                const moved = yield* Effect.tryPromise({
+                  try: async () => {
+                    try {
+                      await NodeFSP.rename(path, expiredPath);
+                      return true;
+                    } catch (cause) {
+                      if (isMissing(cause) || isExists(cause) || isNotEmpty(cause)) return false;
+                      throw cause;
                     }
-                    return yield* acquire(key, path, remaining - 1, reapDeadOwner);
-                  }),
-                (owner) => release(reapGuardPath, owner),
-              );
+                  },
+                  catch: (cause) =>
+                    new DeviceLeaseStoreError({ key, reason: "write_failed", cause }),
+                });
+                yield* options.onDeadOwnerReapAttempted?.(moved) ?? Effect.void;
+                if (moved) {
+                  // Keep the generation tombstone: a contender paused after reading this dead
+                  // owner must not be able to rename a replacement lock at the same path.
+                  return yield* acquire(key, path, remaining - 1, reapDeadOwner);
+                }
+              }
             }
             return yield* boundedWait(() => acquire(key, path, remaining - 1, reapDeadOwner));
           }),

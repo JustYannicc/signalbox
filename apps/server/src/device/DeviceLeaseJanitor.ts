@@ -146,6 +146,7 @@ export const makeDeviceLeaseJanitor = (
               cause: new Error("Another walk is waiting for this device."),
             });
           }
+          const claimId = access.createShutdownClaimId();
           const pending: DeviceLeaseRecord = {
             ...waiterState.lease,
             state: "shutting_down",
@@ -153,6 +154,7 @@ export const makeDeviceLeaseJanitor = (
             shutdownOwner: {
               processId: access.processId,
               processIdentity: access.processIdentity,
+              claimId,
             },
           };
           yield* store
@@ -166,9 +168,15 @@ export const makeDeviceLeaseJanitor = (
             booted: current.deviceBooted,
             physical: current.physical,
           } satisfies DeviceLeaseTarget;
-          return { key, leaseId: current.leaseId, target };
+          return {
+            key,
+            leaseId: current.leaseId,
+            claimId,
+            target,
+          };
         }
 
+        const claimId = access.createShutdownClaimId();
         const pending: DeviceLeaseRecord = {
           version: 1,
           leaseId: input.leaseId,
@@ -187,12 +195,13 @@ export const makeDeviceLeaseJanitor = (
           shutdownOwner: {
             processId: access.processId,
             processIdentity: access.processIdentity,
+            claimId,
           },
         };
         yield* store
           .write(key, pending)
           .pipe(Effect.mapError((cause) => mapStoreError("shutdown", cause)));
-        return { key, leaseId: pending.leaseId, target: input.target };
+        return { key, leaseId: pending.leaseId, claimId, target: input.target };
       }),
     );
 
@@ -302,6 +311,7 @@ export const makeDeviceLeaseJanitor = (
                 status: "would_shutdown" as const,
               };
             }
+            const claimId = access.createShutdownClaimId();
             const pending = {
               ...waiterState.lease,
               state: "shutting_down" as const,
@@ -309,6 +319,7 @@ export const makeDeviceLeaseJanitor = (
               shutdownOwner: {
                 processId: access.processId,
                 processIdentity: access.processIdentity,
+                claimId,
               },
             };
             yield* store
@@ -318,7 +329,7 @@ export const makeDeviceLeaseJanitor = (
               hostId: current.hostId,
               deviceId: current.deviceId,
               status: "shutdown_pending" as const,
-              claim: { key: entry.key, leaseId: pending.leaseId, target },
+              claim: { key: entry.key, leaseId: pending.leaseId, claimId, target },
             };
           }),
         );

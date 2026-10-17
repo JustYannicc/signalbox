@@ -96,6 +96,7 @@ export function DevicePanel(props: {
     if (!props.visible || !target) return;
     let cancelled = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
+    let requestController: AbortController | null = null;
     let owner = panelSessionRef.current;
     if (
       owner &&
@@ -105,37 +106,47 @@ export function DevicePanel(props: {
     )
       owner = null;
     const heartbeat = async () => {
-      const result = await open({
-        environmentId,
-        input: {
-          threadId,
-          hostId: target.hostId,
-          deviceId: target.deviceId,
-          platform: target.platform,
-          ...(owner !== null
-            ? { sessionId: owner.sessionId, leaseId: owner.leaseId }
-            : !targetLeaseConsumed.current &&
-                target.sessionId !== undefined &&
-                target.leaseId !== undefined
-              ? { sessionId: target.sessionId, leaseId: target.leaseId }
-              : {}),
-        },
-      });
-      if (cancelled) {
-        if (result._tag === "Success") {
-          void close({
+      const controller = new AbortController();
+      requestController = controller;
+      const settlement = await settleDeviceOpenForSurface({
+        signal: controller.signal,
+        isCurrent: () => !cancelled,
+        open: (signal) =>
+          open(
+            {
+              environmentId,
+              input: {
+                threadId,
+                hostId: target.hostId,
+                deviceId: target.deviceId,
+                platform: target.platform,
+                ...(owner !== null
+                  ? { sessionId: owner.sessionId, leaseId: owner.leaseId }
+                  : !targetLeaseConsumed.current &&
+                      target.sessionId !== undefined &&
+                      target.leaseId !== undefined
+                    ? { sessionId: target.sessionId, leaseId: target.leaseId }
+                    : {}),
+              },
+            },
+            signal,
+          ),
+        release: (session) =>
+          close({
             environmentId,
             input: {
               threadId,
-              hostId: target.hostId,
-              deviceId: target.deviceId,
-              sessionId: result.value.sessionId,
-              leaseId: result.value.leaseId,
+              hostId: session.hostId,
+              deviceId: session.deviceId,
+              sessionId: session.sessionId,
+              leaseId: session.leaseId,
             },
-          });
-        }
-        return;
-      }
+          }),
+        accept: () => undefined,
+      });
+      if (requestController === controller) requestController = null;
+      if (settlement._tag === "Cancelled") return;
+      const result = settlement.result;
       if (result._tag === "Success") {
         owner = result.value;
         panelSessionRef.current = owner;
@@ -177,6 +188,8 @@ export function DevicePanel(props: {
     return () => {
       cancelled = true;
       if (timer !== undefined) clearTimeout(timer);
+      requestController?.abort();
+      requestController = null;
       const released = owner;
       if (preserveLeaseForFloat.current) {
         preserveLeaseForFloat.current = false;

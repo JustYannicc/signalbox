@@ -36,6 +36,11 @@ import { HttpServer } from "effect/http";
 import { ProviderWorkspaceMissingError } from "../provider/Errors.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as ProjectService from "../project/ProjectService.ts";
+import * as DeviceAgentLiveness from "../device/DeviceAgentLiveness.ts";
+import { makeDeviceLeaseAccess } from "../device/DeviceLeaseAccess.ts";
+import { makeMemoryDeviceLeaseStore } from "../device/DeviceLeaseStore.ts";
+import type { DeviceLeaseRecord } from "../device/DeviceLease.ts";
+import * as RuntimeLayer from "./runtimeLayer.ts";
 import * as McpProviderSession from "@t3tools/provider-core/server/mcpSession";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as McpSessionRegistry from "../mcp/McpSessionRegistry.ts";
@@ -488,6 +493,7 @@ function layerTest(input: {
   readonly scopeCloseReached?: Deferred.Deferred<void>;
   readonly serverSettingsLayer?: ReturnType<typeof ServerSettings.layerTest>;
   readonly projectServiceLayer?: Layer.Layer<ProjectService.ProjectService>;
+  readonly providerTurnAnalyticsLayer?: Layer.Layer<never>;
 }) {
   const layerConfiguredEventSink =
     input.flakyReleaseWrites !== undefined
@@ -565,6 +571,9 @@ function layerTest(input: {
           layerTestStores,
           ...(input.serverSettingsLayer === undefined ? [] : [input.serverSettingsLayer]),
           ...(input.projectServiceLayer === undefined ? [] : [input.projectServiceLayer]),
+          ...(input.providerTurnAnalyticsLayer === undefined
+            ? []
+            : [input.providerTurnAnalyticsLayer]),
         ),
       ),
     ),
@@ -2850,6 +2859,85 @@ it.effect("ProviderSessionManagerV2 checks liveness without delaying idle releas
     });
 
     yield* effect.pipe(Effect.provide(layerTest({ state, idleTimeoutMs: 1000 })));
+  }),
+);
+
+it.effect("DeviceAgentLiveness tracks the composed provider session manager", () =>
+  Effect.gen(function* () {
+    const state = yield* Ref.make(emptyState);
+    const projectServiceLayer = Layer.mock(ProjectService.ProjectService)({
+      getById: (projectId) => Effect.succeed(Option.some(makeBrowserAccessProject(projectId))),
+    });
+    const providerTurnAnalyticsLayer = Layer.succeed(ProviderEventIngestor.ProviderTurnAnalytics, {
+      record: () => Effect.void,
+    });
+    const effect = Effect.gen(function* () {
+      yield* RuntimeLayer.bindDeviceAgentLiveness;
+      const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+      const liveness = yield* DeviceAgentLiveness.DeviceAgentLiveness;
+      const { threadId, providerSessionId } = yield* openSessionWithBackgroundCommand(
+        "provider-session-manager-device-liveness",
+      );
+      const store = yield* makeMemoryDeviceLeaseStore;
+      const access = makeDeviceLeaseAccess({
+        store,
+        processId: 41,
+        processIdentity: "server-start-41",
+        isOwnerProcessLive: () => "unknown",
+        isProviderSessionLive: liveness.isLive,
+      });
+      const lease: DeviceLeaseRecord = {
+        version: 1,
+        leaseId: "stale-device-heartbeat",
+        state: "ready",
+        deviceBooted: true,
+        hostId: "local",
+        platform: "android",
+        canonicalDeviceId: "avd:signalbox-pixel",
+        deviceId: "emulator-5554",
+        aliases: ["emulator-5554", "avd:signalbox-pixel", "signalbox-pixel"],
+        deviceName: "signalbox-pixel",
+        physical: false,
+        bootedBySignalbox: true,
+        lastDeviceActivityAt: 0,
+        owners: [
+          {
+            sessionId: "owner-session",
+            leaseId: "stale-device-heartbeat",
+            threadId,
+            kind: "agent",
+            providerSessionId,
+            processId: 41,
+            processIdentity: "server-start-41",
+            openedAt: "2026-10-17T00:00:00.000Z",
+            lastActivityAt: 0,
+            lastHeartbeatAt: 0,
+          },
+        ],
+      };
+
+      const active = yield* access.assessOwners(lease, 20 * 60_000);
+      assert.equal(active[0]?.status, "live");
+
+      yield* manager.close(providerSessionId);
+
+      const released = yield* access.assessOwners(lease, 20 * 60_000);
+      assert.equal(released[0]?.status, "dead");
+    });
+
+    yield* effect.pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          layerTest({
+            state,
+            idleTimeoutMs: 60_000,
+            projectServiceLayer,
+            providerTurnAnalyticsLayer,
+          }),
+          DeviceAgentLiveness.layer,
+        ),
+      ),
+    );
   }),
 );
 
