@@ -128,6 +128,11 @@ export function AutomationPage(props: {
       replace: true,
     });
   };
+  // Runs only draw on the live diagram, so picking one leaves the draft.
+  const pickRun = (runId: string, view: AutomationView) => {
+    setPickedSide({ side: "live", runId });
+    show(view, runId);
+  };
   const nextRun = nextRunText(automation);
   const TriggerIcon = triggerIcon(automation);
   const selectedRun = detail.runs.find((run) => run.id === shownRunId) ?? runDetail?.run ?? null;
@@ -202,7 +207,7 @@ export function AutomationPage(props: {
           selectedId={shownRunId}
           // A run's chat stays a chat; from the diagram or the code, the run traces on the
           // live diagram, since runs don't draw on a draft.
-          onSelect={(runId) => show(props.view === "run" ? "run" : "diagram", runId)}
+          onSelect={(runId) => pickRun(runId, props.view === "run" ? "run" : "diagram")}
         />
         {props.view === "code" ? (
           <AutomationSourceView
@@ -219,7 +224,7 @@ export function AutomationPage(props: {
               run={runDetail}
               version={automation.version}
               triggerIcon={TriggerIcon}
-              onShowOnDiagram={() => show("diagram", runDetail.run.id)}
+              onShowOnDiagram={() => pickRun(runDetail.run.id, "diagram")}
             />
           ) : runQuery.error ? (
             <Notice title="Couldn't load this run">{runQuery.error}</Notice>
@@ -237,7 +242,7 @@ export function AutomationPage(props: {
               selectedRun={selectedRun}
               runError={props.runId ? runQuery.error : null}
               triggerIcon={TriggerIcon}
-              onSelectRun={(runId) => show("diagram", runId)}
+              onSelectRun={(runId) => pickRun(runId, "diagram")}
               onOpenRunChat={(runId) => show("run", runId)}
               onShowLine={(line) => show("code", props.runId, line)}
               draft={shownDraft}
