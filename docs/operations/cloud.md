@@ -873,6 +873,10 @@ Alchemy keeps its state in the account (`Cloudflare.state()`: an
 Durable Object migrations itself, so new Durable Object classes go in the stack
 as a new binding; the `migrations` in `wrangler.jsonc` are for `wrangler dev`.
 
+Roll back a bad deploy of an Alchemy-managed Worker with `wrangler rollback`
+to an earlier version, never by reverting the merge: a revert deploys again
+and replays the legacy migration tags.
+
 Closing a pull request also deletes its R2 prefix and removes its pool links
 from production. The close workflow destroys the preview's stage first (and
 deletes any Worker or container a wrangler-era preview left), then asks

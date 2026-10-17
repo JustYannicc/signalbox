@@ -42,6 +42,7 @@ import * as PoolDirectory from "../pool/PoolDirectory.ts";
 import * as UserPreviewSetup from "../previewSetup/UserPreviewSetup.ts";
 import * as PushNotifier from "../push/PushNotifier.ts";
 import * as CloudThreadService from "../thread/CloudThreadService.ts";
+import * as ThreadsLive from "../thread/ThreadsLive.ts";
 import * as ModelManifest from "../thread/ModelManifest.ts";
 import { scriptedProviderEnabled } from "../thread/scriptedProvider.ts";
 import type { MachineBackendEnv } from "../thread/runner/MachineBackend.ts";
@@ -231,7 +232,7 @@ const makeRuntime = (storage: DurableObjectStorage, env: UserObjectEnv) => {
             Layer.mergeAll(
               UserShell.layer,
               UserThreadStatus.layer,
-              CloudThreadService.layer,
+              CloudThreadService.layer.pipe(Layer.provideMerge(ThreadsLive.layer)),
               PoolSignIns.layer,
               drives.services,
               ConnectionLinks.layer,
@@ -258,7 +259,13 @@ const makeRuntime = (storage: DurableObjectStorage, env: UserObjectEnv) => {
               KindClassifier.layerFromEnv(env).pipe(Layer.provide(FetchHttpClient.layer)),
               layerAlarm(storage),
               layerLoginAlarm(storage),
-              PushNotifier.layerWithDevices(decodeEnvironmentId(env.ENVIRONMENT_ID)).pipe(
+              Layer.unwrap(
+                Effect.map(UserStore.UserStore, (store) =>
+                  PushNotifier.layerWithDevices(decodeEnvironmentId(env.ENVIRONMENT_ID), (sid) =>
+                    Effect.map(store.findSession(sid), (session) => session !== null),
+                  ),
+                ),
+              ).pipe(
                 Layer.provide(
                   Layer.mergeAll(
                     FetchHttpClient.layer,
