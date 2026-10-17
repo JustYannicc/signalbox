@@ -47,15 +47,6 @@ export function useEnvironmentCanWriteModelSettings(
   return environmentCanWriteModelSettings(config?.environment.capabilities);
 }
 
-export function readEnvironmentCanWriteModelSettings(
-  environmentId: EnvironmentId | null | undefined,
-): boolean {
-  if (environmentId == null) return true;
-  return environmentCanWriteModelSettings(
-    appAtomRegistry.get(environmentServerConfigsAtom).get(environmentId)?.environment.capabilities,
-  );
-}
-
 /**
  * Whether to show environments at all: pickers, lists, Add environment, pairing, the local
  * environment and its network access. Signalbox Cloud is the user's one environment and says

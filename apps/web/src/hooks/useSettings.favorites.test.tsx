@@ -21,7 +21,6 @@ const state = vi.hoisted(() => ({
 
 vi.mock("~/state/environmentCapabilities", async (importOriginal) => ({
   ...(await importOriginal<typeof import("~/state/environmentCapabilities")>()),
-  readEnvironmentCanWriteModelSettings: () => state.modelSettingsWritable,
   useEnvironmentCanWriteModelSettings: () => state.modelSettingsWritable,
 }));
 
