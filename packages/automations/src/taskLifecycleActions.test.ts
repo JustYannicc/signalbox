@@ -172,6 +172,10 @@ const harness = (options: HarnessOptions = {}) =>
 
     return {
       actions: makeTaskLifecycleActions({ threads, records }),
+      recreateActions: () => makeTaskLifecycleActions({ threads, records }),
+      advanceThread: () => {
+        thread = { ...thread, updatedAt: at(10) };
+      },
       dispatches,
       recordReads,
       records,
@@ -452,6 +456,55 @@ describe("task lifecycle actions", () => {
           "thread.settle",
           "thread.settle",
         ]);
+      }),
+    ),
+  );
+  it.effect("recovers a persisted settlement after the caller is gone", () =>
+    withDatabase(
+      Effect.gen(function* () {
+        const setup = yield* harness({ failFirstSettle: true });
+        yield* Effect.flip(
+          setup.actions.act({
+            threadId: THREAD_ID,
+            action: "complete",
+            outcome: "Shipped",
+            expectedGeneration: 0,
+            commandId: "recover-completion",
+          }),
+        );
+        const pending = yield* setup.records.recordPendingCompletions();
+        expect(pending).toHaveLength(1);
+        yield* setup.recreateActions().recoverPendingCompletion(pending[0]!);
+        expect(setup.thread().archivedAt).not.toBeNull();
+        expect(yield* setup.records.recordPendingCompletions()).toEqual([]);
+        expect(setup.dispatches.map((command) => command.commandId)).toEqual([
+          "recover-completion",
+          "recover-completion",
+        ]);
+      }),
+    ),
+  );
+
+  it.effect("discards a persisted settlement when new work changed its snapshot", () =>
+    withDatabase(
+      Effect.gen(function* () {
+        const setup = yield* harness({ failFirstSettle: true });
+        yield* Effect.flip(
+          setup.actions.act({
+            threadId: THREAD_ID,
+            action: "complete",
+            outcome: "Old work",
+            expectedGeneration: 0,
+            commandId: "stale-recovery",
+          }),
+        );
+        const pending = yield* setup.records.recordPendingCompletions();
+        setup.advanceThread();
+        const recovered = yield* setup.recreateActions().recoverPendingCompletion(pending[0]!);
+        expect(recovered?.record?.outcome).toBeNull();
+        expect(setup.thread().archivedAt).toBeNull();
+        expect(setup.dispatches).toHaveLength(1);
+        expect(yield* setup.records.recordPendingCompletions()).toEqual([]);
       }),
     ),
   );

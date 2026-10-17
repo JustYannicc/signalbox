@@ -1,4 +1,9 @@
-import { CommandId, ThreadId, type OrchestrationV2DomainEvent } from "@t3tools/contracts";
+import {
+  AutomationError,
+  CommandId,
+  ThreadId,
+  type OrchestrationV2DomainEvent,
+} from "@t3tools/contracts";
 import type { TaskLifecycleInput, TaskLifecycleResult } from "@t3tools/contracts/taskLifecycle";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -6,7 +11,8 @@ import * as Effect from "effect/Effect";
 import { fail } from "./errors.ts";
 import type { AutomationThreadsShape } from "./host.ts";
 import { isTerminalRunStatus } from "./runs.ts";
-import type { TaskLifecycleRecords } from "./taskLifecycle.ts";
+import type { TaskLifecycleRecords, TaskLifecyclePendingCompletion } from "./taskLifecycle.ts";
+import { TransientFailure } from "./stepPolicy.ts";
 
 /** The same lifecycle operation serves clients, agents and automation steps. */
 export const makeTaskLifecycleActions = (deps: {
@@ -70,19 +76,34 @@ export const makeTaskLifecycleActions = (deps: {
           current.runs.some((run) => !isTerminalRunStatus(run.status))
         )
           return unchanged();
-        // The record precedes the event so the early-settle automation sees this was automatic.
+        const settleCommandId =
+          input.commandId ??
+          `task:complete:${input.threadId}:${(current.record?.generation ?? 0) + (resumingCompletion ? 0 : 1)}`;
+        // The durable intent precedes the event so a restart can finish this exact settlement.
         const saved = resumingCompletion
           ? { record: current.record, applied: false }
-          : yield* deps.records.apply({ ...input, expectedUpdatedAt: undefined });
+          : yield* deps.records.recordPendingCompletion({
+              ...input,
+              outcome: input.outcome,
+              expectedUpdatedAt: undefined,
+              snapshotAt: DateTime.formatIso(current.thread.updatedAt),
+              settleCommandId,
+            });
         if (!saved.applied && !resumingCompletion) return { ...current, ...saved };
         yield* dispatch({
           type: "thread.settle",
-          commandId: CommandId.make(
-            input.commandId ?? `task:complete:${input.threadId}:${saved.record?.generation}`,
-          ),
+          commandId: CommandId.make(settleCommandId),
           threadId: ThreadId.make(input.threadId),
           snapshotAt: current.thread.updatedAt,
-        });
+        }).pipe(
+          Effect.mapError(
+            (cause) =>
+              new AutomationError({
+                message: cause.message,
+                cause: new TransientFailure(cause.message, { cause }),
+              }),
+          ),
+        );
         const after = yield* snapshot(input.threadId);
         if (after.thread.archivedAt === null) {
           // A message won the host's snapshot guard. Its new work must not inherit this outcome.
@@ -92,6 +113,12 @@ export const makeTaskLifecycleActions = (deps: {
           });
           return { ...(yield* snapshot(input.threadId)), applied: false };
         }
+        if (saved.record !== null)
+          yield* deps.records.clearPendingCompletion({
+            threadId: input.threadId,
+            generation: saved.record.generation,
+            commandId: settleCommandId,
+          });
         return { ...after, applied: true };
       }
       if (input.action === "reopen") {
@@ -146,6 +173,50 @@ export const makeTaskLifecycleActions = (deps: {
       }),
     );
 
+  const recoverPendingCompletion = (
+    pending: TaskLifecyclePendingCompletion,
+  ): Effect.Effect<TaskLifecycleResult | null, AutomationError> =>
+    Effect.gen(function* () {
+      const shell = yield* deps.threads.getThreadShell(ThreadId.make(pending.threadId));
+      const record = yield* deps.records.read(pending.threadId);
+      if (
+        shell === null ||
+        shell.deletedAt !== null ||
+        shell.archivedAt !== null ||
+        record?.generation !== pending.generation
+      ) {
+        yield* deps.records.clearPendingCompletion(pending);
+        return null;
+      }
+      const current = yield* snapshot(pending.threadId);
+      if (
+        DateTime.formatIso(shell.updatedAt) !== pending.snapshotAt ||
+        current.runs.some((run) => !isTerminalRunStatus(run.status))
+      ) {
+        yield* deps.records.reopen({
+          threadId: pending.threadId,
+          expectedGeneration: pending.generation,
+        });
+        return { ...(yield* snapshot(pending.threadId)), applied: false };
+      }
+      yield* dispatch({
+        type: "thread.settle",
+        threadId: ThreadId.make(pending.threadId),
+        commandId: CommandId.make(pending.commandId),
+        snapshotAt: DateTime.makeUnsafe(pending.snapshotAt),
+      });
+      const after = yield* snapshot(pending.threadId);
+      if (after.thread.archivedAt === null) {
+        yield* deps.records.reopen({
+          threadId: pending.threadId,
+          expectedGeneration: pending.generation,
+        });
+        return { ...(yield* snapshot(pending.threadId)), applied: false };
+      }
+      yield* deps.records.clearPendingCompletion(pending);
+      return null;
+    });
+
   /** A message or explicit reopen invalidates outcomes from an earlier settlement. */
   const onDomainEvent = (event: OrchestrationV2DomainEvent) =>
     event.type === "thread.unsettled" || event.type === "thread.unarchived"
@@ -161,7 +232,7 @@ export const makeTaskLifecycleActions = (deps: {
             .pipe(Effect.map(({ applied }) => applied));
         })
       : Effect.succeed(false);
-  return { act, onDomainEvent };
+  return { act, onDomainEvent, recoverPendingCompletion };
 };
 
 export type TaskLifecycleActions = ReturnType<typeof makeTaskLifecycleActions>;

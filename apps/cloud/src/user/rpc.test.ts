@@ -22,6 +22,7 @@ import * as RpcTest from "effect/rpc/RpcTest";
 import { SignalboxContextId } from "@t3tools/contracts/signalboxContexts";
 
 import * as Environment from "../environment.ts";
+import { pauseTaskDone } from "../automations/taskLifecycleTesting.ts";
 import { makeMemoryCloud } from "../testing.ts";
 import { scriptedModelSelection, scriptedReply } from "../thread/scriptedProvider.ts";
 import { projectIdForContext } from "./contextProjects.ts";
@@ -41,6 +42,7 @@ const connect = (
   Effect.gen(function* () {
     const cloud = makeMemoryCloud();
     yield* cloud.userDirectory.forUser(userId).recordSignIn({ id: userId, email: "a@b.c" });
+    yield* pauseTaskDone(cloud, userId, Environment.SCRATCH_PROJECT_ID);
     const rpc = yield* RpcTest.makeClient(CloudRpc.CloudRpcGroup).pipe(
       Effect.provide(
         Layer.mergeAll(

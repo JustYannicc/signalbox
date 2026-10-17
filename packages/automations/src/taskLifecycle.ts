@@ -330,6 +330,7 @@ export const makeTaskRecords = Effect.gen(function* () {
 
   const apply = (
     input: TaskLifecycleInput,
+    pending?: { readonly snapshotAt: string; readonly commandId: string },
   ): Effect.Effect<TaskLifecycleStoreResult, AutomationError> => {
     switch (input.action) {
       case "read":
@@ -396,6 +397,16 @@ export const makeTaskRecords = Effect.gen(function* () {
                 generation = excluded.generation,
                 updated_at = excluded.updated_at
             `;
+            if (input.action === "complete" && pending !== undefined) {
+              yield* sql`
+                INSERT INTO ${sql(pendingCompletionTable)} (
+                  thread_id, generation, snapshot_at, command_id, outcome, settled_at
+                ) VALUES (
+                  ${input.threadId}, ${generation}, ${pending.snapshotAt}, ${pending.commandId},
+                  ${input.outcome ?? ""}, ${settledAt}
+                )
+              `;
+            }
             if (input.action === "record-settle") {
               yield* sql`
                 INSERT INTO signalbox_automation_task_lifecycle_settlements (
@@ -474,6 +485,44 @@ export const makeTaskRecords = Effect.gen(function* () {
       }),
     );
 
+  const recordPendingCompletion = (input: TaskLifecyclePendingCompletionInput) =>
+    apply(
+      { ...input, action: "complete" },
+      {
+        snapshotAt: input.snapshotAt,
+        commandId: input.settleCommandId,
+      },
+    );
+  const recordPendingCompletions = () =>
+    run(
+      "pendingCompletions",
+      sql<PendingCompletionRow>`SELECT * FROM ${sql(pendingCompletionTable)}`.pipe(
+        Effect.map((rows): ReadonlyArray<TaskLifecyclePendingCompletion> =>
+          rows.map((row) => ({
+            threadId: row.thread_id,
+            generation: row.generation,
+            snapshotAt: row.snapshot_at,
+            commandId: row.command_id,
+            outcome: row.outcome,
+            settledAt: row.settled_at,
+          })),
+        ),
+      ),
+    );
+  const clearPendingCompletion = (input: {
+    readonly threadId: string;
+    readonly generation: number;
+    readonly commandId: string;
+  }) =>
+    run(
+      "clearPendingCompletion",
+      sql<{ thread_id: string }>`
+      DELETE FROM ${sql(pendingCompletionTable)}
+      WHERE thread_id = ${input.threadId} AND generation = ${input.generation} AND command_id = ${input.commandId}
+      RETURNING thread_id
+    `.pipe(Effect.map((rows) => rows.length > 0)),
+    );
+
   const propose = (input: TaskLifecycleProposeInput) => apply({ ...input, action: "propose" });
   const complete = (input: TaskLifecycleOutcomeInput) => apply({ ...input, action: "complete" });
   const recordSettle = (
@@ -483,7 +532,19 @@ export const makeTaskRecords = Effect.gen(function* () {
     input.reason == null ? complete(input) : recordSettle({ ...input, reason: input.reason });
   const reopen = (input: TaskLifecycleReopenInput) => apply({ ...input, action: "reopen" });
 
-  return { read, setConditionRunId, apply, propose, complete, recordSettle, recordOutcome, reopen };
+  return {
+    read,
+    setConditionRunId,
+    apply,
+    propose,
+    complete,
+    recordPendingCompletion,
+    recordPendingCompletions,
+    clearPendingCompletion,
+    recordSettle,
+    recordOutcome,
+    reopen,
+  };
 });
 
 export type TaskLifecycleRecords = Effect.Success<typeof makeTaskRecords>;

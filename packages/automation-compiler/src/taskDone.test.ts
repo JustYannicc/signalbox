@@ -39,7 +39,7 @@ type LifecycleState = {
     pullRequests: PullRequest[];
   };
   runs: Array<{ status: string }>;
-  messages: Array<{ role: string; text: string }>;
+  messages: Array<{ role: string; text: string; id?: string }>;
   record: { generation: number; condition: { summary: string; input?: unknown } | null } | null;
   applied: boolean;
 };
@@ -78,6 +78,7 @@ const lifecycle = (overrides: Partial<LifecycleState> = {}): LifecycleState => (
 function fixture(
   options: {
     kind?: "task" | "chat";
+    messages?: LifecycleState["messages"];
     pullRequests?: PullRequest[];
     unsettledAt?: string | null;
     otherThreads?: Record<string, { archivedAt?: string | null; unsettledAt?: string | null }>;
@@ -103,6 +104,7 @@ function fixture(
   const sourceState = (threadId = "task-1") =>
     lifecycle({
       kind: options.kind ?? "task",
+      messages: options.messages ?? lifecycle().messages,
       thread: {
         ...lifecycle().thread,
         id: threadId,
@@ -229,6 +231,18 @@ function fixture(
 }
 
 describe("Task done automation", () => {
+  it("does not propose conditions for an automation's helper thread", async () => {
+    const setup = fixture({
+      messages: [
+        { id: "automation:run:step:message", role: "user", text: "Judge the original task" },
+      ],
+    });
+    const body = await loadBody();
+    await body(setup.w, { threadId: "task-1" }, { event: "thread.created" });
+    expect(setup.llmCalls).toEqual([]);
+    expect(setup.agents).toEqual([]);
+    expect(setup.calls.every((call) => call.args.action === "read")).toBe(true);
+  });
   it("archives the default merged-PR condition only after live or no-deploy proof", async () => {
     for (const state of ["live", "none"] as const) {
       const test = fixture({ verification: [{ state }] });

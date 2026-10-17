@@ -915,7 +915,9 @@ export const makeEngine = <R>(
       tick: built.tick.pipe(
         Effect.ensuring(sources.tick),
         Effect.ensuring(external.poll),
-        Effect.ensuring(taskLifecycleRuns.recoverPending),
+        Effect.ensuring(
+          taskLifecycleRuns.recoverPending.pipe(logFailure("Task completion recovery failed")),
+        ),
       ),
       drain: built.drain,
     } satisfies WorkflowEngineShape;

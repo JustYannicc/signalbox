@@ -5,13 +5,14 @@ import { compileWorkflow } from "./compileWorkflow.ts";
 
 const compiled = compileWorkflow(SETTLE_TASK);
 if (!compiled.ok) throw new Error(JSON.stringify(compiled.diagnostics, null, 2));
+const workerModule = compiled.workflow.workerModule!;
 
 type Receiver = Record<string, (...args: Array<unknown>) => unknown>;
 type Body = (w: Receiver, input: unknown) => Promise<unknown>;
 
 async function loadBody(): Promise<Body> {
   const module = await import(
-    /* @vite-ignore */ `data:text/javascript,${encodeURIComponent(compiled.workflow.workerModule!)}`
+    /* @vite-ignore */ `data:text/javascript,${encodeURIComponent(workerModule)}`
   );
   return module.load((body: Body) => body) as Body;
 }

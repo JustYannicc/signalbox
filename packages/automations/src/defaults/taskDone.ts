@@ -47,7 +47,7 @@ type Lifecycle = {
   kind: "chat" | "task";
   thread: Thread;
   runs: Run[];
-  messages: Array<{ role: string; text: string }>;
+  messages: Array<{ id?: string; role: string; text: string }>;
   record: {
     generation: number;
     condition: { summary: string; input?: unknown } | null;
@@ -407,6 +407,8 @@ export default workflow(async (w, input: Input, event: Event & { at?: string }) 
     await w.waitFor("Wait for the task's request", { on: "message.sent", where: { threadId } });
     state = await read(w, threadId, true);
   }
+  if (state.messages.find((message) => message.role === "user")?.id?.startsWith("automation:"))
+    return "The parent automation owns this helper thread's completion.";
   if (state.kind !== "task") return "Chats have no done-condition.";
 
   const manual = input.condition !== undefined;
