@@ -1,4 +1,4 @@
-import { memo, type MouseEventHandler, type PointerEventHandler } from "react";
+import { memo, useEffect, useState, type MouseEventHandler, type PointerEventHandler } from "react";
 import { CheckIcon, ChevronDownIcon, ChevronLeftIcon, Minimize2Icon, PlayIcon } from "lucide-react";
 import { CornerUpRight, ListPlus } from "lucide";
 import { MorphIcon } from "~/components/MorphIcon";
@@ -78,6 +78,11 @@ const formatPendingPrimaryActionLabel = (input: {
   return input.questionIndex > 0 ? "Submit answers" : "Submit answer";
 };
 
+// A stop can take seconds to land, and then this slot becomes Resume, so
+// repeat Stop clicks would resume the run. Stop re-enables if it never lands.
+const STOP_PENDING_MAX_MS = 10_000;
+const RESUME_AFTER_STOP_GUARD_MS = 1_000;
+
 const messageActionPillClassName =
   "inline-flex shrink-0 cursor-pointer items-center justify-center gap-1.5 whitespace-nowrap rounded-full bg-message-action font-medium text-base text-message-action-foreground shadow-xs shadow-message-action/24 outline-none hover:bg-message-action-hover focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background disabled:pointer-events-none disabled:opacity-64 disabled:shadow-none sm:text-sm";
 
@@ -116,6 +121,15 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
   onToggleKeepFullHistory,
 }: ComposerPrimaryActionsProps) {
   const environmentCopy = useOneEnvironmentCopy(); // signalbox
+  const [isStopping, setIsStopping] = useState(false);
+  useEffect(() => {
+    if (!isStopping) return;
+    const timeout = setTimeout(
+      () => setIsStopping(false),
+      canInterrupt ? STOP_PENDING_MAX_MS : RESUME_AFTER_STOP_GUARD_MS,
+    );
+    return () => clearTimeout(timeout);
+  }, [isStopping, canInterrupt]);
   const pointerFocusProps = preserveComposerFocusOnPointerDown
     ? { onPointerDown: preventPointerFocus }
     : undefined;
@@ -142,15 +156,17 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
           <button
             type="button"
             className={cn(
-              "flex shrink-0 cursor-pointer items-center justify-center rounded-full bg-destructive/90 text-white shadow-xs shadow-destructive/24 inset-shadow-control-highlight transition-colors duration-150 hover:bg-destructive active:inset-shadow-control-pressed active:shadow-none [&_svg]:pointer-events-none",
+              "flex shrink-0 cursor-pointer items-center justify-center rounded-full bg-destructive/90 text-white shadow-xs shadow-destructive/24 inset-shadow-control-highlight transition-colors duration-150 hover:bg-destructive active:inset-shadow-control-pressed active:shadow-none disabled:cursor-default disabled:opacity-64 disabled:hover:bg-destructive/90 [&_svg]:pointer-events-none",
               insidePendingAction ? "size-8 sm:size-7" : "size-8 sm:h-8 sm:w-8",
             )}
             {...pointerFocusProps}
-            disabled={!canOperateThread}
+            disabled={!canOperateThread || isStopping}
             onClick={() => {
-              if (canOperateThread) onInterrupt();
+              if (!canOperateThread || isStopping) return;
+              setIsStopping(true);
+              onInterrupt();
             }}
-            aria-label="Stop generation"
+            aria-label={isStopping ? "Stopping" : "Stop generation"}
           />
         }
       >
@@ -158,7 +174,7 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
           <rect x="2" y="2" width="8" height="8" rx="1.5" />
         </svg>
       </TooltipTrigger>
-      <TooltipPopup>Interrupt</TooltipPopup>
+      <TooltipPopup>{isStopping ? "Stopping…" : "Interrupt"}</TooltipPopup>
     </Tooltip>
   );
 
@@ -327,6 +343,7 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
         isSendDisabled ||
         isConnecting ||
         isEnvironmentUnavailable ||
+        (showResume && isStopping) ||
         (!hasSendableContent && !showResume)
       }
       aria-label={submitStatus ?? submitLabel}
