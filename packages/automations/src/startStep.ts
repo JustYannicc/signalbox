@@ -16,12 +16,19 @@ import type { EngineServices } from "./engineTypes.ts";
 import { fail } from "./errors.ts";
 import { isExternalRunSystem, type ExternalRuns } from "./external.ts";
 import { asRecord, fromJson, toJson } from "./json.ts";
-import { modelPrompt } from "./modelSteps.ts";
-import type { AutomationFunctions, CallbackLink } from "./host.ts";
+import { modelPrompt, modelResult } from "./modelSteps.ts";
+import type { AutomationFunctions, AutomationModelSteps, CallbackLink } from "./host.ts";
 import { waitsOnEvents } from "./events/runWaits.ts";
 import { explained } from "./runLog.ts";
 import { retryAfterMs, retryPolicy, stepTimeoutMs } from "./stepPolicy.ts";
-import { httpRequest, isRetryableStatus, launchAgent, wakeAt, type StepStart } from "./steps.ts";
+import {
+  httpRequest,
+  isRetryableStatus,
+  launchAgent,
+  modelFor,
+  wakeAt,
+  type StepStart,
+} from "./steps.ts";
 import { nowIso } from "./time.ts";
 import type { AutomationRow, RunRow, StepRow, WorkflowStore } from "./WorkflowStore.ts";
 
@@ -42,6 +49,7 @@ export interface StartStepDependencies {
   readonly store: WorkflowStore;
   readonly services: Context.Context<EngineServices>;
   readonly functions: AutomationFunctions["Service"];
+  readonly models: AutomationModelSteps["Service"] | undefined;
   /** `w.run` on another system's runners. */
   readonly external: Pick<ExternalRuns, "start">;
   readonly connections: Effect.Success<typeof makeConnections>;
@@ -83,8 +91,32 @@ export const makeStartStep =
         return thread();
       case "llm":
       case "judge":
-      case "extract":
-        return thread(modelPrompt(step.verb, step.label, asRecord(first)));
+      case "extract": {
+        const verb = step.verb;
+        const options = asRecord(first);
+        const prompt = modelPrompt(verb, step.label, options);
+        const models = deps.models;
+        if (models === undefined) return thread(prompt);
+        return Effect.gen(function* () {
+          const modelSelection = yield* modelFor(options, defaults());
+          const attempts = retryPolicy(verb, args).attempts;
+          // Hosted runners retry failed host calls independently of the step's policy.
+          for (let attempt = step.attempt; ; attempt++) {
+            const text = yield* models.complete({
+              projectId: automation.project_id,
+              modelSelection,
+              prompt,
+            });
+            const result = modelResult(verb, options, text);
+            if (result.ok) return { type: "done", value: result.value } satisfies StepOutcome;
+            if (attempt >= attempts) return yield* fail(result.error);
+          }
+        }).pipe(
+          Effect.provideContext(deps.services),
+          Effect.timeout(stepTimeoutMs(verb, args) ?? "10 minutes"),
+          Effect.catchTags({ TimeoutError: () => fail("The model step timed out.") }),
+        );
+      }
       case "http":
         return Effect.gen(function* () {
           const value = yield* httpRequest(first, {
