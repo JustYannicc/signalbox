@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vite-plus/test";
 
-import { redactEgressResponse } from "./egressResponse.ts";
+import { redactEgressResponse } from "../EgressResponse.ts";
 
 const utf8 = new TextEncoder();
 const values = ["1", "abc", 'a"b', "abcdefg", "sk-throwaway-charset-fixture", "é"];

@@ -1,12 +1,14 @@
 // @effect-diagnostics globalFetch:off - the machine's requests pass through the Workers runtime's own fetch, streams untouched, outside Effect.
 import { listedNames } from "@signalbox/runner-protocol/SecretPlaceholders";
 
-import type { SecretValues } from "../runner/secretValues.ts";
-import type { EgressDispatchAnswer } from "./egressDispatch.ts";
-import { redactEgressResponse } from "./egressResponse.ts";
-import { readEgressRequest } from "./egressRequest.ts";
-import { bridgeWebSocket, isWebSocketUpgrade } from "./webSocketBridge.ts";
-import type { SendAnswer, SendRequest } from "./ThreadSends.ts";
+import type { SecretValues } from "./runner/secretValues.ts";
+import type { EgressDispatchAnswer } from "./EgressDispatch.ts";
+import { redactEgressResponse } from "./EgressResponse.ts";
+import { MAX_READ_BODY, readEgressRequest } from "./egress/egressRequest.ts";
+import { bridgeWebSocket, isWebSocketUpgrade } from "./egress/webSocketBridge.ts";
+import type { SendAnswer, SendRequest } from "./egressTypes.ts";
+
+export { MAX_READ_BODY };
 
 /**
  * Every HTTP and HTTPS request a thread's light machine makes (#592),

@@ -7,9 +7,9 @@ import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as SqlClient from "effect/sql/SqlClient";
 
-import { freshDatabase, launch, withObject } from "../runner/runnerTestKit.ts";
+import { freshDatabase, launch, withObject } from "../runnerTesting.ts";
 import { ThreadStore } from "../ThreadStore.ts";
-import { makeEgressDispatch } from "./egressDispatch.ts";
+import { makeEgressDispatch } from "../EgressDispatch.ts";
 
 const oldValue = `sk-old-${crypto.randomUUID()}`;
 const runId = RunId.make("dispatch-test-run");

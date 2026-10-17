@@ -1,8 +1,7 @@
 // @effect-diagnostics cryptoRandomUUID:off - generated throwaway values, never vault credentials.
 import { describe, expect, it } from "vite-plus/test";
-import { serveEgress as serveProductionEgress } from "./egress.ts";
-import { serveWithFakeNetwork as serveEgress } from "./egressTestKit.ts";
-import { MAX_READ_BODY } from "./egressRequest.ts";
+import { MAX_READ_BODY, serveEgress as serveProductionEgress } from "../Egress.ts";
+import { serveWithFakeNetwork as serveEgress } from "../tests/egressTestKit.ts";
 
 const value = `sk-throwaway-${crypto.randomUUID()}`;
 const authoritySecret = `sk-${crypto.randomUUID()}`;

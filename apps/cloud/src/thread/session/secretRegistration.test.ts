@@ -6,8 +6,8 @@ import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as SqlClient from "effect/sql/SqlClient";
 
-import { serveEgress } from "../egress/egress.ts";
-import { readSecretSources } from "../egress/secretSendTables.ts";
+import { serveEgress } from "../Egress.ts";
+import { readSecretSources } from "../secretRegistrationTesting.ts";
 import {
   connect,
   freshDatabase,
@@ -16,9 +16,9 @@ import {
   send,
   turnReport,
   withObject,
-} from "../runner/runnerTestKit.ts";
+} from "../runnerTesting.ts";
 import { ThreadStore } from "../ThreadStore.ts";
-import { serveSessionRequest } from "./sessionRoutes.ts";
+import { serveSessionRequest } from "../SessionRoutes.ts";
 
 const values = [{ name: "KEY", value: "registration-fixture-canary" }];
 const environment = OnePasswordEnvironmentId.make("registration-env");

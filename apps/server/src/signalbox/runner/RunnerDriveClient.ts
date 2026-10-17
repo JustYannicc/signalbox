@@ -1,6 +1,7 @@
 import {
   DRIVE_PATHS,
   type DriveAccess,
+  type DriveCheckpointRecord,
   type DriveState,
   driveJson,
   MAX_PACK_BYTES,
@@ -85,6 +86,10 @@ export interface DriveClient {
   ) => Effect.Effect<RefWriteResult, DriveClientError>;
   readonly mirror: (
     request: typeof ReconcileRequest.Type,
+  ) => Effect.Effect<RefWriteResult, DriveClientError>;
+  /** Registers immutable checkpoint metadata after its notes pack is uploaded. */
+  readonly recordCheckpoint: (
+    record: DriveCheckpointRecord,
   ) => Effect.Effect<RefWriteResult, DriveClientError>;
   /** Where git fetches the drive's remote through the cloud. */
   readonly remoteUrl: string;
@@ -348,6 +353,12 @@ export const makeDriveClient = Effect.fn("makeDriveClient")(function* (input: {
       writeRefs(DRIVE_PATHS.reconcile, driveJson.reconcile.encode(request), "reconciling main"),
     mirror: (request) =>
       writeRefs(DRIVE_PATHS.mirror, driveJson.mirror.encode(request), "mirroring the remote"),
+    recordCheckpoint: (record) =>
+      writeRefs(
+        DRIVE_PATHS.checkpoint,
+        driveJson.checkpoint.encode(record),
+        "recording a checkpoint",
+      ),
     remoteUrl: `${origin}${DRIVE_PATHS.remote}`,
     shortcuts: (have) =>
       postJson(

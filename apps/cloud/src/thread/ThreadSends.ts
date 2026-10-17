@@ -17,13 +17,14 @@ import * as Option from "effect/Option";
 import * as Semaphore from "effect/Semaphore";
 import * as SqlClient from "effect/sql/SqlClient";
 
-import { UserDirectory } from "../../user/UserDirectory.ts";
-import { systemNoticeEvents } from "../runner/runnerEvents.ts";
-import { activeRun } from "../runLifecycle.ts";
-import { approvalRequestEvents } from "../runtimeRequests.ts";
-import * as ThreadEngine from "../ThreadEngine.ts";
-import { ThreadStore } from "../ThreadStore.ts";
-import { makeEgressDispatch, type EgressDispatchAnswer } from "./egressDispatch.ts";
+import type { SendAnswer, SendRequest } from "./egressTypes.ts";
+import { UserDirectory } from "../user/UserDirectory.ts";
+import { systemNoticeEvents } from "./runner/runnerEvents.ts";
+import { activeRun } from "./runLifecycle.ts";
+import { approvalRequestEvents } from "./runtimeRequests.ts";
+import * as ThreadEngine from "./ThreadEngine.ts";
+import { ThreadStore } from "./ThreadStore.ts";
+import { makeEgressDispatch, type EgressDispatchAnswer } from "./EgressDispatch.ts";
 import {
   countSecretAsks,
   markAskKept,
@@ -31,7 +32,7 @@ import {
   readSecretSources,
   saveSecretAsk,
   type SecretAsk,
-} from "./secretSendTables.ts";
+} from "./egress/secretSendTables.ts";
 
 /**
  * Whether the thread's machine may send its secrets somewhere (#592): the
@@ -51,17 +52,7 @@ import {
  * thread's transcript, so anyone can see where it went.
  */
 
-export type SendAnswer =
-  | { readonly _tag: "allowed" }
-  | { readonly _tag: "refused"; readonly message: string }
-  | { readonly _tag: "waiting"; readonly message: string };
-
-/** One request's question to the gate: its host, the secrets it carries, how long it may wait. */
-export interface SendRequest {
-  readonly host: string;
-  readonly names: ReadonlyArray<string>;
-  readonly waitMs: number;
-}
+export type { SendAnswer, SendRequest } from "./egressTypes.ts";
 
 export class ThreadSends extends Context.Service<
   ThreadSends,
@@ -75,7 +66,7 @@ export class ThreadSends extends Context.Service<
     /** Sends under the current secret registration revision. */
     readonly dispatch: (request: Request, revision: number) => Effect.Effect<EgressDispatchAnswer>;
   }
->()("@signalbox/cloud/thread/egress/ThreadSends") {}
+>()("@signalbox/cloud/thread/ThreadSends") {}
 
 /** The answers a send ask offers, in the order clients lay them out. */
 const askOptions = (host: string) =>

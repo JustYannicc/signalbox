@@ -5,15 +5,13 @@ import { RunId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as SqlClient from "effect/sql/SqlClient";
 
-import { migrateSecretSends } from "../egress/secretSendTables.ts";
 import {
-  migrateCurrentSecretValues,
-  migrateSecretRunIdentity,
-  migrateSecretValues,
   beginSecretRun,
+  migrateSecretRegistrationRunIdentity,
+  migrateSecretRegistrationThroughCurrentValues,
   registerSecretValues,
   readSecretValues,
-} from "./secretValues.ts";
+} from "../secretRegistrationTesting.ts";
 
 it.effect("persists current-only secret values in redaction history", () =>
   Effect.gen(function* () {
@@ -23,10 +21,8 @@ it.effect("persists current-only secret values in redaction history", () =>
     const value = "current-only-fixture";
     const current = [{ name: "KEY", value }];
 
-    yield* migrateSecretValues;
-    yield* migrateSecretSends;
-    yield* migrateCurrentSecretValues;
-    yield* migrateSecretRunIdentity;
+    yield* migrateSecretRegistrationThroughCurrentValues;
+    yield* migrateSecretRegistrationRunIdentity;
     yield* beginSecretRun(generation, runId).pipe(sql.withTransaction);
     expect(
       yield* registerSecretValues(generation, runId, [], current).pipe(sql.withTransaction),
@@ -47,16 +43,14 @@ it.effect("persists current-only secret values in redaction history", () =>
 it.effect("0013 invalidates pre-run fills and sources while retaining redaction history", () =>
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
-    yield* migrateSecretValues;
-    yield* migrateSecretSends;
-    yield* migrateCurrentSecretValues;
+    yield* migrateSecretRegistrationThroughCurrentValues;
     yield* sql`INSERT INTO secret_values (name, value) VALUES ('KEY', 'upgrade-history-fixture')`;
     yield* sql`INSERT INTO secret_registration (id, generation) VALUES (1, 3)`;
     yield* sql`INSERT INTO secret_current_values (name, value) VALUES ('KEY', 'upgrade-history-fixture')`;
     yield* sql`INSERT INTO secret_sources (name, environment) VALUES ('KEY', 'env-old')`;
     yield* sql`UPDATE secret_current_registration SET revision = 4 WHERE id = 1`;
 
-    yield* migrateSecretRunIdentity.pipe(sql.withTransaction);
+    yield* migrateSecretRegistrationRunIdentity.pipe(sql.withTransaction);
 
     const snapshot = yield* readSecretValues;
     expect(snapshot).toEqual({

@@ -66,6 +66,10 @@
     "./SecretPlaceholders": {
       "types": "./src/SecretPlaceholders.ts",
       "import": "./src/SecretPlaceholders.ts"
+    },
+    "./testing/SecretsFixture": {
+      "types": "./src/testing/SecretsFixture.ts",
+      "import": "./src/testing/SecretsFixture.ts"
     }
   },
   "scripts": {

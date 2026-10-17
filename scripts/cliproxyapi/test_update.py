@@ -11,6 +11,7 @@ from pathlib import Path
 ROOT = Path(__file__).parent
 TESTDATA = ROOT / "testdata"
 UPDATE_SCRIPT = ROOT / "update.py"
+SOURCE_COMMIT = "0" * 40
 
 
 class UpdateTests(unittest.TestCase):
@@ -39,6 +40,7 @@ class UpdateTests(unittest.TestCase):
                 str(UPDATE_SCRIPT),
                 str(self.release_path),
                 str(self.checksums_path),
+                SOURCE_COMMIT,
                 str(self.manifest_path),
             ],
             capture_output=True,
@@ -55,6 +57,7 @@ class UpdateTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         manifest = json.loads(self.manifest_path.read_text(encoding="utf-8"))
         self.assertEqual(manifest["version"], "8.0.16")
+        self.assertEqual(manifest["source"], {"commit": SOURCE_COMMIT})
         self.assertEqual(len(manifest["platforms"]), 6)
         self.assertEqual(manifest["platforms"]["darwin-arm64"]["sha256"], "0" * 64)
         self.assertEqual(
@@ -94,6 +97,25 @@ class UpdateTests(unittest.TestCase):
 
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("missing a valid SHA-256", result.stderr)
+        self.assert_manifest_unchanged()
+
+    def test_invalid_source_commit_leaves_manifest_unchanged(self) -> None:
+        result = subprocess.run(
+            [
+                "python3",
+                str(UPDATE_SCRIPT),
+                str(self.release_path),
+                str(self.checksums_path),
+                "not-a-commit",
+                str(self.manifest_path),
+            ],
+            capture_output=True,
+            check=False,
+            text=True,
+        )
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("full upstream source commit hash", result.stderr)
         self.assert_manifest_unchanged()
 
     def test_prerelease_leaves_manifest_unchanged(self) -> None:

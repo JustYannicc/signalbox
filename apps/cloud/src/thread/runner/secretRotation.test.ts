@@ -8,11 +8,11 @@ import * as SqlClient from "effect/sql/SqlClient";
 import { OnePasswordEnvironmentId } from "@t3tools/contracts/signalboxFolders";
 import { makeMemoryCloud } from "../../testing.ts";
 import { UserDirectory } from "../../user/UserDirectory.ts";
-import { readSecretSources } from "../egress/secretSendTables.ts";
-import { serveEgress } from "../egress/egress.ts";
-import * as ThreadSends from "../egress/ThreadSends.ts";
+import { readSecretSources } from "../secretRegistrationTesting.ts";
+import { serveEgress } from "../Egress.ts";
+import * as ThreadSends from "../ThreadSends.ts";
 import { ThreadStore } from "../ThreadStore.ts";
-import { serveSessionRequest } from "../session/sessionRoutes.ts";
+import { serveSessionRequest } from "../SessionRoutes.ts";
 import {
   connect,
   freshDatabase,
@@ -22,7 +22,7 @@ import {
   send,
   turnReport,
   withObject,
-} from "./runnerTestKit.ts";
+} from "../runnerTesting.ts";
 
 const a = `sk-a-${crypto.randomUUID()}`;
 const b = `sk-b-${crypto.randomUUID()}`;

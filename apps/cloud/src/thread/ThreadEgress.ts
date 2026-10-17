@@ -1,15 +1,15 @@
 import type { ThreadId } from "@t3tools/contracts";
 import { WorkerEntrypoint } from "cloudflare:workers";
 
-import type { DirectUploadsEnv } from "../../drive/directStorage.ts";
-import { makePlatformUpload } from "./egressUpload.ts";
+import type { DirectUploadsEnv } from "../drive/directStorage.ts";
+import { makePlatformUpload } from "./EgressUpload.ts";
 
-import type { MachineBackendEnv } from "../runner/MachineBackend.ts";
-import { type ThreadObjectNamespace, threadObjectStub } from "../ThreadDirectory.ts";
-import { serveEgress } from "./egress.ts";
+import type { MachineBackendEnv } from "./runner/MachineBackend.ts";
+import { type ThreadObjectNamespace, threadObjectStub } from "./ThreadDirectory.ts";
+import { serveEgress } from "./Egress.ts";
 
 /**
- * Where a light machine's HTTP and HTTPS requests land (`egress.ts`). Each
+ * Where a light machine's HTTP and HTTPS requests land (`Egress.ts`). Each
  * thread's container gets one bound to its own thread, so its requests can
  * only ever be checked against that thread's secrets and answers.
  */

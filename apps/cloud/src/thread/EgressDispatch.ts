@@ -2,11 +2,10 @@
 import * as Effect from "effect/Effect";
 import * as SqlClient from "effect/sql/SqlClient";
 
-import { ThreadStore } from "../ThreadStore.ts";
+import type { EgressDispatchAnswer } from "./egressTypes.ts";
+import { ThreadStore } from "./ThreadStore.ts";
 
-export type EgressDispatchAnswer =
-  | { readonly _tag: "stale" }
-  | { readonly _tag: "sent"; readonly response: Response };
+export type { EgressDispatchAnswer } from "./egressTypes.ts";
 
 const failed = () =>
   new Response("Signalbox could not dispatch this request safely.\n", {

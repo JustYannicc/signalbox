@@ -36,7 +36,7 @@ import {
  * generation it was handed is reported through `onExit`.
  *
  * Every HTTP and HTTPS request the container makes goes through the thread's
- * egress check (#592, `egress/ThreadEgress.ts`), outside the container, set
+ * egress check (#592, `ThreadEgress.ts`), outside the container, set
  * before each start: Cloudflare then gives the container the CA its HTTPS is
  * re-signed with (`EGRESS_CA`), which the Runner trusts for itself and the
  * harnesses (`RunnerEgressTrust.ts`). Other ports go out as they are.

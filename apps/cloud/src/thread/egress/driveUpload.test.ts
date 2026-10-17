@@ -7,8 +7,8 @@ import * as Platform from "../../platform.ts";
 import { DriveDirectory } from "../../drive/DriveDirectory.ts";
 import { makeDirectUploads, s3Storage } from "../../drive/directUploads.ts";
 import { makeMemoryDrives, makeRepo } from "../../drive/driveTesting.ts";
-import { makePlatformUpload } from "./egressUpload.ts";
-import { serveWithFakeNetwork as serveEgress } from "./egressTestKit.ts";
+import { makePlatformUpload } from "../EgressUpload.ts";
+import { serveWithFakeNetwork as serveEgress } from "../tests/egressTestKit.ts";
 
 const DRIVE = "my/personal/upload-test";
 const MANAGER = {

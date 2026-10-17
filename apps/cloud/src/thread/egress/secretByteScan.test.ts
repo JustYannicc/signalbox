@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { scanSecretBytes } from "./secretByteScan.ts";
+import { redactEgressResponse } from "../EgressResponse.ts";
 
 const streamChunks = (chunks: ReadonlyArray<Uint8Array>) =>
   new ReadableStream<Uint8Array>({
@@ -33,7 +33,20 @@ const readToFailure = async (stream: ReadableStream<Uint8Array>) => {
   return { bytes, error };
 };
 
-describe("scanSecretBytes", () => {
+const redactBinaryChunks = async (
+  chunks: ReadonlyArray<Uint8Array>,
+  secrets: ReadonlyArray<{ readonly name: string; readonly value: string }>,
+) => {
+  const response = await redactEgressResponse(
+    new Response(streamChunks(chunks), {
+      headers: { "content-type": "application/octet-stream" },
+    }),
+    secrets,
+  );
+  return readToFailure(response.body!);
+};
+
+describe("binary egress response", () => {
   it.each([
     ["7 ASCII bytes", "1234567", 7, false],
     ["8 ASCII bytes", "12345678", 8, true],
@@ -42,10 +55,9 @@ describe("scanSecretBytes", () => {
   ] as const)("applies the binary threshold to %s", async (_kind, value, byteLength, blocked) => {
     const bytes = new TextEncoder().encode(value);
     expect(bytes.byteLength).toBe(byteLength);
-    const result = await readToFailure(
-      streamChunks([...bytes].map((byte) => new Uint8Array([byte]))).pipeThrough(
-        scanSecretBytes([{ name: "BOUNDARY", value }]),
-      ),
+    const result = await redactBinaryChunks(
+      [...bytes].map((byte) => new Uint8Array([byte])),
+      [{ name: "BOUNDARY", value }],
     );
     const message = result.error instanceof Error ? result.error.message : "";
 
@@ -63,14 +75,13 @@ describe("scanSecretBytes", () => {
     const secret = "abcdefghij";
     const suffix = "cdefghij";
     const bytes = new TextEncoder().encode(`public-${secret}-tail`);
-    const result = await readToFailure(
-      streamChunks([...bytes].map((byte) => new Uint8Array([byte]))).pipeThrough(
-        scanSecretBytes([
-          { name: "LONG", value: secret },
-          { name: "SUFFIX", value: suffix },
-          { name: "ALIAS", value: secret },
-        ]),
-      ),
+    const result = await redactBinaryChunks(
+      [...bytes].map((byte) => new Uint8Array([byte])),
+      [
+        { name: "LONG", value: secret },
+        { name: "SUFFIX", value: suffix },
+        { name: "ALIAS", value: secret },
+      ],
     );
     const message = result.error instanceof Error ? result.error.message : "";
 
@@ -86,9 +97,7 @@ describe("scanSecretBytes", () => {
     const chunks = Array.from({ length: 64 }, (_, index) =>
       body.subarray(index * 2048, (index + 1) * 2048),
     );
-    const result = await readToFailure(
-      streamChunks(chunks).pipeThrough(scanSecretBytes([{ name: "KEY", value: "not-present" }])),
-    );
+    const result = await redactBinaryChunks(chunks, [{ name: "KEY", value: "not-present" }]);
 
     expect(result.error).toBeUndefined();
     expect([...result.bytes]).toEqual([...body]);

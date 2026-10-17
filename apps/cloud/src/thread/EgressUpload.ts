@@ -1,13 +1,13 @@
 // @effect-diagnostics globalDate:off globalFetch:off - Native HTTP interception verifies the existing storage signature without buffering the upload.
 import { MAX_DIRECT_PACK_BYTES } from "@signalbox/runner-protocol/DriveProtocol";
 
-import { drivePackPrefix } from "../../drive/DrivePacks.ts";
+import { drivePackPrefix } from "../drive/DrivePacks.ts";
 import {
   directStorageSettings,
   DIRECT_UPLOAD_URL_SECONDS,
   MAX_DIRECT_INDEX_BYTES,
   type DirectUploadsEnv,
-} from "../../drive/directStorage.ts";
+} from "../drive/directStorage.ts";
 
 const queryKeys = new Set([
   "X-Amz-Expires",

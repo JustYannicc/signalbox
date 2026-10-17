@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { redactEgressResponse } from "./egressResponse.ts";
+import { redactEgressResponse } from "../EgressResponse.ts";
 
 const utf8 = new TextEncoder();
 const ascii = "ascii-secret-12345";

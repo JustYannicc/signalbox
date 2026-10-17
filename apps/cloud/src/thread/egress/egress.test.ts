@@ -1,10 +1,9 @@
 // @effect-diagnostics cryptoRandomUUID:off - fake secrets are generated per run, so no test ever holds a real one.
 import { describe, expect, it } from "vite-plus/test";
 
-import { REFUSED_HEADER } from "./egress.ts";
-import { serveWithFakeNetwork as serveEgress } from "./egressTestKit.ts";
-import { MAX_READ_BODY } from "./egressRequest.ts";
-import type { SendAnswer } from "./ThreadSends.ts";
+import { MAX_READ_BODY, REFUSED_HEADER } from "../Egress.ts";
+import { serveWithFakeNetwork as serveEgress } from "../tests/egressTestKit.ts";
+import type { SendAnswer } from "../ThreadSends.ts";
 
 const KEY = `sk-test-${crypto.randomUUID()}`;
 const TOKEN = `ghp-test-${crypto.randomUUID()}`;

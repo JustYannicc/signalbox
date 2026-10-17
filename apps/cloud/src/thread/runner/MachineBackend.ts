@@ -122,7 +122,7 @@ export interface MachineBackendShape {
  */
 export interface MachineHost {
   readonly container?: Container | undefined;
-  /** Where the container's requests go for the egress check (`egress/ThreadEgress.ts`). */
+  /** Where the container's requests go for the egress check (`ThreadEgress.ts`). */
   readonly egress?: (() => Fetcher) | undefined;
   readonly onExit?: (exit: MachineExit, generation: number) => void;
 }

@@ -22,11 +22,11 @@ import {
   threadId,
   turnReport,
   withObject,
-} from "../runner/runnerTestKit.ts";
+} from "../runnerTesting.ts";
 import type * as ThreadEngine from "../ThreadEngine.ts";
 import { threadShellFromProjection } from "../threadProjection.ts";
-import { saveSecretSources } from "./secretSendTables.ts";
-import * as ThreadSends from "./ThreadSends.ts";
+import { saveSecretSources } from "../secretRegistrationTesting.ts";
+import * as ThreadSends from "../ThreadSends.ts";
 
 const environment = OnePasswordEnvironmentId.make("envfolder");
 const homeA = FolderId.make("folder-a");

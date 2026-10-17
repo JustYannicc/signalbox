@@ -51,9 +51,8 @@ import {
   type ThreadObjectReply,
   wire,
 } from "./threadWire.ts";
-import type { EgressDispatchAnswer } from "./egress/egressDispatch.ts";
 import type { SecretValues } from "./runner/secretValues.ts";
-import type { SendAnswer, SendRequest } from "./egress/ThreadSends.ts";
+import type { EgressDispatchAnswer, SendAnswer, SendRequest } from "./egressTypes.ts";
 
 /**
  * How the Worker and user objects reach thread objects. Every thread has

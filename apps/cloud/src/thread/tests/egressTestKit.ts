@@ -1,4 +1,4 @@
-import { serveEgress } from "./egress.ts";
+import { serveEgress } from "../Egress.ts";
 
 /** Replaces only external dispatch. Tests still use the real inspection, approval and redaction. */
 export const serveWithFakeNetwork = (

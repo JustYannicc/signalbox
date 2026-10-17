@@ -3,8 +3,8 @@ import * as NodeStream from "node:stream";
 import * as NodeZlib from "node:zlib";
 
 import { makeSecretScrubber, type SecretValue } from "@signalbox/runner-protocol/SecretScrubber";
-import { egressRawTextSecrets, egressTextDecoder, scrubEgressText } from "./egressText.ts";
-import { scanSecretBytes } from "./secretByteScan.ts";
+import { egressRawTextSecrets, egressTextDecoder, scrubEgressText } from "./egress/egressText.ts";
+import { scanSecretBytes } from "./egress/secretByteScan.ts";
 
 const UNKNOWN_TYPE_SNIFF_BYTES = 64 * 1024;
 const TEXT_CONTENT_TYPE =

@@ -57,8 +57,8 @@ import { deliverPendingEvents } from "./eventOutbox.ts";
 import { deliverPendingSummary } from "./summaryOutbox.ts";
 import { THREAD_OBJECT_JURISDICTION, type ThreadObjectApi } from "./ThreadDirectory.ts";
 import * as ThreadBrowsing from "./browsing/ThreadBrowsing.ts";
-import type { ThreadEgressExports } from "./egress/ThreadEgress.ts";
-import * as ThreadSends from "./egress/ThreadSends.ts";
+import type { ThreadEgressExports } from "./ThreadEgress.ts";
+import * as ThreadSends from "./ThreadSends.ts";
 import * as ThreadEngine from "./ThreadEngine.ts";
 import { makeThreadObjectApi } from "./threadObjectApi.ts";
 import { type BrowserReply, wire } from "./threadWire.ts";
@@ -318,7 +318,7 @@ export class ThreadObject extends DurableObject<ThreadObjectEnv> implements Thre
     this.api = makeThreadObjectApi(
       (effect) => this.runtime.runPromise(effect),
       async () => {
-        // An answer the egress check waits on, or an "Always" to keep (`egress/ThreadSends.ts`).
+        // An answer the egress check waits on, or an "Always" to keep (`ThreadSends.ts`).
         await this.runtime.runPromise(ThreadSends.ThreadSends.use((sends) => sends.settle));
         await this.armAlarm(await pushRunnerWork(this.runnerHost));
       },
@@ -411,7 +411,7 @@ export class ThreadObject extends DurableObject<ThreadObjectEnv> implements Thre
     );
   }
 
-  /** The machine's egress check: the values its requests are read for (`egress/egress.ts`). */
+  /** The machine's egress check: the values its requests are read for (`Egress.ts`). */
   egressSecrets() {
     return this.runtime.runPromise(ThreadStore.ThreadStore.use((store) => store.secretValues));
   }

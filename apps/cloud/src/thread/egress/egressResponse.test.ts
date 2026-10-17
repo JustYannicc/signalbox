@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { redactEgressResponse } from "./egressResponse.ts";
+import { redactEgressResponse } from "../EgressResponse.ts";
 
 const secret = "sk-throwaway-response-fixture";
 const secretBytes = new TextEncoder().encode(secret);

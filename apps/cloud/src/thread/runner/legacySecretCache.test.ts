@@ -6,7 +6,7 @@ import * as Effect from "effect/Effect";
 import * as SqlClient from "effect/sql/SqlClient";
 
 import { scrubModelRequest } from "../../modelGateway/scrubModelRequest.ts";
-import { readSecretSources } from "../egress/secretSendTables.ts";
+import { readSecretSources } from "../secretRegistrationTesting.ts";
 import { ThreadStore } from "../ThreadStore.ts";
 import {
   connect,
@@ -17,7 +17,7 @@ import {
   send,
   turnReport,
   withObject,
-} from "./runnerTestKit.ts";
+} from "../runnerTesting.ts";
 
 const envA = OnePasswordEnvironmentId.make("legacy-env-a");
 const envB = OnePasswordEnvironmentId.make("legacy-env-b");

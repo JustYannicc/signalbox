@@ -2,7 +2,9 @@ import {
   SYNTHETIC_SECRET_ENVIRONMENT,
   SYNTHETIC_SECRET_NAMES,
 } from "@signalbox/runner-protocol/SyntheticSecrets";
-import type { SecretsRegistration } from "@signalbox/runner-protocol/SecretsProtocol";
+import { hasSyntheticSecretsRegistrationShape } from "@signalbox/runner-protocol/testing/SecretsFixture";
+import { RunId } from "@t3tools/contracts";
+import { secretsJson, type SecretsRegistration } from "@signalbox/runner-protocol/SecretsProtocol";
 import { secretPlaceholder } from "@signalbox/runner-protocol/SecretScrubber";
 import { OnePasswordEnvironmentId } from "@t3tools/contracts/signalboxFolders";
 import { describe, expect, it } from "@effect/vitest";
@@ -76,16 +78,41 @@ describe("RunnerSyntheticSecrets", () => {
         yield* secrets.load(access, first.report);
         const second = makeReport({ secrets });
         yield* secrets.load(access, second.report);
+        const third = makeReport({ secrets });
+        yield* secrets.load(access, third.report);
         const firstValues = first.registrations[0]!.secrets.map(({ value }) => value);
         const secondValues = second.registrations[0]!.secrets.map(({ value }) => value);
+        const thirdValues = third.registrations[0]!.secrets.map(({ value }) => value);
+        expect(hasSyntheticSecretsRegistrationShape(first.registrations[0]!)).toBe(true);
+        expect(hasSyntheticSecretsRegistrationShape(second.registrations[0]!)).toBe(true);
+        expect(hasSyntheticSecretsRegistrationShape(third.registrations[0]!)).toBe(true);
+        for (const [registration, runId] of [
+          [first.registrations[0]!, "synthetic-fixture-run-1"],
+          [second.registrations[0]!, "synthetic-fixture-run-2"],
+          [third.registrations[0]!, "synthetic-fixture-run-3"],
+        ] as const) {
+          const wire = { ...registration, runId: RunId.make(runId) };
+          expect(secretsJson.registration.decode(secretsJson.registration.encode(wire))).toEqual(
+            wire,
+          );
+        }
         expect(onePasswordCalls).toBe(0);
         expect(firstValues.length).toBe(3);
         expect(secondValues.length).toBe(3);
-        expect(new Set([...firstValues, ...secondValues]).size).toBe(6);
-        expect(first.registrations[0]!.sources?.length).toBe(3);
-        expect(second.registrations[0]!.sources?.length).toBe(3);
+        expect(thirdValues.length).toBe(3);
+        expect(new Set([...firstValues, ...secondValues, ...thirdValues]).size).toBe(9);
+        expect(
+          first.registrations[0]!.sources?.map(({ name, environment }) => [name, environment]),
+        ).toEqual(SYNTHETIC_SECRET_NAMES.map((name) => [name, syntheticId]));
+        expect(
+          second.registrations[0]!.sources?.map(({ name, environment }) => [name, environment]),
+        ).toEqual(SYNTHETIC_SECRET_NAMES.map((name) => [name, syntheticId]));
+        expect(
+          third.registrations[0]!.sources?.map(({ name, environment }) => [name, environment]),
+        ).toEqual(SYNTHETIC_SECRET_NAMES.map((name) => [name, syntheticId]));
         expect(first.infos).toEqual(["loaded 3 secrets from synthetic preview"]);
         expect(second.infos).toEqual(first.infos);
+        expect(third.infos).toEqual(first.infos);
       }),
   );
 

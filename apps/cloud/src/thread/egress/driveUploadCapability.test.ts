@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vite-plus/test";
 
 import { s3Storage } from "../../drive/directStorage.ts";
-import { makePlatformUpload } from "./egressUpload.ts";
-import { serveWithFakeNetwork as serveEgress } from "./egressTestKit.ts";
+import { makePlatformUpload } from "../EgressUpload.ts";
+import { serveWithFakeNetwork as serveEgress } from "../tests/egressTestKit.ts";
 
 const DRIVE = "my/personal/upload-test";
 const env = {
