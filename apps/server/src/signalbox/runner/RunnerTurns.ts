@@ -270,6 +270,8 @@ export const makeRunnerTurns = Effect.fn("makeRunnerTurns")(function* (input: {
   readonly emit: (item: RunnerItem) => Effect.Effect<void>;
   /** Installs or reuses the dependencies in `cwd` before each turn. */
   readonly dependencies?: RunnerDependencies;
+  /** Preview restoration shares the checkout preparation lock with turns. */
+  readonly preparing?: Semaphore.Semaphore;
   /** The thread's drive, checked out in `cwd`. Absent: turns run in a plain directory. */
   readonly openDrive?: (access: DriveAccess) => Effect.Effect<RunnerDrive, never, Scope.Scope>;
   /** Where the harnesses' sessions are kept. Absent: they stay on this machine. */
@@ -429,7 +431,7 @@ export const makeRunnerTurns = Effect.fn("makeRunnerTurns")(function* (input: {
       yield* input.emit({ kind: "machine.outgrown", runId, reason });
     });
   /** One turn readies the working directory at a time, even after a stop left one installing. */
-  const preparing = yield* Semaphore.make(1);
+  const preparing = input.preparing ?? (yield* Semaphore.make(1));
 
   const interruptNow = (turn: Turn) =>
     turn.session === null || turn.providerThread === null || turn.providerTurnId === null
