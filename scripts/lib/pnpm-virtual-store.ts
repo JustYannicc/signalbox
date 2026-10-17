@@ -24,3 +24,9 @@ export function pnpmVirtualStoreFolders(workspaceRoot: string): string[] {
     ? [store]
     : [];
 }
+
+/** Vite's default workspace root plus any external package store. */
+export function pnpmViteFsAllow(appRoot: string): string[] {
+  const workspaceRoot = NodePath.resolve(appRoot, "../..");
+  return [workspaceRoot, ...pnpmVirtualStoreFolders(workspaceRoot)];
+}

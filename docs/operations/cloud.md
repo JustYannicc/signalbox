@@ -155,7 +155,7 @@ TTL, so only an abandoned VM reaches it.
 
 The boat key needs the actions `sandbox.create`, `sandbox.read`,
 `sandbox.update`, `sandbox.stop`, `sandbox.resume`, `sandbox.delete` and
-`file.write`.
+`file.write` and `exec` (to update the Runner launcher on existing VMs).
 
 To try it locally, the machine must reach your `wrangler dev` and the gateway,
 for example through `cloudflared tunnel --url http://127.0.0.1:8787

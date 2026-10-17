@@ -5,7 +5,7 @@ import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import { afterEach, test } from "vite-plus/test";
 import { symlinksSupported } from "@t3tools/shared/testing/symlinks";
-import { pnpmVirtualStoreFolders } from "./pnpm-virtual-store.ts";
+import { pnpmViteFsAllow, pnpmVirtualStoreFolders } from "./pnpm-virtual-store.ts";
 
 const roots: string[] = [];
 afterEach(() => {
@@ -33,6 +33,10 @@ test.skipIf(!symlinksSupported)(
         JSON.stringify({ virtualStoreDir }),
       );
       NodeAssert.equal(pnpmVirtualStoreFolders(workspace).length, 1);
+      NodeAssert.deepEqual(pnpmViteFsAllow(NodePath.join(workspace, "apps", "web")), [
+        workspace,
+        store,
+      ]);
       NodeAssert.ok(target.startsWith(pnpmVirtualStoreFolders(workspace)[0] + NodePath.sep));
     }
     NodeFS.writeFileSync(
@@ -40,5 +44,6 @@ test.skipIf(!symlinksSupported)(
       JSON.stringify({ virtualStoreDir: ".pnpm" }),
     );
     NodeAssert.deepEqual(pnpmVirtualStoreFolders(workspace), []);
+    NodeAssert.deepEqual(pnpmViteFsAllow(NodePath.join(workspace, "apps", "web")), [workspace]);
   },
 );

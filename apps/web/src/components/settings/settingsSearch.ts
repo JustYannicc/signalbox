@@ -63,6 +63,7 @@ export interface SettingsSearchItem {
   readonly localEnvironmentOnly?: boolean;
   readonly wslAvailableOnly?: boolean;
   readonly managedTunnelOnly?: boolean;
+  readonly hidden?: boolean; // signalbox: no row renders for it
   // signalbox: its row only renders where the environment it acts on can do this.
   readonly capability?: SignalboxEnvironmentCapability;
   readonly secondary?: boolean;
@@ -573,6 +574,13 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["cli terminal shell path install command line"],
     desktopOnly: true,
     localEnvironmentOnly: true, // signalbox: the thin build bundles no CLI
+  },
+  {
+    id: "mobile-app",
+    title: "Mobile app",
+    to: "/settings/general",
+    searchTerms: ["phone tablet iPhone iPad iOS Android App Store Google Play QR"],
+    hidden: true, // signalbox: no Signalbox app in the stores yet
   },
   {
     id: "privacy-policy",
@@ -1168,6 +1176,7 @@ export function filterAvailableSettingsSearchItems(
   const items: ReadonlyArray<SettingsSearchItem> = SETTINGS_SEARCH_ITEMS;
   return items.filter(
     (item) =>
+      !item.hidden && // signalbox
       (!item.cloudOnly || availability.hasCloudPublicConfig) &&
       (!item.environmentOnly || availability.hasEnvironment) &&
       (!item.providerSettingsOnly || availability.hasProviderSettingsEnvironment) &&

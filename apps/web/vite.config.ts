@@ -6,7 +6,7 @@ import { tanstackRouter } from "@tanstack/router-plugin/vite";
 import compression from "compression";
 import { defineProject, type TestProjectInlineConfiguration } from "vite-plus/test/config";
 import "vite-plus/test/config";
-import { defineConfig, type Connect, type Plugin, searchForWorkspaceRoot } from "vite-plus";
+import { defineConfig, type Connect, type Plugin } from "vite-plus";
 import pkg from "./package.json" with { type: "json" };
 
 import {
@@ -17,7 +17,7 @@ import {
 import { loadRepoEnv } from "../../scripts/lib/public-config";
 import { thirdPartyLicensesPlugin } from "../../scripts/lib/third-party-licenses";
 import { tailwindPlugins } from "./vite/tailwind";
-import { pnpmVirtualStoreFolders } from "../../scripts/lib/pnpm-virtual-store";
+import { pnpmViteFsAllow } from "../../scripts/lib/pnpm-virtual-store";
 
 const repoEnv = loadRepoEnv();
 Object.assign(process.env, repoEnv);
@@ -200,12 +200,7 @@ export default defineConfig(() => {
       port,
       strictPort: true,
       allowedHosts,
-      fs: {
-        allow: [
-          searchForWorkspaceRoot(import.meta.dirname),
-          ...pnpmVirtualStoreFolders(NodeURL.fileURLToPath(new URL("../..", import.meta.url))),
-        ],
-      },
+      fs: { allow: pnpmViteFsAllow(import.meta.dirname) },
       // Transform the whole module graph at server start instead of on the
       // first request. Without this, a cold worktree discovers and transforms
       // modules one import-level at a time while the browser waits — which
