@@ -11,7 +11,7 @@ import * as Layer from "effect/Layer";
 
 import * as Environment from "../environment.ts";
 import { GitHub } from "./GitHub.ts";
-import type { GitHubApi } from "./GitHubApi.ts";
+import { GitHubError, type GitHubApi } from "./GitHubApi.ts";
 import * as PullRequestRepository from "./PullRequestRepository.ts";
 import type { ResolvedPullRequestRepository } from "./PullRequestRepository.ts";
 import { makeReadCache } from "./cloudReadCache.ts";
@@ -92,10 +92,12 @@ const fixture = (options: {
   readonly projects: ReadonlyArray<OrchestrationProjectShell>;
   readonly targets?: ReadonlyArray<ResolvedPullRequestRepository>;
   readonly answers?: Array<unknown | null>;
+  readonly failures?: Array<GitHubError>;
   readonly resolve?: PullRequestRepository.PullRequestRepository["Service"]["resolve"];
   readonly forProject?: PullRequestRepository.PullRequestRepository["Service"]["forProject"];
 }) => {
   const answers = [...(options.answers ?? [])];
+  const failures = [...(options.failures ?? [])];
   const calls: GraphQlCall[] = [];
   const api = {
     host: "github.com",
@@ -106,6 +108,8 @@ const fixture = (options: {
       variables: Readonly<Record<string, unknown>>,
     ) => {
       calls.push({ operation, token, variables });
+      const failure = failures.shift();
+      if (failure !== undefined) return Effect.fail(failure);
       const queued = answers.shift();
       const answer = typeof queued === "function" ? queued(variables) : queued;
       return Effect.succeed(answer == null ? null : JSON.stringify(answer));
@@ -344,6 +348,130 @@ it.effect("returns an empty listing for Scratch when its drive has no remote", (
 
       expect(result).toMatchObject({ entries: [], errors: [], providers: [], nextCursors: {} });
       expect(current.calls).toHaveLength(0);
+    }),
+  );
+});
+
+it.effect("fails the listing when every selected repository read fails", () => {
+  const first = project("rate-limited-a", "A", "acme/a");
+  const second = project("rate-limited-b", "B", "acme/b");
+  const retryAt = Date.parse("2026-10-17T16:00:00.000Z");
+  const rateLimit = (operation: string) =>
+    new GitHubError({
+      operation,
+      status: 403,
+      message: "rate limited",
+      retryAt,
+    });
+  const current = fixture({
+    projects: [first, second],
+    targets: [target(first, "acme/a"), target(second, "acme/b")],
+    failures: [rateLimit("listPullRequests"), rateLimit("listPullRequests")],
+  });
+
+  return current.run(
+    Effect.gen(function* () {
+      const listing = yield* makeListingReads(makeReadCache());
+      const failure = yield* Effect.result(listing.list({ state: "open" }));
+
+      expect(current.calls.length).toBeGreaterThan(0);
+      expect(failure._tag).toBe("Failure");
+      if (failure._tag === "Failure") {
+        expect(failure.failure._tag).toBe("PullRequestOperationError");
+        if (failure.failure._tag === "PullRequestOperationError") {
+          expect(failure.failure.operation).toBe("list");
+          expect(failure.failure.detail).toContain("rate limit");
+          expect(failure.failure.detail).toContain("Retry after 2026-10-17T16:00:00");
+        }
+      }
+    }),
+  );
+});
+
+it.effect("keeps errors when another selected repository read succeeds empty", () => {
+  const failed = project("partial-a", "A", "acme/a");
+  const succeeded = project("partial-b", "B", "acme/b");
+  const current = fixture({
+    projects: [failed, succeeded],
+    targets: [target(failed, "acme/a"), target(succeeded, "acme/b")],
+    answers: [
+      searchAnswer([]),
+      {
+        data: {
+          repository: {
+            pullRequests: { pageInfo: { hasNextPage: false, endCursor: null }, nodes: [] },
+          },
+        },
+      },
+    ],
+    failures: [
+      new GitHubError({ operation: "listPullRequests", status: 503, message: "unavailable" }),
+    ],
+  });
+
+  return current.run(
+    Effect.gen(function* () {
+      const listing = yield* makeListingReads(makeReadCache());
+      const result = yield* listing.list({ state: "open" });
+
+      expect(current.calls).toHaveLength(3);
+      expect(result.entries).toEqual([]);
+      expect(result.errors).toHaveLength(1);
+      expect(result.errors[0]?.message).toContain("could not be read");
+    }),
+  );
+});
+
+it.effect("returns successful repository rows alongside another repository error", () => {
+  const failed = project("partial-rows-a", "A", "acme/a");
+  const succeeded = project("partial-rows-b", "B", "acme/b");
+  const current = fixture({
+    projects: [failed, succeeded],
+    targets: [target(failed, "acme/a"), target(succeeded, "acme/b")],
+    answers: [searchAnswer([row(4, "acme/b")])],
+    failures: [
+      new GitHubError({ operation: "listPullRequests", status: 503, message: "unavailable" }),
+    ],
+  });
+
+  return current.run(
+    Effect.gen(function* () {
+      const listing = yield* makeListingReads(makeReadCache());
+      const result = yield* listing.list({ state: "open" });
+
+      expect(current.calls).toHaveLength(2);
+      expect(result.entries.map((entry) => entry.number)).toEqual([4]);
+      expect(result.errors).toHaveLength(1);
+      expect(result.errors[0]?.message).toContain("could not be read");
+    }),
+  );
+});
+
+it.effect("keeps a successful empty repository listing as an empty list", () => {
+  const shell = project("empty-github", "Empty", "acme/empty");
+  const current = fixture({
+    projects: [shell],
+    targets: [target(shell, "acme/empty")],
+    answers: [
+      searchAnswer([]),
+      {
+        data: {
+          repository: {
+            pullRequests: { pageInfo: { hasNextPage: false, endCursor: null }, nodes: [] },
+          },
+        },
+      },
+    ],
+  });
+
+  return current.run(
+    Effect.gen(function* () {
+      const listing = yield* makeListingReads(makeReadCache());
+      const result = yield* listing.list({ state: "open" });
+
+      expect(current.calls).toHaveLength(2);
+      expect(result.entries).toEqual([]);
+      expect(result.errors).toEqual([]);
     }),
   );
 });

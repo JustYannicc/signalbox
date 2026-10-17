@@ -1,4 +1,5 @@
 import { expect, it } from "@effect/vitest";
+import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
 import * as Logger from "effect/Logger";
 import * as HttpClient from "effect/http/HttpClient";
@@ -6,6 +7,16 @@ import * as HttpClientError from "effect/http/HttpClientError";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
 
 import { makeGitHubApi } from "./GitHubApi.ts";
+
+const jsonClient = (body: unknown, headers: Record<string, string> = {}) =>
+  HttpClient.make((request) =>
+    Effect.succeed(
+      HttpClientResponse.fromWeb(
+        request,
+        new Response(JSON.stringify(body), { status: 200, headers }),
+      ),
+    ),
+  );
 
 it.effect("keeps transport error text and request credentials out of logs", () => {
   const token = "github-transport-secret-canary";
@@ -69,3 +80,52 @@ it.effect("preserves missing resources and rate-limit backoff for empty response
     expect(error.retryAt).toBeDefined();
   });
 });
+
+it.effect("preserves retry time for GitHub's HTTP 200 GraphQL RATE_LIMIT answer", () =>
+  Effect.gen(function* () {
+    const reset = Math.floor((yield* Clock.currentTimeMillis) / 1_000) + 600;
+    const client = jsonClient(
+      {
+        data: null,
+        errors: [
+          {
+            type: "RATE_LIMIT",
+            message: "API rate limit exceeded",
+            extensions: { code: "graphql_rate_limit" },
+          },
+        ],
+      },
+      { "x-ratelimit-reset": String(reset) },
+    );
+
+    const error = yield* makeGitHubApi(client)
+      .graphql("pullRequestList", "token", "query { viewer { login } }", {})
+      .pipe(Effect.flip);
+
+    expect(error.operation).toBe("pullRequestList");
+    expect(error.status).toBe(200);
+    expect(error.retryAt).toBe(reset * 1_000);
+  }),
+);
+
+it.effect(
+  "keeps legacy RATE_LIMITED detection and ignores unrelated text containing its name",
+  () =>
+    Effect.gen(function* () {
+      const legacy = yield* makeGitHubApi(
+        jsonClient({ data: null, errors: [{ type: "RATE_LIMITED", message: "quota" }] }),
+      )
+        .graphql("legacy", "token", "query { viewer { login } }", {})
+        .pipe(Effect.flip);
+      expect(legacy.retryAt).toBeDefined();
+
+      const answer = { data: { viewer: null }, message: 'The text "RATE_LIMITED" is a label.' };
+      const text = yield* makeGitHubApi(jsonClient(answer)).graphql(
+        "ordinary",
+        "token",
+        "query { viewer { login } }",
+        {},
+      );
+      expect(text).toBe(JSON.stringify(answer));
+    }),
+);

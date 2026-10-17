@@ -141,6 +141,27 @@ const decodeErrorBody = Schema.decodeUnknownOption(
   Schema.Struct({ message: Schema.optional(Schema.String) }),
 );
 
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === "object" && value !== null && !Array.isArray(value);
+
+const isGraphQlRateLimit = (body: unknown) =>
+  isRecord(body) &&
+  Array.isArray(body.errors) &&
+  body.errors.some((error) => {
+    if (!isRecord(error)) return false;
+    if (error.type === "RATE_LIMITED") return true;
+    if (error.type !== "RATE_LIMIT") return false;
+    const code = error.code ?? (isRecord(error.extensions) ? error.extensions.code : undefined);
+    return code === "graphql_rate_limit";
+  });
+
+const graphqlRateLimitRetryAt = (response: HttpClientResponse.HttpClientResponse, now: number) => {
+  const retryAfter = retryAtFromHeader(response.headers["retry-after"], now);
+  if (retryAfter !== undefined) return retryAfter;
+  const reset = Number(response.headers["x-ratelimit-reset"]) * 1_000;
+  return Number.isFinite(reset) && reset > now ? reset : now + 60_000;
+};
+
 /** git's credential for a token over HTTPS. */
 export const gitAuthorization = (token: string) =>
   `Basic ${Base64.encode(`x-access-token:${token}`)}`;
@@ -301,16 +322,16 @@ export const makeGitHubApi = (
           }
           const text = new TextDecoder().decode(bytes);
           if (response.status === 404) return null;
-          yield* failUnlessOk(operation, response, Option.getOrNull(parseJson(text)));
+          const body = Option.getOrNull(parseJson(text));
+          yield* failUnlessOk(operation, response, body);
           // GraphQL answers its own rate limit with a 200 and an error in the body.
-          if (text.includes('"RATE_LIMITED"')) {
+          if (response.status === 200 && isGraphQlRateLimit(body)) {
             const now = yield* Clock.currentTimeMillis;
-            const reset = Number(response.headers["x-ratelimit-reset"]) * 1_000;
             return yield* new GitHubError({
               operation,
               status: response.status,
               message: "GitHub's API rate limit is used up for now.",
-              retryAt: Number.isFinite(reset) && reset > now ? reset : now + 60_000,
+              retryAt: graphqlRateLimitRetryAt(response, now),
             });
           }
           return text;

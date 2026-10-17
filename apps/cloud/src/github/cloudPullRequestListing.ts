@@ -366,6 +366,7 @@ export const makeListingReads = (cache: ReadCache) =>
                     truncated: false,
                     cursorError: false,
                     key,
+                    cause: read.failure,
                   };
                 }
                 const { page, observedAt } = read.success;
@@ -413,12 +414,18 @@ export const makeListingReads = (cache: ReadCache) =>
                   truncated: page.truncated,
                   cursorError: nextCursor !== null && nextCursor.length > MAX_CURSOR_LENGTH,
                   key,
+                  cause: null as GitHubError | null,
                 };
               }),
             );
           },
           { concurrency: REPOSITORY_CONCURRENCY },
         );
+
+        if (selectedRepos.length > 0 && batches.every((batch) => batch.cause !== null)) {
+          const cause = batches[0]?.cause;
+          if (cause !== undefined && cause !== null) return yield* githubReadError("list")(cause);
+        }
 
         const nextCursors: Record<string, string> = {};
         for (const batch of batches) {
