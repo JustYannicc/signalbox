@@ -32,6 +32,7 @@ import type {
 import type { BrowsingDispatched } from "./browsing/ThreadBrowsing.ts";
 import type { SearchBackfillProgress, SearchThreadDocuments } from "./ThreadEngine.ts";
 import { browsingWire } from "./browsing/browsingWire.ts";
+import { ThreadObjectError } from "./ThreadAccess.ts";
 import type { PreviewLinkResult } from "./preview/PreviewGateway.ts";
 import type {
   DriveAuthorization,
@@ -65,14 +66,7 @@ import {
 
 export const THREAD_OBJECT_JURISDICTION = "eu";
 
-export class ThreadObjectError extends Schema.TaggedError<ThreadObjectError>()(
-  "ThreadObjectError",
-  { operation: Schema.String, cause: Schema.Defect() },
-) {
-  override get message(): string {
-    return `Thread object call failed (${this.operation}).`;
-  }
-}
+export { ThreadObjectError } from "./ThreadAccess.ts";
 
 /** A watcher fell behind the agent's browser; its stream ended for good (see `preview/BrowserMirror.ts`). */
 export class BrowserWatchBehindError extends Schema.TaggedError<BrowserWatchBehindError>()(
