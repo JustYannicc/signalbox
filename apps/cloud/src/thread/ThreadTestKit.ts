@@ -14,5 +14,5 @@ export {
   threadObjectApiFor,
   turnReport,
   withObject,
-} from "./runner/runnerTestKit.ts";
+} from "./runnerTesting.ts";
 export { TurnReports } from "./diagnostics/TurnReports.ts";

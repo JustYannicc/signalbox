@@ -18,7 +18,7 @@ import type { SqlError } from "effect/sql/SqlError";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
 
 import { canWrite, myDriveId } from "../drive/driveAccess.ts";
-import type { ModelGatewayRecord } from "../modelGateway/modelGatewayRecord.ts";
+import type { ModelGatewayRecord } from "../models/ModelRecords.ts";
 import type { DriveObjectNamespace } from "../drive/DriveDirectory.ts";
 import { type AttachmentObjects, attachmentStorage } from "../attachments/attachmentObjects.ts";
 import {
@@ -30,7 +30,7 @@ import type { PackBucket } from "../drive/DrivePacks.ts";
 import * as Platform from "../platform.ts";
 import * as CloudflareSearchIndex from "../search/CloudflareSearchIndex.ts";
 import * as PoolDirectory from "../pool/PoolDirectory.ts";
-import * as PreviewState from "./preview/PreviewState.ts";
+import * as PreviewState from "./PreviewState.ts";
 import * as BrowserTrail from "./preview/BrowserTrail.ts";
 import { PreviewGateway } from "./preview/PreviewGateway.ts";
 import { type PreviewEnv, previewSettings } from "./preview/previewHost.ts";
@@ -405,6 +405,10 @@ export class ThreadObject extends DurableObject<ThreadObjectEnv> implements Thre
 
   diagnostics(...args: Parameters<ThreadObjectApi["diagnostics"]>) {
     return this.api.diagnostics(...args);
+  }
+
+  requestPullRequestSync(...args: Parameters<ThreadObjectApi["requestPullRequestSync"]>) {
+    return this.api.requestPullRequestSync(...args);
   }
 
   /** The thread's container stopped on its own: its lease is over (see `ThreadRunner.machineExited`). */

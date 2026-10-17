@@ -84,6 +84,7 @@ const setup = (
         threadSnapshot: unused,
         getTurnItem: () => Effect.succeed(null),
         threadHistoryPage: unused,
+        requestPullRequestSync: unused,
         subscribeThread: () => Stream.die("not used by notes"),
         previews: () => Stream.die("not used by notes"),
         browsing: () => Stream.die("not used by notes"),

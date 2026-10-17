@@ -83,6 +83,7 @@ const threads = CloudThreadService.CloudThreadService.of({
   dispatchCommand: unused,
   launchThread: unused,
   threadHistoryPage: unused,
+  requestPullRequestSync: unused,
   subscribeThread: () => Stream.die("not used by assets"),
   previews: () => Stream.die("not used by assets"),
   browsing: () => Stream.die("not used by assets"),

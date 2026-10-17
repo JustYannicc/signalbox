@@ -1,0 +1,827 @@
+import { assert, it } from "@effect/vitest";
+import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as Crypto from "effect/Crypto";
+import * as Deferred from "effect/Deferred";
+import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
+import * as Fiber from "effect/Fiber";
+import * as FileSystem from "effect/FileSystem";
+import * as Path from "effect/Path";
+import * as PlatformError from "effect/PlatformError";
+import * as Schema from "effect/Schema";
+import * as TestClock from "effect/testing/TestClock";
+
+import * as NativeArtifactCache from "./native-artifact-cache.ts";
+import * as NativeArtifactLock from "./native-artifact-lock.ts";
+import * as NativeClientBuildIdentity from "./native-client-build-identity.ts";
+import * as NativeClientFingerprint from "./native-client-fingerprint.ts";
+
+type TestRequirements = FileSystem.FileSystem | Path.Path | Crypto.Crypto;
+type TestErrors = PlatformError.PlatformError | NativeArtifactCache.NativeArtifactCacheError;
+const LockOwnerSchema = Schema.Struct({ pid: Schema.Number, startTime: Schema.String });
+const encodeLockOwner = Schema.encodeSync(Schema.fromJsonString(LockOwnerSchema));
+
+const identity = (
+  overrides: Partial<NativeArtifactCache.NativeArtifactIdentity> = {},
+): NativeArtifactCache.NativeArtifactIdentity =>
+  ({
+    schemaVersion: 1,
+    platform: "ios",
+    fingerprint: "a".repeat(40),
+    expoPlatforms: ["ios"],
+    target: { runtime: "iOS-27-0", architecture: "arm64" },
+    toolchain: { host: "darwin", xcode: "Xcode 27.0 build 18A123", simulatorSdk: "27.0" },
+    sources: [
+      {
+        type: "file",
+        filePath: "app.json",
+        reasons: ["expoConfig"],
+        hash: "f".repeat(40),
+      },
+    ],
+    artifactKind: "app",
+    ...overrides,
+  }) satisfies NativeArtifactCache.NativeArtifactIdentity;
+
+const processProbe = (pid: number): NativeArtifactLock.ProcessIdentityProbe<never, never> => ({
+  current: Effect.succeed({ pid, startTime: `process-${pid}` }),
+  observe: (observedPid) => Effect.succeed({ _tag: "alive", startTime: `process-${observedPid}` }),
+});
+
+const writeArtifact = (
+  buildIdentity: NativeArtifactCache.NativeArtifactIdentity,
+  artifactPath: string,
+  contents: string,
+) =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    if (buildIdentity.artifactKind === "app") {
+      yield* fs.makeDirectory(artifactPath);
+      yield* fs.writeFileString(`${artifactPath}/Info.plist`, contents);
+    } else {
+      yield* fs.writeFileString(artifactPath, contents);
+    }
+  });
+
+const makeClient = (input: {
+  readonly cacheRoot: string;
+  readonly worktree: string;
+  readonly device: string;
+  readonly identity: NativeArtifactCache.NativeArtifactIdentity;
+  readonly build: (artifactPath: string) => Effect.Effect<void, TestErrors, TestRequirements>;
+  readonly waitForLock?: () => Effect.Effect<void, TestErrors, TestRequirements>;
+}) =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const installedPath = path.join(input.cacheRoot, "installed", `${input.device}.native`);
+    return {
+      cacheRoot: path.join(input.cacheRoot, "artifacts"),
+      identity: input.identity,
+      currentIdentity: () => Effect.succeed(input.identity),
+      process: processProbe(input.device.length + 100),
+      build: input.build,
+      install: (artifactPath: string) =>
+        Effect.gen(function* () {
+          yield* fs.remove(installedPath, { recursive: true, force: true });
+          yield* fs.copy(artifactPath, installedPath);
+        }),
+      installedBinary: () =>
+        Effect.gen(function* () {
+          if (!(yield* fs.exists(installedPath))) return null;
+          return yield* NativeArtifactCache.hashArtifact(installedPath);
+        }),
+      expectedInstalledBinary: (artifactPath: string) =>
+        NativeArtifactCache.hashArtifact(artifactPath),
+      ...(input.waitForLock ? { waitForLock: input.waitForLock } : {}),
+    } satisfies NativeArtifactCache.EnsureNativeArtifactOptions<
+      TestErrors,
+      TestRequirements,
+      TestErrors
+    >;
+  });
+
+it.layer(NodeServices.layer)("native artifact cache", (it) => {
+  it.effect("preserves Expo source variants and nullable hashes in cache manifests", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "native-artifact-expo-sources-" });
+      const snapshot = yield* NativeClientBuildIdentity.decodeExpoFingerprint(
+        JSON.stringify({
+          hash: "a".repeat(40),
+          sources: [
+            {
+              type: "contents",
+              id: "appMajorVersion",
+              hash: "da4b9237bacccdf19c0760cab7aec4a8359010b0",
+            },
+            {
+              type: "contents",
+              id: "expo-config",
+              contents: "must stay out of the cache manifest",
+              reasons: ["expoConfig"],
+              hash: null,
+            },
+            {
+              type: "file",
+              filePath: "app.json",
+              reasons: ["expoConfig"],
+              hash: "b".repeat(40),
+              overrideHashKey: "app-config",
+            },
+            {
+              type: "dir",
+              filePath: "assets",
+              reasons: ["assetFiles"],
+              hash: null,
+            },
+            {
+              type: "package",
+              name: "expo",
+              version: "54.0.0",
+              filePath: "node_modules/expo/package.json",
+              reasons: ["rootPackage"],
+              hash: "c".repeat(40),
+            },
+          ],
+        }),
+      );
+      const fileWithoutReasons = yield* Effect.exit(
+        NativeClientBuildIdentity.decodeExpoFingerprint(
+          JSON.stringify({
+            hash: "b".repeat(40),
+            sources: [{ type: "file", filePath: "app.json", hash: "c".repeat(40) }],
+          }),
+        ),
+      );
+      assert.isTrue(Exit.isFailure(fileWithoutReasons));
+      const sources = snapshot.sources.map(NativeClientFingerprint.projectExpoFingerprintSource);
+      const buildIdentity = identity({ fingerprint: snapshot.hash, sources });
+      const request = yield* makeClient({
+        cacheRoot: root,
+        worktree: "expo-fingerprint-fixture",
+        device: "simulator-expo-sources",
+        identity: buildIdentity,
+        build: (artifactPath) => writeArtifact(buildIdentity, artifactPath, "expo-source-fixture"),
+      });
+      const built = yield* NativeArtifactCache.ensureNativeArtifact(request);
+      const manifestText = yield* fs.readFileString(
+        path.join(path.dirname(built.artifactPath), "manifest.json"),
+      );
+      const manifest = JSON.parse(manifestText);
+
+      assert.deepEqual(manifest.manifest.identity.sources, sources);
+      const appMajorVersionSource = manifest.manifest.identity.sources.find(
+        (source: NativeClientFingerprint.ExpoFingerprintSource) =>
+          source.type === "contents" && source.id === "appMajorVersion",
+      );
+      assert.isDefined(appMajorVersionSource);
+      assert.isFalse(Object.hasOwn(appMajorVersionSource, "reasons"));
+      assert.isFalse(manifestText.includes("must stay out of the cache manifest"));
+    }),
+  );
+
+  it.effect("reuses one verified artifact across worktrees and installs it per device", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "native-artifact-cross-worktree-" });
+      const buildIdentity = identity({
+        sources: [
+          {
+            type: "file",
+            filePath: "app.json",
+            reasons: ["expoConfig"],
+            hash: "f".repeat(40),
+          },
+          {
+            type: "file",
+            filePath: "app.config.ts",
+            reasons: ["expoConfigPlugins"],
+            hash: "e".repeat(40),
+          },
+        ],
+      });
+      const reorderedSourcesIdentity = identity({
+        sources: buildIdentity.sources.toReversed(),
+      });
+      let buildCount = 0;
+
+      const request = (
+        worktree: string,
+        device: string,
+        requestIdentity: NativeArtifactCache.NativeArtifactIdentity,
+      ) =>
+        makeClient({
+          cacheRoot: root,
+          worktree,
+          device,
+          identity: requestIdentity,
+          build: (artifactPath) =>
+            Effect.gen(function* () {
+              buildCount += 1;
+              yield* writeArtifact(requestIdentity, artifactPath, `built by ${worktree}`);
+            }),
+        }).pipe(Effect.flatMap((options) => NativeArtifactCache.ensureNativeArtifact(options)));
+
+      const first = yield* request("worktree-a", "simulator-a", buildIdentity);
+      const second = yield* request("worktree-b", "simulator-b", reorderedSourcesIdentity);
+
+      assert.equal(buildCount, 1);
+      assert.isTrue(first.built);
+      assert.isFalse(first.cacheHit);
+      assert.isFalse(second.built);
+      assert.isTrue(second.cacheHit);
+      assert.equal(
+        yield* fs.readFileString(path.join(root, "installed/simulator-a.native/Info.plist")),
+        "built by worktree-a",
+      );
+      assert.equal(
+        yield* fs.readFileString(path.join(root, "installed/simulator-b.native/Info.plist")),
+        "built by worktree-a",
+      );
+      const manifest = yield* fs.readFileString(
+        path.join(path.dirname(first.artifactPath), "manifest.json"),
+      );
+      assert.isTrue(manifest.includes('"expoPlatforms":["ios"]'));
+      assert.isTrue(manifest.includes('"filePath":"app.json"'));
+      assert.isTrue(manifest.includes(`"hash":"${"f".repeat(40)}"`));
+      assert.isTrue(manifest.includes("Xcode 27.0 build 18A123"));
+      assert.isTrue(manifest.includes('"manifestDigest":"'));
+    }),
+  );
+
+  it.effect("reuses artifacts when Expo adds or removes null-hash source records", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "native-artifact-null-source-" });
+      const commonSources: Array<NativeArtifactCache.NativeArtifactSource> = [
+        {
+          type: "file",
+          filePath: "app.json",
+          reasons: ["expoConfig"],
+          hash: "f".repeat(40),
+        },
+      ];
+      const androidSource = {
+        type: "dir",
+        filePath: "android",
+        reasons: ["bareNativeDir"],
+        hash: null,
+      } as const;
+      const primaryIdentity = identity({
+        platform: "android",
+        fingerprint: "f69eef1931fe93f4bafc5063ace4e9fc328bb2e7",
+        expoPlatforms: ["android"],
+        target: {
+          abi: "arm64-v8a",
+          apiLevel: "36",
+          variant: "debug",
+          appId: "com.justyannicc.signalbox.dev",
+        },
+        toolchain: {
+          host: "darwin",
+          hostArchitecture: "arm64",
+          node: "v24.18.0",
+          expoTemplateHash: "0aaa86f73a8c75ee18a7dcccd19737de4f5d705566bdec0a4c9e89077d8db1cc",
+          javaVersion:
+            'openjdk version "21.0.12.1" 2026-08-18\nOpenJDK Runtime Environment Homebrew (build 21.0.12.1)\nOpenJDK 64-Bit Server VM Homebrew (build 21.0.12.1, mixed mode, sharing)',
+          androidSdkBuildTools: ["35.0.0", "36.0.0", "37.0.0"],
+          androidSdkPlatforms: ["android-34", "android-35", "android-36", "android-37.0"],
+          androidNdkVersions: ["27.1.12297006"],
+        },
+        sources: [...commonSources, androidSource],
+        artifactKind: "apk",
+      });
+      const secondaryIdentity = identity({
+        ...primaryIdentity,
+        sources: commonSources,
+      });
+      const primaryKey = yield* NativeArtifactCache.nativeArtifactCacheKey(primaryIdentity);
+      const secondaryKey = yield* NativeArtifactCache.nativeArtifactCacheKey(secondaryIdentity);
+      assert.equal(primaryKey, secondaryKey);
+
+      const withOtherIgnoredSources = identity({
+        ...secondaryIdentity,
+        sources: [
+          ...commonSources,
+          {
+            type: "file",
+            filePath: "ignored.txt",
+            reasons: ["bareNativeDir"],
+            hash: null,
+          },
+          {
+            type: "package",
+            name: "ignored-package",
+            version: "1.0.0",
+            filePath: "node_modules/ignored-package/package.json",
+            reasons: ["expoConfigPlugins"],
+            hash: null,
+          },
+        ],
+      });
+      assert.equal(
+        yield* NativeArtifactCache.nativeArtifactCacheKey(withOtherIgnoredSources),
+        primaryKey,
+      );
+
+      let buildCount = 0;
+      const request = (
+        worktree: string,
+        device: string,
+        buildIdentity: NativeArtifactCache.NativeArtifactIdentity,
+      ) =>
+        makeClient({
+          cacheRoot: root,
+          worktree,
+          device,
+          identity: buildIdentity,
+          build: (artifactPath) =>
+            Effect.gen(function* () {
+              buildCount += 1;
+              yield* writeArtifact(buildIdentity, artifactPath, `built for ${worktree}`);
+            }),
+        }).pipe(Effect.flatMap((options) => NativeArtifactCache.ensureNativeArtifact(options)));
+
+      let buildFinished = false;
+      const primaryOptions = yield* makeClient({
+        cacheRoot: root,
+        worktree: "worktree-with-android-dir",
+        device: "emulator-primary",
+        identity: primaryIdentity,
+        build: (artifactPath) =>
+          Effect.gen(function* () {
+            buildCount += 1;
+            yield* writeArtifact(
+              primaryIdentity,
+              artifactPath,
+              "built for worktree-with-android-dir",
+            );
+            buildFinished = true;
+          }),
+      });
+      const first = yield* NativeArtifactCache.ensureNativeArtifact({
+        ...primaryOptions,
+        currentIdentity: () => Effect.succeed(buildFinished ? secondaryIdentity : primaryIdentity),
+      });
+      const second = yield* request("clean-worktree", "emulator-secondary", secondaryIdentity);
+      const manifestText = yield* fs.readFileString(
+        path.join(path.dirname(first.artifactPath), "manifest.json"),
+      );
+      const installedSecondaryPath = path.join(root, "installed/emulator-secondary.native");
+
+      assert.equal(buildCount, 1);
+      assert.isTrue(first.built);
+      assert.isTrue(second.cacheHit);
+      assert.isFalse(second.built);
+      assert.isTrue(manifestText.includes('"filePath":"android"'));
+      assert.equal(
+        yield* fs.readFileString(installedSecondaryPath),
+        "built for worktree-with-android-dir",
+      );
+    }),
+  );
+
+  it.effect("serializes concurrent callers so one build serves both devices", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "native-artifact-concurrent-" });
+      const buildIdentity = identity({
+        platform: "android",
+        expoPlatforms: ["android"],
+        target: { abi: "arm64-v8a", apiLevel: "35" },
+        artifactKind: "apk",
+      });
+      let releaseBuild!: () => void;
+      const buildGate = new Promise<void>((resolve) => {
+        releaseBuild = resolve;
+      });
+      let builds = 0;
+
+      const request = (device: string, pid: number) =>
+        NativeArtifactCache.ensureNativeArtifact({
+          cacheRoot: root,
+          identity: buildIdentity,
+          currentIdentity: () => Effect.succeed(buildIdentity),
+          process: processProbe(pid),
+          waitForLock: () => Effect.sync(releaseBuild).pipe(Effect.andThen(Effect.yieldNow)),
+          build: (artifactPath) =>
+            Effect.gen(function* () {
+              builds += 1;
+              yield* Effect.promise(() => buildGate);
+              yield* writeArtifact(buildIdentity, artifactPath, "one-debug-apk");
+            }),
+          install: (artifactPath) =>
+            Effect.gen(function* () {
+              const fs = yield* FileSystem.FileSystem;
+              const path = yield* Path.Path;
+              yield* fs.copy(artifactPath, path.join(root, `${device}.apk`));
+            }),
+          installedBinary: () =>
+            Effect.gen(function* () {
+              const fs = yield* FileSystem.FileSystem;
+              const path = yield* Path.Path;
+              const installedPath = path.join(root, `${device}.apk`);
+              return (yield* fs.exists(installedPath))
+                ? yield* NativeArtifactCache.hashArtifact(installedPath)
+                : null;
+            }),
+          expectedInstalledBinary: (artifactPath) => NativeArtifactCache.hashArtifact(artifactPath),
+        });
+
+      const results = yield* Effect.all([request("emulator-a", 201), request("emulator-b", 202)], {
+        concurrency: "unbounded",
+      });
+      assert.equal(builds, 1);
+      assert.deepEqual(results.map((result) => result.cacheHit).sort(), [false, true]);
+    }),
+  );
+
+  it.effect("separates fingerprint and Xcode toolchain identities", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "native-artifact-identities-" });
+      const base = identity();
+      const toolchainChanged = identity({
+        toolchain: { host: "darwin", xcode: "Xcode 26.5 build 17F80", simulatorSdk: "26.5" },
+      });
+      const targetChanged = identity({
+        target: { runtime: "iOS-26-5", architecture: "arm64" },
+      });
+      const fingerprintChanged = identity({ fingerprint: "b".repeat(40) });
+      let builds = 0;
+
+      for (const [index, buildIdentity] of [
+        base,
+        toolchainChanged,
+        targetChanged,
+        fingerprintChanged,
+      ].entries()) {
+        const request = yield* makeClient({
+          cacheRoot: root,
+          worktree: `worktree-${index}`,
+          device: `simulator-${index}`,
+          identity: buildIdentity,
+          build: (artifactPath) =>
+            Effect.gen(function* () {
+              builds += 1;
+              yield* writeArtifact(buildIdentity, artifactPath, `artifact-${index}`);
+            }),
+        });
+        yield* NativeArtifactCache.ensureNativeArtifact(request);
+      }
+
+      assert.equal(builds, 4);
+    }),
+  );
+
+  it.effect("rejects a cached artifact whose verified bytes changed", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "native-artifact-tamper-" });
+      const buildIdentity = identity();
+      let builds = 0;
+      const request = yield* makeClient({
+        cacheRoot: root,
+        worktree: "worktree-a",
+        device: "simulator-a",
+        identity: buildIdentity,
+        build: (artifactPath) =>
+          Effect.gen(function* () {
+            builds += 1;
+            yield* writeArtifact(buildIdentity, artifactPath, `build-${builds}`);
+          }),
+      });
+
+      const first = yield* NativeArtifactCache.ensureNativeArtifact(request);
+      yield* fs.writeFileString(path.join(first.artifactPath, "Info.plist"), "tampered");
+      const second = yield* NativeArtifactCache.ensureNativeArtifact(request);
+
+      assert.equal(builds, 2);
+      assert.isTrue(second.built);
+      assert.isFalse(second.cacheHit);
+      assert.equal(
+        yield* fs.readFileString(path.join(second.artifactPath, "Info.plist")),
+        "build-2",
+      );
+    }),
+  );
+
+  it.effect("does not reuse an artifact when retained Expo source hashes disagree", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "native-artifact-provenance-" });
+      const original = identity();
+      const changedSources = identity({
+        sources: [
+          {
+            type: "file",
+            filePath: "app.json",
+            reasons: ["expoConfig"],
+            hash: "0".repeat(40),
+          },
+        ],
+      });
+      let builds = 0;
+
+      const request = (device: string, buildIdentity: NativeArtifactCache.NativeArtifactIdentity) =>
+        makeClient({
+          cacheRoot: root,
+          worktree: `worktree-${device}`,
+          device,
+          identity: buildIdentity,
+          build: (artifactPath) =>
+            Effect.gen(function* () {
+              builds += 1;
+              yield* writeArtifact(buildIdentity, artifactPath, `build-${builds}`);
+            }),
+        }).pipe(Effect.flatMap((options) => NativeArtifactCache.ensureNativeArtifact(options)));
+
+      const first = yield* request("simulator-a", original);
+      const second = yield* request("simulator-b", changedSources);
+
+      assert.equal(builds, 2);
+      assert.isTrue(first.built);
+      assert.isTrue(second.built);
+      assert.equal(yield* fs.readFileString(`${second.artifactPath}/Info.plist`), "build-2");
+    }),
+  );
+
+  it.effect("rejects a device install whose installed binary hash differs from the artifact", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const root = yield* fs.makeTempDirectoryScoped({
+        prefix: "native-artifact-install-mismatch-",
+      });
+      const buildIdentity = identity();
+      const client = yield* makeClient({
+        cacheRoot: root,
+        worktree: "worktree-a",
+        device: "simulator-a",
+        identity: buildIdentity,
+        build: (artifactPath) => writeArtifact(buildIdentity, artifactPath, "verified-artifact"),
+      });
+      const mismatched = { ...client, installedBinary: () => Effect.succeed("different-binary") };
+      const exit = yield* NativeArtifactCache.ensureNativeArtifact(mismatched).pipe(Effect.exit);
+
+      assert.isTrue(Exit.isFailure(exit));
+    }),
+  );
+
+  it.effect("does not publish a failed or input-drifted build", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "native-artifact-no-poison-" });
+      const buildIdentity = identity();
+      const cacheKey = yield* NativeArtifactCache.nativeArtifactCacheKey(buildIdentity);
+      let builds = 0;
+      const failedRequest = yield* makeClient({
+        cacheRoot: root,
+        worktree: "failed-worktree",
+        device: "simulator-failed",
+        identity: buildIdentity,
+        build: (artifactPath) =>
+          Effect.gen(function* () {
+            builds += 1;
+            yield* writeArtifact(buildIdentity, artifactPath, "partial");
+            return yield* new NativeArtifactCache.NativeArtifactCacheError({
+              message: "simulated build failure",
+            });
+          }),
+      });
+      const failed = yield* NativeArtifactCache.ensureNativeArtifact(failedRequest).pipe(
+        Effect.exit,
+      );
+      const entryPath = path.join(root, "artifacts", "ios", cacheKey);
+      assert.isTrue(Exit.isFailure(failed));
+      assert.isFalse(yield* fs.exists(entryPath));
+
+      const interruptedRequest = {
+        ...failedRequest,
+        device: "simulator-interrupted",
+        build: (artifactPath: string) =>
+          Effect.gen(function* () {
+            builds += 1;
+            yield* writeArtifact(buildIdentity, artifactPath, "partial-before-interrupt");
+            return yield* Effect.interrupt;
+          }),
+      };
+      const interrupted = yield* NativeArtifactCache.ensureNativeArtifact(interruptedRequest).pipe(
+        Effect.exit,
+      );
+      assert.isTrue(Exit.isFailure(interrupted));
+      assert.isFalse(yield* fs.exists(entryPath));
+
+      let buildFinished = false;
+      const changedIdentity = identity({
+        sources: [
+          { type: "file", filePath: "app.json", reasons: ["expoConfig"], hash: "0".repeat(40) },
+        ],
+      });
+      const driftingRequest = {
+        ...failedRequest,
+        currentIdentity: () => Effect.succeed(buildFinished ? changedIdentity : buildIdentity),
+        build: (artifactPath: string) =>
+          Effect.gen(function* () {
+            builds += 1;
+            yield* writeArtifact(buildIdentity, artifactPath, "built-before-drift");
+            buildFinished = true;
+          }),
+      };
+      const drifted = yield* NativeArtifactCache.ensureNativeArtifact(driftingRequest).pipe(
+        Effect.exit,
+      );
+      assert.isTrue(Exit.isFailure(drifted));
+      assert.isFalse(yield* fs.exists(entryPath));
+    }),
+  );
+
+  it.effect("reclaims a dead lock owner and leaves a live owner untouched", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "native-artifact-lock-" });
+      const lockPath = path.join(root, "dead.lock");
+      const deadOwner = { pid: 301, startTime: "old-process" };
+      yield* fs.makeDirectory(lockPath);
+      const deadOwnerText = encodeLockOwner(deadOwner);
+      yield* fs.writeFileString(path.join(lockPath, "owner.json"), deadOwnerText);
+
+      const reclaimed = yield* NativeArtifactLock.withNativeArtifactLock(
+        {
+          lockPath,
+          process: {
+            current: Effect.succeed({ pid: 302, startTime: "new-process" }),
+            observe: () => Effect.succeed({ _tag: "dead" }),
+          },
+        },
+        Effect.succeed("acquired"),
+      );
+      assert.equal(reclaimed, "acquired");
+
+      const recycledPath = path.join(root, "recycled.lock");
+      yield* fs.makeDirectory(recycledPath);
+      yield* fs.writeFileString(
+        path.join(recycledPath, "owner.json"),
+        encodeLockOwner({ pid: 305, startTime: "previous-process" }),
+      );
+      const recycled = yield* NativeArtifactLock.withNativeArtifactLock(
+        {
+          lockPath: recycledPath,
+          process: {
+            current: Effect.succeed({ pid: 306, startTime: "new-process" }),
+            observe: () => Effect.succeed({ _tag: "alive", startTime: "recycled-process" }),
+          },
+        },
+        Effect.succeed("reclaimed recycled PID"),
+      );
+      assert.equal(recycled, "reclaimed recycled PID");
+
+      const livePath = path.join(root, "live.lock");
+      const liveOwner = { pid: 303, startTime: "still-running" };
+      yield* fs.makeDirectory(livePath);
+      const liveOwnerText = encodeLockOwner(liveOwner);
+      yield* fs.writeFileString(path.join(livePath, "owner.json"), liveOwnerText);
+      const stopped = yield* NativeArtifactLock.withNativeArtifactLock(
+        {
+          lockPath: livePath,
+          process: {
+            current: Effect.succeed({ pid: 304, startTime: "contender" }),
+            observe: () => Effect.succeed({ _tag: "alive", startTime: "still-running" }),
+          },
+          wait: () =>
+            Effect.fail(
+              new NativeArtifactLock.NativeArtifactLockError({
+                message: "bounded live-lock check",
+              }),
+            ),
+        },
+        Effect.void,
+      ).pipe(Effect.exit);
+      assert.isTrue(Exit.isFailure(stopped));
+      assert.isTrue(yield* fs.exists(livePath));
+      assert.equal(yield* fs.readFileString(path.join(livePath, "owner.json")), liveOwnerText);
+
+      const unknownPath = path.join(root, "unknown.lock");
+      const unknownOwner = { pid: 305, startTime: "unverifiable" };
+      const unknownOwnerText = encodeLockOwner(unknownOwner);
+      yield* fs.makeDirectory(unknownPath);
+      yield* fs.writeFileString(path.join(unknownPath, "owner.json"), unknownOwnerText);
+      const unverifiable = yield* NativeArtifactLock.withNativeArtifactLock(
+        {
+          lockPath: unknownPath,
+          process: {
+            current: Effect.succeed({ pid: 306, startTime: "contender" }),
+            observe: () => Effect.succeed({ _tag: "unknown" }),
+          },
+        },
+        Effect.void,
+      ).pipe(Effect.exit);
+      assert.isTrue(Exit.isFailure(unverifiable));
+      assert.isTrue(yield* fs.exists(unknownPath));
+      assert.equal(
+        yield* fs.readFileString(path.join(unknownPath, "owner.json")),
+        unknownOwnerText,
+      );
+    }),
+  );
+
+  it.effect("releases lock claims cancelled during directory creation or owner publication", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "native-artifact-lock-cancel-" });
+
+      const cancelAt = (point: "directory" | "owner") =>
+        Effect.gen(function* () {
+          const lockPath = path.join(root, `${point}.lock`);
+          const ownerPath = path.join(lockPath, "owner.json");
+          const claimed = yield* Deferred.make<void>();
+          const continueClaim = yield* Deferred.make<void>();
+          let paused = false;
+
+          const pause = (shouldPause: boolean) => {
+            if (!shouldPause || paused) return Effect.void;
+            paused = true;
+            return Deferred.succeed(claimed, undefined).pipe(
+              Effect.andThen(Deferred.await(continueClaim)),
+            );
+          };
+          const interceptedFs: FileSystem.FileSystem = {
+            ...fs,
+            makeDirectory: (directory, options) =>
+              fs
+                .makeDirectory(directory, options)
+                .pipe(Effect.andThen(pause(point === "directory" && directory === lockPath))),
+            writeFileString: (filePath, contents, options) =>
+              fs
+                .writeFileString(filePath, contents, options)
+                .pipe(Effect.andThen(pause(point === "owner" && filePath === ownerPath))),
+          };
+
+          const worker = yield* NativeArtifactLock.withNativeArtifactLock(
+            { lockPath, process: processProbe(401) },
+            Effect.succeed("acquired"),
+          ).pipe(Effect.provideService(FileSystem.FileSystem, interceptedFs), Effect.forkChild);
+          yield* Deferred.await(claimed);
+          const cancelling = yield* Fiber.interrupt(worker).pipe(
+            Effect.forkChild({ startImmediately: true }),
+          );
+          yield* Deferred.succeed(continueClaim, undefined);
+          yield* Fiber.join(cancelling);
+
+          const result = yield* Fiber.await(worker);
+          assert.isTrue(Exit.isFailure(result));
+          assert.isFalse(yield* fs.exists(lockPath));
+        });
+
+      yield* cancelAt("directory");
+      yield* cancelAt("owner");
+    }),
+  );
+
+  it.effect("times out live-lock acquisition without reclaiming its owner", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "native-artifact-lock-timeout-" });
+      const lockPath = path.join(root, "live.lock");
+      const owner = { pid: 402, startTime: "live-owner" };
+      const ownerText = encodeLockOwner(owner);
+      const firstWait = yield* Deferred.make<void>();
+      yield* fs.makeDirectory(lockPath);
+      yield* fs.writeFileString(path.join(lockPath, "owner.json"), ownerText);
+
+      const worker = yield* NativeArtifactLock.withNativeArtifactLock(
+        {
+          lockPath,
+          process: {
+            current: Effect.succeed({ pid: 403, startTime: "contender" }),
+            observe: () => Effect.succeed({ _tag: "alive", startTime: owner.startTime }),
+          },
+          acquisitionTimeoutMs: 5_000,
+          wait: () =>
+            Deferred.succeed(firstWait, undefined).pipe(Effect.andThen(Effect.sleep("200 millis"))),
+        },
+        Effect.void,
+      ).pipe(Effect.result, Effect.forkChild);
+
+      yield* Deferred.await(firstWait);
+      yield* TestClock.adjust("10 seconds");
+      const result = yield* Fiber.join(worker);
+
+      assert.equal(result._tag, "Failure");
+      if (result._tag === "Failure") {
+        assert.instanceOf(result.failure, NativeArtifactLock.NativeArtifactLockError);
+        assert.include(result.failure.message, "Timed out after 5 seconds");
+      }
+      assert.isTrue(yield* fs.exists(lockPath));
+      assert.equal(yield* fs.readFileString(path.join(lockPath, "owner.json")), ownerText);
+    }).pipe(Effect.provide(TestClock.layer())),
+  );
+});

@@ -2,6 +2,10 @@ import {
   type AuthEnvironmentScope,
   OrchestrationV2ShellSnapshot,
   type ProjectId,
+  type PullRequestDiffInput,
+  type PullRequestDiffResult,
+  type PullRequestUnavailableReason,
+  type SourceControlProviderKind,
   type ServerAuthSessionMethod,
 } from "@t3tools/contracts";
 import type { ThreadSearchInput, ThreadSearchResult } from "@t3tools/contracts/signalboxSearch";
@@ -37,7 +41,7 @@ import { API_HEADER, type ApiCredential, encodeApiCredential } from "../api/apiO
 import type { CreatedKey, KeyOptions } from "../localKeys/LocalKeys.ts";
 import type { LocalKeysView } from "../localKeys/localModelAccess.ts";
 import type { LocalModelAuthorization } from "../models/ModelProtocol.ts";
-import type { ModelUsage } from "../modelGateway/modelGatewayRecord.ts";
+import type { ModelUsage } from "../models/ModelRecords.ts";
 import type { PreviewSetup } from "../previewSetup/previewSetupWire.ts";
 import type { SignInCheck } from "../signIn/SignInGrants.ts";
 import type {
@@ -78,6 +82,21 @@ export class UserObjectError extends Schema.TaggedError<UserObjectError>()("User
 
 /** The shell crosses Durable Object RPC in its JSON encoding, which keeps its dates. */
 export const shellSnapshotWire = jsonCodec(OrchestrationV2ShellSnapshot);
+
+/** A PR diff response that keeps service failures typed across Durable Object RPC. */
+export type PullRequestDiffReply =
+  | { readonly _tag: "success"; readonly value: PullRequestDiffResult }
+  | {
+      readonly _tag: "unavailable";
+      readonly reason: PullRequestUnavailableReason;
+      readonly provider?: SourceControlProviderKind;
+    }
+  | {
+      readonly _tag: "operation-error";
+      readonly operation: string;
+      readonly detail: string;
+      readonly reason?: "not-found";
+    };
 
 /** What a user's object answers. `UserObject` implements it method for method. */
 export interface UserObjectApi {
@@ -203,6 +222,8 @@ export interface UserObjectApi {
   }) => Promise<PreviewSetupApplied>;
   /** Who the user's agents commit as, from their GitHub connection; null when not connected. */
   readonly githubCommitAuthor: () => Promise<CommitAuthor | null>;
+  /** A PR diff from the user's authorized GitHub repository and connection. */
+  readonly pullRequestDiff: (input: PullRequestDiffInput) => Promise<PullRequestDiffReply>;
   /**
    * The user's 1Password service account token, or null when none is
    * connected: only for their thread's machine (`ThreadRunner`'s `ThreadSecrets`).
@@ -230,6 +251,8 @@ export interface UserObjectApi {
    * thread (`drive/automationRoutes.ts`). The engine's refusal is an answer.
    */
   readonly automationTool: (threadId: string, name: string, input: unknown) => Promise<ToolResult>;
+  /** The thread token fixes the learner level; tool inputs never choose one. */
+  readonly learnerTool: (threadId: string, name: string, input: unknown) => Promise<ToolResult>;
   /**
    * What's going on in a thread's home folder, for its agent
    * (`drive/statusLineRoutes.ts`, `UserThreadStatus`), as `statusLineJson.folder` text.
@@ -358,6 +381,7 @@ const METHODS = Object.keys({
   redeemPreviewSetup: true,
   importPreviewSetup: true,
   githubCommitAuthor: true,
+  pullRequestDiff: true,
   onePasswordToken: true,
   contextIds: true,
   recordDriveAccess: true,
@@ -366,6 +390,7 @@ const METHODS = Object.keys({
   publishBranch: true,
   automationTool: true,
   folderStatus: true,
+  learnerTool: true,
   browserSession: true,
   browserSignIn: true,
   checkSignIn: true,

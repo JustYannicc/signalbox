@@ -5,6 +5,12 @@ import {
   type ToolResult,
 } from "@signalbox/runner-protocol/AutomationProtocol";
 import {
+  LEARNER_PATHS,
+  learnerJson,
+  type LearnerToolRequest,
+  type LearnerToolResult,
+} from "@signalbox/runner-protocol/LearnerProtocol";
+import {
   BRANCH_PATHS,
   branchJson,
   type PublishRequest,
@@ -64,6 +70,8 @@ import { HttpClient, HttpClientRequest } from "effect/http";
  * `threadStatus`, `setThreadStatus` and `folderStatus` read and write the
  * thread's status line (`StatusLineProtocol.ts`). Writing one note twice
  * leaves the same note, so all three are retried.
+ * `learnerTool` forwards a learner call (`LearnerProtocol.ts`). Only reads
+ * are retried; event and statement writes might already have taken effect.
  *
  * `browserSession` gets the thread's session in the person's browser
  * (`BrowserProtocol.ts`), and `endBrowser` deletes it. Both are safe to
@@ -111,6 +119,10 @@ export interface ContextClient {
     input: ThreadStatusNoteInput,
   ) => Effect.Effect<SetThreadStatusAnswer, ContextClientError>;
   readonly folderStatus: Effect.Effect<FolderStatusAnswer, ContextClientError>;
+  readonly learnerTool: (
+    request: LearnerToolRequest,
+    options: { readonly retry: boolean },
+  ) => Effect.Effect<LearnerToolResult, ContextClientError>;
   readonly browserSession: Effect.Effect<BrowserSessionAnswer, ContextClientError>;
   readonly endBrowser: (request: BrowserEndRequest) => Effect.Effect<void, ContextClientError>;
   readonly browserSignIn: (
@@ -208,6 +220,10 @@ export const makeContextClient = Effect.fn("makeContextClient")(function* (input
     );
   const automationRead = automationTool(true);
   const automationWrite = automationTool(false);
+  const learnerTool = (retry: boolean) =>
+    json(LEARNER_PATHS.tool, learnerJson.toolRequest.encode, learnerJson.tool.decode, retry);
+  const learnerRead = learnerTool(true);
+  const learnerWrite = learnerTool(false);
 
   return {
     view: json(CONTEXT_PATHS.view, () => "{}", contextJson.view.decode)(undefined),
@@ -233,6 +249,7 @@ export const makeContextClient = Effect.fn("makeContextClient")(function* (input
       () => "{}",
       statusLineJson.folder.decode,
     )(undefined),
+    learnerTool: (request, { retry }) => (retry ? learnerRead : learnerWrite)(request),
     browserSession: json(BROWSER_PATHS.session, () => "{}", browserJson.session.decode)(undefined),
     endBrowser: json(BROWSER_PATHS.end, browserJson.endRequest.encode, constVoid),
     browserSignIn: json(

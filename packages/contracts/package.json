@@ -7,10 +7,6 @@
   ],
   "type": "module",
   "exports": {
-    "./signalboxCollaboration": {
-      "types": "./src/signalboxCollaboration.ts",
-      "import": "./src/signalboxCollaboration.ts"
-    },
     ".": {
       "types": "./src/index.ts",
       "import": "./src/index.ts"
@@ -90,6 +86,14 @@
     "./signalboxRepositories": {
       "types": "./src/signalboxRepositories.ts",
       "import": "./src/signalboxRepositories.ts"
+    },
+    "./signalboxLearner": {
+      "types": "./src/signalboxLearner.ts",
+      "import": "./src/signalboxLearner.ts"
+    },
+    "./signalboxCollaboration": {
+      "types": "./src/signalboxCollaboration.ts",
+      "import": "./src/signalboxCollaboration.ts"
     },
     "./signalboxSearch": {
       "types": "./src/signalboxSearch.ts",

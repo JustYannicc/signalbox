@@ -70,6 +70,7 @@ const setup = (
         searchDocuments: async () => null,
         contextWorkVisible: async () => false,
         find: async () => ({ _tag: "not_found" }),
+        requestPullRequestSync: async () => ({ _tag: "not_found" }),
         diagnostics: async () => null,
         previews: async () => null,
         previewLink: async () => ({ _tag: "unavailable", message: "none" }),

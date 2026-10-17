@@ -10,8 +10,19 @@ const LevelId = Schema.toType(FolderId).check(Schema.isTrimmed());
 
 export const CatalogLevelRef = Schema.Struct({ home: CatalogHome, incarnation: Incarnation });
 
-export const CatalogRootHome = CatalogHome.check(
-  Schema.makeFilter((home) => home.level._tag === "top"),
+type RootHome = CatalogHome & {
+  readonly level: Extract<CatalogHome["level"], { readonly _tag: "top" }>;
+};
+type FolderLevelRef = typeof CatalogLevelRef.Type & {
+  readonly home: CatalogHome & {
+    readonly level: Extract<CatalogHome["level"], { readonly _tag: "folder" }>;
+  };
+};
+
+export const CatalogRootHome = CatalogHome.pipe(
+  Schema.refine((home): home is RootHome => home.level._tag === "top", {
+    identifier: "CatalogRootHome",
+  }),
 );
 
 const decodeHome = Schema.decodeUnknownSync(CatalogHome);
@@ -37,7 +48,11 @@ export const CatalogRootHomeState = Schema.Struct({
 
 export const CatalogFolderHomeState = Schema.Struct({
   ...storageFields,
-  level: CatalogLevelRef.check(Schema.makeFilter((level) => level.home.level._tag === "folder")),
+  level: CatalogLevelRef.pipe(
+    Schema.refine((level): level is FolderLevelRef => level.home.level._tag === "folder", {
+      identifier: "CatalogFolderLevelRef",
+    }),
+  ),
 });
 
 export const CatalogRootState = Schema.Struct({
