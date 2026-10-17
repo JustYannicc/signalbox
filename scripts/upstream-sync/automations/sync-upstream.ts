@@ -53,6 +53,7 @@ export default workflow(async (w, input: { resume?: SyncPr } | null) => {
   let open: SyncPr | null = input?.resume ?? (await w.recall("Find the open sync PR", "sync-pr"));
   if (open) {
     try {
+      await w.eventCursor("Capture events before checking the open PR");
       const last: PullRequest = await w.call("Check it's still open", "signalbox.pull_request_read", { threadId: open.threadId, url: open.url });
       if (last.state !== "open") open = null;
     } catch {
@@ -88,6 +89,7 @@ export default workflow(async (w, input: { resume?: SyncPr } | null) => {
   const where = { threadId, number };
 
   const followed = await w.repeat("See it through to merge", { max: 12 }, async (w) => {
+    const after = await w.eventCursor("Capture events before reading the pull request");
     const pr: PullRequest = await w.call("Read the pull request", "signalbox.pull_request_read", { threadId, url });
     if (pr.state === "merged") return w.done("merged");
     if (pr.state === "closed") return w.done("closed");
@@ -98,6 +100,7 @@ export default workflow(async (w, input: { resume?: SyncPr } | null) => {
       await w.waitFor("Wait for CI", {
         on: ["pr.checks.passed", "pr.checks.failed", "pr.conflicted", "pr.merged", "pr.closed"],
         where,
+        after,
         timeout: { hours: 1 },
       });
       return;
@@ -144,6 +147,7 @@ export default workflow(async (w, input: { resume?: SyncPr } | null) => {
     await w.waitFor("Wait for the merge", {
       on: ["pr.merged", "pr.closed", "pr.checks.failed", "pr.conflicted"],
       where,
+      after,
       timeout: { minutes: 30 },
     });
   });

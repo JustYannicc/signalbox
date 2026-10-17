@@ -11,6 +11,7 @@ import {
   monitorsOf,
   pullRequestSynced,
   receiveCallback,
+  saveOk,
   threadEvent,
   withEngine,
 } from "./WorkflowEngine.testkit.ts";
@@ -44,6 +45,41 @@ const settle = (engine: WorkflowEngine["Service"]) =>
     yield* engine.tick;
     yield* engine.drain;
   });
+
+it.effect("event cursors start at zero and reject a cursor from another run", () =>
+  withEngine(
+    {},
+    Effect.gen(function* () {
+      const engine = yield* WorkflowEngine;
+      const capture = yield* saveOk(`export const meta = { name: "Capture event cursor" } as const;
+export default workflow(async (w) => await w.eventCursor("Capture inbox boundary"));`);
+      const capturedRun = yield* engine.startRun({
+        automationId: capture.id,
+        trigger: "manual",
+      });
+      yield* engine.drain;
+      const cursor = (yield* engine.getRun(capturedRun.id)).output as {
+        readonly runId: string;
+        readonly sequence: number;
+      };
+      expect(cursor).toEqual({ runId: capturedRun.id, sequence: 0 });
+
+      const wait = yield* saveOk(`export const meta = { name: "Use another run's cursor" } as const;
+export default workflow(async (w, input: { after: { runId: string; sequence: number } }) => {
+  await w.waitFor("Wait for the merge", { on: "pr.merged", after: input.after });
+});`);
+      const waitingRun = yield* engine.startRun({
+        automationId: wait.id,
+        input: { after: cursor },
+        trigger: "manual",
+      });
+      yield* engine.drain;
+      const failed = yield* engine.getRun(waitingRun.id);
+      expect(failed.run.status).toBe("failed");
+      expect(failed.run.error).toContain("event cursor captured by this run");
+    }),
+  ),
+);
 
 it.effect(
   "wait_for on an event wakes the thread once, and the thread shows the wait meanwhile",

@@ -389,6 +389,7 @@ export const makeEngine = <R>(
 
     const startStep = makeStartStep({
       store,
+      links,
       services,
       functions,
       external,
