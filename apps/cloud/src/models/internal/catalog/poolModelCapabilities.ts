@@ -1,7 +1,7 @@
 import type { ModelCapabilities, ProviderOptionDescriptor } from "@t3tools/contracts";
 
-import type { ServedModel } from "../pool/cliProxyApi.ts";
-import type { CloudPoolKind } from "./providerCatalog.ts";
+import type { ServedModel } from "../../../pool/cliProxyApi.ts";
+import type { CloudPoolKind } from "./routing.ts";
 
 const EFFORT_LABELS: Readonly<Record<string, string>> = {
   none: "None",

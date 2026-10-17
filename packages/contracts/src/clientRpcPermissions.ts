@@ -25,6 +25,8 @@ import { SIGNALBOX_ANALYTICS_WS_METHODS } from "./signalboxAnalytics.ts";
 /** Incremental client enforcement; the server still authorizes every request. */
 export const CLIENT_GUARDED_RPC_SCOPES = {
   [WS_METHODS.providerUploadFeedback]: AuthOrchestrationOperateScope, // signalbox: feedback uploads require the destination's operate grant
+  [WS_METHODS.serverUpsertKeybinding]: AuthSettingsWriteScope,
+  [WS_METHODS.serverRemoveKeybinding]: AuthSettingsWriteScope,
   [SIGNALBOX_ANALYTICS_WS_METHODS.setEnabled]: AuthSettingsWriteScope,
   [WS_METHODS.serverRunStorageCleanup]: AuthSettingsWriteScope,
   [WS_METHODS.serverCheckOtlpEndpoint]: AuthSettingsWriteScope,
