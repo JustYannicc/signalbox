@@ -457,6 +457,7 @@ import {
 } from "./chat/ThreadErrorBanner";
 import { failureShownInTimeline } from "./chat/failureShownInTimeline"; // signalbox
 import { runtimeIsSettingUp } from "./chat/runtimeIsSettingUp"; // signalbox
+import { createVisitDedupe, visitStampFor } from "./chat/threadVisit"; // signalbox
 import { QueuedRunsControl, type QueuedRunsControlHandle } from "./chat/QueuedRunsControl";
 import { useThreadLinkedPullRequest } from "./pullRequest/useThreadLinkedPullRequest";
 import { useProactivePanels } from "../hooks/useProactivePanels";
@@ -1250,7 +1251,8 @@ export default function ChatView(props: ChatViewProps) {
     (store) => store.threadLastVisitedAtById[routeThreadKey],
   );
   const visitThreadMutation = useAtomCommand(threadEnvironment.visit, { reportFailure: false });
-  const lastDispatchedVisitRef = useRef<string | null>(null);
+  const visitDedupe = useRef(createVisitDedupe()).current; // signalbox: forgets on thread switch
+
   const lastVisitDispatchAtRef = useRef(0);
   const settings = useEnvironmentSettings(environmentId);
   const clientSettingsHydrated = useClientSettingsHydrated();
@@ -2344,7 +2346,8 @@ export default function ChatView(props: ChatViewProps) {
 
   useEffect(() => {
     if (!serverThread?.id) return;
-    const threadUpdatedAt = Date.parse(serverThread.updatedAt);
+    const visitStamp = visitStampFor(serverThread); // signalbox: at least the latest run's end
+    const threadUpdatedAt = Date.parse(visitStamp);
     if (Number.isNaN(threadUpdatedAt)) return;
     const effectiveLastVisitedAt = resolveThreadLastVisitedAt(
       serverThread.lastVisitedAt,
@@ -2358,14 +2361,16 @@ export default function ChatView(props: ChatViewProps) {
       // lands. The dedupe also keeps a mark-unread on the open thread sticky:
       // the rewind leaves updatedAt untouched, so the already-dispatched key
       // skips a fresh visit until new activity lands or the thread is reopened.
-      const dispatchKey = `${routeThreadKey}:${serverThread.updatedAt}`;
-      if (lastDispatchedVisitRef.current === dispatchKey) return;
+      const dispatchKey = `${routeThreadKey}:${visitStamp}`;
+      if (visitDedupe.isDuplicate(routeThreadKey, dispatchKey)) return; // signalbox
       const dispatch = () => {
-        lastDispatchedVisitRef.current = dispatchKey;
+        visitDedupe.sent(routeThreadKey, dispatchKey); // signalbox
         lastVisitDispatchAtRef.current = Date.now();
         void visitThreadMutation({
           environmentId: serverThread.environmentId,
-          input: { threadId: serverThread.id, visitedAt: serverThread.updatedAt },
+          input: { threadId: serverThread.id, visitedAt: visitStamp },
+        }).then((result) => {
+          if (result._tag === "Failure") visitDedupe.failed(dispatchKey); // signalbox: retry
         });
       };
       const latestRunCompletedAtMs = serverThread.latestRun?.completedAt
