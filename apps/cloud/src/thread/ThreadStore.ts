@@ -56,7 +56,6 @@ import {
   firstLegacyDeliveryCursor,
   takeLegacyDeliveryChunk,
   utf8Bytes,
-  type LegacyDeliveryCursor,
 } from "./searchOutboxParts.ts";
 
 /**
@@ -561,13 +560,15 @@ const decodeSearchOutboxRows = Schema.decodeUnknownSync(Schema.Array(SearchOutbo
 const decodeSearchPendingFlags = Schema.decodeUnknownSync(
   Schema.Array(Schema.Struct({ has_delivery: Schema.Number, has_conversion: Schema.Number })),
 );
+const decodeSearchBlockedFlags = Schema.decodeUnknownSync(
+  Schema.Array(Schema.Struct({ blocked: Schema.Number })),
+);
 const SearchBackfillDocumentRow = Schema.Struct({
   position: Schema.Number,
   item_id: Schema.String,
   document: Schema.String,
 });
 const SearchBackfillDocumentJson = Schema.fromJsonString(SearchDocument);
-const encodeSearchDocument = Schema.encodeSync(SearchBackfillDocumentJson);
 const decodeSearchBackfillDocument = Schema.decodeUnknownSync(SearchBackfillDocumentJson);
 const decodeSearchBackfillRows = Schema.decodeUnknownSync(Schema.Array(SearchBackfillDocumentRow));
 const SearchBackfillPartJson = Schema.fromJsonString(SearchDocumentPartSchema);
@@ -1001,9 +1002,7 @@ const make = Effect.gen(function* () {
   const hasUnpackageableSearch: ThreadStore["Service"]["hasUnpackageableSearch"] =
     sql`SELECT EXISTS (SELECT 1 FROM search_outbox_unpackageable) AS blocked`.pipe(
       Effect.map((rows) => {
-        const [row] = Schema.decodeUnknownSync(
-          Schema.Array(Schema.Struct({ blocked: Schema.Number })),
-        )(rows);
+        const [row] = decodeSearchBlockedFlags(rows);
         return row?.blocked === 1;
       }),
     );

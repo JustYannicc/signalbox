@@ -377,7 +377,7 @@ describe("SearchBackfill", () => {
     () =>
       Effect.gen(function* () {
         const harness = yield* makeHarness({ summaries: [] });
-        const context = yield* Effect.context().pipe(Effect.provide(harness.userServices));
+        const context = yield* Layer.build(harness.userServices);
         const failedObserver = SearchBackfill.SearchBackfill.of({
           activation: Effect.succeed(null),
           ready: Effect.succeed(false),
