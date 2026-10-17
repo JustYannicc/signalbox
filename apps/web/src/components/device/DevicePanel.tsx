@@ -16,12 +16,13 @@ import { Dialog } from "~/components/ui/dialog";
 import { WizardPopup } from "~/components/ui/wizard";
 import { Spinner } from "~/components/ui/spinner";
 import { cn } from "~/lib/utils";
-import { deviceEnvironment, useDeviceState } from "~/state/device";
+import { deviceEnvironment, useDeviceAgentCommandFailure, useDeviceState } from "~/state/device";
 import { formatEnvironmentQueryError } from "~/state/query";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { DeviceLoadingView } from "./DeviceLoadingView";
 import { DeviceSetup, deviceHubReadiness } from "./DeviceSetup";
 import { DeviceWorkspace } from "./DeviceWorkspace";
+import { DeviceAgentCommandFailureNotice } from "./DeviceAgentCommandFailureNotice";
 import { PreviewPanelShell, type PreviewPanelMode } from "../preview/PreviewPanelShell";
 
 const platformLabel = (platform: DevicePlatform) =>
@@ -58,13 +59,17 @@ export function DevicePanel(props: {
     () => state.sessions.filter((session) => session.threadId === threadId),
     [state.sessions, threadId],
   );
-  const activeSession = props.surface.target
-    ? sessions.find(
+  const matchingSessions = props.surface.target
+    ? sessions.filter(
         (session) =>
           session.deviceId === props.surface.target?.deviceId &&
           session.hostId === props.surface.target.hostId,
       )
-    : undefined;
+    : [];
+  const activeSession =
+    matchingSessions.find((session) => "ownerKind" in session && session.ownerKind === "panel") ??
+    matchingSessions[0];
+  const agentCommandFailure = useDeviceAgentCommandFailure(environmentId, activeSession, sessions);
   const activeDevice = activeSession
     ? state.devices.find(
         (device) => device.hostId === activeSession.hostId && device.id === activeSession.deviceId,
@@ -189,6 +194,9 @@ export function DevicePanel(props: {
             <X className="size-3" />
           </Button>
         </div>
+      ) : null}
+      {agentCommandFailure ? (
+        <DeviceAgentCommandFailureNotice failure={agentCommandFailure} />
       ) : null}
       <div className="@container relative flex min-h-0 flex-1">
         {activeDevice && activeSession ? (

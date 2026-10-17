@@ -1,5 +1,6 @@
 import * as Dialog from "../../components/ui/Dialog";
 import {
+  agentDeviceSessionIdForPanelSession,
   deviceToolVersionLabels,
   deviceToolUpdateOwnership,
   deviceToolUpdatePolicy,
@@ -85,11 +86,21 @@ function DevicePreviewScreen({
   const shutdown = useAtomCommand(deviceEnvironment.shutdown, { reportFailure: false });
   const streamRef = useRef<DeviceStreamRef>(null);
   const state = useEnvironmentQuery(deviceEnvironment.state({ environmentId, input: {} }));
+  const agentDiagnostics = useEnvironmentQuery(
+    deviceEnvironment.agentDiagnostics({ environmentId, input: {} }),
+  );
   const previews = useMemo(
     () => threadDevicePreviews(state.data, threadId),
     [state.data, threadId],
   );
   const preview = selectedThreadDevicePreview(previews, selectedKey);
+  const agentSessionId = agentDeviceSessionIdForPanelSession(
+    preview?.session,
+    state.data?.sessions ?? [],
+  );
+  const agentCommandFailure = agentSessionId
+    ? agentDiagnostics.data?.find((failure) => failure.sessionId === agentSessionId)
+    : undefined;
   const onInputConnected = useCallback(async (connected: boolean) => {
     setInputConnected(connected);
     if (connected) setControlsVisible(false);
@@ -290,6 +301,55 @@ function DevicePreviewScreen({
           ) : null}
         </View>
       )}
+      {agentCommandFailure ? (
+        <View
+          className="absolute z-10 gap-1 rounded-xl border border-warning-border bg-warning px-3.5 py-3"
+          style={{
+            top: Math.max(insets.top, 12) + 60,
+            left: Math.max(insets.left, 12),
+            right: Math.max(insets.right, 12),
+          }}
+        >
+          <AppText
+            accessibilityRole="alert"
+            accessibilityLiveRegion="polite"
+            className="text-sm font-t3-medium text-warning-foreground"
+          >
+            agent-device {agentCommandFailure.command} failed
+          </AppText>
+          <AppText selectable className="text-xs text-warning-foreground">
+            {agentCommandFailure.message}
+          </AppText>
+          {agentCommandFailure.hint ? (
+            <AppText selectable className="text-xs text-warning-foreground">
+              {agentCommandFailure.hint}
+            </AppText>
+          ) : null}
+          {agentCommandFailure.diagnosticId || agentCommandFailure.logPath ? (
+            <Pressable
+              accessibilityRole="button"
+              className="min-h-10 justify-center"
+              onPress={() =>
+                Dialog.alert(
+                  "Agent-device diagnostics",
+                  [
+                    agentCommandFailure.diagnosticId
+                      ? `Diagnostic ID: ${agentCommandFailure.diagnosticId}`
+                      : null,
+                    agentCommandFailure.logPath ? `Log path: ${agentCommandFailure.logPath}` : null,
+                  ]
+                    .filter((entry) => entry !== null)
+                    .join("\n"),
+                )
+              }
+            >
+              <AppText className="text-xs font-t3-medium text-warning-foreground underline">
+                Diagnostic details
+              </AppText>
+            </Pressable>
+          ) : null}
+        </View>
+      ) : null}
       {controlsVisible ? (
         <Animated.View
           entering={OVERLAY_ENTERING}
