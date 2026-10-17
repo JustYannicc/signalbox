@@ -6,6 +6,12 @@ import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 
 import type { Oid } from "./git/gitObjects.ts";
+import type {
+  HistoryOrigin,
+  HistoryResult,
+  HistorySnapshot,
+  HistoryStartResult,
+} from "./DriveHistory.ts";
 import type { AccessDelivery, DrivePerson, MembershipChange } from "./DriveMembers.ts";
 import type {
   DriveWriter,
@@ -38,6 +44,13 @@ export const DRIVE_OBJECT_JURISDICTION = "eu";
 
 /** What a drive object answers. `DriveObject` implements it method for method. */
 export interface DriveObjectApi {
+  readonly packStorage: (name: string) => Promise<string | null>;
+  readonly history: (userId: string) => Promise<HistoryResult>;
+  readonly historyOrigin: (userId: string) => Promise<HistoryOrigin | null>;
+  readonly startFromHistory: (
+    userId: string,
+    history: HistorySnapshot,
+  ) => Promise<HistoryStartResult>;
   readonly open: (writer: DriveWriter) => Promise<RefWrite>;
   readonly refs: (threadId: string | null, packsAfter?: number) => Promise<ThreadRefs>;
   readonly ref: (name: string) => Promise<Oid | null>;
@@ -153,6 +166,10 @@ export function handleFor(api: DriveObjectApi): DriveHandle {
         catch: (cause) => new DriveObjectError({ operation, cause }),
       });
   return {
+    packStorage: wrap("packStorage"),
+    history: wrap("history"),
+    historyOrigin: wrap("historyOrigin"),
+    startFromHistory: wrap("startFromHistory"),
     open: wrap("open"),
     refs: wrap("refs"),
     ref: wrap("ref"),
