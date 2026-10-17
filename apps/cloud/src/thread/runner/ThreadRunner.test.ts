@@ -1,4 +1,7 @@
-import { type RunnerItem } from "@signalbox/runner-protocol/RunnerProtocol";
+import {
+  REQUEST_HEAVY_MACHINE_COMMAND,
+  type RunnerItem,
+} from "@signalbox/runner-protocol/RunnerProtocol";
 import { CommandId, MessageId, ProjectId, ProviderInstanceId } from "@t3tools/contracts";
 import { PERSONAL_CONTEXT_ID, SignalboxContextId } from "@t3tools/contracts/signalboxContexts";
 import { OnePasswordEnvironmentId } from "@t3tools/contracts/signalboxFolders";
@@ -12,7 +15,6 @@ import { HARNESS_MODES_UNSUPPORTED } from "../threadDecider.ts";
 import { CONNECT_TIMEOUT_MS, IDLE_TAIL_MS } from "./MachineBackend.ts";
 import { DRAIN_TIMEOUT_MS } from "./ThreadRunner.ts";
 import { CONTINUE_PROMPT, MAX_CONTINUATIONS } from "./runRecovery.ts";
-import { REQUEST_HEAVY_MACHINE_INSTRUCTIONS } from "./machineInstructions.ts";
 import {
   claude,
   claudeDriver,
@@ -999,7 +1001,12 @@ describe("ThreadRunner", () => {
           });
           yield* connect(runner);
           const work = yield* runner.work;
-          expect(work.drive?.instructions).toEqual([...levels, REQUEST_HEAVY_MACHINE_INSTRUCTIONS]);
+          expect(work.drive?.instructions).toEqual([
+            ...levels,
+            expect.objectContaining({
+              text: expect.stringContaining(REQUEST_HEAVY_MACHINE_COMMAND),
+            }),
+          ]);
         }),
       { drives: true },
     ),
@@ -1037,7 +1044,12 @@ describe("ThreadRunner", () => {
           const work = yield* runner.work;
           // The continuation: a run of its own.
           expect(work.turn?.runId).not.toBe(turn.runId);
-          expect(work.drive?.instructions).toEqual([...levels, REQUEST_HEAVY_MACHINE_INSTRUCTIONS]);
+          expect(work.drive?.instructions).toEqual([
+            ...levels,
+            expect.objectContaining({
+              text: expect.stringContaining(REQUEST_HEAVY_MACHINE_COMMAND),
+            }),
+          ]);
         }),
       { drives: true },
     ),

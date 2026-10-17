@@ -1,7 +1,9 @@
 import { RunId } from "@t3tools/contracts";
-import { REQUEST_HEAVY_MACHINE_REASON } from "@signalbox/runner-protocol/RunnerProtocol";
+import {
+  REQUEST_HEAVY_MACHINE_COMMAND,
+  REQUEST_HEAVY_MACHINE_REASON,
+} from "@signalbox/runner-protocol/RunnerProtocol";
 import { describe, expect, it } from "@effect/vitest";
-import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as TestClock from "effect/testing/TestClock";
@@ -13,14 +15,13 @@ import {
   type MachineBackendShape,
 } from "./MachineBackend.ts";
 import { CONTINUE_PROMPT } from "./runRecovery.ts";
-import { REQUEST_HEAVY_MACHINE_INSTRUCTIONS } from "./machineInstructions.ts";
-import * as TurnReports from "../diagnostics/TurnReports.ts";
 import {
   connect,
   freshDatabase,
   launch,
   liveTurn,
   personal,
+  readTurnReport,
   saveSession,
   snapshot,
   threadId,
@@ -135,7 +136,11 @@ describe("machine classes", () => {
           // The reply so far, then the Runner saved everything before the move.
           yield* saveSession(context, "claude-session-1");
           const lightWork = yield* runner.work;
-          expect(lightWork.drive?.instructions).toContainEqual(REQUEST_HEAVY_MACHINE_INSTRUCTIONS);
+          expect(lightWork.drive?.instructions).toContainEqual(
+            expect.objectContaining({
+              text: expect.stringContaining(REQUEST_HEAVY_MACHINE_COMMAND),
+            }),
+          );
           expect(
             yield* runner.batch({
               generation: machine.generation,
@@ -176,8 +181,7 @@ describe("machine classes", () => {
             text: "Hel",
           });
           expect(items.filter((item) => item.type === "system_notice")).toEqual([]);
-          const reports = Context.get(context, TurnReports.TurnReports);
-          const record = yield* reports.turn(projection, turn.runId);
+          const record = yield* readTurnReport(context, projection, turn.runId);
           if (record === null) throw new Error("expected the turn's diagnostic record");
           expect(record.machines).toContainEqual(
             expect.objectContaining({
@@ -203,8 +207,12 @@ describe("machine classes", () => {
             message: { text: CONTINUE_PROMPT },
             providerThread: { nativeThreadRef: { nativeId: "claude-session-1" } },
           });
-          expect(heavyWork.drive?.instructions).not.toContainEqual(
-            REQUEST_HEAVY_MACHINE_INSTRUCTIONS,
+          expect(heavyWork.drive?.instructions).not.toEqual(
+            expect.arrayContaining([
+              expect.objectContaining({
+                text: expect.stringContaining(REQUEST_HEAVY_MACHINE_COMMAND),
+              }),
+            ]),
           );
         }),
       { ...options, drives: true },
