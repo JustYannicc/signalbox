@@ -133,6 +133,13 @@ async function applyPostMergeSteps() {
   );
 
   await generateRouteTree();
+
+  // Upstream fixes can remove fork cycles. Prune those entries without hiding new violations.
+  try {
+    run("node", ["scripts/boundaries/check.mjs", "--write-baseline"]);
+  } catch {
+    console.warn("Boundary baseline could not be pruned; CI will report the remaining violations.");
+  }
 }
 
 /**
