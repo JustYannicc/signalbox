@@ -201,6 +201,7 @@ Architecture and its constraints: `docs/internals/overview.md`. Glossary: `docs/
 ## Where code lives
 
 Before adding a module or importing across modules, read [workspace boundaries](packages/README.md) and [cloud module boundaries](apps/cloud/src/README.md).
+Before changing thread execution or live events, read the [threads module](apps/cloud/src/thread/README.md).
 
 For live people views or explicit location joins, read [presence](apps/cloud/src/presence/README.md).
 
