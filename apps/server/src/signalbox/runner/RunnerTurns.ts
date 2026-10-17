@@ -679,6 +679,29 @@ export const makeRunnerTurns = Effect.fn("makeRunnerTurns")(function* (input: {
     runtime: ProviderAdapterV2SessionRuntime,
   ) => {
     const instanceId = adapter.instanceId;
+    // A failed handoff can leave a provider winding down while the next run loads.
+    const eventRunId = (event: ProviderAdapterV2Event) => {
+      if (event.type === "turn_item.updated" && event.turnItem.runId !== null) {
+        return event.turnItem.runId;
+      }
+      const providerTurnId =
+        event.type === "turn.terminal"
+          ? event.providerTurnId
+          : event.type === "provider_turn.updated"
+            ? event.providerTurn.id
+            : event.type === "turn_item.updated"
+              ? event.turnItem.providerTurnId
+              : null;
+      for (const [runId, turn] of turns) {
+        if (
+          (providerTurnId !== null && turn.providerTurnId === providerTurnId) ||
+          (event.type === "provider_turn.updated" &&
+            turn.attemptId === event.providerTurn.runAttemptId)
+        )
+          return runId;
+      }
+      return latestRunId;
+    };
     const filterAssistant = makeAssistantStreamingFilter(
       DEFAULT_SERVER_SETTINGS.responseStreamingMode,
     );
@@ -711,7 +734,12 @@ export const makeRunnerTurns = Effect.fn("makeRunnerTurns")(function* (input: {
     return runtime.events.pipe(
       Stream.runForEach((event) =>
         Effect.gen(function* () {
-          if (latestRunId !== null && outgrown.has(latestRunId)) return;
+          const originatingRunId = eventRunId(event);
+          if (originatingRunId !== null && outgrown.has(originatingRunId)) {
+            // Its terminal still releases the next run's wait for this provider.
+            yield* track(event);
+            return;
+          }
           if (yield* holdForDrive(event, (held, runId) => deliver(held, runId))) return;
           yield* track(event);
           yield* deliver(event);

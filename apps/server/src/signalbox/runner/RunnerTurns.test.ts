@@ -1786,7 +1786,7 @@ describe("RunnerTurns", () => {
           });
           yield* settle;
           log.length = 0;
-          return { fake, log, reported };
+          return { fake, log, reported, turns };
         });
 
       it.effect.each(["drive", "session"] as const)(
@@ -1810,6 +1810,35 @@ describe("RunnerTurns", () => {
                 ),
               });
               expect(fake.calls).toContain("interrupt native-1");
+            }),
+          ),
+      );
+
+      it.effect(
+        "drops a failed handoff's late events while the next turn winds down its provider",
+        () =>
+          Effect.scoped(
+            Effect.gen(function* () {
+              const { fake, reported, turns } = yield* lightTurn("light", "session");
+              yield* Queue.offer(fake.events, providerTurnStarted(1));
+              yield* Queue.offer(fake.events, command("running", "npm run build"));
+              yield* settle;
+              yield* turns.start({
+                turn: turnFor(2),
+                modelToken: "token-2",
+                drive: { driveId: "my/personal/user_1", token: "sbd1.x.y", remoteToken: null },
+                sessions: { token: "sbs1.t.2" },
+              });
+              yield* settle;
+              yield* Queue.offer(fake.events, command("running", "npm run-script lint"));
+              yield* Queue.offer(fake.events, turnEnded(1));
+              for (let round = 0; round < 30; round++) yield* Effect.yieldNow;
+
+              expect(
+                reported.filter((item) => item.kind === "turn.failed").map((item) => item.runId),
+              ).toEqual([RunId.make("run-1")]);
+              expect(reported.some((item) => item.kind === "machine.outgrown")).toBe(false);
+              expect(fake.calls).toContain("start run-2");
             }),
           ),
       );
