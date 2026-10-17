@@ -153,12 +153,13 @@ const sanitizeGitHubDiagnostic = (value: string, token: string) => {
   if (token.length > 0) {
     sanitized = sanitized.replaceAll(token, "[redacted]");
     sanitized = sanitized.replaceAll(gitAuthorization(token), "[redacted]");
+    sanitized = sanitized.replaceAll(Base64.encode(`x-access-token:${token}`), "[redacted]");
   }
   return sanitized
     .replace(/\b(?:gh[pousr]_[A-Za-z0-9_]{20,}|github_pat_[A-Za-z0-9_]{20,})\b/gi, "[redacted]")
-    .replace(/\b(?:Bearer|Basic)\s+[A-Za-z0-9+/=_-]+/gi, "[redacted]")
+    .replace(/\b(?:Bearer|Basic)\s+[A-Za-z0-9+/=_-]{16,}/gi, "[redacted]")
     .replace(
-      /((?:access[_-]?token|refresh[_-]?token|token)\s*[:=]\s*["']?)[^"'&,\s}]+/gi,
+      /((?:access[_-]?token|refresh[_-]?token|token)["']?\s*[:=]\s*["']?)[^"'&,\s}]+/gi,
       "$1[redacted]",
     )
     .split("")
@@ -172,8 +173,7 @@ const sanitizeGitHubDiagnostic = (value: string, token: string) => {
 };
 
 const responseExcerpt = (text: string, token: string) => {
-  const safePrefix = text.slice(0, 240 + Math.max(token.length, 512));
-  const sanitized = sanitizeGitHubDiagnostic(safePrefix, token);
+  const sanitized = sanitizeGitHubDiagnostic(text, token);
   if (sanitized.length === 0) return undefined;
   return sanitized.length > 240 ? `${sanitized.slice(0, 240)}…` : sanitized;
 };
@@ -389,10 +389,7 @@ export const makeGitHubApi = (
             new GitHubError({
               operation,
               status: response.status,
-              message: sanitizeGitHubDiagnostic(
-                "GitHub sent an answer Signalbox does not understand.",
-                token,
-              ),
+              message: "GitHub sent an answer Signalbox does not understand.",
               ...responseDiagnostics(requestKind, text, token),
             }),
         ),

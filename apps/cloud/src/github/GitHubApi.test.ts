@@ -1,6 +1,7 @@
 import { expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Logger from "effect/Logger";
+import * as Base64 from "effect/encoding/Base64";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientError from "effect/http/HttpClientError";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
@@ -107,4 +108,49 @@ it.effect("keeps status and sanitized body diagnostics for failed REST answers",
   }).pipe(
     Effect.provide(Logger.layer([Logger.map(Logger.formatJson, (line) => void lines.push(line))])),
   );
+});
+
+it.effect("redacts quoted opaque credentials and the bare git credential", () => {
+  const token = "supplied-credential-canary";
+  const opaque = "opaque-credential-that-is-not-the-supplied-token";
+  const encoded = Base64.encode(`x-access-token:${token}`);
+  const lines: Array<string> = [];
+  const client = responseClient({ access_token: opaque, refresh_token: opaque, encoded }, 502);
+
+  return Effect.gen(function* () {
+    const error = yield* makeGitHubApi(client).viewer(token).pipe(Effect.flip);
+    const diagnostic = JSON.stringify(error) + lines.join("\n");
+    expect(error.responseExcerpt).toContain("[redacted]");
+    expect(diagnostic).not.toContain(opaque);
+    expect(diagnostic).not.toContain(encoded);
+  }).pipe(
+    Effect.provide(Logger.layer([Logger.map(Logger.formatJson, (line) => void lines.push(line))])),
+  );
+});
+
+it.effect("redacts credentials before shortening a whitespace-heavy response", () => {
+  const token = "0123456789abcdef0123456789abcdef01234567";
+  const lines: Array<string> = [];
+  const client = HttpClient.make((request) =>
+    Effect.succeed(HttpClientResponse.fromWeb(request, new Response(" ".repeat(713) + token))),
+  );
+
+  return Effect.gen(function* () {
+    const error = yield* makeGitHubApi(client).viewer(token).pipe(Effect.flip);
+    expect(error.responseExcerpt).toBe("[redacted]");
+    expect(lines.join("\n")).not.toContain(token.slice(0, 39));
+  }).pipe(
+    Effect.provide(Logger.layer([Logger.map(Logger.formatJson, (line) => void lines.push(line))])),
+  );
+});
+
+it.effect("preserves ordinary authentication advice", () => {
+  const message = "Basic authentication using a password is not supported.";
+  return Effect.gen(function* () {
+    const error = yield* makeGitHubApi(responseClient({ message }, 401))
+      .viewer("supplied-token")
+      .pipe(Effect.flip);
+    expect(error.message).toBe(message);
+    expect(error.responseExcerpt).toContain(message);
+  });
 });
