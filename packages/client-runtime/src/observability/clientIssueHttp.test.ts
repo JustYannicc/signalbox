@@ -50,6 +50,48 @@ const prepared = (
 });
 
 describe("client issue HTTP delivery", () => {
+  it.effect.each([404, 405, 410, 501])(
+    "discards unsupported endpoints with JSON status %s",
+    (status) =>
+      Effect.gen(function* () {
+        const fetcher: typeof fetch = async () => Response.json({ code: "not_found" }, { status });
+        const result = yield* sendClientIssue(prepared(null), ISSUE).pipe(
+          Effect.provide(layerRemoteHttpClient(fetcher)),
+        );
+        expect(result).toBe("discarded");
+      }),
+  );
+
+  it.effect.each([404, 405, 410, 501])(
+    "discards unsupported endpoints with HTML status %s",
+    (status) =>
+      Effect.gen(function* () {
+        const fetcher: typeof fetch = async () =>
+          new Response("<h1>Not found</h1>", {
+            status,
+            headers: { "content-type": "text/html" },
+          });
+        const result = yield* sendClientIssue(prepared(null), ISSUE).pipe(
+          Effect.provide(layerRemoteHttpClient(fetcher)),
+        );
+        expect(result).toBe("discarded");
+      }),
+  );
+
+  it.effect.each([401, 408, 429, 500, 502, 503, 504])(
+    "retains non-contract retryable status %s",
+    (status) =>
+      Effect.gen(function* () {
+        const fetcher: typeof fetch = async () =>
+          Response.json({ code: "unavailable" }, { status });
+        const result = yield* sendClientIssue(prepared(null), ISSUE).pipe(
+          Effect.provide(layerRemoteHttpClient(fetcher)),
+          Effect.result,
+        );
+        expect(Result.isFailure(result)).toBe(true);
+      }),
+  );
+
   it.effect.each([400, 403, 413, 415])("discards permanent rejection %s", (status) =>
     Effect.gen(function* () {
       const fetcher: typeof fetch = async () =>

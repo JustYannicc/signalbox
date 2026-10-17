@@ -7,7 +7,10 @@ import * as Schema from "effect/Schema";
 import * as RemoteEnvironmentAuthorization from "../authorization/service.ts";
 import type { PreparedConnection } from "../connection/model.ts";
 import * as ManagedRelay from "../relay/managedRelay.ts";
-import { RemoteEnvironmentAuthFetchError } from "../rpc/http.ts";
+import {
+  RemoteEnvironmentAuthFetchError,
+  RemoteEnvironmentAuthUndeclaredStatusError,
+} from "../rpc/http.ts";
 import { executeAuthenticatedEnvironmentHttpRequest } from "../state/environmentHttpAuth.ts";
 
 /** Uses the destination's cookie, bearer or renewable DPoP credentials. */
@@ -39,9 +42,16 @@ export const sendClientIssue = Effect.fnUntraced(function* (
           Effect.provideService(HttpClient.TracerPropagationEnabled, false),
         ),
     isUnauthorizedResponse: (response) => response.status === 401,
-  });
+  }).pipe(
+    Effect.catchIf(
+      (error): error is RemoteEnvironmentAuthUndeclaredStatusError =>
+        error._tag === "RemoteEnvironmentAuthUndeclaredStatusError" &&
+        [404, 405, 410, 501].includes(error.status),
+      (error) => Effect.succeed({ status: error.status }),
+    ),
+  );
   if (result.status === 204) return;
-  if ([400, 403, 413, 415].includes(result.status)) return "discarded" as const;
+  if ([400, 403, 413, 415, 404, 405, 410, 501].includes(result.status)) return "discarded" as const;
   return yield* new RemoteEnvironmentAuthFetchError({
     message: "The environment temporarily rejected the client issue.",
     cause: result,

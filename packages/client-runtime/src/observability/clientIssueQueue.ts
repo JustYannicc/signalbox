@@ -50,6 +50,7 @@ export function createClientIssueQueue() {
   let retryAfter = 0;
   let cancelRetry: (() => void) | undefined;
   let droppedCount = 0;
+  let lastFailedDestinations = new Set<string | null>();
   const lastStateByKey = new Map<string, string>();
 
   const reset = (): void => {
@@ -61,6 +62,7 @@ export function createClientIssueQueue() {
     retryCount = 0;
     retryAfter = 0;
     droppedCount = 0;
+    lastFailedDestinations.clear();
     lastStateByKey.clear();
   };
 
@@ -157,7 +159,7 @@ export function createClientIssueQueue() {
   function scheduleNextRetry(): void {
     if (cancelRetry !== undefined || pending.length === 0) return;
     if (retryCount >= MAX_TIMER_RETRIES) {
-      retryAfter = performance.now() + RETRY_COOLDOWN_MS;
+      if (retryAfter === 0) retryAfter = performance.now() + RETRY_COOLDOWN_MS;
       return;
     }
     const delayMs = RETRY_DELAYS_MS[retryCount]!;
@@ -183,20 +185,26 @@ export function createClientIssueQueue() {
 
   function flushAutomatically(): Promise<ClientIssueFlushResult> {
     if (activeFlush?.generation === generation) return activeFlush.promise;
-    if (pending.length === 0 || cancelRetry !== undefined) {
-      return Promise.resolve(currentFlushResult(0, 0));
+    if (
+      cancelRetry !== undefined ||
+      (retryCount >= MAX_TIMER_RETRIES && performance.now() < retryAfter)
+    ) {
+      return startFlush(lastFailedDestinations);
     }
     if (retryCount >= MAX_TIMER_RETRIES) {
-      if (performance.now() < retryAfter) return Promise.resolve(currentFlushResult(0, 0));
       retryCount = 0;
       retryAfter = 0;
     }
     return startFlush();
   }
 
-  function startFlush(): Promise<ClientIssueFlushResult> {
+  function startFlush(
+    skippedDestinations: ReadonlySet<string | null> = new Set(),
+  ): Promise<ClientIssueFlushResult> {
     if (activeFlush?.generation === generation) return activeFlush.promise;
-    if (pending.length === 0) return Promise.resolve(currentFlushResult(0, 0));
+    if (!pending.some((entry) => !skippedDestinations.has(entry.event.environmentId))) {
+      return Promise.resolve(currentFlushResult(0, 0));
+    }
 
     const flushGeneration = generation;
     const record: ActiveFlush = {
@@ -206,7 +214,7 @@ export function createClientIssueQueue() {
     let sent = 0;
     let failed = 0;
     const run = async (): Promise<ClientIssueFlushResult> => {
-      const failedDestinations = new Set<string | null>();
+      const failedDestinations = new Set(skippedDestinations);
       const attempted = new Set<QueuedIssue>();
       let attemptCount = 0;
       while (attemptCount < MAX_PENDING_ISSUES) {
@@ -240,6 +248,11 @@ export function createClientIssueQueue() {
       }
 
       if (generation === flushGeneration) {
+        lastFailedDestinations = new Set(
+          pending
+            .filter((entry) => failedDestinations.has(entry.event.environmentId))
+            .map((entry) => entry.event.environmentId),
+        );
         if (failed > 0 && pending.length > 0) {
           scheduleNextRetry();
         } else if (pending.length === 0) {
@@ -261,13 +274,7 @@ export function createClientIssueQueue() {
       })
       .finally(() => {
         if (activeFlush === record) activeFlush = null;
-        if (
-          generation === flushGeneration &&
-          failed === 0 &&
-          pending.length > 0 &&
-          cancelRetry === undefined &&
-          retryCount < MAX_TIMER_RETRIES
-        ) {
+        if (generation === flushGeneration && pending.length > 0) {
           void flushAutomatically();
         }
       });

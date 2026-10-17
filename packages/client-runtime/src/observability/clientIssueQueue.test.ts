@@ -58,6 +58,86 @@ describe("client issue queue", () => {
     expect(outbound).toHaveLength(2);
   });
 
+  it("sends new healthy destinations while another destination waits for retries or cooldown", async () => {
+    let nowMillis = 0;
+    vi.spyOn(performance, "now").mockImplementation(() => nowMillis);
+    const attempts: Array<string | null> = [];
+    const healthySend = Promise.withResolvers<void>();
+    const laterSend = Promise.withResolvers<void>();
+    const retries: Array<{
+      fire: () => Promise<ClientIssueFlushResult> | undefined;
+      delayMs: number;
+      active: boolean;
+    }> = [];
+    let cancellations = 0;
+    configureClientIssueReporting({
+      client: "web",
+      release: "development",
+      scheduleRetry: (callback, delayMs) => {
+        const retry = {
+          fire: () => {
+            retry.active = false;
+            return callback();
+          },
+          delayMs,
+          active: true,
+        };
+        retries.push(retry);
+        return () => {
+          retry.active = false;
+          cancellations += 1;
+        };
+      },
+      send: async (event) => {
+        attempts.push(event.environmentId);
+        if (event.environmentId === "env-offline") throw new Error("offline");
+        await (event.environmentId === "env-healthy" ? healthySend.promise : laterSend.promise);
+      },
+    });
+    const report = (environmentId: string) =>
+      reportClientIssue({
+        code: "runtime.uncaught",
+        severity: "error",
+        source: "exception",
+        environmentId,
+      });
+
+    report("env-offline");
+    await flushClientIssues();
+    expect(retries.map(({ delayMs, active }) => ({ delayMs, active }))).toEqual([
+      { delayMs: 1_000, active: true },
+    ]);
+    report("env-healthy");
+    expect(attempts).toEqual(["env-offline", "env-healthy"]);
+    const healthyFlush = flushClientIssues();
+    healthySend.resolve();
+    expect(await healthyFlush).toMatchObject({ sent: 1, failed: 0, pending: 1 });
+    expect(attempts).toEqual(["env-offline", "env-healthy"]);
+    expect(retries).toHaveLength(1);
+    expect(retries[0]!.active).toBe(true);
+    expect(cancellations).toBe(0);
+
+    for (const [index, delayMs] of [1_000, 5_000, 30_000].entries()) {
+      expect(retries[index]!.delayMs).toBe(delayMs);
+      nowMillis += delayMs;
+      expect(await retries[index]!.fire()).toMatchObject({ sent: 0, failed: 1, pending: 1 });
+    }
+    expect(retries).toHaveLength(3);
+    expect(retries.every((retry) => !retry.active)).toBe(true);
+    expect(attempts.filter((environmentId) => environmentId === "env-offline")).toHaveLength(4);
+
+    report("env-later");
+    expect(attempts.at(-1)).toBe("env-later");
+    const laterFlush = flushClientIssues();
+    laterSend.resolve();
+    expect(await laterFlush).toMatchObject({ sent: 1, failed: 0, pending: 1 });
+    expect(attempts.filter((environmentId) => environmentId === "env-offline")).toHaveLength(4);
+    expect(retries).toHaveLength(3);
+    expect(retries.every((retry) => !retry.active)).toBe(true);
+    expect(cancellations).toBe(0);
+    expect(getClientIssueReportingStats()).toEqual({ pending: 1, dropped: 0 });
+  });
+
   it("exhausts three timer retries and recovers on a new report after the cooldown", async () => {
     let nowMillis = 0;
     vi.spyOn(performance, "now").mockImplementation(() => nowMillis);
