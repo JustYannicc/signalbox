@@ -9,9 +9,8 @@ import * as Effect from "effect/Effect";
 import * as CloudAutomations from "../automations/CloudAutomations.ts";
 import * as PoolDirectory from "../pool/PoolDirectory.ts";
 import * as CloudThreadService from "../thread/CloudThreadService.ts";
+import * as RunnerTesting from "../thread/runnerTesting.ts";
 import { scriptedModelSelection } from "../thread/scriptedProvider.ts";
-import * as ThreadRunner from "../thread/runner/ThreadRunner.ts";
-import { claude, hello, liveTurn, turnReport } from "../thread/runner/runnerTestKit.ts";
 import { makeMemoryCloud } from "../testing.ts";
 import * as DriveSharing from "../user/DriveSharing.ts";
 import * as SignInGrants from "../signIn/SignInGrants.ts";
@@ -99,21 +98,6 @@ const tokenFor = (
   return { claims, binding };
 };
 
-const connectRunner = (runner: ThreadRunner.ThreadRunner["Service"], threadId: ThreadId) =>
-  Effect.gen(function* () {
-    const plan = yield* runner.reconcile;
-    if (plan.ensure === null) throw new Error("expected a machine request");
-    yield* runner.ensured(plan.ensure.generation);
-    const welcome = yield* runner.hello({
-      ...hello(plan.ensure.generation, plan.ensure.token),
-      threadId,
-    });
-    if (welcome._tag !== "welcome") {
-      throw new Error(`Runner refused ${welcome.reason}: ${welcome.message}`);
-    }
-    return { ...plan.ensure, machineClass: plan.machineClass };
-  });
-
 const turnIdentity = (
   threadId: ThreadId,
   turnId: string,
@@ -151,7 +135,7 @@ const createThreadHome = (
       threadId,
       projectId: projectIdForContext(OWNER),
       title: "Executor authorization",
-      modelSelection: claude,
+      modelSelection: RunnerTesting.claudeModelSelection,
       runtimeMode: "full-access",
       interactionMode: "default",
       workspaceStrategy: { type: "root" },
@@ -274,7 +258,7 @@ describe("Executor token live authority", () => {
 
       const machine = yield* fixture.cloud.threadRun(
         threadId,
-        ThreadRunner.ThreadRunner.use((runner) => connectRunner(runner, threadId)),
+        RunnerTesting.connectRunner(threadId),
       );
       const first = tokenFor(
         turnIdentity(threadId, firstRun.runId, fixture.folderId),
@@ -319,30 +303,7 @@ describe("Executor token live authority", () => {
         yield* fixture.user.authorizeExecutorToken(wrongFolder.claims, wrongFolder.binding),
       ).toBe(false);
 
-      yield* fixture.cloud.threadRun(
-        threadId,
-        ThreadRunner.ThreadRunner.use((runner) =>
-          Effect.gen(function* () {
-            const turn = yield* liveTurn(runner);
-            const report = turnReport(turn.runId, turn.runOrdinal, turn.providerThread);
-            yield* runner.batch({
-              generation: machine.generation,
-              sequence: 1,
-              items: [report.started],
-            });
-            yield* runner.batch({
-              generation: machine.generation,
-              sequence: 2,
-              items: [report.partial],
-            });
-            yield* runner.batch({
-              generation: machine.generation,
-              sequence: 3,
-              items: [report.full, report.terminal],
-            });
-          }),
-        ),
-      );
+      yield* fixture.cloud.threadRun(threadId, RunnerTesting.finishCurrentTurn(machine.generation));
       expect(yield* fixture.user.authorizeExecutorToken(first.claims, first.binding)).toBe(false);
 
       const secondRun = yield* startTurn(fixture.cloud, threadId, "executor-second-turn");
@@ -367,42 +328,19 @@ describe("Executor token live authority", () => {
 
       yield* fixture.cloud.threadRun(
         threadId,
-        ThreadRunner.ThreadRunner.use((runner) =>
-          Effect.gen(function* () {
-            const turn = yield* liveTurn(runner);
-            const report = turnReport(turn.runId, turn.runOrdinal, turn.providerThread);
-            yield* runner.batch({
-              generation: machine.generation,
-              sequence: 4,
-              items: [report.started, report.partial],
-            });
-            yield* runner.disconnected({
-              generation: machine.generation,
-              connection: 1,
-              detail: "test close",
-            });
-          }),
-        ),
+        RunnerTesting.disconnectDuringCurrentTurn(machine, "test close"),
       );
       expect(yield* fixture.user.authorizeExecutorToken(second.claims, second.binding)).toBe(false);
 
       const replacement = yield* fixture.cloud.threadRun(
         threadId,
-        ThreadRunner.ThreadRunner.use((runner) =>
-          Effect.gen(function* () {
-            yield* runner.ended(machine.generation, "test replacement");
-            return yield* connectRunner(runner, threadId);
-          }),
-        ),
+        RunnerTesting.replaceRunner(threadId, machine.generation),
       );
       expect(replacement.generation).toBe(machine.generation + 1);
       expect(yield* fixture.user.authorizeExecutorToken(second.claims, second.binding)).toBe(false);
-      const continuation = yield* fixture.cloud.threadRun(
-        threadId,
-        ThreadRunner.ThreadRunner.use((runner) => liveTurn(runner)),
-      );
+      const continuation = yield* fixture.cloud.threadRun(threadId, RunnerTesting.currentRunId());
       const oldLease = tokenFor(
-        turnIdentity(threadId, continuation.runId, fixture.folderId),
+        turnIdentity(threadId, continuation, fixture.folderId),
         fixture,
         undefined,
         machine.generation,
@@ -411,7 +349,7 @@ describe("Executor token live authority", () => {
         false,
       );
       const currentLease = tokenFor(
-        turnIdentity(threadId, continuation.runId, fixture.folderId),
+        turnIdentity(threadId, continuation, fixture.folderId),
         fixture,
         undefined,
         replacement.generation,
