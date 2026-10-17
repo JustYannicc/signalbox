@@ -2,6 +2,7 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
+import { RunId } from "@t3tools/contracts";
 
 import { matchThread, threadTurns } from "../context/threadContext.ts";
 import { browsingWire, encodeBrowsingLine } from "./browsing/browsingWire.ts";
@@ -9,6 +10,7 @@ import { ThreadBrowsing } from "./browsing/ThreadBrowsing.ts";
 import { TurnReports } from "./diagnostics/TurnReports.ts";
 import type { ThreadObjectApi } from "./ThreadDirectory.ts";
 import * as ThreadEngine from "./ThreadEngine.ts";
+import * as ThreadRunner from "./runner/ThreadRunner.ts";
 import { encodeBatchLine, type ThreadObjectReply, wire } from "./threadWire.ts";
 
 // Diagnostic records are plain JSON values already (ISO times, no class instances).
@@ -23,7 +25,11 @@ const encodeRecord = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
  */
 export const makeThreadObjectApi = (
   run: <A, E>(
-    effect: Effect.Effect<A, E, ThreadEngine.ThreadEngine | TurnReports | ThreadBrowsing>,
+    effect: Effect.Effect<
+      A,
+      E,
+      ThreadEngine.ThreadEngine | TurnReports | ThreadBrowsing | ThreadRunner.ThreadRunner
+    >,
   ) => Promise<A>,
   afterChange: () => Promise<void>,
   wakeAt: (at: number) => Promise<void>,
@@ -184,6 +190,23 @@ export const makeThreadObjectApi = (
             summary === null ? null : wire.summary.encode(summary),
           ),
         ),
+      ),
+    authorizeExecutorTurn: (actor, input) =>
+      run(
+        engine
+          .use((service) => service.summary(actor))
+          .pipe(
+            Effect.flatMap((summary) =>
+              summary === null
+                ? Effect.succeed(false)
+                : ThreadRunner.ThreadRunner.use((runner) =>
+                    runner.authorizeExecutorTurn({
+                      runId: RunId.make(input.runId),
+                      generation: input.generation,
+                    }),
+                  ),
+            ),
+          ),
       ),
   };
 };

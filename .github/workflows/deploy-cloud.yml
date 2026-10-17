@@ -116,6 +116,7 @@ jobs:
       # Optional: agents' sign-ins from 1Password through Executor (docs/operations/cloud.md).
       EXECUTOR_LOGIN_SERVICE_URL: ${{ vars.EXECUTOR_LOGIN_SERVICE_URL }}
       EXECUTOR_LOGIN_SERVICE_TOKEN: ${{ secrets.EXECUTOR_LOGIN_SERVICE_TOKEN }}
+      EXECUTOR_TOKEN_RETIRING_PUBLIC_JWKS: ${{ vars.EXECUTOR_TOKEN_RETIRING_PUBLIC_JWKS }}
       # Optional: pushes to phones (docs/operations/cloud.md, "Push notifications").
       APNS_TEAM_ID: ${{ vars.APNS_TEAM_ID }}
       APNS_KEY_ID: ${{ vars.APNS_KEY_ID }}
@@ -355,6 +356,7 @@ jobs:
       # Optional: agents' sign-ins from 1Password through Executor (docs/operations/cloud.md).
       EXECUTOR_LOGIN_SERVICE_URL: ${{ vars.EXECUTOR_LOGIN_SERVICE_URL }}
       EXECUTOR_LOGIN_SERVICE_TOKEN: ${{ secrets.EXECUTOR_LOGIN_SERVICE_TOKEN }}
+      EXECUTOR_TOKEN_RETIRING_PUBLIC_JWKS: ${{ vars.EXECUTOR_TOKEN_RETIRING_PUBLIC_JWKS }}
       # The pull request's own Runner on boat machines, when it changes the Runner.
       RUNNER_IMAGE: ${{ needs.runner_image.outputs.image }}
       # Optional: pushes to phones (docs/operations/cloud.md, "Push notifications").

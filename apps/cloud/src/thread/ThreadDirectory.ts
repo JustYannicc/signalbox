@@ -100,6 +100,11 @@ export interface ThreadObjectApi {
   readonly subscribe: (actor: Actor, input: unknown) => Promise<ReadableStream<Uint8Array> | null>;
   /** The thread's current summary, when `actor` owns it. */
   readonly summary: (actor: Actor) => Promise<unknown>;
+  /** Whether the exact live run still holds the requested Runner generation. */
+  readonly authorizeExecutorTurn: (
+    actor: Actor,
+    input: { readonly runId: string; readonly generation: number },
+  ) => Promise<boolean>;
   /**
    * A turn's diagnostic record as JSON, by run or trace id, or the list of
    * recent turns for null. Null when the actor cannot see the thread or no
@@ -186,6 +191,10 @@ export interface ThreadHandle {
     ThreadNotFoundError | ThreadObjectError
   >;
   readonly summary: (actor: Actor) => Effect.Effect<ThreadSummary | null, ThreadObjectError>;
+  readonly authorizeExecutorTurn: (
+    actor: Actor,
+    input: { readonly runId: string; readonly generation: number },
+  ) => Effect.Effect<boolean, ThreadObjectError>;
   /** See `ThreadObjectApi.diagnostics`; the record is passed through as JSON text. */
   readonly diagnostics: (
     actor: Actor,
@@ -425,6 +434,8 @@ export function handleFor(api: ThreadObjectApi): ThreadHandle {
             : decodeIn("summary", () => wire.summary.decode(value)),
         ),
       ),
+    authorizeExecutorTurn: (actor, input) =>
+      call("authorizeExecutorTurn", () => api.authorizeExecutorTurn(actor, input)),
   };
 }
 

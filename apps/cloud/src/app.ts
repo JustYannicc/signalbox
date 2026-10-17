@@ -59,6 +59,9 @@ import * as ThreadDirectory from "./thread/ThreadDirectory.ts";
 import * as ThreadKindTurns from "./thread/ThreadKindTurns.ts";
 import * as ThreadContexts from "./user/threadContexts.ts";
 import * as UserDirectory from "./user/UserDirectory.ts";
+import type { ExecutorAuthorizationClaims } from "./executor/ExecutorTokenClaims.ts";
+import type { ExecutorTokenBinding } from "./executor/ExecutorTokenBindings.ts";
+import type { ExecutorTokenService } from "./executor/ExecutorTokens.ts";
 
 /**
  * The cloud environment's request handling, built once per isolate: the
@@ -204,9 +207,47 @@ export interface CloudApp {
   readonly api: (request: Request) => Promise<Response>;
   /** `/mcp` and its protected-resource metadata (`api/mcpRoutes.ts`). */
   readonly mcp: (request: Request) => Promise<Response>;
+  /** Public key discovery for Executor's signed-token verifier. */
+  readonly executorJwks: () => Promise<Response>;
+  /** Private WorkerEntrypoint seam; Executor calls it after signature verification. */
+  readonly authorizeExecutor: (claims: unknown) => Promise<{ readonly active: boolean }>;
 }
 
-export const makeCloudApp = <E>(services: Layer.Layer<Services, E>): CloudApp => {
+export const executorJwksResponse = async (
+  executorTokens: Pick<ExecutorTokenService, "jwks"> | undefined,
+): Promise<Response> => {
+  if (executorTokens === undefined) {
+    return new Response("Executor token signing is not configured.", { status: 503 });
+  }
+  try {
+    return Response.json(await executorTokens.jwks(), {
+      headers: { "cache-control": "public, max-age=60" },
+    });
+  } catch {
+    return new Response("Executor token signing is not configured.", { status: 503 });
+  }
+};
+
+const EXECUTOR_AUTHORIZATION_TIMEOUT_MS = 5_000;
+
+export const authorizeExecutorWithTimeout = (
+  authorize: () => Promise<{ readonly active: boolean }>,
+): Promise<{ readonly active: boolean }> =>
+  Effect.runPromise(
+    Effect.promise(() =>
+      Promise.resolve()
+        .then(authorize)
+        .catch(() => ({ active: false })),
+    ).pipe(
+      Effect.timeout(EXECUTOR_AUTHORIZATION_TIMEOUT_MS),
+      Effect.orElseSucceed(() => ({ active: false })),
+    ),
+  );
+
+export const makeCloudApp = <E>(
+  services: Layer.Layer<Services, E>,
+  options: { readonly executorTokens?: ExecutorTokenService } = {},
+): CloudApp => {
   const runtime = ManagedRuntime.make(services);
   // Lives as long as the isolate.
   const scope = Scope.makeUnsafe();
@@ -232,6 +273,15 @@ export const makeCloudApp = <E>(services: Layer.Layer<Services, E>): CloudApp =>
       await Effect.runPromise(Scope.close(scope, Exit.die(cause)));
       throw cause;
     });
+  const authorizeExecutorUser = (
+    claims: ExecutorAuthorizationClaims,
+    binding: ExecutorTokenBinding,
+  ) =>
+    runtime.runPromise(
+      UserDirectory.UserDirectory.use((users) =>
+        users.forUser(binding.ownerUserId).authorizeExecutorToken(claims, binding),
+      ),
+    );
   return {
     http: (request) => http.then((handler) => handler(request)),
     webSocket: (request) => runtime.runPromise(openSocket(request)),
@@ -243,5 +293,18 @@ export const makeCloudApp = <E>(services: Layer.Layer<Services, E>): CloudApp =>
           ? protectedResourceMetadata(request)
           : handleMcpRequest(request),
       ),
+    executorJwks: () => executorJwksResponse(options.executorTokens),
+    authorizeExecutor: (claims) => {
+      const executorTokens = options.executorTokens;
+      return executorTokens === undefined
+        ? Promise.resolve({ active: false })
+        : authorizeExecutorWithTimeout(() =>
+            executorTokens.authorize(claims, {
+              person: authorizeExecutorUser,
+              turn: authorizeExecutorUser,
+              automation: authorizeExecutorUser,
+            }),
+          );
+    },
   };
 };

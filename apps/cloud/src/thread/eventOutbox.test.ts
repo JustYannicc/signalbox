@@ -78,6 +78,7 @@ const makeOwner = () => {
     flush: Effect.void,
     start: Effect.void,
     host: () => Effect.die("not in these tests"),
+    executorRunActive: () => Effect.succeed(false),
     workerModule: () => Effect.die("not in these tests"),
   });
   const cloud = makeMemoryCloud({

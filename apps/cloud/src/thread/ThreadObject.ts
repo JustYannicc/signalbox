@@ -337,6 +337,10 @@ export class ThreadObject extends DurableObject<ThreadObjectEnv> implements Thre
     return this.api.summary(...args);
   }
 
+  authorizeExecutorTurn(...args: Parameters<ThreadObjectApi["authorizeExecutorTurn"]>) {
+    return this.api.authorizeExecutorTurn(...args);
+  }
+
   diagnostics(...args: Parameters<ThreadObjectApi["diagnostics"]>) {
     return this.api.diagnostics(...args);
   }

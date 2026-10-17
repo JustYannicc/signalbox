@@ -216,6 +216,12 @@ export type ModelAuthorization =
     }
   | { readonly _tag: "denied"; readonly reason: string };
 
+/** A turn lease binding kept privately beside an Executor token's JTI. */
+export interface ExecutorTurnLease {
+  readonly runId: RunId;
+  readonly generation: number;
+}
+
 /** What the object must do for the lease, and when to look again. */
 export interface MachinePlan {
   /** Ask the backend for this machine. Idempotent per generation. */
@@ -301,6 +307,8 @@ export class ThreadRunner extends Context.Service<
       token: string,
       provider: ModelGatewayProvider,
     ) => Effect.Effect<ModelAuthorization>;
+    /** Whether this exact user-message run still holds the connected Runner lease. */
+    readonly authorizeExecutorTurn: (input: ExecutorTurnLease) => Effect.Effect<boolean>;
     /**
      * The lease token, when `generation` holds the lease and `token` is its
      * token (a preview tunnel's hello), or when only `generation` is given.
@@ -890,6 +898,32 @@ const make = Effect.gen(function* () {
       } satisfies ModelAuthorization;
     });
 
+  const authorizeExecutorTurn: ThreadRunner["Service"]["authorizeExecutorTurn"] = (input) =>
+    Effect.gen(function* () {
+      if (!Number.isSafeInteger(input.generation) || input.generation < 1) return false;
+      const projection = yield* engine.projection;
+      if (projection === null) return false;
+      const run = harnessRun(projection);
+      if (run === undefined || run.id !== input.runId || run.threadId !== projection.thread.id) {
+        return false;
+      }
+      const message = projection.messages.find((candidate) => candidate.id === run.userMessageId);
+      if (
+        message === undefined ||
+        message.threadId !== projection.thread.id ||
+        message.role !== "user"
+      ) {
+        return false;
+      }
+      const current = yield* lease;
+      return (
+        current.status === "connected" &&
+        current.token !== null &&
+        current.disconnectedAt === null &&
+        current.generation === input.generation
+      );
+    }).pipe(Effect.catchCause(() => Effect.succeed(false)));
+
   const accountMoved: ThreadRunner["Service"]["accountMoved"] = (runId, message) =>
     engine.apply((projection, ctx) =>
       Effect.succeed({
@@ -1217,6 +1251,7 @@ const make = Effect.gen(function* () {
     previewDrive,
     accountMoved,
     authorizeModel,
+    authorizeExecutorTurn,
     authorizeDrive,
     authorizeSession,
     authorizeRemote,
