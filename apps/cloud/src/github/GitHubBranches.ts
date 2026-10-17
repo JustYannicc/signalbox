@@ -28,6 +28,7 @@ import { DriveDirectory, type DriveHandle } from "../drive/DriveDirectory.ts";
 import { DrivePacks } from "../drive/DrivePacks.ts";
 import {
   commitsSince,
+  GITHUB_LIMITS,
   packForPush,
   receivePackRequest,
   receivePackResult,
@@ -449,6 +450,7 @@ const make = Effect.gen(function* () {
         remoteHas: [refs.base, refs.main, ...refs.shallow].filter(
           (oid): oid is Oid => oid !== null,
         ),
+        limits: GITHUB_LIMITS,
         // GitHub still checks `old` as it moves the branch, so a lease never races a push.
         force: old !== null && old === lease,
       }).pipe(
@@ -461,13 +463,22 @@ const make = Effect.gen(function* () {
         ),
       );
       const ref = `refs/heads/${branch}`;
-      const answer = yield* github.api
-        .receivePack(
-          userToken,
-          repository,
-          receivePackRequest({ ref, old, next: head, pack: packed.pack }),
-        )
-        .pipe(Effect.mapError(gitHubRefusal("push")));
+      // The pack streams from the drive as it goes: a read failing cuts the push, which isn't GitHub's doing.
+      let unreadable = false;
+      let sent = 0;
+      const pack = packed.pack.pipe(
+        Stream.tap((bytes) => Effect.sync(() => (sent += bytes.length))),
+        Stream.tapError(() => Effect.sync(() => (unreadable = true))),
+      );
+      const request = receivePackRequest({ ref, old, next: head, pack, size: packed.size });
+      const answer = yield* github.api.receivePack(userToken, repository, request.body).pipe(
+        Effect.tapError(() =>
+          Effect.logWarning("push cut off", { sent, size: packed.size, unreadable }),
+        ),
+        Effect.mapError((error) =>
+          unreadable ? driveUnavailable() : gitHubRefusal("push")(error),
+        ),
+      );
       if (answer.status !== 200) {
         const reason = reasonForStatus(answer.status);
         return yield* refusal(

@@ -46,7 +46,7 @@ const explain = (reason: PublishFailureReason, message: string) => {
 
 const CommitMessage = Schema.String.annotate({
   description:
-    "The commit message for changes not committed yet. Defaults to the pull request's title.",
+    "The commit message for changes not committed yet. Defaults to a summary of the changed files.",
 });
 
 /** The publishing tools, saving through `drive()` and asking the cloud through `view`'s client. */
@@ -59,7 +59,7 @@ export const layerBranchTools = (view: DrivesView, drive: () => BranchDrive | nu
         return yield* fail("This thread has no drive to publish; it opens with the thread's turn.");
       }
       const saved = yield* current
-        .saveBranch(commitMessage ?? request.title ?? "Save work to publish")
+        .saveBranch(commitMessage)
         .pipe(
           Effect.catchCause((cause) =>
             Effect.logWarning("saving the branch to publish failed", Cause.pretty(cause)).pipe(

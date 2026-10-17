@@ -19,6 +19,17 @@ export function getProjectScopeSelectionTarget(
   );
 }
 
+export function projectScopeSubtitle(
+  scope: HomeProjectScope,
+  selectionTarget: EnvironmentProject,
+  showsFilesystemDetails: boolean,
+): string | null {
+  if (!showsFilesystemDetails) return null;
+  return scope.projects.length > 1
+    ? `${scope.projects.length} workspaces`
+    : selectionTarget.workspaceRoot;
+}
+
 export function filterProjectScopes(
   scopes: ReadonlyArray<HomeProjectScope>,
   searchText: string,

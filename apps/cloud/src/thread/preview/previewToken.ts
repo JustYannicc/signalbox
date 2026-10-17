@@ -1,4 +1,4 @@
-import type { ThreadId } from "@t3tools/contracts";
+import { PortSchema, type ThreadId } from "@t3tools/contracts";
 import * as Base64Url from "effect/encoding/Base64Url";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
@@ -6,16 +6,9 @@ import * as Schema from "effect/Schema";
 import { equalInConstantTime, leaseMac } from "../runner/leaseMac.ts";
 
 /**
- * Preview credentials, derived from the machine's lease token like model
- * tokens (`runner/leaseMac.ts`), so the thread stores nothing and a new
- * machine generation voids every one at once:
- *
- *   sbp1.<base64url(claims)>.<base64url(HMAC-SHA256(lease token, claims))>
- *
- * A `ticket` rides in the link a client opens and lasts minutes; the preview
- * origin trades it for a `session`, kept in an HttpOnly cookie on that origin.
- * The Worker reads the thread id from the claims to know which thread to ask;
- * only the thread can check the MAC.
+ * A thread key signs preview credentials independently of its machine lease.
+ * Tickets cross from the signed-in app to the isolated preview origin, which
+ * trades them for an HttpOnly session. Membership is checked on every use.
  */
 
 const PREFIX = "sbp1";
@@ -26,7 +19,7 @@ const PreviewClaims = Schema.Struct({
   t: Schema.String,
   /** User id: re-checked against the thread's members on every request. */
   u: Schema.String,
-  p: Schema.Number,
+  p: PortSchema,
   /** Expiry, epoch ms. */
   exp: Schema.Number,
 });
@@ -39,11 +32,11 @@ const decodeClaims = Schema.decodeUnknownOption(claimsJson);
 const encoder = new TextEncoder();
 const decoder = new TextDecoder();
 
-const mac = (leaseToken: string, payload: string) => leaseMac(leaseToken, `preview\n${payload}`);
+const mac = (key: string, payload: string) => leaseMac(key, `preview\n${payload}`);
 
-export async function previewToken(leaseToken: string, claims: PreviewClaims) {
+export async function previewToken(key: string, claims: PreviewClaims) {
   const payload = Base64Url.encode(encoder.encode(encodeClaims(claims)));
-  return `${PREFIX}.${payload}.${await mac(leaseToken, payload)}`;
+  return `${PREFIX}.${payload}.${await mac(key, payload)}`;
 }
 
 const split = (token: string) => {
@@ -61,14 +54,20 @@ export function threadOfPreviewToken(token: string): ThreadId | null {
   return (split(token)?.claims.t ?? null) as ThreadId | null;
 }
 
-/** `token`'s claims when the lease token signed them and they are unexpired; null otherwise. */
+/** Claims are authoritative only after signature and expiry verification. */
 export async function verifyPreviewToken(
   token: string,
-  leaseToken: string,
+  key: string,
   now: number,
 ): Promise<PreviewClaims | null> {
   const parts = split(token);
   if (parts === null || parts.claims.exp <= now) return null;
-  const expected = await mac(leaseToken, parts.payload);
+  const expected = await mac(key, parts.payload);
   return equalInConstantTime(parts.signature, expected) ? parts.claims : null;
 }
+
+/** Routing hints only. An expired or forged token never authorizes access. */
+export const previewTokenTarget = (token: string) => {
+  const claims = split(token)?.claims;
+  return claims === undefined ? null : { threadId: claims.t, port: claims.p };
+};
