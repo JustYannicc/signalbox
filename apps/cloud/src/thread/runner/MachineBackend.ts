@@ -173,6 +173,8 @@ export interface MachineRecord {
   readonly machineId: string | null;
   /** Idempotency key of a create the provider may have accepted; reused until it names the machine. */
   readonly createKey: string | null;
+  /** Backend setup installed on a particular machine; absent on older records. */
+  readonly setupKey?: string;
   readonly desired: "running" | "stopped" | "destroyed";
   /** Whether the provider accepted `desired`. Until then the thread's alarm keeps asking. */
   readonly settled: boolean;

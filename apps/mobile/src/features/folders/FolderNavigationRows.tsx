@@ -44,6 +44,8 @@ function LevelRow(props: {
   readonly icon: "folder" | "folder.fill" | "building.2";
   readonly name: string;
   readonly accessibilityLabel: string;
+  /** A folder's current phase, shown quietly beside its count. */
+  readonly phase?: string;
   readonly count: number;
   /** signalbox: status roll-up (#670), "2 working · 1 waiting"; null when nothing moves. */
   readonly summary?: string | null;
@@ -89,6 +91,11 @@ function LevelRow(props: {
             </AppText>
           ) : null}
         </View>
+        {props.phase === undefined ? null : (
+          <AppText className="max-w-[40%] shrink text-xs text-foreground-muted" numberOfLines={1}>
+            {props.phase}
+          </AppText>
+        )}
         {props.count > 0 ? (
           <AppText className="text-xs tabular-nums text-foreground-muted">{props.count}</AppText>
         ) : null}
@@ -170,7 +177,12 @@ export const FolderNodeRow = memo(function FolderNodeRow(
         depth={props.depth}
         icon="folder"
         name={folder.name}
-        accessibilityLabel={`Threads in ${path}`}
+        accessibilityLabel={
+          folder.phase === undefined
+            ? `Threads in ${path}`
+            : `Threads in ${path}, phase ${folder.phase.current}`
+        }
+        {...(folder.phase === undefined ? {} : { phase: folder.phase.current })}
         count={props.counts.get(folder.id) ?? 0}
         summary={props.summaries.get(folder.id) ?? null}
         selected={props.selectedFolderId === folder.id}

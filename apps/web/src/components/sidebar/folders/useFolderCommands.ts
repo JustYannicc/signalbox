@@ -17,6 +17,7 @@ import type {
   FolderLevel,
   FolderMoveInput,
   FolderRevokeSecretSendInput,
+  FolderSetPhaseInput,
   OnePasswordEnvironmentId,
   SignalboxFoldersSnapshot,
 } from "@t3tools/contracts/signalboxFolders";
@@ -70,6 +71,7 @@ export function useFolderCommands() {
   const setInstructions = useAtomCommand(signalboxFolders.setInstructions, {
     reportFailure: false,
   });
+  const setPhase = useAtomCommand(signalboxFolders.setPhase, { reportFailure: false });
   const setSecrets = useAtomCommand(signalboxFolders.setSecrets, { reportFailure: false });
   const setGitHubLend = useAtomCommand(signalboxFolders.setGitHubLend, { reportFailure: false });
   const setOnePassword = useAtomCommand(signalboxFolders.setOnePassword, {
@@ -125,6 +127,9 @@ export function useFolderCommands() {
           "Could not save instructions",
           setInstructions({ environmentId, input: { level, instructions } }),
         ),
+      /** Moves it to another phase, replaces its phases, or (`phases: null`) clears them. */
+      setPhase: (environmentId: EnvironmentId, input: FolderSetPhaseInput): Change =>
+        reported("Could not change this folder's phase", setPhase({ environmentId, input })),
       /** Null stops loading secrets at this level. */
       setSecrets: (
         environmentId: EnvironmentId,
@@ -159,6 +164,7 @@ export function useFolderCommands() {
       setGitHubLend,
       setInstructions,
       setOnePassword,
+      setPhase,
       setSecrets,
       update,
     ],

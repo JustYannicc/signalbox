@@ -19,6 +19,7 @@ import * as Effect from "effect/Effect";
 
 import { makeRunnerDrive } from "./RunnerDrive.ts";
 import type { DriveClient } from "./RunnerDriveClient.ts";
+import type { SecretMask } from "./secretMask.ts";
 
 const GIT_ENV = {
   ...process.env,
@@ -369,11 +370,18 @@ export type FakeDrive = ReturnType<typeof makeFakeDrive>;
 
 const makeRoot = () => NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "runner-drive-"));
 
-export const machine = (drive: FakeDrive, root: string, name: string, threadId: string) =>
+export const machine = (
+  drive: FakeDrive,
+  root: string,
+  name: string,
+  threadId: string,
+  options: { readonly secretMask?: SecretMask } = {},
+) =>
   makeRunnerDrive({
     cwd: NodePath.join(root, name, "threads", threadId),
     client: drive.client(threadId),
     branch: threadRemoteBranch(threadId),
+    ...options,
   }).pipe(
     Effect.map((runner) => ({ runner, cwd: NodePath.join(root, name, "threads", threadId) })),
   );
