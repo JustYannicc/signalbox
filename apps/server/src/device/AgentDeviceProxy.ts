@@ -15,7 +15,11 @@ import {
 import * as DeviceAgentDiagnostics from "./DeviceAgentDiagnostics.ts";
 import { observeAgentDeviceCommandResponse } from "./AgentDeviceCommandObservation.ts";
 import * as DeviceService from "./DeviceService.ts";
-import { findAgentDeviceSession, listAgentDeviceSessions } from "./AgentDeviceSession.ts";
+import {
+  findAgentDeviceSession,
+  listAgentDeviceSessions,
+  sameAgentDeviceSession,
+} from "./AgentDeviceSession.ts";
 import { AGENT_DEVICE_PROXY_ROUTE_PREFIX } from "./AgentDeviceProxyProtocol.ts";
 import * as AgentDeviceProxyRegistry from "./AgentDeviceProxyRegistry.ts";
 import {
@@ -189,6 +193,10 @@ const handler = Effect.gen(function* () {
       : request.method === "GET"
         ? upstreamRequest
         : HttpClientRequest.bodyStream(upstreamRequest, request.stream);
+  const current = findAgentDeviceSession(yield* devices.state, info.sessionId);
+  if (!current || !sameAgentDeviceSession(before, current)) {
+    return HttpServerResponse.text("Device session is no longer active", { status: 409 });
+  }
   const response = yield* httpClient.execute(requestWithBody);
 
   const responseStream =

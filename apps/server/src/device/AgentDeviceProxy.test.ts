@@ -33,7 +33,6 @@ const proxyTokenFor = (sessionId: string) => `${TOKEN}-${sessionId}`;
 
 const session = (id: string, host = "local", thread = `thread-${id}`): AgentDeviceSession => ({
   sessionId: id,
-  leaseId: `lease-${id}`,
   ownerKind: "agent",
   providerSessionId: ProviderSessionId.make(`provider-${id}`),
   threadId: ThreadId.make(thread),
@@ -41,7 +40,7 @@ const session = (id: string, host = "local", thread = `thread-${id}`): AgentDevi
   deviceId: DeviceId.make(`device-${id}`),
 });
 
-const stateWith = (sessions: ReadonlyArray<AgentDeviceSession>) =>
+const stateWith = (sessions: ReadonlyArray<unknown>) =>
   ({ sessions }) as unknown as DeviceServiceState;
 
 const rpc = (sessionId: string, command = "press") =>
@@ -86,6 +85,7 @@ const createFixture = (options: {
     readonly contentType?: string;
   };
   readonly beforeReply?: (url: string) => void;
+  readonly beforeRegistryReply?: () => void;
 }) => {
   let state = stateWith(options.sessions);
   const requests: Array<{
@@ -155,7 +155,11 @@ const createFixture = (options: {
     snapshot: Effect.sync(() => Array.from(failures.values())),
   } as unknown as DeviceAgentDiagnostics.DeviceAgentDiagnostics["Service"];
   const registry = {
-    get: (sessionId: string) => Effect.succeed(endpoints.get(sessionId) ?? null),
+    get: (sessionId: string) =>
+      Effect.sync(() => {
+        options.beforeRegistryReply?.();
+        return endpoints.get(sessionId) ?? null;
+      }),
   } as unknown as AgentDeviceProxyRegistry.AgentDeviceProxyRegistry["Service"];
   const { handler, dispose } = HttpRouter.toWebHandler(
     AgentDeviceProxy.routeLayer.pipe(
@@ -174,7 +178,7 @@ const createFixture = (options: {
     handler,
     requests,
     failures,
-    setSessions: (sessions: ReadonlyArray<AgentDeviceSession>) => {
+    setSessions: (sessions: ReadonlyArray<unknown>) => {
       state = stateWith(sessions);
     },
   };
@@ -190,6 +194,26 @@ const commandRequest = (
     headers: headers(token),
     body,
   });
+
+const replaceSessionField = (
+  session: AgentDeviceSession,
+  field: "sessionId" | "ownerKind" | "providerSessionId" | "threadId" | "hostId" | "deviceId",
+): unknown => {
+  switch (field) {
+    case "sessionId":
+      return { ...session, sessionId: "replacement-session" };
+    case "ownerKind":
+      return { ...session, ownerKind: "panel" };
+    case "providerSessionId":
+      return { ...session, providerSessionId: ProviderSessionId.make("replacement-provider") };
+    case "threadId":
+      return { ...session, threadId: ThreadId.make("replacement-thread") };
+    case "hostId":
+      return { ...session, hostId: DeviceHostId.make("replacement-host") };
+    case "deviceId":
+      return { ...session, deviceId: DeviceId.make("replacement-device") };
+  }
+};
 
 describe("agent-device proxy", () => {
   it("forwards the daemon response unchanged and publishes the typed Xcode failure", async () => {
@@ -381,16 +405,22 @@ describe("agent-device proxy", () => {
     expect(fixture.failures.size).toBe(0);
   });
 
-  it.each(["closed", "lease changed"] as const)(
-    "does not publish a failure when the session becomes stale after response (%s)",
+  it.each([
+    "sessionId",
+    "ownerKind",
+    "providerSessionId",
+    "threadId",
+    "hostId",
+    "deviceId",
+  ] as const)(
+    "does not publish a failure when the session's %s changes after response",
     async (change) => {
       const current = session("session-1");
-      let setSessions: (sessions: ReadonlyArray<AgentDeviceSession>) => void = () => {};
+      let setSessions: (sessions: ReadonlyArray<unknown>) => void = () => {};
       const fixture = createFixture({
         sessions: [current],
         reply: () => ({ body: typedFailure() }),
-        beforeReply: () =>
-          setSessions(change === "closed" ? [] : [{ ...current, leaseId: "new-lease" }]),
+        beforeReply: () => setSessions([replaceSessionField(current, change)]),
       });
       setSessions = fixture.setSessions;
 
@@ -399,6 +429,39 @@ describe("agent-device proxy", () => {
       expect(fixture.failures.size).toBe(0);
     },
   );
+
+  it("does not bind the agent session identity to the lease generation", async () => {
+    const current = session("session-1");
+    let setSessions: (sessions: ReadonlyArray<unknown>) => void = () => {};
+    const fixture = createFixture({
+      sessions: [current],
+      reply: () => ({ body: typedFailure() }),
+      beforeReply: () => setSessions([{ ...current, leaseId: "new-lease" }]),
+    });
+    setSessions = fixture.setSessions;
+
+    await (await fixture.handler(commandRequest("session-1"))).text();
+
+    expect(fixture.failures.get("session-1")?.reason).toBe("simulator_service_hub_unavailable");
+  });
+
+  it("rejects a stale session tuple before forwarding", async () => {
+    const current = session("session-1");
+    let setSessions: (sessions: ReadonlyArray<unknown>) => void = () => {};
+    const fixture = createFixture({
+      sessions: [current],
+      reply: () => ({ body: typedFailure() }),
+      beforeRegistryReply: () =>
+        setSessions([{ ...current, providerSessionId: ProviderSessionId.make("replacement") }]),
+    });
+    setSessions = fixture.setSessions;
+
+    const response = await fixture.handler(commandRequest("session-1"));
+
+    expect(response.status).toBe(409);
+    expect(fixture.requests).toHaveLength(0);
+    expect(fixture.failures.size).toBe(0);
+  });
 
   it("clears the displayed failure after a successful command", async () => {
     let next = 0;

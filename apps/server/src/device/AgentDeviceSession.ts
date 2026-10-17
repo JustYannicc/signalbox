@@ -4,7 +4,6 @@ import * as Schema from "effect/Schema";
 
 export const AgentDeviceSession = Schema.Struct({
   sessionId: Schema.NonEmptyString,
-  leaseId: Schema.NonEmptyString,
   ownerKind: Schema.Literal("agent"),
   providerSessionId: ProviderSessionId,
   threadId: ThreadId,
@@ -32,7 +31,6 @@ export const findAgentDeviceSession = (state: unknown, sessionId: string) => {
 
 export const sameAgentDeviceSession = (left: AgentDeviceSession, right: AgentDeviceSession) =>
   left.sessionId === right.sessionId &&
-  left.leaseId === right.leaseId &&
   left.ownerKind === right.ownerKind &&
   left.providerSessionId === right.providerSessionId &&
   left.threadId === right.threadId &&

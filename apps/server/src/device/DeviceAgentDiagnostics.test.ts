@@ -19,7 +19,6 @@ import * as DeviceService from "./DeviceService.ts";
 
 const session = (id: string, threadId = `thread-${id}`): AgentDeviceSession => ({
   sessionId: id,
-  leaseId: `lease-${id}`,
   ownerKind: "agent",
   providerSessionId: ProviderSessionId.make(`provider-${id}`),
   threadId: ThreadId.make(threadId),
@@ -79,7 +78,7 @@ describe("device agent diagnostics", () => {
     }).pipe(Effect.provide(testLayer)),
   );
 
-  it.effect("does not return diagnostics after a lease or provider session changes", () =>
+  it.effect("does not return diagnostics after the provider session changes", () =>
     Effect.gen(function* () {
       const live = session("session-1");
       yield* setDeviceState(stateWith([live]));
@@ -91,7 +90,9 @@ describe("device agent diagnostics", () => {
       });
       expect(yield* diagnostics.snapshot).toHaveLength(1);
 
-      yield* setDeviceState(stateWith([{ ...live, leaseId: "new-lease" }]));
+      yield* setDeviceState(
+        stateWith([{ ...live, providerSessionId: ProviderSessionId.make("replacement-provider") }]),
+      );
       expect(yield* diagnostics.snapshot).toEqual([]);
     }).pipe(Effect.provide(testLayer)),
   );
