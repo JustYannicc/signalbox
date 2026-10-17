@@ -63,7 +63,7 @@ function projects() {
   for (const parent of ["apps", "packages", "infra", "."]) {
     const directories =
       parent === "."
-        ? ["scripts"]
+        ? ["scripts", "oxlint-plugin-t3code"]
         : NodeFS.readdirSync(NodePath.join(root, parent)).map((name) => `${parent}/${name}`);
     for (const directory of directories) {
       const manifest = NodePath.join(root, directory, "package.json");

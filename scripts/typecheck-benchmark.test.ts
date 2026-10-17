@@ -22,6 +22,7 @@ test("discovers only workspace manifests in the supported topology", () => {
     expect(discoverWorkspaces(root).map(({ relativePath }) => relativePath)).toEqual([
       "apps/a/package.json",
       "infra/c/package.json",
+      "oxlint-plugin-t3code/package.json",
       "packages/b/package.json",
       "scripts/package.json",
     ]);

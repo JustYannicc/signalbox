@@ -60,8 +60,10 @@ export function discoverWorkspaces(rootDirectory: string): WorkspaceManifest[] {
       if (isRegularFile(NodePath.join(rootDirectory, path))) paths.push(path);
     }
   }
-  if (isRegularFile(NodePath.join(rootDirectory, "scripts/package.json")))
-    paths.push("scripts/package.json");
+  for (const directory of ["scripts", "oxlint-plugin-t3code"]) {
+    const path = `${directory}/package.json`;
+    if (isRegularFile(NodePath.join(rootDirectory, path))) paths.push(path);
+  }
 
   return paths.sort().map((relativePath) => {
     const absolutePath = NodePath.join(rootDirectory, relativePath);
@@ -239,7 +241,7 @@ export function loadBaselineScripts(
     .filter(
       (path) =>
         /^(?:apps|packages|infra)\/[^/]+\/package\.json$/.test(path) ||
-        path === "scripts/package.json",
+        /^(?:scripts|oxlint-plugin-t3code)\/package\.json$/.test(path),
     );
   const baselineWorkspacePaths = new Set(paths);
   const baselineScripts = new Map<string, string | undefined>();
