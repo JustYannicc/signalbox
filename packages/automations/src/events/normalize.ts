@@ -319,6 +319,11 @@ export const MAPPED_EVENT_NAMES: ReadonlySet<string> = new Set<string>([
   // A cloud drive's ref moved; the cloud delivers them (`deliverEvent`).
   "drive.changed",
   "drive.branch-saved",
+  // Repository webhooks delivered by the cloud's GitHub connection.
+  "pr.opened",
+  "pr.checks.completed",
+  "release.published",
+  "issue.opened",
   // A watched source changed (sources/sourceWatches.ts).
   ...SOURCE_ITEM_EVENTS,
 ] satisfies ReadonlyArray<AutomationEventName>);

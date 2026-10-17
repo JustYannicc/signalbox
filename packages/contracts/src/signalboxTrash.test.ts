@@ -1,8 +1,11 @@
 import { describe, expect, it } from "vite-plus/test";
 import * as Schema from "effect/Schema";
 
-import { AuthOrchestrationOperateScope, AuthOrchestrationReadScope } from "./auth.ts";
-import { clientRpcRequiredScopes } from "./clientRpcPermissions.ts";
+import {
+  AuthOrchestrationOperateScope,
+  AuthOrchestrationReadScope,
+  clientRpcRequiredScopes,
+} from "@t3tools/contracts";
 import {
   SIGNALBOX_TRASH_REQUIRED_SCOPES,
   SIGNALBOX_TRASH_WS_METHODS,

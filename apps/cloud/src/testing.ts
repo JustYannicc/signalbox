@@ -15,7 +15,8 @@ import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as ManagedRuntime from "effect/ManagedRuntime";
 
 import * as CloudAccounts from "./account/CloudAccounts.ts";
-import { API_HEADER, encodeApiCredential, serveApiRequest } from "./api/apiObject.ts";
+import { API_HEADER, encodeApiCredential } from "./api/apiCredential.ts";
+import { serveApiRequest } from "./api/apiObject.ts";
 import { MCP_PATH, makeMcpHandler } from "./api/mcpObject.ts";
 import * as CloudAssets from "./assets/CloudAssets.ts";
 import * as CloudAutomations from "./automations/CloudAutomations.ts";

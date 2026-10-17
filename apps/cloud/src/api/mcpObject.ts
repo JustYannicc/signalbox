@@ -13,7 +13,8 @@ import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http";
 
 import type * as Environment from "../environment.ts";
 import { type ApiCaller, callOperation } from "./apiCall.ts";
-import { API_HEADER, callerFor, decodeApiCredential } from "./apiObject.ts";
+import { API_HEADER, decodeApiCredential } from "./apiCredential.ts";
+import { callerFor } from "./apiObject.ts";
 import { cloudServes, cloudUnserved } from "./cloudCoverage.ts";
 
 /**

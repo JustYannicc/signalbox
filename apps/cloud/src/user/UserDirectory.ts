@@ -21,6 +21,7 @@ import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 
 import type { AutomationHostCall } from "../automations/CloudAutomations.ts";
+import type { HookAnswer, HookRequest } from "../automations/webhookRequest.ts";
 import type { ConnectionLink, CreatedLink } from "../connections/ConnectionLinks.ts";
 import type {
   LinkedConnections,
@@ -28,7 +29,7 @@ import type {
   LinkedToken,
 } from "../connections/linkedConnections.ts";
 import type { ConnectResult, ConnectStart } from "../github/GitHubConnection.ts";
-import { API_HEADER, type ApiCredential, encodeApiCredential } from "../api/apiObject.ts";
+import { API_HEADER, type ApiCredential, encodeApiCredential } from "../api/apiCredential.ts";
 import type { CreatedKey, KeyOptions } from "../localKeys/LocalKeys.ts";
 import type { LocalKeysView, LocalModelAuthorization } from "../localKeys/localModelAccess.ts";
 import type { ModelUsage } from "../modelGateway/modelGatewayRecord.ts";
@@ -78,6 +79,7 @@ export interface UserObjectApi {
   readonly trashProgress: (
     id: string,
   ) => Promise<import("../trash/TrashWorkflow.ts").TrashProgress>;
+  readonly receiveHook: (request: HookRequest) => Promise<HookAnswer>;
   readonly recordSignIn: (profile: AccountProfile) => Promise<void>;
   readonly profile: () => Promise<AccountProfile | null>;
   readonly createSession: (input: {
@@ -315,6 +317,7 @@ const METHODS = Object.keys({
   recordThreadSummary: true,
   threadEvents: true,
   driveEvents: true,
+  receiveHook: true,
   rebuildThreadIndex: true,
   beginGitHubConnect: true,
   completeGitHubConnect: true,

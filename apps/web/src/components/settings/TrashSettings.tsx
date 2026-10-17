@@ -24,7 +24,8 @@ import { Trash2Icon } from "lucide-react";
 import { useEffect, useState } from "react";
 
 import { useEnvironmentQuery } from "~/state/query";
-import { signalboxTrash, useTrashEnvironments } from "~/state/signalboxTrash";
+import { signalboxTrash } from "~/connection/runtime";
+import { useTrashEnvironments } from "~/state/signalboxTrash";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { formatRelativeTimeLabel } from "../../timestampFormat";
 import {

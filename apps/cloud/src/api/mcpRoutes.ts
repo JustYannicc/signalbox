@@ -6,7 +6,7 @@ import { createRemoteJWKSet, jwtVerify } from "jose";
 
 import { isLocalKey, verifyLocalKey } from "../localKeys/LocalKeys.ts";
 import * as UserDirectory from "../user/UserDirectory.ts";
-import type { ApiCredential } from "./apiObject.ts";
+import type { ApiCredential } from "./apiCredential.ts";
 import { MCP_PATH } from "./mcpObject.ts";
 
 /**

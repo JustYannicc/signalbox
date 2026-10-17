@@ -15,10 +15,9 @@ import * as Option from "effect/Option";
 import { AsyncResult, Atom } from "effect/reactivity";
 
 import { environmentCatalog } from "../connection/catalog";
-import { connectionAtomRuntime } from "../connection/runtime";
+import { connectionAtomRuntime, signalboxTrash } from "../connection/runtime";
 import { environmentSnapshotAtom } from "./shell";
 import { environmentServerConfigsAtom } from "./server";
-import { signalboxTrash } from "./signalboxTrash";
 
 export const threadEnvironment = createThreadEnvironmentAtoms(
   connectionAtomRuntime,
