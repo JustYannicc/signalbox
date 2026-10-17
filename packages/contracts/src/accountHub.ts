@@ -361,7 +361,7 @@ export const PoolLinkMoveResult = Schema.Struct({
 export type PoolLinkMoveResult = typeof PoolLinkMoveResult.Type;
 
 /** The account types a cloud pool can take. */
-const CLOUD_POOL_ACCOUNT_TYPES = ["claude", "codex"] as const;
+export const CLOUD_POOL_ACCOUNT_TYPES = ["claude", "codex"] as const;
 export type CloudPoolAccountType = (typeof CLOUD_POOL_ACCOUNT_TYPES)[number];
 export const isCloudPoolAccountType = (type: unknown): type is CloudPoolAccountType =>
   (CLOUD_POOL_ACCOUNT_TYPES as ReadonlyArray<unknown>).includes(type);
