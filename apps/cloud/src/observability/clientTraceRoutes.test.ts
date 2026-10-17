@@ -70,6 +70,7 @@ const setup = Effect.gen(function* () {
   let requests = 0;
   const cloud = makeMemoryCloud();
   let upstreamStatus = 200;
+  let upstreamFailure: Error | undefined;
   const authenticate: CloudSessions.CloudSessions["Service"]["authenticate"] = (credentials) =>
     credentials.bearer === "session" || credentials.cookie === "session"
       ? Effect.succeed({
@@ -107,6 +108,7 @@ const setup = Effect.gen(function* () {
             filtered.push(
               filterTraces(JSON.parse(body), { stage: "pr-test", version: "test-release" }),
             );
+            if (upstreamFailure !== undefined) throw upstreamFailure;
             return new Response(null, { status: upstreamStatus });
           },
         },
@@ -157,6 +159,9 @@ const setup = Effect.gen(function* () {
     post,
     sent,
     filtered,
+    setUpstreamFailure: (error: Error) => {
+      upstreamFailure = error;
+    },
     setUpstreamStatus: (status: number) => {
       upstreamStatus = status;
     },
@@ -267,6 +272,17 @@ describe("Cloud browser trace intake", () => {
           .status,
       ).toBe(429);
       expect(sent).toHaveLength(300);
+    }),
+  );
+  it.effect("keeps internal collector causes out of the HTTP response", () =>
+    Effect.gen(function* () {
+      const { post, setUpstreamFailure } = yield* setup;
+      setUpstreamFailure(new Error(CANARY));
+      const response = yield* post();
+      expect(response.status).toBe(502);
+      const body = yield* Effect.promise(() => response.text());
+      expect(body).not.toContain(CANARY);
+      expect(body).toContain("trace_intake_rejected");
     }),
   );
   it.effect("does not claim delivery when Sentry rejects the batch", () =>

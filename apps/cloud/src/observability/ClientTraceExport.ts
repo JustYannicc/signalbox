@@ -13,7 +13,7 @@ export interface TraceExportEnv {
 
 export class ClientTraceExportError extends Schema.TaggedError<ClientTraceExportError>()(
   "ClientTraceExportError",
-  { status: Schema.Literals([502, 503]) },
+  { status: Schema.Literals([502, 503]), cause: Schema.optional(Schema.Defect()) },
 ) {}
 
 export class ClientTraceExport extends Context.Service<
@@ -35,7 +35,7 @@ export const layer = (env: TraceExportEnv) =>
         const token = env.TRACE_EXPORT_TOKEN;
         if (!binding || !token) return yield* new ClientTraceExportError({ status: 503 });
         const body = yield* encode(payload).pipe(
-          Effect.mapError(() => new ClientTraceExportError({ status: 502 })),
+          Effect.mapError((cause) => new ClientTraceExportError({ status: 502, cause })),
         );
         const response = yield* Effect.tryPromise({
           try: (signal) =>
@@ -47,10 +47,13 @@ export const layer = (env: TraceExportEnv) =>
                 signal,
               }),
             ),
-          catch: () => new ClientTraceExportError({ status: 502 }),
+          catch: (cause) => new ClientTraceExportError({ status: 502, cause }),
         }).pipe(
           Effect.timeout("5 seconds"),
-          Effect.mapError(() => new ClientTraceExportError({ status: 502 })),
+          Effect.catchTags({
+            TimeoutError: (cause) =>
+              Effect.fail(new ClientTraceExportError({ status: 502, cause })),
+          }),
         );
         if (!response.ok) return yield* new ClientTraceExportError({ status: 502 });
       }),

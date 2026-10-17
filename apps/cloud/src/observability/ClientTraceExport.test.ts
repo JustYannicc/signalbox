@@ -16,6 +16,30 @@ describe("client trace delivery boundaries", () => {
     }).pipe(Effect.provide(ClientTraceExport.layer({}))),
   );
 
+  it.effect("keeps the collector failure as an internal cause", () => {
+    const cause = new Error("canary-private-collector-failure");
+    return Effect.gen(function* () {
+      const exporter = yield* ClientTraceExport.ClientTraceExport;
+      const result = yield* exporter.submit({ resourceSpans: [] }).pipe(Effect.result);
+      expect(result._tag).toBe("Failure");
+      if (result._tag === "Failure") {
+        expect(result.failure.status).toBe(502);
+        expect(result.failure.cause).toBe(cause);
+      }
+    }).pipe(
+      Effect.provide(
+        ClientTraceExport.layer({
+          TRACE_EXPORT_TOKEN: "trace-test-token",
+          TRACE_EXPORT: {
+            fetch: async () => {
+              throw cause;
+            },
+          },
+        }),
+      ),
+    );
+  });
+
   it.effect("honors telemetry opt-out even with a configured collector", () => {
     let called = false;
     return ClientTraceExport.ClientTraceExport.use((exporter) =>

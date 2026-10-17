@@ -15,7 +15,7 @@ const MAX_BYTES = 128 * 1024;
 
 export class ClientTraceRejected extends Schema.TaggedError<ClientTraceRejected>()(
   "ClientTraceRejected",
-  { status: Schema.Number },
+  { status: Schema.Number, cause: Schema.optional(Schema.Defect()) },
 ) {}
 
 export class ClientTraceIntake extends Context.Service<
@@ -31,7 +31,7 @@ export class ClientTraceIntake extends Context.Service<
   }
 >()("@signalbox/cloud/observability/ClientTraceIntake") {}
 
-const isClientTraceRejected = Schema.is(ClientTraceRejected);
+export const isClientTraceRejected = Schema.is(ClientTraceRejected);
 
 const make = Effect.gen(function* () {
   const users = yield* UserDirectory.UserDirectory;
@@ -44,48 +44,57 @@ const make = Effect.gen(function* () {
   const release = yield* Config.String("APP_VERSION").pipe(Config.withDefault("development"));
   const enabled = yield* Config.String("T3CODE_TELEMETRY_ENABLED").pipe(Config.withDefault("true"));
   const decode = Schema.decodeUnknownEffect(Schema.fromJsonString(ClientTraces));
-  const reject = (status: number) => new ClientTraceRejected({ status });
 
   const ingest: ClientTraceIntake["Service"]["ingest"] = Effect.fnUntraced(function* (input) {
     const session = yield* sessions
       .authenticate(input.credentials)
-      .pipe(Effect.catchTags({ UserObjectError: () => Effect.fail(reject(503)) }));
-    if (!(yield* limits.allow(session.userId))) return yield* reject(429);
+      .pipe(
+        Effect.catchTags({
+          UserObjectError: (cause) => Effect.fail(new ClientTraceRejected({ status: 503, cause })),
+        }),
+      );
+    if (!(yield* limits.allow(session.userId)))
+      return yield* new ClientTraceRejected({ status: 429 });
     if (
       input.contentType?.split(";", 1)[0]?.trim().toLowerCase() !== "application/json" ||
       (input.contentEncoding && input.contentEncoding !== "identity")
     )
-      return yield* reject(415);
+      return yield* new ClientTraceRejected({ status: 415 });
     if (
       input.contentLength !== undefined &&
       (!/^\d+$/.test(input.contentLength) || Number(input.contentLength) > MAX_BYTES)
     )
-      return yield* reject(413);
+      return yield* new ClientTraceRejected({ status: 413 });
     if (enabled === "false") return;
     const bytes = yield* input.body.pipe(
       Stream.runFoldEffect(
         () => new Uint8Array(0),
         (body, chunk) => {
-          if (body.length + chunk.length > MAX_BYTES) return Effect.fail(reject(413));
+          if (body.length + chunk.length > MAX_BYTES)
+            return Effect.fail(new ClientTraceRejected({ status: 413 }));
           const next = new Uint8Array(body.length + chunk.length);
           next.set(body);
           next.set(chunk, body.length);
           return Effect.succeed(next);
         },
       ),
-      Effect.mapError((error) => (isClientTraceRejected(error) ? error : reject(400))),
+      Effect.mapError((cause) =>
+        isClientTraceRejected(cause) ? cause : new ClientTraceRejected({ status: 400, cause }),
+      ),
       Effect.timeout("5 seconds"),
-      Effect.catchTags({ TimeoutError: () => Effect.fail(reject(408)) }),
+      Effect.catchTags({
+        TimeoutError: (cause) => Effect.fail(new ClientTraceRejected({ status: 408, cause })),
+      }),
     );
     const inputTraces = yield* decode(new TextDecoder().decode(bytes)).pipe(
-      Effect.mapError(() => reject(400)),
+      Effect.mapError((cause) => new ClientTraceRejected({ status: 400, cause })),
     );
     const spanCount = inputTraces.resourceSpans.reduce(
       (count, resource) =>
         count + resource.scopeSpans.reduce((total, scope) => total + scope.spans.length, 0),
       0,
     );
-    if (spanCount > 256) return yield* reject(400);
+    if (spanCount > 256) return yield* new ClientTraceRejected({ status: 400 });
     const threadIds = [
       ...new Set(
         inputTraces.resourceSpans.flatMap((resource) =>
@@ -107,10 +116,12 @@ const make = Effect.gen(function* () {
         : yield* users
             .forUser(session.userId)
             .clientTraceDimensions(threadIds)
-            .pipe(Effect.mapError(() => reject(503)));
+            .pipe(Effect.mapError((cause) => new ClientTraceRejected({ status: 503, cause })));
     const traces = safeClientTraces(inputTraces, session.userId, environment, release, dimensions);
-    if (traces === null) return yield* reject(400);
-    yield* exporter.submit(traces).pipe(Effect.mapError(({ status }) => reject(status)));
+    if (traces === null) return yield* new ClientTraceRejected({ status: 400 });
+    yield* exporter
+      .submit(traces)
+      .pipe(Effect.mapError((cause) => new ClientTraceRejected({ status: cause.status, cause })));
   });
   return ClientTraceIntake.of({ ingest });
 });
