@@ -207,12 +207,10 @@ describe("machine classes", () => {
             message: { text: CONTINUE_PROMPT },
             providerThread: { nativeThreadRef: { nativeId: "claude-session-1" } },
           });
-          expect(heavyWork.drive?.instructions).not.toEqual(
-            expect.arrayContaining([
-              expect.objectContaining({
-                text: expect.stringContaining(REQUEST_HEAVY_MACHINE_COMMAND),
-              }),
-            ]),
+          expect(heavyWork.drive?.instructions).not.toContainEqual(
+            expect.objectContaining({
+              text: expect.stringContaining(REQUEST_HEAVY_MACHINE_COMMAND),
+            }),
           );
         }),
       { ...options, drives: true },
