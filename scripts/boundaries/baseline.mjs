@@ -3,6 +3,18 @@ export function violationKey(violation) {
   return [violation.rule.name, violation.from, violation.to].join(" | ");
 }
 
+// Older scans omitted cyclic edges. Recognize that existing debt without growing the file.
+export function unrecordedBaseCycles(violations, previous) {
+  if (!previous) return new Set();
+  const recorded = new Set(previous);
+  return new Set(
+    violations
+      .filter((violation) => violation.rule.name === "no-circular")
+      .map(violationKey)
+      .filter((key) => !recorded.has(key)),
+  );
+}
+
 export function checkBaseline(entries, previous, current) {
   const errors = [];
   if (new Set(entries).size !== entries.length) errors.push("Baseline contains duplicate entries.");
