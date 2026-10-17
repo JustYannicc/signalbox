@@ -60,6 +60,14 @@ describe("cloud API coverage", () => {
     expect(silent).toEqual([]);
   });
 
+  it("serves review replies and resolution through the public API", () => {
+    for (const name of ["pullRequests.replyToThread", "pullRequests.setThreadResolution"]) {
+      const operation = operations.find((entry) => entry.name === name)!;
+      expect(cloudServes(operation)).toBe(true);
+      expect(cloudUnserved(operation)).toBeUndefined();
+    }
+  });
+
   it("lists nothing the cloud serves", () => {
     const stale = operations
       .filter((operation) => cloudServes(operation) && cloudUnserved(operation) !== undefined)
