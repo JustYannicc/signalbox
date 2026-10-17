@@ -338,7 +338,8 @@ function registerDeviceWithRelay(
       });
       return;
     }
-    void registerWithSignalboxClouds(body); // signalbox: cloud push, beside the relay
+    yield* Effect.promise(() => registerWithSignalboxClouds(body)); // signalbox: cloud push, beside the relay
+    if (expectedGeneration !== deviceRegistrationGeneration) return;
     const relayConfig = readRelayConfig();
     if (!relayConfig) {
       setRegistrationStatus("unknown");
@@ -837,11 +838,9 @@ export function registerAgentAwarenessConnection(connection: SavedRemoteConnecti
 }
 
 // signalbox: Signalbox Cloud takes the registration without a relay account.
-export function registerAgentAwarenessForSignalboxCloud(): void {
+export function registerAgentAwarenessForSignalboxCloud(input: RegisterDeviceInput = {}): void {
   if (!canRegisterPushNotifications()) return;
-  ensurePushTokenListener();
-  ensureAppStateListener();
-  enqueueDeviceRegistration({}, "Signalbox Cloud device registration failed");
+  enqueueDeviceRegistration(input, "Signalbox Cloud device registration failed");
 }
 
 function removeAgentAwarenessConnection(environmentId: EnvironmentId): void {
