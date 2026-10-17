@@ -7,6 +7,7 @@ import {
   workosStubLayer,
 } from "@signalbox/account/WorkOSTesting";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
+import * as Clock from "effect/Clock";
 import * as ConfigProvider from "effect/ConfigProvider";
 import type * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
@@ -80,6 +81,8 @@ import * as GitHub from "./github/GitHub.ts";
 import * as GitHubActions from "./github/GitHubActions.ts";
 import * as GitHubBranches from "./github/GitHubBranches.ts";
 import * as AgentPullRequests from "./github/AgentPullRequests.ts";
+import * as CloudPullRequests from "./github/CloudPullRequests.ts";
+import * as PullRequestRepository from "./github/PullRequestRepository.ts";
 import * as ConnectionLinks from "./connections/ConnectionLinks.ts";
 import * as GitHubConnection from "./github/GitHubConnection.ts";
 import * as LocalKeys from "./localKeys/LocalKeys.ts";
@@ -294,6 +297,7 @@ const makeUserRuntime = (
           GitHubBranches.layer,
           AgentPullRequests.layer,
           GitHubActions.layer,
+          CloudPullRequests.layer.pipe(Layer.provideMerge(PullRequestRepository.layer)),
           UserPreviewSetup.layer,
           CloudAssets.layer,
           LoginService.layer(logins),
@@ -327,7 +331,14 @@ const makeUserRuntime = (
           ),
           // No push credentials, so phones are recorded and every push is skipped.
           Layer.provideMerge(
-            PushNotifier.layerWithDevices(EnvironmentId.make(CLOUD_TEST_ENV.ENVIRONMENT_ID)).pipe(
+            Layer.unwrap(
+              Effect.map(UserStore.UserStore, (store) =>
+                PushNotifier.layerWithDevices(
+                  EnvironmentId.make(CLOUD_TEST_ENV.ENVIRONMENT_ID),
+                  (sid) => Effect.map(store.findSession(sid), (session) => session !== null),
+                ),
+              ),
+            ).pipe(
               Layer.provide(
                 Layer.mergeAll(
                   FetchHttpClient.layer,
@@ -448,6 +459,8 @@ export const makeMemoryCloud = (
   const alarms = new Map<string, number>();
   /** Every user's automation runs, as Workflow instances of the real runtime. */
   const workflows = makeMemoryWorkflows(() => userDirectory);
+  /** When each in-memory thread object's alarm would fire next, as a refresh request armed it. */
+  const threadAlarms = new Map<string, number>();
   const userFor = (userId: string) => {
     const existing = users.get(userId);
     if (existing) return existing;
@@ -513,7 +526,10 @@ export const makeMemoryCloud = (
       ...makeThreadObjectApi(
         run,
         async () => {},
-        async () => {},
+        async (at) => {
+          const current = threadAlarms.get(threadId);
+          if (current === undefined || current > at) threadAlarms.set(threadId, at);
+        },
       ),
       previews: async () =>
         new ReadableStream({
@@ -611,6 +627,11 @@ export const makeMemoryCloud = (
           ThreadStore.ThreadStore.use((store) => Effect.orDie(store.secrets)),
         ),
       ),
+    /** The next alarm a refresh requested for a thread would arm, for tests. */
+    threadAlarmAt: (threadId: string) => threadAlarms.get(threadId),
+    /** The in-memory object's clock, for comparing its alarm with its current time. */
+    threadNow: (threadId: string) =>
+      Effect.promise(() => threadFor(threadId).run(Clock.currentTimeMillis)),
     /** The instructions each of a thread's runs was started with, by run id. */
     runInstructions: (threadId: string, runId: string) =>
       Effect.promise(() =>

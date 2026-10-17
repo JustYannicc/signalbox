@@ -25,6 +25,7 @@ allowBuilds:
   node-pty: true
   # Ships N-API prebuilds; its install script only rebuilds from source.
   objc-js: false
+  # Neither the SDK web entry nor codegen needs protobufjs install hooks.
   protobufjs: false
   "react-native-enriched-markdown@file:apps/mobile/deps/react-native-enriched-markdown-1.2.0-t3.15.tgz": true
   sharp: true
@@ -219,6 +220,7 @@ minimumReleaseAgeExclude:
   - "@react-native/virtualized-lists@0.88.0"
   - react-native-svg@15.16.0
   - "@expo/schema-utils@58.0.2"
+  - "@boxd-sh/sdk@0.2.17"
   - "@lunora/agent@1.0.0-alpha.217"
   - "@lunora/cli@1.0.0-alpha.399"
   - "@lunora/codegen@1.0.0-alpha.315"
