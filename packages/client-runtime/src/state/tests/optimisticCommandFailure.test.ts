@@ -1,3 +1,4 @@
+import "./threadCommandTestSession.ts";
 import { describe, expect, it } from "@effect/vitest";
 import * as Cause from "effect/Cause";
 import * as Deferred from "effect/Deferred";
@@ -22,7 +23,7 @@ describe("optimistic pin command failures", () => {
       new ConnectionTransientError({ reason: "transport", detail: "Disconnected" }),
     ],
     ["timeout", new Cause.TimeoutError()],
-  ] as const)("keeps a possibly committed command after a %s", (_kind, error) =>
+  ] as const)("keeps a possibly committed command after a %s", ([_kind, error]) =>
     Effect.gen(function* () {
       const h = yield* makeHarness();
       const result = h.commands.pin.run(h.registry, target);
