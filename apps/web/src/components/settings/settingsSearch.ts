@@ -14,6 +14,7 @@ import { sourceControlClients } from "@t3tools/client-runtime/source-control-cli
 import { DEFAULT_KEYBINDINGS } from "@t3tools/shared/keybindings";
 import { commandLabel } from "./KeybindingsSettings.logic";
 import { keybindingCapability } from "./keybindingCapabilities"; // signalbox
+import { settingsItemSupported, settingsPathSupported } from "./settingsCapabilities";
 import {
   validateSettingsScopeSearch,
   type ResolvedSettingsScope,
@@ -1186,22 +1187,31 @@ export function filterAvailableSettingsSearchItems(
   availability: SettingsSearchAvailability,
 ): ReadonlyArray<SettingsSearchItem> {
   const items: ReadonlyArray<SettingsSearchItem> = SETTINGS_SEARCH_ITEMS;
-  return items.filter(
-    (item) =>
-      !item.hidden && // signalbox
-      (!item.cloudOnly || availability.hasCloudPublicConfig) &&
-      (!item.environmentOnly || availability.hasEnvironment) &&
-      (!item.providerSettingsOnly || availability.hasProviderSettingsEnvironment) &&
-      (!item.macProviderSettingsOnly || availability.hasMacProviderSettingsEnvironment) &&
-      (!item.localBackendManagementOnly || availability.canManageLocalBackend) &&
-      (!item.localEnvironmentOnly || !availability.localEnvironmentDisabled) &&
-      (!item.wslAvailableOnly || availability.isWslSettingsRowVisible) &&
-      (!item.requiresThreadAutoSettlement || availability.hasThreadAutoSettlement) &&
-      (!item.managedTunnelOnly || availability.managedTunnelActive === true) &&
-      (!item.capability || !availability.unsupportedCapabilities?.has(item.capability)) &&
-      (!availability.unsupportedCapabilities ||
-        isSettingsPathAvailable(item.to, availability.unsupportedCapabilities)),
-  );
+  return items
+    .filter(
+      (item) =>
+        !item.hidden &&
+        (!item.cloudOnly || availability.hasCloudPublicConfig) &&
+        (!item.environmentOnly || availability.hasEnvironment) &&
+        (!item.providerSettingsOnly || availability.hasProviderSettingsEnvironment) &&
+        (!item.macProviderSettingsOnly || availability.hasMacProviderSettingsEnvironment) &&
+        (!item.localBackendManagementOnly || availability.canManageLocalBackend) &&
+        (!item.localEnvironmentOnly || !availability.localEnvironmentDisabled) &&
+        (!item.wslAvailableOnly || availability.isWslSettingsRowVisible) &&
+        (!item.requiresThreadAutoSettlement || availability.hasThreadAutoSettlement) &&
+        (!item.managedTunnelOnly || availability.managedTunnelActive === true) &&
+        (!item.capability || !availability.unsupportedCapabilities?.has(item.capability)) &&
+        (!availability.unsupportedCapabilities ||
+          settingsItemSupported(item.id, availability.unsupportedCapabilities)) &&
+        (!availability.unsupportedCapabilities ||
+          isSettingsPathAvailable(item.to, availability.unsupportedCapabilities)),
+    )
+    .map((item) =>
+      item.id === "keybinding-chat.newLocal" &&
+      availability.unsupportedCapabilities?.has("localFilesystem")
+        ? { ...item, title: commandLabel("chat.newLocal", false) }
+        : item,
+    );
 }
 
 interface CapabilitySearchEnvironment {
@@ -1250,18 +1260,11 @@ export function unsupportedSettingsCapabilities(
 }
 
 /** signalbox: settings pages that only exist where an environment can do something. */
-const SETTINGS_PATH_CAPABILITIES: Partial<Record<SettingsPath, SignalboxEnvironmentCapability>> = {
-  "/settings/scheduled-tasks": "scheduledTasks",
-  // Connections manages other environments; the cloud is the only one.
-  "/settings/connections": "otherEnvironments",
-};
-
 export function isSettingsPathAvailable(
   path: SettingsPath,
   unsupportedCapabilities: ReadonlySet<SignalboxEnvironmentCapability>,
 ): boolean {
-  const capability = SETTINGS_PATH_CAPABILITIES[path];
-  return capability === undefined || !unsupportedCapabilities.has(capability);
+  return settingsPathSupported(path, unsupportedCapabilities);
 }
 
 export function searchSettings(

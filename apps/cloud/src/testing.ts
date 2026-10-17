@@ -44,6 +44,7 @@ import * as PushNotifier from "./push/PushNotifier.ts";
 import * as UserPreviewSetup from "./previewSetup/UserPreviewSetup.ts";
 import { makeMemoryPools } from "./pool/testing.ts";
 import * as CloudThreadService from "./thread/CloudThreadService.ts";
+import * as ThreadsLive from "./thread/ThreadsLive.ts";
 import * as CloudAnalytics from "./thread/diagnostics/CloudAnalytics.ts";
 import * as DiagnosticsStore from "./thread/diagnostics/DiagnosticsStore.ts";
 import * as TurnDiagnostics from "./thread/diagnostics/TurnDiagnostics.ts";
@@ -314,7 +315,7 @@ const makeUserRuntime = (
               LocalKeys.layer,
               SignInGrants.layer,
               PoolSignIns.layer,
-              CloudThreadService.layer,
+              CloudThreadService.layer.pipe(Layer.provideMerge(ThreadsLive.layer)),
               PersonBrowsers.layer(kernel),
             ),
           ),
@@ -546,6 +547,7 @@ export const makeMemoryCloud = (
   const userObject = (userId: string) =>
     Layer.effectContext(Effect.orDie(userFor(userId).runtime.contextEffect));
   const threadService = CloudThreadService.layer.pipe(
+    Layer.provideMerge(ThreadsLive.layer),
     Layer.provideMerge(
       Layer.mergeAll(
         Layer.succeed(UserDirectory.UserDirectory, userDirectory),

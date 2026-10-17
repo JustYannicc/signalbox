@@ -100,8 +100,9 @@ import * as GitHubBranches from "../github/GitHubBranches.ts";
 import { makeGitHubImport } from "../github/GitHubImport.ts";
 import * as DriveBrowsing from "./driveBrowsing.ts";
 import * as CloudThreadService from "../thread/CloudThreadService.ts";
+import * as Threads from "../thread/Threads.ts";
 import { deviceMember, makeBrowsingHandlers } from "../thread/browsing/browsingRpc.ts";
-import { type Actor, ThreadNotFoundError } from "../thread/ThreadEngine.ts";
+import { type Actor, ThreadNotFoundError } from "../thread/ThreadAccess.ts";
 import type { BrowserReply } from "../thread/threadWire.ts";
 import { DriveSharing } from "./DriveSharing.ts";
 import { makePoolHandlers, POOL_METHODS, POOL_REQUIRED_SCOPES } from "./poolRpc.ts";
@@ -420,6 +421,7 @@ export const layerHandlers = (input: {
     Effect.gen(function* () {
       const shell = yield* UserShell.UserShell;
       const threads = yield* CloudThreadService.CloudThreadService;
+      const coreThreads = yield* Threads.Threads;
       const assets = yield* CloudAssets.CloudAssets;
       const contexts = yield* UserContexts.UserContexts;
       const sections = yield* LegacySections.LegacySections;
@@ -458,7 +460,7 @@ export const layerHandlers = (input: {
                 const left = [...known].some((id) => !actor.contextIds.includes(id));
                 known = new Set(actor.contextIds);
                 if (!left) return false;
-                return yield* threads.threadSnapshot(actor, threadId).pipe(
+                return yield* coreThreads.snapshot(actor, threadId).pipe(
                   Effect.as(false),
                   Effect.catchTags({ ThreadNotFoundError: () => Effect.succeed(true) }),
                   Effect.orElseSucceed(() => false),
@@ -578,7 +580,7 @@ export const layerHandlers = (input: {
           ),
         [ORCHESTRATION_V2_WS_METHODS.dispatchCommand]: (command) =>
           threadCall(
-            Effect.flatMap(actorNow, (actor) => threads.dispatchCommand(actor, command)),
+            Effect.flatMap(actorNow, (actor) => coreThreads.dispatch(actor, command)),
             (message) =>
               new OrchestrationV2DispatchCommandError({
                 commandId: command.commandId,
@@ -588,7 +590,7 @@ export const layerHandlers = (input: {
           ),
         [ORCHESTRATION_V2_WS_METHODS.launchThread]: (request) =>
           threadCall(
-            Effect.flatMap(actorNow, (actor) => threads.launchThread(actor, request)),
+            Effect.flatMap(actorNow, (actor) => coreThreads.launch(actor, request)),
             (message) =>
               new OrchestrationV2ThreadLaunchError({
                 commandId: request.commandId,
@@ -598,7 +600,7 @@ export const layerHandlers = (input: {
           ),
         [ORCHESTRATION_V2_WS_METHODS.subscribeThread]: (request) =>
           Stream.unwrap(
-            Effect.map(actorNow, (actor) => threads.subscribeThread(actor, request)),
+            Effect.map(actorNow, (actor) => coreThreads.subscribe(actor, request)),
           ).pipe(
             Stream.interruptWhen(lostSight(request.threadId)),
             Stream.flattenIterable,
@@ -614,7 +616,7 @@ export const layerHandlers = (input: {
         [ORCHESTRATION_V2_WS_METHODS.getThreadProjection]: (request) =>
           threadCall(
             Effect.map(
-              Effect.flatMap(actorNow, (actor) => threads.threadSnapshot(actor, request.threadId)),
+              Effect.flatMap(actorNow, (actor) => coreThreads.snapshot(actor, request.threadId)),
               (snapshot) => snapshot.projection,
             ),
             (message) =>

@@ -1,4 +1,14 @@
 import { describe, expect, it } from "@effect/vitest";
+import {
+  AVAILABLE_CONNECTION_STATE,
+  EnvironmentRegistry,
+  EnvironmentSupervisor,
+  PrimaryConnectionTarget,
+  type PreparedConnection,
+  type SupervisorConnectionState,
+} from "@t3tools/client-runtime/connection";
+import { RpcPermissionGuard, type RpcSession } from "@t3tools/client-runtime/rpc";
+import { createSignalboxTrashAtoms } from "@t3tools/client-runtime/state/signalboxTrash";
 import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import {
   SIGNALBOX_TRASH_WS_METHODS,
@@ -13,18 +23,6 @@ import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 import { Atom, AtomRegistry } from "effect/reactivity";
-
-import {
-  AVAILABLE_CONNECTION_STATE,
-  PrimaryConnectionTarget,
-  type PreparedConnection,
-  type SupervisorConnectionState,
-} from "../connection/model.ts";
-import * as EnvironmentRegistry from "../connection/registry.ts";
-import * as EnvironmentSupervisor from "../connection/supervisor.ts";
-import { RpcPermissionGuard } from "../rpc/client.ts";
-import * as RpcSession from "../rpc/session.ts";
-import { createSignalboxTrashAtoms } from "./signalboxTrash.ts";
 
 const ENVIRONMENT_ID = EnvironmentId.make("trash-environment");
 const TARGET = new PrimaryConnectionTarget({
@@ -71,7 +69,7 @@ describe("Signalbox Trash atoms", () => {
           [SIGNALBOX_TRASH_WS_METHODS.list]: (_input: Record<string, never>) =>
             Ref.get(serverSnapshot).pipe(Effect.tap(() => Effect.sync(() => (rpcCalls += 1)))),
         };
-        const session = { client } as unknown as RpcSession.RpcSession;
+        const session = { client } as unknown as RpcSession;
         const supervisor = EnvironmentSupervisor.EnvironmentSupervisor.of({
           target: TARGET,
           state: supervisorState,
