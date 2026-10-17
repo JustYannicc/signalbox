@@ -14,9 +14,10 @@ export type Oid = string;
  * A remote-backed drive holds the remote's commits one deep, so the drive's
  * graph alone can't say how the base's head relates to the commits the branch
  * sits on. GitHub can, as the reader: it compares the base with the branch's
- * head when that was pushed, else with each remote commit the branch's own
- * history reaches. When neither answers, the comparison fails with why rather
- * than diffing against the wrong commit.
+ * head when that was pushed, else with the newest of the branch's commits it
+ * has (pushed before, perhaps already merged) and the remote commits the
+ * newer ones took in. When that can't be known, the comparison fails with
+ * why rather than diffing against the wrong commit.
  */
 
 export class BranchComparisonError extends Schema.TaggedError<BranchComparisonError>()(
@@ -40,6 +41,8 @@ export interface RemoteRelation {
 const MAX_WALK = 5_000;
 /** Most remote commits a branch may sit on (its base, merges it took in) before giving up. */
 const MAX_FRONTIER = 8;
+/** Most commits GitHub is asked about to find the newest of the branch's it has. */
+const MAX_PROBES = 32;
 
 const short = (oid: Oid) => oid.slice(0, 7);
 
@@ -88,32 +91,25 @@ export const gitHubCompare =
       );
 
 /**
- * The branch's own history in the drive, from `head` back to the remote
- * commits it sits on (`frontier`). `complete` is false when a commit's parent
- * is neither in the drive nor one of its remote commits, or the walk ran long.
+ * The branch's history in the drive: each commit from `head` back to the
+ * remote commits it sits on, with its parents. `complete` is false when the
+ * walk ran long.
  */
 const ownHistory = (drive: DriveHandle, head: Oid, shallow: ReadonlySet<Oid>) =>
   Effect.gen(function* () {
+    const parentsOf = new Map<Oid, ReadonlyArray<Oid>>();
     const seen = new Set<Oid>();
-    const frontier = new Set<Oid>();
-    let complete = true;
     let next: ReadonlyArray<Oid> = [head];
     while (next.length > 0) {
       const wanted = next.filter((oid) => !seen.has(oid));
       for (const oid of wanted) seen.add(oid);
-      if (seen.size > MAX_WALK) return { seen, frontier, complete: false };
+      if (seen.size > MAX_WALK) return { seen, parentsOf, complete: false };
       const found = yield* drive.commits(wanted);
-      if (found.length < wanted.length) complete = false;
-      next = found.flatMap((commit) => {
-        // A remote commit's parents stay on the remote: the walk stops there.
-        if (shallow.has(commit.oid)) {
-          frontier.add(commit.oid);
-          return [];
-        }
-        return commit.parents;
-      });
+      for (const commit of found) parentsOf.set(commit.oid, commit.parents);
+      // A remote commit's parents stay on the remote: the walk stops there.
+      next = found.filter((commit) => !shallow.has(commit.oid)).flatMap((commit) => commit.parents);
     }
-    return { seen, frontier, complete };
+    return { seen, parentsOf, complete: true };
   });
 
 /** Merge bases already found, by drive, base and head: commits never change, so neither do they. */
@@ -162,21 +158,83 @@ export const mergeBase = (input: {
       if (direct !== null) return direct.mergeBase;
       if (!history.complete) {
         return yield* fail(
-          `Part of this branch's history isn't saved in this folder, so where it left ${input.baseName} is unknown.`,
+          `This branch's history is too long to find where it left ${input.baseName}. Push it to compare on GitHub.`,
         );
       }
-      const frontier = [...history.frontier];
-      if (frontier.length === 0) {
+      // The newest commits of the branch GitHub has. It has every ancestor of a commit it
+      // has, so along a line of single parents those are an unbroken oldest run, found by
+      // halving; a merge splits the search into each of its parents.
+      const shallow = new Set(input.shallow);
+      const relations = new Map<Oid, RemoteRelation>();
+      const newestKnown = new Set<Oid>();
+      const unknown = new Set<Oid>([input.head]);
+      const starts: Array<Oid> = [input.head];
+      let probes = 0;
+      const probe = (commit: Oid) =>
+        Effect.gen(function* () {
+          if (++probes > MAX_PROBES) {
+            return yield* fail(
+              `This branch has too much unpushed history to find where it left ${input.baseName}. Push it to compare on GitHub.`,
+            );
+          }
+          const relation = yield* compare(input.base, commit);
+          if (relation !== null) relations.set(commit, relation);
+          return relation !== null;
+        });
+      while (starts.length > 0) {
+        const start = starts.pop()!;
+        const line = [start];
+        for (;;) {
+          const parents = history.parentsOf.get(line.at(-1)!) ?? [];
+          const parent = parents[0];
+          if (parents.length !== 1 || parent === undefined) break;
+          if (shallow.has(line.at(-1)!) || shallow.has(parent)) break;
+          if (!history.parentsOf.has(parent) || unknown.has(parent) || line.includes(parent)) break;
+          line.push(parent);
+        }
+        // A remote commit GitHub has by definition; the head it just said it hasn't.
+        let low = start === input.head ? 1 : 0;
+        let high = line.length;
+        if (shallow.has(start)) high = 0;
+        while (low < high) {
+          const middle = Math.floor((low + high) / 2);
+          if (yield* probe(line[middle]!)) high = middle;
+          else low = middle + 1;
+        }
+        for (const commit of line.slice(0, low)) unknown.add(commit);
+        if (low < line.length) {
+          newestKnown.add(line[low]!);
+          continue;
+        }
+        // GitHub has none of this line: where it goes on from is still to search.
+        const last = line.at(-1)!;
+        for (const parent of history.parentsOf.get(last) ?? []) {
+          if (unknown.has(parent)) continue;
+          if (shallow.has(parent)) newestKnown.add(parent);
+          else if (history.parentsOf.has(parent)) starts.push(parent);
+          else {
+            return yield* fail(
+              `Part of this branch's history isn't saved in this folder, so where it left ${input.baseName} is unknown.`,
+            );
+          }
+        }
+        if (!history.parentsOf.has(last) && !shallow.has(last)) {
+          return yield* fail(
+            `GitHub doesn't have ${short(last)}, which this branch is built on, so where it left ${input.baseName} is unknown.`,
+          );
+        }
+      }
+      if (newestKnown.size === 0) {
         return yield* fail(`This branch shares no history with ${input.baseName}.`);
       }
-      if (frontier.length > MAX_FRONTIER) {
+      if (newestKnown.size > MAX_FRONTIER) {
         return yield* fail(
           `This branch took in too many other commits to find where it left ${input.baseName}. Push it to compare on GitHub.`,
         );
       }
       const candidates = new Set<Oid>();
-      for (const commit of frontier) {
-        const relation = yield* compare(input.base, commit);
+      for (const commit of newestKnown) {
+        const relation = relations.get(commit) ?? (yield* compare(input.base, commit));
         if (relation === null) {
           return yield* fail(
             `GitHub doesn't have ${short(commit)}, which this branch is built on, so where it left ${input.baseName} is unknown.`,

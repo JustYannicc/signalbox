@@ -1,6 +1,6 @@
 import { useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { formatDiffCount } from "@t3tools/client-runtime/diff-count";
-import { reviewFilePatchRequest } from "@t3tools/client-runtime/state/review";
+import { reviewFilePatchRequest } from "@t3tools/client-runtime/state/review"; // signalbox
 
 import { countReviewCommentContexts, parseReviewInlineComments } from "./reviewCommentSelection";
 import { getCachedNativeReviewDiffData } from "./nativeReviewDiffAdapter";
@@ -171,6 +171,7 @@ export function useReviewDiffData(input: {
                   environmentId,
                   input: {
                     cacheKey: scope,
+                    // signalbox: pinned to the source's commits (#864)
                     request: reviewFilePatchRequest({ cwd, source: lazySource, file }),
                   },
                 })

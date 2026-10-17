@@ -292,6 +292,11 @@ const make = Effect.gen(function* () {
       ),
     );
 
+  const driveUnreadable = (cause: unknown) =>
+    Effect.as(Effect.logWarning("branch changes unavailable", { cause }), {
+      branchChangesError: "The drive is unavailable right now.",
+    });
+
   const notARepository = refusal("not_a_repository", "This folder is not a git repository.");
 
   /** A refusal as the git panel's status reads it. */
@@ -392,22 +397,31 @@ const make = Effect.gen(function* () {
         Effect.mapError(asManagerError(cwd, "status")),
       );
       const branchLocal = { ...local, isDefaultRef: false, refName: branch };
+      // Counting the branch's changes needs GitHub. When it can't, clients are told why
+      // rather than shown zero; a status without the remote never counts them.
+      const uncounted = (branchChangesError: string) => ({
+        local: includeRemote ? { ...branchLocal, branchChangesError } : branchLocal,
+        remote: null,
+      });
       const userToken = includeRemote ? yield* token : null;
-      if (userToken === null) return { local: branchLocal, remote: null };
+      if (userToken === null) return uncounted("Connect GitHub first: Settings › Source Control.");
       const repository = target.remote.repository;
       const remote = yield* Effect.all(
         [
+          github.api.repository(userToken, repository),
           github.api.branchHead(userToken, repository, branch),
           github.api.pullForBranch(userToken, repository, branch),
         ],
-        { concurrency: 2 },
+        { concurrency: 3 },
       ).pipe(Effect.option);
-      if (remote._tag === "None") return { local: branchLocal, remote: null };
-      const [remoteHead, pr] = remote.value;
+      if (remote._tag === "None") return uncounted("GitHub can't be reached right now.");
+      const [readable, remoteHead, pr] = remote.value;
+      // Totals come from caches, so the reader's access to the repository is checked each time.
+      if (readable === null) return uncounted("You can't open this repository on GitHub.");
       // What the branch would merge: its committed work against its pull request's base.
-      const branchChanges =
+      const counted =
         branchReview === null
-          ? null
+          ? { branchChangesError: "This cloud stores no drives to count changes in." }
           : yield* branchReview
               .totals(
                 reviewTargetOf(target, target.thread),
@@ -415,9 +429,14 @@ const make = Effect.gen(function* () {
                 pr?.baseRef ?? target.remote.defaultBranch,
               )
               .pipe(
-                Effect.catch((cause) =>
-                  Effect.as(Effect.logWarning("branch changes unavailable", { cause }), null),
-                ),
+                Effect.map((branchChanges) => ({ branchChanges })),
+                Effect.catchTags({
+                  BranchComparisonError: (error) =>
+                    Effect.succeed({ branchChangesError: error.message }),
+                  DriveReadError: (error) => Effect.succeed({ branchChangesError: error.message }),
+                  DriveObjectError: (cause) => driveUnreadable(cause),
+                  DrivePackError: (cause) => driveUnreadable(cause),
+                }),
               );
       let aheadCount = state.ahead;
       let behindCount = 0;
@@ -436,7 +455,7 @@ const make = Effect.gen(function* () {
         aheadCount = 0;
       }
       return {
-        local: branchChanges === null ? branchLocal : { ...branchLocal, branchChanges },
+        local: { ...branchLocal, ...counted },
         remote: {
           hasUpstream: remoteHead !== null,
           aheadCount,
@@ -467,10 +486,41 @@ const make = Effect.gen(function* () {
       target === null ? Effect.succeed(NOT_A_REPOSITORY) : statusOf(target, cwd, includeRemote),
     );
 
+  /**
+   * A watched status, again. Access can be taken away while someone watches,
+   * so the drive and the thread are checked each time, and losing either ends
+   * the watch. A failure that may pass keeps the last status (null) for the
+   * next try.
+   */
+  const recompute = (actor: Actor, cwd: string, includeRemote: boolean) =>
+    resolve(actor, cwd).pipe(
+      Effect.tap((current) => visible(actor, current)),
+      Effect.flatMap((current) =>
+        statusOf(current, cwd, includeRemote).pipe(
+          Effect.catch((error) =>
+            Effect.as(
+              Effect.logWarning("branch status refresh failed", { detail: error.detail }),
+              null,
+            ),
+          ),
+        ),
+      ),
+      Effect.catchTags({
+        BranchPublishError: (error) =>
+          error.reason === "not_a_repository"
+            ? Effect.succeed(NOT_A_REPOSITORY)
+            : error.reason === "unavailable"
+              ? Effect.as(
+                  Effect.logWarning("branch status refresh failed", { detail: error.message }),
+                  null,
+                )
+              : Effect.fail(asManagerError(cwd, "status")(error)),
+      }),
+    );
+
   const watch: GitHubBranches["Service"]["watch"] = (actor, cwd, includeRemote) =>
     Stream.unwrap(
       Effect.gen(function* () {
-        // The thread and its branch never change, so they are looked up once.
         const target = yield* resolveRepository(actor, cwd);
         if (target === null) {
           // Nothing turns a folder into a repository here, so the answer holds.
@@ -482,17 +532,7 @@ const make = Effect.gen(function* () {
           Stream.fromSubscription(subscription).pipe(Stream.filter((changed) => changed === cwd)),
           Stream.fromSchedule(Schedule.spaced(STATUS_INTERVAL)),
         ).pipe(
-          // A failed recomputation keeps the last status; the next one tries again.
-          Stream.mapEffect(() =>
-            statusOf(target, cwd, includeRemote).pipe(
-              Effect.catch((error) =>
-                Effect.as(
-                  Effect.logWarning("branch status refresh failed", { detail: error.detail }),
-                  null,
-                ),
-              ),
-            ),
-          ),
+          Stream.mapEffect(() => recompute(actor, cwd, includeRemote)),
           Stream.filter((next) => next !== null),
         );
         return Stream.concat(Stream.make(first), later).pipe(

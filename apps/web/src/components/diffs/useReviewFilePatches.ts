@@ -13,7 +13,7 @@ import {
   useState,
 } from "react";
 import { getRenderablePatch, resolveFileDiffPath, type RenderablePatch } from "~/lib/diffRendering";
-import { reviewFilePatchRequest } from "@t3tools/client-runtime/state/review";
+import { reviewFilePatchRequest } from "@t3tools/client-runtime/state/review"; // signalbox
 import { reviewEnvironment } from "~/state/review";
 
 const filePathCollator = new Intl.Collator(undefined, {
@@ -72,6 +72,7 @@ export function useReviewFilePatches({
                   environmentId,
                   input: {
                     cacheKey: scope,
+                    // signalbox: pinned to the source's commits (#864)
                     request: reviewFilePatchRequest({
                       cwd,
                       source,

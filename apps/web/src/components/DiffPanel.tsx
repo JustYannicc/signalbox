@@ -7,7 +7,7 @@ import {
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
 import { safeErrorLogAttributes } from "@t3tools/client-runtime/errors";
-import { reviewSourceContentRefs } from "@t3tools/client-runtime/state/review";
+import { reviewSourceContentRefs } from "@t3tools/client-runtime/state/review"; // signalbox
 import type { ScopedThreadRef, RunId } from "@t3tools/contracts";
 import {
   ArrowRightIcon,
@@ -375,7 +375,7 @@ export default function DiffPanel({
       environmentId: activeThread.environmentId,
       cwd: preview.cwd,
       sourceKind: selectedGitSource.kind,
-      ...reviewSourceContentRefs(selectedGitSource),
+      ...reviewSourceContentRefs(selectedGitSource), // signalbox: pinned commits (#864)
       cacheKey: selectedGitSource.diffHash,
     });
   }, [
@@ -1091,7 +1091,8 @@ export default function DiffPanel({
                     {hasNoNetChanges
                       ? selectedTurn
                         ? "No net changes in this selection."
-                        : selectedGitScope === "unstaged"
+                        : // signalbox: name what is empty (#864)
+                          selectedGitScope === "unstaged"
                           ? "No uncommitted changes."
                           : selectedGitSource?.baseRef
                             ? `No changes against ${selectedGitSource.baseRef}.`

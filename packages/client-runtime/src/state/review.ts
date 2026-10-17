@@ -18,6 +18,7 @@ import {
 } from "./runtime.ts";
 import type { EnvironmentRegistry } from "../connection/registry.ts";
 
+// signalbox: requests pinned to a source's commits (#864)
 type ReviewFilePatchRequest = ReviewDiffPreviewInput & {
   readonly file: NonNullable<ReviewDiffPreviewInput["file"]>;
 };

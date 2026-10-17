@@ -89,6 +89,7 @@ import { ScrollArea } from "~/components/ui/scroll-area";
 import { Textarea } from "~/components/ui/textarea";
 import { stackedThreadToast, toastManager } from "~/components/ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
+import { resolveChangesTotals } from "./branchChangesTotals"; // signalbox
 import { useOpenInPreferredEditor } from "~/editorPreferences";
 import {
   useGitStackedAction,
@@ -1141,7 +1142,7 @@ export default function GitActionsControl({
   const isRepo = gitStatus?.isRepo ?? true;
   const hasPrimaryRemote = gitStatus?.hasPrimaryRemote ?? false;
   const gitStatusForActions = gitStatus;
-  const changesTotals = gitStatusForActions?.branchChanges ?? gitStatusForActions?.workingTree;
+  const changesTotals = resolveChangesTotals(gitStatusForActions ?? null); // signalbox: never a zero nobody counted (#864)
 
   const allFiles = gitStatusForActions?.workingTree.files ?? [];
   const selectedFiles = allFiles.filter((f) => !excludedFiles.has(f.path));
@@ -1910,12 +1911,25 @@ export default function GitActionsControl({
         >
           <FileDiffIcon className={THREAD_DETAILS_PANEL_ICON_CLASS} aria-hidden />
           <span className={cn("flex-1 text-left", THREAD_DETAILS_PANEL_LABEL_CLASS)}>Changes</span>
-          <span className="flex items-center gap-1 font-mono text-2xs tabular-nums">
-            <span className="text-success">+{formatDiffCount(changesTotals?.insertions ?? 0)}</span>
-            <span className="text-destructive">
-              -{formatDiffCount(changesTotals?.deletions ?? 0)}
+          {changesTotals.kind === "unavailable" ? (
+            // signalbox: the server tried and couldn't count; say why rather than +0 −0 (#864)
+            <>
+              <Tooltip>
+                <TooltipTrigger render={<span className="text-2xs text-muted-foreground" />}>
+                  Unavailable
+                </TooltipTrigger>
+                <TooltipPopup side="bottom" className="max-w-72 break-words">
+                  {changesTotals.reason}
+                </TooltipPopup>
+              </Tooltip>
+              <span className="sr-only">{changesTotals.reason}</span>
+            </>
+          ) : (
+            <span className="flex items-center gap-1 font-mono text-2xs tabular-nums">
+              <span className="text-success">+{formatDiffCount(changesTotals.insertions)}</span>
+              <span className="text-destructive">-{formatDiffCount(changesTotals.deletions)}</span>
             </span>
-          </span>
+          )}
         </ThreadDetailsControl>
       ) : null}
 

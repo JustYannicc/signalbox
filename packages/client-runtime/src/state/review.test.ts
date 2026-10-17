@@ -1,7 +1,10 @@
 import type { ReviewDiffPreviewSource } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { reviewFilePatchRequest, reviewSourceContentRefs } from "./review.ts";
+import {
+  reviewFilePatchRequest,
+  reviewSourceContentRefs,
+} from "@t3tools/client-runtime/state/review";
 
 const branchRange: ReviewDiffPreviewSource = {
   id: "branch-range",

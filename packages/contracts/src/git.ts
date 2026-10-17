@@ -235,6 +235,8 @@ const VcsStatusLocalShape = {
       deletions: NonNegativeInt,
     }),
   ),
+  // signalbox: why `branchChanges` couldn't be counted, so clients show that instead of zero (#864)
+  branchChangesError: Schema.optional(TrimmedNonEmptyStringSchema),
 };
 
 const VcsStatusRemoteShape = {

@@ -102,6 +102,8 @@ const setupRemote = () => {
   };
   /** A commit on `branch` on GitHub, made upstream and pushed: someone else's work. */
   const pushUpstream = (branch: string, from: string, file: string, text: string) => {
+    // Start from GitHub's copy: pull requests merged there move its branches.
+    upstream.git(["fetch", "-q", bare, "+refs/heads/*:refs/remotes/github/*"]);
     upstream.git(["checkout", "-q", "-B", branch, from]);
     upstream.write(file, text);
     const oid = upstream.commit(`${file} on ${branch}`);
@@ -115,8 +117,14 @@ const setupRemote = () => {
     git(machine, ["commit", "-qm", message]);
     return git(machine, ["rev-parse", "HEAD"]);
   };
+  /** What the Runner does to take in GitHub's `main`: fetch its head, deep enough to merge. */
+  const fetchMain = () => {
+    git(machine, ["fetch", "-q", "--depth=2", "origin", "main"]);
+    return git(machine, ["rev-parse", "FETCH_HEAD"]);
+  };
   return {
     bare,
+    fetchMain,
     machine,
     pack,
     commit,
@@ -185,6 +193,21 @@ const prepare = Effect.fn("prepare")(function* (
       ]);
       return turn;
     });
+  /** The Runner takes in a remote head, kept without its parents. */
+  const takeInRemote = (oid: string, previous: string) =>
+    uploadPack({ driveId, threadId, ...remote.pack([oid], [previous]), remoteHead: oid });
+  /** The Runner commits a merge of `other` into the branch. */
+  const mergeTurn = (previous: string, other: string) =>
+    Effect.gen(function* () {
+      git(remote.machine, ["merge", "-q", "--no-edit", other]);
+      const merged = git(remote.machine, ["rev-parse", "HEAD"]);
+      yield* uploadPack({ driveId, threadId, ...remote.pack([merged], [previous, other]) });
+      yield* handle.updateRefs(writer, [
+        { name: threadRef(threadId), old: previous, new: merged },
+        { name: wipRef(threadId), old: (yield* handle.refs(threadId)).wip, new: merged },
+      ]);
+      return merged;
+    });
   /** The Runner auto-saves mid-turn: only `wip` moves. */
   const autosave = (turn: string, file: string, text: string) =>
     Effect.gen(function* () {
@@ -213,7 +236,19 @@ const prepare = Effect.fn("prepare")(function* (
     result.sources.find((candidate) => candidate.kind === kind);
   const status = () =>
     rpc[WS_METHODS.subscribeVcsStatus]({ cwd }).pipe(Stream.take(1), Stream.runHead);
-  return { rpc, cwd, branch, driveId, commitTurn, autosave, preview, source, status };
+  return {
+    rpc,
+    cwd,
+    branch,
+    driveId,
+    commitTurn,
+    takeInRemote,
+    mergeTurn,
+    autosave,
+    preview,
+    source,
+    status,
+  };
 });
 
 const run = <A, E, R>(
@@ -299,6 +334,51 @@ describe("reviewing a thread's branch in the cloud", () => {
         }).pipe(Stream.runDrain);
         // Pushed: GitHub compares the branch's head itself.
         yield* check;
+      }),
+    ),
+  );
+
+  it.effect("starts from work main already merged when only newer commits are unpushed", () =>
+    run(({ remote, github, rpc, cwd, commitTurn, preview, source, branch }) =>
+      Effect.gen(function* () {
+        // A-B-C on the branch: B was pushed and merged, then main moved on to D.
+        const merged = yield* commitTurn(remote.head, "src/app.ts", "export const hi = 1;\n");
+        yield* rpc[WS_METHODS.gitRunStackedAction]({
+          actionId: "push-1",
+          cwd,
+          action: "create_pr",
+          threadId,
+        }).pipe(Stream.runDrain);
+        github.merge(1);
+        remote.pushUpstream("main", "github/main", "elsewhere.md", "someone else's work\n");
+        // Pushing C would move the branch on GitHub: C stays the drive's alone.
+        const latest = yield* commitTurn(merged, "README.md", "hello there\n");
+        expect(github.head(branch)).toBe(merged);
+
+        const changes = source(yield* preview(), "branch-range");
+        expect(changes).toMatchObject({
+          revision: { baseSha: merged, headSha: latest },
+          files: [{ path: "README.md" }],
+        });
+      }),
+    ),
+  );
+
+  it.effect("finds the newest base a branch merged in, after main moved again", () =>
+    run(({ remote, commitTurn, takeInRemote, mergeTurn, preview, source }) =>
+      Effect.gen(function* () {
+        const turn = yield* commitTurn(remote.head, "src/app.ts", "export const hi = 1;\n");
+        remote.pushUpstream("main", "github/main", "middle.md", "main moved\n");
+        const middle = remote.fetchMain();
+        yield* takeInRemote(middle, remote.head);
+        const merged = yield* mergeTurn(turn, middle);
+        remote.pushUpstream("main", "github/main", "late.md", "main moved again\n");
+
+        const changes = source(yield* preview(), "branch-range");
+        expect(changes).toMatchObject({
+          revision: { baseSha: middle, headSha: merged },
+          files: [{ path: "src/app.ts" }],
+        });
       }),
     ),
   );
