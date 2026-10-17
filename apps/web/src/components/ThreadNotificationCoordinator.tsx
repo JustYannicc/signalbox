@@ -25,6 +25,11 @@ import {
   setNotificationBadge,
   unlockNotificationAudio,
 } from "../threadNotifications";
+import {
+  completionEarnsSignal,
+  createNeedsYouToasts,
+  needsYouToastTimeout,
+} from "../needsYouSignals"; // signalbox: #43
 import { resolveSidebarThreadStatus } from "./Sidebar.logic";
 import { AutomationNotices } from "./automations/AutomationNotices"; // signalbox: automations
 import { toastManager } from "./ui/toast";
@@ -119,6 +124,7 @@ function EnvironmentNotifications({
     strict: false,
   });
   const previous = useRef(new Map<ThreadId, NotificationState>());
+  const needsYouToasts = useRef(createNeedsYouToasts((id) => toastManager.close(id))); // signalbox
 
   useEffect(() => {
     if (threads === null) {
@@ -150,11 +156,18 @@ function EnvironmentNotifications({
           ? completedAt
           : (prior?.completion ?? null);
       next.set(thread.id, { raw: rawThread, subagentRequest, attention, completion });
+      needsYouToasts.current.sync(
+        thread.id,
+        thread.archivedAt === null ? attention : null,
+        activeEnvironmentId === environmentId && activeThreadId === thread.id,
+      ); // signalbox
       if (!prior || thread.archivedAt !== null) continue;
       const kind =
         attention && attention !== prior.attention
           ? "input"
-          : completion !== null && (prior.completion === null || completion > prior.completion)
+          : completion !== null &&
+              (prior.completion === null || completion > prior.completion) &&
+              completionEarnsSignal(thread) // signalbox: #43
             ? "completion"
             : null;
       if (!kind) continue;
@@ -180,6 +193,7 @@ function EnvironmentNotifications({
         (activeEnvironmentId !== environmentId || activeThreadId !== thread.id)
       ) {
         const toastId = toastManager.add({
+          timeout: needsYouToastTimeout(kind), // signalbox
           type: kind === "completion" ? "success" : status === "failed" ? "error" : "warning",
           title,
           description: thread.title,
@@ -207,6 +221,8 @@ function EnvironmentNotifications({
             },
           },
         });
+        if (kind === "input" && attention)
+          needsYouToasts.current.add(thread.id, attention, toastId); // signalbox
         continue;
       }
       if (

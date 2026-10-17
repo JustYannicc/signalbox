@@ -588,6 +588,8 @@ import {
   startAttachmentUpload,
 } from "../lib/attachmentUploadQueue";
 import { sanitizeThreadErrorMessage } from "~/rpc/transportError";
+import { failureShownInTimeline } from "./chat/failureShownInTimeline"; // signalbox
+import { runtimeIsSettingUp } from "./chat/runtimeIsSettingUp"; // signalbox
 import { RightPanelSheet } from "./RightPanelSheet";
 import { previewEnvironment } from "../state/preview";
 import { clampFileAttachmentUploadBytes } from "@t3tools/client-runtime/state/attachments";
@@ -2327,10 +2329,17 @@ export default function ChatView(props: ChatViewProps) {
   });
   const activeThreadShell = useThreadShell(isServerThread ? activeThreadRef : null);
   const timelineThreadError =
-    serverRuntime?.status === "failed" &&
-    serverRuntime.lastErrorClass === "usage_limit" &&
-    activeThreadShell?.latestRun &&
-    visibleThreadError === serverRuntime.lastError
+    (serverRuntime?.status === "failed" &&
+      serverRuntime.lastErrorClass === "usage_limit" &&
+      activeThreadShell?.latestRun &&
+      visibleThreadError === serverRuntime.lastError) ||
+    // signalbox: the failure row already says it, with its cause.
+    (localServerError === null &&
+      failureShownInTimeline(
+        serverProjection?.turnItems ?? [],
+        serverLatestRun?.runId,
+        visibleThreadError,
+      ))
       ? null
       : visibleThreadError;
 
@@ -11061,6 +11070,9 @@ export default function ChatView(props: ChatViewProps) {
                   : {})}
                 {...(onOpenWorktreeSetupTerminal ? { onOpenWorktreeSetupTerminal } : {})}
                 isPreparingWorktree={!paintOnlyDisplayedTimeline && isPreparingWorktree}
+                isSettingUpMachine={
+                  !paintOnlyDisplayedTimeline && runtimeIsSettingUp(serverRuntime?.status)
+                } // signalbox
                 footer={
                   paintOnlyDisplayedTimeline ? null : pendingHandoff === null ? (
                     threadStatusLine

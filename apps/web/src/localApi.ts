@@ -3,6 +3,7 @@ import type { ConfirmDialogOptions, ContextMenuItem, LocalApi } from "@t3tools/c
 import { requestConfirmDialog } from "./confirmDialog";
 import { dismissContextMenu, showContextMenuFallback } from "./contextMenuFallback";
 import { readBrowserClientSettings, writeBrowserClientSettings } from "./clientPersistenceStorage";
+import { adoptNeedsYouDefaults } from "./needsYouSignals"; // signalbox: #43
 
 let cachedApi: LocalApi | undefined;
 
@@ -60,10 +61,14 @@ function createBrowserLocalApi(): LocalApi {
     },
     persistence: {
       getClientSettings: async () => {
+        // signalbox: needs-you signals on by default (#43)
         if (window.desktopBridge) {
-          return window.desktopBridge.getClientSettings();
+          const bridge = window.desktopBridge;
+          return adoptNeedsYouDefaults(await bridge.getClientSettings(), (settings) => {
+            void bridge.setClientSettings(settings);
+          });
         }
-        return readBrowserClientSettings();
+        return adoptNeedsYouDefaults(readBrowserClientSettings(), writeBrowserClientSettings);
       },
       setClientSettings: async (settings) => {
         if (window.desktopBridge) {
