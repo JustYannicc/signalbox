@@ -328,6 +328,53 @@ export default workflow(async (_w) => "morning");`;
     }),
   );
 
+  it.effect("keeps implicit cron zones when explicit duplicates change or move", () =>
+    Effect.gen(function* () {
+      const { rpc, settingsRpc, thread, tool, engine } = yield* setup;
+      const writer = yield* thread("thread-edited-duplicate-zones", "Edit one scheduled time");
+      for (const draft of [false, true]) {
+        for (const reordered of [false, true]) {
+          yield* settingsRpc[PERSON_TIMEZONE_WS_METHODS.set]({ timezone: "Europe/Zurich" });
+          const name = `Edited mornings ${draft} ${reordered}`;
+          const explicit = { cron: "0 9 * * *", timezone: "UTC" };
+          const implicit = { cron: "0 9 * * *" };
+          const sourceOf = (triggers: ReadonlyArray<typeof implicit | typeof explicit>) =>
+            `export const meta = ${JSON.stringify({ name, triggers })} as const;
+export default workflow(async (_w) => "morning");`;
+          const source = sourceOf([explicit, implicit]);
+          const saved = yield* rpc[AUTOMATION_WS_METHODS.automationsSave]({
+            source,
+            projectId: Environment.SCRATCH_PROJECT_ID,
+            compiled: compiledOf(source),
+          });
+          if (!saved.ok) return yield* Effect.die(saved.diagnostics);
+          const automationId = saved.automation.id;
+          yield* settingsRpc[PERSON_TIMEZONE_WS_METHODS.set]({ timezone: "America/New_York" });
+          const edited = { ...explicit, timezone: "Asia/Tokyo" };
+          const triggers = reordered ? [implicit, edited] : [edited, implicit];
+          const editedSource = sourceOf(triggers);
+          // A second draft save checks that provenance survives persisted metadata decoding.
+          for (let save = 0; save < (draft ? 2 : 1); save++) {
+            yield* tool(writer, "automation_save", {
+              source: editedSource,
+              compiled: compiledOf(editedSource),
+              automationId,
+              draft,
+            });
+          }
+          if (draft) yield* tool(writer, "automation_publish", { automationId });
+          const current = (yield* engine((workflow) => workflow.get(automationId))).automation;
+          expect(current.triggers).toEqual(
+            triggers.map((trigger) => ({
+              ...trigger,
+              timezone: "timezone" in trigger ? trigger.timezone : "Europe/Zurich",
+            })),
+          );
+        }
+      }
+    }),
+  );
+
   it.effect("keeps local time across DST and a non-hour timezone offset", () =>
     Effect.gen(function* () {
       vi.useFakeTimers({ toFake: ["Date"] });

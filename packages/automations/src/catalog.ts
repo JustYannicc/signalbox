@@ -9,9 +9,7 @@ import {
   type AutomationSaveResult,
   type AutomationSourceStatus,
   type WorkflowDiagnostic,
-  WorkflowMeta,
   type WorkflowSourceWatch,
-  type WorkflowTrigger,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -19,6 +17,7 @@ import * as Schema from "effect/Schema";
 
 import { automationDefaults, automationTriggers, runLogLines, runMarks } from "./columns.ts";
 import type { WorkflowCompileResult } from "./compiled.ts";
+import { SavedWorkflowMeta, withDefaultCronTimezones } from "./cronTimezones.ts";
 import { liveColumns, makeDrafts, type DraftsShape } from "./drafts.ts";
 import { fail } from "./errors.ts";
 import { stepWatch } from "./events/runWaits.ts";
@@ -36,44 +35,10 @@ import type { AutomationRow, WorkflowStore } from "./WorkflowStore.ts";
  */
 
 const decodeGraph = Schema.decodeSync(Schema.fromJsonString(WorkflowGraph));
-const decodeMeta = Schema.decodeSync(Schema.fromJsonString(WorkflowMeta));
+const decodeMeta = Schema.decodeSync(Schema.fromJsonString(SavedWorkflowMeta));
 const RUN_HISTORY = 20;
 /** Versions never change, so their decoded file and diagram are kept for the views that show them. */
 const VERSION_CACHE = 64;
-
-/**
- * Save cron zones with the version's metadata. A cron that stays unchanged
- * keeps its saved zone across edits; legacy implicit crons were UTC in cloud.
- */
-const withDefaultCronTimezones = (
-  meta: WorkflowMeta,
-  defaultTimezone: string,
-  previous: ReadonlyArray<WorkflowTrigger>,
-) => {
-  if (!meta.triggers) return meta;
-  const previousZones = new Map<string, Array<string>>();
-  for (const trigger of previous) {
-    if (!("cron" in trigger)) continue;
-    const zones = previousZones.get(trigger.cron) ?? [];
-    zones.push(trigger.timezone ?? "UTC");
-    previousZones.set(trigger.cron, zones);
-  }
-  // Explicit occurrences must not leave their old zones for identical implicit crons to take.
-  for (const trigger of meta.triggers) {
-    if (!("cron" in trigger) || trigger.timezone === undefined) continue;
-    const zones = previousZones.get(trigger.cron);
-    const index = zones?.indexOf(trigger.timezone) ?? -1;
-    if (index !== -1) zones?.splice(index, 1);
-  }
-  return {
-    ...meta,
-    triggers: meta.triggers.map((trigger) => {
-      if (!("cron" in trigger) || trigger.timezone !== undefined) return trigger;
-      const zone = previousZones.get(trigger.cron)?.shift() ?? defaultTimezone;
-      return { ...trigger, timezone: zone };
-    }),
-  };
-};
 
 interface VersionView {
   readonly version: number;
@@ -180,17 +145,20 @@ export const makeCatalog = (deps: {
       if (existing && authorize) yield* authorize(automationDefaults(existing));
       let meta = compiledMeta;
       if (defaultTimezone !== undefined) {
-        let previousTriggers = existing ? automationTriggers(existing) : [];
-        if (input.draft && existing && existing.draft_version !== null) {
-          const previousDraft = yield* store.getVersion(
-            existing.automation_id,
-            existing.draft_version,
-          );
-          if (previousDraft?.meta_json) {
-            previousTriggers = decodeMeta(previousDraft.meta_json).triggers ?? [];
-          }
-        }
-        meta = withDefaultCronTimezones(compiledMeta, defaultTimezone, previousTriggers);
+        const previousVersion = existing
+          ? yield* store.getVersion(
+              existing.automation_id,
+              input.draft || existing.version === 0
+                ? (existing.draft_version ?? existing.version)
+                : existing.version,
+            )
+          : undefined;
+        const previous = previousVersion?.meta_json
+          ? decodeMeta(previousVersion.meta_json)
+          : existing
+            ? { name: existing.name, triggers: automationTriggers(existing) }
+            : undefined;
+        meta = withDefaultCronTimezones(compiledMeta, defaultTimezone, previous);
       }
       const defaults = existing ? automationDefaults(existing) : input.defaults;
       const now = yield* DateTime.now;
