@@ -2,6 +2,7 @@
 import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
+import * as NodeURL from "node:url";
 import { expect, test } from "vite-plus/test";
 import {
   assertUnpatchedCompiler,
@@ -74,7 +75,7 @@ test("compiler parity checks composite projects with fresh build state on every 
       JSON.stringify({ compilerOptions: { composite: true, noEmit: true }, files: ["fixture.ts"] }),
     );
     NodeFS.writeFileSync(source, "const value: number = 1;\n");
-    const compiler = NodePath.resolve("node_modules/.bin/tsc-rs");
+    const compiler = NodeURL.fileURLToPath(new URL("../node_modules/.bin/tsc-rs", import.meta.url));
     const clean = runCompiler(compiler, project);
     expect(clean.output).not.toContain("TS6379");
     expect(clean.status).toBe(0);
