@@ -59,6 +59,7 @@ import { makeRunnerTurns } from "./RunnerTurns.ts";
 import type { RunnerDrive } from "./RunnerDrive.ts";
 import { makePreviewServices } from "./RunnerPreviewServices.ts";
 import { makeRunnerUsage } from "./RunnerUsage.ts";
+import { prepareRunnerPaths } from "./RunnerPaths.ts";
 
 /**
  * Runs threads' Runners on this machine. `ensure` starts a thread's Runner at
@@ -141,17 +142,20 @@ export const makeRunnerHost = Effect.fn("makeRunnerHost")(function* (config: Run
           yield* existing.session.replaced;
           yield* stop(request.threadId, existing);
         }
+        const paths = yield* prepareRunnerPaths(config.home, request.threadId);
         // The checkout sits one folder down: the folder above holds the instructions
         // its shortcuts bring, outside the drive (`RunnerInstructions.ts`).
-        const cwd = path.join(config.home, "workspaces", request.threadId, "drive");
+        const { cwd, machineRoot: root } = paths;
         yield* fs.makeDirectory(cwd, { recursive: true });
         const scope = yield* Scope.fork(hostScope);
         const session = yield* Effect.gen(function* () {
-          const root = path.join(config.home, "machines", request.threadId);
           // The harnesses' sessions leave the machine as they are written (#132).
           const sessions = yield* makeRunnerSessions({
             cloudUrl,
             codexHome: machineLayout(path, root).codexHome,
+            ...(paths.legacyCwd === undefined
+              ? {}
+              : { codexCwdMigration: { from: paths.legacyCwd, to: cwd } }),
             mask,
           }).pipe(Effect.provide(FetchHttpClient.layer), Effect.provide(driveServices));
           // Every drive the user can read, for the harnesses (#141).
@@ -179,6 +183,7 @@ export const makeRunnerHost = Effect.fn("makeRunnerHost")(function* (config: Run
           });
           const made = yield* makeRunnerAdapters({
             root,
+            cwd,
             gatewayUrl: request.modelGatewayUrl,
             claudeQueryRunner: layerSessionQueryRunner(sessions.claude, (runner) =>
               withContextServer(runner, context.mcpServers),
@@ -188,9 +193,13 @@ export const makeRunnerHost = Effect.fn("makeRunnerHost")(function* (config: Run
             sessionEnvironment: secrets.environment,
             mask: mask.text,
           });
-          const { adapters, layout, stderr, environment, attachmentsDir } = made;
+          const { adapters, layout, stderr, attachmentsDir } = made;
           harnessVariables = made.harnessVariables;
-          const dependencies = yield* makeRunnerDependencies({ cwd, caches, environment });
+          const dependencies = yield* makeRunnerDependencies({
+            cwd,
+            caches,
+            environment: made.dependencyEnvironment,
+          });
           const preparing = yield* Semaphore.make(1);
           const openingDrive = yield* Semaphore.make(1);
           let filesPrepared = false;

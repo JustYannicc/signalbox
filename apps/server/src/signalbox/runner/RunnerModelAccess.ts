@@ -1,3 +1,6 @@
+// @effect-diagnostics nodeBuiltinImport:off - PATH needs the host path-list delimiter.
+import * as NodePath from "node:path";
+
 import type { ClaudeSettings, CodexSettings } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -85,6 +88,18 @@ export function harnessEnvironment(
   }
   return { ...environment, ...caches, HOME: layout.home, ...claudeGateway(gatewayUrl) };
 }
+
+/** Makes project-installed commands available to every provider's shell tools. */
+export const agentToolEnvironment = (
+  environment: NodeJS.ProcessEnv,
+  cwd: string,
+): NodeJS.ProcessEnv => ({
+  ...environment,
+  PATH: [NodePath.join(cwd, "node_modules", ".bin"), environment.PATH]
+    .filter((entry): entry is string => entry !== undefined && entry.length > 0)
+    .join(NodePath.delimiter),
+  PWD: cwd,
+});
 
 /** Longer than the login service's 4-minute budget for one sign-in. */
 export const MCP_TOOL_TIMEOUT_SEC = 300;

@@ -12,6 +12,7 @@ import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 
 import {
+  agentToolEnvironment,
   claudeSettings,
   codexSettings,
   harnessEnvironment,
@@ -19,6 +20,7 @@ import {
   prepareMachine,
   writeModelToken,
 } from "./RunnerModelAccess.ts";
+import { runnerPaths } from "./RunnerPaths.ts";
 
 const GATEWAY = "http://127.0.0.1:8788";
 const DEFAULT_CLAUDE_SETTINGS = Schema.decodeUnknownSync(ClaudeSettings)({});
@@ -53,6 +55,79 @@ describe("RunnerModelAccess", () => {
         homePath: layout.codexHome,
         shadowHomePath: "",
       });
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("launches a project-local vp from a colon-free cloud thread path", () =>
+    Effect.gen(function* () {
+      const root = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "runner-tool-path-"));
+      try {
+        const path = yield* Path.Path;
+        const thread = runnerPaths(path, root, "thread:with:colons");
+        const layout = machineLayout(path, thread.machineRoot);
+        NodeFS.mkdirSync(layout.home, { recursive: true });
+        const bin = NodePath.join(thread.cwd, "node_modules", ".bin");
+        NodeFS.mkdirSync(bin, { recursive: true });
+        NodeFS.writeFileSync(
+          NodePath.join(bin, "vp"),
+          `#!/usr/bin/env node
+const fs = require("node:fs");
+const path = require("node:path");
+const entries = process.env.PATH.split(path.delimiter);
+if (
+  path.delimiter === ":" &&
+  [
+    process.cwd(),
+    process.env.PWD,
+    process.env.HOME,
+    ...entries,
+  ].some((value) => value.includes(":"))
+) {
+  console.error("path segment contains separator :");
+  process.exit(2);
+}
+if (
+  fs.realpathSync(entries[0]) !==
+  fs.realpathSync(path.join(process.cwd(), "node_modules", ".bin"))
+) {
+  process.exit(3);
+}
+fs.writeFileSync(path.join(process.env.HOME, "vp-ran"), process.cwd());
+console.log(JSON.stringify({ cwd: process.cwd(), pwd: process.env.PWD, home: process.env.HOME }));
+`,
+          { mode: 0o755 },
+        );
+
+        const base = harnessEnvironment(
+          { PATH: process.env.PATH, HOME: "/host/home", OPENAI_API_KEY: "host-key" },
+          layout,
+          GATEWAY,
+        );
+        const environment = agentToolEnvironment(base, thread.cwd);
+        const child = NodeChildProcess.spawnSync("vp", ["--version"], {
+          cwd: thread.cwd,
+          env: environment,
+          encoding: "utf8",
+        });
+
+        expect(child.status).toBe(0);
+        expect(child.stderr).toBe("");
+        const launched = JSON.parse(child.stdout) as {
+          cwd: string;
+          pwd: string;
+          home: string;
+        };
+        expect(launched.pwd).toBe(thread.cwd);
+        expect(launched.home).toBe(layout.home);
+        expect(NodeFS.realpathSync(launched.cwd)).toBe(NodeFS.realpathSync(thread.cwd));
+        expect(
+          NodeFS.realpathSync(NodeFS.readFileSync(NodePath.join(layout.home, "vp-ran"), "utf8")),
+        ).toBe(NodeFS.realpathSync(thread.cwd));
+        expect(environment.PATH?.split(NodePath.delimiter)[0]).toBe(bin);
+        expect(environment.OPENAI_API_KEY).toBeUndefined();
+      } finally {
+        NodeFS.rmSync(root, { recursive: true, force: true });
+      }
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 

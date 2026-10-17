@@ -3,6 +3,7 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import * as Schema from "effect/Schema";
 import type * as PlatformError from "effect/PlatformError";
 import * as Schedule from "effect/Schedule";
 import type * as Scope from "effect/Scope";
@@ -31,6 +32,8 @@ const POLL_MS = 250;
 /** Lets Codex's rollout writer flush the row for an event it just sent. */
 const WRITE_SETTLE_MS = 25;
 const NEWLINE = 0x0a;
+const JsonObject = Schema.Record(Schema.String, Schema.Unknown);
+const decodeJsonObject = Schema.decodeUnknownOption(JsonObject);
 
 export interface CodexRollouts {
   readonly restore: Effect.Effect<void, SessionClientError | PlatformError.PlatformError>;
@@ -71,6 +74,8 @@ export const makeCodexRollouts = Effect.fn("makeCodexRollouts")(function* (input
   readonly codexHome: string;
   readonly client: SessionClient;
   readonly outbox: SessionOutbox;
+  /** Rewrites the old colon-bearing checkout path before Codex rebuilds its indexes. */
+  readonly cwdMigration?: { readonly from: string; readonly to: string };
 }): Effect.fn.Return<CodexRollouts, never, FileSystem.FileSystem | Path.Path | Scope.Scope> {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -83,13 +88,44 @@ export const makeCodexRollouts = Effect.fn("makeCodexRollouts")(function* (input
   let polling = false;
   const lock = yield* Semaphore.make(1);
 
+  const rebaseRow = (row: string) => {
+    if (input.cwdMigration === undefined) return row;
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(row);
+    } catch {
+      return row;
+    }
+    const object = Option.getOrNull(decodeJsonObject(parsed));
+    if (object === null || object.type !== "session_meta") return row;
+    const payload = Option.getOrNull(decodeJsonObject(object.payload));
+    if (payload === null || payload.cwd !== input.cwdMigration.from) return row;
+    return (
+      JSON.stringify({
+        ...object,
+        payload: { ...payload, cwd: input.cwdMigration.to },
+      }) ?? row
+    );
+  };
+
+  const rebaseRollout = (text: string) =>
+    input.cwdMigration === undefined ? text : text.split("\n").map(rebaseRow).join("\n");
+
   /** Starts a file's cursor after the rows the store already holds of it. */
   const startCursor = (stream: string, file: string) =>
     Effect.gen(function* () {
       // Born on this machine since the restore: the store holds none of it.
       if (listed !== null && !listed.has(stream)) yield* input.outbox.stored(stream, 0);
       const held = yield* input.outbox.count(stream);
-      const length = lengthOfLines(yield* fs.readFile(file), held);
+      const bytes = yield* fs.readFile(file);
+      const original = new TextDecoder().decode(bytes);
+      const rebased = rebaseRollout(original);
+      const normalized = new TextEncoder().encode(rebased);
+      if (rebased !== original) {
+        yield* fs.writeFile(`${file}.signalbox-rebase`, normalized);
+        yield* fs.rename(`${file}.signalbox-rebase`, file);
+      }
+      const length = lengthOfLines(normalized, held);
       // The store holds more than this disk: only a restore puts that right.
       if (length === null) return false;
       cursors.set(stream, length);
@@ -152,7 +188,7 @@ export const makeCodexRollouts = Effect.fn("makeCodexRollouts")(function* (input
           yield* input.outbox.stored(stream, count);
           // This disk holds as much or more: the rest is queued from the cursor.
           if ((yield* fs.exists(file)) && (yield* startCursor(stream, file))) continue;
-          const rows = yield* input.client.rows(stream);
+          const rows = (yield* input.client.rows(stream)).map(rebaseRow);
           const body = new TextEncoder().encode(rows.map((row) => `${row}\n`).join(""));
           yield* fs.makeDirectory(path.dirname(file), { recursive: true });
           yield* fs.writeFile(`${file}.restore`, body);
