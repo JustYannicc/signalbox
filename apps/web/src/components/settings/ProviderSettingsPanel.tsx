@@ -131,6 +131,7 @@ import {
   resolveSelectedProviderEnvironmentId,
 } from "./ProviderSettingsPanel.logic";
 import { useShowsEnvironmentUi } from "../../state/environmentCapabilities";
+import { useEnvironmentCanWriteModelSettings } from "../../state/environmentCapabilities";
 import { useOneEnvironmentCopy } from "~/state/oneEnvironmentCopy"; // signalbox
 
 function modelListChanges(current: ReadonlyArray<string>, next: ReadonlyArray<string>) {
@@ -564,6 +565,7 @@ export function EnvironmentProviderSettings({
 }) {
   const settings = useEnvironmentSettings(environmentId);
   const canWriteSettings = useEnvironmentScope(environmentId, AuthSettingsWriteScope);
+  const canWriteModelSettings = useEnvironmentCanWriteModelSettings(environmentId);
   const canRefreshProviders = useEnvironmentScope(environmentId, AuthOrchestrationReadScope);
   const updateSettings = useUpdateEnvironmentSettings(environmentId);
   const updateModelPreferences = useUpdateEnvironmentModelPreferences(environmentId);
@@ -970,6 +972,7 @@ export function EnvironmentProviderSettings({
           ) : undefined
         }
         canWriteSettings={canWriteSettings}
+        canWriteModelPreferences={canWriteSettings && canWriteModelSettings && !readOnly}
         setup={
           // signalbox: hub instances add accounts to the account hub.
           mode === "editor" && isHubInstanceConfig(row.instance.config) ? (

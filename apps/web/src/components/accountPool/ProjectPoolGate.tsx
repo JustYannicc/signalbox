@@ -45,7 +45,7 @@ export function useNeedsPool(
   environmentId: EnvironmentId | null,
   need: PoolNeed | null,
 ): NeedsPool | null {
-  // Only a sign-in names its pool; views change with usage, so only it subscribes.
+  // Only sign-in needs the pool name; views change with usage, so only it subscribes.
   const views = usePoolViews(need?._tag === "signIn" ? environmentId : null);
   const poolName =
     need?._tag === "signIn" ? views.find((view) => view.id === need.poolId)?.name : undefined;
