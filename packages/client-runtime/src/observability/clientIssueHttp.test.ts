@@ -4,14 +4,14 @@ import type { ClientIssue } from "@t3tools/contracts/clientIssues";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Result from "effect/Result";
-import * as RemoteEnvironmentAuthorization from "../authorization/service.ts";
+import { RemoteEnvironmentAuthorization } from "@t3tools/client-runtime/authorization";
 import {
   PrimaryConnectionTarget,
   RelayConnectionTarget,
   type PreparedConnection,
-} from "../connection/model.ts";
-import * as ManagedRelay from "../relay/managedRelay.ts";
-import { layerRemoteHttpClient } from "../rpc/http.ts";
+} from "@t3tools/client-runtime/connection";
+import { ManagedRelay } from "@t3tools/client-runtime/relay";
+import { layerRemoteHttpClient } from "@t3tools/client-runtime/rpc";
 import { sendClientIssue } from "@t3tools/client-runtime/observability/client-issue-http";
 
 const ISSUE: ClientIssue = {
@@ -169,7 +169,7 @@ describe("client issue HTTP delivery", () => {
         readonly accessToken?: string;
       }> = [];
       const requests: Request[] = [];
-      const remoteAuthorization = RemoteEnvironmentAuthorization.RemoteEnvironmentAuthorization.of({
+      const remoteAuthorization = RemoteEnvironmentAuthorization.of({
         authorizeBearer: () => Effect.die("Unexpected bearer renewal."),
         authorizeDpop: () => Effect.die("Unexpected websocket authorization."),
         authorizeDpopHttp: (input) =>
@@ -215,10 +215,7 @@ describe("client issue HTTP delivery", () => {
       const services = Layer.mergeAll(
         layerRemoteHttpClient(fetcher),
         Layer.succeed(ManagedRelay.ManagedRelayDpopSigner, signer),
-        Layer.succeed(
-          RemoteEnvironmentAuthorization.RemoteEnvironmentAuthorization,
-          remoteAuthorization,
-        ),
+        Layer.succeed(RemoteEnvironmentAuthorization, remoteAuthorization),
       );
 
       yield* sendClientIssue(
