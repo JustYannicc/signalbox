@@ -5,6 +5,7 @@ import { accountSignOutPaletteItem } from "../account/accountPaletteItem"; // si
 import { useAutomationPaletteItems } from "./automations/automationPaletteItems"; // signalbox: automations
 import { useFolderPaletteItems } from "./sidebar/folders/folderPaletteItems"; // signalbox: folders
 import { useNotesPaletteItems } from "./notes/notesPaletteItems"; // signalbox: notes
+import { useThreadPinPaletteAction } from "./chat/threadPinPaletteAction";
 import { useRepositoryPickerGroups } from "./addProject/repositoryPicker"; // signalbox: repositories
 import {
   addProjectCloneSources,
@@ -84,8 +85,6 @@ import {
   MonitorIcon,
   MoonIcon,
   PaletteIcon,
-  PinIcon,
-  PinOffIcon,
   RotateCcwIcon,
   SettingsIcon,
   SquarePenIcon,
@@ -111,8 +110,6 @@ import { useAtomValue } from "@effect/atom-react";
 import { isDesktopLocalConnectionTarget } from "../connection/desktopLocal";
 import { useDesktopLocalBootstraps } from "../connection/useDesktopLocalBootstraps";
 import { useHandleNewThread } from "../hooks/useHandleNewThread";
-import { useThreadActions } from "../hooks/useThreadActions";
-import { useStableCallback } from "../hooks/useStableCallback";
 import { useOpenPanelPullRequestUrl } from "../hooks/useOpenPanelPullRequestUrl";
 import { writeTextToClipboard } from "../hooks/useCopyToClipboard";
 import {
@@ -687,31 +684,11 @@ function OpenCommandPaletteDialog(props: {
   const activeThreadServerConfig = useServerConfigs().get(
     activeThread?.environmentId ?? ("" as EnvironmentId),
   );
-  const { pinThread, confirmAndUnpinThread } = useThreadActions();
-  const canOperateActiveThread = useEnvironmentScope(
-    activeThread?.environmentId ?? null,
-    AuthOrchestrationOperateScope,
+  const threadPinPalette = useThreadPinPaletteAction(
+    activeThread,
+    activeThreadServerConfig?.environment.capabilities.threadPinning === true,
+    setOpen,
   );
-  const canToggleActiveThreadPin =
-    activeThread !== null &&
-    activeThreadServerConfig?.environment.capabilities.threadPinning === true &&
-    canOperateActiveThread;
-  const toggleActiveThreadPin = async () => {
-    if (!activeThread || !canToggleActiveThreadPin) return;
-    const threadRef = scopeThreadRef(activeThread.environmentId, activeThread.id);
-    const isPinned = activeThread.pinnedAt != null;
-    const result = await (isPinned ? confirmAndUnpinThread(threadRef) : pinThread(threadRef));
-    if (result._tag !== "Failure" || isAtomCommandInterrupted(result)) return;
-    const error = squashAtomCommandFailure(result);
-    toastManager.add(
-      stackedThreadToast({
-        type: "error",
-        title: isPinned ? "Failed to unpin thread" : "Failed to pin thread",
-        description: error instanceof Error ? error.message : "An error occurred.",
-      }),
-    );
-  };
-  const runToggleActiveThreadPin = useStableCallback(toggleActiveThreadPin);
   const activeThreadReferenceCopyTarget =
     referenceThreadRef === null || (pathname === "/pull-requests" && !openPanelPullRequestUrl)
       ? null
@@ -1994,22 +1971,7 @@ function OpenCommandPaletteDialog(props: {
     });
   }
 
-  if (activeThreadId && canToggleActiveThreadPin && activeThread) {
-    const isPinned = activeThread.pinnedAt != null;
-    actionItems.push({
-      kind: "action",
-      value: "action:toggle-thread-pin",
-      searchTerms: [isPinned ? "unpin" : "pin", "thread", "current"],
-      title: isPinned ? "Unpin thread" : "Pin thread",
-      icon: isPinned ? (
-        <PinOffIcon className={ITEM_ICON_CLASS} />
-      ) : (
-        <PinIcon className={ITEM_ICON_CLASS} />
-      ),
-      shortcutCommand: "thread.pin",
-      run: runToggleActiveThreadPin,
-    });
-  }
+  actionItems.push(...threadPinPalette.items);
 
   const promptLinkTarget = paletteRouteTarget
     ? paletteRouteTarget.kind === "server"
@@ -3325,14 +3287,7 @@ function OpenCommandPaletteDialog(props: {
       requestThreadFindOpen();
       return;
     }
-    if (command === "thread.pin" && activeThreadId && !event.nativeEvent.isComposing) {
-      event.preventDefault();
-      event.stopPropagation();
-      if (!canToggleActiveThreadPin) return;
-      setOpen(false);
-      void toggleActiveThreadPin();
-      return;
-    }
+    if (threadPinPalette.handleKey(event, command)) return;
 
     if (
       addProjectCloneFlow?.step === "repository" &&
