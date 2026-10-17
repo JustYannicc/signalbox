@@ -454,6 +454,8 @@ import {
   shouldShowThreadErrorBanner,
   ThreadErrorBanner,
 } from "./chat/ThreadErrorBanner";
+import { failureShownInTimeline } from "./chat/failureShownInTimeline"; // signalbox
+import { runtimeIsSettingUp } from "./chat/runtimeIsSettingUp"; // signalbox
 import { QueuedRunsControl, type QueuedRunsControlHandle } from "./chat/QueuedRunsControl";
 import { useThreadLinkedPullRequest } from "./pullRequest/useThreadLinkedPullRequest";
 import { useProactivePanels } from "../hooks/useProactivePanels";
@@ -533,8 +535,6 @@ import {
   startAttachmentUpload,
 } from "../lib/attachmentUploadQueue";
 import { sanitizeThreadErrorMessage } from "~/rpc/transportError";
-import { failureShownInTimeline } from "./chat/failureShownInTimeline"; // signalbox
-import { runtimeIsSettingUp } from "./chat/runtimeIsSettingUp"; // signalbox
 import { RightPanelSheet } from "./RightPanelSheet";
 import { previewEnvironment } from "../state/preview";
 import { clampFileAttachmentUploadBytes } from "@t3tools/client-runtime/state/attachments";
