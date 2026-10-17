@@ -1,5 +1,5 @@
 import {
-  AuthAdministrativeScopes,
+  AuthStandardClientScopes,
   CommandId,
   EnvironmentHttpApi,
   EnvironmentHttpCommonError,
@@ -221,8 +221,8 @@ const withProjectCliSessionToken = <A, E, R>(
 ) =>
   Effect.acquireUseRelease(
     environmentAuth.issueSession({
-      scopes: AuthAdministrativeScopes,
-      label: "signalbox project cli",
+      scopes: AuthStandardClientScopes,
+      label: "t3 project cli",
     }),
     (issued) => run(issued.token),
     (issued) => environmentAuth.revokeSession(issued.sessionId).pipe(Effect.ignore({ log: true })),
