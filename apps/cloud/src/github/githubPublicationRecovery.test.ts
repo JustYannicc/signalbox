@@ -4,7 +4,7 @@ import * as Effect from "effect/Effect";
 import { publicationFixture } from "./githubPublicationTesting.ts";
 
 describe("cloud publication recovery", () => {
-  it.effect.each([403, 422])(
+  it.effect.each([403, 404, 422])(
     "allows changing owner and name after a definite create %s",
     (status) =>
       Effect.gen(function* () {

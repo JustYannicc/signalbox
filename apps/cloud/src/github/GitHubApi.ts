@@ -500,6 +500,20 @@ export const makeGitHubApi = (
           }),
         ),
         token,
+      ).pipe(
+        Effect.flatMap((repository) =>
+          repository === null
+            ? Effect.fail(
+                new GitHubError({
+                  operation: "createRepository",
+                  status: 404,
+                  message:
+                    "GitHub refused to create this repository. Check the owner and your access.",
+                  requestKind: "rest",
+                }),
+              )
+            : Effect.succeed(repository),
+        ),
       ),
     /** The repositories the user can push to, most recently pushed first: one page, enough to pick from. */
     repositories: (token: string) =>
