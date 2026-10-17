@@ -1,3 +1,7 @@
+// @effect-diagnostics nodeBuiltinImport:off globalTimers:off -- The one-off Node harness sends a bounded RFC 6455 preflight.
+import * as NodeCrypto from "node:crypto";
+import * as NodeHttps from "node:https";
+
 export interface ConnectionDiagnostic {
   readonly levelId: string;
   readonly opens: number;
@@ -13,6 +17,140 @@ export interface ConnectionDiagnostic {
   readonly incomingBytes: number;
   readonly outgoingFrames: number;
   readonly outgoingBytes: number;
+}
+
+export interface UpgradeResponseSummary {
+  readonly status: number | null;
+  readonly kind: "upgrade" | "http-response" | "network-error" | "connection-closed" | "timeout";
+  readonly errorCode?: string;
+}
+
+interface UpgradeResponseLike {
+  readonly statusCode?: number | undefined;
+  readonly headers: Readonly<Record<string, string | ReadonlyArray<string> | undefined>>;
+}
+
+const ALLOWED_CLOUDFLARE_CODES = new Set([
+  "1000",
+  "1001",
+  "1003",
+  "1015",
+  "1020",
+  "1033",
+  "1101",
+  "1102",
+]);
+
+/** Only read fixed error headers and values that cannot contain free-form response text. */
+export function safeUpgradeErrorCode(response: UpgradeResponseLike): string | undefined {
+  const headerValue = (name: string) => {
+    const value = response.headers[name] ?? response.headers[name.toLowerCase()];
+    return Array.isArray(value) ? value[0] : value;
+  };
+  const cfCode = headerValue("cf-error-code");
+  if (typeof cfCode === "string" && ALLOWED_CLOUDFLARE_CODES.has(cfCode)) return `CF_${cfCode}`;
+  if (headerValue("cf-mitigated") === "challenge") return "CF_CHALLENGE";
+  return undefined;
+}
+
+/** Match Lunora's current shard-then-token query when diagnosing its native socket handshake. */
+export function upgradeUrl(baseUrl: string | URL, shardKey: string, token: string): URL {
+  const url = new URL(baseUrl);
+  if (url.protocol !== "wss:") throw new TypeError("The upgrade URL must use wss.");
+  url.searchParams.set("shard", shardKey);
+  url.searchParams.set("token", token);
+  return url;
+}
+
+/** Perform one bounded handshake and return no URL, body, headers, or free-form error text. */
+export function probeWebSocketUpgrade(
+  baseUrl: string | URL,
+  shardKey: string,
+  token: string,
+  timeoutMs = 8_000,
+  requestFactory: typeof NodeHttps.request = NodeHttps.request,
+): Promise<UpgradeResponseSummary> {
+  const url = upgradeUrl(baseUrl, shardKey, token);
+  const requestUrl = new URL(url);
+  requestUrl.protocol = "https:";
+  const key = NodeCrypto.randomBytes(16).toString("base64");
+  return new Promise((resolve) => {
+    let settled = false;
+    const request = requestFactory(requestUrl, {
+      method: "GET",
+      headers: {
+        Connection: "Upgrade",
+        Upgrade: "websocket",
+        "Sec-WebSocket-Key": key,
+        "Sec-WebSocket-Version": "13",
+      },
+    });
+    let responseStatus: number | null = null;
+    let responseErrorCode: string | undefined;
+    const finish = (summary: UpgradeResponseSummary, destroyRequest = false) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(deadline);
+      resolve(summary);
+      if (destroyRequest) request.destroy();
+    };
+    const deadline = setTimeout(() => {
+      finish(
+        responseStatus === null
+          ? { status: null, kind: "timeout" }
+          : {
+              status: responseStatus,
+              kind: "http-response",
+              ...(responseErrorCode === undefined ? {} : { errorCode: responseErrorCode }),
+            },
+        true,
+      );
+    }, timeoutMs);
+    request.once("error", () =>
+      finish(
+        responseStatus === null
+          ? { status: null, kind: "network-error" }
+          : {
+              status: responseStatus,
+              kind: "http-response",
+              ...(responseErrorCode === undefined ? {} : { errorCode: responseErrorCode }),
+            },
+      ),
+    );
+    request.once("close", () =>
+      finish(
+        responseStatus === null
+          ? { status: null, kind: "connection-closed" }
+          : {
+              status: responseStatus,
+              kind: "http-response",
+              ...(responseErrorCode === undefined ? {} : { errorCode: responseErrorCode }),
+            },
+      ),
+    );
+    request.once("response", (response) => {
+      responseStatus = response.statusCode ?? null;
+      responseErrorCode = safeUpgradeErrorCode(response);
+      const finishResponse = () =>
+        finish({
+          status: responseStatus,
+          kind: "http-response",
+          ...(responseErrorCode === undefined ? {} : { errorCode: responseErrorCode }),
+        });
+      response.once("end", finishResponse);
+      response.once("close", finishResponse);
+      response.once("error", finishResponse);
+      response.resume();
+    });
+    request.once("upgrade", (response, socket) => {
+      const status = response.statusCode ?? 101;
+      const errorCode = safeUpgradeErrorCode(response);
+      finish({ status, kind: "upgrade", ...(errorCode === undefined ? {} : { errorCode }) });
+      socket.once("error", () => {});
+      socket.destroy();
+    });
+    request.end();
+  });
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

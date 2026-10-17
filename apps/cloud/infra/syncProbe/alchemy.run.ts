@@ -65,14 +65,15 @@ export default Alchemy.Stack(
       name: `signalbox-sync-probe-${stage}`,
       main: here("worker.ts"),
       compatibility,
-      workersDev: { enabled: false, previewsEnabled: true },
+      // Cloudflare version URLs do not support Workers that implement Durable Objects.
+      workersDev: { enabled: true, previewsEnabled: false },
       env: {
         PROBE_SECRET: probeSecret,
         ...bindings,
       },
     });
     if (worker.url === undefined) {
-      throw new Error("Alchemy did not return a Worker preview URL for the sync probe.");
+      throw new Error("Alchemy did not return a Worker URL for the isolated sync probe.");
     }
 
     return { stage, worker: worker.workerName, url: worker.url };

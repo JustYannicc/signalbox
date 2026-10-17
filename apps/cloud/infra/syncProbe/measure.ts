@@ -7,6 +7,7 @@ import { LunoraClient } from "lunorash/client";
 import { api } from "./lunora/_generated/api.ts";
 import {
   formatConnectionDiagnostics,
+  probeWebSocketUpgrade,
   safeSocketErrorKind,
   type ConnectionDiagnostic,
 } from "./diagnostics.ts";
@@ -56,7 +57,7 @@ if (workerUrlText === undefined || probeSecret === undefined) {
 
 const workerUrl = new URL(workerUrlText);
 if (workerUrl.protocol !== "https:" || !workerUrl.hostname.endsWith(".workers.dev")) {
-  throw new Error("The sync probe must target an isolated HTTPS Worker preview URL.");
+  throw new Error("The sync probe must target an isolated HTTPS probe Worker URL.");
 }
 workerUrl.pathname = "/";
 workerUrl.search = "";
@@ -242,6 +243,11 @@ try {
   const tokens = new Map<string, string>();
   for (const levelId of PROBE_LEVELS)
     tokens.set(levelId, await issueProbeToken(probeSecret, levelId));
+
+  const upgradeToken = tokens.get("top:test");
+  NodeAssert.ok(upgradeToken !== undefined);
+  const upgrade = await probeWebSocketUpgrade(websocketUrl, "top:test", upgradeToken);
+  console.log(`SYNC_PROBE_WEBSOCKET_UPGRADE ${JSON.stringify(upgrade)}`);
 
   for (const levelId of PROBE_LEVELS) {
     const token = tokens.get(levelId);
