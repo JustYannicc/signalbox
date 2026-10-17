@@ -37,26 +37,26 @@ const fixture = (env: RecoveryDrillEnv = preview) => {
   let arms = 0;
   let inspected = 0;
   let incarnations = 0;
+  let armingFails = false;
   const drill = () =>
     makeRecoveryDrill(env, {
       incarnation: async () => `object-${++incarnations}`,
       load: async () => structuredClone(state),
-      save: async (value) => {
+      save: async (value, arm) => {
+        if (arm && armingFails) throw new Error("alarm unavailable");
         state = structuredClone(value);
-      },
-      inspect: async () => {
-        inspected += 1;
-        return evidence;
+        if (arm) arms += 1;
       },
       reset: () => {
         resets += 1;
         throw new Error("object reset");
       },
-      exclusive: (work) => work(),
+      exclusive: (work) =>
+        work(async () => {
+          inspected += 1;
+          return evidence;
+        }),
       rearm: async () => {},
-      arm: async () => {
-        arms += 1;
-      },
     });
   return {
     drill,
@@ -71,6 +71,9 @@ const fixture = (env: RecoveryDrillEnv = preview) => {
     },
     get inspected() {
       return inspected;
+    },
+    failArming: (fails: boolean) => {
+      armingFails = fails;
     },
     change: (value: RecoveryInspection) => {
       evidence = value;
@@ -238,5 +241,26 @@ describe("preview recovery drills", () => {
     });
     expect(test.inspected).toBe(inspected);
     expect(test.resets).toBe(0);
+  });
+
+  it("cannot leave a pending fault when atomic alarm arming fails", async () => {
+    const test = fixture();
+    await test.drill().command("owner", command("enroll"));
+    test.failArming(true);
+    await expect(test.drill().command("owner", command("retry-alarm"))).rejects.toThrow(
+      "alarm unavailable",
+    );
+    expect(test.state?.faults).toEqual([]);
+    expect(await test.drill().preservesAlarm()).toBe(false);
+    test.failArming(false);
+    await test.drill().command("owner", command("retry-alarm"));
+    expect(test.arms).toBe(1);
+    expect(await test.drill().preservesAlarm()).toBe(true);
+    await expect(
+      test.drill().alarm({ isRetry: false, retryCount: 0 }, async () => {}),
+    ).rejects.toThrow("object reset");
+    await test.drill().alarm({ isRetry: true, retryCount: 1 }, async () => {});
+    expect(test.state?.faults[0]).toMatchObject({ complete: true });
+    expect(await test.drill().preservesAlarm()).toBe(false);
   });
 });

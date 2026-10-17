@@ -1,8 +1,10 @@
 import { CommandId } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Deferred from "effect/Deferred";
+import * as Fiber from "effect/Fiber";
 
-import { recoveryEvidence } from "./RecoveryEvidence.ts";
+import { recoveryEvidence, withRecoveryInspection } from "./RecoveryEvidence.ts";
 import {
   appendSession,
   connect,
@@ -127,6 +129,53 @@ describe("recovery drill evidence", () => {
         expect((yield* engine.snapshot(owner)).projection.thread.title).toBe(
           "recovery-drill/still-usable",
         );
+      }).pipe(Effect.provide(context)),
+    ),
+  );
+
+  it.effect("lets an in-flight RPC release the engine before closing the input gate", () =>
+    withObject(freshDatabase(), (engine, _runner, context) =>
+      Effect.gen(function* () {
+        yield* launch(engine);
+        const locked = yield* Deferred.make<void>();
+        const rpcResponse = yield* Deferred.make<void>();
+        const queued = yield* Deferred.make<void>();
+        const order: Array<string> = [];
+        let gateClosed = false;
+        const turnStart = yield* engine
+          .apply(() =>
+            Effect.gen(function* () {
+              yield* Deferred.succeed(locked, undefined);
+              yield* Deferred.await(rpcResponse);
+              order.push("turn committed");
+              return { events: [], result: undefined };
+            }),
+          )
+          .pipe(Effect.forkChild);
+        yield* Deferred.await(locked);
+        const inspection = yield* Effect.gen(function* () {
+          yield* Deferred.succeed(queued, undefined);
+          return yield* withRecoveryInspection((inspect) =>
+            Effect.gen(function* () {
+              gateClosed = true;
+              order.push("gate closed");
+              try {
+                return yield* inspect(owner.userId, []);
+              } finally {
+                gateClosed = false;
+              }
+            }),
+          );
+        }).pipe(Effect.forkChild);
+        yield* Deferred.await(queued);
+        yield* Effect.yieldNow;
+        expect(gateClosed).toBe(false);
+        order.push("RPC response delivered");
+        yield* Deferred.succeed(rpcResponse, undefined);
+        yield* Fiber.join(turnStart);
+        yield* Fiber.join(inspection);
+        expect(order).toEqual(["RPC response delivered", "turn committed", "gate closed"]);
+        expect(gateClosed).toBe(false);
       }).pipe(Effect.provide(context)),
     ),
   );

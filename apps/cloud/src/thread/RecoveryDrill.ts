@@ -50,18 +50,18 @@ export interface RecoveryDrillState {
   readonly faults: ReadonlyArray<Fault>;
 }
 
+type RecoveryInspector = (
+  userId: string,
+  commandIds: ReadonlyArray<string>,
+) => Promise<RecoveryInspection>;
+
 interface RecoveryDrillHost {
   readonly incarnation: () => Promise<string>;
   readonly load: () => Promise<RecoveryDrillState | undefined>;
-  readonly save: (state: RecoveryDrillState) => Promise<void>;
-  readonly inspect: (
-    userId: string,
-    commandIds: ReadonlyArray<string>,
-  ) => Promise<RecoveryInspection>;
-  readonly exclusive: <A>(work: () => Promise<A>) => Promise<A>;
+  readonly save: (state: RecoveryDrillState, arm?: boolean) => Promise<void>;
+  readonly exclusive: <A>(work: (inspect: RecoveryInspector) => Promise<A>) => Promise<A>;
   readonly rearm: () => Promise<void>;
   readonly reset: () => void;
-  readonly arm: () => Promise<void>;
 }
 
 const rejection = (error: string) => ({ error });
@@ -74,66 +74,70 @@ const matches = (expected: typeof Expected.Type, evidence: RecoveryEvidence) =>
 export const makeRecoveryDrill = (env: RecoveryDrillEnv, host: RecoveryDrillHost) => {
   let incarnation: Promise<string> | undefined;
   const incarnationOf = () => (incarnation ??= host.incarnation());
+  const runCommand = async (userId: string, input: unknown, inspect: RecoveryInspector) => {
+    if (!recoveryDrillsEnabled(env)) return rejection("disabled");
+    const decoded = decodeCommand(input);
+    if (Option.isNone(decoded)) return rejection("invalid_command");
+    const command = decoded.value;
+    const stored = await host.load();
+    if (command.action === "disable") {
+      if (stored === undefined || stored.userId !== userId) return rejection("not_enrolled");
+      const state = {
+        ...stored,
+        enabled: false,
+        faults: stored.faults.map((fault) =>
+          fault.complete ? fault : { ...fault, complete: true, cancelled: "disabled" },
+        ),
+      };
+      await host.save(state);
+      return { incarnation: await incarnationOf(), state };
+    }
+    const evidence = await inspect(userId, command.commandIds);
+    if (evidence === null) return rejection("not_found");
+    if ("error" in evidence) return evidence;
+    if (command.action === "enroll") {
+      const state = stored ?? { enabled: true, userId, faults: [] };
+      await host.save({ ...state, enabled: true });
+      return { incarnation: await incarnationOf(), evidence, state: { ...state, enabled: true } };
+    }
+    if (stored === undefined || stored.userId !== userId) return rejection("not_enrolled");
+    if (command.action === "inspect")
+      return { incarnation: await incarnationOf(), evidence, state: stored };
+    if (!stored.enabled) return rejection("not_enrolled");
+    const previous = stored.faults.find((fault) => fault.id === command.id);
+    if (previous !== undefined) {
+      return previous.action === command.action
+        ? { incarnation: await incarnationOf(), evidence, state: stored, replayed: true }
+        : rejection("id_conflict");
+    }
+    if (command.expected === undefined || !matches(command.expected, evidence)) {
+      return rejection("stale_target");
+    }
+    if (stored.faults.length >= 20) return rejection("fault_limit");
+    if (stored.faults.some((fault) => !fault.complete)) return rejection("fault_pending");
+    const fault: Fault = {
+      id: command.id,
+      action: command.action,
+      incarnation: await incarnationOf(),
+      before: evidence,
+      deliveries: [],
+      complete: command.action === "reset",
+    };
+    const state = { ...stored, faults: [...stored.faults, fault] };
+    if (new TextEncoder().encode(JSON.stringify(state)).byteLength > 1_500_000) {
+      return rejection("evidence_limit");
+    }
+    // The one-shot consumption and pre-fault evidence must survive the reset.
+    await host.save(state, command.action === "retry-alarm");
+    if (command.action === "reset") host.reset();
+    return { incarnation: await incarnationOf(), evidence, state };
+  };
   return {
     async command(userId: string, input: unknown) {
       if (!recoveryDrillsEnabled(env)) return rejection("disabled");
-      const decoded = decodeCommand(input);
-      if (Option.isNone(decoded)) return rejection("invalid_command");
-      const command = decoded.value;
-      const stored = await host.load();
-      if (command.action === "disable") {
-        if (stored === undefined || stored.userId !== userId) return rejection("not_enrolled");
-        const state = {
-          ...stored,
-          enabled: false,
-          faults: stored.faults.map((fault) =>
-            fault.complete ? fault : { ...fault, complete: true, cancelled: "disabled" },
-          ),
-        };
-        await host.save(state);
-        await host.rearm();
-        return { incarnation: await incarnationOf(), state };
-      }
-      const evidence = await host.inspect(userId, command.commandIds);
-      if (evidence === null) return rejection("not_found");
-      if ("error" in evidence) return evidence;
-      if (command.action === "enroll") {
-        const state = stored ?? { enabled: true, userId, faults: [] };
-        await host.save({ ...state, enabled: true });
-        return { incarnation: await incarnationOf(), evidence, state: { ...state, enabled: true } };
-      }
-      if (stored === undefined || stored.userId !== userId) return rejection("not_enrolled");
-      if (command.action === "inspect")
-        return { incarnation: await incarnationOf(), evidence, state: stored };
-      if (!stored.enabled) return rejection("not_enrolled");
-      const previous = stored.faults.find((fault) => fault.id === command.id);
-      if (previous !== undefined) {
-        return previous.action === command.action
-          ? { incarnation: await incarnationOf(), evidence, state: stored, replayed: true }
-          : rejection("id_conflict");
-      }
-      if (command.expected === undefined || !matches(command.expected, evidence)) {
-        return rejection("stale_target");
-      }
-      if (stored.faults.length >= 20) return rejection("fault_limit");
-      if (stored.faults.some((fault) => !fault.complete)) return rejection("fault_pending");
-      const fault: Fault = {
-        id: command.id,
-        action: command.action,
-        incarnation: await incarnationOf(),
-        before: evidence,
-        deliveries: [],
-        complete: command.action === "reset",
-      };
-      const state = { ...stored, faults: [...stored.faults, fault] };
-      if (new TextEncoder().encode(JSON.stringify(state)).byteLength > 1_500_000) {
-        return rejection("evidence_limit");
-      }
-      // The one-shot consumption and pre-fault evidence must survive the reset.
-      await host.save(state);
-      if (command.action === "reset") host.reset();
-      else await host.arm();
-      return { incarnation: await incarnationOf(), evidence, state };
+      const result = await host.exclusive((inspect) => runCommand(userId, input, inspect));
+      if ("state" in result && !result.state.enabled) await host.rearm();
+      return result;
     },
 
     async alarm(
@@ -147,7 +151,8 @@ export const makeRecoveryDrill = (env: RecoveryDrillEnv, host: RecoveryDrillHost
         : undefined;
       if (before === undefined || pending === undefined) return tick();
       await tick();
-      await host.exclusive(async () => {
+      let rearm = false;
+      await host.exclusive(async (inspect) => {
         const state = await host.load();
         const currentFault = state?.faults.find((fault) => fault.id === pending.id);
         if (
@@ -161,7 +166,7 @@ export const makeRecoveryDrill = (env: RecoveryDrillEnv, host: RecoveryDrillHost
         const first = currentFault.deliveries.length === 0;
         let cancelled: string | undefined;
         if (first) {
-          const current = await host.inspect(state.userId, []);
+          const current = await inspect(state.userId, []);
           if (current !== null && "error" in current) cancelled = current.error;
           else if (
             current === null ||
@@ -202,8 +207,9 @@ export const makeRecoveryDrill = (env: RecoveryDrillEnv, host: RecoveryDrillHost
         });
         // Do not replace this alarm: Cloudflare must retry the failed invocation itself.
         if (first && cancelled === undefined) host.reset();
-        await host.rearm();
+        rearm = true;
       });
+      if (rearm) await host.rearm();
     },
 
     async preservesAlarm() {

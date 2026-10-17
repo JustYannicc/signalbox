@@ -1,4 +1,4 @@
-import { CommandId } from "@t3tools/contracts";
+import { CommandId, type OrchestrationV2ThreadProjection } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 
 import { SessionRows } from "./session/SessionRows.ts";
@@ -47,73 +47,88 @@ const sessionEvidence = Effect.gen(function* () {
     : results.filter((stream) => stream !== null);
 });
 
-/** A coherent pre-fault boundary. Tokens, message bodies and native transcript rows stay private. */
-export const recoveryEvidence = (userId: string, commandIds: ReadonlyArray<string>) =>
+/** Runs only while its caller owns engine serialization. */
+const inspectRecovery = (
+  projection: OrchestrationV2ThreadProjection | null,
+  userId: string,
+  commandIds: ReadonlyArray<string>,
+) =>
   Effect.gen(function* () {
     const store = yield* ThreadStore;
     if (!(yield* Effect.orDie(store.initialized))) return null;
+    const owner = yield* Effect.orDie(store.owner);
+    if (
+      projection === null ||
+      owner?.userId !== userId ||
+      !projection.thread.title.startsWith("recovery-drill/")
+    )
+      return null;
+    const events = yield* Effect.orDie(store.events(0, MAX_EVENTS + 1));
+    if (events.length > MAX_EVENTS) return { error: "evidence_limit" as const };
+    const sessionRows = yield* sessionEvidence;
+    if (sessionRows === null) return { error: "evidence_limit" as const };
+    const { token: _token, ...lease } = yield* Effect.orDie(store.machine);
+    const machine = yield* Effect.orDie(store.machineRecord);
+    const receipts = yield* Effect.forEach(commandIds, (id) =>
+      Effect.map(Effect.orDie(store.receipt(CommandId.make(id))), (receipt) => ({ id, receipt })),
+    );
+    const eventHashes = yield* Effect.forEach(events, ({ sequence, event }) =>
+      Effect.map(digest(JSON.stringify(event)), (hash) => ({ sequence, id: event.id, hash })),
+    );
+    const reasoning = yield* Effect.forEach(
+      projection.turnItems.filter((item) => item.type === "reasoning"),
+      (item) =>
+        Effect.map(digest(item.text), (hash) => ({
+          id: item.id,
+          runId: item.runId,
+          status: item.status,
+          hash,
+        })),
+    );
+    return {
+      threadId: projection.thread.id,
+      sequence: events.at(-1)?.sequence ?? 0,
+      activeRunId: activeRun(projection)?.id ?? null,
+      lease,
+      machine,
+      receipts,
+      events: eventHashes,
+      sessions: sessionRows,
+      runs: projection.runs.map((run) => ({
+        id: run.id,
+        status: run.status,
+        restartContinuationOfRunId: run.restartContinuationOfRunId ?? null,
+      })),
+      reasoning,
+    };
+  });
+
+export type RecoveryInspection = Effect.Success<ReturnType<typeof inspectRecovery>>;
+export type RecoveryEvidence = Exclude<NonNullable<RecoveryInspection>, { readonly error: string }>;
+
+/** Acquire engine serialization before the platform input gate, never while holding it. */
+export const withRecoveryInspection = <A>(
+  work: (
+    inspect: (
+      userId: string,
+      commandIds: ReadonlyArray<string>,
+    ) => Effect.Effect<RecoveryInspection>,
+  ) => Effect.Effect<A>,
+) =>
+  Effect.gen(function* () {
     const engine = yield* ThreadEngine;
+    const store = yield* ThreadStore;
     const sessions = yield* SessionRows;
     return yield* engine.apply((projection) =>
-      Effect.gen(function* () {
-        const owner = yield* Effect.orDie(store.owner);
-        if (
-          projection === null ||
-          owner?.userId !== userId ||
-          !projection.thread.title.startsWith("recovery-drill/")
-        ) {
-          return null;
-        }
-        const events = yield* Effect.orDie(store.events(0, MAX_EVENTS + 1));
-        if (events.length > MAX_EVENTS) {
-          return { error: "evidence_limit" as const };
-        }
-        const sessionRows = yield* sessionEvidence.pipe(
+      work((userId, commandIds) =>
+        inspectRecovery(projection, userId, commandIds).pipe(
+          Effect.provideService(ThreadStore, store),
           Effect.provideService(SessionRows, sessions),
-        );
-        if (sessionRows === null) {
-          return { error: "evidence_limit" as const };
-        }
-        const { token: _token, ...lease } = yield* Effect.orDie(store.machine);
-        const machine = yield* Effect.orDie(store.machineRecord);
-        const receipts = yield* Effect.forEach(commandIds, (id) =>
-          Effect.map(Effect.orDie(store.receipt(CommandId.make(id))), (receipt) => ({
-            id,
-            receipt,
-          })),
-        );
-        const eventHashes = yield* Effect.forEach(events, ({ sequence, event }) =>
-          Effect.map(digest(JSON.stringify(event)), (hash) => ({ sequence, id: event.id, hash })),
-        );
-        const reasoning = yield* Effect.forEach(
-          projection.turnItems.filter((item) => item.type === "reasoning"),
-          (item) =>
-            Effect.map(digest(item.text), (hash) => ({
-              id: item.id,
-              runId: item.runId,
-              status: item.status,
-              hash,
-            })),
-        );
-        return {
-          threadId: projection.thread.id,
-          sequence: events.at(-1)?.sequence ?? 0,
-          activeRunId: activeRun(projection)?.id ?? null,
-          lease,
-          machine,
-          receipts,
-          events: eventHashes,
-          sessions: sessionRows,
-          runs: projection.runs.map((run) => ({
-            id: run.id,
-            status: run.status,
-            restartContinuationOfRunId: run.restartContinuationOfRunId ?? null,
-          })),
-          reasoning,
-        };
-      }).pipe(Effect.map((result) => ({ events: [], result }))),
+        ),
+      ).pipe(Effect.map((result) => ({ events: [], result }))),
     );
   });
 
-export type RecoveryInspection = Effect.Success<ReturnType<typeof recoveryEvidence>>;
-export type RecoveryEvidence = Exclude<NonNullable<RecoveryInspection>, { readonly error: string }>;
+/** Tokens, message bodies and native transcript rows stay private. */
+export const recoveryEvidence = (userId: string, commandIds: ReadonlyArray<string>) =>
+  withRecoveryInspection((inspect) => inspect(userId, commandIds));

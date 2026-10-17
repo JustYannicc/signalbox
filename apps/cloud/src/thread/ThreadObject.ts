@@ -73,7 +73,7 @@ import {
   type RecoveryDrillEnv,
   type RecoveryDrillState,
 } from "./RecoveryDrill.ts";
-import { recoveryEvidence } from "./RecoveryEvidence.ts";
+import { withRecoveryInspection } from "./RecoveryEvidence.ts";
 
 /**
  * One per thread, named by its thread id, always in the EU jurisdiction. It
@@ -322,15 +322,25 @@ export class ThreadObject extends DurableObject<ThreadObjectEnv> implements Thre
       incarnation: () =>
         this.runtime.runPromise(Effect.flatMap(Crypto.Crypto, (crypto) => crypto.randomUUIDv4())),
       load: () => ctx.storage.get<RecoveryDrillState>("recovery-drill-v1"),
-      save: async (state) => {
-        await ctx.storage.put("recovery-drill-v1", state);
+      save: async (state, arm) => {
+        const at = arm ? await this.now() : undefined;
+        await ctx.storage.transaction(async (transaction) => {
+          await transaction.put("recovery-drill-v1", state);
+          if (at !== undefined) await transaction.setAlarm(at);
+        });
         await ctx.storage.sync();
       },
-      inspect: (userId, commandIds) =>
-        this.runtime.runPromise(recoveryEvidence(userId, commandIds)),
       reset: () => ctx.abort("recovery-drill: intentional object reset"),
-      arm: async () => ctx.storage.setAlarm(await this.now()),
-      exclusive: (work) => ctx.blockConcurrencyWhile(work),
+      exclusive: (work) =>
+        this.runtime.runPromise(
+          withRecoveryInspection((inspect) =>
+            Effect.promise(() =>
+              ctx.blockConcurrencyWhile(() =>
+                work((userId, commandIds) => this.runtime.runPromise(inspect(userId, commandIds))),
+              ),
+            ),
+          ),
+        ),
       rearm: async () => {
         const deferred = this.deferredAlarmAt;
         this.deferredAlarmAt = null;
@@ -373,7 +383,7 @@ export class ThreadObject extends DurableObject<ThreadObjectEnv> implements Thre
   }
 
   recoveryDrill(userId: string, input: unknown) {
-    return this.ctx.blockConcurrencyWhile(() => this.recovery.command(userId, input));
+    return this.recovery.command(userId, input);
   }
 
   requestPullRequestSync(...args: Parameters<ThreadObjectApi["requestPullRequestSync"]>) {
