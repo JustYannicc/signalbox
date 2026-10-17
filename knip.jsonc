@@ -67,7 +67,7 @@
     "apps/cloud": {
       // Workers and Alchemy stacks load these entries by filename.
       "entry": [
-        "src/modelGateway/worker.ts!",
+        "src/models/gatewayWorker.ts!",
         "src/boxdSpike/worker.ts!",
         "alchemy.run.ts!",
         "infra/boxd-spike.alchemy.ts!",
