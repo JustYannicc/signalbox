@@ -349,6 +349,8 @@ interface TimelineRowSharedState {
   onWorktreeSetupWorkLocally: (() => void) | null;
   onOpenWorktreeSetupTerminal: ((terminalId: string) => void) | null;
   workGroupViewState: WorkGroupViewState;
+  findEntryId: string | null;
+  findRevealKey: string;
 }
 
 interface TimelineRowActivityState {
@@ -844,6 +846,14 @@ const ConversationTimeline = memo(function ConversationTimeline({
     [activeFindAttemptId, paintedExpandedAttemptIds],
   );
 
+  const workFindKey = `${findNavigationId}:${normalizedFindQuery}:${activeFindMatch?.entryId ?? ""}:${activeFindMatch?.occurrence ?? 0}`;
+  const [workFindReveal, setWorkFindReveal] = useState({ key: workFindKey, pending: true });
+  if (workFindReveal.key !== workFindKey) setWorkFindReveal({ key: workFindKey, pending: true });
+  const pendingWorkFindEntryId =
+    workFindReveal.key !== workFindKey || workFindReveal.pending
+      ? activeFindMatch?.entryId
+      : undefined;
+
   const rowsProjectionRef = useRef<{
     readonly threadKey: string;
     readonly workspaceRoot: string | undefined;
@@ -859,6 +869,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
         expandedRunIds: visibleExpandedRunIds,
         expandedAttemptIds: visibleExpandedAttemptIds,
         expandedWorkGroupIds,
+        findEntryId: pendingWorkFindEntryId,
         isWorking,
         runlessWorkActive,
         activeTurnStartedAt,
@@ -882,6 +893,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
     visibleExpandedRunIds,
     visibleExpandedAttemptIds,
     expandedWorkGroupIds,
+    pendingWorkFindEntryId,
     isWorking,
     runlessWorkActive,
     activeTurnStartedAt,
@@ -890,6 +902,21 @@ const ConversationTimeline = memo(function ConversationTimeline({
     worktreeSetup,
   ]);
   const rows = useStableRows(rawRows, listIdentityKey);
+  useEffect(() => {
+    if (!pendingWorkFindEntryId) return;
+    const group = rows.find(
+      (row) =>
+        row.kind === "work" &&
+        row.isExpandedToolGroup &&
+        row.groupedEntries.some((entry) => entry.id === pendingWorkFindEntryId),
+    );
+    if (!group) return;
+    const groupId = group.id.slice(0, -":details".length);
+    setExpandedWorkGroupIds((previous) =>
+      previous.has(groupId) ? previous : new Set(previous).add(groupId),
+    );
+    setWorkFindReveal({ key: workFindKey, pending: false });
+  }, [pendingWorkFindEntryId, rows, workFindKey]);
   // Run status/timestamps churn on every stream event; the shared row context
   // must not change with them or every timeline row re-renders per event.
   const runs = useStableHandoffRuns(runsProp);
@@ -1312,6 +1339,8 @@ const ConversationTimeline = memo(function ConversationTimeline({
       onWorktreeSetupWorkLocally: onWorktreeSetupWorkLocally ?? null,
       onOpenWorktreeSetupTerminal: onOpenWorktreeSetupTerminal ?? null,
       workGroupViewState,
+      findEntryId: activeFindMatch?.entryId ?? null,
+      findRevealKey: workFindKey,
     }),
     [
       readyCitationRequest,
@@ -1350,6 +1379,8 @@ const ConversationTimeline = memo(function ConversationTimeline({
       onWorktreeSetupWorkLocally,
       onOpenWorktreeSetupTerminal,
       workGroupViewState,
+      activeFindMatch,
+      workFindKey,
     ],
   );
   const compactionAwaitingRow =
@@ -1440,6 +1471,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
         timelineViewportElement,
         query,
         (rowId) => {
+          if (entryById.has(rowId)) return rowId;
           const rowIndex = rows.findIndex((row) => row.id === rowId);
           for (const row of rows.slice(Math.max(0, rowIndex))) {
             if (row.kind !== "turn-fold" && row.kind !== "attempt-fold") {
@@ -1496,7 +1528,14 @@ const ConversationTimeline = memo(function ConversationTimeline({
     query: normalizedFindQuery,
     match: activeFindMatch,
     navigationId: findNavigationId,
-    rowIndex: activeFindMatch ? rows.findIndex((row) => row.id === activeFindMatch.entryId) : -1,
+    rowIndex: activeFindMatch
+      ? rows.findIndex(
+          (row) =>
+            row.id === activeFindMatch.entryId ||
+            (row.kind === "work" &&
+              row.groupedEntries.some((entry) => entry.id === activeFindMatch.entryId)),
+        )
+      : -1,
     listRef,
     contentInsetEndAdjustment,
   });
@@ -3531,7 +3570,13 @@ function ExpandedWorkGroupEntries({
   entries: TimelineWorkEntry[];
   workspaceRoot: string | undefined;
 }) {
-  const { workGroupViewState: viewState, onToggleWorkEntry } = use(TimelineRowCtx);
+  const {
+    workGroupViewState: viewState,
+    onToggleWorkEntry,
+    findEntryId,
+    findRevealKey,
+  } = use(TimelineRowCtx);
+  const findIndex = entries.findIndex((entry) => entry.id === findEntryId);
   const [initialScrollIndex] = useState(() =>
     resolveWorkGroupScrollIndex(entries, viewState.scrollPositions.get(anchorKey)),
   );
@@ -3586,7 +3631,13 @@ function ExpandedWorkGroupEntries({
     updateScrollFades();
   }, [anchorKey, updateScrollFades, viewState]);
 
+  const revealFindEntry = useCallback(() => {
+    if (findIndex >= 0) void listRef.current?.scrollToIndex({ index: findIndex, animated: false });
+  }, [findIndex, findRevealKey]);
+  useLayoutEffect(revealFindEntry, [revealFindEntry]);
+
   const handleLoad = useCallback(() => {
+    revealFindEntry();
     const list = listRef.current;
     const element = list?.getScrollableNode();
     if (initialScrollIndex && list && element) {
@@ -3601,7 +3652,7 @@ function ExpandedWorkGroupEntries({
       }
     }
     setRestoringPosition(false);
-  }, [initialScrollIndex]);
+  }, [initialScrollIndex, revealFindEntry]);
 
   useLayoutEffect(() => {
     const element = listRef.current?.getScrollableNode();
@@ -3652,9 +3703,11 @@ function ExpandedWorkGroupEntries({
           maintainScrollAtEndThreshold={1 / Math.max(1, fades.viewportHeight)}
           // Measure the restored row even when an intra-row offset puts its
           // estimated bounds outside the list's small bootstrap render window.
-          {...(restoringPosition && initialScrollIndex
-            ? { alwaysRender: { indices: [initialScrollIndex.index] } }
-            : {})}
+          {...(findIndex >= 0
+            ? { alwaysRender: { indices: [findIndex] } }
+            : restoringPosition && initialScrollIndex
+              ? { alwaysRender: { indices: [initialScrollIndex.index] } }
+              : {})}
           maintainVisibleContentPosition
           onLoad={handleLoad}
           onScroll={handleScroll}
@@ -5370,6 +5423,11 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
   const [expanded, setExpanded] = useState(
     () => groupView?.state.expandedEntries.has(workEntry.id) ?? false,
   );
+  useEffect(() => {
+    if (ctx.findEntryId !== workEntry.id) return;
+    setExpanded(true);
+    groupView?.state.expandedEntries.add(workEntry.id);
+  }, [ctx.findEntryId, ctx.findRevealKey, groupView, workEntry.id]);
   const toggleExpanded = () => {
     const next = !expanded;
     if (groupView) {
@@ -5569,6 +5627,7 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
 
   return (
     <WorkLogRow
+      data-thread-find-entry-id={workEntry.id}
       data-v2-item-type={workEntry.projectedItem?.item.type}
       data-v2-item-visibility={workEntry.projectedItem?.visibility}
       {...rowToggleProps}
@@ -5721,7 +5780,9 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
           ) : (
             <>
               {expandedBody ? (
-                <pre className={toolCallExpandedBodyClassName}>{expandedBody}</pre>
+                <pre data-thread-find-text className={toolCallExpandedBodyClassName}>
+                  {expandedBody}
+                </pre>
               ) : null}
               {plainOutputFetches && workEntry.projectedItem ? (
                 <FetchedToolOutput

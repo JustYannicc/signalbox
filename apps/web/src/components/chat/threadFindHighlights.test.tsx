@@ -47,6 +47,32 @@ afterEach(async () => {
 });
 
 describe("find highlight caching", () => {
+  it("counts only the indexed output edges, preserving the tail occurrence", () => {
+    container.innerHTML =
+      '<div data-timeline-row-id="tool"><pre data-thread-find-text="tool-output"></pre></div>';
+    const output = container.querySelector("pre")!;
+    output.textContent = "café" + "x".repeat(350) + "café" + "x".repeat(350) + "café";
+    const ranges = collectThreadFindRanges(container, "café");
+    expect(ranges.map(({ occurrence, range }) => [occurrence, range.startOffset])).toEqual([
+      [0, 0],
+      [1, output.textContent.length - 4],
+    ]);
+  });
+  it("keeps tool occurrences under their source item inside a grouped timeline row", () => {
+    container.innerHTML =
+      '<div data-timeline-row-id="work-group:first:details">' +
+      '<div data-thread-find-entry-id="first"><pre data-thread-find-text>café</pre></div>' +
+      '<div data-thread-find-entry-id="second"><span>café wrapper</span><pre data-thread-find-text>printf café</pre><pre data-thread-find-text>café output</pre></div></div>';
+    const ranges = collectThreadFindRanges(container, "café");
+    expect(
+      ranges.map(({ rowId, occurrence, range }) => [rowId, occurrence, range.toString()]),
+    ).toEqual([
+      ["first", 0, "café"],
+      ["second", 0, "café"],
+      ["second", 1, "café"],
+    ]);
+  });
+
   it("checks only the old and new occurrence when cycling a message with many clipped matches", async () => {
     container.innerHTML =
       '<div data-timeline-row-id="first"><div data-thread-find-fold><p data-thread-find-text>' +

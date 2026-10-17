@@ -1,3 +1,7 @@
+import {
+  THREAD_TOOL_SEARCH_OUTPUT_EDGE as TOOL_OUTPUT_EDGE,
+  THREAD_TOOL_SEARCH_COMMAND_LIMIT as TOOL_COMMAND_LIMIT,
+} from "@t3tools/shared/threadSearch";
 import { threadPullRequestsOf } from "@t3tools/shared/threadPullRequests";
 import type { OrchestrationV2ThreadProjection } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
@@ -5,8 +9,6 @@ import * as DateTime from "effect/DateTime";
 import type { SearchDocument } from "../search/SearchIndex.ts";
 
 const THREAD_ROW_ID = "thread";
-const TOOL_OUTPUT_EDGE = 320;
-const TOOL_COMMAND_LIMIT = 1_000;
 const SECRET_KEY = /secret|token|password|credential|authorization|cookie|base64|image|binary/i;
 const sliceText = (text: string, start: number, end: number) => {
   if (start > 0 && /[\uDC00-\uDFFF]/u.test(text[start] ?? "")) start += 1;

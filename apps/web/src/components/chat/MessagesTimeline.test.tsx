@@ -429,6 +429,54 @@ function buildProps() {
   };
 }
 
+it("Find opens the selected tool group and item details without expanding its sibling", async () => {
+  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+  vi.stubGlobal("requestAnimationFrame", () => 0);
+  vi.stubGlobal("cancelAnimationFrame", () => {});
+  const entries = ["first", "second"].map((id) => ({
+    id,
+    kind: "work" as const,
+    createdAt: MESSAGE_CREATED_AT,
+    entry: {
+      id,
+      createdAt: MESSAGE_CREATED_AT,
+      label: id,
+      tone: "tool" as const,
+      itemType: "command_execution" as const,
+      toolLifecycleStatus: "completed" as const,
+      command: `printf ${id}_needle`,
+      detail: `${id}_output`,
+    },
+  }));
+  let renderer: ReactTestRenderer | undefined;
+  try {
+    await act(() => {
+      renderer = create(<MessagesTimeline {...buildProps()} timelineEntries={entries} />);
+    });
+    expect(JSON.stringify(renderer!.toJSON())).not.toContain("second_output");
+    await act(() => {
+      renderer!.update(
+        <MessagesTimeline
+          {...buildProps()}
+          timelineEntries={entries}
+          findExpanded
+          findQuery="needle"
+          findNavigationId={1}
+          activeFindMatch={{ entryId: "second", runId: null, occurrence: 0 }}
+        />,
+      );
+    });
+    expect(JSON.stringify(renderer!.toJSON())).toContain("second_output");
+    expect(JSON.stringify(renderer!.toJSON())).not.toContain("first_output");
+    const target = renderer!.root.findByProps({ "data-thread-find-entry-id": "second" });
+    expect(target.props["aria-expanded"]).toBe(true);
+    await act(() => target.props.onClick());
+    expect(JSON.stringify(renderer!.toJSON())).not.toContain("second_output");
+  } finally {
+    await act(() => renderer?.unmount());
+  }
+});
+
 function buildLongUserMessageText(tail = "deep hidden detail only after expand") {
   return Array.from({ length: 9 }, (_, index) =>
     index === 8 ? tail : `Line ${index + 1}: ${"verbose prompt content ".repeat(8).trim()}`,

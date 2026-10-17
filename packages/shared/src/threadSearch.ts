@@ -1,3 +1,6 @@
+export const THREAD_TOOL_SEARCH_OUTPUT_EDGE = 320;
+export const THREAD_TOOL_SEARCH_COMMAND_LIMIT = 1_000;
+
 interface ThreadSearchTextPart {
   readonly text: string;
   readonly highlighted: boolean;

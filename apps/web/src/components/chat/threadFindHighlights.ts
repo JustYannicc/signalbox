@@ -1,4 +1,8 @@
-import { findThreadSearchOccurrences } from "@t3tools/shared/threadSearch";
+import {
+  THREAD_TOOL_SEARCH_COMMAND_LIMIT,
+  THREAD_TOOL_SEARCH_OUTPUT_EDGE,
+  findThreadSearchOccurrences,
+} from "@t3tools/shared/threadSearch";
 import { useEffect, useLayoutEffect, useRef } from "react";
 import { THREAD_FIND_BLOCK_TAGS } from "@t3tools/shared/threadFindText";
 
@@ -22,7 +26,9 @@ export function collectThreadFindRanges(container: HTMLElement, query: string): 
 
   for (const scope of container.querySelectorAll(THREAD_FIND_TEXT_SELECTOR)) {
     if (scope.parentElement?.closest(THREAD_FIND_TEXT_SELECTOR)) continue;
-    const rowId = scope.closest("[data-timeline-row-id]")?.getAttribute("data-timeline-row-id");
+    const rowId =
+      scope.closest("[data-thread-find-entry-id]")?.getAttribute("data-thread-find-entry-id") ??
+      scope.closest("[data-timeline-row-id]")?.getAttribute("data-timeline-row-id");
     if (!rowId) continue;
 
     let text = "";
@@ -30,7 +36,22 @@ export function collectThreadFindRanges(container: HTMLElement, query: string): 
     const flush = () => {
       let startIndex = 0;
       let endIndex = 0;
+      const mode = scope.getAttribute("data-thread-find-text");
+      const trimStart =
+        mode === "command" || mode === "tool-output" ? text.length - text.trimStart().length : 0;
+      const trimEnd =
+        mode === "command" || mode === "tool-output" ? text.trimEnd().length : text.length;
       for (const offset of findThreadSearchOccurrences(text, query)) {
+        const matchEnd = offset + query.length;
+        if (offset < trimStart || matchEnd > trimEnd) continue;
+        if (mode === "command" && matchEnd > trimStart + THREAD_TOOL_SEARCH_COMMAND_LIMIT) continue;
+        if (
+          mode === "tool-output" &&
+          trimEnd - trimStart > THREAD_TOOL_SEARCH_OUTPUT_EDGE * 2 &&
+          matchEnd > trimStart + THREAD_TOOL_SEARCH_OUTPUT_EDGE &&
+          offset < trimEnd - THREAD_TOOL_SEARCH_OUTPUT_EDGE
+        )
+          continue;
         while (startIndex < nodes.length && nodes[startIndex]!.end <= offset) startIndex++;
         if (endIndex < startIndex) endIndex = startIndex;
         while (endIndex < nodes.length && nodes[endIndex]!.end < offset + query.length) endIndex++;
@@ -193,6 +214,7 @@ export function useThreadFindHighlights(input: {
         "data-thread-find-fold",
         "data-timeline-row-id",
         "data-thread-find-text",
+        "data-thread-find-entry-id",
         "data-thread-find-ignore",
       ],
     });

@@ -1331,6 +1331,7 @@ export function deriveMessagesTimelineRows(input: {
   expandedRunIds?: ReadonlySet<RunId>;
   expandedAttemptIds?: ReadonlySet<RunAttemptId>;
   expandedWorkGroupIds?: ReadonlySet<string>;
+  findEntryId?: string | undefined;
   isWorking: boolean;
   /**
    * The live work has no app run (a provider-native subagent thread), so
@@ -1477,7 +1478,9 @@ export function deriveMessagesTimelineRows(input: {
             entry: (latestRunningToolEntry ?? latestVisibleToolEntry).entry,
             groupedEntries: visibleActiveToolEntries.map((entry) => entry.entry),
             groupId,
-            expanded: input.expandedWorkGroupIds?.has(groupId) ?? false,
+            expanded:
+              (input.expandedWorkGroupIds?.has(groupId) ?? false) ||
+              visibleActiveToolEntries.some((entry) => entry.id === input.findEntryId),
             active: latestToolKeepsActivityLive,
             ...(latestThoughtEntry ? { thought: latestThoughtEntry.entry } : {}),
           };
@@ -1634,7 +1637,9 @@ export function deriveMessagesTimelineRows(input: {
         const activeInProgressToolEntries = visibleGroupedEntries.filter(workEntryIsInActiveRun);
         if (activeInProgressToolEntries.length > 0) {
           const groupId = workGroupId(timelineEntry.id);
-          const expanded = input.expandedWorkGroupIds?.has(groupId) ?? false;
+          const expanded =
+            (input.expandedWorkGroupIds?.has(groupId) ?? false) ||
+            groupedEntries.some((entry) => entry.id === input.findEntryId);
           const latestActiveToolEntry = activeInProgressToolEntries.at(-1)!;
           nextRows.push({
             kind: "work-live",
@@ -1670,7 +1675,9 @@ export function deriveMessagesTimelineRows(input: {
           });
         } else {
           const groupId = workGroupId(timelineEntry.id);
-          const expanded = input.expandedWorkGroupIds?.has(groupId) ?? false;
+          const expanded =
+            (input.expandedWorkGroupIds?.has(groupId) ?? false) ||
+            groupedEntries.some((entry) => entry.id === input.findEntryId);
           const summaryKind = toolGroupSummaryKind(visibleGroupedEntries);
           const primarySourceEntry = visibleGroupedEntries.find(
             (entry) => entry.toolSource !== undefined,
@@ -1882,7 +1889,9 @@ export function deriveMessagesTimelineRows(input: {
     const failedGroupAnchor = latestToolFailed ? activeWorkAnchor : undefined;
     if (failedGroupAnchor) {
       const groupId = workGroupId(failedGroupAnchor.id);
-      const expanded = input.expandedWorkGroupIds?.has(groupId) ?? false;
+      const expanded =
+        (input.expandedWorkGroupIds?.has(groupId) ?? false) ||
+        visibleActiveToolEntries.some((entry) => entry.id === input.findEntryId);
       nextRows.push({
         kind: "thinking",
         id: LIVE_ACTIVITY_ROW_ID,

@@ -182,6 +182,21 @@ export function useThreadFindNavigation({
         return;
       }
 
+      // Work groups and output panels scroll independently of the timeline.
+      for (
+        let element = range.startContainer.parentElement;
+        element && element !== container;
+        element = element.parentElement
+      ) {
+        if (element.scrollHeight <= element.clientHeight || element.clientHeight === 0) continue;
+        const overflow = getComputedStyle(element).overflowY;
+        if (overflow !== "auto" && overflow !== "scroll") continue;
+        const bounds = range.getBoundingClientRect();
+        const viewport = element.getBoundingClientRect();
+        if (bounds.top < viewport.top) element.scrollTop += bounds.top - viewport.top - 16;
+        else if (bounds.bottom > viewport.bottom)
+          element.scrollTop += bounds.bottom - viewport.bottom + 16;
+      }
       const codeScroller = range.startContainer.parentElement?.closest("pre");
       if (codeScroller) {
         const rect = range.getBoundingClientRect();
