@@ -102,10 +102,20 @@ export const makeRepo = () => {
     return git(["rev-parse", "HEAD"]);
   };
   /** A pack of what `include` reaches and `exclude` does not, as the Runner builds one. */
-  const pack = (include: ReadonlyArray<string>, exclude: ReadonlyArray<string> = []) => {
+  const pack = (
+    include: ReadonlyArray<string>,
+    exclude: ReadonlyArray<string> = [],
+    filter?: string,
+  ) => {
     const out = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "drive-pack-"));
     const name = git(
-      ["pack-objects", "--revs", "--delta-base-offset", NodePath.join(out, "pack")],
+      [
+        "pack-objects",
+        "--revs",
+        ...(filter === undefined ? [] : [`--filter=${filter}`]),
+        "--delta-base-offset",
+        NodePath.join(out, "pack"),
+      ],
       [...include, ...exclude.map((oid) => `^${oid}`)].join("\n") + "\n",
     );
     const read = (ext: string): Bytes =>
