@@ -10,6 +10,7 @@ import {
   findFileScriptCalls,
   findRequiredCalls,
   guardedByMatchingFile,
+  maskShellComments,
   repoPath,
 } from "./deploy-workflow-shell.mjs";
 
@@ -100,8 +101,9 @@ export function auditDeployWorkflow(source, repoRoot = root) {
 
       if (typeof step?.run !== "string") continue;
       const workingDirectory = repoPath(step["working-directory"] ?? jobWorkingDirectory);
-      const calls = findFileScriptCalls(step.run);
-      const guards = findFileGuards(step.run, workingDirectory ?? ".");
+      const source = maskShellComments(step.run);
+      const calls = findFileScriptCalls(source);
+      const guards = findFileGuards(source, workingDirectory ?? ".");
 
       for (const call of calls) {
         const script = workingDirectory === null ? null : repoPath(call.file, workingDirectory);
@@ -141,17 +143,14 @@ export function auditDeployWorkflow(source, repoRoot = root) {
           continue;
         }
 
-        if (
-          workingDirectory === null ||
-          !guardedByMatchingFile(step.run, call.index, script, workingDirectory)
-        ) {
+        if (workingDirectory === null || !guardedByMatchingFile(guards, call.index, script)) {
           problems.push(
             `${jobName}/${step.name ?? `step ${stepIndex + 1}`} runs PR-head script ${script} without a matching file-existence guard or trusted main checkout`,
           );
         }
       }
 
-      for (const required of findRequiredCalls(step.run)) {
+      for (const required of findRequiredCalls(source)) {
         if (
           guards.some((guard) => required.index > guard.start && required.index < guard.blockEnd)
         ) {

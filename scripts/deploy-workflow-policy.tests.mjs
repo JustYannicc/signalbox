@@ -42,6 +42,152 @@ NodeTest.test("an unguarded Node script from the PR checkout fails", () => {
   );
 });
 
+NodeTest.test("comment lines cannot shift an optional guard over an unguarded script", () => {
+  const workflow = fixture(`      - name: Release event
+        working-directory: apps/cloud
+        run: |
+          if [[ -f infra/release-event.ts ]]; then
+            # ${"x".repeat(160)}
+          fi
+          node infra/release-event.ts
+`);
+  NodeAssert.throws(
+    () => assertDeployWorkflowPolicy(workflow),
+    /PR-head script apps\/cloud\/infra\/release-event\.ts/,
+  );
+});
+
+NodeTest.test("comment lines cannot shift a required package script into a guard", () => {
+  const workflow = fixture(`      - name: Build
+        run: |
+          # ${"x".repeat(160)}
+          if [[ -f apps/web/package.json ]]; then
+            vp run --filter @t3tools/web build
+          fi
+`);
+  NodeAssert.throws(() => assertDeployWorkflowPolicy(workflow), /guards a required package script/);
+});
+
+NodeTest.test("comment lines cannot shift a required deploy binary into a guard", () => {
+  const workflow = fixture(`      - name: Deploy
+        working-directory: apps/cloud
+        run: |
+          # ${"x".repeat(160)}
+          if [[ -f node_modules/.bin/alchemy ]]; then
+            ./node_modules/.bin/alchemy deploy --stage pr-1
+          fi
+`);
+  NodeAssert.throws(() => assertDeployWorkflowPolicy(workflow), /guards a required local binary/);
+});
+
+NodeTest.test("commented-out guards and script calls do not affect policy", () => {
+  const workflow = fixture(`      - name: Release event
+        working-directory: apps/cloud
+        run: |
+          # if [[ -f infra/release-event.ts ]]; then node infra/release-event.ts; fi
+          node infra/release-event.ts
+`);
+  NodeAssert.throws(
+    () => assertDeployWorkflowPolicy(workflow),
+    /PR-head script apps\/cloud\/infra\/release-event\.ts/,
+  );
+});
+
+NodeTest.test("comments do not break a valid optional script guard", () => {
+  const workflow = fixture(`      - name: Release event
+        working-directory: apps/cloud
+        run: |
+          # A missing telemetry file is expected on older PR heads.
+          if [[ -f infra/release-event.ts ]]; then
+            # If it exists, failures still fail this step.
+            node infra/release-event.ts
+          fi
+`);
+  NodeAssert.doesNotThrow(() => assertDeployWorkflowPolicy(workflow));
+});
+
+NodeTest.test("common Node and shell wrappers cannot hide PR scripts", () => {
+  const commands = [
+    "node --experimental-strip-types scripts/release.ts",
+    "node --import tsx scripts/release.ts",
+    "env RELEASE_STAGE=preview node scripts/release.ts",
+    "timeout 60 node scripts/release.ts",
+    "tsx scripts/release.ts",
+    "npx tsx scripts/release.ts",
+    "vp exec node scripts/release.ts",
+    "node scripts/release.mts",
+    "node scripts/release.cts",
+    "EVENT=`node scripts/release.ts`",
+  ];
+  for (const command of commands) {
+    const workflow = fixture(`      - name: Release event
+        run: ${command}
+`);
+    NodeAssert.throws(
+      () => assertDeployWorkflowPolicy(workflow),
+      /PR-head script scripts\/release\.(?:[mc])?ts/,
+      command,
+    );
+  }
+});
+
+NodeTest.test("common Node and shell wrappers allow a matching file guard", () => {
+  const commands = [
+    "node --experimental-strip-types scripts/release.ts",
+    "node --import tsx scripts/release.ts",
+    "env RELEASE_STAGE=preview node scripts/release.ts",
+    "timeout 60 node scripts/release.ts",
+    "tsx scripts/release.ts",
+    "npx tsx scripts/release.ts",
+    "vp exec node scripts/release.ts",
+    "node scripts/release.mts",
+    "node scripts/release.cts",
+    "EVENT=`node scripts/release.ts`",
+  ];
+  for (const command of commands) {
+    const script =
+      ["scripts/release.mts", "scripts/release.cts"].find((path) => command.includes(path)) ??
+      "scripts/release.ts";
+    const workflow = fixture(`      - name: Release event
+        run: |
+          if [[ -f ${script} ]]; then
+            ${command}
+          fi
+`);
+    NodeAssert.doesNotThrow(() => assertDeployWorkflowPolicy(workflow), command);
+  }
+});
+
+NodeTest.test("Node module hook scripts are checked independently from the main script", () => {
+  const workflow = fixture(`      - name: Release event
+        run: |
+          if [[ -f scripts/release.ts ]]; then
+            node --import ./scripts/preload.ts scripts/release.ts
+          fi
+`);
+  NodeAssert.throws(
+    () => assertDeployWorkflowPolicy(workflow),
+    (error) => error.message.includes("PR-head script scripts/preload.ts"),
+  );
+});
+
+NodeTest.test("Node module hook scripts can use a matching file guard", () => {
+  const commands = [
+    ["node --import ./scripts/preload.ts", "scripts/preload.ts"],
+    ["node --require=./scripts/preload.cjs", "scripts/preload.cjs"],
+    ["node --loader ./scripts/preload.mjs", "scripts/preload.mjs"],
+  ];
+  for (const [command, script] of commands) {
+    const workflow = fixture(`      - name: Release event
+        run: |
+          if [[ -f ${script} ]]; then
+            ${command}
+          fi
+`);
+    NodeAssert.doesNotThrow(() => assertDeployWorkflowPolicy(workflow), command);
+  }
+});
+
 NodeTest.test("a matching file check guards an optional Node script", () => {
   const workflow = fixture(`      - name: Release event
         working-directory: apps/cloud
@@ -117,6 +263,21 @@ NodeTest.test("a missing-file guard does not protect a script in its else branch
   NodeAssert.throws(
     () => assertDeployWorkflowPolicy(workflow),
     /PR-head script \.github\/scripts\/cleanup\.sh/,
+  );
+});
+
+NodeTest.test("a script in an elif branch is not protected by the first branch guard", () => {
+  const workflow = fixture(`      - name: Release event
+        run: |
+          if [[ -f scripts/release.ts ]]; then
+            echo "first branch"
+          elif [[ "$RUN_RELEASE" == "yes" ]]; then
+            node scripts/release.ts
+          fi
+`);
+  NodeAssert.throws(
+    () => assertDeployWorkflowPolicy(workflow),
+    /PR-head script scripts\/release\.(?:[mc])?ts/,
   );
 });
 

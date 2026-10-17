@@ -1,9 +1,60 @@
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 
-const scriptExtension = /\.(?:cjs|mjs|js|tsx?|sh|py|rb)$/i;
-const commandBoundary = String.raw`(?:^|[\n;&|()][ \t]*|\b(?:then|do|else)[ \t]+)`;
+const scriptExtension = /\.(?:cjs|mjs|js|[mc]?ts|tsx|sh|py|rb)$/i;
+const commandBoundary = String.raw`(?:^|[\n;&|()\x60][ \t]*|\b(?:then|do|else|elif)[ \t]+)`;
 const assignments = String.raw`(?:[A-Za-z_][A-Za-z0-9_]*=(?:"[^"]*"|'[^']*'|[^\s;|&()]+)[ \t]+)*`;
+const timeoutPrefix = String.raw`(?:timeout[ \t]+(?:--preserve-status[ \t]+)?[0-9]+(?:\.[0-9]+)?(?:[smhd])?[ \t]+)?`;
+const environmentPrefix = String.raw`(?:env[ \t]+)?${assignments}(?:env[ \t]+)?`;
+const commandPrefix = String.raw`${commandBoundary}(?:if[ \t]+)?!?[ \t]*${timeoutPrefix}${environmentPrefix}`;
+const runnerPrefix = String.raw`(?:(?:npx[ \t]+|vp[ \t]+exec[ \t]+|(?:pnpm|npm|yarn)[ \t]+exec[ \t]+))?`;
+const nodeOptions = String.raw`(?:--(?:import|require|loader|conditions|env-file|input-type|experimental-loader)(?:=[^\s;|&()]+|[ \t]+[^\s;|&()]+)|--[A-Za-z][A-Za-z0-9-]*(?:=[^\s;|&()]+)?|-[A-Za-z][A-Za-z0-9-]*(?:=[^\s;|&()]+)?)[ \t]+`;
+
+// Recognized commands are node/tsx/bash/sh/source/./python/ruby and direct relative paths. Wrappers
+// are env assignments, numeric timeout durations, npx, and vp/pnpm/npm/yarn exec without extra flags.
+// This does not expand variables or eval, or interpret shell functions and runner-specific flags.
+
+export function maskShellComments(source) {
+  const characters = source.split("");
+  let quote = null;
+  let escaped = false;
+  let inComment = false;
+
+  for (let index = 0; index < characters.length; index += 1) {
+    const character = characters[index];
+    if (inComment) {
+      if (character === "\r" || character === "\n") {
+        inComment = false;
+      } else {
+        characters[index] = " ";
+      }
+      continue;
+    }
+
+    if (escaped) {
+      escaped = false;
+      continue;
+    }
+    if (quote === "'") {
+      if (character === "'") quote = null;
+      continue;
+    }
+    if (quote === '"') {
+      if (character === "\\") escaped = true;
+      else if (character === '"') quote = null;
+      continue;
+    }
+
+    if (character === "\\") escaped = true;
+    else if (character === "'" || character === '"') quote = character;
+    else if (character === "#" && (index === 0 || /[\s;|&(){}\x60]/.test(characters[index - 1]))) {
+      inComment = true;
+      characters[index] = " ";
+    }
+  }
+
+  return characters.join("");
+}
 
 function unquote(value) {
   return value.replace(/^(?:"([\s\S]*)"|'([\s\S]*)')$/, (_, double, single) => double ?? single);
@@ -25,10 +76,9 @@ export function repoPath(value, base = ".") {
   return normalized === ".." || normalized.startsWith("../") ? null : normalized;
 }
 
-export function findFileScriptCalls(run) {
-  const source = run.replace(/^\s*#.*$/gm, "");
+export function findFileScriptCalls(source) {
   const interpreterPattern = new RegExp(
-    `${commandBoundary}(?:if[ \\t]+)?!?[ \\t]*${assignments}(?:env[ \\t]+)?(?:node|bash|sh|source|\\.|python3?|ruby)[ \\t]+(?:-[A-Za-z][A-Za-z0-9-]*(?:=[^\\s]+)?[ \\t]+)*(?:"([^"]+)"|'([^']+)'|([^\\s;|&()]+))`,
+    `${commandPrefix}${runnerPrefix}(?:node|tsx|bash|sh|source|\\.|python3?|ruby)[ \\t]+(?:${nodeOptions})*(?:"([^"]+)"|'([^']+)'|(?!-)([^\\s;|&()\\x60]+))`,
     "g",
   );
   const calls = [];
@@ -39,8 +89,19 @@ export function findFileScriptCalls(run) {
     }
   }
 
+  const nodeLoadOptionPattern = new RegExp(
+    `${commandPrefix}${runnerPrefix}node[ \\t]+(?:${nodeOptions})*?--(?:import|require|loader|experimental-loader)(?:=|[ \\t]+)(?:"([^"]+)"|'([^']+)'|([^\\s;|&()\\x60]+))`,
+    "g",
+  );
+  for (const match of source.matchAll(nodeLoadOptionPattern)) {
+    const candidate = match[1] ?? match[2] ?? match[3];
+    if (scriptExtension.test(candidate)) {
+      calls.push({ index: match.index, file: unquote(candidate) });
+    }
+  }
+
   const directPattern = new RegExp(
-    `${commandBoundary}(?:if[ \\t]+)?!?[ \\t]*${assignments}(?:"([^"]+)"|'([^']+)'|((?:\\.{1,2}/|/)[^\\s;|&()]+))`,
+    `${commandPrefix}(?:"([^"]+)"|'([^']+)'|((?:\\.{1,2}/|/)[^\\s;|&()\\x60]+))`,
     "g",
   );
   for (const match of source.matchAll(directPattern)) {
@@ -49,17 +110,16 @@ export function findFileScriptCalls(run) {
       calls.push({ index: match.index, file: unquote(candidate) });
     }
   }
-  return calls;
+  return [...new Map(calls.map((call) => [`${call.index}:${call.file}`, call])).values()];
 }
 
-export function findRequiredCalls(run) {
-  const source = run.replace(/^\s*#.*$/gm, "");
+export function findRequiredCalls(source) {
   const packagePattern = new RegExp(
-    `${commandBoundary}(?:if[ \\t]+)?!?[ \\t]*${assignments}(?:vp|pnpm|npm|yarn)(?:[ \\t]+[^\\s;|&()]+)*?[ \\t]+run(?:-script)?\\b`,
+    `${commandPrefix}(?:vp|pnpm|npm|yarn)(?:[ \\t]+[^\\s;|&()]+)*?[ \\t]+run(?:-script)?\\b`,
     "g",
   );
   const localBinaryPattern = new RegExp(
-    `${commandBoundary}(?:if[ \\t]+)?!?[ \\t]*${assignments}((?:\\.{1,2}/)*node_modules/\\.bin/[A-Za-z0-9._-]+)`,
+    `${commandPrefix}((?:\\.{1,2}/)*node_modules/\\.bin/[A-Za-z0-9._-]+)`,
     "g",
   );
   const requiredScripts = new Map([
@@ -77,7 +137,7 @@ export function findRequiredCalls(run) {
       index: match.index,
       kind: "local binary",
     })),
-    ...findFileScriptCalls(run)
+    ...findFileScriptCalls(source)
       .filter(({ file }) => requiredScripts.has(NodePath.posix.basename(file)))
       .map(({ index, file }) => ({
         index,
@@ -86,10 +146,10 @@ export function findRequiredCalls(run) {
   ];
 }
 
-export function findFileGuards(run, workingDirectory) {
+export function findFileGuards(source, workingDirectory) {
   const pattern =
-    /\bif\s+(?:\[\[\s+-f\s+(?<double>"[^"]+"|'[^']+'|[^\s;]+)\s+\]\]|\[\s+-f\s+(?<single>"[^"]+"|'[^']+'|[^\s\]]+)\s+\]|test\s+-f\s+(?<test>"[^"]+"|'[^']+'|[^\s;]+))\s*;?\s*then\b(?<thenBody>[\s\S]*?)(?:\belse\b(?<elseBody>[\s\S]*?))?\bfi\b/g;
-  return [...run.matchAll(pattern)].map((match) => {
+    /\bif\s+(?:\[\[\s+-f\s+(?<double>"[^"]+"|'[^']+'|[^\s;]+)\s+\]\]|\[\s+-f\s+(?<single>"[^"]+"|'[^']+'|[^\s\]]+)\s+\]|test\s+-f\s+(?<test>"[^"]+"|'[^']+'|[^\s;]+))\s*;?\s*then\b(?<thenBody>[\s\S]*?)(?:\b(?:elif|else)\b[\s\S]*?)?\bfi\b/g;
+  return [...source.matchAll(pattern)].map((match) => {
     const thenBody = match.groups.thenBody;
     const thenStart = match.index + match[0].indexOf(thenBody);
     return {
@@ -153,8 +213,8 @@ export function dependencyClosure(file, repoRoot) {
   return { files: visited, failures };
 }
 
-export function guardedByMatchingFile(run, callIndex, file, workingDirectory) {
-  return findFileGuards(run, workingDirectory).some(
+export function guardedByMatchingFile(guards, callIndex, file) {
+  return guards.some(
     (guard) => guard.file === file && callIndex > guard.start && callIndex < guard.thenEnd,
   );
 }
