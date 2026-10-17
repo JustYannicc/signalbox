@@ -4,6 +4,7 @@ import { createPostHogDrain } from "evlog/posthog";
 import { createSentryDrain } from "evlog/sentry";
 
 import { redactContent } from "./src/observability/content.ts";
+import { postHogEnabled } from "./src/observability/posthog.ts";
 
 /**
  * evlog for Signalbox Cloud (#285): one wide event per request, turn, Durable
@@ -14,7 +15,8 @@ import { redactContent } from "./src/observability/content.ts";
  * - `SENTRY_DSN`: wide events as Sentry logs, and errors as Sentry issues.
  * - `POSTHOG_API_KEY` and `POSTHOG_HOST`: wide events as PostHog logs. Both
  *   are required: there is no default host, since Signalbox's PostHog is to be
- *   an EU project (#358) and evlog's default is US. Off with
+ *   an EU project (#358) and evlog's default is US. Also requires
+ *   `SIGNALBOX_POSTHOG_ENABLED=true` after #358 lands. Off with
  *   `T3CODE_TELEMETRY_ENABLED=false`, the self-hosted server's switch.
  * - `SIGNALBOX_STAGE`: the event's environment. evlog reads `APP_VERSION`
  *   (the release) itself.
@@ -22,13 +24,14 @@ import { redactContent } from "./src/observability/content.ts";
  * A drain without its key is left out, so local dev and tests drain nowhere.
  */
 
-const telemetryOff = ["false", "no", "off", "0", "n"].includes(
-  process.env.T3CODE_TELEMETRY_ENABLED?.trim().toLowerCase() ?? "",
-);
+const analyticsEnabled = postHogEnabled({
+  SIGNALBOX_POSTHOG_ENABLED: process.env.SIGNALBOX_POSTHOG_ENABLED,
+  T3CODE_TELEMETRY_ENABLED: process.env.T3CODE_TELEMETRY_ENABLED,
+});
 
 const drains = [
   process.env.SENTRY_DSN ? createSentryDrain({ issues: true }) : null,
-  process.env.POSTHOG_API_KEY && process.env.POSTHOG_HOST && !telemetryOff
+  process.env.POSTHOG_API_KEY && process.env.POSTHOG_HOST && analyticsEnabled
     ? createPostHogDrain({ host: process.env.POSTHOG_HOST })
     : null,
 ].filter((drain) => drain !== null);

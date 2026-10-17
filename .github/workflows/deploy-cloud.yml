@@ -120,6 +120,9 @@ jobs:
       SENTRY_DSN: ${{ secrets.SENTRY_DSN }}
       POSTHOG_API_KEY: ${{ secrets.POSTHOG_API_KEY }}
       POSTHOG_HOST: ${{ vars.POSTHOG_HOST }}
+      # Leave unset until #358 lands; credentials alone never enable sends.
+      SIGNALBOX_POSTHOG_ENABLED: ${{ vars.SIGNALBOX_POSTHOG_ENABLED }}
+      T3CODE_TELEMETRY_ENABLED: ${{ vars.T3CODE_TELEMETRY_ENABLED }}
     steps:
       - &checkout
         name: Checkout
@@ -373,6 +376,9 @@ jobs:
       SENTRY_DSN: ${{ secrets.SENTRY_DSN }}
       POSTHOG_API_KEY: ${{ secrets.POSTHOG_API_KEY }}
       POSTHOG_HOST: ${{ vars.POSTHOG_HOST }}
+      # Leave unset until #358 lands; credentials alone never enable sends.
+      SIGNALBOX_POSTHOG_ENABLED: ${{ vars.SIGNALBOX_POSTHOG_ENABLED }}
+      T3CODE_TELEMETRY_ENABLED: ${{ vars.T3CODE_TELEMETRY_ENABLED }}
     steps:
       - *checkout
       - *setup

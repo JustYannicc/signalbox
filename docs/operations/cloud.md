@@ -693,8 +693,10 @@ and `cloud-production`), passed through `alchemy.run.ts`. Each is optional:
   destination to Sentry's OTLP endpoint (all of a preview's requests, a tenth
   of production's).
 - `POSTHOG_API_KEY` with the `POSTHOG_HOST` variable, both required (no
-  default host): every event as a PostHog log. Unset until Signalbox's EU
-  PostHog project exists (#358), so PostHog gets nothing yet.
+  default host): every event as a PostHog log. Both this drain and usage
+  analytics also require `SIGNALBOX_POSTHOG_ENABLED=true`. Leave that switch
+  unset until #358 lands, then set it with the EU project credentials.
+  Credentials alone never enable PostHog.
 
 After each deploy, CI sends one `release` event naming the stage and commit
 (`apps/cloud/infra/release-event.ts`). Without either key the events still go
@@ -702,8 +704,8 @@ to Workers Logs.
 
 ### Usage analytics
 
-With `SIGNALBOX_POSTHOG_KEY` set (and `SIGNALBOX_POSTHOG_HOST` for a non-US
-project), thread objects send `cloud.turn.completed` per turn and
+With `SIGNALBOX_POSTHOG_ENABLED=true` and both `SIGNALBOX_POSTHOG_KEY` and
+`SIGNALBOX_POSTHOG_HOST` set to the EU project, thread objects send `cloud.turn.completed` per turn and
 `cloud.machine.session` per machine wake to Signalbox's PostHog. These are the
 #116 events the cost replay reads. Ids are hashed and nothing carries content,
 paths or command text. `T3CODE_TELEMETRY_ENABLED=false` turns them off. The

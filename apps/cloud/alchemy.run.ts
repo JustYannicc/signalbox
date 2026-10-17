@@ -125,6 +125,8 @@ function telemetryEnv(stage: string) {
       SENTRY_DSN: yield* optionalSecret("SENTRY_DSN"),
       POSTHOG_API_KEY: yield* optionalSecret("POSTHOG_API_KEY"),
       POSTHOG_HOST: yield* optional("POSTHOG_HOST"),
+      SIGNALBOX_POSTHOG_ENABLED: yield* optional("SIGNALBOX_POSTHOG_ENABLED"),
+      T3CODE_TELEMETRY_ENABLED: yield* optional("T3CODE_TELEMETRY_ENABLED"),
     };
   });
 }
