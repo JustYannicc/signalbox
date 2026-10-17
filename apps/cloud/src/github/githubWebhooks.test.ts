@@ -57,6 +57,12 @@ describe("GitHub webhook events", () => {
         expect(
           yield* user.receiveHook({ ...request, body: new TextEncoder().encode(`${body} `) }),
         ).toEqual({ status: 401 });
+        for (const invalid of [undefined, "sha256=not-hex", "sha256=ab", signature.slice(7)]) {
+          const headers = { ...request.headers };
+          if (invalid === undefined) delete headers["x-hub-signature-256"];
+          else headers["x-hub-signature-256"] = invalid;
+          expect(yield* user.receiveHook({ ...request, headers })).toEqual({ status: 401 });
+        }
         const first = yield* user.receiveHook(request);
         expect(first).toMatchObject({ status: 202, duplicate: false });
         expect(yield* user.receiveHook(request)).toEqual({ ...first, duplicate: true });

@@ -1,5 +1,5 @@
 import { AutomationError, type AutomationEventName } from "@t3tools/contracts";
-import type { WorkflowEngineShape } from "@signalbox/automations/WorkflowEngine";
+import * as WorkflowEngine from "@signalbox/automations/WorkflowEngine";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
@@ -60,15 +60,10 @@ export const checksStateOf = (checks: MergeEvidence["checks"]) =>
 
 /** A durable delivery is acknowledged only once every triggered run and waiting step has taken it. */
 export const makeGitHubEventDelivery = Effect.gen(function* () {
+  const engine = yield* WorkflowEngine.WorkflowEngine;
   const merges = yield* PullRequestMerges;
   const github = yield* GitHub;
-  return (
-    engine: WorkflowEngineShape,
-    store: GitHubWebhookStore,
-    row: SubscriptionRow,
-    encoded: string,
-    id: string,
-  ) =>
+  return (store: GitHubWebhookStore, row: SubscriptionRow, encoded: string, id: string) =>
     Effect.gen(function* () {
       const delivery = decodeDelivery(encoded);
       const payload = parseGitHubPayload(delivery.body);
@@ -114,7 +109,10 @@ export const makeGitHubEventDelivery = Effect.gen(function* () {
           ),
         );
         const events = new Set(signal.events);
-        if (signal.events.includes("pr.checks.completed") && checksState !== before?.checks_state) {
+        if (
+          signal.events.includes("pr.checks.completed") &&
+          (facts.headSha !== before?.head_sha || checksState !== before?.checks_state)
+        ) {
           if (checksState === "passing") events.add("pr.checks.passed");
           if (checksState === "failing") events.add("pr.checks.failed");
         }

@@ -7,7 +7,7 @@ import * as Layer from "effect/Layer";
 import { toJson } from "@signalbox/automations/json";
 import * as SqlClient from "effect/sql/SqlClient";
 
-/** Accepted requests stay here until delivery succeeds. Completed ids are kept for one day. */
+/** Accepted requests stay here until delivery succeeds. */
 interface DeliveryRow {
   readonly id: string;
   readonly kind: "automation" | "callback" | "github";
@@ -16,7 +16,8 @@ interface DeliveryRow {
   readonly attempts: number;
 }
 
-const RETENTION_MS = 24 * 60 * 60_000;
+// GitHub lets senders redeliver events from the past three days.
+const RETENTION_MS = 3 * 24 * 60 * 60_000;
 const BATCH = 20;
 const storageError = (cause: unknown) =>
   new AutomationError({ message: "Couldn't store a webhook delivery.", cause });

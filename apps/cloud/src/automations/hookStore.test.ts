@@ -57,6 +57,10 @@ describe("durable webhook inbox", () => {
         expect([attempts, yield* hooks.nextAt]).toEqual([2, null]);
         expect(yield* hooks.enqueue(request)).toEqual({ ...accepted, duplicate: true });
         yield* TestClock.adjust("25 hours");
+        expect(yield* hooks.enqueue(request)).toEqual({ ...accepted, duplicate: true });
+        yield* TestClock.adjust("46 hours");
+        expect(yield* hooks.enqueue(request)).toEqual({ ...accepted, duplicate: true });
+        yield* TestClock.adjust("2 hours");
         expect(yield* hooks.enqueue(request)).toMatchObject({ status: 202, duplicate: false });
       }).pipe(Effect.provide(layer)),
   );

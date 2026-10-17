@@ -9,6 +9,7 @@ import {
 import * as HostedEngine from "@signalbox/automations/runner/layer";
 import { HostedRuns } from "@signalbox/automations/runner/hostedDriver";
 import * as WorkflowEngine from "@signalbox/automations/WorkflowEngine";
+import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -48,7 +49,7 @@ import * as HookStoreModule from "./hookStore.ts";
  * The object keeps the engine's records on its SQLite, starts steps when an
  * instance asks, runs agents in the user's cloud threads, and sends a waiting
  * step's outcome to its instance as an event. Its alarm starts crons and
- * reads steps' runs on GitHub Actions. Hooks, Executor calls and `w.run` on
+ * reads steps' runs on GitHub Actions. Executor calls and `w.run` on
  * the host aren't here yet; they fail with a clear message instead of hanging.
  */
 
@@ -162,8 +163,18 @@ const make = Effect.gen(function* () {
       return due.length === 0 ? null : Math.min(...due);
     }),
   );
+  const reconcileGitHubHooks = githubHooks.reconcile.pipe(
+    Effect.catch((error) =>
+      Effect.gen(function* () {
+        yield* Effect.logWarning("GitHub event subscription reconciliation failed", {
+          cause: error,
+        });
+        yield* Clock.currentTimeMillis.pipe(Effect.flatMap((now) => alarm.arm(now + 60_000)));
+      }),
+    ),
+  );
   const flush = drainAndPush.pipe(
-    Effect.andThen(githubHooks.reconcile(engine)),
+    Effect.andThen(reconcileGitHubHooks),
     Effect.andThen(nextAlarmAt),
     Effect.flatMap(alarm.arm),
     Effect.tapCause((cause) => Effect.logError("Cloud automations flush failed", cause)),
@@ -333,7 +344,7 @@ const make = Effect.gen(function* () {
       Effect.andThen(
         inbox.drain((row) =>
           row.kind === "github"
-            ? githubHooks.deliver(engine, row.target, row.payload, row.id)
+            ? githubHooks.deliver(row.target, row.payload, row.id)
             : hooks.deliver(row.kind, row.payload, row.id),
         ),
       ),
@@ -348,10 +359,10 @@ const make = Effect.gen(function* () {
 
 /** The engine on the user object: give it the object's SQLite, threads, pushes and its runner. */
 export const layer = Layer.effect(CloudAutomations, make).pipe(
-  Layer.provideMerge(HostedEngine.layer),
   Layer.provideMerge(
     GitHubWebhooksModule.layer.pipe(Layer.provideMerge(PullRequestMergesModule.layer)),
   ),
+  Layer.provideMerge(HostedEngine.layer),
   Layer.provideMerge(
     Layer.mergeAll(
       CloudThreads.layer,
