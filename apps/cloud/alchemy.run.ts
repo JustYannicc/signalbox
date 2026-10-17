@@ -27,6 +27,7 @@ import {
   PREVIEW_DRIVE_PACKS_BUCKET,
   PREVIEW_ZONE,
   SIGNALBOX_ZONE_ID,
+  syntheticSecretVars,
 } from "./infra/stage.ts";
 import type {
   DriveObject,
@@ -160,7 +161,12 @@ function workerEnv(target: CloudStage) {
           RUNNER_IMAGE: yield* optional("RUNNER_IMAGE"),
         };
 
-    return { ...target.vars, ...shared, ...stageEnv };
+    return {
+      ...target.vars,
+      ...shared,
+      ...stageEnv,
+      ...syntheticSecretVars(target, yield* optional("PREVIEW_SYNTHETIC_SECRET_SOURCE")),
+    };
   });
 }
 

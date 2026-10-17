@@ -29,6 +29,7 @@ import * as GitHub from "../github/GitHub.ts";
 import type { PackBucket } from "../drive/DrivePacks.ts";
 import * as Platform from "../platform.ts";
 import * as PoolDirectory from "../pool/PoolDirectory.ts";
+import * as PreviewSecrets from "../previewSecrets.ts";
 import * as PreviewState from "./preview/PreviewState.ts";
 import * as BrowserTrail from "./preview/BrowserTrail.ts";
 import { PreviewGateway } from "./preview/PreviewGateway.ts";
@@ -95,8 +96,11 @@ export interface ThreadObjectEnv
     CloudAnalytics.CloudAnalyticsEnv,
     PreviewEnv,
     GitHub.GitHubEnv {
+  readonly DEPLOYMENT_STAGE?: string;
+  readonly ENVIRONMENT_ID: string;
   /** Set by `vp run dev` only. Local workerd has no jurisdictions. */
   readonly LOCAL_WORKERD?: string;
+  readonly PREVIEW_SYNTHETIC_SECRETS?: string;
   readonly USERS: UserDirectory.UserObjectNamespace;
   /** Pools' objects: a turn starts only on a model its pool serves (`TurnModels.ts`). */
   readonly POOLS: PoolDirectory.PoolObjectNamespace;
@@ -305,6 +309,7 @@ export class ThreadObject extends DurableObject<ThreadObjectEnv> implements Thre
     );
     this.runnerHost = {
       ctx,
+      syntheticSecrets: PreviewSecrets.previewSyntheticSecretsEnabled(env),
       run: (effect) => this.runtime.runPromise(effect),
       holdsTurn: () =>
         this.runtime.runPromise(PullRequestSync.PullRequestSync.use((sync) => sync.holdsTurn)),

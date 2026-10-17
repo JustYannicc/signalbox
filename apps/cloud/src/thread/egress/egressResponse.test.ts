@@ -114,29 +114,25 @@ describe("redactEgressResponse", () => {
     expect(await response.text()).toBe("{{secret:KEY}}");
   });
 
-  it("keeps clean non-UTF-8 declared text byte-exact", async () => {
+  it("transcodes clean declared Latin-1 text to UTF-8", async () => {
     const body = new Uint8Array([0x63, 0x61, 0x66, 0xe9]);
     const response = await redactEgressResponse(
       new Response(body, { headers: { "content-type": "text/plain; charset=iso-8859-1" } }),
       secretValue,
     );
 
-    expect([...new Uint8Array(await response.arrayBuffer())]).toEqual([...body]);
+    expect(await response.text()).toBe("café");
+    expect(response.headers.get("content-type")).toBe("text/plain; charset=utf-8");
   });
 
-  it("stops a non-UTF-8 declared text response when raw secret bytes occur", async () => {
+  it("redacts a declared Latin-1 text response", async () => {
     const body = new Uint8Array([0x63, 0x61, 0x66, 0xe9, 0x20, ...secretBytes]);
     const response = await redactEgressResponse(
       new Response(body, { headers: { "content-type": "text/plain; charset=iso-8859-1" } }),
       secretValue,
     );
-    const result = await readToFailure(response);
-    const message = result.error instanceof Error ? result.error.message : "";
-
     expect(response.status).toBe(200);
-    expect(message.includes("KEY")).toBe(true);
-    expect(message.includes(secret)).toBe(false);
-    expect(new TextDecoder().decode(result.bytes).includes(secret)).toBe(false);
+    expect(await response.text()).toBe("café {{secret:KEY}}");
   });
 
   it("continues text redaction for UTF-8 text and drops representation headers", async () => {
@@ -185,7 +181,7 @@ describe("redactEgressResponse", () => {
     expect([...new Uint8Array(await response.arrayBuffer())]).toEqual([...body]);
   });
 
-  it("keeps large unknown-type UTF-8 bodies on the exact binary scan path", async () => {
+  it("keeps large clean unknown-type UTF-8 bodies readable", async () => {
     const body = new TextEncoder().encode(`${"ascii prefix ".repeat(6_000)}archive tail`);
     const response = await redactEgressResponse(
       new Response(body, { headers: { "content-type": "application/x-unknown" } }),

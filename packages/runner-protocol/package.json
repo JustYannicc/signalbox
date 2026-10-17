@@ -51,6 +51,10 @@
       "types": "./src/SecretProtection.ts",
       "import": "./src/SecretProtection.ts"
     },
+    "./SyntheticSecrets": {
+      "types": "./src/SyntheticSecrets.ts",
+      "import": "./src/SyntheticSecrets.ts"
+    },
     "./BrowserProtocol": {
       "types": "./src/BrowserProtocol.ts",
       "import": "./src/BrowserProtocol.ts"

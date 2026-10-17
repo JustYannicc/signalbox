@@ -1,4 +1,5 @@
 import { ProjectId, ThreadId } from "@t3tools/contracts";
+import { SYNTHETIC_SECRET_ENVIRONMENT } from "@signalbox/runner-protocol/SyntheticSecrets";
 import {
   type FolderCreateInput,
   type FolderDeleteInput,
@@ -33,6 +34,7 @@ import type { SqlError } from "effect/sql/SqlError";
 
 import { parseDriveId } from "../drive/driveAccess.ts";
 import { moveNotesUp } from "../notes/noteTables.ts";
+import * as PreviewSecrets from "../previewSecrets.ts";
 import type { TurnInstructions, TurnPools, TurnSecrets } from "../thread/turnPool.ts";
 import { contextOfProject, driveOfProject, projectIdForDrive } from "./contextProjects.ts";
 import { foldDrives } from "./driveFolders.ts";
@@ -229,12 +231,14 @@ const toTreeFolder = (row: typeof FolderRow.Type): TreeFolder => ({
 
 /** How long a filing waits for its thread to be created before the next filing drops it. */
 const UNCLAIMED_FILING_MS = 24 * 60 * 60 * 1000;
+const syntheticSecretEnvironmentId = OnePasswordEnvironmentId.make(SYNTHETIC_SECRET_ENVIRONMENT);
 
 const refuse = (message: string, reason: "not-found" | "invalid" = "invalid") =>
   Effect.fail(new FolderRefusedError({ reason, message }));
 
 const make = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
+  const syntheticSecretsEnabled = yield* PreviewSecrets.SyntheticSecretsEnabled;
   const crypto = yield* Crypto.Crypto;
   const contexts = yield* UserContexts.UserContexts;
   const driveIndex = yield* UserDriveIndex.UserDriveIndex;
@@ -653,6 +657,9 @@ const make = Effect.gen(function* () {
     mutate((current) =>
       Effect.gen(function* () {
         const environmentId = input.secrets?.environmentId ?? null;
+        if (environmentId === syntheticSecretEnvironmentId && !syntheticSecretsEnabled) {
+          return yield* refuse("Synthetic secrets are only available in an enabled preview.");
+        }
         if (input.level._tag === "top") {
           if (current.tree.topSecrets === environmentId) return false;
           yield* sql`UPDATE folders_state SET secrets_environment_id = ${environmentId} WHERE id = 1`;

@@ -92,11 +92,15 @@ While secret history exists, outbound request bodies must be inspectable UTF-8
 text no larger than 1 MiB. Git clone/fetch negotiation also permits gzip or
 deflate, with the same limit on both compressed and decoded bytes; binary Git
 push bodies remain refused. Every external response is checked, even when its
-request carried no secret. UTF-8 text responses use the egress text scrubber,
-which replaces every nonempty loaded hidden value and its common encodings. The
-model-facing text scrubber keeps its existing seven-character minimum. Binary
-responses and declared non-UTF-8 text are scanned against the exact bytes of
-loaded hidden values at least eight UTF-8 bytes long. Shorter values are not
+request carried no secret. Declared text, JSON, XML and form responses decode
+through the runtime's WHATWG `TextDecoder` using their declared charset, then
+redact every nonempty loaded hidden value and its common encodings. They return
+UTF-8 with the corresponding content type. ASCII and Latin-1 labels normalize
+to Windows-1252; UTF-16 byte order follows its encoding label. Unsupported or
+invalid charsets are refused, and malformed text aborts without passing its
+unredacted bytes. The model-facing text scrubber keeps its existing
+seven-character minimum. Binary responses are scanned against the exact bytes
+of loaded hidden values at least eight UTF-8 bytes long. Shorter values are not
 covered in binary responses; registration returns a names-only warning for a
 hidden value below that threshold. Clean identity-encoded binary responses
 retain their representation headers; decoding, text rewriting or a scrubbed
@@ -110,9 +114,12 @@ The binary scanner withholds the longest possible match across chunks. A match
 aborts the body before any byte of that secret is delivered. Headers or a safe
 prefix may already have arrived, so a late match truncates the response rather
 than changing its HTTP status. Errors identify the secret's name, never its value.
-An unknown content type is treated as text only when its complete body fits
-the 64 KiB sniff limit and is UTF-8 without binary controls; otherwise it uses
-the exact byte scanner, with the same eight-byte minimum.
+An unknown content type uses at most 64 KiB of prefix bytes to choose its path.
+A valid UTF-8 text prefix selects streaming text redaction, including for larger
+bodies; a code point split at the limit waits for its remaining bytes. Later
+invalid UTF-8 aborts that stream. Other prefixes use the exact byte scanner,
+with the same eight-byte minimum. Known binary content types always use that
+scanner.
 
 Platform drive uploads use a separate capability check: the configured storage
 endpoint, authorized drive, signed object path, expiry and byte length must

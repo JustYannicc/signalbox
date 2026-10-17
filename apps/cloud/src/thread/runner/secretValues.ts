@@ -125,7 +125,7 @@ export const registerSecretValues = (
       yield* sql`INSERT INTO secret_current_values (name, value) VALUES (${name}, ${value})
         ON CONFLICT (name) DO UPDATE SET value = excluded.value`;
     }
-    for (const { name, value } of secrets) {
+    for (const { name, value } of [...secrets, ...current]) {
       yield* sql`INSERT INTO secret_values (value, name) VALUES (${value}, ${name})
         ON CONFLICT (value) DO NOTHING`;
     }

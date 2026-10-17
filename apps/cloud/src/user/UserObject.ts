@@ -33,6 +33,7 @@ import { MCP_PATH, makeMcpHandler } from "../api/mcpObject.ts";
 import * as LocalKeys from "../localKeys/LocalKeys.ts";
 import * as LoginService from "../signIn/LoginService.ts";
 import * as NoteReader from "../notes/NoteReader.ts";
+import * as PreviewSecrets from "../previewSecrets.ts";
 import * as UserNotes from "../notes/UserNotes.ts";
 import * as SignInGrants from "../signIn/SignInGrants.ts";
 import * as Platform from "../platform.ts";
@@ -102,8 +103,10 @@ export interface UserObjectEnv
   /** Also where pasted screenshots and files live (`attachments/`). */
   readonly DRIVE_PACKS?: DrivePacks.PackBucket & AttachmentObjects;
   readonly DRIVE_PACKS_PREFIX?: string;
+  readonly DEPLOYMENT_STAGE?: string;
   readonly ENVIRONMENT_ID: string;
   readonly ENVIRONMENT_LABEL?: string;
+  readonly PREVIEW_SYNTHETIC_SECRETS?: string;
   /** Set by `vp run dev` only. Local workerd has no jurisdictions. */
   readonly LOCAL_WORKERD?: string;
   readonly THREADS: ThreadDirectory.ThreadObjectNamespace;
@@ -259,7 +262,16 @@ const makeRuntime = (storage: DurableObjectStorage, env: UserObjectEnv) => {
             ),
           ),
           Layer.provideMerge(LegacySections.layer),
-          Layer.provideMerge(UserFolders.layer),
+          Layer.provideMerge(
+            UserFolders.layer.pipe(
+              Layer.provide(
+                Layer.succeed(
+                  PreviewSecrets.SyntheticSecretsEnabled,
+                  PreviewSecrets.previewSyntheticSecretsEnabled(env),
+                ),
+              ),
+            ),
+          ),
           Layer.provideMerge(ModelManifest.layer),
           Layer.provideMerge(
             GitHub.layer(GitHub.gitHubPipesConfig(env), GitHub.gitHubEndpoints(env)).pipe(

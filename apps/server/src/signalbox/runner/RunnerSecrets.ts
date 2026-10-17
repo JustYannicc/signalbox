@@ -3,7 +3,8 @@ import {
   MIN_BINARY_SECRET_BYTES,
 } from "@signalbox/runner-protocol/SecretProtection";
 import type { SecretValue } from "@signalbox/runner-protocol/SecretScrubber";
-import type { OnePasswordEnvironmentId } from "@t3tools/contracts/signalboxFolders";
+import { SYNTHETIC_SECRET_ENVIRONMENT } from "@signalbox/runner-protocol/SyntheticSecrets";
+import { OnePasswordEnvironmentId } from "@t3tools/contracts/signalboxFolders";
 import {
   type SecretsAccess,
   type SecretsRegistration,
@@ -15,7 +16,8 @@ import * as Schema from "effect/Schema";
 import { HttpClient, HttpClientRequest } from "effect/http";
 
 import { routesHarness } from "./RunnerGatewayPins.ts";
-import type { OnePassword } from "./RunnerOnePassword.ts";
+import type { OnePassword, OnePasswordClient } from "./RunnerOnePassword.ts";
+import { makeRunnerSyntheticSecretClient } from "./RunnerSyntheticSecrets.ts";
 import type { SecretMask } from "./secretMask.ts";
 
 /**
@@ -68,6 +70,12 @@ type SecretRegistration = Omit<SecretsRegistration, "runId">;
 
 /** The name the 1Password service account token is masked under: 1Password's own variable. */
 const TOKEN_NAME = "OP_SERVICE_ACCOUNT_TOKEN";
+const syntheticEnvironmentId = OnePasswordEnvironmentId.make(SYNTHETIC_SECRET_ENVIRONMENT);
+const SYNTHETIC_CAPABILITY_REQUIRED =
+  "The synthetic preview secret source requires a preview capability.";
+const SYNTHETIC_SOURCE_MIXED =
+  "The synthetic preview secret source cannot be mixed with 1Password Environments.";
+const SYNTHETIC_GENERATION_FAILED = "Synthetic preview secrets could not be generated.";
 
 export interface RunnerSecrets {
   /**
@@ -160,8 +168,19 @@ export const makeRunnerSecrets = (input: {
         clear(guarded);
         return version;
       }
+      const synthetic = environments.some(
+        (environmentId) => environmentId === syntheticEnvironmentId,
+      );
+      if (synthetic && access?.synthetic !== true) {
+        clear(guarded);
+        return yield* new SecretsRegisterError({ message: SYNTHETIC_CAPABILITY_REQUIRED });
+      }
+      if (synthetic && environments.length !== 1) {
+        clear(guarded);
+        return yield* new SecretsRegisterError({ message: SYNTHETIC_SOURCE_MIXED });
+      }
       const token = access?.token ?? null;
-      if (token === null) {
+      if (!synthetic && token === null) {
         clear(guarded);
         yield* report.notice(
           "This folder's secrets come from 1Password, but no 1Password service account is connected, so none loaded. Connect one in the folder's Secrets.",
@@ -172,7 +191,12 @@ export const makeRunnerSecrets = (input: {
         registration = empty;
         return version;
       }
-      if (read !== null && read.token === token && sameStrings(read.environments, environments)) {
+      if (
+        !synthetic &&
+        read !== null &&
+        read.token === token &&
+        sameStrings(read.environments, environments)
+      ) {
         if (registration === null) {
           throw new Error("a cached 1Password read has no secret registration");
         }
@@ -185,39 +209,55 @@ export const makeRunnerSecrets = (input: {
       read = null;
       registration = null;
       fillable = { values: new Map(), guarded };
-      input.mask.add([{ name: TOKEN_NAME, value: token }]);
+      if (synthetic) use({});
       const failures: Array<string> = [];
       const next: Record<string, string> = {};
       const hidden: Array<SecretValue> = [];
       const skipped = new Set<string>();
       const routing = new Set<string>();
       const reserved = input.reserved();
-      const client = yield* input.onePassword(token).pipe(
-        Effect.catchTags({
-          OnePasswordError: (error) => {
-            failures.push(`signing in to 1Password failed: ${error.message}`);
-            return Effect.succeed(null);
-          },
-        }),
-      );
+      let client: OnePasswordClient | null = null;
+      if (synthetic) {
+        client = makeRunnerSyntheticSecretClient();
+      } else if (token !== null) {
+        input.mask.add([{ name: TOKEN_NAME, value: token }]);
+        client = yield* input.onePassword(token).pipe(
+          Effect.catchTags({
+            OnePasswordError: (error) => {
+              failures.push(`signing in to 1Password failed: ${error.message}`);
+              return Effect.succeed(null);
+            },
+          }),
+        );
+      }
+      const activeClient = client;
       const found =
-        client === null
+        activeClient === null
           ? []
           : yield* Effect.forEach(
               environments,
-              (environmentId) =>
-                client.variables(environmentId).pipe(
-                  Effect.map((variables) => ({ environmentId, variables })),
-                  Effect.catchTags({
-                    OnePasswordError: (error) => {
-                      failures.push(`Environment ${environmentId}: ${error.message}`);
-                      return Effect.succeed({ environmentId, variables: [] });
-                    },
-                  }),
-                ),
+              (environmentId) => {
+                const variables = activeClient
+                  .variables(environmentId)
+                  .pipe(Effect.map((variables) => ({ environmentId, variables })));
+                return synthetic
+                  ? variables.pipe(
+                      Effect.mapError(
+                        () => new SecretsRegisterError({ message: SYNTHETIC_GENERATION_FAILED }),
+                      ),
+                    )
+                  : variables.pipe(
+                      Effect.catchTags({
+                        OnePasswordError: (error) => {
+                          failures.push(`Environment ${environmentId}: ${error.message}`);
+                          return Effect.succeed({ environmentId, variables: [] });
+                        },
+                      }),
+                    );
+              },
               // In parallel, kept in order.
               { concurrency: "unbounded" },
-            );
+            ).pipe(Effect.tapError(() => Effect.sync(() => clear(guarded))));
       // Top level first: a nearer folder's variable replaces one from above.
       const currentSources = new Map<string, OnePasswordEnvironmentId>();
       /** Each name's nearest hidden value: what outbound placeholders can use. */
@@ -262,12 +302,13 @@ export const makeRunnerSecrets = (input: {
       );
       registration = nextRegistration;
       if (failures.length === 0) use(next);
-      read = failures.length === 0 ? { token, environments } : null;
+      read = failures.length === 0 && !synthetic && token !== null ? { token, environments } : null;
       fillable = { values: current, guarded };
       const count = Object.keys(next).length;
-      yield* report.info(
-        `loaded ${plural(count, "secret", "secrets")} from ${plural(environments.length, "1Password Environment", "1Password Environments")}`,
-      );
+      const source = synthetic
+        ? "synthetic preview"
+        : plural(environments.length, "1Password Environment", "1Password Environments");
+      yield* report.info(`loaded ${plural(count, "secret", "secrets")} from ${source}`);
       yield* warnAboutBinaryProtection(report, nextRegistration.secrets);
       if (failures.length > 0) {
         yield* report.notice(

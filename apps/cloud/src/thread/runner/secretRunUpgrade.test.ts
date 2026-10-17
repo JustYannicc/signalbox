@@ -1,5 +1,7 @@
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
+import { makeSecretScrubber } from "@signalbox/runner-protocol/SecretScrubber";
 import { expect, it } from "@effect/vitest";
+import { RunId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as SqlClient from "effect/sql/SqlClient";
 
@@ -8,8 +10,39 @@ import {
   migrateCurrentSecretValues,
   migrateSecretRunIdentity,
   migrateSecretValues,
+  beginSecretRun,
+  registerSecretValues,
   readSecretValues,
 } from "./secretValues.ts";
+
+it.effect("persists current-only secret values in redaction history", () =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    const generation = 3;
+    const runId = RunId.make("run-current-only");
+    const value = "current-only-fixture";
+    const current = [{ name: "KEY", value }];
+
+    yield* migrateSecretValues;
+    yield* migrateSecretSends;
+    yield* migrateCurrentSecretValues;
+    yield* migrateSecretRunIdentity;
+    yield* beginSecretRun(generation, runId).pipe(sql.withTransaction);
+    expect(
+      yield* registerSecretValues(generation, runId, [], current).pipe(sql.withTransaction),
+    ).toBe(true);
+
+    const snapshot = yield* readSecretValues;
+    expect(snapshot).toEqual({
+      registered: generation,
+      registeredRunId: runId,
+      revision: 3,
+      current,
+      values: current,
+    });
+    expect(makeSecretScrubber(snapshot.values).text(`echo ${value}`)).toBe("echo {{secret:KEY}}");
+  }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),
+);
 
 it.effect("0013 invalidates pre-run fills and sources while retaining redaction history", () =>
   Effect.gen(function* () {

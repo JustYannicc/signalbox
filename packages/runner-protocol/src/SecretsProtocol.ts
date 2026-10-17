@@ -28,6 +28,8 @@ export const SecretsAccess = Schema.Struct({
   token: Schema.NullOr(Schema.String),
   /** Top level first; a nearer folder's variable replaces one of the same name from above. */
   environments: Schema.Array(OnePasswordEnvironmentId),
+  /** Trusted preview deployment capability; never supplied by a folder assignment or token. */
+  synthetic: Schema.optionalKey(Schema.Literal(true)),
   /**
    * This machine's outbound requests pass through the thread's egress check
    * (#592), which asks before a secret goes to a new host. Only on a guarded

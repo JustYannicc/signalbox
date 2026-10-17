@@ -40,13 +40,8 @@ export const trustEgressCa = Effect.fn("trustEgressCa")(function* (
     if (!bundle.includes(ca)) yield* fs.writeFileString(SYSTEM_BUNDLE, `${ca}\n`, { flag: "a" });
     return true;
   }).pipe(
-    Effect.catch((error) =>
-      Effect.as(
-        Effect.logWarning("couldn't add the egress CA to the system bundle", {
-          message: error.message,
-        }),
-        false,
-      ),
+    Effect.catch(() =>
+      Effect.as(Effect.logWarning("couldn't add the egress CA to the system bundle"), false),
     ),
   );
   if (bundled) {

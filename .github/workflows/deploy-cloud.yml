@@ -334,6 +334,7 @@ jobs:
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
       PR_NUMBER: ${{ github.event.pull_request.number }}
       STAGE: pr-${{ github.event.pull_request.number }}
+      PREVIEW_SYNTHETIC_SECRET_SOURCE: ${{ vars.PREVIEW_SYNTHETIC_SECRET_SOURCE }}
       T3CODE_WORKOS_CLIENT_ID: ${{ vars.T3CODE_WORKOS_CLIENT_ID }}
       # The MCP authorization server (`apps/cloud/src/api/mcpRoutes.ts`); unset, MCP takes keys only.
       WORKOS_AUTHKIT_DOMAIN: ${{ vars.WORKOS_AUTHKIT_DOMAIN }}

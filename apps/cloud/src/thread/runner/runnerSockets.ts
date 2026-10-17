@@ -1,10 +1,12 @@
 import type { DriveAccess } from "@signalbox/runner-protocol/DriveProtocol";
+import { SYNTHETIC_SECRET_ENVIRONMENT } from "@signalbox/runner-protocol/SyntheticSecrets";
 import {
   runnerFrame,
   type ThreadMessage,
   threadFrame,
 } from "@signalbox/runner-protocol/RunnerProtocol";
 import type { RunId } from "@t3tools/contracts";
+import { OnePasswordEnvironmentId } from "@t3tools/contracts/signalboxFolders";
 import type * as Effect from "effect/Effect";
 
 import * as ThreadRunner from "./ThreadRunner.ts";
@@ -18,6 +20,7 @@ import * as ThreadRunner from "./ThreadRunner.ts";
  */
 
 const RUNNER_TAG = "runner";
+const syntheticSecretEnvironmentId = OnePasswordEnvironmentId.make(SYNTHETIC_SECRET_ENVIRONMENT);
 
 /** Close codes. 4000s are ours; the Runner reconnects after any of them but `refused`. */
 const CLOSE = { refused: 4001, replaced: 4002, protocol: 4003, released: 4004 } as const;
@@ -37,6 +40,7 @@ interface Attachment {
 
 export interface RunnerSocketHost {
   readonly ctx: DurableObjectState;
+  readonly syntheticSecrets?: boolean | undefined;
   readonly run: <A>(effect: Effect.Effect<A, never, ThreadRunner.ThreadRunner>) => Promise<A>;
   /**
    * Whether the turn waits for its pull requests' reads, which the object's
@@ -115,9 +119,12 @@ export async function pushRunnerWork(host: RunnerSocketHost): Promise<ThreadRunn
     starting && work.drive !== null
       ? await host.run(runner.use((service) => service.commitAuthor))
       : null;
+  const onlySyntheticEnvironment =
+    work.secrets.length > 0 &&
+    work.secrets.every((environment) => environment === syntheticSecretEnvironmentId);
   // Asked the same way, and only when the chain names an Environment.
   const secretsToken =
-    starting && work.secrets.length > 0
+    starting && work.secrets.length > 0 && !onlySyntheticEnvironment
       ? await host.run(runner.use((service) => service.secretsToken))
       : null;
   // Asked the same way, and only for a turn that resumes its harness session.
@@ -149,6 +156,7 @@ export async function pushRunnerWork(host: RunnerSocketHost): Promise<ThreadRunn
         secrets: {
           token: secretsToken,
           environments: work.secrets,
+          ...(host.syntheticSecrets === true ? { synthetic: true } : {}),
           ...(work.guarded ? { guarded: true } : {}),
         },
       });

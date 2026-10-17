@@ -3,6 +3,7 @@ import * as NodeStream from "node:stream";
 import * as NodeZlib from "node:zlib";
 
 import { makeSecretScrubber, type SecretValue } from "@signalbox/runner-protocol/SecretScrubber";
+import { egressTextDecoder, scrubEgressText } from "./egressText.ts";
 import { scanSecretBytes } from "./secretByteScan.ts";
 
 const UNKNOWN_TYPE_SNIFF_BYTES = 64 * 1024;
@@ -63,16 +64,7 @@ const refuse = () =>
 const bodyKind = (contentType: string | null): "binary" | "text" | "unknown" => {
   if (contentType === null) return "unknown";
   const mime = contentType.split(";", 1)[0]!.trim().toLowerCase();
-  if (TEXT_CONTENT_TYPE.test(mime)) {
-    const charset = /(?:^|;)\s*charset\s*=\s*(?:"([^"]+)"|'([^']+)'|([^;\s]+))/i.exec(contentType);
-    const label = charset?.[1] ?? charset?.[2] ?? charset?.[3];
-    if (label === undefined) return "text";
-    try {
-      return new TextDecoder(label).encoding === "utf-8" ? "text" : "binary";
-    } catch {
-      return "binary";
-    }
-  }
+  if (TEXT_CONTENT_TYPE.test(mime)) return "text";
   if (
     /^(image|audio|video|font)\//.test(mime) ||
     BINARY_APPLICATION_TYPES.has(mime) ||
@@ -93,17 +85,14 @@ const hasBinaryControls = (text: string) => {
   return false;
 };
 
-const looksLikeSmallText = (chunks: ReadonlyArray<Uint8Array>) => {
-  const length = chunks.reduce((total, chunk) => total + chunk.length, 0);
-  const bytes = new Uint8Array(length);
-  let offset = 0;
-  for (const chunk of chunks) {
-    bytes.set(chunk, offset);
-    offset += chunk.length;
-  }
+const looksLikeTextPrefix = (chunks: ReadonlyArray<Uint8Array>, complete: boolean) => {
   try {
-    const text = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(bytes);
-    return !hasBinaryControls(text);
+    const decoder = new TextDecoder("utf-8", { fatal: true });
+    for (const chunk of chunks) {
+      if (hasBinaryControls(decoder.decode(chunk, { stream: true }))) return false;
+    }
+    // A code point may straddle the sniff limit; only EOF makes an unfinished one invalid.
+    return !complete || !hasBinaryControls(decoder.decode());
   } catch {
     return false;
   }
@@ -170,8 +159,7 @@ const sniffUnknownBody = (
               sniffedBytes += item.value.length;
             }
 
-            const isSmallText =
-              sourceDone && sniffedBytes < UNKNOWN_TYPE_SNIFF_BYTES && looksLikeSmallText(chunks);
+            const isText = looksLikeTextPrefix(chunks, sourceDone);
             const prefixAndSource = new ReadableStream<Uint8Array>({
               start(controller) {
                 for (const chunk of chunks) controller.enqueue(chunk);
@@ -188,7 +176,11 @@ const sniffUnknownBody = (
               },
             });
             transformedReader = prefixAndSource
-              .pipeThrough(isSmallText ? scrubber.bytes() : scanSecretBytes(secrets))
+              .pipeThrough(
+                isText
+                  ? scrubEgressText(scrubber, new TextDecoder("utf-8", { fatal: true }))
+                  : scanSecretBytes(secrets),
+              )
               .getReader();
           } catch (cause) {
             controller.error(cause);
@@ -256,13 +248,23 @@ export async function redactEgressResponse(
     return refuse();
   }
 
-  const kind = bodyKind(response.headers.get("content-type"));
+  const contentType = response.headers.get("content-type");
+  const kind = bodyKind(contentType);
+  let textDecoder: TextDecoder | null = null;
+  if (kind === "text") {
+    try {
+      textDecoder = egressTextDecoder(contentType!);
+    } catch {
+      await response.body.cancel().catch(() => undefined);
+      return refuse();
+    }
+  }
   const redactedBody = transformLazily(response.body, (original) => {
     let body = original;
     for (const encoding of encodings.toReversed()) {
       body = body.pipeThrough(makeContentDecoder(encoding));
     }
-    if (kind === "text") return body.pipeThrough(scrubber.bytes());
+    if (textDecoder !== null) return body.pipeThrough(scrubEgressText(scrubber, textDecoder));
     if (kind === "binary") return body.pipeThrough(scanSecretBytes(secrets));
     return sniffUnknownBody(body, scrubber, secrets);
   });
@@ -270,6 +272,9 @@ export async function redactEgressResponse(
   if (!unchangedIdentityBinary || representationHeaderChanged) {
     for (const name of REPRESENTATION_HEADERS) headers.delete(name);
   }
-  if (contentTypeChanged) headers.delete("content-type");
+  if (kind === "text") {
+    const mime = contentTypeChanged ? "text/plain" : contentType!.split(";", 1)[0]!.trim();
+    headers.set("content-type", `${mime}; charset=utf-8`);
+  } else if (contentTypeChanged) headers.delete("content-type");
   return new Response(redactedBody, { status: response.status, headers });
 }
