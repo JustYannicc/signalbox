@@ -36,6 +36,7 @@ import {
 import { makeCloudBuiltinTools } from "./cloudBuiltinTools.ts";
 import { driveEvent, makeChangedFiles } from "./driveChanges.ts";
 import * as CloudCompilerModule from "./cloudCompiler.ts";
+import * as CloudModelSteps from "./cloudModelSteps.ts";
 import * as CloudThreads from "./cloudThreads.ts";
 import { callTool, makeCloudTools } from "./cloudTools.ts";
 import { makeGitHubActionsRunner } from "./githubActionsRunner.ts";
@@ -367,6 +368,7 @@ export const layer = Layer.effect(CloudAutomations, make).pipe(
     Layer.mergeAll(
       CloudThreads.layer,
       CloudCompilerModule.layer,
+      CloudModelSteps.layer,
       PullRequestReadsModule.layer,
       PullRequestMergesModule.layer,
       layerUnhosted,

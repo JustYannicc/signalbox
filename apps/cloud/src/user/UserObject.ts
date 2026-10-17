@@ -11,11 +11,14 @@ import * as ManagedRuntime from "effect/ManagedRuntime";
 import * as Schema from "effect/Schema";
 
 import * as CloudAssets from "../assets/CloudAssets.ts";
+import * as Evlog from "../observability/Evlog.ts";
+import * as ClientRpcTracing from "../observability/clientRpcTracing.ts";
 import * as IdentityProvider from "../account/IdentityProvider.ts";
 import * as CloudConfig from "../CloudConfig.ts";
 import { AutomationAlarm, CloudAutomations } from "../automations/CloudAutomations.ts";
 import * as PersonBrowsers from "../browser/PersonBrowsers.ts";
 import * as CloudEngine from "../automations/cloudEngine.ts";
+import { layerModelCompletion } from "../models/cloudflare.ts";
 import { HookOrigin } from "../automations/cloudIngress.ts";
 import { layerWorkflows } from "../automations/workflowRunner.ts";
 import { type AttachmentObjects, attachmentStorage } from "../attachments/attachmentObjects.ts";
@@ -126,6 +129,10 @@ export interface UserObjectEnv
   readonly POOLS: PoolDirectory.PoolObjectNamespace;
   /** `1` in dev and tests: clients may pick the scripted provider (`scriptedProvider.ts`). */
   readonly SCRIPTED_PROVIDER?: string;
+  /** The Worker binding that accepts filtered client RPC trace batches. */
+  readonly TRACE_EXPORT?: Pick<Fetcher, "fetch">;
+  /** Secret shared with the Worker-side trace intake. */
+  readonly TRACE_EXPORT_TOKEN?: string;
 }
 
 const decodeEnvironmentId = Schema.decodeSync(EnvironmentId);
@@ -209,7 +216,8 @@ const layerAlarm = (storage: DurableObjectStorage) =>
   );
 
 // The whole storage, not just `storage.sql`: migrations run in transactions.
-const makeRuntime = (storage: DurableObjectStorage, env: UserObjectEnv) => {
+const makeRuntime = (ctx: DurableObjectState, env: UserObjectEnv) => {
+  const { storage } = ctx;
   const drives = layerDrives(env);
   return ManagedRuntime.make(
     // The user's automations (#434), on the services below.
@@ -218,6 +226,7 @@ const makeRuntime = (storage: DurableObjectStorage, env: UserObjectEnv) => {
         Layer.mergeAll(
           layerWorkflows(env.AUTOMATION_RUNS),
           layerAutomationAlarm(storage),
+          layerModelCompletion({ pools: env.POOLS }, { localWorkerd: env.LOCAL_WORKERD === "1" }),
           Layer.succeed(HookOrigin, env.AUTOMATION_HOOK_ORIGIN ?? ""),
         ),
       ),
@@ -335,7 +344,14 @@ const makeRuntime = (storage: DurableObjectStorage, env: UserObjectEnv) => {
               }),
             ),
           ),
-          Layer.provideMerge(Layer.mergeAll(SqliteClient.layer({ storage }), Platform.layerCrypto)),
+          Layer.provideMerge(
+            Layer.mergeAll(
+              SqliteClient.layer({ storage }),
+              Platform.layerCrypto,
+              Evlog.layer,
+              Evlog.layerWaitUntil(ctx),
+            ),
+          ),
           Layer.provideMerge(
             IdentityProvider.layer.pipe(
               Layer.provide(CloudConfig.layer),
@@ -350,6 +366,7 @@ const makeRuntime = (storage: DurableObjectStorage, env: UserObjectEnv) => {
               Layer.orDie,
             ),
           ),
+          Layer.provideMerge(ClientRpcTracing.layer(env, (promise) => ctx.waitUntil(promise))),
         ),
       ),
     ),
@@ -379,7 +396,7 @@ export class UserObject extends DurableObject<UserObjectEnv> implements UserObje
       scripted: scriptedProviderEnabled(env),
       attachments: env.DRIVE_PACKS !== undefined,
     };
-    this.runtime = makeRuntime(ctx.storage, env);
+    this.runtime = makeRuntime(ctx, env);
     this.sockets = new ClientSockets({
       ctx,
       identity: this.identity,
@@ -557,6 +574,10 @@ export class UserObject extends DurableObject<UserObjectEnv> implements UserObje
     return this.api.contextIds();
   }
 
+  clientTraceDimensions(threadIds: Parameters<UserObjectApi["clientTraceDimensions"]>[0]) {
+    return this.api.clientTraceDimensions(threadIds);
+  }
+
   recordDriveAccess(entry: Parameters<UserObjectApi["recordDriveAccess"]>[0]) {
     return this.api.recordDriveAccess(entry);
   }
@@ -704,6 +725,12 @@ export class UserObject extends DurableObject<UserObjectEnv> implements UserObje
           ),
         ],
         { discard: true },
+      ).pipe(
+        // Named by the person's user id (`UserDirectory`).
+        Evlog.withUnit(
+          "user.alarm",
+          this.ctx.id.name === undefined ? {} : { person: { id: this.ctx.id.name } },
+        ),
       ),
     );
   }

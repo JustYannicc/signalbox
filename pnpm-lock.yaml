@@ -291,8 +291,8 @@ importers:
         specifier: 4.0.5
         version: 4.0.5
       evlog:
-        specifier: 2.30.0
-        version: 2.30.0(@types/node@24.12.4)(@types/react@19.3.0)(ai@7.0.127(zod@4.6.5))(esbuild@0.28.2)(express@5.2.1(supports-color@10.2.2))(h3@1.15.11)(hono@4.13.7)(jiti@2.7.0)(ofetch@1.5.1)(react@19.3.0)(terser@5.48.0)(typescript@7.0.2)(unrun@0.2.39)(yaml@2.9.0)
+        specifier: https://github.com/JustYannicc/evlog/releases/download/evlog-effect-preview.2/evlog-2.32.0-effect.2.tgz
+        version: https://github.com/JustYannicc/evlog/releases/download/evlog-effect-preview.2/evlog-2.32.0-effect.2.tgz(@types/node@24.12.4)(@types/react@19.3.0)(ai@7.0.127(zod@4.6.5))(effect@4.0.5)(esbuild@0.28.2)(express@5.2.1(supports-color@10.2.2))(h3@1.15.11)(hono@4.13.13)(jiti@2.7.0)(ofetch@1.5.1)(react@19.3.0)(terser@5.48.0)(typescript@7.0.2)(unrun@0.2.39)(yaml@2.9.0)
       fractional-indexing:
         specifier: 4.0.0
         version: 4.0.0
@@ -10657,6 +10657,74 @@ packages:
       '@types/react':
         optional: true
       ai:
+        optional: true
+      elysia:
+        optional: true
+      eve:
+        optional: true
+      express:
+        optional: true
+      fastify:
+        optional: true
+      h3:
+        optional: true
+      hono:
+        optional: true
+      next:
+        optional: true
+      nitro:
+        optional: true
+      nitropack:
+        optional: true
+      ofetch:
+        optional: true
+      react:
+        optional: true
+      react-router:
+        optional: true
+
+  evlog@https://github.com/JustYannicc/evlog/releases/download/evlog-effect-preview.2/evlog-2.32.0-effect.2.tgz:
+    resolution: {integrity: sha512-Gb7FYRwx7FWBZSJqsDxP5GLgtYtfX8uMaPPqXeiY+aYJQefYDD9MYQca5lUb0pHsBs7wpSLlvoCm8p11mAxe1g==, tarball: https://github.com/JustYannicc/evlog/releases/download/evlog-effect-preview.2/evlog-2.32.0-effect.2.tgz}
+    version: 2.32.0
+    engines: {node: '>=18.0.0'}
+    hasBin: true
+    peerDependencies:
+      '@nestjs/common': '>=11.2.7'
+      '@nestjs/core': '>=11.2.7'
+      '@nuxt/kit': ^4.4.2
+      '@orpc/server': '>=1.15.4'
+      '@tanstack/start-client-core': ^1.170.34
+      '@types/react': '*'
+      ai: '>=6.0.168 <8.0.0'
+      effect: 4.0.5
+      elysia: '>=1.4.30'
+      eve: '>=0.30.0'
+      express: '>=5.2.1'
+      fastify: '>=5.12.5'
+      h3: ^1.15.11
+      hono: '>=4.13.12'
+      next: '>=16.3.8'
+      nitro: ^3.0.260311-beta
+      nitropack: ^2.13.4
+      ofetch: ^1.5.1
+      react: '>=19.3.0'
+      react-router: '>=7.18.4'
+    peerDependenciesMeta:
+      '@nestjs/common':
+        optional: true
+      '@nestjs/core':
+        optional: true
+      '@nuxt/kit':
+        optional: true
+      '@orpc/server':
+        optional: true
+      '@tanstack/start-client-core':
+        optional: true
+      '@types/react':
+        optional: true
+      ai:
+        optional: true
+      effect:
         optional: true
       elysia:
         optional: true
@@ -24309,6 +24377,37 @@ snapshots:
       express: 5.2.1(supports-color@10.2.2)
       h3: 1.15.11
       hono: 4.13.7
+      ofetch: 1.5.1
+      react: 19.3.0
+    transitivePeerDependencies:
+      - '@arethetypeswrong/core'
+      - '@types/node'
+      - '@vitejs/devtools'
+      - esbuild
+      - jiti
+      - less
+      - publint
+      - sass
+      - sass-embedded
+      - stylus
+      - sugarss
+      - terser
+      - tsx
+      - typescript
+      - unplugin-unused
+      - unrun
+      - yaml
+
+  evlog@https://github.com/JustYannicc/evlog/releases/download/evlog-effect-preview.2/evlog-2.32.0-effect.2.tgz(@types/node@24.12.4)(@types/react@19.3.0)(ai@7.0.127(zod@4.6.5))(effect@4.0.5)(esbuild@0.28.2)(express@5.2.1(supports-color@10.2.2))(h3@1.15.11)(hono@4.13.13)(jiti@2.7.0)(ofetch@1.5.1)(react@19.3.0)(terser@5.48.0)(typescript@7.0.2)(unrun@0.2.39)(yaml@2.9.0):
+    dependencies:
+      vite: '@voidzero-dev/vite-plus-core@1.0.0(@types/node@24.12.4)(esbuild@0.28.2)(jiti@2.7.0)(terser@5.48.0)(typescript@7.0.2)(unrun@0.2.39)(yaml@2.9.0)'
+    optionalDependencies:
+      '@types/react': 19.3.0
+      ai: 7.0.127(zod@4.6.5)
+      effect: 4.0.5
+      express: 5.2.1(supports-color@10.2.2)
+      h3: 1.15.11
+      hono: 4.13.13
       ofetch: 1.5.1
       react: 19.3.0
     transitivePeerDependencies:
