@@ -277,6 +277,7 @@ function deploy(
           namespaceId: 866,
           simple: { limit: 300, period: 60 },
         }),
+        AUTOMATION_HOOK_ORIGIN: `https://${target.cloudDomain}`,
         // Binding and class names are the Durable Objects' identity.
         USERS: Cloudflare.DurableObject<UserObject>(DO.USERS),
         DRIVES: Cloudflare.DurableObject<DriveObject>(DO.DRIVES),

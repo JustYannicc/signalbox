@@ -45,7 +45,7 @@ export const openConnection = (input: {
   /** Sends one encoded frame, along with the message it encodes. */
   readonly send: (frame: string, message: FromServerEncoded) => void;
   /** Sees every message the client sends, just before the server gets it. */
-  readonly receiving?: (message: FromClientEncoded) => void;
+  readonly receiving?: (message: FromClientEncoded) => Effect.Effect<void>;
   readonly replay?: ReadonlyArray<FromClientEncoded>;
 }) =>
   Effect.gen(function* () {
@@ -118,7 +118,7 @@ export const openConnection = (input: {
           messages,
           (message) =>
             Effect.andThen(
-              Effect.sync(() => input.receiving?.(message)),
+              input.receiving?.(message) ?? Effect.void,
               Effect.provideService(write(CLIENT_ID, message), Tracer.Tracer, tracer),
             ),
           { discard: true },

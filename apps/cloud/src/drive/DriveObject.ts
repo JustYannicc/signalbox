@@ -213,4 +213,28 @@ export class DriveObject extends DurableObject<DriveObjectEnv> implements DriveO
   pendingAccess() {
     return this.api.pendingAccess();
   }
+
+  recordCheckpoint(...args: Parameters<DriveObjectApi["recordCheckpoint"]>) {
+    return this.api.recordCheckpoint(...args);
+  }
+
+  checkpoint(...args: Parameters<DriveObjectApi["checkpoint"]>) {
+    return this.api.checkpoint(...args);
+  }
+
+  forkCheckpoint(...args: Parameters<DriveObjectApi["forkCheckpoint"]>) {
+    return this.api.forkCheckpoint(...args);
+  }
+
+  restoreCheckpoint(...args: Parameters<DriveObjectApi["restoreCheckpoint"]>) {
+    return this.api.restoreCheckpoint(...args);
+  }
+
+  undoRestore(...args: Parameters<DriveObjectApi["undoRestore"]>) {
+    return this.api.undoRestore(...args);
+  }
+
+  updateToLatest(...args: Parameters<DriveObjectApi["updateToLatest"]>) {
+    return this.api.updateToLatest(...args);
+  }
 }

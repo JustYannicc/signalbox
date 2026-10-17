@@ -1,9 +1,10 @@
 /**
- * One automation: a header with its controls, then one of three views. Run
- * shows a run as a chat of what happened, Diagram draws it over the diagram,
- * Code shows the file the diagram is derived from. A run picked in `?run=`
- * shows; without one the latest run does. A pending draft adds a bar to
- * switch Diagram and Code between the live version and the draft.
+ * One automation: a header with where it lives and its controls, then its
+ * runs beside one of three views. Run shows a run as a chat of what happened,
+ * Diagram draws it over the diagram, Code shows the file the diagram is
+ * derived from. A run picked in `?run=` shows; without one the latest run
+ * does. A pending draft adds a bar to switch Diagram and Code between the
+ * live version and the draft.
  */
 import type { Automation, AutomationDetail, EnvironmentId } from "@t3tools/contracts";
 import { triggerSummary } from "@t3tools/client-runtime/automations/triggers";
@@ -15,6 +16,7 @@ import { createElement, useState } from "react";
 import { useEnvironmentQuery } from "../../state/query";
 import { automationState } from "../../state/automations";
 import { formatRelativeTimeUntil } from "../../timestampFormat";
+import { useProjectHomeLabel } from "../sidebar/folders/useProjectHomeLabel";
 import { Badge } from "../ui/badge";
 import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from "../ui/empty";
 import { Skeleton } from "../ui/skeleton";
@@ -23,6 +25,7 @@ import { AutomationActions } from "./AutomationActions";
 import { AutomationDraftBar, type DraftSide } from "./AutomationDraftBar";
 import { AutomationView, automationRoute } from "./automationFormat";
 import { AutomationRunChat } from "./AutomationRunChat";
+import { AutomationRunList } from "./AutomationRunList";
 import { AutomationsPageShell } from "./AutomationsPageShell";
 import { WatchedSources } from "./WatchedSources";
 import { AutomationSourceView } from "./AutomationSourceView";
@@ -87,7 +90,19 @@ export function AutomationPage(props: {
     shownRunId ? automationState.run({ environmentId, input: { runId: shownRunId } }) : null,
   );
   const runDetail = runQuery.data?.run.id === shownRunId ? runQuery.data : null;
-  const [draftSide, setDraftSide] = useState<DraftSide>("draft");
+  // A run picked by link (Home's needs-you row) shows on the live diagram, since runs
+  // don't draw on a draft. A side picked in the draft bar holds until the run changes.
+  const [pickedSide, setPickedSide] = useState<{ side: DraftSide; runId: string | null } | null>(
+    null,
+  );
+  const draftSide: DraftSide =
+    pickedSide && pickedSide.runId === props.runId
+      ? pickedSide.side
+      : props.runId
+        ? "live"
+        : "draft";
+  const setDraftSide = (side: DraftSide) => setPickedSide({ side, runId: props.runId });
+  const home = useProjectHomeLabel(environmentId, detail?.automation.projectId ?? null);
 
   if (!detail) {
     return (
@@ -113,6 +128,11 @@ export function AutomationPage(props: {
       replace: true,
     });
   };
+  // Runs only draw on the live diagram, so picking one leaves the draft.
+  const pickRun = (runId: string, view: AutomationView) => {
+    setPickedSide({ side: "live", runId });
+    show(view, runId);
+  };
   const nextRun = nextRunText(automation);
   const TriggerIcon = triggerIcon(automation);
   const selectedRun = detail.runs.find((run) => run.id === shownRunId) ?? runDetail?.run ?? null;
@@ -123,6 +143,7 @@ export function AutomationPage(props: {
   return (
     <AutomationsPageShell
       title={automation.name}
+      home={home}
       header={
         <div className="ms-auto flex shrink-0 items-center gap-3">
           <ToggleGroup
@@ -180,46 +201,55 @@ export function AutomationPage(props: {
           onSideChange={setDraftSide}
         />
       ) : null}
-      {props.view === "code" ? (
-        <AutomationSourceView
-          environmentId={environmentId}
-          automation={automation}
-          source={shownDraft?.source ?? detail.source}
-          compareTo={shownDraft && automation.version > 0 ? detail.source : null}
-          line={props.line}
+      <div className="@container/automation flex min-h-0 flex-1">
+        <AutomationRunList
+          runs={detail.runs}
+          selectedId={shownRunId}
+          // A run's chat stays a chat; from the diagram or the code, the run traces on the
+          // live diagram, since runs don't draw on a draft.
+          onSelect={(runId) => pickRun(runId, props.view === "run" ? "run" : "diagram")}
         />
-      ) : props.view === "run" ? (
-        runDetail ? (
-          <AutomationRunChat
+        {props.view === "code" ? (
+          <AutomationSourceView
             environmentId={environmentId}
-            run={runDetail}
-            version={automation.version}
-            triggerIcon={TriggerIcon}
-            onShowOnDiagram={() => show("diagram", runDetail.run.id)}
+            automation={automation}
+            source={shownDraft?.source ?? detail.source}
+            compareTo={shownDraft && automation.version > 0 ? detail.source : null}
+            line={props.line}
           />
-        ) : runQuery.error ? (
-          <Notice title="Couldn't load this run">{runQuery.error}</Notice>
-        ) : shownRunId ? (
-          <Loading label="Loading run" />
+        ) : props.view === "run" ? (
+          runDetail ? (
+            <AutomationRunChat
+              environmentId={environmentId}
+              run={runDetail}
+              version={automation.version}
+              triggerIcon={TriggerIcon}
+              onShowOnDiagram={() => pickRun(runDetail.run.id, "diagram")}
+            />
+          ) : runQuery.error ? (
+            <Notice title="Couldn't load this run">{runQuery.error}</Notice>
+          ) : shownRunId ? (
+            <Loading label="Loading run" />
+          ) : (
+            <Notice title="No runs yet">Run it now to see what each step does.</Notice>
+          )
         ) : (
-          <Notice title="No runs yet">Run it now to see what each step does.</Notice>
-        )
-      ) : (
-        <div className="flex min-h-0 flex-1 border-t">
-          <AutomationWorkspace
-            environmentId={environmentId}
-            detail={detail}
-            runDetail={runDetail}
-            selectedRun={selectedRun}
-            runError={props.runId ? runQuery.error : null}
-            triggerIcon={TriggerIcon}
-            onSelectRun={(runId) => show("diagram", runId)}
-            onOpenRunChat={(runId) => show("run", runId)}
-            onShowLine={(line) => show("code", props.runId, line)}
-            draft={shownDraft}
-          />
-        </div>
-      )}
+          <div className="flex min-h-0 flex-1 border-t">
+            <AutomationWorkspace
+              environmentId={environmentId}
+              detail={detail}
+              runDetail={runDetail}
+              selectedRun={selectedRun}
+              runError={props.runId ? runQuery.error : null}
+              triggerIcon={TriggerIcon}
+              onSelectRun={(runId) => pickRun(runId, "diagram")}
+              onOpenRunChat={(runId) => show("run", runId)}
+              onShowLine={(line) => show("code", props.runId, line)}
+              draft={shownDraft}
+            />
+          </div>
+        )}
+      </div>
     </AutomationsPageShell>
   );
 }
