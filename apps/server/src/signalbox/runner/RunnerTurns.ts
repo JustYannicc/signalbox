@@ -1296,7 +1296,7 @@ export const makeRunnerTurns = Effect.fn("makeRunnerTurns")(function* (input: {
         return Effect.void;
       }
 
-      // Suppress concurrent duplicates, but keep failures eligible for cloud replay.
+      // Suppress concurrent duplicates; a failed answer can replay after the socket reconnects.
       respondingRuntimeRequests.add(response.requestId);
       return observed.runtime
         .respondToRuntimeRequest({

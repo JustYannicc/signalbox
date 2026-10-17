@@ -797,6 +797,13 @@ const make = Effect.gen(function* () {
     Effect.gen(function* () {
       const run = projection === null ? undefined : harnessRun(projection);
       const upgrade = runtimeResponseUpgrade(lease, projection, run, now, DRAIN_TIMEOUT_MS);
+      const blockedNoticeMissing =
+        upgrade.type === "blocked" &&
+        projection !== null &&
+        run !== undefined &&
+        !projection.turnItems.some(
+          (item) => item.id === `turn-item:${run.id}:runner-update-blocked:${lease.generation}`,
+        );
       const untraced = projection === null ? null : yield* turnFor(projection);
       const turn =
         untraced === null || upgrade.type !== "none"
@@ -808,6 +815,7 @@ const make = Effect.gen(function* () {
         generation: lease.generation,
         needsUpkeep:
           (upgrade.type !== "none" && upgrade.type !== "blocked") ||
+          blockedNoticeMissing ||
           needsUpkeep(lease, run !== undefined, yield* previews.held),
         drain: lease.drain?._tag === "asked" ? lease.drain.id : null,
         turn,
@@ -835,7 +843,8 @@ const make = Effect.gen(function* () {
             : { token: yield* sessionTokenOf(lease.token, projection.thread.id, lease.generation) },
         secrets: turn === null ? [] : yield* Effect.orDie(store.secrets),
         activeRunId: run?.id ?? null,
-        runtimeResponses: projection === null ? [] : runtimeResponses(projection),
+        runtimeResponses:
+          projection === null || run === undefined ? [] : runtimeResponses(projection, run.id),
         // Only a Runner that takes steers is handed them.
         steers:
           projection === null || run?.status !== "running" || lease.steers !== true
@@ -1041,7 +1050,27 @@ const make = Effect.gen(function* () {
               },
               ctx,
             );
-          if (upgrade.type === "blocked") return keep({ ...IDLE, runId });
+          if (upgrade.type === "blocked") {
+            const id = TurnItemId.make(
+              `turn-item:${run.id}:runner-update-blocked:${lease.generation}`,
+            );
+            if (projection.turnItems.some((item) => item.id === id))
+              return keep({ ...IDLE, runId });
+            return {
+              events: systemNoticeEvents(
+                projection,
+                run,
+                {
+                  id,
+                  title: "Machine",
+                  message:
+                    "This machine couldn't update to support questions and approvals. Stop this turn before retrying.",
+                },
+                ctx,
+              ),
+              result: { ...IDLE, runId },
+            };
+          }
           if (upgrade.type === "drain")
             return {
               events: notice(),
