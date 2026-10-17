@@ -117,6 +117,22 @@ NodeTest.test("escaped CRLF continuations are masked without shifting call offse
   );
 });
 
+NodeTest.test("line continuations keep double- and single-quote behavior", () => {
+  const backslash = String.fromCharCode(92);
+  for (const lineEnding of ["\n", "\r\n"]) {
+    const doubleQuoted = `echo "value ${backslash}${lineEnding}node scripts/release.ts"`;
+    const doubleQuotedMask = maskShellComments(doubleQuoted);
+    NodeAssert.equal(doubleQuotedMask.length, doubleQuoted.length, JSON.stringify(lineEnding));
+    NodeAssert.equal(doubleQuotedMask.includes(`${backslash}${lineEnding}`), false);
+    NodeAssert.deepEqual(findFileScriptCalls(doubleQuotedMask), []);
+
+    const singleQuoted = `echo 'value ${backslash}${lineEnding}node scripts/release.ts'`;
+    const singleQuotedMask = maskShellComments(singleQuoted);
+    NodeAssert.equal(singleQuotedMask.length, singleQuoted.length, JSON.stringify(lineEnding));
+    NodeAssert.equal(singleQuotedMask.includes(`${backslash}${lineEnding}`), true);
+  }
+});
+
 NodeTest.test("comments do not break a valid optional script guard", () => {
   const workflow = fixture(`      - name: Release event
         working-directory: apps/cloud
@@ -192,6 +208,95 @@ NodeTest.test("an escaped line break preserves a matching file guard", () => {
   NodeAssert.doesNotThrow(() => assertDeployWorkflowPolicy(workflow));
 });
 
+NodeTest.test("a backslash at the end of a comment cannot hide the next command", () => {
+  const backslash = String.fromCharCode(92);
+  const workflow = fixture(`      - name: Release event
+        run: |
+          # node old.ts ${backslash}
+          node scripts/release.ts
+`);
+  NodeAssert.throws(
+    () => assertDeployWorkflowPolicy(workflow),
+    /PR-head script scripts\/release\.ts/,
+  );
+
+  for (const lineEnding of ["\n", "\r\n"]) {
+    const source = `# node old.ts ${backslash}${lineEnding}node scripts/release.ts`;
+    const masked = maskShellComments(source);
+    NodeAssert.equal(masked.length, source.length, JSON.stringify(lineEnding));
+    NodeAssert.deepEqual(
+      findFileScriptCalls(masked).map(({ file }) => file),
+      ["scripts/release.ts"],
+      JSON.stringify(lineEnding),
+    );
+  }
+});
+
+NodeTest.test("a backslash in a trailing comment cannot extend a file guard", () => {
+  const backslash = String.fromCharCode(92);
+  const workflow = fixture(`      - name: Release event
+        run: |
+          if [[ -f scripts/release.ts ]]; then node scripts/release.ts; fi # done ${backslash}
+          node scripts/release.ts
+`);
+  NodeAssert.throws(
+    () => assertDeployWorkflowPolicy(workflow),
+    /PR-head script scripts\/release\.ts/,
+  );
+});
+
+NodeTest.test("a backslash in a comment cannot hide required build or deploy commands", () => {
+  const backslash = String.fromCharCode(92);
+  const build = fixture(`      - name: Build
+        run: |
+          if [[ -f scripts/release.ts ]]; then
+            # optional ${backslash}
+            vp run build
+          fi
+`);
+  NodeAssert.throws(() => assertDeployWorkflowPolicy(build), /guards a required package script/);
+
+  const deploy = fixture(`      - name: Deploy
+        run: |
+          if [[ -f scripts/release.ts ]]; then
+            # optional ${backslash}
+            ./node_modules/.bin/alchemy deploy
+          fi
+`);
+  NodeAssert.throws(() => assertDeployWorkflowPolicy(deploy), /guards a required local binary/);
+});
+
+NodeTest.test("an escaped backslash at line end preserves the next command boundary", () => {
+  const backslash = String.fromCharCode(92);
+  for (const lineEnding of ["\n", "\r\n"]) {
+    const source = `echo a ${backslash}${backslash}${lineEnding}node scripts/release.ts`;
+    const masked = maskShellComments(source);
+    NodeAssert.equal(masked.length, source.length, JSON.stringify(lineEnding));
+    NodeAssert.deepEqual(
+      findFileScriptCalls(masked).map(({ file }) => file),
+      ["scripts/release.ts"],
+      JSON.stringify(lineEnding),
+    );
+  }
+});
+
+NodeTest.test("brace groups are command boundaries and can use a matching file guard", () => {
+  const unguarded = fixture(`      - name: Release event
+        run: |
+          { node scripts/release.ts; }
+`);
+  NodeAssert.throws(
+    () => assertDeployWorkflowPolicy(unguarded),
+    /PR-head script scripts\/release\.ts/,
+  );
+
+  const guarded = fixture(`      - name: Release event
+        run: |
+          if [[ -f scripts/release.ts ]]; then { node scripts/release.ts; }; fi
+`);
+  NodeAssert.doesNotThrow(() => assertDeployWorkflowPolicy(guarded));
+});
+
 NodeTest.test("nested conditionals inside a file guard fail closed", () => {
   const workflow = fixture(`      - name: Build
         run: |
@@ -218,6 +323,17 @@ NodeTest.test("nested conditionals inside a file guard fail closed", () => {
     () => assertDeployWorkflowPolicy(nestedElse),
     /uses nested conditionals inside file-existence guards, which are unsupported/,
   );
+
+  const nestedBrace = fixture(`      - name: Build
+        run: |
+          if [[ -f scripts/release.ts ]]; then
+            { if true; then :; fi; vp run build; }
+          fi
+`);
+  NodeAssert.throws(
+    () => assertDeployWorkflowPolicy(nestedBrace),
+    /uses nested conditionals inside file-existence guards, which are unsupported/,
+  );
 });
 
 NodeTest.test("common Node and shell wrappers cannot hide PR scripts", () => {
@@ -226,6 +342,7 @@ NodeTest.test("common Node and shell wrappers cannot hide PR scripts", () => {
     "node --import tsx scripts/release.ts",
     "node -r dotenv/config scripts/release.ts",
     "node -r=dotenv/config scripts/release.ts",
+    "node -C development scripts/release.ts",
     "env RELEASE_STAGE=preview node scripts/release.ts",
     "timeout 60 node scripts/release.ts",
     "tsx scripts/release.ts",
@@ -253,6 +370,7 @@ NodeTest.test("common Node and shell wrappers allow a matching file guard", () =
     "node --import tsx scripts/release.ts",
     "node -r dotenv/config scripts/release.ts",
     "node -r=dotenv/config scripts/release.ts",
+    "node -C development scripts/release.ts",
     "env RELEASE_STAGE=preview node scripts/release.ts",
     "timeout 60 node scripts/release.ts",
     "tsx scripts/release.ts",

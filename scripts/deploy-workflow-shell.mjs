@@ -2,13 +2,13 @@ import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 
 const scriptExtension = /\.(?:cjs|mjs|js|[mc]?ts|tsx|sh|py|rb)$/i;
-const commandBoundary = String.raw`(?:^|[\n;&|()\x60][ \t]*|\b(?:then|do|else|elif)[ \t]+)`;
+const commandBoundary = String.raw`(?:^|[\n;&|(){\x60][ \t]*|\b(?:then|do|else|elif)[ \t]+)`;
 const assignments = String.raw`(?:[A-Za-z_][A-Za-z0-9_]*=(?:"[^"]*"|'[^']*'|[^\s;|&()]+)[ \t]+)*`;
 const timeoutPrefix = String.raw`(?:timeout[ \t]+(?:--preserve-status[ \t]+)?[0-9]+(?:\.[0-9]+)?(?:[smhd])?[ \t]+)?`;
 const environmentPrefix = String.raw`(?:env[ \t]+)?${assignments}(?:env[ \t]+)?`;
 const commandPrefix = String.raw`${commandBoundary}(?:if[ \t]+)?!?[ \t]*${timeoutPrefix}${environmentPrefix}`;
 const runnerPrefix = String.raw`(?:(?:npx[ \t]+|vp[ \t]+exec[ \t]+|(?:pnpm|npm|yarn)[ \t]+exec[ \t]+))?`;
-const nodeOptions = String.raw`(?:--(?:import|require|loader|conditions|env-file|input-type|experimental-loader)(?:=[^\s;|&()]+|[ \t]+[^\s;|&()]+)|-r(?:=[^\s;|&()]+|[ \t]+[^\s;|&()]+)|--[A-Za-z][A-Za-z0-9-]*(?:=[^\s;|&()]+)?|-[A-Za-z][A-Za-z0-9-]*(?:=[^\s;|&()]+)?)[ \t]+`;
+const nodeOptions = String.raw`(?:--(?:import|require|loader|conditions|env-file|input-type|experimental-loader)(?:=[^\s;|&()]+|[ \t]+[^\s;|&()]+)|-(?:r|C)(?:=[^\s;|&()]+|[ \t]+[^\s;|&()]+)|--[A-Za-z][A-Za-z0-9-]*(?:=[^\s;|&()]+)?|-[A-Za-z][A-Za-z0-9-]*(?:=[^\s;|&()]+)?)[ \t]+`;
 
 // Recognized commands are node/tsx/bash/sh/source/./python/ruby and direct relative paths. Wrappers
 // are env assignments, numeric timeout durations, npx, and vp/pnpm/npm/yarn exec without extra flags.
@@ -23,6 +23,19 @@ export function maskShellComments(source) {
 
   for (let index = 0; index < characters.length; index += 1) {
     const character = characters[index];
+    if (inComment) {
+      if (character === "\r" || character === "\n") {
+        inComment = false;
+      } else {
+        characters[index] = " ";
+      }
+      continue;
+    }
+
+    if (escaped) {
+      escaped = false;
+      continue;
+    }
     if (character === "\\" && quote !== "'" && characters[index + 1] === "\n") {
       characters[index] = " ";
       characters[index + 1] = " ";
@@ -39,19 +52,6 @@ export function maskShellComments(source) {
       characters[index + 1] = " ";
       characters[index + 2] = " ";
       index += 2;
-      continue;
-    }
-    if (inComment) {
-      if (character === "\r" || character === "\n") {
-        inComment = false;
-      } else {
-        characters[index] = " ";
-      }
-      continue;
-    }
-
-    if (escaped) {
-      escaped = false;
       continue;
     }
     if (quote === "'") {
@@ -180,7 +180,7 @@ export function findFileGuards(source, workingDirectory) {
       start: match.index,
       thenEnd: thenStart + thenBody.length,
       blockEnd: match.index + match[0].length,
-      nested: /(?:^|[\n;&|()])[ \t]*if[ \t]+|\b(?:then|do|else|elif)[ \t]+if[ \t]+/.test(
+      nested: /(?:^|[\n;&|(){])[ \t]*if[ \t]+|\b(?:then|do|else|elif)[ \t]+if[ \t]+/.test(
         guardedBody,
       ),
     };
