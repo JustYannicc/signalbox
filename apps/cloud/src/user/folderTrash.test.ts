@@ -181,7 +181,7 @@ describe("folder trash", () => {
       expect(trashedAgain.trash.trashId).not.toBe(trashed.trash.trashId);
       expect(yield* folders.trashDetails(trashedAgain.trash.trashId)).toMatchObject({
         status: "trashed",
-        folderIds: [root.id, child.id, leaf.id],
+        folderIds: [root.id, child.id, leaf.id].toSorted(),
         noteIds: ["note-invoices"],
       });
       expect(yield* sql`SELECT id FROM notes WHERE id = 'note-invoices'`).toHaveLength(1);
