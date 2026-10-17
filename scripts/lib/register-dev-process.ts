@@ -1,7 +1,7 @@
-import { registerProcess } from "../../packages/shared/src/agentProcesses/registry.ts";
+import { registerProcess } from "@t3tools/shared/agentProcesses";
 import * as Effect from "effect/Effect";
 
-import { registeredPorts } from "./agent-process-environment.ts";
+import { registeredPorts } from "@t3tools/shared/agentProcessEnvironment";
 
 export const registerDevProcess = Effect.fn("agentProcesses.registerDevProcess")(function* (
   pid: number,

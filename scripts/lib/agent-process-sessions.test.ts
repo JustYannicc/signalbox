@@ -9,7 +9,7 @@ import {
   processSessionId,
   ownedSessionId,
   sessions,
-} from "../../packages/shared/src/agentProcessSessions.ts";
+} from "@t3tools/shared/agentProcessSessions";
 
 describe("agent session ownership", () => {
   it("never assigns a human command to an agent just because they share a checkout", async () => {

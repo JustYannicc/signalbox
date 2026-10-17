@@ -5,13 +5,5 @@
     "types": ["node"],
     "lib": ["ESNext", "esnext.disposable"]
   },
-  "include": [
-    "**/*.ts",
-    "../packages/shared/src/agentProcesses/**/*.ts",
-    "../packages/shared/src/agentProcessSessions.ts"
-  ],
-  "exclude": [
-    "../packages/shared/src/agentProcesses/**/*.test.ts",
-    "../packages/shared/src/agentProcesses/test-fixture.ts"
-  ]
+  "include": ["**/*.ts"]
 }

@@ -9,11 +9,13 @@ import { expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 
-import { registerProcess, snapshot } from "../packages/shared/src/agentProcesses/registry.ts";
-import { createNodeProcessOps } from "../packages/shared/src/agentProcesses/processOps.ts";
-import { recordSession } from "../packages/shared/src/agentProcessSessions.ts";
+import { registerProcess, snapshot } from "@t3tools/shared/agentProcesses";
+import { createNodeProcessOps } from "@t3tools/shared/agentProcessInspection";
+import { recordSession } from "@t3tools/shared/agentProcessSessions";
 
-const command = NodeURL.fileURLToPath(new URL("./agent-processes.ts", import.meta.url));
+const command = NodeURL.fileURLToPath(
+  new URL("../packages/shared/src/agentProcesses/cli.ts", import.meta.url),
+);
 const execute = NodeUtil.promisify(NodeChildProcess.execFile);
 
 it.effect("stops only the selected session unless every registration is explicitly requested", () =>

@@ -1,8 +1,8 @@
 import { expect, it } from "vite-plus/test";
 
-import * as HostProcess from "../HostProcess.ts";
-import { createNodeProcessOps, sameIdentity } from "./processOps.ts";
-import type { ProcessIdentity } from "./types.ts";
+import * as HostProcess from "@t3tools/shared/HostProcess";
+import { createNodeProcessOps, sameIdentity } from "@t3tools/shared/agentProcessInspection";
+import type { ProcessIdentity } from "@t3tools/shared/agentProcesses";
 
 const preciseStart: ProcessIdentity = {
   platform: "darwin",

@@ -17,12 +17,14 @@
       "vite": { "entry": [".github/**/*.test.cjs"] },
       "vitest": { "entry": [".github/**/*.test.cjs"] },
     },
+    "packages/shared": {
+      "entry": ["src/agentProcesses/cli.ts", "src/agentProcesses/preload.ts"], // Lifecycle hooks and Node's --import.
+    },
     "scripts": {
       // Knip loads its preprocessor through a CLI option; native verification and
       // worktree setup (from t3.json) run directly.
       "entry": [
         "knip-schemas.ts",
-        "agent-process-preload.ts", // Loaded by Node's --import in tracked subprocesses.
         "mobile-native-client.ts",
         "setup-worktree.ts",
         "workload-cost-replay.ts", // signalbox: workload analytics

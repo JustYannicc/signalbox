@@ -1,12 +1,9 @@
 // @effect-diagnostics nodeBuiltinImport:off - Node preloads this before application dependencies exist.
 import * as NodePath from "node:path";
 
-import { registerProcess } from "../packages/shared/src/agentProcesses/registry.ts";
-import {
-  canonicalDirectory,
-  isPathWithinWorktree,
-} from "../packages/shared/src/agentProcesses/paths.ts";
-import { registeredPorts } from "./lib/agent-process-environment.ts";
+import { registerProcess } from "./registry.ts";
+import { canonicalDirectory, isPathWithinWorktree } from "./paths.ts";
+import { registeredPorts } from "./environment.ts";
 
 const worktreePath = process.env.SIGNALBOX_PROCESS_WORKTREE;
 const sessionId = process.env.SIGNALBOX_PROCESS_SESSION_ID;

@@ -3,7 +3,7 @@ import { expect, it, vi } from "vite-plus/test";
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 
-import { makeFixture } from "./test-fixture.ts";
+import { makeFixture } from "./tests/fixture.ts";
 
 it("registers a process in the worktree and durable common-dir index", async () => {
   const { worktreePath, commonDir, registry, addProcess } = makeFixture();

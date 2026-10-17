@@ -4,13 +4,9 @@ import * as NodeFS from "node:fs";
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
 
-import { registerProcess, stop } from "../../packages/shared/src/agentProcesses/registry.ts";
-import {
-  ownedSessionId,
-  processSessionId,
-  sessions,
-} from "../../packages/shared/src/agentProcessSessions.ts";
-import { trackedEnvironment } from "./agent-process-environment.ts";
+import { registerProcess, stop } from "./registry.ts";
+import { ownedSessionId, processSessionId, sessions } from "../agentProcessSessions.ts";
+import { trackedEnvironment } from "./environment.ts";
 
 export async function runTrackedCommand(
   input: {
@@ -92,7 +88,7 @@ export async function runTrackedCommand(
         worktreePath: input.worktreePath,
         sessionId,
         ownerPid: process.pid,
-        preloadUrl: new URL("../agent-process-preload.ts", import.meta.url).href,
+        preloadUrl: new URL("./preload.ts", import.meta.url).href,
       }),
       detached: false,
     });

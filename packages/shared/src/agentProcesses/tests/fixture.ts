@@ -4,7 +4,7 @@ import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
-import { createAgentProcessRegistry } from "./registry.ts";
+import { createAgentProcessRegistry } from "@t3tools/shared/agentProcesses";
 
 const tempDirectories: Array<string> = [];
 

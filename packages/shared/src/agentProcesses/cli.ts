@@ -3,19 +3,10 @@
 import * as NodeFSP from "node:fs/promises";
 import * as NodeUtil from "node:util";
 
-import {
-  reap,
-  status,
-  stop,
-  resolveCommonDir,
-} from "../packages/shared/src/agentProcesses/registry.ts";
-import {
-  ownedSessionId,
-  recordSession,
-  sessions,
-} from "../packages/shared/src/agentProcessSessions.ts";
-import { resolveProcessWorktree } from "./lib/agent-process-worktree.ts";
-import { runTrackedCommand } from "./lib/agent-process-run.ts";
+import { reap, status, stop, resolveCommonDir } from "./registry.ts";
+import { ownedSessionId, recordSession, sessions } from "../agentProcessSessions.ts";
+import { resolveProcessWorktree } from "./worktree.ts";
+import { runTrackedCommand } from "./run.ts";
 
 async function harnessHook() {
   let input = "";
@@ -56,7 +47,7 @@ async function harnessHook() {
       JSON.stringify({
         hookSpecificOutput: {
           hookEventName: payload.hook_event_name,
-          additionalContext: `For background commands, use node scripts/agent-processes.ts run --session-id ${shellValue} -- <command>. Before reporting done, stop owned commands with node scripts/agent-processes.ts stop --session-id ${shellValue}.`,
+          additionalContext: `For background commands, use node packages/shared/src/agentProcesses/cli.ts run --session-id ${shellValue} -- <command>. Before reporting done, stop owned commands with node packages/shared/src/agentProcesses/cli.ts stop --session-id ${shellValue}.`,
         },
       }),
     );

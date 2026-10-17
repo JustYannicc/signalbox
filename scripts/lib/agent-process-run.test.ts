@@ -8,8 +8,8 @@ import { expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 
-import { createNodeProcessOps } from "../../packages/shared/src/agentProcesses/processOps.ts";
-import { runTrackedCommand } from "./agent-process-run.ts";
+import { createNodeProcessOps } from "@t3tools/shared/agentProcessInspection";
+import { runTrackedCommand } from "@t3tools/shared/agentProcessRun";
 
 it.effect("waits for its spawned command to exit when registration fails", () =>
   Effect.gen(function* () {

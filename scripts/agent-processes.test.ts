@@ -10,9 +10,11 @@ import { expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 
-import { snapshot, status, stop } from "../packages/shared/src/agentProcesses/registry.ts";
+import { snapshot, status, stop } from "@t3tools/shared/agentProcesses";
 
-const command = NodeURL.fileURLToPath(new URL("./agent-processes.ts", import.meta.url));
+const command = NodeURL.fileURLToPath(
+  new URL("../packages/shared/src/agentProcesses/cli.ts", import.meta.url),
+);
 const execute = NodeUtil.promisify(NodeChildProcess.execFile);
 
 it("runs cleanup commands without installed application dependencies", async () => {
@@ -24,11 +26,7 @@ it("runs cleanup commands without installed application dependencies", async () 
     await execute("git", ["init", "--quiet", cwd]);
     await NodeFSP.writeFile(NodePath.join(cwd, "package.json"), '{"type":"module"}');
     const files = [
-      "scripts/agent-processes.ts",
-      "scripts/agent-process-preload.ts",
-      "scripts/lib/agent-process-environment.ts",
-      "scripts/lib/agent-process-run.ts",
-      "scripts/lib/agent-process-worktree.ts",
+      "packages/shared/package.json",
       "packages/shared/src/agentProcessSessions.ts",
       "packages/shared/src/agentProcesses",
     ];
@@ -39,10 +37,29 @@ it("runs cleanup commands without installed application dependencies", async () 
         await NodeFSP.cp(new URL(file, sourceRoot), destination, { recursive: true });
       }),
     );
-    const result = await execute(process.execPath, ["scripts/agent-processes.ts", "status"], {
-      cwd,
-    });
+    const result = await execute(
+      process.execPath,
+      ["packages/shared/src/agentProcesses/cli.ts", "status"],
+      {
+        cwd,
+      },
+    );
     expect(JSON.parse(result.stdout)).toEqual([]);
+    const tracked = await execute(
+      process.execPath,
+      [
+        "packages/shared/src/agentProcesses/cli.ts",
+        "run",
+        "--session-id",
+        "no-dependencies-fixture",
+        "--",
+        process.execPath,
+        "-e",
+        "process.stdout.write('tracked')",
+      ],
+      { cwd },
+    );
+    expect(tracked.stdout).toContain("tracked");
     const outside = await NodeFSP.mkdtemp(
       NodePath.join(NodeOS.tmpdir(), "signalbox-external-child-"),
     );
@@ -51,7 +68,7 @@ it("runs cleanup commands without installed application dependencies", async () 
         process.execPath,
         [
           "--import",
-          NodePath.join(cwd, "scripts/agent-process-preload.ts"),
+          NodePath.join(cwd, "packages/shared/src/agentProcesses/preload.ts"),
           "-e",
           "process.stdout.write('outside')",
         ],

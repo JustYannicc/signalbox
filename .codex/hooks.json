@@ -5,7 +5,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node \"$(git rev-parse --show-toplevel)/scripts/agent-processes.ts\" hook",
+            "command": "node \"$(git rev-parse --show-toplevel)/packages/shared/src/agentProcesses/cli.ts\" hook",
             "commandWindows": "node -e \"process.stderr.write('Automatic process cleanup is unavailable on Windows.\\n')\""
           }
         ]
@@ -16,7 +16,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node \"$(git rev-parse --show-toplevel)/scripts/agent-processes.ts\" hook",
+            "command": "node \"$(git rev-parse --show-toplevel)/packages/shared/src/agentProcesses/cli.ts\" hook",
             "timeout": 3,
             "commandWindows": "node -e \"process.stderr.write('Automatic process cleanup is unavailable on Windows.\\n')\""
           }
@@ -28,7 +28,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node \"$(git rev-parse --show-toplevel)/scripts/agent-processes.ts\" hook",
+            "command": "node \"$(git rev-parse --show-toplevel)/packages/shared/src/agentProcesses/cli.ts\" hook",
             "commandWindows": "node -e \"process.stderr.write('Automatic process cleanup is unavailable on Windows.\\n')\""
           }
         ]
@@ -39,7 +39,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node \"$(git rev-parse --show-toplevel)/scripts/agent-processes.ts\" hook",
+            "command": "node \"$(git rev-parse --show-toplevel)/packages/shared/src/agentProcesses/cli.ts\" hook",
             "timeout": 3,
             "commandWindows": "node -e \"process.stderr.write('Automatic process cleanup is unavailable on Windows.\\n')\""
           }

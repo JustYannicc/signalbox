@@ -1,19 +1,19 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { trackedEnvironment, registeredPorts } from "./agent-process-environment.ts";
+import { trackedEnvironment, registeredPorts } from "@t3tools/shared/agentProcessEnvironment";
 
 describe("tracked process environment", () => {
   it("keeps the caller's Node options and propagates the same owner to descendants", () => {
     const environment = trackedEnvironment({
       environment: { NODE_OPTIONS: "--max-old-space-size=2048" },
-      worktreePath: "/tmp/a checkout",
+      worktreePath: "/fixture/a checkout",
       sessionId: "session-1",
       ownerPid: 123,
-      preloadUrl: "file:///tmp/a%20checkout/scripts/agent-process-preload.ts",
+      preloadUrl: "file:///fixture/a%20checkout/packages/shared/src/agentProcesses/preload.ts",
     });
     expect(environment.NODE_OPTIONS).toContain("--max-old-space-size=2048");
     expect(environment.NODE_OPTIONS).toContain("--import=");
-    expect(environment.SIGNALBOX_PROCESS_WORKTREE).toBe("/tmp/a checkout");
+    expect(environment.SIGNALBOX_PROCESS_WORKTREE).toBe("/fixture/a checkout");
     expect(environment.SIGNALBOX_PROCESS_SESSION_ID).toBe("session-1");
     expect(environment.SIGNALBOX_PROCESS_OWNER_PID).toBe("123");
   });

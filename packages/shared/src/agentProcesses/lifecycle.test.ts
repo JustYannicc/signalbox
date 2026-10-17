@@ -3,9 +3,9 @@ import { expect, it } from "vite-plus/test";
 import * as NodeChildProcess from "node:child_process";
 import * as NodeFSP from "node:fs/promises";
 
-import * as HostProcess from "../HostProcess.ts";
-import { createAgentProcessRegistry } from "./registry.ts";
-import { makeFixture } from "./test-fixture.ts";
+import * as HostProcess from "@t3tools/shared/HostProcess";
+import { createAgentProcessRegistry } from "@t3tools/shared/agentProcesses";
+import { makeFixture } from "./tests/fixture.ts";
 
 it("does not escalate after its session has resumed", async () => {
   const { worktreePath, commonDir, registry, signals, waits, addProcess, setTerminateOnSignal } =
