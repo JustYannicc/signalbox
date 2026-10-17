@@ -29,6 +29,33 @@ describe("cloud API coverage", () => {
     }
   });
 
+  it("serves every pull-request read in #814", () => {
+    const names = new Set([
+      "pullRequests.list",
+      "pullRequests.listStats",
+      "pullRequests.summary",
+      "pullRequests.routing",
+      "pullRequests.routingIdentity",
+      "pullRequests.stack",
+      "pullRequests.linkedThreads",
+      "pullRequests.detail",
+      "pullRequests.preview",
+      "pullRequests.checks",
+      "pullRequests.activity",
+      "pullRequests.threadComments",
+      "pullRequests.diffFileContents",
+      "pullRequests.refresh",
+      "pullRequests.subscribeRefreshes",
+      "git.resolvePullRequest",
+    ]);
+    const reads = operations.filter((operation) => names.has(operation.name));
+    expect(reads.map((operation) => operation.name).sort()).toEqual([...names].sort());
+    for (const operation of reads) {
+      expect(cloudServes(operation), operation.name).toBe(true);
+      expect(cloudUnserved(operation), operation.name).toBeUndefined();
+    }
+  });
+
   it("serves every operation or says why not", () => {
     const silent = operations
       .filter((operation) => !cloudServes(operation) && cloudUnserved(operation) === undefined)

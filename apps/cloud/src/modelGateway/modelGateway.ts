@@ -3,8 +3,8 @@ import {
   type ModelGatewayProvider,
 } from "@signalbox/runner-protocol/RunnerProtocol";
 
-import type { ModelServeReply } from "../thread/runner/modelGrants.ts";
-import { threadOfModelToken } from "../thread/runner/modelToken.ts";
+import type { ModelServeReply } from "../models/ModelProtocol.ts";
+import { threadOfModelToken } from "../thread/ModelTokens.ts";
 import type { ModelGatewayRecord } from "./modelGatewayRecord.ts";
 import { makeUsageScanner } from "./usageScanner.ts";
 

@@ -6,7 +6,8 @@ import * as Effect from "effect/Effect";
 import * as Base64 from "effect/encoding/Base64";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
-import type * as Stream from "effect/Stream";
+import * as Stream from "effect/Stream";
+import * as HttpClientError from "effect/http/HttpClientError";
 import { type HttpClient, HttpClientRequest, type HttpClientResponse } from "effect/http";
 
 /**
@@ -62,6 +63,8 @@ const GITHUB_ENDPOINTS: GitHubEndpoints = {
   web: "https://github.com",
   api: "https://api.github.com",
 };
+
+const MAX_JSON_RESPONSE_BYTES = 8 * 1024 * 1024;
 
 const Viewer = Schema.Struct({
   login: Schema.String,
@@ -143,6 +146,27 @@ const parseJson = Schema.decodeUnknownOption(Schema.fromJsonString(Schema.Unknow
 const decodeErrorBody = Schema.decodeUnknownOption(
   Schema.Struct({ message: Schema.optional(Schema.String) }),
 );
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === "object" && value !== null && !Array.isArray(value);
+
+const isGraphQlRateLimit = (body: unknown) =>
+  isRecord(body) &&
+  Array.isArray(body.errors) &&
+  body.errors.some((error) => {
+    if (!isRecord(error)) return false;
+    if (error.type === "RATE_LIMITED") return true;
+    if (error.type !== "RATE_LIMIT") return false;
+    const code = error.code ?? (isRecord(error.extensions) ? error.extensions.code : undefined);
+    return code === "graphql_rate_limit";
+  });
+
+const graphqlRateLimitRetryAt = (response: HttpClientResponse.HttpClientResponse, now: number) => {
+  const retryAfter = retryAtFromHeader(response.headers["retry-after"], now);
+  if (retryAfter !== undefined) return retryAfter;
+  const reset = Number(response.headers["x-ratelimit-reset"]) * 1_000;
+  return Number.isFinite(reset) && reset > now ? reset : now + 60_000;
+};
 
 /** git's credential for a token over HTTPS. */
 export const gitAuthorization = (token: string) =>
@@ -335,26 +359,58 @@ export const makeGitHubApi = (
     ).pipe(
       Effect.flatMap((response) =>
         Effect.gen(function* () {
-          const text = yield* response.text.pipe(Effect.orElseSucceed(() => ""));
-          if (response.status === 404) return null;
-          yield* failUnlessOk(
-            operation,
-            response,
-            Option.getOrNull(parseJson(text)),
-            text,
-            requestKind,
-            token,
+          const chunks: Uint8Array[] = [];
+          let length = 0;
+          yield* response.stream.pipe(
+            Stream.runForEach((chunk) => {
+              length += chunk.byteLength;
+              if (length > MAX_JSON_RESPONSE_BYTES) {
+                return Effect.fail(
+                  new GitHubError({
+                    operation,
+                    status: response.status,
+                    message: "GitHub's answer is too large to read.",
+                    requestKind,
+                  }),
+                );
+              }
+              chunks.push(chunk);
+              return Effect.void;
+            }),
+            Effect.catchIf(
+              (error) =>
+                HttpClientError.isHttpClientError(error) && error.reason._tag === "EmptyBodyError",
+              () => Effect.void,
+            ),
+            Effect.mapError(
+              () =>
+                new GitHubError({
+                  operation,
+                  status: response.status,
+                  message: "GitHub's answer could not be read within its size limit.",
+                  requestKind,
+                }),
+            ),
           );
+          const bytes = new Uint8Array(length);
+          let offset = 0;
+          for (const chunk of chunks) {
+            bytes.set(chunk, offset);
+            offset += chunk.byteLength;
+          }
+          const text = new TextDecoder().decode(bytes);
+          if (response.status === 404) return null;
+          const body = Option.getOrNull(parseJson(text));
+          yield* failUnlessOk(operation, response, body, text, requestKind, token);
           // GraphQL answers its own rate limit with a 200 and an error in the body.
-          if (text.includes('"RATE_LIMITED"')) {
+          if (response.status === 200 && isGraphQlRateLimit(body)) {
             const now = yield* Clock.currentTimeMillis;
-            const reset = Number(response.headers["x-ratelimit-reset"]) * 1_000;
             const failure = new GitHubError({
               operation,
               status: response.status,
               message: "GitHub's API rate limit is used up for now.",
               ...responseDiagnostics(requestKind, text, token),
-              retryAt: Number.isFinite(reset) && reset > now ? reset : now + 60_000,
+              retryAt: graphqlRateLimitRetryAt(response, now),
             });
             yield* logResponseFailure(failure);
             return yield* failure;
