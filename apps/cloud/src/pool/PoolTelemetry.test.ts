@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "@effect/vitest";
 import { RunId } from "@t3tools/contracts";
+import { POOL_LINK_PATH } from "@t3tools/contracts/accountHub";
 
 import { isManagementRequest } from "./CliProxyApiRuntime.ts";
 import type { PoolCallEvent } from "./PoolTelemetry.ts";
@@ -29,6 +30,50 @@ const modelRequest = () =>
   });
 
 describe("pool release attribution", () => {
+  it("keeps link affinity working without exporting it as verified thread correlation", async () => {
+    const events: Array<PoolCallEvent> = [];
+    const pool = makeMemoryPoolObject(undefined, (event) => events.push(event));
+    try {
+      await pool.api.create(actor, { name: "Work", personal: true });
+      const link = await pool.api.openLink(actor);
+      if (link._tag !== "ok") throw new Error("Could not open the test link.");
+      const moved = await pool.api.linkFetch(
+        link.value,
+        new Request(`https://pool.test${POOL_LINK_PATH}/accounts`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            accounts: ["first", "second"].map((name) => ({
+              name: `${name}.json`,
+              content: JSON.stringify({ type: "claude", email: `${name}@example.test` }),
+            })),
+          }),
+        }),
+      );
+      expect(moved.status).toBe(200);
+      const send = () =>
+        pool.api.linkFetch(
+          link.value,
+          new Request(`https://pool.test${POOL_LINK_PATH}/v1/messages`, {
+            method: "POST",
+            headers: { "content-type": "application/json", "x-signalbox-thread": canary },
+            body: JSON.stringify({ model: "claude-opus-5-5" }),
+          }),
+        );
+      const first = await send();
+      const second = await send();
+      expect([first.status, second.status]).toEqual([200, 200]);
+      expect(first.headers.get("x-fake-account")).not.toBeNull();
+      expect(second.headers.get("x-fake-account")).toBe(first.headers.get("x-fake-account"));
+      expect(events.at(-1)?.person).toEqual({ id: actor.userId });
+      expect(events.at(-1)?.thread).toBeUndefined();
+      expect(events.at(-1)?.turn).toBeUndefined();
+      expect(JSON.stringify(events)).not.toContain(canary);
+    } finally {
+      await pool.runtime.dispose();
+    }
+  });
+
   it("attributes header latency and failures to the running release without probing model calls", async () => {
     const events: Array<PoolCallEvent> = [];
     const pool = makeMemoryPoolObject(undefined, (event) => events.push(event));

@@ -514,8 +514,9 @@ const make = Effect.gen(function* () {
           release: remote ? () => unknownRelease : container.release,
           correlation: {
             ...(options?.actor && { person: { id: options.actor.userId } }),
-            ...(options?.thread && { thread: { id: options.thread } }),
+            // Link affinity is caller-supplied; only the model authority supplies a trace.
             ...(options?.trace && {
+              ...(options.thread && { thread: { id: options.thread } }),
               turn: { id: options.trace.runId, traceId: options.trace.traceId },
             }),
           },
