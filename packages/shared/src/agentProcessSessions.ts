@@ -69,20 +69,41 @@ export async function sessions(worktreePath: string) {
 
 export async function ownedSessionId(
   worktreePath: string,
-  explicit?: string,
-  codexThreadId?: string,
+  input: {
+    readonly explicit?: string | undefined;
+    readonly environmentSessionId?: string | undefined;
+    readonly codexThreadId?: string | undefined;
+  } = {},
 ) {
-  if (explicit !== undefined && explicit.length > 0) return explicit;
-  const runtimeId = codexThreadId;
-  if (runtimeId === undefined || runtimeId.length === 0) return undefined;
-  // Native Codex subagent hooks carry the parent session ID separately from the
-  // child's runtime ID. Match that exact ID rather than another session in this checkout.
-  const matches = (await sessions(worktreePath)).filter(
-    (session) => (session.runtimeSessionId ?? session.sessionId) === runtimeId,
-  );
-  if (matches.length > 1) throw new Error("Multiple sessions claim the same Codex thread ID");
-  // CODEX_SESSION_ID can belong to a parent. An unbound child owns only its runtime ID.
-  return matches[0]?.sessionId ?? runtimeId;
+  if (input.explicit !== undefined) {
+    if (input.explicit.length === 0) throw new Error("Session ID must not be empty");
+    return input.explicit;
+  }
+  const runtimeId = input.codexThreadId;
+  if (runtimeId !== undefined && runtimeId.length > 0) {
+    // Native Codex subagent hooks carry the parent session ID separately from the
+    // child's runtime ID. Match that exact ID, including when a parent environment is inherited.
+    const matches = (await sessions(worktreePath)).filter(
+      (session) => (session.runtimeSessionId ?? session.sessionId) === runtimeId,
+    );
+    if (matches.length > 1) throw new Error("Multiple sessions claim the same Codex thread ID");
+    // CODEX_SESSION_ID can belong to a parent. An unbound child owns only its runtime ID.
+    return matches[0]?.sessionId ?? runtimeId;
+  }
+  const environmentId = input.environmentSessionId;
+  if (environmentId === undefined || environmentId.length === 0) return undefined;
+  // Claude shares its root environment with native subagents, so this ID alone
+  // cannot distinguish the parent from a live child.
+  if (
+    (await sessions(worktreePath)).some(
+      (session) => !session.ended && session.sessionId.startsWith(`${environmentId}/`),
+    )
+  ) {
+    throw new Error(
+      "Inherited session ownership is ambiguous while subagents are active; pass --session-id explicitly",
+    );
+  }
+  return environmentId;
 }
 
 export function processSessionId(explicit?: string) {

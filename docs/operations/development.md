@@ -25,12 +25,13 @@ On macOS and Linux, dev and Metro scripts register their processes for cleanup. 
 automatically; Codex commands use their exact runtime thread ID. Commands without
 an agent owner get a separate ID, so ending an agent session cannot stop a person's server.
 Review and trust the repository hooks when the harness prompts, so session cleanup can run.
+Claude native subagents inherit their parent's environment. While children are active,
+both `agents:run` and `agents:stop` require the explicit `--session-id` from the hook context.
 
 `vp run agents:stop` stops your session's registrations, using the harness environment
 or an explicit `--session-id <id>`. It refuses to stop without a session ID. Pass `--all`
 only when you intend to stop every registration in the checkout, including other sessions.
-`vp run agents:reap`
-retries stale registrations across the repository, and `vp run agents:status --all` shows
+`vp run agents:reap` retries stale registrations across the repository, and `vp run agents:status --all` shows
 registered PIDs, ports, memory and CPU. These commands check process identity and cwd before
 signaling. Other processes remain untouched. A missing checkout or unverifiable cwd keeps
 the registration for inspection.

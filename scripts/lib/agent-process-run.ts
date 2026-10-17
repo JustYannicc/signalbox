@@ -37,11 +37,11 @@ export async function runTrackedCommand(
     });
   }
   const sessionId = processSessionId(
-    await ownedSessionId(
-      input.worktreePath,
-      input.sessionId ?? process.env.SIGNALBOX_PROCESS_SESSION_ID,
-      process.env.CODEX_THREAD_ID,
-    ),
+    await ownedSessionId(input.worktreePath, {
+      explicit: input.sessionId,
+      environmentSessionId: process.env.SIGNALBOX_PROCESS_SESSION_ID,
+      codexThreadId: process.env.CODEX_THREAD_ID,
+    }),
   );
   let cleanupInProgress: ReturnType<typeof stop> | undefined;
   const cleanup = () => {

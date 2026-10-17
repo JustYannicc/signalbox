@@ -140,11 +140,11 @@ async function main() {
 }
 
 async function stopSessionId(worktreePath: string, explicit?: string) {
-  const sessionId = await ownedSessionId(
-    worktreePath,
-    explicit ?? process.env.SIGNALBOX_PROCESS_SESSION_ID,
-    process.env.CODEX_THREAD_ID,
-  );
+  const sessionId = await ownedSessionId(worktreePath, {
+    explicit,
+    environmentSessionId: process.env.SIGNALBOX_PROCESS_SESSION_ID,
+    codexThreadId: process.env.CODEX_THREAD_ID,
+  });
   if (sessionId === undefined || sessionId.length === 0) {
     throw new Error(
       "Stopping processes requires --session-id ID or a harness session environment; use --all to stop every registration in this checkout",
