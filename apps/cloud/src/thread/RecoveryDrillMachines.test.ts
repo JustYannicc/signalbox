@@ -45,7 +45,7 @@ describe("preview recovery Boat kill", () => {
     },
   );
 
-  it("persists before evidence, deletes only its validated active target, and leaves the machine record stale", async () => {
+  it("kills a running Boat VM whose stop is unsettled and leaves its machine record stale", async () => {
     const test = fixture();
     await test.drill().command("owner", command("enroll"));
     const result = await test.drill().command("owner", command("kill-machine"));

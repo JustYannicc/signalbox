@@ -19,7 +19,7 @@ export const active: RecoveryEvidence = {
   sequence: 10,
   activeRunId: RunId.make("run-1"),
   lease: { ...emptyLease, generation: 5, status: "connected", machineClass: "heavy" },
-  machine: { machineId: "bx_old", createKey: null, desired: "running", settled: true },
+  machine: { machineId: "bx_old", createKey: null, desired: "running", settled: false },
   events: [],
   receipts: [],
   sessions: [],

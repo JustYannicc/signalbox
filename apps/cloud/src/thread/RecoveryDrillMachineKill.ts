@@ -108,7 +108,7 @@ export const makeRecoveryDrillMachineKiller = (options: {
       if (!isHeavy(evidence) || evidence.machine.machineId === null) {
         return { tag: "return" as const, value: rejection("not_boat_machine") };
       }
-      if (evidence.machine.desired !== "running" || !evidence.machine.settled) {
+      if (evidence.machine.desired !== "running") {
         return { tag: "return" as const, value: rejection("stale_target") };
       }
       if (control === null) {
@@ -180,8 +180,7 @@ export const makeRecoveryDrillMachineKiller = (options: {
         !current.ok ||
         !options.matches(targetOf(prepared.before), current.evidence) ||
         !isHeavy(current.evidence) ||
-        current.evidence.machine.desired !== "running" ||
-        !current.evidence.machine.settled
+        current.evidence.machine.desired !== "running"
       ) {
         const cancelled = updateFault(state, command.id, (item) => ({
           ...item,
