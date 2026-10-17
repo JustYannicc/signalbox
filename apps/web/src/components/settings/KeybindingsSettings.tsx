@@ -1583,10 +1583,14 @@ export function KeybindingsSettingsPanel() {
       {!canWriteSettings ? (
         <p className="text-xs text-muted-foreground">
           {connectedEnvironments.length === 0
-            ? "Connect an environment to change keybindings."
+            ? showsEnvironmentUi
+              ? "Connect an environment to change keybindings."
+              : "Reconnect to Signalbox to change keybindings."
             : !supportsSettingsWrite // signalbox: the server can't store them, not a missing grant
               ? "Keybindings can't be changed here yet."
-              : "This connection can view keybindings but cannot change them."}
+              : showsEnvironmentUi
+                ? "This connection can view keybindings but cannot change them."
+                : "You can view keybindings but can't change them."}
         </p>
       ) : null}
       <div inert={!canWriteSettings && supportsSettingsWrite} className="flex flex-col gap-8">
