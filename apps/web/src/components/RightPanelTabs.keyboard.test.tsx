@@ -3,15 +3,25 @@
 import { act, type ComponentProps } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
+import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import {
   compileResolvedKeybindingsConfig,
   DEFAULT_RESOLVED_KEYBINDINGS,
 } from "@t3tools/shared/keybindings";
 
 import { RightPanelTabs } from "./RightPanelTabs";
+import { addBrowserSurface } from "./preview/addBrowserSurface";
+import { selectThreadRightPanelState, useRightPanelStore } from "~/rightPanelStore";
 
 vi.mock("~/hooks/useTheme", () => ({ useTheme: () => ({ resolvedTheme: "light" }) }));
-vi.mock("~/browser/browserDefaults", () => ({ useBrowserDefaults: () => ({ profiles: [] }) }));
+vi.mock("~/browser/browserDefaults", () => ({
+  useBrowserDefaults: () => ({
+    profiles: [
+      { id: "default", name: "Default" },
+      { id: "work", name: "Work" },
+    ],
+  }),
+}));
 
 let root: Root;
 let container: HTMLDivElement;
@@ -110,6 +120,36 @@ async function press(key: string, options: KeyboardEventInit = {}) {
 }
 
 describe("right panel new-tab shortcut", () => {
+  it("opens the cloud agent's browser with one touch instead of a local profile submenu", async () => {
+    const threadRef = {
+      environmentId: EnvironmentId.make("cloud-launcher-test"),
+      threadId: ThreadId.make("cloud-thread"),
+    };
+    const openPreview = vi.fn(() =>
+      Promise.reject(new Error("Cloud has no server preview engine")),
+    );
+    await renderPanel({
+      browserAvailable: true,
+      browserProfilesAvailable: false,
+      onAddBrowser: () => {
+        void addBrowserSurface({ threadRef, openPreview, target: "agent-browser" });
+      },
+    });
+    await press("t", { metaKey: true });
+    const item = [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')].find((item) =>
+      item.textContent?.startsWith("Browser"),
+    );
+    expect(item).toBeDefined();
+    const click = new MouseEvent("click", { bubbles: true });
+    Object.defineProperty(click, "pointerType", { value: "touch" });
+    await act(() => item!.dispatchEvent(click));
+
+    const panel = selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, threadRef);
+    expect(panel.activeSurfaceId).toBe("agent-browser");
+    expect(panel.isOpen).toBe(true);
+    expect(openPreview).not.toHaveBeenCalled();
+  });
+
   it.each(["MacIntel", "Win32", "Linux x86_64"])(
     "opens the menu on %s and chooses a tab",
     async (platform) => {

@@ -173,6 +173,32 @@ export const modelFor = (
     return selection;
   });
 
+/**
+ * The model a gateway step completes with. Unlike a thread, a completion has no
+ * launch to resolve an omitted default, so it takes the project's default now.
+ */
+export const completionModelFor = (
+  options: Readonly<Record<string, unknown>>,
+  defaults: AutomationDefaults,
+  projectId: string,
+) =>
+  Effect.gen(function* () {
+    const resolved =
+      defaults.modelSelection === null && typeof options.model !== "string"
+        ? {
+            ...defaults,
+            modelSelection: yield* (yield* AutomationThreads).initialModelSelection(
+              ProjectId.make(projectId),
+            ),
+          }
+        : defaults;
+    const selection = yield* modelFor(options, resolved);
+    if (selection === null) {
+      return yield* fail("Choose a default model, or name both a provider and model in this step.");
+    }
+    return selection;
+  });
+
 const needsDeferredModel = (
   options: Readonly<Record<string, unknown>>,
   defaults: AutomationDefaults,

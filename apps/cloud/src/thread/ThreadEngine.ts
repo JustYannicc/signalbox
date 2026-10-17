@@ -35,7 +35,7 @@ import * as Scope from "effect/Scope";
 import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 
-import { isHarnessInstance } from "./providerCatalog.ts";
+import { isHarnessInstance } from "../models/ModelRouting.ts";
 import {
   beginPreparation,
   changePreparation,

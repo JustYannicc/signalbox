@@ -1,11 +1,15 @@
 import {
   ProjectId,
+  EnvironmentId,
   ProviderDriverKind,
   ProviderInstanceId,
   type ServerProvider,
 } from "@t3tools/contracts";
 import { DEFAULT_UNIFIED_SETTINGS } from "@t3tools/contracts/settings";
 import { describe, expect, it } from "vite-plus/test";
+import { deriveProviderInstanceEntries } from "../providerInstances";
+import { resolveComposerProviderSelection } from "./composerProviderSelection";
+import { resolveComposerDefaultModelPolicy } from "./composerDefaultModelPolicy";
 import {
   mapDefaultModelSelectionToPool,
   resolveComposerDefaultModelSelection,
@@ -72,6 +76,49 @@ const providers = [
 ];
 
 describe("Signalbox composer model selection policy", () => {
+  it("keeps a fresh draft's custom pool selectable when cached models have no default metadata", () => {
+    const customId = ProviderInstanceId.make("codex_hub_work");
+    const cached: ServerProvider = {
+      ...provider({ models: [{ slug: "cached" }] }),
+      instanceId: customId,
+      status: "error",
+      auth: { status: "unknown" },
+      unavailableReason: "The pool snapshot did not refresh in time.",
+    };
+    const settings = {
+      ...DEFAULT_UNIFIED_SETTINGS,
+      providerInstances: {
+        [customId]: { driver: ProviderDriverKind.make("codex"), config: { setupMode: "hub" } },
+      },
+    };
+    const entries = deriveProviderInstanceEntries([cached]);
+    const policy = resolveComposerDefaultModelPolicy({
+      environmentId: EnvironmentId.make("cloud"),
+      routeKind: "draft",
+      activeProjectDefaultModelSelection: null,
+      activeProjectId: null,
+      activeThreadId: null,
+      personDefaultModelSelection: null,
+      providerStatuses: [cached],
+      settings,
+      lockedProvider: null,
+      composerDraft: { activeProvider: null, modelSelectionByProvider: {} },
+      providerSelection: {
+        ...resolveComposerProviderSelection({
+          entries,
+          providerInstances: settings.providerInstances,
+          candidateInstanceIds: [],
+          lockedProvider: null,
+          lockedInstanceId: null,
+        }),
+        providerInstanceEntries: entries,
+        mapModelSelectionToPool: () => null,
+      },
+    });
+    expect(policy.initialModelSelection).toBeNull();
+    expect(policy.selectedProviderSelection.selectedProviderEntry?.instanceId).toBe(customId);
+  });
+
   it("keeps an explicit fresh-draft choice ahead of defaults", () => {
     const draftSelection = { instanceId, model: "chosen" };
     const defaults = resolveComposerDefaultModelSelection({
