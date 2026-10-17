@@ -88,6 +88,7 @@ import Animated, {
   withTiming,
 } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { useOneEnvironmentCopy } from "../home/useOneEnvironmentCopy"; // signalbox
 import { useWorkspaceContentWidth } from "../layout/workspace-content-width";
 import { useNativeWorkspaceColumnsSupported } from "../../native/NativeWorkspaceColumns";
 import { useNativeColumnLayoutMetrics } from "../../native/native-layout-metrics";
@@ -467,14 +468,16 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
     }
   })();
   const threadSyncLabel = useDelayedStatus(selectedThreadKey, realThreadSyncLabel);
+  const environmentCopy = useOneEnvironmentCopy(); // signalbox
   const pendingBackgroundWork = presentPendingBackgroundWork(
     props.selectedThread.pendingBackgroundTasks,
   );
   const floatingStatus = ((): FloatingWorkingStatus | null => {
     const connectionStatus = connectionFloatingStatus({
-      connectionError: props.connectionError,
+      // signalbox: with one environment the pill says Signalbox, not the cloud's label.
+      connectionError: props.connectionError && environmentCopy(props.connectionError),
       connectionState: props.connectionStateLabel,
-      environmentLabel: props.environmentLabel,
+      environmentLabel: props.environmentLabel && environmentCopy(props.environmentLabel),
       onReconnect: props.onReconnectEnvironment,
     });
     if (connectionStatus !== null) {
@@ -1354,7 +1357,7 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
                         editorRef={composerEditorRef}
                         draftMessage={props.draftMessage}
                         draftAttachments={props.draftAttachments}
-                        placeholder="Ask the repo agent, or run a command…"
+                        placeholder="Ask anything…"
                         contentMaxWidth={contentMaxWidth}
                         connectionState={props.connectionStateLabel}
                         environmentLabel={props.environmentLabel}

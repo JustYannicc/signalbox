@@ -39,7 +39,9 @@ import { SIGNALBOX_ANALYTICS_RPC_REQUIRED_SCOPES } from "../signalbox/analytics/
 import { SIGNALBOX_CONTEXTS_REQUIRED_SCOPES } from "@t3tools/contracts/signalboxContexts"; // signalbox: contexts
 import { SIGNALBOX_DRIVES_REQUIRED_SCOPES } from "@t3tools/contracts/signalboxDrives"; // signalbox: drives
 import { SIGNALBOX_FOLDERS_REQUIRED_SCOPES } from "@t3tools/contracts/signalboxFolders"; // signalbox: folders
+import { SIGNALBOX_NOTES_REQUIRED_SCOPES } from "@t3tools/contracts/signalboxNotes"; // signalbox: notes
 import { SIGNALBOX_THREAD_KINDS_REQUIRED_SCOPES } from "@t3tools/contracts/signalboxThreadKinds"; // signalbox: thread kinds
+import { SIGNALBOX_THREAD_STATUS_REQUIRED_SCOPES } from "@t3tools/contracts/signalboxStatusLine"; // signalbox: status lines
 import { SIGNALBOX_PREVIEWS_REQUIRED_SCOPES } from "@t3tools/contracts/signalboxPreviews"; // signalbox: previews
 import { SIGNALBOX_BROWSING_REQUIRED_SCOPES } from "@t3tools/contracts/signalboxBrowsing"; // signalbox: browsing
 import { SIGNALBOX_PUSH_REQUIRED_SCOPES } from "@t3tools/contracts/signalboxPush"; // signalbox: push devices
@@ -58,7 +60,9 @@ export const RPC_REQUIRED_SCOPES = {
   ...SIGNALBOX_CONTEXTS_REQUIRED_SCOPES, // signalbox: contexts
   ...SIGNALBOX_DRIVES_REQUIRED_SCOPES, // signalbox: drives
   ...SIGNALBOX_FOLDERS_REQUIRED_SCOPES, // signalbox: folders
+  ...SIGNALBOX_NOTES_REQUIRED_SCOPES, // signalbox: notes
   ...SIGNALBOX_THREAD_KINDS_REQUIRED_SCOPES, // signalbox: thread kinds
+  ...SIGNALBOX_THREAD_STATUS_REQUIRED_SCOPES, // signalbox: status lines
   ...SIGNALBOX_PREVIEWS_REQUIRED_SCOPES, // signalbox: previews
   ...SIGNALBOX_BROWSING_REQUIRED_SCOPES, // signalbox: browsing
   ...SIGNALBOX_PUSH_REQUIRED_SCOPES, // signalbox: push devices

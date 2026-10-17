@@ -9,7 +9,7 @@ import type { Atom } from "effect/reactivity";
 
 import type { EnvironmentRegistry } from "../connection/registry.ts";
 import { createEnvironmentRpcSubscriptionAtomFamily } from "./runtime.ts";
-import type { SectionDestination, SectionTree, SectionTreeNode } from "./sectionsModel.ts";
+import type { SectionDestination } from "./sectionsModel.ts";
 import { sectionDestinations } from "./sectionsMoves.ts";
 
 /**
@@ -35,33 +35,6 @@ export function contextIdOfProject(
 ): string | undefined {
   return snapshot?.contexts.find((context) => context.projectIds.includes(projectId))?.id;
 }
-
-export interface ContextSectionGroup<Project> {
-  readonly context: SignalboxContext;
-  readonly roots: ReadonlyArray<SectionTreeNode<Project>>;
-  /** The context's top-level projects, placed ones first. */
-  readonly projects: ReadonlyArray<Project>;
-}
-
-/**
- * Splits one environment's section tree into its contexts, in the contexts'
- * order. Subsections stay with their top-level section, which names the
- * context; a project goes to the context that lists it.
- */
-export function groupSectionTreeByContext<Project extends { readonly id: ProjectId }>(
-  tree: SectionTree<Project>,
-  snapshot: SignalboxContextsSnapshot,
-): ReadonlyArray<ContextSectionGroup<Project>> {
-  const topLevel = [...tree.rootProjects, ...tree.unplacedProjects];
-  return snapshot.contexts.map((context) => ({
-    context,
-    roots: tree.roots.filter((node) => node.section.contextId === context.id),
-    projects: topLevel.filter((project) => context.projectIds.includes(project.id)),
-  }));
-}
-
-/** Fold state shares the sections' own, under an id no section can take. */
-export const contextFoldId = (contextId: string) => `context:${contextId}`;
 
 /**
  * The sections a project can move into: those of its own context. Outside the

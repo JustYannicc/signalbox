@@ -4,13 +4,13 @@ import { draftHeroCopy, PROJECT_HERO_COPY, projectSettingsLabel } from "./folder
 
 describe("draftHeroCopy", () => {
   it("keeps upstream's project words where the environment has no folders", () => {
-    expect(draftHeroCopy(null)).toBe(PROJECT_HERO_COPY);
+    expect(draftHeroCopy(false)).toBe(PROJECT_HERO_COPY);
   });
 
-  it("names the level a thread without a project starts in, and never says project", () => {
-    const copy = draftHeroCopy("Personal");
-    expect(copy.scratchLabel).toBe("Personal");
-    expect(copy.startWithout).toBe("or start in Personal");
+  it("starts a thread without a project at the top level, and never says project", () => {
+    const copy = draftHeroCopy(true);
+    expect(copy.scratchLabel).toBe("Top level");
+    expect(copy.startWithout).toBe("or start at the top level");
     for (const text of Object.values(copy)) expect(text).not.toMatch(/project/i);
   });
 });

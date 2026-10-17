@@ -308,6 +308,42 @@ describe("UserFolders", () => {
       }).pipe(Effect.provide(layerMemoryStore)),
   );
 
+  it.effect("lends a GitHub account to a folder for CI steps, and takes it back (#641)", () =>
+    Effect.gen(function* () {
+      const { folders, store } = yield* services;
+      yield* store.recordSignIn({ id: USER, email: "a@b.c" });
+      yield* TestClock.setTime(1_000);
+      yield* give(CLIENT_DRIVE, "Northwind");
+      const repo = (yield* folders.snapshot).folders.find((folder) => folder.files)!;
+      const lendOf = (snapshot: SignalboxFoldersSnapshot) =>
+        snapshot.folders.find((folder) => folder.id === repo.id)?.githubLend;
+      expect(repo.githubLend).toBeUndefined();
+
+      expect(lendOf(yield* folders.setGitHubLend(repo.id, "octo"))).toEqual({
+        login: "octo",
+        lentAt: 1_000,
+      });
+      // The same account again keeps when it was lent; another replaces it.
+      yield* TestClock.setTime(2_000);
+      expect(lendOf(yield* folders.setGitHubLend(repo.id, "octo"))?.lentAt).toBe(1_000);
+      expect(lendOf(yield* folders.setGitHubLend(repo.id, "hubot"))).toEqual({
+        login: "hubot",
+        lentAt: 2_000,
+      });
+      expect(lendOf(yield* folders.setGitHubLend(repo.id, null))).toBeUndefined();
+
+      // The lend was for those files' repository: other files need lending again.
+      yield* folders.setGitHubLend(repo.id, "octo");
+      expect(lendOf(yield* folders.update({ id: repo.id, files: null }))).toBeUndefined();
+
+      // A deleted folder's lend goes with it.
+      yield* folders.setGitHubLend(repo.id, "octo");
+      yield* folders.delete({ id: repo.id });
+      const { bindings } = yield* folders.rows;
+      expect(bindings.filter((row) => row.kind === "github-actions")).toEqual([]);
+    }).pipe(Effect.provide(layerMemoryStore)),
+  );
+
   it.effect("migrates sections, placements and pools into folders, once", () =>
     Effect.gen(function* () {
       const { contexts, store, sql } = yield* services;

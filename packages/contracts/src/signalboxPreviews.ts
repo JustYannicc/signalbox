@@ -169,6 +169,22 @@ export const AgentBrowserStep = Schema.Struct({
 });
 export type AgentBrowserStep = typeof AgentBrowserStep.Type;
 
+/**
+ * A tab the agent handed to the person (#579): a payment, which only a
+ * person finishes. The agent waits on the tab, reading nothing, until the
+ * person answers the "Payment" automation's ask (`runId`) with how it went.
+ */
+export const AgentBrowserHandoff = Schema.Struct({
+  kind: Schema.Literal("payment"),
+  /** The site, as its host. */
+  site: Schema.String,
+  /** The automation run asking the person; null until it started. */
+  runId: Schema.NullOr(Schema.String),
+  /** The page, when it can be finished in the person's own browser too (an account's cart). */
+  ownBrowserUrl: Schema.NullOr(Schema.String),
+});
+export type AgentBrowserHandoff = typeof AgentBrowserHandoff.Type;
+
 /** What a watch stream carries. */
 export const AgentBrowserUpdate = Schema.Union([
   /** First, then on every change. */
@@ -185,6 +201,8 @@ export const AgentBrowserUpdate = Schema.Union([
     problem: Schema.NullOr(Schema.String),
     /** Said once, e.g. why control went back to the agent. */
     notice: Schema.NullOr(Schema.String),
+    /** The mirrored tab waits on the person; absent from machines that never hand tabs off. */
+    handoff: Schema.optionalKey(Schema.NullOr(AgentBrowserHandoff)),
   }),
   /**
    * rrweb events for `tabId`, as a JSON array. A batch that starts with a

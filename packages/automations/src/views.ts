@@ -13,7 +13,7 @@ import * as Cron from "effect/Cron";
 import * as DateTime from "effect/DateTime";
 import * as Result from "effect/Result";
 
-import { automationTriggers, errorDetailOf, stepArgs, stepAsk } from "./columns.ts";
+import { automationTriggers, errorDetailOf, externalRunOf, stepArgs, stepAsk } from "./columns.ts";
 import { builtInOfRow } from "./defaults/registry.ts";
 import { fromJson } from "./json.ts";
 import type { AutomationRow, RunSummaryRow, StepRow, WaitingAskRow } from "./WorkflowStore.ts";
@@ -93,6 +93,7 @@ function waitingQuestion(step: WaitingAskRow): AutomationWaitingQuestion {
     options: ask.options,
     multi: ask.multi,
     fields: ask.fields,
+    open: ask.open,
     since: step.started_at,
   };
 }
@@ -141,6 +142,7 @@ export function stepView(row: StepRow): AutomationStep {
     attempt: row.attempt,
     startedAt: row.started_at,
     finishedAt: row.finished_at,
+    ...(row.external_json ? { external: externalRunOf(row.external_json) } : {}),
   };
 }
 

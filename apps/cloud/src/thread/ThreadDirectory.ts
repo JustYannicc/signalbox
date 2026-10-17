@@ -1,5 +1,6 @@
 import type { PreviewPort } from "@signalbox/runner-protocol/PreviewTunnel";
 import type { ModelGatewayProvider } from "@signalbox/runner-protocol/RunnerProtocol";
+import type { StatusNoteView } from "@signalbox/runner-protocol/StatusLineProtocol";
 import type {
   OrchestrationV2Command,
   OrchestrationV2SubscribeThreadInput,
@@ -449,6 +450,10 @@ export interface ThreadObjectNamespace {
     readonly recordModelRequest: (record: ModelGatewayRecord) => Promise<void>;
     readonly authorizeDrive: (token: string) => Promise<DriveAuthorization>;
     readonly authorizeRemote: (token: string) => Promise<RemoteAuthorization>;
+    /** The thread's status line for its agent (`statusLineJson.read`); null before it exists. */
+    readonly statusLine: () => Promise<string | null>;
+    /** The agent's note (`statusLineJson.writeRequest`); the stored note, null when the thread is gone. */
+    readonly writeStatusNote: (input: string) => Promise<StatusNoteView | null>;
   };
 }
 

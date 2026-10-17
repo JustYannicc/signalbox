@@ -6,7 +6,8 @@ import { type Browser, chromium } from "playwright-core";
 import { afterAll, beforeAll, describe, expect, it } from "vite-plus/test";
 
 import { makeRunnerBrowser, type TabSource } from "./RunnerBrowser.ts";
-import { AGENT_WAIT_MS, PERSON_DRIVING, type Timer } from "./RunnerBrowserControl.ts";
+import { AGENT_WAIT_MS, PERSON_DRIVING } from "./RunnerBrowserControl.ts";
+import { manualTimers } from "./runnerBrowserTesting.ts";
 
 /**
  * The agent's browser as a person watches it (#587), on a real Chromium: the
@@ -16,7 +17,7 @@ import { AGENT_WAIT_MS, PERSON_DRIVING, type Timer } from "./RunnerBrowserContro
  */
 
 const PAGE = `<title>Form</title>
-<label>Name <input id="name"></label>
+<label>Name <input id="name" oninput="console.log('typed ' + this.value)"></label>
 <button onclick="document.body.append(Object.assign(document.createElement('p'), { textContent: 'clicked' }))">Add</button>`;
 const CANVAS_PAGE = `<title>Canvas</title>
 <canvas id="art" width="40" height="40"></canvas>
@@ -54,36 +55,6 @@ afterAll(async () => {
 const machineTabs = async (): Promise<TabSource> => {
   const context = await chrome.newContext();
   return { newPage: () => context.newPage(), close: () => context.close() };
-};
-
-/** Timers the test fires by hand; `armed` resolves once one for `ms` is set. */
-const manualTimers = () => {
-  const set = new Set<{ readonly run: () => void; readonly ms: number }>();
-  const waiting = new Set<{ readonly ms: number; readonly resolve: () => void }>();
-  const timer: Timer = (run, ms) => {
-    const entry = { run, ms };
-    set.add(entry);
-    for (const wait of waiting)
-      if (wait.ms === ms) {
-        waiting.delete(wait);
-        wait.resolve();
-      }
-    return () => void set.delete(entry);
-  };
-  return {
-    timer,
-    armed: (ms: number) =>
-      [...set].some((entry) => entry.ms === ms)
-        ? Promise.resolve()
-        : new Promise<void>((resolve) => waiting.add({ ms, resolve })),
-    fire: (ms: number) => {
-      for (const entry of set)
-        if (entry.ms === ms) {
-          set.delete(entry);
-          entry.run();
-        }
-    },
-  };
 };
 
 /** Everything a stream carries, and a way to wait for the update the test needs next. */
@@ -215,8 +186,9 @@ describe("the agent's browser, mirrored", () => {
         ownedByCaller: false,
       });
 
-      // The agent's next action waits for the person.
+      // The agent's next actions wait for the person, reads too (#579).
       const agentClick = browser.click({ locator: "role=button[name='Add']" });
+      const agentRead = browser.snapshot({});
       await timers.armed(AGENT_WAIT_MS);
 
       const typed = updates.seen.length;
@@ -233,11 +205,13 @@ describe("the agent's browser, mirrored", () => {
         typed,
       );
       expect(input).toMatchObject({ tabId: opened.tabId });
-      // Reads don't wait for the person.
-      expect((await browser.snapshot({})).visibleText).toContain("by script");
 
       viewer.input({ _tag: "release" });
       await agentClick;
+      // What the page logged while the person drove never reaches the agent.
+      const read = await agentRead;
+      expect(read.visibleText).toContain("by script");
+      expect(read.consoleEntries.map((entry) => entry.text)).not.toContain("typed Ada");
       const person = await steps.next((each) => each.step.action === "person");
       expect(person.events).toContain("Ada");
       expect(await browser.evaluate({ expression: "document.querySelector('#name').value" })).toBe(

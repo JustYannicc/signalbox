@@ -29,6 +29,7 @@ export const CONTEXT_INSTRUCTIONS = [
   `If search_context answers insufficient_evidence, say that you found nothing, with what you searched; never guess which work was meant.`,
   `Where ${DRIVES_ROOT} is not mounted as a folder, list_drives and read_drive_file read the same paths.`,
   `In a drive backed by a GitHub repository, push and create_pr publish this thread's branch; git push has no credential here.`,
+  `Before you finish each turn, call set_thread_status with the next step (one line, who acts) and where the work got to (one or two plain sentences for someone new). thread_status and folder_status read what's going on.`,
   `The instructions of the folders this thread lives in come first in your AGENTS.md, top level first; they apply to all your work here, not to one drive's files.`,
   `Use preview_service_start with the project's exact dev-server command when its preview must return on a new machine; use preview_service_stop to remove it.`,
 ].join("\n");

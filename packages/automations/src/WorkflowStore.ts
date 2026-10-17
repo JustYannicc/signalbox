@@ -3,6 +3,7 @@ import {
   type AutomationRunStatus,
   type AutomationRunTrigger,
   type AutomationStepStatus,
+  type ExternalRun,
   type WorkflowStepVerb,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
@@ -10,6 +11,7 @@ import * as Effect from "effect/Effect";
 import * as SqlClient from "effect/sql/SqlClient";
 import type { SqlError } from "effect/sql/SqlError";
 
+import { toJson } from "./json.ts";
 import { ensureAutomationTables } from "./storeSchema.ts";
 import { isoAt } from "./time.ts";
 
@@ -144,6 +146,10 @@ export interface StepRow {
   readonly attempt: number;
   readonly started_at: string;
   readonly finished_at: string | null;
+  /** The run in another system the step started (`ExternalRun` JSON), as last read. */
+  readonly external_json?: string | null;
+  /** When to read that run again; null once there's nothing more to read. */
+  readonly poll_at?: string | null;
 }
 
 /** What run lists show; `runSummary` reads only these. */
@@ -664,14 +670,22 @@ export const make = Effect.gen(function* () {
     markWaiting: (
       runId: string,
       key: string,
-      wait: { threadId?: string; agentRunId?: string; wakeAt?: string; event?: string },
+      wait: {
+        threadId?: string;
+        agentRunId?: string;
+        wakeAt?: string;
+        event?: string;
+        external?: ExternalRun;
+        pollAt?: string;
+      },
     ) =>
       run(
         "markWaiting",
         sql<{ step_key: string }>`
           UPDATE signalbox_automation_steps
           SET status = 'waiting', thread_id = ${wait.threadId ?? null}, wake_at = ${wait.wakeAt ?? null},
-            event = ${wait.event ?? null}, agent_run_id = ${wait.agentRunId ?? null}
+            event = ${wait.event ?? null}, agent_run_id = ${wait.agentRunId ?? null},
+            external_json = ${wait.external ? toJson(wait.external) : null}, poll_at = ${wait.pollAt ?? null}
           WHERE run_id = ${runId} AND step_key = ${key} AND status = 'running'
           RETURNING step_key
         `,
@@ -755,6 +769,38 @@ export const make = Effect.gen(function* () {
             AND r.status = 'running'
         `,
       ),
+    /** What a waiting step's external run looks like now, and when to read it next. False once it settled. */
+    saveExternal: (runId: string, key: string, externalJson: string, pollAt: string | null) =>
+      run(
+        "saveExternal",
+        sql<{ step_key: string }>`
+          UPDATE signalbox_automation_steps SET external_json = ${externalJson}, poll_at = ${pollAt}
+          WHERE run_id = ${runId} AND step_key = ${key} AND status = 'waiting'
+          RETURNING step_key
+        `,
+      ).pipe(Effect.map(changedRows)),
+    /** Waiting steps of running runs whose external run is due to be read again by `now`. */
+    duePolls: (now: string) =>
+      run(
+        "duePolls",
+        sql<StepRow>`
+          SELECT s.* FROM signalbox_automation_steps s
+          JOIN signalbox_automation_runs r ON r.run_id = s.run_id
+          WHERE s.status = 'waiting' AND s.poll_at IS NOT NULL AND s.poll_at <= ${now}
+            AND r.status = 'running'
+          ORDER BY s.poll_at LIMIT 50
+        `,
+      ),
+    /** When the next external run is due to be read; null when none is. */
+    nextPollAt: () =>
+      run(
+        "nextPollAt",
+        sql<{ readonly at: string | null }>`
+          SELECT MIN(s.poll_at) AS at FROM signalbox_automation_steps s
+          JOIN signalbox_automation_runs r ON r.run_id = s.run_id
+          WHERE s.status = 'waiting' AND s.poll_at IS NOT NULL AND r.status = 'running'
+        `,
+      ).pipe(Effect.map((rows) => rows[0]?.at ?? null)),
     /** When the next enabled cron is due; null when none is scheduled. */
     nextCronAt: () =>
       run(
