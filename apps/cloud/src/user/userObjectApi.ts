@@ -6,6 +6,7 @@ import * as Schema from "effect/Schema";
 
 import { deliverCompletion } from "../collaboration/completion.ts";
 import type { CloudThreadService } from "../thread/CloudThreadService.ts";
+import * as ThreadSearch from "../search/ThreadSearch.ts";
 import { automationTool } from "../automations/automationTool.ts";
 import * as PersonBrowsers from "../browser/PersonBrowsers.ts";
 import * as CloudAutomations from "../automations/CloudAutomations.ts";
@@ -50,6 +51,7 @@ export const makeUserObjectApi = (
     effect: Effect.Effect<
       A,
       E,
+      | ThreadSearch.ThreadSearch
       | UserStore.UserStore
       | CloudThreadService
       | UserShell.UserShell
@@ -89,6 +91,10 @@ export const makeUserObjectApi = (
         : f(automations.value),
     );
   return {
+    searchThreads: (actor, input) =>
+      run(ThreadSearch.ThreadSearch.use((search) => search.query(actor, input))),
+    readSearchItem: (actor, threadId, itemId) =>
+      run(ThreadSearch.ThreadSearch.use((search) => search.readItem(actor, threadId, itemId))),
     recordSignIn: (profile) => use((store) => store.recordSignIn(profile)),
     profile: () => use((store) => store.profile),
     createSession: (input) => use((store) => store.createSession(input)),

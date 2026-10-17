@@ -6,6 +6,9 @@ import {
   type OrchestrationV2Command,
   type OrchestrationV2DomainEvent,
   type OrchestrationV2Run,
+  type ProjectId,
+  type OrchestrationV2SearchThreadInput,
+  type OrchestrationV2SearchThreadResult,
   type OrchestrationV2SubscribeThreadInput,
   type OrchestrationV2ThreadLaunchInput,
   type OrchestrationV2ThreadLaunchResult,
@@ -53,6 +56,18 @@ import {
   type TurnSecrets,
 } from "./turnPool.ts";
 import { poolErrorMessage } from "../pool/PoolDirectory.ts";
+import {
+  type SearchDelivery,
+  SearchDocument,
+  SearchThreadMetadata,
+} from "../search/SearchIndex.ts";
+import { searchHomeForThread } from "../search/searchHome.ts";
+import { findProjectedThreadItems } from "../search/threadFind.ts";
+import {
+  documentForProjectedItem,
+  documentsForItems,
+  documentsForProjection,
+} from "./searchDocuments.ts";
 import type { ThreadMonitor, ThreadSnapshotWire, ThreadSummaryWire } from "./threadWire.ts";
 
 /**
@@ -157,6 +172,20 @@ const isProviderNativeChild = (thread: OrchestrationV2AppThread) =>
 export type ThreadSummary = typeof ThreadSummaryWire.Type;
 
 export type ThreadSnapshot = typeof ThreadSnapshotWire.Type;
+
+export interface SearchThreadDocuments {
+  readonly snapshotSequence: number;
+  readonly projectId: ProjectId;
+  readonly title: string;
+  readonly archived: boolean;
+  readonly deleted: boolean;
+  readonly documents: ReadonlyArray<SearchDocument>;
+}
+
+export interface SearchBackfillProgress {
+  readonly revision: number;
+  readonly complete: boolean;
+}
 
 /** What `apply` commits: events, the machine lease to store with them, and the caller's result. */
 export interface EngineDecision<A> {
@@ -265,6 +294,24 @@ export class ThreadEngine extends Context.Service<
       readonly events: ReadonlyArray<ThreadStore.StoredEvent>;
     } | null>;
     readonly acknowledgeEvents: (through: number) => Effect.Effect<void>;
+    readonly hasPendingSearch: Effect.Effect<boolean>;
+    readonly pendingSearchDelivery: Effect.Effect<SearchDelivery | null>;
+    readonly acknowledgeSearchDelivery: (
+      revision: number,
+      deliveryId: string,
+    ) => Effect.Effect<void>;
+    /** Starts or restarts an additive backfill, after the normal actor check. */
+    readonly backfill: (actor: Actor) => Effect.Effect<SearchBackfillProgress | null>;
+    /** Rechecks current content before search can return a snippet. */
+    readonly searchDocuments: (
+      actor: Actor,
+      itemIds: ReadonlyArray<string>,
+    ) => Effect.Effect<SearchThreadDocuments | null>;
+    /** Finds a current in-thread match in the authorized projection. */
+    readonly find: (
+      actor: Actor,
+      input: OrchestrationV2SearchThreadInput,
+    ) => Effect.Effect<OrchestrationV2SearchThreadResult, ThreadNotFoundError>;
   }
 >()("@signalbox/cloud/thread/ThreadEngine") {}
 
@@ -309,6 +356,88 @@ const toStreamItem = (stored: ThreadStore.StoredEvent): OrchestrationV2ThreadStr
   sequence: stored.sequence,
   event: stored.event,
 });
+
+const SEARCH_DELIVERY_PAGE_SIZE = 48;
+const sameSearchDocument = Schema.toEquivalence(SearchDocument);
+const sameSearchMetadata = Schema.toEquivalence(SearchThreadMetadata);
+
+const searchHome = (owner: ThreadStore.ThreadOwner, projection: OrchestrationV2ThreadProjection) =>
+  searchHomeForThread(owner.userId, String(owner.contextId), String(projection.thread.projectId));
+
+const searchMetadata = (projection: OrchestrationV2ThreadProjection) => ({
+  threadId: String(projection.thread.id),
+  title: projection.thread.title,
+  archived: projection.thread.archivedAt !== null,
+  deleted: projection.thread.deletedAt !== null,
+});
+
+function searchDeliveryDrafts(
+  before: OrchestrationV2ThreadProjection | null,
+  after: OrchestrationV2ThreadProjection,
+  owner: ThreadStore.ThreadOwner,
+  complete: boolean,
+  sourceSequence: number,
+): ReadonlyArray<ThreadStore.SearchDeliveryDraft> {
+  const nextDocuments = documentsForProjection(after);
+  const nextById = new Map(nextDocuments.map((row) => [row.itemId, row]));
+  const nextHome = searchHome(owner, after);
+  const nextMetadata = searchMetadata(after);
+  const beforeDocuments = before === null ? [] : documentsForProjection(before);
+  const beforeById = new Map(beforeDocuments.map((row) => [row.itemId, row]));
+  const homeChanged =
+    before !== null &&
+    (before.thread.projectId !== after.thread.projectId || before.thread.id !== after.thread.id);
+  const metadataChanged =
+    before === null || !sameSearchMetadata(searchMetadata(before), nextMetadata);
+
+  const draftsFor = (
+    home: ThreadStore.SearchDeliveryDraft["home"],
+    thread: ThreadStore.SearchDeliveryDraft["thread"],
+    documents: ReadonlyArray<SearchDocument>,
+    removed: ReadonlyArray<string>,
+  ): Array<ThreadStore.SearchDeliveryDraft> => {
+    const count = Math.max(
+      1,
+      Math.ceil(Math.max(documents.length, removed.length) / SEARCH_DELIVERY_PAGE_SIZE),
+    );
+    return Array.from({ length: count }, (_, page) => ({
+      home,
+      thread,
+      documents: documents.slice(
+        page * SEARCH_DELIVERY_PAGE_SIZE,
+        (page + 1) * SEARCH_DELIVERY_PAGE_SIZE,
+      ),
+      removed: removed.slice(
+        page * SEARCH_DELIVERY_PAGE_SIZE,
+        (page + 1) * SEARCH_DELIVERY_PAGE_SIZE,
+      ),
+      complete,
+      sourceSequence,
+    }));
+  };
+
+  if (homeChanged && before !== null) {
+    return [
+      ...draftsFor(
+        searchHome(owner, before),
+        { ...searchMetadata(before), deleted: true },
+        [],
+        beforeDocuments.map((row) => row.itemId),
+      ),
+      ...draftsFor(nextHome, nextMetadata, nextDocuments, []),
+    ];
+  }
+
+  const changed = nextDocuments.filter((row) => {
+    const previous = beforeById.get(row.itemId);
+    return previous === undefined || !sameSearchDocument(previous, row);
+  });
+  const removed = beforeDocuments
+    .filter((row) => !nextById.has(row.itemId))
+    .map((row) => row.itemId);
+  if (changed.length === 0 && removed.length === 0 && !metadataChanged) return [];
+  return draftsFor(nextHome, nextMetadata, changed, removed);
+}
 
 const make = Effect.gen(function* () {
   const store = yield* ThreadStore.ThreadStore;
@@ -387,6 +516,46 @@ const make = Effect.gen(function* () {
     // The thread's first commit creates its storage.
     if (current.thread === null) yield* Effect.orDie(store.initialize);
     const nextKey = summaryKey(projection, current.monitors, current.statusNote);
+    // Streaming events never rebuild historical search documents. Their final item does.
+    const searchChanged =
+      current.thread === null ||
+      events.some((event) => {
+        if (event.type === "turn-item.updated") {
+          return (
+            event.payload.type === "run_interrupt_request" ||
+            documentForProjectedItem(projection, {
+              item: event.payload,
+              position: 0,
+              visibility: "local",
+              sourceThreadId: projection.thread.id,
+              sourceItemId: event.payload.id,
+            }) !== null
+          );
+        }
+        if (event.type === "run.updated") {
+          return (
+            current.thread?.projection.runs.find((run) => run.id === event.payload.id)?.status !==
+            event.payload.status
+          );
+        }
+        return (
+          event.type.startsWith("thread.") ||
+          event.type === "run.created" ||
+          event.type.startsWith("context-transfer.") ||
+          event.type === "checkpoint.captured"
+        );
+      });
+    const searchComplete =
+      current.thread === null || (yield* Effect.orDie(store.searchOutbox)).backfillComplete;
+    const searchDeliveries = searchChanged
+      ? searchDeliveryDrafts(
+          current.thread?.projection ?? null,
+          projection,
+          owner,
+          searchComplete,
+          current.head + events.length,
+        )
+      : [];
     const head = yield* Effect.orDie(
       store.commit({
         head: current.head,
@@ -398,6 +567,7 @@ const make = Effect.gen(function* () {
         ...(input.machine ? { machine: input.machine } : {}),
         ...(input.nativeChildPending ? { nativeChildPending: input.nativeChildPending } : {}),
         summaryChanged: nextKey !== current.summaryKey,
+        ...(searchDeliveries.length > 0 ? { searchDeliveries } : {}),
       }),
     );
     yield* Ref.set(state, { ...current, head, thread: { owner, projection }, summaryKey: nextKey });
@@ -895,6 +1065,76 @@ const make = Effect.gen(function* () {
   const acknowledgeEvents: ThreadEngine["Service"]["acknowledgeEvents"] = (through) =>
     Effect.orDie(store.acknowledgeEvents(through));
 
+  const hasPendingSearch: ThreadEngine["Service"]["hasPendingSearch"] = Effect.gen(function* () {
+    const current = yield* Ref.get(state);
+    if (current.thread === null) return false;
+    const [outbox, pending] = yield* Effect.all([
+      store.searchOutbox,
+      store.pendingSearchDelivery,
+    ]).pipe(Effect.orDie);
+    return outbox.backfillRequested || pending !== null;
+  });
+
+  const pendingSearchDelivery: ThreadEngine["Service"]["pendingSearchDelivery"] = Effect.gen(
+    function* () {
+      const current = yield* Ref.get(state);
+      return current.thread === null ? null : yield* Effect.orDie(store.pendingSearchDelivery);
+    },
+  );
+
+  const acknowledgeSearchDelivery: ThreadEngine["Service"]["acknowledgeSearchDelivery"] = (
+    revision,
+    deliveryId,
+  ) => serialized(Effect.orDie(store.acknowledgeSearchDelivery(revision, deliveryId)));
+
+  const backfill: ThreadEngine["Service"]["backfill"] = (actor) =>
+    serialized(
+      Effect.gen(function* () {
+        const current = yield* Ref.get(state);
+        const thread = visibleTo(current, actor);
+        if (thread === null) return null;
+        const existing = yield* Effect.orDie(store.searchOutbox);
+        if (existing.backfillRequested)
+          return { revision: existing.backfillRevision, complete: false };
+        const marker: ThreadStore.SearchDeliveryDraft = {
+          home: searchHome(thread.owner, thread.projection),
+          thread: searchMetadata(thread.projection),
+          documents: documentsForProjection(thread.projection),
+          removed: [],
+          complete: true,
+          sourceSequence: current.head,
+        };
+        const outbox = yield* Effect.orDie(
+          store.requestSearchBackfill({
+            home: marker.home,
+            thread: marker.thread,
+            documents: marker.documents,
+            sourceSequence: marker.sourceSequence,
+          }),
+        );
+        return { revision: outbox.backfillRevision, complete: outbox.backfillComplete };
+      }),
+    );
+
+  const searchDocuments: ThreadEngine["Service"]["searchDocuments"] = (actor, itemIds) =>
+    Effect.gen(function* () {
+      const { head, projection } = yield* readable(actor);
+      return {
+        snapshotSequence: head,
+        projectId: projection.thread.projectId,
+        title: projection.thread.title,
+        archived: projection.thread.archivedAt !== null,
+        deleted: projection.thread.deletedAt !== null,
+        documents: documentsForItems(projection, itemIds),
+      };
+    }).pipe(Effect.catchTags({ ThreadNotFoundError: () => Effect.succeed(null) }));
+
+  const find: ThreadEngine["Service"]["find"] = (actor, input) =>
+    Effect.gen(function* () {
+      const { head, projection } = yield* readable(actor);
+      return findProjectedThreadItems(projection, input, head);
+    });
+
   const canSee: ThreadEngine["Service"]["canSee"] = (actor) =>
     Effect.map(Ref.get(state), (current) => visibleTo(current, actor) !== null);
 
@@ -919,6 +1159,12 @@ const make = Effect.gen(function* () {
     hasPendingEvents,
     pendingEvents,
     acknowledgeEvents,
+    hasPendingSearch,
+    pendingSearchDelivery,
+    acknowledgeSearchDelivery,
+    backfill,
+    searchDocuments,
+    find,
   });
 });
 

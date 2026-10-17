@@ -28,6 +28,7 @@ import {
 import * as GitHub from "../github/GitHub.ts";
 import type { PackBucket } from "../drive/DrivePacks.ts";
 import * as Platform from "../platform.ts";
+import * as CloudflareSearchIndex from "../search/CloudflareSearchIndex.ts";
 import * as PoolDirectory from "../pool/PoolDirectory.ts";
 import * as PreviewState from "./preview/PreviewState.ts";
 import * as BrowserTrail from "./preview/BrowserTrail.ts";
@@ -56,6 +57,7 @@ import * as SessionRows from "./session/SessionRows.ts";
 import { handleSessionRequest, isSessionApiPath } from "./session/sessionRoutes.ts";
 import { deliverPendingEvents } from "./eventOutbox.ts";
 import { deliverPendingSummary } from "./summaryOutbox.ts";
+import { deliverPendingSearch } from "./searchOutbox.ts";
 import { THREAD_OBJECT_JURISDICTION, type ThreadObjectApi } from "./ThreadDirectory.ts";
 import * as ThreadBrowsing from "./browsing/ThreadBrowsing.ts";
 import * as ThreadEngine from "./ThreadEngine.ts";
@@ -92,6 +94,7 @@ import * as ThreadStatusNotes from "./statusLine/ThreadStatusNotes.ts";
 export interface ThreadObjectEnv
   extends
     MachineBackend.MachineBackendEnv,
+    CloudflareSearchIndex.SearchIndexEnv,
     CloudAnalytics.CloudAnalyticsEnv,
     PreviewEnv,
     GitHub.GitHubEnv {
@@ -238,6 +241,7 @@ const makeRuntime = (
         ),
       ),
       Layer.provideMerge(ThreadEngine.layer),
+      Layer.provideMerge(CloudflareSearchIndex.layerFromEnv(env)),
       Layer.provideMerge(
         TurnModels.layer({ scripted: scriptedProviderEnabled(env) }).pipe(
           Layer.provide(
@@ -375,6 +379,18 @@ export class ThreadObject extends DurableObject<ThreadObjectEnv> implements Thre
 
   summary(...args: Parameters<ThreadObjectApi["summary"]>) {
     return this.api.summary(...args);
+  }
+
+  backfill(...args: Parameters<ThreadObjectApi["backfill"]>) {
+    return this.api.backfill(...args);
+  }
+
+  searchDocuments(...args: Parameters<ThreadObjectApi["searchDocuments"]>) {
+    return this.api.searchDocuments(...args);
+  }
+
+  find(...args: Parameters<ThreadObjectApi["find"]>) {
+    return this.api.find(...args);
   }
 
   diagnostics(...args: Parameters<ThreadObjectApi["diagnostics"]>) {
@@ -591,6 +607,8 @@ export class ThreadObject extends DurableObject<ThreadObjectEnv> implements Thre
   private nextDeliveryAt = 0;
   private eventFailures = 0;
   private nextEventsAt = 0;
+  private searchFailures = 0;
+  private nextSearchAt = 0;
   private machineFailures = 0;
   private analyticsFailures = 0;
   private sharingFailures = 0;
@@ -620,6 +638,7 @@ export class ThreadObject extends DurableObject<ThreadObjectEnv> implements Thre
           runner.needsUpkeep ||
           (yield* engine.hasTurnWork) ||
           (yield* engine.hasPendingSummary) ||
+          (yield* engine.hasPendingSearch) ||
           (yield* engine.hasPendingEvents) ||
           (yield* Effect.forEach(
             MachineBackend.distinctBackends(yield* MachineBackend.MachineBackend),
@@ -904,6 +923,20 @@ export class ThreadObject extends DurableObject<ThreadObjectEnv> implements Thre
       this.nextDeliveryAt = delivered ? 0 : now + retryDelay(this.deliveryFailures);
     }
     await this.deliverEvents(now);
+    if (now >= this.nextSearchAt) {
+      const delivered = await this.runtime.runPromise(
+        deliverPendingSearch.pipe(
+          Effect.map(() => true),
+          Effect.catchCause((cause) =>
+            Effect.logError("thread search delivery failed", Cause.pretty(cause)).pipe(
+              Effect.as(false),
+            ),
+          ),
+        ),
+      );
+      this.searchFailures = delivered ? 0 : this.searchFailures + 1;
+      this.nextSearchAt = delivered ? 0 : now + retryDelay(this.searchFailures);
+    }
     const machineWakeAt = await this.tendMachine(now).catch(async (cause: unknown) => {
       await this.runtime.runPromise(Effect.logError("machine upkeep failed", String(cause)));
       return now + retryDelay(1);
@@ -953,6 +986,13 @@ export class ThreadObject extends DurableObject<ThreadObjectEnv> implements Thre
       step.more ? now + (step.ok ? STEP_INTERVAL_MS : retryDelay(this.stepFailures)) : null,
       summaryAt,
       eventsAt,
+      this.nextSearchAt > 0
+        ? this.nextSearchAt
+        : (await this.runtime.runPromise(
+              ThreadEngine.ThreadEngine.use((engine) => engine.hasPendingSearch),
+            ))
+          ? now + STEP_INTERVAL_MS
+          : null,
       machineWakeAt,
       diagnosticsWakeAt,
       pullRequestsWakeAt,

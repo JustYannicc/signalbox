@@ -2011,6 +2011,13 @@
       "output": "aebf4e45"
     },
     {
+      "name": "threads.query",
+      "rpc": "signalbox.search.query",
+      "access": "read",
+      "input": "2f63ad84",
+      "output": "fdcbbe22"
+    },
+    {
       "name": "threads.queue.resume",
       "rpc": "orchestration.dispatchCommand",
       "command": "queue.resume",
@@ -2089,7 +2096,7 @@
       "rpc": "orchestration.searchThreads",
       "access": "read",
       "input": "4851e18f",
-      "output": "7e3c74cc"
+      "output": "655a6572"
     },
     {
       "name": "threads.searchOne",

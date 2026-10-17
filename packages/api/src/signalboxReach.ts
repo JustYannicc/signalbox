@@ -11,6 +11,10 @@ export const SIGNALBOX_RPC_REACH = {
   "signalbox.collaboration.status": read({ name: "threads.collaboration.status" }),
   "signalbox.collaboration.cancel": write({ name: "threads.collaboration.cancel" }),
   "signalbox.collaboration.interrupt": write({ name: "threads.collaboration.interrupt" }),
+  "signalbox.search.query": read({
+    name: "threads.query",
+    summary: "Search thread items across the folders you can see, with anchors and index coverage.",
+  }),
   "signalbox.analytics.getSettings": read({ name: "analytics.get" }),
   "signalbox.analytics.setEnabled": write({ name: "analytics.setEnabled" }),
   "signalbox.analytics.recordClientEvent": exempt(
