@@ -49,6 +49,15 @@ const makeRuntime = (ctx: DurableObjectState, driveId: string, env: DriveObjectE
 type OutboxServices = ManagedRuntime.ManagedRuntime.Services<ReturnType<typeof makeRuntime>>;
 
 export class DriveObject extends DurableObject<DriveObjectEnv> implements DriveObjectApi {
+  packStorage(...args: Parameters<DriveObjectApi["packStorage"]>) {
+    return this.api.packStorage(...args);
+  }
+  history(...args: Parameters<DriveObjectApi["history"]>) {
+    return this.api.history(...args);
+  }
+  startFromHistory(...args: Parameters<DriveObjectApi["startFromHistory"]>) {
+    return this.api.startFromHistory(...args);
+  }
   private readonly api: DriveObjectApi;
   private readonly runtime: ReturnType<typeof makeRuntime>;
   private readonly driveId: string;
