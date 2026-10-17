@@ -19,6 +19,8 @@ export const SignalboxEnvironmentCapabilityFields = {
   serverSettingsWrite: Schema.optionalKey(Schema.Boolean),
   /** Allows model preferences and the default model through a restricted settings patch. */
   modelSettingsWrite: Schema.optionalKey(Schema.Boolean),
+  /** Serves the person's analytics consent read/write RPCs, independently of host settings. */
+  analyticsSettings: Schema.optionalKey(Schema.Boolean),
   /** Serves `device.*`: the iOS Simulators and Android Emulators on its device hosts. */
   devices: Schema.optionalKey(Schema.Boolean),
   /** Serves scheduled tasks (`scheduledTasks.*`, `subscribeScheduledTasks`). */

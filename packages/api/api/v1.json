@@ -1162,7 +1162,7 @@
       "name": "pullRequests.diffFileContents",
       "rpc": "pullRequests.diffFileContents",
       "access": "read",
-      "input": "65023a5f",
+      "input": "fa31bf25",
       "output": "80061c35"
     },
     {
@@ -1528,7 +1528,7 @@
       "rpc": "server.getConfig",
       "access": "read",
       "input": "03c2b661",
-      "output": "1279d273"
+      "output": "4176cd6a"
     },
     {
       "name": "server.refreshProviders",
@@ -1565,7 +1565,7 @@
       "access": "read",
       "stream": "snapshot",
       "input": "240ec835",
-      "output": "8a5ce10b"
+      "output": "402d7fcc"
     },
     {
       "name": "settings.get",
