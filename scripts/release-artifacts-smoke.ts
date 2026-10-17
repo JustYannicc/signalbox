@@ -7,6 +7,7 @@ import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import * as NodeURL from "node:url";
+import * as CliRelease from "@t3tools/shared/cliRelease";
 import * as Console from "effect/Console";
 import * as Effect from "effect/Effect";
 
@@ -24,6 +25,30 @@ const releaseWorkflow = NodeFS.readFileSync(
   NodePath.join(repoRoot, ".github/workflows/release.yml"),
   "utf8",
 );
+const desktopWorkflow = NodeFS.readFileSync(
+  NodePath.join(repoRoot, ".github/workflows/release-desktop.yml"),
+  "utf8",
+);
+for (const workflow of [releaseWorkflow, desktopWorkflow]) {
+  NodeAssert.doesNotMatch(
+    workflow,
+    /\bt3-[^\r\n]*(?:\.tar\.gz|\.zip)/,
+    "Release workflows must select Signalbox CLI archives.",
+  );
+}
+for (const [platform, architecture, key] of [
+  ["mac", "arm64", "darwin-arm64"],
+  ["linux", "arm64", "linux-arm64"],
+  ["linux", "x64", "linux-x64"],
+  ["win", "arm64", "win32-arm64"],
+  ["win", "x64", "win32-x64"],
+] as const) {
+  NodeAssert.equal(
+    cliArchiveFileName("9.9.9-smoke.0", platform, architecture),
+    CliRelease.cliArchiveFileName("9.9.9-smoke.0", key),
+    "CLI builders and downloaders must agree on release archive names.",
+  );
+}
 const mobileConfig = NodeFS.readFileSync(
   NodePath.join(repoRoot, "apps/mobile/app.config.ts"),
   "utf8",
