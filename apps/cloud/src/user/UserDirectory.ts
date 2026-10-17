@@ -37,7 +37,7 @@ import { API_HEADER, type ApiCredential, encodeApiCredential } from "../api/apiO
 import type { CreatedKey, KeyOptions } from "../localKeys/LocalKeys.ts";
 import type { LocalKeysView } from "../localKeys/localModelAccess.ts";
 import type { LocalModelAuthorization } from "../models/ModelProtocol.ts";
-import type { ModelUsage } from "../modelGateway/modelGatewayRecord.ts";
+import type { ModelUsage } from "../models/ModelRecords.ts";
 import type { PreviewSetup } from "../previewSetup/previewSetupWire.ts";
 import type { SignInCheck } from "../signIn/SignInGrants.ts";
 import type {
@@ -231,6 +231,8 @@ export interface UserObjectApi {
    * thread (`drive/automationRoutes.ts`). The engine's refusal is an answer.
    */
   readonly automationTool: (threadId: string, name: string, input: unknown) => Promise<ToolResult>;
+  /** The thread token fixes the learner level; tool inputs never choose one. */
+  readonly learnerTool: (threadId: string, name: string, input: unknown) => Promise<ToolResult>;
   /**
    * What's going on in a thread's home folder, for its agent
    * (`drive/statusLineRoutes.ts`, `UserThreadStatus`), as `statusLineJson.folder` text.
@@ -365,6 +367,7 @@ const METHODS = Object.keys({
   publishBranch: true,
   automationTool: true,
   folderStatus: true,
+  learnerTool: true,
   browserSession: true,
   browserSignIn: true,
   checkSignIn: true,

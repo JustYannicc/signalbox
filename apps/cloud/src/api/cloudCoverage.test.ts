@@ -4,6 +4,17 @@ import { describe, expect, it } from "vite-plus/test";
 import { CLOUD_UNSERVED, cloudServes, cloudUnserved, coverageKeyMatches } from "./cloudCoverage.ts";
 
 describe("cloud API coverage", () => {
+  it("serves analytics preferences instead of leaving Settings with unknown RPCs", () => {
+    const analytics = operations.filter((operation) => operation.name.startsWith("analytics."));
+    expect(analytics.map((operation) => operation.name).sort()).toEqual([
+      "analytics.get",
+      "analytics.setEnabled",
+    ]);
+    expect(
+      analytics.filter((operation) => !cloudServes(operation)).map((operation) => operation.name),
+    ).toEqual([]);
+  });
+
   it("reports deferred cloud terminals as tracked gaps", () => {
     const terminals = operations.filter((operation) =>
       /^(terminal\.|terminalEvents\.|terminalMetadata\.)/.test(operation.name),

@@ -4,7 +4,8 @@ import * as NodeFS from "node:fs";
 import { ThreadId } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
 
-import { previewLabel, previewOrigin, previewSettings } from "../src/thread/preview/previewHost.ts";
+import { previewLabel } from "@t3tools/shared/preview";
+import { previewOrigin, previewSettings } from "../src/thread/preview/previewHost.ts";
 
 import { parseJsonc } from "../../../scripts/cloud-migrations/check.ts";
 import {
@@ -47,6 +48,7 @@ describe("cloudStage", () => {
       drivePacksBucket: "signalbox-drives",
       automationWorkflow: "signalbox-cloud-automations",
       vars: {
+        SIGNALBOX_STAGE: "production",
         ENVIRONMENT_ID: "4bfb70e5-7954-458a-9b75-4834c0ab4e13",
         CLOUD_URL: "https://app.signalbox.run",
         MODEL_GATEWAY_URL: "https://gateway.signalbox.run",
@@ -68,6 +70,7 @@ describe("cloudStage", () => {
       drivePacksBucket: "signalbox-drives-preview",
       automationWorkflow: "signalbox-cloud-pr-298-automations",
       vars: {
+        SIGNALBOX_STAGE: "pr-298",
         ENVIRONMENT_ID: "cloud-preview-298",
         DRIVE_PACKS_PREFIX: "pr-298/",
         MODEL_GATEWAY_URL: "https://gateway-preview-298.signalbox.run",
