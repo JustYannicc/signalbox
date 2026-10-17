@@ -113,8 +113,16 @@ export const launch = (
   engine: ThreadEngine.ThreadEngine["Service"],
   commandId = "launch-1",
   creation: ThreadEngine.ThreadCreation = personal,
-  projectId = ProjectId.make("scratch"),
-  modelSelection: ModelSelection = claude,
+  {
+    projectId = ProjectId.make("scratch"),
+    modelSelection = claude,
+    text = "Hi",
+  }: {
+    readonly projectId?: ProjectId;
+    readonly modelSelection?: ModelSelection;
+    /** The first message's text. */
+    readonly text?: string;
+  } = {},
 ) =>
   engine.launch(
     owner,
@@ -127,7 +135,7 @@ export const launch = (
       runtimeMode: "full-access",
       interactionMode: "default",
       workspaceStrategy: { type: "root" },
-      initialMessage: { messageId: MessageId.make("message-1"), text: "Hi", attachments: [] },
+      initialMessage: { messageId: MessageId.make("message-1"), text, attachments: [] },
     },
     creation,
   );
@@ -284,6 +292,7 @@ export const turnReport = (
   runId: RunId,
   runOrdinal: number,
   providerThread: OrchestrationV2ProviderThread,
+  { replyText = "Hello!" }: { readonly replyText?: string } = {},
 ) => {
   const reply = (text: string, done: boolean) =>
     encodeTurnItem({
@@ -333,8 +342,8 @@ export const turnReport = (
         nativeThreadRef: { driver: claudeDriver, nativeId: "claude-session-1", strength: "strong" },
       },
     } satisfies RunnerItem,
-    partial: provider({ type: "turn_item.updated", turnItem: reply("Hel", false) }),
-    full: provider({ type: "turn_item.updated", turnItem: reply("Hello!", true) }),
+    partial: provider({ type: "turn_item.updated", turnItem: reply(replyText.slice(0, 3), false) }),
+    full: provider({ type: "turn_item.updated", turnItem: reply(replyText, true) }),
     terminal: provider({
       type: "turn.terminal",
       providerThreadId: providerThread.id,

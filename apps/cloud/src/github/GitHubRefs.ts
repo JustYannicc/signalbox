@@ -37,12 +37,12 @@ const notARepository: VcsListRefsResult = {
 
 class RefKey extends Data.Class<{ readonly repository: string; readonly token: string }> {}
 
-export const makeGitHubRefs = (access: {
-  readonly drive: (driveId: string) => Effect.Effect<SignalboxDriveRole | null, unknown>;
+export const makeGitHubRefs = <DriveError, ThreadError>(access: {
+  readonly drive: (driveId: string) => Effect.Effect<SignalboxDriveRole | null, DriveError>;
   readonly threadSnapshot: (
     actor: Actor,
     threadId: ThreadId,
-  ) => Effect.Effect<OrchestrationV2ThreadBoundedSnapshot, unknown>;
+  ) => Effect.Effect<OrchestrationV2ThreadBoundedSnapshot, ThreadError>;
 }) =>
   Effect.gen(function* () {
     const github = yield* GitHub;
