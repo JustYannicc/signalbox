@@ -5,7 +5,6 @@ import {
   ORCHESTRATION_PROTOCOL_VERSION,
   ORCHESTRATION_PROTOCOL_VERSION_TEXT,
 } from "@t3tools/contracts";
-import * as Cause from "effect/Cause";
 import * as ConfigProvider from "effect/ConfigProvider";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
@@ -27,6 +26,7 @@ import * as ClientTraceIntake from "./observability/ClientTraceIntake.ts";
 import * as ClientTraceRoutes from "./observability/clientTraceRoutes.ts";
 import * as ClientIssueIntake from "./observability/ClientIssueIntake.ts";
 import * as ClientIssueRoutes from "./observability/clientIssueRoutes.ts";
+import { logRequestFailure } from "./observability/requestFailures.ts";
 import * as CloudAccounts from "./account/CloudAccounts.ts";
 import * as IdentityProvider from "./account/IdentityProvider.ts";
 import * as TestIdentities from "./testSignIn/TestIdentities.ts";
@@ -255,15 +255,7 @@ export const makeCloudApp = <E>(services: Layer.Layer<Services, E>): CloudApp =>
         const httpEffect = yield* HttpRouter.toHttpEffect(routes);
         const context = yield* Effect.context<Services>();
         return HttpEffect.toWebHandler(
-          httpEffect.pipe(
-            // Handlers map expected failures to responses; anything left is a bug worth logging.
-            Effect.tapCause((cause) =>
-              Cause.hasInterruptsOnly(cause)
-                ? Effect.void
-                : Effect.logError("cloud request failed", Cause.pretty(cause)),
-            ),
-            Effect.provide(context),
-          ),
+          httpEffect.pipe(Effect.tapCause(logRequestFailure), Effect.provide(context)),
         );
       }).pipe(Scope.provide(scope)),
     )
