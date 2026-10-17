@@ -7,7 +7,7 @@ import type { TaskLifecycleRecord, TaskLifecycleResult } from "@t3tools/contract
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
 import { useAtomValue } from "@effect/atom-react";
 import { Link } from "@tanstack/react-router";
-import { ArchiveRestoreIcon, CheckIcon, PencilIcon } from "lucide-react";
+import { ArchiveRestoreIcon, CheckIcon, ChevronRightIcon, PencilIcon } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 
 import { useThreadActions } from "../../hooks/useThreadActions";
@@ -132,7 +132,10 @@ function TaskLifecycleTaskRow(props: {
   const [busy, setBusy] = useState(false);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [summary, setSummary] = useState("");
+  const [initialSummary, setInitialSummary] = useState("");
   const [inputText, setInputText] = useState("");
+  const [initialInputText, setInitialInputText] = useState("");
+  const [advancedOpen, setAdvancedOpen] = useState(false);
   const [hidden, setHidden] = useState(false);
   const key = `${environmentId}:${threadId}`;
   const recordReady = recordThreadKey === key;
@@ -189,13 +192,29 @@ function TaskLifecycleTaskRow(props: {
   const openEditor = () => {
     const value = conditionEditorValue(currentRecord, hasPullRequest);
     setSummary(value.summary);
+    setInitialSummary(value.summary);
     setInputText(value.input);
+    setInitialInputText(value.input);
+    setAdvancedOpen(false);
     setDialogOpen(true);
   };
 
   const saveCondition = async () => {
     const parsed = decodeInput(inputText);
-    if (!summary.trim() || parsed.error) return;
+    const doneWhen = summary.trim();
+    if (!doneWhen || parsed.error) return;
+    const summaryChanged = doneWhen !== initialSummary.trim();
+    const advancedChanged = inputText !== initialInputText;
+    const summaryCondition = {
+      type: "outcome",
+      criteria: doneWhen,
+      outcome: doneWhen,
+    };
+    const input = advancedChanged
+      ? (parsed.value ?? summaryCondition)
+      : summaryChanged
+        ? summaryCondition
+        : parsed.value;
     setBusy(true);
     setReadError(null);
     const result = await runLifecycle({
@@ -203,9 +222,9 @@ function TaskLifecycleTaskRow(props: {
       input: {
         threadId,
         action: "propose",
-        summary: summary.trim(),
+        summary: doneWhen,
         automationId: currentRecord?.condition?.automationId ?? "builtin:task-done",
-        ...(parsed.value === undefined ? {} : { input: parsed.value }),
+        ...(input === undefined ? {} : { input }),
         expectedGeneration: currentRecord?.generation ?? 0,
         expectedUpdatedAt: shell.updatedAt,
       },
@@ -359,8 +378,8 @@ function TaskLifecycleTaskRow(props: {
           <DialogHeader>
             <DialogTitle>Done when</DialogTitle>
             <DialogDescription>
-              Signalbox archives this task when this condition holds. Keep the JSON input aligned
-              with the summary.
+              Describe the result that should be true before this task is done. A folder agent
+              checks it after the task’s work finishes.
             </DialogDescription>
           </DialogHeader>
           <div className="flex flex-col gap-3 px-6">
@@ -368,36 +387,65 @@ function TaskLifecycleTaskRow(props: {
               className="flex flex-col gap-1.5 text-sm font-medium"
               htmlFor="task-done-summary"
             >
-              Summary
+              Done when
               <Input
                 id="task-done-summary"
                 value={summary}
                 onChange={(event) => setSummary(event.currentTarget.value)}
-                placeholder="Merged and live"
+                placeholder="The requested change is working"
                 maxLength={240}
               />
             </label>
-            <label className="flex flex-col gap-1.5 text-sm font-medium" htmlFor="task-done-input">
-              Condition JSON
-              <Textarea
-                id="task-done-input"
-                value={inputText}
-                onChange={(event) => setInputText(event.currentTarget.value)}
-                placeholder={'{\n  "type": "event",\n  "on": "pr.merged"\n}'}
-                spellCheck={false}
-                aria-invalid={editorError !== undefined}
-                aria-describedby="task-done-input-help"
-              />
-            </label>
-            <p id="task-done-input-help" className="text-xs text-muted-foreground">
-              Use event, date, source, all, or any conditions. For a linked pull request, the
-              default waits for it to merge and go live.
-            </p>
-            {editorError ? (
-              <p role="alert" className="text-xs text-destructive">
-                {editorError}
-              </p>
-            ) : null}
+            <div className="flex flex-col gap-2">
+              <button
+                type="button"
+                aria-expanded={advancedOpen}
+                aria-controls="task-done-input-group"
+                onClick={() => setAdvancedOpen((open) => !open)}
+                className="flex w-fit items-center gap-1 text-sm font-medium text-muted-foreground hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
+              >
+                <ChevronRightIcon
+                  aria-hidden
+                  className={`size-3.5 transition-transform ${advancedOpen ? "rotate-90" : ""}`}
+                />
+                Advanced condition (optional)
+              </button>
+              <div
+                id="task-done-input-group"
+                hidden={!advancedOpen}
+                className="flex flex-col gap-2"
+              >
+                <label
+                  className="flex flex-col gap-1.5 text-sm font-medium"
+                  htmlFor="task-done-input"
+                >
+                  Condition JSON
+                  <Textarea
+                    id="task-done-input"
+                    value={inputText}
+                    onChange={(event) => setInputText(event.currentTarget.value)}
+                    placeholder={'{\n  "type": "event",\n  "on": "pr.merged"\n}'}
+                    spellCheck={false}
+                    aria-invalid={editorError !== undefined}
+                    aria-describedby="task-done-input-help"
+                  />
+                </label>
+                <p id="task-done-input-help" className="text-xs text-muted-foreground">
+                  Optional JSON can wait for an event, date, or source, or combine conditions. It
+                  takes precedence over the description above.
+                </p>
+                {editorError ? (
+                  <p role="alert" className="text-xs text-destructive">
+                    {editorError}
+                  </p>
+                ) : null}
+              </div>
+              {!advancedOpen && editorError ? (
+                <p role="alert" className="text-xs text-destructive">
+                  Open the advanced condition to fix the JSON.
+                </p>
+              ) : null}
+            </div>
           </div>
           <DialogFooter>
             <Button variant="ghost" disabled={busy} onClick={() => setDialogOpen(false)}>

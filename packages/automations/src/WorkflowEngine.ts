@@ -136,7 +136,7 @@ export interface WorkflowEngineShape extends CatalogShape {
   readonly registerPullRequestReads: (reads: PullRequestReads) => Effect.Effect<void>;
   /** A host that reaches another system's runners lets `w.run(…, { on })` send functions there. */
   readonly registerExternalRunner: ExternalRuns["register"];
-  /** When `tick` next has an external run to read (epoch ms), for a host that sleeps until then. */
+  /** When `tick` next has recovery or external-run work, for a host that sleeps until then. */
   readonly nextExternalPollAt: ExternalRuns["nextPollAt"];
   /** Sets or clears (null) the webhook signing secret; it is never read back. */
   readonly setWebhookSecret: <E = never>(input: {
@@ -844,6 +844,7 @@ export const makeEngine = <R>(
 
     // Attached runs' monitors come back after a restart (the driver recovers its own runs).
     yield* forkRoot(attachments.recover.pipe(logFailure("Automation recovery failed")));
+    yield* taskLifecycleRuns.recoverPending.pipe(logFailure("Task completion recovery failed"));
 
     return {
       ...catalog,
@@ -889,7 +890,12 @@ export const makeEngine = <R>(
           pullRequestReads = reads;
         }),
       registerExternalRunner: external.register,
-      nextExternalPollAt: external.nextPollAt,
+      nextExternalPollAt: Effect.all([external.nextPollAt, taskLifecycleRuns.nextRecoveryAt]).pipe(
+        Effect.map((times) => {
+          const due = times.filter((at) => at !== null);
+          return due.length === 0 ? null : Math.min(...due);
+        }),
+      ),
       setWebhookSecret,
       cancelRun,
       retryRun,
@@ -906,7 +912,11 @@ export const makeEngine = <R>(
       subscribeRun: (runId) => feed.watch(`run:${runId}`, catalog.getRun(runId), runShows(runId)),
       subscribeNotices: PubSub.subscribe(notices).pipe(Effect.map(Stream.fromSubscription)),
       // One failing doesn't hold up the other.
-      tick: built.tick.pipe(Effect.ensuring(sources.tick), Effect.ensuring(external.poll)),
+      tick: built.tick.pipe(
+        Effect.ensuring(sources.tick),
+        Effect.ensuring(external.poll),
+        Effect.ensuring(taskLifecycleRuns.recoverPending),
+      ),
       drain: built.drain,
     } satisfies WorkflowEngineShape;
   });

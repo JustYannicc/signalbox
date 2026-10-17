@@ -11,6 +11,7 @@ import { useEffect, useState } from "react";
 import { Pressable, TextInput, View } from "react-native";
 
 import { AppText as Text } from "../../components/ui/AppText";
+import { SymbolView } from "../../components/ui/AppSymbol";
 import { Button } from "../../components/ui/Button";
 import { Sheet } from "../../components/ui/Sheet";
 import { useEnvironmentServerConfig } from "../../state/entities";
@@ -95,7 +96,10 @@ export function TaskLifecycleControl(props: {
   const [busy, setBusy] = useState(false);
   const [editorOpen, setEditorOpen] = useState(false);
   const [summary, setSummary] = useState("");
+  const [initialSummary, setInitialSummary] = useState("");
   const [inputText, setInputText] = useState("");
+  const [initialInputText, setInitialInputText] = useState("");
+  const [advancedOpen, setAdvancedOpen] = useState(false);
   const key = `${environmentId}:${threadId}`;
   const hasPullRequest = shell.pullRequests.length > 0;
   const recordReady = recordThreadKey === key;
@@ -138,13 +142,29 @@ export function TaskLifecycleControl(props: {
   const openEditor = () => {
     const value = conditionEditorValue(recordReady ? record : null, hasPullRequest);
     setSummary(value.summary);
+    setInitialSummary(value.summary);
     setInputText(value.input);
+    setInitialInputText(value.input);
+    setAdvancedOpen(false);
     setEditorOpen(true);
   };
 
   const saveCondition = async () => {
     const parsed = decodeInput(inputText);
-    if (!summary.trim() || parsed.error) return;
+    const doneWhen = summary.trim();
+    if (!doneWhen || parsed.error) return;
+    const summaryChanged = doneWhen !== initialSummary.trim();
+    const advancedChanged = inputText !== initialInputText;
+    const summaryCondition = {
+      type: "outcome",
+      criteria: doneWhen,
+      outcome: doneWhen,
+    };
+    const input = advancedChanged
+      ? (parsed.value ?? summaryCondition)
+      : summaryChanged
+        ? summaryCondition
+        : parsed.value;
     setBusy(true);
     setError(null);
     const result = await runLifecycle({
@@ -152,9 +172,9 @@ export function TaskLifecycleControl(props: {
       input: {
         threadId,
         action: "propose",
-        summary: summary.trim(),
+        summary: doneWhen,
         automationId: record?.condition?.automationId ?? "builtin:task-done",
-        ...(parsed.value === undefined ? {} : { input: parsed.value }),
+        ...(input === undefined ? {} : { input }),
         expectedGeneration: record?.generation ?? 0,
         expectedUpdatedAt: shell.updatedAt,
       },
@@ -276,39 +296,69 @@ export function TaskLifecycleControl(props: {
         <Sheet title="Done when" onClose={() => setEditorOpen(false)}>
           <View className="flex-1 gap-4 px-5 py-5">
             <Text className="text-sm text-foreground-muted">
-              Signalbox archives this task when the condition holds. Use event, date, source, all,
-              or any.
+              Describe the result that should be true before this task is done. A folder agent
+              checks it after the task’s work finishes.
             </Text>
             <View className="gap-1.5">
-              <Text className="text-sm font-t3-medium text-foreground">Summary</Text>
+              <Text className="text-sm font-t3-medium text-foreground">Done when</Text>
               <TextInput
-                accessibilityLabel="Done condition summary"
+                accessibilityLabel="Done when"
+                accessibilityHint="A folder agent checks this description after the task’s work finishes."
                 className="min-h-12 rounded-xl border border-border bg-grouped-card px-3 text-base text-foreground"
                 editable={!busy}
                 maxLength={240}
                 onChangeText={setSummary}
-                placeholder="Merged and live"
+                placeholder="The requested change is working"
                 value={summary}
               />
             </View>
-            <View className="min-h-40 flex-1 gap-1.5">
-              <Text className="text-sm font-t3-medium text-foreground">Condition JSON</Text>
-              <TextInput
-                accessibilityLabel="Done condition JSON"
-                accessibilityHint={
-                  conditionError ?? "A JSON condition Signalbox evaluates for this task."
-                }
-                className="min-h-40 flex-1 rounded-xl border border-border bg-grouped-card px-3 py-3 font-mono text-xs leading-5 text-foreground"
-                editable={!busy}
-                multiline
-                onChangeText={setInputText}
-                placeholder={'{\n  "type": "event",\n  "on": "pr.merged"\n}'}
-                scrollEnabled
-                textAlignVertical="top"
-                value={inputText}
-              />
-              {conditionError ? (
-                <Text className="text-xs text-danger-foreground">{conditionError}</Text>
+            <View className="gap-2">
+              <Pressable
+                accessibilityRole="button"
+                accessibilityState={{ expanded: advancedOpen }}
+                className="min-h-11 flex-row items-center gap-1 active:opacity-60"
+                onPress={() => setAdvancedOpen((open) => !open)}
+              >
+                <SymbolView
+                  name={advancedOpen ? "chevron.down" : "chevron.right"}
+                  size={12}
+                  tintColorClassName="accent-icon-subtle"
+                  type="monochrome"
+                />
+                <Text className="text-sm font-t3-medium text-foreground-muted">
+                  Advanced condition (optional)
+                </Text>
+              </Pressable>
+              {advancedOpen ? (
+                <View className="min-h-40 flex-1 gap-1.5">
+                  <Text className="text-sm font-t3-medium text-foreground">Condition JSON</Text>
+                  <Text className="text-xs text-foreground-muted">
+                    Use JSON to wait for an event, date, or source, or combine conditions. It takes
+                    precedence over the description above.
+                  </Text>
+                  <TextInput
+                    accessibilityLabel="Condition JSON"
+                    accessibilityHint={
+                      conditionError ?? "An optional condition Signalbox evaluates for this task."
+                    }
+                    className="min-h-40 flex-1 rounded-xl border border-border bg-grouped-card px-3 py-3 font-mono text-xs leading-5 text-foreground"
+                    editable={!busy}
+                    multiline
+                    onChangeText={setInputText}
+                    placeholder={'{\n  "type": "event",\n  "on": "pr.merged"\n}'}
+                    scrollEnabled
+                    textAlignVertical="top"
+                    value={inputText}
+                  />
+                  {conditionError ? (
+                    <Text className="text-xs text-danger-foreground">{conditionError}</Text>
+                  ) : null}
+                </View>
+              ) : null}
+              {!advancedOpen && conditionError ? (
+                <Text className="text-xs text-danger-foreground">
+                  Open the advanced condition to fix the JSON.
+                </Text>
               ) : null}
             </View>
             <Button

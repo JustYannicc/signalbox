@@ -41,15 +41,37 @@ interface SettlementHistoryRow {
   readonly recorded_at: string;
 }
 
+interface PendingCompletionRow {
+  readonly thread_id: string;
+  readonly generation: number;
+  readonly snapshot_at: string;
+  readonly command_id: string;
+  readonly outcome: string;
+  readonly settled_at: string;
+}
+
 export interface TaskLifecycleStoreResult {
   readonly record: TaskLifecycleRecord | null;
   readonly applied: boolean;
+}
+
+export interface TaskLifecyclePendingCompletion {
+  readonly threadId: string;
+  readonly generation: number;
+  readonly snapshotAt: string;
+  readonly commandId: string;
+  readonly outcome: string;
+  readonly settledAt: string;
 }
 
 type MutationFields = Omit<TaskLifecycleInput, "action">;
 
 export type TaskLifecycleProposeInput = MutationFields & { readonly summary: string };
 export type TaskLifecycleOutcomeInput = MutationFields & { readonly outcome?: string };
+export type TaskLifecyclePendingCompletionInput = TaskLifecycleOutcomeInput & {
+  readonly snapshotAt: string;
+  readonly settleCommandId: string;
+};
 export type TaskLifecycleReopenInput = Pick<
   TaskLifecycleInput,
   "threadId" | "expectedGeneration" | "expectedUpdatedAt" | "commandId"
@@ -71,6 +93,18 @@ export interface TaskLifecycleStore {
   readonly complete: (
     input: TaskLifecycleOutcomeInput,
   ) => Effect.Effect<TaskLifecycleStoreResult, AutomationError>;
+  readonly recordPendingCompletion: (
+    input: TaskLifecyclePendingCompletionInput,
+  ) => Effect.Effect<TaskLifecycleStoreResult, AutomationError>;
+  readonly recordPendingCompletions: () => Effect.Effect<
+    ReadonlyArray<TaskLifecyclePendingCompletion>,
+    AutomationError
+  >;
+  readonly clearPendingCompletion: (input: {
+    readonly threadId: string;
+    readonly generation: number;
+    readonly commandId: string;
+  }) => Effect.Effect<boolean, AutomationError>;
   readonly recordSettle: (
     input: TaskLifecycleOutcomeInput & { readonly reason: TaskLifecycleSettleReason },
   ) => Effect.Effect<TaskLifecycleStoreResult, AutomationError>;
@@ -84,6 +118,7 @@ export interface TaskLifecycleStore {
 
 const recordTable = "signalbox_automation_task_lifecycle";
 const commandTable = "signalbox_automation_task_lifecycle_commands";
+const pendingCompletionTable = "signalbox_automation_task_lifecycle_pending_completions";
 const TaskLifecycleDoneConditionJson = Schema.fromJsonString(TaskLifecycleDoneConditionSchema);
 const decodeTaskLifecycleDoneCondition = Schema.decodeUnknownEffect(TaskLifecycleDoneConditionJson);
 const encodeTaskLifecycleDoneCondition = Schema.encodeEffect(TaskLifecycleDoneConditionJson);
@@ -212,6 +247,19 @@ export const makeTaskRecords = Effect.gen(function* () {
       )
     `,
   );
+  yield* run(
+    "createPendingCompletionTable",
+    sql`
+      CREATE TABLE IF NOT EXISTS ${sql(pendingCompletionTable)} (
+        thread_id TEXT PRIMARY KEY NOT NULL,
+        generation INTEGER NOT NULL CHECK (generation > 0),
+        snapshot_at TEXT NOT NULL,
+        command_id TEXT NOT NULL,
+        outcome TEXT NOT NULL,
+        settled_at TEXT NOT NULL
+      )
+    `,
+  );
 
   const readRow = (threadId: string) =>
     sql<TaskLifecycleRow>`SELECT * FROM ${sql(recordTable)} WHERE thread_id = ${threadId}`.pipe(
@@ -232,6 +280,8 @@ export const makeTaskRecords = Effect.gen(function* () {
     });
 
   const read = (threadId: string) => run("read", readRecord(threadId));
+  const clearPendingCompletionSql = (threadId: string) =>
+    sql`DELETE FROM ${sql(pendingCompletionTable)} WHERE thread_id = ${threadId}`;
 
   const mutate = (
     input: TaskLifecycleInput,
@@ -294,21 +344,25 @@ export const makeTaskRecords = Effect.gen(function* () {
         const conditionJson = JSON.stringify(condition);
         return mutate(input, (current, now) => {
           const generation = (current?.generation ?? 0) + 1;
-          return sql`
-            INSERT INTO ${sql(recordTable)} (
-              thread_id, condition_json, outcome, settled_reason, uncertain, settled_at, generation, updated_at
-            ) VALUES (
-              ${input.threadId}, ${conditionJson}, NULL, NULL, 0, NULL, ${generation}, ${now}
-            )
-            ON CONFLICT (thread_id) DO UPDATE SET
-              condition_json = excluded.condition_json,
-              outcome = NULL,
-              settled_reason = NULL,
-              uncertain = 0,
-              settled_at = NULL,
-              generation = excluded.generation,
-              updated_at = excluded.updated_at
-          `.pipe(Effect.as(true));
+          return Effect.gen(function* () {
+            yield* clearPendingCompletionSql(input.threadId);
+            yield* sql`
+              INSERT INTO ${sql(recordTable)} (
+                thread_id, condition_json, outcome, settled_reason, uncertain, settled_at, generation, updated_at
+              ) VALUES (
+                ${input.threadId}, ${conditionJson}, NULL, NULL, 0, NULL, ${generation}, ${now}
+              )
+              ON CONFLICT (thread_id) DO UPDATE SET
+                condition_json = excluded.condition_json,
+                outcome = NULL,
+                settled_reason = NULL,
+                uncertain = 0,
+                settled_at = NULL,
+                generation = excluded.generation,
+                updated_at = excluded.updated_at
+            `;
+            return true;
+          });
         });
       }
       case "complete":
@@ -326,6 +380,7 @@ export const makeTaskRecords = Effect.gen(function* () {
           const generation = (current?.generation ?? 0) + 1;
           const settledAt = input.settledAt ?? now;
           return Effect.gen(function* () {
+            yield* clearPendingCompletionSql(input.threadId);
             yield* sql`
               INSERT INTO ${sql(recordTable)} (
                 thread_id, condition_json, outcome, settled_reason, uncertain, settled_at, generation, updated_at
@@ -358,22 +413,30 @@ export const makeTaskRecords = Effect.gen(function* () {
       case "reopen":
         return mutate(input, (current, now) => {
           if (current === null) {
-            return sql`
-              INSERT INTO ${sql(recordTable)} (
-                thread_id, condition_json, outcome, settled_reason, uncertain, settled_at, generation, updated_at
-              ) VALUES (${input.threadId}, NULL, NULL, NULL, 0, NULL, 1, ${now})
-            `.pipe(Effect.as(true));
+            return Effect.gen(function* () {
+              yield* clearPendingCompletionSql(input.threadId);
+              yield* sql`
+                INSERT INTO ${sql(recordTable)} (
+                  thread_id, condition_json, outcome, settled_reason, uncertain, settled_at, generation, updated_at
+                ) VALUES (${input.threadId}, NULL, NULL, NULL, 0, NULL, 1, ${now})
+              `;
+              return true;
+            });
           }
-          return sql`
-            UPDATE ${sql(recordTable)} SET
-              outcome = NULL,
-              settled_reason = NULL,
-              uncertain = 0,
-              settled_at = NULL,
-              generation = ${current.generation + 1},
-              updated_at = ${now}
-            WHERE thread_id = ${input.threadId}
-          `.pipe(Effect.as(true));
+          return Effect.gen(function* () {
+            yield* clearPendingCompletionSql(input.threadId);
+            yield* sql`
+              UPDATE ${sql(recordTable)} SET
+                outcome = NULL,
+                settled_reason = NULL,
+                uncertain = 0,
+                settled_at = NULL,
+                generation = ${current.generation + 1},
+                updated_at = ${now}
+              WHERE thread_id = ${input.threadId}
+            `;
+            return true;
+          });
         });
     }
   };

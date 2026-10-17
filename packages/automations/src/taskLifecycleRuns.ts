@@ -128,7 +128,11 @@ export const makeTaskLifecycleRuns = (deps: {
       if (!saved) yield* deps.endRunById(input.runId);
     });
 
-  const startConditionRun = (threadId: string, expectedGeneration: number, allowPaused = false) =>
+  const startConditionRun = (
+    threadId: string,
+    expectedGeneration: number,
+    allowMissingBuiltIn = false,
+  ) =>
     Effect.gen(function* () {
       const record = yield* deps.records.read(threadId);
       const condition = record?.condition;
@@ -156,8 +160,8 @@ export const makeTaskLifecycleRuns = (deps: {
         : yield* deps.store.getAutomation(automationId);
       if (
         (automation !== undefined && automation.project_id !== shell.projectId) ||
-        (!automation && !(allowPaused && builtIn)) ||
-        (!allowPaused && (!automation || automation.enabled !== 1))
+        (!automation && !(allowMissingBuiltIn && builtIn)) ||
+        (automation !== undefined && automation.enabled !== 1)
       )
         return;
       const run = yield* deps.startRun({
@@ -279,7 +283,7 @@ export const makeTaskLifecycleRuns = (deps: {
         event.threadId,
         Effect.gen(function* () {
           const prior = yield* deps.records.read(event.threadId);
-          if (!prior?.condition || prior.settledAt !== null) return;
+          if (!prior?.condition) return;
           const threadId = ThreadId.make(event.threadId);
           const shell = yield* deps.threads.getThreadShell(threadId);
           if (
@@ -303,7 +307,33 @@ export const makeTaskLifecycleRuns = (deps: {
     return Effect.void;
   };
 
-  return { act, onDomainEvent };
+  const recoverPending = Effect.gen(function* () {
+    for (const pending of yield* deps.records.recordPendingCompletions()) {
+      yield* serialized(
+        pending.threadId,
+        Effect.gen(function* () {
+          const prior = yield* deps.records.read(pending.threadId);
+          const result = yield* deps.actions.recoverPendingCompletion(pending);
+          if (result?.record?.condition)
+            yield* reopenAndRearm(pending.threadId, prior?.condition?.runId ?? undefined);
+        }),
+      ).pipe(
+        Effect.catchCause((cause) =>
+          Effect.logWarning("Task completion recovery failed", {
+            threadId: pending.threadId,
+            cause,
+          }),
+        ),
+      );
+    }
+  });
+
+  const nextRecoveryAt = Effect.gen(function* () {
+    if ((yield* deps.records.recordPendingCompletions()).length === 0) return null;
+    return DateTime.toEpochMillis(yield* DateTime.now) + 30_000;
+  });
+
+  return { act, onDomainEvent, recoverPending, nextRecoveryAt };
 };
 
 export type TaskLifecycleRuns = ReturnType<typeof makeTaskLifecycleRuns>;

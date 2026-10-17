@@ -79,7 +79,8 @@ function fixture(
   options: {
     kind?: "task" | "chat";
     pullRequests?: PullRequest[];
-    archivedThreadIds?: string[];
+    unsettledAt?: string | null;
+    otherThreads?: Record<string, { archivedAt?: string | null; unsettledAt?: string | null }>;
     recordCondition?: { summary: string; input?: unknown } | null;
     verification?: Array<{ state: string; evidence?: string; commit?: string }>;
     wait?: (label: string, args: Record<string, unknown>) => unknown;
@@ -90,7 +91,6 @@ function fixture(
   let condition = options.recordCondition ?? null;
   let updatedAt = "2026-10-17T09:00:00.000Z";
   let pullRequests = options.pullRequests ?? [mergedPullRequest];
-  const archivedThreadIds = new Set(options.archivedThreadIds ?? []);
   let verificationText = "";
   const verificationReplies = [...(options.verification ?? [])];
   const calls: Array<{ operation: string; args: Record<string, unknown> }> = [];
@@ -107,7 +107,12 @@ function fixture(
         ...lifecycle().thread,
         id: threadId,
         updatedAt: threadId === "task-1" ? updatedAt : "2026-10-17T08:00:00.000Z",
-        archivedAt: archivedThreadIds.has(threadId) ? "2026-10-17T08:00:00.000Z" : null,
+        unsettledAt:
+          threadId === "task-1"
+            ? (options.unsettledAt ?? null)
+            : (options.otherThreads?.[threadId]?.unsettledAt ?? null),
+        archivedAt:
+          threadId === "task-1" ? null : (options.otherThreads?.[threadId]?.archivedAt ?? null),
         pullRequests: threadId === "task-1" ? pullRequests : [],
       },
       record: { generation, condition },
@@ -397,7 +402,10 @@ describe("Task done automation", () => {
   });
 
   it("satisfies taskArchived immediately when its named dependency is already archived", async () => {
-    const test = fixture({ archivedThreadIds: ["source-task"] });
+    const test = fixture({
+      unsettledAt: "2026-10-17T09:00:00.000Z",
+      otherThreads: { "source-task": { archivedAt: "2026-10-17T10:00:00.000Z" } },
+    });
 
     await test.run({
       threadId: "task-1",
@@ -411,6 +419,57 @@ describe("Task done automation", () => {
       ),
     ).toBe(true);
     expect(test.waits).toEqual([]);
+    expect(test.calls.some((call) => call.args.action === "complete")).toBe(true);
+  });
+
+  it("does not satisfy a date from before the task was reopened", async () => {
+    const test = fixture({ unsettledAt: "2026-10-17T11:00:00.000Z" });
+
+    const result = await test.run({
+      threadId: "task-1",
+      condition: { type: "date", at: "2026-10-17T10:00:00.000Z" },
+      expectedGeneration: 4,
+      at: "2026-10-17T12:00:00.000Z",
+    });
+
+    expect(result).toBe("The done-condition did not hold before its wait ended.");
+    expect(test.timeline.some((entry) => entry.startsWith("sleep:"))).toBe(false);
+    expect(test.calls.some((call) => call.args.action === "complete")).toBe(false);
+  });
+
+  it("does not satisfy an already archived dependency from before the task was reopened", async () => {
+    const waiting = new Error("expected workflow wait");
+    const test = fixture({
+      unsettledAt: "2026-10-17T11:00:00.000Z",
+      otherThreads: { "source-task": { archivedAt: "2026-10-17T10:00:00.000Z" } },
+      wait: () => {
+        throw waiting;
+      },
+    });
+
+    await expect(
+      test.run({
+        threadId: "task-1",
+        condition: { type: "taskArchived", taskThreadId: "source-task" },
+        expectedGeneration: 4,
+      }),
+    ).rejects.toBe(waiting);
+
+    expect(test.waits).toHaveLength(1);
+    expect(test.calls.some((call) => call.args.action === "complete")).toBe(false);
+  });
+
+  it("satisfies a date after the task was reopened", async () => {
+    const test = fixture({ unsettledAt: "2026-10-17T11:00:00.000Z" });
+
+    await test.run({
+      threadId: "task-1",
+      condition: { type: "date", at: "2026-10-17T12:00:00.000Z" },
+      expectedGeneration: 4,
+      at: "2026-10-17T10:00:00.000Z",
+    });
+
+    expect(test.timeline).toContain("sleep:Wait until the date condition");
     expect(test.calls.some((call) => call.args.action === "complete")).toBe(true);
   });
 

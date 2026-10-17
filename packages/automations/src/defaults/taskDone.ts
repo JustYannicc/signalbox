@@ -102,6 +102,11 @@ function mergedAfterReopen(pr: PullRequest, thread: Thread) {
   return !thread.unsettledAt || (mergedAt !== null && mergedAt !== undefined && Date.parse(mergedAt) > Date.parse(thread.unsettledAt));
 }
 
+function timestamp(value: string | null | undefined) {
+  const parsed = value ? Date.parse(value) : Number.NEGATIVE_INFINITY;
+  return Number.isFinite(parsed) ? parsed : Number.NEGATIVE_INFINITY;
+}
+
 function pullRequestsMerged(state: Lifecycle) {
   const links = (state.thread.pullRequests ?? []).filter((pr) => pr.source !== "stack-dismissed");
   return links.length > 0 && links.every((pr) => mergedAfterReopen(pr, state.thread));
@@ -189,10 +194,16 @@ function nextDateDeadline(
   leaves: ReadonlyArray<Condition>,
   program: ReturnType<typeof conditionProgram>["program"],
   satisfied: ReadonlyArray<boolean>,
+  reopenAt: number,
 ) {
   const dates = leaves
     .map((leaf, index) => ({ leaf, index }))
-    .filter(({ leaf, index }) => conditionType(leaf) === "date" && !satisfied[index] && leaf.at)
+    .filter(({ leaf, index }) =>
+      conditionType(leaf) === "date" &&
+      !satisfied[index] &&
+      leaf.at &&
+      timestamp(leaf.at) > reopenAt,
+    )
     .map(({ leaf, index }) => ({ at: Date.parse(leaf.at!), index }))
     .toSorted((left, right) => left.at - right.at);
   for (const date of dates) {
@@ -277,7 +288,14 @@ async function verifyPullRequestLeaves(w, leaves: Condition[], satisfied: boolea
     return true;
 }
 
-async function waitForCondition(w, condition: Condition, threadId: string, startedAt: string, generation: number) {
+async function waitForCondition(
+  w,
+  condition: Condition,
+  threadId: string,
+  startedAt: string,
+  generation: number,
+  state: Lifecycle,
+) {
   const { leaves, program } = conditionProgram(condition);
   const sourceLeaves = leaves.filter((leaf) => conditionType(leaf) === "source");
   if (sourceLeaves.length > 0) {
@@ -300,16 +318,23 @@ async function waitForCondition(w, condition: Condition, threadId: string, start
     }
   }
 
+  const reopenAt = timestamp(state.thread.unsettledAt);
   let now = Date.parse(startedAt);
   const satisfied = leaves.map(
-    (leaf) => conditionType(leaf) === "date" && Boolean(leaf.at) && Date.parse(leaf.at!) <= now,
+    (leaf) =>
+      conditionType(leaf) === "date" &&
+      Boolean(leaf.at) &&
+      timestamp(leaf.at) > reopenAt &&
+      timestamp(leaf.at) <= now,
   );
   for (const [index, leaf] of leaves.entries()) {
     if (!["taskArchived", "task-archived"].includes(conditionType(leaf))) continue;
     const target = leaf.taskThreadId ?? leaf.where?.threadId;
     if (typeof target !== "string") continue;
     const dependency = await read(w, target);
-    satisfied[index] = dependency.thread.archivedAt !== null;
+    satisfied[index] =
+      timestamp(dependency.thread.archivedAt) > reopenAt &&
+      timestamp(dependency.thread.archivedAt) > timestamp(dependency.thread.unsettledAt);
   }
   if (conditionHolds(program, satisfied)) return true;
   if (!(await verifyPullRequestLeaves(w, leaves, satisfied, threadId, generation))) return false;
@@ -318,16 +343,21 @@ async function waitForCondition(w, condition: Condition, threadId: string, start
     .filter((leaf) => ["event", "taskArchived", "task-archived", "pullRequestsMergedAndLive"].includes(conditionType(leaf)))
     .flatMap(eventPatterns))];
   if (names.length === 0) {
-    const deadline = nextDateDeadline(leaves, program, satisfied);
+    const deadline = nextDateDeadline(leaves, program, satisfied, reopenAt);
     if (deadline === undefined) return false;
     await w.sleep("Wait until the date condition", { until: new Date(deadline).toISOString() });
     for (const [index, leaf] of leaves.entries())
-      if (conditionType(leaf) === "date" && leaf.at && Date.parse(leaf.at) <= deadline) satisfied[index] = true;
+      if (
+        conditionType(leaf) === "date" &&
+        leaf.at &&
+        timestamp(leaf.at) > reopenAt &&
+        timestamp(leaf.at) <= deadline
+      ) satisfied[index] = true;
     return conditionHolds(program, satisfied);
   }
 
   for (;;) {
-    const deadline = nextDateDeadline(leaves, program, satisfied);
+    const deadline = nextDateDeadline(leaves, program, satisfied, reopenAt);
     const timeout = deadline === undefined
       ? undefined
       : { seconds: Math.max(1, Math.ceil((deadline - now) / 1000)) };
@@ -340,13 +370,18 @@ async function waitForCondition(w, condition: Condition, threadId: string, start
     if (matched === null) {
       if (deadline === undefined) return false;
       for (const [index, leaf] of leaves.entries())
-        if (conditionType(leaf) === "date" && leaf.at && Date.parse(leaf.at) <= deadline) satisfied[index] = true;
+        if (
+          conditionType(leaf) === "date" &&
+          leaf.at &&
+          timestamp(leaf.at) > reopenAt &&
+          timestamp(leaf.at) <= deadline
+        ) satisfied[index] = true;
       return conditionHolds(program, satisfied);
     }
     now = Date.parse(String(matched.at)) || now;
     for (const [index, leaf] of leaves.entries()) {
       const leafType = conditionType(leaf);
-      if (leafType === "date" && leaf.at && Date.parse(leaf.at) <= now) {
+      if (leafType === "date" && leaf.at && timestamp(leaf.at) > reopenAt && timestamp(leaf.at) <= now) {
         satisfied[index] = true;
       } else if (["event", "taskArchived", "task-archived"].includes(leafType)) {
         const patterns = eventPatterns(leaf);
@@ -467,7 +502,7 @@ export default workflow(async (w, input: Input, event: Event & { at?: string }) 
       });
     }
   } else {
-    if (!(await waitForCondition(w, condition, threadId, event.at ?? input.at ?? "1970-01-01T00:00:00.000Z", generation)))
+    if (!(await waitForCondition(w, condition, threadId, event.at ?? input.at ?? "1970-01-01T00:00:00.000Z", generation, state)))
       return "The done-condition did not hold before its wait ended.";
     state = await read(w, threadId);
   }

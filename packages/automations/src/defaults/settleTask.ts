@@ -140,8 +140,6 @@ export default workflow(async (w, input: { threadId?: string }) => {
 
   if (reason === "dropped") return { reason, outcome: guess.outcome, finishing: "skipped" };
 
-  // Keep the finishing pass in this project until the folder-agent seam lands.
-  // It uses project defaults, and the prompt makes its temporary authority clear.
   const latest: Lifecycle = await w.call("Confirm the task is still settled", "signalbox.task_lifecycle", {
     threadId,
     action: "read",
@@ -156,7 +154,7 @@ export default workflow(async (w, input: { threadId?: string }) => {
 
   const finished = await w.agent("Pave behind the settled task", {
     prompt: [
-      "You represent this project folder, not the user. The folder-agent role is not wired yet, so use this project's default model and workspace.",
+      "You are this folder's finishing agent. You represent this project folder, not the user. Work in this folder's project and use the supplied task as your scope.",
       "Make a narrow finishing pass on work that is already useful: cleanup, tests, docs, and hardening. Do not expand the task or reopen it.",
       "Before changing files, read the task lifecycle. If this task is no longer settled with the recorded outcome, stop without changing anything.",
       \`Task thread: \${threadId} (\${before.thread.title}).\`,

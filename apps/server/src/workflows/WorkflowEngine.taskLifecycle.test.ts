@@ -3,7 +3,14 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 
 import { WorkflowEngine } from "@signalbox/automations/WorkflowEngine";
-import { fakeThreads, saveOk, threadEvent, withEngine } from "./WorkflowEngine.testkit.ts";
+import {
+  DEFAULTS,
+  fakeThreads,
+  fakeTools,
+  saveOk,
+  threadEvent,
+  withEngine,
+} from "./WorkflowEngine.testkit.ts";
 
 const waitAutomation = `export const meta = { name: "Wait for task completion" } as const;
 export default workflow(async (w) => {
@@ -233,6 +240,142 @@ it.effect("rearms for a non-streaming user message, but not assistant messages",
       expect((yield* engine.getRun(nextRunId)).input).toMatchObject({
         expectedGeneration: generation + 1,
       });
+    }),
+  );
+});
+
+it.effect(
+  "only published automations can change task lifecycle; agents can read in-project",
+  () => {
+    const threads = fakeThreads();
+    threads.state.shells["thread-9"] = {
+      archivedAt: null,
+      deletedAt: null,
+      settledAt: null,
+      settledOverride: null,
+      creationSource: "web",
+      id: "thread-9",
+      providerInstanceId: "codex",
+      modelSelection: { instanceId: "codex", model: "gpt-6-astra" },
+      runtimeMode: "approval-required",
+      interactionMode: "default",
+      branch: null,
+      lineage: {
+        rootThreadId: "thread-9",
+        parentThreadId: null,
+        relationshipToParent: null,
+      },
+      forkedFrom: null,
+      activeProviderThreadId: null,
+      latestRunId: null,
+      activeRunId: null,
+      status: "idle",
+      pendingRuntimeRequest: null,
+      latestVisibleMessage: null,
+      latestUserMessageAt: null,
+      hasActionableProposedPlan: false,
+      itemCount: 0,
+      visibleItemCount: 0,
+      createdAt: DateTime.makeUnsafe("2026-10-17T09:00:00Z"),
+      updatedAt: DateTime.makeUnsafe("2026-10-17T09:00:00Z"),
+    };
+    threads.state.threadRuns["thread-9"] = [];
+    const tools = fakeTools();
+    const source = (name: string, threadId: string, action: "read" | "reopen") =>
+      `export const meta = { name: "${name}" } as const;
+export default workflow(async (w) => {
+  return await w.call("Change task", "signalbox.task_lifecycle", { threadId: "${threadId}", action: "${action}" });
+});`;
+    return withEngine(
+      { threads },
+      Effect.gen(function* () {
+        const engine = yield* WorkflowEngine;
+        yield* engine.registerBuiltinTools(tools.handler);
+        const run = (automationId: string) =>
+          Effect.gen(function* () {
+            const started = yield* engine.startRun({ automationId, trigger: "manual" });
+            yield* engine.drain;
+            return yield* engine.getRun(started.id);
+          });
+
+        const agentVersion = yield* saveOk(source("Change task as agent", "thread-9", "reopen"));
+        const refused = yield* run(agentVersion.id);
+        expect(refused.run.status).toBe("failed");
+        expect(refused.run.error).toContain(
+          "Only Signalbox's own automations, or one a person published, can change a task's lifecycle",
+        );
+        expect(refused.run.error).not.toContain("merge gate");
+        expect(tools.calls).toEqual([]);
+        expect((yield* engine.taskLifecycle({ threadId: "thread-9", action: "read" })).record).toBe(
+          null,
+        );
+
+        const draft = yield* engine.save({
+          source: source("Change task as a person", "thread-9", "reopen"),
+          projectId: "project-automations" as never,
+          defaults: DEFAULTS,
+          draft: true,
+        });
+        if (!draft.ok) throw new Error("draft didn't save");
+        yield* engine.publish(draft.automation.id, { version: draft.automation.draftVersion! });
+        const publishedRun = yield* run(draft.automation.id);
+        if (publishedRun.run.status !== "succeeded")
+          throw new Error(`Published lifecycle mutation failed: ${String(publishedRun.run.error)}`);
+        expect(
+          (yield* engine.taskLifecycle({ threadId: "thread-9", action: "read" })).record,
+        ).toMatchObject({ generation: 1 });
+
+        const reader = yield* saveOk(source("Read task", "thread-9", "read"));
+        expect((yield* run(reader.id)).run.status).toBe("succeeded");
+
+        threads.state.shells["thread-elsewhere"] = {
+          projectId: "project-other",
+          archivedAt: null,
+          deletedAt: null,
+          settledAt: null,
+          settledOverride: null,
+        };
+        const outOfScopeReader = yield* saveOk(
+          source("Read another project's task", "thread-elsewhere", "read"),
+        );
+        const outOfScope = yield* run(outOfScopeReader.id);
+        expect(outOfScope.run.status).toBe("failed");
+        expect(outOfScope.run.error).toContain(
+          "Task lifecycle steps only act in their automation's folder",
+        );
+      }),
+    );
+  },
+);
+
+it.effect("does not auto-start an evaluator automation that was disabled", () => {
+  const threads = fakeThreads();
+  threads.state.shells["thread-9"] = {
+    archivedAt: null,
+    settledAt: null,
+    settledOverride: null,
+  };
+  return withEngine(
+    { threads },
+    Effect.gen(function* () {
+      const engine = yield* WorkflowEngine;
+      const automation = yield* saveOk(waitAutomation);
+      yield* engine.setEnabled(automation.id, false);
+
+      const proposed = yield* engine.taskLifecycle({
+        threadId: "thread-9",
+        action: "propose",
+        automationId: automation.id,
+        summary: "The requested date passed",
+        input: { type: "date", at: "2026-10-18T00:00:00.000Z" },
+      });
+
+      expect(proposed.record?.condition).toMatchObject({
+        automationId: automation.id,
+        summary: "The requested date passed",
+        runId: null,
+      });
+      expect((yield* engine.get(automation.id)).runs).toHaveLength(0);
     }),
   );
 });
