@@ -21,6 +21,7 @@ interface FakeAccount {
   readonly type: string;
   readonly email: string;
   disabled: boolean;
+  signedOut?: boolean;
   /** Headers of its last response, as CLIProxyAPI keeps them; none until set. */
   signals?: Record<string, string>;
   /** When those headers came, ISO. */
@@ -329,6 +330,7 @@ export const makeFakeCliProxyApi = () => {
             type: account.type,
             email: account.email,
             disabled: account.disabled,
+            ...(account.signedOut ? { status: "error", unavailable: true } : {}),
             quota: {
               signals: account.signals ?? {},
               ...(account.observedAt ? { observed_at: account.observedAt } : {}),

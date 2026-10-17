@@ -600,6 +600,39 @@ const make = Effect.gen(function* () {
     };
   });
 
+  /** Stores the account list without claiming a foreground snapshot or quota read completed. */
+  const storeAccountRows = (
+    live: ReadonlyArray<CliProxyApi.ListedAccount>,
+    cached: ReadonlyArray<CachedAccount>,
+    now: number,
+    contributors: (name: string) => string | null = () => null,
+  ) =>
+    Effect.gen(function* () {
+      const known = new Map(cached.map((account) => [account.name, account]));
+      for (const account of live) {
+        const before = known.get(account.name);
+        if (
+          before !== undefined &&
+          before.type === account.type &&
+          before.email === account.email &&
+          before.disabled === account.disabled &&
+          before.signedOut === account.signedOut
+        )
+          continue;
+        const contributor = before === undefined ? contributors(account.name) : null;
+        yield* sql`INSERT INTO accounts (name, type, email, disabled, signed_out,
+          contributed_by, added_at)
+        VALUES (${account.name}, ${account.type}, ${account.email},
+          ${account.disabled ? 1 : 0}, ${account.signedOut ? 1 : 0}, ${contributor}, ${now})
+        ON CONFLICT (name) DO UPDATE SET type = excluded.type, email = excluded.email,
+          disabled = excluded.disabled, signed_out = excluded.signed_out`;
+      }
+      const names = new Set(live.map((account) => account.name));
+      for (const account of cached) {
+        if (!names.has(account.name)) yield* sql`DELETE FROM accounts WHERE name = ${account.name}`;
+      }
+    });
+
   const threadAccounts = ThreadAccounts.make({
     sql,
     audit: (detail) => audit(POOL_ITSELF, "move-thread", detail),
@@ -703,41 +736,11 @@ const make = Effect.gen(function* () {
         }),
       );
       const cached = yield* cachedAccounts;
-      const known = new Map(cached.accounts.map((account) => [account.name, account]));
-      const changed = live.filter((account) => {
-        const before = known.get(account.name);
-        return (
-          before === undefined ||
-          before.type !== account.type ||
-          before.email !== account.email ||
-          before.disabled !== account.disabled ||
-          before.signedOut !== account.signedOut
-        );
-      });
-      const names = new Set(live.map((account) => account.name));
-      const removed = cached.accounts.filter((account) => !names.has(account.name));
       const mode: PoolLimits.ReadMode =
         options?.passive === true || options?.probe === true ? "probe" : "free";
-      if (changed.length === 0 && removed.length === 0 && cached.error === null) {
-        // Account-list freshness is independent of the usage probes below.
-        yield* sql`UPDATE accounts_state SET checked_at = ${now}, error = NULL WHERE id = 1`;
-        yield* refreshLimits(endpoint, live, now, mode);
-        return live;
-      }
       yield* sql.withTransaction(
         Effect.gen(function* () {
-          for (const account of changed) {
-            const contributor = known.has(account.name) ? null : contributors(account.name);
-            yield* sql`INSERT INTO accounts (name, type, email, disabled, signed_out,
-                contributed_by, added_at)
-              VALUES (${account.name}, ${account.type}, ${account.email},
-                ${account.disabled ? 1 : 0}, ${account.signedOut ? 1 : 0}, ${contributor}, ${now})
-              ON CONFLICT (name) DO UPDATE SET type = excluded.type, email = excluded.email,
-                disabled = excluded.disabled, signed_out = excluded.signed_out`;
-          }
-          for (const account of removed) {
-            yield* sql`DELETE FROM accounts WHERE name = ${account.name}`;
-          }
+          yield* storeAccountRows(live, cached.accounts, now, contributors);
           yield* sql`UPDATE accounts_state SET checked_at = ${now}, error = NULL WHERE id = 1`;
         }),
       );
@@ -1122,6 +1125,8 @@ const make = Effect.gen(function* () {
       const endpoint = endpointOf(row, { models: true });
       yield* ensureManagedConfig(endpoint);
       const live = yield* CliProxyApi.listAccounts(endpoint);
+      const cached = yield* cachedAccounts;
+      yield* sql.withTransaction(storeAccountRows(live, cached.accounts, now));
       yield* refreshLimits(endpoint, live, now, "probe");
     }).pipe(
       samplingUsage.withPermits(1),
