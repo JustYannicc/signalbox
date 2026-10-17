@@ -62,9 +62,14 @@
       ],
     },
     "apps/cloud": {
-      // The ModelGateway Worker's entry, the Alchemy stack the deploy runs, and
-      // the plan guard CI runs with node.
-      "entry": ["src/modelGateway/worker.ts!", "alchemy.run.ts!", "infra/check-plan.ts"],
+      // Workers and Alchemy stacks load these entries by filename.
+      "entry": [
+        "src/modelGateway/worker.ts!",
+        "src/boxdSpike/worker.ts!",
+        "alchemy.run.ts!",
+        "infra/boxd-spike.alchemy.ts!",
+        "infra/check-plan.ts",
+      ],
       // `cloudflare:workers` is a Workers runtime module, not a package.
       "ignoreDependencies": ["cloudflare"],
     },
