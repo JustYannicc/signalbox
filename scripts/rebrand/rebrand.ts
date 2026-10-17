@@ -113,7 +113,8 @@ const DOC_RULES = [
   { pattern: /\bcom\.t3tools\.t3code\b/g, replace: "com.justyannicc.signalbox" },
   // Scheme names without `://`, as in "the `t3code-dev` / `t3code` navigation schemes".
   {
-    pattern: /`t3code(-dev|-preview)?`(?=(?: \/ `t3code(?:-dev|-preview)?`)* navigation schemes?\b)/g,
+    pattern:
+      /`t3code(-dev|-preview)?`(?=(?: \/ `t3code(?:-dev|-preview)?`)* navigation schemes?\b)/g,
     replace: "`signalbox$1`",
   },
 ];
