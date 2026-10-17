@@ -12,7 +12,7 @@ import {
   newThreadIn,
   poolOfHome,
 } from "@t3tools/client-runtime/state/signalboxFolders";
-import type { EnvironmentId, ProjectId } from "@t3tools/contracts";
+import type { EnvironmentId, ProjectId, ThreadId } from "@t3tools/contracts";
 import type { AccountPoolId } from "@t3tools/contracts/accountHub";
 import type { FolderId } from "@t3tools/contracts/signalboxFolders";
 import { useCallback, useContext } from "react";
@@ -34,6 +34,13 @@ export interface StartInFolder {
   readonly ownerProjectId: ProjectId | null;
   readonly folderId: FolderId | null;
   readonly openFiles?: boolean;
+  /** False creates the draft without opening it. */
+  readonly navigate?: boolean;
+}
+
+export interface StartedInFolder {
+  readonly draftId: DraftId;
+  readonly threadId: ThreadId;
 }
 
 export function useStartInFolder() {
@@ -65,20 +72,23 @@ export function useStartInFolder() {
   );
 
   return useCallback(
-    async (input: StartInFolder) => {
+    async (input: StartInFolder): Promise<StartedInFolder | null> => {
       const snapshotNow = () =>
         registry.get(environmentFoldersAtom).get(input.environmentId)?.snapshot ?? null;
       const before = snapshotNow();
-      if (before === null) return;
+      if (before === null) return null;
       const ownerProjectId =
         input.ownerProjectId ??
         before.folders.find((folder) => folder.id === input.folderId)?.files?.projectId;
-      if (ownerProjectId === undefined) return;
+      if (ownerProjectId === undefined) return null;
       const { projectId } = newThreadIn(before, input.folderId, ownerProjectId);
       const result = await settlePromise(() =>
         // Folders without files share their owner's project, so its empty draft may be
         // another folder's: always a draft of this folder's own.
-        handleNewThread(scopeProjectRef(input.environmentId, projectId), { freshDraft: true }),
+        handleNewThread(scopeProjectRef(input.environmentId, projectId), {
+          freshDraft: true,
+          ...(input.navigate === false ? { navigate: false } : {}),
+        }),
       );
       if (result._tag === "Failure") {
         const error = squashAtomCommandFailure(result);
@@ -89,10 +99,10 @@ export function useStartInFolder() {
             description: error instanceof Error ? error.message : "An error occurred.",
           }),
         );
-        return;
+        return null;
       }
       const opened = result.value;
-      if (opened === null) return;
+      if (opened === null) return null;
       // Read the tree again: it may have changed while the draft opened. For a fresh draft this
       // is `newThreadIn(...).file`; it also catches an empty draft reused from another folder.
       const latest = snapshotNow() ?? before;
@@ -108,6 +118,7 @@ export function useStartInFolder() {
           .getState()
           .open(scopeThreadRef(input.environmentId, opened.threadId), "files");
       }
+      return opened;
     },
     [commands, followPool, handleNewThread, registry],
   );

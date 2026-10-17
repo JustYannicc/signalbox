@@ -82,6 +82,8 @@ export function useNewThreadHandler() {
         replace?: boolean;
         /** signalbox: a new draft even when the project has an empty one (folders share projects). */
         freshDraft?: boolean;
+        /** signalbox: with `freshDraft`, create it without opening it (quick capture). */
+        navigate?: boolean;
       },
     ): Promise<{ draftId: DraftId; threadId: ThreadId } | null> => {
       const projects = readProjects();
@@ -130,7 +132,8 @@ export function useNewThreadHandler() {
           candidate.environmentId === projectRef.environmentId,
       );
       const abandonedSinceRequest = () =>
-        routeChangedSinceRequest() || (project !== undefined && readProject(projectRef) === null);
+        (options?.navigate !== false && routeChangedSinceRequest()) || // signalbox
+        (project !== undefined && readProject(projectRef) === null);
       const projectSettings = resolveProjectSettings(
         targetServerSettings,
         project?.id ?? null,
@@ -402,6 +405,7 @@ export function useNewThreadHandler() {
         if (modelSelectionOverride) {
           setModelSelection(draftId, modelSelectionOverride, { replaceOptions: true });
         }
+        if (options?.navigate === false) return { draftId, threadId }; // signalbox
         await router.navigate({
           to: "/draft/$draftId",
           params: { draftId },

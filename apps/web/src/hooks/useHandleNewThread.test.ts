@@ -350,4 +350,26 @@ describe("useNewThreadHandler with folders", () => {
       expect.objectContaining({ params: { draftId: "draft-delayed" } }),
     );
   });
+
+  it("creates a quick-capture draft without opening it, even after the user moved on", async () => {
+    testState.reset(null);
+    const projectRef = { environmentId: "environment-ssh", projectId: "project-remote" } as never;
+    const pendingOpen = useNewThreadHandler()(projectRef, { freshDraft: true, navigate: false });
+
+    testState.router.state.location.href = "/usage";
+    testState.completeProjectFileRead(null);
+
+    await expect(pendingOpen).resolves.toEqual({
+      draftId: "draft-delayed",
+      threadId: "thread-delayed",
+    });
+    expect(testState.draftStore.setLogicalProjectDraftThreadId).toHaveBeenCalledWith(
+      "remote-project",
+      projectRef,
+      "draft-delayed",
+      expect.objectContaining({ threadId: "thread-delayed" }),
+    );
+    expect(testState.router.navigate).not.toHaveBeenCalled();
+    expect(testState.router.state.location.href).toBe("/usage");
+  });
 });
