@@ -7,7 +7,8 @@ description: Test T3 Code's native iOS and Android app through its Device panel 
 
 ## Open the device
 
-Call `device_list`, then `device_open` with the selected host and device IDs.
+Call `device_list` and record the selected host, device ID and initial boot state.
+Then call `device_open` with those IDs and retain the returned device ID.
 T3 boots the device and shows its live stream in the Device panel. Follow its
 returned `quickStart`, using the exact `agentDevice.command` and all `targetArgs`
 on every operation. Use `device_screenshot` to inspect the screen.
@@ -38,7 +39,8 @@ This reuses a matching native client or builds and installs one. Authorized
 mobile verification includes that build step unless the user prohibits it.
 
 Start `vp run dev:client` from `apps/mobile`, or reuse a healthy Metro belonging
-to this checkout. Open its printed development-client URL with AgentDevice
+to this checkout. Record the PIDs of backend and Metro processes you start.
+Open its printed development-client URL with AgentDevice
 `open com.t3tools.t3code.dev <url>` and all returned target arguments.
 The device must be able to reach both Metro and the isolated backend.
 Append `&disableAutoLaunch=1&disableFab=1` to the development-client URL query
@@ -63,6 +65,17 @@ through AgentDevice. For a backend on the device host, use
 on Android. For a remote backend, use its reachable origin.
 
 Confirm the intended projects appear, exercise the affected flow, and capture
-evidence. Retain the app and environment while iterating. At teardown, remove
-the disposable connection, close the AgentDevice session, call `device_close`,
-and stop only your backend and Metro processes.
+evidence. Retain the app and environment while iterating.
+
+## Clean up
+
+On completion or failure, remove the disposable connection and close the
+AgentDevice session with its returned target arguments. Call `device_close`
+with the tracked host and returned device ID. Set `shutdown=true` if this walk
+booted the device; preserve a device that was already booted for another owner.
+Coordinate an explicit handoff if another walk needs the device next.
+
+Stop backend and Metro processes by the PIDs captured when you started them.
+Preserve processes you reused. Never kill processes or shut down devices by
+pattern, and leave T3's shared daemon alone. Verify your device is shut down
+and your spawned processes have exited before calling teardown complete.
