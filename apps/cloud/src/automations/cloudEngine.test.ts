@@ -2,9 +2,16 @@
 import { afterEach, describe, expect, it, vi } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as TestClock from "effect/testing/TestClock";
+import { compileForCloud } from "@signalbox/automation-compiler/compileForCloud";
+import * as WorkflowEngine from "@signalbox/automations/WorkflowEngine";
 
 import { makeRepo } from "../drive/driveTesting.ts";
 import { makeFakeGitHub } from "../github/githubTesting.ts";
+import * as GitHubWebhooks from "../github/GitHubWebhooks.ts";
+import { makeMemoryCloud } from "../testing.ts";
+import * as Environment from "../environment.ts";
+import { scriptedModelSelection } from "../thread/scriptedProvider.ts";
+import * as CloudCompiler from "./cloudCompiler.ts";
 import { hookTestSetup, HOOK_USER } from "./hookTesting.ts";
 
 const DRIVE = `my/personal/${HOOK_USER}`;
@@ -20,6 +27,121 @@ const json = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
 
 describe("cloud automation flush", () => {
+  it.effect("finds the owner after an initially missing profile for both hook kinds", () =>
+    Effect.gen(function* () {
+      const userId = "user+late";
+      const repo = makeRepo();
+      repos.push(repo);
+      const installed: Array<{ readonly url: string; readonly repository: string }> = [];
+      const github = makeFakeGitHub({
+        bare: repo.dir,
+        repository: "owner/repo",
+        defaultBranch: "main",
+        more: (method, url, body) => {
+          if (url.pathname === "/repos/owner/repo/hooks") {
+            if (method === "GET") return json([]);
+            if (method === "POST") {
+              const input = JSON.parse(new TextDecoder().decode(body)) as {
+                readonly config: { readonly url: string };
+              };
+              installed.push({ url: input.config.url, repository: "owner/repo" });
+              return json({ id: 1 }, 201);
+            }
+          }
+          return null;
+        },
+      });
+      const cloud = makeMemoryCloud({ github: github.layer });
+      const user = cloud.userDirectory.forUser(userId);
+      const save = (source: string) =>
+        cloud.inUser(
+          userId,
+          Effect.gen(function* () {
+            const result = compileForCloud(source);
+            if (!result.ok) return yield* Effect.die(result.diagnostics);
+            const compiler = yield* CloudCompiler.CloudCompiler;
+            const engine = yield* WorkflowEngine.WorkflowEngine;
+            const compiled = yield* CloudCompiler.acceptCompiled(result.compiled);
+            const saved = yield* compiler.withStaged(
+              source,
+              compiled,
+              engine.save({
+                source,
+                projectId: Environment.SCRATCH_PROJECT_ID,
+                defaults: {
+                  modelSelection: scriptedModelSelection,
+                  runtimeMode: "full-access",
+                  interactionMode: "default",
+                },
+              }),
+            );
+            if (!saved.ok) return yield* Effect.die(saved.diagnostics);
+            return saved.automation;
+          }),
+        );
+      const webhook =
+        yield* save(`export const meta = { name: "Late hook", triggers: [{ webhook: {} }] } as const;
+export default workflow(async (_w, input: unknown) => input);`);
+      yield* save(`export const meta = { name: "Late repository", triggers: [{ on: "pr.opened" }] } as const;
+export default workflow(async (_w, input: unknown) => input);`);
+      expect(webhook.webhook?.url).toBeNull();
+      yield* cloud.inUser(
+        userId,
+        GitHubWebhooks.GitHubWebhooks.use((hooks) => hooks.reconcile),
+      );
+      yield* cloud.inUser(
+        userId,
+        GitHubWebhooks.GitHubWebhooks.use((hooks) => hooks.sync),
+      );
+      expect(
+        yield* cloud.inUser(
+          userId,
+          GitHubWebhooks.GitHubWebhooks.use((hooks) => hooks.store.list),
+        ),
+      ).toEqual([]);
+      expect(installed).toEqual([]);
+
+      yield* user.recordSignIn({ id: userId, email: "late@example.com" });
+      yield* user.beginGitHubConnect({ grantId: "late-connect", returnTo: HOOK_ORIGIN });
+      github.authorize(userId);
+      yield* user.completeGitHubConnect("late-connect");
+      yield* Effect.promise(() =>
+        cloud.drives.apiFor(`my/personal/${userId}`).setRemote({
+          provider: "github",
+          repository: "owner/repo",
+          defaultBranch: "main",
+        }),
+      );
+      const signedIn = yield* cloud.inUser(
+        userId,
+        WorkflowEngine.WorkflowEngine.use((engine) => engine.get(webhook.id)),
+      );
+      expect(signedIn.automation.webhook?.url).toBe(
+        `/api/hooks/${encodeURIComponent(userId)}${webhook.webhook!.path.slice("/api/hooks".length)}`,
+      );
+      yield* cloud.inUser(
+        userId,
+        GitHubWebhooks.GitHubWebhooks.use((hooks) => hooks.reconcile),
+      );
+      const rows = yield* cloud.inUser(
+        userId,
+        GitHubWebhooks.GitHubWebhooks.use((hooks) => hooks.store.list),
+      );
+      expect(rows).toHaveLength(1);
+      expect(rows[0]?.repository).toBe("owner/repo");
+      yield* cloud.inUser(
+        userId,
+        GitHubWebhooks.GitHubWebhooks.use((hooks) => hooks.sync),
+      );
+      expect(installed).toEqual([
+        {
+          url: `/api/github/hooks/${encodeURIComponent(userId)}/${rows[0]!.id}`,
+          repository: "owner/repo",
+        },
+      ]);
+    }),
+  );
+
   it.effect("retries GitHub reconciliation without losing mutations or earlier work alarms", () =>
     Effect.gen(function* () {
       vi.useFakeTimers({ toFake: ["Date"] });
