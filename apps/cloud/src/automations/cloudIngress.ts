@@ -86,6 +86,10 @@ export const layer = Layer.effectContext(
         (callback ? run?.status !== "running" : options === null || automation.version === 0)
       )
         return { status: 404 };
+      yield* Effect.annotateCurrentSpan({
+        "folder.id": automation.project_id,
+        "automation.id": automation.automation_id,
+      });
       if (
         !(yield* Effect.promise(() =>
           sameToken(request.token, callback?.token ?? automation.webhook_token),

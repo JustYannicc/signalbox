@@ -10,7 +10,7 @@ import { GitHubWebhooks } from "./GitHubWebhooks.ts";
 import { deliveredRemarks } from "./githubEventDelivery.ts";
 import { gitHubSignals, parseGitHubPayload } from "./githubEvents.ts";
 
-const source = `export const meta = { name: "Read GitHub facts", overlap: "allow", triggers: [{ on: "pr.opened", where: { repository: "owner/repo" } }] } as const;
+const source = `export const meta = { name: "Read GitHub facts", overlap: "allow", triggers: [{ on: "pr.opened", where: { repository: "Owner/Repo" } }] } as const;
 export default workflow(async (_w, pr: unknown) => pr);`;
 
 describe("GitHub webhook events", () => {

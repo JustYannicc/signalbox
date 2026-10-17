@@ -169,6 +169,7 @@ const make = Effect.gen(function* () {
     if (request.body.byteLength > MAX_HOOK_BYTES) return { status: 413 };
     const row = yield* wrap(store.get(request.hookId));
     if (!row || row.enabled !== 1) return { status: 404 };
+    yield* Effect.annotateCurrentSpan({ "folder.id": row.project_id });
     if (!(yield* Effect.promise(() => verifySignature(GITHUB_SIGNATURE, row.secret, request))))
       return { status: 401 };
     const event = request.headers["x-github-event"];
