@@ -25,6 +25,7 @@ import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 
 import type { AutomationHostCall } from "../automations/CloudAutomations.ts";
+import type { HookAnswer, HookRequest } from "../automations/webhookRequest.ts";
 import type { ConnectionLink, CreatedLink } from "../connections/ConnectionLinks.ts";
 import type {
   LinkedConnections,
@@ -94,6 +95,7 @@ export type PullRequestDiffReply =
 
 /** What a user's object answers. `UserObject` implements it method for method. */
 export interface UserObjectApi {
+  readonly receiveHook: (request: HookRequest) => Promise<HookAnswer>;
   readonly recordSignIn: (profile: AccountProfile) => Promise<void>;
   readonly profile: () => Promise<AccountProfile | null>;
   readonly createSession: (input: {
@@ -332,6 +334,7 @@ const METHODS = Object.keys({
   recordThreadSummary: true,
   threadEvents: true,
   driveEvents: true,
+  receiveHook: true,
   rebuildThreadIndex: true,
   beginGitHubConnect: true,
   completeGitHubConnect: true,

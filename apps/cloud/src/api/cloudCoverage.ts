@@ -89,29 +89,29 @@ export const CLOUD_UNSERVED: Readonly<Record<string, Unserved>> = {
   "git.preparePullRequestThread": gap("#818"),
 
   // Git beyond the thread's own branch.
-  "vcs.listRefs": gap("#394"),
-  "review.getDiffFileContents": gap("#394"),
+  "vcs.listRefs": gap("#809"),
+  "review.getDiffFileContents": gap("#809"),
   "sourceControl.cloneRepository": githubImports,
-  "sourceControl.publishRepository": gap("#394"),
+  "sourceControl.publishRepository": gap("#810"),
 
   // Files in folders without a machine.
   "projects.writeFile": gap("#439"),
   "projects.searchContents": gap("#439"),
   "projects.createNew": exempt("Folders hold projects; create one with folders.create."),
   "projects.mutate": exempt("Folders hold projects; change them with folders.*."),
-  "assets.persistChatAttachments": gap("#399"),
+  "assets.persistChatAttachments": gap("#813"),
 
   // Pools: the cloud signs in Claude and ChatGPT accounts only.
-  "pools.advice": gap("#197"),
+  "pools.advice": gap("#819"),
   "provider.auth.respond": gap("#205"),
   "provider.auth.logout": gap("#205"),
   "provider.chatgpt.*": exempt("A self-hosted server's ChatGPT desktop handoff."),
   "provider.codex.authCallback.subscribe": exempt(
     "A self-hosted server's localhost sign-in callback.",
   ),
-  "provider.consumeResetCredit": gap("#197"),
+  "provider.consumeResetCredit": gap("#820"),
   "provider.install.*": poolHarnesses,
-  "provider.uploadFeedback": gap("#15"),
+  "provider.uploadFeedback": gap("#822"),
   "server.updateProvider": poolHarnesses,
 
   "acpRegistry.*": exempt("ACP agents install on a host; cloud threads run on pool harnesses."),

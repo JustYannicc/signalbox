@@ -33,14 +33,10 @@ module.exports = {
         path: [`^${CLOUD}/[^/]+/(?:tests?|__tests__)/`, `^${CLOUD}/[^/]+/.*/(?:tests?|__tests__)/`],
       },
     },
-    {
-      name: "no-circular",
-      severity: "warn",
-      from: {},
-      to: { circular: true },
-    },
   ],
   options: {
+    // lint:boundaries checks complete cyclic edges rather than deduplicated cycle summaries.
+    skipAnalysisNotInRules: true,
     doNotFollow: { path: "(?:^|/)node_modules/" },
     tsPreCompilationDeps: true,
     parser: "tsc",
