@@ -35,6 +35,7 @@ export function isShutdownCancellation(stderr: string) {
     .filter(
       (line) =>
         line &&
+        !/^Updated watches in (?:\d+(?:\.\d+)?(?:ns|µs|ms|s|m|h))+$/.test(line) &&
         !/^LSP_PEAK_RSS_KIB=\d+$/.test(line) &&
         line !== "Command exited with non-zero status 1",
     );
