@@ -28,6 +28,16 @@ export class GitHubError extends Schema.TaggedError<GitHubError>()("GitHubError"
   /** Sanitized response headers that help identify malformed GitHub answers. */
   responseContentType: Schema.optional(Schema.String),
   responseContentLength: Schema.optional(Schema.String),
+  /** GitHub's bounded rate-limit headers, when present on an answer. */
+  responseRateLimits: Schema.optional(
+    Schema.Struct({
+      remaining: Schema.optional(Schema.String),
+      reset: Schema.optional(Schema.String),
+      resource: Schema.optional(Schema.String),
+      used: Schema.optional(Schema.String),
+      retryAfter: Schema.optional(Schema.String),
+    }),
+  ),
   /** When GitHub's rate limit lets the caller ask again (epoch ms), when it said. */
   retryAt: Schema.optional(Schema.Number),
 }) {}
@@ -128,6 +138,7 @@ const toPull = (body: typeof PullBody.Type): GitHubPullRequest => ({
 });
 
 const RefBody = Schema.Struct({ object: Schema.Struct({ sha: Schema.String }) });
+const RefsBody = Schema.Array(Schema.Struct({ ref: Schema.String, ...RefBody.fields }));
 const CommitBody = Schema.Struct({ sha: Schema.String });
 const MergeBody = Schema.Struct({ merged: Schema.Boolean });
 const TreeBody = Schema.Struct({
@@ -206,6 +217,9 @@ const boundedDiagnostic = (value: string, token: string, maxLength: number) => {
   return sanitized.length > maxLength ? `${sanitized.slice(0, maxLength)}…` : sanitized;
 };
 
+const boundedResponseHeader = (value: string) =>
+  value.length > 120 ? `${value.slice(0, 120)}…` : value;
+
 const responseDiagnostics = (
   requestKind: GitHubRequestKind,
   response: HttpClientResponse.HttpClientResponse,
@@ -221,11 +235,29 @@ const responseDiagnostics = (
     response.headers["content-length"] === undefined
       ? undefined
       : boundedDiagnostic(response.headers["content-length"], token, 120);
+  const rateLimitHeaders = {
+    ...(response.headers["x-ratelimit-remaining"] === undefined
+      ? {}
+      : { remaining: boundedResponseHeader(response.headers["x-ratelimit-remaining"]) }),
+    ...(response.headers["x-ratelimit-reset"] === undefined
+      ? {}
+      : { reset: boundedResponseHeader(response.headers["x-ratelimit-reset"]) }),
+    ...(response.headers["x-ratelimit-resource"] === undefined
+      ? {}
+      : { resource: boundedResponseHeader(response.headers["x-ratelimit-resource"]) }),
+    ...(response.headers["x-ratelimit-used"] === undefined
+      ? {}
+      : { used: boundedResponseHeader(response.headers["x-ratelimit-used"]) }),
+    ...(response.headers["retry-after"] === undefined
+      ? {}
+      : { retryAfter: boundedResponseHeader(response.headers["retry-after"]) }),
+  };
   return {
     requestKind,
     ...(excerpt === undefined ? {} : { responseExcerpt: excerpt }),
     ...(contentType === undefined ? {} : { responseContentType: contentType }),
     ...(contentLength === undefined ? {} : { responseContentLength: contentLength }),
+    ...(Object.keys(rateLimitHeaders).length === 0 ? {} : { responseRateLimits: rateLimitHeaders }),
   };
 };
 
@@ -293,6 +325,9 @@ export const makeGitHubApi = (
       ...(error.responseContentLength === undefined
         ? {}
         : { responseContentLength: error.responseContentLength }),
+      ...(error.responseRateLimits === undefined
+        ? {}
+        : { responseRateLimits: error.responseRateLimits }),
     });
 
   const readResponseText = (
@@ -423,7 +458,7 @@ export const makeGitHubApi = (
                     operation,
                     status: response.status,
                     message: "GitHub's answer is too large to read.",
-                    requestKind,
+                    ...responseDiagnostics(requestKind, response, "", token),
                   }),
                 );
               }
@@ -619,6 +654,19 @@ export const makeGitHubApi = (
         ),
         token,
       ).pipe(Effect.map((body) => body?.object.sha ?? null)),
+    /** All branch refs. GitHub's matching-refs endpoint returns the whole namespace without paging. */
+    listRefs: (token: string, repository: string) =>
+      json(
+        "listRefs",
+        RefsBody,
+        HttpClientRequest.get(`${api}/repos/${repository}/git/matching-refs/heads/`),
+        token,
+      ).pipe(
+        Effect.catchIf(
+          (error) => error.status === 409 && /^Git Repository is empty\.?$/i.test(error.message),
+          () => Effect.succeed([]),
+        ),
+      ),
     /** The newest pull request from `branch` in the same repository, in any state. */
     pullForBranch: (token: string, repository: string, branch: string) => {
       const url = new URL(`${api}/repos/${repository}/pulls`);

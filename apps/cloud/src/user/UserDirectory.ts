@@ -37,7 +37,7 @@ import { API_HEADER, type ApiCredential, encodeApiCredential } from "../api/apiO
 import type { CreatedKey, KeyOptions } from "../localKeys/LocalKeys.ts";
 import type { LocalKeysView } from "../localKeys/localModelAccess.ts";
 import type { LocalModelAuthorization } from "../models/ModelProtocol.ts";
-import type { ModelUsage } from "../modelGateway/modelGatewayRecord.ts";
+import type { ModelUsage } from "../models/ModelRecords.ts";
 import type { PreviewSetup } from "../previewSetup/previewSetupWire.ts";
 import type { SignInCheck } from "../signIn/SignInGrants.ts";
 import type {
@@ -78,6 +78,12 @@ export class UserObjectError extends Schema.TaggedError<UserObjectError>()("User
 
 /** The shell crosses Durable Object RPC in its JSON encoding, which keeps its dates. */
 export const shellSnapshotWire = jsonCodec(OrchestrationV2ShellSnapshot);
+
+export interface ClientTraceDimension {
+  readonly threadId: string;
+  readonly folderId: string | null;
+  readonly orgId: string | null;
+}
 
 /** A PR diff response that keeps service failures typed across Durable Object RPC. */
 export type PullRequestDiffReply =
@@ -212,6 +218,10 @@ export interface UserObjectApi {
   readonly onePasswordToken: () => Promise<string | null>;
   /** The user's current contexts, which every thread call acts within. */
   readonly contextIds: () => Promise<ReadonlyArray<SignalboxContextId>>;
+  /** Resolves trusted, currently visible context and folder ids for telemetry threads. */
+  readonly clientTraceDimensions: (
+    threadIds: ReadonlyArray<string>,
+  ) => Promise<ReadonlyArray<ClientTraceDimension>>;
   /** A drive object's membership delivery (`drive/driveAccessOutbox.ts`). Idempotent. */
   readonly recordDriveAccess: (entry: DriveAccessEntry) => Promise<void>;
   /** The user's role in a drive right now, or null when they can't open it (`UserDrives`). */
@@ -232,6 +242,8 @@ export interface UserObjectApi {
    * thread (`drive/automationRoutes.ts`). The engine's refusal is an answer.
    */
   readonly automationTool: (threadId: string, name: string, input: unknown) => Promise<ToolResult>;
+  /** The thread token fixes the learner level; tool inputs never choose one. */
+  readonly learnerTool: (threadId: string, name: string, input: unknown) => Promise<ToolResult>;
   /**
    * What's going on in a thread's home folder, for its agent
    * (`drive/statusLineRoutes.ts`, `UserThreadStatus`), as `statusLineJson.folder` text.
@@ -361,12 +373,14 @@ const METHODS = Object.keys({
   pullRequestDiff: true,
   onePasswordToken: true,
   contextIds: true,
+  clientTraceDimensions: true,
   recordDriveAccess: true,
   driveAccess: true,
   readableDrives: true,
   publishBranch: true,
   automationTool: true,
   folderStatus: true,
+  learnerTool: true,
   browserSession: true,
   browserSignIn: true,
   checkSignIn: true,

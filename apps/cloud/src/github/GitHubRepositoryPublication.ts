@@ -7,6 +7,7 @@ import {
 import { canManageDrive, type SignalboxDriveRole } from "@t3tools/contracts/signalboxDrives";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
+import * as Schema from "effect/Schema";
 
 import { DriveDirectory } from "../drive/DriveDirectory.ts";
 import { DrivePacks } from "../drive/DrivePacks.ts";
@@ -24,6 +25,9 @@ import { planPublicationPush, pushPublication } from "./GitHubPublicationPush.ts
 const GITHUB = SourceControlProviderKind.make("github");
 const failed = (detail: string) =>
   new SourceControlRepositoryError({ provider: GITHUB, operation: "publishRepository", detail });
+const isRepositoryError = Schema.is(SourceControlRepositoryError);
+const isDriveReadError = Schema.is(DriveReadError);
+const isPushRefused = Schema.is(PushRefused);
 
 const resultOf = (publication: DrivePublication): SourceControlPublishRepositoryResult => {
   const repository = publication.repository!;
@@ -44,8 +48,8 @@ const resultOf = (publication: DrivePublication): SourceControlPublishRepository
   };
 };
 
-export const makeRepositoryPublication = (
-  accessDrive: (driveId: string) => Effect.Effect<SignalboxDriveRole | null, unknown>,
+export const makeRepositoryPublication = <AccessError>(
+  accessDrive: (driveId: string) => Effect.Effect<SignalboxDriveRole | null, AccessError>,
 ) =>
   Effect.gen(function* () {
     const directory = yield* Effect.serviceOption(DriveDirectory);
@@ -139,8 +143,8 @@ export const makeRepositoryPublication = (
         return resultOf(publication);
       }).pipe(
         Effect.catch((error) => {
-          if (error instanceof SourceControlRepositoryError) return Effect.fail(error);
-          if (error instanceof DriveReadError || error instanceof PushRefused)
+          if (isRepositoryError(error)) return Effect.fail(error);
+          if (isDriveReadError(error) || isPushRefused(error))
             return Effect.fail(failed(error.message));
           return Effect.logWarning("Cloud folder publication failed", { error }).pipe(
             Effect.andThen(

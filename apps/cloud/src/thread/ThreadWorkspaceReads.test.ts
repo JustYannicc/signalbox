@@ -10,7 +10,7 @@ import { makeMemoryObjects } from "../attachments/attachmentTesting.ts";
 import * as DriveDirectory from "../drive/DriveDirectory.ts";
 import * as Platform from "../platform.ts";
 import { layerAttachments, makeMemoryCloud } from "../testing.ts";
-import * as ThreadContexts from "../user/threadContexts.ts";
+import * as ThreadContextLayers from "../user/threadContextLayers.ts";
 import { remoteThreadWorktree } from "../user/contextProjects.ts";
 import * as UserDrives from "../user/UserDrives.ts";
 import * as UserFolders from "../user/UserFolders.ts";
@@ -78,7 +78,7 @@ const fixture = Effect.gen(function* () {
   const folders = yield* UserFolders.UserFolders.pipe(
     Effect.provide(cloud.userObject(actor.userId)),
   );
-  const contexts = ThreadContexts.layer.pipe(
+  const contexts = ThreadContextLayers.layer.pipe(
     Layer.provide(
       Layer.mergeAll(
         Layer.succeed(DriveDirectory.DriveDirectory, drives),
@@ -104,6 +104,7 @@ const fixture = Effect.gen(function* () {
         }),
       ),
     ),
+    Layer.provide(cloud.userObject(actor.userId)),
   );
   const service = yield* Threads.Threads.pipe(
     Effect.provide(

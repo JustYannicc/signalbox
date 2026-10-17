@@ -110,6 +110,7 @@ function readWorkspace() {
 // Returns the packages a path touches, [] for an inert path, or null when the
 // path is not understood and everything must run.
 function ownersOf(file, packages) {
+  if (file === ".vscode/settings.json") return ["@t3tools/scripts"]; // signalbox: native SDK selection needs its parity proof.
   if (INERT.some((pattern) => pattern.test(file))) return [];
   // A manifest can change dependencies or versions other packages read.
   if (path.posix.basename(file) === "package.json") return null;

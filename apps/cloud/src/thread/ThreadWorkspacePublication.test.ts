@@ -31,6 +31,7 @@ const fixture = Effect.gen(function* () {
         Layer.provide(Layer.succeed(ThreadDirectory.ThreadDirectory, cloud.threadDirectory)),
         Layer.provide(
           Layer.succeed(ThreadContexts, {
+            initialModelSelection: () => Effect.succeed(null),
             placeOfProject: (id) =>
               Effect.sync(() =>
                 id === projectId

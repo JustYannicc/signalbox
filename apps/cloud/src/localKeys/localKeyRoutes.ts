@@ -7,7 +7,7 @@ import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http";
 
 import { optionalString } from "../CloudConfig.ts";
 import { NO_STORE_HEADERS, requestUrl } from "../http/credentials.ts";
-import { LOCAL_KEY_HEADER } from "../modelGateway/modelGateway.ts";
+import { LOCAL_KEY_HEADER } from "../models/ModelHttp.ts";
 import {
   guarded,
   pageFailure,

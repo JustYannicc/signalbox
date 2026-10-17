@@ -1,16 +1,25 @@
 import { PERSONAL_CONTEXT_ID } from "@t3tools/contracts/signalboxContexts";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Data from "effect/Data";
 
 import { makeRepositoryPublication } from "./GitHubRepositoryPublication.ts";
 import { publicationFixture, USER } from "./githubPublicationTesting.ts";
+
+class InfrastructureFailure extends Data.TaggedError("InfrastructureFailure")<{
+  readonly message: string;
+}> {}
 
 describe("publication failures", () => {
   it.effect("keeps infrastructure diagnostics out of the public error", () =>
     Effect.gen(function* () {
       const f = yield* publicationFixture();
       const publish = yield* makeRepositoryPublication(() =>
-        Effect.fail(new Error("database relation publication_internal is missing")),
+        Effect.fail(
+          new InfrastructureFailure({
+            message: "database relation publication_internal is missing",
+          }),
+        ),
       ).pipe(Effect.provide(f.cloud.layerFor(USER)));
       const error = yield* publish(
         { userId: USER, contextIds: [PERSONAL_CONTEXT_ID] },
