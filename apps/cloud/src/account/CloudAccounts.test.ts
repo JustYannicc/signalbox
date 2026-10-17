@@ -87,7 +87,9 @@ describe("CloudAccounts", () => {
         ),
       ).pipe(
         Effect.provide(
-          CloudAccounts.layer.pipe(Layer.provide(Layer.succeed(HttpClient.HttpClient, client))),
+          Layer.fresh(CloudAccounts.layer).pipe(
+            Layer.provide(Layer.succeed(HttpClient.HttpClient, client)),
+          ),
         ),
       );
       expect(requests).toEqual([

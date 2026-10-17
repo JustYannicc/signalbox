@@ -21,7 +21,9 @@ it.effect("omits all test bindings in production even when secrets are supplied"
     const preview = yield* testSignInEnv(false).pipe(
       Effect.provide(ConfigProvider.layer(ConfigProvider.fromEnv({ env }))),
     );
-    if (!("E2E_WORKOS_API_KEY" in preview)) throw new Error("missing preview bindings");
+    if (!("E2E_WORKOS_API_KEY" in preview) || !Redacted.isRedacted(preview.E2E_WORKOS_API_KEY)) {
+      throw new Error("missing preview bindings");
+    }
     expect(Redacted.value(preview.E2E_WORKOS_API_KEY)).toBe(env.E2E_WORKOS_API_KEY);
   }),
 );
