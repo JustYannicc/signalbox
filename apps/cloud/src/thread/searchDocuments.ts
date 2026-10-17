@@ -3,13 +3,13 @@ import {
   THREAD_TOOL_SEARCH_COMMAND_LIMIT as TOOL_COMMAND_LIMIT,
 } from "@t3tools/shared/threadSearch";
 import { threadPullRequestsOf } from "@t3tools/shared/threadPullRequests";
+import { threadToolInput } from "@t3tools/shared/threadToolInput";
 import type { OrchestrationV2ThreadProjection } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 
 import type { SearchDocument } from "../search/SearchIndex.ts";
 
 const THREAD_ROW_ID = "thread";
-const SECRET_KEY = /secret|token|password|credential|authorization|cookie|base64|image|binary/i;
 const sliceText = (text: string, start: number, end: number) => {
   if (start > 0 && /[\uDC00-\uDFFF]/u.test(text[start] ?? "")) start += 1;
   if (end < text.length && /[\uD800-\uDBFF]/u.test(text[end - 1] ?? "")) end -= 1;
@@ -55,23 +55,6 @@ function toolResultText(value: unknown): string {
     return toolResultText(value.content);
   }
   return "";
-}
-
-function safeInputText(value: unknown, depth = 0): string {
-  if (typeof value === "string") return value;
-  if (typeof value === "boolean" || (typeof value === "number" && Number.isFinite(value)))
-    return String(value);
-  if (typeof value !== "object" || value === null || depth >= 3) return "";
-  if (Array.isArray(value))
-    return value
-      .map((part) => safeInputText(part, depth + 1))
-      .filter(Boolean)
-      .join(" ");
-  return Object.entries(value)
-    .filter(([key]) => !SECRET_KEY.test(key))
-    .map(([, item]) => safeInputText(item, depth + 1))
-    .filter(Boolean)
-    .join("\n");
 }
 
 const nonEmptyText = (parts: ReadonlyArray<string>) =>
@@ -174,20 +157,13 @@ export function documentForProjectedItem(
       ) {
         return null;
       }
-      const input = safeInputText(item.input);
+      const input = threadToolInput(item.input).text;
       const output = item.outputOmitted === true ? "" : outputExcerpt(toolResultText(item.output));
       return document(projection, {
         ...common,
         entryId: String(item.id),
         kind: "tool",
-        text: [
-          item.toolName ?? "",
-          item.status,
-          input ? clip(input, TOOL_COMMAND_LIMIT) : "",
-          output,
-        ]
-          .filter(Boolean)
-          .join("\n"),
+        text: [item.toolName ?? "", item.status, input, output].filter(Boolean).join("\n"),
       });
     }
     case "approval_request":

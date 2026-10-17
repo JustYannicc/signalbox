@@ -4,6 +4,25 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 import { collectThreadFindRanges, useThreadFindHighlights } from "./threadFindHighlights";
+import { toolInputFindPresentation } from "./toolInputFind";
+
+function renderInput(value: unknown) {
+  const input = toolInputFindPresentation(value);
+  const scope = document.createElement("div");
+  for (const [key, value] of Object.entries(input.attributes)) scope.setAttribute(key, value);
+  if (input.args) {
+    for (const [key, value] of input.args) {
+      const row = document.createElement("div");
+      const label = document.createElement("span");
+      label.textContent = `${key} `;
+      row.append(label, value);
+      scope.append(row);
+    }
+  } else {
+    scope.textContent = input.argsText;
+  }
+  return scope;
+}
 
 function Probe(props: Parameters<typeof useThreadFindHighlights>[0]) {
   useThreadFindHighlights(props);
@@ -47,6 +66,64 @@ afterEach(async () => {
 });
 
 describe("find highlight caching", () => {
+  it("maps safe input values to glyphs before output occurrences, excluding keys and secrets", () => {
+    container.innerHTML =
+      '<div data-timeline-row-id="group" data-thread-find-entry-id="tool"></div>';
+    const row = container.firstElementChild!;
+    const input = renderInput({ "café label": "café", password: "café secret" });
+    const output = document.createElement("pre");
+    output.setAttribute("data-thread-find-text", "tool-output");
+    output.textContent = "café";
+    row.append(input, output);
+    const ranges = collectThreadFindRanges(container, "café");
+    expect(
+      ranges.map(({ rowId, occurrence, range }) => [rowId, occurrence, range.toString()]),
+    ).toEqual([
+      ["tool", 0, "café"],
+      ["tool", 1, "café"],
+    ]);
+    expect(ranges[0]!.range.startContainer.parentElement?.textContent).toBe("café label café");
+    expect(ranges[0]!.range.startOffset).toBe(0);
+    expect(ranges[1]!.range.startContainer.parentElement).toBe(output);
+  });
+
+  it("maps nested escaped input and repeated values to their own rendered positions", () => {
+    container.innerHTML = '<div data-timeline-row-id="tool"></div>';
+    const input = renderInput({
+      query: { password: "café", terms: ["café", "café"], escaped: 'say "hi"\n😀' },
+    });
+    container.firstElementChild!.append(input);
+    const repeated = collectThreadFindRanges(container, "café");
+    expect(repeated).toHaveLength(2);
+    expect(repeated.every(({ range }) => range.toString() === "café")).toBe(true);
+    expect(repeated[0]!.range.startOffset).toBeLessThan(repeated[1]!.range.startOffset);
+    const escaped = collectThreadFindRanges(container, '"hi"\n😀');
+    expect(escaped).toHaveLength(1);
+    expect(escaped[0]!.range.toString()).toBe('\\"hi\\"\\n😀');
+  });
+
+  it("keeps the global input budget from shifting an output match", () => {
+    container.innerHTML = '<div data-timeline-row-id="tool"></div>';
+    const input = renderInput({ prefix: "x".repeat(998), suffix: "café" });
+    const output = document.createElement("pre");
+    output.setAttribute("data-thread-find-text", "tool-output");
+    output.textContent = "café";
+    container.firstElementChild!.append(input, output);
+    const ranges = collectThreadFindRanges(container, "café");
+    expect(ranges).toHaveLength(1);
+    expect(ranges[0]!.occurrence).toBe(0);
+    expect(ranges[0]!.range.startContainer.parentElement).toBe(output);
+  });
+
+  it("restarts non-overlapping matching at each indexed output edge", () => {
+    container.innerHTML =
+      '<div data-timeline-row-id="tool"><pre data-thread-find-text="tool-output"></pre></div>';
+    container.querySelector("pre")!.textContent = "a".repeat(1001);
+    const ranges = collectThreadFindRanges(container, "aa");
+    expect(ranges).toHaveLength(320);
+    expect(ranges[160]!.range.startOffset).toBe(681);
+    expect(ranges[319]!.range.startOffset).toBe(999);
+  });
   it("counts only the indexed output edges, preserving the tail occurrence", () => {
     container.innerHTML =
       '<div data-timeline-row-id="tool"><pre data-thread-find-text="tool-output"></pre></div>';

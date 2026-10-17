@@ -499,6 +499,7 @@ type MessagesTimelineRowContent =
       createdAt: string;
       groupedEntries: WorkLogEntry[];
       isExpandedToolGroup: boolean;
+      groupId?: string;
       displayLabel?: string;
     }
   | {
@@ -654,6 +655,7 @@ function expandedWorkGroupRow(
   return {
     kind: "work",
     id: `${groupId}:details`,
+    groupId,
     createdAt,
     groupedEntries,
     isExpandedToolGroup: true,
@@ -2212,6 +2214,7 @@ function isRowUnchanged(a: MessagesTimelineRow, b: MessagesTimelineRow): boolean
       const bw = b as typeof a;
       return (
         a.isExpandedToolGroup === bw.isExpandedToolGroup &&
+        a.groupId === bw.groupId &&
         a.displayLabel === bw.displayLabel &&
         Equal.equals(a.groupedEntries, bw.groupedEntries)
       );

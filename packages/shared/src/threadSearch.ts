@@ -1,6 +1,23 @@
 export const THREAD_TOOL_SEARCH_OUTPUT_EDGE = 320;
 export const THREAD_TOOL_SEARCH_COMMAND_LIMIT = 1_000;
 
+export function threadToolSearchWindows(text: string, kind: "command" | "output") {
+  const start = text.length - text.trimStart().length;
+  const end = text.trimEnd().length;
+  const window = (from: number, to: number) => ({
+    start: from > 0 && /[\uDC00-\uDFFF]/u.test(text[from] ?? "") ? from + 1 : from,
+    end: to < text.length && /[\uD800-\uDBFF]/u.test(text[to - 1] ?? "") ? to - 1 : to,
+  });
+  if (end <= start) return [];
+  if (kind === "command")
+    return [window(start, Math.min(end, start + THREAD_TOOL_SEARCH_COMMAND_LIMIT))];
+  if (end - start <= THREAD_TOOL_SEARCH_OUTPUT_EDGE * 2) return [window(start, end)];
+  return [
+    window(start, start + THREAD_TOOL_SEARCH_OUTPUT_EDGE),
+    window(end - THREAD_TOOL_SEARCH_OUTPUT_EDGE, end),
+  ];
+}
+
 interface ThreadSearchTextPart {
   readonly text: string;
   readonly highlighted: boolean;

@@ -349,8 +349,6 @@ interface TimelineRowSharedState {
   onWorktreeSetupWorkLocally: (() => void) | null;
   onOpenWorktreeSetupTerminal: ((terminalId: string) => void) | null;
   workGroupViewState: WorkGroupViewState;
-  findEntryId: string | null;
-  findRevealKey: string;
 }
 
 interface TimelineRowActivityState {
@@ -366,6 +364,10 @@ interface TimelineRowActivityState {
 
 const TimelineRowCtx = createContext<TimelineRowSharedState>(null!);
 const TimelineRowActivityCtx = createContext<TimelineRowActivityState>(null!);
+const TimelineFindTargetCtx = createContext<{ findEntryId: string | null; findRevealKey: string }>({
+  findEntryId: null,
+  findRevealKey: "",
+});
 
 interface WorkGroupViewState {
   scrollPositions: Map<string, WorkGroupScrollAnchor>;
@@ -910,8 +912,8 @@ const ConversationTimeline = memo(function ConversationTimeline({
         row.isExpandedToolGroup &&
         row.groupedEntries.some((entry) => entry.id === pendingWorkFindEntryId),
     );
-    if (!group) return;
-    const groupId = group.id.slice(0, -":details".length);
+    if (group?.kind !== "work" || group.groupId === undefined) return;
+    const groupId = group.groupId;
     setExpandedWorkGroupIds((previous) =>
       previous.has(groupId) ? previous : new Set(previous).add(groupId),
     );
@@ -1301,6 +1303,10 @@ const ConversationTimeline = memo(function ConversationTimeline({
     };
   }, [timelineViewportElement, rows.length, reportContentOverflow, chatWidth]);
 
+  const findTarget = useMemo(
+    () => ({ findEntryId: activeFindMatch?.entryId ?? null, findRevealKey: workFindKey }),
+    [activeFindMatch?.entryId, workFindKey],
+  );
   const sharedState = useMemo<TimelineRowSharedState>(
     () => ({
       citationRequest: readyCitationRequest,
@@ -1339,8 +1345,6 @@ const ConversationTimeline = memo(function ConversationTimeline({
       onWorktreeSetupWorkLocally: onWorktreeSetupWorkLocally ?? null,
       onOpenWorktreeSetupTerminal: onOpenWorktreeSetupTerminal ?? null,
       workGroupViewState,
-      findEntryId: activeFindMatch?.entryId ?? null,
-      findRevealKey: workFindKey,
     }),
     [
       readyCitationRequest,
@@ -1379,8 +1383,6 @@ const ConversationTimeline = memo(function ConversationTimeline({
       onWorktreeSetupWorkLocally,
       onOpenWorktreeSetupTerminal,
       workGroupViewState,
-      activeFindMatch,
-      workFindKey,
     ],
   );
   const compactionAwaitingRow =
@@ -1583,85 +1585,87 @@ const ConversationTimeline = memo(function ConversationTimeline({
 
   return (
     <MarkdownFindContext value={findActive}>
-      <TimelineRowCtx value={sharedState}>
-        <TimelineRowActivityCtx value={activityState}>
-          <TooltipScrollDismissArea
-            ref={setTimelineViewportElement}
-            className="relative h-full min-h-0"
-            data-assistant-citation-viewport="true"
-          >
-            {onCiteAssistantText && citationThreadRef ? (
-              <AssistantSelectionToolbar
-                viewport={timelineViewportElement}
-                threadRef={citationThreadRef}
-                onCite={onCiteAssistantText}
+      <TimelineFindTargetCtx value={findTarget}>
+        <TimelineRowCtx value={sharedState}>
+          <TimelineRowActivityCtx value={activityState}>
+            <TooltipScrollDismissArea
+              ref={setTimelineViewportElement}
+              className="relative h-full min-h-0"
+              data-assistant-citation-viewport="true"
+            >
+              {onCiteAssistantText && citationThreadRef ? (
+                <AssistantSelectionToolbar
+                  viewport={timelineViewportElement}
+                  threadRef={citationThreadRef}
+                  onCite={onCiteAssistantText}
+                />
+              ) : null}
+              <LegendList<MessagesTimelineRow>
+                ref={setTimelineList}
+                data={rows}
+                extraData={`${listIdentityKey}:${rows.length}`}
+                keyExtractor={keyExtractor}
+                getItemType={getItemType}
+                renderItem={renderItem}
+                estimatedItemSize={90}
+                initialScrollAtEnd={
+                  !findActive && citationRequest === null && rememberedPosition?.atEnd !== false
+                }
+                // Legend needs a data refresh to mount new pins without a scroll event.
+                dataVersion={readyCitationRequest?.key ?? listIdentityKey}
+                {...(alwaysRender ? { alwaysRender } : {})}
+                onLoad={handleListLoad}
+                {...(anchoredEndSpace ? { anchoredEndSpace } : {})}
+                contentInsetEndAdjustment={anchoredEndSpace ? contentInsetEndAdjustment : 0}
+                maintainScrollAtEnd={
+                  citationPositioning ||
+                  (restoringThreadPosition && rememberedPosition?.atEnd === false) ||
+                  anchoredEndSpace ||
+                  !liveFollowEnabled ||
+                  fullscreenAppRowId !== null ||
+                  disclosureToggleSettling
+                    ? false
+                    : isWorking && !prefersReducedMotion && settlingListIdentity === null
+                      ? TIMELINE_MAINTAIN_SCROLL_AT_END_SMOOTH
+                      : TIMELINE_MAINTAIN_SCROLL_AT_END
+                }
+                maintainVisibleContentPosition={
+                  findActive ||
+                  citationPositioning ||
+                  (restoringThreadPosition && rememberedPosition?.atEnd === false)
+                    ? false
+                    : maintainVisibleContentPosition
+                }
+                maintainScrollAtEndThreshold={1}
+                onScroll={handleScroll}
+                onItemSizeChanged={handleItemSizeChanged}
+                className={cn(
+                  "messages-timeline-scroll scrollbar-gutter-both h-full min-h-0 overflow-x-hidden overscroll-y-contain [overflow-anchor:none]",
+                  topFadeEnabled && "topbar-scroll-fade",
+                )}
+                ListHeaderComponent={listHeader}
+                ListFooterComponent={timelineListFooter}
               />
-            ) : null}
-            <LegendList<MessagesTimelineRow>
-              ref={setTimelineList}
-              data={rows}
-              extraData={`${listIdentityKey}:${rows.length}`}
-              keyExtractor={keyExtractor}
-              getItemType={getItemType}
-              renderItem={renderItem}
-              estimatedItemSize={90}
-              initialScrollAtEnd={
-                !findActive && citationRequest === null && rememberedPosition?.atEnd !== false
-              }
-              // Legend needs a data refresh to mount new pins without a scroll event.
-              dataVersion={readyCitationRequest?.key ?? listIdentityKey}
-              {...(alwaysRender ? { alwaysRender } : {})}
-              onLoad={handleListLoad}
-              {...(anchoredEndSpace ? { anchoredEndSpace } : {})}
-              contentInsetEndAdjustment={anchoredEndSpace ? contentInsetEndAdjustment : 0}
-              maintainScrollAtEnd={
-                citationPositioning ||
-                (restoringThreadPosition && rememberedPosition?.atEnd === false) ||
-                anchoredEndSpace ||
-                !liveFollowEnabled ||
-                fullscreenAppRowId !== null ||
-                disclosureToggleSettling
-                  ? false
-                  : isWorking && !prefersReducedMotion && settlingListIdentity === null
-                    ? TIMELINE_MAINTAIN_SCROLL_AT_END_SMOOTH
-                    : TIMELINE_MAINTAIN_SCROLL_AT_END
-              }
-              maintainVisibleContentPosition={
-                findActive ||
-                citationPositioning ||
-                (restoringThreadPosition && rememberedPosition?.atEnd === false)
-                  ? false
-                  : maintainVisibleContentPosition
-              }
-              maintainScrollAtEndThreshold={1}
-              onScroll={handleScroll}
-              onItemSizeChanged={handleItemSizeChanged}
-              className={cn(
-                "messages-timeline-scroll scrollbar-gutter-both h-full min-h-0 overflow-x-hidden overscroll-y-contain [overflow-anchor:none]",
-                topFadeEnabled && "topbar-scroll-fade",
-              )}
-              ListHeaderComponent={listHeader}
-              ListFooterComponent={timelineListFooter}
-            />
-            <TimelineMinimap
-              items={minimapItems}
-              hasPersistentGutter={minimapHasPersistentGutter}
-              hitStripWidth={minimapHitStripWidth}
-              currentIndex={minimapCurrentIndex}
-              stripMap={minimapStripMap}
-              onWheel={forwardMinimapWheel}
-              onSelect={(item) => {
-                onManualNavigation();
-                void listRef.current?.scrollToIndex({
-                  index: item.rowIndex,
-                  animated: true,
-                  viewOffset: 24,
-                });
-              }}
-            />
-          </TooltipScrollDismissArea>
-        </TimelineRowActivityCtx>
-      </TimelineRowCtx>
+              <TimelineMinimap
+                items={minimapItems}
+                hasPersistentGutter={minimapHasPersistentGutter}
+                hitStripWidth={minimapHitStripWidth}
+                currentIndex={minimapCurrentIndex}
+                stripMap={minimapStripMap}
+                onWheel={forwardMinimapWheel}
+                onSelect={(item) => {
+                  onManualNavigation();
+                  void listRef.current?.scrollToIndex({
+                    index: item.rowIndex,
+                    animated: true,
+                    viewOffset: 24,
+                  });
+                }}
+              />
+            </TooltipScrollDismissArea>
+          </TimelineRowActivityCtx>
+        </TimelineRowCtx>
+      </TimelineFindTargetCtx>
     </MarkdownFindContext>
   );
 });
@@ -3570,12 +3574,8 @@ function ExpandedWorkGroupEntries({
   entries: TimelineWorkEntry[];
   workspaceRoot: string | undefined;
 }) {
-  const {
-    workGroupViewState: viewState,
-    onToggleWorkEntry,
-    findEntryId,
-    findRevealKey,
-  } = use(TimelineRowCtx);
+  const { workGroupViewState: viewState, onToggleWorkEntry } = use(TimelineRowCtx);
+  const { findEntryId, findRevealKey } = use(TimelineFindTargetCtx);
   const findIndex = entries.findIndex((entry) => entry.id === findEntryId);
   const [initialScrollIndex] = useState(() =>
     resolveWorkGroupScrollIndex(entries, viewState.scrollPositions.get(anchorKey)),
@@ -5408,6 +5408,7 @@ const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: WorkEntryRowP
 function WorkEntryLogRow(props: WorkEntryRowProps) {
   const { workEntry, workspaceRoot, displayLabel } = props;
   const ctx = use(TimelineRowCtx);
+  const { findEntryId, findRevealKey } = use(TimelineFindTargetCtx);
   const { threadRef, onImageExpand, timestampFormat } = ctx;
   const { retryableWorkspacePreparationRunIds, onRetryWorkspacePreparation } = ctx;
   const threadTarget = useThreadReadTarget(workEntry, ctx.activeThreadEnvironmentId);
@@ -5424,10 +5425,10 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
     () => groupView?.state.expandedEntries.has(workEntry.id) ?? false,
   );
   useEffect(() => {
-    if (ctx.findEntryId !== workEntry.id) return;
+    if (findEntryId !== workEntry.id) return;
     setExpanded(true);
     groupView?.state.expandedEntries.add(workEntry.id);
-  }, [ctx.findEntryId, ctx.findRevealKey, groupView, workEntry.id]);
+  }, [findEntryId, findRevealKey, groupView, workEntry.id]);
   const toggleExpanded = () => {
     const next = !expanded;
     if (groupView) {

@@ -30,6 +30,7 @@ import { CommandOutputPanel, useCommandOutputStreaming } from "./CommandOutputPa
 import { resolveExternalWebLinkHref } from "./externalLinkContextMenu";
 import type { ExpandedImagePreview } from "./ExpandedImagePreview";
 import { ShellCommandBlock } from "./ShellCommandBlock";
+import { toolInputFindPresentation } from "./toolInputFind";
 
 interface V2ItemInspectorProps {
   readonly projectedItem: OrchestrationV2ProjectedTurnItem;
@@ -79,10 +80,12 @@ function StructuredValue({
   value,
   highlightJson = false,
   language,
+  findAttributes,
 }: {
   readonly value: unknown;
   readonly highlightJson?: boolean;
   readonly language?: "typescript";
+  readonly findAttributes?: ReturnType<typeof toolInputFindPresentation>["attributes"];
 }) {
   const text = typeof value === "string" ? value : JSON.stringify(value, null, 2);
   const isJson = useMemo(() => {
@@ -96,7 +99,10 @@ function StructuredValue({
   }, [highlightJson, text]);
   if (!text) return null;
   return (
-    <pre className={cn("max-h-80 overflow-auto text-muted-foreground", monoClassName)}>
+    <pre
+      {...findAttributes}
+      className={cn("max-h-80 overflow-auto text-muted-foreground", monoClassName)}
+    >
       {language || isJson ? (
         <RenderErrorBoundary fallback={text}>
           <Suspense fallback={text}>
@@ -214,7 +220,12 @@ function ToolCallBody(
     readonly outputSlot?: ReactNode;
   },
 ) {
-  const call = toolCallLines({ command: props.command, args: props.args });
+  const call = toolCallLines({ command: props.command });
+  // signalbox: Find maps indexed values to the actual input, excluding keys and secrets.
+  const input = useMemo(
+    () => (props.command === undefined ? toolInputFindPresentation(props.args) : null),
+    [props.command, props.args],
+  );
   return (
     <div className={cn("space-y-1.5", monoClassName)}>
       {!call.command && props.toolName ? <div data-thread-find-text>{props.toolName}</div> : null}
@@ -233,9 +244,9 @@ function ToolCallBody(
           {props.searchStatus}
         </div>
       ) : null}
-      {call.args ? (
-        <div className="text-foreground/85">
-          {call.args.map(([key, value]) => (
+      {input?.args ? (
+        <div {...input.attributes} className="text-foreground/85">
+          {input.args.map(([key, value]) => (
             <div key={key}>
               <span className="text-muted-foreground">{key} </span>
               {key === "code" && isJavaScriptReplTool(props.toolName) ? (
@@ -247,9 +258,11 @@ function ToolCallBody(
           ))}
         </div>
       ) : null}
-      {call.argsText ? <StructuredValue value={call.argsText} highlightJson /> : null}
+      {input?.argsText ? (
+        <StructuredValue value={input.argsText} findAttributes={input.attributes} highlightJson />
+      ) : null}
       {props.outputSlot ?? <ToolOutput {...props} />}
-      {props.exitCode !== undefined && props.exitCode !== 0 ? (
+      {props.searchStatus === undefined && props.exitCode !== undefined && props.exitCode !== 0 ? (
         <div className="text-destructive">exit {props.exitCode}</div>
       ) : null}
     </div>

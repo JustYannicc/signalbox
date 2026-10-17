@@ -512,6 +512,10 @@
       "types": "./src/threadSearch.ts",
       "import": "./src/threadSearch.ts"
     },
+    "./threadToolInput": {
+      "types": "./src/threadToolInput.ts",
+      "import": "./src/threadToolInput.ts"
+    },
     "./markdownLinks": {
       "types": "./src/markdownLinks.ts",
       "import": "./src/markdownLinks.ts"
