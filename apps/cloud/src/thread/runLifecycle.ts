@@ -216,10 +216,10 @@ export function finishRunEvents(
   const node = projection.nodes.find((candidate) => candidate.id === run.rootNodeId);
   const queued = queuedRuns(projection);
   const holdQueue = options.queue === "hold";
-  const [next, ...rest] =
-    (options.queue ?? "advance") === "advance"
-      ? queued.filter((candidate) => candidate.queueHeld !== true)
-      : [];
+  const advanceQueue = (options.queue ?? "advance") === "advance";
+  const next = advanceQueue ? queued.find((candidate) => candidate.queueHeld !== true) : undefined;
+  // Held runs keep their place when a newer unheld run leaves the queue.
+  const remaining = advanceQueue ? queued.filter((candidate) => candidate.id !== next?.id) : [];
   return [
     ...(options.leading ?? []),
     ...projection.turnItems.flatMap((item) =>
@@ -258,7 +258,7 @@ export function finishRunEvents(
       ? queued.map((candidate) => runEvent(ctx, "run.updated", { ...candidate, queueHeld: true }))
       : []),
     ...(next === undefined ? [] : startRunEvents(projection, next, "queued_turn", ctx)),
-    ...rest.map((candidate, index) =>
+    ...remaining.map((candidate, index) =>
       runEvent(ctx, "run.updated", { ...candidate, queuePosition: index + 1 }),
     ),
   ];

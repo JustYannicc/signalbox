@@ -195,7 +195,13 @@ function dispatchMessage(
   if (steered !== undefined) {
     return accept([...updates, ...steerEvents(projection, steered, message, "steer", ctx)]);
   }
-  const queuePosition = projection.runs.filter((run) => run.status === "queued").length + 1;
+  const queuePosition =
+    Math.max(
+      0,
+      ...projection.runs
+        .filter((run) => run.status === "queued")
+        .map((run) => run.queuePosition ?? run.ordinal),
+    ) + 1;
   const run: OrchestrationV2Run = {
     id: runId,
     threadId: thread.id,

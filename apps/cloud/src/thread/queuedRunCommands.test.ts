@@ -99,6 +99,51 @@ const order = (projection: OrchestrationV2ThreadProjection) =>
   queuedRunsInDeliveryOrder(projection).map((run) => run.ordinal);
 
 describe("cloud queue decisions", () => {
+  it("appends new messages after queued runs with gaps and legacy missing positions", () => {
+    const original = fixture();
+    const current = {
+      ...original,
+      runs: original.runs.map((run) => ({
+        ...run,
+        queuePosition: run.ordinal === 2 ? 6 : run.ordinal === 4 ? 12 : null,
+      })),
+    };
+    expect(order(current)).toEqual([3, 2, 4]);
+    const appended = apply(
+      current,
+      decide(
+        current,
+        {
+          type: "message.dispatch",
+          commandId: CommandId.make("append-gap"),
+          threadId,
+          createdBy: "user",
+          creationSource: "web",
+          messageId: MessageId.make("message-tail"),
+          text: "Tail",
+          attachments: [],
+          dispatchMode: { type: "queue_after_active" },
+        },
+        ctx,
+      ),
+    );
+    expect(order(appended)).toEqual([3, 2, 4, 5]);
+    expect(appended.runs.find((run) => run.ordinal === 5)?.queuePosition).toBe(13);
+    const advanced = applyEvents(
+      appended,
+      finishRunEvents(appended, appended.runs[0]!, "completed", ctx),
+    )!;
+    expect(advanced.runs.find((run) => run.status === "starting")?.ordinal).toBe(3);
+    expect(order(advanced)).toEqual([2, 4, 5]);
+    expect(advanced.messages.map((message) => message.text)).toEqual([
+      "Live",
+      "Queued 2",
+      "Queued 3",
+      "Queued 4",
+      "Tail",
+    ]);
+  });
+
   it("stores a deterministic order used by start, finish, cancel and resume", () => {
     const original = fixture();
     const command = reorder(4, 2);
