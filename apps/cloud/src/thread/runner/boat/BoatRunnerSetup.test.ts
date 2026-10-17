@@ -1,8 +1,9 @@
+// @effect-diagnostics nodeBuiltinImport:off - exercises the actual Bash launcher and installer in temporary directories.
 import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "@effect/vitest";
 
 import { CONFIG_PATH, RUNNER_SCRIPT, SETUP_COMMAND } from "./BoatRunnerSetup.ts";
 
