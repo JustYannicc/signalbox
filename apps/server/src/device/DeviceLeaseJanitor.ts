@@ -46,7 +46,12 @@ export interface DeviceLeaseJanitor {
   }) => Effect.Effect<ReadonlyArray<DeviceJanitorItem>, DeviceOperationError>;
 }
 
-export const makeDeviceLeaseJanitor = (access: DeviceLeaseAccess): DeviceLeaseJanitor => {
+export const makeDeviceLeaseJanitor = (
+  access: DeviceLeaseAccess,
+  options: {
+    readonly reconcileDevice?: (target: DeviceLeaseTarget) => Effect.Effect<boolean | undefined>;
+  } = {},
+): DeviceLeaseJanitor => {
   const { store, mapStoreError, withLocks, withoutDeadOwners, withoutDeadWaiters } = access;
 
   const prepareExplicitShutdown: DeviceLeaseJanitor["prepareExplicitShutdown"] = (input) =>
@@ -145,6 +150,10 @@ export const makeDeviceLeaseJanitor = (access: DeviceLeaseAccess): DeviceLeaseJa
             ...waiterState.lease,
             state: "shutting_down",
             owners: [],
+            shutdownOwner: {
+              processId: access.processId,
+              processIdentity: access.processIdentity,
+            },
           };
           yield* store
             .write(key, pending)
@@ -175,6 +184,10 @@ export const makeDeviceLeaseJanitor = (access: DeviceLeaseAccess): DeviceLeaseJa
           bootedBySignalbox: false,
           lastDeviceActivityAt: now,
           owners: [],
+          shutdownOwner: {
+            processId: access.processId,
+            processIdentity: access.processIdentity,
+          },
         };
         yield* store
           .write(key, pending)
@@ -192,7 +205,11 @@ export const makeDeviceLeaseJanitor = (access: DeviceLeaseAccess): DeviceLeaseJa
         if (entry.lease) {
           return (
             (input.hostId === undefined || entry.lease.hostId === input.hostId) &&
-            (input.deviceId === undefined || entry.lease.deviceId === input.deviceId)
+            (input.deviceId === undefined ||
+              leaseMatchesDevice(entry.lease, {
+                hostId: entry.lease.hostId,
+                deviceId: input.deviceId,
+              }))
           );
         }
         const [hostId, deviceAlias] = entry.key.split("\u0000", 2);
@@ -222,20 +239,47 @@ export const makeDeviceLeaseJanitor = (access: DeviceLeaseAccess): DeviceLeaseJa
         } satisfies DeviceLeaseTarget;
         const item = yield* withLocks(target, "idle cleanup", () =>
           Effect.gen(function* () {
-            const current = yield* store
+            let current = yield* store
               .read(entry.key)
               .pipe(Effect.mapError((cause) => mapStoreError("idle cleanup", cause)));
             if (!current) return undefined;
-            const classify = (reason: DeviceJanitorReason): DeviceJanitorItem => ({
-              hostId: current.hostId,
-              deviceId: current.deviceId,
+            const classify = (
+              lease: DeviceLeaseRecord,
+              reason: DeviceJanitorReason,
+            ): DeviceJanitorItem => ({
+              hostId: lease.hostId,
+              deviceId: lease.deviceId,
               status: "skipped",
               reason,
             });
-            if (current.physical) return classify("physical");
-            if (!current.bootedBySignalbox) return classify("not_signalbox_owned");
-            if (!current.deviceBooted) return classify("not_booted");
-            if (current.state !== "ready") return classify("in_progress");
+            if (current.physical) return classify(current, "physical");
+            if (current.state === "shutting_down") {
+              const claimant = current.shutdownOwner;
+              if (
+                claimant === undefined ||
+                access.isOwnerProcessLive(claimant.processId, claimant.processIdentity) !==
+                  "dead" ||
+                options.reconcileDevice === undefined ||
+                !input.apply
+              )
+                return classify(current, "in_progress");
+              const reconciledBooted = yield* options.reconcileDevice(target);
+              if (reconciledBooted === undefined) return classify(current, "in_progress");
+              current = {
+                ...current,
+                state: "ready",
+                deviceBooted: reconciledBooted,
+                bootedBySignalbox: reconciledBooted && current.bootedBySignalbox,
+                owners: [],
+                shutdownOwner: undefined,
+              };
+              yield* store
+                .write(entry.key, current)
+                .pipe(Effect.mapError((cause) => mapStoreError("idle cleanup", cause)));
+            }
+            if (!current.bootedBySignalbox) return classify(current, "not_signalbox_owned");
+            if (!current.deviceBooted) return classify(current, "not_booted");
+            if (current.state !== "ready") return classify(current, "in_progress");
             const ownership = yield* withoutDeadOwners(current, now);
             const waiterState = yield* withoutDeadWaiters(ownership.lease, now);
             if (input.apply && (ownership.changed || waiterState.changed)) {
@@ -244,13 +288,13 @@ export const makeDeviceLeaseJanitor = (access: DeviceLeaseAccess): DeviceLeaseJa
                 .pipe(Effect.mapError((cause) => mapStoreError("idle cleanup", cause)));
             }
             if (ownership.owners.some((owner) => owner.status === "unknown")) {
-              return classify("unknown_owner");
+              return classify(current, "unknown_owner");
             }
             if (ownership.owners.some((owner) => owner.status === "live")) {
-              return classify("active_owner");
+              return classify(current, "active_owner");
             }
-            if (waiterState.lease.waiters?.length) return classify("waiting_walk");
-            if (!leaseIdleLongEnough(waiterState.lease, now)) return classify("not_idle");
+            if (waiterState.lease.waiters?.length) return classify(current, "waiting_walk");
+            if (!leaseIdleLongEnough(waiterState.lease, now)) return classify(current, "not_idle");
             if (!input.apply) {
               return {
                 hostId: current.hostId,
@@ -258,7 +302,15 @@ export const makeDeviceLeaseJanitor = (access: DeviceLeaseAccess): DeviceLeaseJa
                 status: "would_shutdown" as const,
               };
             }
-            const pending = { ...waiterState.lease, state: "shutting_down" as const, owners: [] };
+            const pending = {
+              ...waiterState.lease,
+              state: "shutting_down" as const,
+              owners: [],
+              shutdownOwner: {
+                processId: access.processId,
+                processIdentity: access.processIdentity,
+              },
+            };
             yield* store
               .write(entry.key, pending)
               .pipe(Effect.mapError((cause) => mapStoreError("idle cleanup", cause)));

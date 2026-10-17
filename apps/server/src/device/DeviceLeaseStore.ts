@@ -7,6 +7,7 @@ import * as NodePath from "node:path";
 import * as NodeProcess from "node:process";
 
 import * as Effect from "effect/Effect";
+import * as Duration from "effect/Duration";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
@@ -81,11 +82,13 @@ export const makeMemoryDeviceLeaseStore = Effect.gen(function* () {
 interface LockOwner {
   readonly pid: number;
   readonly processIdentity: string;
+  readonly token?: string | undefined;
 }
 
 const LockOwnerSchema = Schema.Struct({
   pid: Schema.Int,
   processIdentity: Schema.String,
+  token: Schema.optional(Schema.String),
 });
 const LockOwnerJson = Schema.fromJsonString(LockOwnerSchema);
 const DeviceLeaseJson = Schema.fromJsonString(DeviceLeaseRecord);
@@ -176,10 +179,17 @@ const decodeLease = (value: string, key: string): DeviceLeaseRecordValue => {
   }
 };
 
-export const makeFileDeviceLeaseStore = (rootDirectory: string): DeviceLeaseStore => {
+export const makeFileDeviceLeaseStore = (
+  rootDirectory: string,
+  options: {
+    readonly waitAttempts?: number;
+    readonly waitInterval?: Duration.Input;
+    readonly onDeadOwnerObserved?: () => Effect.Effect<void>;
+  } = {},
+): DeviceLeaseStore => {
   const recordPath = (key: string) => NodePath.join(rootDirectory, `${safeSegment(key)}.json`);
-  const lockPath = (key: string) => NodePath.join(rootDirectory, `${safeSegment(key)}.lock`);
-  const ownerPath = (key: string) => NodePath.join(lockPath(key), "owner.json");
+  const lockPath = (key: string, purpose = "operation") =>
+    NodePath.join(rootDirectory, `${safeSegment(key)}.${purpose}.lock`);
 
   const read = (
     key: string,
@@ -216,90 +226,151 @@ export const makeFileDeviceLeaseStore = (rootDirectory: string): DeviceLeaseStor
         await NodeFSP.rename(temporary, target);
       },
       catch: (cause) => new DeviceLeaseStoreError({ key, reason: "write_failed", cause }),
-    });
+    }).pipe(Effect.uninterruptible);
 
-  const acquire = (key: string, remaining: number): Effect.Effect<void, DeviceLeaseStoreError> =>
-    Effect.tryPromise({
-      try: async () => {
-        await NodeFSP.mkdir(rootDirectory, { recursive: true });
-        await NodeFSP.mkdir(lockPath(key));
-        try {
-          await NodeFSP.writeFile(
-            ownerPath(key),
-            encodeLockOwner({
-              pid: NodeProcess.pid,
-              processIdentity: currentDeviceLeaseProcessIdentity,
-            } satisfies LockOwner),
-            {
-              encoding: "utf8",
-              mode: 0o600,
-            },
+  const acquire = (
+    key: string,
+    path: string,
+    remaining: number,
+    reapDeadOwner: boolean,
+  ): Effect.Effect<string, DeviceLeaseStoreError> => {
+    const token = NodeCrypto.randomUUID();
+    const ownerFile = (lock: string) => NodePath.join(lock, "owner.json");
+    const reapGuardPath = lockPath(key, "reap");
+    const boundedWait = (retry: () => Effect.Effect<string, DeviceLeaseStoreError>) =>
+      remaining <= 1
+        ? Effect.fail(
+            new DeviceLeaseStoreError({
+              key,
+              reason: "lock_timeout",
+              cause: new Error("Timed out waiting for the device operation lock."),
+            }),
+          )
+        : Effect.sleep(options.waitInterval ?? DEVICE_LEASE_WAIT_INTERVAL).pipe(
+            Effect.andThen(retry()),
           );
-        } catch (cause) {
-          await NodeFSP.rm(lockPath(key), { recursive: true, force: true }).catch(() => undefined);
-          throw cause;
-        }
-      },
-      catch: (cause) =>
-        isExists(cause)
-          ? new LockBusyError({ key })
-          : new DeviceLeaseStoreError({ key, reason: "write_failed", cause }),
-    }).pipe(
-      // Directory creation and its owner marker are one lock acquisition. An
-      // interrupted Promise must not leave a markerless lock behind.
-      Effect.uninterruptible,
+    const readLockOwner = (lock: string) =>
+      Effect.tryPromise({
+        try: async () => decodeLockOwner(await NodeFSP.readFile(ownerFile(lock), "utf8")),
+        catch: (cause) => new DeviceLeaseStoreError({ key, reason: "read_failed", cause }),
+      }).pipe(Effect.option);
+    const acquireOnce = (lock: string, ownerToken: string) =>
+      Effect.tryPromise({
+        try: async () => {
+          await NodeFSP.mkdir(rootDirectory, { recursive: true });
+          await NodeFSP.mkdir(lock);
+          try {
+            await NodeFSP.writeFile(
+              ownerFile(lock),
+              encodeLockOwner({
+                pid: NodeProcess.pid,
+                processIdentity: currentDeviceLeaseProcessIdentity,
+                token: ownerToken,
+              } satisfies LockOwner),
+              {
+                encoding: "utf8",
+                mode: 0o600,
+              },
+            );
+          } catch (cause) {
+            await NodeFSP.rm(lock, { recursive: true, force: true }).catch(() => undefined);
+            throw cause;
+          }
+          return ownerToken;
+        },
+        catch: (cause) =>
+          isExists(cause)
+            ? new LockBusyError({ key, path: lock })
+            : new DeviceLeaseStoreError({ key, reason: "write_failed", cause }),
+      }).pipe(
+        // Directory creation and its owner marker are one lock acquisition. An
+        // interrupted Promise must not leave a markerless lock behind.
+        Effect.uninterruptible,
+      );
+    return acquireOnce(path, token).pipe(
       Effect.catchTags({
         LockBusyError: () =>
           Effect.gen(function* () {
-            const lockOwner = yield* Effect.tryPromise({
-              try: async () => decodeLockOwner(await NodeFSP.readFile(ownerPath(key), "utf8")),
-              catch: (cause) => new DeviceLeaseStoreError({ key, reason: "read_failed", cause }),
-            }).pipe(Effect.option);
-            const owner = Option.getOrUndefined(lockOwner);
+            const owner = Option.getOrUndefined(yield* readLockOwner(path));
             if (
+              reapDeadOwner &&
               owner !== undefined &&
-              Number.isInteger(owner.pid) &&
-              typeof owner.processIdentity === "string" &&
               deviceLeaseProcessLiveness(owner.pid, owner.processIdentity) === "dead"
             ) {
-              const expiredPath = `${lockPath(key)}.expired.${NodeCrypto.randomUUID()}`;
-              yield* Effect.tryPromise({
-                try: async () => {
-                  await NodeFSP.rename(lockPath(key), expiredPath);
-                  await NodeFSP.rm(expiredPath, { recursive: true, force: true });
-                },
-                catch: (cause) => new DeviceLeaseStoreError({ key, reason: "write_failed", cause }),
-              }).pipe(
-                Effect.catchIf(
-                  (error) => isMissing(error.cause),
-                  () => Effect.void,
-                ),
+              yield* options.onDeadOwnerObserved?.() ?? Effect.void;
+              // Only one contender may decide whether a dead operation lock is still the
+              // generation it observed. The guard is fail-closed when its owner is unknown.
+              const reapToken = NodeCrypto.randomUUID();
+              const guardAttempt = yield* acquireOnce(reapGuardPath, reapToken).pipe(
+                Effect.map((guard) => ({ _tag: "Guard" as const, guard })),
+                Effect.catchTags({
+                  LockBusyError: () => Effect.succeed({ _tag: "Busy" as const }),
+                }),
               );
-              return yield* acquire(key, remaining);
+              if (guardAttempt._tag === "Busy") {
+                return yield* boundedWait(() => acquire(key, path, remaining - 1, reapDeadOwner));
+              }
+              return yield* Effect.acquireUseRelease(
+                Effect.succeed(guardAttempt.guard),
+                () =>
+                  Effect.gen(function* () {
+                    const current = Option.getOrUndefined(yield* readLockOwner(path));
+                    if (
+                      current !== undefined &&
+                      current.token === owner.token &&
+                      current.pid === owner.pid &&
+                      current.processIdentity === owner.processIdentity &&
+                      deviceLeaseProcessLiveness(current.pid, current.processIdentity) === "dead"
+                    ) {
+                      const expiredPath = `${path}.expired.${NodeCrypto.randomUUID()}`;
+                      yield* Effect.tryPromise({
+                        try: async () => {
+                          await NodeFSP.rename(path, expiredPath);
+                          await NodeFSP.rm(expiredPath, { recursive: true, force: true });
+                        },
+                        catch: (cause) =>
+                          new DeviceLeaseStoreError({ key, reason: "write_failed", cause }),
+                      }).pipe(
+                        Effect.catchTags({
+                          DeviceLeaseStoreError: (error) =>
+                            isMissing(error.cause) ? Effect.void : Effect.fail(error),
+                        }),
+                      );
+                    }
+                    return yield* acquire(key, path, remaining - 1, reapDeadOwner);
+                  }),
+                (owner) => release(reapGuardPath, owner),
+              );
             }
-            if (remaining <= 1) {
-              return yield* new DeviceLeaseStoreError({
-                key,
-                reason: "lock_timeout",
-                cause: new Error("Timed out waiting for the device operation lock."),
-              });
-            }
-            yield* Effect.sleep(DEVICE_LEASE_WAIT_INTERVAL);
-            return yield* acquire(key, remaining - 1);
+            return yield* boundedWait(() => acquire(key, path, remaining - 1, reapDeadOwner));
           }),
       }),
     );
+  };
+
+  const release = (path: string, token: string) =>
+    Effect.tryPromise({
+      try: async () => {
+        let owner: LockOwner;
+        try {
+          owner = decodeLockOwner(await NodeFSP.readFile(ownerPathFor(path), "utf8"));
+        } catch (cause) {
+          if (isMissing(cause)) return;
+          throw cause;
+        }
+        if (owner.token === token) await NodeFSP.rm(path, { recursive: true, force: true });
+      },
+      catch: (cause) => new DeviceLeaseStoreError({ key: path, reason: "write_failed", cause }),
+    }).pipe(Effect.uninterruptible);
+
+  const ownerPathFor = (path: string) => NodePath.join(path, "owner.json");
 
   return {
     withLock: (key, use) =>
       Effect.acquireUseRelease(
-        acquire(key, DEVICE_LEASE_WAIT_ATTEMPTS),
+        acquire(key, lockPath(key), options.waitAttempts ?? DEVICE_LEASE_WAIT_ATTEMPTS, true),
         () => use,
-        () =>
-          Effect.tryPromise({
-            try: () => NodeFSP.rm(lockPath(key), { recursive: true, force: true }),
-            catch: (cause) => new DeviceLeaseStoreError({ key, reason: "write_failed", cause }),
-          }),
+        (token) => release(lockPath(key), token),
       ),
     read,
     write,
@@ -342,4 +413,5 @@ export const makeFileDeviceLeaseStore = (rootDirectory: string): DeviceLeaseStor
 
 class LockBusyError extends Schema.TaggedError<LockBusyError>()("LockBusyError", {
   key: Schema.String,
+  path: Schema.String,
 }) {}

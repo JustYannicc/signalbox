@@ -158,6 +158,46 @@ it.effect("holds the controller lease for the whole provider walk lifetime", () 
   }).pipe(Effect.scoped),
 );
 
+it.effect("transfers the last lease to queued walks without shutting down or rebooting", () =>
+  Effect.gen(function* () {
+    const { store, coordinator } = yield* makeRuntime;
+    const firstCaller = agent("release-to-waiter-1", "provider-release-1");
+    const waitingCaller = agent("release-to-waiter-2", "provider-release-2");
+    const first = yield* coordinator.acquire(open(firstCaller, "first", target, true));
+    expect(first._tag).toBe("Acquired");
+    if (first._tag !== "Acquired") return;
+    const ready = yield* coordinator.finishOpen({
+      key: first.session.leaseKey,
+      sessionId: first.session.sessionId,
+      leaseId: first.session.leaseId,
+      target: { ...target, id: "emulator-5554", booted: true },
+    });
+    expect(
+      (yield* coordinator.acquire(open(waitingCaller, "waiting", { ...target, booted: true })))
+        ._tag,
+    ).toBe("Waiting");
+
+    const claims = yield* coordinator.release({
+      threadId: firstCaller.threadId,
+      sessionId: ready.sessionId,
+      leaseId: ready.leaseId,
+      caller: firstCaller,
+    });
+    expect(claims).toEqual([]);
+    const held = yield* store.read(first.session.leaseKey);
+    expect(held).toMatchObject({ state: "ready", deviceBooted: true, bootedBySignalbox: true });
+    expect(held?.waiters?.map((waiter) => waiter.waiterId)).toEqual(["waiting"]);
+
+    const transferred = yield* coordinator.acquire(
+      open(waitingCaller, "waiting", { ...target, id: "emulator-5554", booted: true }, true),
+    );
+    expect(transferred).toMatchObject({ _tag: "Acquired", shouldBoot: false });
+    expect((yield* store.read(first.session.leaseKey))?.owners[0]?.providerSessionId).toBe(
+      waitingCaller.providerSessionId,
+    );
+  }).pipe(Effect.scoped),
+);
+
 it.effect("expires orphaned FIFO tickets after the bounded open wait", () =>
   Effect.gen(function* () {
     const { store, coordinator } = yield* makeRuntime;
@@ -222,7 +262,13 @@ it.effect("keeps the AVD-name and booted-serial identities on one lease", () =>
       leaseId: ready.leaseId,
       caller,
     });
-    expect(releasedByAvdName).toMatchObject([{ target: { id: "emulator-5554" } }]);
+    expect(releasedByAvdName).toEqual([]);
+    expect(yield* store.read(reserved.session.leaseKey)).toMatchObject({
+      state: "ready",
+      owners: [],
+      waiters: [{ waiterId: "contender" }],
+      deviceId: "emulator-5554",
+    });
   }).pipe(Effect.scoped),
 );
 

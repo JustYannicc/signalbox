@@ -111,6 +111,104 @@ it.effect.each([
   }).pipe(Effect.scoped),
 );
 
+it.effect("matches an Android AVD name for both dry-run and apply", () =>
+  Effect.gen(function* () {
+    const { store, key, janitor } = yield* fixture("dead");
+    const dryRun = yield* janitor.planIdleCleanup({
+      hostId: LOCAL_DEVICE_HOST_ID,
+      deviceId: DeviceId.make("Pixel_API_35"),
+      now,
+      apply: false,
+    });
+    expect(dryRun).toMatchObject([
+      { hostId: LOCAL_DEVICE_HOST_ID, deviceId: "emulator-5554", status: "would_shutdown" },
+    ]);
+
+    const applied = yield* janitor.planIdleCleanup({
+      hostId: LOCAL_DEVICE_HOST_ID,
+      deviceId: DeviceId.make("avd:Pixel_API_35"),
+      now,
+      apply: true,
+    });
+    expect(applied[0]?.status).toBe("shutdown_pending");
+    expect((yield* store.read(key))?.state).toBe("shutting_down");
+  }).pipe(Effect.scoped),
+);
+
+it.effect("recovers a dead shutdown claimant only after observing device state", () =>
+  Effect.gen(function* () {
+    const store = yield* makeMemoryDeviceLeaseStore;
+    const key = `${LOCAL_DEVICE_HOST_ID}\u0000avd:Pixel_API_35`;
+    const waiter = {
+      waiterId: "queued-walk",
+      threadId: ThreadId.make("queued-walk"),
+      kind: "panel" as const,
+      processId: 41,
+      processIdentity: "current-server",
+      queuedAt: now,
+    };
+    yield* store.write(key, {
+      ...lease,
+      state: "shutting_down",
+      owners: [],
+      waiters: [waiter],
+      shutdownOwner: { processId: 99, processIdentity: "dead-shutdown-process" },
+    });
+    const janitor = makeDeviceLeaseJanitor(
+      makeDeviceLeaseAccess({
+        store,
+        processId: 41,
+        processIdentity: "current-server",
+        isOwnerProcessLive: (pid) => (pid === 99 ? "dead" : "live"),
+      }),
+      { reconcileDevice: () => Effect.succeed(false) },
+    );
+
+    const result = yield* janitor.planIdleCleanup({
+      hostId: LOCAL_DEVICE_HOST_ID,
+      now,
+      apply: true,
+    });
+    expect(result[0]?.reason).toBe("not_signalbox_owned");
+    expect(yield* store.read(key)).toMatchObject({
+      state: "ready",
+      deviceBooted: false,
+      bootedBySignalbox: false,
+      waiters: [waiter],
+      shutdownOwner: undefined,
+    });
+  }).pipe(Effect.scoped),
+);
+
+it.effect.each(["live", "unknown"] as const)("does not recover a $1 shutdown claimant", (status) =>
+  Effect.gen(function* () {
+    const store = yield* makeMemoryDeviceLeaseStore;
+    const key = `${LOCAL_DEVICE_HOST_ID}\u0000avd:Pixel_API_35`;
+    yield* store.write(key, {
+      ...lease,
+      state: "shutting_down",
+      owners: [],
+      shutdownOwner: { processId: 99, processIdentity: "shutdown-process" },
+    });
+    const janitor = makeDeviceLeaseJanitor(
+      makeDeviceLeaseAccess({
+        store,
+        processId: 41,
+        processIdentity: "current-server",
+        isOwnerProcessLive: () => status,
+      }),
+      { reconcileDevice: () => Effect.die("Must not inspect a live or unknown claimant") },
+    );
+    const result = yield* janitor.planIdleCleanup({
+      hostId: LOCAL_DEVICE_HOST_ID,
+      now,
+      apply: true,
+    });
+    expect(result[0]?.reason).toBe("in_progress");
+    expect((yield* store.read(key))?.state).toBe("shutting_down");
+  }).pipe(Effect.scoped),
+);
+
 it.effect("reserves an unleased device during explicit shutdown so opens wait", () =>
   Effect.gen(function* () {
     const store = yield* makeMemoryDeviceLeaseStore;

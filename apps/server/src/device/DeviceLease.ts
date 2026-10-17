@@ -35,6 +35,12 @@ export const DeviceLeaseWaiter = Schema.Struct({
 });
 export type DeviceLeaseWaiter = typeof DeviceLeaseWaiter.Type;
 
+export const DeviceLeaseShutdownOwner = Schema.Struct({
+  processId: Schema.Int,
+  processIdentity: Schema.String,
+});
+export type DeviceLeaseShutdownOwner = typeof DeviceLeaseShutdownOwner.Type;
+
 export const DeviceLeaseRecord = Schema.Struct({
   version: Schema.Literal(1),
   leaseId: Schema.String,
@@ -51,6 +57,7 @@ export const DeviceLeaseRecord = Schema.Struct({
   lastDeviceActivityAt: Schema.Finite,
   owners: Schema.Array(DeviceLeaseOwner),
   waiters: Schema.optional(Schema.Array(DeviceLeaseWaiter)),
+  shutdownOwner: Schema.optional(DeviceLeaseShutdownOwner),
 });
 export type DeviceLeaseRecord = typeof DeviceLeaseRecord.Type;
 

@@ -156,209 +156,211 @@ export const makeDeviceLeaseCoordinator = (options: { readonly access: DeviceLea
 
     const acquire: DeviceLeaseCoordinator["acquire"] = (request) =>
       withLocks(request.target, "open", () =>
-        Effect.gen(function* () {
-          const now = yield* Clock.currentTimeMillis;
-          const stored = yield* find(request.target, "open");
-          const ownership = stored
-            ? yield* withoutDeadOwners(stored.lease, now)
-            : { lease: undefined, owners: [], changed: false };
-          const waiterState = ownership.lease
-            ? yield* withoutDeadWaiters(ownership.lease, now)
-            : { lease: undefined, changed: false };
-          const lease = waiterState.lease;
-          if (stored && (ownership.changed || waiterState.changed)) {
-            yield* store
-              .write(stored.key, lease)
-              .pipe(Effect.mapError((cause) => mapStoreError("open", cause)));
-          }
-          const queue = lease?.waiters ?? [];
-          const existingWaiter = queue.find((waiter) => waiter.waiterId === request.waiterId);
-          const enqueue = (current: DeviceLeaseRecord) => {
-            if (existingWaiter) return current;
-            const queuedAt = Math.max(now, ...queue.map((waiter) => waiter.queuedAt + 1));
-            return {
-              ...current,
-              waiters: [
-                ...queue,
-                {
-                  waiterId: request.waiterId,
-                  threadId: request.caller.threadId,
-                  kind: request.caller.kind,
-                  ...(request.caller.kind === "agent" &&
-                  request.caller.providerSessionId !== undefined
-                    ? { providerSessionId: request.caller.providerSessionId }
-                    : {}),
-                  processId: options.access.processId,
-                  processIdentity: options.access.processIdentity,
-                  queuedAt,
-                },
-              ],
+        Effect.uninterruptibleMask(() =>
+          Effect.gen(function* () {
+            const now = yield* Clock.currentTimeMillis;
+            const stored = yield* find(request.target, "open");
+            const ownership = stored
+              ? yield* withoutDeadOwners(stored.lease, now)
+              : { lease: undefined, owners: [], changed: false };
+            const waiterState = ownership.lease
+              ? yield* withoutDeadWaiters(ownership.lease, now)
+              : { lease: undefined, changed: false };
+            const lease = waiterState.lease;
+            if (stored && (ownership.changed || waiterState.changed)) {
+              yield* store
+                .write(stored.key, lease)
+                .pipe(Effect.mapError((cause) => mapStoreError("open", cause)));
+            }
+            const queue = lease?.waiters ?? [];
+            const existingWaiter = queue.find((waiter) => waiter.waiterId === request.waiterId);
+            const enqueue = (current: DeviceLeaseRecord) => {
+              if (existingWaiter) return current;
+              const queuedAt = Math.max(now, ...queue.map((waiter) => waiter.queuedAt + 1));
+              return {
+                ...current,
+                waiters: [
+                  ...queue,
+                  {
+                    waiterId: request.waiterId,
+                    threadId: request.caller.threadId,
+                    kind: request.caller.kind,
+                    ...(request.caller.kind === "agent" &&
+                    request.caller.providerSessionId !== undefined
+                      ? { providerSessionId: request.caller.providerSessionId }
+                      : {}),
+                    processId: options.access.processId,
+                    processIdentity: options.access.processIdentity,
+                    queuedAt,
+                  },
+                ],
+              };
             };
-          };
-          const wait = (current: DeviceLeaseRecord | undefined) =>
-            current === undefined || stored === undefined
-              ? Effect.succeed({ _tag: "Waiting" as const })
-              : store.write(stored.key, enqueue(current)).pipe(
-                  Effect.mapError((cause) => mapStoreError("open", cause)),
-                  Effect.as({ _tag: "Waiting" as const }),
-                );
+            const wait = (current: DeviceLeaseRecord | undefined) =>
+              current === undefined || stored === undefined
+                ? Effect.succeed({ _tag: "Waiting" as const })
+                : store.write(stored.key, enqueue(current)).pipe(
+                    Effect.mapError((cause) => mapStoreError("open", cause)),
+                    Effect.as({ _tag: "Waiting" as const }),
+                  );
 
-          if (lease?.state === "shutting_down") return yield* wait(lease);
+            if (lease?.state === "shutting_down") return yield* wait(lease);
 
-          const requestHasExactPanelOwner =
-            request.caller.kind === "panel" &&
-            (request.caller.sessionId !== undefined || request.caller.leaseId !== undefined);
-          if (
-            requestHasExactPanelOwner &&
-            (request.caller.sessionId === undefined || request.caller.leaseId === undefined)
-          ) {
-            return yield* new DeviceOperationError({
-              operation: "open",
-              reason: "stale_session",
-              cause: new Error("Both sessionId and leaseId are required to renew a panel owner."),
-            });
-          }
+            const requestHasExactPanelOwner =
+              request.caller.kind === "panel" &&
+              (request.caller.sessionId !== undefined || request.caller.leaseId !== undefined);
+            if (
+              requestHasExactPanelOwner &&
+              (request.caller.sessionId === undefined || request.caller.leaseId === undefined)
+            ) {
+              return yield* new DeviceOperationError({
+                operation: "open",
+                reason: "stale_session",
+                cause: new Error("Both sessionId and leaseId are required to renew a panel owner."),
+              });
+            }
 
-          const exactOwner = requestHasExactPanelOwner
-            ? lease?.owners.find(
-                (owner) =>
-                  owner.kind === "panel" &&
+            const exactOwner = requestHasExactPanelOwner
+              ? lease?.owners.find(
+                  (owner) =>
+                    owner.kind === "panel" &&
+                    owner.threadId === request.caller.threadId &&
+                    owner.sessionId === request.caller.sessionId &&
+                    owner.leaseId === request.caller.leaseId,
+                )
+              : undefined;
+            if (requestHasExactPanelOwner && exactOwner === undefined) {
+              return yield* new DeviceOperationError({
+                operation: "open",
+                reason: "stale_session",
+                cause: new Error("The panel lease is no longer active."),
+              });
+            }
+
+            const idempotentOwner = lease?.owners.find((owner) =>
+              request.caller.kind === "agent"
+                ? owner.kind === "agent" &&
                   owner.threadId === request.caller.threadId &&
+                  owner.providerSessionId === request.caller.providerSessionId
+                : requestHasExactPanelOwner &&
                   owner.sessionId === request.caller.sessionId &&
                   owner.leaseId === request.caller.leaseId,
-              )
-            : undefined;
-          if (requestHasExactPanelOwner && exactOwner === undefined) {
-            return yield* new DeviceOperationError({
-              operation: "open",
-              reason: "stale_session",
-              cause: new Error("The panel lease is no longer active."),
-            });
-          }
+            );
+            if (lease && idempotentOwner) {
+              if (lease.state === "opening") return { _tag: "Waiting" as const };
+              const observer =
+                idempotentOwner.kind === "panel" &&
+                ownership.owners.some(
+                  (entry) =>
+                    entry.status !== "dead" &&
+                    entry.owner.threadId === idempotentOwner.threadId &&
+                    (entry.owner.kind === "agent" ||
+                      (entry.owner.kind === "panel" &&
+                        ownerKey(entry.owner) !== ownerKey(idempotentOwner) &&
+                        entry.owner.observer !== true)),
+                );
+              const renewed = {
+                ...idempotentOwner,
+                ...(idempotentOwner.kind === "panel" ? { observer } : {}),
+                lastActivityAt: now,
+                lastHeartbeatAt: now,
+              };
+              const next = {
+                ...lease,
+                lastDeviceActivityAt: now,
+                waiters: lease.waiters?.filter((waiter) => waiter.waiterId !== request.waiterId),
+                owners: lease.owners.map((owner) =>
+                  ownerKey(owner) === ownerKey(idempotentOwner) ? renewed : owner,
+                ),
+              };
+              yield* store
+                .write(stored!.key, next)
+                .pipe(Effect.mapError((cause) => mapStoreError("open", cause)));
+              return {
+                _tag: "Acquired" as const,
+                session: sessionFor(next, renewed, stored!.key),
+                shouldBoot: false,
+                created: false,
+              };
+            }
 
-          const idempotentOwner = lease?.owners.find((owner) =>
-            request.caller.kind === "agent"
-              ? owner.kind === "agent" &&
-                owner.threadId === request.caller.threadId &&
-                owner.providerSessionId === request.caller.providerSessionId
-              : requestHasExactPanelOwner &&
-                owner.sessionId === request.caller.sessionId &&
-                owner.leaseId === request.caller.leaseId,
-          );
-          if (lease && idempotentOwner) {
-            if (lease.state === "opening") return { _tag: "Waiting" as const };
+            const active = ownership.owners.filter((entry) => entry.status !== "dead");
+            const sameWalkOwners = active.filter((entry) => sameWalk(entry.owner, request.caller));
+            const hasConflict = active.some((entry) => !sameWalk(entry.owner, request.caller));
+            const sameWalkLeaseIds = new Set(sameWalkOwners.map((entry) => entry.owner.leaseId));
+            if (hasConflict || sameWalkLeaseIds.size > 1) return yield* wait(lease);
+            if (lease?.state === "opening" && active.length > 0) {
+              return { _tag: "Waiting" as const };
+            }
+            const queueHead = queue[0];
+            if (
+              sameWalkOwners.length === 0 &&
+              queueHead !== undefined &&
+              queueHead.waiterId !== request.waiterId
+            )
+              return yield* wait(lease);
+
+            const inheritedOwner = sameWalkOwners[0]?.owner;
+            const leaseId = inheritedOwner?.leaseId ?? (yield* randomId());
+            const sessionId = yield* randomId();
+            const recoveringOpening = lease?.state === "opening" && active.length === 0;
             const observer =
-              idempotentOwner.kind === "panel" &&
-              ownership.owners.some(
+              request.caller.kind === "panel" &&
+              sameWalkOwners.some(
                 (entry) =>
-                  entry.status !== "dead" &&
-                  entry.owner.threadId === idempotentOwner.threadId &&
-                  (entry.owner.kind === "agent" ||
-                    (entry.owner.kind === "panel" &&
-                      ownerKey(entry.owner) !== ownerKey(idempotentOwner) &&
-                      entry.owner.observer !== true)),
+                  entry.owner.kind === "agent" ||
+                  (entry.owner.kind === "panel" && entry.owner.observer !== true),
               );
-            const renewed = {
-              ...idempotentOwner,
-              ...(idempotentOwner.kind === "panel" ? { observer } : {}),
-              lastActivityAt: now,
-              lastHeartbeatAt: now,
-            };
-            const next = {
-              ...lease,
+            const owner = newOwner(request, sessionId, leaseId, now, observer);
+            const shouldBoot =
+              request.shouldBoot &&
+              (recoveringOpening || lease === undefined
+                ? !request.target.booted
+                : lease.deviceBooted !== true);
+            const nextLease: DeviceLeaseRecord = {
+              version: 1,
+              leaseId,
+              state: shouldBoot ? "opening" : "ready",
+              deviceBooted: recoveringOpening
+                ? request.target.booted
+                : shouldBoot
+                  ? false
+                  : (lease?.deviceBooted ?? request.target.booted),
+              hostId: request.target.hostId,
+              platform: request.target.platform,
+              canonicalDeviceId: canonicalDeviceId(request.target),
+              deviceId: request.target.id,
+              aliases: [...new Set([...(lease?.aliases ?? []), ...deviceAliases(request.target)])],
+              deviceName: request.target.name,
+              physical: request.target.physical,
+              bootedBySignalbox: (lease?.bootedBySignalbox ?? false) || shouldBoot,
               lastDeviceActivityAt: now,
-              waiters: lease.waiters?.filter((waiter) => waiter.waiterId !== request.waiterId),
-              owners: lease.owners.map((owner) =>
-                ownerKey(owner) === ownerKey(idempotentOwner) ? renewed : owner,
-              ),
+              owners: [
+                ...(lease?.owners ?? []).map((existing) =>
+                  request.caller.kind === "agent" &&
+                  existing.kind === "panel" &&
+                  existing.threadId === request.caller.threadId
+                    ? { ...existing, observer: true }
+                    : existing,
+                ),
+                owner,
+              ],
+              ...(queue.length === 0
+                ? {}
+                : { waiters: queue.filter((waiter) => waiter.waiterId !== request.waiterId) }),
             };
+            const key = stored?.key ?? deviceLeaseKey(request.target);
             yield* store
-              .write(stored!.key, next)
+              .write(key, nextLease)
               .pipe(Effect.mapError((cause) => mapStoreError("open", cause)));
             return {
               _tag: "Acquired" as const,
-              session: sessionFor(next, renewed, stored!.key),
-              shouldBoot: false,
-              created: false,
+              session: sessionFor(nextLease, owner, key),
+              shouldBoot,
+              created: true,
             };
-          }
-
-          const active = ownership.owners.filter((entry) => entry.status !== "dead");
-          const sameWalkOwners = active.filter((entry) => sameWalk(entry.owner, request.caller));
-          const hasConflict = active.some((entry) => !sameWalk(entry.owner, request.caller));
-          const sameWalkLeaseIds = new Set(sameWalkOwners.map((entry) => entry.owner.leaseId));
-          if (hasConflict || sameWalkLeaseIds.size > 1) return yield* wait(lease);
-          if (lease?.state === "opening" && active.length > 0) {
-            return { _tag: "Waiting" as const };
-          }
-          const queueHead = queue[0];
-          if (
-            sameWalkOwners.length === 0 &&
-            queueHead !== undefined &&
-            queueHead.waiterId !== request.waiterId
-          )
-            return yield* wait(lease);
-
-          const inheritedOwner = sameWalkOwners[0]?.owner;
-          const leaseId = inheritedOwner?.leaseId ?? (yield* randomId());
-          const sessionId = yield* randomId();
-          const recoveringOpening = lease?.state === "opening" && active.length === 0;
-          const observer =
-            request.caller.kind === "panel" &&
-            sameWalkOwners.some(
-              (entry) =>
-                entry.owner.kind === "agent" ||
-                (entry.owner.kind === "panel" && entry.owner.observer !== true),
-            );
-          const owner = newOwner(request, sessionId, leaseId, now, observer);
-          const shouldBoot =
-            request.shouldBoot &&
-            (recoveringOpening || lease === undefined
-              ? !request.target.booted
-              : lease.deviceBooted !== true);
-          const nextLease: DeviceLeaseRecord = {
-            version: 1,
-            leaseId,
-            state: shouldBoot ? "opening" : "ready",
-            deviceBooted: recoveringOpening
-              ? request.target.booted
-              : shouldBoot
-                ? false
-                : (lease?.deviceBooted ?? request.target.booted),
-            hostId: request.target.hostId,
-            platform: request.target.platform,
-            canonicalDeviceId: canonicalDeviceId(request.target),
-            deviceId: request.target.id,
-            aliases: [...new Set([...(lease?.aliases ?? []), ...deviceAliases(request.target)])],
-            deviceName: request.target.name,
-            physical: request.target.physical,
-            bootedBySignalbox: (lease?.bootedBySignalbox ?? false) || shouldBoot,
-            lastDeviceActivityAt: now,
-            owners: [
-              ...(lease?.owners ?? []).map((existing) =>
-                request.caller.kind === "agent" &&
-                existing.kind === "panel" &&
-                existing.threadId === request.caller.threadId
-                  ? { ...existing, observer: true }
-                  : existing,
-              ),
-              owner,
-            ],
-            ...(queue.length === 0
-              ? {}
-              : { waiters: queue.filter((waiter) => waiter.waiterId !== request.waiterId) }),
-          };
-          const key = stored?.key ?? deviceLeaseKey(request.target);
-          yield* store
-            .write(key, nextLease)
-            .pipe(Effect.mapError((cause) => mapStoreError("open", cause)));
-          return {
-            _tag: "Acquired" as const,
-            session: sessionFor(nextLease, owner, key),
-            shouldBoot,
-            created: true,
-          };
-        }),
+          }),
+        ),
       );
 
     const finishOpen: DeviceLeaseCoordinator["finishOpen"] = (input) =>
@@ -446,7 +448,15 @@ export const makeDeviceLeaseCoordinator = (options: { readonly access: DeviceLea
               yield* store.write(input.key, { ...current, state: "ready", owners: [] });
               return undefined;
             }
-            const pending = { ...current, state: "shutting_down" as const, owners: [] };
+            const pending = {
+              ...current,
+              state: "shutting_down" as const,
+              owners: [],
+              shutdownOwner: {
+                processId: options.access.processId,
+                processIdentity: options.access.processIdentity,
+              },
+            };
             yield* store.write(input.key, pending);
             return { key: input.key, leaseId: input.leaseId, target };
           }).pipe(Effect.mapError((cause) => mapStoreError("open", cause))),
@@ -515,6 +525,7 @@ export const makeDeviceLeaseCoordinator = (options: { readonly access: DeviceLea
               if (!current) return undefined;
               const now = yield* Clock.currentTimeMillis;
               const ownership = yield* withoutDeadOwners(current, now);
+              const waiterState = yield* withoutDeadWaiters(ownership.lease, now);
               const closing = ownership.lease.owners.filter((owner) =>
                 input.sessionId !== undefined
                   ? owner.sessionId === input.sessionId &&
@@ -529,25 +540,36 @@ export const makeDeviceLeaseCoordinator = (options: { readonly access: DeviceLea
                       owner.providerSessionId === input.caller.providerSessionId),
               );
               if (closing.length === 0) return undefined;
-              const remaining = ownership.lease.owners.filter(
+              const remaining = waiterState.lease.owners.filter(
                 (owner) => !closing.some((closed) => ownerKey(closed) === ownerKey(owner)),
               );
-              if (input.shutdown && remaining.length > 0) {
+              if (input.shutdown && (remaining.length > 0 || waiterState.lease.waiters?.length)) {
                 return yield* new DeviceOperationError({
                   operation: "close",
                   reason: "busy",
-                  cause: new Error("Another owner still holds this device."),
+                  cause: new Error("Another owner or queued walk still depends on this device."),
                 });
+              }
+              const nextLease = { ...waiterState.lease, owners: remaining };
+              if (remaining.length === 0 && waiterState.lease.waiters?.length) {
+                yield* store
+                  .write(candidate.key, { ...nextLease, state: "ready" })
+                  .pipe(Effect.mapError((cause) => mapStoreError("close", cause)));
+                return undefined;
               }
               if (
                 remaining.length === 0 &&
-                ownership.lease.deviceBooted &&
-                (ownership.lease.bootedBySignalbox || input.shutdown)
+                waiterState.lease.deviceBooted &&
+                (waiterState.lease.bootedBySignalbox || input.shutdown)
               ) {
                 const pending: DeviceLeaseRecord = {
-                  ...ownership.lease,
+                  ...nextLease,
                   state: "shutting_down",
                   owners: [],
+                  shutdownOwner: {
+                    processId: options.access.processId,
+                    processIdentity: options.access.processIdentity,
+                  },
                 };
                 yield* store
                   .write(candidate.key, pending)
@@ -560,9 +582,10 @@ export const makeDeviceLeaseCoordinator = (options: { readonly access: DeviceLea
               }
               yield* store
                 .write(candidate.key, {
-                  ...ownership.lease,
+                  ...nextLease,
                   state: "ready",
                   owners: remaining,
+                  shutdownOwner: undefined,
                 })
                 .pipe(Effect.mapError((cause) => mapStoreError("close", cause)));
               return undefined;
@@ -589,11 +612,17 @@ export const makeDeviceLeaseCoordinator = (options: { readonly access: DeviceLea
                     deviceBooted: false,
                     bootedBySignalbox: false,
                     owners: [],
+                    shutdownOwner: undefined,
                   }
                 : undefined,
             );
           } else {
-            yield* store.write(claim.key, { ...current, state: "ready", owners: [] });
+            yield* store.write(claim.key, {
+              ...current,
+              state: "ready",
+              owners: [],
+              shutdownOwner: undefined,
+            });
           }
         }).pipe(Effect.mapError((cause) => mapStoreError("shutdown", cause))),
       );

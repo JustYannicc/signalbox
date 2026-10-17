@@ -31,6 +31,7 @@ export interface DeviceLeaseAccess {
   readonly store: DeviceLeaseStore;
   readonly processId: number;
   readonly processIdentity: string;
+  readonly isOwnerProcessLive: (pid: number, identity: string) => DeviceOwnerLiveness;
   readonly mapStoreError: (operation: string, cause: DeviceLeaseStoreError) => DeviceOperationError;
   readonly withLocks: <A, E>(
     target: DeviceLeaseTarget,
@@ -219,6 +220,7 @@ export const makeDeviceLeaseAccess = (options: DeviceLeaseAccessOptions): Device
     store: options.store,
     processId: options.processId,
     processIdentity: options.processIdentity,
+    isOwnerProcessLive: options.isOwnerProcessLive,
     mapStoreError,
     withLocks,
     find,

@@ -36,7 +36,6 @@ import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import * as Option from "effect/Option";
 import * as PubSub from "effect/PubSub";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
@@ -252,7 +251,6 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
     ...(isProviderSessionLive === undefined ? {} : { isProviderSessionLive }),
   });
   const leases = yield* makeDeviceLeaseCoordinator({ access: leaseAccess });
-  const deviceJanitor = makeDeviceLeaseJanitor(leaseAccess);
 
   const httpClient = (yield* HttpClient.HttpClient).pipe(HttpClient.withScope);
   const statePubSub = yield* PubSub.unbounded<DeviceServiceState>();
@@ -478,6 +476,24 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
       }
     }
     return { devices, detail: list.errors?.map((error) => error.message).join("\n") || undefined };
+  });
+
+  const deviceJanitor = makeDeviceLeaseJanitor(leaseAccess, {
+    reconcileDevice: (target) =>
+      readiness(target.hostId).pipe(
+        Effect.flatMap(fetchDevices),
+        Effect.map(({ devices }) => {
+          const device = devices.find(
+            (candidate) =>
+              candidate.hostId === target.hostId &&
+              deviceAliases(leaseTarget(candidate)).some((alias) =>
+                deviceAliases(target).includes(alias),
+              ),
+          );
+          return device?.booted;
+        }),
+        Effect.catch(() => Effect.succeed(undefined)),
+      ),
   });
 
   const refresh = Effect.fn("DeviceService.refresh")(function* (ready: DeviceReadiness) {
@@ -981,6 +997,9 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
         );
       };
 
+      type DeviceLeaseOpenAttempt =
+        | { readonly _tag: "Waiting" }
+        | { readonly _tag: "Opened"; readonly session: DeviceSession };
       const waitForLease = (remaining: number): Effect.Effect<DeviceSession, DeviceError> =>
         Effect.gen(function* () {
           if (hosts.get(host.id) !== host) {
@@ -1010,21 +1029,40 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
             return yield* new DeviceNotFoundError({ hostId: host.id, deviceId: input.deviceId });
           }
           const target = leaseTarget(deviceToOpen);
-          const result = yield* leases.acquire({
-            target,
-            caller,
-            waiterId,
-            shouldBoot: !deviceToOpen.booted && !deviceToOpen.physical && input.boot !== false,
-          });
-          if (result._tag === "Acquired") {
-            return yield* performOpen(
-              result.session,
-              result.shouldBoot,
-              result.created,
-              deviceToOpen,
-              target,
-            );
-          }
+          let cleanupRegistered = false;
+          const result = yield* Effect.uninterruptibleMask((restore) =>
+            Effect.acquireUseRelease(
+              leases.acquire({
+                target,
+                caller,
+                waiterId,
+                shouldBoot: !deviceToOpen.booted && !deviceToOpen.physical && input.boot !== false,
+              }),
+              (acquired): Effect.Effect<DeviceLeaseOpenAttempt, DeviceError> => {
+                if (acquired._tag === "Waiting") return restore(Effect.succeed(acquired));
+                return restore(
+                  Effect.suspend((): Effect.Effect<DeviceLeaseOpenAttempt, DeviceError> => {
+                    cleanupRegistered = true;
+                    return performOpen(
+                      acquired.session,
+                      acquired.shouldBoot,
+                      acquired.created,
+                      deviceToOpen,
+                      target,
+                    ).pipe(Effect.map((session) => ({ _tag: "Opened" as const, session })));
+                  }),
+                );
+              },
+              (acquired, exit) =>
+                acquired._tag === "Acquired" &&
+                acquired.created &&
+                !cleanupRegistered &&
+                Exit.isFailure(exit)
+                  ? cleanupProvisional(acquired.session, target)
+                  : Effect.void,
+            ),
+          );
+          if (result._tag === "Opened") return result.session;
           yield* markQueued();
           if (remaining <= 0) {
             return yield* new DeviceOperationError({
@@ -1487,9 +1525,7 @@ export const make = (
     const path = yield* Path.Path;
     const runner = yield* ProcessRunner.ProcessRunner;
     const settings = yield* ServerSettings.ServerSettingsService;
-    const providerSessions = yield* Effect.serviceOption(
-      ProviderSessionManager.ProviderSessionManagerV2,
-    );
+    const providerSessions = yield* ProviderSessionManager.ProviderSessionManagerV2;
     const scope = yield* Scope.Scope;
     const hosts = new Map<DeviceHostId, DeviceHost.DeviceHost["Service"]>([
       [localHost.id, localHost],
@@ -1555,12 +1591,8 @@ export const make = (
         ),
       {
         store: makeFileDeviceLeaseStore(deviceLeaseDirectory(yield* HostProcess.HomeDirectory)),
-        ...(Option.isSome(providerSessions)
-          ? {
-              isProviderSessionLive: (providerSessionId: ProviderSessionId) =>
-                providerSessions.value.isLive(providerSessionId),
-            }
-          : {}),
+        isProviderSessionLive: (providerSessionId: ProviderSessionId) =>
+          providerSessions.isLive(providerSessionId),
         ...(options.automaticCleanup === undefined
           ? {}
           : { automaticCleanup: options.automaticCleanup }),

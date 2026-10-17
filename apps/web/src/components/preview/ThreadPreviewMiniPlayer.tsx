@@ -49,6 +49,8 @@ import {
 import { useRightPanelStore } from "~/rightPanelStore";
 import { deviceEnvironment, useDeviceState } from "~/state/device";
 import { useAtomCommand } from "~/state/use-atom-command";
+import * as Cause from "effect/Cause";
+import * as Option from "effect/Option";
 
 import { DeviceStreamView } from "../device/DeviceStreamView";
 import type { DeviceScreenSize } from "@t3tools/client-runtime/device/stream";
@@ -270,13 +272,36 @@ function DeviceMiniPlayer({
   const device = deviceState.devices.find(
     (entry) => entry.hostId === source.hostId && entry.id === source.deviceId,
   );
-  const observer = deviceState.sessions.some(
-    (session) =>
-      session.threadId === threadRef.threadId &&
-      session.hostId === source.hostId &&
-      session.deviceId === source.deviceId &&
-      deviceSessionRequiresReadOnlyPanel(session),
-  );
+  const sourceOwnerKey = `${source.sessionId ?? ""}\u0000${source.leaseId ?? ""}`;
+  const sourceOwner =
+    source.sessionId !== undefined && source.leaseId !== undefined
+      ? { sessionId: source.sessionId, leaseId: source.leaseId }
+      : null;
+  const [leaseOwnership, setLeaseOwnership] = useState(() => ({
+    key: sourceOwnerKey,
+    owner: sourceOwner,
+    verified: false,
+  }));
+  const currentOwnership =
+    leaseOwnership.key === sourceOwnerKey
+      ? leaseOwnership
+      : { key: sourceOwnerKey, owner: sourceOwner, verified: false };
+  const activeOwner = currentOwnership.owner;
+  const leaseVerified = currentOwnership.verified;
+  const activePanelSession =
+    leaseVerified && activeOwner
+      ? deviceState.sessions.find(
+          (session) =>
+            session.threadId === threadRef.threadId &&
+            session.hostId === source.hostId &&
+            session.deviceId === source.deviceId &&
+            session.ownerKind === "panel" &&
+            session.sessionId === activeOwner.sessionId &&
+            session.leaseId === activeOwner.leaseId,
+        )
+      : undefined;
+  const canControl =
+    activePanelSession !== undefined && !deviceSessionRequiresReadOnlyPanel(activePanelSession);
   const hostLabel =
     deviceState.hosts.find((host) => host.id === source.hostId)?.label ?? "Device host";
   const cornerRadius = useCallback(
@@ -319,6 +344,22 @@ function DeviceMiniPlayer({
       }
       if (result._tag === "Success") {
         owner = { sessionId: result.value.sessionId, leaseId: result.value.leaseId };
+        setLeaseOwnership({ key: sourceOwnerKey, owner, verified: true });
+      } else {
+        const failure = Option.getOrNull(Cause.findErrorOption(result.cause));
+        const staleSession =
+          typeof failure === "object" &&
+          failure !== null &&
+          "_tag" in failure &&
+          failure._tag === "DeviceOperationError" &&
+          "reason" in failure &&
+          failure.reason === "stale_session";
+        if (owner !== null && staleSession) {
+          owner = null;
+          setLeaseOwnership({ key: sourceOwnerKey, owner: null, verified: false });
+          timer = setTimeout(() => void heartbeat(), 0);
+          return;
+        }
       }
       timer = setTimeout(() => void heartbeat(), 60_000);
     };
@@ -345,6 +386,7 @@ function DeviceMiniPlayer({
   }, [
     closeDeviceLease,
     openDeviceLease,
+    sourceOwnerKey,
     source.deviceId,
     source.hostId,
     source.leaseId,
@@ -390,7 +432,7 @@ function DeviceMiniPlayer({
             deviceName={device?.name ?? source.name}
             deviceDescription={`${hostLabel} · ${device?.version ?? source.platform}`}
             visible
-            readOnly={observer}
+            readOnly={!canControl}
             onScreen={setScreen}
           />
         </div>

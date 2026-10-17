@@ -906,6 +906,29 @@ describe("executeAtomQuery", () => {
     }
     registry.dispose();
   });
+
+  it("settles a runtime command when its surface aborts", async () => {
+    const runtime = Atom.runtime(Layer.empty);
+    const registry = AtomRegistry.make();
+    const controller = new AbortController();
+    const command = createRuntimeCommand(runtime, {
+      label: "test.abortable-command",
+      execute: () => Effect.never,
+    });
+    const resultPromise = runAtomCommand(registry, command, undefined, {
+      reportFailure: false,
+      signal: controller.signal,
+    });
+
+    controller.abort();
+
+    const result = await resultPromise;
+    expect(result._tag).toBe("Failure");
+    if (result._tag === "Failure") {
+      expect(Cause.hasInterruptsOnly(result.cause)).toBe(true);
+    }
+    registry.dispose();
+  });
 });
 
 describe("runtime command runner", () => {

@@ -1,5 +1,5 @@
 import type { DeviceSummary, EnvironmentId } from "@t3tools/contracts";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
   captureDeviceScreenshot,
   DeviceScreenshotError,
@@ -30,6 +30,20 @@ export function DeviceWorkspace(props: {
   const downloadRef = useRef<string | null>(null);
   const access = useDeviceHubAccess(props.environmentId, props.device.hostId);
   const controls = useDeviceControls({ ...props, access });
+  const canControl = props.visible && !props.observer;
+  const canControlRef = useRef(canControl);
+  useLayoutEffect(() => {
+    canControlRef.current = canControl;
+  }, [canControl]);
+  const guardedControls = useMemo(
+    () => ({
+      ...controls,
+      disabled: !canControl || controls.disabled,
+      act: (body: Parameters<typeof controls.act>[0]) =>
+        canControlRef.current ? controls.act(body) : Promise.resolve(),
+    }),
+    [canControl, controls],
+  );
   useEffect(() => {
     if (!access || !props.visible) captureRef.current?.abort();
     return () => {
@@ -39,7 +53,7 @@ export function DeviceWorkspace(props: {
     };
   }, [access, props.visible]);
   const saveScreenshot = () => {
-    if (!access || captureRef.current || !props.visible) return;
+    if (!access || captureRef.current || !canControlRef.current) return;
     const controller = new AbortController();
     captureRef.current = controller;
     setScreenshotPending(true);
@@ -109,14 +123,22 @@ export function DeviceWorkspace(props: {
                       platform={props.device.platform}
                       handle={handle}
                       view={view}
-                      controls={controls}
+                      controls={guardedControls}
                       screenshotPending={screenshotPending}
                       onScreenshot={() => void saveScreenshot()}
                       toolsOpen={toolsOpen}
-                      onTools={() => setToolsOpen(!toolsOpen)}
-                      onFloat={props.onFloat}
-                      onClose={props.onClose}
-                      onPowerOff={props.onPowerOff}
+                      onTools={() => {
+                        if (canControlRef.current) setToolsOpen(!toolsOpen);
+                      }}
+                      onFloat={() => {
+                        if (canControlRef.current) props.onFloat();
+                      }}
+                      onClose={() => {
+                        if (canControlRef.current) props.onClose();
+                      }}
+                      onPowerOff={() => {
+                        if (canControlRef.current) props.onPowerOff();
+                      }}
                     />
                   ),
                 }
@@ -124,14 +146,17 @@ export function DeviceWorkspace(props: {
           />
         </div>
       </div>
-      {toolsOpen ? (
+      {toolsOpen && canControl ? (
         <DeviceToolsPanel
           device={props.device}
-          controls={controls}
+          controls={guardedControls}
           hostDiagnostics={props.hostDiagnostics}
           access={access}
           axOverlay={axOverlay}
-          onAxOverlayChange={setAxOverlay}
+          onAxOverlayChange={(enabled) => {
+            if (canControlRef.current) setAxOverlay(enabled);
+          }}
+          readOnly={!canControl}
           onClose={() => setToolsOpen(false)}
           className="absolute inset-y-0 right-0 z-10 w-full max-w-72 border-l shadow-lg @[700px]:static @[700px]:w-72 @[700px]:shrink-0 @[700px]:shadow-none"
         />

@@ -37,7 +37,13 @@ import * as DeviceHost from "./DeviceHost.ts";
 import { NodeRuntimeUnavailableError } from "@t3tools/shared/nodeRuntime";
 
 import * as DeviceService from "./DeviceService.ts";
-import { deviceLeaseDirectory, makeFileDeviceLeaseStore } from "./DeviceLeaseStore.ts";
+import {
+  deviceLeaseDirectory,
+  makeFileDeviceLeaseStore,
+  makeMemoryDeviceLeaseStore,
+  type DeviceLeaseStore,
+} from "./DeviceLeaseStore.ts";
+import * as ProviderSessionManager from "../orchestration-v2/ProviderSessionManager.ts";
 
 const decodeJson = Schema.decodeUnknownSync(Schema.fromJsonString(Schema.Unknown));
 
@@ -243,6 +249,15 @@ const fixture = Effect.fn("fixture")(function* (
       ServerConfig.layerTest(process.cwd(), productionConfigBaseDir),
       NetService.layer,
       Layer.succeed(HostProcess.HomeDirectory, hostHomeDirectory ?? process.cwd()),
+      Layer.succeed(
+        ProviderSessionManager.ProviderSessionManagerV2,
+        ProviderSessionManager.ProviderSessionManagerV2.of({
+          isLive: (providerSessionId: ProviderSessionId) =>
+            (leaseRuntime.isProviderSessionLive?.(providerSessionId) ?? Effect.succeed(true)).pipe(
+              Effect.map((live) => live === true),
+            ),
+        } as unknown as ProviderSessionManager.ProviderSessionManagerV2["Service"]),
+      ),
     ).pipe(Layer.provideMerge(NodeServices.layer));
     service = yield* DeviceService.make({
       automaticCleanup: leaseRuntime.automaticCleanup ?? false,
@@ -452,6 +467,53 @@ it.effect("cancels a queued open without leaving a panel status behind", () =>
   }).pipe(Effect.scoped),
 );
 
+it.effect("releases a provisional owner when open is interrupted just after reservation", () =>
+  Effect.gen(function* () {
+    const baseStore = yield* makeMemoryDeviceLeaseStore;
+    const reservationPersisted = yield* Deferred.make<void>();
+    const finishReservationWrite = yield* Deferred.make<void>();
+    let holdReservation = true;
+    const store: DeviceLeaseStore = {
+      ...baseStore,
+      write: (key, lease) =>
+        baseStore.write(key, lease).pipe(
+          Effect.tap(() =>
+            holdReservation && lease?.state === "opening"
+              ? Effect.gen(function* () {
+                  holdReservation = false;
+                  yield* Deferred.succeed(reservationPersisted, undefined);
+                  yield* Deferred.await(finishReservationWrite);
+                })
+              : Effect.void,
+          ),
+        ),
+    };
+    const { service } = yield* fixture(Effect.void, undefined, false, undefined, false, undefined, {
+      store,
+      automaticCleanup: false,
+    });
+    yield* service.configure({ enabled: true });
+    const opening = yield* Effect.forkChild(
+      service.open({
+        threadId: ThreadId.make("interrupted-provisional-open"),
+        hostId: LOCAL_DEVICE_HOST_ID,
+        deviceId: DeviceId.make("Pixel_API_35"),
+        platform: "android",
+      }),
+    );
+    yield* Deferred.await(reservationPersisted);
+    expect((yield* baseStore.list).flatMap((entry) => entry.lease?.owners ?? [])).toHaveLength(1);
+    const interruption = yield* Effect.forkChild(Fiber.interrupt(opening));
+    yield* Effect.yieldNow;
+    expect(opening.pollUnsafe()).toBeUndefined();
+    yield* Deferred.succeed(finishReservationWrite, undefined);
+    const exit = yield* Fiber.await(opening);
+    yield* Fiber.join(interruption);
+    expect(Exit.isFailure(exit)).toBe(true);
+    expect((yield* baseStore.list).flatMap((entry) => entry.lease?.owners ?? [])).toEqual([]);
+  }).pipe(Effect.scoped),
+);
+
 it.effect("keeps one device lease across production services and worktree state dirs", () =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
@@ -651,6 +713,63 @@ it.effect("publishes boot progress and does not restore sessions after support i
     expect(state.sessions).toEqual([]);
     expect(state.bootingDevices).toEqual([]);
   }).pipe(Effect.scoped),
+);
+
+it.effect(
+  "production device composition releases an agent owner when its provider session ends",
+  () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const homeDirectory = yield* fs.makeTempDirectoryScoped({
+        prefix: "device-provider-liveness-",
+      });
+      const baseDir = (yield* Path.Path).join(homeDirectory, "worktree", ".t3");
+      const live = yield* Ref.make(true);
+      const { service } = yield* fixture(
+        Effect.void,
+        undefined,
+        false,
+        undefined,
+        false,
+        undefined,
+        {
+          automaticCleanup: false,
+          isProviderSessionLive: () => Ref.get(live),
+        },
+        true,
+        baseDir,
+        homeDirectory,
+      );
+      yield* service.configure({ enabled: true });
+      const threadId = ThreadId.make("provider-session-ended");
+      const providerSessionId = ProviderSessionId.make("ended-provider-session");
+      yield* service.open(
+        {
+          threadId,
+          hostId: LOCAL_DEVICE_HOST_ID,
+          deviceId: DeviceId.make("emulator-5554"),
+          platform: "android",
+        },
+        { kind: "agent", providerSessionId },
+      );
+
+      yield* Ref.set(live, false);
+      const panel = yield* service.open({
+        threadId,
+        hostId: LOCAL_DEVICE_HOST_ID,
+        deviceId: DeviceId.make("emulator-5554"),
+        platform: "android",
+      });
+      const leases = yield* makeFileDeviceLeaseStore(deviceLeaseDirectory(homeDirectory)).list;
+      expect(leases.flatMap((entry) => entry.lease?.owners ?? [])).toMatchObject([
+        { kind: "panel", sessionId: panel.sessionId, observer: false },
+      ]);
+      expect(
+        leases
+          .flatMap((entry) => entry.lease?.owners ?? [])
+          .some((owner) => owner.providerSessionId === providerSessionId),
+      ).toBe(false);
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 
 describe("device discovery after server restart", () => {
@@ -1107,6 +1226,12 @@ it.effect("reconciles SSH host settings without publishing no-op changes", () =>
       Effect.provideService(ProcessRunner.ProcessRunner, {
         run: () => Effect.die("Unexpected helper launch"),
       }),
+      Effect.provideService(
+        ProviderSessionManager.ProviderSessionManagerV2,
+        ProviderSessionManager.ProviderSessionManagerV2.of({
+          isLive: () => Effect.succeed(true),
+        } as unknown as ProviderSessionManager.ProviderSessionManagerV2["Service"]),
+      ),
       Effect.provideService(
         HttpClient.HttpClient,
         HttpClient.make(() => Effect.die("Unexpected HTTP request")),
