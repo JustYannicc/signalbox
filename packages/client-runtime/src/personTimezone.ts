@@ -2,6 +2,8 @@ import type { EnvironmentId, ExecutionEnvironmentCapabilities } from "@t3tools/c
 import * as Cause from "effect/Cause";
 import { Atom } from "effect/reactivity";
 
+import { IANA_TIMEZONES } from "./ianaTimezones.ts";
+
 type IntlWithTimezoneValues = typeof Intl & {
   readonly supportedValuesOf?: (key: "timeZone") => ReadonlyArray<string>;
 };
@@ -17,13 +19,26 @@ export function detectDeviceTimezone(): string | null {
   }
 }
 
+let fallbackTimezones: ReadonlyArray<string> | undefined;
+
+const supportedFallbackTimezones = () =>
+  (fallbackTimezones ??= IANA_TIMEZONES.filter((timeZone) => {
+    try {
+      Intl.DateTimeFormat("en", { timeZone });
+      return true;
+    } catch {
+      return false;
+    }
+  }));
+
 export function supportedTimezones(deviceTimezone = detectDeviceTimezone()): ReadonlyArray<string> {
-  let zones: ReadonlyArray<string> = [];
+  let zones: ReadonlyArray<string> | undefined;
   try {
-    zones = (Intl as IntlWithTimezoneValues).supportedValuesOf?.call(Intl, "timeZone") ?? [];
+    zones = (Intl as IntlWithTimezoneValues).supportedValuesOf?.call(Intl, "timeZone");
   } catch {
-    // Keep the current device and UTC selectable on runtimes without supportedValuesOf.
+    // A partial Intl implementation can expose enumeration but reject timeZone.
   }
+  if (!zones?.length) zones = supportedFallbackTimezones();
   return Array.from(new Set(["UTC", ...zones, ...(deviceTimezone ? [deviceTimezone] : [])])).sort(
     (left, right) => left.localeCompare(right),
   );

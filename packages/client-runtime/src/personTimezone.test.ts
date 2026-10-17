@@ -1,4 +1,4 @@
-import { describe, expect, it } from "@effect/vitest";
+import { describe, expect, it, vi } from "@effect/vitest";
 import type { ExecutionEnvironmentCapabilities } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 
@@ -11,7 +11,7 @@ import {
   PersonTimezoneReportCoordinator,
   supportedTimezones,
   supportsPersonTimezone,
-} from "./personTimezone.ts";
+} from "@t3tools/client-runtime/personTimezone";
 
 describe("person timezone client helpers", () => {
   it("reads the client's IANA time zone and offers searchable supported zones", () => {
@@ -28,6 +28,29 @@ describe("person timezone client helpers", () => {
     expect(supportsPersonTimezone(undefined)).toBe(false);
     expect(supportsPersonTimezone({ personTimezone: false })).toBe(false);
     expect(supportsPersonTimezone({ personTimezone: true })).toBe(true);
+  });
+
+  it("offers a browsable catalog and preserves saved aliases without Intl enumeration", () => {
+    const DateTimeFormat = Intl.DateTimeFormat;
+    for (const supportedValuesOf of [
+      undefined,
+      () => [],
+      () => {
+        throw new RangeError("Unsupported enumeration");
+      },
+    ]) {
+      vi.stubGlobal("Intl", { DateTimeFormat, supportedValuesOf });
+      try {
+        const zones = supportedTimezones("US/Eastern");
+        expect(zones.length).toBeGreaterThan(300);
+        expect(zones).toEqual(
+          expect.arrayContaining(["UTC", "Europe/Zurich", "Asia/Kathmandu", "US/Eastern"]),
+        );
+        expect(new Set(zones).size).toBe(zones.length);
+      } finally {
+        vi.unstubAllGlobals();
+      }
+    }
   });
 
   it("shows a backend error message and falls back for failures without one", () => {
