@@ -375,11 +375,36 @@ source-build test flag, and restore the managed image's checksummed no-plugin
 archive build. Until a patch applies or is deliberately removed, release sync
 must fail for maintainer review.
 
-To roll back a merged update, revert its sync commit and let the normal main
-deployment rebuild the prior pins. This restores the previous executable; it
-does not roll back config or auth files persisted in a pool or self-hosted
-account hub. Treat any release that may have migrated those files as a data
+After reproducing an upstream regression, choose a good release from successful
+deployment and reproduction evidence, not merely the previous pin. Prepare its
+full manifest with `python3 -m scripts.cliproxyapi.rollback` from the repository
+root. Pass the manifest path, `--expected-version`, `--good-commit` (the full
+repository commit containing that manifest), `--good-evidence`, `--reproduction`,
+`--upstream-issue`, and a one-line `--reason`. Evidence arguments are HTTPS links;
+the caller must establish that the good release passes the same reproduction.
+The command only edits the local manifest. It neither diagnoses the regression
+nor creates an issue, pull request or deployment.
+
+The command restores the source commit, all binary assets and checksums, and the
+container archive from that good commit. It retains current holds and adds an
+open-ended hold starting at the bad version, with the reason and evidence links.
+Submit that manifest on `automation/cliproxyapi-update`, link the reproduction,
+good-release evidence and upstream issue in the PR, and let the same smoke,
+preview and CI gates check the rollback. The normal main deployment rebuilds the
+image after merge. Rollback restores the executable; it does not roll back config
+or auth files persisted in a pool or self-hosted account hub. Treat any release
+that may have migrated those files as a data
 recovery decision as well as an image rollback.
+
+The manifest's `holds` array blocks releases from each entry's inclusive `from`
+version until its optional exclusive `before` version. Scheduled sync skips a
+held latest release and shows the reason and upstream issue in the run summary.
+Auto-merge checks holds from both current main and the release PR, including
+when main changes, so an existing bump cannot drop a hold to bypass it. Updates
+preserve holds. To lift one, remove its entry on main. After a fixed release
+passes the reproduction, set `before` to that version on main and rerun sync.
+Until the alert automation is connected, these steps require a maintainer or an
+agent to provide and verify the evidence.
 
 A self-hosted server that moved a pool here keeps a pool link (`pool/poolLink.ts`,
 `/api/pool-link`): a token naming the pool's object plus a secret only that

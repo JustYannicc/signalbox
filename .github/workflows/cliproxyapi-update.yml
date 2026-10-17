@@ -29,6 +29,7 @@ jobs:
         uses: actions/checkout@v6
         with:
           token: ${{ secrets.UPSTREAM_SYNC_TOKEN || github.token }}
+          fetch-depth: 0
 
       - name: Require the owner token
         run: |
@@ -50,8 +51,24 @@ jobs:
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
           echo "version=$version" >> "$GITHUB_OUTPUT"
 
+      - name: Respect release holds
+        id: policy
+        env:
+          VERSION: ${{ steps.release.outputs.version }}
+        run: |
+          git fetch origin +refs/heads/main:refs/remotes/origin/main
+          git show origin/main:apps/cloud/containers/cliproxyapi/release.json > "$RUNNER_TEMP/cliproxyapi-current.json"
+          policy="$(python3 -m scripts.cliproxyapi.release_policy "$RUNNER_TEMP/cliproxyapi-current.json" "$VERSION")"
+          held="$(jq -r '.held' <<< "$policy")"
+          echo "held=$held" >> "$GITHUB_OUTPUT"
+          if [[ "$held" == "true" ]]; then
+            echo "CLIProxyAPI $VERSION is held; leaving the pin and update branch alone." >> "$GITHUB_STEP_SUMMARY"
+            jq -r '.holds[] | "- \(.reason) (\(.upstreamIssue)); reproduction: \(.reproduction)"' <<< "$policy" >> "$GITHUB_STEP_SUMMARY"
+          fi
+
       - name: Prepare the update branch
         id: branch
+        if: steps.policy.outputs.held == 'false'
         env:
           VERSION: ${{ steps.release.outputs.version }}
         run: |
@@ -78,18 +95,31 @@ jobs:
           fi
           existing_pr="$(gh pr list --state open --head "$branch" --json number --jq '.[0].number // empty')"
           branch_version=""
+          branch_holds="[]"
           if git show "origin/$branch:$manifest" >/dev/null 2>&1; then
             branch_version="$(git show "origin/$branch:$manifest" | jq -r '.version')"
+            git show "origin/$branch:$manifest" > "$RUNNER_TEMP/cliproxyapi-branch.json"
+            branch_holds="$(jq -cS '.holds // []' "$RUNNER_TEMP/cliproxyapi-branch.json")"
+            if [[ -n "$existing_pr" ]]; then
+              branch_base="$(git merge-base origin/main "origin/$branch")"
+              git show "$branch_base:$manifest" > "$RUNNER_TEMP/cliproxyapi-branch-base.json"
+              policy="$(python3 -m scripts.cliproxyapi.release_policy "$RUNNER_TEMP/cliproxyapi-current.json" "$VERSION" "$RUNNER_TEMP/cliproxyapi-branch.json" "$RUNNER_TEMP/cliproxyapi-branch-base.json")"
+              if [[ "$(jq -r '.held' <<< "$policy")" == "true" ]]; then
+                printf 'update=false\nexisting_pr=%s\n' "$existing_pr" >> "$GITHUB_OUTPUT"
+                echo "The open release PR holds $VERSION; preserving that PR and its evidence." >> "$GITHUB_STEP_SUMMARY"
+                jq -r '.holds[] | "- \(.reason) (\(.upstreamIssue)); reproduction: \(.reproduction)"' <<< "$policy" >> "$GITHUB_STEP_SUMMARY"
+                exit 0
+              fi
+            fi
           fi
           echo "existing_pr=$existing_pr" >> "$GITHUB_OUTPUT"
-          if [[ "$branch_version" == "$VERSION" && -n "$existing_pr" ]]; then
+          current_holds="$(jq -cS '.holds // []' "$RUNNER_TEMP/cliproxyapi-current.json")"
+          if [[ "$branch_version" == "$VERSION" && -n "$existing_pr" && "$branch_holds" == "$current_holds" ]]; then
             echo "update=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
 
-          echo "update=true" >> "$GITHUB_OUTPUT"
-          echo "current=$current" >> "$GITHUB_OUTPUT"
-          echo "branch=$branch" >> "$GITHUB_OUTPUT"
+          printf 'update=true\ncurrent=%s\nbranch=%s\n' "$current" "$branch" >> "$GITHUB_OUTPUT"
           git checkout -B "$branch" origin/main
 
       - name: Download upstream checksums
@@ -126,7 +156,7 @@ jobs:
         env:
           SOURCE_COMMIT: ${{ steps.source.outputs.commit }}
         run: >-
-          python3 scripts/cliproxyapi/update.py
+          python3 -m scripts.cliproxyapi.update
           "$RUNNER_TEMP/cliproxyapi-release.json"
           "$RUNNER_TEMP/cliproxyapi-release/checksums.txt"
           "$SOURCE_COMMIT"
@@ -195,7 +225,7 @@ jobs:
           fi
 
       - name: Close a stale release problem
-        if: steps.branch.outputs.update != 'true' && steps.branch.outputs.existing_pr == ''
+        if: steps.policy.outputs.held == 'false' && steps.branch.outputs.update != 'true' && steps.branch.outputs.existing_pr == ''
         env:
           CLOSE_REASON: The pinned version matches the latest stable release.
         run: node scripts/cliproxyapi/report-problem.mjs close
