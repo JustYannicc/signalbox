@@ -7,6 +7,7 @@ import type {
   ServerConfig as T3ServerConfig,
 } from "@t3tools/contracts";
 import { resolveProjectProviderInstanceEnabled } from "@t3tools/contracts";
+import { hubInstancePoolId } from "@t3tools/contracts/accountHub";
 import {
   buildExplicitProviderOptionSelectionsFromDescriptors,
   getProviderOptionDescriptors,
@@ -139,18 +140,22 @@ export function isModelSelectionUnavailable(
   const provider = config.providers.find(
     (candidate) => candidate.instanceId === selection.instanceId,
   );
+  const isHubInstance =
+    hubInstancePoolId(config.settings?.providerInstances[selection.instanceId]?.config) !== null;
   if (isDisabledForProject(config, provider, selection.instanceId, projectId)) {
     return true;
   }
   const driver =
     provider?.driver ?? config.settings?.providerInstances[selection.instanceId]?.driver;
   return (
-    driver === "antigravity" &&
-    (!provider ||
-      !provider.installed ||
-      provider.auth.status === "unauthenticated" ||
-      provider.availability === "unavailable" ||
-      !provider.models.some((model) => model.slug === selection.model))
+    (driver === "antigravity" &&
+      (!provider ||
+        !provider.installed ||
+        provider.auth.status === "unauthenticated" ||
+        provider.availability === "unavailable" ||
+        !provider.models.some((model) => model.slug === selection.model))) ||
+    (isHubInstance &&
+      (!provider || !provider.models.some((model) => model.slug === selection.model)))
   );
 }
 
@@ -162,15 +167,23 @@ export function describeUnavailableModelSelection(
   const provider = config?.providers.find(
     (candidate) => candidate.instanceId === selection.instanceId,
   );
+  const isHubInstance =
+    hubInstancePoolId(config?.settings?.providerInstances[selection.instanceId]?.config) !== null;
   return isDisabledForProject(config, provider, selection.instanceId, projectId)
     ? {
         title: "Model turned off for this project",
         detail: "Turn it back on from web or desktop, or choose another model.",
       }
-    : {
-        title: "Antigravity model unavailable",
-        detail: "Set up Antigravity on web or desktop, or choose another model.",
-      };
+    : isHubInstance && !provider?.models.some((model) => model.slug === selection.model)
+      ? {
+          title: "Model unavailable",
+          detail:
+            "This model is not currently available from this pool. Choose another model or refresh the catalog.",
+        }
+      : {
+          title: "Antigravity model unavailable",
+          detail: "Set up Antigravity on web or desktop, or choose another model.",
+        };
 }
 
 export function resolveSelectableModelSelection(
@@ -248,15 +261,17 @@ export function buildModelOptions(
     }
 
     const providerLabel = providerDisplayLabel(provider);
+    const isHubInstance =
+      hubInstancePoolId(config?.settings?.providerInstances[provider.instanceId]?.config) !== null;
     const updateRequired = provider.updateRequiredModels?.length
       ? { driver: provider.driver, updateRequiredModels: provider.updateRequiredModels }
       : undefined;
     const preferences = config?.settings?.providerModelPreferences?.[provider.instanceId];
     const hiddenModels = new Set(preferences?.hiddenModels ?? []);
     const order = new Map((preferences?.modelOrder ?? []).map((slug, index) => [slug, index]));
-    const models = provider.models.filter(
-      (model) => includeHidden || model.isCustom || !hiddenModels.has(model.slug),
-    );
+    const models = provider.models
+      .map((model) => (isHubInstance && model.isCustom ? { ...model, isCustom: false } : model))
+      .filter((model) => includeHidden || model.isCustom || !hiddenModels.has(model.slug));
     if (order.size > 0)
       models.sort((a, b) => (order.get(a.slug) ?? Infinity) - (order.get(b.slug) ?? Infinity));
     for (const model of models) {
@@ -318,6 +333,10 @@ export function buildModelOptions(
       const model = provider?.models.find(
         (candidate) => candidate.slug === fallbackModelSelection.model,
       );
+      const isHubInstance =
+        hubInstancePoolId(
+          config?.settings?.providerInstances[fallbackModelSelection.instanceId]?.config,
+        ) !== null;
       const providerDriver =
         provider?.driver ?? instanceConfig?.driver ?? fallbackModelSelection.instanceId;
       const providerLabel = providerDisplayLabel({
@@ -334,7 +353,8 @@ export function buildModelOptions(
         providerDriver,
         isDefault: false,
         isLegacy: model?.isLegacy === true,
-        ...(isModelSelectionUnavailable(config, fallbackModelSelection, projectId) ||
+        ...((isHubInstance && !model) ||
+        isModelSelectionUnavailable(config, fallbackModelSelection, projectId) ||
         (provider !== undefined && !isProviderEnabledForProject(config, provider, projectId)) ||
         provider?.updateRequiredModels?.some((gated) => gated.slug === fallbackModelSelection.model)
           ? { isUnavailable: true }

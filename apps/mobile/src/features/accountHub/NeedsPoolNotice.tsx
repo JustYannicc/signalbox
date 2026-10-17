@@ -9,8 +9,7 @@ import { useEnvironmentQuery } from "../../state/query";
 import { serverEnvironment } from "../../state/server";
 
 /**
- * Its one action opens the pools in Usage. Subscriptions are added on web and
- * desktop, so it says where.
+ * Its action opens Usage → Limits, where the pool's state is shown.
  */
 export function NeedsPoolNotice(props: {
   readonly environmentId: EnvironmentId | null;
@@ -28,11 +27,15 @@ export function NeedsPoolNotice(props: {
   const message =
     need._tag === "signIn"
       ? `Needs a pool. Sign in to ${poolName ?? "its pool"} on web or desktop.`
-      : "Needs a pool. Nothing above this folder has one.";
+      : need._tag === "noPool"
+        ? "Needs a pool. Nothing above this folder has one."
+        : `Needs a pool. ${need.message}`;
+  const action =
+    need._tag === "noModels" || need._tag === "unavailable" ? "Check pool" : "Open pools";
   return (
     <Pressable
       accessibilityRole="button"
-      accessibilityHint="Opens your pools in Usage"
+      accessibilityHint="Opens pool status in Usage limits"
       className="px-3 py-2"
       onPress={() =>
         navigation.navigate("SettingsSheet", {
@@ -42,7 +45,7 @@ export function NeedsPoolNotice(props: {
       }
     >
       <Text className="text-xs text-foreground">
-        {message} <Text className="text-xs font-t3-medium text-primary">Open pools</Text>
+        {message} <Text className="text-xs font-t3-medium text-primary">{action}</Text>
       </Text>
     </Pressable>
   );

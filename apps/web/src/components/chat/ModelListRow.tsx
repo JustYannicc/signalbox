@@ -26,6 +26,7 @@ export const ModelListRow = memo(function ModelListRow(props: {
   acpRegistryAgentId?: string | undefined;
   acpRegistryIconUrl?: string | undefined;
   isFavorite: boolean;
+  canToggleFavorite?: boolean;
   isSelected: boolean;
   showSelection?: boolean;
   showProvider: boolean;
@@ -111,7 +112,7 @@ export const ModelListRow = memo(function ModelListRow(props: {
                 onKeyDown={(event) => {
                   event.stopPropagation();
                 }}
-                disabled={Boolean(props.disabledReason)}
+                disabled={Boolean(props.disabledReason) || props.canToggleFavorite === false}
                 aria-label={props.isFavorite ? "Remove from favorites" : "Add to favorites"}
               >
                 <StarIcon

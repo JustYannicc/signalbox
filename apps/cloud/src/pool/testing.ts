@@ -37,24 +37,71 @@ interface FakeModel {
   readonly id: string;
   /** Epoch seconds. */
   readonly created: number;
+  readonly displayName: string;
+  readonly reasoningEfforts: ReadonlyArray<string>;
 }
 
 /** What `/v1/models` lists per account type: CLIProxyAPI's catalog, trimmed to what tests need. */
 const fakeCatalog = (): Record<string, Array<FakeModel>> => ({
   claude: [
-    { id: "claude-opus-5-5", created: 1_790_035_200 },
-    { id: "claude-sonnet-5-5", created: 1_790_553_600 },
-    { id: "claude-fable-5-1", created: 1_788_220_800 },
+    {
+      id: "claude-opus-5-5",
+      created: 1_790_035_200,
+      displayName: "Claude Opus 5.5",
+      reasoningEfforts: ["low", "medium", "high"],
+    },
+    {
+      id: "claude-sonnet-5-5",
+      created: 1_790_553_600,
+      displayName: "Claude Sonnet 5.5",
+      reasoningEfforts: [],
+    },
+    {
+      id: "claude-fable-5-1",
+      created: 1_788_220_800,
+      displayName: "Claude Fable 5.1",
+      reasoningEfforts: [],
+    },
     // Legacy in the model manifest.
-    { id: "claude-opus-5", created: 1_784_038_800 },
+    {
+      id: "claude-opus-5",
+      created: 1_784_038_800,
+      displayName: "Claude Opus 5",
+      reasoningEfforts: [],
+    },
     // Unknown to the manifest, and older than every current model.
-    { id: "claude-3-7-sonnet-20250219", created: 1_708_300_800 },
+    {
+      id: "claude-3-7-sonnet-20250219",
+      created: 1_708_300_800,
+      displayName: "Claude 3.7 Sonnet",
+      reasoningEfforts: [],
+    },
   ],
   codex: [
-    { id: "gpt-6-astra", created: 1_783_616_400 },
-    { id: "gpt-6.1-sol", created: 1_790_640_000 },
-    { id: "gpt-6-luna", created: 1_790_035_200 },
-    { id: "gpt-5.5", created: 1_776_902_400 },
+    {
+      id: "gpt-6-astra",
+      created: 1_783_616_400,
+      displayName: "GPT-6 Astra",
+      reasoningEfforts: ["low", "medium", "high", "xhigh", "max", "ultra"],
+    },
+    {
+      id: "gpt-6.1-sol",
+      created: 1_790_640_000,
+      displayName: "GPT-6.1 Sol",
+      reasoningEfforts: ["low", "medium", "high", "xhigh", "max", "ultra"],
+    },
+    {
+      id: "gpt-6-luna",
+      created: 1_790_035_200,
+      displayName: "GPT-6 Luna",
+      reasoningEfforts: ["low", "medium", "high", "xhigh", "max"],
+    },
+    {
+      id: "gpt-5.5",
+      created: 1_776_902_400,
+      displayName: "GPT-5.5",
+      reasoningEfforts: [],
+    },
   ],
 });
 
@@ -88,6 +135,8 @@ export const makeFakeCliProxyApi = () => {
       .padStart(8, "0");
   /** Accounts whose cooldown was cleared (`routing/cooldown/reset`), in order. */
   const cooldownResets: Array<string> = [];
+  /** Provider channels whose optional model definitions were read. */
+  const modelDefinitionRequests: Array<string> = [];
   const cooling = (account: FakeAccount) =>
     account.cooldownUntil !== undefined && Date.parse(account.cooldownUntil) > Date.now();
   let counter = 0;
@@ -177,6 +226,21 @@ export const makeFakeCliProxyApi = () => {
     }
     const route = url.pathname.slice("/v8/management/".length);
     if (request.headers.get("authorization") === "Bearer wrong") return json({}, 401);
+    const modelDefinitions = /^routing\/model-definitions\/(claude|codex)$/u.exec(route);
+    if (request.method === "GET" && modelDefinitions !== null) {
+      const channel = modelDefinitions[1] as "claude" | "codex";
+      modelDefinitionRequests.push(channel);
+      return json({
+        channel,
+        models: (catalog[channel] ?? []).map((model) => ({
+          id: model.id,
+          display_name: model.displayName,
+          type: channel,
+          owned_by: OWNER_BY_TYPE[channel],
+          thinking: { levels: model.reasoningEfforts },
+        })),
+      });
+    }
     switch (`${request.method} ${route}`) {
       case "GET config":
         return json({});
@@ -189,7 +253,15 @@ export const makeFakeCliProxyApi = () => {
         counter += 1;
         const state = `state-${counter}`;
         logins.set(state, { type: provider, done: false });
-        return json({ url: `https://login.example.test/?state=${state}`, state });
+        // Each provider's login ends on its CLIProxyAPI's own `localhost` listener.
+        const redirect =
+          provider === "claude"
+            ? "http://localhost:54545/callback"
+            : "http://localhost:1455/auth/callback";
+        const login = new URL("https://login.example.test/");
+        login.searchParams.set("redirect_uri", redirect);
+        login.searchParams.set("state", state);
+        return json({ url: login.toString(), state });
       }
       case "GET oauth/status": {
         const login = logins.get(url.searchParams.get("state") ?? "");
@@ -288,7 +360,15 @@ export const makeFakeCliProxyApi = () => {
         return json({ error: `no route ${request.method} ${route}` }, 404);
     }
   };
-  return { serve, accounts, catalog, configPatches, accountRequests, cooldownResets };
+  return {
+    serve,
+    accounts,
+    catalog,
+    configPatches,
+    accountRequests,
+    cooldownResets,
+    modelDefinitionRequests,
+  };
 };
 
 /**
