@@ -7,7 +7,8 @@ import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
 import type { SqlError } from "effect/sql/SqlError";
-import { poolObjectName, type ModelPoolRoute } from "../pool/PoolDirectory.ts";
+import type { ModelPoolRoute } from "../models/ModelProtocol.ts";
+import { poolObjectName } from "../pool/PoolDirectory.ts";
 
 import { homeOf, isWithin, poolResolver } from "./folderTree.ts";
 import { makeProfileId } from "./profileId.ts";

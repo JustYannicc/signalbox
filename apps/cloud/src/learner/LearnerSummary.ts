@@ -6,7 +6,8 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
 import { pickModel, replyText } from "../notes/noteReading.ts";
-import { PoolDirectory, type ModelPoolRoute, type PoolModelApi } from "../pool/PoolDirectory.ts";
+import type { ModelPoolRoute } from "../models/ModelProtocol.ts";
+import { PoolDirectory, type PoolModelApi } from "../pool/PoolDirectory.ts";
 import * as LearnerJev from "./LearnerJev.ts";
 
 const encodeBody = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
