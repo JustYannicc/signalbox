@@ -124,37 +124,56 @@ export const writes = <P, A, E, R>(handle: (params: P) => Effect.Effect<A, E, R>
 export const writesWithCapability = <P, A, E, R>(handle: (params: P) => Effect.Effect<A, E, R>) =>
   declare((params: P) => writingCaller.pipe(Effect.flatMap(() => handle(params))));
 
+const withThreadWriteAccess = <P, A, E, R>(
+  params: P,
+  threads: (params: P) => ReadonlyArray<ThreadId | undefined>,
+  handle: (params: P) => Effect.Effect<A, E, R>,
+) =>
+  Effect.gen(function* () {
+    const caller = yield* writingCaller;
+    for (const threadId of threads(params)) {
+      if (threadId === undefined || threadId === caller.scope.thread?.threadId) continue;
+      const target = yield* caller.threads
+        .getThreadShell(threadId)
+        .pipe(Effect.mapError(unavailable));
+      if (target !== null && target.deletedAt === null) {
+        yield* assertTargetWithinLimits(caller.limits, target);
+      }
+    }
+    // The target's user can raise its modes after the check above; the
+    // orchestrator checks again under the thread's lock and records its
+    // refusal here, since handlers wrap dispatch errors their own way.
+    const refused = yield* Ref.make<DispatchModeRefusal | undefined>(undefined);
+    return yield* handle(params).pipe(
+      Effect.provideService(DispatchModeLimit, { ...caller.limits, refused }),
+      Effect.catch((error) =>
+        Effect.flatMap(Ref.get(refused), (refusal) =>
+          Effect.fail<E | OrchestratorMcpFailure>(
+            refusal === undefined ? error : escalationDenied(refusal),
+          ),
+        ),
+      ),
+    );
+  });
+
 export const writesThreads = <P, A, E, R>(
+  threads: (params: P) => ReadonlyArray<ThreadId | undefined>,
+  handle: (params: P) => Effect.Effect<A, E, R>,
+) => declare((params: P) => withThreadWriteAccess(params, threads, handle));
+
+/** An action-discriminated tool may read for any authorized thread, while its writes stay scoped. */
+export const readsOrWritesThreads = <P, A, E, R>(
+  isRead: (params: P) => boolean,
   threads: (params: P) => ReadonlyArray<ThreadId | undefined>,
   handle: (params: P) => Effect.Effect<A, E, R>,
 ) =>
   declare((params: P) =>
-    Effect.gen(function* () {
-      const caller = yield* writingCaller;
-      for (const threadId of threads(params)) {
-        if (threadId === undefined || threadId === caller.scope.thread?.threadId) continue;
-        const target = yield* caller.threads
-          .getThreadShell(threadId)
-          .pipe(Effect.mapError(unavailable));
-        if (target !== null && target.deletedAt === null) {
-          yield* assertTargetWithinLimits(caller.limits, target);
-        }
-      }
-      // The target's user can raise its modes after the check above; the
-      // orchestrator checks again under the thread's lock and records its
-      // refusal here, since handlers wrap dispatch errors their own way.
-      const refused = yield* Ref.make<DispatchModeRefusal | undefined>(undefined);
-      return yield* handle(params).pipe(
-        Effect.provideService(DispatchModeLimit, { ...caller.limits, refused }),
-        Effect.catch((error) =>
-          Effect.flatMap(Ref.get(refused), (refusal) =>
-            Effect.fail<E | OrchestratorMcpFailure>(
-              refusal === undefined ? error : escalationDenied(refusal),
-            ),
-          ),
-        ),
-      );
-    }),
+    isRead(params)
+      ? readCaller().pipe(
+          Effect.tap(assertLiveCaller),
+          Effect.flatMap(() => handle(params)),
+        )
+      : withThreadWriteAccess(params, threads, handle),
   );
 
 const escalationDenied = (refusal: DispatchModeRefusal) =>

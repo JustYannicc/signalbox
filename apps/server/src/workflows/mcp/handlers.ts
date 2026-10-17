@@ -1,5 +1,6 @@
 import {
   OrchestratorMcpFailure,
+  ThreadId,
   type AutomationError,
   type OrchestrationV2ThreadShell,
 } from "@t3tools/contracts";
@@ -7,7 +8,7 @@ import * as Effect from "effect/Effect";
 
 import * as SecretRequests from "../../secrets/SecretRequests.ts";
 import * as McpToolAccess from "../../mcp/McpToolAccess.ts";
-import { readCaller, type Caller } from "../../mcp/threadAccess.ts";
+import { readCaller, readThread, type Caller } from "../../mcp/threadAccess.ts";
 import { callerDefaults, saveForCaller, withinLimits } from "../callerAccess.ts";
 import { builtInById } from "@signalbox/automations/defaults/registry";
 import { skillReference, unknownTopic } from "../skill/files.ts";
@@ -57,6 +58,51 @@ export const layer = McpToolAccess.toLayer(
     const engine = yield* WorkflowEngine.WorkflowEngine;
     const secretRequests = yield* SecretRequests.SecretRequests;
     return {
+      task_lifecycle: McpToolAccess.readsOrWritesThreads(
+        (input) => input.action === "read",
+        (input) => [input.threadId === undefined ? undefined : ThreadId.make(input.threadId)],
+        (input) =>
+          asCaller((caller) => {
+            const callerThread = caller.caller;
+            const threadId =
+              (input.threadId === undefined ? undefined : ThreadId.make(input.threadId)) ??
+              caller.caller?.id;
+            if (threadId === undefined)
+              return Effect.fail(
+                new OrchestratorMcpFailure({
+                  code: "target_required",
+                  message:
+                    "Pass threadId: this MCP client is not running inside a Signalbox thread.",
+                }),
+              );
+
+            if (input.action === "read")
+              return readThread(threadId).pipe(
+                Effect.flatMap(({ projection }) =>
+                  callerThread !== undefined &&
+                  projection.thread.projectId !== callerThread.projectId
+                    ? Effect.fail(
+                        new OrchestratorMcpFailure({
+                          code: "capability_denied",
+                          message: "Agents can only read task lifecycle state in the same project.",
+                        }),
+                      )
+                    : engine
+                        .taskLifecycle({ ...input, threadId })
+                        .pipe(Effect.mapError(toMcpFailure)),
+                ),
+              );
+
+            if (callerThread === undefined || threadId !== callerThread.id)
+              return Effect.fail(
+                new OrchestratorMcpFailure({
+                  code: "capability_denied",
+                  message: "Task lifecycle changes can only act on the calling thread.",
+                }),
+              );
+            return engine.taskLifecycle({ ...input, threadId }).pipe(Effect.mapError(toMcpFailure));
+          }),
+      ),
       automation_reference: McpToolAccess.reads(({ topic }) => {
         const reference = skillReference(topic);
         return reference === null

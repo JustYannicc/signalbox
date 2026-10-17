@@ -747,7 +747,13 @@ const make = Effect.gen(function* () {
       const driveId = turn === null || !drivesEnabled ? null : yield* driveOf;
       return keep<RunnerWork>({
         generation: lease.generation,
-        needsUpkeep: needsUpkeep(lease, run !== undefined, yield* previews.held),
+        needsUpkeep: needsUpkeep(
+          lease,
+          run !== undefined,
+          projection?.thread.archivedAt != null || projection?.thread.settledOverride === "settled"
+            ? false
+            : yield* previews.held,
+        ),
         drain: lease.drain?._tag === "asked" ? lease.drain.id : null,
         turn,
         modelToken:
@@ -966,6 +972,10 @@ const make = Effect.gen(function* () {
         const backend = backends[classOf(lease)];
         const run = projection === null ? undefined : harnessRun(projection);
         const runId = run?.id ?? null;
+        const closing =
+          projection !== null &&
+          (projection.thread.archivedAt !== null ||
+            projection.thread.settledOverride === "settled");
         /**
          * Lets the machine go. `failure` fails the live run with it; `recover`
          * continues it on the next machine (`runRecovery.ts`), and then the
@@ -1005,7 +1015,7 @@ const make = Effect.gen(function* () {
           );
         };
         if (lease.status === "none") {
-          const previewHeld = yield* previews.held;
+          const previewHeld = !closing && (yield* previews.held);
           if ((run === undefined && !previewHeld) || projection === null) {
             return keep(UNNEEDED);
           }
@@ -1038,8 +1048,19 @@ const make = Effect.gen(function* () {
           };
         }
         if (lease.status === "requested") {
+          // A preview can open its writable checkout before the main hello.
+          // Let that Runner connect and drain before closing its machine.
+          if (closing) {
+            const token = lease.ensuredAt === null ? lease.token : null;
+            return keep<MachinePlan>({
+              ...IDLE,
+              ensure: token === null ? null : { generation: lease.generation, token },
+              wakeAt: now + (token === null ? DRAIN_TIMEOUT_MS : ENSURE_RETRY_MS),
+              runId,
+            });
+          }
           // A preview can keep the request alive without a run to fail.
-          const previewHeld = yield* previews.held;
+          const previewHeld = !closing && (yield* previews.held);
           if (run === undefined && !previewHeld) {
             return yield* release({ reason: "idle", detail: "No turn needs it any more." });
           }
@@ -1066,6 +1087,12 @@ const make = Effect.gen(function* () {
         if (lease.disconnectedAt !== null) {
           const deadline = lease.disconnectedAt + RECONNECT_TIMEOUT_MS;
           if (now < deadline) return keep({ ...IDLE, wakeAt: deadline, runId });
+          // A lost socket says nothing about the machine's last writes. Closing
+          // work waits for its Runner to reconnect and confirm those saves.
+          const saved = lease.drain?._tag === "answered" && lease.drain.unsaved.length === 0;
+          if (closing && !saved) {
+            return keep({ ...IDLE, wakeAt: now + DRAIN_TIMEOUT_MS, runId });
+          }
           return yield* release({
             reason: "error",
             detail: `The Runner did not reconnect within ${RECONNECT_TIMEOUT_MS / 1000} s.`,
@@ -1073,7 +1100,7 @@ const make = Effect.gen(function* () {
             recover: run !== undefined,
           });
         }
-        if (run !== undefined || (yield* previews.held)) {
+        if (run !== undefined || (!closing && (yield* previews.held))) {
           const busy = { ...BUSY, runId };
           // Needed again: a drain under way no longer leads anywhere.
           return lease.idleSince === null && lease.drain === undefined
@@ -1087,15 +1114,33 @@ const make = Effect.gen(function* () {
         const idleSince = lease.idleSince ?? now;
         // An open preview pushes the tail out to its last traffic.
         const tailFrom = Math.max(idleSince, (yield* previews.lastActiveAt) ?? 0);
-        if (now - tailFrom >= backend.idleTailMs) {
+        if (closing || now - tailFrom >= backend.idleTailMs) {
           const idle = `Idle for ${formatDuration(now - tailFrom)}.`;
-          // The machine saves everything it wrote before its tokens go (#493);
-          // a Runner from before drains is let go as it always was.
+          // The machine saves everything it wrote before its tokens go (#493).
           if (lease.drains !== true) {
+            if (closing)
+              return {
+                events: [],
+                machine: { ...lease, idleSince },
+                result: { ...IDLE, wakeAt: now + DRAIN_TIMEOUT_MS },
+              };
             return yield* release({ reason: "idle", detail: idle, idleSince: tailFrom });
           }
           if (lease.drain?._tag === "answered") {
             const unsaved = lease.drain.unsaved;
+            if (closing && unsaved.length > 0) {
+              const retryAt = lease.drain.id + DRAIN_TIMEOUT_MS;
+              if (now < retryAt) return keep({ ...IDLE, wakeAt: retryAt });
+              return {
+                events: [],
+                machine: { ...lease, idleSince, drain: { _tag: "asked", id: now } as const },
+                result: {
+                  ...IDLE,
+                  drain: { generation: lease.generation, id: now },
+                  wakeAt: now + DRAIN_TIMEOUT_MS,
+                },
+              };
+            }
             return yield* release({
               reason: "idle",
               detail:
@@ -1118,6 +1163,17 @@ const make = Effect.gen(function* () {
           }
           const deadline = lease.drain.id + DRAIN_TIMEOUT_MS;
           if (now < deadline) return keep({ ...IDLE, wakeAt: deadline });
+          if (closing) {
+            return {
+              events: [],
+              machine: { ...lease, drain: { _tag: "asked", id: now } as const },
+              result: {
+                ...IDLE,
+                drain: { generation: lease.generation, id: now },
+                wakeAt: now + DRAIN_TIMEOUT_MS,
+              },
+            };
+          }
           return yield* release({
             reason: "idle",
             detail: `${idle} It didn't confirm its last saves within ${DRAIN_TIMEOUT_MS / 1000} s, so anything it wrote after its last save may be lost.`,

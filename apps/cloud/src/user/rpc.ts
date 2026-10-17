@@ -7,6 +7,8 @@ import {
   AuthPreviewOperateScope,
   AuthSourceControlWriteScope,
   AuthStandardClientScopes,
+  AUTOMATION_WS_METHODS,
+  clientRpcRequiredScopes,
   EnvironmentAuthorizationError,
   GitCommandError,
   ORCHESTRATION_V2_WS_METHODS,
@@ -168,6 +170,7 @@ const SERVED = [
   WS_METHODS.subscribeServerLifecycle,
   ORCHESTRATION_V2_WS_METHODS.subscribeShell,
   ORCHESTRATION_V2_WS_METHODS.getArchivedShellSnapshot,
+  ORCHESTRATION_V2_WS_METHODS.subscribeArchivedShell,
   ORCHESTRATION_V2_WS_METHODS.dispatchCommand,
   ORCHESTRATION_V2_WS_METHODS.launchThread,
   ORCHESTRATION_V2_WS_METHODS.subscribeThread,
@@ -261,6 +264,7 @@ const REQUIRED_SCOPES = {
   [WS_METHODS.subscribeServerLifecycle]: AuthOrchestrationReadScope,
   [ORCHESTRATION_V2_WS_METHODS.subscribeShell]: AuthOrchestrationReadScope,
   [ORCHESTRATION_V2_WS_METHODS.getArchivedShellSnapshot]: AuthOrchestrationReadScope,
+  [ORCHESTRATION_V2_WS_METHODS.subscribeArchivedShell]: AuthOrchestrationReadScope,
   [ORCHESTRATION_V2_WS_METHODS.dispatchCommand]: AuthOrchestrationOperateScope,
   [ORCHESTRATION_V2_WS_METHODS.launchThread]: AuthOrchestrationOperateScope,
   [ORCHESTRATION_V2_WS_METHODS.subscribeThread]: AuthOrchestrationReadScope,
@@ -339,9 +343,13 @@ const REQUIRED_SCOPES = {
 
 /** Authorizes every RPC on one connection against that connection's session scopes. */
 export const layerScopeAuthorization = (scopes: ReadonlyArray<AuthEnvironmentScope>) =>
-  Layer.succeed(RpcScopeAuthorization)((effect, { rpc }) => {
-    const requiredScope = REQUIRED_SCOPES[rpc._tag as ServedTag];
-    return scopes.includes(requiredScope)
+  Layer.succeed(RpcScopeAuthorization)((effect, { rpc, payload }) => {
+    // Task lifecycle reads need only read scope; its writes operate, as on a self-hosted server.
+    const requiredScope =
+      rpc._tag === AUTOMATION_WS_METHODS.automationsTaskLifecycle
+        ? clientRpcRequiredScopes(rpc._tag, payload).find((scope) => !scopes.includes(scope))
+        : REQUIRED_SCOPES[rpc._tag as ServedTag];
+    return requiredScope === undefined || scopes.includes(requiredScope)
       ? effect
       : Effect.fail(
           new EnvironmentAuthorizationError({
@@ -588,6 +596,18 @@ export const layerHandlers = (input: {
                 (cause) =>
                   new OrchestrationV2GetShellSnapshotError({
                     message: "The sidebar is unavailable right now.",
+                    cause,
+                  }),
+              ),
+            ),
+          ),
+        [ORCHESTRATION_V2_WS_METHODS.subscribeArchivedShell]: () =>
+          Stream.unwrap(
+            shell.subscribeArchived.pipe(
+              Effect.mapError(
+                (cause) =>
+                  new OrchestrationV2GetShellSnapshotError({
+                    message: "Archived threads are unavailable right now.",
                     cause,
                   }),
               ),

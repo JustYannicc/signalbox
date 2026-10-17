@@ -887,7 +887,7 @@ describe("V2 environment commands", () => {
     }).pipe(Effect.provide(layerTestCrypto)),
   );
 
-  it.effect("dispatches settle and unsettle commands without timestamps", () =>
+  it.effect("stops work for explicit settlement and leaves reopening timestamp-free", () =>
     Effect.gen(function* () {
       const dispatched: OrchestrationV2Command[] = [];
       const supervisor = yield* makeSupervisor({ commands: dispatched, projects: [] });
@@ -907,6 +907,7 @@ describe("V2 environment commands", () => {
           type: "thread.settle",
           commandId: "settle-command",
           threadId: "thread-1",
+          stopWork: true,
         },
         {
           type: "thread.unsettle",

@@ -188,6 +188,7 @@ const makeFixture = () => {
   const userShell = UserShell.UserShell.of({
     snapshot: Effect.succeed(shell),
     subscribe: () => Effect.succeed(Stream.empty),
+    subscribeArchived: Effect.succeed(Stream.empty),
     recordThreadSummary: () => Effect.void,
     rebuildThreadIndex: Effect.succeed(0),
   });

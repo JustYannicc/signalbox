@@ -103,6 +103,10 @@ const layerThreads = Layer.effect(
         threads
           .dispatch({ type: "thread.settle", ...input } satisfies OrchestrationV2ServerCommand)
           .pipe(Effect.asVoid, Effect.mapError(hostError(""))),
+      dispatchLifecycle: (command) =>
+        threads
+          .dispatch(command)
+          .pipe(Effect.asVoid, Effect.mapError(hostError("Couldn't change the task"))),
       domainEvents: threads.streamDomainEvents.pipe(Stream.mapError(hostError(""))),
       monitorsChanged: (threadId, next) =>
         Effect.sync(() => {

@@ -181,9 +181,8 @@ function useThreadActionExecutor(
           Dialog.alert(actionFailureTitle(action), actionFailureMessage(action, result.cause));
           return false;
         }
-        if (action === "archive" || action === "unarchive" || action === "delete") {
-          refreshArchivedThreadsForEnvironment(thread.environmentId);
-        }
+        // signalbox: settle and unsettle move a thread in or out of the archive too.
+        refreshArchivedThreadsForEnvironment(thread.environmentId);
         onCompleted?.(action, thread);
         return true;
       } finally {

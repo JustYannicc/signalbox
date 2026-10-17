@@ -269,6 +269,8 @@ export const makeRunnerTurns = Effect.fn("makeRunnerTurns")(function* (input: {
   readonly preparing?: Semaphore.Semaphore;
   /** The thread's drive, checked out in `cwd`. Absent: turns run in a plain directory. */
   readonly openDrive?: (access: DriveAccess) => Effect.Effect<RunnerDrive, never, Scope.Scope>;
+  /** A drive opened by preview before this Runner has started a turn. */
+  readonly previewDrive?: () => RunnerDrive | null;
   /** Where the harnesses' sessions are kept. Absent: they stay on this machine. */
   readonly sessions?: RunnerSessions;
   /** Brings the thread's attachments to this machine, with the turn's session token (`RunnerAttachments.ts`). */
@@ -371,14 +373,22 @@ export const makeRunnerTurns = Effect.fn("makeRunnerTurns")(function* (input: {
       return Effect.logWarning(message);
     });
 
+  /** Turns and preview restoration must not race while preparing the checkout. */
+  const preparing = input.preparing ?? (yield* Semaphore.make(1));
+
   const drain: RunnerTurns["drain"] = Effect.gen(function* () {
     const unsaved: Array<string> = [];
-    if (drive !== null) {
-      const saved = yield* Effect.result(drive.drive.saveNow);
-      if (saved._tag === "Failure") {
-        unsaved.push(`Saving this thread's files failed: ${saveFailureReason(saved.failure)}`);
-      }
-    }
+    yield* preparing.withPermits(1)(
+      Effect.gen(function* () {
+        // Preview can open the writable checkout before a turn has claimed it.
+        const currentDrive = drive?.drive ?? input.previewDrive?.() ?? null;
+        if (currentDrive === null) return;
+        const saved = yield* Effect.result(currentDrive.saveNow);
+        if (saved._tag === "Failure") {
+          unsaved.push(`Saving this thread's files failed: ${saveFailureReason(saved.failure)}`);
+        }
+      }),
+    );
     if (input.sessions !== undefined) {
       for (const driver of new Set([...input.adapters.values()].map((adapter) => adapter.driver))) {
         const reason = yield* input.sessions.flush(driver);
@@ -402,8 +412,6 @@ export const makeRunnerTurns = Effect.fn("makeRunnerTurns")(function* (input: {
       yield* drain;
       yield* input.emit({ kind: "machine.outgrown", runId, reason });
     });
-  /** One turn readies the working directory at a time, even after a stop left one installing. */
-  const preparing = input.preparing ?? (yield* Semaphore.make(1));
 
   const interruptNow = (turn: Turn) =>
     turn.session === null || turn.providerThread === null || turn.providerTurnId === null

@@ -93,6 +93,7 @@ function waitingQuestion(step: WaitingAskRow): AutomationWaitingQuestion {
     options: ask.options,
     multi: ask.multi,
     fields: ask.fields,
+    importance: ask.importance,
     open: ask.open,
     since: step.started_at,
   };

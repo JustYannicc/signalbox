@@ -52,6 +52,15 @@ describe("questionFromStep", () => {
     expect(question?.options).toEqual(["send", "skip"]);
     expect(question?.question).toBe('{\n  "to": "ana"\n}');
   });
+
+  it("preserves a low-priority ask for waiting-question views", () => {
+    const question = questionFromStep(
+      "r",
+      step({ args: [{ options: ["dropped", "done-enough"], importance: "low" }] }),
+    );
+    expect(question?.importance).toBe("low");
+    expect(parseAutomationAsk({}).ask.importance).toBe("high");
+  });
 });
 
 describe("ask form", () => {
