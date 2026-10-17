@@ -10,6 +10,7 @@ import {
   RUNTIME_MODULE,
 } from "@signalbox/automations/workflow/runtimeSource";
 import { exports, WorkerEntrypoint } from "cloudflare:workers";
+import { log } from "evlog";
 
 import { userObjectStub, type UserObjectNamespace } from "../user/UserDirectory.ts";
 import { COMPATIBILITY_DATE } from "../../infra/stage.ts";
@@ -65,9 +66,12 @@ export const AutomationWorkflow = createDynamicWorkflowEntrypoint<AutomationWork
     const { userId, automationId, version } = metadata;
     const workerId = workerIdFor(metadata);
     const worker = env.LOADER.get(workerId, async () => {
-      // Only a cold id loads its code: one line per version per isolate, ids only (#284).
-      // @effect-diagnostics-next-line globalConsole:off - the dispatcher runs outside Effect.
-      console.log(JSON.stringify({ message: "automation worker loaded", workerId, version }));
+      // Only a cold id loads its code: one event per version per isolate, ids only (#284).
+      log.info({
+        action: "automation.worker_loaded",
+        person: { id: userId },
+        automation: { id: automationId, version, workerId },
+      });
       return {
         compatibilityDate: COMPATIBILITY_DATE,
         mainModule: RUNTIME_MAIN,
