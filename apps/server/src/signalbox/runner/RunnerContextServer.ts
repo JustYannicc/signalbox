@@ -21,6 +21,7 @@ import packageJson from "../../../package.json" with { type: "json" };
 import type { ClaudeAgentSdkQueryRunnerShape } from "../../orchestration-v2/Adapters/ClaudeAdapterV2.ts";
 import { automationCaller, layerAutomationTools } from "./RunnerAutomationTools.ts";
 import { layerRunnerPullRequestTools } from "./RunnerPullRequestTools.ts";
+import { layerLearnerTools } from "./RunnerLearnerTools.ts";
 import { type BranchDrive, layerBranchTools } from "./RunnerBranchTools.ts";
 import {
   BROWSER_EXECUTABLE_ENV,
@@ -198,6 +199,7 @@ export const startContextServer = Effect.fn("startContextServer")(function* (inp
     layerRunnerPullRequestTools(view).pipe(
       Layer.provide(Layer.mergeAll(NodeFileSystem.layer, NodePath.layer)),
     ),
+    layerLearnerTools(view),
     layerScheduledTaskTools(view, input.threadId ?? null),
     previewServiceTools,
     layerStatusLineTools(view),

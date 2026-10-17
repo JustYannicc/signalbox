@@ -187,7 +187,7 @@ const makeLayer = (options: {
   const connection = GitHubConnection.GitHubConnection.of({
     accessToken: Effect.succeed(options.token === undefined ? TOKEN : options.token),
   } as unknown as GitHubConnection.GitHubConnection["Service"]);
-  const github = GitHub.GitHub.of({ pipes: null, api: api as never });
+  const github = GitHub.GitHub.of({ pipesForUser: () => Effect.succeed(null), api: api as never });
 
   return AgentPullRequests.layer.pipe(
     Layer.provide(
