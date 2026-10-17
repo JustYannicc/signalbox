@@ -1,5 +1,4 @@
 import { AuthEnvironmentMaintainScope } from "@t3tools/contracts";
-import { useMemo } from "react";
 
 import { usePrimaryCloudLinkState } from "~/cloud/primaryCloudLinkState";
 import { hasCloudPublicConfig } from "~/cloud/publicConfig";
@@ -29,7 +28,7 @@ export function useUnsupportedSettingsCapabilities(scopeSearch: SettingsScopeSea
   const { environments } = useEnvironments();
   const primaryEnvironment = usePrimaryEnvironment();
   const showsEnvironmentUi = useShowsEnvironmentUi();
-  return useMemo(() => {
+  return (() => {
     const unsupported = unsupportedSettingsCapabilities(
       environments.filter(
         (environment) =>
@@ -41,7 +40,7 @@ export function useUnsupportedSettingsCapabilities(scopeSearch: SettingsScopeSea
     return showsEnvironmentUi
       ? unsupported
       : new Set([...unsupported, "otherEnvironments" as const]);
-  }, [environments, primaryEnvironment, scopeSearch.machine, showsEnvironmentUi]);
+  })();
 }
 
 export function useAvailableSettingsSearchItems(scopeSearch: SettingsScopeSearch = {}) {

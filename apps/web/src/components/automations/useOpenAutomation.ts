@@ -1,5 +1,4 @@
 import { useNavigate } from "@tanstack/react-router";
-import { useCallback } from "react";
 
 import { useSidebar } from "../ui/sidebar";
 import { automationRoute, type AutomationRouteTarget } from "./automationFormat";
@@ -11,20 +10,17 @@ import { automationRoute, type AutomationRouteTarget } from "./automationFormat"
 export function useOpenAutomation() {
   const navigate = useNavigate();
   const { isMobile, setOpenMobile } = useSidebar();
-  return useCallback(
-    (target?: AutomationRouteTarget, runId?: string | null) => {
-      if (isMobile) setOpenMobile(false);
-      if (target) void navigate(automationRoute(target, runId));
-      else void navigate({ to: "/automations" });
-    },
-    [isMobile, navigate, setOpenMobile],
-  );
+  return (target?: AutomationRouteTarget, runId?: string | null) => {
+    if (isMobile) setOpenMobile(false);
+    if (target) void navigate(automationRoute(target, runId));
+    else void navigate({ to: "/automations" });
+  };
 }
 
 /** Opens the overview, from anywhere. */
 export function useOpenAutomations() {
   const navigate = useNavigate();
-  return useCallback(async () => {
+  return async () => {
     await navigate({ to: "/automations" });
-  }, [navigate]);
+  };
 }

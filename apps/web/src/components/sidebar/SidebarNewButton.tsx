@@ -6,7 +6,7 @@
  */
 import { useAtomValue } from "@effect/atom-react";
 import { SquarePenIcon } from "lucide-react";
-import { useCallback, type MouseEvent as ReactMouseEvent } from "react";
+import { type MouseEvent as ReactMouseEvent } from "react";
 
 import { openCommandPalette } from "../../commandPaletteBus";
 import { useHandleNewThread } from "../../hooks/useHandleNewThread";
@@ -27,22 +27,19 @@ export function SidebarNewButton() {
     shortcutLabelForCommand(keybindings, "chat.new") ??
     (projectCount <= 1 ? shortcutLabelForCommand(keybindings, "chat.newLocal") : undefined);
 
-  const handleNew = useCallback(
-    (event: ReactMouseEvent) => {
-      if (isMobile) setOpenMobile(false);
-      if (shouldCreateNewThreadInCurrentProject(event.shiftKey, projectCount)) {
-        void startNewThreadFromContext({
-          activeDraftThread: newThreadContext.activeDraftThread,
-          activeThread: newThreadContext.activeThread ?? undefined,
-          defaultProjectRef: newThreadContext.defaultProjectRef,
-          handleNewThread: newThreadContext.handleNewThread,
-        });
-        return;
-      }
-      openCommandPalette({ open: "new-thread-in" });
-    },
-    [isMobile, newThreadContext, projectCount, setOpenMobile],
-  );
+  const handleNew = (event: ReactMouseEvent) => {
+    if (isMobile) setOpenMobile(false);
+    if (shouldCreateNewThreadInCurrentProject(event.shiftKey, projectCount)) {
+      void startNewThreadFromContext({
+        activeDraftThread: newThreadContext.activeDraftThread,
+        activeThread: newThreadContext.activeThread ?? undefined,
+        defaultProjectRef: newThreadContext.defaultProjectRef,
+        handleNewThread: newThreadContext.handleNewThread,
+      });
+      return;
+    }
+    openCommandPalette({ open: "new-thread-in" });
+  };
 
   return (
     <div className="shrink-0 px-2 pt-2">

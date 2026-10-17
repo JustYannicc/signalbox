@@ -1494,10 +1494,8 @@ export default function ChatView(props: ChatViewProps) {
   const activeRuntime = isServerThread ? serverRuntime : (activeThread?.runtime ?? null);
   // signalbox: older turns keep how their own run ended (settledRunSummaries)
   const settledRuns = useSettledRunSummaries(serverProjection?.runs ?? EMPTY_RUNS);
-  const timelineLatestRun = useMemo(
-    () => (activeActivityRun === null ? null : { ...activeActivityRun, settledRuns }),
-    [activeActivityRun, settledRuns],
-  );
+  const timelineLatestRun =
+    activeActivityRun === null ? null : { ...activeActivityRun, settledRuns };
   const hasHeldQueuedRuns =
     isServerThread &&
     serverProjection?.runs.some((run) => run.status === "queued" && run.queueHeld === true) ===

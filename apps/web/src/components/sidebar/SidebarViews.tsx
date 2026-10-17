@@ -11,7 +11,7 @@
  * thread.
  */
 import { useLocation } from "@tanstack/react-router";
-import { useCallback, type ReactNode } from "react";
+import { type ReactNode } from "react";
 
 import { isElectron } from "../../env";
 import { AutomationsWaitingGroup } from "../automations/AutomationsWaitingGroup";
@@ -58,13 +58,10 @@ export function SidebarViews(props: {
     environmentIdentificationMode === "artwork",
   );
 
-  const changeView = useCallback(
-    (next: SidebarView) => {
-      setView(next);
-      if (onUtilityPage) void navigateToMainApp();
-    },
-    [navigateToMainApp, onUtilityPage, setView],
-  );
+  const changeView = (next: SidebarView) => {
+    setView(next);
+    if (onUtilityPage) void navigateToMainApp();
+  };
 
   return (
     <SidebarRailContext value>

@@ -1702,24 +1702,20 @@ function OpenCommandPaletteDialog(props: {
   // several, the environments view lists them as they come up.
   const isOnAddProjectEnvironmentsView =
     currentView?.groups[0]?.value === ADD_PROJECT_ENVIRONMENTS_VIEW;
-  useEffect(() => {
-    if (!addProjectAwaitingConnection) return;
-    if (!isOnAddProjectEnvironmentsView) {
-      setAddProjectAwaitingConnection(false);
-      return;
-    }
-    if (addProjectEnvironmentOptions.length === 0) return;
+  if (
+    addProjectAwaitingConnection &&
+    (!isOnAddProjectEnvironmentsView || addProjectEnvironmentOptions.length > 0)
+  ) {
     setAddProjectAwaitingConnection(false);
-    if (addProjectEnvironmentOptions.length > 1 || defaultAddProjectEnvironmentId === null) return;
-    setViewStack((previousViews) => previousViews.slice(0, -1));
-    startAddProjectSourceSelection(defaultAddProjectEnvironmentId);
-  }, [
-    addProjectAwaitingConnection,
-    addProjectEnvironmentOptions.length,
-    defaultAddProjectEnvironmentId,
-    isOnAddProjectEnvironmentsView,
-    startAddProjectSourceSelection,
-  ]);
+    if (
+      isOnAddProjectEnvironmentsView &&
+      addProjectEnvironmentOptions.length === 1 &&
+      defaultAddProjectEnvironmentId !== null
+    ) {
+      setViewStack((previousViews) => previousViews.slice(0, -1));
+      startAddProjectSourceSelection(defaultAddProjectEnvironmentId);
+    }
+  }
 
   const openNewProjectFlow = () => {
     const firstOption = newProjectEnvironmentOptions[0];
