@@ -11,6 +11,9 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
+import { DriveDirectory } from "../drive/DriveDirectory.ts";
+import { projectIdForContext, projectIdForDrive } from "../user/contextProjects.ts";
+import * as UserDriveIndex from "../user/UserDriveIndex.ts";
 import { makeMemoryCloud } from "../testing.ts";
 import type { ThreadSummary } from "../thread/ThreadEngine.ts";
 import * as UserContexts from "../user/UserContexts.ts";
@@ -19,8 +22,9 @@ import * as SearchAuthority from "./SearchAuthority.ts";
 
 const userId = "user_1";
 const orgId = SignalboxContextId.make("org_acme");
-const projectOne = ProjectId.make("project-one");
-const projectTwo = ProjectId.make("project-two");
+const projectOne = ProjectId.make("scratch");
+const sharedDrive = "folder/personal/shared-search";
+const projectTwo = projectIdForDrive(sharedDrive);
 const at = (millis: number) => DateTime.makeUnsafe(millis);
 
 const shell = (
@@ -81,21 +85,33 @@ const summary = (
 const prepare = Effect.gen(function* () {
   const cloud = makeMemoryCloud();
   const userServices = cloud.userObject(userId);
-  const { store, contexts } = yield* Effect.all({
+  const { store, contexts, driveIndex } = yield* Effect.all({
     store: UserStore.UserStore,
     contexts: UserContexts.UserContexts,
+    driveIndex: UserDriveIndex.UserDriveIndex,
   }).pipe(Effect.provide(userServices));
 
   yield* store.recordSignIn({ id: userId, email: "person@example.com" });
   yield* contexts.syncOrganizations([{ id: orgId, name: "Acme" }]);
+  const drive = yield* DriveDirectory.use((directory) =>
+    Effect.succeed(directory.forDrive(sharedDrive)),
+  ).pipe(Effect.provide(cloud.drives.layer));
+  const owner = { userId: "drive-owner", email: "owner@example.com", name: "Owner" };
+  yield* drive.setup({
+    name: "Shared search",
+    members: [
+      { ...owner, role: "owner" },
+      { userId, email: "person@example.com", name: null, role: "viewer" },
+    ],
+  });
   yield* store.replaceThreadIndex([
     summary("personal-one", PERSONAL_CONTEXT_ID, projectOne),
     summary("personal-two", PERSONAL_CONTEXT_ID, projectTwo),
-    summary("organization-thread", orgId, ProjectId.make("project-org")),
-    summary("archived-thread", PERSONAL_CONTEXT_ID, ProjectId.make("project-archived"), {
+    summary("organization-thread", orgId, projectIdForContext(orgId)),
+    summary("archived-thread", PERSONAL_CONTEXT_ID, projectOne, {
       archivedAt: at(20),
     }),
-    summary("deleted-thread", PERSONAL_CONTEXT_ID, ProjectId.make("project-deleted"), {
+    summary("deleted-thread", PERSONAL_CONTEXT_ID, projectOne, {
       deletedAt: at(20),
     }),
   ]);
@@ -103,7 +119,7 @@ const prepare = Effect.gen(function* () {
   const authority = yield* SearchAuthority.SearchAuthority.pipe(
     Effect.provide(SearchAuthority.layerUser.pipe(Layer.provide(userServices))),
   );
-  return { authority, contexts };
+  return { authority, contexts, drive, owner, driveIndex, store };
 });
 
 describe("SearchAuthority", () => {
@@ -145,10 +161,44 @@ describe("SearchAuthority", () => {
 
       expect(result.homes).toEqual([
         {
-          home: { ownerId: PERSONAL_CONTEXT_ID, projectId: projectOne },
-          threadIds: ["personal-one"],
+          home: { ownerId: userId, projectId: projectOne },
+          threadIds: ["archived-thread", "personal-one"],
         },
       ]);
+    }),
+  );
+
+  it.effect("revokes a shared folder before its stale membership and thread indexes catch up", () =>
+    Effect.gen(function* () {
+      const { authority, contexts, drive, owner, driveIndex, store } = yield* prepare;
+      const actor = { userId, contextIds: [PERSONAL_CONTEXT_ID, orgId] };
+      const before = yield* authority.current(actor);
+      expect(before.homes.flatMap((home) => home.threadIds)).toContain("personal-two");
+      const staleThreads = yield* store.threadIndex;
+      yield* drive.unshare(owner, userId);
+      yield* store.replaceThreadIndex(
+        staleThreads.threads.map((row) => ({
+          ...row,
+          threadId: row.shell.id,
+          revision: 1,
+        })),
+      );
+      // The outbox may be delayed. Keep the derived list granting access while the drive denies it.
+      yield* driveIndex.record({
+        driveId: sharedDrive,
+        name: "Shared search",
+        role: "viewer",
+        sharedBy: owner.userId,
+        revision: 100,
+      });
+      expect(yield* contexts.contextIds).toContain(orgId);
+      expect((yield* driveIndex.drives).some((entry) => entry.driveId === sharedDrive)).toBe(true);
+      expect(
+        (yield* store.threadIndex).threads.some((row) => row.shell.id === "personal-two"),
+      ).toBe(true);
+      const after = yield* authority.current(actor);
+      expect(after.homes.flatMap((home) => home.threadIds)).not.toContain("personal-two");
+      expect(after.homes.flatMap((home) => home.threadIds)).toContain("personal-one");
     }),
   );
 
