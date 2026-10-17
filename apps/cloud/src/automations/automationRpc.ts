@@ -1,11 +1,10 @@
 import {
   AUTOMATION_WS_METHODS,
   AutomationError,
-  DEFAULT_PROVIDER_INTERACTION_MODE,
-  DEFAULT_RUNTIME_MODE,
   ThreadId,
   type AutomationRpcs,
   type ModelSelection,
+  type ProjectId,
 } from "@t3tools/contracts";
 import { AutomationThreads } from "@signalbox/automations/host";
 import { fail } from "@signalbox/automations/errors";
@@ -15,7 +14,7 @@ import type * as Rpc from "effect/rpc/Rpc";
 import * as Stream from "effect/Stream";
 
 import { CloudAutomations } from "./CloudAutomations.ts";
-import { acceptCompiled, CloudCompiler, COMPILE_WHERE } from "./cloudCompiler.ts";
+import { acceptCompiled, COMPILE_WHERE } from "./cloudCompiler.ts";
 import { GitHubWebhooks } from "../github/GitHubWebhooks.ts";
 
 /**
@@ -55,7 +54,7 @@ const compileWhere = fail(COMPILE_WHERE);
  * what an automation they save runs with: there's no calling thread to take it from.
  */
 export const makeAutomationHandlers = Effect.fn("makeAutomationHandlers")(function* (options: {
-  readonly newThreadModel: Effect.Effect<ModelSelection | null>;
+  readonly newThreadModel: (projectId?: ProjectId) => Effect.Effect<ModelSelection | null>;
   /**
    * Whether publishing vouches for the reviewed version: only a person's app
    * session can say a person looked at it. Keys, the CLI and MCP may be an
@@ -66,19 +65,7 @@ export const makeAutomationHandlers = Effect.fn("makeAutomationHandlers")(functi
   const engine = yield* WorkflowEngine.WorkflowEngine;
   const automations = yield* CloudAutomations;
   const threads = yield* AutomationThreads;
-  const compiler = yield* CloudCompiler;
   const github = yield* GitHubWebhooks;
-  const saveDefaults = options.newThreadModel.pipe(
-    Effect.flatMap((modelSelection) =>
-      modelSelection === null
-        ? fail("Add an account to a pool first: saved automations run on your pool.")
-        : Effect.succeed({
-            modelSelection,
-            runtimeMode: DEFAULT_RUNTIME_MODE,
-            interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
-          }),
-    ),
-  );
   const flushed = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
     effect.pipe(Effect.tap(() => automations.flush));
   /** Spans name the automation or run, never what's in them. */
@@ -142,32 +129,10 @@ export const makeAutomationHandlers = Effect.fn("makeAutomationHandlers")(functi
             Effect.map((compiled) => ({ ok: true as const, graph: compiled.graph })),
           ),
     [METHODS.automationsSave]: (input: Payload<typeof METHODS.automationsSave>) =>
-      input.compiled === undefined
-        ? compileWhere
-        : about({
-            "folder.id": input.projectId,
-            ...(input.automationId ? { "automation.id": input.automationId } : {}),
-          }).pipe(
-            Effect.andThen(
-              flushed(
-                Effect.gen(function* () {
-                  const compiled = yield* acceptCompiled(input.compiled);
-                  const defaults = yield* saveDefaults;
-                  return yield* compiler.withStaged(
-                    input.source,
-                    compiled,
-                    engine.save({
-                      source: input.source,
-                      projectId: input.projectId,
-                      defaults,
-                      ...(input.automationId ? { automationId: input.automationId } : {}),
-                      ...(input.draft === true ? { draft: true } : {}),
-                    }),
-                  );
-                }),
-              ),
-            ),
-          ),
+      about({
+        "folder.id": input.projectId,
+        ...(input.automationId ? { "automation.id": input.automationId } : {}),
+      }).pipe(Effect.andThen(automations.save(input, options.newThreadModel))),
     [METHODS.automationsCustomize]: (_input: Payload<typeof METHODS.automationsCustomize>) =>
       notYet("Customizing built-ins from the app (an agent's automation_customize works)"),
     [METHODS.automationsStopAttached]: (input: Payload<typeof METHODS.automationsStopAttached>) =>

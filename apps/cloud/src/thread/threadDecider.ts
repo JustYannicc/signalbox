@@ -1,4 +1,5 @@
 import {
+  type ModelSelection,
   MessageId,
   type OrchestrationV2AppThread,
   type OrchestrationV2Command,
@@ -11,7 +12,7 @@ import {
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 
-import { isHarnessInstance } from "./providerCatalog.ts";
+import { isHarnessInstance } from "../models/ModelRouting.ts";
 import { decideLifecycleCommand } from "./lifecycleCommands.ts";
 import { pullRequestLinkEvents } from "./pullRequests/pullRequestLinks.ts";
 import {
@@ -404,7 +405,10 @@ export function decide(
  */
 export function decideLaunch(
   projection: Projection | null,
-  input: OrchestrationV2ThreadLaunchInput & { readonly threadId: ThreadId },
+  input: OrchestrationV2ThreadLaunchInput & {
+    readonly threadId: ThreadId;
+    readonly modelSelection: ModelSelection;
+  },
   ctx: DecisionContext,
   worktree: ThreadWorktree | null = null,
 ): Decision {

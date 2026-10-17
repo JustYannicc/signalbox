@@ -64,6 +64,7 @@ import { serializeComposerFileLink } from "@t3tools/shared/composerTrigger";
 import { folderDropTarget, resolveDroppedFolderPath } from "./folderDrop";
 import { createModelSelection, normalizeModelSlug } from "@t3tools/shared/model";
 import { USAGE_LIMITS_COMMAND } from "@t3tools/shared/usageLimits";
+import { resolveComposerDefaultModelPolicy } from "../../lib/composerDefaultModelPolicy"; // signalbox: combine project, person, and pool defaults for composer drafts.
 import {
   memo,
   type ComponentProps,
@@ -91,15 +92,15 @@ import {
   replaceTextRange,
 } from "../../composer-logic";
 import { DISCONNECTED_COMPOSER_PLACEHOLDER } from "../../composerPlaceholder";
+import { composerModelSendBlockReason } from "../../lib/composerModelPolicy"; // signalbox: apply Signalbox send checks to the selected pooled model.
 import { listContinuationForEnter, listIndentForTab } from "../../composer-list-continuation";
 import {
   deriveComposerSendState,
-  getAntigravitySendBlockReason,
   readFileAsDataUrl,
   resolveComposerInteractionMode,
-  resolveComposerProviderSelection,
   threadShellHasStarted,
 } from "../ChatView.logic";
+import { resolveComposerProviderSelection } from "../../lib/composerProviderSelection"; // signalbox: select providers from the project's pool.
 import {
   dataTransferHasComposerMention,
   makeComposerMentionDragHandlers,
@@ -122,10 +123,11 @@ import {
   composerDraftHasUserContent,
   composerTargetKey,
   hydrateImagesFromPersisted,
+  useEffectiveComposerModelState,
   useComposerDraftStore,
   useComposerThreadDraft,
-  useEffectiveComposerModelState,
 } from "../../composerDraftStore";
+import { useSignalboxEffectiveComposerModelState } from "../../lib/composerModelStatePolicy"; // signalbox: refresh implicit new-thread models while preserving explicit picks.
 import {
   MAX_STASH_ENTRIES,
   partitionStashAttachments,
@@ -1568,6 +1570,7 @@ export interface ChatComposerProps {
   providerStatuses: ServerProvider[];
   providerCatalogKnown: boolean;
   activeProjectDefaultModelSelection: ModelSelection | null | undefined;
+  personDefaultModelSelection: ModelSelection | null; // signalbox: fallback when the project has no configured choice.
   activeThreadModelSelection: ModelSelection | null | undefined;
   reportedModelSelection?: ModelSelection | null;
   activeProjectId: ProjectId | null;
@@ -1807,7 +1810,11 @@ function useComposerProviderSelection(
       ),
     );
   // signalbox: pools
-  const { entries: providerInstanceEntries, need: poolNeed } = useProjectPoolEntries(
+  const {
+    entries: providerInstanceEntries,
+    need: poolNeed,
+    mapModelSelectionToPool, // signalbox: resolve defaults against the destination project's pool.
+  } = useProjectPoolEntries(
     environmentId,
     activeProjectId,
     allProviderInstanceEntries,
@@ -1817,7 +1824,12 @@ function useComposerProviderSelection(
   return {
     providerInstanceEntries,
     poolNeed, // signalbox: pools
-    ...resolveComposerProviderSelection({ ...selection, entries: providerInstanceEntries }),
+    mapModelSelectionToPool, // signalbox: pass pool mapping into default resolution.
+    ...resolveComposerProviderSelection({
+      ...selection,
+      entries: providerInstanceEntries,
+      providerInstances: settings.providerInstances, // signalbox: identify cached custom pools.
+    }),
   };
 }
 
@@ -2270,14 +2282,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     uploadsByImageId,
   ]);
 
-  const {
-    providerInstanceEntries,
-    selectedProviderEntry,
-    requestedDriverKind,
-    lockedContinuationGroupKey,
-    unavailableProviderInstanceId,
-    poolNeed: poolNeedNow, // signalbox: pools
-  } = useComposerProviderSelection({
+  // signalbox: resolve initial model and provider state from the folder, person, and project pool.
+  const isNewThreadDraft = routeKind === "draft";
+  const providerSelection = useComposerProviderSelection({
     providerStatuses,
     settings,
     activeProjectId,
@@ -2293,6 +2300,19 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     lockedInstanceId:
       activeThread?.runtime?.providerInstanceId ?? activeThreadModelSelection?.instanceId,
   });
+  const { providerInstanceEntries, poolNeed: poolNeedNow } = providerSelection;
+  const modelPolicy = resolveComposerDefaultModelPolicy({
+    ...props,
+    composerDraft,
+    providerSelection,
+  });
+  const { initialModelSelection } = modelPolicy;
+  const {
+    selectedProviderEntry,
+    requestedDriverKind,
+    lockedContinuationGroupKey,
+    unavailableProviderInstanceId,
+  } = modelPolicy.selectedProviderSelection;
   // signalbox: only the pool the project runs on; its need waits for the catalog, like the chrome.
   const needsPool = useNeedsPool(environmentId, providerCatalogKnown ? poolNeedNow : null);
   const selectedInstanceId =
@@ -2322,7 +2342,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     ? runtimeMode
     : (compatibleRuntimeModeOptions[0]?.mode ?? runtimeMode);
 
-  const { modelOptions: composerModelOptions, selectedModel } = useEffectiveComposerModelState({
+  // signalbox: apply new-thread defaults while preserving explicit picks and existing thread pins.
+  const legacyComposerModelState = useEffectiveComposerModelState({
     threadRef: composerDraftTarget,
     providers: providerStatuses,
     selectedProvider,
@@ -2331,7 +2352,16 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     projectModelSelection: activeProjectDefaultModelSelection,
     settings,
   });
-  const providerSendBlockReason = getAntigravitySendBlockReason(
+  const { modelOptions: composerModelOptions, selectedModel } =
+    useSignalboxEffectiveComposerModelState({
+      legacyState: legacyComposerModelState,
+      composerDraft,
+      isNewThreadDraft,
+      initialModelSelection,
+      selectedInstanceId,
+    });
+  // signalbox: use the pool-aware model policy for provider send eligibility.
+  const providerSendBlockReason = composerModelSendBlockReason(
     selectedProviderEntry?.snapshot,
     selectedModel,
   );
