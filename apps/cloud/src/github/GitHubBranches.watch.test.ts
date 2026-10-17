@@ -33,7 +33,9 @@ const REMOTE = {
   defaultBranch: "main",
 } as const;
 
-class TestDrive extends Context.Service<TestDrive, DriveHandle>()("test/GitHubBranches/Drive") {}
+class TestDrive extends Context.Service<TestDrive, DriveHandle>()(
+  "@signalbox/cloud/github/GitHubBranches.watch.test/TestDrive",
+) {}
 
 const commit = (oid: string, parents: ReadonlyArray<string>) => ({
   oid,
