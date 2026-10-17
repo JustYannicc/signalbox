@@ -72,6 +72,12 @@ describe("cloud model settings RPC", () => {
 
       const saved = yield* writer[WS_METHODS.serverUpdateSettings]({
         patch: {
+          migrateModelPreferences: {
+            favorites: [{ provider: SCRIPTED_INSTANCE_ID, model: "old-local-model" }],
+            providerModelPreferences: {
+              [SCRIPTED_INSTANCE_ID]: { hiddenModels: ["old-local-model"], modelOrder: [] },
+            },
+          },
           setModelFavorites: [{ provider: SCRIPTED_INSTANCE_ID, model, favorite: true }],
           setModelsHidden: [{ provider: SCRIPTED_INSTANCE_ID, model, hidden: true }],
           setProviderModelOrder: { provider: SCRIPTED_INSTANCE_ID, modelOrder: [model] },

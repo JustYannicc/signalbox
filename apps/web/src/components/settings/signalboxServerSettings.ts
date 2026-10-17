@@ -24,7 +24,7 @@ export function acceptsServerSettings(environment: SettingsTarget) {
   );
 }
 
-export function acceptsModelSettings(environment: SettingsTarget) {
+function acceptsModelSettings(environment: SettingsTarget) {
   return environmentCanWriteModelSettings(environment.serverConfig?.environment?.capabilities);
 }
 

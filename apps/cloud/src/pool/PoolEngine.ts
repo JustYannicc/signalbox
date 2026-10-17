@@ -159,9 +159,9 @@ export class PoolEngine extends Context.Service<
     readonly models: (actor: PoolActor) => Effect.Effect<PoolModels.PoolModels, Failure>;
     /** Reads the last catalog without refreshing it, for a pool link's metadata endpoint. */
     readonly cachedModels: (actor: PoolActor) => Effect.Effect<PoolModels.PoolModels, Failure>;
-    /** Refreshes a stale catalog from an alarm without waking a managed pool. */
+    /** Refreshes a stale catalog from an alarm, waking a managed pool for this read. */
     readonly refreshModelsAtAlarm: () => Effect.Effect<void, SqlError>;
-    /** The next catalog refresh alarm, when this pool can be read without waking its container. */
+    /** The next catalog refresh alarm for a pool with accounts or an external backing. */
     readonly nextModelsRefreshAt: () => Effect.Effect<number | null, SqlError>;
     readonly startLogin: (
       actor: PoolActor,
@@ -873,18 +873,25 @@ const make = Effect.gen(function* () {
   const canRefreshModels = (row: PoolRow): Effect.Effect<boolean> =>
     row.backing === "external" ? Effect.succeed(row.external_url !== null) : container.running;
 
+  const schedulesModels = (row: PoolRow) =>
+    row.backing === "external"
+      ? Effect.succeed(row.external_url !== null)
+      : Effect.map(cachedAccounts, (cached) => cached.accounts.length > 0);
+
   const modelRefreshDue = (cached: PoolModels.PoolModels, now: number) => {
     if (cached.checkedAt > 0 && now - cached.checkedAt < MODELS_REFRESH_MS) return false;
     return cached.attemptedAt === 0 || now - cached.attemptedAt >= MODELS_REFRESH_RETRY_MS;
   };
 
-  /** Reads the provider catalog using a passive container peek, never a cold start. */
-  const refreshModelCatalog = (row: PoolRow) =>
+  /** Alarm reads may cold-start a pool; ordinary reads stay passive. */
+  const refreshModelCatalog = (row: PoolRow, wake = false) =>
     Effect.gen(function* () {
       const now = yield* Clock.currentTimeMillis;
       // Record the attempt first so a crash or failed response cannot cause an alarm loop.
       yield* withSql(PoolModels.markAttempted(now));
-      const endpoint = endpointOf(row, { passive: true });
+      const cold = wake && row.backing !== "external" && !(yield* container.running);
+      const endpoint = endpointOf(row, cold ? { models: true } : { passive: true });
+      if (cold) yield* ensureManagedConfig(endpoint);
       const models = endpoint.link
         ? yield* CliProxyApi.listPoolLinkModels(endpoint)
         : yield* CliProxyApi.listModels(endpoint);
@@ -901,12 +908,12 @@ const make = Effect.gen(function* () {
     );
 
   const refreshingModels = yield* Semaphore.make(1);
-  const refreshModelsIfDue = (row: PoolRow) =>
+  const refreshModelsIfDue = (row: PoolRow, wake = false) =>
     refreshingModels.withPermits(1)(
       Effect.gen(function* () {
         const cached = yield* cachedModels;
         const now = yield* Clock.currentTimeMillis;
-        if (modelRefreshDue(cached, now)) yield* refreshModelCatalog(row);
+        if (modelRefreshDue(cached, now)) yield* refreshModelCatalog(row, wake);
       }),
     );
 
@@ -956,14 +963,14 @@ const make = Effect.gen(function* () {
   const refreshModelsAtAlarm: PoolEngine["Service"]["refreshModelsAtAlarm"] = () =>
     Effect.gen(function* () {
       const row = yield* poolRow;
-      if (row === null || !(yield* canRefreshModels(row))) return;
-      yield* refreshModelsIfDue(row);
+      if (row === null || !(yield* schedulesModels(row))) return;
+      yield* refreshModelsIfDue(row, true);
     });
 
   const nextModelsRefreshAt: PoolEngine["Service"]["nextModelsRefreshAt"] = () =>
     Effect.gen(function* () {
       const row = yield* poolRow;
-      if (row === null || !(yield* canRefreshModels(row))) return null;
+      if (row === null || !(yield* schedulesModels(row))) return null;
       const cached = yield* cachedModels;
       const now = yield* Clock.currentTimeMillis;
       const next =

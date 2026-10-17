@@ -281,9 +281,9 @@ which lists only what its enabled accounts can run). Its v8 management catalog
 supplies display names and reasoning levels. CLIProxyAPI updates that catalog
 itself; new served models do not need a Signalbox deploy. Signalbox keeps a
 small fallback for labels, defaults, and established fast-mode support. Account
-changes refresh the cache immediately. Alarms refresh active managed pools and
-external pools every three hours, with a five-minute retry after failures,
-without waking sleeping containers.
+changes refresh the cache immediately. Alarms refresh pools every three hours,
+with a five-minute retry after failures. A managed pool with accounts wakes for
+that read and follows the normal idle timeout afterwards.
 
 A turn on a model its pool doesn't serve is refused at turn start
 (`thread/TurnModels.ts`). The scripted provider, a reply without a model, is

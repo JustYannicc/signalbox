@@ -17,8 +17,10 @@ import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
+import * as Equal from "effect/Equal";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Schedule from "effect/Schedule";
 import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
@@ -274,15 +276,31 @@ const make = Effect.gen(function* () {
       return yield* refresh(actor);
     });
 
+  // Pool alarms update their own objects, so reread at the shared cache TTL to
+  // carry those changes into user config streams with no new user-side command.
   const changes: UserPools["Service"]["changes"] = (actor) =>
     Stream.unwrap(
-      Effect.as(
-        state(actor),
-        SubscriptionRef.changes(current).pipe(
+      Effect.gen(function* () {
+        const poll = Stream.fromSchedule(Schedule.spaced(ACCOUNTS_FRESH_MS)).pipe(
+          Stream.mapEffect(() =>
+            state(actor).pipe(
+              Effect.catchTags({
+                AccountHubRpcError: () =>
+                  Effect.logWarning("cloud pool subscription refresh failed"),
+              }),
+            ),
+          ),
+          Stream.runDrain,
+          Effect.forkScoped,
+        );
+        yield* poll;
+        yield* state(actor);
+        return SubscriptionRef.changes(current).pipe(
           Stream.filter(Option.isSome),
           Stream.map((known) => known.value.state),
-        ),
-      ),
+          Stream.changesWith<PoolsState>(Equal.equals),
+        );
+      }),
     );
 
   /** A pool object call, failing the way pool RPCs fail. */

@@ -115,6 +115,39 @@ describe("PoolObject", () => {
     }).pipe(Effect.ensuring(Effect.sync(() => vi.useRealTimers())));
   });
 
+  it.effect("keeps a catalog deadline while asleep and wakes once for its scheduled read", () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(T0);
+    const { pool, runtime, cliProxyApi, container } = makePool();
+    const runEngine = <A, E>(
+      effect: (engine: PoolEngine.PoolEngine["Service"]) => Effect.Effect<A, E>,
+    ) => Effect.promise(() => runtime.runPromise(PoolEngine.PoolEngine.use(effect)));
+    return Effect.gen(function* () {
+      yield* pool.create(alice, { name: "Work", personal: false });
+      expect(yield* runEngine((engine) => engine.nextModelsRefreshAt())).toBeNull();
+      yield* signIn(pool);
+      yield* Effect.promise(() =>
+        runtime.runPromise(PoolContainer.PoolContainer.use((service) => service.stop)),
+      );
+      cliProxyApi.catalog.claude!.push({
+        id: "claude-new-while-asleep",
+        created: 1,
+        displayName: "New Claude",
+        reasoningEfforts: ["high"],
+      });
+      const deadline = T0 + PoolEngine.MODELS_REFRESH_MS;
+      expect(yield* runEngine((engine) => engine.nextModelsRefreshAt())).toBe(deadline);
+      vi.setSystemTime(deadline);
+      yield* runEngine((engine) => engine.refreshModelsAtAlarm());
+      expect(
+        (yield* runEngine((engine) => engine.cachedModels(alice))).models.map((model) => model.id),
+      ).toContain("claude-new-while-asleep");
+      expect(container.starts).toBe(2);
+      yield* runEngine((engine) => engine.refreshModelsAtAlarm());
+      expect(container.starts).toBe(2);
+    }).pipe(Effect.ensuring(Effect.sync(() => vi.useRealTimers())));
+  });
+
   it.effect("backs off failed model refreshes and does not wake a sleeping managed pool", () => {
     vi.useFakeTimers({ toFake: ["Date"] });
     vi.setSystemTime(T0);
@@ -154,7 +187,7 @@ describe("PoolObject", () => {
       yield* pool.models(alice);
       expect(container.starts).toBe(1);
       expect(modelReads).toBe(before + 1);
-      expect(yield* nextRefresh()).toBeNull();
+      expect(yield* nextRefresh()).toBe(T0 + 2 * PoolEngine.MODELS_REFRESH_MS);
     }).pipe(Effect.ensuring(Effect.sync(() => vi.useRealTimers())));
   });
 

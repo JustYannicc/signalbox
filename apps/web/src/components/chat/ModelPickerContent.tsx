@@ -12,7 +12,7 @@ import { useNavigate } from "@tanstack/react-router";
 import { LegendList, type LegendListRef } from "@legendapp/list/react";
 import { memo, useMemo, useState, useCallback, useEffect, useLayoutEffect, useRef } from "react";
 import { ChevronRightIcon } from "lucide-react";
-import { ModelListRow } from "./ModelListRow";
+import { ModelListRow } from "./SignalboxModelListRow";
 import { ModelPickerSidebar } from "./ModelPickerSidebar";
 import { getProviderStatusMessage, hasProviderSetup } from "./ProviderStatusBanner";
 import {
@@ -43,7 +43,6 @@ import {
   useToggleEnvironmentModelFavorite,
 } from "~/hooks/useSettings";
 import { cn } from "~/lib/utils";
-import { useEnvironmentCanWriteModelSettings } from "~/state/environmentCapabilities";
 import { getVirtualizedScrollFadeClassName } from "../ui/scroll-area";
 import { TooltipProvider } from "../ui/tooltip";
 import { InlineButton } from "../ui/button";
@@ -190,7 +189,6 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
   const pickerContentRef = useRef<HTMLDivElement>(null);
   const highlightedModelKeyRef = useRef<string | null>(null);
   const { favorites } = useEnvironmentModelPreferences(props.environmentId);
-  const canWriteModelSettings = useEnvironmentCanWriteModelSettings(props.environmentId);
   const activeEntry = props.instanceEntries.find(
     (entry) => entry.instanceId === props.activeInstanceId,
   );
@@ -924,7 +922,6 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
                         isFavorite={favoritesSet.has(
                           providerModelKey(model.instanceId, model.slug),
                         )}
-                        canToggleFavorite={canWriteModelSettings}
                         isSelected={
                           selectedModelKeys !== undefined
                             ? selectedModelKeySet.has(modelKey)

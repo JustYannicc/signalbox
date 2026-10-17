@@ -92,6 +92,31 @@ const ALLOWED_PATCH_KEYS = new Set([
   "defaultModelSelection",
 ]);
 
+const withAvailableMigration = (patch: ServerSettingsPatch, available: AvailableModels) => {
+  const migration = patch.migrateModelPreferences;
+  if (migration === undefined) return patch;
+  // Legacy browser preferences can belong to another environment. They must not block a valid write.
+  const filtered = filterAvailableModels(
+    {
+      favorites: migration.favorites ?? null,
+      providerModelPreferences: migration.providerModelPreferences ?? null,
+      defaultModelSelection: null,
+    },
+    available,
+  );
+  return {
+    ...patch,
+    migrateModelPreferences: {
+      ...(migration.favorites === undefined ? {} : { favorites: filtered.favorites ?? [] }),
+      ...(migration.providerModelPreferences === undefined
+        ? {}
+        : {
+            providerModelPreferences: filtered.providerModelPreferences ?? {},
+          }),
+    },
+  };
+};
+
 const validatePatch = (patch: ServerSettingsPatch, available: AvailableModels) =>
   Effect.gen(function* () {
     if (Object.keys(patch).some((key) => !ALLOWED_PATCH_KEYS.has(key))) {
@@ -171,13 +196,14 @@ const make = Effect.gen(function* () {
 
   const update: UserModelSettings["Service"]["update"] = (patch, available) =>
     Effect.gen(function* () {
-      yield* validatePatch(patch, available);
+      const prepared = withAvailableMigration(patch, available);
+      yield* validatePatch(prepared, available);
       const [next, wrote] = yield* sql.withTransaction(
         Effect.gen(function* () {
           const current = yield* read;
           const settings = applyServerSettingsPatch(
             { ...DEFAULT_SERVER_SETTINGS, ...current },
-            patch,
+            prepared,
           );
           const next: ModelSettingsSnapshot = {
             favorites: settings.favorites,
