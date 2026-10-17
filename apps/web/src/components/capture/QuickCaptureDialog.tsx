@@ -59,6 +59,7 @@ export function QuickCaptureDialog(props: { readonly open: boolean }) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   // Read once: each opening mounts afresh, from a failed save's text when there was one.
   const [restore] = useState(() => useQuickCaptureStore.getState().restore);
+  const [openCount] = useState(() => useQuickCaptureStore.getState().openCount);
   const [text, setText] = useState(restore?.text ?? "");
   const [caret, setCaret] = useState(restore?.text.length ?? 0);
   const [picked, setPicked] = useState<CaptureDestination | null>(restore?.destination ?? null);
@@ -102,7 +103,8 @@ export function QuickCaptureDialog(props: { readonly open: boolean }) {
       return;
     }
     setSaving(true);
-    void saved.finally(closeQuickCapture);
+    // Only this opening: if it was dismissed and a failed save reopened it, leave that one up.
+    void saved.finally(() => closeQuickCapture(openCount));
   };
 
   const updateText = (next: string, nextCaret: number) => {
@@ -115,7 +117,7 @@ export function QuickCaptureDialog(props: { readonly open: boolean }) {
   };
 
   const pick = (choice: CaptureDestination) => {
-    if (!trigger) return;
+    if (!trigger || savedRef.current) return;
     const next = removeTriggerText(text, trigger);
     updateText(next.text, next.caret);
     setPicked(choice);
@@ -125,7 +127,8 @@ export function QuickCaptureDialog(props: { readonly open: boolean }) {
   // Counted synchronously, so a drop and a paste in one tick are capped and reported against the same total.
   const fileCountRef = useRef(files.length);
   const addFiles = (incoming: ReadonlyArray<File>) => {
-    if (incoming.length === 0) return;
+    // Once saving starts, what's being saved is fixed: a late file would show here and never reach the draft.
+    if (incoming.length === 0 || savedRef.current) return;
     const room = Math.max(PROVIDER_SEND_TURN_MAX_ATTACHMENTS - fileCountRef.current, 0);
     const kept = incoming.slice(0, room).map((file) => ({ id: randomUUID(), file }));
     fileCountRef.current += kept.length;
@@ -139,6 +142,7 @@ export function QuickCaptureDialog(props: { readonly open: boolean }) {
   };
 
   const removeFile = (id: string) => {
+    if (savedRef.current) return;
     fileCountRef.current -= 1;
     setFiles((current) => current.filter((file) => file.id !== id));
   };
@@ -180,7 +184,7 @@ export function QuickCaptureDialog(props: { readonly open: boolean }) {
       if (hasContent) finish(false);
       return;
     }
-    if (event.key === "Backspace" && caret === 0 && picked !== null) {
+    if (event.key === "Backspace" && caret === 0 && picked !== null && !savedRef.current) {
       setPicked(null);
     }
   };
@@ -221,8 +225,11 @@ export function QuickCaptureDialog(props: { readonly open: boolean }) {
     <CommandDialog
       open={props.open}
       onOpenChange={(next) => {
+        if (next) return;
+        // While saving, dismissing just hides the bar: the save carries on, and a failed one reopens it.
+        if (saving) closeQuickCapture();
         // Esc, a click outside: keep what's written as a draft.
-        if (!next) finish(false);
+        else finish(false);
       }}
     >
       <CommandDialogPopup aria-label="Quick capture" data-quick-capture="">
@@ -268,7 +275,9 @@ export function QuickCaptureDialog(props: { readonly open: boolean }) {
               <CaptureChips
                 picked={picked}
                 files={files}
-                onUnpick={() => setPicked(null)}
+                onUnpick={() => {
+                  if (!savedRef.current) setPicked(null);
+                }}
                 onRemoveFile={removeFile}
               />
             )}

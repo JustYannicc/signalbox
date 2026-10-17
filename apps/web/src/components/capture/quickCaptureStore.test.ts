@@ -59,4 +59,16 @@ describe("quickCaptureStore", () => {
     openQuickCapture();
     expect(useQuickCaptureStore.getState().restore).toBeNull();
   });
+
+  it("a stale opening's close leaves the capture that replaced it open", () => {
+    openQuickCapture();
+    const stale = useQuickCaptureStore.getState().openCount;
+    closeQuickCapture();
+    restoreQuickCapture(failed("came back"));
+    closeQuickCapture(stale);
+    expect(useQuickCaptureStore.getState()).toMatchObject({
+      open: true,
+      restore: { text: "came back" },
+    });
+  });
 });

@@ -134,7 +134,7 @@ export function useNewThreadHandler() {
           candidate.environmentId === projectRef.environmentId,
       );
       const abandonedSinceRequest = () =>
-        (options?.navigate !== false && routeChangedSinceRequest()) || // signalbox
+        (options?.navigate !== false && routeChangedSinceRequest()) || // signalbox: quick capture
         (project !== undefined && readProject(projectRef) === null);
       const projectSettings = resolveProjectSettings(
         targetServerSettings,
@@ -407,8 +407,8 @@ export function useNewThreadHandler() {
         if (modelSelectionOverride) {
           setModelSelection(draftId, modelSelectionOverride, { replaceOptions: true });
         }
-        options?.seed?.(draftId); // signalbox
-        if (options?.navigate === false) return { draftId, threadId }; // signalbox
+        options?.seed?.(draftId); // signalbox: quick capture
+        if (options?.navigate === false) return { draftId, threadId }; // signalbox: quick capture
         await router.navigate({
           to: "/draft/$draftId",
           params: { draftId },

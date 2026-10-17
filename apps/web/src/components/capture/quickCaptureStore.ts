@@ -39,8 +39,10 @@ export const restoreQuickCapture = (restore: CaptureRestore) =>
       : { open: true, openCount: state.openCount + 1, restore },
   );
 
-export const closeQuickCapture = () =>
+/** `openCount`: close only that opening, a no-op once another has replaced it or it's closed. */
+export const closeQuickCapture = (openCount?: number) =>
   useQuickCaptureStore.setState((state) => {
+    if (!state.open || (openCount !== undefined && openCount !== state.openCount)) return state;
     const [next, ...rest] = state.waiting;
     return next === undefined
       ? { open: false }
