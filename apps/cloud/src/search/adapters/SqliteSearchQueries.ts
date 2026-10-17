@@ -66,18 +66,21 @@ const contentMatch = (
     };
   }
 
-  const matchesByTerm = terms.flatMap((term, index) => [
-    sql`SELECT rowid AS documentId, ${index} AS termIndex
-      FROM search_documents_fts
-      WHERE search_documents_fts MATCH ${keywordExpression(term)}`,
-    sql`SELECT p.document_id AS documentId, ${index} AS termIndex
-      FROM search_document_parts_fts f
-      JOIN search_document_parts p ON p.id = f.rowid
-      WHERE search_document_parts_fts MATCH ${keywordExpression(term)}`,
-  ]);
-  const union = sql.join(" UNION ALL ", false)(matchesByTerm);
+  // workerd caps compound SELECTs at five. Join the terms instead of adding two per word.
+  const expressions = encodeStrings(terms.map(keywordExpression));
   return {
-    predicate: sql`d.id IN (SELECT documentId FROM (${union}) km
+    predicate: sql`d.id IN (SELECT documentId FROM (
+      SELECT f.rowid AS documentId, term.key AS termIndex
+      FROM json_each(${expressions}) term
+      CROSS JOIN search_documents_fts f
+      WHERE search_documents_fts MATCH term.value
+      UNION ALL
+      SELECT p.document_id AS documentId, term.key AS termIndex
+      FROM json_each(${expressions}) term
+      CROSS JOIN search_document_parts_fts f
+      JOIN search_document_parts p ON p.id = f.rowid
+      WHERE search_document_parts_fts MATCH term.value
+    ) km
       GROUP BY documentId HAVING COUNT(DISTINCT km.termIndex) = ${terms.length})`,
   };
 };
