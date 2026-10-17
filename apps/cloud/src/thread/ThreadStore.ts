@@ -1,7 +1,14 @@
+import type { RetainedWorkflowScript } from "@signalbox/runner-protocol/RunnerProtocol";
+import {
+  migrateWorkflowScripts,
+  readWorkflowScript,
+  retainWorkflowScripts,
+} from "./workflowScripts.ts";
 import { FolderInstructions } from "@signalbox/runner-protocol/DriveProtocol";
 import { MachineClass } from "@signalbox/runner-protocol/RunnerProtocol";
 import {
   CommandId,
+  type NodeId,
   type OrchestrationV2DomainEvent,
   OrchestrationV2DomainEventJson,
 } from "@t3tools/contracts";
@@ -94,6 +101,7 @@ export interface MachineLease {
   readonly drains?: boolean | undefined;
   /** This generation's Runner takes `steer` (#562), as its `hello` said. */
   readonly steers?: boolean | undefined;
+  readonly workflowStops?: boolean | undefined;
   /**
    * The idle machine was asked to save everything before it goes (#493), at
    * `id` (when it was asked), and whether it answered and what it couldn't save.
@@ -131,6 +139,10 @@ export class ThreadStore extends Context.Service<
   ThreadStore,
   {
     /** Whether the thread's tables exist. They are created with the thread, never before. */
+    readonly workflowScript: (
+      subagentId: NodeId,
+      revision: string,
+    ) => Effect.Effect<RetainedWorkflowScript | null, SqlError>;
     readonly initialized: Effect.Effect<boolean, SqlError>;
     /** Creates or upgrades the tables. */
     readonly initialize: Effect.Effect<void, SqlError | Migrator.MigrationError>;
@@ -147,6 +159,7 @@ export class ThreadStore extends Context.Service<
      * Returns the new head.
      */
     readonly commit: (input: {
+      readonly scripts?: ReadonlyArray<RetainedWorkflowScript>;
       readonly head: number;
       readonly events: ReadonlyArray<OrchestrationV2DomainEvent>;
       /** `traceId`: the turn the command started, if it started one. */
@@ -308,6 +321,7 @@ const migrations = Migrator.fromRecord({
   "0010_browsing": migrateBrowsing,
   // The thread's status note and the runtime's cursor through ended runs (#670, `statusLine/`).
   "0011_status_note": migrateStatusNote,
+  "0012_workflow_scripts": migrateWorkflowScripts,
 });
 
 /** Applies every migration not recorded yet (`storage/migrations.ts`). Never edit or rename a merged one. */
@@ -374,6 +388,7 @@ const MachineLeaseJson = Schema.fromJsonString(
     movedUp: Schema.optional(Schema.Boolean),
     drains: Schema.optional(Schema.Boolean),
     steers: Schema.optional(Schema.Boolean),
+    workflowStops: Schema.optional(Schema.Boolean),
     drain: Schema.optional(
       Schema.Union([
         Schema.Struct({ _tag: Schema.Literal("asked"), id: Schema.Number }),
@@ -488,6 +503,10 @@ const make = Effect.gen(function* () {
       yield* sql`UPDATE outbox SET revision = MAX(${sequence}, revision + 1) WHERE id = 1`;
     }
     if (input.machine) yield* saveMachine(input.machine);
+    if (input.scripts)
+      yield* retainWorkflowScripts(input.scripts).pipe(
+        Effect.provideService(SqlClient.SqlClient, sql),
+      );
     if (input.instructions) {
       yield* sql`INSERT INTO run_instructions (run_id, levels)
           VALUES (${input.instructions.runId}, ${encodeInstructions(input.instructions.levels)})
@@ -565,6 +584,10 @@ const make = Effect.gen(function* () {
     );
 
   return ThreadStore.of({
+    workflowScript: (subagentId, revision) =>
+      readWorkflowScript(subagentId, revision).pipe(
+        Effect.provideService(SqlClient.SqlClient, sql),
+      ),
     initialized,
     initialize: Effect.asVoid(migrate.pipe(Effect.provideService(SqlClient.SqlClient, sql))),
     owner,

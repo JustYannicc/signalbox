@@ -664,10 +664,23 @@ export const OrchestrationV2WorkflowRunHandles = Schema.Struct({
   runId: Schema.optional(TrimmedNonEmptyString),
   transcriptDir: Schema.optional(TrimmedNonEmptyString),
   scriptPath: Schema.optional(TrimmedNonEmptyString),
+  // signalbox: Retain the script revision after the workflow's machine goes away.
+  scriptRevision: Schema.optional(TrimmedNonEmptyString),
 });
 export type OrchestrationV2WorkflowRunHandles = typeof OrchestrationV2WorkflowRunHandles.Type;
 
+// signalbox: Keep workflow stop receipts durable across retries and runner replacement.
+export const OrchestrationV2WorkflowStop = Schema.Struct({
+  attempt: Schema.optional(PositiveInt),
+  generation: NonNegativeInt,
+  runId: RunId,
+  taskId: TrimmedNonEmptyString,
+  status: Schema.Literals(["requested", "stopped", "failed"]),
+});
+export type OrchestrationV2WorkflowStop = typeof OrchestrationV2WorkflowStop.Type;
+
 export const OrchestrationV2SubagentWorkflow = Schema.Struct({
+  stop: Schema.optional(OrchestrationV2WorkflowStop),
   name: Schema.optional(TrimmedNonEmptyString),
   runHandles: Schema.optional(OrchestrationV2WorkflowRunHandles),
   phases: Schema.Array(OrchestrationV2WorkflowPhase),
@@ -3384,14 +3397,18 @@ export const OrchestrationV2RpcError = Schema.Union([
 ]);
 export type OrchestrationV2RpcError = typeof OrchestrationV2RpcError.Type;
 
+// signalbox: A retained script belongs to a coordinator, even when workflows reuse its path.
 export const OrchestrationV2GetWorkflowScriptInput = Schema.Struct({
   threadId: ThreadId,
+  subagentId: Schema.optional(NodeId),
   scriptPath: TrimmedNonEmptyString,
 });
 export type OrchestrationV2GetWorkflowScriptInput =
   typeof OrchestrationV2GetWorkflowScriptInput.Type;
 
 export const OrchestrationV2GetWorkflowScriptResult = Schema.Struct({
+  subagentId: Schema.optional(NodeId),
+  revision: Schema.optional(TrimmedNonEmptyString),
   scriptPath: TrimmedNonEmptyString,
   contents: Schema.String,
   truncated: Schema.Boolean,

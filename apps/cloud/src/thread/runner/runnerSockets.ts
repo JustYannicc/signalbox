@@ -33,6 +33,7 @@ interface Attachment {
   readonly steers?: boolean | undefined;
   /** How many of `sentRunId`'s steers this socket's Runner was handed; absent: none. */
   readonly sentSteers?: number | undefined;
+  readonly sentWorkflowStops?: ReadonlyArray<string>;
 }
 
 export interface RunnerSocketHost {
@@ -131,6 +132,14 @@ export async function pushRunnerWork(host: RunnerSocketHost): Promise<ThreadRunn
   for (const socket of host.ctx.getWebSockets(RUNNER_TAG)) {
     const attachment = attachmentOf(socket);
     if (attachment === null || attachment.generation !== work.generation) continue;
+    const sentWorkflowStops = new Set(attachment.sentWorkflowStops ?? []);
+    if (attachment.connection === work.connection)
+      for (const stop of work.workflowStops) {
+        const key = `${stop.subagentId}:${stop.runId}:${stop.taskId}:${stop.attempt ?? 1}`;
+        if (sentWorkflowStops.has(key)) continue;
+        send(socket, { type: "workflow.stop", ...stop });
+        sentWorkflowStops.add(key);
+      }
     let sentRunId = attachment.sentRunId;
     let sentSteers = attachment.sentSteers ?? 0;
     if (sentRunId !== null && sentRunId !== work.activeRunId) {
@@ -167,6 +176,7 @@ export async function pushRunnerWork(host: RunnerSocketHost): Promise<ThreadRunn
       sentDrainId = work.drain;
     }
     if (
+      sentWorkflowStops.size !== (attachment.sentWorkflowStops?.length ?? 0) ||
       sentRunId !== attachment.sentRunId ||
       sentDrainId !== attachment.sentDrainId ||
       sentSteers !== (attachment.sentSteers ?? 0)
@@ -174,6 +184,7 @@ export async function pushRunnerWork(host: RunnerSocketHost): Promise<ThreadRunn
       socket.serializeAttachment({
         ...attachment,
         sentRunId,
+        sentWorkflowStops: [...sentWorkflowStops],
         sentDrainId,
         sentSteers,
       } satisfies Attachment);

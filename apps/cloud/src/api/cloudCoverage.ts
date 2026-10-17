@@ -61,8 +61,6 @@ export const CLOUD_UNSERVED: Readonly<Record<string, Unserved>> = {
   "threads.subscribeArchived": gap("#439"),
   "threads.commandOutput": gap("#439"),
   "threads.getTurnItem": gap("#439"),
-  "threads.getWorkflowScript": gap("#439"),
-  "threads.stopWorkflow": gap("#439"),
   "threads.rollback": gap("#398"),
   "threads.search": gap("#334"),
   "threads.searchOne": gap("#334"),

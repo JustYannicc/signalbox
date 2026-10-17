@@ -1,4 +1,11 @@
+import type { RetainedWorkflowScript } from "@signalbox/runner-protocol/RunnerProtocol";
+import { workflowEvent, stoppedWorkflowEvents } from "./workflowControl.ts";
 import {
+  type OrchestrationV2GetWorkflowScriptInput,
+  type OrchestrationV2GetWorkflowScriptResult,
+  type OrchestrationV2StopWorkflowInput,
+  OrchestrationGetWorkflowScriptError,
+  OrchestrationV2StopWorkflowError,
   type CommandId,
   EventId,
   type OrchestrationV2Command,
@@ -110,6 +117,7 @@ export type ThreadSnapshot = typeof ThreadSnapshotWire.Type;
 
 /** What `apply` commits: events, the machine lease to store with them, and the caller's result. */
 export interface EngineDecision<A> {
+  readonly scripts?: ReadonlyArray<RetainedWorkflowScript>;
   readonly events: ReadonlyArray<OrchestrationV2DomainEvent>;
   readonly machine?: ThreadStore.MachineLease;
   readonly result: A;
@@ -140,6 +148,17 @@ export class ThreadEngine extends Context.Service<
       OrchestrationV2ThreadLaunchResult,
       ThreadNotFoundError | ThreadCommandRejectedError
     >;
+    readonly getWorkflowScript: (
+      actor: Actor,
+      input: OrchestrationV2GetWorkflowScriptInput,
+    ) => Effect.Effect<
+      OrchestrationV2GetWorkflowScriptResult,
+      ThreadNotFoundError | OrchestrationGetWorkflowScriptError
+    >;
+    readonly stopWorkflow: (
+      actor: Actor,
+      input: OrchestrationV2StopWorkflowInput,
+    ) => Effect.Effect<void, ThreadNotFoundError | OrchestrationV2StopWorkflowError>;
     readonly snapshot: (actor: Actor) => Effect.Effect<ThreadSnapshot, ThreadNotFoundError>;
     /**
      * `subscribeThread`: a snapshot or the events after the client's cursor,
@@ -306,6 +325,7 @@ const make = Effect.gen(function* () {
 
   /** Commits decided events and publishes them. Callers hold the lock. */
   const commit = Effect.fnUntraced(function* (input: {
+    readonly scripts?: ReadonlyArray<RetainedWorkflowScript>;
     readonly events: ReadonlyArray<OrchestrationV2DomainEvent>;
     readonly command?: {
       readonly id: CommandId;
@@ -337,6 +357,7 @@ const make = Effect.gen(function* () {
       store.commit({
         head: current.head,
         events,
+        ...(input.scripts === undefined ? {} : { scripts: input.scripts }),
         ...(input.command ? { command: input.command } : {}),
         ...(input.instructions === undefined ? {} : { instructions: input.instructions }),
         ...(input.secrets === undefined ? {} : { secrets: input.secrets }),
@@ -544,6 +565,101 @@ const make = Effect.gen(function* () {
       return { threadId: input.threadId, projection, resumed: result.replayed };
     });
 
+  const getWorkflowScript: ThreadEngine["Service"]["getWorkflowScript"] = (actor, input) =>
+    serialized(
+      Effect.gen(function* () {
+        const { projection } = yield* readable(actor);
+        const candidates = projection.subagents.filter(
+          (task) =>
+            task.workflow !== undefined &&
+            task.threadId === input.threadId &&
+            task.workflow.runHandles?.scriptPath === input.scriptPath &&
+            (input.subagentId === undefined || task.id === input.subagentId),
+        );
+        const task = candidates.length === 1 ? candidates[0] : undefined;
+        const revision = task?.workflow?.runHandles?.scriptRevision;
+        if (task === undefined || revision === undefined) {
+          return yield* new OrchestrationGetWorkflowScriptError({
+            reason: "not-found",
+            scriptPath: input.scriptPath,
+          });
+        }
+        const script = yield* Effect.orDie(store.workflowScript(task.id, revision));
+        if (
+          script === null ||
+          script.runId !== task.runId ||
+          script.scriptPath !== input.scriptPath
+        ) {
+          return yield* new OrchestrationGetWorkflowScriptError({
+            reason: "not-found",
+            scriptPath: input.scriptPath,
+          });
+        }
+        return {
+          scriptPath: script.scriptPath,
+          subagentId: task.id,
+          revision,
+          contents: script.contents,
+          truncated: script.truncated,
+        };
+      }),
+    );
+
+  const stopWorkflow: ThreadEngine["Service"]["stopWorkflow"] = (actor, input) =>
+    serialized(
+      Effect.gen(function* () {
+        const { projection } = yield* readable(actor);
+        const task = projection.subagents.find(
+          (each) => each.id === input.subagentId && each.threadId === input.threadId,
+        );
+        const fail = (reason: OrchestrationV2StopWorkflowError["reason"]) =>
+          new OrchestrationV2StopWorkflowError({ ...input, reason });
+        if (task?.workflow === undefined) return yield* fail("not-running");
+        if (task.workflow.stop?.status === "stopped" || task.workflow.stop?.status === "requested")
+          return;
+        if (!["running", "pending", "waiting"].includes(task.status))
+          return yield* fail("not-running");
+        if (task.origin !== "provider_native" || task.driver !== "claudeAgent")
+          return yield* fail("unsupported");
+        if (
+          task.runId === null ||
+          !task.nativeTaskRef?.nativeId ||
+          task.nativeTaskRef.driver !== task.driver
+        )
+          return yield* fail("unavailable");
+        const providerThreadId =
+          task.providerThreadId ??
+          projection.runs.find((run) => run.id === task.runId)?.providerThreadId;
+        if (
+          !projection.providerThreads.some(
+            (thread) =>
+              thread.id === providerThreadId &&
+              thread.appThreadId === input.threadId &&
+              thread.driver === task.driver &&
+              thread.providerInstanceId === task.providerInstanceId,
+          )
+        )
+          return yield* fail("unavailable");
+        const machine = yield* Effect.orDie(store.machine);
+        if (machine.status !== "none" && machine.workflowStops !== true)
+          return yield* fail("unsupported");
+        const stop = {
+          attempt: (task.workflow.stop?.attempt ?? 0) + 1,
+          generation: machine.generation,
+          runId: task.runId,
+          taskId: task.nativeTaskRef.nativeId,
+          status: "requested" as const,
+        };
+        const ctx = yield* context;
+        yield* commit({
+          events:
+            machine.status === "none"
+              ? stoppedWorkflowEvents(projection, task.id, stop, ctx)
+              : [workflowEvent(ctx, { ...task, workflow: { ...task.workflow, stop } })],
+        });
+      }),
+    );
+
   const snapshot: ThreadEngine["Service"]["snapshot"] = (actor) =>
     Effect.map(readable(actor), ({ head, projection }) => ({ snapshotSequence: head, projection }));
 
@@ -578,9 +694,10 @@ const make = Effect.gen(function* () {
       Effect.gen(function* () {
         const current = yield* Ref.get(state);
         const decision = yield* decideWith(current.thread?.projection ?? null, yield* context);
-        if (decision.events.length > 0) {
+        if (decision.events.length > 0 || (decision.scripts?.length ?? 0) > 0) {
           yield* commit({
             events: decision.events,
+            ...(decision.scripts === undefined ? {} : { scripts: decision.scripts }),
             ...(decision.machine ? { machine: decision.machine } : {}),
           });
         } else if (decision.machine) {
@@ -730,6 +847,8 @@ const make = Effect.gen(function* () {
 
   return ThreadEngine.of({
     canSee,
+    getWorkflowScript,
+    stopWorkflow,
     dispatch,
     launch,
     snapshot,

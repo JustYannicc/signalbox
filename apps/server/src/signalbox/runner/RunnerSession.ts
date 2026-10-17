@@ -194,6 +194,10 @@ export const makeRunnerSession = Effect.fn("makeRunnerSession")(function* (
         return acknowledge(message.sequence);
       case "turn.start":
         return turns.start(message);
+      case "workflow.stop":
+        return message.generation === input.generation && turns.stopWorkflow !== undefined
+          ? turns.stopWorkflow(message).pipe(Effect.forkIn(scope), Effect.asVoid)
+          : Effect.void;
       case "interrupt":
         return turns.interrupt(message.runId);
       case "steer":
@@ -231,6 +235,7 @@ export const makeRunnerSession = Effect.fn("makeRunnerSession")(function* (
         build: input.build,
         drains: true,
         steers: true,
+        workflowStops: turns.stopWorkflow !== undefined,
         // A started run missing here went with an earlier process on this machine.
         takenRunIds: yield* turns.taken,
       });

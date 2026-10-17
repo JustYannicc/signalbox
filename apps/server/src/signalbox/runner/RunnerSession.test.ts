@@ -5,7 +5,7 @@ import type {
   RunnerTurn,
   ThreadMessage,
 } from "@signalbox/runner-protocol/RunnerProtocol";
-import { RunId, ThreadId } from "@t3tools/contracts";
+import { NodeId, RunId, ThreadId } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -35,6 +35,7 @@ const item = (label: string): RunnerItem => ({
  */
 const makeFakeThread = Effect.gen(function* () {
   const committed = yield* Ref.make<ReadonlyArray<RunnerItem>>([]);
+  const welcomed = yield* Deferred.make<void>();
   const acked = yield* Ref.make(0);
   const hellos = yield* Ref.make<ReadonlyArray<number>>([]);
   /** The runs each `hello` said its process holds. */
@@ -66,6 +67,7 @@ const makeFakeThread = Effect.gen(function* () {
                 ackedSequence: yield* Ref.get(acked),
                 activeRunId: runId,
               });
+              yield* Deferred.succeed(welcomed, undefined);
               return;
             case "batch": {
               const last = yield* Ref.get(acked);
@@ -91,7 +93,7 @@ const makeFakeThread = Effect.gen(function* () {
       inbox === null ? Effect.void : Effect.asVoid(Queue.offer(inbox, message)),
     );
 
-  return { transport, committed, acked, hellos, helloRuns, dropAfterCommit, toCurrent };
+  return { transport, welcomed, committed, acked, hellos, helloRuns, dropAfterCommit, toCurrent };
 });
 
 /** A harness whose reports the test writes by hand. */
@@ -142,6 +144,47 @@ const sessionOf = (
   });
 
 describe("RunnerSession", () => {
+  it.effect("hands workflow stops only to the machine generation they name", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const thread = yield* makeFakeThread;
+        const turns = yield* makeFakeTurns;
+        const stopped = yield* Deferred.make<void>();
+        const requests: Array<string> = [];
+        yield* makeRunnerSession({
+          threadId,
+          generation: 1,
+          token: "token",
+          machineId: "machine",
+          imageVersion: "test",
+          build,
+          transport: thread.transport,
+          makeTurns: (emit) =>
+            Effect.map(turns.make(emit), (fake) => ({
+              ...fake,
+              stopWorkflow: (request) =>
+                Effect.sync(() => {
+                  requests.push(request.taskId);
+                }).pipe(Effect.andThen(Deferred.succeed(stopped, undefined)), Effect.asVoid),
+            })),
+        });
+        yield* Deferred.await(thread.welcomed);
+        const request = {
+          type: "workflow.stop" as const,
+          generation: 2,
+          runId,
+          subagentId: NodeId.make("workflow"),
+          taskId: "stale-task",
+        };
+        yield* thread.toCurrent(request);
+        yield* thread.toCurrent({ ...request, generation: 1, taskId: "current-task" });
+        yield* Deferred.await(stopped);
+        expect(requests).toEqual(["current-task"]);
+        expect(yield* Ref.get(turns.startedTurns)).toEqual([]);
+      }),
+    ),
+  );
+
   it.effect("answers a drain once it saved everything, saying what it couldn't", () =>
     Effect.scoped(
       Effect.gen(function* () {

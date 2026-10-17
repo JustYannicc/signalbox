@@ -1,3 +1,10 @@
+import type { WorkflowStopRequest } from "@signalbox/runner-protocol/RunnerProtocol";
+import {
+  attachedWorkflowScripts,
+  lostWorkflowStopEvents,
+  pendingWorkflowStops,
+  workflowScriptsOf,
+} from "../workflowControl.ts";
 import type { CommitAuthor, DriveAccess } from "@signalbox/runner-protocol/DriveProtocol";
 import type { SecretValue } from "@signalbox/runner-protocol/SecretScrubber";
 import type { SessionAccess } from "@signalbox/runner-protocol/SessionProtocol";
@@ -242,6 +249,8 @@ export interface MachinePlan {
 
 /** What the connected Runner should be doing right now. */
 export interface RunnerWork {
+  readonly workflowStops: ReadonlyArray<WorkflowStopRequest>;
+  readonly connection: number;
   readonly generation: number;
   /** Whether `reconcile` has something to do now: ask, retry, time out or start the idle tail. */
   readonly needsUpkeep: boolean;
@@ -533,6 +542,7 @@ const make = Effect.gen(function* () {
           disconnectedAt: null,
           drains: hello.drains === true,
           steers: hello.steers === true,
+          workflowStops: hello.workflowStops === true,
         },
         result: {
           _tag: "welcome",
@@ -564,7 +574,9 @@ const make = Effect.gen(function* () {
       }
       const { events, undecodable, outgrown, drained } = runnerBatchEvents(
         projection,
-        input.items,
+        input.items.filter(
+          (item) => item.kind !== "workflow.stopped" || item.generation === input.generation,
+        ),
         ctx,
         lease.steers === true,
       );
@@ -579,6 +591,8 @@ const make = Effect.gen(function* () {
           ? Effect.void
           : Effect.logWarning("dropped Runner events this build cannot read", { undecodable }),
       );
+      const after = applyEvents(projection, events) ?? projection;
+      const scripts = attachedWorkflowScripts(after, workflowScriptsOf(input.items));
       const acked = { _tag: "ack", sequence: input.sequence } as const;
       // The Runner saved everything and stopped reporting: its machine is done
       // either way, and only a light one's run moves up.
@@ -587,12 +601,13 @@ const make = Effect.gen(function* () {
           recorded,
           Effect.map(
             machineGone({ projection, lease, now, ctx, detail: outgrown, moveUp: true, events }),
-            (gone) => ({ ...gone, result: acked }),
+            (gone) => ({ ...gone, scripts, result: acked }),
           ),
         );
       }
       return Effect.as(recorded, {
         events,
+        scripts,
         machine: {
           ...lease,
           ackedSequence: input.sequence,
@@ -785,7 +800,7 @@ const make = Effect.gen(function* () {
       return held ? turn : freshSessionTurn(projection, turn);
     });
 
-  const work: ThreadRunner["Service"]["work"] = withLease(({ projection, lease }) =>
+  const work: ThreadRunner["Service"]["work"] = withLease(({ projection, lease }, ctx) =>
     Effect.gen(function* () {
       const untraced = projection === null ? null : yield* turnFor(projection);
       const turn =
@@ -795,41 +810,52 @@ const make = Effect.gen(function* () {
       const grant = projection === null ? undefined : modelGrantFor(projection, yield* ownerId);
       const run = projection === null ? undefined : harnessRun(projection);
       const driveId = turn === null || !drivesEnabled ? null : yield* driveOf;
-      return keep<RunnerWork>({
-        generation: lease.generation,
-        needsUpkeep: needsUpkeep(lease, run !== undefined, yield* previews.held),
-        drain: lease.drain?._tag === "asked" ? lease.drain.id : null,
-        turn,
-        modelToken:
-          turn === null || grant === undefined || lease.token === null
-            ? null
-            : yield* modelToken(lease.token, grant),
-        drive:
-          driveId === null || lease.token === null || projection === null || run === undefined
-            ? null
-            : {
-                driveId,
-                token: yield* driveToken(lease.token, projection.thread.id, lease.generation),
-                // Any drive may have a remote to fetch, or a shortcut to one (#142).
-                remoteToken: yield* remoteToken(lease.token, projection.thread.id, run.id),
-                // Its folders' `AGENTS.md`, as the turn was started with (#227), also
-                // when this run continues it on another machine (#620).
-                instructions: yield* Effect.orDie(
-                  store.instructions(continuedRun(projection, run).id),
-                ),
-              },
-        sessions:
-          turn === null || lease.token === null || projection === null
-            ? null
-            : { token: yield* sessionTokenOf(lease.token, projection.thread.id, lease.generation) },
-        secrets: turn === null ? [] : yield* Effect.orDie(store.secrets),
-        activeRunId: run?.id ?? null,
-        // Only a Runner that takes steers is handed them.
-        steers:
-          projection === null || run?.status !== "running" || lease.steers !== true
-            ? []
-            : steersOf(projection, run).map(runnerMessageOf),
-      });
+      const settled = projection === null ? [] : lostWorkflowStopEvents(projection, lease, ctx);
+      return {
+        ...keep<RunnerWork>({
+          connection: lease.connection ?? 0,
+          workflowStops:
+            projection === null || lease.workflowStops !== true || lease.status !== "connected"
+              ? []
+              : pendingWorkflowStops(projection, lease.generation),
+          generation: lease.generation,
+          needsUpkeep: needsUpkeep(lease, run !== undefined, yield* previews.held),
+          drain: lease.drain?._tag === "asked" ? lease.drain.id : null,
+          turn,
+          modelToken:
+            turn === null || grant === undefined || lease.token === null
+              ? null
+              : yield* modelToken(lease.token, grant),
+          drive:
+            driveId === null || lease.token === null || projection === null || run === undefined
+              ? null
+              : {
+                  driveId,
+                  token: yield* driveToken(lease.token, projection.thread.id, lease.generation),
+                  // Any drive may have a remote to fetch, or a shortcut to one (#142).
+                  remoteToken: yield* remoteToken(lease.token, projection.thread.id, run.id),
+                  // Its folders' `AGENTS.md`, as the turn was started with (#227), also
+                  // when this run continues it on another machine (#620).
+                  instructions: yield* Effect.orDie(
+                    store.instructions(continuedRun(projection, run).id),
+                  ),
+                },
+          sessions:
+            turn === null || lease.token === null || projection === null
+              ? null
+              : {
+                  token: yield* sessionTokenOf(lease.token, projection.thread.id, lease.generation),
+                },
+          secrets: turn === null ? [] : yield* Effect.orDie(store.secrets),
+          activeRunId: run?.id ?? null,
+          // Only a Runner that takes steers is handed them.
+          steers:
+            projection === null || run?.status !== "running" || lease.steers !== true
+              ? []
+              : steersOf(projection, run).map(runnerMessageOf),
+        }),
+        events: settled,
+      };
     }),
   );
 
