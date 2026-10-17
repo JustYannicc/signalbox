@@ -2,7 +2,6 @@ import { operations } from "@signalbox/api/catalog";
 import {
   AuthOrchestrationOperateScope,
   AuthOrchestrationReadScope,
-  AuthStandardClientScopes,
   AuthSettingsWriteScope,
   type AuthEnvironmentScope,
   EnvironmentId,
@@ -15,6 +14,7 @@ import * as Environment from "../environment.ts";
 import { makeMemoryCloud } from "../testing.ts";
 import { scriptedModelSelection } from "../thread/scriptedProvider.ts";
 import { type ApiCaller, callOperation } from "./apiCall.ts";
+import { CLOUD_CLIENT_SCOPES } from "../auth/CloudScopes.ts";
 
 const identity = { environmentId: EnvironmentId.make("cloud-test"), label: "Cloud" };
 const userId = "user_1";
@@ -160,7 +160,7 @@ describe("public API calls", () => {
         yield* call(
           "keys.create",
           { label: "relay", scopes: ["relay:write"], model: false },
-          person(AuthStandardClientScopes),
+          person(CLOUD_CLIENT_SCOPES),
         ),
       );
       expect(answer.status).toBe(422);
