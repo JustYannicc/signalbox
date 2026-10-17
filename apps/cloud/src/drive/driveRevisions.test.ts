@@ -6,18 +6,14 @@ import * as NodePath from "node:path";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as SqlClient from "effect/sql/SqlClient";
+import * as Stream from "effect/Stream";
 
 import { makeDriveReader } from "./DriveReader.ts";
 import { GITHUB_LIMITS, packForPush } from "./gitPush.ts";
 import { DriveDirectory } from "./DriveDirectory.ts";
 import * as DriveRevisions from "./DriveRevisions.ts";
 import * as DriveEvents from "./DriveEvents.ts";
-import {
-  collectPackBytes,
-  inspectPackedCommits,
-  makeMemoryDrives,
-  makeRepo,
-} from "./driveTesting.ts";
+import { concatBytes, registerPack, makeMemoryDrives, makeRepo } from "./driveTesting.ts";
 import { uploadPack } from "./DriveUploads.ts";
 import * as DriveStore from "./DriveStore.ts";
 import { threadRef, wipRef } from "./DriveStore.ts";
@@ -50,18 +46,6 @@ const upload = (
   uploadPack({ driveId: DRIVE, threadId, idx: packed.idx, pack: packed.pack }).pipe(
     Effect.provide(drives.layer),
   );
-
-const registerPack = (threadId: string, packed: ReturnType<ReturnType<typeof makeRepo>["pack"]>) =>
-  Effect.gen(function* () {
-    const inspected = yield* inspectPackedCommits(packed);
-    return yield* DriveStore.DriveStore.use((store) =>
-      store.registerPack({
-        ...inspected,
-        size: packed.pack.length,
-        threadId,
-      }),
-    );
-  });
 
 const views: DriveCheckpointRecord["views"] = {
   shortcuts: [{ path: "docs", target: "my/personal/docs", commit: null }],
@@ -145,7 +129,7 @@ describe("drive checkpoints and revisions", () => {
           remoteHas: [first],
           limits: GITHUB_LIMITS,
         }).pipe(Effect.provide(drives.layer));
-        const pushPack = yield* collectPackBytes(push.pack);
+        const pushPack = concatBytes(yield* Stream.runCollect(push.pack));
         const pushHash = NodeChildProcess.execFileSync("git", ["index-pack", "--stdin"], {
           cwd: git.dir,
           input: pushPack,

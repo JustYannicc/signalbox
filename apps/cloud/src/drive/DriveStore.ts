@@ -9,6 +9,16 @@ import type { SqlError } from "effect/sql/SqlError";
 
 import { DriveRemote } from "@signalbox/runner-protocol/DriveProtocol";
 import type { DriveCheckpointRecord } from "@signalbox/runner-protocol/DriveProtocol";
+import type {
+  DriveWriter,
+  ThreadRefs,
+  RefWrite,
+  CheckpointOperationResult,
+  ForkCheckpointRequest,
+  RestoreCheckpointRequest,
+  UndoRestoreRequest,
+  UpdateToLatestRequest,
+} from "./DriveRevisionTypes.ts";
 import { canManageDrive } from "@t3tools/contracts/signalboxDrives";
 import * as Migrations from "../storage/migrations.ts";
 import { canWrite } from "./driveAccess.ts";
@@ -18,27 +28,17 @@ import * as DriveRevisions from "./DriveRevisions.ts";
 import * as DriveRevisionStore from "./DriveRevisionStore.ts";
 import { isWithin } from "./DriveReader.ts";
 import type { ObjectType, Oid } from "./git/gitObjects.ts";
-import type {
-  CheckpointOperationResult,
-  DriveWriter,
-  ForkCheckpointRequest,
-  RefWrite,
-  RestoreCheckpointRequest,
-  ThreadRefs,
-  UndoRestoreRequest,
-  UpdateToLatestRequest,
-} from "./driveRevisionTypes.ts";
 
 export type {
-  CheckpointOperationResult,
   DriveWriter,
-  ForkCheckpointRequest,
-  RefWrite,
-  RestoreCheckpointRequest,
   ThreadRefs,
+  RefWrite,
+  CheckpointOperationResult,
+  ForkCheckpointRequest,
+  RestoreCheckpointRequest,
   UndoRestoreRequest,
   UpdateToLatestRequest,
-} from "./driveRevisionTypes.ts";
+} from "./DriveRevisionTypes.ts";
 
 /**
  * What one drive's Durable Object persists: its refs, the packs it holds in

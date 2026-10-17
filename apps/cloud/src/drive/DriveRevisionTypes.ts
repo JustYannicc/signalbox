@@ -1,5 +1,4 @@
 import type { CheckpointViews, DriveRemote } from "@signalbox/runner-protocol/DriveProtocol";
-
 import type { Oid } from "./git/gitObjects.ts";
 
 /** Who is writing: a thread, on its machine of `generation`. */

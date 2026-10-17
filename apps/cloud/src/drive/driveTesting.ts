@@ -8,7 +8,6 @@ import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as ManagedRuntime from "effect/ManagedRuntime";
-import * as Stream from "effect/Stream";
 
 import * as UserDirectory from "../user/UserDirectory.ts";
 import { deliverAccess } from "./driveAccessOutbox.ts";
@@ -19,39 +18,9 @@ import { makeDriveObjectApi } from "./driveObjectApi.ts";
 import * as DrivePacks from "./DrivePacks.ts";
 import type * as DriveMembers from "./DriveMembers.ts";
 import * as DriveStore from "./DriveStore.ts";
-import { concatBytes, parseCommit, type Bytes } from "./git/gitObjects.ts";
+import { parseCommit, type Bytes } from "./git/gitObjects.ts";
 import { verifyPack } from "./git/gitPack.ts";
-
-/** Verifies a real test pack and reads the commit metadata its registration stores. */
-export const inspectPackedCommits = (packed: { readonly pack: Bytes; readonly idx: Bytes }) =>
-  Effect.gen(function* () {
-    const verified = yield* Effect.promise(() => verifyPack(packed.pack, packed.idx));
-    const commits = [...verified.structure].flatMap(([oid, object]) => {
-      if (object.type !== "commit") return [];
-      const commit = parseCommit(object.content);
-      return [
-        {
-          oid,
-          tree: commit.tree,
-          parents: commit.parents,
-          authorName: commit.author.name,
-          authorEmail: commit.author.email,
-          time: commit.author.time,
-          message: commit.message,
-        },
-      ];
-    });
-    return {
-      name: verified.name,
-      objects: verified.objects,
-      commits,
-      external: [...verified.external],
-    };
-  });
-
-/** Collects a push stream so Git's own index-pack can inspect its exact bytes. */
-export const collectPackBytes = <E, R>(pack: Stream.Stream<Uint8Array, E, R>) =>
-  Stream.runCollect(pack).pipe(Effect.map(concatBytes));
+export { concatBytes } from "./git/gitObjects.ts";
 
 /**
  * Test wiring for drives: drive objects on in-memory SQLite, packs in memory,
@@ -146,3 +115,36 @@ export const makeRepo = () => {
   const cleanup = () => NodeFS.rmSync(dir, { recursive: true, force: true });
   return { dir, git, write, commit, pack, cleanup };
 };
+
+export const registerPack = (
+  threadId: string,
+  packed: ReturnType<ReturnType<typeof makeRepo>["pack"]>,
+) =>
+  Effect.gen(function* () {
+    const verified = yield* Effect.promise(() => verifyPack(packed.pack, packed.idx));
+    const commits = [...verified.structure].flatMap(([oid, object]) => {
+      if (object.type !== "commit") return [];
+      const commit = parseCommit(object.content);
+      return [
+        {
+          oid,
+          tree: commit.tree,
+          parents: commit.parents,
+          authorName: commit.author.name,
+          authorEmail: commit.author.email,
+          time: commit.author.time,
+          message: commit.message,
+        },
+      ];
+    });
+    return yield* DriveStore.DriveStore.use((store) =>
+      store.registerPack({
+        name: verified.name,
+        size: packed.pack.length,
+        threadId,
+        objects: verified.objects,
+        commits,
+        external: [...verified.external],
+      }),
+    );
+  });

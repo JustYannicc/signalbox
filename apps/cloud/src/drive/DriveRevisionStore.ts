@@ -10,7 +10,7 @@ import type {
   UndoRestoreRequest,
   ThreadRefs,
   UpdateToLatestRequest,
-} from "./driveRevisionTypes.ts";
+} from "./DriveRevisionTypes.ts";
 import type { Oid } from "./git/gitObjects.ts";
 import type { SignalboxDriveRole } from "@t3tools/contracts/signalboxDrives";
 import * as Clock from "effect/Clock";
