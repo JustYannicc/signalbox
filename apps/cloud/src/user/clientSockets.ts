@@ -1,4 +1,5 @@
 import { type AuthEnvironmentScope, WS_METHODS } from "@t3tools/contracts";
+import * as Clock from "effect/Clock";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
@@ -10,6 +11,12 @@ import type * as Environment from "../environment.ts";
 import { sendableCloseCode } from "../thread/preview/previewHeaders.ts";
 import { type Connection, openConnection } from "./connection.ts";
 import { CloudRpcGroup } from "./rpc.ts";
+import {
+  type ClientConnectionRecord,
+  type ClientKind,
+  logClientSession,
+  logClientSessionSnapshot,
+} from "./clientSessionLog.ts";
 
 /**
  * The user object's end of its clients' RPC sockets. Sockets use the
@@ -35,7 +42,7 @@ const STORED_PREFIX = "clientSocket/";
 export const PING = JSON.stringify(constPing);
 export const PONG = JSON.stringify(constPong);
 
-interface Attachment {
+interface Attachment extends ClientConnectionRecord {
   /** Names the socket's stored subscriptions. */
   readonly key: string;
   readonly sid: string;
@@ -148,6 +155,7 @@ export class ClientSockets {
     const unstore = (requestId: string) => {
       if (stored.delete(requestId)) kv.delete(this.storedKey(attachment.key, requestId));
     };
+    const storedKey = (requestId: string) => this.storedKey(attachment.key, requestId);
     const opened = this.host.run(
       openConnection({
         identity: this.host.identity,
@@ -163,14 +171,21 @@ export class ClientSockets {
             // Closing; the client reconnects and subscribes again.
           }
         },
-        receiving: (message) => {
-          if (message._tag === "Request" && replayed.has(message.tag)) {
-            stored.add(String(message.id));
-            kv.put(this.storedKey(attachment.key, String(message.id)), message);
-          } else if (message._tag === "Interrupt") {
-            unstore(String(message.requestId));
-          }
-        },
+        receiving: (message) =>
+          Effect.gen(function* () {
+            if (message._tag === "Request") {
+              yield* logClientSession(attachment, {
+                action: "rpc",
+                method: CloudRpcGroup.requests.has(message.tag) ? message.tag : "unknown",
+              });
+            }
+            if (message._tag === "Request" && replayed.has(message.tag)) {
+              stored.add(String(message.id));
+              kv.put(storedKey(String(message.id)), message);
+            } else if (message._tag === "Interrupt") {
+              unstore(String(message.requestId));
+            }
+          }),
       }).pipe(Scope.provide(scope)),
     );
     const live = { opened, scope, stored, received: opened.then(() => undefined) };
@@ -183,7 +198,12 @@ export class ClientSockets {
    * attachment goes too, so a frame that arrives while it closes finds no
    * session to start a server for.
    */
-  private async drop(socket: WebSocket, code: number, reason: string) {
+  private async drop(
+    socket: WebSocket,
+    code: number,
+    reason: string,
+    cause: "peer" | "error" | "expired" | "revoked" | "setup",
+  ) {
     const attachment = attachmentOf(socket);
     try {
       socket.serializeAttachment(null);
@@ -192,6 +212,7 @@ export class ClientSockets {
     }
     close(socket, code, reason);
     if (attachment === null) return;
+    await this.host.run(logClientSession(attachment, { action: "closed", code, cause }));
     this.forget(attachment.key);
     const live = this.live.get(attachment.key);
     this.live.delete(attachment.key);
@@ -199,17 +220,28 @@ export class ClientSockets {
   }
 
   /** Accepts `socket` for an authenticated session and starts serving it. */
-  async accept(socket: WebSocket, session: ClientSession, userId: string) {
+  async accept(
+    socket: WebSocket,
+    session: ClientSession,
+    userId: string,
+    clientKind: ClientKind = "unknown",
+  ) {
     this.host.ctx.acceptWebSocket(socket, [CLIENT_TAG, sessionTag(session.sid)]);
     const attachment: Attachment = {
       key: await this.host.run(Effect.orDie(Crypto.Crypto.use((crypto) => crypto.randomUUIDv4()))),
       sid: session.sid,
       userId,
+      clientKind,
+      openedAt: await this.host.run(Clock.currentTimeMillis),
       scopes: session.scopes,
       expiresAt: session.expiresAt,
     };
     socket.serializeAttachment(attachment);
-    await this.serve(socket, attachment).opened;
+    await this.host.run(logClientSession(attachment, { action: "opened" }));
+    await this.serve(socket, attachment).opened.catch(async (cause: unknown) => {
+      await this.drop(socket, 1011, "Connection failed", "setup");
+      throw cause;
+    });
   }
 
   /**
@@ -217,7 +249,7 @@ export class ClientSockets {
    * runs: a change one client or thread makes must reach every other
    * client's subscriptions. Also drops what sockets that are gone stored.
    */
-  async restore(now: number) {
+  async restore(now: number, userId?: string) {
     const sockets = this.host.ctx.getWebSockets(CLIENT_TAG);
     const keys = new Set(sockets.map((socket) => attachmentOf(socket)?.key));
     const { kv } = this.host.ctx.storage;
@@ -227,14 +259,17 @@ export class ClientSockets {
     for (const socket of sockets) {
       const attachment = attachmentOf(socket);
       if (attachment === null) close(socket, 1011, "Unknown socket");
-      else if (attachment.expiresAt <= now) await this.drop(socket, 1000, "Session expired");
+      else if (attachment.expiresAt <= now)
+        await this.drop(socket, 1000, "Session expired", "expired");
       else {
+        await this.host.run(logClientSession(attachment, { action: "restored" }));
         // One socket's server failing to start mustn't keep the object from waking.
         await this.serve(socket, attachment).opened.catch(() =>
-          this.drop(socket, 1011, "Connection failed"),
+          this.drop(socket, 1011, "Connection failed", "setup"),
         );
       }
     }
+    if (userId !== undefined) await this.host.run(logClientSessionSnapshot(userId, this.live.size));
     if (this.live.size === 0) return;
     const subscriptions = [...this.live.values()].reduce((sum, live) => sum + live.stored.size, 0);
     // Each line is one wake from hibernation with clients connected.
@@ -251,17 +286,17 @@ export class ClientSockets {
       this.host.run((await live.opened).receive(frame)),
     );
     // A server that couldn't start serves nothing; the client reconnects to a fresh one.
-    await live.received.catch(() => this.drop(socket, 1011, "Connection failed"));
+    await live.received.catch(() => this.drop(socket, 1011, "Connection failed", "error"));
   }
 
-  async closed(socket: WebSocket, code = 1000, reason = "") {
-    await this.drop(socket, sendableCloseCode(code), reason);
+  async closed(socket: WebSocket, code = 1000, reason = "", cause: "peer" | "error" = "peer") {
+    await this.drop(socket, sendableCloseCode(code), reason, cause);
   }
 
   /** Disconnects every socket of a revoked session. */
   async revoke(sid: string) {
     for (const socket of this.host.ctx.getWebSockets(sessionTag(sid))) {
-      await this.drop(socket, 1000, "Session revoked");
+      await this.drop(socket, 1000, "Session revoked", "revoked");
     }
   }
 
@@ -271,7 +306,7 @@ export class ClientSockets {
     for (const socket of this.host.ctx.getWebSockets(CLIENT_TAG)) {
       const expiresAt = attachmentOf(socket)?.expiresAt;
       if (expiresAt === undefined) continue;
-      if (expiresAt <= now) await this.drop(socket, 1000, "Session expired");
+      if (expiresAt <= now) await this.drop(socket, 1000, "Session expired", "expired");
       else next = next === null ? expiresAt : Math.min(next, expiresAt);
     }
     return next;
