@@ -81,7 +81,6 @@
     "no-circular | apps/cloud/src/previewSetup/UserPreviewSetup.ts | apps/cloud/src/pool/PoolDirectory.ts",
     "no-circular | apps/cloud/src/previewSetup/UserPreviewSetup.ts | apps/cloud/src/pool/poolLink.ts",
     "no-circular | apps/cloud/src/previewSetup/UserPreviewSetup.ts | apps/cloud/src/user/UserPools.ts",
-    "no-circular | apps/cloud/src/push/PushNotifier.ts | apps/cloud/src/user/UserStore.ts",
     "no-circular | apps/cloud/src/thread/CloudThreadService.ts | apps/cloud/src/thread/ThreadDirectory.ts",
     "no-circular | apps/cloud/src/thread/CloudThreadService.ts | apps/cloud/src/thread/browsing/ThreadBrowsing.ts",
     "no-circular | apps/cloud/src/thread/ThreadDirectory.ts | apps/cloud/src/thread/ThreadEngine.ts",
