@@ -12,6 +12,17 @@ import {
   tunnelRunnerFrame,
   tunnelThreadFrame,
 } from "@signalbox/runner-protocol/PreviewTunnel";
+import type { DriveAccess } from "@signalbox/runner-protocol/DriveProtocol";
+import type { PreviewService } from "@signalbox/runner-protocol/PreviewServices";
+import type { PreviewConfiguration } from "./PreviewState.ts";
+import {
+  PREVIEW_SCRIPT_PATH,
+  PREVIEW_VIEW_PATH,
+  previewOpenPath,
+  previewScript,
+  startingPreview,
+  withPreviewLease,
+} from "./previewPage.ts";
 import type { ThreadId } from "@t3tools/contracts";
 
 import { BrowserMirror, type BrowserMirrorHost } from "./BrowserMirror.ts";
@@ -19,6 +30,9 @@ import { requestHeaders, responseHeaders, sendableCloseCode } from "./previewHea
 import {
   labelOfHost,
   PREVIEW_COOKIE,
+  PREVIEW_ROUTE_COOKIE,
+  previewRouteCookie,
+  readPreviewRoute,
   PREVIEW_TICKET_PATH,
   previewLabel,
   previewOrigin,
@@ -26,15 +40,19 @@ import {
   readCookie,
 } from "./previewHost.ts";
 import { previewsLine } from "../threadWire.ts";
-import { type PreviewClaims, previewToken, verifyPreviewToken } from "./previewToken.ts";
+import {
+  type PreviewClaims,
+  previewToken,
+  previewTokenTarget,
+  verifyPreviewToken,
+} from "./previewToken.ts";
 
 /**
  * The thread object's half of the PreviewGateway: the Runner's tunnel socket
  * (`@signalbox/runner-protocol/PreviewTunnel`), and every preview request the
  * Worker routes here by host. A request is served only when
  *
- * - its credential was signed with the lease token of the machine whose
- *   tunnel is connected (so a new generation voids every link and cookie),
+ * - its credential was signed by this thread,
  * - its user can see the thread, and
  * - the machine reports a web server on the port.
  *
@@ -50,10 +68,11 @@ import { type PreviewClaims, previewToken, verifyPreviewToken } from "./previewT
 
 const TUNNEL_TAG = "preview-tunnel";
 const CLIENT_TAG = "preview-client";
+const VIEW_TAG = "preview-view";
 
 /** How long a link opens the preview. */
 const TICKET_TTL_MS = 2 * 60_000;
-/** How long a browser stays signed in to a preview, while its machine lasts. */
+/** Browser credentials outlive machines; membership is checked again on every request. */
 const SESSION_TTL_MS = 12 * 60 * 60_000;
 /** How long the machine has to answer a request or a WebSocket handshake. */
 const HEAD_TIMEOUT_MS = 60_000;
@@ -80,6 +99,11 @@ interface TunnelAttachment {
   readonly mirror?: boolean;
 }
 
+interface ViewAttachment {
+  readonly userId: string;
+  readonly port: number;
+}
+
 interface ClientAttachment {
   readonly stream: number;
   readonly generation: number;
@@ -92,6 +116,10 @@ export interface PreviewGatewayHost extends Pick<
   readonly ctx: DurableObjectState;
   readonly settings: PreviewSettings | null;
   readonly threadId: () => ThreadId;
+  readonly appOrigin: string;
+  readonly configuration: () => Promise<PreviewConfiguration>;
+  readonly saveServices: (services: ReadonlyArray<PreviewService>) => Promise<void>;
+  readonly drive: () => Promise<DriveAccess | null>;
   /** For tests; the wall clock otherwise. */
   readonly now?: () => number;
   /** The lease token when `generation` holds the lease (and `token` matches, if given). */
@@ -172,6 +200,35 @@ const tryClose = (socket: WebSocket, code: number, reason: string) => {
 
 export class PreviewGateway {
   private readonly pending = new Map<number, Pending>();
+  private configuration: PreviewConfiguration | null = null;
+  private loading: Promise<PreviewConfiguration> | null = null;
+
+  private loadConfiguration() {
+    return (this.loading ??= this.host
+      .configuration()
+      .then((configuration) => {
+        this.configuration = configuration;
+        return configuration;
+      })
+      .catch((cause: unknown) => {
+        this.loading = null;
+        throw cause;
+      }));
+  }
+
+  private views() {
+    return this.host.ctx
+      .getWebSockets(VIEW_TAG)
+      .filter((socket) => socket.readyState === WebSocket.OPEN);
+  }
+
+  private viewState(socket: WebSocket) {
+    const attachment = attachmentOf<ViewAttachment>(socket);
+    return attachment !== null &&
+      this.tunnel()?.attachment.ports.some((entry) => entry.port === attachment.port)
+      ? "ready"
+      : "starting";
+  }
   // The thread's own streams stay below the Runner's (`RUNNER_STREAM_BASE`).
   private nextStream = Math.floor(Math.random() * RUNNER_STREAM_BASE);
   private lastActive: number | null = null;
@@ -191,6 +248,7 @@ export class PreviewGateway {
   constructor(host: PreviewGatewayHost) {
     this.host = host;
     this.now = host.now ?? Date.now;
+    this.toldHeld = this.held;
     this.mirror = new BrowserMirror({
       ...host,
       storeStep: async (step, recording) => {
@@ -210,7 +268,7 @@ export class PreviewGateway {
 
   /** Whether a browser holds a preview socket open. */
   get held(): boolean {
-    return this.clients().length > 0;
+    return this.clients().length > 0 || this.views().length > 0;
   }
 
   get lastActiveAt(): number | null {
@@ -238,7 +296,8 @@ export class PreviewGateway {
   }
 
   isClient(socket: WebSocket) {
-    return this.host.ctx.getTags(socket).includes(CLIENT_TAG);
+    const tags = this.host.ctx.getTags(socket);
+    return tags.includes(CLIENT_TAG) || tags.includes(VIEW_TAG);
   }
 
   acceptTunnel(): Response {
@@ -266,6 +325,12 @@ export class PreviewGateway {
 
   async onTunnelMessage(socket: WebSocket, data: string | ArrayBuffer) {
     if (typeof data !== "string") {
+      const tunnel = this.tunnel();
+      if (
+        tunnel?.socket !== socket ||
+        (await this.host.leaseToken(tunnel.attachment.generation)) === null
+      )
+        return;
       this.onData(data);
       return;
     }
@@ -291,13 +356,21 @@ export class PreviewGateway {
       for (const other of this.host.ctx.getWebSockets(TUNNEL_TAG)) {
         if (other !== socket) tryClose(other, CLOSE.replaced, "Replaced by a newer tunnel.");
       }
+      const configuration = await this.loadConfiguration();
       this.failAll("The machine reconnected.");
       socket.serializeAttachment({
         generation: message.generation,
         ports: [],
         mirror: message.mirror === true,
       } satisfies TunnelAttachment);
-      trySend(socket, tunnelThreadFrame.encode({ type: "welcome" }));
+      trySend(
+        socket,
+        tunnelThreadFrame.encode({
+          type: "welcome",
+          services: configuration.services,
+          drive: await this.host.drive(),
+        }),
+      );
       this.mirror.connected();
       this.notify();
       await this.holdMaybeChanged();
@@ -308,7 +381,23 @@ export class PreviewGateway {
       tryClose(socket, CLOSE.protocol, "Say hello first.");
       return;
     }
+    if (
+      this.tunnel()?.socket !== socket ||
+      (await this.host.leaseToken(attachment.generation)) === null
+    ) {
+      tryClose(socket, CLOSE.released, "This machine is no longer current.");
+      return;
+    }
     switch (message.type) {
+      case "services": {
+        await this.host.saveServices(message.services);
+        const current = await this.loadConfiguration();
+        this.configuration = { ...current, services: message.services };
+        this.loading = Promise.resolve(this.configuration);
+        this.send(socket, { type: "services.saved", services: message.services });
+        this.notify();
+        return;
+      }
       case "ports":
         socket.serializeAttachment({ ...attachment, ports: message.ports });
         this.notify();
@@ -383,6 +472,8 @@ export class PreviewGateway {
 
   /** The lease of `generation` ended: its tunnel and every browser on it go. */
   async release(generation: number) {
+    // A tab can open after the release decision. Its hold belongs to the thread,
+    // so it must survive this machine and request the next one.
     let ended = false;
     for (const socket of this.host.ctx.getWebSockets(TUNNEL_TAG)) {
       if (attachmentOf<TunnelAttachment>(socket)?.generation !== generation) continue;
@@ -405,6 +496,17 @@ export class PreviewGateway {
   }
 
   async onClientMessage(socket: WebSocket, data: string | ArrayBuffer) {
+    if (this.host.ctx.getTags(socket).includes(VIEW_TAG)) {
+      const viewer = attachmentOf<ViewAttachment>(socket);
+      if (viewer === null || !(await this.host.canSee(viewer.userId))) {
+        tryClose(socket, CLOSE.refused, "You cannot see this thread.");
+        this.lastActive = this.now();
+        await this.holdMaybeChanged();
+        return;
+      }
+      trySend(socket, this.viewState(socket));
+      return;
+    }
     const attachment = attachmentOf<ClientAttachment>(socket);
     const tunnel = this.tunnel();
     if (
@@ -428,7 +530,11 @@ export class PreviewGateway {
     tryClose(socket, sendableCloseCode(code), reason);
     const attachment = attachmentOf<ClientAttachment>(socket);
     const tunnel = this.tunnel();
-    if (attachment !== null && tunnel?.attachment.generation === attachment.generation) {
+    if (
+      attachment !== null &&
+      tunnel !== null &&
+      tunnel.attachment.generation === attachment.generation
+    ) {
       this.send(tunnel.socket, {
         type: "ws.close",
         stream: attachment.stream,
@@ -462,29 +568,66 @@ export class PreviewGateway {
     const ticket = url.pathname === PREVIEW_TICKET_PATH ? url.searchParams.get("ticket") : null;
     const credential = ticket ?? readCookie(request.headers.get("cookie"), PREVIEW_COOKIE);
     const reopen = "Open it again from the thread in Signalbox.";
-    if (credential === null) return page(401, `This preview needs you signed in. ${reopen}`);
-    const tunnel = this.tunnel();
-    const leaseToken =
-      tunnel === null ? null : await this.host.leaseToken(tunnel.attachment.generation);
-    if (tunnel === null || leaseToken === null) {
-      return page(
-        503,
-        "This thread's machine isn't running. Send a message to start it, then open the preview again from the thread in Signalbox.",
-      );
-    }
-    const claims = await verifyPreviewToken(credential, leaseToken, this.now());
+    const returnToApp = async () => {
+      const target =
+        (credential === null ? null : previewTokenTarget(credential)) ??
+        readPreviewRoute(readCookie(request.headers.get("cookie"), PREVIEW_ROUTE_COOKIE));
+      if (
+        request.method === "GET" &&
+        (request.headers.get("accept")?.includes("text/html") ||
+          request.headers.get("sec-fetch-dest") === "document") &&
+        target !== null &&
+        target.threadId === this.host.threadId() &&
+        (await this.label(target.port)) === label
+      ) {
+        return new Response(null, {
+          status: 302,
+          headers: {
+            location: new URL(
+              previewOpenPath(target.threadId, target.port),
+              this.host.appOrigin,
+            ).toString(),
+            "cache-control": "no-store",
+          },
+        });
+      }
+      return page(401, `Sign in again to open this preview. ${reopen}`);
+    };
+    if (credential === null) return returnToApp();
+    const configuration = await this.loadConfiguration();
+    const claims = await verifyPreviewToken(credential, configuration.key, this.now());
     if (
       claims === null ||
       claims.t !== this.host.threadId() ||
       (await this.label(claims.p)) !== label ||
       (ticket !== null ? claims.k !== "ticket" : claims.k !== "session")
     ) {
-      return page(401, `This preview link expired, or its machine stopped since. ${reopen}`);
+      return returnToApp();
     }
     if (!(await this.host.canSee(claims.u))) return page(403, "You can't see this thread.");
-    if (ticket !== null) return this.signIn(claims, leaseToken);
-    if (!tunnel.attachment.ports.some((entry) => entry.port === claims.p)) {
-      return page(502, `Nothing serves port ${claims.p} on the thread's machine right now.`);
+    if (ticket !== null) return this.signIn(claims, configuration.key);
+    if (url.pathname === PREVIEW_SCRIPT_PATH) return previewScript();
+    if (url.pathname === PREVIEW_VIEW_PATH) {
+      if (request.headers.get("upgrade")?.toLowerCase() !== "websocket")
+        return page(426, "Open this preview in a browser.");
+      const [client, server] = Object.values(new WebSocketPair()) as [WebSocket, WebSocket];
+      this.host.ctx.acceptWebSocket(server, [VIEW_TAG]);
+      server.serializeAttachment({ userId: claims.u, port: claims.p } satisfies ViewAttachment);
+      trySend(server, this.viewState(server));
+      await this.holdMaybeChanged();
+      return new Response(null, { status: 101, webSocket: client });
+    }
+    const tunnel = this.tunnel();
+    const leaseToken =
+      tunnel === null ? null : await this.host.leaseToken(tunnel.attachment.generation);
+    if (
+      tunnel === null ||
+      leaseToken === null ||
+      !tunnel.attachment.ports.some((entry) => entry.port === claims.p)
+    ) {
+      return configuration.services.some((entry) => entry.port === claims.p)
+        ? startingPreview()
+        : page(404, "This preview has no dev server to start. Ask the agent to start it.");
     }
     const origin = previewOrigin(settings, label);
     return request.headers.get("upgrade")?.toLowerCase() === "websocket"
@@ -493,21 +636,23 @@ export class PreviewGateway {
   }
 
   /** Trades a link's ticket for this origin's session cookie. */
-  private async signIn(claims: PreviewClaims, leaseToken: string) {
-    const session = await previewToken(leaseToken, {
+  private async signIn(claims: PreviewClaims, key: string) {
+    const session = await previewToken(key, {
       ...claims,
       k: "session",
       exp: this.now() + SESSION_TTL_MS,
     });
     const secure = this.host.settings?.scheme === "https" ? "; Secure" : "";
-    return new Response(null, {
-      status: 302,
-      headers: {
-        location: "/",
-        "cache-control": "no-store",
-        "set-cookie": `${PREVIEW_COOKIE}=${session}; Path=/; HttpOnly; SameSite=Lax${secure}; Max-Age=${SESSION_TTL_MS / 1000}`,
-      },
-    });
+    const headers = new Headers({ location: "/", "cache-control": "no-store" });
+    headers.append(
+      "set-cookie",
+      `${PREVIEW_COOKIE}=${session}; Path=/; HttpOnly; SameSite=Lax${secure}; Max-Age=${SESSION_TTL_MS / 1000}`,
+    );
+    headers.append(
+      "set-cookie",
+      `${PREVIEW_ROUTE_COOKIE}=${previewRouteCookie(this.host.threadId(), claims.p)}; Path=/; HttpOnly; SameSite=Lax${secure}; Max-Age=31536000`,
+    );
+    return new Response(null, { status: 302, headers });
   }
 
   private newStream() {
@@ -572,7 +717,7 @@ export class PreviewGateway {
       HEAD_TIMEOUT_MS,
     );
     try {
-      return await head.promise;
+      return withPreviewLease(await head.promise);
     } finally {
       clearTimeout(timeout);
       this.lastActive = this.now();
@@ -707,10 +852,18 @@ export class PreviewGateway {
 
   /** The ports the connected machine serves. */
   ports(): ReadonlyArray<PreviewPort> {
-    return this.tunnel()?.attachment.ports ?? [];
+    const ports = new Map(
+      (this.configuration?.services ?? []).map((service) => [
+        service.port,
+        { port: service.port, processName: null } as PreviewPort,
+      ]),
+    );
+    for (const port of this.tunnel()?.attachment.ports ?? []) ports.set(port.port, port);
+    return [...ports.values()].toSorted((a, b) => a.port - b.port);
   }
 
   private notify() {
+    for (const view of this.views()) trySend(view, this.viewState(view));
     const line = previewsLine(this.ports(), this.browsedNow);
     for (const listener of this.listeners) listener(line);
   }
@@ -745,6 +898,7 @@ export class PreviewGateway {
    */
   async subscribe(userId: string): Promise<ReadableStream<Uint8Array> | null> {
     if (!(await this.host.canSee(userId))) return null;
+    await this.loadConfiguration();
     await this.loadBrowsed();
     let listener: ((line: string) => void) | null = null;
     return new ReadableStream<Uint8Array>({
@@ -769,23 +923,23 @@ export class PreviewGateway {
   }
 
   /** A link that opens the preview of `port` for `userId`. */
-  async link(userId: string, port: number): Promise<PreviewLinkResult> {
+  async link(userId: string, port: number, handoff = false): Promise<PreviewLinkResult> {
     const settings = this.host.settings;
     if (settings === null) return { _tag: "unavailable", message: "Previews are off here." };
     if (!(await this.host.canSee(userId))) {
       return { _tag: "unavailable", message: "Thread not found." };
     }
-    const tunnel = this.tunnel();
-    const leaseToken =
-      tunnel === null ? null : await this.host.leaseToken(tunnel.attachment.generation);
-    if (tunnel === null || leaseToken === null) {
-      return { _tag: "unavailable", message: "This thread's machine isn't running." };
+    const configuration = await this.loadConfiguration();
+    if (!this.ports().some((entry) => entry.port === port)) {
+      return { _tag: "unavailable", message: "This preview has no dev server to start." };
     }
-    if (!tunnel.attachment.ports.some((entry) => entry.port === port)) {
-      return { _tag: "unavailable", message: `Nothing serves port ${port} right now.` };
-    }
+    if (!handoff)
+      return {
+        _tag: "ok",
+        url: new URL(previewOpenPath(this.host.threadId(), port), this.host.appOrigin).toString(),
+      };
     const threadId = this.host.threadId();
-    const ticket = await previewToken(leaseToken, {
+    const ticket = await previewToken(configuration.key, {
       k: "ticket",
       t: threadId,
       u: userId,
