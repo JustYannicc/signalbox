@@ -19,6 +19,15 @@ import { SyncCursor as SyncCursorSchema, SyncFailure } from "../definition.ts";
 import { decodeWireValue, encodeWireValue, type WireValue } from "./lunoraWireValue.ts";
 
 const isSyncFailure = Schema.is(SyncFailure);
+const revocationCodes = new Set([
+  "FORBIDDEN",
+  "FORBIDDEN_SHARD",
+  "UNAUTHORIZED",
+  "UNAUTHENTICATED",
+  "TOKEN_EXPIRED",
+  "IDENTITY_MISMATCH",
+  "OFFLINE_IDENTITY_CHANGED",
+]);
 
 type ObserveResult<OutputValue extends SyncSchema, FailureValue extends SyncSchema> =
   | {
@@ -220,7 +229,7 @@ function subscribeView<Op extends ViewOperationShape>(
             try {
               unsubscribeQuery = client.subscribe(reference, args, receive, {
                 onError: (error) => {
-                  if (error.code === "FORBIDDEN") {
+                  if (revocationCodes.has(error.code ?? "")) {
                     revoke();
                     return;
                   }

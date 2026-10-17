@@ -531,7 +531,7 @@ describe("Lunora home operation transactions", () => {
     const observe = (
       person = "alice",
       key = "counter",
-      resume?: import("../definition.ts").SyncCursor,
+      resume?: import("@signalbox/sync/definition").SyncCursor,
     ) =>
       t.db
         .query((ctx) =>
@@ -555,7 +555,7 @@ describe("Lunora home operation transactions", () => {
           readonly value:
             | { readonly defined: false }
             | { readonly defined: true; readonly value: number };
-          readonly cursor: import("../definition.ts").SyncCursor;
+          readonly cursor: import("@signalbox/sync/definition").SyncCursor;
         }
       | {
           readonly _tag: "Failure";

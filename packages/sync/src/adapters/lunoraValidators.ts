@@ -140,10 +140,6 @@ export function emitStoredField(ast: SchemaAST.AST, path: string): string {
   return emitField(ast, path, false);
 }
 
-export function emitStoredRequired(ast: SchemaAST.AST, path: string): string {
-  return emitRequired(ast, path, false);
-}
-
 function isAbsent(ast: SchemaAST.AST): boolean {
   return ast._tag === "Undefined" || ast._tag === "Void";
 }

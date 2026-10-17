@@ -58,7 +58,7 @@
         },
         "overrides": [
           {
-            // Lunora emits native engine contexts; their clock runs outside Effect.
+            // signalbox: Lunora emits native engine contexts; their clock runs outside Effect.
             "include": ["**/lunora/_generated/**/*.ts"],
             "options": { "diagnosticSeverity": { "globalDate": "off" } }
           },

@@ -323,6 +323,30 @@ describe("Lunora sync view client", () => {
     }),
   );
 
+  it.effect.each([
+    "FORBIDDEN_SHARD",
+    "UNAUTHORIZED",
+    "UNAUTHENTICATED",
+    "TOKEN_EXPIRED",
+    "IDENTITY_MISMATCH",
+    "OFFLINE_IDENTITY_CHANGED",
+  ])("clears the last value and stops when the server returns %s", (code) =>
+    Effect.gen(function* () {
+      const transport = createTransport();
+      const client = makeClient(transport);
+      const observed = yield* observe(client.view("count", input));
+      yield* Effect.promise(() => transport.attached);
+      transport.emit(value(4));
+      expect(yield* observed.take).toMatchObject({ _tag: "Snapshot", value: { count: 4 } });
+      transport.error({ code, message: "AccessDenied" });
+
+      expect(yield* observed.take).toEqual({ _tag: "Revoked" });
+      yield* Fiber.join(observed.fiber);
+      expect(transport.queryUnsubscribes).toBe(1);
+      expect(transport.statusUnsubscribes).toBe(1);
+    }),
+  );
+
   it.effect("decodes declared operation failures into the view stream error channel", () =>
     Effect.gen(function* () {
       const transport = createTransport();
