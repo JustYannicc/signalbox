@@ -48,7 +48,7 @@ describe("optimistic pin command failures", () => {
       const h = yield* makeHarness();
       const result = h.commands.pin.run(h.registry, target);
       const request = yield* Queue.take(h.requests);
-      yield* Deferred.fail(request.reply, { _tag });
+      yield* Deferred.fail(request.reply, Object.assign(new Error("Refused"), { _tag }));
 
       expect((yield* Effect.promise(() => result))._tag).toBe("Failure");
       expect(h.registry.get(h.visibleAtom)).toBe(SNAPSHOT);

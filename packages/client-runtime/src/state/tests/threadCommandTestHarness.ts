@@ -84,7 +84,7 @@ export const SNAPSHOT: OrchestrationV2ShellSnapshot = {
 export const makeHarness = Effect.fn("TestThreadCommands.makeHarness")(function* () {
   const requests = yield* Queue.unbounded<{
     command: OrchestrationV2Command;
-    reply: Deferred.Deferred<OrchestrationV2DispatchCommandResult, unknown>;
+    reply: Deferred.Deferred<OrchestrationV2DispatchCommandResult, Error>;
   }>();
   const supervisor = EnvironmentSupervisor.EnvironmentSupervisor.of({
     target: { environmentId: ENVIRONMENT_ID },
@@ -93,7 +93,7 @@ export const makeHarness = Effect.fn("TestThreadCommands.makeHarness")(function*
         client: {
           [ORCHESTRATION_V2_WS_METHODS.dispatchCommand]: (command: OrchestrationV2Command) =>
             Effect.gen(function* () {
-              const reply = yield* Deferred.make<OrchestrationV2DispatchCommandResult, unknown>();
+              const reply = yield* Deferred.make<OrchestrationV2DispatchCommandResult, Error>();
               yield* Queue.offer(requests, { command, reply });
               return yield* Deferred.await(reply);
             }),
