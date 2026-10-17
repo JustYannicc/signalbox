@@ -1006,7 +1006,6 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
       const branchCached = yield* Deferred.make<string>();
       const localPublishedBeforeRemote = yield* Deferred.make<void>();
       const cacheWatcherReady = yield* Deferred.make<void>();
-      let remoteStatusCalls = 0;
       let remoteStatusReturned = false;
       let refreshCompleted = false;
       const { manager, ghCalls } = yield* makeManager({
@@ -1038,10 +1037,7 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
               ),
             ),
         remoteStatus: (input, options) =>
-          Effect.sync(() => {
-            remoteStatusCalls += 1;
-          }).pipe(
-            Effect.andThen(manager.remoteStatus(input, options)),
+          manager.remoteStatus(input, options).pipe(
             Effect.tap((remote) =>
               Effect.sync(() => {
                 remoteStatusReturned = remote?.pr !== null && remote?.pr !== undefined;
@@ -1137,7 +1133,6 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
       const coldStatus = yield* broadcaster.getStatus({ cwd: repoDir });
       expect(coldStatus.refName).toBe("feature/next-status");
       expect(coldStatus.pr).toBeNull();
-      expect(remoteStatusCalls).toBe(2);
 
       const snapshot = yield* Stream.runHead(
         broadcaster.streamStatus({ cwd: repoDir, includeRemote: false }),

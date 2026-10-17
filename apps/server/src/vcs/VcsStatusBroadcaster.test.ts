@@ -328,8 +328,8 @@ describe("VcsStatusBroadcaster", () => {
       state.currentRemoteStatus = baseRemoteStatus;
       yield* broadcaster.refreshLocalStatus("/repo");
       const refreshedBranch = yield* broadcaster.refreshPullRequestStatus("/repo");
-      assert.isNull(refreshedBranch);
-      assert.equal(state.remoteStatusCalls, 2);
+      assert.deepStrictEqual(refreshedBranch, baseRemoteStatus);
+      assert.equal(state.remoteStatusCalls, 3);
       const refreshedStatus = yield* broadcaster.getStatus({ cwd: "/repo" });
       assert.equal(refreshedStatus.refName, "feature/next");
       assert.isNull(refreshedStatus.pr);
