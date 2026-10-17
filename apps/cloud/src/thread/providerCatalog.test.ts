@@ -2,7 +2,26 @@ import { ProviderInstanceId } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
 
 import { BUNDLED_MODEL_CATALOGS } from "./ModelManifest.ts";
-import { harnessModels, poolIdOfInstance, runnerInstanceFor } from "./providerCatalog.ts";
+import {
+  harnessModels,
+  poolIdOfInstance,
+  poolServerProvider,
+  runnerInstanceFor,
+} from "./providerCatalog.ts";
+
+describe("poolServerProvider", () => {
+  it.each(["claude", "codex"] as const)("allows plan questions for the %s harness", (kind) => {
+    const provider = poolServerProvider({
+      kind,
+      instanceId: ProviderInstanceId.make(`${kind}_hub`),
+      displayName: kind,
+      signedIn: true,
+      models: [],
+      checkedAt: "2026-10-17T11:24:00.000Z",
+    });
+    expect(provider.showInteractionModeToggle).toBe(true);
+  });
+});
 
 describe("poolIdOfInstance", () => {
   it("names the pool a harness turn runs on", () => {
