@@ -4,7 +4,9 @@ In a Signalbox Cloud thread, agents browse in the cloud: real sites open in your
 
 ## Watch
 
-Open **Previews → Agent's browser** in the thread header. On mobile it's in the header's globe menu. The panel shows a live copy of the page the agent is on, and switches tabs with the agent. Pick a tab to keep watching that one instead.
+On web, open **Browser** from the thread's right panel. On mobile, open **Agent's browser** from the header's globe menu. The panel shows a live copy of the page the agent is on, and switches tabs with the agent. Pick a tab to keep watching that one instead.
+
+When **Thread tabs** is available, choose it in the panel to see the thread's open tabs and share one of your own.
 
 The copy is rebuilt from the page itself rather than streamed as video, so it stays sharp and scrolls like the real site. Pages that draw on a canvas, like maps and games, update about once a second. Click a link in the copy to open it in a tab of your own, signed in as you; the agent's tab stays where it is.
 
