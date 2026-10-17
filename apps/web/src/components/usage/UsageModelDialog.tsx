@@ -38,6 +38,7 @@ export function UsageModelDialog({
   environments,
   metric,
   chartWindow,
+  canSetPrice,
   onSetPrice,
   onClose,
 }: {
@@ -45,6 +46,7 @@ export function UsageModelDialog({
   readonly environments: readonly EnvironmentUsageStatus[];
   readonly metric: UsageChartMetric;
   readonly chartWindow: UsageChartWindow;
+  readonly canSetPrice: boolean;
   readonly onSetPrice: () => void;
   readonly onClose: () => void;
 }) {
@@ -143,7 +145,7 @@ export function UsageModelDialog({
             <span className="text-xs text-muted-foreground">
               {formatTokens(model.unpricedTokens)} tokens have no known price
             </span>
-            <Button onClick={onSetPrice}>Set price</Button>
+            {canSetPrice ? <Button onClick={onSetPrice}>Set price</Button> : null}
           </DialogFooter>
         ) : null}
       </DialogPopup>

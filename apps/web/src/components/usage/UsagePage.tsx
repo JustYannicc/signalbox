@@ -95,6 +95,7 @@ import {
 } from "./usageShortcuts";
 import { useEscapeToGoBack } from "../../hooks/useNavigateBack";
 import { PROVIDER_ORDER, PROVIDER_PRESENTATION, providersWithUsage } from "./usageProviders";
+import { hasWritableSelectedUsagePriceTarget } from "./usagePriceCapabilities";
 import {
   readUsagePagePreferences,
   saveUsagePagePreferences,
@@ -178,6 +179,14 @@ export function UsagePage() {
   const isProviderLoading = (provider: UsageProviderKind) =>
     loading.everyProvider || loading.providers.has(provider);
   const presentations = useAtomValue(environmentPresentations.presentationsAtom);
+  const canEditModelPrices = hasWritableSelectedUsagePriceTarget(
+    environments.map((environment) => ({
+      environmentId: environment.environmentId,
+      serverSettingsWrite: presentations.get(environment.environmentId)?.serverConfig?.environment
+        .capabilities.serverSettingsWrite,
+    })),
+    selectedEnvironmentIds,
+  );
   const cursorAccessEnvironments = hiddenProviders.has("cursor")
     ? []
     : cursorKeychainAccessEnvironments(selectedEnvironments);
@@ -395,7 +404,10 @@ export function UsagePage() {
             isPartial={isPartial}
             duplicateSources={merged.duplicateSources}
             contractMismatches={merged.contractMismatches}
-            onOpenModelPrices={() => setPriceDialog({})}
+            canEditModelPrices={canEditModelPrices}
+            onOpenModelPrices={() => {
+              if (canEditModelPrices) setPriceDialog({});
+            }}
           />
         </WorkspaceBreadcrumbItem>
         <WorkspaceBreadcrumbSeparator />
@@ -985,14 +997,16 @@ export function UsagePage() {
             timeZone: shownWindow.timeZone,
             referenceTime: shownWindow.untilTime,
           }}
+          canSetPrice={canEditModelPrices}
           onSetPrice={() => {
+            if (!canEditModelPrices) return;
             setSelectedModelKey(null);
             setPriceDialog({ model: selectedModel.model });
           }}
           onClose={() => setSelectedModelKey(null)}
         />
       ) : null}
-      {priceDialog ? (
+      {priceDialog && canEditModelPrices ? (
         <UsagePriceOverrides
           usage={environments}
           initialSelectedEnvironmentIds={selectedEnvironmentIds}
@@ -1232,6 +1246,7 @@ function UsageEnvironmentFilter({
   isPartial,
   duplicateSources,
   contractMismatches,
+  canEditModelPrices,
   onOpenModelPrices,
 }: {
   readonly environments: readonly EnvironmentUsageStatus[];
@@ -1243,6 +1258,7 @@ function UsageEnvironmentFilter({
   readonly isPartial: boolean;
   readonly duplicateSources: readonly string[];
   readonly contractMismatches: MergedUsage["contractMismatches"];
+  readonly canEditModelPrices: boolean;
   readonly onOpenModelPrices: () => void;
 }) {
   const allSelected = selectedEnvironmentIds === null;
@@ -1358,11 +1374,15 @@ function UsageEnvironmentFilter({
             contractMismatches={contractMismatches}
           />
         ) : null}
-        <MenuSeparator />
-        <MenuItem onClick={onOpenModelPrices}>
-          <SlidersHorizontalIcon aria-hidden />
-          Model prices
-        </MenuItem>
+        {canEditModelPrices ? (
+          <>
+            <MenuSeparator />
+            <MenuItem onClick={onOpenModelPrices}>
+              <SlidersHorizontalIcon aria-hidden />
+              Model prices
+            </MenuItem>
+          </>
+        ) : null}
       </MenuPopup>
     </Menu>
   );

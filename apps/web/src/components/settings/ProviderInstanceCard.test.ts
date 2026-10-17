@@ -1,5 +1,6 @@
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
+import { act, create, type ReactTestRenderer } from "react-test-renderer";
 import { describe, expect, it, vi } from "vite-plus/test";
 import {
   ProviderDriverKind,
@@ -11,10 +12,14 @@ import {
 import {
   deriveProviderModelsForDisplay,
   nextProviderEnvironmentWithFieldValue,
+  ProviderEnvironmentSection,
   providerEnvironmentWithoutNames,
   ProviderInstanceCard,
   readProviderEnvironmentVariable,
 } from "./ProviderInstanceCard";
+import { ProviderModelsSection } from "./ProviderModelsSection";
+import { ProviderSettingsForm } from "./ProviderSettingsForm";
+import { providerClients } from "./providerDriverMeta";
 
 // signalbox: rendered without a browser, so environment UI reads as shown.
 vi.mock("../../state/environmentCapabilities", async (importOriginal) => ({
@@ -171,6 +176,73 @@ describe("deriveProviderModelsForDisplay", () => {
       const markup = renderToStaticMarkup(createElement(ProviderInstanceCard, { ...props, mode }));
       expect(markup).toContain("Unavailable");
       expect(markup).toContain("is not a symlink");
+    }
+  });
+
+  it("keeps Cloud pool models visible without exposing host configuration", async () => {
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    const instanceId = ProviderInstanceId.make("codex_hub");
+    const driver = ProviderDriverKind.make("codex");
+    let renderer: ReactTestRenderer | undefined;
+    await act(async () => {
+      renderer = create(
+        createElement(ProviderInstanceCard, {
+          instanceId,
+          instance: {
+            driver,
+            config: { binaryPath: "/host/bin/codex", configDirectory: "/host/.codex" },
+            environment: [{ name: "HOST_ONLY_KEY", value: "host-secret", sensitive: true }],
+          },
+          driverOption: providerClients.get(driver),
+          liveProvider: {
+            instanceId,
+            driver,
+            enabled: true,
+            installed: true,
+            version: null,
+            status: "ready",
+            auth: { status: "authenticated" },
+            checkedAt: "2026-08-27T12:00:00.000Z",
+            models: [
+              {
+                slug: "pool-model",
+                name: "Pool model",
+                isCustom: false,
+                capabilities: null,
+              },
+            ],
+            slashCommands: [],
+            skills: [],
+          },
+          mode: "editor",
+          supportsServerSettingsWrite: false,
+          onUpdate: () => undefined,
+          hiddenModels: [],
+          favoriteModels: [],
+          modelOrder: [],
+          onHiddenModelsChange: () => undefined,
+          onFavoriteModelsChange: () => undefined,
+          onToggleFavorite: () => undefined,
+          onModelOrderChange: () => undefined,
+        }),
+      );
+    });
+
+    try {
+      expect(renderer!.root.findAllByType(ProviderSettingsForm)).toHaveLength(0);
+      expect(renderer!.root.findAllByType(ProviderEnvironmentSection)).toHaveLength(0);
+      expect(renderer!.root.findAllByType(ProviderModelsSection)).toHaveLength(1);
+      expect(renderer!.root.findAllByProps({ "data-model-slug": "pool-model" })).toHaveLength(1);
+      expect(
+        renderer!.root.findByProps({ "aria-label": "Show Pool model in the model picker" }).props
+          .disabled,
+      ).toBe(true);
+      expect(
+        renderer!.root.findByProps({ "aria-label": "Add Pool model to favorites" }).props.disabled,
+      ).toBe(true);
+    } finally {
+      await act(async () => renderer?.unmount());
+      vi.unstubAllGlobals();
     }
   });
 });

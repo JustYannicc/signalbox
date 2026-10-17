@@ -130,7 +130,7 @@ import {
   resolveRemoteOperateAccess,
   resolveSelectedProviderEnvironmentId,
 } from "./ProviderSettingsPanel.logic";
-import { useShowsEnvironmentUi } from "../../state/environmentCapabilities";
+import { useEnvironmentSupports, useShowsEnvironmentUi } from "../../state/environmentCapabilities";
 import { useOneEnvironmentCopy } from "~/state/oneEnvironmentCopy"; // signalbox
 
 function modelListChanges(current: ReadonlyArray<string>, next: ReadonlyArray<string>) {
@@ -563,6 +563,7 @@ export function EnvironmentProviderSettings({
   readonly readOnly?: boolean;
 }) {
   const settings = useEnvironmentSettings(environmentId);
+  const supportsServerSettingsWrite = useEnvironmentSupports(environmentId, "serverSettingsWrite");
   const canWriteSettings = useEnvironmentScope(environmentId, AuthSettingsWriteScope);
   const canRefreshProviders = useEnvironmentScope(environmentId, AuthOrchestrationReadScope);
   const updateSettings = useUpdateEnvironmentSettings(environmentId);
@@ -692,7 +693,11 @@ export function EnvironmentProviderSettings({
       candidate: Pick<ProviderSettingsUpdateCandidate, "driver" | "instanceId">,
       targetVersion?: string,
     ) => {
-      if (!readEnvironmentScope(environmentId, AuthProvidersManageScope)) return;
+      if (
+        !supportsServerSettingsWrite ||
+        !readEnvironmentScope(environmentId, AuthProvidersManageScope)
+      )
+        return;
       // Ref-based re-entry guard, mirroring refreshProviders: a state updater
       // may run after this function returns, so it cannot gate the dispatch.
       if (updatingInstanceIdsRef.current.has(candidate.instanceId)) {
@@ -732,7 +737,7 @@ export function EnvironmentProviderSettings({
         return next;
       });
     },
-    [environmentId, updateProvider],
+    [environmentId, supportsServerSettingsWrite, updateProvider],
   );
 
   interface InstanceRow {
@@ -822,6 +827,7 @@ export function EnvironmentProviderSettings({
       >[0]["textGenerationModelSelection"];
     },
   ) => {
+    if (!supportsServerSettingsWrite || readOnly) return;
     const { providerInstances: _providerInstances, ...patch } = buildProviderInstanceUpdatePatch({
       settings,
       instanceId: row.instanceId,
@@ -843,6 +849,7 @@ export function EnvironmentProviderSettings({
   };
 
   const deleteProviderInstance = async (row: InstanceRow) => {
+    if (!supportsServerSettingsWrite || readOnly) return;
     const updateResult = await persistProviderInstance({
       operation: "remove",
       instanceId: row.instanceId,
@@ -880,6 +887,7 @@ export function EnvironmentProviderSettings({
   };
 
   const resetDefaultInstance = async (driverKind: ProviderDriverKind) => {
+    if (!supportsServerSettingsWrite || readOnly) return;
     const result = await persistProviderInstance({
       operation: "remove",
       instanceId: defaultInstanceIdForDriver(driverKind),
@@ -948,7 +956,9 @@ export function EnvironmentProviderSettings({
         acpProjects={projects}
         projectOverride={projectOverride}
         onAcceptUrlAuth={
-          readOnly ? undefined : (action) => acceptUrlAuthentication(row.instanceId, action)
+          !supportsServerSettingsWrite || readOnly
+            ? undefined
+            : (action) => acceptUrlAuthentication(row.instanceId, action)
         }
         instanceId={row.instanceId}
         instance={row.instance}
@@ -958,6 +968,7 @@ export function EnvironmentProviderSettings({
         selected={mode === "list" && selectedRow?.instanceId === row.instanceId}
         onSelect={mode === "list" ? () => setSelectedInstanceId(row.instanceId) : undefined}
         readOnly={readOnly}
+        supportsServerSettingsWrite={supportsServerSettingsWrite}
         runtime={
           mode === "editor" &&
           row.driver === "codex" &&
@@ -969,7 +980,7 @@ export function EnvironmentProviderSettings({
             />
           ) : undefined
         }
-        canWriteSettings={canWriteSettings}
+        canWriteSettings={supportsServerSettingsWrite && canWriteSettings}
         setup={
           // signalbox: hub instances add accounts to the account hub.
           mode === "editor" && isHubInstanceConfig(row.instance.config) ? (
@@ -979,7 +990,7 @@ export function EnvironmentProviderSettings({
               provider={liveProvider}
               readOnly={readOnly}
             />
-          ) : mode === "editor" && row.driver === "antigravity" ? (
+          ) : supportsServerSettingsWrite && mode === "editor" && row.driver === "antigravity" ? (
             <ProviderSetupSection
               environmentId={environmentId}
               environmentLabel={environmentLabel}
@@ -998,7 +1009,8 @@ export function EnvironmentProviderSettings({
               provider={liveProvider}
               readOnly={readOnly}
             />
-          ) : mode === "editor" &&
+          ) : supportsServerSettingsWrite &&
+            mode === "editor" &&
             row.driver === "codex" &&
             readCodexSetupMode(row.instance.config) === "managed" ? (
             <CodexSetupSection
@@ -1022,7 +1034,8 @@ export function EnvironmentProviderSettings({
                 })
               }
             />
-          ) : mode === "editor" &&
+          ) : supportsServerSettingsWrite &&
+            mode === "editor" &&
             !readOnly &&
             liveProvider &&
             (liveProvider.setup?.canAuthenticate ||
@@ -1035,7 +1048,8 @@ export function EnvironmentProviderSettings({
               provider={liveProvider}
               readOnly={readOnly}
             />
-          ) : mode === "editor" &&
+          ) : supportsServerSettingsWrite &&
+            mode === "editor" &&
             !readOnly &&
             row.driver === "cursor" &&
             liveProvider?.setup?.canAuthenticate === false ? (
@@ -1064,10 +1078,16 @@ export function EnvironmentProviderSettings({
           );
         }}
         onDelete={
-          mode === "editor" && !row.isDefault ? () => deleteProviderInstance(row) : undefined
+          supportsServerSettingsWrite && !readOnly && mode === "editor" && !row.isDefault
+            ? () => deleteProviderInstance(row)
+            : undefined
         }
         headerAction={
-          mode === "editor" && row.isDefault && row.isDirty ? (
+          supportsServerSettingsWrite &&
+          !readOnly &&
+          mode === "editor" &&
+          row.isDefault &&
+          row.isDirty ? (
             <SettingResetButton
               label={`${resetLabel} provider settings`}
               onClick={() => resetDefaultInstance(row.driver)}
@@ -1082,6 +1102,7 @@ export function EnvironmentProviderSettings({
           const models =
             affectedModels ??
             modelListChanges(modelPreferences.hiddenModels, next).map((change) => change.model);
+          if (!supportsServerSettingsWrite || !canWriteSettings) return;
           void updateModelPreferences({
             setModelsHidden: models.map((model) => ({
               provider: row.instanceId,
@@ -1091,9 +1112,11 @@ export function EnvironmentProviderSettings({
           });
         }}
         onToggleFavorite={(model) => {
+          if (!supportsServerSettingsWrite || !canWriteSettings) return;
           void toggleModelFavorite(row.instanceId, model);
         }}
         onFavoriteModelsChange={(next) => {
+          if (!supportsServerSettingsWrite || !canWriteSettings) return;
           void updateModelPreferences({
             setModelFavorites: modelListChanges(favoriteModels, next).map(
               ({ model, selected }) => ({ provider: row.instanceId, model, favorite: selected }),
@@ -1101,11 +1124,13 @@ export function EnvironmentProviderSettings({
           });
         }}
         onModelOrderChange={(modelOrder) => {
+          if (!supportsServerSettingsWrite || !canWriteSettings) return;
           void updateModelPreferences({
             setProviderModelOrder: { provider: row.instanceId, modelOrder },
           });
         }}
         onInstallRecommended={
+          supportsServerSettingsWrite &&
           !readOnly &&
           liveProvider?.compatibilityAdvisory?.message &&
           liveProvider.compatibilityAdvisory.recommendedVersion &&
@@ -1119,7 +1144,7 @@ export function EnvironmentProviderSettings({
             : undefined
         }
         onRunUpdate={
-          !readOnly && showInlineUpdateButton && updateCandidate
+          supportsServerSettingsWrite && !readOnly && showInlineUpdateButton && updateCandidate
             ? () => {
                 if (canRunInlineUpdate) void runProviderUpdate(updateCandidate);
               }
@@ -1136,7 +1161,7 @@ export function EnvironmentProviderSettings({
         {...searchableSetting("providers")}
         variant="plain"
         titleAction={
-          !readOnly ? (
+          supportsServerSettingsWrite && !readOnly ? (
             <Tooltip>
               <TooltipTrigger
                 render={
@@ -1156,7 +1181,7 @@ export function EnvironmentProviderSettings({
         }
         headerAction={
           <div className="flex min-w-0 items-center gap-2">
-            <ProviderUpdatesAction />
+            {supportsServerSettingsWrite ? <ProviderUpdatesAction /> : null}
             <Tooltip>
               <TooltipTrigger
                 render={
@@ -1195,7 +1220,9 @@ export function EnvironmentProviderSettings({
             />
           </SettingsGroup>
         ) : null}
-        {readOnly ? null : <MoveNativeLogins environmentId={environmentId} framed />}
+        {supportsServerSettingsWrite && !readOnly ? (
+          <MoveNativeLogins environmentId={environmentId} framed />
+        ) : null}
         <SettingsGroup
           divided={false}
           className={cn(
@@ -1211,7 +1238,7 @@ export function EnvironmentProviderSettings({
             >
               <div className="divide-y divide-border/50">
                 {rows.map((row) => renderProviderInstance(row, "list"))}
-                {!readOnly ? (
+                {supportsServerSettingsWrite && !readOnly ? (
                   <button
                     type="button"
                     className="flex w-full cursor-pointer items-center gap-3 px-3 py-3 text-left text-sm text-muted-foreground transition-colors outline-none hover:bg-muted/25 hover:text-foreground focus-visible:bg-muted/25 focus-visible:text-foreground sm:px-4"
@@ -1241,92 +1268,97 @@ export function EnvironmentProviderSettings({
         </SettingsGroup>
       </SettingsSection>
 
-      <UsageProviderSettings
-        key={environmentId}
-        environmentId={environmentId}
-        environmentLabel={environmentLabel}
-        sources={settings.usageLimitSources}
-        cursorKeychainUsageEnabled={settings.cursorKeychainUsageEnabled}
-        readOnly={readOnly}
-      />
+      {supportsServerSettingsWrite ? (
+        <UsageProviderSettings
+          key={environmentId}
+          environmentId={environmentId}
+          environmentLabel={environmentLabel}
+          sources={settings.usageLimitSources}
+          cursorKeychainUsageEnabled={settings.cursorKeychainUsageEnabled}
+          readOnly={readOnly}
+        />
+      ) : null}
 
-      <SettingsSection title="Advanced">
-        <SettingsRow
-          id={searchableSetting("provider-health-check-interval").id}
-          title={
-            <span className="inline-flex items-center gap-1.5">
-              {searchableSetting("provider-health-check-interval").title}
-              <PolicyTooltip>
-                This interval is configured here, then the shared Background activity policy decides
-                whether provider probes may run when the timer fires. Custom intervals appear as
-                Advanced in General settings.
-              </PolicyTooltip>
-            </span>
-          }
-          description="Refresh provider status, versions, and models in the background. Set to 0 to disable."
-          resetAction={
-            providerHealthRefreshIntervalSeconds !== defaultProviderHealthRefreshIntervalSeconds ? (
-              <span
+      {supportsServerSettingsWrite ? (
+        <SettingsSection title="Advanced">
+          <SettingsRow
+            id={searchableSetting("provider-health-check-interval").id}
+            title={
+              <span className="inline-flex items-center gap-1.5">
+                {searchableSetting("provider-health-check-interval").title}
+                <PolicyTooltip>
+                  This interval is configured here, then the shared Background activity policy
+                  decides whether provider probes may run when the timer fires. Custom intervals
+                  appear as Advanced in General settings.
+                </PolicyTooltip>
+              </span>
+            }
+            description="Refresh provider status, versions, and models in the background. Set to 0 to disable."
+            resetAction={
+              providerHealthRefreshIntervalSeconds !==
+              defaultProviderHealthRefreshIntervalSeconds ? (
+                <span
+                  inert={!canWriteSettings}
+                  className={!canWriteSettings ? "opacity-50" : undefined}
+                >
+                  <SettingResetButton
+                    label="provider health check interval"
+                    onClick={() =>
+                      updateSettings(
+                        backgroundActivityOverrideSettings(
+                          settings.backgroundActivity,
+                          resolvedBackgroundActivity,
+                          { providerHealthRefreshInterval: undefined },
+                        ),
+                      )
+                    }
+                  />
+                </span>
+              ) : null
+            }
+            control={
+              <div
                 inert={!canWriteSettings}
-                className={!canWriteSettings ? "opacity-50" : undefined}
+                aria-disabled={!canWriteSettings || undefined}
+                className={cn(
+                  "flex shrink-0 items-center gap-2",
+                  !canWriteSettings && "opacity-50 select-none",
+                )}
               >
-                <SettingResetButton
-                  label="provider health check interval"
-                  onClick={() =>
+                <NumberField
+                  value={providerHealthRefreshIntervalSeconds}
+                  min={0}
+                  step={PROVIDER_HEALTH_INTERVAL_STEP_SECONDS}
+                  size="sm"
+                  className="w-32"
+                  onValueChange={(value) =>
                     updateSettings(
                       backgroundActivityOverrideSettings(
                         settings.backgroundActivity,
                         resolvedBackgroundActivity,
-                        { providerHealthRefreshInterval: undefined },
+                        {
+                          providerHealthRefreshInterval: Duration.seconds(
+                            normalizeIntervalSeconds(value),
+                          ),
+                        },
                       ),
                     )
                   }
-                />
-              </span>
-            ) : null
-          }
-          control={
-            <div
-              inert={!canWriteSettings}
-              aria-disabled={!canWriteSettings || undefined}
-              className={cn(
-                "flex shrink-0 items-center gap-2",
-                !canWriteSettings && "opacity-50 select-none",
-              )}
-            >
-              <NumberField
-                value={providerHealthRefreshIntervalSeconds}
-                min={0}
-                step={PROVIDER_HEALTH_INTERVAL_STEP_SECONDS}
-                size="sm"
-                className="w-32"
-                onValueChange={(value) =>
-                  updateSettings(
-                    backgroundActivityOverrideSettings(
-                      settings.backgroundActivity,
-                      resolvedBackgroundActivity,
-                      {
-                        providerHealthRefreshInterval: Duration.seconds(
-                          normalizeIntervalSeconds(value),
-                        ),
-                      },
-                    ),
-                  )
-                }
-              >
-                <NumberFieldGroup>
-                  <NumberFieldDecrement aria-label="Decrease provider health check interval" />
-                  <NumberFieldInput aria-label="Provider health check interval in seconds" />
-                  <NumberFieldIncrement aria-label="Increase provider health check interval" />
-                </NumberFieldGroup>
-              </NumberField>
-              <span className="text-xs text-muted-foreground">seconds</span>
-            </div>
-          }
-        />
-      </SettingsSection>
+                >
+                  <NumberFieldGroup>
+                    <NumberFieldDecrement aria-label="Decrease provider health check interval" />
+                    <NumberFieldInput aria-label="Provider health check interval in seconds" />
+                    <NumberFieldIncrement aria-label="Increase provider health check interval" />
+                  </NumberFieldGroup>
+                </NumberField>
+                <span className="text-xs text-muted-foreground">seconds</span>
+              </div>
+            }
+          />
+        </SettingsSection>
+      ) : null}
 
-      {isAddInstanceDialogOpen && !readOnly ? (
+      {isAddInstanceDialogOpen && supportsServerSettingsWrite && !readOnly ? (
         <AddProviderInstanceDialog
           open
           environmentId={environmentId}

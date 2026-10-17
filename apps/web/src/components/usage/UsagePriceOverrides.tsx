@@ -41,7 +41,10 @@ import {
   type UsagePriceTarget,
   type UsagePriceWriteResult,
 } from "./usagePriceTargets";
-import { useShowsEnvironmentUi } from "../../state/environmentCapabilities";
+import {
+  readEnvironmentSupports,
+  useShowsEnvironmentUi,
+} from "../../state/environmentCapabilities";
 
 const priceTargetsAtom = Atom.make((get): readonly UsagePriceTarget[] =>
   [...get(environmentPresentations.presentationsAtom)].map(([environmentId, environment]) => {
@@ -71,13 +74,15 @@ const priceTargetsAtom = Atom.make((get): readonly UsagePriceTarget[] =>
           ? "Offline"
           : settings === null
             ? "Prices not loaded"
-            : environment.serverConfig?.environment.capabilities.usagePriceOverrides !== true
-              ? "Update server to edit prices"
-              : access === "pending"
-                ? "Checking permissions…"
-                : access === "denied"
-                  ? "Read-only access"
-                  : null,
+            : environment.serverConfig?.environment.capabilities.serverSettingsWrite === false
+              ? "Server settings are read-only here"
+              : environment.serverConfig?.environment.capabilities.usagePriceOverrides !== true
+                ? "Update server to edit prices"
+                : access === "pending"
+                  ? "Checking permissions…"
+                  : access === "denied"
+                    ? "Read-only access"
+                    : null,
     };
   }),
 );
@@ -255,6 +260,7 @@ export function UsagePriceOverrides({
       })),
       changes: new Map([...changes].map(([id, plan]) => [id, plan.changes])),
       write: async (input) =>
+        readEnvironmentSupports(input.environmentId, "serverSettingsWrite") &&
         readEnvironmentScope(input.environmentId, AuthSettingsWriteScope)
           ? updateSettings(input)
           : { _tag: "Failure" },

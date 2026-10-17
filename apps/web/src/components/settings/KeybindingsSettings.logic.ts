@@ -14,6 +14,10 @@ import {
 import { shortcutKeyFromEvent } from "../../keybindings";
 import { isMacPlatform } from "../../lib/utils";
 import { METRIC_OPTIONS, WINDOW_OPTIONS } from "../usage/usageShortcuts";
+import {
+  capabilityKeybindingLabel,
+  keybindingWhenWithoutTerminalState,
+} from "./keybindingSettingsCapabilities";
 
 // Every usage.* command needs a rank. An unranked one falls back to the
 // alphabetical compare, which makes the comparator inconsistent and the order
@@ -244,6 +248,7 @@ export function groupKeybindingRows(
 export function buildKeybindingRows(
   keybindings: ResolvedKeybindingsConfig,
   query: string,
+  capabilities = { localFilesystem: true, terminal: true },
 ): ReadonlyArray<KeybindingRow> {
   const normalizedQuery = query.trim().toLowerCase();
   const rows = keybindings.map((binding, index) => {
@@ -287,9 +292,13 @@ export function buildKeybindingRows(
   return rowsWithConflicts.filter((row) => {
     return (
       row.command.toLowerCase().includes(normalizedQuery) ||
-      commandLabel(row.command).toLowerCase().includes(normalizedQuery) ||
+      commandLabel(row.command, capabilities.localFilesystem)
+        .toLowerCase()
+        .includes(normalizedQuery) ||
       row.key.toLowerCase().includes(normalizedQuery) ||
-      row.when.toLowerCase().includes(normalizedQuery) ||
+      (capabilities.terminal ? row.when : keybindingWhenWithoutTerminal(row.binding.whenAst))
+        .toLowerCase()
+        .includes(normalizedQuery) ||
       row.source.toLowerCase().includes(normalizedQuery)
     );
   });
@@ -351,7 +360,9 @@ export function buildKeybindingCommandOptions(
   return [...commands].toSorted((left, right) => compareCommands(left, right, commandLabel));
 }
 
-export function commandLabel(command: KeybindingCommand): string {
+export function commandLabel(command: KeybindingCommand, hasLocalFilesystem = true): string {
+  const capabilityLabel = capabilityKeybindingLabel(command, hasLocalFilesystem);
+  if (capabilityLabel) return capabilityLabel;
   if (command === "composer.sendAlternate") return "Composer: Opposite Queue or Steer Action";
   if (command === "composer.sendBackground") return "Composer: Start in Background";
   if (command === "composer.sendAndNewThread") return "Composer: Send and Start New Thread";
@@ -430,4 +441,11 @@ export function keybindingFromKeyboardEvent(
   if (event.shiftKey) parts.push("shift");
   parts.push(keyToken);
   return parts.join("+");
+}
+
+// Terminal state is always false when the environment has no terminal.
+export function keybindingWhenWithoutTerminal(node: KeybindingWhenNode | undefined): string {
+  if (!node) return "";
+  const result = keybindingWhenWithoutTerminalState(node);
+  return typeof result === "boolean" ? (result ? "" : "Never") : whenAstToExpression(result);
 }

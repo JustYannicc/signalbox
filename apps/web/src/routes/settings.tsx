@@ -29,6 +29,7 @@ import {
 } from "../components/settings/settingsSearch";
 import { useShowsEnvironmentUi } from "../state/environmentCapabilities";
 import { useOneEnvironmentCopy } from "~/state/oneEnvironmentCopy"; // signalbox
+import { SettingsCapabilityBoundary } from "../components/settings/SettingsCapability";
 
 function RestoreDeviceDefaultsButton({ onRestored }: { onRestored: () => void }) {
   const { changedSettingLabels, restoreDefaults } = useSettingsRestore(onRestored);
@@ -138,9 +139,11 @@ function SettingsContentLayout() {
         </WorkspacePageHeader>
 
         <div key={`${contentScopeKey}:${restoreSignal}`} className="min-h-0 flex flex-1 flex-col">
-          <SettingsScopeBoundary pathname={location.pathname}>
-            <Outlet />
-          </SettingsScopeBoundary>
+          <SettingsCapabilityBoundary>
+            <SettingsScopeBoundary pathname={location.pathname}>
+              <Outlet />
+            </SettingsScopeBoundary>
+          </SettingsCapabilityBoundary>
         </div>
       </div>
     </SidebarInset>

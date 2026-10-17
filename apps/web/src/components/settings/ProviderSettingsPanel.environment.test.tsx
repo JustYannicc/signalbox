@@ -30,6 +30,8 @@ const commands = vi.hoisted(() => ({
   canWriteSettings: true,
 }));
 
+const capabilities = vi.hoisted(() => ({ serverSettingsWrite: true }));
+
 const settingsState = vi.hoisted(() => ({
   value: null as UnifiedSettings | null,
   readEnvironmentIds: [] as EnvironmentId[],
@@ -143,8 +145,17 @@ vi.mock("../../state/entities", () => ({
   useServerConfigs: () => new Map(),
 }));
 
+vi.mock("../../state/environmentCapabilities", () => ({
+  useEnvironmentSupports: (_environmentId: EnvironmentId, capability: string) =>
+    capability === "serverSettingsWrite" ? capabilities.serverSettingsWrite : true,
+}));
+
 import { EnvironmentProviderSettings } from "./ProviderSettingsPanel";
 import { AddProviderInstanceDialog } from "./AddProviderInstanceDialog";
+import { HubInstanceSetup } from "../accountHub/HubInstanceSetup";
+import { MoveNativeLogins } from "../accountPool/MoveNativeLogins";
+import { ProviderUpdatesAction } from "../ProviderUpdatesAction";
+import { UsageProviderSettings } from "./UsageProviderSettings";
 
 const environmentId = EnvironmentId.make("remote-device");
 const codexId = ProviderInstanceId.make("codex");
@@ -173,6 +184,10 @@ function provider(): ServerProvider {
       message: "Update available.",
     },
   };
+}
+
+function poolProvider(instanceId: ProviderInstanceId): ServerProvider {
+  return { ...provider(), instanceId };
 }
 
 function renderPanel(options?: {
@@ -231,6 +246,7 @@ describe("EnvironmentProviderSettings routing", () => {
       .mockResolvedValue({ _tag: "Success", value: {} });
     commands.canManageProviders = true;
     commands.canWriteSettings = true;
+    capabilities.serverSettingsWrite = true;
     commands.refresh.mockReset().mockResolvedValue({ _tag: "Success" });
     commands.updateProvider.mockReset().mockResolvedValue({ _tag: "Success" });
     commands.uninstall.mockReset().mockResolvedValue({ _tag: "Success", value: {} });
@@ -428,6 +444,72 @@ describe("EnvironmentProviderSettings routing", () => {
     ).toBeNull();
     expect(visitElements(panel, isRefreshButton)).not.toBeNull();
     expect(visitElements(panel, isAddProviderButton)).not.toBeNull();
+  });
+
+  it("keeps Cloud pool providers visible while hiding unsupported server configuration", () => {
+    capabilities.serverSettingsWrite = false;
+    settingsState.value = {
+      ...DEFAULT_UNIFIED_SETTINGS,
+      providerInstances: {
+        [customId]: {
+          driver: ProviderDriverKind.make("codex"),
+          enabled: true,
+          config: { binaryPath: "/usr/local/bin/codex", configDirectory: "/home/user/.codex" },
+          environment: [{ name: "OPENAI_API_KEY", value: "secret", sensitive: true }],
+        },
+      },
+    };
+    atoms.providers = [provider()];
+
+    const panel = renderPanel({ targetInstanceId: customId });
+    const customCard = visitElements(
+      panel,
+      (element) => element.props.instanceId === customId && element.props.mode === "editor",
+    );
+
+    expect(customCard).not.toBeNull();
+    expect(customCard?.props.supportsServerSettingsWrite).toBe(false);
+    expect(customCard?.props.canWriteSettings).toBe(false);
+    expect(customCard?.props.onDelete).toBeUndefined();
+    expect(customCard?.props.onRunUpdate).toBeUndefined();
+    expect(customCard?.props.headerAction).toBeNull();
+    expect(visitElements(panel, isAddProviderButton)).toBeNull();
+    expect(visitElements(panel, (element) => element.props.title === "Advanced")).toBeNull();
+    expect(
+      visitElements(panel, (element) => element.type === AddProviderInstanceDialog),
+    ).toBeNull();
+    expect(visitElements(panel, (element) => element.type === UsageProviderSettings)).toBeNull();
+    expect(visitElements(panel, (element) => element.type === ProviderUpdatesAction)).toBeNull();
+    expect(visitElements(panel, (element) => element.type === MoveNativeLogins)).toBeNull();
+    expect(visitElements(panel, isRefreshButton)).not.toBeNull();
+    expect(settingsState.updateSettings).not.toHaveBeenCalled();
+  });
+
+  it("keeps pool account setup and provider refresh available in Cloud", () => {
+    capabilities.serverSettingsWrite = false;
+    const poolInstanceId = ProviderInstanceId.make("codex_hub");
+    settingsState.value = {
+      ...DEFAULT_UNIFIED_SETTINGS,
+      providerInstances: {
+        [poolInstanceId]: {
+          driver: ProviderDriverKind.make("codex"),
+          enabled: true,
+          config: { setupMode: "hub" },
+        },
+      },
+    };
+    atoms.providers = [poolProvider(poolInstanceId)];
+
+    const panel = renderPanel({ targetInstanceId: poolInstanceId });
+    const poolCard = visitElements(
+      panel,
+      (element) => element.props.instanceId === poolInstanceId && element.props.mode === "editor",
+    );
+
+    expect(poolCard).not.toBeNull();
+    expect((poolCard?.props.setup as ReactElement | undefined)?.type).toBe(HubInstanceSetup);
+    expect(visitElements(panel, isAddProviderButton)).toBeNull();
+    expect(visitElements(panel, isRefreshButton)).not.toBeNull();
   });
 
   it("removes an open add-instance dialog when the provider grant is revoked", () => {

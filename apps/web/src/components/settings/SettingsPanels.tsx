@@ -1,6 +1,7 @@
 import { SettingsGroup } from "./SettingsGroup";
 import { AccountSettingsSection } from "../../account/AccountSettingsSection"; // signalbox: accounts
 import { ProductAnalyticsSettingsSection } from "../../analytics/ProductAnalyticsSettingsSection"; // signalbox: analytics
+import { SettingsCapability } from "./SettingsCapability";
 import { ArchiveIdleChatsSetting } from "../threadKind/ArchiveIdleChatsSetting"; // signalbox: thread kinds
 import { settingsScopeEnvironmentLabels } from "./settingsScopeAxis";
 import { useScopedSettingsWriteAllowed } from "./useScopedSettings";
@@ -1301,49 +1302,52 @@ export function AppearanceSettingsPanel() {
         />
 
         {showEnvironmentIdentification ? (
-          <SettingsRow
-            {...searchableSetting("environment-identification")}
-            description="Choose how Dev and Nightly environments are identified."
-            resetAction={
-              settings.environmentIdentificationMode !== DEFAULT_ENVIRONMENT_IDENTIFICATION_MODE ? (
-                <SettingResetButton
-                  label="environment identification"
-                  onClick={() =>
-                    updateSettings({
-                      environmentIdentificationMode: DEFAULT_ENVIRONMENT_IDENTIFICATION_MODE,
-                    })
-                  }
-                />
-              ) : null
-            }
-            control={
-              <Select
-                value={settings.environmentIdentificationMode}
-                onValueChange={(value) => {
-                  if (value === "artwork" || value === "pill" || value === "none") {
-                    updateSettings({ environmentIdentificationMode: value });
-                  }
-                }}
-              >
-                <SelectTrigger
-                  size="sm"
-                  className="w-full sm:w-40"
-                  aria-label="Environment identification"
+          <SettingsCapability id="environment-identification">
+            <SettingsRow
+              {...searchableSetting("environment-identification")}
+              description="Choose how Dev and Nightly environments are identified."
+              resetAction={
+                settings.environmentIdentificationMode !==
+                DEFAULT_ENVIRONMENT_IDENTIFICATION_MODE ? (
+                  <SettingResetButton
+                    label="environment identification"
+                    onClick={() =>
+                      updateSettings({
+                        environmentIdentificationMode: DEFAULT_ENVIRONMENT_IDENTIFICATION_MODE,
+                      })
+                    }
+                  />
+                ) : null
+              }
+              control={
+                <Select
+                  value={settings.environmentIdentificationMode}
+                  onValueChange={(value) => {
+                    if (value === "artwork" || value === "pill" || value === "none") {
+                      updateSettings({ environmentIdentificationMode: value });
+                    }
+                  }}
                 >
-                  <SelectValue>
-                    {ENVIRONMENT_IDENTIFICATION_LABELS[settings.environmentIdentificationMode]}
-                  </SelectValue>
-                </SelectTrigger>
-                <SelectPopup align="end" alignItemWithTrigger={false}>
-                  {Object.entries(ENVIRONMENT_IDENTIFICATION_LABELS).map(([value, label]) => (
-                    <SelectItem hideIndicator key={value} value={value}>
-                      {label}
-                    </SelectItem>
-                  ))}
-                </SelectPopup>
-              </Select>
-            }
-          />
+                  <SelectTrigger
+                    size="sm"
+                    className="w-full sm:w-40"
+                    aria-label="Environment identification"
+                  >
+                    <SelectValue>
+                      {ENVIRONMENT_IDENTIFICATION_LABELS[settings.environmentIdentificationMode]}
+                    </SelectValue>
+                  </SelectTrigger>
+                  <SelectPopup align="end" alignItemWithTrigger={false}>
+                    {Object.entries(ENVIRONMENT_IDENTIFICATION_LABELS).map(([value, label]) => (
+                      <SelectItem hideIndicator key={value} value={value}>
+                        {label}
+                      </SelectItem>
+                    ))}
+                  </SelectPopup>
+                </Select>
+              }
+            />
+          </SettingsCapability>
         ) : null}
 
         <SettingsRow
@@ -2211,7 +2215,9 @@ export function GeneralSettingsPanel() {
       {/* signalbox: accounts */}
       <AccountSettingsSection />
       {/* signalbox: analytics opt-out */}
-      <ProductAnalyticsSettingsSection />
+      <SettingsCapability id="product-analytics">
+        <ProductAnalyticsSettingsSection />
+      </SettingsCapability>
       <ProjectDefaultsSettings category="general" />
       <SettingsSection id="organization" title="Organization">
         <SettingsRow
@@ -3305,27 +3311,32 @@ export function GeneralSettingsPanel() {
         />
       </SettingsSection>
       <SettingsSection title="Diagnostics">
-        <SettingsRow
-          {...searchableSetting("diagnostics")}
-          description={
-            !showsEnvironmentUi // signalbox: one environment
-              ? "Inspect processes, resource use, and logs."
-              : isEnvironmentScope
-                ? "Inspect processes, resource use, and logs on this environment."
-                : "Inspect processes, resource use, and logs on one environment at a time."
-          }
-          control={
-            <Button
-              render={
-                <Link to="/settings/diagnostics" search={{ machine: environmentId ?? undefined }} />
-              }
-              size="sm"
-              variant="outline"
-            >
-              View diagnostics
-            </Button>
-          }
-        />
+        <SettingsCapability id="diagnostics">
+          <SettingsRow
+            {...searchableSetting("diagnostics")}
+            description={
+              !showsEnvironmentUi // signalbox: one environment
+                ? "Inspect processes, resource use, and logs."
+                : isEnvironmentScope
+                  ? "Inspect processes, resource use, and logs on this environment."
+                  : "Inspect processes, resource use, and logs on one environment at a time."
+            }
+            control={
+              <Button
+                render={
+                  <Link
+                    to="/settings/diagnostics"
+                    search={{ machine: environmentId ?? undefined }}
+                  />
+                }
+                size="sm"
+                variant="outline"
+              >
+                View diagnostics
+              </Button>
+            }
+          />
+        </SettingsCapability>
         <SettingsRow
           {...searchableSetting("open-source-licenses")}
           description="Notices for dependencies, assets, and optional tools used by Signalbox."

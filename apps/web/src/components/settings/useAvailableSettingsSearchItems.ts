@@ -17,23 +17,29 @@ import { useEnvironmentQuery } from "~/state/query";
 import { useEnvironmentScope } from "~/state/session";
 import { isWslSettingsRowVisible } from "./ConnectionsSettings.logic";
 import { isProviderSettingsEnvironmentAvailable } from "./ProviderSettingsPanel.logic";
-import type { SettingsScopeSearch } from "./settingsScope";
+import { resolveSettingsScope, type SettingsScopeSearch } from "./settingsScope";
+import { useSettingsProjectGroups } from "./useSettingsProjectGroups";
 import {
   filterAvailableSettingsSearchItems,
   getThreadAutoSettlementSearchAvailability,
   unsupportedSettingsCapabilities,
 } from "./settingsSearch";
 
-/** signalbox: capabilities no environment the settings act on has, within the machine filter. */
-export function useUnsupportedSettingsCapabilities(scopeSearch: SettingsScopeSearch = {}) {
+const EMPTY_SCOPE_SEARCH: SettingsScopeSearch = {};
+
+/** Capabilities absent from every environment in the selected settings scope. */
+export function useUnsupportedSettingsCapabilities(
+  scopeSearch: SettingsScopeSearch = EMPTY_SCOPE_SEARCH,
+) {
   const { environments } = useEnvironments();
   const primaryEnvironment = usePrimaryEnvironment();
   const showsEnvironmentUi = useShowsEnvironmentUi();
+  const groups = useSettingsProjectGroups();
   return useMemo(() => {
+    const scope = resolveSettingsScope(scopeSearch, groups, environments);
     const unsupported = unsupportedSettingsCapabilities(
-      environments.filter(
-        (environment) =>
-          scopeSearch.machine === undefined || environment.environmentId === scopeSearch.machine,
+      environments.filter((environment) =>
+        scope.environmentIds.includes(environment.environmentId),
       ),
       primaryEnvironment,
     );
@@ -41,7 +47,7 @@ export function useUnsupportedSettingsCapabilities(scopeSearch: SettingsScopeSea
     return showsEnvironmentUi
       ? unsupported
       : new Set([...unsupported, "otherEnvironments" as const]);
-  }, [environments, primaryEnvironment, scopeSearch.machine, showsEnvironmentUi]);
+  }, [environments, groups, primaryEnvironment, scopeSearch, showsEnvironmentUi]);
 }
 
 export function useAvailableSettingsSearchItems(scopeSearch: SettingsScopeSearch = {}) {
