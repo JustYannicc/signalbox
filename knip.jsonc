@@ -28,6 +28,7 @@
         "knip-schemas.ts",
         "mobile-native-client.ts",
         "setup-worktree.ts",
+        "release-artifacts-smoke.ts", // signalbox: invoked as a subprocess by release-smoke.ts
         "workload-cost-replay.ts", // signalbox: workload analytics
         "boundaries/check.mjs", // signalbox: module boundaries
         "boundaries/tests.mjs", // signalbox: module boundaries

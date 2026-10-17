@@ -14,7 +14,7 @@ import {
 } from "@signalbox/runner-protocol/PreviewTunnel";
 import type { DriveAccess } from "@signalbox/runner-protocol/DriveProtocol";
 import type { PreviewService } from "@signalbox/runner-protocol/PreviewServices";
-import type { PreviewConfiguration } from "./PreviewState.ts";
+import type { PreviewConfiguration } from "../PreviewState.ts";
 import {
   PREVIEW_SCRIPT_PATH,
   PREVIEW_VIEW_PATH,

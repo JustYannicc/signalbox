@@ -83,7 +83,7 @@ export const fixture = Effect.gen(function* () {
       }),
   } as unknown as GitHubApi;
   const dependencies = Layer.mergeAll(
-    Layer.succeed(GitHub, GitHub.of({ pipes: null, api })),
+    Layer.succeed(GitHub, GitHub.of({ pipesForUser: () => Effect.succeed(null), api })),
     Layer.mock(PullRequestRepository, {
       forProject: () =>
         Effect.succeed({

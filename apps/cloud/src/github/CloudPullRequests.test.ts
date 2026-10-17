@@ -222,7 +222,7 @@ const makeFixture = () => {
   const dependencies = Layer.mergeAll(
     NodeSqliteClient.layer({ filename: ":memory:" }),
     Platform.layerCrypto,
-    Layer.succeed(GitHub, GitHub.of({ pipes: null, api })),
+    Layer.succeed(GitHub, GitHub.of({ pipesForUser: () => Effect.succeed(null), api })),
     Layer.succeed(PullRequestRepository.PullRequestRepository, repository),
     Layer.succeed(UserShell.UserShell, userShell),
     Layer.succeed(UserDrives.UserDrives, userDrives),
