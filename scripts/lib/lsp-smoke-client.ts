@@ -291,13 +291,13 @@ export class LspSmokeClient {
       if (!this.isClosed && !this.child.stdin.destroyed) this.notify("exit");
       const result = await this.waitUntilClosed(5_000);
       // time reports its own exit status when its measured child dies from a signal.
-      const measuredSignal = this.stderrText.match(
-        /^(?:time: command terminated abnormally|Command terminated by signal \d+)$/m,
+      const crash = this.stderrText.match(
+        /^(?:time: command terminated abnormally|Command terminated by signal \d+|panic:.*|fatal(?: error)?:.*)$/m,
       );
       const error =
         this.protocolError?.message ??
         result.error?.message ??
-        (result.signal ? `LSP server stopped by ${result.signal}` : (measuredSignal?.[0] ?? null));
+        (result.signal ? `LSP server stopped by ${result.signal}` : (crash?.[0] ?? null));
       return {
         code: result.code,
         error,

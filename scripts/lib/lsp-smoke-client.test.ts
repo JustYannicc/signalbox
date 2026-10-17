@@ -57,13 +57,16 @@ test.each(["missing-ack", "error-ack"])(
   },
 );
 
-test.each(["signal", "malformed"])("shutdown fails for %s after acknowledgement", async (mode) => {
-  const client = spawnServer(mode);
-  try {
-    const result = await client.shutdown();
-    expect(result.responseReceived).toBe(true);
-    expect(result.error).toBeTruthy();
-  } finally {
-    await client.terminate();
-  }
-});
+test.each(["signal", "malformed", "panic", "fatal"])(
+  "shutdown fails for %s after acknowledgement",
+  async (mode) => {
+    const client = spawnServer(mode);
+    try {
+      const result = await client.shutdown();
+      expect(result.responseReceived).toBe(true);
+      expect(result.error).toBeTruthy();
+    } finally {
+      await client.terminate();
+    }
+  },
+);

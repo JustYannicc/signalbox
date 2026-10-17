@@ -37,6 +37,9 @@ NodeProcess.stdin.on("data", (chunk) => {
       }
     } else if (message.method === "exit") {
       if (mode === "signal") NodeProcess.kill(NodeProcess.pid, "SIGKILL");
+      if (mode === "panic")
+        NodeProcess.stderr.write("panic: runtime error: invalid memory address\n");
+      if (mode === "fatal") NodeProcess.stderr.write("fatal: unrelated failure\n");
       if (mode === "malformed") {
         NodeProcess.stdout.write("Content-Length: 1\r\n\r\n{");
       }
