@@ -3,35 +3,32 @@
 Use a new thread for a separate task. Choose **New worktree** when its code changes
 need a separate branch and working directory.
 
-## Home and Pipeline
+## Home
 
-The icon rail on the left edge of the sidebar switches between two views of your
-threads. **Home** groups them by where they live. **Pipeline** orders them by what
-needs your attention, and is the view the rest of this page describes. Collapsing the
-sidebar hides the view but keeps the rail. **New**, pinned above both views, starts a
-thread. The back and forward arrows beside the sidebar toggle step through where you've been.
-
-To drop the rail and keep only the project tree, turn on **Sidebar (legacy)** in
-**Settings**.
+The icon rail on the left edge of the sidebar opens **Home**, which shows your threads
+where they live. Collapsing the sidebar hides Home but keeps the rail. **New**, pinned
+above Home, starts a thread. The back and forward arrows beside the sidebar toggle step
+through where you've been.
 
 ## Organize with folders
 
-In Signalbox Cloud, Home shows Personal and every work organization you belong to, side by side.
-You don't switch accounts, and organizations you join show up the next time you sign in. Each has
-its own folders, nested as deep as you like. Choose **New folder** at the bottom of Personal or an
-organization, or **New folder inside** in a folder's menu; the command palette has **New folder**
-too. A folder's menu also renames, moves, reorders, and deletes it. Deleting a folder moves its
+In Signalbox Cloud, Home is your top level: your threads and folders sit right in it, and every
+work organization you belong to shows inside it as a level of its own. You don't switch accounts,
+and organizations you join show up the next time you sign in. Your top level and each organization
+have their own folders, nested as deep as you like. Choose **New folder** at the bottom of Home or
+inside an organization, or **New folder inside** in a folder's menu; the command palette has **New
+folder** too. A folder's menu also renames, moves, reorders, and deletes it. Deleting a folder moves its
 folders and threads up a level. No thread or file is deleted.
 
 ### Where threads live
 
-Every thread lives in one place: a folder, or the top level of Personal or an organization. It lives
-where you start it: use the new thread button on a folder, or **New thread** in the menu beside
-Personal or an organization. To move a thread, right-click it and choose **Move to folder…**, or use
-**Move thread to folder…** in the command palette. A thread can move anywhere within its own
-Personal or organization, never between them.
+Every thread lives in one place: a folder, your top level, or the top of an organization. It lives
+where you start it: use the new thread button on a folder or an organization, or **New thread** in
+the **⋯** menu next to **Folders** for your top level. To move a thread, right-click it and choose
+**Move to folder…**, or use **Move thread to folder…** in the command palette. A thread can move
+anywhere within your own levels or within its organization, never between them.
 
-A thread acts as the Personal or organization it starts in, for good: a work thread uses that
+A thread acts as the level it starts in, yours or an organization's, for good: a work thread uses that
 organization's identity and connections, a personal one uses yours. Moving a thread changes what it
 runs on from its next message, its folder's pool and instructions. Its files stay the ones it
 started in.
@@ -39,10 +36,10 @@ started in.
 ### A folder's files
 
 A folder can have its own files: a shared drive, or a folder shared from a My Drive, of the same
-Personal or organization. Pick them under **Files** in the folder's menu, or **No files of its own**.
+owner, you or the organization. Pick them under **Files** in the folder's menu, or **No files of its own**.
 They show as one **Files** row inside the folder; open it to browse them. Threads started in the
-folder work in those files. In a folder without files of its own, they work in the files of its
-Personal or organization. Each drive you're given starts out as a folder of its own, which you can
+folder work in those files. In a folder without files of its own, they work in the files of the
+top level it sits in. Each drive you're given starts out as a folder of its own, which you can
 move, rename, or hand its files to another folder.
 
 ### Start from another folder
@@ -55,7 +52,7 @@ new folder as usual. Nothing about the original changes.
 ### Instructions
 
 Each level can have instructions for agents, its own `AGENTS.md`. Choose **Instructions…** in a
-folder's menu, or in the menu beside Personal for the top level. Agents follow the top level's
+folder's menu, or in the **⋯** menu next to **Folders** for the top level. Agents follow the top level's
 first, then each folder's on the way down to the thread's own folder. Leave them empty to remove
 them.
 
@@ -68,7 +65,7 @@ variables for things like `vp run dev` or tests. Signalbox never shows their val
    can import a `.env` file there. Copy its ID from **Manage environment › Copy environment ID**.
 2. On 1Password.com, create a service account with read access to that Environment. 1Password shows
    its token (`ops_…`) only once.
-3. Choose **Secrets…** in a folder's menu, or in the menu beside Personal for the top level, and
+3. Choose **Secrets…** in a folder's menu, or in the **⋯** menu next to **Folders** for the top level, and
    paste the Environment ID and the token.
 
 You add the token once; it covers all your folders. **Disconnect** in any folder's Secrets stops
@@ -85,6 +82,22 @@ secrets loading everywhere.
   `{{secret:NAME}}` instead. Variables set to show their value by default in 1Password, and values
   of 6 characters or fewer, aren't hidden.
 
+### Scratch pad
+
+Every folder has a scratch pad for thoughts that aren't ready to act on, such as "after #456 merges,
+also do X". Choose **Scratch pad** in a folder's menu, or in the menu beside Personal for notes that
+belong nowhere in particular. The command palette has **Scratch pad** too. Type a note and press Enter.
+Half-formed is fine, and nothing asks you about it later.
+
+Your words stay exactly as you wrote them. A moment later, whoever reads the note writes what it
+thinks you meant underneath, with what it would do. Choose **OK, do it** and the note becomes a task
+in that folder that starts with your words, and it leaves the scratch pad. Choose **Not this**, or just
+ignore it, and it stays a plain note. **Read again** in the note's menu asks for a fresh reading.
+
+Notes are private by default: only you and your assistant read them. In an organization's folders,
+switch to **Team** to write notes the folder's agent can read too. Agents working in a folder can
+look up its team notes when they need them. They never see your private notes.
+
 ### Sections on your own server
 
 On a server you run yourself, Home organizes projects into sections instead. On web and desktop,
@@ -94,12 +107,12 @@ its parent. Use a project's move menu to place it in a section or back at the ro
 connected to the same environment share this organization. On mobile, choose **Browse sections**
 from Home to navigate the project tree.
 
-Folders and sections organize where work lives. **Pinned**, **Active**, **Snoozed**, and
-**Settled** in Pipeline are thread status groups.
+Folders and sections organize where work lives. On mobile, **Pinned**, **Active**, **Snoozed**,
+and **Settled** are thread status groups.
 
 ### Drives and sharing
 
-Personal and each organization have a private **My Drive**. In a work organization, choose **New
+Your top level and each organization have a private **My Drive**. In a work organization, choose **New
 shared drive** beside its name to create a drive for the organization; it shows up as a new folder. To share a folder from My Drive, right-click it in
 **Files** and choose **Share folder…**. People you share it with can see that folder and its history.
 Removing someone cuts their access everywhere at once. Threads stay private, even in a shared drive;
@@ -171,6 +184,17 @@ Tasks leave through **Done** when you hover their row. Chats you leave alone arc
 after seven idle days; hover a chat's icon to see when. Change or turn this off in **Settings →
 General → Archive idle chats after**. Bring an archived chat back from **Settings → Archive**.
 
+## See where a thread got to
+
+In Signalbox Cloud, every thread keeps a status line: what it's doing or waiting on, the next step,
+and where the work got to, written so someone who has never seen the thread can pick it up. It's at
+the top of **Thread details**, and on a phone at the top of the thread's settings. The next step
+also shows under the thread in its folder. The agent updates the status line every turn. If it
+doesn't, Signalbox writes one from the turn. Everyone with access to the thread sees the same line.
+
+A folder shows how many of its threads are working or waiting. Hover its name to see the idle ones
+too.
+
 ## Pin and reorder threads
 
 Pin a thread from its menu to keep it above your active work.
@@ -192,35 +216,12 @@ scroll position instead of following the thread to its new place in the list.
 
 Pinning does not prevent automatic settlement. Settling a thread removes its pin.
 
-In Pipeline on web and desktop, drag a thread between status groups to change its state. Drag a thread up into
-the pinned section to pin it at the spot you drop it; drag a pinned thread down into the active
-list to unpin it. Dragging a thread onto the **Settled** header settles it, and dragging a settled
-thread into the active list un-settles it. A snoozed thread can be dragged out of the snoozed
-shelf, which wakes it, but threads cannot be dragged into the shelf because snoozing needs a wake
-time. Dragging a pinned thread out of the pinned section does not ask for unpin confirmation.
-Pinned and active boundary labels appear only while dragging, without moving the rows. The
-other rows slide aside to show where the thread will land. When you cross into another section,
-the dragged thread shows the action the drop performs, with its icon: **Pin**, **Unpin**,
-**Settle**, **Un-settle**, or **Wake**. Its status and hover actions hide during the drag. A pinned
-thread keeps its pin only while it stays in the pinned section; once it leaves, the badge takes
-over. Reordering within the same section shows no badge. When there are no pins, drag to the top
-edge to pin a thread. Section labels stay readable for the whole drag, and the section the
-thread is over takes the accent color. Section labels also
-identify empty sections and a collapsed settled shelf.
-
-Drag within the pinned or active section to change its order. Other rows slide aside to show the
-spot where the thread will land. Drops into either section keep the position you choose. On
-mobile, open a thread's menu and choose **Arrange threads**. Drag a handle within or between
+On mobile, open a thread's menu and choose **Arrange threads**. Drag a handle within or between
 **Pinned** and **Active** to reorder, pin, or unpin. Drop onto the **Settled** divider to
 settle a thread. The dragged card shows the action before you release it. Expand **Snoozed**
 or **Settled** to drag a parked thread back into either live section. Each drop saves; **Done** returns to the thread list.
 **Move up** and **Move down** are also available in the thread menu. The server
 saves the order, so it survives a refresh and appears on your other connected devices.
-
-On web and desktop, the list also animates section changes made with thread actions such as
-**Pin**, **Settle**, and **Snooze**. These transitions respect your system's reduced-motion
-preference. While dragging, rows follow the insertion gap without replaying a second transition
-after the drop.
 
 New threads appear above the active threads you have arranged. Settling clears a thread's active
 position, so using **Un-settle** returns it to the top. Pinning and snoozing preserve its active
@@ -242,8 +243,7 @@ open.
 
 ### Fold working threads (beta)
 
-Turn on **Settings → General → Working section (beta)** on web and desktop, or **Settings →
-Thread behavior → Working section** on iOS and Android, to move threads that are working or
+On iOS and Android, turn on **Settings → Thread behavior → Working section** to move threads that are working or
 monitoring into a collapsed **Working** section below the active list. A thread returns to the top
 of the active list when it finishes, fails, or needs an approval or answer. The Working section
 lists the thread you last sent work to first. Pinned threads stay in the pinned section. Each

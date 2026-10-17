@@ -56,6 +56,7 @@ import { ThreadKindGlyph } from "./ThreadKindGlyph"; // signalbox: thread kinds
 import { shouldRecedeThreadRow } from "./thread-row-emphasis";
 import { ThreadSearchMatchExcerpt } from "./thread-search-match";
 import { useThreadFolderMenu } from "../folders/use-thread-folder-menu"; // signalbox: folders
+import { useThreadStatusNote } from "../../state/signalboxThreadStatus"; // signalbox: status line
 
 interface StatusLabel {
   readonly label: string;
@@ -570,6 +571,8 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
       : workingLabel) ?? (isUnread ? DONE_STATUS_LABEL : undefined);
   const recede = shouldRecedeThreadRow({ status, selected });
   const timeLabel = props.timeLabel;
+  const statusNote = useThreadStatusNote(thread.environmentId, thread.id); // signalbox: status line
+  const nextStep = thread.archivedAt === null ? (statusNote?.nextStep ?? null) : null;
 
   const handleDelete = useCallback(() => onDeleteThread(thread), [onDeleteThread, thread]);
   const handleRename = useCallback(() => onRenameThread(thread), [onRenameThread, thread]);
@@ -1000,6 +1003,19 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
             numberOfLines={1}
           >
             {thread.runtime.lastError}
+          </Text>
+        ) : nextStep !== null ? (
+          // signalbox: status line (#670), the agent's next step in place of branch and environment
+          <Text
+            className={cn(
+              "flex-1 text-xs",
+              selected
+                ? selectedThreadRowColors.mutedForegroundClassName
+                : rowAppearance.mutedForegroundClassName,
+            )}
+            numberOfLines={1}
+          >
+            Next: {nextStep}
           </Text>
         ) : thread.branch || props.environmentLabel ? (
           <View className="min-w-0 flex-1 flex-row items-center gap-1">

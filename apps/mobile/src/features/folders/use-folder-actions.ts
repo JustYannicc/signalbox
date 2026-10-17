@@ -1,5 +1,8 @@
 // signalbox: what the folder menus do: dialogs, confirmations, and the folder commands.
-import { folderDeleteMessage } from "@t3tools/client-runtime/state/signalboxFolders";
+import {
+  folderDeleteMessage,
+  ownerLevelName,
+} from "@t3tools/client-runtime/state/signalboxFolders";
 import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
@@ -21,6 +24,7 @@ import * as Dialog from "../../components/ui/Dialog";
 import { uuidv4 } from "../../lib/uuid";
 import { signalboxFolders } from "../../state/signalboxFolders";
 import { useAtomCommand } from "../../state/use-atom-command";
+import type { NotesOpen } from "../notes/note-menus";
 import { folderFilterKey } from "./folder-filter";
 import { parseFolderMenuEvent, type PoolChoice } from "./folder-menus";
 
@@ -66,7 +70,9 @@ export function useFolderActions(input: {
   const moveFolder = useAtomCommand(signalboxFolders.moveFolder, QUIET);
   const deleteFolder = useAtomCommand(signalboxFolders.deleteFolder, QUIET);
   const setInstructions = useAtomCommand(signalboxFolders.setInstructions, QUIET);
+  const setGitHubLend = useAtomCommand(signalboxFolders.setGitHubLend, QUIET);
   const [editing, setEditing] = useState<InstructionsEditing | null>(null);
+  const [notes, setNotes] = useState<NotesOpen | null>(null);
 
   const requestCreateFolder = useCallback(
     (parentId: FolderId | null, ownerId: SignalboxContextId) => {
@@ -135,12 +141,21 @@ export function useFolderActions(input: {
             updateFolder({ environmentId, input: { id: folder.id, poolId: choice.poolId } }),
           );
           return;
+        case "githubLend":
+          void run(
+            choice.lent ? "Couldn’t lend your GitHub" : "Couldn’t stop lending your GitHub",
+            setGitHubLend({ environmentId, input: { id: folder.id, lent: choice.lent } }),
+          );
+          return;
         case "instructions":
           setEditing({
             level: { _tag: "folder", folderId: folder.id },
             name: folder.name,
             instructions: folder.instructions ?? "",
           });
+          return;
+        case "notes":
+          setNotes({ environmentId, level: { _tag: "folder", folderId: folder.id } });
           return;
         case "delete":
           Dialog.confirm({
@@ -165,6 +180,7 @@ export function useFolderActions(input: {
       pools,
       requestCreateFolder,
       run,
+      setGitHubLend,
       snapshot,
       startFrom,
       updateFolder,
@@ -174,15 +190,16 @@ export function useFolderActions(input: {
   const onTopLevelAction = useCallback(
     (owner: SignalboxContext, event: string) => {
       if (event === "top:new-folder") requestCreateFolder(null, owner.id);
+      if (event === "top:notes") setNotes({ environmentId, level: { _tag: "top" } });
       if (event === "top:instructions" && snapshot !== null) {
         setEditing({
           level: { _tag: "top" },
-          name: owner.name,
+          name: ownerLevelName(owner),
           instructions: snapshot.top.instructions ?? "",
         });
       }
     },
-    [requestCreateFolder, snapshot],
+    [environmentId, requestCreateFolder, snapshot],
   );
 
   /** Saves the open editor's text; resolves whether it was saved. */
@@ -202,6 +219,8 @@ export function useFolderActions(input: {
     onTopLevelAction,
     editing,
     closeEditor: useCallback(() => setEditing(null), []),
+    notes,
+    closeNotes: useCallback(() => setNotes(null), []),
     saveInstructions,
   };
 }

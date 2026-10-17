@@ -12,6 +12,7 @@ import type { EnvironmentConnectionPhase } from "@t3tools/client-runtime/connect
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 import { DEFAULT_KEYBINDINGS } from "@t3tools/shared/keybindings";
 import { commandLabel } from "./KeybindingsSettings.logic";
+import { keybindingCapability } from "./keybindingCapabilities"; // signalbox
 import {
   validateSettingsScopeSearch,
   type ResolvedSettingsScope,
@@ -110,12 +111,14 @@ const KEYBINDING_SEARCH_ITEMS = STATIC_KEYBINDING_COMMANDS.toSorted((left, right
   const defaultKeys = DEFAULT_KEYBINDINGS.filter((binding) => binding.command === command).map(
     (binding) => binding.key,
   );
+  const capability = keybindingCapability(command); // signalbox
   return {
     id: keybindingSearchAnchorId(command),
     title: commandLabel(command),
     to: "/settings/keybindings" as const,
     searchTerms: [command, ...defaultKeys],
     secondary: true,
+    ...(capability ? { capability } : {}), // signalbox
     ...(defaultKeys.length === 0 ? { targetId: "keybindings" } : {}),
   };
 });
@@ -302,6 +305,7 @@ export const SETTINGS_SEARCH_ITEMS = [
     title: "Terminal font",
     to: "/settings/appearance",
     searchTerms: ["typography family size monospace output"],
+    capability: "terminal", // signalbox
   },
   {
     id: "font-smoothing",
@@ -347,12 +351,6 @@ export const SETTINGS_SEARCH_ITEMS = [
     title: "Auto-resume limited threads",
     to: "/settings/general",
     searchTerms: ["usage quota rate limit reset recover continue"],
-  },
-  {
-    id: "working-shelf",
-    title: "Working section (beta)",
-    to: "/settings/general",
-    searchTerms: ["hide fold running monitoring threads inbox sidebar shelf"],
   },
   {
     id: "auto-settle-inactive-threads",
@@ -526,7 +524,7 @@ export const SETTINGS_SEARCH_ITEMS = [
     id: "unpin-confirmation",
     title: "Unpin confirmation",
     to: "/settings/general",
-    searchTerms: ["ask before thread pinned section"],
+    searchTerms: ["ask before thread pinned unpin"],
   },
   {
     id: "archive-confirmation",
@@ -574,6 +572,7 @@ export const SETTINGS_SEARCH_ITEMS = [
     to: "/settings/general",
     searchTerms: ["cli terminal shell path install command line"],
     desktopOnly: true,
+    localEnvironmentOnly: true, // signalbox: the thin build bundles no CLI
   },
   {
     id: "privacy-policy",
@@ -611,12 +610,6 @@ export const SETTINGS_SEARCH_ITEMS = [
     title: "Context window indicator (legacy)",
     to: "/settings/general",
     searchTerms: ["composer meter usage tokens circle old"],
-  },
-  {
-    id: "legacy-sidebar",
-    title: "Sidebar (legacy)",
-    to: "/settings/general",
-    searchTerms: ["project thread tree old flat list"],
   },
   {
     id: "keybindings",

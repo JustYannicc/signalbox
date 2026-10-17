@@ -45,6 +45,7 @@ import {
 import { isAutomationApiPath, serveAutomationRequest } from "./automationRoutes.ts";
 import { isBranchApiPath, serveBranchRequest } from "./branchRoutes.ts";
 import { isBrowserApiPath, serveBrowserRequest } from "./browserRoutes.ts";
+import { isStatusLineApiPath, serveStatusLineRequest } from "./statusLineRoutes.ts";
 import {
   type DirectUploads,
   type DirectUploadsEnv,
@@ -239,6 +240,26 @@ async function route(
   if (isAutomationApiPath(new URL(request.url).pathname)) {
     if (request.method !== "POST") return text("Method not allowed.", 405);
     return await runtime!.runPromise(serveAutomationRequest(auth, await request.text()));
+  }
+  // The thread's status line and its home folder's, for its agent (#670).
+  if (isStatusLineApiPath(new URL(request.url).pathname)) {
+    if (request.method !== "POST") return text("Method not allowed.", 405);
+    const thread = ThreadDirectory.threadObjectStub(
+      env.THREADS,
+      ThreadId.make(auth.threadId),
+      options,
+    );
+    return await runtime!.runPromise(
+      serveStatusLineRequest(
+        auth,
+        {
+          statusLine: () => thread.statusLine(),
+          writeStatusNote: (input) => thread.writeStatusNote(input),
+        },
+        new URL(request.url).pathname,
+        await request.text(),
+      ),
+    );
   }
   // The person's browser for the thread's agent, opened as its owner (#574).
   const browserPath = new URL(request.url).pathname;

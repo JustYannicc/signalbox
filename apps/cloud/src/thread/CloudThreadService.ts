@@ -39,6 +39,7 @@ import type { PreviewLinkResult } from "./preview/PreviewGateway.ts";
 import { commandThreadId, unsupported } from "./threadDecider.ts";
 import * as ThreadDirectory from "./ThreadDirectory.ts";
 import { ThreadKindTurns, withLevel } from "./ThreadKindTurns.ts";
+import { STATUS_LINE_INSTRUCTIONS } from "./statusLine/statusInstructions.ts";
 import type { BrowserReply } from "./threadWire.ts";
 import {
   type Actor,
@@ -337,7 +338,7 @@ const make = Effect.gen(function* () {
   const attachments = yield* CloudAttachments;
   const kindTurns = yield* ThreadKindTurns;
 
-  /** The thread's turn from its home's chain, with its kind's level last on it. */
+  /** The thread's turn from its home's chain, with its kind's level and the status line's last on it. */
   const turnOf = (
     threadId: ThreadId,
     projectId: ProjectId | null,
@@ -349,7 +350,10 @@ const make = Effect.gen(function* () {
         [threadContexts.turn(threadId, projectId), kindTurns.beforeTurn(threadId, message)],
         { concurrency: 2 },
       ),
-      ([turn, level]) => ({ ...turn, instructions: withLevel(turn.instructions, level) }),
+      ([turn, level]) => ({
+        ...turn,
+        instructions: withLevel(withLevel(turn.instructions, level), STATUS_LINE_INSTRUCTIONS),
+      }),
     );
 
   const dispatchCommand: CloudThreadService["Service"]["dispatchCommand"] = (actor, command) =>

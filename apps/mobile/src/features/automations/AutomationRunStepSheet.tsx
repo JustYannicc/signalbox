@@ -28,6 +28,7 @@ import { automationState } from "../../state/automations";
 import { useEnvironmentQuery } from "../../state/query";
 import { AskAnswer } from "./AskAnswer";
 import { PillButton, StatusDot } from "./AutomationParts";
+import { ExternalRunCard } from "./ExternalRunCard";
 import { STATUS_TEXT_CLASS } from "./presentation";
 import { ErrorDetails } from "./RunDiagnostics";
 import { ServiceLogo } from "./ServiceLogo";
@@ -160,6 +161,8 @@ function StepRun(props: {
       {props.question ? (
         <AskAnswer environmentId={props.environmentId} question={props.question} />
       ) : null}
+
+      {step.external ? <ExternalRunCard run={step.external} /> : null}
 
       {step.error ? <ErrorDetails error={step.error} detail={step.errorDetail} /> : null}
 

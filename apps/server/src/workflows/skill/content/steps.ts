@@ -47,6 +47,7 @@ Asks the user and waits, for days if needed. It reaches their phone.
 | \`multi: true\` | Returns an array of chosen options. |
 | \`fields\` | A form: \`{ name: { type, label?, default?, required?, options? } }\`, types \`text\`, \`longText\`, \`number\`, \`boolean\`, \`choice\`. Returns \`{ choice, values }\`. A \`longText\` field with \`default: draft\` is how the user edits something before it's used. |
 | \`timeout\`, \`onTimeout\` | Stop waiting after a duration and go on with that option (or \`"fail"\`). |
+| \`open\` | \`{ threadId, view?: "browser" }\`: what the user can open beside the question, the thread or its agent's live browser. |
 
 Without fields it returns the chosen option. Branch on it with \`if\`/\`switch\`; with fields, branch on \`answer.choice\`.
 
@@ -74,6 +75,16 @@ Runs a top-level function from this file in Node, in the project's folder: anyth
 - 15 minutes per call. Poll longer work across calls (see \`patterns.md\`).
 - A minimal environment: no provider keys or server secrets.
 - Only for automations saved from a full-access thread.
+
+### \`w.run(label, { on: "github-actions", ref?, secrets?, environment?, timeout? }, fn, ...args)\` → \`fn\`'s result
+
+Runs the function on a GitHub Actions runner of the folder's repository instead, in a checkout of \`ref\` (default branch by default): CI capacity, the repo's secrets and environments, the same function and result. The step shows the run's jobs and steps live, with their log tails and a link to GitHub.
+
+- Signalbox Cloud only, in a folder added from GitHub. The repo needs Signalbox's step workflow on its default branch: \`references/github-actions.md\` has the file; add it in a pull request for a person to merge.
+- Steps run as the GitHub account its owner lent to the folder (folder ⋯ → Lend my GitHub to CI steps). Without a lend the step fails saying so; ask the person to lend it, you can't.
+- \`secrets: ["NPM_TOKEN"]\` sets those repository (or \`environment\`) secrets as environment variables for the function. Nothing else is.
+- Arguments and the file's \`w.run\` code travel as the run's inputs, which anyone who can read the repo's Actions can see. Pass ids, not secrets or big data (64 KB at most).
+- Waits up to 6 hours, GitHub's job limit; \`timeout\` sets less. Cancelling the automation run cancels the GitHub run.
 
 ## Time and memory
 

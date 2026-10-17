@@ -1,5 +1,5 @@
-// signalbox: one row per level of an owner's tree: its top level, then its folders, nested.
-import type { FolderNode } from "@t3tools/client-runtime/state/signalboxFolders";
+// signalbox: one row per level of the tree: your top level, its folders, and member levels, nested.
+import { ownerLevelName, type FolderNode } from "@t3tools/client-runtime/state/signalboxFolders";
 import type { MenuAction } from "@react-native-menu/menu";
 import type { SignalboxContext } from "@t3tools/contracts/signalboxContexts";
 import type { Folder, FolderId } from "@t3tools/contracts/signalboxFolders";
@@ -9,7 +9,6 @@ import { Pressable, View } from "react-native";
 import { SymbolView } from "../../components/ui/AppSymbol";
 import { AppText } from "../../components/ui/AppText";
 import { Menu } from "../../components/ui/Menu";
-import { cn } from "../../lib/cn";
 
 const MAX_VISUAL_DEPTH = 5;
 const NO_ACTIONS: MenuAction[] = [];
@@ -36,14 +35,20 @@ function RowMenu(props: {
   );
 }
 
-/** A selectable level: its name, how many threads are in it or below, and a menu. */
+/**
+ * A selectable level: its name, how many threads are in it or below, and a
+ * menu. A folder where something moves says so quietly under its name.
+ */
 function LevelRow(props: {
   readonly depth: number;
-  readonly icon: "folder" | "folder.fill";
+  readonly icon: "folder" | "folder.fill" | "building.2";
   readonly name: string;
-  readonly subtitle?: string;
   readonly accessibilityLabel: string;
   readonly count: number;
+  /** signalbox: status roll-up (#670), "2 working · 1 waiting"; null when nothing moves. */
+  readonly summary?: string | null;
+  /** The source folder, captured when this folder started. */
+  readonly origin?: string;
   readonly selected: boolean;
   readonly onSelect: () => void;
   readonly leading?: ReactNode;
@@ -57,14 +62,19 @@ function LevelRow(props: {
       <View className="size-10 items-center justify-center">{props.leading}</View>
       <Pressable
         accessibilityRole="button"
-        accessibilityLabel={props.accessibilityLabel}
+        accessibilityLabel={
+          props.summary
+            ? `${props.accessibilityLabel}, ${props.summary.replaceAll(" · ", ", ")}`
+            : props.accessibilityLabel
+        }
         accessibilityState={{ selected: props.selected }}
-        className={cn(
-          "min-w-0 flex-1 flex-row items-center gap-2 py-1 active:opacity-75",
-          props.subtitle ? "min-h-13" : "min-h-11",
-        )}
+        accessibilityHint={props.origin ? `Based on ${props.origin}` : undefined}
+        className={
+          props.origin || props.summary
+            ? "min-h-13 min-w-0 flex-1 flex-row items-center gap-2 py-1 active:opacity-75"
+            : "min-h-11 min-w-0 flex-1 flex-row items-center gap-2 py-1 active:opacity-75"
+        }
         onPress={props.onSelect}
-        accessibilityHint={props.subtitle ? `Based on ${props.subtitle}` : undefined}
       >
         <SymbolView
           name={props.icon}
@@ -82,9 +92,11 @@ function LevelRow(props: {
           >
             {props.name}
           </AppText>
-          {props.subtitle ? (
-            <AppText className="text-xs text-foreground-muted" numberOfLines={1}>
-              Based on {props.subtitle}
+          {props.summary || props.origin ? (
+            <AppText className="text-xs text-foreground-muted" numberOfLines={2}>
+              {[props.summary, props.origin ? `Based on ${props.origin}` : null]
+                .filter(Boolean)
+                .join(" · ")}
             </AppText>
           ) : null}
         </View>
@@ -97,9 +109,13 @@ function LevelRow(props: {
   );
 }
 
-/** An owner's top level: the threads that aren't in any of its folders. */
+/**
+ * A level's own row: your top level (depth 0), or an organization you're a
+ * member of inside it. Selecting it shows the threads in none of its folders.
+ */
 export const OwnerTopLevelRow = memo(function OwnerTopLevelRow(props: {
   readonly owner: SignalboxContext;
+  readonly depth: number;
   readonly selected: boolean;
   readonly actions: MenuAction[];
   readonly onSelect: (owner: SignalboxContext) => void;
@@ -111,22 +127,28 @@ export const OwnerTopLevelRow = memo(function OwnerTopLevelRow(props: {
     [onAction, owner],
   );
   const handleSelect = useCallback(() => onSelect(owner), [onSelect, owner]);
+  const name = ownerLevelName(owner);
+  const personal = owner.kind === "personal";
   return (
     <LevelRow
-      depth={0}
-      icon="folder.fill"
-      name={owner.name}
-      accessibilityLabel={`Threads at the top level of ${owner.name}`}
+      depth={props.depth}
+      icon={personal ? "folder.fill" : "building.2"}
+      name={name}
+      accessibilityLabel={
+        personal ? "Threads at the top level" : `Threads at the top of ${owner.name}`
+      }
       count={0}
       selected={props.selected}
       onSelect={handleSelect}
-      menu={<RowMenu label={owner.name} actions={props.actions} onPressAction={handleMenu} />}
+      menu={<RowMenu label={name} actions={props.actions} onPressAction={handleMenu} />}
     />
   );
 });
 
 export interface FolderRowContext {
   readonly counts: ReadonlyMap<FolderId, number>;
+  /** Each folder's status roll-up line, where something moves. */
+  readonly summaries: ReadonlyMap<FolderId, string>;
   readonly selectedFolderId: FolderId | null;
   readonly collapsed: ReadonlySet<FolderId>;
   /** Each folder's menu, built once per snapshot. */
@@ -159,9 +181,10 @@ export const FolderNodeRow = memo(function FolderNodeRow(
         depth={props.depth}
         icon="folder"
         name={folder.name}
-        subtitle={folder.origin?.name}
         accessibilityLabel={`Threads in ${path}`}
         count={props.counts.get(folder.id) ?? 0}
+        summary={props.summaries.get(folder.id) ?? null}
+        origin={folder.origin?.name}
         selected={props.selectedFolderId === folder.id}
         onSelect={handleSelect}
         leading={

@@ -28,6 +28,7 @@ import {
   isSettingsSearchScopeAvailable,
 } from "../components/settings/settingsSearch";
 import { useShowsEnvironmentUi } from "../state/environmentCapabilities";
+import { useOneEnvironmentCopy } from "~/state/oneEnvironmentCopy"; // signalbox
 
 function RestoreDeviceDefaultsButton({ onRestored }: { onRestored: () => void }) {
   const { changedSettingLabels, restoreDefaults } = useSettingsRestore(onRestored);
@@ -45,6 +46,7 @@ function RestoreDeviceDefaultsButton({ onRestored }: { onRestored: () => void })
 }
 
 function SettingsScopeBoundary({ pathname, children }: { pathname: string; children: ReactNode }) {
+  const environmentCopy = useOneEnvironmentCopy(); // signalbox
   const { scope, connectedEnvironments } = useSettingsScope();
   const { environments } = useEnvironments();
   const hash = useLocation({ select: (location) => location.hash });
@@ -100,7 +102,7 @@ function SettingsScopeBoundary({ pathname, children }: { pathname: string; child
     return (
       <SettingsPageContainer>
         <p className="text-sm text-muted-foreground">
-          Reconnect {scope.label} to change its settings.
+          {environmentCopy(`Reconnect ${scope.label} to change its settings.`)}
         </p>
       </SettingsPageContainer>
     );

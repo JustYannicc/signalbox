@@ -27,7 +27,9 @@ export function folderMenuActions(input: {
   readonly snapshot: SignalboxFoldersSnapshot;
   readonly folder: Folder;
   readonly pools: ReadonlyArray<PoolChoice>;
-  readonly canStartFrom: boolean;
+  readonly canStartFrom?: boolean;
+  /** The environment keeps notes (`capabilities.notes`). */
+  readonly notes?: boolean;
 }): MenuAction[] {
   const { snapshot, folder } = input;
   const actions: MenuAction[] = [
@@ -79,6 +81,17 @@ export function folderMenuActions(input: {
       ],
     });
   }
+  // Shown while lent too, so a lend whose files went away can still be stopped.
+  if (folder.files || folder.githubLend) {
+    actions.push({
+      id: "folder:github-lend",
+      title: folder.githubLend
+        ? `CI steps run as @${folder.githubLend.login}`
+        : "Lend my GitHub to CI steps",
+      state: folder.githubLend ? "on" : undefined,
+    });
+  }
+  if (input.notes) actions.push({ id: "folder:notes", title: "Scratch pad" });
   actions.push(
     { id: "folder:instructions", title: "Instructions…" },
     { id: "folder:delete", title: "Delete folder", attributes: { destructive: true } },
@@ -92,7 +105,9 @@ export type FolderMenuChoice =
   | { readonly _tag: "rename" }
   | { readonly _tag: "move"; readonly input: FolderMoveInput }
   | { readonly _tag: "pool"; readonly poolId: AccountPoolId | null }
+  | { readonly _tag: "githubLend"; readonly lent: boolean }
   | { readonly _tag: "instructions" }
+  | { readonly _tag: "notes" }
   | { readonly _tag: "delete" };
 
 /** The change a folder menu choice asks for; null when there is nothing to change. */
@@ -107,6 +122,9 @@ export function parseFolderMenuEvent(input: {
   if (event === "folder:start-from") return { _tag: "startFrom" };
   if (event === "folder:rename") return { _tag: "rename" };
   if (event === "folder:instructions") return { _tag: "instructions" };
+  // A switch: choosing it flips the lend.
+  if (event === "folder:github-lend") return { _tag: "githubLend", lent: !folder.githubLend };
+  if (event === "folder:notes") return { _tag: "notes" };
   if (event === "folder:delete") return { _tag: "delete" };
   if (event === "folder:up" || event === "folder:down") {
     const move = folderSiblingMove(snapshot, folder.id, event === "folder:up" ? "up" : "down");
@@ -132,11 +150,19 @@ export function parseFolderMenuEvent(input: {
   return null;
 }
 
-/** An owner's top level. Only Personal's has instructions of its own (`snapshot.top`). */
-export function topLevelMenuActions(input: { readonly personal: boolean }): MenuAction[] {
+/**
+ * An owner's top level. Only Personal's has instructions of its own
+ * (`snapshot.top`), and notes: a top-level note is always its author's own.
+ */
+export function topLevelMenuActions(input: {
+  readonly personal: boolean;
+  readonly notes?: boolean;
+}): MenuAction[] {
+  if (!input.personal) return [{ id: "top:new-folder", title: "New folder" }];
   return [
     { id: "top:new-folder", title: "New folder" },
-    ...(input.personal ? [{ id: "top:instructions", title: "Instructions…" }] : []),
+    ...(input.notes ? [{ id: "top:notes", title: "Scratch pad" }] : []),
+    { id: "top:instructions", title: "Instructions…" },
   ];
 }
 

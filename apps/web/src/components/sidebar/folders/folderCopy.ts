@@ -3,6 +3,8 @@
  * environment keeps folders (`capabilities.folders`). Every other environment
  * keeps upstream's exact wording, so these return it unchanged there.
  */
+import { TOP_LEVEL_NAME } from "@t3tools/client-runtime/state/signalboxFolders";
+
 /** What the new-thread hero calls its picker, its rows and the way out of a project. */
 export interface DraftHeroCopy {
   /** The picker's label on a draft without a project (upstream's scratch project). */
@@ -32,14 +34,13 @@ export const PROJECT_HERO_COPY: DraftHeroCopy = {
 };
 
 /**
- * `level` is the folder a thread without a project lives at, named as the
- * sidebar names it ("Personal"): nothing is without a home there (#227). Null
- * where the environment has no folders.
+ * With folders, a thread without a project lives at your top level: nothing
+ * is without a home there (#227). Without folders, upstream's project words.
  */
-export function draftHeroCopy(level: string | null): DraftHeroCopy {
-  if (level === null) return PROJECT_HERO_COPY;
+export function draftHeroCopy(folders: boolean): DraftHeroCopy {
+  if (!folders) return PROJECT_HERO_COPY;
   return {
-    scratchLabel: level,
+    scratchLabel: TOP_LEVEL_NAME,
     choose: "Choose a folder",
     add: "Add a source",
     addToStart: "Add a source to start",
@@ -47,8 +48,8 @@ export function draftHeroCopy(level: string | null): DraftHeroCopy {
     search: "Search folders",
     searchPlaceholder: "Search folders...",
     noMatches: "No matching folders.",
-    startWithout: `or start in ${level}`,
-    startWithoutFailed: `Could not start in ${level}`,
+    startWithout: "or start at the top level",
+    startWithoutFailed: "Could not start at the top level",
   };
 }
 

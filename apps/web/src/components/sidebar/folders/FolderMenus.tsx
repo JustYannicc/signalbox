@@ -1,6 +1,6 @@
 /**
- * The ⋯ menus of the folder tree: a folder's (start from, make, rename, move, files,
- * pool, instructions, secrets, delete) and an owner's top level.
+ * The ⋯ menus of the folder tree: a folder's (start from, make, rename, move,
+ * files, pool, GitHub lend, instructions, secrets, delete) and an owner's top level.
  */
 import { useAtomValue } from "@effect/atom-react";
 import {
@@ -17,23 +17,27 @@ import {
   ArrowUpIcon,
   EllipsisIcon,
   FileTextIcon,
+  GitBranchIcon,
   FolderInputIcon,
   FolderPlusIcon,
-  GitBranchIcon,
   HardDriveIcon,
   KeyRoundIcon,
   PencilIcon,
   SquarePenIcon,
+  StickyNoteIcon,
   Trash2Icon,
 } from "lucide-react";
 
 import { usePoolViews } from "../../../state/accountPools";
 import { PoolRadioSubmenu } from "../../accountPool/PoolRadioSubmenu";
 import { environmentDrivesAtom } from "../../../state/signalboxDrives";
+import { notesEnvironmentsAtom } from "../../../state/signalboxNotes";
+import { openNotes } from "../../notes/notesSheetStore";
 import { DriveProjectShareMenuItem } from "../../drives/DriveProjectShareMenuItem";
 import { Button } from "../../ui/button";
 import {
   Menu,
+  MenuCheckboxItem,
   MenuItem,
   MenuPopup,
   MenuRadioGroup,
@@ -49,6 +53,10 @@ import type { FolderOwner } from "./folderSidebarModel";
 import type { FolderCommands } from "./useFolderCommands";
 
 const NO_FILES = "none";
+
+/** Says whose account a folder's CI steps run as once it's lent. */
+const githubLendLabel = (folder: Folder) =>
+  folder.githubLend ? `CI steps run as @${folder.githubLend.login}` : "Lend my GitHub to CI steps";
 
 function MoreTrigger(props: { label: string }) {
   return (
@@ -110,6 +118,7 @@ function EditableFolderMenuItems(props: FolderMenuProps) {
   const moveUp = folderSiblingMove(snapshot, folder.id, "up");
   const moveDown = folderSiblingMove(snapshot, folder.id, "down");
   const files = folder.files?.projectId;
+  const keepsNotes = useAtomValue(notesEnvironmentsAtom).has(environmentId);
   // Its current files stay pickable while the drive list catches up.
   const filesUnlisted = files !== undefined && !drives.some((drive) => drive.projectId === files);
 
@@ -200,6 +209,16 @@ function EditableFolderMenuItems(props: FolderMenuProps) {
           onChange={(poolId) => void commands.setPool(environmentId, folder.id, poolId)}
         />
       ) : null}
+      {/* Shown while lent too, so a lend whose files went away can still be stopped. */}
+      {folder.files || folder.githubLend ? (
+        <MenuCheckboxItem
+          variant="switch"
+          checked={folder.githubLend !== undefined}
+          onCheckedChange={(lent) => void commands.setGitHubLend(environmentId, folder.id, lent)}
+        >
+          {githubLendLabel(folder)}
+        </MenuCheckboxItem>
+      ) : null}
       <MenuItem
         onClick={() =>
           openFolderDialog({
@@ -214,6 +233,16 @@ function EditableFolderMenuItems(props: FolderMenuProps) {
         <FileTextIcon />
         Instructions…
       </MenuItem>
+      {keepsNotes ? (
+        <MenuItem
+          onClick={() =>
+            openNotes({ environmentId, home: { _tag: "folder", folderId: folder.id } })
+          }
+        >
+          <StickyNoteIcon />
+          Scratch pad
+        </MenuItem>
+      ) : null}
       <MenuItem
         onClick={() =>
           openFolderDialog({
@@ -267,7 +296,10 @@ function EditableFolderMenuItems(props: FolderMenuProps) {
   );
 }
 
-/** An owner's top level: a new thread there, and (for Personal) the top level's instructions and secrets. */
+/**
+ * An owner's top level: a new thread there, and (for Personal) the top
+ * level's instructions, secrets and notes.
+ */
 export function OwnerMenu(props: {
   environmentId: EnvironmentId;
   snapshot: SignalboxFoldersSnapshot;
@@ -276,11 +308,16 @@ export function OwnerMenu(props: {
   onNewThread: (() => void) | null;
 }) {
   const { environmentId, snapshot, owner } = props;
-  const editsTopLevel = props.canEdit && owner.context.id === PERSONAL_CONTEXT_ID;
-  if (props.onNewThread === null && !editsTopLevel) return null;
+  const personal = owner.context.id === PERSONAL_CONTEXT_ID;
+  const editsTopLevel = props.canEdit && personal;
+  const keepsNotes = useAtomValue(notesEnvironmentsAtom).has(environmentId);
+  const topLevelNotes = personal && keepsNotes;
+  if (props.onNewThread === null && !editsTopLevel && !topLevelNotes) return null;
   return (
     <Menu>
-      <MoreTrigger label={`More for ${owner.context.name}`} />
+      <MoreTrigger
+        label={`More for ${owner.context.kind === "personal" ? "the top level" : owner.context.name}`}
+      />
       <MenuPopup align="end" side="right">
         {props.onNewThread ? (
           <MenuItem onClick={props.onNewThread}>
@@ -317,6 +354,12 @@ export function OwnerMenu(props: {
           >
             <KeyRoundIcon />
             Secrets…
+          </MenuItem>
+        ) : null}
+        {topLevelNotes ? (
+          <MenuItem onClick={() => openNotes({ environmentId, home: { _tag: "top" } })}>
+            <StickyNoteIcon />
+            Scratch pad
           </MenuItem>
         ) : null}
       </MenuPopup>

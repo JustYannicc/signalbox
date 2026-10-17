@@ -37,6 +37,7 @@ import { uploadPack } from "../drive/DriveUploads.ts";
 import type { Bytes } from "../drive/git/gitObjects.ts";
 import { makeDriveReader } from "../drive/DriveReader.ts";
 import { makeRemoteFiles } from "../drive/remoteFiles.ts";
+import * as Environment from "../environment.ts";
 import { remoteHead } from "../drive/remoteRoutes.ts";
 import * as Platform from "../platform.ts";
 import { makeMemoryCloud } from "../testing.ts";
@@ -174,6 +175,20 @@ describe("GitHub-backed drives", () => {
           ).pipe(Layer.provide(cloud.layerFor(userId))),
         ),
       );
+
+      // Scratch is a folder, not a repository: the git panel reads that, not a failure.
+      const scratch = Environment.scratchProject.workspaceRoot;
+      const notARepository = { isRepo: false, refName: null, hasWorkingTreeChanges: false };
+      expect(
+        yield* rpc[WS_METHODS.subscribeVcsStatus]({ cwd: scratch }).pipe(
+          Stream.take(1),
+          Stream.runHead,
+        ),
+      ).toMatchObject(Option.some({ _tag: "snapshot", local: notARepository, remote: null }));
+      expect(yield* rpc[WS_METHODS.vcsRefreshStatus]({ cwd: scratch })).toMatchObject({
+        ...notARepository,
+        pr: null,
+      });
 
       const discovered = yield* rpc[WS_METHODS.serverDiscoverSourceControl]({});
       expect(discovered.sourceControlProviders[0]).toMatchObject({

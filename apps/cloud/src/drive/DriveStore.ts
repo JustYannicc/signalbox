@@ -489,11 +489,6 @@ const OidRows = Schema.decodeUnknownSync(Schema.Array(Schema.Struct({ oid: Schem
 const PromisedRow = Schema.Struct({ oid: Schema.String, size: Schema.NullOr(Schema.Number) });
 const decodePromisedRows = Schema.decodeUnknownSync(Schema.Array(PromisedRow));
 const encodePromised = Schema.encodeSync(Schema.fromJsonString(Schema.Array(PromisedRow)));
-const ForkOriginRow = Schema.Struct({
-  drive_id: Schema.String,
-  main: Schema.NullOr(Schema.String),
-});
-const decodeForkOriginRows = Schema.decodeUnknownSync(Schema.Array(ForkOriginRow));
 const decodeWorkRows = Schema.decodeUnknownSync(
   Schema.Array(
     Schema.Struct({
@@ -523,419 +518,418 @@ const chunks = <A>(items: ReadonlyArray<A>) =>
     items.slice(i * CHUNK, (i + 1) * CHUNK),
   );
 
-const make = (driveId: string) =>
-  Effect.gen(function* () {
-    const sql = yield* SqlClient.SqlClient;
-    const members = yield* DriveMembers.DriveMembers;
-    const events = yield* DriveEvents.DriveEvents;
+const make = Effect.fn("DriveStore.make")(function* (driveId: string) {
+  const sql = yield* SqlClient.SqlClient;
+  const members = yield* DriveMembers.DriveMembers;
+  const events = yield* DriveEvents.DriveEvents;
 
-    const ref: DriveStore["Service"]["ref"] = (name) =>
-      sql`SELECT name, oid FROM refs WHERE name = ${name}`.pipe(
-        Effect.map((rows) => decodeRefRows(rows)[0]?.oid ?? null),
-      );
+  const ref: DriveStore["Service"]["ref"] = (name) =>
+    sql`SELECT name, oid FROM refs WHERE name = ${name}`.pipe(
+      Effect.map((rows) => decodeRefRows(rows)[0]?.oid ?? null),
+    );
 
-    const threadRow = (threadId: string) =>
-      sql`SELECT base, generation FROM threads WHERE thread_id = ${threadId}`.pipe(
-        Effect.map((rows) => decodeThreadRows(rows)[0] ?? null),
-      );
+  const threadRow = (threadId: string) =>
+    sql`SELECT base, generation FROM threads WHERE thread_id = ${threadId}`.pipe(
+      Effect.map((rows) => decodeThreadRows(rows)[0] ?? null),
+    );
 
-    const remote: DriveStore["Service"]["remote"] =
-      sql`SELECT provider, repository, default_branch, mode FROM remote WHERE id = 1`.pipe(
-        Effect.map((rows) => {
-          const row = decodeRemoteRows(rows)[0];
-          return row === undefined
-            ? null
-            : {
-                provider: row.provider,
-                repository: row.repository,
-                defaultBranch: row.default_branch,
-                ...(row.mode === null ? {} : { mode: row.mode }),
-              };
-        }),
-      );
+  const remote: DriveStore["Service"]["remote"] =
+    sql`SELECT provider, repository, default_branch, mode FROM remote WHERE id = 1`.pipe(
+      Effect.map((rows) => {
+        const row = decodeRemoteRows(rows)[0];
+        return row === undefined
+          ? null
+          : {
+              provider: row.provider,
+              repository: row.repository,
+              defaultBranch: row.default_branch,
+              ...(row.mode === null ? {} : { mode: row.mode }),
+            };
+      }),
+    );
 
-    const setRemote: DriveStore["Service"]["setRemote"] = (next) =>
-      sql`INSERT INTO remote (id, provider, repository, default_branch, mode)
+  const setRemote: DriveStore["Service"]["setRemote"] = (next) =>
+    sql`INSERT INTO remote (id, provider, repository, default_branch, mode)
       VALUES (1, ${next.provider}, ${next.repository}, ${next.defaultBranch}, ${next.mode ?? null})
       ON CONFLICT (id) DO UPDATE SET provider = excluded.provider,
         repository = excluded.repository, default_branch = excluded.default_branch,
         mode = excluded.mode`.pipe(Effect.asVoid);
 
-    const forkStore = DriveForkStore.makeDriveForkStore({
-      driveId,
-      sql,
-      role: (userId) => members.role(userId),
-      remote,
-      ref,
+  const forkStore = DriveForkStore.makeDriveForkStore({
+    driveId,
+    sql,
+    role: (userId) => members.role(userId),
+    remote,
+    ref,
+  });
+
+  const refs: DriveStore["Service"]["refs"] = (threadId, packsAfter = 0) =>
+    Effect.gen(function* () {
+      const packs = decodePackRows(
+        yield* sql`SELECT seq, name, size FROM packs WHERE seq > ${packsAfter}
+          AND (private_to IS NULL OR private_to = ${threadId}) ORDER BY seq`,
+      );
+      const thread = threadId === null ? null : yield* threadRow(threadId);
+      const shallow = OidRows(
+        yield* sql`SELECT oid FROM shallow WHERE pack_seq > ${packsAfter} ORDER BY pack_seq, oid`,
+      ).map((row) => row.oid);
+      return {
+        main: yield* ref(MAIN_REF),
+        thread: threadId === null ? null : yield* ref(threadRef(threadId)),
+        wip: threadId === null ? null : yield* ref(wipRef(threadId)),
+        machine: threadId === null ? null : yield* ref(machineRef(threadId)),
+        base: thread?.base ?? null,
+        packs,
+        remote: yield* remote,
+        shallow,
+      };
     });
 
-    const refs: DriveStore["Service"]["refs"] = (threadId, packsAfter = 0) =>
-      Effect.gen(function* () {
-        const packs = decodePackRows(
-          yield* sql`SELECT seq, name, size FROM packs WHERE seq > ${packsAfter}
-          AND (private_to IS NULL OR private_to = ${threadId}) ORDER BY seq`,
-        );
-        const thread = threadId === null ? null : yield* threadRow(threadId);
-        const shallow = OidRows(
-          yield* sql`SELECT oid FROM shallow WHERE pack_seq > ${packsAfter} ORDER BY pack_seq, oid`,
-        ).map((row) => row.oid);
-        return {
-          main: yield* ref(MAIN_REF),
-          thread: threadId === null ? null : yield* ref(threadRef(threadId)),
-          wip: threadId === null ? null : yield* ref(wipRef(threadId)),
-          machine: threadId === null ? null : yield* ref(machineRef(threadId)),
-          base: thread?.base ?? null,
-          packs,
-          remote: yield* remote,
-          shallow,
-        };
-      });
+  const isCommit = (oid: Oid) =>
+    sql`SELECT oid FROM commits WHERE oid = ${oid}`.pipe(Effect.map((rows) => rows.length > 0));
 
-    const isCommit = (oid: Oid) =>
-      sql`SELECT oid FROM commits WHERE oid = ${oid}`.pipe(Effect.map((rows) => rows.length > 0));
-
-    const setRef = (name: string, oid: Oid, by: string) =>
-      Effect.flatMap(
-        Clock.currentTimeMillis,
-        (now) =>
-          sql`INSERT INTO refs (name, oid, updated_by, updated_at) VALUES (${name}, ${oid}, ${by}, ${now})
+  const setRef = (name: string, oid: Oid, by: string) =>
+    Effect.flatMap(
+      Clock.currentTimeMillis,
+      (now) =>
+        sql`INSERT INTO refs (name, oid, updated_by, updated_at) VALUES (${name}, ${oid}, ${by}, ${now})
           ON CONFLICT (name) DO UPDATE SET oid = excluded.oid, updated_by = excluded.updated_by,
           updated_at = excluded.updated_at`,
-      );
+    );
 
-    /** Moves `main` or a thread's branch from `before` for a thread or a person, recording it when it changed. */
-    const land = (
-      name: string,
-      before: Oid | null,
-      after: Oid,
-      by: { readonly threadId: string } | { readonly userId: string },
-    ) => {
-      const threadId = "threadId" in by ? by.threadId : null;
-      return setRef(name, after, "threadId" in by ? by.threadId : by.userId).pipe(
-        Effect.andThen(
-          before === after ? Effect.void : events.record({ ref: name, before, after, threadId }),
-        ),
-      );
-    };
+  /** Moves `main` or a thread's branch from `before` for a thread or a person, recording it when it changed. */
+  const land = (
+    name: string,
+    before: Oid | null,
+    after: Oid,
+    by: { readonly threadId: string } | { readonly userId: string },
+  ) => {
+    const threadId = "threadId" in by ? by.threadId : null;
+    return setRef(name, after, "threadId" in by ? by.threadId : by.userId).pipe(
+      Effect.andThen(
+        before === after ? Effect.void : events.record({ ref: name, before, after, threadId }),
+      ),
+    );
+  };
 
-    /**
-     * Records the writer's generation, refusing an older one: once a thread's
-     * newer machine has written, its earlier machine never writes again.
-     */
-    const fence = (writer: DriveWriter) =>
-      Effect.gen(function* () {
-        const row = yield* threadRow(writer.threadId);
-        if (row !== null && writer.generation < row.generation) return false;
-        if (row !== null && writer.generation > row.generation) {
-          yield* sql`UPDATE threads SET generation = ${writer.generation}
+  /**
+   * Records the writer's generation, refusing an older one: once a thread's
+   * newer machine has written, its earlier machine never writes again.
+   */
+  const fence = (writer: DriveWriter) =>
+    Effect.gen(function* () {
+      const row = yield* threadRow(writer.threadId);
+      if (row !== null && writer.generation < row.generation) return false;
+      if (row !== null && writer.generation > row.generation) {
+        yield* sql`UPDATE threads SET generation = ${writer.generation}
           WHERE thread_id = ${writer.threadId}`;
-        }
-        return true;
-      });
+      }
+      return true;
+    });
 
-    const STALE: RefWrite = {
-      _tag: "refused",
-      reason: "A newer machine of this thread writes here now.",
-    };
+  const STALE: RefWrite = {
+    _tag: "refused",
+    reason: "A newer machine of this thread writes here now.",
+  };
 
-    /** Whether the writer's owner may still change files here. Removing them ends it at once. */
-    const writes = (writer: DriveWriter) => Effect.map(members.role(writer.userId), canWrite);
+  /** Whether the writer's owner may still change files here. Removing them ends it at once. */
+  const writes = (writer: DriveWriter) => Effect.map(members.role(writer.userId), canWrite);
 
-    const NO_ACCESS: RefWrite = {
-      _tag: "refused",
-      reason: "You no longer have access to change this drive.",
-    };
+  const NO_ACCESS: RefWrite = {
+    _tag: "refused",
+    reason: "You no longer have access to change this drive.",
+  };
 
-    const open: DriveStore["Service"]["open"] = (writer) =>
-      Effect.gen(function* () {
-        if (!(yield* writes(writer))) return NO_ACCESS;
-        if (!(yield* fence(writer))) return STALE;
-        if ((yield* threadRow(writer.threadId)) === null) {
-          const main = yield* ref(MAIN_REF);
-          const now = yield* Clock.currentTimeMillis;
-          yield* sql`INSERT INTO threads (thread_id, base, generation, opened_at)
+  const open: DriveStore["Service"]["open"] = (writer) =>
+    Effect.gen(function* () {
+      if (!(yield* writes(writer))) return NO_ACCESS;
+      if (!(yield* fence(writer))) return STALE;
+      if ((yield* threadRow(writer.threadId)) === null) {
+        const main = yield* ref(MAIN_REF);
+        const now = yield* Clock.currentTimeMillis;
+        yield* sql`INSERT INTO threads (thread_id, base, generation, opened_at)
           VALUES (${writer.threadId}, ${main}, ${writer.generation}, ${now})`;
-          if (main !== null) yield* setRef(threadRef(writer.threadId), main, writer.threadId);
-        }
-        return {
-          _tag: "ok",
-          refs: yield* refs(writer.threadId, writer.packsAfter),
-        } satisfies RefWrite;
-      }).pipe(sql.withTransaction);
+        if (main !== null) yield* setRef(threadRef(writer.threadId), main, writer.threadId);
+      }
+      return {
+        _tag: "ok",
+        refs: yield* refs(writer.threadId, writer.packsAfter),
+      } satisfies RefWrite;
+    }).pipe(sql.withTransaction);
 
-    /** What the drive neither holds nor has the remote keep for it. */
-    const missing: DriveStore["Service"]["missing"] = (oids, visibleTo) =>
-      Effect.gen(function* () {
-        const unique = [...new Set(oids)];
-        const found = new Set<string>();
-        for (const chunk of chunks(unique)) {
-          // Two queries: one with both lists would bind twice the parameters SQLite allows.
-          // Where each object is read from, usually a pack the caller may lean on.
-          for (const row of OidRows(
-            yield* sql`SELECT o.oid FROM objects o JOIN packs p ON p.seq = o.pack_seq
+  /** What the drive neither holds nor has the remote keep for it. */
+  const missing: DriveStore["Service"]["missing"] = (oids, visibleTo) =>
+    Effect.gen(function* () {
+      const unique = [...new Set(oids)];
+      const found = new Set<string>();
+      for (const chunk of chunks(unique)) {
+        // Two queries: one with both lists would bind twice the parameters SQLite allows.
+        // Where each object is read from, usually a pack the caller may lean on.
+        for (const row of OidRows(
+          yield* sql`SELECT o.oid FROM objects o JOIN packs p ON p.seq = o.pack_seq
             WHERE o.oid IN ${sql.in(chunk)}
             AND (p.private_to IS NULL OR p.private_to = ${visibleTo})`,
-          ))
-            found.add(row.oid);
-          // Else another copy may be in one: an object first stored privately is read from there.
-          const unread = chunk.filter((oid) => !found.has(oid));
-          if (unread.length > 0) {
-            for (const row of OidRows(
-              yield* sql`SELECT DISTINCT e.oid FROM pack_entries e JOIN packs p ON p.seq = e.pack_seq
+        ))
+          found.add(row.oid);
+        // Else another copy may be in one: an object first stored privately is read from there.
+        const unread = chunk.filter((oid) => !found.has(oid));
+        if (unread.length > 0) {
+          for (const row of OidRows(
+            yield* sql`SELECT DISTINCT e.oid FROM pack_entries e JOIN packs p ON p.seq = e.pack_seq
               WHERE e.oid IN ${sql.in(unread)}
               AND (p.private_to IS NULL OR p.private_to = ${visibleTo})`,
-            ))
-              found.add(row.oid);
-          }
-          const rest = chunk.filter((oid) => !found.has(oid));
-          if (rest.length === 0) continue;
-          for (const row of OidRows(
-            yield* sql`SELECT oid FROM promised WHERE oid IN ${sql.in(rest)}`,
           ))
             found.add(row.oid);
         }
-        return unique.filter((oid) => !found.has(oid));
-      });
+        const rest = chunk.filter((oid) => !found.has(oid));
+        if (rest.length === 0) continue;
+        for (const row of OidRows(
+          yield* sql`SELECT oid FROM promised WHERE oid IN ${sql.in(rest)}`,
+        ))
+          found.add(row.oid);
+      }
+      return unique.filter((oid) => !found.has(oid));
+    });
 
-    const promised: DriveStore["Service"]["promised"] = (oids) =>
-      Effect.gen(function* () {
-        const out: Array<PromisedFile> = [];
-        for (const chunk of chunks([...new Set(oids)])) {
-          out.push(
-            ...decodePromisedRows(
-              yield* sql`SELECT oid, size FROM promised WHERE oid IN ${sql.in(chunk)}`,
-            ),
-          );
-        }
-        return out;
-      });
+  const promised: DriveStore["Service"]["promised"] = (oids) =>
+    Effect.gen(function* () {
+      const out: Array<PromisedFile> = [];
+      for (const chunk of chunks([...new Set(oids)])) {
+        out.push(
+          ...decodePromisedRows(
+            yield* sql`SELECT oid, size FROM promised WHERE oid IN ${sql.in(chunk)}`,
+          ),
+        );
+      }
+      return out;
+    });
 
-    const registerPack: DriveStore["Service"]["registerPack"] = (pack) =>
-      Effect.gen(function* () {
-        const existing = decodeOwnerRows(
-          yield* sql`SELECT private_to FROM packs WHERE name = ${pack.name}`,
-        );
-        const privateTo = pack.privateTo ?? null;
-        if (existing.length > 0) {
-          // The same bytes again: a retry, or a copy of a pack the uploader can already lean on.
-          const owner = existing[0]!.private_to;
-          if (owner === privateTo || owner === null) return { _tag: "ok" } as const;
-          // Another thread's private pack stays its own.
-          if (privateTo !== null) return { _tag: "missing", oids: [] } as const;
-          // A public copy of a private pack, its uploader holding the bytes itself: public
-          // once everything it leans on is.
-          const absent = yield* missing(pack.external, null);
-          if (absent.length > 0) return { _tag: "missing", oids: absent } as const;
-          yield* sql`UPDATE packs SET private_to = NULL WHERE name = ${pack.name}`;
-          return { _tag: "ok" } as const;
-        }
-        const promising = new Set((pack.promised ?? []).map((file) => file.oid));
-        // A public pack leans only on public packs; a private one on those and its thread's own.
-        const absent = (yield* missing(pack.external, privateTo)).filter(
-          (oid) => !promising.has(oid),
-        );
+  const registerPack: DriveStore["Service"]["registerPack"] = (pack) =>
+    Effect.gen(function* () {
+      const existing = decodeOwnerRows(
+        yield* sql`SELECT private_to FROM packs WHERE name = ${pack.name}`,
+      );
+      const privateTo = pack.privateTo ?? null;
+      if (existing.length > 0) {
+        // The same bytes again: a retry, or a copy of a pack the uploader can already lean on.
+        const owner = existing[0]!.private_to;
+        if (owner === privateTo || owner === null) return { _tag: "ok" } as const;
+        // Another thread's private pack stays its own.
+        if (privateTo !== null) return { _tag: "missing", oids: [] } as const;
+        // A public copy of a private pack, its uploader holding the bytes itself: public
+        // once everything it leans on is.
+        const absent = yield* missing(pack.external, null);
         if (absent.length > 0) return { _tag: "missing", oids: absent } as const;
-        const now = yield* Clock.currentTimeMillis;
-        yield* sql`INSERT INTO packs (name, size, object_count, thread_id, created_at, private_to)
+        yield* sql`UPDATE packs SET private_to = NULL WHERE name = ${pack.name}`;
+        return { _tag: "ok" } as const;
+      }
+      const promising = new Set((pack.promised ?? []).map((file) => file.oid));
+      // A public pack leans only on public packs; a private one on those and its thread's own.
+      const absent = (yield* missing(pack.external, privateTo)).filter(
+        (oid) => !promising.has(oid),
+      );
+      if (absent.length > 0) return { _tag: "missing", oids: absent } as const;
+      const now = yield* Clock.currentTimeMillis;
+      yield* sql`INSERT INTO packs (name, size, object_count, thread_id, created_at, private_to)
         VALUES (${pack.name}, ${pack.size}, ${pack.objects.length}, ${pack.threadId}, ${now}, ${privateTo})`;
-        const [row] = yield* sql<{
-          readonly seq: number;
-        }>`SELECT seq FROM packs WHERE name = ${pack.name}`;
-        const seq = row!.seq;
-        for (const object of pack.objects) {
-          // An object already in an earlier pack is still read from there.
-          yield* sql`INSERT OR IGNORE INTO objects (oid, pack_seq, offset, length, type, size)
+      const [row] = yield* sql<{
+        readonly seq: number;
+      }>`SELECT seq FROM packs WHERE name = ${pack.name}`;
+      const seq = row!.seq;
+      for (const object of pack.objects) {
+        // An object already in an earlier pack is still read from there.
+        yield* sql`INSERT OR IGNORE INTO objects (oid, pack_seq, offset, length, type, size)
           VALUES (${object.oid}, ${seq}, ${object.offset}, ${object.length}, ${object.type}, ${object.size})`;
-          yield* sql`INSERT INTO pack_entries (pack_seq, offset, oid, length, type, size)
+        yield* sql`INSERT INTO pack_entries (pack_seq, offset, oid, length, type, size)
           VALUES (${seq}, ${object.offset}, ${object.oid}, ${object.length}, ${object.type}, ${object.size})`;
-        }
-        for (const oid of pack.shallow ?? []) {
-          yield* sql`INSERT OR IGNORE INTO shallow (oid, pack_seq) VALUES (${oid}, ${seq})`;
-        }
-        // One statement however many: a big remote names hundreds of thousands of files.
-        if (pack.promised !== undefined && pack.promised.length > 0) {
-          yield* sql`INSERT OR IGNORE INTO promised (oid, size)
+      }
+      for (const oid of pack.shallow ?? []) {
+        yield* sql`INSERT OR IGNORE INTO shallow (oid, pack_seq) VALUES (${oid}, ${seq})`;
+      }
+      // One statement however many: a big remote names hundreds of thousands of files.
+      if (pack.promised !== undefined && pack.promised.length > 0) {
+        yield* sql`INSERT OR IGNORE INTO promised (oid, size)
           SELECT value ->> 'oid', value ->> 'size' FROM json_each(${encodePromised(pack.promised)})`;
-        }
-        for (const commit of pack.commits) {
-          yield* sql`INSERT OR IGNORE INTO commits (oid, tree, author_name, author_email, time, message)
+      }
+      for (const commit of pack.commits) {
+        yield* sql`INSERT OR IGNORE INTO commits (oid, tree, author_name, author_email, time, message)
           VALUES (${commit.oid}, ${commit.tree}, ${commit.authorName}, ${commit.authorEmail},
             ${commit.time}, ${commit.message})`;
-          for (const [position, parent] of commit.parents.entries()) {
-            yield* sql`INSERT OR IGNORE INTO commit_parents (oid, position, parent)
+        for (const [position, parent] of commit.parents.entries()) {
+          yield* sql`INSERT OR IGNORE INTO commit_parents (oid, position, parent)
             VALUES (${commit.oid}, ${position}, ${parent})`;
-          }
         }
-        return { _tag: "ok" } as const;
-      }).pipe(sql.withTransaction);
+      }
+      return { _tag: "ok" } as const;
+    }).pipe(sql.withTransaction);
 
-    const isAncestor = (ancestor: Oid, descendant: Oid) =>
-      sql`WITH RECURSIVE reach(oid) AS (
+  const isAncestor = (ancestor: Oid, descendant: Oid) =>
+    sql`WITH RECURSIVE reach(oid) AS (
         SELECT ${descendant}
         UNION
         SELECT p.parent FROM commit_parents p JOIN reach r ON p.oid = r.oid
       )
       SELECT oid FROM reach WHERE oid = ${ancestor} LIMIT 1`.pipe(
-        Effect.map((rows) => rows.length > 0),
-      );
+      Effect.map((rows) => rows.length > 0),
+    );
 
-    const ownRefs = (threadId: string) =>
-      new Set([threadRef(threadId), wipRef(threadId), machineRef(threadId)]);
+  const ownRefs = (threadId: string) =>
+    new Set([threadRef(threadId), wipRef(threadId), machineRef(threadId)]);
 
-    const updateRefs: DriveStore["Service"]["updateRefs"] = (writer, updates) =>
-      Effect.gen(function* () {
-        const own = ownRefs(writer.threadId);
-        const foreign = updates.find((update) => !own.has(update.name));
-        if (foreign !== undefined) {
+  const updateRefs: DriveStore["Service"]["updateRefs"] = (writer, updates) =>
+    Effect.gen(function* () {
+      const own = ownRefs(writer.threadId);
+      const foreign = updates.find((update) => !own.has(update.name));
+      if (foreign !== undefined) {
+        return {
+          _tag: "refused",
+          reason: `A thread moves only its own refs, not ${foreign.name}.`,
+        } as const;
+      }
+      if (!(yield* writes(writer))) return NO_ACCESS;
+      if (!(yield* fence(writer))) return STALE;
+      for (const update of updates) {
+        // Only the machine ref may name a commit other threads aren't handed.
+        const visible =
+          update.name === machineRef(writer.threadId)
+            ? yield* isCommit(update.new)
+            : (yield* missing([update.new], null)).length === 0;
+        if (!visible) {
           return {
             _tag: "refused",
-            reason: `A thread moves only its own refs, not ${foreign.name}.`,
+            reason: `The drive does not have commit ${update.new}.`,
           } as const;
         }
-        if (!(yield* writes(writer))) return NO_ACCESS;
-        if (!(yield* fence(writer))) return STALE;
-        for (const update of updates) {
-          // Only the machine ref may name a commit other threads aren't handed.
-          const visible =
-            update.name === machineRef(writer.threadId)
-              ? yield* isCommit(update.new)
-              : (yield* missing([update.new], null)).length === 0;
-          if (!visible) {
-            return {
-              _tag: "refused",
-              reason: `The drive does not have commit ${update.new}.`,
-            } as const;
-          }
+      }
+      const currents = new Map<string, Oid | null>();
+      for (const update of updates) {
+        const current = yield* ref(update.name);
+        // Already where the writer wants it: a retry of a write that landed.
+        if (current !== update.old && current !== update.new) {
+          return {
+            _tag: "conflict",
+            refs: yield* refs(writer.threadId, writer.packsAfter),
+          } as const;
         }
-        const currents = new Map<string, Oid | null>();
-        for (const update of updates) {
-          const current = yield* ref(update.name);
-          // Already where the writer wants it: a retry of a write that landed.
-          if (current !== update.old && current !== update.new) {
-            return {
-              _tag: "conflict",
-              refs: yield* refs(writer.threadId, writer.packsAfter),
-            } as const;
-          }
-          currents.set(update.name, current);
-        }
-        const branch = threadRef(writer.threadId);
-        for (const update of updates) {
-          yield* update.name === branch
-            ? land(branch, currents.get(branch) ?? null, update.new, writer)
-            : setRef(update.name, update.new, writer.threadId);
-        }
+        currents.set(update.name, current);
+      }
+      const branch = threadRef(writer.threadId);
+      for (const update of updates) {
+        yield* update.name === branch
+          ? land(branch, currents.get(branch) ?? null, update.new, writer)
+          : setRef(update.name, update.new, writer.threadId);
+      }
+      return { _tag: "ok", refs: yield* refs(writer.threadId, writer.packsAfter) } as const;
+    }).pipe(sql.withTransaction);
+
+  const reconcile: DriveStore["Service"]["reconcile"] = (writer, request) =>
+    Effect.gen(function* () {
+      if (!writer.live) {
+        return {
+          _tag: "refused",
+          reason: "main only moves while the thread's turn runs.",
+        } as const;
+      }
+      if (!(yield* writes(writer))) return NO_ACCESS;
+      const source = yield* remote;
+      if (source !== null && source.mode !== "source") {
+        return { _tag: "refused", reason: "This drive's work lands on its remote." } as const;
+      }
+      if (!(yield* fence(writer))) return STALE;
+      if ((yield* ref(threadRef(writer.threadId))) !== request.newMain) {
+        return {
+          _tag: "refused",
+          reason: "main only moves to the thread's own branch.",
+        } as const;
+      }
+      const current = yield* ref(MAIN_REF);
+      if (current === request.newMain)
         return { _tag: "ok", refs: yield* refs(writer.threadId, writer.packsAfter) } as const;
-      }).pipe(sql.withTransaction);
+      if (current !== request.expectedMain) {
+        return {
+          _tag: "conflict",
+          refs: yield* refs(writer.threadId, writer.packsAfter),
+        } as const;
+      }
+      if (current !== null && !(yield* isAncestor(current, request.newMain))) {
+        return { _tag: "refused", reason: "main only moves forward: merge it first." } as const;
+      }
+      yield* land(MAIN_REF, current, request.newMain, writer);
+      return { _tag: "ok", refs: yield* refs(writer.threadId, writer.packsAfter) } as const;
+    }).pipe(sql.withTransaction);
 
-    const reconcile: DriveStore["Service"]["reconcile"] = (writer, request) =>
-      Effect.gen(function* () {
-        if (!writer.live) {
-          return {
-            _tag: "refused",
-            reason: "main only moves while the thread's turn runs.",
-          } as const;
-        }
-        if (!(yield* writes(writer))) return NO_ACCESS;
-        const source = yield* remote;
-        if (source !== null && source.mode !== "source") {
-          return { _tag: "refused", reason: "This drive's work lands on its remote." } as const;
-        }
-        if (!(yield* fence(writer))) return STALE;
-        if ((yield* ref(threadRef(writer.threadId))) !== request.newMain) {
-          return {
-            _tag: "refused",
-            reason: "main only moves to the thread's own branch.",
-          } as const;
-        }
-        const current = yield* ref(MAIN_REF);
-        if (current === request.newMain)
-          return { _tag: "ok", refs: yield* refs(writer.threadId, writer.packsAfter) } as const;
+  const mirror: DriveStore["Service"]["mirror"] = (writer, request) =>
+    Effect.gen(function* () {
+      if (!writer.live) {
+        return {
+          _tag: "refused",
+          reason: "main only moves while the thread's turn runs.",
+        } as const;
+      }
+      const source = yield* remote;
+      if (source === null || source.mode === "source") {
+        return { _tag: "refused", reason: "This drive has no remote to mirror." } as const;
+      }
+      if (!(yield* writes(writer))) return NO_ACCESS;
+      if (!(yield* fence(writer))) return STALE;
+      if (!(yield* isCommit(request.newMain))) {
+        return {
+          _tag: "refused",
+          reason: `The drive does not have commit ${request.newMain}.`,
+        } as const;
+      }
+      const current = yield* ref(MAIN_REF);
+      if (current !== request.newMain) {
+        // The remote may have been force-pushed, so main need not move forward.
         if (current !== request.expectedMain) {
           return {
             _tag: "conflict",
             refs: yield* refs(writer.threadId, writer.packsAfter),
           } as const;
         }
-        if (current !== null && !(yield* isAncestor(current, request.newMain))) {
-          return { _tag: "refused", reason: "main only moves forward: merge it first." } as const;
-        }
         yield* land(MAIN_REF, current, request.newMain, writer);
-        return { _tag: "ok", refs: yield* refs(writer.threadId, writer.packsAfter) } as const;
-      }).pipe(sql.withTransaction);
+      }
+      return { _tag: "ok", refs: yield* refs(writer.threadId, writer.packsAfter) } as const;
+    }).pipe(sql.withTransaction);
 
-    const mirror: DriveStore["Service"]["mirror"] = (writer, request) =>
-      Effect.gen(function* () {
-        if (!writer.live) {
-          return {
-            _tag: "refused",
-            reason: "main only moves while the thread's turn runs.",
-          } as const;
-        }
-        const source = yield* remote;
-        if (source === null || source.mode === "source") {
-          return { _tag: "refused", reason: "This drive has no remote to mirror." } as const;
-        }
-        if (!(yield* writes(writer))) return NO_ACCESS;
-        if (!(yield* fence(writer))) return STALE;
-        if (!(yield* isCommit(request.newMain))) {
-          return {
-            _tag: "refused",
-            reason: `The drive does not have commit ${request.newMain}.`,
-          } as const;
-        }
-        const current = yield* ref(MAIN_REF);
-        if (current !== request.newMain) {
-          // The remote may have been force-pushed, so main need not move forward.
-          if (current !== request.expectedMain) {
-            return {
-              _tag: "conflict",
-              refs: yield* refs(writer.threadId, writer.packsAfter),
-            } as const;
-          }
-          yield* land(MAIN_REF, current, request.newMain, writer);
-        }
-        return { _tag: "ok", refs: yield* refs(writer.threadId, writer.packsAfter) } as const;
-      }).pipe(sql.withTransaction);
-
-    const locate: DriveStore["Service"]["locate"] = (oids) =>
-      Effect.gen(function* () {
-        const out: Array<ObjectLocation> = [];
-        for (const chunk of chunks([...new Set(oids)])) {
-          out.push(
-            ...decodeLocationRows(
-              yield* sql`SELECT o.oid, p.name AS pack, o.offset, o.length, o.type, o.size
+  const locate: DriveStore["Service"]["locate"] = (oids) =>
+    Effect.gen(function* () {
+      const out: Array<ObjectLocation> = [];
+      for (const chunk of chunks([...new Set(oids)])) {
+        out.push(
+          ...decodeLocationRows(
+            yield* sql`SELECT o.oid, p.name AS pack, o.offset, o.length, o.type, o.size
               FROM objects o JOIN packs p ON p.seq = o.pack_seq WHERE o.oid IN ${sql.in(chunk)}`,
-            ),
-          );
-        }
-        return out;
-      });
+          ),
+        );
+      }
+      return out;
+    });
 
-    const locateAt: DriveStore["Service"]["locateAt"] = (pack, offset) =>
-      sql`SELECT e.oid, p.name AS pack, e.offset, e.length, e.type, e.size
+  const locateAt: DriveStore["Service"]["locateAt"] = (pack, offset) =>
+    sql`SELECT e.oid, p.name AS pack, e.offset, e.length, e.type, e.size
       FROM pack_entries e JOIN packs p ON p.seq = e.pack_seq
       WHERE p.name = ${pack} AND e.offset = ${offset}`.pipe(
-        Effect.map((rows) => decodeLocationRows(rows)[0] ?? null),
-      );
+      Effect.map((rows) => decodeLocationRows(rows)[0] ?? null),
+    );
 
-    const COMMIT_COLUMNS = sql`c.oid, c.tree, c.author_name, c.author_email, c.time, c.message,
+  const COMMIT_COLUMNS = sql`c.oid, c.tree, c.author_name, c.author_email, c.time, c.message,
     (SELECT group_concat(parent, ',') FROM
       (SELECT parent FROM commit_parents WHERE oid = c.oid ORDER BY position)) AS parents`;
 
-    const commits: DriveStore["Service"]["commits"] = (oids) =>
-      Effect.gen(function* () {
-        const out: Array<StoredCommit> = [];
-        for (const chunk of chunks([...new Set(oids)])) {
-          const rows =
-            yield* sql`SELECT ${COMMIT_COLUMNS} FROM commits c WHERE c.oid IN ${sql.in(chunk)}`;
-          out.push(...decodeCommitRows(rows).map(toCommit));
-        }
-        return out;
-      });
+  const commits: DriveStore["Service"]["commits"] = (oids) =>
+    Effect.gen(function* () {
+      const out: Array<StoredCommit> = [];
+      for (const chunk of chunks([...new Set(oids)])) {
+        const rows =
+          yield* sql`SELECT ${COMMIT_COLUMNS} FROM commits c WHERE c.oid IN ${sql.in(chunk)}`;
+        out.push(...decodeCommitRows(rows).map(toCommit));
+      }
+      return out;
+    });
 
-    const commitsBetween: DriveStore["Service"]["commitsBetween"] = (from, to, limit) =>
-      sql`WITH RECURSIVE old(oid) AS (
+  const commitsBetween: DriveStore["Service"]["commitsBetween"] = (from, to, limit) =>
+    sql`WITH RECURSIVE old(oid) AS (
         SELECT ${from} WHERE ${from} IS NOT NULL
         UNION
         SELECT p.parent FROM commit_parents p JOIN old o ON p.oid = o.oid
@@ -949,95 +943,95 @@ const make = (driveId: string) =>
       SELECT ${COMMIT_COLUMNS} FROM commits c JOIN new n ON n.oid = c.oid
       WHERE c.oid NOT IN (SELECT oid FROM old)
       ORDER BY c.time DESC, c.oid LIMIT ${limit}`.pipe(
-        Effect.map((rows) => decodeCommitRows(rows).map(toCommit)),
-      );
+      Effect.map((rows) => decodeCommitRows(rows).map(toCommit)),
+    );
 
-    const log: DriveStore["Service"]["log"] = (from, limit) =>
-      sql`WITH RECURSIVE reach(oid) AS (
+  const log: DriveStore["Service"]["log"] = (from, limit) =>
+    sql`WITH RECURSIVE reach(oid) AS (
         SELECT ${from}
         UNION
         SELECT p.parent FROM commit_parents p JOIN reach r ON p.oid = r.oid
       )
       SELECT ${COMMIT_COLUMNS} FROM commits c JOIN reach r ON r.oid = c.oid
       ORDER BY c.time DESC, c.oid LIMIT ${limit}`.pipe(
-        Effect.map((rows) => decodeCommitRows(rows).map(toCommit)),
-      );
+      Effect.map((rows) => decodeCommitRows(rows).map(toCommit)),
+    );
 
-    const replaceMain: DriveStore["Service"]["replaceMain"] = (userId, request) =>
-      Effect.gen(function* () {
-        if (!canManageDrive(yield* members.role(userId))) {
-          return { _tag: "refused", reason: "Only the drive's managers can do that." } as const;
+  const replaceMain: DriveStore["Service"]["replaceMain"] = (userId, request) =>
+    Effect.gen(function* () {
+      if (!canManageDrive(yield* members.role(userId))) {
+        return { _tag: "refused", reason: "Only the drive's managers can do that." } as const;
+      }
+      if (!(yield* isCommit(request.newMain))) {
+        return {
+          _tag: "refused",
+          reason: `The drive does not have commit ${request.newMain}.`,
+        } as const;
+      }
+      const current = yield* ref(MAIN_REF);
+      if (current !== request.newMain) {
+        if (current !== request.expectedMain) {
+          return { _tag: "conflict", refs: yield* refs(null) } as const;
         }
-        if (!(yield* isCommit(request.newMain))) {
-          return {
-            _tag: "refused",
-            reason: `The drive does not have commit ${request.newMain}.`,
-          } as const;
+        if (current !== null && !(yield* isAncestor(current, request.newMain))) {
+          return { _tag: "refused", reason: "main only moves forward." } as const;
         }
-        const current = yield* ref(MAIN_REF);
-        if (current !== request.newMain) {
-          if (current !== request.expectedMain) {
-            return { _tag: "conflict", refs: yield* refs(null) } as const;
-          }
-          if (current !== null && !(yield* isAncestor(current, request.newMain))) {
-            return { _tag: "refused", reason: "main only moves forward." } as const;
-          }
-          yield* land(MAIN_REF, current, request.newMain, { userId });
-        }
-        if (request.shortcut !== undefined) {
-          const now = yield* Clock.currentTimeMillis;
-          yield* sql`INSERT INTO shortcuts (path, target, created_at)
-          VALUES (${request.shortcut.path}, ${request.shortcut.target}, ${now})
-          ON CONFLICT (path) DO NOTHING`;
-        }
-        return { _tag: "ok", refs: yield* refs(null) } as const;
-      }).pipe(sql.withTransaction);
-
-    const shortcuts: DriveStore["Service"]["shortcuts"] = sql`SELECT path, target FROM shortcuts
-    ORDER BY path`.pipe(Effect.map(decodeShortcutRows));
-
-    const refuseShortcut = (reason: string) => Effect.succeed({ _tag: "refused", reason } as const);
-    const NOT_A_WRITER = "You can't change this drive.";
-
-    const addShortcut: DriveStore["Service"]["addShortcut"] = (userId, shortcut) =>
-      Effect.gen(function* () {
-        if (!canWrite(yield* members.role(userId))) return yield* refuseShortcut(NOT_A_WRITER);
-        const clash = (yield* shortcuts).find((existing) => overlaps(existing.path, shortcut.path));
-        if (clash !== undefined) {
-          return yield* refuseShortcut(
-            clash.path === shortcut.path
-              ? `${shortcut.path} is already a shortcut.`
-              : `${shortcut.path} would overlap the shortcut at ${clash.path}.`,
-          );
-        }
+        yield* land(MAIN_REF, current, request.newMain, { userId });
+      }
+      if (request.shortcut !== undefined) {
         const now = yield* Clock.currentTimeMillis;
         yield* sql`INSERT INTO shortcuts (path, target, created_at)
+          VALUES (${request.shortcut.path}, ${request.shortcut.target}, ${now})
+          ON CONFLICT (path) DO NOTHING`;
+      }
+      return { _tag: "ok", refs: yield* refs(null) } as const;
+    }).pipe(sql.withTransaction);
+
+  const shortcuts: DriveStore["Service"]["shortcuts"] = sql`SELECT path, target FROM shortcuts
+    ORDER BY path`.pipe(Effect.map(decodeShortcutRows));
+
+  const refuseShortcut = (reason: string) => Effect.succeed({ _tag: "refused", reason } as const);
+  const NOT_A_WRITER = "You can't change this drive.";
+
+  const addShortcut: DriveStore["Service"]["addShortcut"] = (userId, shortcut) =>
+    Effect.gen(function* () {
+      if (!canWrite(yield* members.role(userId))) return yield* refuseShortcut(NOT_A_WRITER);
+      const clash = (yield* shortcuts).find((existing) => overlaps(existing.path, shortcut.path));
+      if (clash !== undefined) {
+        return yield* refuseShortcut(
+          clash.path === shortcut.path
+            ? `${shortcut.path} is already a shortcut.`
+            : `${shortcut.path} would overlap the shortcut at ${clash.path}.`,
+        );
+      }
+      const now = yield* Clock.currentTimeMillis;
+      yield* sql`INSERT INTO shortcuts (path, target, created_at)
         VALUES (${shortcut.path}, ${shortcut.target}, ${now})`;
-        return { _tag: "ok" } as const;
-      }).pipe(sql.withTransaction);
+      return { _tag: "ok" } as const;
+    }).pipe(sql.withTransaction);
 
-    const removeShortcut: DriveStore["Service"]["removeShortcut"] = (userId, path) =>
-      Effect.gen(function* () {
-        if (!canWrite(yield* members.role(userId))) return yield* refuseShortcut(NOT_A_WRITER);
-        const removed = yield* sql`DELETE FROM shortcuts WHERE path = ${path} RETURNING path`;
-        return removed.length === 0
-          ? yield* refuseShortcut(`${path} isn't a shortcut.`)
-          : ({ _tag: "ok" } as const);
-      }).pipe(sql.withTransaction);
+  const removeShortcut: DriveStore["Service"]["removeShortcut"] = (userId, path) =>
+    Effect.gen(function* () {
+      if (!canWrite(yield* members.role(userId))) return yield* refuseShortcut(NOT_A_WRITER);
+      const removed = yield* sql`DELETE FROM shortcuts WHERE path = ${path} RETURNING path`;
+      return removed.length === 0
+        ? yield* refuseShortcut(`${path} isn't a shortcut.`)
+        : ({ _tag: "ok" } as const);
+    }).pipe(sql.withTransaction);
 
-    /** Every commit `main` reaches, as a recursive CTE to join against. */
-    const REACH = sql`reach(oid) AS (
+  /** Every commit `main` reaches, as a recursive CTE to join against. */
+  const REACH = sql`reach(oid) AS (
       SELECT oid FROM refs WHERE name = ${MAIN_REF}
       UNION
       SELECT p.parent FROM commit_parents p JOIN reach r ON p.oid = r.oid
     )`;
 
-    const unreconciled: DriveStore["Service"]["unreconciled"] = ({ limit, threadId }) =>
-      Effect.gen(function* () {
-        const moved = sql`(b.oid IS NOT NULL OR w.oid IS NOT NULL)`;
-        // Each thread's latest ref, whichever it moved last, unless `main` already holds it.
-        const rows = decodeWorkRows(
-          yield* sql`WITH RECURSIVE ${REACH},
+  const unreconciled: DriveStore["Service"]["unreconciled"] = ({ limit, threadId }) =>
+    Effect.gen(function* () {
+      const moved = sql`(b.oid IS NOT NULL OR w.oid IS NOT NULL)`;
+      // Each thread's latest ref, whichever it moved last, unless `main` already holds it.
+      const rows = decodeWorkRows(
+        yield* sql`WITH RECURSIVE ${REACH},
           heads AS (
             SELECT t.thread_id, t.base,
               CASE WHEN w.oid IS NOT NULL AND (b.oid IS NULL OR w.updated_at >= b.updated_at)
@@ -1051,12 +1045,12 @@ const make = (driveId: string) =>
           SELECT thread_id, base, head, at FROM heads
           WHERE head NOT IN (SELECT oid FROM reach)
           ORDER BY at DESC LIMIT ${limit}`,
-        );
-        // Where the work leaves `main`: its newest ancestor `main` holds, so files
-        // other threads landed (and this one merged in) aren't counted as its own.
-        return yield* Effect.forEach(rows, (row) =>
-          Effect.map(
-            sql`WITH RECURSIVE ${REACH},
+      );
+      // Where the work leaves `main`: its newest ancestor `main` holds, so files
+      // other threads landed (and this one merged in) aren't counted as its own.
+      return yield* Effect.forEach(rows, (row) =>
+        Effect.map(
+          sql`WITH RECURSIVE ${REACH},
             up(oid) AS (
               SELECT ${row.head}
               UNION
@@ -1065,45 +1059,45 @@ const make = (driveId: string) =>
             )
             SELECT c.oid FROM up JOIN commits c ON c.oid = up.oid
             WHERE up.oid IN (SELECT oid FROM reach) ORDER BY c.time DESC LIMIT 1`,
-            (found): UnreconciledWork => ({
-              threadId: row.thread_id,
-              commit: row.head,
-              base: OidRows(found)[0]?.oid ?? row.base,
-              at: row.at,
-            }),
-          ),
-        );
-      });
-
-    return DriveStore.of({
-      initialize: Effect.asVoid(migrate.pipe(Effect.provideService(SqlClient.SqlClient, sql))),
-      open,
-      refs,
-      ref,
-      missing,
-      promised,
-      registerPack,
-      updateRefs,
-      reconcile,
-      setRemote,
-      remote,
-      mirror,
-      locate,
-      locateAt,
-      commits,
-      commitsBetween,
-      log,
-      replaceMain,
-      shortcuts,
-      addShortcut,
-      removeShortcut,
-      unreconciled,
-      forkSnapshot: forkStore.forkSnapshot,
-      startFrom: forkStore.startFrom,
-      forkOrigin: forkStore.forkOrigin,
-      packOrigin: forkStore.packOrigin,
+          (found): UnreconciledWork => ({
+            threadId: row.thread_id,
+            commit: row.head,
+            base: OidRows(found)[0]?.oid ?? row.base,
+            at: row.at,
+          }),
+        ),
+      );
     });
+
+  return DriveStore.of({
+    initialize: Effect.asVoid(migrate.pipe(Effect.provideService(SqlClient.SqlClient, sql))),
+    open,
+    refs,
+    ref,
+    missing,
+    promised,
+    registerPack,
+    updateRefs,
+    reconcile,
+    setRemote,
+    remote,
+    mirror,
+    locate,
+    locateAt,
+    commits,
+    commitsBetween,
+    log,
+    replaceMain,
+    shortcuts,
+    addShortcut,
+    removeShortcut,
+    unreconciled,
+    forkSnapshot: forkStore.forkSnapshot,
+    startFrom: forkStore.startFrom,
+    forkOrigin: forkStore.forkOrigin,
+    packOrigin: forkStore.packOrigin,
   });
+});
 
 /** The store, its events and the members of the drive named `driveId`, on the object's SQLite. */
 export const layer = (driveId: string) =>

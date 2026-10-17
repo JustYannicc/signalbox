@@ -372,6 +372,36 @@ export default workflow(async (w) => {
     expect(runModule).toContain("export { issues, pulls };");
   });
 
+  it("runs a w.run function on a GitHub Actions runner when its options say so", () => {
+    const result = compileWorkflow(`import { execFileSync } from "node:child_process";
+export const meta = { name: "CI" } as const;
+function test(filter: string) { return execFileSync("npm", ["test", "--", filter], { encoding: "utf8" }); }
+export default workflow(async (w) => {
+  const output = await w.run("Build and test", { on: "github-actions", ref: "main" }, test, "unit");
+  await w.notify("Tests", output);
+});
+`);
+    if (!result.ok) throw new Error(JSON.stringify(result.diagnostics));
+    const { graph, script, runModule } = result.workflow;
+    expect(graph.nodes[0]).toMatchObject({
+      verb: "run",
+      service: "github-actions",
+      detail: { function: { literal: "test" }, on: { literal: "github-actions" } },
+    });
+    expect(script.replace(/\s+/g, " ")).toContain(
+      'w.run("s1", "Build and test", { on: "github-actions", ref: "main" }, "test", "unit")',
+    );
+    expect(runModule).toContain("export { test };");
+  });
+
+  it("rejects runners w.run can't use", () => {
+    const messages = errors(
+      `await w.run("Build", { on: "circleci" }, f);`,
+      `function f() { return 1; }\n`,
+    );
+    expect(messages.some((message) => message.includes('on: "github-actions"'))).toBe(true);
+  });
+
   it("emits a worker module whose factory gives each run its own top-level state", async () => {
     const { workerModule } = compiled(
       `await w.notify("Count", String(bump()));\n  return count;`,

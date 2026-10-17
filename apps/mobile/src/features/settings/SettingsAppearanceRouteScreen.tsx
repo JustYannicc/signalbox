@@ -6,9 +6,11 @@ import { CodeAppearanceSection } from "./appearance/sections/CodeAppearanceSecti
 import { TerminalAppearanceSection } from "./appearance/sections/TerminalAppearanceSection";
 import { TextAppearanceSection } from "./appearance/sections/TextAppearanceSection";
 import { ThemeAppearanceSection } from "./appearance/sections/ThemeAppearanceSection";
+import { useAnyEnvironmentSupports } from "../../state/environmentCapabilities"; // signalbox
 
 export function SettingsAppearanceRouteScreen() {
   const insets = useSafeAreaInsets();
+  const hasTerminal = useAnyEnvironmentSupports("terminal"); // signalbox
 
   return (
     <SettingsScreen title="Appearance">
@@ -23,7 +25,7 @@ export function SettingsAppearanceRouteScreen() {
       >
         <ThemeAppearanceSection />
         <TextAppearanceSection />
-        <TerminalAppearanceSection />
+        {hasTerminal ? <TerminalAppearanceSection /> : null}
         <CodeAppearanceSection />
       </ScrollView>
     </SettingsScreen>

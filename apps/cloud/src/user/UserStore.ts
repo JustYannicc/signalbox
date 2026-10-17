@@ -24,11 +24,13 @@ import * as Migrations from "../storage/migrations.ts";
 import * as UserPreviewSetup from "../previewSetup/UserPreviewSetup.ts";
 import * as GitHubConnection from "../github/GitHubConnection.ts";
 import * as LocalKeys from "../localKeys/LocalKeys.ts";
+import * as NoteTables from "../notes/noteTables.ts";
 import * as UserContexts from "./UserContexts.ts";
 import * as UserDriveIndex from "./UserDriveIndex.ts";
 import * as ResourceBindings from "./ResourceBindings.ts";
 import * as FolderTables from "./folderTables.ts";
 import * as ThreadKindTables from "./threadKindTables.ts";
+import * as StatusNoteTables from "./statusNoteTables.ts";
 import * as OnePasswordAccount from "./OnePasswordAccount.ts";
 import * as SignInTables from "../signIn/signInTables.ts";
 import * as UserPools from "./UserPools.ts";
@@ -213,6 +215,9 @@ const migrations = Migrator.fromRecord({
   "0016_local_keys": LocalKeys.createTables,
   "0017_api_keys": LocalKeys.addApiScopes,
   "0018_sign_in_grants": SignInTables.createTables,
+  // Each thread's latest status note (#670, `UserThreadStatus`).
+  "0019_status_notes": StatusNoteTables.createTables,
+  "0019_notes": NoteTables.createTables,
   "0021_folder_origins": FolderTables.addOrigins,
 });
 
