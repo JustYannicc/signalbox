@@ -150,7 +150,7 @@ describe("ThreadRunner", () => {
     withObject(freshDatabase(), (engine, runner, context) =>
       Effect.gen(function* () {
         // As in the cloud: the thread runs on a pool's instance, the Runner on the harness's.
-        yield* launch(engine, "launch-1", personal, ProjectId.make("scratch"), POOL_CLAUDE);
+        yield* launch(engine, "launch-1", personal, { modelSelection: POOL_CLAUDE });
         const first = yield* connect(runner);
         const turn = yield* liveTurn(runner);
         const report = turnReport(turn.runId, turn.runOrdinal, turn.providerThread);
@@ -192,7 +192,7 @@ describe("ThreadRunner", () => {
   it.effect("starts a new harness session when the thread holds none to resume", () =>
     withObject(freshDatabase(), (engine, runner) =>
       Effect.gen(function* () {
-        yield* launch(engine, "launch-1", personal, ProjectId.make("scratch"), POOL_CLAUDE);
+        yield* launch(engine, "launch-1", personal, { modelSelection: POOL_CLAUDE });
         const first = yield* connect(runner);
         const turn = yield* liveTurn(runner);
         const report = turnReport(turn.runId, turn.runOrdinal, turn.providerThread);

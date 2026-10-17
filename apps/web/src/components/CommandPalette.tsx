@@ -4,6 +4,7 @@ import { threadPullRequestLinkMode } from "@t3tools/client-runtime/thread-pull-r
 import { accountSignOutPaletteItem } from "../account/accountPaletteItem"; // signalbox: accounts
 import { useAutomationPaletteItems } from "./automations/automationPaletteItems"; // signalbox: automations
 import { useFolderPaletteItems } from "./sidebar/folders/folderPaletteItems"; // signalbox: folders
+import { useSidebarViewPaletteItems } from "./sidebar/sidebarViewCommands";
 import { useNotesPaletteItems } from "./notes/notesPaletteItems"; // signalbox: notes
 import { useThreadPinPaletteAction } from "./chat/threadPinPaletteAction"; // signalbox: cloud pin
 import { QUICK_CAPTURE_PALETTE_ITEM } from "./capture/capturePaletteItems"; // signalbox: quick capture
@@ -2346,6 +2347,7 @@ function OpenCommandPaletteDialog(props: {
   if (accountSignOutItem) actionItems.push(accountSignOutItem);
   actionItems.push(...useAutomationPaletteItems()); // signalbox: automations
   actionItems.push(...useFolderPaletteItems()); // signalbox: folders
+  actionItems.push(...useSidebarViewPaletteItems());
   actionItems.push(...useNotesPaletteItems()); // signalbox: notes
 
   const contextualProjectGroup =
