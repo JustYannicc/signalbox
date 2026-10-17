@@ -53,4 +53,15 @@ describe("redactContent", () => {
     redactContent(event);
     expect(event.note).toBe(REDACTED);
   });
+
+  it("keeps bounded turn failure classes for Sentry grouping", () => {
+    const event = {
+      action: "turn",
+      turn: { failureClass: "usage_limit" },
+      error: { name: "canary-error-name", message: "canary-rejected-prompt" },
+    };
+    redactContent(event);
+    expect(event.error).toEqual({ name: "TurnFailure.usage_limit", message: REDACTED });
+    expect(JSON.stringify(event)).not.toContain("canary");
+  });
 });

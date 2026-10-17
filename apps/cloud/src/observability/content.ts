@@ -26,6 +26,16 @@ export const CONTENT_KEYS: ReadonlySet<string> = new Set([
 
 export const REDACTED = "[REDACTED]";
 
+// Only these fixed classes may survive as Sentry issue types, never provider text.
+const TURN_FAILURE_CLASSES = new Set([
+  "usage_limit",
+  "provider_error",
+  "transport_error",
+  "permission_error",
+  "validation_error",
+  "unknown",
+]);
+
 /** What an event keeps if redacting it fails: enough to find it, nothing more. */
 const IDENTITY_KEYS = new Set([
   "timestamp",
@@ -64,6 +74,13 @@ export const redactContent = (event: Record<string, unknown>): void => {
   };
   try {
     visit(event, false);
+    const turn = event.turn;
+    if (event.action === "turn" && typeof turn === "object" && turn !== null) {
+      const failureClass = (turn as Record<string, unknown>).failureClass;
+      if (typeof failureClass === "string" && TURN_FAILURE_CLASSES.has(failureClass)) {
+        event.error = { name: `TurnFailure.${failureClass}`, message: REDACTED };
+      }
+    }
   } catch {
     // evlog drains the event anyway when this throws: fail closed instead.
     for (const key of Object.keys(event)) if (!IDENTITY_KEYS.has(key)) delete event[key];

@@ -1,4 +1,8 @@
-import type { OrchestrationV2Run, OrchestrationV2ThreadProjection } from "@t3tools/contracts";
+import type {
+  OrchestrationV2ProviderFailure,
+  OrchestrationV2Run,
+  OrchestrationV2ThreadProjection,
+} from "@t3tools/contracts";
 import { createError } from "evlog";
 import * as Effect from "effect/Effect";
 
@@ -18,7 +22,7 @@ export const emitTurnEvent = (input: {
   readonly run: OrchestrationV2Run;
   readonly traceId: string;
   readonly owner: string | null;
-  readonly failure: { readonly class: string; readonly code?: string | null | undefined } | null;
+  readonly failure: Pick<OrchestrationV2ProviderFailure, "class" | "code"> | null;
   readonly properties: ReturnType<typeof turnCompletedProperties>;
 }) => {
   const { projection, run, properties } = input;
@@ -40,7 +44,13 @@ export const emitTurnEvent = (input: {
     Evlog.withUnit("turn", {
       ...(input.owner !== null && { person: { id: input.owner } }),
       thread: { id: projection.thread.id },
-      turn: { id: run.id, traceId: input.traceId, ordinal: run.ordinal, ...work },
+      turn: {
+        id: run.id,
+        traceId: input.traceId,
+        ordinal: run.ordinal,
+        ...work,
+        ...(failed && { failureClass: input.failure?.class ?? "unknown" }),
+      },
       provider,
       model,
     }),
