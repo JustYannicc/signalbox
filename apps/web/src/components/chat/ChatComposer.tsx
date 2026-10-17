@@ -7301,6 +7301,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                   ) : null}
                   <ComposerFooterPrimaryActions
                     sendLock={sendLock} // signalbox: send lock
+                    // Stop state belongs to one thread; the composer stays mounted across threads.
+                    key={activeThreadId ?? "new"}
                     compact={isComposerResting || isComposerPrimaryActionsCompact}
                     canOperateThread={canOperateThread}
                     activeContextWindow={
