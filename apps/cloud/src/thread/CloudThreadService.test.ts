@@ -152,7 +152,7 @@ describe("CloudThreadService", () => {
       const service = yield* CloudThreadService.CloudThreadService.pipe(
         Effect.provide(cloud.layerPersonal(actor.userId)),
       );
-      const uploads = yield* CloudAttachments.CloudAttachments.pipe(
+      const uploads = yield* CloudAttachments.use((service) => Effect.succeed(service)).pipe(
         Effect.provide(layerAttachments(cloud.attachmentObjects)),
       );
       const bytes = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 1, 2, 3, 4]);
@@ -222,15 +222,11 @@ describe("CloudThreadService", () => {
       if (copied === undefined) throw new Error("expected the owned attachment to be copied");
       expect(editedMessage?.text).toBe("Edited with owned attachment");
       expect(copied.id).not.toBe(owned.id);
-      expect(
-        edited.visibleTurnItems.find(
-          (row) => row.item.type === "user_message" && row.item.messageId === queued.userMessageId,
-        )?.item,
-      ).toMatchObject({
-        type: "user_message",
-        text: "Edited with owned attachment",
-        attachments: [copied],
-      });
+      expect(edited.visibleTurnItems).not.toContainEqual(
+        expect.objectContaining({
+          item: expect.objectContaining({ messageId: queued.userMessageId }),
+        }),
+      );
 
       const foreign = yield* upload("user_2", "foreign.png");
       const foreignEdit = yield* Effect.flip(

@@ -198,6 +198,7 @@ const current = (
       ] as unknown as ReadonlyArray<OrchestrationV2ProviderThread>),
     turnItems: changes.turnItems ?? [preparationItem(), failureItem()],
     messages: changes.messages ?? [userMessage()],
+    visibleTurnItems: [],
   }) as unknown as OrchestrationV2ThreadProjection;
 
 const retry = (id = "command:retry:1") =>

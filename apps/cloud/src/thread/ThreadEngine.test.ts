@@ -331,10 +331,9 @@ describe("ThreadEngine", () => {
         expect(
           pending.messages.find((message) => message.id === firstQueued.userMessageId)?.text,
         ).toBe("Edited second message");
-        expect(
-          pending.visibleTurnItems.find((row) => row.item.id === `turn-item:${firstQueued.id}:user`)
-            ?.item,
-        ).toMatchObject({ type: "user_message", text: "Edited second message" });
+        expect(pending.visibleTurnItems).not.toContainEqual(
+          expect.objectContaining({ item: expect.objectContaining({ runId: firstQueued.id }) }),
+        );
         const replay = yield* replayFrom(engine, before.snapshotSequence);
         const replayed = applyEvents(
           before.projection,
@@ -352,6 +351,10 @@ describe("ThreadEngine", () => {
         expect(yield* Effect.flip(engine.dispatch(owner, staleEdit, personal))).toEqual(rejected);
 
         const settled = (yield* engine.snapshot(owner)).projection;
+        expect(
+          settled.visibleTurnItems.find((row) => row.item.id === `turn-item:${firstQueued.id}:user`)
+            ?.item,
+        ).toMatchObject({ type: "user_message", text: "Edited second message" });
         expect(
           settled.messages
             .filter((message) => message.role === "user")
