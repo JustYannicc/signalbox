@@ -22,6 +22,7 @@ import {
 import { SettingsScreen } from "./components/SettingsScreen";
 import { SettingsSection } from "./components/SettingsSection";
 import { useSettingsEnvironmentFilter, type SettingsTarget } from "./settings-environment-filter";
+import { signsInHere } from "./signalboxSettingsTargets"; // signalbox
 
 export function SettingsProviderAccountsRouteScreen() {
   const { selectedTargets } = useSettingsEnvironmentFilter();
@@ -42,10 +43,8 @@ export function SettingsProviderAccountsRouteScreen() {
             selectedTargets.map((environment) => (
               <SettingsSection key={environment.environmentId} title={environment.label}>
                 {environment.serverConfig.providers
-                  .filter(
-                    // signalbox: provider accounts live in pools; only ACP agents sign in here.
-                    (provider) => provider.driver === "acpRegistry" && provider.installed,
-                  )
+                  // signalbox: provider accounts live in pools; only ACP agents sign in here.
+                  .filter(signsInHere)
                   .map((provider) => (
                     <ProviderAccount
                       key={provider.instanceId}
@@ -53,9 +52,7 @@ export function SettingsProviderAccountsRouteScreen() {
                       provider={provider}
                     />
                   ))}
-                {!environment.serverConfig.providers.some(
-                  (provider) => provider.driver === "acpRegistry" && provider.installed,
-                ) ? (
+                {!environment.serverConfig.providers.some(signsInHere) ? ( // signalbox
                   <Text className="p-4 text-foreground-muted">
                     Accounts live in pools on Usage → Limits. ACP agents that sign in show here.
                   </Text>

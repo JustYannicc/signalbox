@@ -19,7 +19,11 @@ import {
   SettingsEnvironmentFilterHeader,
 } from "./components/SettingsEnvironmentFilterHeader";
 import { useSettingsEnvironmentFilter } from "./settings-environment-filter";
-import { targetsSupporting, targetsWithRepositoryIdentity } from "./signalboxSettingsTargets"; // signalbox
+import {
+  targetsSupporting,
+  targetsWithProviderAccounts,
+  targetsWithRepositoryIdentity,
+} from "./signalboxSettingsTargets"; // signalbox
 import { AutomationsSettingsRows } from "../automations/AutomationsSettingsRows"; // signalbox: automations
 import { SignInSettingsRow } from "../signIn/SignInSettingsRow"; // signalbox: sign-in grants
 import { OnlyEnvironmentAccountSections } from "../account/EnvironmentAccountSection"; // signalbox
@@ -194,9 +198,10 @@ function SettingsIndexSections() {
         <AutomationsSettingsRows />
         {/* signalbox: sign-in grants */}
         <SignInSettingsRow />
-        {/* signalbox: hidden where no selected environment runs them. */}
-        {!noServerTargets &&
-        targetsSupporting(selectedTargets, "scheduledTasks").length === 0 ? null : (
+        {/* signalbox: hidden where no selected environment runs them, and on the cloud. */}
+        {(noServerTargets && !showsEnvironments) ||
+        (!noServerTargets &&
+          targetsSupporting(selectedTargets, "scheduledTasks").length === 0) ? null : (
           <SettingsRow icon="clock" label="Scheduled tasks" target="SettingsScheduledTasks" />
         )}
       </SettingsSection>
@@ -255,7 +260,8 @@ function SettingsIndexSections() {
 
       <SettingsSection title="App">
         <UsageSettingsRow />
-        {hidesServerSettings && !noServerTargets ? (
+        {/* signalbox: only ACP agents sign in here, and the cloud runs none */}
+        {hidesServerSettings && targetsWithProviderAccounts(selectedTargets).length > 0 ? (
           <SettingsRow
             icon="person.crop.circle"
             label="Provider accounts"
