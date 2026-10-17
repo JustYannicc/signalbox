@@ -214,7 +214,7 @@ export const poolServerProvider = (input: {
     driver: harness.driver,
     displayName: input.displayName,
     badgeLabel: "Preview",
-    showInteractionModeToggle: false,
+    showInteractionModeToggle: true,
     supportsConversationRollback: false,
     supportsTextGeneration: false,
     enabled: true,
