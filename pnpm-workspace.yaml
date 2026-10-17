@@ -5,6 +5,9 @@ packages:
   - packages/*
   - scripts
 
+# Share package files across local worktrees.
+virtualStoreType: global
+
 # Successor to onlyBuiltDependencies/ignoredBuiltDependencies (pnpm 11).
 # true = allowed to run build scripts; false mirrors the pnpm 10 behavior
 # where anything outside onlyBuiltDependencies was silently not built.
@@ -308,6 +311,26 @@ overrides:
   yaml: "catalog:"
 
 packageExtensions:
+  # Our patch makes Alchemy's test helper import vite-plus/test.
+  "alchemy@2.0.0-beta.80":
+    dependencies:
+      vite-plus: "catalog:"
+  "electron-store@8.2.0":
+    peerDependencies:
+      electron: "*"
+  "expo-file-system@58.0.9":
+    peerDependencies:
+      expo-modules-core: "*"
+  "@react-navigation/native@7.5.1":
+    peerDependencies:
+      "@react-navigation/routers": "*"
+  "@react-navigation/native-stack@7.21.0":
+    peerDependencies:
+      "@react-navigation/core": "*"
+  # The quick-actions config plugin imports this at runtime but only declares a devDependency.
+  "expo-quick-actions@6.0.2":
+    dependencies:
+      "@expo/config-plugins": 58.0.9
   # dependency-cruiser needs the JS compiler API; the app uses native TypeScript 7.
   "dependency-cruiser@18.6.0":
     dependencies:

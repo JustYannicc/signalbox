@@ -4,7 +4,12 @@ import type {
   ProjectScript,
   EnvironmentId,
 } from "@t3tools/contracts";
-import { AuthSettingsWriteScope, EnvironmentAuthorizationError } from "@t3tools/contracts";
+import {
+  AuthSettingsWriteScope,
+  EnvironmentAuthorizationError,
+  environmentCanWriteKeybindings,
+  environmentSupports,
+} from "@t3tools/contracts";
 import type { UnifiedSettings } from "@t3tools/contracts/settings";
 import {
   isAtomCommandInterrupted,
@@ -30,7 +35,6 @@ import {
 } from "../../projectScripts";
 import { appAtomRegistry } from "../../rpc/atomRegistry";
 import { serverEnvironment } from "../../state/server";
-import { readEnvironmentScope } from "../../state/session";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { useProjects } from "../../state/entities";
 import { type NewProjectScriptInput } from "../ProjectScriptsControl";
@@ -71,29 +75,91 @@ export function useProjectScriptEditing(input: {
       serverConfig?.keybindings ?? [],
       input.keybindingCommand,
     );
+    // signalbox: shortcut support does not grant support for project script settings.
+    if (
+      !environmentSupports(serverConfig?.environment.capabilities, "serverSettingsWrite") ||
+      !environmentSupports(serverConfig?.environment.capabilities, "terminal")
+    ) {
+      return AsyncResult.failure(
+        Cause.fail(new Error("This environment cannot change project actions.")),
+      );
+    }
     const isDeletingScript = !input.nextScripts.some(
       (script) => commandForProjectScript(script.id) === input.keybindingCommand,
     );
     const changesKeybinding =
       input.keybinding !== undefined &&
       (input.keybinding?.trim() || null) !== previousKeybinding &&
-      (!isDeletingScript || readEnvironmentScope(environmentId, AuthSettingsWriteScope));
-    if (changesKeybinding && !readEnvironmentScope(environmentId, AuthSettingsWriteScope)) {
-      return AsyncResult.failure(
-        Cause.fail(
-          new EnvironmentAuthorizationError({
-            requiredScope: AuthSettingsWriteScope,
-            message: "This connection cannot change keyboard shortcuts.",
-          }),
-        ),
-      );
-    }
+      // signalbox: deletion may leave a reusable shortcut when cleanup is not permitted.
+      (!isDeletingScript ||
+        (environmentCanWriteKeybindings(serverConfig?.environment.capabilities) &&
+          appAtomRegistry.get(serverEnvironment.removeKeybinding.permissionAtom(environmentId))));
     const keybindingRule = changesKeybinding
       ? decodeProjectScriptKeybindingRule({
           keybinding: input.keybinding,
           command: input.keybindingCommand,
         })
       : null;
+    const scriptId = input.keybindingCommand
+      ? projectScriptIdFromCommand(input.keybindingCommand)
+      : null;
+    const retainedElsewhere =
+      !input.nextScripts.some((script) => script.id === scriptId) &&
+      (settings.defaultProjectScripts.some((script) => script.id === scriptId) ||
+        Object.entries(settings.projectSettingsOverrides).some(
+          ([projectId, entry]) =>
+            projectId !== input.projectId &&
+            entry.defaultProjectScripts?.some((script) => script.id === scriptId),
+        ) ||
+        allProjects.some(
+          (other) =>
+            other.environmentId === environmentId &&
+            other.id !== input.projectId &&
+            resolveProjectScripts(settings, other).some((script) => script.id === scriptId),
+        ));
+    const previousRules = (changesKeybinding ? (serverConfig?.keybindings ?? []) : []).flatMap(
+      (binding) => {
+        if (binding.command !== input.keybindingCommand || binding.whenAst) return [];
+        const previous = decodeProjectScriptKeybindingRule({
+          keybinding: keybindingValueForCommand([binding], input.keybindingCommand),
+          command: input.keybindingCommand,
+        });
+        return previous ? [previous] : [];
+      },
+    );
+    const previous = previousRules.at(-1);
+    const rulesToRemove = !changesKeybinding
+      ? []
+      : keybindingRule
+        ? previousRules.slice(0, -1)
+        : retainedElsewhere || !input.previousScripts.some((script) => script.id === scriptId)
+          ? []
+          : previousRules;
+    const keybindingCommands = [
+      ...(keybindingRule ? [serverEnvironment.upsertKeybinding] : []),
+      ...(rulesToRemove.length > 0 ? [serverEnvironment.removeKeybinding] : []),
+    ];
+    const canWriteKeybindings = (commands = keybindingCommands) => {
+      if (commands.length === 0) return true;
+      const capabilities = appAtomRegistry.get(serverEnvironment.configValueAtom(environmentId))
+        ?.environment.capabilities;
+      return (
+        environmentCanWriteKeybindings(capabilities) &&
+        commands.every((command) => appAtomRegistry.get(command.permissionAtom(environmentId)))
+      );
+    };
+    const denied = (saved = false) =>
+      AsyncResult.failure<void, EnvironmentAuthorizationError>(
+        Cause.fail(
+          new EnvironmentAuthorizationError({
+            requiredScope: AuthSettingsWriteScope,
+            message: saved
+              ? "The script was saved, but this connection can no longer change keyboard shortcuts."
+              : "This connection cannot change keyboard shortcuts.",
+          }),
+        ),
+      );
+    if (!canWriteKeybindings()) return denied();
     const updateResult = mapAtomCommandResult(
       await updateProjectScriptSettings({
         environmentId,
@@ -121,54 +187,14 @@ export function useProjectScriptEditing(input: {
       return updateResult;
     }
 
-    if (!changesKeybinding) return updateResult;
-    if (!readEnvironmentScope(environmentId, AuthSettingsWriteScope)) {
-      return AsyncResult.failure(
-        Cause.fail(
-          new EnvironmentAuthorizationError({
-            requiredScope: AuthSettingsWriteScope,
-            message: isDeletingScript
-              ? "The script was deleted, but its keyboard shortcut could not be removed because permission changed."
-              : "The script was saved, but this connection can no longer change keyboard shortcuts.",
-          }),
-        ),
-      );
-    }
-
-    const scriptId = input.keybindingCommand
-      ? projectScriptIdFromCommand(input.keybindingCommand)
-      : null;
-    if (!keybindingRule && !input.previousScripts.some((script) => script.id === scriptId)) {
-      return updateResult;
-    }
-    const retainedElsewhere =
-      !input.nextScripts.some((script) => script.id === scriptId) &&
-      (settings.defaultProjectScripts.some((script) => script.id === scriptId) ||
-        Object.entries(settings.projectSettingsOverrides).some(
-          ([projectId, entry]) =>
-            projectId !== input.projectId &&
-            entry.defaultProjectScripts?.some((script) => script.id === scriptId),
-        ) ||
-        allProjects.some(
-          (other) =>
-            other.environmentId === environmentId &&
-            other.id !== input.projectId &&
-            resolveProjectScripts(settings, other).some((script) => script.id === scriptId),
-        ));
-    if (!keybindingRule && retainedElsewhere) return updateResult;
-
-    const previousRules = (serverConfig?.keybindings ?? []).flatMap((binding) => {
-      if (binding.command !== input.keybindingCommand || binding.whenAst) return [];
-      const previous = decodeProjectScriptKeybindingRule({
-        keybinding: keybindingValueForCommand([binding], input.keybindingCommand),
-        command: input.keybindingCommand,
-      });
-      return previous ? [previous] : [];
-    });
-    const previous = previousRules.at(-1);
-    for (const rule of keybindingRule ? previousRules.slice(0, -1) : previousRules) {
+    if (!canWriteKeybindings()) return denied(true);
+    for (const rule of rulesToRemove) {
+      if (!canWriteKeybindings([serverEnvironment.removeKeybinding])) return denied(true);
       const result = await removeKeybinding({ environmentId, input: rule });
       if (result._tag === "Failure") return mapAtomCommandResult(result, () => undefined);
+    }
+    if (keybindingRule && !canWriteKeybindings([serverEnvironment.upsertKeybinding])) {
+      return denied(true);
     }
     return keybindingRule
       ? mapAtomCommandResult(
