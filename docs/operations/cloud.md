@@ -739,8 +739,7 @@ and `cloud-production`), passed through `alchemy.run.ts`. Each is optional:
   Credentials alone never enable PostHog.
 
 After each deploy, CI sends one `release` event naming the stage and commit
-(`apps/cloud/infra/release-event.ts`). Without either key the events still go
-to Workers Logs.
+(`apps/cloud/infra/release-event.ts`).
 
 ### Usage analytics
 
