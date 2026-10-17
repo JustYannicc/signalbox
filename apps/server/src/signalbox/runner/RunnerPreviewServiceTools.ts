@@ -1,21 +1,17 @@
 import { PortSchema, TrimmedNonEmptyString } from "@t3tools/contracts";
-import { PreviewServiceCwd, type PreviewService } from "@signalbox/runner-protocol/PreviewServices";
+import { PreviewServiceCwd } from "@signalbox/runner-protocol/PreviewServices";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 
-import { fail, register, ToolError } from "./RunnerContextTools.ts";
-import type { RunnerPreviewServices } from "./RunnerPreviewServices.ts";
-import type { RunnerConnectionError } from "./RunnerSession.ts";
+import { register, ToolError } from "./RunnerContextTools.ts";
+import * as RunnerPreviewServiceCommands from "./RunnerPreviewServiceCommands.ts";
 
 /** The agent's explicit way to make its dev server survive a new Runner. */
-export const layerPreviewServiceTools = (
-  services: RunnerPreviewServices,
-  persist: (services: ReadonlyArray<PreviewService>) => Effect.Effect<void, RunnerConnectionError>,
-  ready: Effect.Effect<void, RunnerConnectionError> = Effect.void,
-) =>
-  Layer.effectDiscard(
-    Effect.all([
+export const layerPreviewServiceTools = Layer.effectDiscard(
+  Effect.gen(function* () {
+    const commands = yield* RunnerPreviewServiceCommands.RunnerPreviewServiceCommands;
+    yield* Effect.all([
       register({
         name: "preview_service_start",
         description:
@@ -27,20 +23,10 @@ export const layerPreviewServiceTools = (
         }),
         writes: { destructive: false, openWorld: true },
         handle: ({ port, command, cwd }) =>
-          Effect.gen(function* () {
-            yield* ready.pipe(
-              Effect.mapError((error) => new ToolError({ message: error.message, cause: error })),
-            );
-            yield* services
-              .start({ port, command, cwd: cwd ?? "." })
-              .pipe(
-                Effect.mapError((error) => new ToolError({ message: error.message, cause: error })),
-              );
-            yield* persist(yield* services.list).pipe(
-              Effect.mapError((error) => new ToolError({ message: error.message, cause: error })),
-            );
-            return `Preview service declared on port ${port}.`;
-          }),
+          commands.start({ port, command, cwd: cwd ?? "." }).pipe(
+            Effect.mapError((error) => new ToolError({ message: error.message, cause: error })),
+            Effect.as(`Preview service declared on port ${port}.`),
+          ),
       }),
       register({
         name: "preview_service_stop",
@@ -49,19 +35,11 @@ export const layerPreviewServiceTools = (
         parameters: Schema.Struct({ port: PortSchema }),
         writes: { destructive: true, openWorld: true },
         handle: ({ port }) =>
-          Effect.gen(function* () {
-            yield* ready.pipe(
-              Effect.mapError((error) => new ToolError({ message: error.message, cause: error })),
-            );
-            if (!(yield* services.list).some((service) => service.port === port)) {
-              return yield* fail(`No preview service is declared on port ${port}.`);
-            }
-            yield* services.stop(port);
-            yield* persist(yield* services.list).pipe(
-              Effect.mapError((error) => new ToolError({ message: error.message, cause: error })),
-            );
-            return `Preview service stopped on port ${port}.`;
-          }),
+          commands.stop(port).pipe(
+            Effect.mapError((error) => new ToolError({ message: error.message, cause: error })),
+            Effect.as(`Preview service stopped on port ${port}.`),
+          ),
       }),
-    ]),
-  );
+    ]);
+  }),
+);

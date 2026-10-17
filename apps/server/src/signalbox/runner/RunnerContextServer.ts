@@ -45,7 +45,8 @@ import { makeDrivesView } from "./RunnerDrivesView.ts";
 import { MCP_TOOL_TIMEOUT_SEC, type RunnerMcpServers } from "./RunnerModelAccess.ts";
 import { layerScheduledTaskTools } from "./RunnerScheduledTaskTools.ts";
 import { layerPreviewServiceTools } from "./RunnerPreviewServiceTools.ts";
-import type { RunnerPreviewServices } from "./RunnerPreviewServices.ts";
+import * as RunnerPreviewServiceCommands from "./RunnerPreviewServiceCommands.ts";
+import * as RunnerPreviewServices from "./RunnerPreviewServices.ts";
 import { layerStatusLineTools } from "./RunnerStatusLineTools.ts";
 import type { RunnerConnectionError } from "./RunnerSession.ts";
 
@@ -104,7 +105,7 @@ export const startContextServer = Effect.fn("startContextServer")(function* (inp
   /** Where to mount `/drives`; null serves the tools only (a development host). */
   readonly mountPoint: string | null;
   /** Explicit dev servers the thread wants restored on a new machine. */
-  readonly previewServices?: RunnerPreviewServices;
+  readonly previewServices?: RunnerPreviewServices.RunnerPreviewServices;
   /** Saves the declaration list in the thread before a tool replies. */
   readonly persistPreviewServices?: (
     services: ReadonlyArray<PreviewService>,
@@ -165,10 +166,16 @@ export const startContextServer = Effect.fn("startContextServer")(function* (inp
   );
   const previewServiceTools =
     input.previewServices !== undefined && input.persistPreviewServices !== undefined
-      ? layerPreviewServiceTools(
-          input.previewServices,
-          input.persistPreviewServices,
-          input.previewServicesReady,
+      ? layerPreviewServiceTools.pipe(
+          Layer.provide(
+            RunnerPreviewServiceCommands.layer({
+              persist: input.persistPreviewServices,
+              ready: input.previewServicesReady ?? Effect.void,
+            }),
+          ),
+          Layer.provide(
+            Layer.succeed(RunnerPreviewServices.RunnerPreviewServices, input.previewServices),
+          ),
         )
       : Layer.empty;
   const mcp = Layer.mergeAll(

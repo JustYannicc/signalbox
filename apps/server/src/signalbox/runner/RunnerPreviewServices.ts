@@ -1,4 +1,5 @@
 import type { PreviewService } from "@signalbox/runner-protocol/PreviewServices";
+import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
@@ -43,6 +44,10 @@ export interface RunnerPreviewServices {
   /** The declarations this Runner should report to the thread. */
   readonly list: Effect.Effect<ReadonlyArray<PreviewService>>;
 }
+
+export const RunnerPreviewServices = Context.Service<RunnerPreviewServices>(
+  "t3/signalbox/runner/RunnerPreviewServices",
+);
 
 const sameService = (left: PreviewService, right: PreviewService) =>
   left.port === right.port && left.command === right.command && left.cwd === right.cwd;
