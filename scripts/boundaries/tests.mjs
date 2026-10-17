@@ -10,6 +10,7 @@ import config from "../../.dependency-cruiser.cjs";
 import { checkBaseline, violationKey } from "./baseline.mjs";
 import { cyclicViolations } from "./cycles.mjs";
 import "./cycle-tests.mjs";
+import "./comparison-tests.mjs";
 import { readUpstreamSource } from "./upstream.mjs";
 import { workspaceAliases, workspaceTarget, workspaceViolations } from "./workspaces.mjs";
 
