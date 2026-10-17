@@ -388,9 +388,10 @@ export const layer: Layer.Layer<
           FROM orchestration_command_receipts AS receipt
           WHERE receipt.rowid <= ${throughReceiptRowId}
           ORDER BY receipt.rowid DESC
-          LIMIT ${COMPACTION_PAGE_SIZE}
+          LIMIT ${COMPACTION_PAGE_SIZE + 1}
         `.pipe(NodeSqliteClient.readOnly);
-        const obsolete = rows
+        const page = rows.slice(0, COMPACTION_PAGE_SIZE);
+        const obsolete = page
           .filter((row) => row.imported_legacy_thread === 1)
           .map((row) => row.command_id);
         yield* Effect.yieldNow;
@@ -399,9 +400,9 @@ export const layer: Layer.Layer<
           deletedReceiptCount += obsolete.length;
           yield* Effect.yieldNow;
         }
-        throughReceiptRowId = (rows.at(-1)?.row_id ?? 1) - 1;
+        throughReceiptRowId = (page.at(-1)?.row_id ?? 1) - 1;
+        if (rows.length <= COMPACTION_PAGE_SIZE) break;
         yield* pause;
-        if (rows.length < COMPACTION_PAGE_SIZE) break;
       }
 
       const freelistRows = yield* sql<{ readonly freelist_count: number }>`PRAGMA freelist_count`;

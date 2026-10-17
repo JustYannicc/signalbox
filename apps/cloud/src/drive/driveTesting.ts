@@ -18,7 +18,9 @@ import { makeDriveObjectApi } from "./driveObjectApi.ts";
 import * as DrivePacks from "./DrivePacks.ts";
 import type * as DriveMembers from "./DriveMembers.ts";
 import * as DriveStore from "./DriveStore.ts";
-import type { Bytes } from "./git/gitObjects.ts";
+import { parseCommit, type Bytes } from "./git/gitObjects.ts";
+import { verifyPack } from "./git/gitPack.ts";
+export { concatBytes } from "./git/gitObjects.ts";
 
 /**
  * Test wiring for drives: drive objects on in-memory SQLite, packs in memory,
@@ -113,3 +115,36 @@ export const makeRepo = () => {
   const cleanup = () => NodeFS.rmSync(dir, { recursive: true, force: true });
   return { dir, git, write, commit, pack, cleanup };
 };
+
+export const registerPack = (
+  threadId: string,
+  packed: ReturnType<ReturnType<typeof makeRepo>["pack"]>,
+) =>
+  Effect.gen(function* () {
+    const verified = yield* Effect.promise(() => verifyPack(packed.pack, packed.idx));
+    const commits = [...verified.structure].flatMap(([oid, object]) => {
+      if (object.type !== "commit") return [];
+      const commit = parseCommit(object.content);
+      return [
+        {
+          oid,
+          tree: commit.tree,
+          parents: commit.parents,
+          authorName: commit.author.name,
+          authorEmail: commit.author.email,
+          time: commit.author.time,
+          message: commit.message,
+        },
+      ];
+    });
+    return yield* DriveStore.DriveStore.use((store) =>
+      store.registerPack({
+        name: verified.name,
+        size: packed.pack.length,
+        threadId,
+        objects: verified.objects,
+        commits,
+        external: [...verified.external],
+      }),
+    );
+  });
