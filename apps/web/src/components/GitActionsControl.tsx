@@ -21,7 +21,15 @@ import type {
 } from "@t3tools/contracts";
 import { useNavigate } from "@tanstack/react-router";
 import * as Option from "effect/Option";
-import { type MouseEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  type MouseEvent,
+  type ReactNode,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { flushSync } from "react-dom";
 import {
   CheckIcon,
@@ -1143,6 +1151,21 @@ export default function GitActionsControl({
   const hasPrimaryRemote = gitStatus?.hasPrimaryRemote ?? false;
   const gitStatusForActions = gitStatus;
   const changesTotals = resolveChangesTotals(gitStatusForActions ?? null); // signalbox: never a zero nobody counted (#864)
+  // signalbox: one Changes row, counted or wrapped to explain why it isn't (#864)
+  const changesRow = (totals: ReactNode) => (
+    <ThreadDetailsControl
+      type="button"
+      variant="ghost"
+      size="sm"
+      part="row"
+      disabled={!onOpenChanges}
+      onClick={onOpenChanges}
+    >
+      <FileDiffIcon className={THREAD_DETAILS_PANEL_ICON_CLASS} aria-hidden />
+      <span className={cn("flex-1 text-left", THREAD_DETAILS_PANEL_LABEL_CLASS)}>Changes</span>
+      {totals}
+    </ThreadDetailsControl>
+  );
 
   const allFiles = gitStatusForActions?.workingTree.files ?? [];
   const selectedFiles = allFiles.filter((f) => !excludedFiles.has(f.path));
@@ -1901,36 +1924,30 @@ export default function GitActionsControl({
       )}
 
       {isPanel && isRepo ? (
-        <ThreadDetailsControl
-          type="button"
-          variant="ghost"
-          size="sm"
-          part="row"
-          disabled={!onOpenChanges}
-          onClick={onOpenChanges}
-        >
-          <FileDiffIcon className={THREAD_DETAILS_PANEL_ICON_CLASS} aria-hidden />
-          <span className={cn("flex-1 text-left", THREAD_DETAILS_PANEL_LABEL_CLASS)}>Changes</span>
-          {changesTotals.kind === "unavailable" ? (
-            // signalbox: the server tried and couldn't count; say why rather than +0 −0 (#864)
-            <>
-              <Tooltip>
-                <TooltipTrigger render={<span className="text-2xs text-muted-foreground" />}>
-                  Unavailable
-                </TooltipTrigger>
-                <TooltipPopup side="bottom" className="max-w-72 break-words">
-                  {changesTotals.reason}
-                </TooltipPopup>
-              </Tooltip>
-              <span className="sr-only">{changesTotals.reason}</span>
-            </>
-          ) : (
+        changesTotals.kind === "unavailable" ? (
+          // signalbox: the server tried and couldn't count; say why rather than +0 −0 (#864).
+          // The trigger wraps the row, so the reason shows even while the row is disabled.
+          <Tooltip>
+            <TooltipTrigger render={<span className="flex w-full" />}>
+              {changesRow(
+                <>
+                  <span className="text-2xs text-muted-foreground">Unavailable</span>
+                  <span className="sr-only">{changesTotals.reason}</span>
+                </>,
+              )}
+            </TooltipTrigger>
+            <TooltipPopup side="bottom" className="max-w-72 break-words">
+              {changesTotals.reason}
+            </TooltipPopup>
+          </Tooltip>
+        ) : (
+          changesRow(
             <span className="flex items-center gap-1 font-mono text-2xs tabular-nums">
               <span className="text-success">+{formatDiffCount(changesTotals.insertions)}</span>
               <span className="text-destructive">-{formatDiffCount(changesTotals.deletions)}</span>
-            </span>
-          )}
-        </ThreadDetailsControl>
+            </span>,
+          )
+        )
       ) : null}
 
       <Dialog
@@ -1950,7 +1967,7 @@ export default function GitActionsControl({
             <DialogDescription>{COMMIT_DIALOG_DESCRIPTION}</DialogDescription>
           </DialogHeader>
           <DialogPanel>
-            <div className="space-y-3 rounded-xl bg-zinc-25 p-3 text-sm ring-1 ring-black/5 dark:bg-white/[0.035] dark:ring-white/5">
+            <div className="space-y-3 rounded-xl bg-background p-3 text-sm ring-1 ring-black/5 dark:bg-white/[0.035] dark:ring-white/5">
               <div className="grid grid-cols-[auto_1fr] items-center gap-x-2 gap-y-1">
                 <span className="text-muted-foreground">Branch</span>
                 <span className="flex items-center justify-between gap-2">
