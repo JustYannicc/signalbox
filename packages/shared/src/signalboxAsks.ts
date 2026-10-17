@@ -2,7 +2,7 @@ import * as Array from "effect/Array";
 import type {
   SignalboxAsk,
   SignalboxAskAnswerInput,
-  SignalboxAskCommand,
+  SignalboxAskServerCommand,
 } from "@t3tools/contracts/signalboxAsks";
 
 export function pendingAskQuestions(ask: SignalboxAsk) {
@@ -67,7 +67,7 @@ type AskResult =
 
 export function applyAskCommand(
   asks: readonly SignalboxAsk[],
-  command: SignalboxAskCommand,
+  command: SignalboxAskServerCommand,
   now: string,
 ): AskResult {
   if (command.type === "thread.ask.sync") {

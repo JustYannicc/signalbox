@@ -1,4 +1,7 @@
-import { dispatchSignalboxAskCommand } from "./SignalboxAskCommands.ts";
+import {
+  dispatchSignalboxAskCommand,
+  dispatchSignalboxNativeAnswer,
+} from "./SignalboxAskCommands.ts";
 import type {
   OrchestrationV2SearchThreadInput,
   OrchestrationV2SearchThreadResult,
@@ -466,6 +469,7 @@ function commandThreadId(command: OrchestrationV2ServerCommand): ThreadId {
     case "queued-run.cancel":
     case "queued-run.edit":
     case "runtime-request.respond":
+    case "thread.native-ask.respond":
     case "thread.user-input.dismiss":
     case "checkpoint.rollback":
     case "checkpoint.rollback.fail":
@@ -10820,6 +10824,19 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         break;
       case "runtime-request.respond":
         yield* dispatchRuntimeRequestRespond(command, events, effects);
+        break;
+      case "thread.native-ask.respond":
+        yield* dispatchSignalboxNativeAnswer({
+          command,
+          events,
+          respond: (response) => dispatchRuntimeRequestRespond(response, events, effects),
+          loadProjection: (threadId) =>
+            projectionStore
+              .getThreadRecords(threadId, ["runtimeRequests", "providerSessions", "turnItems"], {
+                turnItemTypes: ["user_input_request"],
+              })
+              .pipe(mapDispatchError(command)),
+        });
         break;
       case "thread.user-input.dismiss":
         yield* dispatchThreadUserInputDismiss(command, events, effects);

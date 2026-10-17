@@ -1,15 +1,21 @@
 import {
   MessageId,
+  type ThreadId,
   type OrchestrationV2AppThread,
   type OrchestrationV2Command,
   type OrchestrationV2DomainEvent,
   type OrchestrationV2ServerCommand,
   type OrchestrationV2ThreadProjection,
 } from "@t3tools/contracts";
-import type { SignalboxAskCommand } from "@t3tools/contracts/signalboxAsks";
+import type {
+  SignalboxAskServerCommand,
+  SignalboxNativeAskRespondCommand,
+} from "@t3tools/contracts/signalboxAsks";
 import { applyAskCommand } from "@t3tools/shared/signalboxAsks";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as Ref from "effect/Ref";
+import { mirrorSignalboxAskEvents } from "./SignalboxAskEventMirror.ts";
 
 type AskCommand = Extract<
   OrchestrationV2ServerCommand,
@@ -26,7 +32,7 @@ type AnswerDelivery = Extract<
 >;
 
 function planAskCommand(
-  command: SignalboxAskCommand,
+  command: SignalboxAskServerCommand,
   projection: Pick<
     OrchestrationV2ThreadProjection,
     "thread" | "runtimeRequests" | "providerSessions" | "turnItems"
@@ -146,5 +152,24 @@ export function dispatchSignalboxAskCommand<E>(input: {
         thread = event.payload;
     }
     yield* input.emitAskUpdate(thread, plan.asks, now);
+  });
+}
+
+export function dispatchSignalboxNativeAnswer<E>(input: {
+  readonly command: typeof SignalboxNativeAskRespondCommand.Type;
+  readonly events: Ref.Ref<Array<OrchestrationV2DomainEvent>>;
+  readonly respond: (
+    command: Extract<OrchestrationV2Command, { type: "runtime-request.respond" }>,
+  ) => Effect.Effect<void, E>;
+  readonly loadProjection: (threadId: ThreadId) => Effect.Effect<AskProjection, E>;
+}) {
+  return Effect.gen(function* () {
+    yield* input.respond({ ...input.command, type: "runtime-request.respond" });
+    const events = yield* mirrorSignalboxAskEvents(
+      yield* Ref.get(input.events),
+      input.loadProjection,
+      input.command,
+    );
+    yield* Ref.set(input.events, [...events]);
   });
 }

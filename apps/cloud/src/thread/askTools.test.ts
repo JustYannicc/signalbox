@@ -75,6 +75,21 @@ it.effect(
         recommendationTaken: true,
       });
       expect(projection.messages.at(-1)?.text).toContain("Zurich");
+      const answered = projection.thread.asks?.[0];
+      if (!answered) throw new Error("The answered ask was not persisted");
+      yield* threads.syncAutomationAsk(actor, threadId, {
+        ...answered,
+        id: "workflow-ask",
+        source: { kind: "automation", runId: "workflow-run", stepKey: "gate" },
+      });
+      expect(
+        (yield* threads.threadSnapshot(actor, threadId)).projection.thread.asks?.find(
+          (ask) => ask.id === "workflow-ask",
+        ),
+      ).toMatchObject({
+        source: { kind: "automation", runId: "workflow-run" },
+        status: "answered",
+      });
       yield* cloud.settle;
     }),
 );

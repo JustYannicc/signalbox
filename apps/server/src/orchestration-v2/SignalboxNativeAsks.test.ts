@@ -6,6 +6,7 @@ import {
   ProviderSessionId,
   RuntimeRequestId,
   TurnItemId,
+  ThreadId,
   type OrchestrationV2DomainEvent,
   type OrchestrationV2RuntimeRequest,
 } from "@t3tools/contracts";
@@ -15,6 +16,7 @@ import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
 import * as EffectOutbox from "./EffectOutbox.ts";
 import * as EventSink from "./EventSink.ts";
 import * as ProjectionMaintenance from "./ProjectionMaintenance.ts";
+import { nativeCodexQuestions } from "../provider/nativeCodexQuestions.ts";
 import { layer, threadId, create, answer, instanceId, driver } from "./SignalboxAsks.testkit.ts";
 
 const native = (now: DateTime.Utc, suffix = "native", includeSecret = false) => {
@@ -107,6 +109,67 @@ const native = (now: DateTime.Utc, suffix = "native", includeSecret = false) => 
   ];
   return { request, events };
 };
+
+it.effect(
+  "keeps an assistant's native answer provenance and Codex recommendation after replay",
+  () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* create;
+      const sink = yield* EventSink.EventSinkV2;
+      const { request, events } = native(yield* DateTime.now, "assistant-answer");
+      yield* sink.write({
+        events: events.map((event) =>
+          event.type === "turn-item.updated" && event.payload.type === "user_input_request"
+            ? {
+                ...event,
+                payload: {
+                  ...event.payload,
+                  questions: nativeCodexQuestions(
+                    [
+                      {
+                        id: "a",
+                        header: "Font",
+                        question: "Pick a font",
+                        options: [
+                          { label: "A (Recommended)", description: "Font A" },
+                          { label: "B", description: "Font B" },
+                        ],
+                      },
+                    ],
+                    true,
+                  ),
+                },
+              }
+            : event,
+        ),
+      });
+      yield* orchestrator.dispatch({
+        type: "thread.native-ask.respond",
+        commandId: CommandId.make("assistant-native-answer"),
+        threadId,
+        requestId: request.id,
+        answers: { a: "A (Recommended)" },
+        answeredBy: {
+          kind: "assistant",
+          personId: "thread-owner",
+          assistantThreadId: ThreadId.make("assistant-caller"),
+        },
+      });
+      yield* (yield* ProjectionMaintenance.ProjectionMaintenanceV2).rebuild;
+      const ask = (yield* orchestrator.getThreadProjection(threadId)).thread.asks?.[0];
+      expect(ask?.status).toBe("answered");
+      expect(ask?.rounds[0]?.answers[0]).toMatchObject({
+        recommendationTaken: true,
+        answeredBy: { kind: "assistant", assistantThreadId: "assistant-caller" },
+      });
+      const outbox = yield* EffectOutbox.EffectOutboxV2;
+      expect(
+        (yield* outbox.listByCommandId(CommandId.make("assistant-native-answer"))).some(
+          (effect) => effect.request.type === "runtime-request.respond",
+        ),
+      ).toBe(true);
+    }).pipe(Effect.provide(layer)),
+);
 
 it.effect(
   "mirrors native flags and previews, excludes secrets, and delivers after callback expiration and replay",

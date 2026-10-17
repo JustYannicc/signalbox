@@ -1,9 +1,9 @@
+import { type ThreadCommand } from "./threadCommands.ts";
 import { expireRuntimeRequests } from "./expireRuntimeRequests.ts";
 import { mirrorNativeAskEvents } from "@t3tools/shared/signalboxAsks";
 import {
   type CommandId,
   EventId,
-  type OrchestrationV2Command,
   type OrchestrationV2DomainEvent,
   type OrchestrationV2SubscribeThreadInput,
   type OrchestrationV2ThreadLaunchInput,
@@ -164,7 +164,7 @@ export class ThreadEngine extends Context.Service<
   {
     readonly dispatch: (
       actor: Actor,
-      command: OrchestrationV2Command,
+      command: ThreadCommand,
       creation: ThreadCreation,
     ) => Effect.Effect<
       { readonly sequence: number },
@@ -549,7 +549,9 @@ const make = Effect.gen(function* () {
       },
       (projection, ctx, pool) => {
         const onItsPool =
-          typeof pool === "string" ? commandOnPool(command, projection, pool) : command;
+          typeof pool === "string" && command.type !== "thread.ask.sync"
+            ? commandOnPool(command, projection, pool)
+            : command;
         return decide(
           projection,
           onItsPool.type === "thread.create" && creation.worktree

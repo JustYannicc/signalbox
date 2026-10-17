@@ -133,7 +133,6 @@ function commandThreadIds(command: OrchestrationV2Command): ReadonlyArray<Thread
     case "thread.ask.raise":
     case "thread.ask.answer":
     case "thread.ask.withdraw":
-    case "thread.ask.sync":
     case "thread.create":
     case "thread.archive":
     case "thread.unarchive":

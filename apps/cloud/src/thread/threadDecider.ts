@@ -1,9 +1,9 @@
+import { type ThreadCommand } from "./threadCommands.ts";
 import { decideAsk } from "./threadAsks.ts";
 import { runtimeResponseEvents } from "./runtimeResponses.ts";
 import {
   MessageId,
   type OrchestrationV2AppThread,
-  type OrchestrationV2Command,
   type OrchestrationV2ConversationMessage,
   type OrchestrationV2DomainEvent,
   type OrchestrationV2Run,
@@ -44,10 +44,7 @@ const accept = (events: ReadonlyArray<OrchestrationV2DomainEvent>): Decision => 
 const reject = (message: string): Decision => ({ _tag: "rejected", message });
 
 type Projection = OrchestrationV2ThreadProjection;
-type CommandOf<T extends OrchestrationV2Command["type"]> = Extract<
-  OrchestrationV2Command,
-  { readonly type: T }
->;
+type CommandOf<T extends ThreadCommand["type"]> = Extract<ThreadCommand, { readonly type: T }>;
 
 /** A thread's own branch, and the path clients address its working tree by. */
 export interface ThreadWorktree {
@@ -81,22 +78,20 @@ const CLOUD_COMMAND_TYPES = [
   "thread.pull-request-link.sync",
   "thread.archive",
   "thread.unarchive",
-] as const satisfies ReadonlyArray<OrchestrationV2Command["type"]>;
+] as const satisfies ReadonlyArray<ThreadCommand["type"]>;
 type CloudCommand = CommandOf<(typeof CLOUD_COMMAND_TYPES)[number]>;
 
 /**
  * The commands `decide` serves; its switch is exhaustive over them. The public
  * API lists the rest as gaps (`api/cloudCoverage.ts`).
  */
-export const CLOUD_COMMANDS: ReadonlySet<OrchestrationV2Command["type"]> = new Set(
-  CLOUD_COMMAND_TYPES,
-);
+export const CLOUD_COMMANDS: ReadonlySet<ThreadCommand["type"]> = new Set(CLOUD_COMMAND_TYPES);
 
-const isCloudCommand = (command: OrchestrationV2Command): command is CloudCommand =>
+const isCloudCommand = (command: ThreadCommand): command is CloudCommand =>
   CLOUD_COMMANDS.has(command.type);
 
 /** The thread a command addresses. Commands without a single target thread are not served. */
-export function commandThreadId(command: OrchestrationV2Command) {
+export function commandThreadId(command: ThreadCommand) {
   return "threadId" in command ? command.threadId : null;
 }
 
@@ -228,7 +223,7 @@ function updateThread(
  */
 export function decide(
   projection: Projection | null,
-  command: OrchestrationV2Command,
+  command: ThreadCommand,
   ctx: DecisionContext,
   /** `idleSinceMs`: archive only a thread unchanged since then (the idle-chat sweep's). */
   expected: { readonly idleSinceMs?: number; readonly personId?: string } = {},

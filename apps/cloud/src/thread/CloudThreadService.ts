@@ -1,3 +1,4 @@
+import type { ThreadCommand } from "./threadCommands.ts";
 import { dispatchAutomationAskAnswer } from "../automations/askAnswers.ts";
 import type { SignalboxAsk } from "@t3tools/contracts/signalboxAsks";
 import {
@@ -330,7 +331,7 @@ const isNotFound = Schema.is(ThreadNotFoundError);
 const isRefusal = (error: unknown) => isRejected(error) || isNotFound(error);
 
 /** Commands that can start a turn or pick a model: they carry the resolved pools, instructions and secrets. */
-const PICKS_A_POOL: ReadonlySet<OrchestrationV2Command["type"]> = new Set([
+const PICKS_A_POOL: ReadonlySet<ThreadCommand["type"]> = new Set([
   "thread.create",
   "message.dispatch",
   "thread.ask.answer",
@@ -339,7 +340,7 @@ const PICKS_A_POOL: ReadonlySet<OrchestrationV2Command["type"]> = new Set([
 ]);
 
 /** What a command sends, for the thread's kind (`ThreadKindTurns`). */
-const messageOf = (command: OrchestrationV2Command) =>
+const messageOf = (command: ThreadCommand) =>
   command.type === "message.dispatch" ? { text: command.text, title: command.titleSeed } : null;
 
 const make = Effect.gen(function* () {
@@ -367,15 +368,18 @@ const make = Effect.gen(function* () {
       }),
     );
 
-  const dispatchCommand: CloudThreadService["Service"]["dispatchCommand"] = (actor, command) =>
+  const dispatchCommand = (actor: Actor, command: ThreadCommand) =>
     Effect.gen(function* () {
       const attributed =
         command.type === "thread.ask.answer" && command.answeredBy.kind === "person"
           ? { ...command, answeredBy: { kind: "person" as const, personId: actor.userId } }
           : command;
-      const automationAnswer = yield* dispatchAutomationAskAnswer(actor, attributed, {
-        threadSnapshot: (who, id) => threadSnapshot(who, id),
-      });
+      const automationAnswer =
+        attributed.type === "thread.ask.sync"
+          ? null
+          : yield* dispatchAutomationAskAnswer(actor, attributed, {
+              threadSnapshot: (who, id) => threadSnapshot(who, id),
+            });
       if (automationAnswer !== null) return automationAnswer;
       const threadId = commandThreadId(command);
       if (threadId === null) {

@@ -4,7 +4,7 @@ import {
   type OrchestrationV2Command,
   type OrchestrationV2ThreadProjection,
 } from "@t3tools/contracts";
-import type { SignalboxAskCommand } from "@t3tools/contracts/signalboxAsks";
+import type { SignalboxAskServerCommand } from "@t3tools/contracts/signalboxAsks";
 import { applyAskCommand } from "@t3tools/shared/signalboxAsks";
 import * as DateTime from "effect/DateTime";
 
@@ -18,7 +18,7 @@ type Response = Extract<OrchestrationV2Command, { type: "runtime-request.respond
 /** An answer and its delivery commit together, so a freed machine can pick up the message. */
 export function decideAsk(
   projection: Projection,
-  command: SignalboxAskCommand,
+  command: SignalboxAskServerCommand,
   ctx: DecisionContext,
   deliver: (projection: Projection, message: Message, ctx: DecisionContext) => Decision,
   respond: (projection: Projection, response: Response, ctx: DecisionContext) => Decision,

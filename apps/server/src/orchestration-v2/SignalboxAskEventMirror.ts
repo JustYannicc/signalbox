@@ -4,6 +4,7 @@ import type {
   ThreadId,
 } from "@t3tools/contracts";
 import { mirrorNativeAskEvents } from "@t3tools/shared/signalboxAsks";
+import type { SignalboxNativeAskRespondCommand } from "@t3tools/contracts/signalboxAsks";
 import * as Effect from "effect/Effect";
 
 type AskProjection = Pick<
@@ -14,6 +15,7 @@ type AskProjection = Pick<
 export function mirrorSignalboxAskEvents<E>(
   events: ReadonlyArray<OrchestrationV2DomainEvent>,
   getThreadRecords: (threadId: ThreadId) => Effect.Effect<AskProjection, E>,
+  response?: Pick<typeof SignalboxNativeAskRespondCommand.Type, "requestId" | "answeredBy">,
 ) {
   return Effect.gen(function* () {
     let result = events;
@@ -35,7 +37,7 @@ export function mirrorSignalboxAskEvents<E>(
         created?.type === "thread.created"
           ? { thread: created.payload, runtimeRequests: [], turnItems: [] }
           : yield* getThreadRecords(threadId);
-      result = mirrorNativeAskEvents(projection, result);
+      result = mirrorNativeAskEvents(projection, result, response);
     }
     return result;
   });

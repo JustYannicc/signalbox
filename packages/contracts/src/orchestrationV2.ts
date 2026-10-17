@@ -1,4 +1,9 @@
-import { SignalboxAskCommands, SignalboxAskThreadFields } from "./signalboxAsks.ts";
+import {
+  SignalboxAskCommands,
+  SignalboxAskSyncCommand,
+  SignalboxAskThreadFields,
+  SignalboxNativeAskRespondCommand,
+} from "./signalboxAsks.ts";
 import { OrchestrationMessageContext } from "./composerContext.ts";
 import { NativeQuestionMetadata, NativeQuestionOptionPreview } from "./nativeQuestions.ts";
 import * as Effect from "effect/Effect";
@@ -2991,6 +2996,8 @@ export type OrchestrationV2Command = typeof OrchestrationV2Command.Type;
  * send them.
  */
 const OrchestrationV2InternalCommand = Schema.Union([
+  SignalboxAskSyncCommand,
+  SignalboxNativeAskRespondCommand,
   Schema.Struct({
     type: Schema.Literal("thread.pull-request-watch.sync"),
     commandId: CommandId,

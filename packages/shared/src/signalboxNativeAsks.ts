@@ -6,7 +6,10 @@ import {
   type OrchestrationV2DomainEvent,
   type OrchestrationV2ThreadProjection,
 } from "@t3tools/contracts";
-import type { SignalboxAskQuestion } from "@t3tools/contracts/signalboxAsks";
+import type {
+  SignalboxAskQuestion,
+  SignalboxNativeAskRespondCommand,
+} from "@t3tools/contracts/signalboxAsks";
 import * as DateTime from "effect/DateTime";
 import { applyAskCommand } from "./signalboxAsks.ts";
 
@@ -15,6 +18,7 @@ const isJson = Schema.is(Schema.Json);
 export function mirrorNativeAskEvents(
   projection: Pick<OrchestrationV2ThreadProjection, "thread" | "runtimeRequests" | "turnItems">,
   events: readonly OrchestrationV2DomainEvent[],
+  response?: Pick<typeof SignalboxNativeAskRespondCommand.Type, "requestId" | "answeredBy">,
 ): readonly OrchestrationV2DomainEvent[] {
   let thread = projection.thread;
   const requests = new Map(projection.runtimeRequests.map((request) => [request.id, request]));
@@ -53,7 +57,7 @@ export function mirrorNativeAskEvents(
         question: question.question,
         why: "The agent requested input through its provider.",
         unblocks: "The work waiting on this answer.",
-        recommendation: question.initialAnswer ?? null,
+        recommendation: question.native?.recommendation ?? question.initialAnswer ?? null,
         options: question.options.map((option) => ({
           ...option,
           value: option.value ?? option.label,
@@ -113,7 +117,10 @@ export function mirrorNativeAskEvents(
         round: ask.rounds.at(-1)!.number,
         answers,
         deferredQuestionIds: [],
-        answeredBy: { kind: "person", personId: "thread-owner" },
+        answeredBy:
+          response?.requestId === requestId
+            ? response.answeredBy
+            : { kind: "person", personId: "thread-owner" },
       },
       now,
     );

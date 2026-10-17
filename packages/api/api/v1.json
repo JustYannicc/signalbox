@@ -1798,7 +1798,7 @@
       "rpc": "orchestration.launchThread",
       "access": "write",
       "input": "49ccbbaa",
-      "output": "14d430ba"
+      "output": "1a76d486"
     },
     {
       "name": "threads.delete",
@@ -1831,7 +1831,7 @@
       "rpc": "orchestration.getThreadProjection",
       "access": "read",
       "input": "1276a316",
-      "output": "aab83134"
+      "output": "834c7b58"
     },
     {
       "name": "threads.getFullThreadDiff",
@@ -1852,7 +1852,7 @@
       "rpc": "orchestration.getTurnItem",
       "access": "read",
       "input": "049d9a37",
-      "output": "c8b4fd93"
+      "output": "5c9063b1"
     },
     {
       "name": "threads.getWorkflowScript",
@@ -2111,7 +2111,7 @@
       "access": "read",
       "stream": "snapshot",
       "input": "438e44e7",
-      "output": "66a13b3c"
+      "output": "6f60ed78"
     },
     {
       "name": "threads.subscribeArchived",
@@ -2352,11 +2352,6 @@
     {
       "rpc": "orchestration.dispatchCommand",
       "command": "thread.create",
-      "kind": "internal"
-    },
-    {
-      "rpc": "orchestration.dispatchCommand",
-      "command": "thread.ask.sync",
       "kind": "internal"
     },
     {

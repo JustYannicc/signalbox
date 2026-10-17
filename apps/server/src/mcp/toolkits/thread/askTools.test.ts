@@ -2,13 +2,20 @@ import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import { expect, it } from "@effect/vitest";
 import {
   EnvironmentId,
+  RuntimeRequestId,
+  NodeId,
+  ProviderSessionId,
+  TurnItemId,
   ProviderInstanceId,
   ThreadId,
   type OrchestrationV2ServerCommand,
+  type OrchestrationV2ThreadProjection,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import { McpSchema, McpServer, Toolkit } from "effect/ai";
+import * as ThreadSearch from "../../../orchestration-v2/ThreadSearch.ts";
+import * as ScheduledTaskService from "../../../scheduledTasks/ScheduledTaskService.ts";
 import * as ThreadManagement from "../../../orchestration-v2/ThreadManagementService.ts";
 import * as McpHttpServer from "../../McpHttpServer.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
@@ -113,3 +120,90 @@ it.effect("forces agent source and assistant answer provenance, with stable retr
     });
   }).pipe(Effect.provide(server));
 });
+
+it.effect(
+  "attributes native answers to the authenticated assistant instead of supplied provenance",
+  () => {
+    const dispatched: OrchestrationV2ServerCommand[] = [];
+    const shell = liveThreadShell(threadId);
+    const requestId = RuntimeRequestId.make("native-question");
+    const nodeId = NodeId.make("native-node");
+    const projection = {
+      ...idleThreadProjection(shell),
+      runtimeRequests: [
+        {
+          id: requestId,
+          nodeId,
+          providerTurnId: null,
+          nativeRequestRef: null,
+          kind: "user_input",
+          status: "pending",
+          responseCapability: {
+            type: "live",
+            providerSessionId: ProviderSessionId.make("native-session"),
+          },
+          createdAt: shell.createdAt,
+          resolvedAt: null,
+        },
+      ],
+      turnItems: [
+        {
+          id: TurnItemId.make("native-item"),
+          threadId,
+          runId: null,
+          nodeId,
+          providerThreadId: null,
+          providerTurnId: null,
+          nativeItemRef: null,
+          parentItemId: null,
+          title: "City",
+          ordinal: 1,
+          status: "waiting",
+          startedAt: shell.createdAt,
+          completedAt: null,
+          updatedAt: shell.updatedAt,
+          type: "user_input_request",
+          requestId,
+          questions: [{ id: "city", header: "City", question: "Which city?", options: [] }],
+        },
+      ],
+    } satisfies OrchestrationV2ThreadProjection;
+    const server = McpHttpServer.layerThreadToolkit.pipe(
+      Layer.provideMerge(McpServer.McpServer.layer),
+      Layer.provide(NodeCrypto.layer),
+      Layer.provide(Layer.mock(ThreadSearch.ThreadSearch)({})),
+      Layer.provide(Layer.mock(ScheduledTaskService.ScheduledTaskService)({})),
+      Layer.provide(
+        Layer.mock(ThreadManagement.ThreadManagementService)({
+          getThreadShell: (id) => Effect.succeed(liveThreadShell(id)),
+          getProjectThreadRecords: () => Effect.succeed(projection),
+          dispatch: (command) =>
+            Effect.sync(() => {
+              dispatched.push(command);
+              return { sequence: 13, storedEvents: [] };
+            }),
+        }),
+      ),
+    );
+    return Effect.gen(function* () {
+      const result = yield* call("t3_pending_request_respond", {
+        requestId,
+        answers: { city: "Bern" },
+        answeredBy: {
+          kind: "person",
+          personId: "forged-person",
+          assistantThreadId: "forged-thread",
+        },
+      });
+      expect(result.isError).not.toBe(true);
+      expect(dispatched).toMatchObject([
+        {
+          type: "thread.native-ask.respond",
+          requestId,
+          answers: { city: "Bern" },
+          answeredBy: { kind: "assistant", personId: "thread-owner", assistantThreadId: threadId },
+        },
+      ]);
+    }).pipe(Effect.provide(server));
+  },
+);

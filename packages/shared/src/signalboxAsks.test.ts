@@ -4,6 +4,7 @@ import type {
   SignalboxAsk,
   SignalboxAskAnswerCommand,
   SignalboxAskCommand,
+  SignalboxAskServerCommand,
 } from "@t3tools/contracts/signalboxAsks";
 import { applyAskCommand, blockingAsk, pendingAskQuestions } from "./signalboxAsks.ts";
 
@@ -33,7 +34,7 @@ const raise: SignalboxAskCommand = {
     questions: [question("a"), question("b", true), question("c")],
   },
 };
-function apply(asks: readonly SignalboxAsk[], command: SignalboxAskCommand) {
+function apply(asks: readonly SignalboxAsk[], command: SignalboxAskServerCommand) {
   const result = applyAskCommand(asks, command, now);
   if (!result.ok) throw new Error(result.error);
   return result;

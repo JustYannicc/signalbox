@@ -27,7 +27,6 @@ export const COMMAND_REACH = {
     name: "threads.asks.withdraw",
     summary: "Withdraw an ask that is no longer needed.",
   }),
-  "thread.ask.sync": internal("The automation engine synchronizing its journaled ask."),
   "thread.archive": write(),
   "thread.unarchive": write(),
   "thread.delete": write({ destructive: true }),

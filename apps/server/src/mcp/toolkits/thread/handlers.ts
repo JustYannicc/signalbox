@@ -217,14 +217,20 @@ export const layer = McpToolAccess.toLayer(ThreadToolkit, {
   ),
   t3_pending_request_respond: writesThread((input) =>
     Effect.gen(function* () {
-      const { threads, projection } = yield* readQuestion(input);
+      const { threads, projection, caller } = yield* readQuestion(input);
+      if (!caller)
+        return yield* new OrchestratorMcpFailure({
+          code: "invalid_request",
+          message: "Answer from an assistant thread so its provenance can be recorded.",
+        });
       const result = yield* threads
         .dispatch({
-          type: "runtime-request.respond",
+          type: "thread.native-ask.respond",
           threadId: projection.thread.id,
           commandId: yield* newCommandId(),
           requestId: input.requestId,
           answers: input.answers,
+          answeredBy: { kind: "assistant", personId: "thread-owner", assistantThreadId: caller.id },
         })
         .pipe(Effect.mapError(dispatchFailure));
       return { sequence: result.sequence };

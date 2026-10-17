@@ -1,4 +1,5 @@
 import * as Schema from "effect/Schema";
+import { ProviderUserInputAnswers } from "./providerPolicy.ts";
 
 import {
   CommandId,
@@ -135,7 +136,22 @@ export const SignalboxAskCommands = [
   SignalboxAskRaiseCommand,
   SignalboxAskAnswerCommand,
   SignalboxAskWithdrawCommand,
-  SignalboxAskSyncCommand,
 ] as const;
 export const SignalboxAskCommand = Schema.Union(SignalboxAskCommands);
 export type SignalboxAskCommand = typeof SignalboxAskCommand.Type;
+
+export const SignalboxAskServerCommand = Schema.Union([
+  ...SignalboxAskCommands,
+  SignalboxAskSyncCommand,
+]);
+export type SignalboxAskServerCommand = typeof SignalboxAskServerCommand.Type;
+
+/** Only the MCP handler supplies the authenticated assistant caller. */
+export const SignalboxNativeAskRespondCommand = Schema.Struct({
+  type: Schema.Literal("thread.native-ask.respond"),
+  commandId: CommandId,
+  threadId: ThreadId,
+  requestId: RuntimeRequestId,
+  answers: ProviderUserInputAnswers,
+  answeredBy: SignalboxAskAnswerer,
+});
