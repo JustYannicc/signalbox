@@ -19,6 +19,8 @@ export const SignalboxEnvironmentCapabilityFields = {
   serverSettingsWrite: Schema.optionalKey(Schema.Boolean),
   /** Allows model preferences and the default model through a restricted settings patch. */
   modelSettingsWrite: Schema.optionalKey(Schema.Boolean),
+  /** Allows person-scoped keybinding overrides without writable host settings. */
+  keybindingsWrite: Schema.optionalKey(Schema.Boolean),
   /** Serves the person's analytics consent read/write RPCs, independently of host settings. */
   analyticsSettings: Schema.optionalKey(Schema.Boolean),
   /** Opt-in: cloud keeps the person's timezone. Clients require true, including before config loads. */
@@ -71,6 +73,18 @@ export function environmentCanWriteModelSettings(
   return (
     environmentSupports(capabilities, "serverSettingsWrite") ||
     capabilities?.modelSettingsWrite === true
+  );
+}
+
+export function environmentCanWriteKeybindings(
+  capabilities:
+    | { readonly serverSettingsWrite?: boolean; readonly keybindingsWrite?: boolean }
+    | null
+    | undefined,
+): boolean {
+  return (
+    environmentSupports(capabilities, "serverSettingsWrite") ||
+    capabilities?.keybindingsWrite === true
   );
 }
 

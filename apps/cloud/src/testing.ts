@@ -75,7 +75,8 @@ import * as SessionRows from "./thread/session/SessionRows.ts";
 import * as PullRequestPolls from "./thread/pullRequests/PullRequestPolls.ts";
 import * as PullRequestSync from "./thread/pullRequests/PullRequestSync.ts";
 import * as ThreadStore from "./thread/ThreadStore.ts";
-import * as ModelManifest from "./thread/ModelManifest.ts";
+import * as ModelManifest from "./models/ModelManifest.ts";
+import * as ModelCatalog from "./models/ModelCatalog.ts";
 import * as TurnModels from "./thread/TurnModels.ts";
 import { contextOfProject } from "./user/contextProjects.ts";
 import * as DrivePeople from "./user/DrivePeople.ts";
@@ -111,6 +112,7 @@ import * as UserShell from "./user/UserShell.ts";
 import * as UserThreadStatus from "./user/UserThreadStatus.ts";
 import * as UserStore from "./user/UserStore.ts";
 import * as UserModelSettings from "./user/UserModelSettings.ts";
+import * as UserKeybindings from "./user/UserKeybindings.ts";
 import * as UserAnalyticsPreference from "./user/UserAnalyticsPreference.ts";
 import * as UserTimezone from "./user/UserTimezone.ts";
 import * as UserThreadKinds from "./user/UserThreadKinds.ts";
@@ -148,6 +150,7 @@ export const layerMemoryStore = LegacySections.layer.pipe(
     Layer.mergeAll(
       UserStore.layer,
       UserModelSettings.layer,
+      UserKeybindings.layer,
       UserAnalyticsPreference.layer,
       UserTimezone.layer,
       UserContexts.layerWithDrives,
@@ -370,7 +373,12 @@ const makeUserRuntime = (
               Layer.provideMerge(LearnerJev.layerNone),
             ),
           ),
-          Layer.provideMerge(Layer.mergeAll(layerMemoryStore, ModelManifest.layerBundled)),
+          Layer.provideMerge(
+            Layer.mergeAll(
+              layerMemoryStore,
+              ModelCatalog.layer.pipe(Layer.provideMerge(ModelManifest.layerBundled)),
+            ),
+          ),
           Layer.provideMerge(Layer.mergeAll(drives, people, github)),
           Layer.provideMerge(
             Layer.mergeAll(
