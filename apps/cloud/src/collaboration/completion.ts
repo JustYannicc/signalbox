@@ -64,7 +64,7 @@ export const deliverCompletion = (
         text: `Child task cloud-task:${childId} ${run.status}.\n\n${summary.slice(0, 12_000)}${summary.length > 12_000 ? "\n\nResult truncated. Read task_status for the full result." : ""}`,
         dispatchMode: { type: "queue_after_active" },
       },
-      parentRun ?? null,
+      parentRun === undefined ? null : { id: parentRun.id, status: parentRun.status },
     );
   }).pipe(
     // Losing access must not keep a child's outbox retrying a private result forever.
