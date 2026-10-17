@@ -53,6 +53,7 @@ type Lifecycle = {
     condition: { summary: string; input?: unknown } | null;
   } | null;
   applied: boolean;
+  modelSteps?: boolean;
 };
 type Event = { event?: string; threadId?: string };
 type Verified = Map<string, { commit: string; state: string; evidence: string }>;
@@ -337,6 +338,8 @@ async function waitForCondition(
     if (leaves.length !== 1) throw new Error("Source watches work as one condition on their own.");
     const source = sourceLeaves[0]!;
     if (!source.watch) throw new Error("A source condition needs a watch.");
+    // Judging a change needs a model step (#971); don't wait on a source this host can't judge.
+    if (source.condition && state.modelSteps === false) return "no-model-steps";
     for (;;) {
       const change = await w.waitFor("Wait for the source change", {
         on: source.on ?? "source.item.*",
@@ -448,6 +451,8 @@ export default workflow(async (w, input: Input, event: Event & { at?: string }) 
     const upgradesDefault = triggerType === "pr.updated" && priorInput?.defaultProposal === true && priorInput.type === "outcome";
     if (state.record?.condition && !upgradesDefault) return "The task already has a done-condition.";
     if (currentLinks(state).length === 0) {
+      // Proposing needs a model step; where none can run (#971) the task simply has no condition yet.
+      if (state.modelSteps === false) return "No done-condition proposed: model steps can't run here yet.";
       state = await read(w, threadId, true);
       const proposal = parseProposal(await w.llm("Propose when this task is done", {
         prompt: [
@@ -512,6 +517,7 @@ export default workflow(async (w, input: Input, event: Event & { at?: string }) 
       outcome = verification.outcome;
     } else if (conditionType(condition) === "outcome") {
       if (!condition.criteria?.trim()) throw new Error("An outcome condition needs criteria.");
+      if (state.modelSteps === false) return "Outcome done-conditions need model steps, which can't run here yet.";
       for (;;) {
         const evidence: Lifecycle = await w.call("Read the task for its completion check", "signalbox.task_lifecycle", {
           threadId,
@@ -548,8 +554,9 @@ export default workflow(async (w, input: Input, event: Event & { at?: string }) 
         });
       }
     } else {
-      if (!(await waitForCondition(w, compiled!, threadId, progress, generation, state, verified)))
-        return "The done-condition did not hold before its wait ended.";
+      const held = await waitForCondition(w, compiled!, threadId, progress, generation, state, verified);
+      if (held === "no-model-steps") return "Source done-conditions with a condition need model steps, which can't run here yet.";
+      if (!held) return "The done-condition did not hold before its wait ended.";
       state = await read(w, threadId);
     }
 

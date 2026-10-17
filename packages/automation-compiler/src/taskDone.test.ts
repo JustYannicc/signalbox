@@ -42,6 +42,7 @@ type LifecycleState = {
   messages: Array<{ role: string; text: string; id?: string }>;
   record: { generation: number; condition: { summary: string; input?: unknown } | null } | null;
   applied: boolean;
+  modelSteps?: boolean;
 };
 
 const mergedPullRequest: PullRequest = {
@@ -86,6 +87,7 @@ function fixture(
     verification?: Array<{ state: string; evidence?: string; commit?: string }>;
     wait?: (label: string, args: Record<string, unknown>) => unknown;
     staleAfterVerification?: "generation" | "message";
+    modelSteps?: boolean;
   } = {},
 ) {
   let generation = 4;
@@ -118,6 +120,7 @@ function fixture(
         pullRequests: threadId === "task-1" ? pullRequests : [],
       },
       record: { generation, condition },
+      ...(options.modelSteps === undefined ? {} : { modelSteps: options.modelSteps }),
     });
   const verifierState = () =>
     lifecycle({
@@ -459,6 +462,24 @@ describe("Task done automation", () => {
       }),
     ).rejects.toBe(stop);
     expect(test.calls.some((call) => call.args.action === "complete")).toBe(false);
+  });
+
+  it("proposes nothing, quietly, where model steps can't run", async () => {
+    const test = fixture({ pullRequests: [], modelSteps: false });
+
+    await expect(test.run({ threadId: "task-1", event: "thread.created" })).resolves.toBe(
+      "No done-condition proposed: model steps can't run here yet.",
+    );
+    expect(test.llmCalls).toEqual([]);
+    expect(test.calls.map((call) => call.args.action)).toEqual(["read"]);
+  });
+
+  it("still proposes and verifies the merged-PR condition where model steps can't run", async () => {
+    const test = fixture({ modelSteps: false, verification: [{ state: "live" }] });
+    await test.run({ threadId: "task-1", event: "thread.created" });
+    expect(test.llmCalls).toEqual([]);
+    expect(test.agents).toHaveLength(1);
+    expect(test.calls.some((call) => call.args.action === "complete")).toBe(true);
   });
 
   it("leaves chats without a task done-condition", async () => {

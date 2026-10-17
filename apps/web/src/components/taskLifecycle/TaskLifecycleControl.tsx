@@ -308,17 +308,19 @@ function TaskLifecycleTaskRow(props: {
 
   if (props.presentation === "recent") {
     return (
-      <li className="flex min-h-8 items-center gap-1.5 px-1.5">
-        <Link
-          to="/$environmentId/$threadId"
-          params={buildThreadRouteParams(threadRef)}
-          className="min-w-0 flex-1 truncate text-xs text-sidebar-muted-foreground hover:text-sidebar-foreground"
-        >
-          {shell.title}
-        </Link>
-        <span className="max-w-32 shrink truncate text-3xs text-sidebar-muted-foreground/70">
-          {recordReady ? (displayedOutcome ?? displayedSummary) : "Loading outcome…"}
-        </span>
+      <li className="flex min-h-10 items-center gap-1.5 px-1.5">
+        <div className="flex min-w-0 flex-1 flex-col">
+          <Link
+            to="/$environmentId/$threadId"
+            params={buildThreadRouteParams(threadRef)}
+            className="truncate text-xs text-sidebar-muted-foreground hover:text-sidebar-foreground"
+          >
+            {shell.title}
+          </Link>
+          <span className="truncate text-3xs text-sidebar-muted-foreground/70">
+            {recordReady ? (displayedOutcome ?? displayedSummary) : "Loading outcome…"}
+          </span>
+        </div>
         <Button
           size="xs"
           variant="ghost-muted"

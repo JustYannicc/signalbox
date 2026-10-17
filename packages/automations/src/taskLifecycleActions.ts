@@ -32,7 +32,14 @@ export const makeTaskLifecycleActions = (deps: {
       const kind = deps.threads.getTaskKind
         ? yield* deps.threads.getTaskKind(id)
         : ("task" as const);
-      return { thread, messages, runs, kind, record: yield* deps.records.read(threadId) };
+      return {
+        thread,
+        messages,
+        runs,
+        kind,
+        modelSteps: deps.threads.modelSteps !== false,
+        record: yield* deps.records.read(threadId),
+      };
     });
   const dispatch = (
     command: Parameters<NonNullable<AutomationThreadsShape["dispatchLifecycle"]>>[0],

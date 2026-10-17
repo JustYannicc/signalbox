@@ -14,7 +14,13 @@ import {
   useComposerDraftStore,
 } from "../composerDraftStore";
 import { useSidebarPendingFileDropStore } from "../sidebarPendingFileDropStore";
-import { useEnvironmentThreadRefs, useThreadRefs, useThreadShell } from "../state/entities";
+import {
+  resolveThreadDetailRef, // signalbox: settled tasks
+  useEnvironmentThreadRefs,
+  useThreadRefs,
+  useThreadSettledTask, // signalbox: settled tasks
+  useThreadShell,
+} from "../state/entities";
 import { useEnvironmentQuery } from "../state/query";
 import { environmentShell } from "../state/shell";
 import {
@@ -67,6 +73,18 @@ export function ThreadRouteView({ target }: { target: ThreadRouteTarget }) {
   const draftThread = useComposerDraftStore((store) =>
     serverThreadRef ? store.getDraftThreadByRef(serverThreadRef) : null,
   );
+  // signalbox: a settled task is archived (#671), so it isn't in the live shell, but it stays on
+  // screen with its Reopen. Only a server thread the shell lacks reads its detail here.
+  const archivedRef =
+    target.kind === "server" && serverThreadShell === null
+      ? resolveThreadDetailRef(target.threadRef, {
+          shellExists: false,
+          waitForShell: draftThread !== null,
+        })
+      : null;
+  const settledTask = useThreadSettledTask(archivedRef);
+  const showsSettledTask = settledTask === "settled";
+  const archivedPending = archivedRef !== null && settledTask === "pending";
   const promotedDraftId = useComposerDraftStore((store) =>
     target.kind === "server" ? store.getDraftIdByRef(target.threadRef) : null,
   );
@@ -90,8 +108,8 @@ export function ThreadRouteView({ target }: { target: ThreadRouteTarget }) {
     serverThreadRef ? store.hasDraftThreadsInEnvironment(serverThreadRef.environmentId) : false,
   );
   const renderState = resolveThreadRouteRenderState({
-    bootstrapComplete,
-    serverThreadExists: serverThreadShell !== null,
+    bootstrapComplete: bootstrapComplete && !archivedPending, // signalbox: settled tasks
+    serverThreadExists: serverThreadShell !== null || showsSettledTask,
     serverThreadDeleted: serverThreadShell?.deletedAt != null,
     draftThreadExists: draftThread !== null,
   });

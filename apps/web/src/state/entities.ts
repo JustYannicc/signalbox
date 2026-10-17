@@ -43,6 +43,9 @@ const EMPTY_THREAD_PROJECTION_ATOM = Atom.make<EnvironmentThread | null>(null).p
 const EMPTY_THREAD_STATUS_ATOM = Atom.make<EnvironmentThreadStatus>("empty").pipe(
   Atom.withLabel("web-thread-status:empty"),
 );
+const EMPTY_SETTLED_TASK_ATOM = Atom.make<"settled" | "pending" | "other">("other").pipe(
+  Atom.withLabel("web-settled-task:empty"),
+); // signalbox
 const EMPTY_VISIBLE_TURN_ITEMS_ATOM = Atom.make(EMPTY_VISIBLE_TURN_ITEMS).pipe(
   Atom.withLabel("web-thread-visible-turn-items:empty"),
 );
@@ -124,6 +127,13 @@ export function useChildThreadInputs(ref: ScopedThreadRef | null) {
 export function useThreadProjection(ref: ScopedThreadRef | null): EnvironmentThread | null {
   return useAtomValue(
     ref === null ? EMPTY_THREAD_PROJECTION_ATOM : environmentThreadDetails.threadAtom(ref),
+  );
+}
+
+/** signalbox: whether the thread is a settled task, which leaves the live shell (#671). */
+export function useThreadSettledTask(ref: ScopedThreadRef | null) {
+  return useAtomValue(
+    ref === null ? EMPTY_SETTLED_TASK_ATOM : environmentThreadDetails.settledTaskAtom(ref),
   );
 }
 

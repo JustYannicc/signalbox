@@ -29,6 +29,7 @@ type Lifecycle = {
   runs: Array<{ id: string; status: string }>;
   record: TaskRecord | null;
   applied: boolean;
+  modelSteps?: boolean;
 };
 type Guess = { reason: Reason; outcome: string; uncertain: boolean; finishing: string };
 
@@ -76,6 +77,8 @@ export default workflow(async (w, input: { threadId?: string }) => {
     return "The parent automation owns this helper thread.";
   if (before.kind !== "task" || !isSettled(before.thread)) return "This is not a settled task.";
   if (before.record && before.record.outcome !== null) return "The task already has an outcome.";
+  // Reading why needs a model step; where none can run (#971) the settle stands without a reason.
+  if (before.modelSteps === false) return "Settled; the reason isn't recorded because model steps can't run here yet.";
   const expectedGeneration = before.record?.generation ?? 0;
 
   const answer = await w.llm("Understand why the task was settled", {

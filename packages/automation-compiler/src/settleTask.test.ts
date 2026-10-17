@@ -26,6 +26,7 @@ function fixture(
     readonly alreadyRecorded?: boolean;
     readonly malformedGuess?: boolean;
     readonly helperThread?: boolean;
+    readonly modelSteps?: boolean;
   } = {},
 ) {
   let generation = 4;
@@ -55,6 +56,7 @@ function fixture(
       },
     ],
     runs: [],
+    ...(options.modelSteps === undefined ? {} : { modelSteps: options.modelSteps }),
     record: {
       generation,
       outcome,
@@ -139,6 +141,14 @@ describe("Settle task automation", () => {
     await test.run();
     expect(test.llmCalls).toBe(0);
     expect(test.calls.map((call) => call.action)).toEqual(["read"]);
+  });
+
+  it("keeps the settle without a reason where model steps can't run", async () => {
+    const test = fixture({ modelSteps: false });
+    await test.run();
+    expect(test.llmCalls).toBe(0);
+    expect(test.calls.map((call) => call.action)).toEqual(["read"]);
+    expect(test.agents).toEqual([]);
   });
 
   it("skips automatic completion records", async () => {

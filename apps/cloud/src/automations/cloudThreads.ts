@@ -228,6 +228,8 @@ export const layer = Layer.effect(
           threadId: input.threadId,
         }),
       dispatchLifecycle,
+      // Model steps launch in plan mode, which cloud harnesses refuse (#971).
+      modelSteps: false,
       getTaskKind: (threadId) =>
         kinds.kindOf(threadId).pipe(Effect.mapError(hostError("Couldn't read the thread kind"))),
       domainEvents: feed.events,
