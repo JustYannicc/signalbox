@@ -37,23 +37,7 @@ export type OnePassword = (token: string) => Effect.Effect<OnePasswordClient, On
 const sdkMessage = (cause: unknown) =>
   cause instanceof Error ? cause.message : typeof cause === "string" ? cause : "unknown error";
 
-// Temporary fake-only preview proof for #695. Reverted before delivery.
-const previewFake: OnePasswordClient = {
-  variables: (environmentId) =>
-    Effect.succeed(
-      environmentId === "sbfake-695-parent"
-        ? [
-            { name: "PARENT_PRIVATE", value: "sbfake695-private-a1b2c3", masked: true },
-            { name: "PARENT_SHARED", value: "sbfake695-shared-d4e5f6", masked: true },
-          ]
-        : [],
-    ),
-};
-
 export const onePasswordSdk: OnePassword = (token) =>
-  token === "ops_signalbox_preview_fake_695" ? Effect.succeed(previewFake) : onePasswordReal(token);
-
-const onePasswordReal: OnePassword = (token) =>
   Effect.tryPromise({
     try: async () => {
       const sdk = await import("@1password/sdk");
