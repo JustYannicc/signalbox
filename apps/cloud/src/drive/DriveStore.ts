@@ -8,10 +8,7 @@ import * as SqlClient from "effect/sql/SqlClient";
 import type { SqlError } from "effect/sql/SqlError";
 
 import { DriveRemote } from "@signalbox/runner-protocol/DriveProtocol";
-import type {
-  CheckpointViews,
-  DriveCheckpointRecord,
-} from "@signalbox/runner-protocol/DriveProtocol";
+import type { DriveCheckpointRecord } from "@signalbox/runner-protocol/DriveProtocol";
 import { canManageDrive } from "@t3tools/contracts/signalboxDrives";
 import * as Migrations from "../storage/migrations.ts";
 import { canWrite } from "./driveAccess.ts";
@@ -21,6 +18,27 @@ import * as DriveRevisions from "./DriveRevisions.ts";
 import * as DriveRevisionStore from "./DriveRevisionStore.ts";
 import { isWithin } from "./DriveReader.ts";
 import type { ObjectType, Oid } from "./git/gitObjects.ts";
+import type {
+  CheckpointOperationResult,
+  DriveWriter,
+  ForkCheckpointRequest,
+  RefWrite,
+  RestoreCheckpointRequest,
+  ThreadRefs,
+  UndoRestoreRequest,
+  UpdateToLatestRequest,
+} from "./driveRevisionTypes.ts";
+
+export type {
+  CheckpointOperationResult,
+  DriveWriter,
+  ForkCheckpointRequest,
+  RefWrite,
+  RestoreCheckpointRequest,
+  ThreadRefs,
+  UndoRestoreRequest,
+  UpdateToLatestRequest,
+} from "./driveRevisionTypes.ts";
 
 /**
  * What one drive's Durable Object persists: its refs, the packs it holds in
@@ -58,85 +76,6 @@ export const MAIN_REF = "main";
 export const threadRef = (threadId: string) => `threads/${threadId}`;
 export const wipRef = (threadId: string) => `wip/${threadId}`;
 export const machineRef = (threadId: string) => `machine/${threadId}`;
-
-/** Who is writing: a thread, on its machine of `generation`. */
-export interface DriveWriter {
-  readonly threadId: string;
-  /** The thread's owner, whose role in the drive the write needs. */
-  readonly userId: string;
-  readonly generation: number;
-  /** Whether the thread has a turn running. `main` only moves during one. */
-  readonly live: boolean;
-  /** The highest pack sequence the writer has; answers list only newer packs. */
-  readonly packsAfter: number;
-}
-
-export interface ThreadRefs {
-  readonly main: Oid | null;
-  readonly thread: Oid | null;
-  readonly wip: Oid | null;
-  /** The thread's machine state (#490). */
-  readonly machine: Oid | null;
-  readonly base: Oid | null;
-  readonly packs: ReadonlyArray<{
-    readonly seq: number;
-    readonly name: string;
-    readonly size: number;
-  }>;
-  readonly remote: DriveRemote | null;
-  /** Commits in `packs` whose parents are on the remote, not in the drive. */
-  readonly shallow: ReadonlyArray<Oid>;
-  /** Latest uploaded Git notes ref commit for this thread. */
-  readonly notes?: Oid | null;
-  /** Context and shortcut view pinned by a fork or restore. */
-  readonly pinnedViews?: CheckpointViews | null;
-  /** Changes on fork or restore so the Runner replaces a stale checkout. */
-  readonly revision?: string | null;
-}
-
-export type RefWrite =
-  | { readonly _tag: "ok"; readonly refs: ThreadRefs }
-  | { readonly _tag: "conflict"; readonly refs: ThreadRefs }
-  | { readonly _tag: "refused"; readonly reason: string };
-
-export type CheckpointOperationResult =
-  | { readonly _tag: "ok" | "conflict"; readonly refs: ThreadRefs; readonly generation: number }
-  | { readonly _tag: "refused"; readonly reason: string; readonly generation?: number };
-
-export interface ForkCheckpointRequest {
-  readonly sourceThreadId: string;
-  readonly runId: string;
-  readonly threadId: string;
-  readonly operationId: string;
-}
-
-export interface RestoreCheckpointRequest {
-  readonly threadId: string;
-  readonly runId: string;
-  readonly operationId: string;
-  readonly expectedThread: Oid | null;
-  readonly expectedWip: Oid | null;
-  /** The generation the caller observed; the operation advances it by one. */
-  readonly generation: number;
-}
-
-export interface UndoRestoreRequest {
-  readonly threadId: string;
-  readonly restoreOperationId: string;
-  readonly operationId: string;
-  readonly expectedThread: Oid | null;
-  readonly expectedWip: Oid | null;
-  /** The generation currently held by the thread; undo advances it by one. */
-  readonly generation: number;
-}
-
-export interface UpdateToLatestRequest {
-  readonly threadId: string;
-  readonly operationId: string;
-  readonly expectedThread: Oid | null;
-  readonly expectedWip: Oid | null;
-  readonly generation: number;
-}
 
 export interface PackRegistration {
   readonly name: string;
