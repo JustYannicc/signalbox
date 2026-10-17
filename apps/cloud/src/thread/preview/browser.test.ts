@@ -101,6 +101,10 @@ const makeGateway = (trail: Trail) => {
   const gateway = new PreviewGateway({
     ctx,
     settings: null,
+    appOrigin: "https://cloud.example",
+    configuration: async () => ({ key: "thread-key", services: [] }),
+    saveServices: async () => undefined,
+    drive: async () => null,
     threadId: () => threadId,
     leaseToken: async (generation) => (generation >= 1 ? "lease" : null),
     canSee: async (userId) => userId !== "stranger",

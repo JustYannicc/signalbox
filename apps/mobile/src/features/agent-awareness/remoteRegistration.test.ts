@@ -8,6 +8,7 @@ import Constants from "expo-constants";
 import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import { Cookies, FetchHttpClient, HttpClientRequest, HttpClientResponse } from "effect/http";
 import { ManagedRelay } from "@t3tools/client-runtime/relay";
@@ -17,6 +18,7 @@ import { verifyDpopProof } from "@t3tools/shared/dpop";
 import type { SavedRemoteConnection } from "../../lib/connection";
 import * as Dpop from "../cloud/dpop";
 import * as ManagedRelayLayer from "../cloud/managedRelayLayer";
+import { registerWithSignalboxClouds } from "./signalboxCloudPush";
 import {
   clearAgentAwarenessRegistrationRecord,
   loadAgentAwarenessRegistrationRecord,
@@ -101,7 +103,9 @@ vi.mock("./agentLiveActivity", () => ({
   startAgentLiveActivity: widgetMocks.start,
 }));
 
-vi.mock("./signalboxCloudPush", () => ({ registerWithSignalboxClouds: async () => {} })); // signalbox
+vi.mock("./signalboxCloudPush", () => ({
+  registerWithSignalboxClouds: vi.fn(async () => {}),
+}));
 
 // The state modules pull the whole connection stack (and native expo modules)
 // into the import graph; the arming gate only needs the configs map.
@@ -273,7 +277,47 @@ describe("makeRelayDeviceRegistrationRequest", () => {
     widgetMocks.getInstances.mockReturnValue([]);
     widgetMocks.start.mockClear();
     environmentConfigsMock.configs.clear();
+    vi.mocked(registerWithSignalboxClouds).mockReset();
+    vi.mocked(registerWithSignalboxClouds).mockResolvedValue(undefined);
   });
+
+  it.effect("awaits cloud registration without relay configuration or a Connect account", () =>
+    Effect.gen(function* () {
+      const events: string[] = [];
+      let accept = () => {};
+      let started = () => {};
+      const requested = new Promise<void>((resolve) => {
+        started = resolve;
+      });
+      const accepted = new Promise<void>((resolve) => {
+        accept = resolve;
+      });
+      vi.mocked(registerWithSignalboxClouds).mockImplementationOnce(async () => {
+        started();
+        await accepted;
+        events.push("accepted");
+      });
+      const refresh = yield* refreshAgentAwarenessRegistration().pipe(
+        Effect.tap(() =>
+          Effect.sync(() => {
+            events.push("refreshed");
+          }),
+        ),
+        Effect.forkChild,
+      );
+      yield* Effect.promise(() => requested);
+      yield* Effect.yieldNow;
+      const beforeAcceptance = [...events];
+      accept();
+      yield* Fiber.join(refresh);
+      expect(beforeAcceptance).toEqual([]);
+      expect(events).toEqual(["accepted", "refreshed"]);
+      expect(registerWithSignalboxClouds).toHaveBeenCalledWith(
+        expect.objectContaining({ deviceId: "device-1", pushToken: "apns-token" }),
+      );
+      expect(saveAgentAwarenessRegistrationRecord).not.toHaveBeenCalled();
+    }).pipe(Effect.provide(layerRelayTest)),
+  );
 
   it("preserves disabled Live Activity preferences in relay registrations", () => {
     expect(

@@ -1,6 +1,6 @@
 import { endToEnd } from "@signalbox/runner-protocol/PreviewTunnel";
 
-import { PREVIEW_COOKIE, withoutCookie } from "./previewHost.ts";
+import { PREVIEW_COOKIE, PREVIEW_ROUTE_COOKIE, withoutCookie } from "./previewHost.ts";
 
 /**
  * Headers across the gateway. The dev server sees a plain request to
@@ -35,7 +35,7 @@ export function requestHeaders(
   for (const [name, value] of endToEnd(headers)) {
     if (name === "host" || HANDSHAKE.has(name) || fromEdge(name)) continue;
     if (name === "cookie") {
-      const kept = withoutCookie(value, PREVIEW_COOKIE);
+      const kept = withoutCookie(withoutCookie(value, PREVIEW_COOKIE), PREVIEW_ROUTE_COOKIE);
       if (kept !== null) out.push([name, kept]);
       continue;
     }
@@ -61,7 +61,7 @@ const LOCAL_ORIGINS = (port: number) => [
 
 /** Whether `setCookie` sets the gateway's own cookie. */
 const setsGatewayCookie = (setCookie: string) =>
-  setCookie.split("=", 1)[0]?.trim() === PREVIEW_COOKIE;
+  [PREVIEW_COOKIE, PREVIEW_ROUTE_COOKIE].includes(setCookie.split("=", 1)[0]?.trim() ?? "");
 
 /** What the browser gets back from the dev server on `port`. */
 export function responseHeaders(
