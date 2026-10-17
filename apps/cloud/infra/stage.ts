@@ -76,6 +76,22 @@ export interface CloudStage {
   readonly vars: Readonly<Record<string, string>>;
 }
 
+/**
+ * Preview-only paths that serve the gateway and trace receiver from the app
+ * origin. The app owns the preview's only custom domain.
+ */
+export const previewWorkerRoutes = (target: CloudStage) => ({
+  modelGateway: target.production
+    ? []
+    : [
+        { pattern: `${target.cloudDomain}/anthropic*`, zoneId: SIGNALBOX_ZONE_ID },
+        { pattern: `${target.cloudDomain}/openai*`, zoneId: SIGNALBOX_ZONE_ID },
+      ],
+  traceExport: target.production
+    ? []
+    : [{ pattern: `${target.cloudDomain}/v1/traces*`, zoneId: SIGNALBOX_ZONE_ID }],
+});
+
 export const PRODUCTION_STAGE = "production";
 export const PREVIEW_DRIVE_PACKS_BUCKET = "signalbox-drives-preview";
 
@@ -148,7 +164,7 @@ export const cloudStage = (stage: string): CloudStage => {
       SIGNALBOX_STAGE: stage,
       ENVIRONMENT_ID: `cloud-preview-${number}`,
       ENVIRONMENT_LABEL: `Signalbox Cloud (PR #${number})`,
-      ...urls(cloudDomain, gatewayDomain),
+      ...urls(cloudDomain, cloudDomain),
       PREVIEW_DOMAIN: previews,
       DRIVE_PACKS_PREFIX: `pr-${number}/`,
       // Where a preview takes each user's setup from (`src/previewSetup/`).

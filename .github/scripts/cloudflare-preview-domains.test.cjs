@@ -2,6 +2,7 @@ const assert = require("node:assert/strict");
 const test = require("node:test");
 const {
   assertPreviewStage,
+  cleanupPreviewBindings,
   detachClosedPreviewDomains,
   expectedPreviewBindings,
   managedPreviewNumber,
@@ -9,6 +10,7 @@ const {
 } = require("./cloudflare-preview-domains.cjs");
 
 const bindings = expectedPreviewBindings(913);
+const oldBindings = cleanupPreviewBindings(913);
 const domain = (binding, extra = {}) => ({
   id: `id-${binding.kind}`,
   ...binding,
@@ -34,33 +36,60 @@ test("requires exact host, service, and zone for each preview Worker", () => {
 });
 
 test("fails when a preview binding is missing, disabled, or attached to another service", () => {
-  assert.match(verifyPreviewBindings([domain(bindings[1])], 913).join(" "), /cloud.*not attached/);
+  assert.match(verifyPreviewBindings([], 913).join(" "), /cloud.*not attached/);
   assert.match(
-    verifyPreviewBindings([domain(bindings[0], { enabled: false }), domain(bindings[1])], 913).join(
-      " ",
-    ),
+    verifyPreviewBindings([domain(bindings[0], { enabled: false })], 913).join(" "),
+    /cloud.*disabled or missing enabled state/,
+  );
+  assert.match(
+    verifyPreviewBindings([domain(bindings[0], { enabled: undefined })], 913).join(" "),
     /cloud.*disabled or missing enabled state/,
   );
   assert.match(
     verifyPreviewBindings(
-      [domain(bindings[0], { enabled: undefined }), domain(bindings[1])],
-      913,
-    ).join(" "),
-    /cloud.*disabled or missing enabled state/,
-  );
-  assert.match(
-    verifyPreviewBindings(
-      [domain(bindings[0]), domain({ ...bindings[0], id: "duplicate-cloud" }), domain(bindings[1])],
+      [domain(bindings[0]), domain({ ...bindings[0], id: "duplicate-cloud" })],
       913,
     ).join(" "),
     /cloud.*duplicate Worker domain records/,
   );
   assert.match(
+    verifyPreviewBindings([domain({ ...bindings[0], service: "some-other-worker" })], 913).join(
+      " ",
+    ),
+    /cloud.*wrong Worker service/,
+  );
+});
+
+test("fails when any other Worker adds a preview domain", () => {
+  const extras = [
+    domain({
+      kind: "worker",
+      hostname: "gateway.example.com",
+      service: "signalbox-extra-pr-913",
+      zone_id: bindings[0].zone_id,
+    }),
+    domain({
+      kind: "worker",
+      hostname: "metrics-preview-913.signalbox.run",
+      service: "signalbox-metrics",
+      zone_id: bindings[0].zone_id,
+    }),
+  ];
+  for (const extra of extras) {
+    assert.match(
+      verifyPreviewBindings([domain(bindings[0]), extra], 913).join(" "),
+      /2 Worker domain records; expected exactly one/,
+    );
+  }
+});
+
+test("rejects the legacy multi-domain state after a preview deploy", () => {
+  assert.match(
     verifyPreviewBindings(
-      [domain({ ...bindings[0], service: "some-other-worker" }), domain(bindings[1])],
+      oldBindings.map((binding) => domain(binding)),
       913,
     ).join(" "),
-    /cloud.*wrong Worker service/,
+    /3 Worker domain records; expected exactly one/,
   );
 });
 
@@ -75,9 +104,11 @@ test("refuses production or a mismatched stage before any API call", () => {
   );
 });
 
-test("finds exact app and gateway preview domains even if Cloudflare labels them production", () => {
+test("finds app and legacy gateway/trace domains even if Cloudflare labels them production", () => {
   assert.equal(managedPreviewNumber(domain(bindings[0], { environment: "production" })), 913);
-  assert.equal(managedPreviewNumber(domain(bindings[1], { environment: "production" })), 913);
+  for (const binding of oldBindings.slice(1)) {
+    assert.equal(managedPreviewNumber(domain(binding, { environment: "production" })), 913);
+  }
   assert.equal(
     managedPreviewNumber({
       ...domain(bindings[0]),
@@ -87,7 +118,7 @@ test("finds exact app and gateway preview domains even if Cloudflare labels them
   );
 });
 
-test("deletes only the closed PR's exact app and gateway bindings", async () => {
+test("deletes only the closed PR's app and legacy gateway/trace bindings", async () => {
   const production = {
     id: "production",
     hostname: "app.signalbox.run",
@@ -100,7 +131,8 @@ test("deletes only the closed PR's exact app and gateway bindings", async () => 
     production,
     domain(bindings[0]),
     domain(bindings[0], { id: "duplicate-cloud" }),
-    domain(bindings[1]),
+    domain(oldBindings[1]),
+    domain(oldBindings[2]),
     otherPreview,
   ];
   const deleted = [];
@@ -119,8 +151,8 @@ test("deletes only the closed PR's exact app and gateway bindings", async () => 
     });
   };
 
-  assert.equal(await detachClosedPreviewDomains("account", "token", 913, fetcher), 3);
-  assert.deepEqual(deleted.sort(), ["duplicate-cloud", "id-cloud", "id-gateway"]);
+  assert.equal(await detachClosedPreviewDomains("account", "token", 913, fetcher), 4);
+  assert.deepEqual(deleted.sort(), ["duplicate-cloud", "id-cloud", "id-gateway", "id-traces"]);
   assert.deepEqual(rows, [production, otherPreview]);
 });
 
@@ -135,12 +167,7 @@ test("does not delete a domain bound to the wrong zone or service", async () => 
 });
 
 test("discovers and deletes an orphan trace domain after its Worker is gone", async () => {
-  const traces = {
-    id: "closed-traces",
-    hostname: `traces-${bindings[0].hostname}`,
-    service: `${bindings[0].service}-traces`,
-    zone_id: bindings[0].zone_id,
-  };
+  const traces = domain(oldBindings[2], { id: "closed-traces" });
   const otherPreview = {
     ...traces,
     id: "other-traces",

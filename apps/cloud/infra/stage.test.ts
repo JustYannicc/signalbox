@@ -2,6 +2,7 @@
 import * as NodeFS from "node:fs";
 
 import { ThreadId } from "@t3tools/contracts";
+import { MODEL_GATEWAY_PATHS } from "@signalbox/runner-protocol/RunnerProtocol";
 import { describe, expect, it } from "@effect/vitest";
 
 import { previewLabel } from "@t3tools/shared/preview";
@@ -14,7 +15,9 @@ import {
   cloudStage,
   DURABLE_OBJECT_BINDINGS,
   previewStageNumber,
+  previewWorkerRoutes,
 } from "./stage.ts";
+import { TRACES_PATH } from "../src/observability/nativeTracesWorker.ts";
 
 interface WranglerConfig {
   readonly compatibility_date: string;
@@ -73,10 +76,42 @@ describe("cloudStage", () => {
         SIGNALBOX_STAGE: "pr-298",
         ENVIRONMENT_ID: "cloud-preview-298",
         DRIVE_PACKS_PREFIX: "pr-298/",
-        MODEL_GATEWAY_URL: "https://gateway-preview-298.signalbox.run",
+        MODEL_GATEWAY_URL: "https://preview-298.signalbox.run",
         PREVIEW_DOMAIN: "*-pr298.signalbox-preview.dev",
         PREVIEW_SETUP_SOURCE: "https://app.signalbox.run",
       },
+    });
+  });
+
+  it("routes preview gateway and trace paths through the app origin", () => {
+    const preview = cloudStage("pr-298");
+    const routes = previewWorkerRoutes(preview);
+    expect(routes).toEqual({
+      modelGateway: [
+        {
+          pattern: `${preview.cloudDomain}${MODEL_GATEWAY_PATHS.anthropic}*`,
+          zoneId: "e817cf0e17e849a0aab7a0bf92c0a053",
+        },
+        {
+          pattern: `${preview.cloudDomain}${MODEL_GATEWAY_PATHS.openai}*`,
+          zoneId: "e817cf0e17e849a0aab7a0bf92c0a053",
+        },
+      ],
+      traceExport: [
+        {
+          pattern: `${preview.cloudDomain}${TRACES_PATH}*`,
+          zoneId: "e817cf0e17e849a0aab7a0bf92c0a053",
+        },
+      ],
+    });
+    expect(
+      [MODEL_GATEWAY_PATHS.anthropic, MODEL_GATEWAY_PATHS.openai].map(
+        (path) => new URL(path, preview.vars.MODEL_GATEWAY_URL).origin,
+      ),
+    ).toEqual([`https://${preview.cloudDomain}`, `https://${preview.cloudDomain}`]);
+    expect(previewWorkerRoutes(cloudStage("production"))).toEqual({
+      modelGateway: [],
+      traceExport: [],
     });
   });
 

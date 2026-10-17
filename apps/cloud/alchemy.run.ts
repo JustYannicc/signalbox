@@ -29,6 +29,7 @@ import {
   PREVIEW_DRIVE_PACKS_BUCKET,
   PREVIEW_ZONE,
   SIGNALBOX_ZONE_ID,
+  previewWorkerRoutes,
 } from "./infra/stage.ts";
 import type {
   DriveObject,
@@ -186,6 +187,7 @@ function deploy(
   telemetry: Effect.Success<ReturnType<typeof telemetryEnv>>,
 ) {
   return Effect.gen(function* () {
+    const previewRoutes = previewWorkerRoutes(target);
     const traceExport = yield* nativeTraceExport(target, telemetry);
     const observability = {
       ...workerObservability,
@@ -288,7 +290,9 @@ function deploy(
       main: here("src/models/gatewayWorker.ts"),
       compatibility,
       workersDev: false,
-      domain: { name: target.gatewayDomain, zoneId: SIGNALBOX_ZONE_ID },
+      // Null detaches older preview domains; provider paths now share the app origin.
+      domain: target.production ? { name: target.gatewayDomain, zoneId: SIGNALBOX_ZONE_ID } : null,
+      routes: previewRoutes.modelGateway,
       observability,
       env: {
         ...telemetry,

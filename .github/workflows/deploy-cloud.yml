@@ -459,14 +459,13 @@ jobs:
       - name: Verify preview Worker domains
         run: node .trusted-cleanup/.github/scripts/cloudflare-preview-domains.cjs verify
 
-      # Until a new preview's hosts serve their own certificates, opening one
-      # breaks app.signalbox.run and the other previews in that browser (#618,
-      # see the script). The hosts are infra/stage.ts's cloud and gateway domains.
+      # Wait until the preview's app host serves its own certificate. Until
+      # then, opening it breaks app.signalbox.run and other previews (#618).
       - name: Wait for the preview's own certificates
         timeout-minutes: 35
         run: >-
           node .github/scripts/wait-own-certificate.cjs
-          "preview-$PR_NUMBER.signalbox.run" "gateway-preview-$PR_NUMBER.signalbox.run"
+          "preview-$PR_NUMBER.signalbox.run"
 
       # Production runs main as it is now, which can be ahead of this checkout:
       # merge it in, and rebuild when it brought anything.

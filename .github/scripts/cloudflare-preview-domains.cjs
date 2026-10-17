@@ -23,12 +23,6 @@ function expectedPreviewBindings(value) {
       service: stage.cloudWorker,
       zone_id: SIGNALBOX_ZONE_ID,
     },
-    {
-      kind: "gateway",
-      hostname: stage.gatewayDomain,
-      service: stage.gatewayWorker,
-      zone_id: SIGNALBOX_ZONE_ID,
-    },
   ];
 }
 
@@ -38,12 +32,25 @@ function cleanupPreviewBindings(value) {
   return [
     ...expectedPreviewBindings(number),
     {
+      kind: "gateway",
+      hostname: stage.gatewayDomain,
+      service: stage.gatewayWorker,
+      zone_id: SIGNALBOX_ZONE_ID,
+    },
+    {
       kind: "traces",
       hostname: `traces-${stage.cloudDomain}`,
       service: `${stage.cloudWorker}-traces`,
       zone_id: SIGNALBOX_ZONE_ID,
     },
   ];
+}
+
+function previewDomainNumbers(domain) {
+  // Preview domains carry either the preview host label or the stage's -pr-N service suffix.
+  const hostname = /(?:^|-)preview-([1-9][0-9]*)\.signalbox\.run$/.exec(domain.hostname ?? "");
+  const service = /(?:^|-)pr-([1-9][0-9]*)(?:-|$)/.exec(domain.service ?? "");
+  return new Set([hostname?.[1], service?.[1]].filter(Boolean).map(Number));
 }
 
 const isEnabled = (domain) =>
@@ -80,10 +87,14 @@ function bindingMismatch(domains, binding, { required }) {
 
 function verifyPreviewBindings(domains, value) {
   const number = parsePullRequestNumber(value);
-  return expectedPreviewBindings(number)
+  const errors = expectedPreviewBindings(number)
     .map((binding) => bindingMismatch(domains, binding, { required: true }))
-    .filter(Boolean)
-    .map((message) => `The #${number} preview ${message}`);
+    .filter(Boolean);
+  const attached = domains.filter((domain) => previewDomainNumbers(domain).has(number));
+  if (attached.length !== 1) {
+    errors.push(`has ${attached.length} Worker domain records; expected exactly one.`);
+  }
+  return errors.map((message) => `The #${number} preview ${message}`);
 }
 
 function matchingPreviewBindings(domains, value) {
@@ -250,6 +261,7 @@ if (require.main === module) {
 
 module.exports = {
   assertPreviewStage,
+  cleanupPreviewBindings,
   detachClosedPreviewDomains,
   expectedPreviewBindings,
   listWorkerDomains,
