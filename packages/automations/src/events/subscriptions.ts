@@ -78,7 +78,16 @@ export function whereMatches(
 ): boolean {
   if (!where) return true;
   return Object.entries(where).every(([field, expected]) => {
-    const actual = envelope[field];
-    return Array.isArray(expected) ? expected.includes(actual as never) : actual === expected;
+    // GitHub repository names are case-insensitive, including names copied from a URL.
+    const githubRepository =
+      field === "repository" &&
+      typeof envelope.event === "string" &&
+      /^(pr|release|issue)\./.test(envelope.event);
+    const canonical = (value: unknown) =>
+      githubRepository && typeof value === "string" ? value.toLowerCase() : value;
+    const actual = canonical(envelope[field]);
+    return Array.isArray(expected)
+      ? expected.some((value) => canonical(value) === actual)
+      : actual === canonical(expected);
   });
 }

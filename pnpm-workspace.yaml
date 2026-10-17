@@ -12,6 +12,8 @@ allowBuilds:
   browser-tabs-lock: false
   bufferutil: false
   core-js: false
+  # Lunora's CLI includes optional SSH, protobuf and Vue tooling; codegen uses none of their install hooks.
+  cpu-features: false
   electron: true
   electron-winstaller: false
   esbuild: true
@@ -20,12 +22,14 @@ allowBuilds:
   node-pty: true
   # Ships N-API prebuilds; its install script only rebuilds from source.
   objc-js: false
-  # The SDK web entry does not use grpc-js; protobufjs postinstall only warns about versions.
+  # Neither the SDK web entry nor codegen needs protobufjs install hooks.
   protobufjs: false
   "react-native-enriched-markdown@file:apps/mobile/deps/react-native-enriched-markdown-1.2.0-t3.15.tgz": true
   sharp: true
+  ssh2: false
   tsc-rs: true
   utf-8-validate: false
+  vue-demi: false
   workerd: false
 
 catalog:
@@ -214,6 +218,12 @@ minimumReleaseAgeExclude:
   - react-native-svg@15.16.0
   - "@expo/schema-utils@58.0.2"
   - "@boxd-sh/sdk@0.2.17"
+  - "@lunora/agent@1.0.0-alpha.217"
+  - "@lunora/cli@1.0.0-alpha.399"
+  - "@lunora/codegen@1.0.0-alpha.315"
+  - "@lunora/config@1.0.0-alpha.363"
+  - "@lunora/seed@1.0.0-alpha.228"
+  - lunorash@1.0.0-alpha.398
 
 overrides:
   # Keep jsdom's optional peer consistent so Vite+ has one test-runner instance.
