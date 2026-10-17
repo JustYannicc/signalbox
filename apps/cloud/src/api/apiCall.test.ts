@@ -3,6 +3,7 @@ import {
   AuthOrchestrationOperateScope,
   AuthOrchestrationReadScope,
   AuthStandardClientScopes,
+  AuthSettingsWriteScope,
   type AuthEnvironmentScope,
   EnvironmentId,
 } from "@t3tools/contracts";
@@ -49,6 +50,26 @@ const json = (answer: Effect.Success<ReturnType<typeof callOperation>>) => {
 };
 
 describe("public API calls", () => {
+  it.effect("reads and saves analytics consent through the public reach map", () =>
+    Effect.gen(function* () {
+      const { call } = yield* setup;
+      expect(json(yield* call("analytics.get", {}))).toMatchObject({
+        status: 200,
+        body: { enabled: false, disabledByServer: false },
+      });
+      expect(json(yield* call("analytics.setEnabled", { enabled: true })).status).toBe(403);
+      const writer = person([AuthOrchestrationReadScope, AuthSettingsWriteScope]);
+      expect(json(yield* call("analytics.setEnabled", { enabled: true }, writer))).toMatchObject({
+        status: 200,
+        body: { enabled: true, disabledByServer: false },
+      });
+      expect(json(yield* call("analytics.get", {}))).toMatchObject({
+        status: 200,
+        body: { enabled: true, disabledByServer: false },
+      });
+    }),
+  );
+
   it.effect("creates a folder and lists it, through the same handlers as the app", () =>
     Effect.gen(function* () {
       const { call } = yield* setup;
