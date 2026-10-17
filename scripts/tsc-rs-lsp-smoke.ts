@@ -8,7 +8,11 @@ import getExePath from "@effect/tsgo/lib/getExePath";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
 
-import { LspSmokeClient, type JsonRpcMessage } from "./lib/lsp-smoke-client.ts";
+import {
+  LspSmokeClient,
+  isShutdownCancellation,
+  type JsonRpcMessage,
+} from "./lib/lsp-smoke-client.ts";
 
 type Position = { line: number; character: number };
 type Range = { start: Position; end: Position };
@@ -200,7 +204,7 @@ async function runSession(
     // Both native servers can report cancellation after acknowledging LSP shutdown.
     // Keep that exit status in the measurements; a crash or missing acknowledgement fails.
     const cancelledAfterShutdown =
-      shutdown.code === 1 && /^context canceled$/m.test(client.stderr());
+      shutdown.code === 1 && isShutdownCancellation(client.shutdownStderr());
     if (!shutdown.responseReceived || (shutdown.error && !cancelledAfterShutdown)) {
       throw new Error(shutdown.error ?? "The LSP did not acknowledge shutdown");
     }

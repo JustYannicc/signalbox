@@ -148,7 +148,9 @@ Cloud runner LSP provisioning remains tracked in [#352](https://github.com/JustY
 
 Keep `typescript` and `@effect/tsgo` as diagnostic parity references. tsc-rs 0.7.0 ports
 TypeScript 7.1.0-dev and Effect 0.51.1, while the declared compiler is TypeScript 7.0.2.
-CI compares full diagnostics when compiler setup changes and reports wall time and peak RSS.
+CI compares full diagnostics when compiler setup changes and keeps Cloud source and infrastructure
+parity checks on other source PRs. It reports sequential compiler timings separately from the
+actual full typecheck benchmark, which preserves concurrency two and samples aggregate process-tree RSS.
 For a focused comparison, run `node scripts/typecheck-parity.ts <tsconfig...>`. The declared
 TypeScript binary must be unmodified; the checker rejects an Effect-patched shared binary.
 Use `--typescript <pristine-binary>` to check against a separate copy of the declared compiler.

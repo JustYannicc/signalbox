@@ -89,6 +89,16 @@ function nativeCompiler(packageName: string, platformName: string) {
   );
 }
 
+export function assertUnpatchedCompiler(compiler: string) {
+  // Effect can replace a binary without changing its version, retaining this backup.
+  if (
+    [compiler, NodeFS.realpathSync(compiler)].some((path) => NodeFS.existsSync(`${path}.original`))
+  )
+    throw new Error(
+      "The declared TypeScript binary has an Effect patch backup. Use --typescript with an unmodified declared compiler.",
+    );
+}
+
 function run(compiler: string, project: string) {
   const args = ["--noEmit", "--pretty", "false", "--incremental", "false", "-p", project];
   const started = performance.now();
@@ -108,10 +118,7 @@ function run(compiler: string, project: string) {
         `${project}: compiler failed (${result.status}, ${result.signal})\n${result.stderr}`,
       );
     const output = result.stdout + result.stderr;
-    if (
-      result.status !== 0 &&
-      !diagnostics(output).some((diagnostic) => diagnostic.category === "error")
-    )
+    if (result.status !== 0 && diagnostics(output).length === 0)
       throw new Error(`${project}: compiler failed without diagnostics\n${output}`);
     return {
       output,
@@ -142,6 +149,7 @@ function main(args: string[]) {
   const version = JSON.parse(
     NodeFS.readFileSync(require.resolve("typescript/package.json"), "utf8"),
   ).version;
+  assertUnpatchedCompiler(declared);
   const reported = NodeChildProcess.execFileSync(declared, ["--version"], {
     encoding: "utf8",
   }).trim();

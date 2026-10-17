@@ -1,9 +1,29 @@
+// @effect-diagnostics nodeBuiltinImport:off - compiler fixtures detect shared-store patches.
+import * as NodeFS from "node:fs";
+import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
 import { expect, test } from "vite-plus/test";
-import { compareDiagnostics, diagnostics } from "./typecheck-parity.ts";
+import { assertUnpatchedCompiler, compareDiagnostics, diagnostics } from "./typecheck-parity.ts";
 
 const typeError =
   "src/file.ts(4,2): error TS2322: Type 'string' is not assignable to type 'number'.\n";
 const effectError = "src/file.ts(9,3): error TS377033: Use the Effect clock. effect(globalDate)\n";
+
+test("parity rejects same-version Effect patches through compiler symlinks", () => {
+  const directory = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "compiler-patch-"));
+  try {
+    const binary = NodePath.join(directory, "tsc");
+    const link = NodePath.join(directory, "linked-tsc");
+    NodeFS.writeFileSync(binary, "Version 7.0.2");
+    NodeFS.symlinkSync(binary, link);
+    expect(() => assertUnpatchedCompiler(link)).not.toThrow();
+    NodeFS.copyFileSync(binary, `${binary}.original`);
+    expect(() => assertUnpatchedCompiler(binary)).toThrow("Effect patch backup");
+    expect(() => assertUnpatchedCompiler(link)).toThrow("Effect patch backup");
+  } finally {
+    NodeFS.rmSync(directory, { recursive: true, force: true });
+  }
+});
 
 test("parity combines declared TypeScript with Effect diagnostics regardless of output order", () => {
   expect(

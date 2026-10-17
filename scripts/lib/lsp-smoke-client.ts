@@ -27,6 +27,20 @@ export type LspSmokeShutdown = LspSmokeExit & {
   responseReceived: boolean;
 };
 
+export function isShutdownCancellation(stderr: string) {
+  const withoutTime = stderr.split(/^\s*\d+(?:\.\d+)? real\s+/m)[0]!;
+  const messages = withoutTime
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(
+      (line) =>
+        line &&
+        !/^LSP_PEAK_RSS_KIB=\d+$/.test(line) &&
+        line !== "Command exited with non-zero status 1",
+    );
+  return messages.length > 0 && messages.every((line) => line.includes("context canceled"));
+}
+
 export class LspSmokeTimeoutError extends Error {}
 
 export class LspSmokeClient {
@@ -40,6 +54,7 @@ export class LspSmokeClient {
   private resolveClosed!: (result: CloseResult) => void;
   private stdoutBuffer = Buffer.alloc(0);
   private stderrText = "";
+  private shutdownStderrOffset: number | undefined;
   private serverLogMessageCount = 0;
   private isClosed = false;
   private closeResult: CloseResult | undefined;
@@ -258,6 +273,10 @@ export class LspSmokeClient {
     return this.stderrText;
   }
 
+  shutdownStderr() {
+    return this.stderrText.slice(this.shutdownStderrOffset ?? this.stderrText.length);
+  }
+
   peakRssBytes() {
     const match = this.stderrText.match(/^\s*(\d+)\s+maximum resident set size\s*$/im);
     if (match) return Number(match[1]);
@@ -270,6 +289,7 @@ export class LspSmokeClient {
     try {
       await this.request("shutdown", undefined, 5_000);
       responseReceived = true;
+      this.shutdownStderrOffset = this.stderrText.length;
       this.notify("exit");
       const result = await this.waitUntilClosed(5_000);
       const error =
