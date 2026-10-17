@@ -122,6 +122,8 @@ export const makeFakeDrive = (
     path: string;
     target: FakeDrive;
     readable: boolean;
+    /** Overrides the target's latest commit as a checkpoint-pinned version. */
+    pinnedCommit?: string | null;
   }> = [];
 
   /** Like the cloud, lists only packs after the ones the machine says it has. */
@@ -320,8 +322,8 @@ export const makeFakeDrive = (
               path: shortcut.path,
               target: shortcut.target.id,
               readable: true,
-              pinned: false,
-              main: target.main,
+              pinned: shortcut.pinnedCommit !== undefined,
+              main: shortcut.pinnedCommit === undefined ? target.main : shortcut.pinnedCommit,
               packs: target.packs,
               shallow: target.shallow,
               remote: target.remote,

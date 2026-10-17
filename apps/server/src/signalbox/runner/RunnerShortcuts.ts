@@ -483,12 +483,6 @@ export const makeRunnerShortcuts = Effect.fn("makeRunnerShortcuts")(function* (i
       );
       const mounted: Array<MountedShortcut> = [];
       for (const { shortcut, result } of results) {
-        const entry = {
-          path: shortcut.path,
-          target: shortcut.target,
-          commit: result.success.commit,
-          dir: dirOf(shortcut.path),
-        };
         if (result._tag === "Failure") {
           yield* Effect.logWarning("mounting a shortcut failed", {
             path: shortcut.path,
@@ -498,7 +492,14 @@ export const makeRunnerShortcuts = Effect.fn("makeRunnerShortcuts")(function* (i
           continue;
         }
         if (result.success.notice !== null) notices.push(result.success.notice);
-        if (result.success.shown) mounted.push(entry);
+        if (result.success.shown) {
+          mounted.push({
+            path: shortcut.path,
+            target: shortcut.target,
+            commit: result.success.commit,
+            dir: dirOf(shortcut.path),
+          });
+        }
       }
       // Every readable shortcut is remembered, mounted or not, so a failed one is still taken down later.
       yield* fs.writeFileString(
