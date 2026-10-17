@@ -1770,18 +1770,18 @@ describe("deriveMessagesTimelineRows", () => {
         status: "running",
         startedAt: "2026-01-01T00:02:00Z",
         completedAt: null,
+        settledRuns: new Map([
+          [
+            RunId.make("turn-1"),
+            {
+              runId: RunId.make("turn-1"),
+              status: "interrupted" as const,
+              startedAt: "2026-01-01T00:00:00Z",
+              completedAt: "2026-01-01T00:01:29Z",
+            },
+          ],
+        ]),
       },
-      settledRuns: new Map([
-        [
-          RunId.make("turn-1"),
-          {
-            runId: RunId.make("turn-1"),
-            status: "interrupted" as const,
-            startedAt: "2026-01-01T00:00:00Z",
-            completedAt: "2026-01-01T00:01:29Z",
-          },
-        ],
-      ]),
       isWorking: true,
       activeTurnStartedAt: "2026-01-01T00:02:00Z",
       turnDiffSummaries: [],

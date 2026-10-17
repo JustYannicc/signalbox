@@ -1,8 +1,17 @@
-import type { OrchestrationV2Run, RunId } from "@t3tools/contracts";
+import {
+  orchestrationV2RunWorkStartedAt,
+  type OrchestrationV2Run,
+  type RunId,
+} from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import { useMemo, useRef } from "react";
 
 import type { TimelineLatestRun } from "./MessagesTimeline.logic";
+
+type SettledRunInput = Pick<
+  OrchestrationV2Run,
+  "id" | "status" | "requestedAt" | "workStartedAt" | "startedAt" | "completedAt"
+>;
 
 const SETTLED = new Set<OrchestrationV2Run["status"]>(["completed", "interrupted", "failed"]);
 
@@ -13,7 +22,7 @@ const SETTLED = new Set<OrchestrationV2Run["status"]>(["completed", "interrupted
  * timeline's streaming fast path still sees the same input.
  */
 export function settledRunSummaries(
-  runs: ReadonlyArray<Pick<OrchestrationV2Run, "id" | "status" | "startedAt" | "completedAt">>,
+  runs: ReadonlyArray<SettledRunInput>,
   previous: ReadonlyMap<RunId, TimelineLatestRun> | null,
 ): ReadonlyMap<RunId, TimelineLatestRun> {
   const next = new Map<RunId, TimelineLatestRun>();
@@ -22,7 +31,8 @@ export function settledRunSummaries(
     next.set(run.id, {
       runId: run.id,
       status: run.status,
-      startedAt: run.startedAt === null ? null : DateTime.formatIso(run.startedAt),
+      // When the run left the queue, setup included; never the provider's later start.
+      startedAt: DateTime.formatIso(orchestrationV2RunWorkStartedAt(run)),
       completedAt: DateTime.formatIso(run.completedAt),
     });
   }
@@ -46,7 +56,7 @@ export function settledRunSummaries(
 
 /** The thread's settled run summaries, the same map until one of them changes. */
 export function useSettledRunSummaries(
-  runs: ReadonlyArray<Pick<OrchestrationV2Run, "id" | "status" | "startedAt" | "completedAt">>,
+  runs: ReadonlyArray<SettledRunInput>,
 ): ReadonlyMap<RunId, TimelineLatestRun> {
   const previous = useRef<ReadonlyMap<RunId, TimelineLatestRun> | null>(null);
   return useMemo(() => {

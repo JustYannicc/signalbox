@@ -8,12 +8,15 @@ const at = (iso: string) => DateTime.makeUnsafe(iso);
 const run = (id: string, status: "completed" | "interrupted" | "running", end: string | null) => ({
   id: RunId.make(id),
   status,
-  startedAt: at("2026-01-01T00:00:00.000Z"),
+  requestedAt: at("2025-12-31T23:59:59.000Z"),
+  workStartedAt: at("2026-01-01T00:00:00.000Z"),
+  // The provider starts after the machine is set up; durations don't count from here.
+  startedAt: at("2026-01-01T00:00:40.000Z"),
   completedAt: end === null ? null : at(end),
 });
 
 describe("settledRunSummaries", () => {
-  it("keeps each settled run's own status and times, and skips live runs", () => {
+  it("keeps each settled run's own status and work-start times, and skips live runs", () => {
     const summaries = settledRunSummaries(
       [run("a", "interrupted", "2026-01-01T00:01:29.000Z"), run("b", "running", null)],
       null,

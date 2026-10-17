@@ -470,7 +470,14 @@ export interface TimelineDurationMessage {
 export type TimelineLatestRun = Pick<
   ThreadRunSummary,
   "runId" | "status" | "startedAt" | "completedAt"
->;
+> & {
+  /**
+   * signalbox: the thread's settled runs, each with its own status and times
+   * (settledRunSummaries). They ride on the latest run so the timeline
+   * component needs no prop of its own.
+   */
+  readonly settledRuns?: ReadonlyMap<RunId, TimelineLatestRun> | undefined;
+};
 
 const LIVE_ACTIVITY_ROW_ID = "live-activity-row";
 
@@ -955,8 +962,6 @@ function deriveTurnFolds(input: {
   timelineEntries: ReadonlyArray<TimelineEntry>;
   terminalAssistantMessageIds: ReadonlySet<string>;
   latestRun: TimelineLatestRun | null;
-  /** signalbox: each settled run's own status and times; see settledRunSummaries. */
-  settledRuns: ReadonlyMap<RunId, TimelineLatestRun> | undefined;
   unfoldedRunIds: ReadonlySet<RunId>;
   runlessWorkActive: boolean;
   liveSubagentEntryIds: ReadonlySet<string>;
@@ -1106,9 +1111,11 @@ function deriveTurnFolds(input: {
       continue;
     }
 
-    // A turn's own run says how it ended and how long it took, even once a newer turn is latest.
+    // A turn's own settled run says how it ended and how long it took, from when it left the
+    // queue, even once a newer turn is latest.
     const run =
-      input.latestRun?.runId === runId ? input.latestRun : (input.settledRuns?.get(runId) ?? null);
+      input.latestRun?.settledRuns?.get(runId) ??
+      (input.latestRun?.runId === runId ? input.latestRun : null);
     const isInterruptedTurn = run?.status === "interrupted";
     // A turn cut short by a steer leaves trailing work entries behind its
     // terminal message — take whichever ended last.
@@ -1295,12 +1302,7 @@ function timelineRowEntries(entries: ReadonlyArray<TimelineEntry>) {
 function deriveTimelineTurnFolds(
   input: Pick<
     MessagesTimelineRowsInput,
-    | "timelineEntries"
-    | "latestRun"
-    | "settledRuns"
-    | "isWorking"
-    | "runlessWorkActive"
-    | "runningRunId"
+    "timelineEntries" | "latestRun" | "isWorking" | "runlessWorkActive" | "runningRunId"
   >,
 ) {
   const timelineEntries = timelineRowEntries(input.timelineEntries);
@@ -1315,7 +1317,6 @@ function deriveTimelineTurnFolds(
     timelineEntries,
     terminalAssistantMessageIds: deriveTerminalAssistantMessageIds(timelineEntries),
     latestRun: input.latestRun ?? null,
-    settledRuns: input.settledRuns,
     unfoldedRunIds: new Set([...activeVisualResponseRunIds, ...failedRunIds]),
     runlessWorkActive: input.isWorking && input.runlessWorkActive === true,
     liveSubagentEntryIds: liveSubagentCardEntryIds(timelineEntries),
@@ -1326,7 +1327,6 @@ function deriveTimelineTurnFolds(
 export function deriveMessagesTimelineRows(input: {
   timelineEntries: ReadonlyArray<TimelineEntry>;
   latestRun?: TimelineLatestRun | null;
-  settledRuns?: ReadonlyMap<RunId, TimelineLatestRun>;
   runningRunId?: RunId | null;
   expandedRunIds?: ReadonlySet<RunId>;
   expandedAttemptIds?: ReadonlySet<RunAttemptId>;
@@ -1381,7 +1381,6 @@ export function deriveMessagesTimelineRows(input: {
     timelineEntries: timelineEntries,
     terminalAssistantMessageIds,
     latestRun: input.latestRun ?? null,
-    settledRuns: input.settledRuns,
     unfoldedRunIds: new Set([...activeVisualResponseRunIds, ...failedRunIds]),
     runlessWorkActive,
     liveSubagentEntryIds,
@@ -2003,12 +2002,7 @@ export function timelineEntryTurnFoldRunId(
 export function timelineTurnFoldRunIdsByEntryId(
   input: Pick<
     MessagesTimelineRowsInput,
-    | "timelineEntries"
-    | "latestRun"
-    | "settledRuns"
-    | "isWorking"
-    | "runlessWorkActive"
-    | "runningRunId"
+    "timelineEntries" | "latestRun" | "isWorking" | "runlessWorkActive" | "runningRunId"
   >,
 ): ReadonlyMap<string, RunId> {
   const byEntryId = new Map<string, RunId>();

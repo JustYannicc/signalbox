@@ -443,8 +443,6 @@ interface MessagesTimelineProps {
   listRef: React.RefObject<LegendListRef | null>;
   timelineEntries: ReadonlyArray<TimelineEntry>;
   latestRun: TimelineLatestRun | null;
-  /** signalbox: each settled run's own status and times, for older turns' headers. */
-  settledRuns?: ReadonlyMap<RunId, TimelineLatestRun> | undefined;
   runningRunId?: RunId | null;
   turnDiffSummaries: ReadonlyArray<TurnDiffSummary>;
   routeThreadKey: string;
@@ -550,7 +548,6 @@ const ConversationTimeline = memo(function ConversationTimeline({
   findNavigationId = 0,
   findPositionReaderRef,
   latestRun,
-  settledRuns,
   runningRunId = null,
   turnDiffSummaries,
   routeThreadKey,
@@ -807,21 +804,12 @@ const ConversationTimeline = memo(function ConversationTimeline({
         ? timelineTurnFoldRunIdsByEntryId({
             timelineEntries,
             latestRun,
-            ...(settledRuns ? { settledRuns } : {}),
             runningRunId,
             isWorking,
             runlessWorkActive,
           })
         : null,
-    [
-      findActive,
-      timelineEntries,
-      latestRun,
-      settledRuns,
-      runningRunId,
-      isWorking,
-      runlessWorkActive,
-    ],
+    [findActive, timelineEntries, latestRun, runningRunId, isWorking, runlessWorkActive],
   );
   const activeFindRunId = activeFindMatch
     ? findFoldRunIds?.get(activeFindMatch.entryId)
@@ -867,7 +855,6 @@ const ConversationTimeline = memo(function ConversationTimeline({
       {
         timelineEntries,
         latestRun,
-        ...(settledRuns ? { settledRuns } : {}),
         runningRunId,
         expandedRunIds: visibleExpandedRunIds,
         expandedAttemptIds: visibleExpandedAttemptIds,
@@ -891,7 +878,6 @@ const ConversationTimeline = memo(function ConversationTimeline({
     workspaceRoot,
     timelineEntries,
     latestRun,
-    settledRuns,
     runningRunId,
     visibleExpandedRunIds,
     visibleExpandedAttemptIds,
