@@ -23,7 +23,7 @@ export const DriveRefEvent = Schema.Struct({
   sequence: Schema.Number,
   ref: Schema.String,
   before: Schema.NullOr(Schema.String),
-  after: Schema.String,
+  after: Schema.NullOr(Schema.String),
   /** The thread that moved it; null when a person did (starting or splitting a drive). */
   threadId: Schema.NullOr(Schema.String),
   /** Milliseconds since the epoch. */
@@ -46,7 +46,7 @@ export interface RefMove {
   readonly sequence: number;
   readonly ref: string;
   readonly before: string | null;
-  readonly after: string;
+  readonly after: string | null;
   readonly threadId: string | null;
   readonly at: number;
 }
@@ -87,6 +87,34 @@ export const createTables = Effect.gen(function* () {
   yield* sql`CREATE INDEX ref_event_deliveries_seq ON ref_event_deliveries (seq)`;
 });
 
+/** Undoing a restore can return an unborn branch to having no ref. */
+export const allowDeletedRefs = Effect.gen(function* () {
+  const sql = yield* SqlClient.SqlClient;
+  const [{ seq = 0 } = {}] = yield* sql<{
+    readonly seq: number;
+  }>`SELECT seq FROM sqlite_sequence WHERE name = 'ref_events'`;
+  yield* sql`CREATE TABLE ref_events_nullable (
+    seq INTEGER PRIMARY KEY AUTOINCREMENT,
+    ref TEXT NOT NULL,
+    before TEXT,
+    after TEXT,
+    thread_id TEXT,
+    at INTEGER NOT NULL
+  )`;
+  yield* sql`INSERT INTO ref_events_nullable SELECT * FROM ref_events`;
+  // A temporary row advances AUTOINCREMENT without writing SQLite's system table.
+  const [marker] = yield* sql<{ readonly seq: number }>`INSERT INTO ref_events_nullable
+    (seq, ref, before, after, thread_id, at)
+    SELECT ${seq}, '', NULL, NULL, NULL, 0
+    WHERE ${seq} > (SELECT COALESCE(MAX(seq), 0) FROM ref_events_nullable)
+    RETURNING seq`;
+  if (marker !== undefined) {
+    yield* sql`DELETE FROM ref_events_nullable WHERE seq = ${marker.seq}`;
+  }
+  yield* sql`DROP TABLE ref_events`;
+  yield* sql`ALTER TABLE ref_events_nullable RENAME TO ref_events`;
+});
+
 /** Moves a person's backlog keeps while their object can't take them; older ones go. */
 export const BACKLOG = 1_000;
 
@@ -96,7 +124,7 @@ const decodeMoves = Schema.decodeUnknownSync(
       seq: Schema.Number,
       ref: Schema.String,
       before: Schema.NullOr(Schema.String),
-      after: Schema.String,
+      after: Schema.NullOr(Schema.String),
       thread_id: Schema.NullOr(Schema.String),
       at: Schema.Number,
     }),

@@ -1,11 +1,12 @@
 import type { RunnerItem } from "@signalbox/runner-protocol/RunnerProtocol";
+import type { CheckpointViews } from "@signalbox/runner-protocol/DriveProtocol";
 import type { OrchestrationV2TurnItem, RunId } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 
 import * as Schema from "effect/Schema";
 
-import type { DriveOutcome, MainConflict, RunnerDrive } from "./RunnerDrive.ts";
+import type { DriveCheckpoint, DriveOutcome, MainConflict, RunnerDrive } from "./RunnerDrive.ts";
 import { DriveRefusedError, DriveTooLargeError } from "./RunnerDriveClient.ts";
 
 /** Why a save failed, when it says so in the thread's person's terms: the drive refused it, and why. */
@@ -54,6 +55,48 @@ const notice = (runId: RunId, message: string): RunnerItem => ({
   message,
 });
 
+const recordCheckpoint = (input: {
+  readonly runId: RunId;
+  readonly turnId: string;
+  readonly threadId: string;
+  readonly drive: RunnerDrive;
+  readonly views: CheckpointViews;
+  readonly checkpoint: DriveCheckpoint;
+  readonly emit: (item: RunnerItem) => Effect.Effect<void>;
+}) =>
+  Effect.gen(function* () {
+    yield* input.drive
+      .recordCheckpoint({
+        threadId: input.threadId,
+        runId: input.runId,
+        turnId: input.turnId,
+        commit: input.checkpoint.commit,
+        start: input.checkpoint.start,
+        views: input.views,
+      })
+      .pipe(
+        Effect.catchCause((cause) => {
+          const error = Cause.squash(cause);
+          return Effect.logError(
+            "retaining the turn's checkpoint failed",
+            Cause.pretty(cause),
+          ).pipe(
+            Effect.andThen(
+              input.emit(
+                notice(
+                  input.runId,
+                  isUserFacing(error)
+                    ? `Retaining this turn's checkpoint failed: ${error.message}`
+                    : "Retaining this turn's checkpoint failed; its files remain saved.",
+                ),
+              ),
+            ),
+          );
+        }),
+      );
+    yield* input.emit({ kind: "drive.checkpoint", runId: input.runId, ...input.checkpoint });
+  });
+
 /**
  * Has the agent resolve `outcome`'s conflict, at most `RESOLUTION_ATTEMPTS`
  * times: `resolve` runs it on the files still conflicted and answers whether
@@ -83,7 +126,10 @@ const resolveConflicts = (
  */
 export const finishDriveTurn = (input: {
   readonly runId: RunId;
+  readonly turnId: string;
+  readonly threadId: string;
   readonly drive: RunnerDrive;
+  readonly views: CheckpointViews;
   readonly emit: (item: RunnerItem) => Effect.Effect<void>;
   readonly resolve: (prompt: string) => Effect.Effect<boolean>;
 }) =>
@@ -91,7 +137,7 @@ export const finishDriveTurn = (input: {
     const { runId, drive, emit } = input;
     const finished = yield* drive.finishTurn();
     if (finished.checkpoint !== null) {
-      yield* emit({ kind: "drive.checkpoint", runId, ...finished.checkpoint });
+      yield* recordCheckpoint({ ...input, checkpoint: finished.checkpoint });
     }
     let outcome = yield* resolveConflicts(finished.outcome, drive, (files) =>
       emit(
@@ -119,6 +165,40 @@ export const finishDriveTurn = (input: {
               isUserFacing(error)
                 ? `Saving this turn's files failed: ${error.message}`
                 : "Saving this turn's files failed; the last auto-save is kept.",
+            ),
+          ),
+        ),
+      );
+    }),
+  );
+
+/** Saves a failed or interrupted turn's durable auto-save, without landing the thread branch. */
+export const captureInterruptedDriveTurn = (input: {
+  readonly runId: RunId;
+  readonly turnId: string;
+  readonly threadId: string;
+  readonly drive: RunnerDrive;
+  readonly views: CheckpointViews;
+  readonly emit: (item: RunnerItem) => Effect.Effect<void>;
+}) =>
+  Effect.gen(function* () {
+    const checkpoint = yield* input.drive.captureCheckpoint;
+    if (checkpoint === null) return;
+    yield* recordCheckpoint({ ...input, checkpoint });
+  }).pipe(
+    Effect.catchCause((cause) => {
+      const error = Cause.squash(cause);
+      return Effect.logError(
+        "saving the failed turn's checkpoint failed",
+        Cause.pretty(cause),
+      ).pipe(
+        Effect.andThen(
+          input.emit(
+            notice(
+              input.runId,
+              isUserFacing(error)
+                ? `Saving this turn's checkpoint failed: ${error.message}`
+                : "Saving this turn's checkpoint failed; its last auto-save is kept.",
             ),
           ),
         ),
