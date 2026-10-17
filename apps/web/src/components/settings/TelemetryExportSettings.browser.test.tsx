@@ -42,6 +42,7 @@ vi.mock(import("./SettingsScopeContext"), async (original) => ({
 vi.mock(import("./useScopedSettings"), async (original) => ({
   ...(await original()),
   useScopedSettings: ((select: (settings: typeof state) => unknown) => select(state)) as never,
+  useServerSettingsWritable: () => true, // signalbox: server-scoped sections read config; atoms are stubbed here
 }));
 
 import { TelemetryExportSettings } from "./TelemetryExportSettings";

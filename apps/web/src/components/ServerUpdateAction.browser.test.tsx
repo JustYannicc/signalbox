@@ -213,7 +213,7 @@ describe("ServerUpdateAction", () => {
     [
       { kind: "npm-global", prefix: "/opt/node" },
       "Copy update command",
-      "npm install --global --prefix '/opt/node' signalbox@0.0.45",
+      "npm install --global --prefix '/opt/node' signalbox-cli@0.0.45",
       "Update command copied",
       "then restart signalbox",
     ],
