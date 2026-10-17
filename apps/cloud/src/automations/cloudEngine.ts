@@ -34,8 +34,10 @@ import {
   type AutomationHostRequest,
 } from "./CloudAutomations.ts";
 import { makeCloudBuiltinTools } from "./cloudBuiltinTools.ts";
+import { defaultsForSave } from "./automationDefaults.ts";
 import { driveEvent, makeChangedFiles } from "./driveChanges.ts";
 import * as CloudCompilerModule from "./cloudCompiler.ts";
+import * as CloudModelSteps from "./cloudModelSteps.ts";
 import * as CloudThreads from "./cloudThreads.ts";
 import { callTool, makeCloudTools } from "./cloudTools.ts";
 import { makeGitHubActionsRunner } from "./githubActionsRunner.ts";
@@ -235,6 +237,32 @@ const make = Effect.gen(function* () {
     )(...call.args);
 
   return CloudAutomations.of({
+    save: (input, newThreadModel) =>
+      Effect.gen(function* () {
+        if (input.compiled === undefined) {
+          return yield* new AutomationError({ message: CloudCompilerModule.COMPILE_WHERE });
+        }
+        const compiled = yield* CloudCompilerModule.acceptCompiled(input.compiled);
+        const defaults = yield* defaultsForSave({
+          engine,
+          projectId: input.projectId,
+          ...(input.automationId ? { automationId: input.automationId } : {}),
+          name: compiled.meta.name,
+          graph: compiled.graph,
+          newThreadModel,
+        });
+        return yield* compiler.withStaged(
+          input.source,
+          compiled,
+          engine.save({
+            source: input.source,
+            projectId: input.projectId,
+            defaults,
+            ...(input.automationId ? { automationId: input.automationId } : {}),
+            ...(input.draft === true ? { draft: true } : {}),
+          }),
+        );
+      }).pipe(Effect.tap(() => flush)),
     receiveHook: (request) =>
       annotateOwner.pipe(
         Effect.andThen(
@@ -367,6 +395,7 @@ export const layer = Layer.effect(CloudAutomations, make).pipe(
     Layer.mergeAll(
       CloudThreads.layer,
       CloudCompilerModule.layer,
+      CloudModelSteps.layer,
       PullRequestReadsModule.layer,
       PullRequestMergesModule.layer,
       layerUnhosted,
