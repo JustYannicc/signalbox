@@ -26,11 +26,38 @@ const ONE_ENVIRONMENT_COPY: Readonly<Record<string, string>> = {
     "Signalbox isn't connected. Try again in a moment.",
   "Connect an environment to see usage.": "Connecting to Signalbox…",
   "Connect an environment to see limits.": "Connecting to Signalbox…",
+  // Features the cloud doesn't serve yet.
+  "Update this server to send files with question answers":
+    "Files can't be sent with question answers yet",
+  "Update this environment's Signalbox server to browse pull requests.":
+    "Pull requests aren't available in Signalbox yet.",
+  "Update your Signalbox servers to browse pull requests.":
+    "Pull requests aren't available in Signalbox yet.",
+  // Access: the cloud has no pairing, so there is nothing to pair again.
+  "Pair this client again with preview access to control browser previews.":
+    "You don't have access to control browser previews.",
+  // Connection errors (`@t3tools/client-runtime` connection, shell and authorization state).
+  "The environment credential is invalid.": "Your Signalbox sign-in expired. Sign in again.",
+  "The environment credential does not grant the required access.":
+    "Your Signalbox sign-in doesn't allow this. Sign in again.",
+  "The environment rejected the authentication request.": "Signalbox rejected the sign-in.",
+  "The environment endpoint could not be found.": "Can't reach Signalbox.",
+  "The environment could not authorize the connection.": "Signalbox couldn't sign you in.",
+  "Could not synchronize environment data.": "Couldn't sync your threads.",
+  "Your cloud sign-in changed. Sign in again to authorize the environment.":
+    "Your sign-in changed. Sign in again.",
 };
 
 /** Phrases inside composed text. */
 const ONE_ENVIRONMENT_PHRASES: ReadonlyArray<readonly [string, string]> = [
   ["Reconnect to the environment and", "Reconnect to Signalbox and"],
+  // Provider setup: "Open provider setup to install Codex on this environment."
+  [" on this environment.", "."],
+  // Thread and branch actions the session's scopes don't allow.
+  ["This connection cannot", "You can't"],
+  ["This connection can't", "You can't"],
+  // Relay sign-ins append a DPoP hint (often the device clock), so the sign-in may still be fine.
+  ["The environment credential is invalid.", "Signalbox couldn't verify your sign-in."],
 ];
 
 /** The cloud's environment label, which previews suffix with their PR. */

@@ -1238,7 +1238,7 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
                       exiting={FadeOut.duration(120)}
                     >
                       <ComposerErrorNotice
-                        message={composerError}
+                        message={environmentCopy(composerError)} // signalbox: one-environment copy for restored message errors
                         onDismiss={() => clearThreadComposerError(selectedThreadKey)}
                       />
                     </Animated.View>
@@ -1264,7 +1264,7 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
                       exiting={FadeOut.duration(140)}
                     >
                       <ThreadCreationFailedCard
-                        reason={props.creationState.reason}
+                        reason={environmentCopy(props.creationState.reason)} // signalbox: one-environment copy for failed task errors
                         onEditTask={props.creationState.onEditTask}
                       />
                     </Animated.View>

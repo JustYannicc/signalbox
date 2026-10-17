@@ -4,6 +4,9 @@ import { beforeEach, afterEach, expect, it, vi } from "vite-plus/test";
 const state = vi.hoisted(() => ({
   id: 0,
   saved: false,
+  serverConfig: { environment: { capabilities: {} } } as {
+    environment: { capabilities: { accessManagement?: boolean } };
+  } | null,
   session: {
     _tag: "Success",
     waiting: false,
@@ -23,7 +26,13 @@ vi.mock("@effect/atom-react", () => ({ useAtomValue: () => state.session }));
 vi.mock("@tanstack/react-router", () => ({ useNavigate: () => state.navigate }));
 vi.mock("../state/environments", () => ({
   useEnvironments: () => ({
-    environments: [{ environmentId: `env-${state.id}`, label: "Work laptop" }],
+    environments: [
+      {
+        environmentId: `env-${state.id}`,
+        label: "Work laptop",
+        serverConfig: state.serverConfig,
+      },
+    ],
   }),
 }));
 vi.mock("../state/session", () => ({ environmentSession: { sessionStateAtom: () => null } }));
@@ -38,6 +47,7 @@ let renderer: ReactTestRenderer;
 beforeEach(() => {
   state.id++;
   state.saved = false;
+  state.serverConfig = { environment: { capabilities: {} } };
   state.session = {
     _tag: "Success",
     waiting: false,
@@ -113,4 +123,15 @@ it("persists the secondary dismissal without relying on the toast close callback
     expect.anything(),
   );
   expect(state.close).toHaveBeenCalledWith("notice");
+});
+
+it("waits for the environment to report whether it pairs", async () => {
+  state.serverConfig = null;
+  await render();
+  expect(state.add).not.toHaveBeenCalled();
+});
+it("never asks to pair again where the environment has no pairing", async () => {
+  state.serverConfig = { environment: { capabilities: { accessManagement: false } } };
+  await render();
+  expect(state.add).not.toHaveBeenCalled();
 });

@@ -22,6 +22,7 @@ import {
 import { SettingsScreen } from "./components/SettingsScreen";
 import { SettingsSection } from "./components/SettingsSection";
 import { useSettingsEnvironmentFilter, type SettingsTarget } from "./settings-environment-filter";
+import { environmentCopy } from "../home/useOneEnvironmentCopy"; // signalbox: one-environment copy for the sign-out alert
 
 export function SettingsProviderAccountsRouteScreen() {
   const { selectedTargets } = useSettingsEnvironmentFilter();
@@ -333,7 +334,9 @@ function ProviderAccount({
           onPress={() =>
             Dialog.alert(
               "Sign out?",
-              `Running threads sharing this sign-in on ${environment.label} will stop. Thread history is kept.`,
+              environmentCopy(
+                `Running threads sharing this sign-in on ${environment.label} will stop. Thread history is kept.`,
+              ), // signalbox: one-environment copy for the sign-out alert
               [
                 { text: "Cancel", style: "cancel" },
                 {

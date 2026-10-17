@@ -293,6 +293,7 @@ import { readThreadKind, useThreadKind } from "../state/signalboxThreadKinds"; /
 import { ThreadKindAge, ThreadKindButton } from "./threadKind/ThreadKindIcon"; // signalbox: thread kinds
 import { selectThreadKindMenuItem } from "./threadKind/threadKindMenu"; // signalbox: thread kinds
 import { useShowsEnvironmentUi } from "../state/environmentCapabilities";
+import { environmentCopy } from "../state/oneEnvironmentCopy"; // signalbox: one-environment copy for missing access
 
 const EMPTY_PROVIDER_ENTRIES: ReadonlyMap<string, ProviderInstanceEntry> = new Map();
 // Collapsed shelves share one empty list so a route change alone does not
@@ -761,7 +762,7 @@ function checkThreadOperations(
   toastManager.add({
     type: "error",
     title: "Thread action unavailable",
-    description: "This connection cannot change one or more selected threads.",
+    description: environmentCopy("This connection cannot change one or more selected threads."), // signalbox: one-environment copy for missing access
   });
   return false;
 }
