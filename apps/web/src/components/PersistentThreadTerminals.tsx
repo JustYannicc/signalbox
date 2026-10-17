@@ -20,7 +20,7 @@ import {
 } from "../rightPanelStore";
 import { useProject, useThreadShell } from "../state/entities";
 import { useEnvironmentScope } from "../state/session";
-import { useEnvironmentSupports } from "../state/environmentCapabilities"; // signalbox
+import { useEnvironmentSupports } from "../state/environmentCapabilities"; // signalbox: terminal capability
 import { useKnownTerminalSessions } from "../state/terminalSessions";
 import { selectThreadTerminalUiState, useTerminalUiStateStore } from "../terminalUiStateStore";
 import { useThreadTerminalActions } from "./terminal/useThreadTerminalActions";
@@ -104,7 +104,7 @@ export const PersistentThreadTerminalDrawer = memo(function PersistentThreadTerm
   keybindings,
   onAddTerminalContext,
 }: PersistentThreadTerminalDrawerProps) {
-  const terminalSupported = useEnvironmentSupports(threadRef.environmentId, "terminal"); // signalbox
+  const terminalSupported = useEnvironmentSupports(threadRef.environmentId, "terminal"); // signalbox: terminal capability
   const canOperateTerminal = useEnvironmentScope(threadRef.environmentId, AuthTerminalOperateScope);
   const terminalActions = useThreadTerminalActions(threadRef);
   const serverThread = useThreadShell(threadRef);

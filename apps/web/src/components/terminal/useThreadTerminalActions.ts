@@ -13,7 +13,7 @@ import { randomUUID } from "~/lib/utils";
 import { selectThreadRightPanelState, useRightPanelStore } from "../../rightPanelStore";
 import { useProject, useThreadShell } from "../../state/entities";
 import { readEnvironmentScope } from "../../state/session";
-import { readEnvironmentSupports } from "../../state/environmentCapabilities"; // signalbox
+import { readEnvironmentSupports } from "../../state/environmentCapabilities"; // signalbox: terminal capability
 import { terminalEnvironment } from "../../state/terminal";
 import { useKnownTerminalSessions } from "../../state/terminalSessions";
 import { useAtomCommand } from "../../state/use-atom-command";
@@ -59,7 +59,7 @@ export function useThreadTerminalActions(threadRef: ScopedThreadRef | null) {
 
   const canWrite = () =>
     threadRef !== null &&
-    readEnvironmentSupports(threadRef.environmentId, "terminal") && // signalbox
+    readEnvironmentSupports(threadRef.environmentId, "terminal") && // signalbox: terminal capability
     readEnvironmentScope(threadRef.environmentId, AuthTerminalOperateScope);
 
   // Every client-side id source participates: the server list lags fresh opens,
