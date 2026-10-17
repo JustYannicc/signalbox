@@ -25,6 +25,7 @@ import {
   SquarePenIcon,
   StickyNoteIcon,
   Trash2Icon,
+  WorkflowIcon,
 } from "lucide-react";
 
 import { usePoolViews } from "../../../state/accountPools";
@@ -72,6 +73,8 @@ interface FolderMenuProps {
   owner: FolderOwner;
   folder: Folder;
   commands: FolderCommands;
+  /** Asks an agent to build an automation that lives here; null where it can't live here. */
+  onNewAutomation: (() => void) | null;
 }
 
 export function FolderMenu(props: FolderMenuProps) {
@@ -122,6 +125,12 @@ function FolderMenuItems(props: FolderMenuProps) {
         <FolderPlusIcon />
         New folder inside
       </MenuItem>
+      {props.onNewAutomation ? (
+        <MenuItem onClick={props.onNewAutomation}>
+          <WorkflowIcon />
+          New automation
+        </MenuItem>
+      ) : null}
       <MenuItem onClick={() => openFolderDialog({ kind: "rename", environmentId, folder })}>
         <PencilIcon />
         Rename
@@ -290,6 +299,7 @@ export function OwnerMenu(props: {
   owner: FolderOwner;
   canEdit: boolean;
   onNewThread: (() => void) | null;
+  onNewAutomation: (() => void) | null;
 }) {
   const { environmentId, snapshot, owner } = props;
   const personal = owner.context.id === PERSONAL_CONTEXT_ID;
@@ -307,6 +317,12 @@ export function OwnerMenu(props: {
           <MenuItem onClick={props.onNewThread}>
             <SquarePenIcon />
             New thread
+          </MenuItem>
+        ) : null}
+        {props.onNewAutomation ? (
+          <MenuItem onClick={props.onNewAutomation}>
+            <WorkflowIcon />
+            New automation
           </MenuItem>
         ) : null}
         {editsTopLevel ? (
