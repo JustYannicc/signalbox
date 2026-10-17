@@ -236,13 +236,26 @@ export function loadBaselineScripts(
   commit: string,
   workspaces: readonly WorkspaceManifest[],
 ) {
-  const paths = gitOutput(root, ["ls-tree", "-r", "--name-only", commit])
+  // List directory entries before selecting manifests; vendored trees can exceed Git's output buffer.
+  const parents = gitOutput(root, [
+    "ls-tree",
+    "-d",
+    "--name-only",
+    commit,
+    "--",
+    ...workspaceParents,
+  ])
     .split("\n")
-    .filter(
-      (path) =>
-        /^(?:apps|packages|infra)\/[^/]+\/package\.json$/.test(path) ||
-        /^(?:scripts|oxlint-plugin-t3code)\/package\.json$/.test(path),
-    );
+    .filter(Boolean);
+  const manifests = ["scripts/package.json", "oxlint-plugin-t3code/package.json"];
+  for (const parent of parents) {
+    const children = gitOutput(root, ["ls-tree", "-d", "--name-only", `${commit}:${parent}`]);
+    for (const directory of children.split("\n").filter(Boolean))
+      manifests.push(`${parent}/${directory}/package.json`);
+  }
+  const paths = gitOutput(root, ["ls-tree", "-r", "--name-only", commit, "--", ...manifests])
+    .split("\n")
+    .filter(Boolean);
   const baselineWorkspacePaths = new Set(paths);
   const baselineScripts = new Map<string, string | undefined>();
   for (const { relativePath } of workspaces) {

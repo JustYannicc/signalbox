@@ -1,15 +1,54 @@
 // @effect-diagnostics nodeBuiltinImport:off - tests create isolated package manifests on disk.
 import * as NodeFS from "node:fs";
+import * as NodeChildProcess from "node:child_process";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import { expect, test } from "vite-plus/test";
 import {
   discoverWorkspaces,
+  loadBaselineScripts,
   mapBaselineTscCommands,
   planBaselineTypecheckScripts,
   withTemporaryTypecheckScripts,
 } from "./lib/typecheck-workspaces.ts";
 import { aggregateProcessTreeRss, parseProcessStatus } from "./lib/typecheck-process.ts";
+
+test("baseline discovery excludes large unrelated Git trees", () => {
+  const root = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "benchmark-git-tree-"));
+  const git = (args: string[], input?: string) =>
+    NodeChildProcess.execFileSync("git", args, { cwd: root, encoding: "utf8", input }).trim();
+  try {
+    git(["init", "--quiet"]);
+    NodeFS.mkdirSync(NodePath.join(root, "apps/sample"), { recursive: true });
+    NodeFS.writeFileSync(
+      NodePath.join(root, "apps/sample/package.json"),
+      JSON.stringify({ scripts: { typecheck: "tsc --noEmit" } }),
+    );
+    git(["add", "apps"]);
+    const workspaceTree = git(["write-tree"]);
+    const blob = git(["hash-object", "-w", "--stdin"], "ignored");
+    const largeTree = git(
+      ["mktree"],
+      Array.from(
+        { length: 6000 },
+        (_, index) => `100644 blob ${blob}\t${String(index).padStart(5, "0")}-${"x".repeat(200)}\n`,
+      ).join(""),
+    );
+    const tree = git(
+      ["mktree"],
+      `040000 tree ${largeTree}\t.repos\n${git(["ls-tree", workspaceTree])}\n`,
+    );
+    const commit = git(
+      ["-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", "commit-tree", tree],
+      "fixture\n",
+    );
+    const baseline = loadBaselineScripts(root, commit, discoverWorkspaces(root));
+    expect([...baseline.baselineWorkspacePaths]).toEqual(["apps/sample/package.json"]);
+    expect(baseline.baselineScripts.get("apps/sample/package.json")).toBe("tsc --noEmit");
+  } finally {
+    NodeFS.rmSync(root, { recursive: true, force: true });
+  }
+});
 
 test("discovers only workspace manifests in the supported topology", () => {
   const root = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "typecheck-benchmark-"));
