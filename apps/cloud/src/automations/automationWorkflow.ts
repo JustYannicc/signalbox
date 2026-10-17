@@ -10,7 +10,9 @@ import {
   RUNTIME_MODULE,
 } from "@signalbox/automations/workflow/runtimeSource";
 import { exports, WorkerEntrypoint } from "cloudflare:workers";
+import { log } from "evlog";
 
+import { drainsSettled } from "../observability/evlogWorkers.ts";
 import { userObjectStub, type UserObjectNamespace } from "../user/UserDirectory.ts";
 import { COMPATIBILITY_DATE } from "../../infra/stage.ts";
 import { hostOver } from "./CloudAutomations.ts";
@@ -59,15 +61,19 @@ const hostFor = (props: RunMetadata) =>
   ).AutomationHost({ props });
 
 export const AutomationWorkflow = createDynamicWorkflowEntrypoint<AutomationWorkflowEnv>(
-  ({ env, metadata }) => {
+  ({ env, metadata, ctx }) => {
     if (!isMetadata(metadata)) throw new Error("The run's instance has no automation metadata.");
     if (env.LOADER === undefined) throw new Error("This cloud has no Worker Loader binding.");
     const { userId, automationId, version } = metadata;
     const workerId = workerIdFor(metadata);
     const worker = env.LOADER.get(workerId, async () => {
-      // Only a cold id loads its code: one line per version per isolate, ids only (#284).
-      // @effect-diagnostics-next-line globalConsole:off - the dispatcher runs outside Effect.
-      console.log(JSON.stringify({ message: "automation worker loaded", workerId, version }));
+      // Only a cold id loads its code: one event per version per isolate, ids only (#284).
+      log.info({
+        action: "automation.worker_loaded",
+        person: { id: userId },
+        automation: { id: automationId, version, workerId },
+      });
+      ctx.waitUntil(drainsSettled());
       return {
         compatibilityDate: COMPATIBILITY_DATE,
         mainModule: RUNTIME_MAIN,
