@@ -8,6 +8,7 @@ import * as Context from "effect/Context";
 import type * as Effect from "effect/Effect";
 
 import type { DriveRefEvent } from "../drive/DriveEvents.ts";
+import type { HookAnswer, HookRequest } from "./webhookRequest.ts";
 
 /** One `AutomationRunHost` method and its arguments, as a run's instance calls it. */
 export type AutomationHostRequest = {
@@ -53,6 +54,8 @@ export const hostOver = (
  * work it started here is done.
  */
 export interface CloudAutomationsShape {
+  /** Verifies and durably accepts a request before the Worker acknowledges it. */
+  readonly receiveHook: (request: HookRequest) => Effect.Effect<HookAnswer, AutomationError>;
   /**
    * Domain events of one of the user's threads with their sequence, in order
    * and at least once. Events at or before a sequence already taken from that

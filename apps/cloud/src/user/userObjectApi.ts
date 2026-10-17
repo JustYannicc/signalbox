@@ -84,6 +84,8 @@ export const makeUserObjectApi = (
         : f(automations.value),
     );
   return {
+    receiveHook: (request) =>
+      run(withAutomations((automations) => automations.receiveHook(request))),
     recordSignIn: (profile) => use((store) => store.recordSignIn(profile)),
     profile: () => use((store) => store.profile),
     createSession: (input) => use((store) => store.createSession(input)),

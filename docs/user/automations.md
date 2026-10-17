@@ -29,9 +29,17 @@ Automations in your cloud folders run in Signalbox Cloud, so they fire on schedu
 and pull request news with every app closed, and their questions reach your phone. Ask an agent in
 a cloud thread to write one. When an agent there schedules recurring work for itself ("every 5
 minutes, post the time"), that's an automation in the thread's folder too: pause or delete it like
-any other, or ask the agent to stop it. Some steps don't run in the cloud yet: webhooks and callback links
-(`w.hook`), calls to connected services, `w.run` functions, and model steps (`w.llm`, `w.judge`,
-`w.extract`). Use a self-hosted server for automations that need them.
+any other, or ask the agent to stop it. Webhooks and callback links work with every app closed.
+Model steps use the model saved with the automation and the folder's pool.
+
+For GitHub events, connect GitHub in Settings and ask the agent to add a repository trigger.
+Signalbox installs the webhook when your account has permission to manage that repository's hooks.
+Published releases on upstream repositories can be checked every five minutes when hook access is unavailable.
+An agent can check the connection status and explain missing permissions. Pull requests already linked to
+threads keep their existing watcher.
+
+Calls to connected services and local `w.run` functions still need a self-hosted server.
+Steps on GitHub Actions are available as described below.
 
 ### Steps on GitHub Actions
 

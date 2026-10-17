@@ -3,7 +3,6 @@ import { ExecutorSettingsStore } from "@signalbox/automations/executorConnection
 import { explained } from "@signalbox/automations/runLog";
 import {
   AutomationFunctions,
-  AutomationIngress,
   AutomationRunLogSink,
   AutomationThreads,
 } from "@signalbox/automations/host";
@@ -20,6 +19,7 @@ import * as FetchHttpClient from "effect/http/FetchHttpClient";
 
 import * as PullRequestMergesModule from "../github/PullRequestMerges.ts";
 import * as PullRequestReadsModule from "../github/PullRequestReads.ts";
+import * as GitHubWebhooksModule from "../github/GitHubWebhooks.ts";
 import { PushNotifier } from "../push/PushNotifier.ts";
 import * as CloudThreadService from "../thread/CloudThreadService.ts";
 import { projectOfDrive } from "../user/contextProjects.ts";
@@ -38,6 +38,8 @@ import * as CloudCompilerModule from "./cloudCompiler.ts";
 import * as CloudThreads from "./cloudThreads.ts";
 import { callTool, makeCloudTools } from "./cloudTools.ts";
 import { makeGitHubActionsRunner } from "./githubActionsRunner.ts";
+import * as CloudIngress from "./cloudIngress.ts";
+import * as HookStoreModule from "./hookStore.ts";
 
 /**
  * The user's automations on their Durable Object (#434). Each run is a
@@ -68,19 +70,6 @@ const layerUnhosted = Layer.mergeAll(
         ),
       remove: () => Effect.void,
       prune: () => Effect.void,
-    }),
-  ),
-  Layer.succeed(
-    AutomationIngress,
-    AutomationIngress.of({
-      make: () =>
-        Effect.succeed({
-          hookBaseUrl: Effect.succeed(null),
-          createCallback: () => unavailable("Callback links (w.hook)"),
-          runEnded: () => Effect.void,
-          forget: () => Effect.void,
-          setSecret: () => unavailable("Webhooks"),
-        }),
     }),
   ),
   Layer.succeed(
@@ -123,6 +112,9 @@ const make = Effect.gen(function* () {
   const push = yield* PushNotifier;
   const sql = yield* SqlClient.SqlClient;
   const alarm = yield* AutomationAlarm;
+  const hooks = yield* CloudIngress.CloudHooks;
+  const inbox = yield* HookStoreModule.HookStore;
+  const githubHooks = yield* GitHubWebhooksModule.GitHubWebhooks;
   const owner = CloudThreads.ownerActor.pipe(
     Effect.provideService(UserStore.UserStore, yield* UserStore.UserStore),
     Effect.provideService(UserDrives.UserDrives, yield* UserDrives.UserDrives),
@@ -137,7 +129,7 @@ const make = Effect.gen(function* () {
   );
   yield* engine.registerPullRequestReads(yield* PullRequestReadsModule.PullRequestReads);
   yield* engine.registerExternalRunner("github-actions", yield* makeGitHubActionsRunner);
-  const tools = makeCloudTools({ engine, compiler, threads, folders });
+  const tools = makeCloudTools({ engine, compiler, threads, folders, github: githubHooks });
 
   // Notices queue up while the engine works and go out before the request ends.
   const notices = yield* Queue.unbounded<AutomationNotice>();
@@ -162,13 +154,19 @@ const make = Effect.gen(function* () {
     runs.nextCronAt,
     runs.nextRedeliveryAt,
     engine.nextExternalPollAt,
+    inbox.nextAt,
+    githubHooks.nextAt,
   ]).pipe(
     Effect.map((times) => {
       const due = times.filter((at) => at !== null);
       return due.length === 0 ? null : Math.min(...due);
     }),
   );
-  const flush = drainAndPush.pipe(Effect.andThen(nextAlarmAt), Effect.flatMap(alarm.arm));
+  const flush = drainAndPush.pipe(
+    Effect.andThen(githubHooks.reconcile(engine)),
+    Effect.andThen(nextAlarmAt),
+    Effect.flatMap(alarm.arm),
+  );
 
   /** Who the spans are about: the owner, never anything they wrote. The id never changes, so it's read once. */
   let ownerId: string | undefined;
@@ -225,6 +223,19 @@ const make = Effect.gen(function* () {
     )(...call.args);
 
   return CloudAutomations.of({
+    receiveHook: (request) =>
+      annotateOwner.pipe(
+        Effect.andThen(
+          request.token === "" ? githubHooks.receive(request) : hooks.receive(request),
+        ),
+        Effect.tap(() => nextAlarmAt.pipe(Effect.flatMap(alarm.arm))),
+        Effect.withSpan("CloudAutomations.receiveHook", {
+          attributes: {
+            "webhook.id": request.hookId,
+            "webhook.body_bytes": request.body.byteLength,
+          },
+        }),
+      ),
     threadEvents: ({ threadId, events }) =>
       Effect.gen(function* () {
         const { fresh, take } = yield* freshSince("thread", threadId, events);
@@ -317,6 +328,14 @@ const make = Effect.gen(function* () {
       Effect.withSpan("CloudAutomations.start"),
     ),
     wake: annotateOwner.pipe(
+      Effect.andThen(githubHooks.sync),
+      Effect.andThen(
+        inbox.drain((row) =>
+          row.kind === "github"
+            ? githubHooks.deliver(engine, row.target, row.payload, row.id)
+            : hooks.deliver(row.kind, row.payload, row.id),
+        ),
+      ),
       Effect.andThen(engine.tick),
       Effect.andThen(runs.redeliver),
       Effect.andThen(flush),
@@ -330,13 +349,18 @@ const make = Effect.gen(function* () {
 export const layer = Layer.effect(CloudAutomations, make).pipe(
   Layer.provideMerge(HostedEngine.layer),
   Layer.provideMerge(
+    GitHubWebhooksModule.layer.pipe(Layer.provideMerge(PullRequestMergesModule.layer)),
+  ),
+  Layer.provideMerge(
     Layer.mergeAll(
       CloudThreads.layer,
       CloudCompilerModule.layer,
       PullRequestReadsModule.layer,
       PullRequestMergesModule.layer,
       layerUnhosted,
+      CloudIngress.layer,
     ).pipe(Layer.provideMerge(CloudThreads.layerEventFeed)),
   ),
+  Layer.provideMerge(HookStoreModule.layer),
   Layer.provideMerge(FetchHttpClient.layer),
 );

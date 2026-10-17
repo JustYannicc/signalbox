@@ -16,6 +16,7 @@ import * as Stream from "effect/Stream";
 
 import { CloudAutomations } from "./CloudAutomations.ts";
 import { acceptCompiled, CloudCompiler, COMPILE_WHERE } from "./cloudCompiler.ts";
+import { GitHubWebhooks } from "../github/GitHubWebhooks.ts";
 
 /**
  * The automation RPCs a client calls on the user's object: the same contract
@@ -66,6 +67,7 @@ export const makeAutomationHandlers = Effect.fn("makeAutomationHandlers")(functi
   const automations = yield* CloudAutomations;
   const threads = yield* AutomationThreads;
   const compiler = yield* CloudCompiler;
+  const github = yield* GitHubWebhooks;
   const saveDefaults = options.newThreadModel.pipe(
     Effect.flatMap((modelSelection) =>
       modelSelection === null
@@ -99,12 +101,14 @@ export const makeAutomationHandlers = Effect.fn("makeAutomationHandlers")(functi
       ),
     [METHODS.automationsDelete]: (input: Payload<typeof METHODS.automationsDelete>) =>
       flushed(engine.remove(input.automationId)).pipe(Effect.as({})),
-    [METHODS.automationsRotateWebhook]: (
-      _input: Payload<typeof METHODS.automationsRotateWebhook>,
-    ) => notYet("Webhooks"),
+    [METHODS.automationsRotateWebhook]: (input: Payload<typeof METHODS.automationsRotateWebhook>) =>
+      flushed(engine.rotateWebhook(input.automationId)),
     [METHODS.automationsSetWebhookSecret]: (
-      _input: Payload<typeof METHODS.automationsSetWebhookSecret>,
-    ) => notYet("Webhooks"),
+      input: Payload<typeof METHODS.automationsSetWebhookSecret>,
+    ) => flushed(engine.setWebhookSecret(input)),
+    [METHODS.automationsGitHubSubscriptions]: (
+      _input: Payload<typeof METHODS.automationsGitHubSubscriptions>,
+    ) => github.status.pipe(Effect.map((subscriptions) => ({ subscriptions }))),
     [METHODS.automationsRunNow]: (input: Payload<typeof METHODS.automationsRunNow>) =>
       flushed(
         Effect.gen(function* () {

@@ -69,6 +69,10 @@ export const makeFakeGitHub = (options: {
     remarks?: Array<FakeRemark>;
     /** Changed paths, as GitHub lists the pull request's files. */
     files?: Array<string>;
+    /** Labels currently on the pull request. */
+    labels?: Array<string>;
+    /** Latest reviews, as GitHub's `latestReviews` connection returns them. */
+    reviews?: Array<FakeReview>;
     /** Review threads nobody resolved. */
     openThreads?: number;
     /** The head commit when it merged, as GitHub keeps it after the branch moves or goes. */
@@ -173,7 +177,36 @@ export const makeFakeGitHub = (options: {
               headRefOid: head(pull.head) ?? "0".repeat(40),
               headRefName: pull.head,
               baseRefName: pull.base,
+              baseRefOid: head(pull.base),
               headRepository: { nameWithOwner: pull.headRepository ?? options.repository },
+              baseRepository: { nameWithOwner: options.repository },
+              labels: (() => {
+                const labels = pull.labels ?? [];
+                return {
+                  nodes: labels.slice(0, 100).map((name) => ({ name })),
+                  pageInfo: { hasNextPage: labels.length > 100 },
+                };
+              })(),
+              latestReviews: (() => {
+                const reviews =
+                  pull.reviews ??
+                  (pull.remarks ?? [])
+                    .filter((remark) => remark.kind === "review")
+                    .map((remark) => ({
+                      ...remark,
+                      state: remark.state ?? ("COMMENTED" as const),
+                    }));
+                return {
+                  nodes: reviews.slice(0, 20).map((review) => ({
+                    state: review.state ?? "COMMENTED",
+                    submittedAt: review.at,
+                    body: review.body,
+                    url: `${pullUrl(pull.number)}#${review.id}`,
+                    author: { login: review.author },
+                  })),
+                  pageInfo: { hasNextPage: reviews.length > 20 },
+                };
+              })(),
               reviewThreads: {
                 nodes: Array.from({ length: pull.openThreads ?? 0 }, () => ({ isResolved: false })),
                 pageInfo: { hasNextPage: false },
@@ -536,5 +569,13 @@ export interface FakeRemark {
   readonly body: string;
   readonly at: string;
   readonly path?: string;
-  readonly state?: "APPROVED" | "CHANGES_REQUESTED" | "COMMENTED";
+  readonly state?: "APPROVED" | "CHANGES_REQUESTED" | "COMMENTED" | "DISMISSED";
+}
+
+export interface FakeReview {
+  readonly id: string;
+  readonly author: string;
+  readonly body: string;
+  readonly at: string;
+  readonly state: "APPROVED" | "CHANGES_REQUESTED" | "COMMENTED" | "DISMISSED";
 }

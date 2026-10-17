@@ -294,14 +294,11 @@ export const makeEventTriggers = (deps: EventTriggerDependencies) =>
           threadId,
           ...fields,
         };
-        yield* enqueue({
-          type: "ready",
-          envelope,
-          subs,
-          waiting,
-          context: { fromAutomation, depth: 0 },
-        });
-      }).pipe(logged("publishing"));
+        // External senders keep a durable receipt until this succeeds. A failure
+        // must reach them; dedupe lets a retry finish the remaining automations.
+        yield* deliver(envelope, subs, { fromAutomation, depth: 0 }, true);
+        yield* deps.runWaits.deliver(envelope, waiting);
+      });
 
     const passes = (sub: Subscription, envelope: Envelope, context: DeliveryContext) =>
       Effect.gen(function* () {
@@ -379,17 +376,19 @@ export const makeEventTriggers = (deps: EventTriggerDependencies) =>
       envelope: Envelope,
       subs: ReadonlyArray<Subscription>,
       context: DeliveryContext,
+      strict = false,
     ) =>
       Effect.gen(function* () {
         const byAutomation = Map.groupBy(subs, (sub) => sub.automation.automation_id);
         for (const [automationId, group] of byAutomation) {
           if (automationId === context.sourceAutomationId || paused.has(automationId)) continue;
-          yield* Effect.gen(function* () {
+          const send = Effect.gen(function* () {
             for (const sub of group) {
               if (!(yield* passes(sub, envelope, context))) continue;
               return yield* start(sub.automation, sub.limit, envelope, context);
             }
-          }).pipe(logged(`trigger for ${automationId}`));
+          });
+          yield* strict ? send : send.pipe(logged(`trigger for ${automationId}`));
         }
       });
 
