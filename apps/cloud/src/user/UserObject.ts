@@ -247,7 +247,13 @@ const makeRuntime = (storage: DurableObjectStorage, env: UserObjectEnv) => {
               KindClassifier.layerFromEnv(env).pipe(Layer.provide(FetchHttpClient.layer)),
               layerAlarm(storage),
               layerLoginAlarm(storage),
-              PushNotifier.layerWithDevices(decodeEnvironmentId(env.ENVIRONMENT_ID)).pipe(
+              Layer.unwrap(
+                Effect.map(UserStore.UserStore, (store) =>
+                  PushNotifier.layerWithDevices(decodeEnvironmentId(env.ENVIRONMENT_ID), (sid) =>
+                    Effect.map(store.findSession(sid), (session) => session !== null),
+                  ),
+                ),
+              ).pipe(
                 Layer.provide(
                   Layer.mergeAll(
                     FetchHttpClient.layer,
