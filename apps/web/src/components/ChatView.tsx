@@ -2675,6 +2675,7 @@ export default function ChatView(props: ChatViewProps) {
   const activeThreadModelInstanceId = activeThread?.modelSelection.instanceId;
   const { selectedProviderEntry, requestedDriverKind } = resolveComposerProviderSelection({
     entries: providerInstanceEntries,
+    providerInstances: settings.providerInstances,
     candidateInstanceIds: [
       selectedProviderByThreadId,
       activeRuntime?.providerInstanceId,
