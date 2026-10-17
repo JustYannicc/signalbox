@@ -165,10 +165,6 @@ const receivedIds = (received: ReadonlyArray<Delivery>) =>
 const receivedSequences = (received: ReadonlyArray<Delivery>) =>
   received.flatMap((delivery) => delivery.events.map(({ sequence }) => sequence));
 
-/** `count` sequences from `from`. */
-const sequencesFrom = (from: number, count: number) =>
-  Array.from({ length: count }, (_, index) => from + index);
-
 describe("thread event outbox", () => {
   it.effect("delivers committed events in order, and nothing again once acknowledged", () => {
     const user = makeOwner();
@@ -179,8 +175,10 @@ describe("thread event outbox", () => {
         expect(yield* engine.hasPendingEvents).toBe(true);
         expect(yield* deliver).toBe(true);
         expect(receivedIds(user.received)).toEqual(yield* storedIds(store));
-        const head = (yield* Effect.orDie(store.events(0))).length;
-        expect(receivedSequences(user.received)).toEqual(sequencesFrom(1, head));
+        const head = yield* store.head;
+        expect(receivedSequences(user.received)).toEqual(
+          (yield* store.events(0)).map((stored) => stored.sequence),
+        );
         expect(user.received.every((delivery) => delivery.threadId === threadId)).toBe(true);
 
         // Acknowledged: nothing is pending, and delivering again sends nothing.
@@ -225,7 +223,7 @@ describe("thread event outbox", () => {
           yield* launch(engine);
           yield* runToIdle(engine);
           yield* deliver;
-          return (yield* Effect.orDie(store.events(0))).length;
+          return yield* store.head;
         }),
       );
       const calls = user.received.length;
@@ -254,7 +252,7 @@ describe("thread event outbox", () => {
           yield* Effect.orDie(sql`DROP TABLE event_outbox`);
           yield* Effect.orDie(sql`DROP TABLE thread_monitors`);
           yield* Effect.orDie(sql`DELETE FROM effect_sql_migrations WHERE name = 'automations'`);
-          return (yield* Effect.orDie(store.events(0))).length;
+          return yield* store.head;
         }),
       );
       yield* withObject(filename, user.users, ({ engine, store, deliver }) =>

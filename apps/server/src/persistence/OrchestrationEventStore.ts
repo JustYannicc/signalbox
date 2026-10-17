@@ -24,6 +24,8 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
+import { retainCurrentTurnItem } from "./CurrentTurnItemHistory.ts";
+
 import { replayAndBufferProjectedLiveEvents } from "../orchestration-v2/LiveStreamBudget.ts";
 
 import {
@@ -448,12 +450,8 @@ const makeEventStore = Effect.gen(function* () {
       (event) =>
         Effect.gen(function* () {
           const encoded = yield* encodeV2EventJson(event);
-          const subagent =
-            encoded.type === "subagent.updated"
-              ? encoded.payload
-              : encoded.type === "turn-item.updated" && encoded.payload.type === "subagent"
-                ? encoded.payload
-                : undefined;
+          // signalbox: a current turn item carries its own prompt; its older row is replaced.
+          const subagent = encoded.type === "subagent.updated" ? encoded.payload : undefined;
           const promptKey = subagent === undefined ? undefined : `${event.type}:${subagent.id}`;
           const hint = promptKey === undefined ? undefined : promptHints.get(promptKey);
           const payloadJson = yield* encodeJson(encoded.payload);
@@ -529,14 +527,19 @@ const makeEventStore = Effect.gen(function* () {
               if (oldest !== undefined) promptHints.delete(oldest);
             }
           }
-          return yield* decodeV2StoredEvent({
+          const stored = yield* decodeV2StoredEvent({
             sequence: rows[0]?.sequence,
             commandId: input.commandId ?? null,
             event,
           });
+          return yield* retainCurrentTurnItem(stored).pipe(
+            Effect.provideService(SqlClient.SqlClient, sql),
+          );
         }),
       { concurrency: 1 },
     ).pipe(
+      // signalbox: replacing history and allocating its new cursor commit together.
+      sql.withTransaction,
       Effect.mapError(
         toPersistenceSqlOrDecodeError(
           "OrchestrationEventStore.appendAgentEvents:insert",

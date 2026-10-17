@@ -227,7 +227,7 @@ export const layer: Layer.Layer<
 
     const supersedableThreadEventTypes = new Set(SUPERSEDABLE_THREAD_EVENT_TYPES);
     const readStateThreadEventTypes = new Set(READ_STATE_THREAD_EVENT_TYPES);
-    // Keep subagent.updated and turn-item.updated rows: slimmed payloads reference their prompts.
+    // Keep subagent prompt anchors and the canonical turn-item rows.
     // Bound each reader request and writer delete, including when the reader
     // worker is unavailable and discovery falls back to the writer.
     const COMPACTION_PAGE_SIZE = 50;
@@ -241,7 +241,7 @@ export const layer: Layer.Layer<
      * present. Only the events in between are deleted.
      * Page every event, including non-candidates: filtering before LIMIT could
      * still scan the entire history when superseded events are sparse.
-     * turn-item.updated stays intact because replay assigns positions on first write.
+     * CurrentTurnItemHistory already retains one turn-item row with its stable ordinal.
      */
     const compactEventStore = Effect.gen(function* () {
       let sliceStarted = yield* Clock.monotonicTimeNanos;

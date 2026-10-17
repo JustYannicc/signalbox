@@ -93,7 +93,7 @@ layer("OrchestrationEventStore", (it) => {
         const durable = yield* store
           .readAgentEvents({ threadId, afterSequence })
           .pipe(Stream.runCollect);
-        assert.lengthOf(durable, 2);
+        assert.lengthOf(durable, 1);
         for (const stored of durable) {
           assert.equal(stored.event.type, "turn-item.updated");
           if (stored.event.type !== "turn-item.updated") return;
@@ -105,7 +105,7 @@ layer("OrchestrationEventStore", (it) => {
     ),
   );
 
-  it.effect("stores an unchanged subagent prompt once and replays it on every update", () =>
+  it.effect("stores subagent prompt anchors and a self-contained current turn item", () =>
     Effect.gen(function* () {
       const store = yield* OrchestrationEventStore.OrchestrationEventStore;
       const sql = yield* SqlClient.SqlClient;
@@ -195,14 +195,16 @@ layer("OrchestrationEventStore", (it) => {
       `;
       assert.deepEqual(
         stored.map((row) => row.payload_json.includes(prompt)),
-        [true, true, false, false, false, false, false, false],
+        [true, false, false, false, false],
       );
       const replayed = yield* store
         .readAgentEvents({ threadId, afterSequence })
         .pipe(Stream.runCollect);
       assert.deepEqual(
         replayed.map((entry) => entry.event),
-        events,
+        events.filter(
+          (event, index) => event.type === "subagent.updated" || index === events.length - 1,
+        ),
       );
       const stats = yield* store.getAgentReplayStats({
         threadId,
@@ -210,12 +212,12 @@ layer("OrchestrationEventStore", (it) => {
         throughSequence: yield* store.latestApplicationSequence,
         maxEvents: events.length,
       });
-      assert.isAbove(stats.rawPayloadBytes, prompt.length * 6);
+      assert.isAbove(stats.rawPayloadBytes, prompt.length * 3);
       const applicationStats = yield* store.getReplayStats({
         afterSequence,
         throughSequence: yield* store.latestApplicationSequence,
       });
-      assert.isAbove(applicationStats.rawPayloadBytes, prompt.length * 6);
+      assert.isAbove(applicationStats.rawPayloadBytes, prompt.length * 3);
     }),
   );
 

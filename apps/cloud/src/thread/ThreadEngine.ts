@@ -273,19 +273,20 @@ const make = Effect.gen(function* () {
           store.initialize,
           Effect.all({
             events: store.events(0),
+            head: store.head,
             owner: store.owner,
             monitors: store.monitors,
             statusNote: store.statusNote,
           }),
         ),
       )
-    : { events: [], owner: null, monitors: [], statusNote: null };
+    : { events: [], head: 0, owner: null, monitors: [], statusNote: null };
   const initialProjection = applyEvents(
     null,
     initial.events.map((stored) => stored.event),
   );
   const state = yield* Ref.make<State>({
-    head: initial.events.at(-1)?.sequence ?? 0,
+    head: initial.head,
     thread:
       initial.owner === null || initialProjection === null
         ? null
@@ -349,7 +350,7 @@ const make = Effect.gen(function* () {
     if (events.length > 0) {
       yield* PubSub.publish(
         published,
-        events.map((event, index) => ({ sequence: current.head + index + 1, event })),
+        events.map((event, index) => ({ sequence: head - events.length + index + 1, event })),
       );
     }
     return head;
@@ -716,7 +717,7 @@ const make = Effect.gen(function* () {
       const { thread } = yield* Ref.get(state);
       if (thread === null) return null;
       const delivered = yield* Effect.orDie(store.eventsDelivered);
-      const events = yield* Effect.orDie(store.events(delivered, limit));
+      const events = yield* Effect.orDie(store.eventsForDelivery(delivered, limit));
       return events.length === 0
         ? null
         : { ownerUserId: thread.owner.userId, threadId: thread.projection.thread.id, events };
