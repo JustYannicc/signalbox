@@ -5,15 +5,13 @@ import {
   type ModelSelection,
   type ProjectId,
 } from "@t3tools/contracts";
-import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 
 import { resolveRuntimeMode } from "../mcp/OrchestratorMcpService.ts";
 import type { Caller, CallerLimits } from "../mcp/threadAccess.ts";
 import * as ProjectService from "../project/ProjectService.ts";
-import * as ServerSettings from "../serverSettings.ts";
-import { getAutoBootstrapThreadModelSelection } from "../serverRuntimeStartup.ts";
+import * as ThreadLaunch from "../orchestration-v2/ThreadLaunchService.ts";
 import type { AuthorizeAutomation } from "@signalbox/automations/catalog";
 import { automationError, fail } from "@signalbox/automations/errors";
 import * as WorkflowEngine from "@signalbox/automations/WorkflowEngine";
@@ -48,15 +46,14 @@ const requireProject = (projectId: ProjectId) =>
 const defaultModelSelection = Effect.fn("workflows.defaultModelSelection")(function* (
   project: Effect.Success<ReturnType<typeof requireProject>>,
 ) {
-  const settings = yield* ServerSettings.ServerSettingsService.use(
-    (service) => service.getSettings,
-  ).pipe(
-    Effect.mapError((cause) => automationError("Couldn't read the server settings.", { cause })),
-  );
-  return (
-    resolveProjectSettings(settings, project.id, project).settings.defaultModelSelection ??
-    getAutoBootstrapThreadModelSelection()
-  );
+  const launches = yield* ThreadLaunch.ThreadLaunchService;
+  const selection = yield* launches
+    .initialModelSelection(project.id)
+    .pipe(
+      Effect.mapError((cause) => automationError("Couldn't read the default model.", { cause })),
+    );
+  if (selection === null) return yield* fail("Choose a default model for this folder or person.");
+  return selection;
 });
 
 /**

@@ -43,11 +43,11 @@ describe("harnessModels", () => {
       [...claude, ...served("openai", ["gpt-6.1-sol", 1_790_640_000])],
       BUNDLED_MODEL_CATALOGS,
     );
-    // The manifest's order, its names, and its chat default.
+    // Catalog order stays intact; only economical models become defaults.
     expect(models.map((model) => [model.slug, model.name, model.isDefault ?? false])).toEqual([
       ["claude-opus-5-5", "Claude Opus 5.5", false],
-      ["claude-sonnet-5-5", "Claude Sonnet 5.5", false],
-      ["claude-fable-5-1", "Claude Fable 5.1", true],
+      ["claude-sonnet-5-5", "Claude Sonnet 5.5", true],
+      ["claude-fable-5-1", "Claude Fable 5.1", false],
     ]);
     // Codex gets what its accounts serve, which the hardcoded list missed.
     expect(
@@ -126,7 +126,6 @@ describe("harnessModels", () => {
         slug: "new-research-model",
         name: "New research model",
         isCustom: false,
-        isDefault: true,
         capabilities: {
           optionDescriptors: [
             {
@@ -181,7 +180,7 @@ describe("harnessModels", () => {
       BUNDLED_MODEL_CATALOGS,
     );
     expect(models.map((model) => model.slug)).toEqual(["new-research-model"]);
-    expect(models[0]?.isDefault).toBe(true);
+    expect(models[0]?.isDefault).toBeUndefined();
     expect(harnessModels("claude", [], BUNDLED_MODEL_CATALOGS)).toEqual([]);
   });
 });

@@ -877,6 +877,78 @@ describe("OrchestratorMcpService provider resolution", () => {
     turnItems: [],
   } as unknown as OrchestrationV2ThreadProjection;
 
+  it.effect("uses project initial selection for top-level threads without a target", () =>
+    Effect.gen(function* () {
+      const defaultSelection = {
+        instanceId: codexInstanceId,
+        model: "gpt-5.4-mini",
+      };
+      const dispatched = yield* Ref.make<ReadonlyArray<unknown>>([]);
+      const codex = providerSnapshot({
+        instanceId: codexInstanceId,
+        driver: ProviderDriverKind.make("codex"),
+        model: "gpt-5.4",
+      });
+      const layerDependencies = Layer.mergeAll(
+        NodeServices.layer,
+        Layer.mock(ThreadManagementService.ThreadManagementService)({
+          assertProviderInstanceEnabled: () => Effect.void,
+          getThreadRecords: () => Effect.succeed(parentProjection([])),
+          dispatch: (command) =>
+            Ref.update(dispatched, (commands) => [...commands, command]).pipe(
+              Effect.as({ sequence: 1, storedEvents: [] } as never),
+            ),
+        }),
+        ServerSettings.layerTest(),
+        providerRegistryLayer([
+          {
+            ...codex,
+            models: [
+              ...codex.models,
+              { slug: "gpt-5.4-mini", name: "Mini", isCustom: false, capabilities: null },
+            ],
+          },
+        ]),
+        adapterRegistryLayer([codexInstanceId]),
+        Layer.mock(ProjectService.ProjectService)({}),
+        Layer.mock(SecretRequests.SecretRequests)({}),
+        Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
+      );
+      const serviceLayer = OrchestratorMcpService.layer.pipe(
+        Layer.provide(
+          Layer.mock(ThreadLaunchService.ThreadLaunchService)({
+            initialModelSelection: () => Effect.succeed(defaultSelection),
+          }),
+        ),
+        Layer.provide(Layer.mock(GitVcsDriver.GitVcsDriver)({})),
+      );
+
+      const result = yield* Effect.gen(function* () {
+        const service = yield* OrchestratorMcpService.OrchestratorMcpService;
+        yield* service.createThreads(scope, {
+          threads: [{ prompt: "Use the default." }],
+          clientRequestId: "create-thread-default",
+        });
+        yield* service.createThreads(scope, {
+          threads: [{ prompt: "Use my model.", target: { model: "gpt-5.4" } }],
+          clientRequestId: "create-thread-explicit-model",
+        });
+        return (yield* Ref.get(dispatched)).filter(
+          (command): command is { type: string; modelSelection: unknown } =>
+            typeof command === "object" &&
+            command !== null &&
+            "type" in command &&
+            (command as { type: string }).type === "thread.create",
+        );
+      }).pipe(Effect.provide(serviceLayer.pipe(Layer.provide(layerDependencies))));
+
+      assert.deepEqual(
+        result.map((command) => command.modelSelection),
+        [defaultSelection, { instanceId: codexInstanceId, model: "gpt-5.4" }],
+      );
+    }),
+  );
+
   it.effect(
     "advertises orchestration capability from registered adapters rather than a driver allowlist",
     () =>

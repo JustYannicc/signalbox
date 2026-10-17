@@ -4,6 +4,7 @@ import { DESKTOP_PASTE_AS_TEXT_EVENT } from "../../lib/desktopPasteAsText";
 import { runtimeModeConfig, runtimeModeOptions as runtimeModes } from "./runtimeModeConfig";
 import { isLocalEnvironmentDisabled } from "../../localEnvironment";
 import { usePrimaryEnvironmentId } from "../../state/environments";
+import { useProjectPoolModelSelection } from "../../state/projectPool"; // signalbox
 import { useRightPanelStore } from "~/rightPanelStore";
 import { AttachmentFilePreview } from "../files/AttachmentFilePreview";
 import { Dialog, DialogPopup, DialogTitle } from "../ui/dialog";
@@ -46,6 +47,7 @@ import {
   AuthOrchestrationOperateScope,
   ProviderDriverKind,
   ProviderInstanceId,
+  resolveProjectProviderInstanceEnabled,
   PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
   PROVIDER_SEND_TURN_MAX_IMAGE_BYTES,
   PROVIDER_SEND_TURN_MAX_INPUT_CHARS,
@@ -63,6 +65,7 @@ import {
 import { serializeComposerFileLink } from "@t3tools/shared/composerTrigger";
 import { folderDropTarget, resolveDroppedFolderPath } from "./folderDrop";
 import { createModelSelection, normalizeModelSlug } from "@t3tools/shared/model";
+import { resolveInitialModelSelection } from "@t3tools/shared/defaultModelSelection";
 import { USAGE_LIMITS_COMMAND } from "@t3tools/shared/usageLimits";
 import {
   memo,
@@ -1568,6 +1571,7 @@ export interface ChatComposerProps {
   providerStatuses: ServerProvider[];
   providerCatalogKnown: boolean;
   activeProjectDefaultModelSelection: ModelSelection | null | undefined;
+  activePersonDefaultModelSelection: ModelSelection | null | undefined;
   activeThreadModelSelection: ModelSelection | null | undefined;
   reportedModelSelection?: ModelSelection | null;
   activeProjectId: ProjectId | null;
@@ -1928,6 +1932,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     providerStatuses,
     providerCatalogKnown,
     activeProjectDefaultModelSelection,
+    activePersonDefaultModelSelection,
     activeThreadModelSelection,
     reportedModelSelection,
     activeProjectId,
@@ -2270,29 +2275,79 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     uploadsByImageId,
   ]);
 
-  const {
-    providerInstanceEntries,
-    selectedProviderEntry,
-    requestedDriverKind,
-    lockedContinuationGroupKey,
-    unavailableProviderInstanceId,
-    poolNeed: poolNeedNow, // signalbox: pools
-  } = useComposerProviderSelection({
+  const isNewThreadDraft = routeKind === "draft";
+  const useFreshInitialModel = isNewThreadDraft && composerDraft.modelSelectionExplicit !== true;
+  const mapInitialModelToProjectPool = useProjectPoolModelSelection();
+  const providerSelection = useComposerProviderSelection({
     providerStatuses,
     settings,
     activeProjectId,
     environmentId, // signalbox: pools
     activeThreadId, // signalbox: pools
-    candidateInstanceIds: [
-      composerDraft.activeProvider ?? null,
-      activeThread?.runtime?.providerInstanceId,
-      activeThreadModelSelection?.instanceId,
-      activeProjectDefaultModelSelection?.instanceId,
-    ],
+    candidateInstanceIds: isNewThreadDraft
+      ? useFreshInitialModel
+        ? []
+        : [composerDraft.activeProvider]
+      : [
+          composerDraft.activeProvider ?? null,
+          activeThread?.runtime?.providerInstanceId,
+          activeThreadModelSelection?.instanceId,
+          activeProjectDefaultModelSelection?.instanceId,
+        ],
     lockedProvider,
     lockedInstanceId:
       activeThread?.runtime?.providerInstanceId ?? activeThreadModelSelection?.instanceId,
   });
+  const { providerInstanceEntries, poolNeed: poolNeedNow } = providerSelection;
+  const personDefaultModelSelection =
+    activePersonDefaultModelSelection &&
+    resolveProjectProviderInstanceEnabled(
+      settings,
+      activeProjectId,
+      activePersonDefaultModelSelection.instanceId,
+    )
+      ? activePersonDefaultModelSelection
+      : null;
+  const configuredInitialModelSelection = useFreshInitialModel
+    ? resolveInitialModelSelection({
+        projectDefault: activeProjectDefaultModelSelection,
+        personDefault: personDefaultModelSelection,
+        providers: providerInstanceEntries
+          .filter(
+            (entry) =>
+              entry.enabled &&
+              entry.installed &&
+              entry.isAvailable &&
+              entry.snapshot.auth.status !== "unauthenticated",
+          )
+          .map((entry) => entry.snapshot),
+      })
+    : null;
+  const poolInitialModelSelection = useFreshInitialModel
+    ? mapInitialModelToProjectPool({
+        environmentId,
+        projectId: activeProjectId,
+        threadId: activeThreadId,
+        selection: configuredInitialModelSelection,
+        providerInstances: settings.providerInstances,
+        providers: providerStatuses,
+      })
+    : null;
+  const initialModelSelection = poolInitialModelSelection ?? configuredInitialModelSelection;
+  const selectedProviderSelection = useFreshInitialModel
+    ? resolveComposerProviderSelection({
+        entries: providerInstanceEntries,
+        candidateInstanceIds: [initialModelSelection?.instanceId],
+        lockedProvider,
+        lockedInstanceId: null,
+      })
+    : providerSelection;
+  const {
+    selectedProviderEntry,
+    requestedDriverKind,
+    lockedContinuationGroupKey,
+    unavailableProviderInstanceId,
+  } = selectedProviderSelection;
   // signalbox: only the pool the project runs on; its need waits for the catalog, like the chrome.
   const needsPool = useNeedsPool(environmentId, providerCatalogKnown ? poolNeedNow : null);
   const selectedInstanceId =
@@ -2329,12 +2384,15 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     selectedInstanceId,
     threadModelSelection: activeThreadModelSelection,
     projectModelSelection: activeProjectDefaultModelSelection,
+    personModelSelection: personDefaultModelSelection,
+    initialModelSelection,
+    isNewThreadDraft,
     settings,
   });
-  const providerSendBlockReason = getAntigravitySendBlockReason(
-    selectedProviderEntry?.snapshot,
-    selectedModel,
-  );
+  const providerSendBlockReason =
+    selectedModel.trim() === ""
+      ? "Choose a model or set a default in Settings."
+      : getAntigravitySendBlockReason(selectedProviderEntry?.snapshot, selectedModel);
   const sendDisabledReason =
     sendLock.disabledReason ?? // signalbox: send lock
     (needsPool ? NEEDS_A_POOL : null) ?? // signalbox

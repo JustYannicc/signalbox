@@ -1,7 +1,6 @@
 import * as WorktreeSetupTracker from "../project/WorktreeSetupTracker.ts";
 import * as ProjectCloneTracker from "../project/ProjectCloneTracker.ts";
 import * as TerminalManager from "../terminal/Manager.ts";
-import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import {
   CommandId,
   type ChatAttachment,
@@ -11,14 +10,19 @@ import {
   type OrchestrationV2CreationSource,
   type OrchestrationV2ProviderThreadNativeMetadata,
   type OrchestrationV2ThreadProjection,
+  type Project,
   type ProviderDriverKind,
   type ProviderInteractionMode,
   ProjectId,
   type RunId,
   type RuntimeMode,
   type ScheduledTaskId,
+  type ServerSettingsError,
+  resolveProjectProviderInstanceEnabled,
   ThreadId,
 } from "@t3tools/contracts";
+import { resolveInitialModelSelection } from "@t3tools/shared/defaultModelSelection";
+import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -80,7 +84,7 @@ export interface ThreadLaunchInput {
   readonly projectId: ProjectId;
   readonly title: string;
   readonly generateTitle?: boolean;
-  readonly modelSelection: ModelSelection;
+  readonly modelSelection?: ModelSelection | undefined;
   readonly runtimeMode: RuntimeMode;
   readonly interactionMode: ProviderInteractionMode;
   readonly workspaceStrategy: ThreadLaunchWorkspaceStrategy;
@@ -121,6 +125,7 @@ export class ThreadLaunchError extends Schema.TaggedError<ThreadLaunchError>()(
   {
     operation: Schema.Literals([
       "resolve-project",
+      "resolve-model",
       "read-receipt",
       "generate-metadata",
       "provision-worktree",
@@ -138,6 +143,9 @@ export class ThreadLaunchError extends Schema.TaggedError<ThreadLaunchError>()(
   },
 ) {
   override get message(): string {
+    if (this.operation === "resolve-model") {
+      return "No model is available for this project or person, and no economical provider default is available. Connect a provider or choose a model.";
+    }
     return `Thread launch ${this.commandId} failed during ${this.operation}.`;
   }
 }
@@ -159,6 +167,12 @@ export class ThreadLaunchBaseRefError extends Schema.TaggedError<ThreadLaunchBas
 export class ThreadLaunchService extends Context.Service<
   ThreadLaunchService,
   {
+    readonly initialModelSelection: (
+      projectId: ProjectId,
+    ) => Effect.Effect<
+      ModelSelection | null,
+      ProjectService.ProjectOperationError | ServerSettingsError
+    >;
     readonly launch: (
       input: ThreadLaunchInput,
     ) => Effect.Effect<
@@ -208,6 +222,53 @@ const make = Effect.gen(function* () {
   const ids = yield* IdAllocator.IdAllocatorV2;
   const threads = yield* ThreadManagement.ThreadManagementService;
   const managedFolders = yield* ManagedProjectFolders.ManagedProjectFolders;
+
+  const initialModelSelectionForProject = (projectId: ProjectId, project: Project) =>
+    Effect.gen(function* () {
+      const [settings, providers] = yield* Effect.all([
+        serverSettings.getSettings,
+        providerRegistry.getProviders,
+      ]);
+      const effective = resolveProjectSettings(settings, projectId, project);
+      const isUnavailableSavedDefault = (selection: ModelSelection | null | undefined) => {
+        if (selection == null) return false;
+        const provider = providers.find(
+          (candidate) => candidate.instanceId === selection.instanceId,
+        );
+        return (
+          provider !== undefined &&
+          (!provider.enabled ||
+            !resolveProjectProviderInstanceEnabled(settings, projectId, selection.instanceId) ||
+            provider.models.find((model) => model.slug === selection.model)?.isLegacy === true)
+        );
+      };
+      return resolveInitialModelSelection({
+        projectDefault: isUnavailableSavedDefault(effective.overrides.defaultModelSelection)
+          ? null
+          : effective.overrides.defaultModelSelection,
+        personDefault: isUnavailableSavedDefault(settings.defaultModelSelection)
+          ? null
+          : settings.defaultModelSelection,
+        providers: providers.filter(
+          (provider) =>
+            provider.enabled &&
+            provider.installed &&
+            provider.auth.status !== "unauthenticated" &&
+            provider.availability !== "unavailable" &&
+            resolveProjectProviderInstanceEnabled(settings, projectId, provider.instanceId),
+        ),
+      });
+    });
+
+  const initialModelSelection: ThreadLaunchService["Service"]["initialModelSelection"] = (
+    projectId,
+  ) =>
+    Effect.flatMap(projects.getById(projectId), (project) =>
+      Option.match(project, {
+        onNone: () => Effect.succeed(null),
+        onSome: (value) => initialModelSelectionForProject(projectId, value),
+      }),
+    );
   const preparationScope = yield* Scope.make("sequential");
   const scheduledLaunches = yield* Ref.make<ReadonlySet<CommandId>>(new Set());
   yield* Effect.addFinalizer(() => Scope.close(preparationScope, Exit.void));
@@ -834,10 +895,40 @@ const make = Effect.gen(function* () {
       }
 
       const launchReceipt = yield* readReceipt(input, input.commandId);
+      let modelSelection: ModelSelection | null | undefined = input.modelSelection;
+      const acceptedLaunchReceipt =
+        Option.isSome(launchReceipt) &&
+        launchReceipt.value.status === "accepted" &&
+        launchReceipt.value.commandType === "thread.create"
+          ? launchReceipt.value
+          : undefined;
+      const existingThreadId =
+        input.reuseExistingThread === true
+          ? input.threadId
+          : acceptedLaunchReceipt !== undefined &&
+              (input.threadId === undefined || input.threadId === acceptedLaunchReceipt.threadId)
+            ? acceptedLaunchReceipt.threadId
+            : undefined;
+      if (modelSelection === undefined && existingThreadId !== undefined) {
+        const shell = yield* threads
+          .getThreadShell(existingThreadId)
+          .pipe(Effect.mapError(mapError(input, "create-thread", existingThreadId)));
+        if (shell?.projectId === input.projectId) modelSelection = shell.modelSelection;
+      }
+      modelSelection ??= yield* initialModelSelectionForProject(input.projectId, project).pipe(
+        Effect.mapError(mapError(input, "resolve-project")),
+      );
+      if (modelSelection === null || modelSelection === undefined) {
+        return yield* mapError(
+          input,
+          "resolve-model",
+        )(new Error("No supported model is available for this project or person."));
+      }
+      const launchInput = { ...input, modelSelection };
       yield* threads.assertProviderInstanceEnabled({
-        projectId: input.projectId,
-        commandId: input.commandId,
-        instanceId: input.modelSelection.instanceId,
+        projectId: launchInput.projectId,
+        commandId: launchInput.commandId,
+        instanceId: launchInput.modelSelection.instanceId,
       });
       return yield* Effect.gen(function* () {
         // A retried launch has no client-supplied id to replay against, so
@@ -911,7 +1002,7 @@ const make = Effect.gen(function* () {
                 threadId: candidateThreadId,
                 projectId: input.projectId,
                 title: input.title,
-                modelSelection: input.modelSelection,
+                modelSelection: launchInput.modelSelection,
                 runtimeMode: input.runtimeMode,
                 interactionMode: input.interactionMode,
                 branch: initialBranch,
@@ -965,7 +1056,7 @@ const make = Effect.gen(function* () {
               attachments: input.initialMessage.attachments,
               ...(input.initialMessage.context ? { context: input.initialMessage.context } : {}),
               ...(input.generateTitle === true ? { titleSeed: input.title } : {}),
-              modelSelection: input.modelSelection,
+              modelSelection: launchInput.modelSelection,
               dispatchMode: { type: "defer_start", workspaceStrategy },
               createdBy: input.createdBy,
               creationSource: input.creationSource,
@@ -1109,7 +1200,13 @@ const make = Effect.gen(function* () {
     );
   };
 
-  return ThreadLaunchService.of({ launch, checkWorktreeBase, retryPreparation, prepareRun });
+  return ThreadLaunchService.of({
+    initialModelSelection,
+    launch,
+    checkWorktreeBase,
+    retryPreparation,
+    prepareRun,
+  });
 });
 
 export const layer = Layer.effect(ThreadLaunchService, make);

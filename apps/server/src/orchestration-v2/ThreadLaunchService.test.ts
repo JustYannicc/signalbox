@@ -92,6 +92,26 @@ const otherProject = {
   title: "Other",
 } as const;
 
+const providerSnapshot = (
+  instanceId: ServerProvider["instanceId"],
+  driver: ServerProvider["driver"],
+  model: string,
+  availability?: ServerProvider["availability"],
+): ServerProvider => ({
+  instanceId,
+  driver,
+  enabled: true,
+  installed: true,
+  version: "test",
+  status: "ready",
+  auth: { status: "authenticated" },
+  checkedAt: "2026-09-13T00:00:00.000Z",
+  ...(availability === undefined ? {} : { availability }),
+  models: [{ slug: model, name: model, isCustom: false, capabilities: null }],
+  slashCommands: [],
+  skills: [],
+});
+
 const adapter = {
   instanceId: modelSelection.instanceId,
   driver: ProviderDriverKind.make("codex"),
@@ -113,10 +133,15 @@ interface HarnessOptions {
   readonly generateBranchName?: TextGeneration.TextGeneration["Service"]["generateBranchName"];
   readonly serverSettings?: Parameters<typeof ServerSettings.layerTest>[0];
   readonly providers?: ReadonlyArray<ServerProvider>;
+  readonly projectDefaultModelSelection?: typeof modelSelection | null;
   readonly git?: Partial<GitWorkflow.GitWorkflowService["Service"]>;
 }
 
 function makeHarness(options: HarnessOptions = {}) {
+  const harnessProject =
+    options.projectDefaultModelSelection === undefined
+      ? project
+      : { ...project, defaultModelSelection: options.projectDefaultModelSelection };
   const layerDatabase = SqlitePersistence.layerMemory;
   const layerRegistry = ProviderAdapterRegistry.layerFromAdapters(options.adapters ?? [adapter]);
   const layerOrchestrator = ProviderReplayHarness.layerWithRegistry(
@@ -168,12 +193,12 @@ function makeHarness(options: HarnessOptions = {}) {
       getById: (id) =>
         Effect.succeed(
           id === projectId
-            ? Option.some(project)
+            ? Option.some(harnessProject)
             : id === otherProjectId
               ? Option.some(otherProject)
               : Option.none(),
         ),
-      getByWorkspaceRoot: () => Effect.succeed(Option.some(project)),
+      getByWorkspaceRoot: () => Effect.succeed(Option.some(harnessProject)),
       snapshot: Effect.die("unused"),
       getShell: () => Effect.die("unused"),
       listShells: () => Effect.die("unused"),
@@ -223,7 +248,7 @@ function makeHarness(options: HarnessOptions = {}) {
               projectId,
               title: project.title,
               workspaceRoot: project.workspaceRoot,
-              defaultModelSelection: project.defaultModelSelection,
+              defaultModelSelection: harnessProject.defaultModelSelection,
               defaultThreadEnvMode: null,
               autoPull: false,
               faviconPath: null,
@@ -289,6 +314,68 @@ function launchInput(input: {
     creationSource: "web" as const,
   };
 }
+
+it.effect("uses the project's initial model when a launch omits its selection", () => {
+  const harness = makeHarness();
+  return Effect.gen(function* () {
+    const launches = yield* ThreadLaunch.ThreadLaunchService;
+    const result = yield* launches.launch({
+      ...launchInput({ command: "command:initial-model", thread: "thread:initial-model" }),
+      modelSelection: undefined,
+    });
+    assert.deepEqual(result.projection.thread.modelSelection, modelSelection);
+  }).pipe(Effect.provide(harness.layer));
+});
+
+it.effect("fails launch when no saved or economical model is available", () => {
+  const harness = makeHarness({ projectDefaultModelSelection: null });
+  return Effect.gen(function* () {
+    const launches = yield* ThreadLaunch.ThreadLaunchService;
+    const error = yield* launches
+      .launch({
+        ...launchInput({ command: "command:no-initial-model", thread: "thread:no-initial-model" }),
+        modelSelection: undefined,
+      })
+      .pipe(Effect.flip);
+    assert.equal(error._tag === "ThreadLaunchError" ? error.operation : null, "resolve-model");
+  }).pipe(Effect.provide(harness.layer));
+});
+
+it.effect("preserves an unavailable saved model but skips a disabled model", () => {
+  const alternateInstanceId = ProviderInstanceId.make("claudeAgent");
+  const harness = makeHarness({
+    providers: [
+      providerSnapshot(
+        modelSelection.instanceId,
+        ProviderDriverKind.make("codex"),
+        modelSelection.model,
+        "unavailable",
+      ),
+      providerSnapshot(
+        alternateInstanceId,
+        ProviderDriverKind.make("claudeAgent"),
+        "claude-haiku-5-5",
+      ),
+    ],
+  });
+  return Effect.gen(function* () {
+    const launches = yield* ThreadLaunch.ThreadLaunchService;
+    const settings = yield* ServerSettings.ServerSettingsService;
+    assert.deepEqual(yield* launches.initialModelSelection(projectId), modelSelection);
+
+    yield* settings.updateSettings({
+      projectSettingsOverrides: {
+        [projectId]: {
+          providerInstances: { [modelSelection.instanceId]: { enabled: false } },
+        },
+      },
+    });
+    assert.deepEqual(yield* launches.initialModelSelection(projectId), {
+      instanceId: alternateInstanceId,
+      model: "claude-haiku-5-5",
+    });
+  }).pipe(Effect.provide(harness.layer));
+});
 
 function waitUntil<E, R>(predicate: () => Effect.Effect<boolean, E, R>): Effect.Effect<void, E, R> {
   return Effect.gen(function* () {
@@ -2379,6 +2466,7 @@ it.effect("shared intake preserves durable attachment bytes after a lost launch 
     };
     const failed = yield* ThreadMessageIntake.launchThread(input).pipe(
       Effect.provideService(ThreadLaunch.ThreadLaunchService, {
+        initialModelSelection: () => Effect.succeed(modelSelection),
         launch: (request) =>
           launches.launch(request).pipe(
             Effect.andThen(

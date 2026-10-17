@@ -1,6 +1,11 @@
 import type { DraftId } from "~/composerDraftStore";
 import { composerDraftHasUserContent, useComposerDraftStore } from "~/composerDraftStore";
-import { resolveEnvironmentMachineKind, type ScopedProjectRef } from "@t3tools/contracts";
+import {
+  DEFAULT_SERVER_SETTINGS,
+  resolveProjectProviderInstanceEnabled,
+  resolveEnvironmentMachineKind,
+  type ScopedProjectRef,
+} from "@t3tools/contracts";
 import { scopedProjectKey, scopeProjectRef } from "@t3tools/client-runtime/environment";
 import { isScratchProject } from "@t3tools/client-runtime/state/projects";
 import { FolderPlusIcon } from "lucide-react";
@@ -14,6 +19,7 @@ import { useNewThreadHandler } from "~/hooks/useHandleNewThread";
 import { useScratchProject } from "~/hooks/useScratchProject";
 import { useClientSettings } from "~/hooks/useSettings";
 import { hasExplicitComposerModelSelection } from "~/lib/chatThreadActions";
+import { resolveInitialModelSelection } from "@t3tools/shared/defaultModelSelection";
 import {
   deriveLogicalProjectKeyFromSettings,
   selectProjectGroupingSettings,
@@ -41,7 +47,7 @@ import {
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { InlineButton } from "../ui/button";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
-import { draftModelSelection, useProjectPoolModelSelection } from "../../state/projectPool"; // signalbox
+import { useProjectPoolModelSelection } from "../../state/projectPool"; // signalbox
 import { useDraftHeroCopy } from "../sidebar/folders/useFolderCopy"; // signalbox
 
 const ADD_PROJECT_VALUE = "add-project";
@@ -72,7 +78,6 @@ export function DraftHeroHeadline({
     (store) => store.setLogicalProjectDraftThreadId,
   );
   const getComposerDraft = useComposerDraftStore((store) => store.getComposerDraft);
-  const applyStickyState = useComposerDraftStore((store) => store.applyStickyState);
   const setModelSelection = useComposerDraftStore((store) => store.setModelSelection);
   const projectPool = useProjectPoolModelSelection(); // signalbox
   const openAddProject = useCallback(() => openCommandPalette({ open: "add-project" }), []);
@@ -226,28 +231,54 @@ export function DraftHeroHeadline({
       draftId,
     );
     if (!hasExplicitComposerModelSelection(currentDraft)) {
-      applyStickyState(draftId);
-      const environmentSettings = environments.find(
-        (environment) => environment.environmentId === project.environmentId,
-      )?.serverConfig?.settings;
-      const defaultModelSelection = environmentSettings
-        ? resolveProjectSettings(environmentSettings, project.id, project).settings
-            .defaultModelSelection
-        : project.defaultModelSelection;
-      // signalbox: the draft starts on the pool its project runs on.
       const environmentConfig = environments.find(
         (environment) => environment.environmentId === project.environmentId,
       )?.serverConfig;
+      const environmentSettings = environmentConfig?.settings;
+      const resolvedSettings = resolveProjectSettings(
+        environmentSettings ?? DEFAULT_SERVER_SETTINGS,
+        project.id,
+        project,
+      );
+      const projectDefaultModelSelection =
+        resolvedSettings.sources.defaultModelSelection === "project"
+          ? resolvedSettings.settings.defaultModelSelection
+          : null;
+      // signalbox: the draft starts on the pool its project runs on.
+      const initialModelSelection = resolveInitialModelSelection({
+        projectDefault: projectDefaultModelSelection,
+        personDefault:
+          environmentSettings?.defaultModelSelection &&
+          resolveProjectProviderInstanceEnabled(
+            resolvedSettings.settings,
+            project.id,
+            environmentSettings.defaultModelSelection.instanceId,
+          )
+            ? environmentSettings.defaultModelSelection
+            : null,
+        providers: (environmentConfig?.providers ?? []).filter(
+          (provider) =>
+            provider.enabled &&
+            provider.installed &&
+            provider.auth.status !== "unauthenticated" &&
+            provider.availability !== "unavailable" &&
+            resolveProjectProviderInstanceEnabled(
+              resolvedSettings.settings,
+              project.id,
+              provider.instanceId,
+            ),
+        ),
+      });
       const startingModelSelection =
         (environmentConfig &&
           projectPool({
             environmentId: project.environmentId,
             projectId: project.id,
-            selection: defaultModelSelection ?? draftModelSelection(getComposerDraft(draftId)),
+            selection: initialModelSelection,
             providerInstances: environmentConfig.settings.providerInstances,
             providers: environmentConfig.providers,
           })) ||
-        defaultModelSelection;
+        initialModelSelection;
       if (startingModelSelection) {
         setModelSelection(draftId, startingModelSelection, {
           replaceOptions: true,

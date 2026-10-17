@@ -20,12 +20,14 @@ import {
   DEFAULT_SERVER_SETTINGS,
   environmentSupports, // signalbox
   MessageId,
+  resolveProjectProviderInstanceEnabled,
   repositoryGroupingKeyOf,
   T3_PROJECT_FILE_NAME,
   ThreadId,
 } from "@t3tools/contracts";
 import { newThreadWorkspaceMode, offersNewThreadBranch } from "./signalboxWorktrees"; // signalbox
 import { sanitizeNewRefName } from "@t3tools/shared/git";
+import { resolveInitialModelSelection } from "@t3tools/shared/defaultModelSelection";
 import { resolveNewThreadEnvMode, resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import { parseT3ProjectFile } from "@t3tools/shared/t3ProjectFile";
 import * as Arr from "effect/Array";
@@ -43,8 +45,6 @@ import type { ModelOption, ProviderGroup } from "../../lib/modelOptions";
 import {
   buildModelOptions,
   groupByProvider,
-  resolveDefaultableModelSelection,
-  resolveNewTaskModelSelection,
   resolveSelectableModelSelection,
 } from "../../lib/modelOptions";
 import { scopedProjectKey } from "../../lib/scopedEntities";
@@ -70,7 +70,6 @@ import {
   setStickyComposerModelSelection,
   updateComposerDraftSettings,
   useComposerDraft,
-  useStickyComposerModelSelection,
 } from "../../state/use-composer-drafts";
 import {
   capturePendingTaskEditorWriteBaseline,
@@ -562,27 +561,46 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
     selectedProjectDraft.modelSelection ?? null,
     selectedProject?.id ?? null,
   );
-  const storedStickyModelSelection = useStickyComposerModelSelection();
   const folders = useNewTaskFolders(activeDraftKey, selectedProject); // signalbox: folders
+  const personDefaultModelSelection =
+    selectedEnvironmentServerConfig?.settings.defaultModelSelection ?? null;
+  const initialModelSelection = resolveInitialModelSelection({
+    projectDefault:
+      projectSettings.sources.defaultModelSelection === "project"
+        ? projectSettings.settings.defaultModelSelection
+        : null,
+    personDefault:
+      personDefaultModelSelection &&
+      resolveProjectProviderInstanceEnabled(
+        projectSettings.settings,
+        selectedProject?.id ?? null,
+        personDefaultModelSelection.instanceId,
+      )
+        ? personDefaultModelSelection
+        : null,
+    providers: (selectedEnvironmentServerConfig?.providers ?? NO_PROVIDERS).filter((provider) => {
+      const model = provider.models[0]?.slug;
+      return (
+        provider.availability !== "unavailable" &&
+        model !== undefined &&
+        resolveSelectableModelSelection(
+          selectedEnvironmentServerConfig,
+          { instanceId: provider.instanceId, model },
+          selectedProject?.id ?? null,
+        ) !== null
+      );
+    }),
+  });
   // signalbox: the task starts on the pool its project runs on.
   const sectionPoolSelection = useProjectPoolModelSelection({
     environmentId: selectedProject?.environmentId ?? null,
     projectId: selectedProject?.id ?? null,
-    selection: projectSettings.settings.defaultModelSelection ?? storedStickyModelSelection,
+    selection: initialModelSelection,
     providerInstances: projectSettings.settings.providerInstances,
     providers: selectedEnvironmentServerConfig?.providers ?? NO_PROVIDERS,
     home: folders.poolHome, // signalbox: folders
   });
-  const projectDefaultModelSelection = resolveDefaultableModelSelection(
-    selectedEnvironmentServerConfig,
-    sectionPoolSelection ?? projectSettings.settings.defaultModelSelection,
-    selectedProject?.id ?? null,
-  );
-  const stickyModelSelection = resolveDefaultableModelSelection(
-    selectedEnvironmentServerConfig,
-    storedStickyModelSelection,
-    selectedProject?.id ?? null,
-  );
+  const projectDefaultModelSelection = sectionPoolSelection ?? initialModelSelection;
   // signalbox: the picker offers only the pool the project runs on.
   const { config: poolServerConfig, need: poolNeed } = usePoolServerConfig(
     selectedProject?.environmentId ?? null,
@@ -594,25 +612,14 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
     () =>
       buildModelOptions(
         poolServerConfig,
-        draftModelSelection ?? projectDefaultModelSelection ?? stickyModelSelection,
+        draftModelSelection ?? projectDefaultModelSelection,
         undefined,
         selectedProject?.id ?? null,
       ),
-    [
-      poolServerConfig,
-      draftModelSelection,
-      projectDefaultModelSelection,
-      stickyModelSelection,
-      selectedProject?.id,
-    ],
+    [poolServerConfig, draftModelSelection, projectDefaultModelSelection, selectedProject?.id],
   );
 
-  const selectedModel = resolveNewTaskModelSelection({
-    draftSelection: draftModelSelection,
-    projectDefaultSelection: projectDefaultModelSelection,
-    stickySelection: stickyModelSelection,
-    modelOptions,
-  });
+  const selectedModel = draftModelSelection ?? projectDefaultModelSelection;
   const selectedModelKey = selectedModel
     ? `${selectedModel.instanceId}:${selectedModel.model}`
     : null;

@@ -102,9 +102,10 @@ instance:
 
 ## Model defaults
 
-Signalbox remembers your provider, model, and model options for new threads. A
-project's configured model takes precedence; resetting that project setting
-returns to the remembered selection.
+New threads and automations use the folder's configured model, then your personal
+default in Settings. Without either, Signalbox selects an economical model. If none
+is available, choose a model yourself. Changing a model in one thread does not
+change your default for future threads.
 
 Leaving reasoning level or service tier unset uses the provider's own configuration.
 

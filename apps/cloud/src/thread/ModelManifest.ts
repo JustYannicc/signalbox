@@ -8,7 +8,7 @@ export const BUNDLED_MODEL_CATALOGS: ModelManifestCatalogs = {
   version: 1,
   providers: {
     claudeAgent: {
-      defaults: { chat: "claude-fable-5-1" },
+      defaults: { chat: "claude-haiku-5-5" },
       profiles: {
         opus: {
           capabilities: {
@@ -24,7 +24,7 @@ export const BUNDLED_MODEL_CATALOGS: ModelManifestCatalogs = {
       ],
     },
     codex: {
-      defaults: { chat: "gpt-6-astra" },
+      defaults: { chat: "gpt-6-luna" },
       profiles: {},
       models: [
         { slug: "gpt-6.1-sol", name: "GPT-6.1 Sol", status: "current" },

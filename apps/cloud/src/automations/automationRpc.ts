@@ -6,6 +6,7 @@ import {
   ThreadId,
   type AutomationRpcs,
   type ModelSelection,
+  type ProjectId,
 } from "@t3tools/contracts";
 import { AutomationThreads } from "@signalbox/automations/host";
 import { fail } from "@signalbox/automations/errors";
@@ -54,7 +55,7 @@ const compileWhere = fail(COMPILE_WHERE);
  * what an automation they save runs with: there's no calling thread to take it from.
  */
 export const makeAutomationHandlers = Effect.fn("makeAutomationHandlers")(function* (options: {
-  readonly newThreadModel: Effect.Effect<ModelSelection | null>;
+  readonly newThreadModel: (projectId?: ProjectId) => Effect.Effect<ModelSelection | null>;
   /**
    * Whether publishing vouches for the reviewed version: only a person's app
    * session can say a person looked at it. Keys, the CLI and MCP may be an
@@ -66,17 +67,18 @@ export const makeAutomationHandlers = Effect.fn("makeAutomationHandlers")(functi
   const automations = yield* CloudAutomations;
   const threads = yield* AutomationThreads;
   const compiler = yield* CloudCompiler;
-  const saveDefaults = options.newThreadModel.pipe(
-    Effect.flatMap((modelSelection) =>
-      modelSelection === null
-        ? fail("Add an account to a pool first: saved automations run on your pool.")
-        : Effect.succeed({
-            modelSelection,
-            runtimeMode: DEFAULT_RUNTIME_MODE,
-            interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
-          }),
-    ),
-  );
+  const saveDefaults = (projectId: ProjectId) =>
+    options.newThreadModel(projectId).pipe(
+      Effect.flatMap((modelSelection) =>
+        modelSelection === null
+          ? fail("Add an account to a pool first: saved automations run on your pool.")
+          : Effect.succeed({
+              modelSelection,
+              runtimeMode: DEFAULT_RUNTIME_MODE,
+              interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+            }),
+      ),
+    );
   const flushed = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
     effect.pipe(Effect.tap(() => automations.flush));
   /** Spans name the automation or run, never what's in them. */
@@ -148,7 +150,7 @@ export const makeAutomationHandlers = Effect.fn("makeAutomationHandlers")(functi
               flushed(
                 Effect.gen(function* () {
                   const compiled = yield* acceptCompiled(input.compiled);
-                  const defaults = yield* saveDefaults;
+                  const defaults = yield* saveDefaults(input.projectId);
                   return yield* compiler.withStaged(
                     input.source,
                     compiled,

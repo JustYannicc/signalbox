@@ -479,7 +479,6 @@ describe("mobile model options", () => {
         resolveNewTaskModelSelection({
           draftSelection: null,
           projectDefaultSelection: resolveDefaultableModelSelection(changedConfig, selection, null),
-          stickySelection: null,
           modelOptions: options,
         }),
       ).toBe(selection);
@@ -562,37 +561,41 @@ describe("mobile model options", () => {
     expect(resolveDefaultableModelSelection(null, legacy, null)).toBe(legacy);
   });
 
-  it("resolves new tasks from draft, project, sticky, then provider defaults", () => {
+  it("resolves new tasks from explicit choices, then an economical provider model", () => {
     const draft = { instanceId: ProviderInstanceId.make("codex"), model: "draft" };
     const project = { instanceId: ProviderInstanceId.make("codex"), model: "project" };
-    const sticky = { instanceId: ProviderInstanceId.make("codex"), model: "sticky" };
-    const providerDefault = {
-      selection: { instanceId: ProviderInstanceId.make("codex"), model: "default" },
+    const expensive = {
+      selection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.6-sol" },
+      providerDriver: "codex",
       isDefault: true,
+      isLegacy: false,
+    } as ModelOption;
+    const economical = {
+      selection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4-mini" },
+      providerDriver: "codex",
+      isDefault: false,
+      isLegacy: false,
     } as ModelOption;
     const resolve = (
       draftSelection: ModelSelection | null,
       projectDefaultSelection: ModelSelection | null,
-      stickySelection: ModelSelection | null,
+      modelOptions: ReadonlyArray<ModelOption>,
     ) =>
       resolveNewTaskModelSelection({
         draftSelection,
         projectDefaultSelection,
-        stickySelection,
-        modelOptions: [providerDefault],
+        modelOptions,
       });
 
-    expect(resolve(draft, project, sticky)).toBe(draft);
-    expect(resolve(null, project, sticky)).toBe(project);
-    expect(resolve(null, null, sticky)).toBe(sticky);
-    expect(resolve(null, null, null)).toBe(providerDefault.selection);
+    expect(resolve(draft, project, [expensive, economical])).toBe(draft);
+    expect(resolve(null, project, [expensive, economical])).toBe(project);
+    expect(resolve(null, null, [expensive, economical])).toEqual(economical.selection);
 
-    const unavailable = { ...providerDefault, isUnavailable: true };
+    const unavailable = { ...economical, isUnavailable: true };
     expect(
       resolveNewTaskModelSelection({
         draftSelection: null,
         projectDefaultSelection: null,
-        stickySelection: null,
         modelOptions: [unavailable],
       }),
     ).toBeNull();

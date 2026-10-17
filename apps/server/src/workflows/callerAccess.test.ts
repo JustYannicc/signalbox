@@ -12,7 +12,7 @@ import * as Option from "effect/Option";
 
 import type { CallerLimits } from "../mcp/threadAccess.ts";
 import * as ProjectService from "../project/ProjectService.ts";
-import * as ServerSettings from "../serverSettings.ts";
+import * as ThreadLaunch from "../orchestration-v2/ThreadLaunchService.ts";
 import { saveForCaller } from "./callerAccess.ts";
 import * as WorkflowEngine from "@signalbox/automations/WorkflowEngine";
 
@@ -59,9 +59,12 @@ function harness(options: {
           projectId === options.project.id ? Option.some(options.project) : Option.none(),
         ),
     }),
-    ServerSettings.layerTest(
-      options.environmentModel ? { defaultModelSelection: options.environmentModel } : {},
-    ),
+    Layer.mock(ThreadLaunch.ThreadLaunchService)({
+      initialModelSelection: () =>
+        Effect.succeed(
+          options.project.defaultModelSelection ?? options.environmentModel ?? codex("gpt-6-luna"),
+        ),
+    }),
   );
   return { saved, layer };
 }

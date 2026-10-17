@@ -137,9 +137,9 @@ enough to go on, it says so instead of guessing.
 
 ## Start a thread
 
-On web and desktop, a new thread keeps the current project and carries your model
-and mode selections, unless the destination project has its own model default.
-Its branch and workspace mode come from your configured defaults. To continue in
+On web and desktop, a new thread keeps the current project and mode selections.
+Its model comes from the folder's default, then your personal default, then an
+economical fallback. Its branch and workspace mode come from your configured defaults. To continue in
 an existing worktree, use **New thread in this worktree** from the branch toolbar.
 
 When you change a new thread's project, Signalbox stays in the current environment

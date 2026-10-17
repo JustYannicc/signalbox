@@ -899,17 +899,22 @@ const make = Effect.gen(function* () {
       ),
     );
 
-  const projectDefaultModelSelection = (
-    project: Effect.Success<ReturnType<typeof requireProject>>,
-  ) =>
-    project.defaultModelSelection === null
-      ? Effect.fail(
-          failure(
-            "invalid_request",
-            `Project ${project.id} has no default model, so this caller cannot pick one for it.`,
-          ),
-        )
-      : Effect.succeed(project.defaultModelSelection);
+  const initialModelSelectionForProject = (projectId: ProjectId) =>
+    threadLaunch.initialModelSelection(projectId).pipe(
+      Effect.mapError((error) =>
+        failure("orchestration_error", `Unable to resolve a model: ${errorMessage(error)}`),
+      ),
+      Effect.flatMap((selection) =>
+        selection === null
+          ? Effect.fail(
+              failure(
+                "model_unavailable",
+                "No model is available for this project or person. Connect a provider or choose a model from orchestrator_capabilities.",
+              ),
+            )
+          : Effect.succeed(selection),
+      ),
+    );
   const secretRequests = yield* SecretRequests.SecretRequests;
 
   const requireCapability = (scope: McpInvocationScope) =>
@@ -1576,7 +1581,7 @@ const make = Effect.gen(function* () {
         const { parent, limits } = yield* loadCaller(scope);
         const projectId = yield* resolveProjectTarget(parent, input.projectId);
         yield* assertLiveCallerForOtherProject(scope, parent, projectId);
-        const project = yield* requireProject(projectId);
+        yield* requireProject(projectId);
         const bindToCurrentThread =
           input.bindToCurrentThread ??
           (parent !== undefined && parent.thread.projectId === projectId);
@@ -1592,7 +1597,7 @@ const make = Effect.gen(function* () {
           );
         }
         const modelSelection =
-          parent?.thread.modelSelection ?? (yield* projectDefaultModelSelection(project));
+          parent?.thread.modelSelection ?? (yield* initialModelSelectionForProject(projectId));
         const derivedTitle = input.prompt.split("\n")[0]?.trim() ?? "";
         const title =
           input.title ?? (derivedTitle.length > 0 ? derivedTitle.slice(0, 80) : "Scheduled task");
@@ -2228,11 +2233,37 @@ const make = Effect.gen(function* () {
           input.threads,
           (request, index) =>
             Effect.gen(function* () {
-              const target = yield* resolveTargetRechecking({
-                parent,
-                target: request.target,
-                providers,
-              });
+              const hasExplicitTarget =
+                request.target?.providerInstanceId !== undefined ||
+                request.target?.driverKind !== undefined ||
+                request.target?.model !== undefined;
+              let target: ResolvedTarget;
+              if (hasExplicitTarget) {
+                target = yield* resolveTargetRechecking({
+                  parent,
+                  target: request.target,
+                  providers,
+                });
+              } else {
+                const initialSelection = yield* initialModelSelectionForProject(
+                  parent.thread.projectId,
+                );
+                const options = request.target?.options ?? initialSelection.options;
+                const resolved = yield* resolveTargetRechecking({
+                  parent,
+                  target: {
+                    providerInstanceId: initialSelection.instanceId,
+                    model: initialSelection.model,
+                    ...(options === undefined ? {} : { options }),
+                  },
+                  providers,
+                });
+                target = {
+                  ...resolved,
+                  modelSelection:
+                    options === undefined ? initialSelection : { ...initialSelection, options },
+                };
+              }
               const runtimeMode = yield* resolveRuntimeMode(
                 parent.thread.runtimeMode,
                 request.runtimeMode,

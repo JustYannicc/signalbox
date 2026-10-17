@@ -9,6 +9,7 @@ import {
   type RuntimeMode,
   type ProviderInteractionMode,
   type ServerSettings,
+  resolveProjectProviderInstanceEnabled,
 } from "@t3tools/contracts";
 import { parseMaxDeliveryAge } from "@t3tools/client-runtime/scheduled-task-webhook";
 
@@ -16,6 +17,7 @@ import {
   resolveProjectSettings,
   type LegacyProjectSettingsFields,
 } from "@t3tools/shared/projectSettings";
+import { resolveInitialModelSelection } from "@t3tools/shared/defaultModelSelection";
 import type { ProviderInstanceEntry } from "../../providerInstances";
 
 import type { ResolvedSettingsScope } from "./settingsScope";
@@ -179,31 +181,42 @@ export function scheduledTaskDefaultModel(
   project: (LegacyProjectSettingsFields & { readonly id: ProjectId }) | null,
   entries: readonly ProviderInstanceEntry[],
 ): ModelSelection | null {
-  const available = entries.filter(
-    (entry) =>
-      entry.enabled &&
-      entry.installed &&
-      entry.isAvailable &&
-      entry.snapshot.auth.status !== "unauthenticated",
-  );
-  const configured = resolveProjectSettings(settings, project?.id ?? null, project).settings
-    .defaultModelSelection;
-  for (const selection of [configured, settings.defaultModelSelection]) {
-    if (
-      selection &&
-      available.some(
+  const resolvedProjectSettings = resolveProjectSettings(settings, project?.id ?? null, project);
+  const personDefaultModelSelection = settings.defaultModelSelection;
+  const projectProviderSettings =
+    project?.id === undefined
+      ? undefined
+      : settings.projectSettingsOverrides[project.id]?.providerInstances;
+  const personDefaultHasExplicitProviderSettings =
+    personDefaultModelSelection !== null &&
+    (Object.hasOwn(settings.providerInstances, personDefaultModelSelection.instanceId) ||
+      Object.hasOwn(projectProviderSettings ?? {}, personDefaultModelSelection.instanceId));
+  return resolveInitialModelSelection({
+    projectDefault:
+      resolvedProjectSettings.sources.defaultModelSelection === "project"
+        ? resolvedProjectSettings.settings.defaultModelSelection
+        : null,
+    personDefault:
+      personDefaultModelSelection &&
+      !entries.some(
+        (entry) => entry.instanceId === personDefaultModelSelection.instanceId && !entry.enabled,
+      ) &&
+      (!personDefaultHasExplicitProviderSettings ||
+        resolveProjectProviderInstanceEnabled(
+          settings,
+          project?.id ?? null,
+          personDefaultModelSelection.instanceId,
+        ))
+        ? personDefaultModelSelection
+        : null,
+    providers: entries
+      .filter(
         (entry) =>
-          entry.instanceId === selection.instanceId &&
-          entry.models.find((model) => model.slug === selection.model)?.isLegacy !== true,
+          entry.enabled &&
+          entry.installed &&
+          entry.isAvailable &&
+          entry.snapshot.auth.status !== "unauthenticated",
       )
-    )
-      return selection;
-  }
-  const models = available.flatMap((entry) =>
-    entry.models
-      .filter((model) => !model.isLegacy)
-      .map((model) => ({ instanceId: entry.instanceId, model })),
-  );
-  const fallback = models.find(({ model }) => model.isDefault) ?? models[0];
-  return fallback ? { instanceId: fallback.instanceId, model: fallback.model.slug } : null;
+      .map((entry) => entry.snapshot),
+  });
 }

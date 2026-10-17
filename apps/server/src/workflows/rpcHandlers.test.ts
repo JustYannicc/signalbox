@@ -11,7 +11,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 
 import * as ProjectService from "../project/ProjectService.ts";
-import * as ServerSettings from "../serverSettings.ts";
+import * as ThreadLaunch from "../orchestration-v2/ThreadLaunchService.ts";
 import { automationRpcHandlers } from "./rpcHandlers.ts";
 import * as WorkflowEngine from "@signalbox/automations/WorkflowEngine";
 
@@ -48,7 +48,9 @@ const harness = () => {
       getById: (projectId) =>
         Effect.succeed(projectId === PROJECT ? Option.some(project) : Option.none()),
     }),
-    ServerSettings.layerTest({}),
+    Layer.mock(ThreadLaunch.ThreadLaunchService)({
+      initialModelSelection: () => Effect.succeed(model),
+    }),
   );
   return { handlers: automationRpcHandlers(engine), saved, layer };
 };

@@ -149,6 +149,7 @@ export const layerPersonalThreadContexts = (userId: string) =>
   Layer.succeed(
     ThreadContexts.ThreadContexts,
     ThreadContexts.ThreadContexts.of({
+      initialModelSelection: () => Effect.succeed(null),
       placeOfProject: (projectId) => {
         const contextId = contextOfProject([UserContexts.PERSONAL_CONTEXT], projectId);
         return Effect.succeed(

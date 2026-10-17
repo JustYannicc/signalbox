@@ -282,6 +282,7 @@ describe("scheduled task model defaults", () => {
         auth: { status: "authenticated" },
         models: [
           { slug: "first-model", name: "First", isCustom: false, capabilities: null },
+          { slug: "gpt-5.4-mini", name: "Economical", isCustom: false, capabilities: null },
           {
             slug: "catalog-default",
             name: "Default",
@@ -318,12 +319,12 @@ describe("scheduled task model defaults", () => {
       ),
     ).toEqual(projectSelection);
   });
-  it("uses the advertised default instead of catalog order when no default is configured", () => {
+  it("uses a known economical fallback instead of the advertised or first model", () => {
     expect(
       resolve({ ...config, settings: { ...config.settings, defaultModelSelection: null } }, null),
-    ).toEqual({ instanceId, model: "catalog-default" });
+    ).toEqual({ instanceId, model: "gpt-5.4-mini" });
   });
-  it("falls back to the environment default when the project provider is unavailable", () => {
+  it("falls back to the person default when a project default is unavailable", () => {
     expect(
       resolve(config, {
         id: projectId,

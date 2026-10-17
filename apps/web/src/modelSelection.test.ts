@@ -599,6 +599,115 @@ describe("instance-scoped model selection", () => {
     expect(dispatch.modelOptionsForDispatch).toBeUndefined();
   });
 
+  it("refreshes an implicit new-thread model from the folder or person default", () => {
+    const instanceId = ProviderInstanceId.make("claudeAgent");
+    const driver = ProviderDriverKind.make("claudeAgent");
+    const providers = [
+      {
+        ...provider({
+          provider: driver,
+          instanceId,
+          models: ["claude-fable-5-1", "claude-haiku-5-5"],
+        }),
+        models: [
+          {
+            slug: "claude-fable-5-1",
+            name: "Claude Fable 5.1",
+            isDefault: true,
+            isCustom: false,
+            capabilities: null,
+          },
+          {
+            slug: "claude-haiku-5-5",
+            name: "Claude Haiku 5.5",
+            isCustom: false,
+            capabilities: null,
+          },
+        ],
+      },
+    ];
+    const settings = settingsWithProviderInstances();
+    const staleImplicitDraft = {
+      activeProvider: instanceId,
+      modelSelectionByProvider: {
+        [instanceId]: createModelSelection(instanceId, "claude-fable-5-1"),
+      },
+    };
+    const personDefault = createModelSelection(instanceId, "claude-haiku-5-5");
+    const projectDefault = createModelSelection(instanceId, "claude-fable-5-1");
+
+    expect(
+      deriveEffectiveComposerModelState({
+        draft: staleImplicitDraft,
+        providers,
+        selectedProvider: driver,
+        selectedInstanceId: instanceId,
+        threadModelSelection: null,
+        projectModelSelection: null,
+        personModelSelection: personDefault,
+        isNewThreadDraft: true,
+        settings,
+      }).selectedModel,
+    ).toBe("claude-haiku-5-5");
+
+    expect(
+      deriveEffectiveComposerModelState({
+        draft: staleImplicitDraft,
+        providers,
+        selectedProvider: driver,
+        selectedInstanceId: instanceId,
+        threadModelSelection: null,
+        projectModelSelection: projectDefault,
+        personModelSelection: personDefault,
+        isNewThreadDraft: true,
+        settings,
+      }).selectedModel,
+    ).toBe("claude-fable-5-1");
+  });
+
+  it("keeps explicit new-thread picks and existing thread pins", () => {
+    const instanceId = ProviderInstanceId.make("claudeAgent");
+    const driver = ProviderDriverKind.make("claudeAgent");
+    const fable = createModelSelection(instanceId, "claude-fable-5-1");
+    const providers = [
+      provider({
+        provider: driver,
+        instanceId,
+        models: ["claude-fable-5-1", "claude-haiku-5-5"],
+      }),
+    ];
+    const settings = settingsWithProviderInstances();
+
+    expect(
+      deriveEffectiveComposerModelState({
+        draft: {
+          activeProvider: instanceId,
+          modelSelectionByProvider: { [instanceId]: fable },
+          modelSelectionExplicit: true,
+        },
+        providers,
+        selectedProvider: driver,
+        selectedInstanceId: instanceId,
+        threadModelSelection: null,
+        projectModelSelection: createModelSelection(instanceId, "claude-haiku-5-5"),
+        isNewThreadDraft: true,
+        settings,
+      }).selectedModel,
+    ).toBe("claude-fable-5-1");
+
+    expect(
+      deriveEffectiveComposerModelState({
+        draft: null,
+        providers,
+        selectedProvider: driver,
+        selectedInstanceId: instanceId,
+        threadModelSelection: fable,
+        projectModelSelection: createModelSelection(instanceId, "claude-haiku-5-5"),
+        settings,
+      }).selectedModel,
+    ).toBe("claude-fable-5-1");
+  });
+
   it("preserves an explicit draft OpenCode selection while the catalog is empty", () => {
     const instanceId = ProviderInstanceId.make("opencode_work");
     const driver = ProviderDriverKind.make("opencode");

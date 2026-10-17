@@ -41,15 +41,43 @@ describe("poolFallbackModelSelection", () => {
     expect(poolFallbackModelSelection(providers)).toBeNull();
   });
 
-  it("uses a listed model when the provider is temporarily unavailable", () => {
+  it("uses a cached economical model when the provider is temporarily unavailable", () => {
     expect(
       poolFallbackModelSelection([
         {
           ...provider(true),
-          models: [{ slug: "new-model", name: "New model", isCustom: false, capabilities: null }],
+          models: [{ slug: "gpt-6-luna", name: "Luna", isCustom: false, capabilities: null }],
         },
       ]),
-    ).toEqual({ instanceId: "personal-codex", model: "new-model" });
+    ).toEqual({ instanceId: "personal-codex", model: "gpt-6-luna" });
+  });
+
+  it("ignores flagship defaults and leaves an expensive-only catalog unselected", () => {
+    const expensive = {
+      ...provider(true),
+      models: [
+        {
+          slug: "gpt-6-astra",
+          name: "Astra",
+          isDefault: true,
+          isCustom: false,
+          capabilities: null,
+        },
+      ],
+    };
+    expect(poolDefaultModelSelection([expensive])).toBeNull();
+    expect(poolFallbackModelSelection([expensive])).toBeNull();
+    const withEconomical = {
+      ...expensive,
+      models: [
+        ...expensive.models,
+        { slug: "gpt-6-luna", name: "Luna", isCustom: false, capabilities: null },
+      ],
+    };
+    expect(poolDefaultModelSelection([withEconomical])).toEqual({
+      instanceId: "personal-codex",
+      model: "gpt-6-luna",
+    });
   });
 
   it("has nothing to name without a pool", () => {

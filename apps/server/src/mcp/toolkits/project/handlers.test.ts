@@ -35,6 +35,7 @@ it.effect("attributes a launched thread's first message to the calling thread", 
     const projectId = ProjectId.make("project");
     const providerInstanceId = ProviderInstanceId.make("codex");
     const modelSelection = { instanceId: providerInstanceId, model: "gpt-5" };
+    const initialSelection = { instanceId: providerInstanceId, model: "gpt-5.4-mini" };
     const caller = {
       id: sourceThreadId,
       projectId,
@@ -47,6 +48,7 @@ it.effect("attributes a launched thread's first message to the calling thread", 
       deletedAt: null,
     } as OrchestrationV2ThreadShell;
     let launchedSender: ThreadId | undefined;
+    let launchedModelSelection: ThreadLaunch.ThreadLaunchInput["modelSelection"];
     const layerDependencies = Layer.mergeAll(
       ServerSettings.layerTest(),
       NodeCrypto.layer,
@@ -68,10 +70,11 @@ it.effect("attributes a launched thread's first message to the calling thread", 
       Layer.mock(ThreadLaunch.ThreadLaunchService)({
         launch: (input) => {
           launchedSender = input.initialMessage?.senderThreadId;
+          launchedModelSelection = input.modelSelection;
           return Effect.succeed({
             threadId: input.threadId,
             projection: {
-              thread: { id: input.threadId, projectId, modelSelection },
+              thread: { id: input.threadId, projectId, modelSelection: initialSelection },
               runs: [],
             },
             resumed: false,
@@ -96,7 +99,8 @@ it.effect("attributes a launched thread's first message to the calling thread", 
     const result = yield* toolkit
       .handle("t3_thread_launch", { title: "Audit", message: "Review the change" })
       .pipe(Stream.unwrap, Stream.runCollect, Effect.provide(layerDependencies));
-    expect(result.at(-1)?.result).toMatchObject({ projectId, modelSelection });
+    expect(result.at(-1)?.result).toMatchObject({ projectId, modelSelection: initialSelection });
+    expect(launchedModelSelection).toBeUndefined();
     expect(launchedSender).toBe(sourceThreadId);
   }),
 );
@@ -336,7 +340,7 @@ const clientLaunchHarness = (input: {
             thread: {
               id: launch.threadId,
               projectId: launch.projectId,
-              modelSelection: launch.modelSelection,
+              modelSelection: launch.modelSelection ?? modelSelection,
             },
             runs: [],
           },

@@ -38,6 +38,7 @@ import * as Equal from "effect/Equal";
 import * as Effect from "effect/Effect";
 import { DeepMutable } from "effect/Types";
 import { createModelSelection, normalizeModelSlug } from "@t3tools/shared/model";
+import { resolveInitialModelSelection } from "@t3tools/shared/defaultModelSelection";
 import { useMemo } from "react";
 import { getLocalStorageItem } from "./hooks/useLocalStorage";
 import { readThreadPreviewState } from "./previewStateStore";
@@ -627,6 +628,7 @@ export interface EffectiveComposerModelState {
 interface ComposerDraftModelState {
   activeProvider: ProviderInstanceId | null;
   modelSelectionByProvider: Partial<Record<ProviderInstanceId, ModelSelection>>;
+  modelSelectionExplicit?: boolean;
 }
 
 function providerSelectionsFromModelSelection(
@@ -1080,7 +1082,10 @@ function legacyToModelSelectionByProvider(
 
 export function deriveEffectiveComposerModelState(input: {
   draft:
-    | Pick<ComposerThreadDraftState, "modelSelectionByProvider" | "activeProvider">
+    | Pick<
+        ComposerThreadDraftState,
+        "modelSelectionByProvider" | "activeProvider" | "modelSelectionExplicit"
+      >
     | null
     | undefined;
   providers: ReadonlyArray<ServerProvider>;
@@ -1088,34 +1093,53 @@ export function deriveEffectiveComposerModelState(input: {
   selectedInstanceId?: ProviderInstanceId | null | undefined;
   threadModelSelection: ModelSelection | null | undefined;
   projectModelSelection: ModelSelection | null | undefined;
+  personModelSelection?: ModelSelection | null | undefined;
+  initialModelSelection?: ModelSelection | null | undefined;
+  isNewThreadDraft?: boolean | undefined;
   settings: UnifiedSettings;
 }): EffectiveComposerModelState {
-  const baseModelCandidate =
-    input.threadModelSelection?.model ?? input.projectModelSelection?.model ?? null;
+  const isNewThreadDraft = input.isNewThreadDraft === true;
+  const newThreadDefault = isNewThreadDraft
+    ? input.initialModelSelection !== undefined
+      ? input.initialModelSelection
+      : resolveInitialModelSelection({
+          projectDefault: input.projectModelSelection,
+          personDefault: input.personModelSelection,
+          providers: input.providers,
+        })
+    : null;
+  const selectedNewThreadDefault =
+    newThreadDefault && newThreadDefault.instanceId === input.selectedInstanceId
+      ? newThreadDefault
+      : null;
+  const baseModelCandidate = isNewThreadDraft
+    ? null
+    : input.threadModelSelection?.model || input.projectModelSelection?.model || null;
   const preserveThreadModel =
     input.selectedInstanceId !== null &&
     input.selectedInstanceId !== undefined &&
     input.threadModelSelection?.instanceId === input.selectedInstanceId;
-  const baseModel =
-    (input.selectedInstanceId
-      ? resolveAppModelSelectionForInstance(
-          input.selectedInstanceId,
-          input.settings,
-          input.providers,
-          baseModelCandidate,
-          { preserveUnavailableSelection: preserveThreadModel },
-        )
-      : null) ??
-    // Antigravity has no static model or cross-account catalog fallback.
-    (input.selectedProvider === "antigravity" && input.selectedInstanceId ? "" : null) ??
-    resolveAppModelSelection(
-      input.selectedProvider,
-      input.settings,
-      input.providers,
-      baseModelCandidate,
-    ) ??
-    normalizeModelSlug(baseModelCandidate, input.selectedProvider) ??
-    getDefaultServerModel(input.providers, input.selectedProvider);
+  const baseModel = isNewThreadDraft
+    ? (selectedNewThreadDefault?.model ?? "")
+    : ((input.selectedInstanceId
+        ? resolveAppModelSelectionForInstance(
+            input.selectedInstanceId,
+            input.settings,
+            input.providers,
+            baseModelCandidate,
+            { preserveUnavailableSelection: preserveThreadModel },
+          )
+        : null) ??
+      // Antigravity has no static model or cross-account catalog fallback.
+      (input.selectedProvider === "antigravity" && input.selectedInstanceId ? "" : null) ??
+      resolveAppModelSelection(
+        input.selectedProvider,
+        input.settings,
+        input.providers,
+        baseModelCandidate,
+      ) ??
+      normalizeModelSlug(baseModelCandidate, input.selectedProvider) ??
+      getDefaultServerModel(input.providers, input.selectedProvider));
   const instanceSelection = input.selectedInstanceId
     ? input.draft?.modelSelectionByProvider?.[input.selectedInstanceId]
     : undefined;
@@ -1125,31 +1149,41 @@ export function deriveEffectiveComposerModelState(input: {
     input.selectedInstanceId !== defaultInstanceIdForDriver(input.selectedProvider)
       ? undefined
       : input.draft?.modelSelectionByProvider?.[ProviderInstanceId.make(input.selectedProvider)];
-  const activeSelection = instanceSelection ?? legacySelection;
+  const activeSelection =
+    isNewThreadDraft && input.draft?.modelSelectionExplicit !== true
+      ? undefined
+      : (instanceSelection ?? legacySelection);
   const activeSelectionInstanceId = instanceSelection
     ? (input.selectedInstanceId ?? ProviderInstanceId.make(input.selectedProvider))
     : ProviderInstanceId.make(input.selectedProvider);
-  const selectedModel = activeSelection?.model
-    ? (resolveAppModelSelectionForInstance(
-        activeSelectionInstanceId,
-        input.settings,
-        input.providers,
-        activeSelection.model,
-        { preserveUnavailableSelection: true },
-      ) ??
-      (input.selectedProvider === "antigravity" ? "" : null) ??
-      resolveAppModelSelection(
-        input.selectedProvider,
-        input.settings,
-        input.providers,
-        activeSelection.model,
-      ))
-    : baseModel;
-  const modelOptions =
-    modelSelectionByProviderToOptions(input.draft?.modelSelectionByProvider) ??
-    providerSelectionsFromModelSelection(input.threadModelSelection) ??
-    providerSelectionsFromModelSelection(input.projectModelSelection) ??
-    null;
+  const selectedModel =
+    isNewThreadDraft && activeSelection === undefined
+      ? baseModel
+      : activeSelection?.model
+        ? (resolveAppModelSelectionForInstance(
+            activeSelectionInstanceId,
+            input.settings,
+            input.providers,
+            activeSelection.model,
+            { preserveUnavailableSelection: true },
+          ) ??
+          (input.selectedProvider === "antigravity" ? "" : null) ??
+          resolveAppModelSelection(
+            input.selectedProvider,
+            input.settings,
+            input.providers,
+            activeSelection.model,
+          ))
+        : baseModel;
+  const modelOptions = isNewThreadDraft
+    ? input.draft?.modelSelectionExplicit === true
+      ? providerSelectionsFromModelSelection(activeSelection)
+      : providerSelectionsFromModelSelection(selectedNewThreadDefault)
+    : (modelSelectionByProviderToOptions(input.draft?.modelSelectionByProvider) ??
+      providerSelectionsFromModelSelection(input.threadModelSelection) ??
+      providerSelectionsFromModelSelection(input.projectModelSelection) ??
+      providerSelectionsFromModelSelection(input.personModelSelection) ??
+      null);
 
   return {
     selectedModel,
@@ -4249,6 +4283,9 @@ function useComposerDraftModelState(threadRef: ComposerThreadTarget): ComposerDr
         ? {
             activeProvider: draft.activeProvider,
             modelSelectionByProvider: draft.modelSelectionByProvider,
+            ...(draft.modelSelectionExplicit !== undefined
+              ? { modelSelectionExplicit: draft.modelSelectionExplicit }
+              : {}),
           }
         : EMPTY_COMPOSER_DRAFT_MODEL_STATE;
     }),
@@ -4263,6 +4300,9 @@ export function useEffectiveComposerModelState(input: {
   selectedInstanceId?: ProviderInstanceId | null | undefined;
   threadModelSelection: ModelSelection | null | undefined;
   projectModelSelection: ModelSelection | null | undefined;
+  personModelSelection?: ModelSelection | null | undefined;
+  initialModelSelection?: ModelSelection | null | undefined;
+  isNewThreadDraft?: boolean | undefined;
   settings: UnifiedSettings;
 }): EffectiveComposerModelState {
   const draft = useComposerDraftModelState(input.threadRef ?? input.draftId ?? DraftId.make(""));
@@ -4276,6 +4316,9 @@ export function useEffectiveComposerModelState(input: {
         selectedInstanceId: input.selectedInstanceId,
         threadModelSelection: input.threadModelSelection,
         projectModelSelection: input.projectModelSelection,
+        personModelSelection: input.personModelSelection,
+        initialModelSelection: input.initialModelSelection,
+        isNewThreadDraft: input.isNewThreadDraft,
         settings: input.settings,
       }),
     [
@@ -4283,6 +4326,9 @@ export function useEffectiveComposerModelState(input: {
       input.providers,
       input.settings,
       input.projectModelSelection,
+      input.personModelSelection,
+      input.initialModelSelection,
+      input.isNewThreadDraft,
       input.selectedInstanceId,
       input.selectedProvider,
       input.threadModelSelection,
