@@ -131,7 +131,7 @@ const requireInput = Effect.fn("requireInput")(function* (inputPath: string, hin
  * The tree is archived and unpacked on machines without pnpm, so the store
  * layout cannot be relied on to survive the trip.
  */
-export const stageRuntimeExternals = Effect.fn("stageRuntimeExternals")(function* (input: {
+const stageRuntimeExternals = Effect.fn("stageRuntimeExternals")(function* (input: {
   readonly repoRoot: string;
   readonly stageDir: string;
   readonly platform: BuildPlatform;

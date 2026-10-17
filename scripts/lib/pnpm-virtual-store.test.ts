@@ -5,7 +5,11 @@ import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import { afterEach, test } from "vite-plus/test";
 import { symlinksSupported } from "@t3tools/shared/testing/symlinks";
-import { pnpmViteFsAllow, pnpmVirtualStoreFolders } from "./pnpm-virtual-store.ts";
+import {
+  pnpmViteFsAllow,
+  pnpmVirtualStoreFolders,
+  pnpmMetroWatchFolders,
+} from "./pnpm-virtual-store.ts";
 
 const roots: string[] = [];
 afterEach(() => {
@@ -13,7 +17,7 @@ afterEach(() => {
 });
 
 test.skipIf(!symlinksSupported)(
-  "Vite and Metro can see symlink targets in an external pnpm virtual store",
+  "Vite can serve symlink targets in an external pnpm virtual store",
   () => {
     const root = NodeFS.realpathSync(
       NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "metro-pnpm-")),
@@ -47,3 +51,56 @@ test.skipIf(!symlinksSupported)(
     NodeAssert.deepEqual(pnpmViteFsAllow(NodePath.join(workspace, "apps", "web")), [workspace]);
   },
 );
+
+test.skipIf(!symlinksSupported)(
+  "Metro watches only reachable store slots, including transitive links",
+  () => {
+    const root = NodeFS.realpathSync(
+      NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "metro-slots-")),
+    );
+    roots.push(root);
+    const workspace = NodePath.join(root, "worktree");
+    const store = NodePath.join(root, "store/links");
+    const slotA = NodePath.join(store, "direct/1/hash-a");
+    const slotB = NodePath.join(store, "transitive/1/hash-b");
+    const slotUnused = NodePath.join(store, "unused/1/hash-c");
+    const modules = NodePath.join(workspace, "apps/mobile/node_modules");
+    for (const slot of [slotA, slotB, slotUnused]) {
+      NodeFS.mkdirSync(NodePath.join(slot, "node_modules/pkg"), { recursive: true });
+    }
+    NodeFS.mkdirSync(modules, { recursive: true });
+    NodeFS.mkdirSync(NodePath.join(workspace, "node_modules"), { recursive: true });
+    NodeFS.writeFileSync(
+      NodePath.join(workspace, "node_modules/.modules.yaml"),
+      JSON.stringify({ virtualStoreDir: store }),
+    );
+    NodeFS.symlinkSync(
+      NodePath.join(slotA, "node_modules/pkg"),
+      NodePath.join(modules, "direct"),
+      "dir",
+    );
+    NodeFS.symlinkSync(
+      NodePath.join(slotB, "node_modules/pkg"),
+      NodePath.join(slotA, "node_modules/transitive"),
+      "dir",
+    );
+    NodeFS.symlinkSync(
+      NodePath.join(slotA, "node_modules/pkg"),
+      NodePath.join(slotB, "node_modules/cycle"),
+      "dir",
+    );
+    NodeAssert.deepEqual(pnpmMetroWatchFolders(workspace).sort(), [slotA, slotB].sort());
+  },
+);
+
+test("missing or legacy modules metadata keeps local-store configs usable", () => {
+  const root = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "pnpm-metadata-"));
+  roots.push(root);
+  NodeAssert.deepEqual(pnpmVirtualStoreFolders(root), []);
+  NodeFS.mkdirSync(NodePath.join(root, "node_modules"));
+  NodeFS.writeFileSync(
+    NodePath.join(root, "node_modules/.modules.yaml"),
+    "virtualStoreDir: .pnpm\n",
+  );
+  NodeAssert.deepEqual(pnpmVirtualStoreFolders(root), []);
+});

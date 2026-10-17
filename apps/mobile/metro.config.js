@@ -4,7 +4,7 @@ const { pathToFileURL } = require("node:url");
 const { getDefaultConfig } = require("expo/metro-config");
 const { withUniwindConfig } = require("uniwind/metro");
 const extraThemes = require("./generated-uniwind-theme-names.json");
-const { pnpmVirtualStoreFolders } = require("../../scripts/lib/pnpm-virtual-store.ts");
+const { pnpmMetroWatchFolders } = require("../../scripts/lib/pnpm-virtual-store.ts");
 
 /** @type {import("expo/metro-config").MetroConfig} */
 const config = getDefaultConfig(__dirname);
@@ -39,7 +39,7 @@ config.watchFolders = [
   ...new Set([
     ...(config.watchFolders ?? []),
     workspaceRoot,
-    ...pnpmVirtualStoreFolders(workspaceRoot),
+    ...pnpmMetroWatchFolders(workspaceRoot),
   ]),
 ];
 config.resolver = {

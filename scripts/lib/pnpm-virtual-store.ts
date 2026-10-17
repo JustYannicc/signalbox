@@ -6,9 +6,12 @@ import * as NodePath from "node:path";
 export function pnpmVirtualStoreFolders(workspaceRoot: string): string[] {
   const modulesRoot = NodePath.join(workspaceRoot, "node_modules");
   // pnpm 11 writes JSON to .modules.yaml, including a custom store's actual path.
-  const manifest: unknown = JSON.parse(
-    NodeFS.readFileSync(NodePath.join(modulesRoot, ".modules.yaml"), "utf8"),
-  );
+  let manifest: unknown;
+  try {
+    manifest = JSON.parse(NodeFS.readFileSync(NodePath.join(modulesRoot, ".modules.yaml"), "utf8"));
+  } catch {
+    return [];
+  }
   const virtualStoreDir =
     typeof manifest === "object" &&
     manifest !== null &&
@@ -29,4 +32,42 @@ export function pnpmVirtualStoreFolders(workspaceRoot: string): string[] {
 export function pnpmViteFsAllow(appRoot: string): string[] {
   const workspaceRoot = NodePath.resolve(appRoot, "../..");
   return [workspaceRoot, ...pnpmVirtualStoreFolders(workspaceRoot)];
+}
+
+/** Metro crawls watch roots, so include reachable slots rather than every project's store. */
+export function pnpmMetroWatchFolders(workspaceRoot: string): string[] {
+  const stores = pnpmVirtualStoreFolders(workspaceRoot);
+  if (stores.length === 0) return [];
+  const slots = new Set<string>();
+  const visited = new Set<string>();
+  const pending = [
+    NodePath.join(workspaceRoot, "node_modules"),
+    NodePath.join(workspaceRoot, "apps/mobile/node_modules"),
+    NodePath.join(workspaceRoot, "node_modules/.pnpm/node_modules"),
+  ];
+  while (pending.length > 0) {
+    const modules = pending.pop();
+    if (modules === undefined) break;
+    if (visited.has(modules) || !NodeFS.existsSync(modules)) continue;
+    visited.add(modules);
+    for (const owner of NodeFS.readdirSync(modules)) {
+      if (owner.startsWith(".")) continue;
+      const names = owner.startsWith("@")
+        ? NodeFS.readdirSync(NodePath.join(modules, owner)).map((name) => `${owner}/${name}`)
+        : [owner];
+      for (const name of names) {
+        const candidate = NodePath.join(modules, name);
+        if (!NodeFS.existsSync(candidate)) continue;
+        const target = NodeFS.realpathSync(candidate);
+        if (!stores.some((store) => target.startsWith(`${store}${NodePath.sep}`))) continue;
+        const packageBoundary = target.lastIndexOf(`${NodePath.sep}node_modules${NodePath.sep}`);
+        if (packageBoundary === -1) continue;
+        const slot = target.slice(0, packageBoundary);
+        if (slots.has(slot)) continue;
+        slots.add(slot);
+        pending.push(NodePath.join(slot, "node_modules"));
+      }
+    }
+  }
+  return [...slots];
 }
