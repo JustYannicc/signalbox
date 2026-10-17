@@ -52,12 +52,18 @@ export function AddPoolAccountScreen({ route }: Props) {
   const pendingRef = useRef(false);
   // Only this visit's sign-in counts; an earlier one may still read `succeeded`.
   const [startedFlow, setStartedFlow] = useState<string | null>(null);
+  // The pool's flow before this visit's start: the state still shows it until the new one lands.
+  const [priorFlow, setPriorFlow] = useState<string | null>(null);
+  // A flow the Cancel button is already ending; leaving must not end it a second time.
+  const cancelling = useRef<string | null>(null);
   const left = useRef(false);
   const opened = useRef<string | null>(null);
 
   const active =
     auth?.phase === "starting" || auth?.phase === "waiting" || auth?.phase === "verifying";
   const ours = startedFlow !== null && auth?.flowId === startedFlow;
+  // Another device started a newer sign-in on this pool; it isn't this screen's to show or end.
+  const superseded = startedFlow !== null && !!auth?.flowId && !ours && auth.flowId !== priorFlow;
   const interaction = active && ours ? auth.interaction : null;
   const deviceCode = interaction?.type === "deviceCode" ? interaction : null;
   const browser = interaction?.type === "browser" ? interaction : null;
@@ -77,18 +83,22 @@ export function AddPoolAccountScreen({ route }: Props) {
     return result?._tag === "Success" ? result.value : null;
   }
 
+  const cancelFlow = (flowId: string) => cancel({ environmentId, input: { instanceId, flowId } });
+
   const openPage = (url: string) =>
     void Linking.openURL(url).catch(() => setError("Could not open the sign-in page."));
 
   async function begin() {
     setPasted("");
     setStartedFlow(null);
+    setPriorFlow(auth?.flowId ?? null);
+    cancelling.current = null;
     opened.current = null;
     // No callbackMode: nothing on the phone can take a localhost redirect.
     const flowId = (await run(() => start(target)))?.flowId ?? null;
     // Left while it started: end it here, so the pool stops waiting on it.
     if (left.current) {
-      if (flowId) void cancel({ environmentId, input: { instanceId, flowId } });
+      if (flowId) void cancelFlow(flowId);
       return;
     }
     setStartedFlow(flowId);
@@ -132,11 +142,11 @@ export function AddPoolAccountScreen({ route }: Props) {
 
   // Leaving ends this visit's sign-in unless it already ended, so the pool stops
   // waiting on it; the state may not have caught up with a start that just returned.
-  const ended = ours && (auth?.phase === "failed" || auth?.phase === "cancelled");
+  const ended = superseded || (ours && (auth?.phase === "failed" || auth?.phase === "cancelled"));
   const abandon = useEffectEvent(() => {
     left.current = true;
-    if (startedFlow && !ended && !succeeded) {
-      void cancel({ environmentId, input: { instanceId, flowId: startedFlow } });
+    if (startedFlow && !ended && !succeeded && cancelling.current !== startedFlow) {
+      void cancelFlow(startedFlow);
     }
   });
   useEffect(() => {
@@ -145,21 +155,21 @@ export function AddPoolAccountScreen({ route }: Props) {
     return abandon;
   }, []);
 
-  const status = error
-    ? error
-    : !ours || auth?.phase === "starting"
-      ? "Starting sign-in…"
-      : auth?.phase === "verifying"
-        ? "Checking the account…"
-        : auth?.phase === "succeeded"
-          ? `${account} account added.`
-          : auth?.phase === "failed"
-            ? (auth.message ?? "Sign-in failed. Try again.")
-            : deviceCode
-              ? `Copy this code and enter it on the ${account} page. Signalbox finishes on its own.`
-              : showsCode
-                ? `Sign in to ${account} in your browser. It ends on a page with a code: copy it and paste it here.`
-                : `Sign in to ${account} in your browser, then paste the address the page ends on.`;
+  const status = (() => {
+    if (error) return error;
+    if (superseded) return "A sign-in started on another device replaced this one.";
+    if (!ours || auth?.phase === "starting") return "Starting sign-in…";
+    if (auth?.phase === "verifying") return "Checking the account…";
+    if (auth?.phase === "succeeded") return `${account} account added.`;
+    if (auth?.phase === "failed") return auth.message ?? "Sign-in failed. Try again.";
+    if (deviceCode) {
+      return `Copy this code and enter it on the ${account} page. Signalbox finishes on its own.`;
+    }
+    if (showsCode) {
+      return `Sign in to ${account} in your browser. It ends on a page with a code: copy it and paste it here.`;
+    }
+    return `Sign in to ${account} in your browser, then paste the address the page ends on.`;
+  })();
 
   return (
     <SettingsScreen title={`Add ${account} account`}>
@@ -246,7 +256,24 @@ export function AddPoolAccountScreen({ route }: Props) {
             onPress={() => void begin()}
           />
         ) : (
-          <Button label="Cancel" tone="text" fullWidth onPress={() => navigation.goBack()} />
+          <Button
+            label="Cancel"
+            tone="text"
+            fullWidth
+            disabled={pending}
+            onPress={() => {
+              if (!startedFlow || !ours || !active) return navigation.goBack();
+              // A save already under way can still win: leave only once the cancel took,
+              // and otherwise let the subscribed phase say what happened.
+              const flowId = startedFlow;
+              cancelling.current = flowId;
+              void run(() => cancelFlow(flowId)).then((state) => {
+                if (state) return navigation.goBack();
+                cancelling.current = null;
+                setError(null);
+              });
+            }}
+          />
         )}
       </ScrollView>
     </SettingsScreen>
