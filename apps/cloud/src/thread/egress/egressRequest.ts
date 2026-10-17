@@ -7,22 +7,7 @@ import {
 } from "@signalbox/runner-protocol/SecretPlaceholders";
 import type { SecretValue } from "@signalbox/runner-protocol/SecretScrubber";
 
-/**
- * One request leaving a thread's machine, read for the secrets it carries
- * (#592): every placeholder (`{{secret:NAME}}`, percent-encoded too) and every
- * value in a form the scrubber knows, in its URL, its headers (a Basic
- * credential decoded) and a text body. `request()` is what to send:
- * placeholders filled with values, the rest as it came. Pure: nothing here
- * decides whether it may go.
- *
- * Bodies are read when they are text (JSON, form, plain, XML) and no larger
- * than `MAX_READ_BODY`; anything else goes through unread, as it streams. A
- * program can always transform a value it holds past recognition before
- * sending it, so the check is exact for placeholders and best effort for
- * values a program read.
- */
-
-/** Text bodies read for secrets, as Executor's handles do; larger ones go unread. */
+/** Reads the entire request before any byte may leave the machine's egress broker. */
 export const MAX_READ_BODY = 1024 * 1024;
 
 const TEXT_BODY =
@@ -34,6 +19,8 @@ const BASIC = /^\s*basic\s+([A-Za-z0-9+/=]+)\s*$/i;
 export interface EgressRequest {
   /** The host it goes to, with its port when that isn't the scheme's default. */
   readonly host: string;
+  /** An uninspectable request is never forwarded while the thread has secrets. */
+  readonly refusal: string | null;
   /** Whether it goes out encrypted: secrets only ever do. */
   readonly https: boolean;
   /** Secrets it carries, by placeholder or by value. */
@@ -42,24 +29,22 @@ export interface EgressRequest {
   readonly unknown: ReadonlySet<string>;
   /** The request to send, its placeholders filled. Call once. */
   readonly request: () => Request;
+  /** Buffered, unresolved request for a fresh registration after approval. */
+  readonly original: () => Request;
 }
 
 /** Placeholders a URL encoder wrote, back as they were written. */
 const decodedPlaceholders = (text: string) =>
   text.replace(ENCODED_PLACEHOLDER, (_, name: string) => `{{secret:${name}}}`);
 
-/**
- * The body's bytes when it's text small enough to read, else a stream of all
- * of it, what was read put back in front: a body without a length is read
- * only up to the limit.
- */
+/** Buffers only bounded UTF-8 text; all other bodies fail closed. */
 const readBody = async (
   request: Request,
 ): Promise<
   | { readonly _tag: "read"; readonly bytes: Uint8Array<ArrayBuffer> }
-  | { readonly _tag: "unread"; readonly body: ReadableStream<Uint8Array> | null }
+  | { readonly _tag: "refused"; readonly reason: string }
 > => {
-  if (request.body === null) return { _tag: "unread", body: null };
+  if (request.body === null) return { _tag: "read", bytes: new Uint8Array() };
   const encoding = (request.headers.get("content-encoding") ?? "").trim().toLowerCase();
   const length = Number(request.headers.get("content-length") ?? Number.NaN);
   if (
@@ -67,45 +52,51 @@ const readBody = async (
     length > MAX_READ_BODY ||
     !TEXT_BODY.test(request.headers.get("content-type") ?? "text/plain")
   ) {
-    return { _tag: "unread", body: request.body };
+    await request.body.cancel();
+    return {
+      _tag: "refused",
+      reason:
+        "This thread has secrets, so outbound bodies must be uncompressed UTF-8 text no larger than 1 MiB.",
+    };
   }
   const reader = request.body.getReader();
   const chunks: Array<Uint8Array> = [];
   let size = 0;
-  while (size <= MAX_READ_BODY) {
-    const { done, value } = await reader.read();
-    if (done) {
-      const bytes = new Uint8Array(size);
-      let offset = 0;
-      for (const chunk of chunks) {
-        bytes.set(chunk, offset);
-        offset += chunk.byteLength;
-      }
-      return { _tag: "read", bytes };
-    }
-    chunks.push(value);
-    size += value.byteLength;
-  }
-  // Too big to read: what was read, then the rest as it streams.
-  const rest = new ReadableStream<Uint8Array>({
-    start(controller) {
-      for (const chunk of chunks) controller.enqueue(chunk);
-    },
-    async pull(controller) {
+  try {
+    for (;;) {
       const { done, value } = await reader.read();
-      if (done) controller.close();
-      else controller.enqueue(value);
-    },
-    cancel: (reason) => reader.cancel(reason),
-  });
-  return { _tag: "unread", body: rest };
+      if (done) {
+        const bytes = new Uint8Array(size);
+        let offset = 0;
+        for (const chunk of chunks) {
+          bytes.set(chunk, offset);
+          offset += chunk.byteLength;
+        }
+        return { _tag: "read", bytes };
+      }
+      size += value.byteLength;
+      if (size > MAX_READ_BODY) {
+        await reader.cancel();
+        return {
+          _tag: "refused",
+          reason:
+            "This thread has secrets, so an outbound body larger than 1 MiB cannot be sent unchecked.",
+        };
+      }
+      chunks.push(value);
+    }
+  } finally {
+    reader.releaseLock();
+  }
 };
 
 export async function readEgressRequest(
   request: Request,
   secretValues: ReadonlyArray<SecretValue>,
+  redactions: ReadonlyArray<SecretValue> = secretValues,
 ): Promise<EgressRequest> {
-  const { scrubber, values } = makeSecretLookup(secretValues);
+  const { values } = makeSecretLookup(secretValues);
+  const { scrubber } = makeSecretLookup(redactions);
   const urlValues = new Map([...values].map(([name, value]) => [name, encodeURIComponent(value)]));
   const secrets = new Set<string>();
   const unknown = new Set<string>();
@@ -140,13 +131,15 @@ export async function readEgressRequest(
   }
 
   const read = await readBody(request);
-  let body: ReadableStream<Uint8Array> | Uint8Array<ArrayBuffer> | string | null =
-    read._tag === "unread" ? read.body : read.bytes;
+  let refusal = read._tag === "refused" ? read.reason : null;
+  let body: Uint8Array<ArrayBuffer> | string | null =
+    read._tag === "read" && request.body !== null ? read.bytes : null;
   if (read._tag === "read") {
     let text: string | null = null;
     try {
       text = new TextDecoder("utf-8", { fatal: true }).decode(read.bytes);
     } catch {
+      refusal = "This thread has secrets, so a body that is not UTF-8 cannot be sent unchecked.";
       text = null;
     }
     if (text !== null) {
@@ -161,17 +154,28 @@ export async function readEgressRequest(
 
   return {
     host: url.host,
+    refusal:
+      new URL(filledUrl).origin !== url.origin
+        ? "A secret cannot change the request destination."
+        : refusal,
     https: url.protocol === "https:",
     secrets,
     unknown,
+    original: () =>
+      new Request(request.url, {
+        method: request.method,
+        headers: request.headers,
+        body:
+          request.method === "GET" || request.method === "HEAD" || read._tag === "refused"
+            ? null
+            : read.bytes,
+      }),
     request: () =>
       new Request(filledUrl, {
         method: request.method,
         headers,
         body: request.method === "GET" || request.method === "HEAD" ? null : body,
         redirect: "manual",
-        // A body that still streams goes on as it arrives.
-        ...(body instanceof ReadableStream ? { duplex: "half" } : {}),
       } as RequestInit),
   };
 }

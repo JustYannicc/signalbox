@@ -2,6 +2,7 @@ import {
   type AuthEnvironmentScope,
   OrchestrationV2ShellSnapshot,
   type ServerAuthSessionMethod,
+  type ThreadId,
 } from "@t3tools/contracts";
 import type { WorkOSOrganization } from "@signalbox/account/WorkOSClient";
 import type { ToolResult } from "@signalbox/runner-protocol/AutomationProtocol";
@@ -14,7 +15,7 @@ import type { CommitAuthor } from "@signalbox/runner-protocol/DriveProtocol";
 import type { AccountProfile } from "@t3tools/contracts/account";
 import type { SignalboxContext, SignalboxContextId } from "@t3tools/contracts/signalboxContexts";
 import type { SignalboxDrive, SignalboxDriveRole } from "@t3tools/contracts/signalboxDrives";
-import type { OnePasswordEnvironmentId } from "@t3tools/contracts/signalboxFolders";
+import type { FolderId, OnePasswordEnvironmentId } from "@t3tools/contracts/signalboxFolders";
 import type { SignInSource } from "@t3tools/contracts/signalboxSignIn";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -186,25 +187,29 @@ export interface UserObjectApi {
    * connected: only for their thread's machine (`ThreadRunner`'s `ThreadSecrets`).
    */
   readonly onePasswordToken: () => Promise<string | null>;
+  /** The thread's current home folder; null is its owner's top level. */
+  readonly secretSendFolder: (threadId: ThreadId) => Promise<FolderId | null>;
   /**
    * Which of a thread's secrets the user always lets their agents send to
    * `host` (#592, `SecretSends.ts`), for the thread's egress check.
    */
   readonly secretSendsAllowed: (input: {
+    readonly folderId: FolderId | null;
     readonly host: string;
     readonly sends: ReadonlyArray<{
       readonly environmentId: OnePasswordEnvironmentId;
       readonly name: string;
     }>;
   }) => Promise<ReadonlyArray<string>>;
-  /** A thread's "Always" answers to sending a secret to a host, kept from now on. */
-  readonly keepSecretSends: (
-    grants: ReadonlyArray<{
+  /** A thread's "Always" answers to sending a secret to a host, kept in the home it asked from. */
+  readonly keepSecretSends: (input: {
+    readonly folderId: FolderId | null;
+    readonly grants: ReadonlyArray<{
       readonly environmentId: OnePasswordEnvironmentId;
       readonly name: string;
       readonly host: string;
-    }>,
-  ) => Promise<void>;
+    }>;
+  }) => Promise<void>;
   /** The user's current contexts, which every thread call acts within. */
   readonly contextIds: () => Promise<ReadonlyArray<SignalboxContextId>>;
   /** A drive object's membership delivery (`drive/driveAccessOutbox.ts`). Idempotent. */
@@ -352,6 +357,7 @@ const METHODS = Object.keys({
   importPreviewSetup: true,
   githubCommitAuthor: true,
   onePasswordToken: true,
+  secretSendFolder: true,
   secretSendsAllowed: true,
   keepSecretSends: true,
   contextIds: true,

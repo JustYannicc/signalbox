@@ -4,12 +4,9 @@ import { makeSecretScrubber, type SecretValue, secretPlaceholder } from "./Secre
  * Where a folder secret's placeholder is filled in (#592). The agent writes
  * `{{secret:NAME}}`, never a value: the scrubber turns every value back into
  * it on the way to the model (`SecretScrubber.ts`), and these fill it in
- * again at the boundary, deterministically, outside the model:
- *
- * - on the machine, in what the agent writes or runs (a file, a command),
- *   before the harness runs the tool (`RunnerSecretFill.ts`);
- * - at the machine's egress, in what a program sends, once the person let the
- *   secret go to that host (`thread/egress/` in the cloud).
+ * again only at outbound HTTPS egress, after the person allows the host
+ * (`thread/egress/` in the cloud). Tool inputs, files and commands retain the
+ * placeholder; echoed response values are redacted before returning.
  *
  * Spaces inside the braces are allowed, as in `op inject`. A bare
  * `secret:NAME` without braces is never touched.

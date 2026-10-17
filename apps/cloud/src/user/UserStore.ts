@@ -221,6 +221,7 @@ const migrations = Migrator.fromRecord({
   "0019_status_notes": StatusNoteTables.createTables,
   "0019_notes": NoteTables.createTables,
   "0020_folder_phases": FolderTables.addPhases,
+  "0021_folder_secret_sends": SecretSends.addFolderScope,
 });
 
 /** Applies every migration not recorded yet (`storage/migrations.ts`). Never edit or rename a merged one. */

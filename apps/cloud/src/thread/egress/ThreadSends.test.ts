@@ -1,6 +1,6 @@
 import type { RunnerItem } from "@signalbox/runner-protocol/RunnerProtocol";
 import { CommandId, type ProviderApprovalDecision, RuntimeRequestId } from "@t3tools/contracts";
-import { OnePasswordEnvironmentId } from "@t3tools/contracts/signalboxFolders";
+import { FolderId, OnePasswordEnvironmentId } from "@t3tools/contracts/signalboxFolders";
 import { describe, expect, it } from "@effect/vitest";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -8,7 +8,7 @@ import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as SqlClient from "effect/sql/SqlClient";
 
-import { UserDirectory } from "../../user/UserDirectory.ts";
+import { UserDirectory, UserObjectError } from "../../user/UserDirectory.ts";
 import {
   connect,
   freshDatabase,
@@ -28,30 +28,74 @@ import { saveSecretSources } from "./secretSendTables.ts";
 import * as ThreadSends from "./ThreadSends.ts";
 
 const environment = OnePasswordEnvironmentId.make("envfolder");
+const homeA = FolderId.make("folder-a");
+const homeB = FolderId.make("folder-b");
 const HOST = "hooks.example.test";
 
 /** The owner's object as the gate asks it: the grants it keeps, and what it answers. */
 const fakeOwner = () => {
   const kept: Array<{ environmentId: string; name: string; host: string }> = [];
+  const allowedCalls: Array<unknown> = [];
+  const keptCalls: Array<unknown> = [];
+  const folderLookups: Array<string> = [];
   let allowed = new Set<string>();
+  let folderId: string | null = homeA;
+  let folderLookupFails = false;
   const users = {
     forUser: () => ({
-      secretSendsAllowed: ({ host }: { host: string }) =>
-        Effect.succeed(
-          [...allowed].filter((key) => key.endsWith(` ${host}`)).map((key) => key.split(" ")[0]!),
-        ),
-      keepSecretSends: (
-        grants: ReadonlyArray<{ environmentId: string; name: string; host: string }>,
-      ) =>
+      secretSendFolder: (thread: string) =>
+        Effect.gen(function* () {
+          folderLookups.push(thread);
+          if (folderLookupFails) {
+            return yield* new UserObjectError({
+              operation: "secretSendFolder",
+              cause: new Error("offline"),
+            });
+          }
+          return folderId;
+        }),
+      secretSendsAllowed: (input: {
+        readonly folderId: string | null;
+        readonly host: string;
+        readonly sends: ReadonlyArray<unknown>;
+      }) =>
         Effect.sync(() => {
+          allowedCalls.push(input);
+          const { folderId, host } = input;
+          return [...allowed]
+            .filter((key) => key.startsWith(`${folderId ?? "top"} `) && key.endsWith(` ${host}`))
+            .map((key) => key.split(" ")[1]!);
+        }),
+      keepSecretSends: (input: {
+        readonly folderId: string | null;
+        readonly grants: ReadonlyArray<{
+          environmentId: string;
+          name: string;
+          host: string;
+        }>;
+      }) =>
+        Effect.sync(() => {
+          keptCalls.push(input);
+          const grants = input.grants;
           kept.push(...grants);
-          for (const grant of grants) allowed.add(`${grant.name} ${grant.host}`);
+          for (const grant of grants) {
+            allowed.add(`${input.folderId ?? "top"} ${grant.name} ${grant.host}`);
+          }
         }),
     }),
   } as unknown as UserDirectory["Service"];
   return {
     users,
     kept,
+    allowedCalls,
+    keptCalls,
+    folderLookups,
+    setFolder: (next: string | null) => {
+      folderId = next;
+    },
+    failFolderLookup: () => {
+      folderLookupFails = true;
+    },
     revokeAll: () => {
       allowed = new Set();
     },
@@ -196,6 +240,70 @@ describe("ThreadSends", () => {
         expect((yield* sends.authorize({ host: HOST, names: ["KEY"], waitMs: 0 }))._tag).toBe(
           "waiting",
         );
+      }),
+    );
+  });
+
+  it.effect("checks and keeps Always grants for this thread's home", () => {
+    const owned = fakeOwner();
+    return midTurn(owned, ({ engine, sends }) =>
+      Effect.gen(function* () {
+        yield* sends.authorize({ host: HOST, names: ["KEY"], waitMs: 0 });
+        expect(owned.folderLookups).toContain(threadId);
+        expect(owned.allowedCalls[0]).toMatchObject({
+          folderId: homeA,
+          host: HOST,
+          sends: [{ folderId: homeA, environmentId: environment, name: "KEY" }],
+        });
+        const [request] = yield* pendingRequests(engine);
+        yield* respond(engine, request!.id, "acceptAlways");
+        yield* sends.settle;
+        expect(owned.keptCalls).toEqual([
+          {
+            folderId: homeA,
+            grants: [{ environmentId: environment, name: "KEY", host: HOST }],
+          },
+        ]);
+      }),
+    );
+  });
+
+  it.effect("refuses sends when the owner's folder can't be read", () => {
+    const owned = fakeOwner();
+    owned.failFolderLookup();
+    return midTurn(owned, ({ engine, sends }) =>
+      Effect.gen(function* () {
+        expect(yield* sends.authorize({ host: HOST, names: ["KEY"], waitMs: 0 })).toMatchObject({
+          _tag: "refused",
+        });
+        expect(owned.allowedCalls).toEqual([]);
+        expect(yield* pendingRequests(engine)).toHaveLength(0);
+      }),
+    );
+  });
+
+  it.effect("keeps an Always answer scoped to the home where its ask started", () => {
+    const owned = fakeOwner();
+    return midTurn(owned, ({ engine, sends }) =>
+      Effect.gen(function* () {
+        expect((yield* sends.authorize({ host: HOST, names: ["KEY"], waitMs: 0 }))._tag).toBe(
+          "waiting",
+        );
+        const [request] = yield* pendingRequests(engine);
+        owned.setFolder(homeB);
+        yield* respond(engine, request!.id, "acceptAlways");
+        yield* sends.settle;
+
+        expect(owned.keptCalls).toEqual([
+          {
+            folderId: homeA,
+            grants: [{ environmentId: environment, name: "KEY", host: HOST }],
+          },
+        ]);
+        expect((yield* sends.authorize({ host: HOST, names: ["KEY"], waitMs: 0 }))._tag).toBe(
+          "waiting",
+        );
+        expect(yield* pendingRequests(engine)).toHaveLength(1);
       }),
     );
   });

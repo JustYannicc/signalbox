@@ -7,7 +7,7 @@ const KEY = `sk-test-${crypto.randomUUID()}`;
 const guarded = { values: new Map([["KEY", KEY]]), guarded: true };
 
 describe("RunnerSecretFill", () => {
-  it("fills commands and file writes, every field, and leaves other tools alone", () => {
+  it("preserves placeholders in commands and nested file edits, and leaves other tools alone", () => {
     expect(
       fillToolInput(
         "Bash",
@@ -17,20 +17,14 @@ describe("RunnerSecretFill", () => {
         },
         guarded,
       ),
-    ).toEqual({
-      _tag: "filled",
-      input: { command: `curl -H "Authorization: Bearer ${KEY}" https://example.test`, timeout: 5 },
-    });
+    ).toEqual({ _tag: "untouched" });
     expect(
       fillToolInput(
         "MultiEdit",
         { file_path: ".env", edits: [{ old_string: "KEY={{secret:KEY}}", new_string: "KEY=" }] },
         guarded,
       ),
-    ).toEqual({
-      _tag: "filled",
-      input: { file_path: ".env", edits: [{ old_string: `KEY=${KEY}`, new_string: "KEY=" }] },
-    });
+    ).toEqual({ _tag: "untouched" });
     expect(fillToolInput("mcp__signalbox__create_pr", { body: "{{secret:KEY}}" }, guarded)).toEqual(
       { _tag: "untouched" },
     );
@@ -53,7 +47,7 @@ describe("RunnerSecretFill", () => {
     expect(JSON.stringify(refused)).not.toContain(KEY);
   });
 
-  it("answers Claude Code's PreToolUse hook with the filled input or the refusal", async () => {
+  it("never passes resolved input to Claude Code's PreToolUse hook", async () => {
     const [hook] = secretFillHook(() => guarded).hooks;
     const signal = new AbortController().signal;
     const base = { session_id: "s", transcript_path: "t", cwd: "/w" } as const;
@@ -69,13 +63,8 @@ describe("RunnerSecretFill", () => {
       "toolu_1",
       { signal },
     );
-    expect(filled).toEqual({
-      hookSpecificOutput: {
-        hookEventName: "PreToolUse",
-        permissionDecision: "allow",
-        updatedInput: { file_path: ".env", content: `KEY=${KEY}\n` },
-      },
-    });
+    expect(filled).toEqual({});
+    expect(JSON.stringify(filled)).not.toContain(KEY);
     const denied = await hook!(
       {
         ...base,

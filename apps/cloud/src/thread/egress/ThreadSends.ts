@@ -7,12 +7,13 @@ import {
   RuntimeRequestId,
   TurnItemId,
 } from "@t3tools/contracts";
-import type { OnePasswordEnvironmentId } from "@t3tools/contracts/signalboxFolders";
+import type { FolderId, OnePasswordEnvironmentId } from "@t3tools/contracts/signalboxFolders";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Semaphore from "effect/Semaphore";
 import * as SqlClient from "effect/sql/SqlClient";
 
@@ -22,6 +23,7 @@ import { activeRun } from "../runLifecycle.ts";
 import { approvalRequestEvents } from "../runtimeRequests.ts";
 import * as ThreadEngine from "../ThreadEngine.ts";
 import { ThreadStore } from "../ThreadStore.ts";
+import { makeEgressDispatch, type EgressDispatchAnswer } from "./egressDispatch.ts";
 import {
   countSecretAsks,
   markAskKept,
@@ -38,7 +40,7 @@ import {
  * by value.
  *
  * A secret goes to a host the person allowed: always (kept in their object
- * per Environment, name and host, `user/SecretSends.ts`), or for the rest of
+ * per home folder, Environment, name and host, `user/SecretSends.ts`), or for the rest of
  * the turn. Anything else asks them once, as an approval on the thread
  * (`runtimeRequests.ts`): "Send it this turn", "Always send it there", or no.
  * A send that comes while they haven't answered waits a little, then is
@@ -70,6 +72,8 @@ export class ThreadSends extends Context.Service<
     readonly authorize: (input: SendRequest) => Effect.Effect<SendAnswer>;
     /** After the thread changed: wakes sends waiting on an answer, and keeps "Always" answers. */
     readonly settle: Effect.Effect<void>;
+    /** Sends under the current secret registration revision. */
+    readonly dispatch: (request: Request, revision: number) => Effect.Effect<EgressDispatchAnswer>;
   }
 >()("@signalbox/cloud/thread/egress/ThreadSends") {}
 
@@ -104,6 +108,7 @@ export const layer = Layer.effect(
     const store = yield* ThreadStore;
     const sql = yield* SqlClient.SqlClient;
     const users = yield* UserDirectory;
+    const dispatch = yield* makeEgressDispatch();
     /** Sends waiting on an ask, by its request id; woken by `settle`. */
     const waiting = new Map<string, Deferred.Deferred<void>>();
     /** One ask at a time, so sends made together ask once. */
@@ -114,26 +119,27 @@ export const layer = Layer.effect(
       Effect.provideService(effect, SqlClient.SqlClient, sql);
 
     const secrets: ThreadSends["Service"]["secrets"] = store.secretValues.pipe(
-      Effect.map(({ values }) => values),
+      Effect.map(({ current }) => current),
       Effect.orDie,
     );
 
     /** The names the owner always lets go to `host`; none when their object can't say. */
     const alwaysAllowed = (
       owner: string,
+      folderId: FolderId | null,
       host: string,
       names: ReadonlyArray<string>,
       sources: ReadonlyMap<string, OnePasswordEnvironmentId>,
     ) => {
       const sends = names.flatMap((name) => {
         const environmentId = sources.get(name);
-        return environmentId === undefined ? [] : [{ environmentId, name }];
+        return environmentId === undefined ? [] : [{ folderId, environmentId, name }];
       });
       return sends.length === 0
         ? Effect.succeed(new Set<string>())
         : users
             .forUser(owner)
-            .secretSendsAllowed({ host, sends })
+            .secretSendsAllowed({ folderId, host, sends })
             .pipe(
               Effect.map((allowed) => new Set(allowed)),
               Effect.catch((error) =>
@@ -178,11 +184,18 @@ export const layer = Layer.effect(
     };
 
     /** Asks the person to let `names` go to `host` this turn; null when the run can't ask. */
-    const ask = (run: OrchestrationV2Run, host: string, names: ReadonlyArray<string>) =>
+    const ask = (
+      run: OrchestrationV2Run,
+      folderId: FolderId | null,
+      host: string,
+      names: ReadonlyArray<string>,
+    ) =>
       Effect.gen(function* () {
         const ordinal = (yield* Effect.orDie(withSql(countSecretAsks))) + 1;
         const requestId = askRequestId(run.id, ordinal);
-        yield* Effect.orDie(withSql(saveSecretAsk({ requestId, runId: run.id, host, names })));
+        yield* Effect.orDie(
+          withSql(saveSecretAsk({ requestId, runId: run.id, folderId, host, names })),
+        );
         const plural = names.length === 1 ? "this secret" : "these secrets";
         return yield* engine.apply((projection, ctx) => {
           const events =
@@ -221,6 +234,30 @@ export const layer = Layer.effect(
           } as const;
         }
         const owner = (yield* Effect.orDie(store.owner))?.userId ?? null;
+        const home =
+          owner === null
+            ? Option.none()
+            : yield* users
+                .forUser(owner)
+                .secretSendFolder(projection.thread.id)
+                .pipe(
+                  Effect.asSome,
+                  Effect.catch((error) =>
+                    Effect.as(
+                      Effect.logWarning("reading the thread's home folder failed", {
+                        reason: error._tag,
+                      }),
+                      Option.none(),
+                    ),
+                  ),
+                );
+        if (Option.isNone(home)) {
+          return {
+            _tag: "refused",
+            message: "This thread's home folder could not be read, so it won't send its secrets.",
+          } as const;
+        }
+        const folderId = home.value;
         const asks = yield* Effect.orDie(withSql(readSecretAsks({ host })));
         const answer = answersOf(projection);
         let left = new Set(names);
@@ -231,7 +268,10 @@ export const layer = Layer.effect(
           // "Always" counts here only until it's kept in the owner's object, where a revoke ends it.
           if (
             (answered === "accept" && thisTurn) ||
-            (answered === "acceptAlways" && candidate.keptAt === null)
+            (answered === "acceptAlways" &&
+              candidate.folderScoped &&
+              candidate.folderId === folderId &&
+              candidate.keptAt === null)
           ) {
             for (const name of candidate.names) left.delete(name);
           } else if ((answered === "decline" || answered === "cancel") && thisTurn) {
@@ -240,7 +280,7 @@ export const layer = Layer.effect(
         }
         if (left.size > 0 && owner !== null) {
           const sources = yield* Effect.orDie(withSql(readSecretSources));
-          const always = yield* alwaysAllowed(owner, host, [...left], sources);
+          const always = yield* alwaysAllowed(owner, folderId, host, [...left], sources);
           left = new Set([...left].filter((name) => !always.has(name)));
         }
         if (left.size === 0) {
@@ -263,10 +303,14 @@ export const layer = Layer.effect(
             const pending = (yield* Effect.orDie(withSql(readSecretAsks({ host })))).findLast(
               (candidate) =>
                 candidate.runId === run.id &&
+                candidate.folderScoped &&
+                candidate.folderId === folderId &&
                 answerNow(candidate) === "pending" &&
                 wanted.every((name) => candidate.names.includes(name)),
             );
-            return pending === undefined ? yield* ask(run, host, wanted) : pending.requestId;
+            return pending === undefined
+              ? yield* ask(run, folderId, host, wanted)
+              : pending.requestId;
           }),
         );
         return requestId === null
@@ -318,7 +362,7 @@ export const layer = Layer.effect(
       }
       const answer = answersOf(projection);
       const keep = (yield* Effect.orDie(withSql(readSecretAsks({ unkept: true })))).filter(
-        (candidate) => answer(candidate) === "acceptAlways",
+        (candidate) => candidate.folderScoped && answer(candidate) === "acceptAlways",
       );
       if (keep.length === 0) return;
       const owner = (yield* Effect.orDie(store.owner))?.userId ?? null;
@@ -331,7 +375,7 @@ export const layer = Layer.effect(
         });
         const kept = yield* users
           .forUser(owner)
-          .keepSecretSends(grants)
+          .keepSecretSends({ folderId: candidate.folderId, grants })
           .pipe(
             Effect.as(true),
             Effect.catch((error) =>
@@ -350,6 +394,6 @@ export const layer = Layer.effect(
       }
     });
 
-    return ThreadSends.of({ secrets, authorize, settle });
+    return ThreadSends.of({ secrets, authorize, settle, dispatch });
   }),
 );

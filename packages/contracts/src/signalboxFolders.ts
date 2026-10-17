@@ -91,6 +91,8 @@ export type FolderSecrets = typeof FolderSecrets.Type;
  * ask again. A host is a URL's host, with its port when it isn't the default.
  */
 export const SecretSend = Schema.Struct({
+  /** The thread's home: null is the owner's top level. */
+  folderId: Schema.NullOr(FolderId),
   environmentId: OnePasswordEnvironmentId,
   name: TrimmedNonEmptyString.check(Schema.isMaxLength(256)),
   host: TrimmedNonEmptyString.check(Schema.isMaxLength(260)),
@@ -327,7 +329,7 @@ export type FolderSetOnePasswordInput = typeof FolderSetOnePasswordInput.Type;
 
 /** Stops agents always sending one secret to one host: the next send asks again. */
 export const FolderRevokeSecretSendInput = SecretSend.mapFields(
-  ({ environmentId, name, host }) => ({ environmentId, name, host }),
+  ({ folderId, environmentId, name, host }) => ({ folderId, environmentId, name, host }),
 );
 export type FolderRevokeSecretSendInput = typeof FolderRevokeSecretSendInput.Type;
 

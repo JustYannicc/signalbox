@@ -493,12 +493,16 @@ export class UserObject extends DurableObject<UserObjectEnv> implements UserObje
     return this.api.onePasswordToken();
   }
 
+  secretSendFolder(threadId: Parameters<UserObjectApi["secretSendFolder"]>[0]) {
+    return this.api.secretSendFolder(threadId);
+  }
+
   secretSendsAllowed(input: Parameters<UserObjectApi["secretSendsAllowed"]>[0]) {
     return this.api.secretSendsAllowed(input);
   }
 
-  keepSecretSends(grants: Parameters<UserObjectApi["keepSecretSends"]>[0]) {
-    return this.api.keepSecretSends(grants);
+  keepSecretSends(input: Parameters<UserObjectApi["keepSecretSends"]>[0]) {
+    return this.api.keepSecretSends(input);
   }
 
   contextIds() {

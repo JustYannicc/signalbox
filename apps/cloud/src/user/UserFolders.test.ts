@@ -1,6 +1,7 @@
 import { ThreadId } from "@t3tools/contracts";
 import { PERSONAL_CONTEXT_ID, SignalboxContextId } from "@t3tools/contracts/signalboxContexts";
 import {
+  FolderId,
   OnePasswordEnvironmentId,
   type SignalboxFoldersSnapshot,
 } from "@t3tools/contracts/signalboxFolders";
@@ -218,34 +219,90 @@ describe("UserFolders", () => {
       const { folders, store } = yield* services;
       yield* store.recordSignIn({ id: USER, email: "a@b.c" });
       const environmentId = OnePasswordEnvironmentId.make("env-work");
-      const grant = { environmentId, name: "STRIPE_KEY", host: "api.stripe.com" };
+      const grant = {
+        folderId: null,
+        environmentId,
+        name: "STRIPE_KEY",
+        host: "api.stripe.com",
+      };
 
       yield* folders.keepSends([grant]);
       // Keeping it again changes nothing.
       yield* folders.keepSends([grant]);
       expect(
-        (yield* folders.snapshot).secretSends?.map(({ environmentId, name, host }) => ({
+        (yield* folders.snapshot).secretSends?.map(({ folderId, environmentId, name, host }) => ({
+          folderId,
           environmentId,
           name,
           host,
         })),
       ).toEqual([grant]);
       expect([
-        ...(yield* folders.allowedSends("api.stripe.com", [{ environmentId, name: "STRIPE_KEY" }])),
+        ...(yield* folders.allowedSends("api.stripe.com", [
+          { folderId: null, environmentId, name: "STRIPE_KEY" },
+        ])),
       ]).toEqual(["STRIPE_KEY"]);
+      expect(
+        (yield* folders.allowedSends("api.stripe.com", [
+          {
+            folderId: undefined as never,
+            environmentId,
+            name: "STRIPE_KEY",
+          },
+        ])).size,
+      ).toBe(0);
+
+      const missingFolder = { ...grant, folderId: undefined as never };
+      yield* folders.keepSends([missingFolder]);
+      expect((yield* folders.snapshot).secretSends).toMatchObject([grant]);
+      expect((yield* folders.revokeSecretSend(missingFolder)).secretSends).toMatchObject([grant]);
+
       // Another Environment's variable of the same name is another secret.
       expect(
         (yield* folders.allowedSends("api.stripe.com", [
-          { environmentId: OnePasswordEnvironmentId.make("env-other"), name: "STRIPE_KEY" },
+          {
+            folderId: null,
+            environmentId: OnePasswordEnvironmentId.make("env-other"),
+            name: "STRIPE_KEY",
+          },
         ])).size,
       ).toBe(0);
 
       const revoked = yield* folders.revokeSecretSend(grant);
       expect(revoked.secretSends).toBeUndefined();
       expect(
-        (yield* folders.allowedSends("api.stripe.com", [{ environmentId, name: "STRIPE_KEY" }]))
-          .size,
+        (yield* folders.allowedSends("api.stripe.com", [
+          { folderId: null, environmentId, name: "STRIPE_KEY" },
+        ])).size,
       ).toBe(0);
+    }).pipe(Effect.provide(layerMemoryStore)),
+  );
+
+  it.effect("keeps Always grants to their folder and only revokes that folder's grant", () =>
+    Effect.gen(function* () {
+      const { folders, store } = yield* services;
+      yield* store.recordSignIn({ id: USER, email: "a@b.c" });
+      let snapshot = yield* folders.create({ name: "A", parentId: null });
+      snapshot = yield* folders.create({ name: "B", parentId: null });
+      const folderA = FolderId.make(idOf(snapshot, "A"));
+      const folderB = FolderId.make(idOf(snapshot, "B"));
+      const environmentId = OnePasswordEnvironmentId.make("shared-environment");
+      const send = { environmentId, name: "API_KEY", host: "api.example.test" };
+      const grantA = { ...send, folderId: folderA };
+      const grantB = { ...send, folderId: folderB };
+
+      yield* folders.keepSends([grantA]);
+      expect([...(yield* folders.allowedSends(send.host, [grantA]))]).toEqual(["API_KEY"]);
+      expect([...(yield* folders.allowedSends(send.host, [grantB]))]).toEqual([]);
+
+      yield* folders.keepSends([grantB]);
+      snapshot = yield* folders.snapshot;
+      expect(snapshot.secretSends).toMatchObject([grantA, grantB]);
+
+      snapshot = yield* folders.revokeSecretSend(grantB);
+      expect(snapshot.secretSends).toMatchObject([grantA]);
+      expect([...(yield* folders.allowedSends(send.host, [grantA]))]).toEqual(["API_KEY"]);
+      expect([...(yield* folders.allowedSends(send.host, [grantB]))]).toEqual([]);
     }).pipe(Effect.provide(layerMemoryStore)),
   );
 

@@ -49,6 +49,7 @@ export class ThreadEgress extends WorkerEntrypoint<ThreadEgressEnv, ThreadEgress
         authorize: (input) => thread.authorizeSend(input),
       },
       ownHosts: ownHostsOf(this.env),
+      dispatch: (outgoing, revision) => thread.dispatchSend(outgoing, revision),
     });
   }
 }

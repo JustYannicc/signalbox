@@ -404,12 +404,19 @@ export class ThreadObject extends DurableObject<ThreadObjectEnv> implements Thre
 
   /** The machine's egress check: the values its requests are read for (`egress/egress.ts`). */
   egressSecrets() {
-    return this.runtime.runPromise(ThreadSends.ThreadSends.use((sends) => sends.secrets));
+    return this.runtime.runPromise(ThreadStore.ThreadStore.use((store) => store.secretValues));
   }
 
   /** The machine's egress check: whether a request may take its secrets to its host. */
   authorizeSend(input: ThreadSends.SendRequest) {
     return this.runtime.runPromise(ThreadSends.ThreadSends.use((sends) => sends.authorize(input)));
+  }
+
+  /** Starts a checked request atomically with respect to secret registration. */
+  dispatchSend(request: Request, revision: number) {
+    return this.runtime.runPromise(
+      ThreadSends.ThreadSends.use((sends) => sends.dispatch(request, revision)),
+    );
   }
 
   /** The drive API asking whether a Runner's drive token is good, and for what (see `drive/driveRoutes.ts`). */

@@ -126,7 +126,7 @@ export const serveSessionRequest = (input: SessionRequest) =>
         if (lease.status === "none" || lease.generation !== verdict.generation) return false;
         yield* store.registerSecretValues(verdict.generation, registration.secrets);
         // A Runner from before #592 says nothing of where they came from.
-        if (registration.sources !== undefined) yield* saveSecretSources(registration.sources);
+        yield* saveSecretSources(registration.sources ?? []);
         return true;
       }).pipe(
         sql.withTransaction,

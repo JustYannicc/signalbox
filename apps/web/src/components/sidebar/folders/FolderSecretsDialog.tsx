@@ -44,7 +44,8 @@ export function FolderSecretsDialog(props: { dialog: Extract<FolderDialog, { kin
   const current = snapshot ? levelSecrets(snapshot, dialog.level) : null;
   const above = snapshot ? secretSourcesAbove(snapshot, dialog.level) : [];
   const connectedAt = snapshot?.onePassword?.connectedAt ?? null;
-  const sends = (snapshot?.secretSends ?? []).filter((send) => send.environmentId === current);
+  const folderId = dialog.level._tag === "folder" ? dialog.level.folderId : null;
+  const sends = (snapshot?.secretSends ?? []).filter((send) => send.folderId === folderId);
 
   const [environmentId, setEnvironmentId] = useState<string>(current ?? "");
   const [token, setToken] = useState("");
@@ -117,6 +118,7 @@ export function FolderSecretsDialog(props: { dialog: Extract<FolderDialog, { kin
     void run("stop-send", async (step) => {
       await step(
         commands.revokeSecretSend(dialog.environmentId, {
+          folderId: send.folderId,
           environmentId: send.environmentId,
           name: send.name,
           host: send.host,
@@ -258,12 +260,15 @@ export function FolderSecretsDialog(props: { dialog: Extract<FolderDialog, { kin
               <ul className="grid divide-y rounded-lg border">
                 {sends.map((send) => (
                   <li
-                    key={`${send.name} ${send.host}`}
+                    key={`${send.environmentId} ${send.name} ${send.host}`}
                     className="flex items-center gap-2 px-3 py-1.5"
                   >
                     <p className="min-w-0 flex-1 truncate text-sm">
                       <span className="font-mono">{send.name}</span>
-                      <span className="text-muted-foreground"> to {send.host}</span>
+                      <span className="text-muted-foreground">
+                        {" "}
+                        from {send.environmentId} to {send.host}
+                      </span>
                     </p>
                     <Button
                       size="xs"

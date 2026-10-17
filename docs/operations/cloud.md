@@ -74,13 +74,17 @@ pool (`scrubModelRequest.ts`). Until the machine running the turn has
 registered, the gateway refuses the turn's requests with "This machine hasn't
 registered the folder's secrets to hide them yet."
 
-Placeholders are filled at two boundaries, never by the model (#592). The
-Runner fills `{{secret:NAME}}` in Claude Code's file and shell tools before
-they run (`RunnerSecretFill.ts`, a `PreToolUse` hook). A light machine's HTTP
-and HTTPS requests all go through the thread's egress check outside the
-container (`interceptOutboundHttps("*")`, `thread/egress/`), which fills the
-placeholders a program sends and asks the person before any secret, by
-placeholder or recognizable value, goes to a host they haven't allowed. The
+Placeholders stay unchanged in files and commands (#592). A light machine's
+HTTP and HTTPS requests go through the thread's egress check outside the
+container (`interceptOutboundHttps("*")`, `thread/egress/`). It fills
+`{{secret:NAME}}` only after the person allows the destination, then redacts
+values echoed in the response. Secret-bearing requests require HTTPS.
+While secrets are loaded, binary, compressed, oversized and invalid UTF-8
+request bodies are refused rather than forwarded unchecked. Responses to
+secret-bearing requests must also be redactable text. Registrations replace
+current substitution values atomically while retaining old values for
+ModelGateway redaction. "Always" grants belong to their folder; sharing a
+1Password Environment never shares an approval. The
 container trusts the CA Cloudflare re-signs its HTTPS with: the backend sets
 `NODE_EXTRA_CA_CERTS`, and the Runner adds the CA to the system bundle and the
 browser's NSS database as it starts (`RunnerEgressTrust.ts`). A client with

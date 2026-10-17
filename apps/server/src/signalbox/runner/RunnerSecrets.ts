@@ -39,8 +39,9 @@ import type { SecretMask } from "./secretMask.ts";
  * ModelGateway scrubs every model request with. A registration that fails
  * stops the turn, since the gateway serves none of its requests until then.
  *
- * The same values fill the agent's `{{secret:NAME}}` placeholders (#592,
- * `RunnerSecretFill.ts`), only on a machine whose sends the thread checks.
+ * Registration also supplies outbound-only placeholder substitution (#592).
+ * `RunnerSecretFill.ts` validates references without resolving tool inputs.
+ * Existing raw environment variables remain available to local programs.
  */
 
 export class SecretsRegisterError extends Schema.TaggedError<SecretsRegisterError>()(

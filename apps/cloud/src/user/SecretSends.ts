@@ -1,4 +1,8 @@
-import type { OnePasswordEnvironmentId, SecretSend } from "@t3tools/contracts/signalboxFolders";
+import type {
+  FolderId,
+  OnePasswordEnvironmentId,
+  SecretSend,
+} from "@t3tools/contracts/signalboxFolders";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -10,8 +14,9 @@ import type { SqlError } from "effect/sql/SqlError";
 /**
  * The hosts the person always lets their agents send a folder secret to
  * (#592): the "Always" answers to a thread's first send of a secret to a new
- * host (`thread/egress/`). Kept per 1Password Environment and variable name,
- * so the same name in another Environment is another secret and asks again.
+ * host (`thread/egress/`). Kept per home folder, 1Password Environment,
+ * variable name and destination, so the same Environment in another folder
+ * asks again.
  * A revoked grant keeps its row, with when, so the record shows what agents
  * were allowed and until when.
  *
@@ -19,6 +24,7 @@ import type { SqlError } from "effect/sql/SqlError";
  */
 
 export interface SecretSendKey {
+  readonly folderId: FolderId | null;
   readonly environmentId: OnePasswordEnvironmentId;
   readonly name: string;
   readonly host: string;
@@ -27,7 +33,7 @@ export interface SecretSendKey {
 export class SecretSends extends Context.Service<
   SecretSends,
   {
-    /** Every grant in force, by Environment, name and host. */
+    /** Every grant in force, by folder, Environment, name and host. */
     readonly inForce: Effect.Effect<ReadonlyArray<SecretSend>, SqlError>;
     /** Which of `sends` the person always allows to `host`. */
     readonly allowed: (
@@ -59,9 +65,23 @@ export const createTables = Effect.gen(function* () {
     ON secret_sends (environment_id, name, host) WHERE revoked_at IS NULL`;
 });
 
+/** `UserStore`'s additive `0021_folder_secret_sends` migration (#697). */
+export const addFolderScope = Effect.gen(function* () {
+  const sql = yield* SqlClient.SqlClient;
+  const now = yield* Clock.currentTimeMillis;
+  yield* sql`ALTER TABLE secret_sends ADD COLUMN folder_id TEXT`;
+  yield* sql`DROP INDEX secret_sends_in_force`;
+  yield* sql`CREATE UNIQUE INDEX secret_sends_in_force
+    ON secret_sends (COALESCE(folder_id, ''), environment_id, name, host)
+    WHERE revoked_at IS NULL`;
+  // Earlier approvals had no folder owner, so they cannot safely keep their authority.
+  yield* sql`UPDATE secret_sends SET revoked_at = ${now} WHERE revoked_at IS NULL`;
+});
+
 const decodeRows = Schema.decodeUnknownSync(
   Schema.Array(
     Schema.Struct({
+      folder_id: Schema.NullOr(Schema.String),
       environment_id: Schema.String,
       name: Schema.String,
       host: Schema.String,
@@ -76,10 +96,11 @@ export const layer = Layer.effect(
     const sql = yield* SqlClient.SqlClient;
 
     const inForce: SecretSends["Service"]["inForce"] = Effect.map(
-      sql`SELECT environment_id, name, host, granted_at FROM secret_sends
-        WHERE revoked_at IS NULL ORDER BY environment_id, name, host`,
+      sql`SELECT folder_id, environment_id, name, host, granted_at FROM secret_sends
+        WHERE revoked_at IS NULL ORDER BY folder_id, environment_id, name, host`,
       (rows) =>
         decodeRows(rows).map((row) => ({
+          folderId: row.folder_id as FolderId | null,
           environmentId: row.environment_id as OnePasswordEnvironmentId,
           name: row.name,
           host: row.host,
@@ -89,13 +110,27 @@ export const layer = Layer.effect(
 
     const allowed: SecretSends["Service"]["allowed"] = (host, sends) =>
       Effect.map(
-        sql<{ readonly environment_id: string; readonly name: string }>`SELECT environment_id, name
+        sql<{
+          readonly folder_id: string | null;
+          readonly environment_id: string;
+          readonly name: string;
+        }>`SELECT folder_id, environment_id, name
           FROM secret_sends WHERE revoked_at IS NULL AND host = ${host}`,
         (rows) => {
-          const granted = new Set(rows.map((row) => `${row.environment_id} ${row.name}`));
+          const key = (send: Omit<SecretSendKey, "host">) =>
+            JSON.stringify([send.folderId, send.environmentId, send.name]);
+          const granted = new Set(
+            rows.map((row) =>
+              key({
+                folderId: row.folder_id as FolderId | null,
+                environmentId: row.environment_id as OnePasswordEnvironmentId,
+                name: row.name,
+              }),
+            ),
+          );
           return new Set(
             sends
-              .filter(({ environmentId, name }) => granted.has(`${environmentId} ${name}`))
+              .filter((send) => send.folderId !== undefined && granted.has(key(send)))
               .map(({ name }) => name),
           );
         },
@@ -105,21 +140,24 @@ export const layer = Layer.effect(
       Effect.gen(function* () {
         const now = yield* Clock.currentTimeMillis;
         let added = false;
-        for (const { environmentId, name, host } of grants) {
+        for (const { folderId, environmentId, name, host } of grants) {
+          if (folderId === undefined) continue;
           const rows = yield* sql`INSERT INTO secret_sends
-            (environment_id, name, host, granted_by, granted_at)
-            VALUES (${environmentId}, ${name}, ${host}, ${by}, ${now})
+            (folder_id, environment_id, name, host, granted_by, granted_at)
+            VALUES (${folderId}, ${environmentId}, ${name}, ${host}, ${by}, ${now})
             ON CONFLICT DO NOTHING RETURNING name`;
           added ||= rows.length > 0;
         }
         return added;
       });
 
-    const revoke: SecretSends["Service"]["revoke"] = ({ environmentId, name, host }) =>
+    const revoke: SecretSends["Service"]["revoke"] = ({ folderId, environmentId, name, host }) =>
       Effect.gen(function* () {
+        if (folderId === undefined) return false;
         const now = yield* Clock.currentTimeMillis;
         const rows = yield* sql`UPDATE secret_sends SET revoked_at = ${now}
-          WHERE revoked_at IS NULL AND environment_id = ${environmentId}
+          WHERE revoked_at IS NULL AND folder_id IS ${folderId}
+            AND environment_id = ${environmentId}
             AND name = ${name} AND host = ${host} RETURNING name`;
         return rows.length > 0;
       });

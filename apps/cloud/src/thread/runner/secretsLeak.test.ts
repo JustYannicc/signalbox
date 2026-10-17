@@ -310,7 +310,10 @@ describe("folder secrets", () => {
 
           const { projection } = yield* snapshot(engine);
           for (const stored of [
-            yield* dump(Context.get(context, SqlClient.SqlClient), ["secret_values"]),
+            yield* dump(Context.get(context, SqlClient.SqlClient), [
+              "secret_values",
+              "secret_current_values",
+            ]),
             text_(projection),
             watch.text(),
           ]) {

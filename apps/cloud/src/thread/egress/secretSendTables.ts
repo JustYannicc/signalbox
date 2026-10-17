@@ -1,4 +1,4 @@
-import type { OnePasswordEnvironmentId } from "@t3tools/contracts/signalboxFolders";
+import type { FolderId, OnePasswordEnvironmentId } from "@t3tools/contracts/signalboxFolders";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
@@ -31,6 +31,14 @@ export const migrateSecretSends = Effect.gen(function* () {
   yield* sql`CREATE INDEX secret_send_asks_host ON secret_send_asks (host)`;
 });
 
+/** Adds the home that authorized an Always answer; old pending approvals have no safe scope. */
+export const migrateSecretSendFolderScope = Effect.gen(function* () {
+  const sql = yield* SqlClient.SqlClient;
+  yield* sql`ALTER TABLE secret_send_asks ADD COLUMN folder_id TEXT`;
+  // Old asks had no home to bind an Always answer to.
+  yield* sql`ALTER TABLE secret_send_asks ADD COLUMN folder_scope_valid INTEGER NOT NULL DEFAULT 0`;
+});
+
 /** Replaces where the thread's secrets come from. Run it in the registration's transaction. */
 export const saveSecretSources = (
   sources: ReadonlyArray<{ readonly name: string; readonly environment: OnePasswordEnvironmentId }>,
@@ -58,6 +66,8 @@ export const readSecretSources = Effect.gen(function* () {
 export interface SecretAsk {
   readonly requestId: string;
   readonly runId: string;
+  readonly folderId: FolderId | null;
+  readonly folderScoped: boolean;
   readonly host: string;
   readonly names: ReadonlyArray<string>;
   readonly keptAt: number | null;
@@ -70,6 +80,8 @@ const decodeAsks = Schema.decodeUnknownSync(
     Schema.Struct({
       request_id: Schema.String,
       run_id: Schema.String,
+      folder_id: Schema.NullOr(Schema.String),
+      folder_scope_valid: Schema.Number,
       host: Schema.String,
       names: Schema.fromJsonString(Schema.Array(Schema.String)),
       kept_at: Schema.NullOr(Schema.Number),
@@ -83,13 +95,15 @@ export const readSecretAsks = (which: { readonly host: string } | { readonly unk
     const sql = yield* SqlClient.SqlClient;
     const rows =
       "host" in which
-        ? yield* sql`SELECT request_id, run_id, host, names, kept_at
+        ? yield* sql`SELECT request_id, run_id, folder_id, folder_scope_valid, host, names, kept_at
           FROM secret_send_asks WHERE host = ${which.host} ORDER BY rowid`
-        : yield* sql`SELECT request_id, run_id, host, names, kept_at
+        : yield* sql`SELECT request_id, run_id, folder_id, folder_scope_valid, host, names, kept_at
           FROM secret_send_asks WHERE kept_at IS NULL ORDER BY rowid`;
     return decodeAsks(rows).map((row): SecretAsk => ({
       requestId: row.request_id,
       runId: row.run_id,
+      folderId: row.folder_id as FolderId | null,
+      folderScoped: row.folder_scope_valid === 1,
       host: row.host,
       names: row.names,
       keptAt: row.kept_at,
@@ -103,11 +117,13 @@ export const countSecretAsks = Effect.gen(function* () {
   return row?.n ?? 0;
 });
 
-export const saveSecretAsk = (ask: Omit<SecretAsk, "keptAt">) =>
+export const saveSecretAsk = (ask: Omit<SecretAsk, "keptAt" | "folderScoped">) =>
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
-    yield* sql`INSERT INTO secret_send_asks (request_id, run_id, host, names)
-      VALUES (${ask.requestId}, ${ask.runId}, ${ask.host}, ${encodeNames(ask.names)})`;
+    yield* sql`INSERT INTO secret_send_asks
+        (request_id, run_id, folder_id, folder_scope_valid, host, names)
+      VALUES (${ask.requestId}, ${ask.runId}, ${ask.folderId}, 1, ${ask.host},
+        ${encodeNames(ask.names)})`;
   });
 
 export const markAskKept = (requestId: string, at: number) =>

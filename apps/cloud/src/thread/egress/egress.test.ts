@@ -1,7 +1,8 @@
 // @effect-diagnostics cryptoRandomUUID:off - fake secrets are generated per run, so no test ever holds a real one.
 import { describe, expect, it } from "vite-plus/test";
 
-import { REFUSED_HEADER, serveEgress } from "./egress.ts";
+import { REFUSED_HEADER } from "./egress.ts";
+import { serveWithFakeNetwork as serveEgress } from "./egressTestKit.ts";
 import { MAX_READ_BODY } from "./egressRequest.ts";
 import type { SendAnswer } from "./ThreadSends.ts";
 
@@ -19,7 +20,7 @@ const harness = (answer: SendAnswer = { _tag: "allowed" }) => {
   const serve = (request: Request, own: ReadonlyArray<string> = ["app.signalbox.run"]) =>
     serveEgress(request, {
       thread: {
-        secrets: async () => secrets,
+        secrets: async () => ({ current: secrets, values: secrets, registered: 1, revision: 1 }),
         authorize: async ({ host, names }) => {
           asked.push({ host, names });
           return answer;
@@ -114,7 +115,7 @@ describe("egress", () => {
     expect(sent).toHaveLength(1);
   });
 
-  it("streams a body too big to read through unread", async () => {
+  it("refuses an unknown-length body that exceeds the inspection limit", async () => {
     const { serve, asked, sent } = harness();
     const big = "x".repeat(MAX_READ_BODY + 10);
     const body = new ReadableStream<Uint8Array>({
@@ -128,7 +129,7 @@ describe("egress", () => {
       },
     });
 
-    await serve(
+    const response = await serve(
       new Request("https://upload.example.test/", {
         method: "PUT",
         headers: { "content-type": "text/plain" },
@@ -138,7 +139,8 @@ describe("egress", () => {
     );
 
     expect(asked).toEqual([]);
-    expect(await sent[0]!.text()).toBe(big);
+    expect(response.status).toBe(403);
+    expect(sent).toEqual([]);
   });
 
   it("lets requests without secrets, and Signalbox's own, through untouched", async () => {

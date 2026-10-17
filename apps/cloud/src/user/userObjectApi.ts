@@ -163,11 +163,28 @@ export const makeUserObjectApi = (
     githubCommitAuthor: () => github((service) => service.commitAuthor),
     onePasswordToken: () =>
       run(OnePasswordAccount.OnePasswordAccount.use((account) => account.token)),
-    secretSendsAllowed: async ({ host, sends }) => [
-      ...(await run(UserFolders.UserFolders.use((folders) => folders.allowedSends(host, sends)))),
+    secretSendFolder: (threadId) =>
+      run(
+        UserFolders.UserFolders.use((folders) =>
+          folders.threadHome(ThreadId.make(threadId)).pipe(Effect.map(({ home }) => home)),
+        ),
+      ),
+    secretSendsAllowed: async ({ folderId, host, sends }) => [
+      ...(await run(
+        UserFolders.UserFolders.use((folders) =>
+          folders.allowedSends(
+            host,
+            sends.map((send) => ({ ...send, folderId })),
+          ),
+        ),
+      )),
     ],
-    keepSecretSends: (grants) =>
-      run(UserFolders.UserFolders.use((folders) => folders.keepSends(grants))),
+    keepSecretSends: ({ folderId, grants }) =>
+      run(
+        UserFolders.UserFolders.use((folders) =>
+          folders.keepSends(grants.map((grant) => ({ ...grant, folderId }))),
+        ),
+      ),
     contextIds: () => run(UserDrives.UserDrives.use((drives) => drives.contextIds)),
     recordDriveAccess: (entry) =>
       run(UserDriveIndex.UserDriveIndex.use((index) => index.record(entry))),

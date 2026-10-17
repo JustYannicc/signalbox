@@ -87,19 +87,19 @@ secrets loading everywhere.
 
 #### Using a secret by name
 
-An agent uses a secret by writing `{{secret:NAME}}` where the value goes: in a command, in a file
-it writes, or in a request a program sends. Signalbox fills in the value just before the command
-runs, the file is saved or the request leaves the machine. Reading the file or the command's output
-back shows the placeholder again, so the model never sees the value.
+An agent uses a secret by writing `{{secret:NAME}}` in an HTTPS request's URL, header or text body.
+Files and commands keep the placeholder. Signalbox fills it only as the request leaves the machine,
+after you allow the destination, and hides any value the destination echoes back.
 
 The first time a secret goes to a new host, the thread asks you: **Don't send**, **Send this
 turn**, or **Always send to** that host. Until you answer, the request waits briefly, then the
 agent is told it's waiting on you. "Always" answers are listed under **Agents always send** in the
 folder's **Secrets…**; **Stop** makes the next send there ask again.
 
-- For now this works on threads that run on a light machine. Threads on a repository's machine
-  don't fill placeholders yet, and Codex fills them only in requests its programs send, not in
-  files or commands.
+- For now this works on threads that run on a light machine, with Claude or Codex. Threads on a
+  repository's machine have no egress substitution yet.
+- While a thread has secrets, outbound bodies must be uncompressed UTF-8 text no larger than 1 MiB.
+  Binary, compressed and larger uploads are refused because Signalbox cannot check them.
 - A program that reads a value and sends it somewhere is checked too, as long as the value is
   still recognizable. One that scrambles it first can't be stopped, so only give a thread secrets
   you'd trust it with.
