@@ -7,6 +7,11 @@
       "types": "./src/keywordSearch.ts",
       "import": "./src/keywordSearch.ts"
     },
+    "./pnpmVirtualStore": {
+      "types": "./src/pnpmVirtualStore.ts",
+      "import": "./src/pnpmVirtualStore.ts",
+      "require": "./src/pnpmVirtualStore.ts"
+    },
     "./synchronization": {
       "types": "./src/synchronization.ts",
       "import": "./src/synchronization.ts"
