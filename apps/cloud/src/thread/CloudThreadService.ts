@@ -210,6 +210,7 @@ export class CloudThreadService extends Context.Service<
       actor: Actor,
       threadId: ThreadId,
       port: number,
+      handoff?: boolean,
     ) => Effect.Effect<PreviewLinkResult, ThreadDirectory.ThreadObjectError>;
     /**
      * The agent's browser, mirrored, while the stream is read (see
@@ -519,8 +520,12 @@ const make = Effect.gen(function* () {
       }),
     );
 
-  const openPreview: CloudThreadService["Service"]["openPreview"] = (actor, threadId, port) =>
-    directory.forThread(threadId).previewLink(actor, port);
+  const openPreview: CloudThreadService["Service"]["openPreview"] = (
+    actor,
+    threadId,
+    port,
+    handoff,
+  ) => directory.forThread(threadId).previewLink(actor, port, handoff);
 
   const canSee: CloudThreadService["Service"]["canSee"] = (actor, threadId) =>
     directory

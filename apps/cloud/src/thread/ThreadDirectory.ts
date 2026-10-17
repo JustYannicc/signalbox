@@ -121,7 +121,11 @@ export interface ThreadObjectApi {
   readonly diagnostics: (actor: Actor, key: string | null) => Promise<string | null>;
   /** Newline-delimited `{ ports }` snapshots, or null when the actor cannot see the thread. */
   readonly previews: (actor: Actor) => Promise<ReadableStream<Uint8Array> | null>;
-  readonly previewLink: (actor: Actor, port: number) => Promise<PreviewLinkResult>;
+  readonly previewLink: (
+    actor: Actor,
+    port: number,
+    handoff?: boolean,
+  ) => Promise<PreviewLinkResult>;
   /**
    * The agent's browser, mirrored: newline-delimited `AgentBrowserUpdate`s in
    * their JSON encoding (`wire.browserUpdate`) while read, following `tabId`
@@ -211,6 +215,7 @@ export interface ThreadHandle {
   readonly previewLink: (
     actor: Actor,
     port: number,
+    handoff?: boolean,
   ) => Effect.Effect<PreviewLinkResult, ThreadObjectError>;
   /**
    * See `ThreadObjectApi.browserWatch`. Ends when the object goes away, or
@@ -371,7 +376,8 @@ export function handleFor(api: ThreadObjectApi): ThreadHandle {
           return { ports, browsed: browsed === true };
         },
       ),
-    previewLink: (actor, port) => call("previewLink", () => api.previewLink(actor, port)),
+    previewLink: (actor, port, handoff) =>
+      call("previewLink", () => api.previewLink(actor, port, handoff)),
     browserWatch: (actor, tabId) =>
       lines(
         "browserWatch",

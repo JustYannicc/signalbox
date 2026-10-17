@@ -83,9 +83,9 @@ import {
  * of memory mid-turn), and the run continues on a heavy machine, as does every
  * later one.
  *
- * An open preview (`PreviewHold`) keeps a connected machine up as a live run
- * does, and the idle tail counts from the later of the last run and the last
- * preview traffic. Previews never start a machine.
+ * An open preview (`PreviewHold`) can start a machine without a live run and
+ * keeps it up as a live run does. After it closes, the idle tail counts from
+ * the later of the last run and the last preview traffic.
  *
  * The thread also answers the ModelGateway: a model token is good while the
  * run it was minted for is live on the machine holding the lease.
@@ -297,6 +297,8 @@ export class ThreadRunner extends Context.Service<
     readonly ensured: (generation: number) => Effect.Effect<void>;
     readonly work: Effect.Effect<RunnerWork>;
     readonly reconcile: Effect.Effect<MachinePlan>;
+    /** The preview tunnel can connect before the main Runner socket, using the same lease. */
+    readonly previewDrive: Effect.Effect<DriveAccess | null>;
     /** The pool moved the thread off its account during `runId` (`pool/threadAccounts.ts`). */
     readonly accountMoved: (runId: RunId, message: string) => Effect.Effect<void>;
     /** Whether the ModelGateway may serve `token` for `provider` right now. */
@@ -394,7 +396,7 @@ const needsUpkeep = (lease: ThreadStore.MachineLease, live: boolean, previewHeld
   const held = live || previewHeld;
   switch (lease.status) {
     case "none":
-      return live;
+      return held;
     case "requested":
       return true;
     case "connected":
@@ -843,6 +845,22 @@ const make = Effect.gen(function* () {
     }),
   );
 
+  const previewDrive: ThreadRunner["Service"]["previewDrive"] = Effect.gen(function* () {
+    if (!drivesEnabled) return null;
+    const projection = yield* engine.projection;
+    if (projection === null) return null;
+    const current = yield* lease;
+    if (current.status === "none" || current.token === null) return null;
+    const driveId = yield* driveOf;
+    if (driveId === null) return null;
+    return {
+      driveId,
+      token: yield* driveToken(current.token, projection.thread.id, current.generation),
+      // Remotes are authenticated for a live turn only.
+      remoteToken: null,
+    } satisfies DriveAccess;
+  });
+
   // Reads committed state without the thread's lock: model requests arrive all
   // through a turn and must not queue behind the Runner's batch commits.
   const authorizeModel: ThreadRunner["Service"]["authorizeModel"] = (token, provider) =>
@@ -1111,14 +1129,19 @@ const make = Effect.gen(function* () {
           );
         };
         if (lease.status === "none") {
-          if (run === undefined || projection === null) return keep(UNNEEDED);
+          const previewHeld = yield* previews.held;
+          if ((run === undefined && !previewHeld) || projection === null) {
+            return keep(UNNEEDED);
+          }
           const generation = lease.generation + 1;
           const token = yield* newToken;
           const machineClass = machineClassFor({
             worktreePath: projection.thread.worktreePath,
             movedUp: lease.movedUp === true,
           });
-          yield* diagnostics.machineRequested({ generation, run, now, machineClass });
+          if (run !== undefined) {
+            yield* diagnostics.machineRequested({ generation, run, now, machineClass });
+          }
           return {
             events: [],
             machine: {
@@ -1139,8 +1162,9 @@ const make = Effect.gen(function* () {
           };
         }
         if (lease.status === "requested") {
-          // Nothing needs it any more (the run was stopped before a Runner came).
-          if (run === undefined) {
+          // A preview can keep the request alive without a run to fail.
+          const previewHeld = yield* previews.held;
+          if (run === undefined && !previewHeld) {
             return yield* release({ reason: "idle", detail: "No turn needs it any more." });
           }
           const deadline = (lease.requestedAt ?? now) + backend.connectTimeoutMs;
@@ -1148,8 +1172,11 @@ const make = Effect.gen(function* () {
             const failure = "No machine came up to run this turn.";
             return yield* release({
               reason: "error",
-              detail: `No Runner connected within ${Math.round(backend.connectTimeoutMs / 1000)} s.`,
-              failure,
+              detail:
+                run === undefined
+                  ? `No preview machine connected within ${Math.round(backend.connectTimeoutMs / 1000)} s.`
+                  : `No Runner connected within ${Math.round(backend.connectTimeoutMs / 1000)} s.`,
+              ...(run === undefined ? {} : { failure }),
             });
           }
           const token = lease.ensuredAt === null ? lease.token : null;
@@ -1261,6 +1288,7 @@ const make = Effect.gen(function* () {
     ensured,
     work,
     reconcile,
+    previewDrive,
     accountMoved,
     authorizeModel,
     authorizeDrive,
