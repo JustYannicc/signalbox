@@ -55,6 +55,7 @@ function UndoLastTurnControl(props: {
   const [requestId, setRequestId] = useState<CommandId | null>(null);
   const reportedFailure = useRef<CommandId | null>(null);
   const failure = useUndoFailure(props.environmentId, props.threadId, requestId);
+  const waiting = busy && failure === null;
   const reportFailure = useCallback((id: CommandId, message: string) => {
     if (reportedFailure.current === id) return;
     reportedFailure.current = id;
@@ -84,13 +85,13 @@ function UndoLastTurnControl(props: {
         checkpointId: props.target.checkpointId,
         restoreFiles,
       },
-    })
-      .then((result) => {
-        if (result._tag !== "Success" && !isAtomCommandInterrupted(result)) {
-          reportFailure(commandId, String(squashAtomCommandFailure(result)));
-        }
-      })
-      .finally(() => setBusy(false));
+    }).then((result) => {
+      if (result._tag === "Success") return;
+      setBusy(false);
+      if (!isAtomCommandInterrupted(result)) {
+        reportFailure(commandId, String(squashAtomCommandFailure(result)));
+      }
+    });
   };
 
   return (
@@ -98,7 +99,7 @@ function UndoLastTurnControl(props: {
       accessibilityRole="button"
       accessibilityLabel="Undo last turn"
       hitSlop={8}
-      disabled={busy}
+      disabled={waiting}
       className="size-7 items-center justify-center disabled:opacity-40"
       onPress={() => {
         if (!props.target.changedFiles) {
@@ -118,7 +119,7 @@ function UndoLastTurnControl(props: {
         ]);
       }}
     >
-      {busy ? (
+      {waiting ? (
         <AppActivityIndicator size="small" />
       ) : (
         <SymbolView name="arrow.uturn.backward" size={14} tintColor={props.tintColor} />
