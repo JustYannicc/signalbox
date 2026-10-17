@@ -1,4 +1,4 @@
-import { ThreadId } from "@t3tools/contracts";
+import { type TerminalAttachStreamEvent, ThreadId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
