@@ -24,7 +24,7 @@ jobs:
     timeout-minutes: 30
     environment: cloud-preview
     env:
-      CANDIDATE: aa1be5a3c7f8b00b3c3e931c2b31e1dc1c48a1d0
+      CANDIDATE: 2197828c2602959c21be58b44e03d14830d3a1e9
       PROOF_WORKER: signalbox-auth-proof-883
       CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
@@ -32,7 +32,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
         with:
-          ref: aa1be5a3c7f8b00b3c3e931c2b31e1dc1c48a1d0
+          ref: 2197828c2602959c21be58b44e03d14830d3a1e9
           sparse-checkout: |
             /*
             !/.repos/
