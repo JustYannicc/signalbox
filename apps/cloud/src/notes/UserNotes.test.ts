@@ -85,6 +85,7 @@ const setup = (
         syncAutomationAsk: unused,
         threadSnapshot: unused,
         threadHistoryPage: unused,
+        requestPullRequestSync: unused,
         subscribeThread: () => Stream.die("not used by notes"),
         previews: () => Stream.die("not used by notes"),
         browsing: () => Stream.die("not used by notes"),

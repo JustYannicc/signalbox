@@ -15,8 +15,7 @@ const ITEM_CAPABILITIES: Readonly<Record<string, readonly SignalboxEnvironmentCa
   "cursor-keychain-usage": ["serverSettingsWrite"],
   "provider-health-check-interval": ["serverSettingsWrite"],
   "github-accounts": ["serverSettingsWrite"],
-  // Stand-in until the cloud serves analytics.*; give it its own capability then.
-  "product-analytics": ["serverSettingsWrite"],
+  "product-analytics": ["analyticsSettings"],
   "project-actions": ["terminal", "serverSettingsWrite"],
 };
 

@@ -20,6 +20,7 @@ import * as Layer from "effect/Layer";
 import * as Result from "effect/Result";
 import * as RpcTest from "effect/rpc/RpcTest";
 import * as TestClock from "effect/testing/TestClock";
+import { ConnectionError, SqlError } from "effect/sql/SqlError";
 import { HttpClient, HttpClientResponse } from "effect/http";
 
 import { layerMemoryStore, makeMemoryCloud } from "../testing.ts";
@@ -273,8 +274,20 @@ const registration = {
   },
 };
 
-const layerPushes = (http: Layer.Layer<HttpClient.HttpClient>, env: Record<string, string>) =>
-  PushNotifier.layerWithDevices(environmentId).pipe(
+const layerPushes = (
+  http: Layer.Layer<HttpClient.HttpClient>,
+  env: Record<string, string>,
+  isSessionActive?: Parameters<typeof PushNotifier.layerWithDevices>[1],
+) =>
+  Layer.unwrap(
+    Effect.map(UserStore.UserStore, (store) =>
+      PushNotifier.layerWithDevices(
+        environmentId,
+        isSessionActive ??
+          ((sid) => Effect.map(store.findSession(sid), (session) => session !== null)),
+      ),
+    ),
+  ).pipe(
     Layer.provide(Layer.mergeAll(http, ConfigProvider.layer(ConfigProvider.fromEnv({ env })))),
     Layer.provideMerge(layerMemoryStore),
   );
@@ -391,6 +404,63 @@ describe("PushNotifier", () => {
       );
       expect(apple.sent).toEqual([]);
       expect(left).toEqual([]);
+    }),
+  );
+
+  it.effect("stops pushing when the registering session expires", () =>
+    Effect.gen(function* () {
+      const key = yield* apnsKey;
+      const apple = fakeApple(200);
+      const left = yield* Effect.gen(function* () {
+        const { notifier, devices } = yield* withPhone;
+        yield* TestClock.adjust("1 hour");
+        yield* notifier.threadChanged({ previous: running, next: waiting("user_input") });
+        return yield* devices.list;
+      }).pipe(
+        Effect.provide(
+          layerPushes(apple.layer, {
+            APNS_TEAM_ID: "TEAM123456",
+            APNS_KEY_ID: "KEY1234567",
+            APNS_PRIVATE_KEY: key.pem,
+          }),
+        ),
+      );
+      expect(apple.sent).toEqual([]);
+      expect(left).toEqual([]);
+    }),
+  );
+
+  it.effect("keeps registrations and skips delivery when the session check fails", () =>
+    Effect.gen(function* () {
+      const key = yield* apnsKey;
+      const apple = fakeApple(200);
+      const checked: Array<string> = [];
+      const left = yield* Effect.gen(function* () {
+        const { notifier, devices, session } = yield* withPhone;
+        yield* notifier.threadChanged({ previous: running, next: waiting("user_input") });
+        expect(checked).toEqual([session.sid]);
+        return yield* devices.list;
+      }).pipe(
+        Effect.provide(
+          layerPushes(
+            apple.layer,
+            {
+              APNS_TEAM_ID: "TEAM123456",
+              APNS_KEY_ID: "KEY1234567",
+              APNS_PRIVATE_KEY: key.pem,
+            },
+            (sid) =>
+              Effect.gen(function* () {
+                checked.push(sid);
+                return yield* new SqlError({
+                  reason: new ConnectionError({ cause: new Error("session unavailable") }),
+                });
+              }),
+          ),
+        ),
+      );
+      expect(apple.sent).toEqual([]);
+      expect(left).toHaveLength(1);
     }),
   );
 
