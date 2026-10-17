@@ -204,7 +204,7 @@ import {
   useThreadJumpHintVisibility,
   ThreadStatusPill,
 } from "./Sidebar.logic";
-import { sortThreads } from "../lib/threadSort";
+import { sortThreadsNeedsYouFirst } from "./sidebar/needsYouFirst"; // signalbox
 import { SidebarChromeFooter, SidebarChromeHeader } from "./sidebar/SidebarChrome";
 import { useCopyToClipboard } from "~/hooks/useCopyToClipboard";
 import { useIsMobile } from "~/hooks/useMediaQuery";
@@ -799,7 +799,8 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
               <PullRequestGlyph.pullRequest className="size-3" />
             </a>
           ) : null}
-          {threadStatus && <ThreadStatusLabel status={threadStatus} />}
+          {/* signalbox: a dot, label on hover, so the thread's name stays readable */}
+          {threadStatus && <ThreadStatusLabel status={threadStatus} compact />}
           {canOperateThread && renamingThreadKey === threadKey ? (
             <input
               ref={handleRenameInputRef}
@@ -1381,10 +1382,10 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
         },
       });
     };
-    const visibleProjectThreads = sortThreads(
+    const visibleProjectThreads = sortThreadsNeedsYouFirst(
       projectThreads.filter((thread) => thread.archivedAt === null),
       threadSortOrder,
-    );
+    ); // signalbox: needs-you first
     const projectStatus = resolveProjectStatusIndicator(
       visibleProjectThreads.map((thread) => resolveProjectThreadStatus(thread)),
     );
@@ -3659,12 +3660,12 @@ export default function LegacySidebar() {
     }
 
     return sortedProjects.flatMap((project) => {
-      const projectThreads = sortThreads(
+      const projectThreads = sortThreadsNeedsYouFirst(
         (threadsByProjectKey.get(project.projectKey) ?? []).filter(
           (thread) => thread.archivedAt === null,
         ),
         sidebarThreadSortOrder,
-      );
+      ); // signalbox: needs-you first
       const projectExpanded = resolveProjectExpanded(
         projectExpandedById,
         projectExpansionPreferenceKeys(project),

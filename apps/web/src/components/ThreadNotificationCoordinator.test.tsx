@@ -22,6 +22,8 @@ const state = vi.hoisted(() => ({
   subagent: false,
   background: [] as Array<{ taskId: string; kind: "command" | "monitor" }>,
   delegatedChild: null as "running" | "approval" | null,
+  creationSource: "web" as "web" | "server" | "mcp",
+  stableShell: false,
   add: vi.fn(
     (_toast: { title: string; description: string; actionProps: { onClick: () => void } }) =>
       "toast-1",
@@ -55,7 +57,7 @@ function mockThreadShell() {
     },
     forkedFrom: null,
     createdBy: "user",
-    creationSource: "web",
+    creationSource: state.creationSource,
     latestRunId: "run-1",
     activeRunId: null,
     status: state.completedAt
@@ -89,8 +91,12 @@ function mockThreadShell() {
 }
 
 let stableParent: ReturnType<typeof mockThreadShell> | null = null;
+let stableShell: ReturnType<typeof mockThreadShell> | null = null;
 function mockThreads() {
-  if (state.delegatedChild === null) return [mockThreadShell()];
+  if (state.delegatedChild === null) {
+    // A stable shell is the same object on every render, like an unchanged live snapshot.
+    return [state.stableShell ? (stableShell ??= mockThreadShell()) : mockThreadShell()];
+  }
   stableParent ??= mockThreadShell();
   const child = {
     ...mockThreadShell(),
@@ -179,8 +185,11 @@ beforeEach(() => {
     subagent: false,
     background: [],
     delegatedChild: null,
+    creationSource: "web",
+    stableShell: false,
   });
   stableParent = null;
+  stableShell = null;
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   vi.stubGlobal("window", new EventTarget());
   vi.stubGlobal("document", {
@@ -288,6 +297,84 @@ describe("thread notifications", () => {
       tag: "env-1:thread-1",
       silent: true,
     });
+  });
+
+  // signalbox: #43
+  it("stays quiet when a short turn finishes", async () => {
+    await render();
+    state.completedAt = "2026-09-13T09:00:20.000Z";
+    await render();
+    expect(state.add).not.toHaveBeenCalled();
+  });
+
+  it.each(["server", "mcp"] as const)(
+    "stays quiet when a thread %s started finishes",
+    async (creationSource) => {
+      state.creationSource = creationSource;
+      await render();
+      await complete();
+      expect(state.add).not.toHaveBeenCalled();
+    },
+  );
+
+  it("keeps a question's toast until it's answered, then closes it", async () => {
+    await render();
+    state.input = true;
+    await render();
+    expect(state.add).toHaveBeenLastCalledWith(
+      expect.objectContaining({ title: "Input needed", timeout: 0 }),
+    );
+    await render();
+    expect(state.close).not.toHaveBeenCalled();
+    state.input = false;
+    await render();
+    expect(state.close).toHaveBeenCalledWith("toast-1");
+  });
+
+  it("closes a question's toast when the person opens the thread and its shell is unchanged", async () => {
+    await render();
+    state.input = true;
+    state.stableShell = true;
+    await render();
+    expect(state.add).toHaveBeenLastCalledWith(expect.objectContaining({ title: "Input needed" }));
+    // Only the route changes: the same shell object goes through the identity fast path.
+    state.active = { environmentId: "env-1", threadId: "thread-1" };
+    await render();
+    expect(state.close).toHaveBeenCalledWith("toast-1");
+  });
+
+  it("closes waiting toasts when notifications are turned off", async () => {
+    await render();
+    state.turnError = true;
+    await render();
+    expect(state.add).toHaveBeenCalledTimes(1);
+    state.inApp = false;
+    state.mode = "off";
+    await render();
+    expect(state.close).toHaveBeenCalledWith("toast-1");
+  });
+
+  it("closes waiting toasts when only in-app notifications are turned off", async () => {
+    state.mode = "notifications";
+    await render();
+    state.turnError = true;
+    await render();
+    expect(state.add).toHaveBeenCalledTimes(1);
+    state.inApp = false;
+    await render();
+    expect(state.close).toHaveBeenCalledWith("toast-1");
+  });
+
+  it("closes a failure's toast when the person opens the thread", async () => {
+    await render();
+    state.turnError = true;
+    await render();
+    expect(state.add).toHaveBeenLastCalledWith(
+      expect.objectContaining({ title: "Thread failed", timeout: 0 }),
+    );
+    state.active = { environmentId: "env-1", threadId: "thread-1" };
+    await render();
+    expect(state.close).toHaveBeenCalledWith("toast-1");
   });
 
   it("alerts when only a dev server is left running, not while a monitor can wake the agent", async () => {
