@@ -5,7 +5,7 @@ import * as Stream from "effect/Stream";
 
 import * as CloudTerminals from "./CloudTerminals.ts";
 import * as ThreadDirectory from "./ThreadDirectory.ts";
-import { ThreadObjectError } from "./ThreadObjectError.ts";
+import { ThreadObjectError } from "./ThreadAccess.ts";
 
 type Failure = CloudTerminals.CloudTerminalError;
 

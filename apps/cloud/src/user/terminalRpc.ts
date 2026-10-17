@@ -16,8 +16,7 @@ import {
 import * as Effect from "effect/Effect";
 import * as Stream from "effect/Stream";
 
-import type { Actor } from "../thread/ThreadActor.ts";
-import type { ThreadNotFoundError } from "../thread/ThreadObjectError.ts";
+import type { Actor, ThreadNotFoundError } from "../thread/ThreadAccess.ts";
 import * as CloudTerminals from "../thread/CloudTerminals.ts";
 import * as UserTerminals from "./UserTerminals.ts";
 

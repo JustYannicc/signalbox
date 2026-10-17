@@ -14,8 +14,7 @@ import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Stream from "effect/Stream";
 
-import type { Actor } from "./ThreadActor.ts";
-import type { ThreadNotFoundError, ThreadObjectError } from "./ThreadObjectError.ts";
+import type { Actor, ThreadNotFoundError, ThreadObjectError } from "./ThreadAccess.ts";
 
 export type CloudTerminalError = TerminalError | ThreadNotFoundError | ThreadObjectError;
 

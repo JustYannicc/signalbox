@@ -13,8 +13,7 @@ import {
 import * as Effect from "effect/Effect";
 import * as Stream from "effect/Stream";
 
-import type { Actor } from "../ThreadActor.ts";
-import { ThreadNotFoundError, ThreadObjectError } from "../ThreadObjectError.ts";
+import { type Actor, ThreadNotFoundError, ThreadObjectError } from "../ThreadAccess.ts";
 import { jsonCodec } from "../threadWire.ts";
 
 export const terminalWire = {

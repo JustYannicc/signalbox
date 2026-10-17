@@ -42,6 +42,7 @@ import * as UserPreviewSetup from "../previewSetup/UserPreviewSetup.ts";
 import * as PushNotifier from "../push/PushNotifier.ts";
 import * as CloudThreadService from "../thread/CloudThreadService.ts";
 import * as CloudTerminalsLayer from "../thread/CloudTerminalsLayer.ts";
+import * as ThreadsLive from "../thread/ThreadsLive.ts";
 import * as ModelManifest from "../thread/ModelManifest.ts";
 import { scriptedProviderEnabled } from "../thread/scriptedProvider.ts";
 import type { MachineBackendEnv } from "../thread/runner/MachineBackend.ts";
@@ -230,8 +231,8 @@ const makeRuntime = (storage: DurableObjectStorage, env: UserObjectEnv) => {
               UserShell.layer,
               UserThreadStatus.layer,
               UserTerminals.layer,
-              CloudThreadService.layer,
               CloudTerminalsLayer.layer,
+              CloudThreadService.layer.pipe(Layer.provideMerge(ThreadsLive.layer)),
               PoolSignIns.layer,
               drives.services,
               ConnectionLinks.layer,

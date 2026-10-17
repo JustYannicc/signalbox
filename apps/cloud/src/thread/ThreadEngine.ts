@@ -26,7 +26,6 @@ import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as PubSub from "effect/PubSub";
 import * as Ref from "effect/Ref";
-import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
@@ -37,6 +36,7 @@ import { type Decision, decide, decideLaunch, type ThreadWorktree } from "./thre
 import type { DecisionContext } from "./threadEvents.ts";
 import { applyEvents, threadShellFromProjection, workStartedAt } from "./threadProjection.ts";
 import { noteKey, noteRunId, supersedes } from "./statusLine/statusNotePolicy.ts";
+import { type Actor, ThreadNotFoundError, ThreadCommandRejectedError } from "./ThreadAccess.ts";
 import * as ThreadStore from "./ThreadStore.ts";
 import * as TurnModels from "./TurnModels.ts";
 import {
@@ -49,11 +49,6 @@ import {
 } from "./turnPool.ts";
 import { poolErrorMessage } from "../pool/PoolDirectory.ts";
 import type { ThreadMonitor, ThreadSnapshotWire, ThreadSummaryWire } from "./threadWire.ts";
-import { ThreadNotFoundError } from "./ThreadObjectError.ts";
-import type { Actor } from "./ThreadActor.ts";
-
-export { ThreadNotFoundError };
-export type { Actor };
 
 /**
  * One thread's orchestration, inside its Durable Object. Commands and provider
@@ -66,25 +61,7 @@ export type { Actor };
  * event the log could lose.
  */
 
-export class ThreadCommandRejectedError extends Schema.TaggedError<ThreadCommandRejectedError>()(
-  "ThreadCommandRejectedError",
-  { commandId: Schema.String, commandType: Schema.String, reason: Schema.String },
-) {
-  override get message(): string {
-    return this.reason;
-  }
-
-  static forCommand(
-    command: { readonly id: string; readonly type: string },
-    reason: string,
-  ): ThreadCommandRejectedError {
-    return new ThreadCommandRejectedError({
-      commandId: command.id,
-      commandType: command.type,
-      reason,
-    });
-  }
-}
+export { type Actor, ThreadNotFoundError, ThreadCommandRejectedError } from "./ThreadAccess.ts";
 
 /**
  * Fixed when a thread is created: the context it acts as and the drive it
