@@ -73,7 +73,9 @@ import { SessionAccess } from "./SessionProtocol.ts";
  * frame it sends.
  */
 
-export const RUNNER_PROTOCOL_VERSION = 5;
+export const RUNNER_PROTOCOL_VERSION = 6;
+/** Version 5 remains readable while existing machines finish their image rollout. */
+export const MIN_RUNNER_PROTOCOL_VERSION = 5;
 
 /** Additive frames are gated by hello capabilities, so existing v5 Runners still connect. */
 export const RunnerRuntimeResponse = Schema.Struct({
@@ -171,6 +173,20 @@ export type MachineUsage = typeof MachineUsage.Type;
 export const RunnerLogLevel = Schema.Literals(["info", "warning", "error"]);
 export type RunnerLogLevel = typeof RunnerLogLevel.Type;
 
+/** One dependency root's setup state, keyed to its checkout-relative path. */
+export const DependencyProgress = Schema.Struct({
+  root: Schema.String.check(
+    Schema.isPattern(/^(?![\\/])(?![A-Za-z]:)(?!.*(?:^|[\\/])\.\.(?:[\\/]|$)).*$/),
+  ),
+  status: Schema.Literals(["installing", "installed", "reused", "failed"]),
+  message: Schema.String,
+  durationMs: Schema.optional(NonNegativeInt),
+  reason: Schema.optional(
+    Schema.Literals(["new", "lockfile", "toolchain", "unfinished", "adopted"]),
+  ),
+});
+export type DependencyProgress = typeof DependencyProgress.Type;
+
 /** What the Runner is built from, so a turn's diagnostics name the exact software it ran on. */
 export const RunnerBuild = Schema.Struct({
   /** The image's content digest (`…@sha256:…`), when the machine knows it. */
@@ -216,6 +232,12 @@ export const RunnerItem = Schema.Union([
     kind: Schema.Literal("drive.notice"),
     runId: RunId,
     message: Schema.String,
+  }),
+  /** Dependency preparation is progress until it fails; keep each root in one stable row. */
+  Schema.Struct({
+    kind: Schema.Literal("dependencies.progress"),
+    runId: RunId,
+    ...DependencyProgress.fields,
   }),
   /**
    * The harness's session could not be saved, so the Runner stopped the turn

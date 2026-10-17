@@ -23,7 +23,7 @@ import {
   snapshot,
   turnReport,
   withObject,
-} from "./runnerTestKit.ts";
+} from "./runnerTesting.ts";
 
 const fixture = () =>
   withObject(freshDatabase(), (engine, runner) =>

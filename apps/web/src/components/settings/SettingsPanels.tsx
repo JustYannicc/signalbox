@@ -2132,8 +2132,19 @@ export function GeneralSettingsPanel() {
   const { scope, environment, connectedEnvironments, target } = useSettingsScope();
   const environmentId = environment?.environmentId ?? null;
   const isEnvironmentScope = scope.environmentIds.length === 1 && environmentId !== null;
-  // signalbox: without diagnostics the section only holds licenses.
+  // signalbox: without diagnostics (the cloud has no host to inspect), licenses join About.
   const hasDiagnostics = !useUnsupportedSettingsCapabilities().has("localFilesystem");
+  const licensesRow = (
+    <SettingsRow
+      {...searchableSetting("open-source-licenses")}
+      description="Notices for dependencies, assets, and optional tools used by Signalbox."
+      control={
+        <Button render={<Link to="/settings/open-source-licenses" />} size="sm" variant="outline">
+          View licenses
+        </Button>
+      }
+    />
+  );
   const hasServerTargets = connectedEnvironments.length > 0;
   const [backgroundActivityDialogOpen, setBackgroundActivityDialogOpen] = useState(false);
   const mixedResponseStreamingMode = useScopedSettingsMixed(["responseStreamingMode"]);
@@ -3312,8 +3323,11 @@ export function GeneralSettingsPanel() {
             </Button>
           }
         />
+        {/* signalbox: licenses join About without diagnostics */}
+        {hasDiagnostics ? null : licensesRow}
       </SettingsSection>
-      <SettingsSection title={hasDiagnostics ? "Diagnostics" : "About"}>
+      {/* signalbox: no Diagnostics section without diagnostics */}
+      <SettingsSection title="Diagnostics" hidden={!hasDiagnostics}>
         <SettingsCapability id="diagnostics">
           <SettingsRow
             {...searchableSetting("diagnostics")}
@@ -3340,19 +3354,8 @@ export function GeneralSettingsPanel() {
             }
           />
         </SettingsCapability>
-        <SettingsRow
-          {...searchableSetting("open-source-licenses")}
-          description="Notices for dependencies, assets, and optional tools used by Signalbox."
-          control={
-            <Button
-              render={<Link to="/settings/open-source-licenses" />}
-              size="sm"
-              variant="outline"
-            >
-              View licenses
-            </Button>
-          }
-        />
+        {/* signalbox: licenses sit under Diagnostics when it shows */}
+        {hasDiagnostics ? licensesRow : null}
       </SettingsSection>
 
       <LegacyFeaturesSection />

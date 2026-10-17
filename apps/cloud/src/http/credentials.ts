@@ -19,9 +19,16 @@ export function requestCredentials(request: HttpServerRequest.HttpServerRequest)
   return { cookie: request.cookies[SESSION_COOKIE_NAME], bearer: bearer || undefined };
 }
 
+const fullUrl = (request: HttpServerRequest.HttpServerRequest) =>
+  // Worker requests retain their absolute URL; reconstructing it from proxy
+  // headers can turn an HTTPS callback into http://localhost.
+  URL.canParse(request.originalUrl)
+    ? Option.some(new URL(request.originalUrl))
+    : HttpServerRequest.toURL(request);
+
 /** The request's full URL. */
 export const requestUrl = Effect.map(HttpServerRequest.HttpServerRequest, (request) =>
-  Option.getOrThrow(HttpServerRequest.toURL(request)),
+  Option.getOrThrow(fullUrl(request)),
 );
 
 /**
@@ -37,7 +44,7 @@ export const browserSession = Effect.gen(function* () {
 
 /** `Secure` everywhere but plain-http local development. */
 function cookieOptions(request: HttpServerRequest.HttpServerRequest) {
-  const secure = Option.match(HttpServerRequest.toURL(request), {
+  const secure = Option.match(fullUrl(request), {
     onNone: () => true,
     onSome: (url) => url.protocol === "https:",
   });

@@ -12,7 +12,7 @@ import {
   snapshot,
   threadId,
   withObject,
-} from "./runnerTestKit.ts";
+} from "./runnerTesting.ts";
 
 const question = (id: string, blocking = true): SignalboxAskQuestion => ({
   id,

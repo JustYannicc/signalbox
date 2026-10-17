@@ -21,7 +21,7 @@ import {
   threadId,
   turnReport,
   withObject,
-} from "./runnerTestKit.ts";
+} from "./runnerTesting.ts";
 
 describe("cloud native asks", () => {
   it.effect.each([
