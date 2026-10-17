@@ -60,7 +60,7 @@ const runningSocket = (
     yield* say(host, socket, {
       ...hello(plan.ensure.generation, plan.ensure.token),
       takenRunIds: [],
-      ...(acceptsRuntimeResponses ? { runtimeResponses: true } : {}),
+      runtimeResponses: acceptsRuntimeResponses ? true : undefined,
     });
 
     const start = socket.sent.find((message) => message.type === "turn.start");
@@ -257,6 +257,7 @@ describe("runtime response sockets", () => {
         yield* Effect.promise(() => pushRunnerWork(connected.host));
 
         expect(responseFrames(connected.socket)).toEqual([]);
+        expect((yield* runner.work).needsUpkeep).toBe(true);
         expect((yield* runner.work).runtimeResponses).toMatchObject([
           { requestId: connected.requestId, runId: connected.turn.runId },
         ]);
