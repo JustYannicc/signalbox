@@ -68,6 +68,7 @@ export const DRIVE_API_PREFIX = "/api/drive";
 export const DRIVE_PATHS = {
   open: `${DRIVE_API_PREFIX}/open`,
   state: `${DRIVE_API_PREFIX}/state`,
+  checkpoint: `${DRIVE_API_PREFIX}/checkpoint`,
   packs: `${DRIVE_API_PREFIX}/packs`,
   refs: `${DRIVE_API_PREFIX}/refs`,
   reconcile: `${DRIVE_API_PREFIX}/reconcile`,
@@ -179,6 +180,58 @@ export const DriveRemote = Schema.Struct({
 });
 export type DriveRemote = typeof DriveRemote.Type;
 
+/** A shortcut target's version, recorded with a turn checkpoint. */
+export const CheckpointShortcutView = Schema.Struct({
+  path: Schema.String,
+  target: Schema.String,
+  commit: Schema.NullOr(Oid),
+});
+export type CheckpointShortcutView = typeof CheckpointShortcutView.Type;
+
+/**
+ * The exact `/drives` view a turn read. This mirrors ContextProtocol's view
+ * schema inline to avoid a runtime import cycle: that protocol imports Oid
+ * and DRIVE_API_PREFIX from this module.
+ */
+export const CheckpointContextView = Schema.Struct({
+  driveId: Schema.String,
+  contexts: Schema.Array(
+    Schema.Struct({
+      contextId: Schema.String,
+      name: Schema.String,
+      drives: Schema.Array(
+        Schema.Struct({
+          driveId: Schema.String,
+          path: Schema.NullOr(Schema.String),
+          commit: Schema.NullOr(Oid),
+          time: Schema.NullOr(Schema.Number),
+          shortcuts: Schema.Array(Schema.Struct({ path: Schema.String, target: Schema.String })),
+        }),
+      ),
+    }),
+  ),
+});
+export type CheckpointContextView = typeof CheckpointContextView.Type;
+
+/** The shortcut and context versions this turn saw. */
+export const CheckpointViews = Schema.Struct({
+  shortcuts: Schema.Array(CheckpointShortcutView),
+  context: Schema.NullOr(CheckpointContextView),
+});
+export type CheckpointViews = typeof CheckpointViews.Type;
+
+/** Durable metadata registered with a turn's checkpoint. */
+export const DriveCheckpointRecord = Schema.Struct({
+  runId: Schema.String,
+  turnId: Schema.String,
+  commit: Oid,
+  start: Schema.NullOr(Oid),
+  /** Commit object at the head of `refs/notes/signalbox` in the uploaded pack. */
+  notes: Oid,
+  views: CheckpointViews,
+});
+export type DriveCheckpointRecord = typeof DriveCheckpointRecord.Type;
+
 /** What a thread sees of its drive. */
 export const DriveState = Schema.Struct({
   driveId: Schema.String,
@@ -189,6 +242,12 @@ export const DriveState = Schema.Struct({
   wip: Schema.NullOr(Oid),
   /** The thread's machine state, `machine/<thread id>`; absent from a cloud that keeps none. */
   machine: Schema.optional(Schema.NullOr(Oid)),
+  /** The uploaded Git notes ref commit naming this thread's turn checkpoints. */
+  notes: Schema.optional(Schema.NullOr(Oid)),
+  /** The last checkpoint's pinned view, for restore or continue. */
+  pinnedViews: Schema.optional(Schema.NullOr(CheckpointViews)),
+  /** Changes on restore/fork so an already running machine reloads the selected revision. */
+  revision: Schema.optional(Schema.NullOr(Schema.String)),
   /** Where the thread's branch started: `main` when the thread first opened the drive. */
   base: Schema.NullOr(Oid),
   /** The drive's packs after the caller's `PACKS_AFTER_HEADER`, oldest first. */
@@ -255,6 +314,8 @@ export const DriveShortcut = Schema.Struct({
   target: Schema.String,
   /** False when the user can't open the target: the rest is empty, and nothing is mounted. */
   readable: Schema.Boolean,
+  /** This turn's requested historical version; don't replace it with the latest remote head. */
+  pinned: Schema.optional(Schema.Boolean),
   main: Schema.NullOr(Oid),
   /** The target's packs after the caller's `have` for it, oldest first. */
   packs: Schema.Array(DrivePack),
@@ -341,6 +402,7 @@ export const DirectCommitRequest = Schema.Struct({
 
 export const driveJson = {
   state: jsonCodec(DriveState),
+  checkpoint: jsonCodec(DriveCheckpointRecord),
   packUpload: jsonCodec(PackUploadResult),
   refUpdate: jsonCodec(RefUpdateRequest),
   reconcile: jsonCodec(ReconcileRequest),
