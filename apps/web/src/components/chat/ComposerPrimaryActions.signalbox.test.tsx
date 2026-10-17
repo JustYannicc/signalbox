@@ -5,14 +5,6 @@ import { act, createElement, type ComponentProps } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
-vi.mock("~/hooks/useSettings", () => ({
-  useEnvironmentIdentificationMode: () => "none",
-}));
-vi.mock("../SidebarStageBackdrop", () => ({
-  StageBackdropButtonArt: () => null,
-  useSidebarStageBackdropVariant: () => null,
-}));
-
 import { ComposerPrimaryActions } from "./ComposerPrimaryActions";
 import type { ComposerSendLock } from "./sendLock/composerSendLock";
 import { SEND_LOCKED_REASON } from "./sendLock/composerSendLockStore";
