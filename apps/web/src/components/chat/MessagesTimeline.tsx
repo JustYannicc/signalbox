@@ -230,6 +230,7 @@ import {
   type TimelineLatestRun,
   type WorkGroupScrollAnchor,
 } from "./MessagesTimeline.logic";
+import { SettingUpMachineContext } from "./runtimeIsSettingUp"; // signalbox
 import { type ThreadFindMatch } from "./threadFind";
 import { useThreadFindNavigation } from "./useThreadFindNavigation";
 import { readThreadFindPosition } from "./threadFindPosition";
@@ -505,6 +506,8 @@ interface MessagesTimelineProps {
   findQuery?: string;
   activeFindMatch?: ThreadFindMatch | null;
   findNavigationId?: number;
+  /** signalbox: the turn's machine is still being set up (runtimeIsSettingUp). */
+  settingUpMachine?: boolean;
 }
 
 export function MessagesTimeline(props: MessagesTimelineProps) {
@@ -515,11 +518,13 @@ export function MessagesTimeline(props: MessagesTimelineProps) {
     if (findOpen) onManualNavigation();
   }, [findOpen, onManualNavigation]);
   return (
-    <ConversationTimeline
-      {...props}
-      {...find}
-      liveFollowEnabled={!findOpen && props.liveFollowEnabled}
-    />
+    <SettingUpMachineContext value={props.settingUpMachine === true}>
+      <ConversationTimeline
+        {...props}
+        {...find}
+        liveFollowEnabled={!findOpen && props.liveFollowEnabled}
+      />
+    </SettingUpMachineContext>
   );
 }
 
@@ -3705,9 +3710,12 @@ function toolIconAcceptsTint(toolIcon: ToolActivityIcon | undefined): boolean {
 function WorkingTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "working" }> }) {
   const { isCompacting, isPreparingWorktree, backgroundWorktreeSetup } =
     use(TimelineRowActivityCtx);
-  const shimmer = isPreparingWorktree || isCompacting;
+  const isSettingUpMachine = use(SettingUpMachineContext); // signalbox
+  const shimmer = isPreparingWorktree || isSettingUpMachine || isCompacting;
   const label = isPreparingWorktree ? (
     "Setting up worktree…"
+  ) : isSettingUpMachine ? (
+    "Setting up the machine…"
   ) : isCompacting ? (
     <CompactingLabel />
   ) : row.createdAt ? (
@@ -3784,7 +3792,8 @@ function CompactingLabel() {
 function ThinkingTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "thinking" }> }) {
   const ctx = use(TimelineRowCtx);
   const { isCompacting, isPreparingWorktree } = use(TimelineRowActivityCtx);
-  if (isPreparingWorktree || isCompacting) return <WorkLogRow label="" />;
+  const isSettingUpMachine = use(SettingUpMachineContext); // signalbox
+  if (isPreparingWorktree || isSettingUpMachine || isCompacting) return <WorkLogRow label="" />;
   const activity = <LiveActivityRow label="Thinking" iconName="brain" active shimmer />;
   const { groupId } = row;
   if (groupId === undefined) return activity;

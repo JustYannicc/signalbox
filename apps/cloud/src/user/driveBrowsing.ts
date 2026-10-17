@@ -6,11 +6,14 @@ import type {
   ProjectReadFileInput,
   ProjectSearchEntriesInput,
   ReviewDiffPreviewInput,
+  ReviewDiffFileContentsInput,
 } from "@t3tools/contracts";
 import * as Clock from "effect/Clock";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 
+import { GitHub } from "../github/GitHub.ts";
+import { GitHubConnection } from "../github/GitHubConnection.ts";
 import { DriveDirectory } from "../drive/DriveDirectory.ts";
 import { DriveFiles } from "../drive/DriveFiles.ts";
 import { isWithin, pathSegments } from "../drive/DriveReader.ts";
@@ -61,6 +64,8 @@ export const makeDriveBrowsing = Effect.fn("makeDriveBrowsing")(function* (
   const threads = yield* CloudThreadService.CloudThreadService;
   const files = yield* Effect.serviceOption(DriveFiles);
   const directory = yield* Effect.serviceOption(DriveDirectory);
+  const github = yield* Effect.serviceOption(GitHub);
+  const connection = yield* Effect.serviceOption(GitHubConnection);
 
   /** Logs a read failure and answers with what a client should show. */
   const unavailable = (cause: unknown) =>
@@ -142,6 +147,47 @@ export const makeDriveBrowsing = Effect.fn("makeDriveBrowsing")(function* (
       }
     });
 
+  const diffFileContents = (request: ReviewDiffFileContentsInput) =>
+    Effect.gen(function* () {
+      const drive = yield* openRoot(request.cwd);
+      if (drive === null) return yield* Effect.fail(NO_ACCESS);
+      const worktree = threadWorktreeAt(request.cwd);
+      if (worktree !== null) {
+        const snapshot = yield* threads
+          .threadSnapshot(yield* actor, worktree.threadId)
+          .pipe(Effect.mapError(() => NO_ACCESS));
+        if (driveOfProject(snapshot.projection.thread.projectId, userId) !== drive.driveId) {
+          return yield* Effect.fail(NO_ACCESS);
+        }
+      }
+      const remote =
+        directory._tag === "Some"
+          ? yield* directory.value
+              .forDrive(drive.driveId)
+              .remote()
+              .pipe(Effect.mapError(() => UNAVAILABLE))
+          : null;
+      if (remote !== null) {
+        if (github._tag === "None" || connection._tag === "None")
+          return yield* Effect.fail(UNAVAILABLE);
+        const token = yield* connection.value.accessToken.pipe(Effect.mapError(() => UNAVAILABLE));
+        if (token === null)
+          return yield* Effect.fail("Connect GitHub first: Settings › Source Control.");
+        // Cached immutable blobs still require the reader's current repository access.
+        const repository = yield* github.value.api
+          .repository(token, remote.repository)
+          .pipe(Effect.mapError(() => UNAVAILABLE));
+        if (repository === null) return yield* Effect.fail(NO_ACCESS);
+      }
+      return yield* drive.files.diffFileContents(drive.driveId, request).pipe(
+        Effect.catchTags({
+          DriveReadError: (error) => Effect.fail(error.message),
+          DriveObjectError: unavailable,
+          DrivePackError: unavailable,
+        }),
+      );
+    });
+
   const searchEntries = (request: ProjectSearchEntriesInput) =>
     Effect.gen(function* () {
       const drive = yield* openRoot(request.cwd);
@@ -218,5 +264,5 @@ export const makeDriveBrowsing = Effect.fn("makeDriveBrowsing")(function* (
       };
     });
 
-  return { listEntries, readFile, searchEntries, reviewPreview, turnDiff };
+  return { listEntries, readFile, diffFileContents, searchEntries, reviewPreview, turnDiff };
 });
