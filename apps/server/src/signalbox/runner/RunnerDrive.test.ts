@@ -1,4 +1,4 @@
-// @effect-diagnostics nodeBuiltinImport:off - the assertions run real git on temp dirs.
+// @effect-diagnostics nodeBuiltinImport:off cryptoRandomUUID:off - the assertions run real git on temp dirs, and fake secrets are generated per run.
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 
@@ -20,6 +20,10 @@ import {
 } from "./driveTesting.ts";
 import { makeRunnerDrive } from "./RunnerDrive.ts";
 import { DriveClientError } from "./RunnerDriveClient.ts";
+import { makeSecretMask } from "./secretMask.ts";
+
+/** A folder secret's value, new each run. */
+const fakeSecret = () => `sk-fake-${crypto.randomUUID()}`;
 
 describe("RunnerDrive", () => {
   it.effect(
@@ -62,7 +66,7 @@ describe("RunnerDrive", () => {
         const drive = makeFakeDrive(root);
         const { runner } = yield* machine(drive, root, "vm-1", "t1");
         yield* runner.prepare("remote-token");
-        expect(yield* runner.finishTurn({ message: "Hi" })).toEqual({
+        expect(yield* runner.finishTurn()).toEqual({
           checkpoint: null,
           outcome: { _tag: "nothing_saved" },
         });
@@ -78,12 +82,12 @@ describe("RunnerDrive", () => {
         const first = yield* machine(drive, root, "vm-1", "t1");
         yield* first.runner.prepare("remote-token");
         write(first.cwd, "a.txt", "one\n");
-        const turn = yield* first.runner.finishTurn({ message: "Add a\n\nbody" });
+        const turn = yield* first.runner.finishTurn();
         expect(turn.outcome._tag).toBe("landed");
         expect(turn.checkpoint?.files).toEqual([
           { path: "a.txt", kind: "added", additions: 1, deletions: 0 },
         ]);
-        expect(git(first.cwd, "log", "-1", "--format=%s")).toBe("Add a");
+        expect(git(first.cwd, "log", "-1", "--format=%s")).toBe("Add a.txt");
         write(first.cwd, "a.txt", "one\ntwo\n");
         write(first.cwd, "b.txt", "new\n");
         yield* first.runner.autosave;
@@ -116,16 +120,56 @@ describe("RunnerDrive", () => {
         yield* runner.autosave;
         yield* runner.flush;
         expect(ident(drive.refs("t1").wip!)).toBe(`${octo}|${octo}`);
-        yield* runner.finishTurn({ message: "Add a" });
+        yield* runner.finishTurn();
         expect(ident("HEAD")).toBe(`${octo}|${octo}`);
 
         // A cloud that sends no author, or an owner who disconnected GitHub.
         yield* runner.prepare("remote-token");
         write(cwd, "b.txt", "two\n");
-        yield* runner.finishTurn({ message: "Add b" });
+        yield* runner.finishTurn();
         const signalbox = `${DRIVE_COMMIT_AUTHOR.name} <${DRIVE_COMMIT_AUTHOR.email}>`;
         expect(ident("HEAD")).toBe(`${signalbox}|${signalbox}`);
         expect(ident("HEAD^")).toBe(`${octo}|${octo}`);
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+    ),
+  );
+
+  it.effect("titles a turn's commit with what changed, and lists the files", () =>
+    scopedTest((root) =>
+      Effect.gen(function* () {
+        const drive = makeFakeDrive(root);
+        const { runner, cwd } = yield* machine(drive, root, "vm-1", "t1");
+        yield* runner.prepare("remote-token");
+        write(cwd, "src/a.ts", "a\n");
+        write(cwd, "notes.md", "n\n");
+        yield* runner.finishTurn();
+        expect(git(cwd, "log", "-1", "--format=%B")).toBe(
+          "Add notes.md and a.ts\n\nA\tnotes.md\nA\tsrc/a.ts",
+        );
+
+        yield* runner.prepare("remote-token");
+        git(cwd, "mv", "notes.md", "README.md");
+        yield* runner.finishTurn();
+        expect(git(cwd, "log", "-1", "--format=%s")).toBe("Rename notes.md to README.md");
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+    ),
+  );
+
+  it.effect("masks a folder's secret in a file name the commit lists", () =>
+    scopedTest((root) =>
+      Effect.gen(function* () {
+        const secret = fakeSecret();
+        const secretMask = makeSecretMask();
+        secretMask.add([{ name: "API_KEY", value: secret }]);
+        const drive = makeFakeDrive(root);
+        const { runner, cwd } = yield* machine(drive, root, "vm-1", "t1", { secretMask });
+        yield* runner.prepare("remote-token");
+        // Long enough that the title is cut inside the secret's value.
+        write(cwd, `keys/${"k".repeat(50)}${secret}.txt`, "x\n");
+        yield* runner.finishTurn();
+        const message = git(cwd, "log", "-1", "--format=%B");
+        expect(message).not.toContain(secret.slice(0, 12));
+        expect(message).toContain(`A\tkeys/${"k".repeat(50)}{{secret:API_KEY}}.txt`);
       }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
     ),
   );
@@ -139,7 +183,7 @@ describe("RunnerDrive", () => {
         // No .gitignore: the drive still keeps the machine's caches out.
         write(first.cwd, "app/package.json", "{}\n");
         write(first.cwd, "app/node_modules/pkg/index.js", "module.exports = 1;\n");
-        const turn = yield* first.runner.finishTurn({ message: "Add app" });
+        const turn = yield* first.runner.finishTurn();
         expect(turn.checkpoint?.files.map((file) => file.path)).toEqual(["app/package.json"]);
         expect(git(drive.store, "ls-tree", "-r", "--name-only", drive.refs("t1").thread!)).toBe(
           "app/package.json",
@@ -164,8 +208,8 @@ describe("RunnerDrive", () => {
         yield* b.runner.prepare("remote-token");
         write(a.cwd, "a.txt", "from a\n");
         write(b.cwd, "b.txt", "from b\n");
-        expect((yield* a.runner.finishTurn({ message: "a" })).outcome._tag).toBe("landed");
-        const landed = yield* b.runner.finishTurn({ message: "b" });
+        expect((yield* a.runner.finishTurn()).outcome._tag).toBe("landed");
+        const landed = yield* b.runner.finishTurn();
         expect(landed.outcome).toEqual({ _tag: "landed", main: drive.refs("tb").main });
         // The checkpoint is the turn's own work, not what merging main brought in.
         expect(landed.checkpoint?.files.map((file) => file.path)).toEqual(["b.txt"]);
@@ -196,14 +240,14 @@ describe("RunnerDrive", () => {
         const a = yield* machine(drive, root, "vm-a", "ta");
         yield* a.runner.prepare("remote-token");
         write(a.cwd, "shared.txt", "base\n");
-        yield* a.runner.finishTurn({ message: "base" });
+        yield* a.runner.finishTurn();
         const b = yield* machine(drive, root, "vm-b", "tb");
         yield* a.runner.prepare("remote-token");
         yield* b.runner.prepare("remote-token");
         write(a.cwd, "shared.txt", "from a\n");
         write(b.cwd, "shared.txt", "from b\n");
-        expect((yield* a.runner.finishTurn({ message: "a" })).outcome._tag).toBe("landed");
-        const turn = yield* b.runner.finishTurn({ message: "b" });
+        expect((yield* a.runner.finishTurn()).outcome._tag).toBe("landed");
+        const turn = yield* b.runner.finishTurn();
         expect(turn.outcome).toEqual({ _tag: "conflict", files: ["shared.txt"] });
         expect(read(b.cwd, "shared.txt")).toContain("<<<<<<< ");
 
@@ -228,15 +272,15 @@ describe("RunnerDrive", () => {
         const a = yield* machine(drive, root, "vm-a", "ta");
         yield* a.runner.prepare("remote-token");
         write(a.cwd, "shared.txt", "base\n");
-        yield* a.runner.finishTurn({ message: "base" });
+        yield* a.runner.finishTurn();
         const b = yield* machine(drive, root, "vm-b", "tb");
         yield* a.runner.prepare("remote-token");
         yield* b.runner.prepare("remote-token");
         write(a.cwd, "shared.txt", "from a\n");
         write(b.cwd, "shared.txt", "from b\n");
-        yield* a.runner.finishTurn({ message: "a" });
+        yield* a.runner.finishTurn();
         const main = drive.refs("ta").main;
-        expect((yield* b.runner.finishTurn({ message: "b" })).outcome._tag).toBe("conflict");
+        expect((yield* b.runner.finishTurn()).outcome._tag).toBe("conflict");
         expect((yield* b.runner.abandonMerge)._tag).toBe("not_landed");
         expect(read(b.cwd, "shared.txt")).toBe("from b\n");
         expect(drive.refs("tb")).toMatchObject({ main, thread: git(b.cwd, "rev-parse", "HEAD") });
@@ -256,14 +300,14 @@ describe("RunnerDrive", () => {
         write(b.cwd, "b.txt", "from b\n");
         // Thread a lands while thread b is between its merge and its reconcile.
         drive.onceBeforeReconcile(
-          a.runner.finishTurn({ message: "a" }).pipe(
+          a.runner.finishTurn().pipe(
             Effect.flatMap(({ outcome }) =>
               outcome._tag === "landed" ? Effect.void : Effect.die(new Error(outcome._tag)),
             ),
             Effect.orDie,
           ),
         );
-        const turn = yield* b.runner.finishTurn({ message: "b" });
+        const turn = yield* b.runner.finishTurn();
         expect(turn.outcome._tag).toBe("landed");
         expect(drive.calls.reconcileConflicts).toBe(1);
         expect(drive.mainFile("a.txt")).toBe("from a");
@@ -363,7 +407,7 @@ describe("RunnerDrive", () => {
           yield* runner.flush;
           const autosave = drive.refs("t1").wip;
 
-          const turn = yield* runner.finishTurn({ message: "Add app" });
+          const turn = yield* runner.finishTurn();
           expect(turn.outcome._tag).toBe("saved");
           expect(drive.calls.reconcile).toBe(0);
           const refs = drive.refs("t1");
@@ -407,13 +451,50 @@ describe("RunnerDrive", () => {
           });
           // The turn's end still saves, with the publish inside its checkpoint.
           write(cwd, "later.md", "later\n");
-          const turn = yield* runner.finishTurn({ message: "More" });
+          const turn = yield* runner.finishTurn();
           expect(turn.checkpoint?.start).toBe(head);
           expect(turn.checkpoint?.files.map((file) => file.path).toSorted()).toEqual([
             "later.md",
             "notes.md",
             "src/app.ts",
           ]);
+        }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+      ),
+    );
+
+    it.effect("describes the change when the agent publishes without a commit message", () =>
+      scopedTest((root) =>
+        Effect.gen(function* () {
+          const upstream = makeUpstream(root);
+          const drive = makeFakeDrive(root, { upstream: upstream.dir });
+          const { runner, cwd } = yield* machine(drive, root, "vm-1", "t1");
+          yield* runner.prepare("remote-token");
+          write(cwd, "src/app.ts", "export const app = 1;\n");
+
+          expect((yield* runner.saveBranch())._tag).toBe("saved");
+          expect(git(cwd, "log", "-1", "--format=%B")).toBe("Update app.ts\n\nM\tsrc/app.ts");
+        }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+      ),
+    );
+
+    it.effect("masks a folder's secret in the agent's commit message", () =>
+      scopedTest((root) =>
+        Effect.gen(function* () {
+          const secret = fakeSecret();
+          const secretMask = makeSecretMask();
+          secretMask.add([{ name: "API_KEY", value: secret }]);
+          const upstream = makeUpstream(root);
+          const drive = makeFakeDrive(root, { upstream: upstream.dir });
+          const { runner, cwd } = yield* machine(drive, root, "vm-1", "t1", { secretMask });
+          yield* runner.prepare("remote-token");
+          write(cwd, "src/app.ts", "export const app = 1;\n");
+
+          expect((yield* runner.saveBranch(`Use key ${secret}\n\nIt is ${secret}.`))._tag).toBe(
+            "saved",
+          );
+          expect(git(cwd, "log", "-1", "--format=%B")).toBe(
+            "Use key {{secret:API_KEY}}\n\nIt is {{secret:API_KEY}}.",
+          );
         }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
       ),
     );
@@ -449,7 +530,7 @@ describe("RunnerDrive", () => {
           const first = yield* machine(drive, root, "vm-1", "t1");
           yield* first.runner.prepare("remote-token");
           write(first.cwd, "notes.md", "turn one\n");
-          yield* first.runner.finishTurn({ message: "Notes" });
+          yield* first.runner.finishTurn();
           // The remote moves on, so the thread's base is no longer what a fetch brings.
           upstream.commit("src/app.ts", "export const later = 1;\n", "Later");
 
@@ -462,7 +543,7 @@ describe("RunnerDrive", () => {
           expect(read(second.cwd, "README.md")).toBe("hello\n");
           expect(status(second.cwd)).toEqual([]);
           write(second.cwd, "notes.md", "turn two\n");
-          expect((yield* second.runner.finishTurn({ message: "More" })).outcome._tag).toBe("saved");
+          expect((yield* second.runner.finishTurn()).outcome._tag).toBe("saved");
         }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
       ),
     );
@@ -475,7 +556,7 @@ describe("RunnerDrive", () => {
           const first = yield* machine(drive, root, "vm-1", "t1");
           yield* first.runner.prepare("remote-token");
           write(first.cwd, "notes.md", "turn one\n");
-          yield* first.runner.finishTurn({ message: "Notes" });
+          yield* first.runner.finishTurn();
 
           // The drive keeps the remote's files on the remote: without it, nothing to check out.
           NodeFS.rmSync(upstream.dir, { recursive: true, force: true });
@@ -518,7 +599,7 @@ describe("RunnerDrive", () => {
             const vm1 = yield* machine(drive, root, "vm-1", "t1");
             yield* vm1.runner.prepare("remote-token");
             write(vm1.cwd, "notes.md", "mine\n");
-            expect((yield* vm1.runner.finishTurn({ message: "Notes" })).outcome._tag).toBe("saved");
+            expect((yield* vm1.runner.finishTurn()).outcome._tag).toBe("saved");
 
             // The next turn starts; then, mid-turn, main moves on: a pull request branched
             // before the drive's main merges in. The drive's main stays where it was.
@@ -544,9 +625,7 @@ describe("RunnerDrive", () => {
             agent(vm1.cwd, "fetch", "-q", "origin");
             agent(vm1.cwd, "rebase", "-q", "origin/main");
             expect(git(vm1.cwd, "rev-parse", "HEAD~1")).toBe(main);
-            expect((yield* vm1.runner.finishTurn({ message: "Rebased" })).outcome._tag).toBe(
-              "saved",
-            );
+            expect((yield* vm1.runner.finishTurn()).outcome._tag).toBe("saved");
             const head = git(vm1.cwd, "rev-parse", "HEAD");
             expect(drive.refs("t1").thread).toBe(head);
             // The main it rebased onto rides along one commit deep; its history stays on the remote.
@@ -575,7 +654,7 @@ describe("RunnerDrive", () => {
             const { runner, cwd } = yield* machine(drive, root, "vm-1", "t1");
             yield* runner.prepare("remote-token");
             write(cwd, "README.md", "mine\n");
-            yield* runner.finishTurn({ message: "Mine" });
+            yield* runner.finishTurn();
             upstream.commit("README.md", "theirs\n", "Theirs");
 
             yield* runner.prepare("remote-token");
@@ -602,7 +681,7 @@ describe("RunnerDrive", () => {
               "rebase",
               "--continue",
             );
-            expect((yield* runner.finishTurn({ message: "Resolved" })).outcome._tag).toBe("saved");
+            expect((yield* runner.finishTurn()).outcome._tag).toBe("saved");
             expect(git(drive.store, "show", `${drive.refs("t1").thread}:README.md`)).toBe("both");
           }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
         ),
@@ -616,7 +695,7 @@ describe("RunnerDrive", () => {
             const { runner, cwd } = yield* machine(drive, root, "vm-1", "t1");
             yield* runner.prepare("remote-token");
             write(cwd, "notes.md", "mine\n");
-            yield* runner.finishTurn({ message: "Mine" });
+            yield* runner.finishTurn();
             const mine = git(cwd, "rev-parse", "HEAD");
 
             // Pushed as the thread's branch, then someone else adds to it on GitHub.
@@ -692,7 +771,7 @@ describe("RunnerDrive", () => {
                 const { runner, cwd } = yield* machine(drive, root, "vm-1", "t1");
                 yield* runner.prepare("remote-token");
                 write(cwd, "feature.ts", "export const f = 1;\n");
-                yield* runner.finishTurn({ message: "Feature" });
+                yield* runner.finishTurn();
                 const published = git(cwd, "rev-parse", "HEAD");
 
                 // While its pull request is open, the branch stays as the agent left it.
@@ -715,7 +794,7 @@ describe("RunnerDrive", () => {
                 expect(status(cwd)).toEqual([]);
 
                 write(cwd, "next.ts", "export const n = 1;\n");
-                const turn = yield* runner.finishTurn({ message: "Next" });
+                const turn = yield* runner.finishTurn();
                 expect(turn.checkpoint?.start).toBe(merged);
                 expect(turn.checkpoint?.files.map((file) => file.path)).toEqual(["next.ts"]);
                 // What its next pull request shows, compared the way GitHub does.
@@ -743,7 +822,7 @@ describe("RunnerDrive", () => {
               const { runner, cwd } = yield* machine(drive, root, "vm-1", "t1");
               yield* runner.prepare("remote-token");
               write(cwd, "feature.ts", "export const f = 1;\n");
-              yield* runner.finishTurn({ message: "Feature" });
+              yield* runner.finishTurn();
               write(cwd, "draft.md", "unsaved\n");
 
               upstream.commit("feature.ts", "export const f = 1;\n", "Feature (#7)");
@@ -751,7 +830,7 @@ describe("RunnerDrive", () => {
               expect(read(cwd, "draft.md")).toBe("unsaved\n");
               expect(status(cwd)).toEqual([]);
               expect(git(cwd, "log", "-2", "--format=%s")).toBe(
-                "Merge main after #7 merged\nWork in progress",
+                "Merge main after #7 merged\nAdd draft.md",
               );
             }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
           ),
@@ -768,9 +847,9 @@ describe("RunnerDrive", () => {
             const vm = yield* machine(drive, root, "vm-1", "t1");
             yield* vm.runner.prepare("remote-token");
             write(vm.cwd, "src/app.ts", "export const a = 1;\n");
-            yield* vm.runner.finishTurn({ message: "Feature" });
+            yield* vm.runner.finishTurn();
             write(vm.cwd, "src/app.ts", "export const a = 2;\n");
-            yield* vm.runner.finishTurn({ message: "More" });
+            yield* vm.runner.finishTurn();
             const before = git(vm.cwd, "rev-parse", "HEAD");
             upstream.commit("src/app.ts", "export const a = 1;\n", "Feature (#7)");
             const main = upstream.commit("src/app.ts", "export const a = 3;\n", "Theirs");
@@ -810,7 +889,7 @@ describe("RunnerDrive", () => {
 
               // The turn's own work starts after the merge.
               write(cwd, "next.ts", "export const n = 1;\n");
-              const turn = yield* runner.finishTurn({ message: "Next" });
+              const turn = yield* runner.finishTurn();
               expect(turn.checkpoint?.start).toBe(merged);
               expect(turn.checkpoint?.files.map((file) => file.path)).toEqual(["next.ts"]);
             }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),

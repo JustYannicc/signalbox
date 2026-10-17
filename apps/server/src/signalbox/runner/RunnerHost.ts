@@ -207,6 +207,7 @@ export const makeRunnerHost = Effect.fn("makeRunnerHost")(function* (config: Run
                       client,
                       branch: threadRemoteBranch(request.threadId),
                       machine: { outside: outsideFolders(layout), trees: dependencies.trees },
+                      secretMask: mask,
                     }),
                 ).pipe(
                   Effect.provide(FetchHttpClient.layer),

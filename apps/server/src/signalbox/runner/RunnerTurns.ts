@@ -630,7 +630,6 @@ export const makeRunnerTurns = Effect.fn("makeRunnerTurns")(function* (input: {
       let attempts = 0;
       yield* finishDriveTurn({
         runId,
-        message: state.turn.message.text,
         drive: current,
         emit: input.emit,
         resolve: (prompt) => continueTurn(runId, state, prompt, "merge", ++attempts),
