@@ -46,6 +46,7 @@ import * as PoolDirectory from "../pool/PoolDirectory.ts";
 import * as UserPreviewSetup from "../previewSetup/UserPreviewSetup.ts";
 import * as PushNotifier from "../push/PushNotifier.ts";
 import * as CloudThreadService from "../thread/CloudThreadService.ts";
+import * as ThreadsLive from "../thread/ThreadsLive.ts";
 import * as ModelManifest from "../thread/ModelManifest.ts";
 import { scriptedProviderEnabled } from "../thread/scriptedProvider.ts";
 import type { MachineBackendEnv } from "../thread/runner/MachineBackend.ts";
@@ -233,7 +234,7 @@ const makeRuntime = (storage: DurableObjectStorage, env: UserObjectEnv) => {
             Layer.mergeAll(
               UserShell.layer,
               UserThreadStatus.layer,
-              CloudThreadService.layer,
+              CloudThreadService.layer.pipe(Layer.provideMerge(ThreadsLive.layer)),
               UserLearner.layer.pipe(Layer.provideMerge(LearnerHomes.layer)),
               PoolSignIns.layer,
               drives.services,
