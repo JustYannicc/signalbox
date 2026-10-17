@@ -208,7 +208,7 @@ const fakeClient = (calls: Calls): ContextClient => ({
 });
 
 const serve = (
-  previewServices?: RunnerPreviewServices,
+  previewServices?: RunnerPreviewServices["Service"],
   persistPreviewServices?: (services: ReadonlyArray<PreviewService>) => Effect.Effect<void>,
   previewServicesReady?: Effect.Effect<void>,
 ) =>
@@ -392,7 +392,7 @@ describe("context server (#141)", () => {
       Effect.gen(function* () {
         const declarations: Array<PreviewService> = [];
         const persisted: Array<ReadonlyArray<PreviewService>> = [];
-        const services: RunnerPreviewServices = {
+        const services: RunnerPreviewServices["Service"] = {
           start: (service) =>
             Effect.sync(() => {
               const index = declarations.findIndex((entry) => entry.port === service.port);
@@ -443,7 +443,7 @@ describe("context server (#141)", () => {
       const persisted: Array<ReadonlyArray<PreviewService>> = [];
       const entered = yield* Deferred.make<void>();
       const release = yield* Deferred.make<void>();
-      const services: RunnerPreviewServices = {
+      const services: RunnerPreviewServices["Service"] = {
         start: (service) =>
           Effect.sync(() => {
             const index = declarations.findIndex((entry) => entry.port === service.port);

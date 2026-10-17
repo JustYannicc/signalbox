@@ -109,7 +109,7 @@ const makePorts = (initial: ReadonlyArray<PreviewPort>) => {
 const makeServiceState = (initial: ReadonlyArray<PreviewService> = []) => {
   let current = initial;
   let restores = 0;
-  const service: RunnerPreviewServices = {
+  const service: RunnerPreviewServices["Service"] = {
     start: () => Effect.void,
     stop: () => Effect.void,
     restore: (services) =>

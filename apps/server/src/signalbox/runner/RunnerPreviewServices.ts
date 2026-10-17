@@ -32,22 +32,21 @@ interface ActiveService {
   readonly process: ChildProcessSpawner.ChildProcessHandle;
 }
 
-export interface RunnerPreviewServices {
-  /** Starts this exact command for the declared port, replacing that port's prior command. */
-  readonly start: (service: PreviewService) => Effect.Effect<void, PreviewServiceError>;
-  /** Stops the command and removes its persisted declaration. */
-  readonly stop: (port: number) => Effect.Effect<void>;
-  /** Restores the thread's declarations on this Runner. */
-  readonly restore: (
-    services: ReadonlyArray<PreviewService>,
-  ) => Effect.Effect<void, PreviewServiceError>;
-  /** The declarations this Runner should report to the thread. */
-  readonly list: Effect.Effect<ReadonlyArray<PreviewService>>;
-}
-
-export const RunnerPreviewServices = Context.Service<RunnerPreviewServices>(
-  "t3/signalbox/runner/RunnerPreviewServices",
-);
+export class RunnerPreviewServices extends Context.Service<
+  RunnerPreviewServices,
+  {
+    /** Starts this exact command for the declared port, replacing that port's prior command. */
+    readonly start: (service: PreviewService) => Effect.Effect<void, PreviewServiceError>;
+    /** Stops the command and removes its persisted declaration. */
+    readonly stop: (port: number) => Effect.Effect<void>;
+    /** Restores the thread's declarations on this Runner. */
+    readonly restore: (
+      services: ReadonlyArray<PreviewService>,
+    ) => Effect.Effect<void, PreviewServiceError>;
+    /** The declarations this Runner should report to the thread. */
+    readonly list: Effect.Effect<ReadonlyArray<PreviewService>>;
+  }
+>()("t3/signalbox/runner/RunnerPreviewServices") {}
 
 const sameService = (left: PreviewService, right: PreviewService) =>
   left.port === right.port && left.command === right.command && left.cwd === right.cwd;
@@ -229,5 +228,5 @@ export const makePreviewServices = Effect.fn("makePreviewServices")(function* (i
     stop,
     restore,
     list: Effect.sync(() => [...declarations.values()].toSorted((a, b) => a.port - b.port)),
-  } satisfies RunnerPreviewServices;
+  } satisfies RunnerPreviewServices["Service"];
 });

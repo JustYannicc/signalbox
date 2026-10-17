@@ -69,7 +69,7 @@ export interface PreviewTunnelInput {
   readonly transport: PreviewTunnelTransport;
   readonly ports: PreviewPortSource;
   /** Commands the thread declared, scoped to this Runner and its drive. */
-  readonly services: RunnerPreviewServices;
+  readonly services: RunnerPreviewServices["Service"];
   /** Opens/restores the drive and installs its dependencies before services start. */
   readonly prepareServices: (drive: DriveAccess) => Effect.Effect<void, RunnerConnectionError>;
   /** The agent's browser, which viewers watch through the thread. */

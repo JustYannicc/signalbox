@@ -105,7 +105,7 @@ export const startContextServer = Effect.fn("startContextServer")(function* (inp
   /** Where to mount `/drives`; null serves the tools only (a development host). */
   readonly mountPoint: string | null;
   /** Explicit dev servers the thread wants restored on a new machine. */
-  readonly previewServices?: RunnerPreviewServices.RunnerPreviewServices;
+  readonly previewServices?: RunnerPreviewServices.RunnerPreviewServices["Service"];
   /** Saves the declaration list in the thread before a tool replies. */
   readonly persistPreviewServices?: (
     services: ReadonlyArray<PreviewService>,
