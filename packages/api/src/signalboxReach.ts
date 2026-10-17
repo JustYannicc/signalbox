@@ -226,7 +226,7 @@ export const SIGNALBOX_RPC_REACH = {
   }),
   [SIGNALBOX_PERSON_BROWSER_WS_METHODS.clearProfile]: write({
     name: "personBrowser.clearProfile",
-    summary: "Clear saved site data from your one cloud browser profile.",
+    summary: "Clear your cloud browser sessions, saved site data, and managed sign-ins.",
     destructive: true,
   }),
 } as const satisfies Partial<Record<WsRpcMethod, Reach>>;
