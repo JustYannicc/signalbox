@@ -329,15 +329,17 @@ export const makeRunnerTurns = Effect.fn("makeRunnerTurns")(function* (input: {
     input.secretRequests?.clear({ runId, attemptId });
   /** `turn` is off this machine: whatever waits for it to wind down goes on. */
   const forget = (runId: RunId, turn: Turn) => {
-    if (turns.get(runId) === turn) turns.delete(runId);
+    if (turns.get(runId) === turn) {
+      turns.delete(runId);
+      clearSecretRequestTurn(runId, turn.turn.attemptId);
+    }
     clearRuntimeRequests(runId, turn.attemptId);
-    clearSecretRequestTurn(runId, turn.attemptId);
     Deferred.doneUnsafe(turn.ended, Exit.void);
   };
   yield* Effect.addFinalizer(() =>
     Effect.sync(() => {
       for (const turn of turns.values()) {
-        clearSecretRequestTurn(turn.turn.runId, turn.attemptId);
+        clearSecretRequestTurn(turn.turn.runId, turn.turn.attemptId);
       }
     }),
   );
@@ -633,7 +635,9 @@ export const makeRunnerTurns = Effect.fn("makeRunnerTurns")(function* (input: {
       held.waiting = ended;
       mergeAttempts.add(attemptId);
       turns.set(runId, continuation);
-      yield* Effect.sync(() => pinSecretRequestTurn(runId, attemptId, state.sessionAccess));
+      yield* Effect.sync(() =>
+        pinSecretRequestTurn(runId, state.turn.attemptId, state.sessionAccess),
+      );
       yield* state.session
         .startTurn({
           appThread: turn.appThread,
@@ -1156,6 +1160,7 @@ export const makeRunnerTurns = Effect.fn("makeRunnerTurns")(function* (input: {
       if (conflict !== undefined && opened !== null) {
         if (!(yield* resolveBeforeTurn(state, conflict, opened))) return;
       }
+      yield* Effect.sync(() => pinSecretRequestTurn(turn.runId, turn.attemptId, sessionAccess));
       yield* session.startTurn({
         appThread: turn.appThread,
         threadId: input.threadId,
@@ -1204,7 +1209,6 @@ export const makeRunnerTurns = Effect.fn("makeRunnerTurns")(function* (input: {
     Effect.suspend(() => {
       if (taken.has(turn.runId)) return Effect.void;
       taken.add(turn.runId);
-      pinSecretRequestTurn(turn.runId, turn.attemptId, sessionAccess);
       const state: Turn = {
         turn,
         attemptId: turn.attemptId,
@@ -1243,7 +1247,7 @@ export const makeRunnerTurns = Effect.fn("makeRunnerTurns")(function* (input: {
       const wasRunning = turn.status === "running";
       turn.status = "stopped";
       clearRuntimeRequests(runId, turn.attemptId);
-      clearSecretRequestTurn(runId, turn.attemptId);
+      clearSecretRequestTurn(runId, turn.turn.attemptId);
       // Before the harness names its turn, `track` interrupts once it does. The
       // harness may take seconds to stop; the socket meanwhile reads on.
       return wasRunning ? Effect.asVoid(Effect.forkIn(interruptNow(turn), scope)) : Effect.void;
