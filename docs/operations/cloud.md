@@ -270,13 +270,13 @@ committed. These come from 1Password through the Alchemy stack (#348, #298).
 
 Each account pool is a `PoolObject` (`apps/cloud/src/pool/`), and a managed
 pool runs its own CLIProxyAPI in a Cloudflare Container bound to that object:
-the image in `apps/cloud/containers/cliproxyapi/` (CLIProxyAPI's static
-release build on distroless, about 24 MB), `lite` instances, started by the
-first request and stopped two minutes after the object goes idle. The
-container's disk is thrown away every time; CLIProxyAPI keeps its config and
-accounts in its object-store backend, which is served from the pool object's
-own SQLite through a host only that container can reach. A pool connected to
-an admin's own CLIProxyAPI never starts a container.
+the image in `apps/cloud/containers/cliproxyapi/` (a static build from the
+pinned upstream source with managed-pool carry patches, on distroless), `lite`
+instances, started by the first request and stopped two minutes after the object
+goes idle. The container's disk is thrown away every time; CLIProxyAPI keeps its
+config and accounts in its object-store backend, which is served from the pool
+object's own SQLite through a host only that container can reach. A pool
+connected to an admin's own CLIProxyAPI never starts a container.
 
 The model picker offers what each pool's CLIProxyAPI serves (`GET /v1/models`,
 which lists only what its enabled accounts can run). Its v8 management catalog
@@ -306,11 +306,13 @@ own MCP sign-in (`/mcp` in Claude Code, `codex mcp login signalbox`), and
 
 The `CLIProxyAPI release sync` workflow checks upstream daily. The shared
 manifest at `apps/cloud/containers/cliproxyapi/release.json` holds the version,
-the six self-hosted assets and their sizes and SHA-256 checksums, plus the
-managed-pool image asset. The Docker build reads it from its build context, and
-the account-hub installer imports the same file. The updater verifies every
-asset against the release metadata and `checksums.txt`, then edits only this
-manifest.
+the exact upstream source commit, the six self-hosted assets and their sizes
+and SHA-256 checksums, plus the managed-pool image asset. The Docker build
+checks the cloned release tag against that source commit before applying the
+managed-pool patch. The account-hub installer imports the same manifest for its
+official binary. The updater verifies every asset against the release metadata
+and `checksums.txt`, resolves the source commit from the release tag, then
+edits only this manifest.
 
 Each release gets one pull request with a link to the release notes. GitHub
 auto-merges it after the container smoke test, Cloud preview deploy, and all
@@ -319,6 +321,26 @@ asset keeps the release from merging and opens or updates one issue labelled
 `cli-proxyapi-update-needs-hand`. The next clean sync or green release PR closes
 that issue. The updater uses the existing `UPSTREAM_SYNC_TOKEN`, so GitHub runs
 the PR checks and preview as `JustYannicc`.
+
+The managed-pool image builds the pinned source commit and applies two checked-in
+patches: CLIProxyAPI#6715 adds Codex device login, and a local patch adds Claude's
+manual OAuth flow to the v8 management API. Release sync requires both patches to
+apply before preparing an update. The smoke build runs fake-auth tests for both
+flows; it does not start a real login. The account-hub installer on a self-hosted
+server still downloads the checksummed upstream binary, so these login changes
+apply to managed cloud pools only.
+
+When an upstream release includes CLIProxyAPI#6715, remove only
+`apps/cloud/containers/cliproxyapi/cliproxyapi-6715.patch` and remove its
+`CodexDevice` test filter. The shared patch check and apply helper stay in place
+while any other carry patch remains. Keep the Claude manual-flow patch until
+upstream ships an equivalent or we deliberately remove that support. Remove
+each patch's test filter when removing that patch. Once no carry patches remain,
+remove the source clone and patch check from release sync, remove the
+source-commit field and updater input, remove the source-build test flag, and
+restore the managed image's checksummed no-plugin archive build. Until a patch
+applies or is deliberately removed, release sync must fail for maintainer
+review.
 
 To roll back a merged update, revert its sync commit and let the normal main
 deployment rebuild the prior pins. This restores the previous executable; it

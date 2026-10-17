@@ -1,22 +1,44 @@
-# The CLIProxyAPI every managed account pool runs (src/pool/PoolContainer.ts).
-# Kept small because every pool has one: CLIProxyAPI's static no-plugin
-# release build on distroless, with no shell or package manager at runtime.
-# The scheduled release sync updates the shared manifest with the release's
-# platform and container assets from checksums.txt.
+# Build the pinned source with the managed-pool Codex device-login and
+# Claude manual OAuth patches.
+# Keep the runtime image static and shell-free because every managed pool has one.
+FROM --platform=$BUILDPLATFORM golang:1.26.4-bookworm AS build
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends git jq \
+  && rm -rf /var/lib/apt/lists/*
 
-FROM alpine:3.22 AS fetch
-RUN apk add --no-cache jq
 COPY release.json /release.json
+COPY cliproxyapi-*.patch apply-carry-patches.sh /tmp/cliproxyapi/
 RUN VERSION="$(jq -er '.version' /release.json)" \
-  && ARCHIVE="$(jq -er '.container.name' /release.json)" \
-  && SHA256="$(jq -er '.container.sha256' /release.json)" \
-  && wget -q -O /cpa.tar.gz \
-      "https://github.com/router-for-me/CLIProxyAPI/releases/download/v${VERSION}/${ARCHIVE}" \
-  && echo "${SHA256}  /cpa.tar.gz" | sha256sum -c - \
-  && tar -xzf /cpa.tar.gz -C / cli-proxy-api
+  && SOURCE_COMMIT="$(jq -er '.source.commit' /release.json)" \
+  && git clone --depth 1 --branch "v${VERSION}" --single-branch \
+      https://github.com/router-for-me/CLIProxyAPI.git /src \
+  && ACTUAL_COMMIT="$(git -C /src rev-parse HEAD)" \
+  && if [ "$ACTUAL_COMMIT" != "$SOURCE_COMMIT" ]; then \
+       echo "CLIProxyAPI v${VERSION} resolved to ${ACTUAL_COMMIT}, expected pinned source ${SOURCE_COMMIT}." >&2; \
+       exit 1; \
+     fi \
+  && /tmp/cliproxyapi/apply-carry-patches.sh /src
 
-FROM gcr.io/distroless/static-debian12:nonroot
-COPY --from=fetch /cli-proxy-api /cli-proxy-api
+WORKDIR /src
+RUN go mod download
+
+# CI enables focused fake-auth tests for the actual management endpoints.
+# Normal image builds skip tests but still fail if a carry patch stops applying.
+ARG CLIPROXYAPI_TEST_CARRIED_FLOWS=0
+RUN if [ "$CLIPROXYAPI_TEST_CARRIED_FLOWS" = "1" ]; then \
+      GOMAXPROCS=2 go test -p 2 -count=1 -run 'CodexDevice|ManualClaude|ClaudeManualFlow' \
+        ./sdk/auth ./internal/api/handlers/management ./internal/auth/claude; \
+    fi
+
+# Managed-pool diagnostics need to identify both carried upstream changes.
+RUN VERSION="$(jq -er '.version' /release.json)" \
+  && COMMIT="$(git rev-parse --short HEAD)-signalbox-6715-723" \
+  && CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -p 2 -buildvcs=false \
+      -ldflags="-s -w -X main.Version=${VERSION} -X main.Commit=${COMMIT}" \
+      -o /cli-proxy-api ./cmd/server/
+
+FROM --platform=linux/amd64 gcr.io/distroless/static-debian12:nonroot
+COPY --from=build /cli-proxy-api /cli-proxy-api
 # Config and accounts come from the pool's store (OBJECTSTORE_*), spooled under /tmp.
 WORKDIR /tmp
 EXPOSE 8317

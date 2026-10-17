@@ -103,12 +103,31 @@ jobs:
             --pattern checksums.txt \
             --dir "$RUNNER_TEMP/cliproxyapi-release"
 
+      - name: Require managed-pool carry patches to apply
+        id: source
+        if: steps.branch.outputs.update == 'true'
+        env:
+          TAG: ${{ steps.release.outputs.tag }}
+        run: |
+          git clone --depth 1 --branch "$TAG" --single-branch \
+            https://github.com/router-for-me/CLIProxyAPI.git \
+            "$RUNNER_TEMP/cliproxyapi-source"
+          source_commit="$(git -C "$RUNNER_TEMP/cliproxyapi-source" rev-parse HEAD)"
+          if [[ ! "$source_commit" =~ ^[a-f0-9]{40}$ ]]; then
+            echo "Could not resolve $TAG to a full source commit." >&2
+            exit 1
+          fi
+          echo "commit=$source_commit" >> "$GITHUB_OUTPUT"
+          apps/cloud/containers/cliproxyapi/apply-carry-patches.sh \
+            "$RUNNER_TEMP/cliproxyapi-source" --check
+
       - name: Update the shared release manifest
         if: steps.branch.outputs.update == 'true'
         run: >-
           python3 scripts/cliproxyapi/update.py
           "$RUNNER_TEMP/cliproxyapi-release.json"
           "$RUNNER_TEMP/cliproxyapi-release/checksums.txt"
+          "${{ steps.source.outputs.commit }}"
           apps/cloud/containers/cliproxyapi/release.json
 
       - name: Prepare pull request labels and description
@@ -119,7 +138,7 @@ jobs:
         run: |
           gh label create cli-proxyapi-update --color 1d76db --description "Automated CLIProxyAPI release sync" --force
           cat > "$RUNNER_TEMP/cliproxyapi-pr-body.md" <<EOF
-          Updates the shared CLIProxyAPI release manifest to [$TAG](https://github.com/router-for-me/CLIProxyAPI/releases/tag/$TAG). The manifest contains the version, all self-hosted assets and checksums, and the managed-pool image asset. The Docker build and account-hub installer read the same file.
+          Updates the shared CLIProxyAPI release manifest to [$TAG](https://github.com/router-for-me/CLIProxyAPI/releases/tag/$TAG). The manifest contains the version, exact source commit, all self-hosted assets and checksums, and the managed-pool image asset. The Docker build and account-hub installer read the same file; the managed-pool image builds the source commit and applies the Codex device-login and Claude manual OAuth carry patches.
 
           The container smoke test, Cloud preview deploy and all repository checks must pass before GitHub auto-merges this PR. The scheduled updater verifies every pinned asset against upstream's release metadata and checksums.txt.
 
@@ -183,5 +202,5 @@ jobs:
         if: failure()
         env:
           PROBLEM_SUMMARY: The scheduled release sync could not prepare a verified update.
-          PROBLEM_DETAILS: Check this action run for a missing release asset, checksum problem, or failed GitHub operation. The pinned manifest was not advanced.
+          PROBLEM_DETAILS: Check this action run for a missing release asset, checksum problem, a managed-pool carry patch that no longer applies, or a failed GitHub operation. The pinned manifest was not advanced.
         run: node scripts/cliproxyapi/report-problem.mjs report
