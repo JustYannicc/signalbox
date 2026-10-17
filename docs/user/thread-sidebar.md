@@ -7,8 +7,19 @@ need a separate branch and working directory.
 
 The icon rail on the left edge of the sidebar opens **Home**, which shows your threads
 where they live. Collapsing the sidebar hides Home but keeps the rail. **New**, pinned
-above Home, starts a thread. The back and forward arrows beside the sidebar toggle step
-through where you've been.
+above Home, opens quick capture; Shift-click it to go straight to a new draft. The back
+and forward arrows beside the sidebar toggle step through where you've been.
+
+## Quick capture
+
+Quick capture is the fastest way to write something down. Open it with **New**,
+`mod+shift+space`, or **Quick capture** in the command palette. Type `#` to pick a folder;
+without one it goes to your top level. Paste or drop files to attach them. **Enter** saves
+it as a draft and leaves you where you are. `mod+Enter` opens it as a full draft. Closing it
+any other way also keeps what you wrote as a draft.
+
+Unsent drafts show under **Drafts** at the top of Home. Click one to pick up where you left
+off, or hover it and choose **Discard draft**.
 
 ## Organize with folders
 
