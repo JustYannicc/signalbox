@@ -20,17 +20,39 @@ export function hasWritableSelectedUsagePriceTarget(
   );
 }
 
+/** An unloaded config says nothing yet; on cloud it would open an editor that can't save. */
+export function usagePriceCapabilityTargets(
+  presentations: ReadonlyMap<
+    EnvironmentId,
+    {
+      readonly serverConfig?: {
+        readonly environment?: {
+          readonly capabilities?: { readonly serverSettingsWrite?: boolean };
+        };
+      } | null;
+    }
+  >,
+): UsagePriceCapabilityTarget[] {
+  return [...presentations].flatMap(([environmentId, presentation]) =>
+    presentation.serverConfig
+      ? [
+          {
+            environmentId,
+            serverSettingsWrite:
+              presentation.serverConfig.environment?.capabilities?.serverSettingsWrite,
+          },
+        ]
+      : [],
+  );
+}
+
 /** Whether a selected environment (`null` selects all) can save model prices. */
 export function useCanEditUsagePrices(
   selectedEnvironmentIds: ReadonlySet<EnvironmentId> | null,
 ): boolean {
   const presentations = useAtomValue(environmentPresentations.presentationsAtom);
   return hasWritableSelectedUsagePriceTarget(
-    [...presentations].map(([environmentId, presentation]) => ({
-      environmentId,
-      serverSettingsWrite:
-        presentation.serverConfig?.environment?.capabilities?.serverSettingsWrite,
-    })),
+    usagePriceCapabilityTargets(presentations),
     selectedEnvironmentIds,
   );
 }

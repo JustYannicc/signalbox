@@ -1,7 +1,10 @@
 import { EnvironmentId } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { hasWritableSelectedUsagePriceTarget } from "./usagePriceCapabilities";
+import {
+  hasWritableSelectedUsagePriceTarget,
+  usagePriceCapabilityTargets,
+} from "./usagePriceCapabilities";
 
 const target = (id: string, serverSettingsWrite?: boolean) => ({
   environmentId: EnvironmentId.make(id),
@@ -34,5 +37,13 @@ describe("usage price capability gating", () => {
         new Set([cloud.environmentId, selfHosted.environmentId]),
       ),
     ).toBe(true);
+  });
+
+  it("waits for an environment's config before offering price editing", () => {
+    const cloud = EnvironmentId.make("cloud");
+    const loading = usagePriceCapabilityTargets(new Map([[cloud, { serverConfig: null }]]));
+    expect(hasWritableSelectedUsagePriceTarget(loading, null)).toBe(false);
+    const legacy = usagePriceCapabilityTargets(new Map([[cloud, { serverConfig: {} }]]));
+    expect(hasWritableSelectedUsagePriceTarget(legacy, null)).toBe(true);
   });
 });

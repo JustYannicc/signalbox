@@ -45,6 +45,7 @@ import {
   readEnvironmentSupports,
   useShowsEnvironmentUi,
 } from "../../state/environmentCapabilities";
+import { useCanEditUsagePrices } from "./usagePriceCapabilities"; // signalbox
 
 const priceTargetsAtom = Atom.make((get): readonly UsagePriceTarget[] =>
   [...get(environmentPresentations.presentationsAtom)].map(([environmentId, environment]) => {
@@ -99,7 +100,7 @@ type SaveAttempt = {
   >;
 };
 
-export function UsagePriceOverrides({
+function UsagePriceOverridesDialog({
   usage,
   initialSelectedEnvironmentIds,
   initialModel,
@@ -631,4 +632,11 @@ export function UsagePriceOverrides({
       </DialogPopup>
     </Dialog>
   );
+}
+
+// signalbox: closes the editor as soon as no selected environment can save prices.
+export function UsagePriceOverrides(props: Parameters<typeof UsagePriceOverridesDialog>[0]) {
+  return useCanEditUsagePrices(props.initialSelectedEnvironmentIds) ? (
+    <UsagePriceOverridesDialog {...props} />
+  ) : null;
 }
