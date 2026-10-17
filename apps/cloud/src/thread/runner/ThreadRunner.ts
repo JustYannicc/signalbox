@@ -1170,9 +1170,19 @@ const make = Effect.gen(function* () {
             runId,
           });
         }
+        const closing =
+          projection !== null &&
+          (projection.thread.archivedAt !== null ||
+            projection.thread.settledOverride === "settled");
         if (lease.disconnectedAt !== null) {
           const deadline = lease.disconnectedAt + RECONNECT_TIMEOUT_MS;
           if (now < deadline) return keep({ ...IDLE, wakeAt: deadline, runId });
+          // A lost socket says nothing about the machine's last writes. Closing
+          // work waits for its Runner to reconnect and confirm those saves.
+          const saved = lease.drain?._tag === "answered" && lease.drain.unsaved.length === 0;
+          if (closing && !saved) {
+            return keep({ ...IDLE, wakeAt: now + DRAIN_TIMEOUT_MS, runId });
+          }
           return yield* release({
             reason: "error",
             detail: `The Runner did not reconnect within ${RECONNECT_TIMEOUT_MS / 1000} s.`,
@@ -1180,10 +1190,6 @@ const make = Effect.gen(function* () {
             recover: run !== undefined,
           });
         }
-        const closing =
-          projection !== null &&
-          (projection.thread.archivedAt !== null ||
-            projection.thread.settledOverride === "settled");
         if (run !== undefined || (!closing && (yield* previews.held))) {
           const busy = { ...BUSY, runId };
           // Needed again: a drain under way no longer leads anywhere.

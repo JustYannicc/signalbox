@@ -117,9 +117,7 @@ const make = Effect.gen(function* () {
       : Effect.map(contextIds, (ids) =>
           contextAllows(ids, update.contextId) ? update.item : null,
         ).pipe(
-          Effect.catch((cause) =>
-            Effect.as(Effect.logWarning("cloud shell access check failed", { cause }), null),
-          ),
+          Effect.catch(() => Effect.as(Effect.logWarning("cloud shell access check failed"), null)),
         );
 
   const publish = (summary: ThreadSummary, sequence: number) => {

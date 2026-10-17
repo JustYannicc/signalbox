@@ -7,6 +7,7 @@ import { DRAIN_TIMEOUT_MS } from "./ThreadRunner.ts";
 import {
   connect,
   freshDatabase,
+  hello,
   launch,
   liveTurn,
   owner,
@@ -17,6 +18,48 @@ import {
 } from "./runnerTestKit.ts";
 
 describe("cloud lifecycle machine release", () => {
+  it.effect.each(["thread.archive", "thread.settle"] as const)(
+    "%s keeps a disconnected machine until its save is confirmed",
+    (type) =>
+      withObject(freshDatabase(), (engine, runner) =>
+        Effect.gen(function* () {
+          yield* launch(engine);
+          const machine = yield* connect(runner);
+          const turn = yield* liveTurn(runner);
+          const report = turnReport(turn.runId, turn.runOrdinal, turn.providerThread);
+          yield* runner.batch({
+            generation: machine.generation,
+            sequence: 1,
+            items: [report.started, report.full, report.terminal],
+          });
+          yield* engine.dispatch(
+            owner,
+            { type, commandId: CommandId.make("close-disconnected"), threadId },
+            personal,
+          );
+          expect((yield* runner.reconcile).drain).not.toBeNull();
+          yield* runner.disconnected({
+            generation: machine.generation,
+            connection: 1,
+            detail: "1006",
+          });
+          yield* TestClock.adjust(120_000);
+          const disconnected = yield* runner.reconcile;
+          expect(disconnected.release).toBeNull();
+          expect(disconnected.stop).toBe(false);
+          expect(yield* runner.leaseToken(machine.generation)).toBe(machine.token);
+          yield* runner.hello(hello(machine.generation, machine.token));
+          const retry = yield* runner.reconcile;
+          expect(retry.drain).not.toBeNull();
+          yield* runner.batch({
+            generation: machine.generation,
+            sequence: 2,
+            items: [{ kind: "machine.drained", id: retry.drain!.id, unsaved: [] }],
+          });
+          expect((yield* runner.reconcile).release).toBe(machine.generation);
+        }),
+      ),
+  );
   it.effect.each(["thread.archive", "thread.settle"] as const)(
     "%s releases only after a saved drain, even with a preview open",
     (type) => {
