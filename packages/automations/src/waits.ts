@@ -100,7 +100,7 @@ export const makeWaits = (deps: {
     input: {
       readonly automationId: string;
       readonly input: unknown;
-      readonly eventPatterns: ReadonlyArray<string>;
+      readonly eventPatterns?: ReadonlyArray<string> | undefined;
       readonly attach: {
         readonly threadId: ThreadId;
         readonly key: string;
