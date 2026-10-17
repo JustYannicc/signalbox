@@ -231,6 +231,8 @@ export interface UserObjectApi {
    * thread (`drive/automationRoutes.ts`). The engine's refusal is an answer.
    */
   readonly automationTool: (threadId: string, name: string, input: unknown) => Promise<ToolResult>;
+  /** The thread token fixes the learner level; tool inputs never choose one. */
+  readonly learnerTool: (threadId: string, name: string, input: unknown) => Promise<ToolResult>;
   /**
    * What's going on in a thread's home folder, for its agent
    * (`drive/statusLineRoutes.ts`, `UserThreadStatus`), as `statusLineJson.folder` text.
@@ -365,6 +367,7 @@ const METHODS = Object.keys({
   publishBranch: true,
   automationTool: true,
   folderStatus: true,
+  learnerTool: true,
   browserSession: true,
   browserSignIn: true,
   checkSignIn: true,

@@ -101,6 +101,7 @@ export const STATIC_KEYBINDING_COMMANDS = [
   "composer.branch",
   "composer.toggleSendLock", // signalbox: send lock
   "chat.new",
+  "capture.open", // signalbox: quick capture
   "chat.newLocal",
   "chat.newWithoutProject",
   "chat.find",

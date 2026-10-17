@@ -6,6 +6,7 @@ import { useAutomationPaletteItems } from "./automations/automationPaletteItems"
 import { useFolderPaletteItems } from "./sidebar/folders/folderPaletteItems"; // signalbox: folders
 import { useSidebarViewPaletteItems } from "./sidebar/sidebarViewCommands";
 import { useNotesPaletteItems } from "./notes/notesPaletteItems"; // signalbox: notes
+import { QUICK_CAPTURE_PALETTE_ITEM } from "./capture/capturePaletteItems"; // signalbox: quick capture
 import { useRepositoryPickerGroups } from "./addProject/repositoryPicker"; // signalbox: repositories
 import {
   addProjectCloneSources,
@@ -1900,6 +1901,7 @@ function OpenCommandPaletteDialog(props: {
   }, [clearOpenIntent, browseNavigation, openIntent, projectThreadItems, pushPaletteView]);
 
   const actionItems: Array<CommandPaletteActionItem | CommandPaletteSubmenuItem> = [];
+  actionItems.push(QUICK_CAPTURE_PALETTE_ITEM); // signalbox: quick capture
 
   if (projects.length > 0) {
     const activeProjectTitle =

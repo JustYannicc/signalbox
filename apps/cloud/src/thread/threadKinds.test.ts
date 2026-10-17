@@ -15,7 +15,7 @@ import * as Layer from "effect/Layer";
 import * as TestClock from "effect/testing/TestClock";
 
 import { layerThreadObject } from "../testing.ts";
-import { checkpointEvents } from "./runner/driveItems.ts";
+import { checkpointEvents } from "./driveEvents.ts";
 import { scriptedModelSelection } from "./scriptedProvider.ts";
 import * as ThreadEngine from "./ThreadEngine.ts";
 

@@ -168,8 +168,12 @@ describe("push vendor responses", () => {
         yield* notifier.automationNotice(notice);
         return yield* devices.list;
       }).pipe(
-        Effect.provide(layerPushes(http, yield* credentials(test.platform))),
-        Effect.provide(Logger.layer([Logger.make(({ message }) => void logs.push(message))])),
+        Effect.provide(
+          Layer.mergeAll(
+            layerPushes(http, yield* credentials(test.platform)),
+            Logger.layer([Logger.make(({ message }) => void logs.push(message))]),
+          ),
+        ),
       );
 
       if (test.status === 410) {
