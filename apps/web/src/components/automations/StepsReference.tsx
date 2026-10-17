@@ -1,7 +1,6 @@
 /**
- * The Steps view of `/automations`: every trigger and step an automation can
- * use, with how it's written in the code. Same list as the canvas's add-step
- * palette.
+ * Every trigger and step an automation can use, with how it's written in the
+ * code, for `/automations`. Same list as the canvas's add-step palette.
  */
 import { createElement } from "react";
 
