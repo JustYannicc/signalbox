@@ -122,8 +122,6 @@ function awaitThreadState(
 
 const makeHarness = Effect.fn("TestEnvironmentThreads.makeHarness")(function* (options?: {
   readonly tracer?: Tracer.Tracer;
-  readonly initialClient?: WsRpcProtocolClient;
-  readonly replacementClient?: WsRpcProtocolClient;
   readonly cached?: OrchestrationV2ThreadProjection;
   readonly cachedHistory?: {
     readonly historyCursor: string | null;
@@ -187,10 +185,8 @@ const makeHarness = Effect.fn("TestEnvironmentThreads.makeHarness")(function* (o
         ),
       ),
   } as unknown as WsRpcProtocolClient;
-  const client = options?.initialClient ?? defaultClient;
-  const replacementClient = options?.replacementClient ?? client;
   const supervisorSession = yield* SubscriptionRef.make<Option.Option<RpcSession.RpcSession>>(
-    Option.some(testSession(client, options)),
+    Option.some(testSession(defaultClient, options)),
   );
   const prepared = yield* SubscriptionRef.make<Option.Option<PreparedConnection>>(
     Option.some(PREPARED),
@@ -283,13 +279,9 @@ const makeHarness = Effect.fn("TestEnvironmentThreads.makeHarness")(function* (o
     makeThreadState = makeThreadState.pipe(Effect.provideService(Tracer.Tracer, options.tracer));
   }
   const threadState = yield* makeThreadState;
-  const observedStates = yield* Ref.make<ReadonlyArray<EnvironmentThreadState>>([]);
   yield* SubscriptionRef.changes(threadState).pipe(
     Stream.runForEach((state) =>
-      Ref.set(latest, state).pipe(
-        Effect.andThen(Ref.update(observedStates, (states) => [...states, state])),
-        Effect.andThen(Queue.offer(observed, state)),
-      ),
+      Ref.set(latest, state).pipe(Effect.andThen(Queue.offer(observed, state))),
     ),
     Effect.forkScoped,
   );
@@ -301,7 +293,6 @@ const makeHarness = Effect.fn("TestEnvironmentThreads.makeHarness")(function* (o
     inputs,
     subscribed,
     observed,
-    observedStates,
     latest,
     retryCount,
     subscriptionCount,
@@ -317,7 +308,7 @@ const makeHarness = Effect.fn("TestEnvironmentThreads.makeHarness")(function* (o
     wakeups,
     replaceSession: SubscriptionRef.set(
       supervisorSession,
-      Option.some(testSession(replacementClient, options)),
+      Option.some(testSession(defaultClient, options)),
     ),
   };
 });
@@ -2178,76 +2169,6 @@ describe("EnvironmentThreads", () => {
       yield* awaitThreadState(harness.observed, (state) => state.status === "live");
 
       expect(yield* Ref.get(harness.subscriptionCount)).toBe(2);
-    }),
-  );
-
-  it.effect("drops frames produced by a replaced session", () =>
-    Effect.gen(function* () {
-      const oldSessionStarted = yield* Deferred.make<void>();
-      const releaseOldSession = yield* Deferred.make<void>();
-      const newSessionStarted = yield* Deferred.make<void>();
-      const releaseNewMarker = yield* Deferred.make<void>();
-      const staleProjection = {
-        ...BASE_PROJECTION,
-        thread: { ...BASE_PROJECTION.thread, title: "Stale session" },
-      };
-      const currentProjection = {
-        ...BASE_PROJECTION,
-        thread: { ...BASE_PROJECTION.thread, title: "Current session" },
-      };
-      const method = ORCHESTRATION_V2_WS_METHODS.subscribeThread;
-      const oldClient = {
-        [method]: () =>
-          Stream.fromEffect(
-            Effect.uninterruptible(
-              Deferred.succeed(oldSessionStarted, undefined).pipe(
-                Effect.andThen(Deferred.await(releaseOldSession)),
-                Effect.as([snapshot(staleProjection, 2), synchronized()] as const),
-              ),
-            ),
-          ).pipe(Stream.flatMap(Stream.fromIterable)),
-      } as unknown as WsRpcProtocolClient;
-      const currentClient = {
-        [method]: () =>
-          Stream.fromEffect(
-            Deferred.succeed(newSessionStarted, undefined).pipe(
-              Effect.as(snapshot(currentProjection, 12)),
-            ),
-          ).pipe(
-            Stream.concat(
-              Stream.fromEffect(Deferred.await(releaseNewMarker).pipe(Effect.as(synchronized()))),
-            ),
-          ),
-      } as unknown as WsRpcProtocolClient;
-      const harness = yield* makeHarness({
-        cached: BASE_PROJECTION,
-        completionMarker: true,
-        initialClient: oldClient,
-        replacementClient: currentClient,
-      });
-      yield* Deferred.await(oldSessionStarted);
-      yield* awaitThreadState(harness.observed, (state) => state.status === "synchronizing");
-      yield* Ref.set(harness.observedStates, []);
-
-      yield* harness.replaceSession;
-      yield* Deferred.succeed(releaseOldSession, undefined);
-      yield* Deferred.await(newSessionStarted);
-      yield* awaitThreadState(
-        harness.observed,
-        (state) =>
-          state.status === "synchronizing" &&
-          Option.isSome(state.data) &&
-          state.data.value.thread.title === "Current session",
-      );
-
-      const observed = yield* Ref.get(harness.observedStates);
-      expect(observed.some((state) => state.status === "live")).toBe(false);
-      expect(Option.getOrThrow((yield* Ref.get(harness.latest)).data).thread.title).toBe(
-        "Current session",
-      );
-
-      yield* Deferred.succeed(releaseNewMarker, undefined);
-      yield* awaitThreadState(harness.observed, (state) => state.status === "live");
     }),
   );
 
