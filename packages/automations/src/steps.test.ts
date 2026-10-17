@@ -8,6 +8,7 @@ import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 
 import {
+  AutomationModels,
   AutomationThreads,
   type AutomationThreadLaunch,
   type AutomationThreadsShape,
@@ -127,6 +128,54 @@ describe("agent step model selection", () => {
 
       expect(result).toMatchObject({ type: "waiting", threadId: "thread-host-default" });
       expect(launched).not.toHaveProperty("modelSelection");
+    }),
+  );
+
+  it.effect("resolves the deferred default before applying provider-specific effort", () =>
+    Effect.gen(function* () {
+      let launched: AutomationThreadLaunch | undefined;
+      let resolvedFor: string | undefined;
+      let effortRequestedFor: readonly [string, string] | undefined;
+      const inherited = {
+        instanceId: ProviderInstanceId.make("codex_personal"),
+        model: "gpt-6-codex",
+      };
+      const threads = {
+        initialModelSelection: (projectId: string) => {
+          resolvedFor = projectId;
+          return Effect.succeed(inherited);
+        },
+        launch: (input: AutomationThreadLaunch) => {
+          launched = input;
+          return Effect.succeed({ threadId: ThreadId.make("thread-effort-default") });
+        },
+      } as unknown as AutomationThreadsShape;
+
+      yield* launchAgent({
+        step: agentStep,
+        options: { prompt: "hello", effort: "high" },
+        projectId: "project-1",
+        defaults: noModelDefaults,
+        timeoutMs: null,
+      }).pipe(
+        Effect.provideService(AutomationThreads, threads),
+        Effect.provideService(
+          AutomationModels,
+          AutomationModels.of({
+            effortOption: (instanceId, model) => {
+              effortRequestedFor = [instanceId, model];
+              return Effect.succeed({ id: "reasoningEffort", values: ["medium", "high"] });
+            },
+          }),
+        ),
+      );
+
+      expect(resolvedFor).toBe("project-1");
+      expect(effortRequestedFor).toEqual(["codex_personal", "gpt-6-codex"]);
+      expect(launched?.modelSelection).toEqual({
+        ...inherited,
+        options: [{ id: "reasoningEffort", value: "high" }],
+      });
     }),
   );
 

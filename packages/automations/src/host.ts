@@ -107,6 +107,9 @@ export interface AutomationThreadsShape {
     fields: ReadonlyArray<K>,
     filter?: ThreadRecordFilter,
   ) => Effect.Effect<ThreadRecords<K>, AutomationError>;
+  readonly initialModelSelection: (
+    projectId: ProjectId,
+  ) => Effect.Effect<ModelSelection | null, AutomationError>;
   readonly launch: (
     input: AutomationThreadLaunch,
   ) => Effect.Effect<{ readonly threadId: ThreadId }, AutomationError>;

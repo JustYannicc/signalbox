@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 import { ProviderDriverKind, ProviderInstanceId } from "@t3tools/contracts";
-import { resolveInitialModelSelection } from "./defaultModelSelection.ts";
+import { resolveInitialModelSelection } from "@t3tools/shared/defaultModelSelection";
 
 const instanceId = ProviderInstanceId.make("provider");
 const providers = [

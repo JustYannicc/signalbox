@@ -1098,6 +1098,29 @@ const make = Effect.gen(function* () {
 
   const loadProviders = providerRegistry.getProviders;
 
+  const resolveDefaultModelForProvider = (
+    parent: Pick<OrchestrationV2ThreadProjection, "thread">,
+    provider: ServerProvider,
+  ) =>
+    SignalboxMcpDefaultModels.resolveForProvider({
+      projectId: parent.thread.projectId,
+      provider,
+      project: requireProject(parent.thread.projectId),
+      settings: serverSettings.getSettings.pipe(
+        Effect.mapError((error) =>
+          failure("orchestration_error", `Unable to resolve a model: ${errorMessage(error)}`),
+        ),
+      ),
+    });
+
+  const resolveDelegatedModelForProvider = (
+    parent: Pick<OrchestrationV2ThreadProjection, "thread">,
+    provider: ServerProvider,
+  ) =>
+    provider.instanceId === parent.thread.modelSelection.instanceId
+      ? Effect.succeed(undefined)
+      : resolveDefaultModelForProvider(parent, provider);
+
   const loadOrchestrationCapableInstanceIds = () =>
     providerAdapters.list().pipe(Effect.map((instanceIds) => new Set(instanceIds)));
 
@@ -1144,7 +1167,7 @@ const make = Effect.gen(function* () {
     readonly providers: ReadonlyArray<ServerProvider>;
     readonly resolveOmittedModel?: (
       provider: ServerProvider,
-    ) => Effect.Effect<ModelSelection | null, OrchestratorMcpFailure>;
+    ) => Effect.Effect<ModelSelection | null | undefined, OrchestratorMcpFailure>;
     /**
      * Set only when the command that will dispatch this target already has a receipt: that
      * dispatch can only replay the recorded result, never start anything new, so filtering
@@ -1958,6 +1981,7 @@ const make = Effect.gen(function* () {
           parent,
           target: input.target,
           providers,
+          resolveOmittedModel: (provider) => resolveDelegatedModelForProvider(parent, provider),
           skipProjectEnablementFilter: isRetryOfAcceptedDelegation,
         });
         const runtimeMode = yield* resolveRuntimeMode(
@@ -2272,19 +2296,7 @@ const make = Effect.gen(function* () {
                   ...(request.target?.model === undefined
                     ? {
                         resolveOmittedModel: (provider) =>
-                          SignalboxMcpDefaultModels.resolveForProvider({
-                            projectId: parent.thread.projectId,
-                            provider,
-                            project: requireProject(parent.thread.projectId),
-                            settings: serverSettings.getSettings.pipe(
-                              Effect.mapError((error) =>
-                                failure(
-                                  "orchestration_error",
-                                  `Unable to resolve a model: ${errorMessage(error)}`,
-                                ),
-                              ),
-                            ),
-                          }),
+                          resolveDefaultModelForProvider(parent, provider),
                       }
                     : {}),
                 });

@@ -64,7 +64,7 @@ import { serializeComposerFileLink } from "@t3tools/shared/composerTrigger";
 import { folderDropTarget, resolveDroppedFolderPath } from "./folderDrop";
 import { createModelSelection, normalizeModelSlug } from "@t3tools/shared/model";
 import { USAGE_LIMITS_COMMAND } from "@t3tools/shared/usageLimits";
-import { useComposerDefaultModelPolicy } from "../../hooks/useComposerDefaultModelPolicy"; // signalbox
+import { resolveComposerDefaultModelPolicy } from "../../lib/composerDefaultModelPolicy"; // signalbox
 import {
   memo,
   type ComponentProps,
@@ -98,9 +98,9 @@ import {
   deriveComposerSendState,
   readFileAsDataUrl,
   resolveComposerInteractionMode,
-  resolveComposerProviderSelection,
   threadShellHasStarted,
 } from "../ChatView.logic";
+import { resolveComposerProviderSelection } from "../../lib/composerProviderSelection";
 import {
   dataTransferHasComposerMention,
   makeComposerMentionDragHandlers,
@@ -123,6 +123,7 @@ import {
   composerDraftHasUserContent,
   composerTargetKey,
   hydrateImagesFromPersisted,
+  useEffectiveComposerModelState,
   useComposerDraftStore,
   useComposerThreadDraft,
 } from "../../composerDraftStore";
@@ -1569,6 +1570,7 @@ export interface ChatComposerProps {
   providerStatuses: ServerProvider[];
   providerCatalogKnown: boolean;
   activeProjectDefaultModelSelection: ModelSelection | null | undefined;
+  personDefaultModelSelection: ModelSelection | null;
   activeThreadModelSelection: ModelSelection | null | undefined;
   reportedModelSelection?: ModelSelection | null;
   activeProjectId: ProjectId | null;
@@ -1808,7 +1810,11 @@ function useComposerProviderSelection(
       ),
     );
   // signalbox: pools
-  const { entries: providerInstanceEntries, need: poolNeed } = useProjectPoolEntries(
+  const {
+    entries: providerInstanceEntries,
+    need: poolNeed,
+    mapModelSelectionToPool,
+  } = useProjectPoolEntries(
     environmentId,
     activeProjectId,
     allProviderInstanceEntries,
@@ -1818,6 +1824,7 @@ function useComposerProviderSelection(
   return {
     providerInstanceEntries,
     poolNeed, // signalbox: pools
+    mapModelSelectionToPool,
     ...resolveComposerProviderSelection({ ...selection, entries: providerInstanceEntries }),
   };
 }
@@ -2289,7 +2296,11 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       activeThread?.runtime?.providerInstanceId ?? activeThreadModelSelection?.instanceId,
   });
   const { providerInstanceEntries, poolNeed: poolNeedNow } = providerSelection;
-  const modelPolicy = useComposerDefaultModelPolicy({ props, composerDraft, providerSelection });
+  const modelPolicy = resolveComposerDefaultModelPolicy({
+    ...props,
+    composerDraft,
+    providerSelection,
+  });
   const { initialModelSelection } = modelPolicy;
   const {
     selectedProviderEntry,
@@ -2326,18 +2337,22 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     ? runtimeMode
     : (compatibleRuntimeModeOptions[0]?.mode ?? runtimeMode);
 
+  const legacyComposerModelState = useEffectiveComposerModelState({
+    threadRef: composerDraftTarget,
+    providers: providerStatuses,
+    selectedProvider,
+    selectedInstanceId,
+    threadModelSelection: activeThreadModelSelection,
+    projectModelSelection: activeProjectDefaultModelSelection,
+    settings,
+  });
   const { modelOptions: composerModelOptions, selectedModel } =
     useSignalboxEffectiveComposerModelState({
-      threadRef: composerDraftTarget,
-      providers: providerStatuses,
-      selectedProvider,
-      selectedInstanceId,
-      threadModelSelection: activeThreadModelSelection,
-      projectModelSelection: activeProjectDefaultModelSelection,
-      settings,
+      legacyState: legacyComposerModelState,
       composerDraft,
       isNewThreadDraft,
       initialModelSelection,
+      selectedInstanceId,
     });
   const providerSendBlockReason = composerModelSendBlockReason(
     selectedProviderEntry?.snapshot,

@@ -5,6 +5,10 @@ const testState = vi.hoisted(() => {
   let completeProjectFileRead: (value: null) => void = () => undefined;
   let projectFileRead = Promise.resolve<null>(null);
   let projectRemoved = false;
+  let currentRouteTarget: unknown = null;
+  let carryComposerDraft: unknown = {};
+  let mappedPoolSelection: unknown = null;
+  const projectPoolCalls: unknown[] = [];
   // signalbox: threads filed in a folder away from their project's home.
   const filedAway = new Set<string>();
   let targetSettings = {
@@ -29,7 +33,7 @@ const testState = vi.hoisted(() => {
     }),
   };
   const draftStore = {
-    getComposerDraft: vi.fn(() => ({})),
+    getComposerDraft: vi.fn(() => carryComposerDraft),
     getDraftSessionByLogicalProjectKey: vi.fn(() => storedDraft),
     getDraftSession: vi.fn(() => null),
     getDraftThread: vi.fn(() => null),
@@ -49,6 +53,24 @@ const testState = vi.hoisted(() => {
     get projectRemoved() {
       return projectRemoved;
     },
+    get projectPoolCalls() {
+      return projectPoolCalls;
+    },
+    getCurrentRouteTarget() {
+      return currentRouteTarget;
+    },
+    getMappedPoolSelection() {
+      return mappedPoolSelection;
+    },
+    setCarryComposerDraft(draft: unknown) {
+      carryComposerDraft = draft;
+    },
+    setCurrentRouteTarget(target: unknown) {
+      currentRouteTarget = target;
+    },
+    setMappedPoolSelection(selection: unknown) {
+      mappedPoolSelection = selection;
+    },
     removeProject() {
       projectRemoved = true;
     },
@@ -64,6 +86,10 @@ const testState = vi.hoisted(() => {
     ) {
       storedDraft = nextStoredDraft;
       projectRemoved = false;
+      currentRouteTarget = null;
+      carryComposerDraft = {};
+      mappedPoolSelection = null;
+      projectPoolCalls.length = 0;
       filedAway.clear();
       targetSettings = {
         defaultThreadEnvMode: workspaceDefaults.envMode,
@@ -154,11 +180,6 @@ vi.mock("../composerDraftStore", () => {
     useComposerDraftStore,
   };
 });
-vi.mock("../lib/chatThreadActions", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("../lib/chatThreadActions")>()),
-  hasExplicitComposerModelSelection: () => false,
-  resolveNewThreadModelSelectionOverride: () => null,
-}));
 vi.mock("../lib/t3ProjectFileDefaults", () => ({
   readT3ProjectFile: () => testState.projectFileRead,
 }));
@@ -195,9 +216,14 @@ vi.mock("../state/server", () => ({
 vi.mock("../state/projectPool", () => ({
   // signalbox: no section pools in these tests.
   draftModelSelection: () => null,
-  useProjectPoolModelSelection: () => () => null,
+  useProjectPoolModelSelection: () => (input: unknown) => {
+    testState.projectPoolCalls.push(input);
+    return testState.getMappedPoolSelection();
+  },
 }));
-vi.mock("../threadRoutes", () => ({ resolveThreadRouteTarget: () => null }));
+vi.mock("../threadRoutes", () => ({
+  resolveThreadRouteTarget: () => testState.getCurrentRouteTarget(),
+}));
 vi.mock("../uiStateStore", () => ({
   legacyProjectCwdPreferenceKey: () => "remote-project",
   useUiStateStore: () => [],
@@ -348,6 +374,41 @@ describe("useNewThreadHandler with folders", () => {
     });
     expect(testState.router.navigate).toHaveBeenCalledWith(
       expect.objectContaining({ params: { draftId: "draft-delayed" } }),
+    );
+  });
+});
+
+describe("useNewThreadHandler model carry", () => {
+  it("keeps an explicit carried choice explicit after mapping it to the destination pool", async () => {
+    testState.reset(null);
+    const carrySelection = { instanceId: "source-account", model: "carried-model" };
+    const poolSelection = { instanceId: "destination-pool", model: "pool-model" };
+    const projectRef = {
+      environmentId: "environment-ssh",
+      projectId: "project-remote",
+    } as never;
+    testState.setCurrentRouteTarget({ kind: "draft", draftId: "draft-source" });
+    testState.setCarryComposerDraft({
+      activeProvider: carrySelection.instanceId,
+      modelSelectionByProvider: { [carrySelection.instanceId]: carrySelection },
+      modelSelectionExplicit: true,
+    });
+    testState.setMappedPoolSelection(poolSelection);
+
+    const pendingOpen = useNewThreadHandler()(projectRef);
+    testState.completeProjectFileRead(null);
+    await expect(pendingOpen).resolves.toEqual({
+      draftId: "draft-delayed",
+      threadId: "thread-delayed",
+    });
+
+    expect(testState.projectPoolCalls).toContainEqual(
+      expect.objectContaining({ selection: carrySelection }),
+    );
+    expect(testState.draftStore.setModelSelection).toHaveBeenCalledWith(
+      "draft-delayed",
+      poolSelection,
+      { replaceOptions: true, explicit: true },
     );
   });
 });

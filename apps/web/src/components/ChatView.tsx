@@ -8794,6 +8794,10 @@ export default function ChatView(props: ChatViewProps) {
                               activeProjectDefaultModelSelection={
                                 activeProjectDefaultModelSelection
                               }
+                              personDefaultModelSelection={
+                                environmentById.get(environmentId)?.serverConfig?.settings
+                                  .defaultModelSelection ?? null
+                              }
                               activeThreadModelSelection={activeThread?.modelSelection}
                               activeProjectId={activeProject?.id ?? null}
                               activeContextWindow={activeContextWindow}

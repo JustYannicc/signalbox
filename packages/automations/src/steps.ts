@@ -7,6 +7,7 @@ import {
   type AutomationDefaults,
   type ExternalRun,
   type ModelSelection,
+  type OrchestrationV2ThreadShell,
   type ProviderOptionSelection,
   type ProviderInteractionMode,
 } from "@t3tools/contracts";
@@ -169,6 +170,15 @@ const modelFor = (options: Readonly<Record<string, unknown>>, defaults: Automati
     return selection;
   });
 
+const needsDeferredModel = (
+  options: Readonly<Record<string, unknown>>,
+  defaults: AutomationDefaults,
+) =>
+  defaults.modelSelection === null &&
+  typeof options.effort === "string" &&
+  typeof options.provider !== "string" &&
+  typeof options.model !== "string";
+
 /**
  * Starts the thread for an `agent` step, or for a model step with its built
  * `prompt` in plan mode. `thread: id` sends the prompt to an existing thread
@@ -191,15 +201,44 @@ export const launchAgent = (input: {
     if (typeof prompt !== "string" || !prompt.trim()) {
       return yield* fail("An agent step needs a prompt.");
     }
-    const modelSelection = yield* modelFor(options, input.defaults);
+    const threadId =
+      typeof options.thread === "string" && options.thread.trim()
+        ? ThreadId.make(options.thread.trim())
+        : undefined;
+    const threads = yield* AutomationThreads;
+    let existingShell: OrchestrationV2ThreadShell | undefined;
+    let defaults = input.defaults;
+    if (needsDeferredModel(options, defaults)) {
+      if (threadId !== undefined) {
+        const shell = yield* threads
+          .getThreadShell(threadId)
+          .pipe(Effect.orElseSucceed(() => null));
+        if (shell === null || shell.deletedAt !== null) {
+          return yield* fail(`There's no thread ${threadId} to continue.`);
+        }
+        if (shell.projectId !== input.projectId) {
+          return yield* fail(
+            "An agent step can only continue threads in this automation's project.",
+          );
+        }
+        existingShell = shell;
+        defaults = { ...defaults, modelSelection: shell.modelSelection };
+      } else {
+        defaults = {
+          ...defaults,
+          modelSelection: yield* threads.initialModelSelection(ProjectId.make(input.projectId)),
+        };
+      }
+    }
+    const modelSelection = yield* modelFor(options, defaults);
     const { commandId, messageId } = agentLaunchIds(input.step);
     const deadline = input.timeoutMs === null ? undefined : yield* afterMs(input.timeoutMs);
     const until = deadline ? { wakeAt: deadline } : {};
 
-    if (typeof options.thread === "string" && options.thread.trim()) {
-      const threadId = ThreadId.make(options.thread.trim());
-      const threads = yield* AutomationThreads;
-      const shell = yield* threads.getThreadShell(threadId).pipe(Effect.orElseSucceed(() => null));
+    if (threadId !== undefined) {
+      const shell =
+        existingShell ??
+        (yield* threads.getThreadShell(threadId).pipe(Effect.orElseSucceed(() => null)));
       if (shell === null || shell.deletedAt !== null) {
         return yield* fail(`There's no thread ${threadId} to continue.`);
       }
@@ -235,7 +274,6 @@ export const launchAgent = (input: {
       } satisfies StepStart;
     }
 
-    const threads = yield* AutomationThreads;
     const launched = yield* threads
       .launch({
         commandId,

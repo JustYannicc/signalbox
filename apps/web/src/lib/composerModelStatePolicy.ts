@@ -1,19 +1,21 @@
-import type { ModelSelection } from "@t3tools/contracts";
+import type {
+  ModelSelection,
+  ProviderInstanceId,
+  ProviderOptionSelection,
+} from "@t3tools/contracts";
 import { useMemo } from "react";
-import {
-  useEffectiveComposerModelState,
-  type ComposerThreadDraftState,
-  type EffectiveComposerModelState,
-} from "../composerDraftStore";
 
-type LegacyModelStateInput = Parameters<typeof useEffectiveComposerModelState>[0];
+export interface EffectiveComposerModelState {
+  readonly selectedModel: string;
+  readonly modelOptions: Partial<Record<string, ReadonlyArray<ProviderOptionSelection>>> | null;
+}
 
 export function deriveSignalboxComposerModelState(input: {
   legacyState: EffectiveComposerModelState;
-  composerDraft: Pick<ComposerThreadDraftState, "modelSelectionExplicit">;
+  composerDraft: { readonly modelSelectionExplicit?: boolean };
   isNewThreadDraft: boolean;
   initialModelSelection: ModelSelection | null | undefined;
-  selectedInstanceId: LegacyModelStateInput["selectedInstanceId"];
+  selectedInstanceId: ProviderInstanceId | null | undefined;
 }): EffectiveComposerModelState {
   if (!input.isNewThreadDraft || input.composerDraft.modelSelectionExplicit === true) {
     return input.legacyState;
@@ -33,31 +35,38 @@ export function deriveSignalboxComposerModelState(input: {
   };
 }
 
-export function useSignalboxEffectiveComposerModelState(
-  input: LegacyModelStateInput & {
-    composerDraft: ComposerThreadDraftState;
-    isNewThreadDraft: boolean;
-    initialModelSelection: ModelSelection | null | undefined;
-  },
-): EffectiveComposerModelState {
-  const { composerDraft, isNewThreadDraft, initialModelSelection, ...legacyInput } = input;
-  const legacyState = useEffectiveComposerModelState(legacyInput);
+export function useSignalboxEffectiveComposerModelState(input: {
+  legacyState: EffectiveComposerModelState;
+  composerDraft: { readonly modelSelectionExplicit?: boolean };
+  isNewThreadDraft: boolean;
+  initialModelSelection: ModelSelection | null | undefined;
+  selectedInstanceId: ProviderInstanceId | null | undefined;
+}): EffectiveComposerModelState {
+  const {
+    legacyState,
+    composerDraft,
+    isNewThreadDraft,
+    initialModelSelection,
+    selectedInstanceId,
+  } = input;
+
+  const modelSelectionExplicit = composerDraft.modelSelectionExplicit;
 
   return useMemo(
     () =>
       deriveSignalboxComposerModelState({
         legacyState,
-        composerDraft,
+        composerDraft: { modelSelectionExplicit },
         isNewThreadDraft,
         initialModelSelection,
-        selectedInstanceId: legacyInput.selectedInstanceId,
+        selectedInstanceId,
       }),
     [
-      composerDraft.modelSelectionExplicit,
+      modelSelectionExplicit,
       initialModelSelection,
       isNewThreadDraft,
-      legacyInput.selectedInstanceId,
       legacyState,
+      selectedInstanceId,
     ],
   );
 }

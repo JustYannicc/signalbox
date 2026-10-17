@@ -136,7 +136,7 @@ export function useNewThreadHandler() {
       const defaultRuntimeMode = projectSettings.settings.defaultRuntimeMode;
       // signalbox: the thread starts on the pool its project runs on.
       const resolveModelSelectionOverride = (destinationDraftId: DraftId) => {
-        const override = resolveNewThreadInitialModelSelection({
+        const result = resolveNewThreadInitialModelSelection({
           projectDefaultIsConfigured: projectSettings.sources.defaultModelSelection === "project",
           projectDefaultSelection: projectSettings.settings.defaultModelSelection,
           personDefaultSelection: targetServerSettings.defaultModelSelection ?? null,
@@ -148,15 +148,17 @@ export function useNewThreadHandler() {
             currentRouteTarget?.kind === "draft" ? currentRouteTarget.draftId : null,
           destinationDraftId,
         });
-        return (
-          projectPool({
-            environmentId: projectRef.environmentId,
-            projectId: project?.id ?? null,
-            selection: override,
-            providerInstances: projectSettings.settings.providerInstances,
-            providers: environmentServerConfigs.get(projectRef.environmentId)?.providers ?? [],
-          }) ?? override
-        );
+        return {
+          ...result,
+          selection:
+            projectPool({
+              environmentId: projectRef.environmentId,
+              projectId: project?.id ?? null,
+              selection: result.selection,
+              providerInstances: projectSettings.settings.providerInstances,
+              providers: environmentServerConfigs.get(projectRef.environmentId)?.providers ?? [],
+            }) ?? result.selection,
+        };
       };
       const resolveDefaultEnvMode = async (): Promise<DraftThreadEnvMode> => {
         const consultProjectFile =
@@ -276,9 +278,10 @@ export function useNewThreadHandler() {
             const modelSelectionOverride = resolveModelSelectionOverride(
               emptyStoredDraftThread.draftId,
             );
-            if (modelSelectionOverride) {
-              setModelSelection(emptyStoredDraftThread.draftId, modelSelectionOverride, {
+            if (modelSelectionOverride.selection) {
+              setModelSelection(emptyStoredDraftThread.draftId, modelSelectionOverride.selection, {
                 replaceOptions: true,
+                ...(modelSelectionOverride.explicit ? { explicit: true } : {}),
               });
             }
           }
@@ -396,8 +399,11 @@ export function useNewThreadHandler() {
           ...(carryInteractionMode ? { interactionMode: carryInteractionMode } : {}),
         });
         const modelSelectionOverride = resolveModelSelectionOverride(draftId);
-        if (modelSelectionOverride) {
-          setModelSelection(draftId, modelSelectionOverride, { replaceOptions: true });
+        if (modelSelectionOverride.selection) {
+          setModelSelection(draftId, modelSelectionOverride.selection, {
+            replaceOptions: true,
+            ...(modelSelectionOverride.explicit ? { explicit: true } : {}),
+          });
         }
         await router.navigate({
           to: "/draft/$draftId",

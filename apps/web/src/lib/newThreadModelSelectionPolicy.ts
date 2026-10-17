@@ -85,7 +85,7 @@ export function resolveNewThreadInitialModelSelection(input: {
   readonly explicitCarrySelection: ModelSelection | null;
   readonly carrySourceDraftId: DraftId | null;
   readonly destinationDraftId: DraftId;
-}): ModelSelection | null {
+}): { readonly selection: ModelSelection | null; readonly explicit: boolean } {
   const defaults = resolveComposerDefaultModelSelection({
     isNewThreadDraft: true,
     draftModelSelectionExplicit: false,
@@ -106,5 +106,8 @@ export function resolveNewThreadInitialModelSelection(input: {
           destinationDraftId: input.destinationDraftId,
         })
       : null;
-  return carried ?? defaults.initialModelSelection;
+  return {
+    selection: carried ?? defaults.initialModelSelection,
+    explicit: carried !== null,
+  };
 }

@@ -1,6 +1,6 @@
 import type { ModelSelection } from "@t3tools/contracts";
 import type { ResolvedProjectSettings } from "@t3tools/shared/projectSettings";
-import { getAntigravitySendBlockReason } from "../components/ChatView.logic";
+import { getAntigravitySendBlockReason } from "./antigravityModelPolicy";
 
 export function configuredProjectModelSelection(
   activeProjectSettings: Pick<ResolvedProjectSettings, "settings" | "sources">,

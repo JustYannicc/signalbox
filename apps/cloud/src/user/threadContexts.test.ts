@@ -7,6 +7,7 @@ import * as Layer from "effect/Layer";
 import type { PoolEntry } from "../pool/poolViews.ts";
 import * as ModelManifest from "../thread/ModelManifest.ts";
 import * as ThreadContexts from "./threadContexts.ts";
+import * as ThreadContextLayers from "./threadContextLayers.ts";
 import * as UserDrives from "./UserDrives.ts";
 import * as UserFolders from "./UserFolders.ts";
 import * as UserModelSettings from "./UserModelSettings.ts";
@@ -45,7 +46,7 @@ const resolveOnWorkPool = (
 ) =>
   ThreadContexts.ThreadContexts.use((contexts) => contexts.initialModelSelection(projectId)).pipe(
     Effect.provide(
-      ThreadContexts.layer.pipe(
+      ThreadContextLayers.layer.pipe(
         Layer.provide(
           Layer.mergeAll(
             Layer.mock(UserDrives.UserDrives)({ userId: Effect.succeed("owner") }),

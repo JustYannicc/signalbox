@@ -1,6 +1,6 @@
 import { assert, it } from "@effect/vitest";
 
-import { openCodeModelPricing } from "./modelPricing.ts";
+import { openCodeModelPricing } from "@t3tools/provider-opencode/server/modelPricing";
 
 it("reads object and array cost shapes while keeping zero valid", () => {
   assert.deepStrictEqual(openCodeModelPricing({ input: 3, output: 15 }), {

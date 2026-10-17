@@ -74,6 +74,7 @@ import * as DriveShortcuts from "./user/DriveShortcuts.ts";
 import * as OnePasswordAccount from "./user/OnePasswordAccount.ts";
 import * as ResourceBindings from "./user/ResourceBindings.ts";
 import * as ThreadContexts from "./user/threadContexts.ts";
+import * as ThreadContextLayers from "./user/threadContextLayers.ts";
 import * as UserContexts from "./user/UserContexts.ts";
 import * as GitHub from "./github/GitHub.ts";
 import * as GitHubActions from "./github/GitHubActions.ts";
@@ -317,7 +318,7 @@ const makeUserRuntime = (
           ),
           Layer.provideMerge(
             Layer.mergeAll(
-              ThreadContexts.layer,
+              ThreadContextLayers.layer,
               Platform.layerCrypto,
               UserThreadKinds.layerTurns,
               attachments,
@@ -644,7 +645,7 @@ export const makeMemoryCloud = (
     /** The thread service as `userId`'s object runs it, with that user's contexts. */
     layerFor: (userId: string) =>
       threadService.pipe(
-        Layer.provideMerge(ThreadContexts.layer),
+        Layer.provideMerge(ThreadContextLayers.layer),
         Layer.provideMerge(userObject(userId)),
       ),
     /** The thread service for tests where `userId` has only Personal. */

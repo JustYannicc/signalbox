@@ -74,6 +74,8 @@ const layerThreads = Layer.effect(
         threads.getThreadShell(threadId).pipe(Effect.mapError(hostError(""))),
       getThreadRecords: (threadId, fields, filter) =>
         threads.getThreadRecords(threadId, fields, filter).pipe(Effect.mapError(hostError(""))),
+      initialModelSelection: (projectId) =>
+        launcher.initialModelSelection(projectId).pipe(Effect.mapError(hostError(""))),
       launch: (input) =>
         launcher
           .launch({

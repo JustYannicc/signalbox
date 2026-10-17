@@ -818,6 +818,11 @@ describe("OrchestratorMcpService provider resolution", () => {
       refreshInstance: () => Effect.succeed(providers),
     });
 
+  const projectWithoutModelDefaultLayer = () =>
+    Layer.mock(ProjectService.ProjectService)({
+      getById: () => Effect.succeed(Option.some({ defaultModelSelection: null } as never)),
+    });
+
   const adapterRegistryLayer = (instanceIds: ReadonlyArray<ProviderInstanceId>) =>
     Layer.succeed(
       ProviderAdapterRegistry.ProviderAdapterRegistryV2,
@@ -1421,7 +1426,7 @@ describe("OrchestratorMcpService provider resolution", () => {
               } as never),
             ),
         }),
-        ServerSettings.layerTest(),
+        ServerSettings.layerTest({ defaultModelSelection: null }),
         Layer.mock(ProviderRegistry.ProviderRegistry)({
           getProviders: Effect.succeed([
             providerSnapshot({
@@ -1429,15 +1434,27 @@ describe("OrchestratorMcpService provider resolution", () => {
               driver: ProviderDriverKind.make("codex"),
               model: "gpt-5.4",
             }),
-            providerSnapshot({
-              instanceId: antigravityInstanceId,
-              driver: ProviderDriverKind.make("antigravity"),
-              model: "ant-model",
-            }),
+            {
+              ...providerSnapshot({
+                instanceId: antigravityInstanceId,
+                driver: ProviderDriverKind.make("antigravity"),
+                model: "ant-model",
+              }),
+              models: [
+                {
+                  slug: "ant-model",
+                  name: "Antigravity model",
+                  isCustom: false,
+                  defaultSelection: "economical",
+                  pricing: { inputCostPerMillionTokens: 1, outputCostPerMillionTokens: 2 },
+                  capabilities: null,
+                },
+              ],
+            },
           ]),
         }),
         adapterRegistryLayer([codexInstanceId, antigravityInstanceId]),
-        Layer.mock(ProjectService.ProjectService)({}),
+        projectWithoutModelDefaultLayer(),
         Layer.mock(SecretRequests.SecretRequests)({}),
         Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
       );
@@ -1636,17 +1653,29 @@ describe("OrchestratorMcpService provider resolution", () => {
             driver: ProviderDriverKind.make("codex"),
             model: "gpt-5.4",
           }),
-          providerSnapshot({
-            instanceId: altInstanceId,
-            driver: ProviderDriverKind.make("codex"),
-            model: "gpt-5.4",
-          }),
+          {
+            ...providerSnapshot({
+              instanceId: altInstanceId,
+              driver: ProviderDriverKind.make("codex"),
+              model: "gpt-5.4",
+            }),
+            models: [
+              {
+                slug: "gpt-5.4",
+                name: "GPT 5.4",
+                isCustom: false,
+                defaultSelection: "economical",
+                pricing: { inputCostPerMillionTokens: 1, outputCostPerMillionTokens: 2 },
+                capabilities: null,
+              },
+            ],
+          },
         ]),
         adapterRegistryLayer([codexInstanceId, altInstanceId]),
-        Layer.mock(ProjectService.ProjectService)({}),
+        projectWithoutModelDefaultLayer(),
         Layer.mock(SecretRequests.SecretRequests)({}),
         Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
-        ServerSettings.layerTest(),
+        ServerSettings.layerTest({ defaultModelSelection: null }),
       );
 
       yield* Effect.gen(function* () {
@@ -2008,23 +2037,45 @@ describe("OrchestratorMcpService provider resolution", () => {
                   } as never),
                 ),
             }),
-            ServerSettings.layerTest(),
+            ServerSettings.layerTest({ defaultModelSelection: null }),
             providerRegistryLayer([
-              providerSnapshot({
-                instanceId: codexInstanceId,
-                driver,
-                model: "gpt-5.4",
-                enabled: testCase.inheritedEnabled,
-              }),
-              providerSnapshot({
-                instanceId: codexAltInstanceId,
-                driver: testCase.candidateDriver,
-                model: "codex-alt-model",
-                enabled: testCase.peerEnabled,
-              }),
+              {
+                ...providerSnapshot({
+                  instanceId: codexInstanceId,
+                  driver,
+                  model: "gpt-5.4",
+                  enabled: testCase.inheritedEnabled,
+                }),
+                models: [
+                  {
+                    slug: "gpt-5.4",
+                    name: "GPT 5.4",
+                    isCustom: false,
+                    capabilities: { optionDescriptors: [] },
+                  },
+                ],
+              },
+              {
+                ...providerSnapshot({
+                  instanceId: codexAltInstanceId,
+                  driver: testCase.candidateDriver,
+                  model: "codex-alt-model",
+                  enabled: testCase.peerEnabled,
+                }),
+                models: [
+                  {
+                    slug: "codex-alt-model",
+                    name: "Codex alt model",
+                    isCustom: false,
+                    defaultSelection: "economical",
+                    pricing: { inputCostPerMillionTokens: 1, outputCostPerMillionTokens: 2 },
+                    capabilities: null,
+                  },
+                ],
+              },
             ]),
             adapterRegistryLayer([codexInstanceId, codexAltInstanceId]),
-            Layer.mock(ProjectService.ProjectService)({}),
+            projectWithoutModelDefaultLayer(),
             Layer.mock(SecretRequests.SecretRequests)({}),
             Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
           );
@@ -2100,6 +2151,182 @@ describe("OrchestratorMcpService provider resolution", () => {
             }
           }).pipe(Effect.provide(layerOrchestratorService.pipe(Layer.provide(layerDependencies))));
         }
+      }),
+  );
+
+  it.effect(
+    "inherits the parent model for delegated work and resolves a switched provider before validating its options",
+    () =>
+      Effect.gen(function* () {
+        const claudeInstanceId = ProviderInstanceId.make("claudeAgent");
+        const parentSelection = {
+          instanceId: codexInstanceId,
+          model: "gpt-5.4",
+          options: [{ id: "reasoningEffort", value: "high" }],
+        } as const;
+        const claudeModels: ServerProvider["models"] = [
+          {
+            slug: "claude-opus-5-5",
+            name: "Claude Opus",
+            isCustom: false,
+            defaultSelection: "excluded",
+            pricing: { inputCostPerMillionTokens: 15, outputCostPerMillionTokens: 75 },
+            capabilities: {
+              optionDescriptors: [
+                {
+                  id: "reasoningEffort",
+                  label: "Reasoning effort",
+                  type: "select",
+                  options: [{ id: "low", label: "Low" }],
+                },
+              ],
+            },
+          },
+          {
+            slug: "claude-haiku-5-5",
+            name: "Claude Haiku",
+            isCustom: false,
+            pricing: { inputCostPerMillionTokens: 1, outputCostPerMillionTokens: 2 },
+            capabilities: {
+              optionDescriptors: [
+                {
+                  id: "reasoningEffort",
+                  label: "Reasoning effort",
+                  type: "select",
+                  options: [
+                    { id: "low", label: "Low" },
+                    { id: "high", label: "High" },
+                  ],
+                },
+              ],
+            },
+          },
+        ];
+        const claude = {
+          ...providerSnapshot({
+            instanceId: claudeInstanceId,
+            driver: ProviderDriverKind.make("claudeAgent"),
+            model: "claude-opus-5-5",
+          }),
+          models: claudeModels,
+        };
+        const delegatedTask = {
+          id: taskId,
+          threadId: parentThreadId,
+          runId: parentRunId,
+          parentNodeId,
+          origin: "app_owned",
+          createdBy: "agent",
+          driver: ProviderDriverKind.make("claudeAgent"),
+          providerInstanceId: claudeInstanceId,
+          providerThreadId: null,
+          childThreadId,
+          nativeTaskRef: null,
+          prompt: "Review the diff.",
+          title: null,
+          model: "claude-haiku-5-5",
+          status: "running",
+          result: null,
+          startedAt: null,
+          completedAt: null,
+        };
+        const dispatched = yield* Ref.make<ReadonlyArray<unknown>>([]);
+        const layerDependencies = Layer.mergeAll(
+          NodeServices.layer,
+          Layer.mock(ThreadManagementService.ThreadManagementService)({
+            hasReceipt: () => Effect.succeed(false),
+            assertProviderInstanceEnabled: () => Effect.void,
+            getThreadRecords: (threadId) =>
+              Effect.succeed(
+                threadId === parentThreadId
+                  ? parentProjection([delegatedTask], parentSelection)
+                  : childProjection,
+              ),
+            getThreadShell: (threadId) => Effect.succeed(liveThreadShell(threadId)),
+            dispatch: (command) =>
+              Ref.update(dispatched, (commands) => [...commands, command]).pipe(
+                Effect.as({
+                  sequence: 1,
+                  storedEvents: [
+                    {
+                      sequence: 1,
+                      commandId: null,
+                      event: { type: "subagent.updated", payload: delegatedTask },
+                    },
+                  ],
+                } as never),
+              ),
+          }),
+          ServerSettings.layerTest({ defaultModelSelection: parentSelection }),
+          providerRegistryLayer([
+            providerSnapshot({
+              instanceId: codexInstanceId,
+              driver: ProviderDriverKind.make("codex"),
+              model: "gpt-5.4",
+            }),
+            claude,
+          ]),
+          adapterRegistryLayer([codexInstanceId, claudeInstanceId]),
+          Layer.mock(ProjectService.ProjectService)({
+            getById: () =>
+              Effect.succeed(Option.some({ defaultModelSelection: parentSelection } as never)),
+          }),
+          Layer.mock(SecretRequests.SecretRequests)({}),
+          Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
+        );
+
+        yield* Effect.gen(function* () {
+          const service = yield* OrchestratorMcpService.OrchestratorMcpService;
+          yield* service.delegateTask(scope, {
+            task: "Review the diff.",
+            mode: "async",
+            clientRequestId: "delegate-inherit-parent-model",
+          });
+          yield* service.delegateTask(scope, {
+            task: "Review the diff.",
+            target: { providerInstanceId: claudeInstanceId },
+            mode: "async",
+            clientRequestId: "delegate-switch-provider-model",
+          });
+          yield* service.delegateTask(scope, {
+            task: "Review the diff.",
+            target: {
+              providerInstanceId: claudeInstanceId,
+              options: [{ id: "reasoningEffort", value: "high" }],
+            },
+            mode: "async",
+            clientRequestId: "delegate-switch-provider-options",
+          });
+
+          const commands = yield* Ref.get(dispatched);
+          const selections = commands.map(
+            (command) => (command as { readonly modelSelection: unknown }).modelSelection,
+          );
+          assert.deepEqual(selections, [
+            parentSelection,
+            { instanceId: claudeInstanceId, model: "claude-haiku-5-5" },
+            {
+              instanceId: claudeInstanceId,
+              model: "claude-haiku-5-5",
+              options: [{ id: "reasoningEffort", value: "high" }],
+            },
+          ]);
+
+          const invalidOptions = yield* service
+            .delegateTask(scope, {
+              task: "Review the diff.",
+              target: {
+                providerInstanceId: claudeInstanceId,
+                options: [{ id: "reasoningEffort", value: "max" }],
+              },
+              mode: "async",
+              clientRequestId: "delegate-switch-provider-invalid-options",
+            })
+            .pipe(Effect.flip);
+          assert.equal(invalidOptions.code, "invalid_request");
+          assert.include(invalidOptions.message, "claude-haiku-5-5");
+          assert.equal((yield* Ref.get(dispatched)).length, 3);
+        }).pipe(Effect.provide(layerOrchestratorService.pipe(Layer.provide(layerDependencies))));
       }),
   );
 
