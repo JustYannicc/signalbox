@@ -5,34 +5,38 @@ import {
   DEFAULT_RESOLVED_KEYBINDINGS,
   mergeWithDefaultKeybindings,
 } from "@t3tools/shared/keybindings";
-import { act, useMemo } from "react";
+import { act, createContext, useContext, useMemo } from "react";
 import { create, type ReactTestRenderer } from "react-test-renderer";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 const state = vi.hoisted(() => ({
   keybindings: [] as ResolvedKeybindingsConfig,
-  pathname: "/env/thread",
   terminalFocus: false,
   paletteOpen: false,
   navigate: vi.fn(),
 }));
 
+// Route changes must reach subscribers even when the compiler reuses child JSX.
+const RoutePathContext = createContext("/env/thread");
+
 vi.mock("@effect/atom-react", () => ({ useAtomValue: () => state.keybindings }));
 vi.mock("@tanstack/react-router", () => ({
   useNavigate: () => state.navigate,
-  useParams: ({ select }: { select: (params: Record<string, string>) => unknown }) =>
-    useMemo(
-      () =>
-        select(
-          state.pathname === "/env/thread" ? { environmentId: "env", threadId: "thread" } : {},
-        ),
-      [state.pathname],
-    ),
+  useParams: ({ select }: { select: (params: Record<string, string>) => unknown }) => {
+    const pathname = useContext(RoutePathContext);
+    return useMemo(
+      () => select(pathname === "/env/thread" ? { environmentId: "env", threadId: "thread" } : {}),
+      [pathname],
+    );
+  },
   useLocation: ({
     select,
   }: {
     select: (location: { pathname: string; href: string }) => unknown;
-  }) => select({ pathname: state.pathname, href: state.pathname }),
+  }) => {
+    const pathname = useContext(RoutePathContext);
+    return select({ pathname, href: pathname });
+  },
 }));
 vi.mock("../../state/server", () => ({ primaryServerKeybindingsAtom: {} }));
 vi.mock("../../lib/terminalFocus", () => ({ isTerminalFocused: () => state.terminalFocus }));
@@ -41,18 +45,22 @@ vi.mock("../../commandPaletteBus", () => ({ isCommandPaletteOpen: () => state.pa
 import { MainAppLocationTracker } from "./mainAppLocation";
 import { SidebarViewShortcuts, useSidebarViewPaletteItems } from "./sidebarViewCommands";
 
-function Harness() {
+function PaletteActions() {
   const items = useSidebarViewPaletteItems();
+  return items.map((item) => (
+    <button key={item.value} onClick={item.run}>
+      {item.title}
+    </button>
+  ));
+}
+
+function Harness({ pathname = "/env/thread" }: { pathname?: string }) {
   return (
-    <>
+    <RoutePathContext value={pathname}>
       <MainAppLocationTracker />
       <SidebarViewShortcuts />
-      {items.map((item) => (
-        <button key={item.value} onClick={item.run}>
-          {item.title}
-        </button>
-      ))}
-    </>
+      <PaletteActions />
+    </RoutePathContext>
   );
 }
 
@@ -78,7 +86,6 @@ beforeEach(() => {
   vi.stubGlobal("desktopBridge", undefined);
   vi.spyOn(window.navigator, "platform", "get").mockReturnValue("MacIntel");
   state.keybindings = DEFAULT_RESOLVED_KEYBINDINGS;
-  state.pathname = "/env/thread";
   state.terminalFocus = false;
   state.paletteOpen = false;
   state.navigate.mockReset();
@@ -115,8 +122,7 @@ describe("sidebar view commands", () => {
     act(() => {
       renderer = create(<Harness />);
     });
-    state.pathname = "/settings/keybindings";
-    act(() => renderer.update(<Harness />));
+    act(() => renderer.update(<Harness pathname="/settings/keybindings" />));
 
     press();
 
@@ -127,8 +133,7 @@ describe("sidebar view commands", () => {
     act(() => {
       renderer = create(<Harness />);
     });
-    state.pathname = "/usage";
-    act(() => renderer.update(<Harness />));
+    act(() => renderer.update(<Harness pathname="/usage" />));
 
     await act(async () => renderer.root.findByType("button").props.onClick());
 
@@ -159,8 +164,7 @@ describe("sidebar view commands", () => {
     act(() => {
       renderer = create(<Harness />);
     });
-    state.pathname = "/settings/keybindings";
-    act(() => renderer.update(<Harness />));
+    act(() => renderer.update(<Harness pathname="/settings/keybindings" />));
     const input = document.createElement("input");
     document.body.append(input);
     input.focus();
