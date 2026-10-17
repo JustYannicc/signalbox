@@ -1,0 +1,26 @@
+{
+  "name": "signalbox-847-spike",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "codegen": "lunora codegen",
+    "test": "vitest run --maxWorkers=2",
+    "typecheck": "tsc --noEmit",
+    "build": "node scripts/build.mjs && wrangler deploy --dry-run --outdir dist"
+  },
+  "dependencies": {
+    "effect": "4.0.2",
+    "lunorash": "1.0.0-alpha.398"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "latest",
+    "@types/node": "24.12.4",
+    "@types/ws": "latest",
+    "esbuild": "latest",
+    "typescript": "latest",
+    "vitest": "latest",
+    "wrangler": "4.151.1",
+    "ws": "latest"
+  },
+  "packageManager": "pnpm@12.14.0"
+}
