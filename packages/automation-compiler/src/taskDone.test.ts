@@ -303,7 +303,7 @@ describe("Task done automation", () => {
     expect(test.calls.some((call) => call.args.action === "complete")).toBe(true);
   });
 
-  it("rejects proof when the condition generation or task message changes during verification", async () => {
+  it("drops proof when the generation changes, and keeps evaluating when only the task changed", async () => {
     for (const staleAfterVerification of ["generation", "message"] as const) {
       const test = fixture({
         verification: [{ state: "unknown", evidence: "Waiting for a production check." }],
@@ -325,8 +325,98 @@ describe("Task done automation", () => {
       };
 
       await test.run({ threadId: "task-1", event: "thread.created" });
-      expect(test.calls.some((call) => call.args.action === "complete")).toBe(false);
+      const complete = test.calls.find((call) => call.args.action === "complete");
+      if (staleAfterVerification === "generation") expect(complete).toBeUndefined();
+      // A rename or a message during verification must not strand the evaluator.
+      else expect(complete?.args.expectedUpdatedAt).toBe("2026-10-17T10:00:00.000Z");
     }
+  });
+
+  it("verifies a pull request linked after the others were proven before archiving", async () => {
+    const stop = new Error("still waiting");
+    const secondPullRequest: PullRequest = {
+      ...unmergedPullRequest,
+      number: 43,
+      url: "https://github.com/example/project/pull/43",
+    };
+    let waits = 0;
+    const test = fixture({
+      wait: (label) => {
+        waits++;
+        if (waits === 1) {
+          // PR 42 is proven; PR 43 gets linked while the date is still ahead.
+          test.setPullRequests([mergedPullRequest, secondPullRequest]);
+          test.setUpdatedAt("2026-10-17T09:30:00.000Z");
+          return null;
+        }
+        expect(label).toBe("Wait for the task dependency or pull request");
+        if (waits === 2) {
+          test.setPullRequests([
+            mergedPullRequest,
+            {
+              ...secondPullRequest,
+              snapshot: { state: "merged", mergedAt: "2026-10-17T11:30:00.000Z" },
+            },
+          ]);
+          return { event: "pr.merged", threadId: "task-1", at: "2026-10-17T11:30:00.000Z" };
+        }
+        throw stop;
+      },
+    });
+
+    await test.run({
+      threadId: "task-1",
+      condition: {
+        type: "all",
+        conditions: [
+          { type: "pullRequestsMergedAndLive" },
+          { type: "date", at: "2026-10-17T11:00:00.000Z" },
+        ],
+      },
+      expectedGeneration: 4,
+      at: "2026-10-17T10:00:00.000Z",
+    });
+
+    expect(test.agents).toHaveLength(2);
+    expect(test.timeline.indexOf("call:complete")).toBeGreaterThan(
+      test.timeline.lastIndexOf("agent"),
+    );
+    expect(test.agents.map((agent) => String(agent.prompt))).toEqual([
+      expect.stringContaining("/pull/42"),
+      expect.stringContaining("/pull/43"),
+    ]);
+  });
+
+  it("does not archive while a newly linked pull request is still open", async () => {
+    const stop = new Error("still waiting");
+    let waits = 0;
+    const test = fixture({
+      wait: () => {
+        waits++;
+        if (waits > 1) throw stop;
+        test.setPullRequests([
+          mergedPullRequest,
+          { ...unmergedPullRequest, number: 43, url: "https://github.com/example/project/pull/43" },
+        ]);
+        return null;
+      },
+    });
+
+    await expect(
+      test.run({
+        threadId: "task-1",
+        condition: {
+          type: "all",
+          conditions: [
+            { type: "pullRequestsMergedAndLive" },
+            { type: "date", at: "2026-10-17T11:00:00.000Z" },
+          ],
+        },
+        expectedGeneration: 4,
+        at: "2026-10-17T10:00:00.000Z",
+      }),
+    ).rejects.toBe(stop);
+    expect(test.calls.some((call) => call.args.action === "complete")).toBe(false);
   });
 
   it("leaves chats without a task done-condition", async () => {
@@ -447,7 +537,7 @@ describe("Task done automation", () => {
     });
 
     expect(result).toBe("The done-condition did not hold before its wait ended.");
-    expect(test.timeline.some((entry) => entry.startsWith("sleep:"))).toBe(false);
+    expect(test.timeline).not.toContain("wait:Wait until the date condition");
     expect(test.calls.some((call) => call.args.action === "complete")).toBe(false);
   });
 
@@ -483,7 +573,7 @@ describe("Task done automation", () => {
       at: "2026-10-17T10:00:00.000Z",
     });
 
-    expect(test.timeline).toContain("sleep:Wait until the date condition");
+    expect(test.timeline).toContain("wait:Wait until the date condition");
     expect(test.calls.some((call) => call.args.action === "complete")).toBe(true);
   });
 
