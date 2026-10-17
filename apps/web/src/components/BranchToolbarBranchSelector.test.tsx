@@ -7,7 +7,7 @@ import { expect, it, vi } from "vite-plus/test";
 
 const state = vi.hoisted(() => ({
   configAtom: null as unknown,
-  listRefsCwds: [] as string[],
+  listRefsQueries: [] as (string | null)[],
 }));
 
 vi.mock("../state/server", () => ({
@@ -16,20 +16,23 @@ vi.mock("../state/server", () => ({
 vi.mock("../state/vcs", async () => {
   const { Atom, AsyncResult } = await import("effect/reactivity");
   const status = Atom.make(AsyncResult.initial(false));
+  const refs = Atom.family((query: string | null) =>
+    Atom.make(() => {
+      state.listRefsQueries.push(query);
+      return AsyncResult.success({
+        refs: [],
+        isRepo: true,
+        hasPrimaryRemote: false,
+        nextCursor: null,
+        totalCount: 0,
+      });
+    }),
+  );
   return {
     vcsEnvironment: {
       status: () => status,
-      listRefs: ({ input }: { input: { cwd: string } }) =>
-        Atom.make(() => {
-          state.listRefsCwds.push(input.cwd);
-          return AsyncResult.success({
-            refs: [],
-            isRepo: true,
-            hasPrimaryRemote: false,
-            nextCursor: null,
-            totalCount: 0,
-          });
-        }),
+      listRefs: ({ input }: { input: { cwd: string; query?: string | null } }) =>
+        refs(input.query ?? null),
     },
   };
 });
@@ -38,7 +41,7 @@ vi.mock("../state/entities", () => ({
     id: "thread-test",
     environmentId: "environment-test",
     projectId: "project-test",
-    branch: null,
+    branch: "main",
     worktreePath: null,
     runtime: null,
     linkedPullRequest: null,
@@ -89,7 +92,7 @@ it("waits for config before loading refs and keeps the self-hosted default", asy
   const configAtom = Atom.make<ServerConfig | null>(null);
   const registry = AtomRegistry.make();
   state.configAtom = configAtom;
-  state.listRefsCwds.length = 0;
+  state.listRefsQueries.length = 0;
   registry.set(configAtom, null);
   let renderer: ReactTestRenderer | null = null;
 
@@ -110,17 +113,18 @@ it("waits for config before loading refs and keeps the self-hosted default", asy
     await act(async () => {
       renderer = create(selector);
     });
-    expect(state.listRefsCwds).toEqual([]);
+    expect(state.listRefsQueries).toEqual([]);
 
     await act(async () => {
       registry.set(configAtom, environmentConfig({ worktrees: false }));
     });
-    expect(state.listRefsCwds).toEqual([]);
+    expect(state.listRefsQueries).toEqual([]);
 
     await act(async () => {
       registry.set(configAtom, environmentConfig({}));
     });
-    expect(state.listRefsCwds).toEqual(["/repo"]);
+    expect(state.listRefsQueries).toEqual(expect.arrayContaining([null, "main"]));
+    expect(state.listRefsQueries).toHaveLength(2);
   } finally {
     await act(async () => renderer?.unmount());
     registry.dispose();
