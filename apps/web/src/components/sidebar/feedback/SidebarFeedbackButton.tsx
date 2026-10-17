@@ -84,8 +84,10 @@ export function SidebarFeedbackButton() {
   const [attachScreenshot, setAttachScreenshot] = useState(true);
   const [attachLogs, setAttachLogs] = useState(true);
   const primaryEnvironmentId = usePrimaryEnvironmentId();
-  // Server logs are the host's trace diagnostics; the cloud has no host to read them from.
-  const hasServerLogs = useEnvironmentSupports(primaryEnvironmentId, "localFilesystem");
+  // Server logs are the host's trace diagnostics: none before a host reports, none on the cloud.
+  const hasServerLogs = useEnvironmentSupports(primaryEnvironmentId, "localFilesystem", {
+    waitForConfig: true,
+  });
   const recordAnalyticsEvent = useAtomCommand(recordProductAnalyticsEvent, {
     reportFailure: false,
     reportDefect: false,
