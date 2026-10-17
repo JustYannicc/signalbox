@@ -16,12 +16,28 @@ interface CapableTarget {
   };
 }
 
+interface RepositoryIdentityTarget {
+  readonly serverConfig: {
+    readonly environment: {
+      readonly capabilities: { readonly repositoryIdentity: boolean };
+    };
+  };
+}
+
 export function targetsSupporting<T extends CapableTarget>(
   targets: readonly T[],
   capability: SignalboxEnvironmentCapability,
 ): readonly T[] {
   return targets.filter((target) =>
     environmentSupports(target.serverConfig.environment.capabilities, capability),
+  );
+}
+
+export function targetsWithRepositoryIdentity<T extends RepositoryIdentityTarget>(
+  targets: readonly T[],
+): readonly T[] {
+  return targets.filter(
+    (target) => target.serverConfig.environment.capabilities.repositoryIdentity,
   );
 }
 

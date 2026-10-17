@@ -578,6 +578,7 @@ interface ProviderInstanceCardProps {
   readonly onSelect?: (() => void) | undefined;
   readonly readOnly?: boolean | undefined;
   readonly canWriteSettings?: boolean;
+  readonly canWriteModelPreferences?: boolean;
   readonly onUpdate: (nextInstance: ProviderInstanceConfig) => void;
   readonly onDelete?: (() => void) | undefined;
   readonly headerAction?: ReactNode | undefined;
@@ -628,6 +629,7 @@ export function ProviderInstanceCard({
   onSelect,
   readOnly = false,
   canWriteSettings = true,
+  canWriteModelPreferences = canWriteSettings,
   onUpdate,
   onDelete,
   headerAction,
@@ -1261,7 +1263,7 @@ export function ProviderInstanceCard({
             </p>
             <ProviderModelsSection
               canManageCustomModels={!readOnly}
-              canWritePreferences={canWriteSettings}
+              canWritePreferences={canWriteModelPreferences}
               instanceId={instanceId}
               driverKind={driverKind}
               models={modelsForDisplay}
