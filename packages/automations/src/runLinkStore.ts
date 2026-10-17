@@ -38,25 +38,69 @@ export const make = Effect.gen(function* () {
       ),
     );
 
+  const insertLink = (row: RunLinkRow) =>
+    run(
+      "insertLink",
+      sql`
+        INSERT INTO signalbox_automation_run_links (
+          run_id, thread_id, attach_key, label, restart_of_run_id, lineage_id, started_at
+        ) VALUES (
+          ${row.run_id}, ${row.thread_id}, ${row.attach_key}, ${row.label},
+          ${row.restart_of_run_id}, ${row.lineage_id}, ${row.started_at}
+        )
+        ON CONFLICT (run_id) DO NOTHING
+      `,
+    );
+  const getLink = (runId: string) =>
+    run(
+      "getLink",
+      sql<RunLinkRow>`SELECT * FROM signalbox_automation_run_links WHERE run_id = ${runId}`,
+    ).pipe(Effect.map((rows) => rows[0]));
+
   return {
-    insertLink: (row: RunLinkRow) =>
-      run(
-        "insertLink",
-        sql`
-          INSERT INTO signalbox_automation_run_links (
-            run_id, thread_id, attach_key, label, restart_of_run_id, lineage_id, started_at
-          ) VALUES (
-            ${row.run_id}, ${row.thread_id}, ${row.attach_key}, ${row.label},
-            ${row.restart_of_run_id}, ${row.lineage_id}, ${row.started_at}
-          )
-          ON CONFLICT (run_id) DO NOTHING
-        `,
-      ),
-    getLink: (runId: string) =>
-      run(
-        "getLink",
-        sql<RunLinkRow>`SELECT * FROM signalbox_automation_run_links WHERE run_id = ${runId}`,
-      ).pipe(Effect.map((rows) => rows[0])),
+    insertLink,
+    getLink,
+    /** Adopts an existing unlinked run as a thread attachment. */
+    adoptAttachment: (input: {
+      readonly runId: string;
+      readonly threadId: string;
+      readonly key: string;
+      readonly label: string;
+      readonly startedAt: string;
+    }) =>
+      Effect.gen(function* () {
+        const existing = yield* getLink(input.runId);
+        if (existing) {
+          if (existing.thread_id === input.threadId && existing.attach_key === input.key) return;
+          if (existing.thread_id !== null || existing.attach_key !== null)
+            return yield* Effect.fail(
+              new AutomationError({ message: "That run is already attached to another task." }),
+            );
+          yield* run(
+            "adoptAttachment",
+            sql`
+              UPDATE signalbox_automation_run_links
+              SET thread_id = ${input.threadId}, attach_key = ${input.key}, label = ${input.label}
+              WHERE run_id = ${input.runId} AND thread_id IS NULL AND attach_key IS NULL
+            `,
+          );
+        } else {
+          yield* insertLink({
+            run_id: input.runId,
+            thread_id: input.threadId,
+            attach_key: input.key,
+            label: input.label,
+            restart_of_run_id: null,
+            lineage_id: input.runId,
+            started_at: input.startedAt,
+          });
+        }
+        const adopted = yield* getLink(input.runId);
+        if (adopted?.thread_id !== input.threadId || adopted.attach_key !== input.key)
+          return yield* Effect.fail(
+            new AutomationError({ message: "That run is already attached to another task." }),
+          );
+      }),
     /** The running run attached to `threadId` under `key`, if any. */
     runningAttached: (threadId: string, key: string) =>
       run(

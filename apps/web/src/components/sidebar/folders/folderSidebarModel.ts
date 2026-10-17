@@ -73,6 +73,59 @@ export interface FolderResident {
   readonly archivedAt: string | null;
 }
 
+export interface RecentlySettledFolderThread extends FolderResident {
+  readonly archivedAt: string | null;
+  readonly settledAt: string | null;
+  readonly settledOverride: "settled" | "active" | null;
+  readonly updatedAt: string;
+  readonly title: string;
+}
+
+/** Recently settled tasks stay findable after completion moves them to the archive. */
+export function recentlySettledFolderThreads<Thread extends RecentlySettledFolderThread>(input: {
+  readonly environmentId: EnvironmentId;
+  readonly projectIds: ReadonlyArray<ProjectId>;
+  readonly home: FolderId | null;
+  readonly homeOf: (thread: FolderResident) => FolderId | null;
+  readonly liveThreads: ReadonlyArray<Thread>;
+  readonly archivedThreads: ReadonlyArray<Thread>;
+  readonly isTask: (thread: Thread) => boolean;
+}): ReadonlyArray<Thread> {
+  const projects = new Set(input.projectIds);
+  const byKey = new Map<string, Thread>();
+  const isSettled = (thread: Thread) =>
+    thread.settledAt !== null || thread.settledOverride === "settled";
+  for (const thread of input.archivedThreads) {
+    if (
+      thread.environmentId === input.environmentId &&
+      projects.has(thread.projectId) &&
+      input.homeOf(thread) === input.home &&
+      thread.archivedAt !== null &&
+      isSettled(thread) &&
+      input.isTask(thread)
+    ) {
+      byKey.set(scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)), thread);
+    }
+  }
+  for (const thread of input.liveThreads) {
+    if (
+      thread.environmentId === input.environmentId &&
+      projects.has(thread.projectId) &&
+      input.homeOf(thread) === input.home &&
+      thread.archivedAt === null &&
+      isSettled(thread) &&
+      input.isTask(thread)
+    ) {
+      byKey.set(scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)), thread);
+    }
+  }
+  return [...byKey.values()].toSorted((left, right) => {
+    const leftAt = left.settledAt ?? left.archivedAt ?? left.updatedAt;
+    const rightAt = right.settledAt ?? right.archivedAt ?? right.updatedAt;
+    return rightAt.localeCompare(leftAt) || left.id.localeCompare(right.id);
+  });
+}
+
 export function sameResidents(
   left: ReadonlyArray<FolderResident>,
   right: ReadonlyArray<FolderResident>,

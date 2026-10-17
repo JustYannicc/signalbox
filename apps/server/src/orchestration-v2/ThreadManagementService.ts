@@ -751,7 +751,7 @@ const make = Effect.gen(function* () {
   const sendToThread: ThreadManagementServiceShape["sendToThread"] = (input) =>
     Effect.gen(function* () {
       const target = yield* getProjectThreadRecords(input, ["runs", "providerTurns"]);
-      if (target.thread.archivedAt !== null) {
+      if (target.thread.archivedAt !== null && input.createdBy !== "user") {
         return yield* new ThreadManagementThreadArchivedError({
           threadId: input.threadId,
         });

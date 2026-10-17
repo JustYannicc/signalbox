@@ -41,9 +41,6 @@ export const CLOUD_UNSERVED: Readonly<Record<string, Unserved>> = {
 
   // The rest of a thread's lifecycle.
   "threads.delete": gap("#439"),
-  "threads.settle": gap("#439"),
-  "threads.unsettle": gap("#439"),
-  "threads.autoSettle.set": gap("#439"),
   "threads.snooze": gap("#439"),
   "threads.unsnooze": gap("#439"),
   "threads.pin": gap("#439"),

@@ -10,6 +10,8 @@ import type { AuthorizeAutomation } from "@signalbox/automations/catalog";
 import type { AutomationThreadsShape } from "@signalbox/automations/host";
 import { builtInById } from "@signalbox/automations/defaults/registry";
 import { builtInReadResult } from "@signalbox/automations/tools/builtIns";
+import * as Schema from "effect/Schema";
+import { TaskLifecycleInput } from "@t3tools/contracts/taskLifecycle";
 import {
   automationSummary,
   readResult,
@@ -33,6 +35,8 @@ import { acceptCompiled, type CloudCompiler } from "./cloudCompiler.ts";
  * it saves or runs act with its model and modes, never more. The machine
  * compiles saves (oxc can't run here) and validates locally.
  */
+
+const decodeTaskLifecycle = Schema.decodeUnknownEffect(TaskLifecycleInput);
 
 type Input = Readonly<Record<string, unknown>>;
 type Handler = (
@@ -130,6 +134,26 @@ export const makeCloudTools = (deps: {
       });
 
   return {
+    task_lifecycle: (caller, input) =>
+      Effect.gen(function* () {
+        const requestedThreadId = text(input, "threadId") ?? caller.id;
+        if (requestedThreadId !== caller.id) {
+          if (input.action !== "read")
+            return yield* refuse("Task lifecycle changes can only act on the calling thread.");
+          const target = yield* deps.threads.getThreadShell(ThreadId.make(requestedThreadId));
+          if (target === null || target.projectId !== caller.projectId)
+            return yield* refuse("Task lifecycle reads stay in the calling thread's project.");
+        }
+        const parsed = yield* decodeTaskLifecycle({
+          ...input,
+          threadId: requestedThreadId,
+        }).pipe(
+          Effect.mapError(
+            () => new AutomationError({ message: "Pass a valid task lifecycle action and input." }),
+          ),
+        );
+        return yield* engine.taskLifecycle(parsed);
+      }),
     automation_save: (caller, input) =>
       Effect.gen(function* () {
         const source = yield* required(input, "source");

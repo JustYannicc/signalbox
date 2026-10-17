@@ -20,6 +20,10 @@ export type AutomationAskFieldType = typeof AutomationAskFieldType.Type;
 export const AutomationAskValue = Schema.Union([Schema.String, Schema.Number, Schema.Boolean]);
 export type AutomationAskValue = typeof AutomationAskValue.Type;
 
+/** How strongly a waiting question should interrupt the person. */
+export const AutomationAskImportance = Schema.Literals(["low", "high"]);
+export type AutomationAskImportance = typeof AutomationAskImportance.Type;
+
 /** One input of an ask's form, as the code declared it under `fields`, in code order. */
 export const AutomationAskField = Schema.Struct({
   name: Schema.String,
@@ -45,6 +49,8 @@ export interface AutomationAsk {
   /** `multi: true`: any number of options, answered as an array. */
   readonly multi: boolean;
   readonly fields: ReadonlyArray<AutomationAskField>;
+  /** Defaults to high for existing asks. */
+  readonly importance: AutomationAskImportance;
   /** `onTimeout`: an option, `"fail"`, or null when the code gave none. */
   readonly onTimeout: string | null;
 }
@@ -212,6 +218,10 @@ export function parseAutomationAsk(input: unknown): {
     }
   }
   const multi = options.multi === true;
+  const importance = options.importance ?? "high";
+  if (importance !== "low" && importance !== "high") {
+    problems.push('importance must be "low" or "high".');
+  }
   const listed = readOptions(options.options, problems);
   const question =
     options.question === undefined || options.question === null
@@ -229,6 +239,7 @@ export function parseAutomationAsk(input: unknown): {
           : AUTOMATION_ASK_DEFAULT_OPTIONS),
       multi,
       fields,
+      importance: importance === "low" ? "low" : "high",
       onTimeout: typeof options.onTimeout === "string" ? options.onTimeout : null,
     },
     problems,

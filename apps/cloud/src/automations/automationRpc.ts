@@ -158,6 +158,10 @@ export const makeAutomationHandlers = Effect.fn("makeAutomationHandlers")(functi
               ),
             ),
           ),
+    [METHODS.automationsTaskLifecycle]: (input: Payload<typeof METHODS.automationsTaskLifecycle>) =>
+      about({ "thread.id": input.threadId }).pipe(
+        Effect.andThen(flushed(engine.taskLifecycle(input))),
+      ),
     [METHODS.automationsCustomize]: (_input: Payload<typeof METHODS.automationsCustomize>) =>
       notYet("Customizing built-ins from the app (an agent's automation_customize works)"),
     [METHODS.automationsStopAttached]: (input: Payload<typeof METHODS.automationsStopAttached>) =>

@@ -81,7 +81,8 @@ import {
  *
  * An open preview (`PreviewHold`) keeps a connected machine up as a live run
  * does, and the idle tail counts from the later of the last run and the last
- * preview traffic. Previews never start a machine.
+ * preview traffic. Settled and archived threads skip those holds; runners that
+ * can drain stay leased until their saves reach the store. Previews never start a machine.
  *
  * The thread also answers the ModelGateway: a model token is good while the
  * run it was minted for is live on the machine holding the lease.
@@ -332,8 +333,8 @@ export class ThreadRunner extends Context.Service<
 >()("@signalbox/cloud/thread/runner/ThreadRunner") {}
 
 /**
- * How long an idle machine gets to save everything it wrote before it goes
- * anyway (#493): a save that big is still going, or the machine is wedged.
+ * How long a drain may go unanswered (#493): idle leases release after it,
+ * while finalized threads retain the lease and retry at this interval.
  */
 export const DRAIN_TIMEOUT_MS = 2 * 60_000;
 
@@ -385,19 +386,37 @@ const modelGrantFor = (
  * Mirrors `reconcile`: true exactly when it would act or needs to schedule a
  * check. `live`: a harness run is live; `previewHeld`: a preview is open.
  */
-const needsUpkeep = (lease: ThreadStore.MachineLease, live: boolean, previewHeld: boolean) => {
+const needsUpkeep = (
+  lease: ThreadStore.MachineLease,
+  live: boolean,
+  previewHeld: boolean,
+  finalized: boolean,
+  now: number,
+) => {
   const held = live || previewHeld;
   switch (lease.status) {
     case "none":
       return live;
     case "requested":
       return true;
-    case "connected":
+    case "connected": {
+      if (lease.disconnectedAt !== null) return true;
+      if (!live && finalized) {
+        if (lease.drains !== true || lease.drain === undefined) return true;
+        if (lease.drain._tag === "answered") {
+          return (
+            lease.drain.unsaved.length === 0 ||
+            lease.drain.retryAt === undefined ||
+            now >= lease.drain.retryAt
+          );
+        }
+        return now >= lease.drain.id + DRAIN_TIMEOUT_MS;
+      }
       return (
-        lease.disconnectedAt !== null ||
         lease.drain?._tag === "answered" ||
         (held ? lease.idleSince !== null : lease.idleSince === null)
       );
+    }
   }
 };
 
@@ -783,7 +802,7 @@ const make = Effect.gen(function* () {
       return held ? turn : freshSessionTurn(projection, turn);
     });
 
-  const work: ThreadRunner["Service"]["work"] = withLease(({ projection, lease }) =>
+  const work: ThreadRunner["Service"]["work"] = withLease(({ projection, lease, now }) =>
     Effect.gen(function* () {
       const untraced = projection === null ? null : yield* turnFor(projection);
       const turn =
@@ -792,10 +811,13 @@ const make = Effect.gen(function* () {
           : { ...untraced, traceId: yield* withCrypto(traceIdOf(untraced.runId)) };
       const grant = projection === null ? undefined : modelGrantFor(projection, yield* ownerId);
       const run = projection === null ? undefined : harnessRun(projection);
+      const finalized =
+        projection !== null &&
+        (projection.thread.archivedAt !== null || projection.thread.settledOverride === "settled");
       const driveId = turn === null || !drivesEnabled ? null : yield* driveOf;
       return keep<RunnerWork>({
         generation: lease.generation,
-        needsUpkeep: needsUpkeep(lease, run !== undefined, yield* previews.held),
+        needsUpkeep: needsUpkeep(lease, run !== undefined, yield* previews.held, finalized, now),
         drain: lease.drain?._tag === "asked" ? lease.drain.id : null,
         turn,
         modelToken:
@@ -1096,7 +1118,16 @@ const make = Effect.gen(function* () {
             recover: run !== undefined,
           });
         }
-        if (run !== undefined || (yield* previews.held)) {
+        const finalized =
+          run === undefined &&
+          projection !== null &&
+          (projection.thread.archivedAt !== null ||
+            projection.thread.settledOverride === "settled");
+        const finalizationDetail =
+          projection !== null && projection.thread.archivedAt !== null
+            ? "Thread archived."
+            : "Thread settled.";
+        if (run !== undefined || (!finalized && (yield* previews.held))) {
           const busy = { ...BUSY, runId };
           // Needed again: a drain under way no longer leads anywhere.
           return lease.idleSince === null && lease.drain === undefined
@@ -1110,8 +1141,10 @@ const make = Effect.gen(function* () {
         const idleSince = lease.idleSince ?? now;
         // An open preview pushes the tail out to its last traffic.
         const tailFrom = Math.max(idleSince, (yield* previews.lastActiveAt) ?? 0);
-        if (now - tailFrom >= backend.idleTailMs) {
-          const idle = `Idle for ${formatDuration(now - tailFrom)}.`;
+        if (finalized || now - tailFrom >= backend.idleTailMs) {
+          const idle = finalized
+            ? finalizationDetail
+            : `Idle for ${formatDuration(now - tailFrom)}.`;
           // The machine saves everything it wrote before its tokens go (#493);
           // a Runner from before drains is let go as it always was.
           if (lease.drains !== true) {
@@ -1119,6 +1152,31 @@ const make = Effect.gen(function* () {
           }
           if (lease.drain?._tag === "answered") {
             const unsaved = lease.drain.unsaved;
+            if (finalized && unsaved.length > 0) {
+              const retryAt = lease.drain.retryAt ?? now + DRAIN_TIMEOUT_MS;
+              if (lease.drain.retryAt === undefined) {
+                return {
+                  events: [],
+                  machine: { ...lease, drain: { ...lease.drain, retryAt } },
+                  result: { ...IDLE, wakeAt: retryAt },
+                };
+              }
+              if (now < retryAt) return keep({ ...IDLE, wakeAt: retryAt });
+              yield* Effect.logWarning("thread finalization drain left work unsaved; retrying", {
+                generation: lease.generation,
+                drainId: lease.drain.id,
+                unsavedCount: unsaved.length,
+              });
+              return {
+                events: [],
+                machine: { ...lease, idleSince, drain: { _tag: "asked", id: now } as const },
+                result: {
+                  ...IDLE,
+                  drain: { generation: lease.generation, id: now },
+                  wakeAt: now + DRAIN_TIMEOUT_MS,
+                },
+              };
+            }
             return yield* release({
               reason: "idle",
               detail:
@@ -1141,6 +1199,30 @@ const make = Effect.gen(function* () {
           }
           const deadline = lease.drain.id + DRAIN_TIMEOUT_MS;
           if (now < deadline) return keep({ ...IDLE, wakeAt: deadline });
+          if (finalized) {
+            const retryAt = now + DRAIN_TIMEOUT_MS;
+            yield* Effect.logWarning(
+              "thread finalization drain timed out; retaining machine and retrying",
+              {
+                generation: lease.generation,
+                drainId: lease.drain.id,
+              },
+            );
+            return {
+              events: [],
+              machine: {
+                ...lease,
+                idleSince,
+                drain: {
+                  _tag: "answered" as const,
+                  id: lease.drain.id,
+                  unsaved: ["No save acknowledgement before the drain deadline."],
+                  retryAt,
+                },
+              },
+              result: { ...IDLE, wakeAt: retryAt },
+            };
+          }
           return yield* release({
             reason: "idle",
             detail: `${idle} It didn't confirm its last saves within ${DRAIN_TIMEOUT_MS / 1000} s, so anything it wrote after its last save may be lost.`,

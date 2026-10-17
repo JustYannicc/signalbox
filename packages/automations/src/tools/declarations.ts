@@ -6,6 +6,7 @@ import {
   WorkflowDuration,
   WorkflowSourceWatch,
 } from "@t3tools/contracts";
+import { TaskLifecycleInput, TaskLifecycleResult } from "@t3tools/contracts/taskLifecycle";
 import * as Schema from "effect/Schema";
 
 import { BuiltInList } from "./builtIns.ts";
@@ -55,8 +56,26 @@ const WaitId = Schema.String.annotate({
   description: "The wait's id, from wait_for or list_waits.",
 });
 
+/** MCP calls are scoped to the calling thread by default. */
+const TaskLifecycleToolInput = Schema.Struct({
+  ...TaskLifecycleInput.fields,
+  threadId: Schema.optional(
+    TaskLifecycleInput.fields.threadId.annotate({
+      description: "Thread to act on. Omit to use the calling thread.",
+    }),
+  ),
+});
+
 /** Every automation tool, by its MCP name. */
 export const AUTOMATION_TOOLS = {
+  task_lifecycle: declare({
+    title: "Task lifecycle",
+    description:
+      "Read or change this task's completion condition and state. `propose` stores an editable completion condition with its executable JSON input; use `read` to inspect the current condition and settlement outcome. `complete` is for the completion automation when its condition holds. `reopen` restores an archived or settled task. `record-settle` records a human settlement reason. Omit threadId for this thread. Agents may read tasks in the same project; changes act only on their calling thread.",
+    parameters: TaskLifecycleToolInput,
+    success: TaskLifecycleResult,
+    readonly: false,
+  }),
   automation_reference: declare({
     title: "Automation reference",
     description:

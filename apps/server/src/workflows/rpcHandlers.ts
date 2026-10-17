@@ -80,6 +80,8 @@ export const automationRpcHandlers = (engine: WorkflowEngine.WorkflowEngine["Ser
         Effect.flatMap((defaults) => engine.save({ ...input, defaults })),
       ),
     ),
+  [METHODS.automationsTaskLifecycle]: (input: Payload<typeof METHODS.automationsTaskLifecycle>) =>
+    annotated({ "thread.id": input.threadId }, engine.taskLifecycle(input)),
   [METHODS.automationsCustomize]: (input: Payload<typeof METHODS.automationsCustomize>) =>
     annotated(
       { "automation.id": input.automationId },

@@ -247,6 +247,18 @@ cannot drag or move threads within it. Your saved order returns when you turn it
 
 ## Settle finished work
 
+Tasks have an editable **Done when** condition in their details. The folder's **Task done**
+automation proposes the condition and archives the task with a short outcome when it holds.
+For linked code work, the default waits until every pull request is merged and its deployment
+is live. Repositories without a deployment skip that check. Customize the automation to change
+the folder's defaults.
+
+Settling early takes one click. It stops the agent and holds queued messages for later.
+Your assistant records whether you dropped the work or it is done enough for a finishing pass. If the reason is unclear, it leaves a low-priority question
+for later. The task stays settled while that question waits. Find finished tasks under the
+folder's **Recently settled** list. **Reopen** restores the task; sending a new message also
+reopens it. Chats have no done-condition and keep their idle archive behavior.
+
 Choose **Settle thread** from its menu to move finished work out of the active list
 without deleting the conversation. **Un-settle thread** restores it to active work
 and prevents automatic settlement until new activity resumes the usual rules.
@@ -267,7 +279,7 @@ settle every thread in that section between it and the one you release on.
 The **Un-settle** and **Wake** buttons work the same way in their sections.
 Press `Escape` while dragging to cancel.
 
-By default, environments settle inactive threads after three days and settle
+For threads without a done-condition, environments settle inactive threads after three days and settle
 threads whose pull request merged. A closed pull request can also settle an idle
 thread. Work in progress, pending questions or approvals, and live background work
 prevent automatic settlement. An open pull request does not prevent inactivity

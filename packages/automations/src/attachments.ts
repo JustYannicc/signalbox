@@ -132,9 +132,9 @@ export const makeAttachments = (deps: AttachmentDependencies) => {
       return cancelled;
     });
 
-  /** Settling, archiving or deleting a thread ends what's attached to it. */
+  /** Settling, archiving or deleting a thread ends what's attached to it, even before monitor recovery. */
   const onDomainEvent = (event: OrchestrationV2DomainEvent) =>
-    ENDING_EVENTS.has(event.type) && monitors.has(event.threadId)
+    ENDING_EVENTS.has(event.type)
       ? cancelAttached(event.threadId).pipe(Effect.asVoid)
       : Effect.void;
 

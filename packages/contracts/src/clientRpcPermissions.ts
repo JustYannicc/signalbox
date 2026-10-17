@@ -2,6 +2,7 @@ import * as Schema from "effect/Schema";
 import { GitPreparePullRequestThreadInput } from "./git.ts";
 import {
   AuthOrchestrationOperateScope,
+  AuthOrchestrationReadScope,
   AuthPreviewOperateScope,
   AuthSettingsWriteScope,
   AuthSourceControlWriteScope,
@@ -18,6 +19,7 @@ import {
   SIGNALBOX_PREVIEWS_WS_METHODS,
 } from "./signalboxPreviews.ts"; // signalbox: previews
 import { SIGNALBOX_THREAD_KINDS_WS_METHODS } from "./signalboxThreadKinds.ts"; // signalbox: thread kinds
+import { AUTOMATION_WS_METHODS } from "./automationRpc.ts"; // signalbox: automations
 
 /** Incremental client enforcement; the server still authorizes every request. */
 export const CLIENT_GUARDED_RPC_SCOPES = {
@@ -73,6 +75,7 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   [SIGNALBOX_FOLDERS_WS_METHODS.setInstructions]: AuthOrchestrationOperateScope, // signalbox: folders
   [SIGNALBOX_THREAD_KINDS_WS_METHODS.setKind]: AuthOrchestrationOperateScope, // signalbox: thread kinds
   [SIGNALBOX_THREAD_KINDS_WS_METHODS.setArchiveChatsAfterDays]: AuthSettingsWriteScope, // signalbox: thread kinds
+  [AUTOMATION_WS_METHODS.automationsTaskLifecycle]: AuthOrchestrationOperateScope, // signalbox: automations
   [SIGNALBOX_FOLDERS_WS_METHODS.setSecrets]: AuthOrchestrationOperateScope, // signalbox: folders
   [SIGNALBOX_FOLDERS_WS_METHODS.setOnePassword]: AuthOrchestrationOperateScope, // signalbox: folders
   [SIGNALBOX_SIGN_IN_WS_METHODS.grant]: AuthSettingsWriteScope, // signalbox: sign-in grants
@@ -86,6 +89,13 @@ export function clientRpcRequiredScopes(
   method: string,
   input: unknown,
 ): readonly AuthEnvironmentScope[] {
+  if (method === AUTOMATION_WS_METHODS.automationsTaskLifecycle) {
+    const action =
+      input !== null && typeof input === "object" && !Array.isArray(input)
+        ? (input as { readonly action?: unknown }).action
+        : undefined;
+    return [action === "read" ? AuthOrchestrationReadScope : AuthOrchestrationOperateScope];
+  }
   if (method === WS_METHODS.gitPreparePullRequestThread && input !== undefined) {
     const payload = decodePrepareThread(input);
     if (payload.mode === "worktree" && payload.threadId !== undefined)

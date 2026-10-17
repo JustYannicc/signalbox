@@ -20,6 +20,7 @@ import {
   folderNodeKey,
   folderOwnerKey,
   folderOwners,
+  recentlySettledFolderThreads,
   folderThreadListKey,
   movedThreadDestination,
   moveThreadMenuItem,
@@ -112,6 +113,78 @@ describe("folderSidebarModel", () => {
       [key("in-northwind")]: folderThreadListKey(ENV, ACME, FolderId.make("northwind")),
       [key("filed-at-top")]: folderThreadListKey(ENV, ACME, null),
     });
+  });
+
+  it("keeps settled tasks in each folder after they are archived, excluding chat archives", () => {
+    const candidate = (
+      id: string,
+      projectId: ProjectId,
+      fields: Partial<{
+        readonly archivedAt: string | null;
+        readonly settledAt: string | null;
+        readonly settledOverride: "settled" | "active" | null;
+        readonly kind: "task" | "chat";
+      }> = {},
+    ) => ({
+      environmentId: ENV,
+      id: ThreadId.make(id),
+      projectId,
+      title: id,
+      updatedAt: "2026-10-01T00:00:00.000Z",
+      archivedAt: fields.archivedAt ?? null,
+      settledAt: fields.settledAt ?? null,
+      settledOverride: fields.settledOverride ?? null,
+      kind: fields.kind ?? "task",
+    });
+    const clients = FolderId.make("clients");
+    const clientHomeSnapshot: SignalboxFoldersSnapshot = {
+      ...snapshot,
+      threadHomes: [
+        ...snapshot.threadHomes,
+        { threadId: ThreadId.make("settled-live"), folderId: clients },
+        { threadId: ThreadId.make("settled-live-at"), folderId: clients },
+        { threadId: ThreadId.make("completed"), folderId: clients },
+        { threadId: ThreadId.make("archived-override"), folderId: clients },
+        { threadId: ThreadId.make("archived-chat"), folderId: clients },
+      ],
+    };
+    const recent = recentlySettledFolderThreads({
+      environmentId: ENV,
+      projectIds: [SCRATCH],
+      home: clients,
+      homeOf: threadHomeLookup(clientHomeSnapshot),
+      liveThreads: [
+        candidate("settled-live", SCRATCH, { settledOverride: "settled" }),
+        candidate("settled-live-at", SCRATCH, {
+          settledAt: "2026-10-07T00:00:00.000Z",
+        }),
+        candidate("other-folder", SCRATCH, {
+          settledOverride: "settled",
+        }),
+      ],
+      archivedThreads: [
+        candidate("completed", SCRATCH, {
+          archivedAt: "2026-10-05T00:00:00.000Z",
+          settledAt: "2026-10-05T00:00:00.000Z",
+        }),
+        candidate("archived-override", SCRATCH, {
+          archivedAt: "2026-10-06T00:00:00.000Z",
+          settledOverride: "settled",
+        }),
+        candidate("archived-chat", SCRATCH, {
+          archivedAt: "2026-10-06T00:00:00.000Z",
+          settledOverride: "settled",
+          kind: "chat",
+        }),
+      ],
+      isTask: (thread) => thread.kind === "task",
+    });
+    expect(recent.map((thread) => thread.id)).toEqual([
+      "settled-live-at",
+      "archived-override",
+      "completed",
+      "settled-live",
+    ]);
   });
 
   it("keeps a list's array, and the whole map, while its threads stay the same objects", () => {
