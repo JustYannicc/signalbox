@@ -61,8 +61,9 @@ export function createSignalboxTrashAtoms<R, E>(
   const list = createEnvironmentRpcQueryAtomFamily(runtime, {
     label: "environment-data:signalbox-trash:list",
     tag: SIGNALBOX_TRASH_WS_METHODS.list,
-    // Deletes from any client land here, so opening Trash always asks again.
+    // Other clients can change Trash while its screen is closed, so remounting must fetch again.
     staleTimeMs: 0,
+    idleTtlMs: 0,
   });
   // On failure too: a refused restore can still have changed an entry's status.
   const refreshList = (
