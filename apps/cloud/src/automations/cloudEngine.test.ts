@@ -3,15 +3,15 @@ import { afterEach, describe, expect, it, vi } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as TestClock from "effect/testing/TestClock";
 import { compileForCloud } from "@signalbox/automation-compiler/compileForCloud";
-import { WorkflowEngine } from "@signalbox/automations/WorkflowEngine";
+import * as WorkflowEngine from "@signalbox/automations/WorkflowEngine";
 
 import { makeRepo } from "../drive/driveTesting.ts";
 import { makeFakeGitHub } from "../github/githubTesting.ts";
-import { GitHubWebhooks } from "../github/GitHubWebhooks.ts";
+import * as GitHubWebhooks from "../github/GitHubWebhooks.ts";
 import { makeMemoryCloud } from "../testing.ts";
 import * as Environment from "../environment.ts";
 import { scriptedModelSelection } from "../thread/scriptedProvider.ts";
-import { acceptCompiled, CloudCompiler } from "./cloudCompiler.ts";
+import * as CloudCompiler from "./cloudCompiler.ts";
 import { hookTestSetup, HOOK_USER } from "./hookTesting.ts";
 
 const DRIVE = `my/personal/${HOOK_USER}`;
@@ -59,9 +59,9 @@ describe("cloud automation flush", () => {
           Effect.gen(function* () {
             const result = compileForCloud(source);
             if (!result.ok) return yield* Effect.die(result.diagnostics);
-            const compiler = yield* CloudCompiler;
-            const engine = yield* WorkflowEngine;
-            const compiled = yield* acceptCompiled(result.compiled);
+            const compiler = yield* CloudCompiler.CloudCompiler;
+            const engine = yield* WorkflowEngine.WorkflowEngine;
+            const compiled = yield* CloudCompiler.acceptCompiled(result.compiled);
             const saved = yield* compiler.withStaged(
               source,
               compiled,
@@ -87,16 +87,16 @@ export default workflow(async (_w, input: unknown) => input);`);
       expect(webhook.webhook?.url).toBeNull();
       yield* cloud.inUser(
         userId,
-        GitHubWebhooks.use((hooks) => hooks.reconcile),
+        GitHubWebhooks.GitHubWebhooks.use((hooks) => hooks.reconcile),
       );
       yield* cloud.inUser(
         userId,
-        GitHubWebhooks.use((hooks) => hooks.sync),
+        GitHubWebhooks.GitHubWebhooks.use((hooks) => hooks.sync),
       );
       expect(
         yield* cloud.inUser(
           userId,
-          GitHubWebhooks.use((hooks) => hooks.store.list),
+          GitHubWebhooks.GitHubWebhooks.use((hooks) => hooks.store.list),
         ),
       ).toEqual([]);
       expect(installed).toEqual([]);
@@ -114,24 +114,24 @@ export default workflow(async (_w, input: unknown) => input);`);
       );
       const signedIn = yield* cloud.inUser(
         userId,
-        WorkflowEngine.use((engine) => engine.get(webhook.id)),
+        WorkflowEngine.WorkflowEngine.use((engine) => engine.get(webhook.id)),
       );
       expect(signedIn.automation.webhook?.url).toBe(
         `/api/hooks/${encodeURIComponent(userId)}${webhook.webhook!.path.slice("/api/hooks".length)}`,
       );
       yield* cloud.inUser(
         userId,
-        GitHubWebhooks.use((hooks) => hooks.reconcile),
+        GitHubWebhooks.GitHubWebhooks.use((hooks) => hooks.reconcile),
       );
       const rows = yield* cloud.inUser(
         userId,
-        GitHubWebhooks.use((hooks) => hooks.store.list),
+        GitHubWebhooks.GitHubWebhooks.use((hooks) => hooks.store.list),
       );
       expect(rows).toHaveLength(1);
       expect(rows[0]?.repository).toBe("owner/repo");
       yield* cloud.inUser(
         userId,
-        GitHubWebhooks.use((hooks) => hooks.sync),
+        GitHubWebhooks.GitHubWebhooks.use((hooks) => hooks.sync),
       );
       expect(installed).toEqual([
         {
