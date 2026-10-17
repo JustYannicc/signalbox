@@ -63,6 +63,24 @@ describe("person timezone client helpers", () => {
     );
   });
 
+  it("uses the friendly fallback for transport errors while keeping backend messages", () => {
+    expect(
+      personTimezoneErrorMessage(
+        Cause.fail(new Error("SocketCloseError: connection closed")),
+        "Couldn't save this time zone.",
+      ),
+    ).toBe("Couldn't save this time zone.");
+    expect(
+      personTimezoneErrorMessage(Cause.fail({ message: "Socket is not connected" }), "Try again"),
+    ).toBe("Try again");
+    expect(
+      personTimezoneErrorMessage(
+        Cause.fail(new Error("Couldn't save your timezone. Try again.")),
+        "Try again",
+      ),
+    ).toBe("Couldn't save your timezone. Try again.");
+  });
+
   it("selects only connected cloud environments with report permission", () => {
     const capabilities = { personTimezone: true } as ExecutionEnvironmentCapabilities;
     const environments = [

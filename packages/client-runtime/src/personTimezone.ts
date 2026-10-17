@@ -3,6 +3,7 @@ import * as Cause from "effect/Cause";
 import { Atom } from "effect/reactivity";
 
 import { IANA_TIMEZONES } from "./ianaTimezones.ts";
+import { isTransportConnectionErrorMessage } from "./errors/transport.ts";
 
 type IntlWithTimezoneValues = typeof Intl & {
   readonly supportedValuesOf?: (key: "timeZone") => ReadonlyArray<string>;
@@ -53,7 +54,6 @@ export function supportsPersonTimezone(
 export function personTimezoneErrorMessage(cause: Cause.Cause<unknown>, fallback: string): string {
   if (Cause.hasInterruptsOnly(cause)) return fallback;
   const error = Cause.squash(cause);
-  if (error instanceof Error && error.message.trim()) return error.message;
   if (
     typeof error === "object" &&
     error !== null &&
@@ -61,7 +61,7 @@ export function personTimezoneErrorMessage(cause: Cause.Cause<unknown>, fallback
     typeof error.message === "string" &&
     error.message.trim()
   ) {
-    return error.message;
+    return isTransportConnectionErrorMessage(error.message) ? fallback : error.message;
   }
   return fallback;
 }
