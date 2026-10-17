@@ -3,7 +3,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "prepare": "effect-tsgo patch && vp config --no-agent",
+    "prepare": "node scripts/prepare-effect-sdk.ts && vp config --no-agent",
     "agents:run": "node packages/shared/src/agentProcesses/cli.ts run",
     "agents:stop": "node packages/shared/src/agentProcesses/cli.ts stop",
     "agents:status": "node packages/shared/src/agentProcesses/cli.ts status",
@@ -68,5 +68,5 @@
   "engines": {
     "node": "^24.13.1"
   },
-  "packageManager": "pnpm@11.10.0"
+  "packageManager": "pnpm@11.28.6"
 }
