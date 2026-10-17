@@ -7,6 +7,7 @@ import {
   type AutomationDefaults,
   type ExternalRun,
   type ModelSelection,
+  type OrchestrationV2ThreadShell,
   type ProviderOptionSelection,
   type ProviderInteractionMode,
 } from "@t3tools/contracts";
@@ -109,18 +110,35 @@ const modelFor = (options: Readonly<Record<string, unknown>>, defaults: Automati
     const provider = typeof options.provider === "string" ? options.provider : undefined;
     const model = typeof options.model === "string" ? options.model : undefined;
     const effort = typeof options.effort === "string" ? options.effort : undefined;
-    const switched = provider !== undefined && provider !== defaults.modelSelection.instanceId;
+    const inherited = defaults.modelSelection;
+    const switched = provider !== undefined && provider !== inherited?.instanceId;
     if (switched && !model) {
       return yield* fail(
         `Name the model to use with ${provider}: { provider: "${provider}", model: "…" }.`,
       );
     }
+    if (
+      inherited === null &&
+      provider === undefined &&
+      model === undefined &&
+      effort === undefined
+    ) {
+      return null;
+    }
+    if (inherited === null && (provider === undefined || model === undefined)) {
+      return yield* fail("Choose a default model, or name both a provider and model in this step.");
+    }
     let selections: ReadonlyArray<ProviderOptionSelection> = switched
       ? []
-      : (defaults.modelSelection.options ?? []);
+      : (inherited?.options ?? []);
     if (effort) {
-      const instanceId = provider ?? defaults.modelSelection.instanceId;
-      const modelSlug = model ?? defaults.modelSelection.model;
+      const instanceId = provider ?? inherited?.instanceId;
+      const modelSlug = model ?? inherited?.model;
+      if (instanceId === undefined || modelSlug === undefined) {
+        return yield* fail(
+          "Choose a default model, or name both a provider and model to set reasoning effort.",
+        );
+      }
       const option = yield* effortOption(instanceId, modelSlug);
       if (option === null) {
         return yield* fail(`${modelSlug} on ${instanceId} has no reasoning effort to set.`);
@@ -135,7 +153,14 @@ const modelFor = (options: Readonly<Record<string, unknown>>, defaults: Automati
         { id: option.id, value: effort },
       ];
     }
-    const { options: _inherited, ...base } = defaults.modelSelection;
+    const baseSelection =
+      inherited && !switched
+        ? inherited
+        : provider !== undefined && model !== undefined
+          ? { instanceId: ProviderInstanceId.make(provider), model }
+          : null;
+    if (baseSelection === null) return null;
+    const { options: _inherited, ...base } = baseSelection;
     const selection: ModelSelection = {
       ...base,
       ...(provider ? { instanceId: ProviderInstanceId.make(provider) } : {}),
@@ -144,6 +169,15 @@ const modelFor = (options: Readonly<Record<string, unknown>>, defaults: Automati
     };
     return selection;
   });
+
+const needsDeferredModel = (
+  options: Readonly<Record<string, unknown>>,
+  defaults: AutomationDefaults,
+) =>
+  defaults.modelSelection === null &&
+  typeof options.effort === "string" &&
+  typeof options.provider !== "string" &&
+  typeof options.model !== "string";
 
 /**
  * Starts the thread for an `agent` step, or for a model step with its built
@@ -167,15 +201,44 @@ export const launchAgent = (input: {
     if (typeof prompt !== "string" || !prompt.trim()) {
       return yield* fail("An agent step needs a prompt.");
     }
-    const modelSelection = yield* modelFor(options, input.defaults);
+    const threadId =
+      typeof options.thread === "string" && options.thread.trim()
+        ? ThreadId.make(options.thread.trim())
+        : undefined;
+    const threads = yield* AutomationThreads;
+    let existingShell: OrchestrationV2ThreadShell | undefined;
+    let defaults = input.defaults;
+    if (needsDeferredModel(options, defaults)) {
+      if (threadId !== undefined) {
+        const shell = yield* threads
+          .getThreadShell(threadId)
+          .pipe(Effect.orElseSucceed(() => null));
+        if (shell === null || shell.deletedAt !== null) {
+          return yield* fail(`There's no thread ${threadId} to continue.`);
+        }
+        if (shell.projectId !== input.projectId) {
+          return yield* fail(
+            "An agent step can only continue threads in this automation's project.",
+          );
+        }
+        existingShell = shell;
+        defaults = { ...defaults, modelSelection: shell.modelSelection };
+      } else {
+        defaults = {
+          ...defaults,
+          modelSelection: yield* threads.initialModelSelection(ProjectId.make(input.projectId)),
+        };
+      }
+    }
+    const modelSelection = yield* modelFor(options, defaults);
     const { commandId, messageId } = agentLaunchIds(input.step);
     const deadline = input.timeoutMs === null ? undefined : yield* afterMs(input.timeoutMs);
     const until = deadline ? { wakeAt: deadline } : {};
 
-    if (typeof options.thread === "string" && options.thread.trim()) {
-      const threadId = ThreadId.make(options.thread.trim());
-      const threads = yield* AutomationThreads;
-      const shell = yield* threads.getThreadShell(threadId).pipe(Effect.orElseSucceed(() => null));
+    if (threadId !== undefined) {
+      const shell =
+        existingShell ??
+        (yield* threads.getThreadShell(threadId).pipe(Effect.orElseSucceed(() => null)));
       if (shell === null || shell.deletedAt !== null) {
         return yield* fail(`There's no thread ${threadId} to continue.`);
       }
@@ -194,7 +257,7 @@ export const launchAgent = (input: {
           messageId,
           text: prompt,
           attachments: [],
-          ...(switched ? { modelSelection } : {}),
+          ...(switched && modelSelection !== null ? { modelSelection } : {}),
           createdBy: "system",
           creationSource: "server",
         })
@@ -211,13 +274,12 @@ export const launchAgent = (input: {
       } satisfies StepStart;
     }
 
-    const threads = yield* AutomationThreads;
     const launched = yield* threads
       .launch({
         commandId,
         projectId: ProjectId.make(input.projectId),
         title: input.step.label,
-        modelSelection,
+        ...(modelSelection === null ? {} : { modelSelection }),
         runtimeMode: input.defaults.runtimeMode,
         interactionMode: input.interactionMode ?? input.defaults.interactionMode,
         workspace: workspaceFor(options.worktree),

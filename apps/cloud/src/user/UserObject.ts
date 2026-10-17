@@ -66,7 +66,7 @@ import * as DriveSharing from "./DriveSharing.ts";
 import * as DriveShortcuts from "./DriveShortcuts.ts";
 import * as OnePasswordAccount from "./OnePasswordAccount.ts";
 import * as ResourceBindings from "./ResourceBindings.ts";
-import * as ThreadContexts from "./threadContexts.ts";
+import * as ThreadContextLayers from "./threadContextLayers.ts";
 import * as UserContexts from "./UserContexts.ts";
 import * as UserDrives from "./UserDrives.ts";
 import { makeUserObjectApi } from "./userObjectApi.ts";
@@ -253,8 +253,7 @@ const makeRuntime = (storage: DurableObjectStorage, env: UserObjectEnv) => {
           Layer.provideMerge(GitHubConnection.layer),
           Layer.provideMerge(
             Layer.mergeAll(
-              ThreadContexts.layer,
-              UserPools.layer,
+              ThreadContextLayers.layer.pipe(Layer.provideMerge(UserPools.layer)),
               UserThreadKinds.layerTurns,
               // The person's browser for real sites (#574), on Kernel.
               PersonBrowsers.layerFromEnv(env).pipe(Layer.provide(FetchHttpClient.layer)),

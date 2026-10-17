@@ -68,7 +68,8 @@ export interface AutomationThreadLaunch {
   readonly commandId: CommandId;
   readonly projectId: ProjectId;
   readonly title: string;
-  readonly modelSelection: ModelSelection;
+  /** Omitted when the host should resolve the thread's current default on launch. */
+  readonly modelSelection?: ModelSelection;
   readonly runtimeMode: RuntimeMode;
   readonly interactionMode: ProviderInteractionMode;
   readonly workspace: AgentWorkspace;
@@ -106,6 +107,9 @@ export interface AutomationThreadsShape {
     fields: ReadonlyArray<K>,
     filter?: ThreadRecordFilter,
   ) => Effect.Effect<ThreadRecords<K>, AutomationError>;
+  readonly initialModelSelection: (
+    projectId: ProjectId,
+  ) => Effect.Effect<ModelSelection | null, AutomationError>;
   readonly launch: (
     input: AutomationThreadLaunch,
   ) => Effect.Effect<{ readonly threadId: ThreadId }, AutomationError>;

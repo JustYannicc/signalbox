@@ -1528,21 +1528,21 @@
       "rpc": "server.getConfig",
       "access": "read",
       "input": "03c2b661",
-      "output": "dacf204d"
+      "output": "3c00034d"
     },
     {
       "name": "server.refreshProviders",
       "rpc": "server.refreshProviders",
       "access": "read",
       "input": "54bdce9d",
-      "output": "a332da1e"
+      "output": "4e87a982"
     },
     {
       "name": "server.updateProvider",
       "rpc": "server.updateProvider",
       "access": "write",
       "input": "9c17fa1f",
-      "output": "a332da1e"
+      "output": "4e87a982"
     },
     {
       "name": "server.updateServer",
@@ -1565,7 +1565,7 @@
       "access": "read",
       "stream": "snapshot",
       "input": "240ec835",
-      "output": "6f14184c"
+      "output": "d666518c"
     },
     {
       "name": "settings.get",
@@ -1780,7 +1780,7 @@
       "name": "threads.create",
       "rpc": "orchestration.launchThread",
       "access": "write",
-      "input": "49ccbbaa",
+      "input": "d5a4dd19",
       "output": "1f509429"
     },
     {
