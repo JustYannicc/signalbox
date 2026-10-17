@@ -22,7 +22,14 @@ import { waitsOnEvents } from "./events/runWaits.ts";
 import { explained } from "./runLog.ts";
 import { runModelStep } from "./runModelStep.ts";
 import { retryAfterMs, retryPolicy, stepTimeoutMs } from "./stepPolicy.ts";
-import { httpRequest, isRetryableStatus, launchAgent, wakeAt, type StepStart } from "./steps.ts";
+import {
+  httpRequest,
+  isRetryableStatus,
+  launchAgent,
+  modelFor,
+  wakeAt,
+  type StepStart,
+} from "./steps.ts";
 import { nowIso } from "./time.ts";
 import type { AutomationRow, RunRow, StepRow, WorkflowStore } from "./WorkflowStore.ts";
 
@@ -94,9 +101,16 @@ export const makeStartStep =
           verb,
           label: step.label,
           options,
-          defaults: defaults(),
-          projectId: automation.project_id,
-          models,
+          complete: (prompt) =>
+            modelFor(options, defaults()).pipe(
+              Effect.flatMap((modelSelection) =>
+                models.complete({
+                  projectId: automation.project_id,
+                  modelSelection,
+                  prompt,
+                }),
+              ),
+            ),
         }).pipe(
           Effect.provideContext(deps.services),
           Effect.map((value): StepOutcome => ({ type: "done", value })),
