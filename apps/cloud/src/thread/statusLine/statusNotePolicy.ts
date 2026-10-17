@@ -4,7 +4,7 @@ import type { StatusNoteView } from "@signalbox/runner-protocol/StatusLineProtoc
 import * as DateTime from "effect/DateTime";
 
 import type { ServedModel } from "../../pool/cliProxyApi.ts";
-import { isHarnessInstance } from "../providerCatalog.ts";
+import { isHarnessInstance } from "../../models/ModelRouting.ts";
 import { activeRun } from "../runLifecycle.ts";
 import { isLiveRun } from "../runState.ts";
 import type { StatusNoteCursor } from "./statusNoteTables.ts";

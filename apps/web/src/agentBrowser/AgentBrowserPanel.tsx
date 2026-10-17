@@ -11,14 +11,16 @@ import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
-import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
+import { AuthPreviewOperateScope, type EnvironmentId, type ThreadId } from "@t3tools/contracts";
 import type { AgentBrowserInput, AgentBrowserTab } from "@t3tools/contracts/signalboxPreviews";
 import { GlobeIcon, ServerIcon, TriangleAlertIcon } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { openOwnCopy } from "~/browsing/openOwnCopy";
 import { cn } from "~/lib/utils";
+import { useRightPanelStore } from "~/rightPanelStore";
 import { useEnvironmentSupportsThreadBrowsing } from "~/state/browsing";
+import { useEnvironmentScope } from "~/state/session";
 import { signalboxAgentBrowser, useAgentBrowserTrail } from "~/state/signalboxAgentBrowser";
 import { useEnvironmentQuery } from "~/state/query";
 import { useAtomCommand } from "~/state/use-atom-command";
@@ -56,7 +58,11 @@ export function AgentBrowserPanel(props: {
   const [pinnedTabId, setPinnedTabId] = useState<string | null>(null);
   const [selectedStepId, setSelectedStepId] = useState<string | null>(null);
   const canDrive = useAtomValue(signalboxAgentBrowser.input.permissionAtom(environmentId));
-  const canCopy = useEnvironmentSupportsThreadBrowsing(environmentId);
+  const threadBrowsingSupported = useEnvironmentSupportsThreadBrowsing(environmentId);
+  const canOperatePreview = useEnvironmentScope(environmentId, AuthPreviewOperateScope);
+  const canOpenThreadTabs = threadBrowsingSupported && canOperatePreview;
+  const openThreadTabs = () =>
+    useRightPanelStore.getState().openBrowser({ environmentId, threadId }, null);
   const onCopy = useCallback(
     (url: string) => void openOwnCopy({ environmentId, threadId }, url),
     [environmentId, threadId],
@@ -231,6 +237,11 @@ export function AgentBrowserPanel(props: {
             </>
           )}
         </p>
+        {canOpenThreadTabs ? (
+          <Button variant="outline" size="xs" onClick={openThreadTabs}>
+            Thread tabs
+          </Button>
+        ) : null}
         {selectedStepId !== null ? (
           <Button variant="outline" size="xs" onClick={() => setSelectedStepId(null)}>
             Live
@@ -278,7 +289,7 @@ export function AgentBrowserPanel(props: {
           interactive={interactive}
           onInput={onInput}
           onActivity={onActivity}
-          {...(canCopy ? { onCopy } : {})}
+          {...(threadBrowsingSupported ? { onCopy } : {})}
         />
         {frame.kind === "blank" || (frame.kind === "step" && recording.error !== null) ? (
           <div className="absolute inset-0 flex bg-background">
