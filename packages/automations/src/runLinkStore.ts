@@ -26,6 +26,7 @@ export interface InboxRow {
   readonly event_id: string;
   readonly name: string;
   readonly envelope_json: string;
+  readonly consumed_by: string | null;
 }
 
 export const make = Effect.gen(function* () {
@@ -90,7 +91,7 @@ export const make = Effect.gen(function* () {
       ).pipe(Effect.map((rows) => rows[0]?.count ?? 0)),
 
     /** Keeps an event for a run; false when the run already has it. */
-    keepEvent: (row: Omit<InboxRow, "seq"> & { readonly received_at: string }) =>
+    keepEvent: (row: Omit<InboxRow, "seq" | "consumed_by"> & { readonly received_at: string }) =>
       run(
         "keepEvent",
         sql<{ seq: number }>`
@@ -103,13 +104,21 @@ export const make = Effect.gen(function* () {
           RETURNING seq
         `,
       ).pipe(Effect.map((rows) => rows.length > 0)),
-    /** A run's events no step took yet, oldest first. */
+    /** Untaken events and claims whose waiting step still needs settlement, oldest first. */
     unconsumed: (runId: string) =>
       run(
         "unconsumed",
         sql<InboxRow>`
-          SELECT seq, run_id, event_id, name, envelope_json FROM signalbox_automation_run_inbox
-          WHERE run_id = ${runId} AND consumed_by IS NULL ORDER BY seq
+          SELECT i.seq, i.run_id, i.event_id, i.name, i.envelope_json, i.consumed_by
+          FROM signalbox_automation_run_inbox i
+          WHERE i.run_id = ${runId} AND (
+            i.consumed_by IS NULL OR EXISTS (
+              SELECT 1 FROM signalbox_automation_steps s
+              WHERE s.run_id = i.run_id AND s.step_key = i.consumed_by
+                AND s.status = 'waiting'
+            )
+          )
+          ORDER BY i.seq
         `,
       ),
     /**
