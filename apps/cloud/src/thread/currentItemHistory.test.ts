@@ -21,6 +21,7 @@ import { PERSONAL_CONTEXT_ID } from "@t3tools/contracts/signalboxContexts";
 import { afterEach, describe, expect, it } from "@effect/vitest";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
+import * as Deferred from "effect/Deferred";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as DateTime from "effect/DateTime";
@@ -460,85 +461,139 @@ describe("current cloud item history", () => {
   );
 
   it.effect(
-    "normalizes a legacy multi-row item history without losing its final output or pending start",
-    () =>
-      withObject(freshDatabase(), makeOwner().users, ({ engine, store, sql }) =>
-        Effect.gen(function* () {
-          const created = yield* launch(engine);
-          const runId = runIdOf(created.projection);
-          const head = yield* store.head;
-          yield* engine.acknowledgeEvents(head);
+    "resumes legacy item normalization after the first page commits and the object restarts",
+    () => {
+      const filename = freshDatabase();
+      const user = makeOwner();
+      return Effect.gen(function* () {
+        const { head, finalOutput } = yield* withObject(
+          filename,
+          user.users,
+          ({ engine, store, sql }) =>
+            Effect.gen(function* () {
+              const created = yield* launch(engine);
+              const runId = runIdOf(created.projection);
+              const head = yield* store.head;
+              expect(head).toBeLessThan(99);
+              yield* engine.acknowledgeEvents(head);
+              yield* sql`DROP TRIGGER events_high_water`;
+              for (const table of [
+                "current_turn_items",
+                "item_event_outbox",
+                "event_sequence",
+                "item_history_normalization",
+              ]) {
+                yield* sql`DROP TABLE ${sql(table)}`;
+              }
+              yield* sql`DELETE FROM effect_sql_migrations WHERE migration_id = 12 AND name = 'current_item_history'`;
 
-          const triggers = yield* sql<{ readonly name: string }>`
-          SELECT name FROM sqlite_master WHERE type = 'trigger' AND tbl_name = 'events'
-        `;
-          for (const trigger of triggers) yield* sql`DROP TRIGGER ${sql(trigger.name)}`;
-          const indexes = yield* sql<{ readonly name: string }>`
-          SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name = 'events'
-        `;
-          for (const index of indexes) {
-            const columns = yield* sql<{
-              readonly name: string;
-            }>`PRAGMA index_info(${sql(index.name)})`;
-            if (columns.some((column) => column.name.includes("item")))
-              yield* sql`DROP INDEX ${sql(index.name)}`;
-          }
+              const now = yield* DateTime.now;
+              const finalOutput = "legacy final output\n".repeat(500);
+              for (let index = 0; index < 205; index++) {
+                const event =
+                  index === 1
+                    ? commandItem(now, runId, secondToolId, 200, "completed", "second item")
+                    : commandItem(
+                        now,
+                        runId,
+                        toolId,
+                        index === 0 ? 100 : 999,
+                        index === 204 ? "completed" : "running",
+                        index === 204 ? finalOutput : `partial:${index}`,
+                      );
+                yield* sql`INSERT INTO events (sequence, command_id, format, event)
+                VALUES (${head + index + 1}, NULL, 1, ${encodeEvent(event)})`;
+              }
 
-          const columns = yield* sql<{ readonly name: string }>`PRAGMA table_info(events)`;
-          if (columns.some((column) => column.name === "turn_item_id"))
-            yield* sql`ALTER TABLE events DROP COLUMN turn_item_id`;
+              const committed = yield* Deferred.make<void>();
+              // Observe the durable page outside the transaction, then suspend before the next page.
+              const withTransaction: SqlClient.SqlClient["withTransaction"] = (effect) =>
+                sql.withTransaction(effect).pipe(
+                  Effect.tap(() =>
+                    Effect.gen(function* () {
+                      const [state] = yield* sql<{ cursor: number; done: number }>`
+                  SELECT cursor, done FROM item_history_normalization WHERE id = 1
+                `;
+                      if (state?.cursor === 100 && state.done === 0) {
+                        yield* Deferred.succeed(committed, undefined);
+                        yield* Effect.never;
+                      }
+                    }),
+                  ),
+                );
+              const interruptedSql = new Proxy(sql, {
+                get: (target, key, receiver) =>
+                  key === "withTransaction" ? withTransaction : Reflect.get(target, key, receiver),
+              });
+              const normalizing = yield* Effect.gen(function* () {
+                const freshStore = yield* ThreadStore.ThreadStore;
+                yield* freshStore.initialize;
+              }).pipe(
+                Effect.provide(
+                  Layer.fresh(ThreadStore.layer).pipe(
+                    Layer.provide(Layer.succeed(SqlClient.SqlClient, interruptedSql)),
+                  ),
+                ),
+                Effect.forkChild,
+              );
+              yield* Deferred.await(committed);
+              yield* Fiber.interrupt(normalizing);
+              expect(yield* sql`SELECT cursor, done FROM item_history_normalization`).toEqual([
+                { cursor: 100, done: 0 },
+              ]);
+              expect(
+                yield* sql`SELECT first_sequence, sequence, ordinal FROM current_turn_items WHERE item_id = ${toolId}`,
+              ).toEqual([{ first_sequence: head + 1, sequence: 100, ordinal: 100 }]);
+              expect(
+                yield* sql`SELECT COUNT(*) AS count FROM events WHERE json_extract(event, '$.payload.id') = ${toolId}`,
+              ).toEqual([{ count: 1 + head + 205 - 100 }]);
+              expect(yield* sql`SELECT COUNT(*) AS count FROM item_event_outbox`).toEqual([
+                { count: 0 },
+              ]);
+              expect(yield* store.head).toBe(head + 205);
+              expect(yield* store.eventsDelivered).toBe(head);
+              return { head, finalOutput };
+            }),
+        );
 
-          const now = yield* DateTime.now;
-          const itemEvents = [
-            commandItem(now, runId, toolId, 100, "running", "partial"),
-            commandItem(now, runId, toolId, 100, "running", "more partial"),
-            commandItem(now, runId, toolId, 100, "completed", "legacy final output"),
-          ];
-          let sequence = head;
-          for (const event of itemEvents) {
-            sequence += 1;
-            const encoded = encodeEvent(event);
-            yield* sql`INSERT INTO events (sequence, command_id, format, event)
-            VALUES (${sequence}, ${null}, ${1}, ${encoded})`;
-          }
-
-          // Re-run only the newly appended, immutable migration as an old deployment would.
-          const migrations = yield* sql<{ readonly migration_id: number; readonly name: string }>`
-          SELECT migration_id, name FROM effect_sql_migrations
-          WHERE migration_id = 12 AND name = 'current_item_history'
-        `;
-          for (const migration of migrations) {
-            yield* sql`DELETE FROM effect_sql_migrations
-            WHERE migration_id = ${migration.migration_id} AND name = ${migration.name}`;
-          }
-          yield* sql`DROP TRIGGER IF EXISTS events_high_water`;
-          for (const table of [
-            "current_turn_items",
-            "item_event_outbox",
-            "event_sequence",
-            "item_history_normalization",
-          ]) {
-            yield* sql`DROP TABLE ${sql(table)}`;
-          }
-          yield* store.initialize;
-
-          const rows = yield* store.events(head);
-          const itemRows = rows.filter(
-            (row) => row.event.type === "turn-item.updated" && row.event.payload.id === toolId,
-          );
-          expect(itemRows).toHaveLength(1);
-          expect(commandOutput(itemRows[0]?.event)).toBe("legacy final output");
-          const pending = yield* store.eventsForDelivery(head);
-          const pendingToolEvents = pending.filter(
-            (row) => row.event.type === "turn-item.updated" && row.event.payload.id === toolId,
-          );
-          expect(
-            pendingToolEvents.map((row) =>
-              row.event.type === "turn-item.updated" ? row.event.payload.status : null,
-            ),
-          ).toEqual(["running", "completed"]);
-          expect(yield* store.head).toBe(head + 3);
-        }),
-      ),
+        // withObject has closed the first database connection and all services.
+        yield* withObject(filename, user.users, ({ engine, store, sql }) =>
+          Effect.gen(function* () {
+            expect(yield* sql`SELECT done FROM item_history_normalization`).toEqual([{ done: 1 }]);
+            const rows = yield* store.events(head);
+            expect(rows).toHaveLength(2);
+            expect(rows.map((row) => row.sequence)).toEqual([head + 2, head + 205]);
+            expect(commandOutput(rows[1]?.event)).toBe(finalOutput);
+            const snapshot = yield* engine.snapshot(owner);
+            const items = snapshot.projection.turnItems.filter(
+              (item) => item.id === toolId || item.id === secondToolId,
+            );
+            expect(items.map((item) => [item.id, item.ordinal])).toEqual([
+              [toolId, 100],
+              [secondToolId, 200],
+            ]);
+            expect(snapshot.snapshotSequence).toBe(head + 205);
+            expect(yield* store.head).toBe(head + 205);
+            const pending = (yield* store.eventsForDelivery(head)).filter(
+              (row) => row.event.type === "turn-item.updated" && row.event.payload.id === toolId,
+            );
+            expect(pending.map((row) => row.sequence)).toEqual([head + 204, head + 205]);
+            expect(
+              pending.map((row) =>
+                row.event.type === "turn-item.updated" ? row.event.payload.status : null,
+              ),
+            ).toEqual(["running", "completed"]);
+            expect(commandOutput(pending[1]?.event)).toBe(finalOutput);
+            expect(yield* store.eventsDelivered).toBe(head);
+            yield* engine.acknowledgeEvents(head + 205);
+            expect(yield* store.eventsForDelivery(head + 205)).toEqual([]);
+            expect(yield* sql`SELECT COUNT(*) AS count FROM item_event_outbox`).toEqual([
+              { count: 0 },
+            ]);
+            expect(yield* store.events(head)).toEqual(rows);
+          }),
+        );
+      });
+    },
   );
 });

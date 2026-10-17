@@ -1,15 +1,18 @@
 import { EventId, ThreadId } from "@t3tools/contracts";
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Deferred from "effect/Deferred";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
 import * as SqlClient from "effect/sql/SqlClient";
 import { initializeCurrentTurnItemHistory } from "./CurrentTurnItemHistory.ts";
 import * as OrchestrationEventStore from "./OrchestrationEventStore.ts";
-import * as SqlitePersistence from "./Sqlite.ts";
+import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
+import { runMigrations } from "./Migrations.ts";
 
 const testLayer = OrchestrationEventStore.layer.pipe(
-  Layer.provideMerge(SqlitePersistence.layerMemory),
+  Layer.provideMerge(NodeSqliteClient.layer({ filename: ":memory:" })),
 );
 const threadId = ThreadId.make("legacy-current-items");
 const at = "2026-10-17T00:00:00.000Z";
@@ -41,12 +44,12 @@ const item = (id: string, ordinal: number) => ({
 });
 
 it.effect(
-  "normalizes paged legacy history before removing prompt anchors, and resumes with stable order",
+  "resumes interrupted normalization after its first committed page with stable order and prompts",
   () =>
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
       const store = yield* OrchestrationEventStore.OrchestrationEventStore;
-      yield* sql`UPDATE signalbox_item_history_normalization SET phase = 0, cursor = 0`;
+      yield* runMigrations();
       const rows = Array.from({ length: 205 }, (_, index) => ({
         event_id: `legacy:${index}`,
         aggregate_kind: "thread",
@@ -72,8 +75,56 @@ it.effect(
       }));
       yield* sql`INSERT INTO orchestration_events ${sql.insert(rows)}`;
       const before = yield* store.latestAgentSequence(threadId);
-      yield* initializeCurrentTurnItemHistory;
-      const replay = yield* store.readAgentEvents({ threadId }).pipe(Stream.runCollect);
+      const committed = yield* Deferred.make<void>();
+      // The gate runs after withTransaction has committed and released its connection.
+      const withTransaction: SqlClient.SqlClient["withTransaction"] = (effect) =>
+        sql.withTransaction(effect).pipe(
+          Effect.tap(() =>
+            Effect.gen(function* () {
+              const [state] = yield* sql<{ phase: number; cursor: number }>`
+            SELECT phase, cursor FROM signalbox_item_history_normalization WHERE id = 1
+          `;
+              if (state?.phase === 0 && state.cursor === 100) {
+                yield* Deferred.succeed(committed, undefined);
+                yield* Effect.never;
+              }
+            }),
+          ),
+        );
+      const interruptedSql = new Proxy(sql, {
+        get: (target, key, receiver) =>
+          key === "withTransaction" ? withTransaction : Reflect.get(target, key, receiver),
+      });
+      const normalizing = yield* initializeCurrentTurnItemHistory.pipe(
+        Effect.provideService(SqlClient.SqlClient, interruptedSql),
+        Effect.forkChild,
+      );
+      yield* Deferred.await(committed);
+      yield* Fiber.interrupt(normalizing);
+      assert.deepEqual(yield* sql`SELECT phase, cursor FROM signalbox_item_history_normalization`, [
+        { phase: 0, cursor: 100 },
+      ]);
+      assert.deepEqual(yield* sql`SELECT COUNT(*) AS count FROM orchestration_events`, [
+        { count: 205 },
+      ]);
+      assert.deepEqual(
+        yield* sql`SELECT first_sequence, sequence, ordinal FROM signalbox_current_turn_items ORDER BY first_sequence`,
+        [
+          { first_sequence: 1, sequence: 100, ordinal: 17 },
+          { first_sequence: 2, sequence: 2, ordinal: 18 },
+        ],
+      );
+      assert.deepEqual(
+        yield* sql`SELECT json_extract(payload_json, '$.prompt') AS prompt FROM orchestration_events WHERE sequence = 1`,
+        [{ prompt }],
+      );
+      assert.equal(yield* store.latestAgentSequence(threadId), before);
+
+      const replay = yield* Effect.gen(function* () {
+        yield* initializeCurrentTurnItemHistory;
+        const resumedStore = yield* OrchestrationEventStore.OrchestrationEventStore;
+        return yield* resumedStore.readAgentEvents({ threadId }).pipe(Stream.runCollect);
+      }).pipe(Effect.provide(Layer.fresh(OrchestrationEventStore.layer)));
       assert.lengthOf(replay, 2);
       assert.equal(yield* store.latestAgentSequence(threadId), before);
       assert.deepEqual(
@@ -86,6 +137,10 @@ it.effect(
           return;
         assert.equal(stored.event.payload.prompt, prompt);
         assert.equal(stored.event.payload.ordinal, stored.sequence === 2 ? 18 : 17);
+        assert.equal(
+          stored.event.payload.progress,
+          stored.sequence === 2 ? "starting" : "progress:204",
+        );
       }
       const [stats] = yield* sql<{ rows: number; bytes: number; refs: number }>`
       SELECT COUNT(*) AS rows, SUM(length(payload_json)) AS bytes,
