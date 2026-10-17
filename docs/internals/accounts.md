@@ -14,7 +14,7 @@ Any WorkOS account that signs in gets a session. There is no owner or allowlist:
 hosted Signalbox runs each user's work behind their account, and self-hosters
 leave WorkOS unconfigured and pair instead. The server keeps a profile per
 account, in a fork-owned, self-creating table (see
-[the upstream rules in AGENTS.md](../../AGENTS.md#staying-on-t3-code)), so clients can show who is
+[the upstream rules in AGENTS.md](../../AGENTS.md#upstream-t3-code)), so clients can show who is
 signed in.
 
 The sign-in screen is a client gate. Pairing, the desktop bootstrap and the

@@ -60,6 +60,13 @@ function upstreamCommitLink(sha: string): string {
   return `[\`${sha.slice(0, 12)}\`](https://github.com/${UPSTREAM_REPOSITORY}/commit/${sha})`;
 }
 
+/** How many commits `main` lacks from upstream, linked to their diff: what a sync brings. */
+function upstreamRange(upstreamSha: string): string {
+  const count = git(ROOT, ["rev-list", "--count", `${BASE}..${UPSTREAM}`]);
+  const mergeBase = git(ROOT, ["merge-base", BASE, UPSTREAM]);
+  return `[${count} new commits](https://github.com/${UPSTREAM_REPOSITORY}/compare/${mergeBase}...${upstreamSha})`;
+}
+
 function openConflictIssue(): string | undefined {
   const number = run("gh", [
     "issue",
@@ -82,7 +89,7 @@ function reportBlocked(summary: string, details: string, upstreamSha: string) {
     "",
     details,
     "",
-    `Merge it by hand on a branch off \`main\` following [the runbook](${RUNBOOK_URL}), open a PR, and merge it with a merge commit. The next sync closes this issue once \`main\` merges cleanly.`,
+    `Upstream has ${upstreamRange(upstreamSha)} since \`main\` last merged it. Weigh the conflicts against what those commits bring to code we still share ([merge or port](${RUNBOOK_URL}#merge-or-port)). Either merge it by hand on a branch off \`main\` following [the runbook](${RUNBOOK_URL}) and merge that PR with a merge commit, or port the commits worth having. The next sync closes this issue once \`main\` merges cleanly.`,
     "",
     `Last checked by ${runLink()}.`,
   ].join("\n");
@@ -154,9 +161,8 @@ async function generateRouteTree() {
 }
 
 function ensurePullRequest(upstreamSha: string) {
-  const count = git(ROOT, ["rev-list", "--count", `${BASE}..${UPSTREAM}`]);
   const body = [
-    `Merges ${UPSTREAM_REPOSITORY} main at ${upstreamCommitLink(upstreamSha)} (${count} new commits), then reruns the rebrand codemod, \`vp fmt\`, and the generated files.`,
+    `Merges ${UPSTREAM_REPOSITORY} main at ${upstreamCommitLink(upstreamSha)} (${upstreamRange(upstreamSha)}), then reruns the rebrand codemod, \`vp fmt\`, and the generated files.`,
     "",
     `Review before merging: upstream changes land in the product as-is. Merge with a merge commit. Never squash or rebase it: that drops upstream's history and turns every later sync into conflicts. Upstream may add identity values the codemod can't rename; see [the runbook](${RUNBOOK_URL}).`,
     "",
