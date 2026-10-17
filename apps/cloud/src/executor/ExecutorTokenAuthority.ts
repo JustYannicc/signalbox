@@ -86,20 +86,12 @@ export const authorizeExecutorToken = (claimsValue: unknown, binding: ExecutorTo
 
     switch (roleOf(claims)) {
       case "person": {
-        if (binding.purpose === "interactive-person") {
-          // Interactive person authority always needs a live Signalbox session.
-          const sessionId = binding.sessionId;
-          if (claims.automation !== undefined || sessionId === undefined) return false;
-          return (yield* UserStore.UserStore.use((store) => store.findSession(sessionId))) !== null;
+        const sessionId = binding.sessionId;
+        if (binding.purpose !== "interactive-person" || sessionId === undefined) {
+          return false;
         }
-        // LoginService.sweep is the only sessionless person path. Its source
-        // and exact grant are bound to this JTI above.
-        return (
-          binding.purpose === "background-person" &&
-          claims.automation !== undefined &&
-          claims.thread === undefined &&
-          claims.turn === undefined
-        );
+        // Person authority always needs a live Signalbox session.
+        return (yield* UserStore.UserStore.use((store) => store.findSession(sessionId))) !== null;
       }
       case "turn": {
         if (

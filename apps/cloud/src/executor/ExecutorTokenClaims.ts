@@ -58,15 +58,12 @@ export const roleOf = (
   const hasTurn = claims.turn !== undefined;
   if (hasThread !== hasTurn) throw new Error("A thread and turn must be supplied together.");
 
-  if (claims.person !== undefined) {
-    if (hasThread && claims.automation !== undefined) {
-      throw new Error("A turn token cannot also name an automation.");
-    }
-    return hasThread ? "turn" : "person";
+  if (claims.person !== undefined && claims.automation !== undefined) {
+    throw new Error("A token cannot name both a person and an automation.");
   }
-
   if (claims.automation !== undefined) return "automation";
   if (hasThread) return "turn";
+  if (claims.person !== undefined) return "person";
   throw new Error("Executor tokens need a person, turn, or automation authority.");
 };
 
@@ -74,9 +71,10 @@ export const executorTokenPurpose = (identity: ExecutorTokenIdentity): ExecutorT
   const role = roleOf(identity);
   if (role === "turn") return "turn";
   if (role === "automation") return "automation";
-  return identity.automation === undefined ? "interactive-person" : "background-person";
+  return "interactive-person";
 };
 
+// Keep decoding staged binding records so the current role contract can reject their claims.
 export const ExecutorTokenPurpose = Schema.Literals([
   "interactive-person",
   "background-person",

@@ -11,6 +11,7 @@ import {
   EXECUTOR_TOKEN_TTL_SECONDS,
   makeExecutorTokenService,
   type ExecutorTokenAuthority,
+  type ExecutorTokenIdentity,
 } from "./ExecutorTokens.ts";
 import type {
   ExecutorTokenBinding,
@@ -104,6 +105,57 @@ describe("Executor token issuer and live authorization", () => {
     await expect(service.issue({ ...identity, owner: "org acme" }, binding())).rejects.toThrow(
       "Invalid Executor token identity.",
     );
+  });
+
+  it("rejects mixed roles and incomplete identities before registering a token", async () => {
+    const pair = await generateKeyPair("ES256", { extractable: true });
+    const records = memoryBindings();
+    let writes = 0;
+    const bindings: ExecutorTokenBindingStore = {
+      bind: async (record) => {
+        writes++;
+        return records.bind(record);
+      },
+      get: records.get,
+      remove: records.remove,
+    };
+    const { service } = await serviceFor(pair.privateKey, bindings);
+    const invalidIdentities: ReadonlyArray<readonly [ExecutorTokenIdentity, string]> = [
+      [
+        { owner: "org_acme", level: "folder_1", person: "user_mia", automation: "sweep_1" },
+        "A token cannot name both a person and an automation.",
+      ],
+      [
+        {
+          owner: "org_acme",
+          level: "folder_1",
+          person: "user_mia",
+          thread: "thread_1",
+          turn: "run_1",
+          automation: "sweep_1",
+        },
+        "A token cannot name both a person and an automation.",
+      ],
+      [
+        { owner: "org_acme", level: "folder_1", thread: "thread_1" },
+        "A thread and turn must be supplied together.",
+      ],
+      [
+        { owner: "org_acme", level: "folder_1", turn: "run_1" },
+        "A thread and turn must be supplied together.",
+      ],
+      [
+        { owner: "org_acme", level: "folder_1" },
+        "Executor tokens need a person, turn, or automation authority.",
+      ],
+    ];
+
+    for (const [invalidIdentity, error] of invalidIdentities) {
+      await expect(
+        service.issue(invalidIdentity, binding({ purpose: "background-person" })),
+      ).rejects.toThrow(error);
+    }
+    expect(writes).toBe(0);
   });
 
   it("issues short-lived ES256 tokens and publishes only the public key", async () => {
@@ -293,35 +345,59 @@ describe("Executor token issuer and live authorization", () => {
     ).toEqual({ active: false });
   });
 
-  it("keeps unattended person sweeps as person authority and rechecks their standing grant", async () => {
+  it("rejects a persisted mixed-role token before reading its JTI binding or authority", async () => {
     const pair = await generateKeyPair("ES256", { extractable: true });
-    const bindings = memoryBindings();
+    const legacyIdentity = {
+      owner: "org_acme",
+      level: "folder_1",
+      person: "user_mia",
+      automation: "sweep_1",
+    };
+    const jti = "legacy-background-person";
+    const records = memoryBindings();
+    await records.bind({
+      ...binding({ purpose: "background-person" }),
+      jti,
+      identity: legacyIdentity,
+      issuedAt: NOW,
+      expiresAt: NOW + EXECUTOR_TOKEN_TTL_SECONDS,
+    });
+    let reads = 0;
+    const bindings: ExecutorTokenBindingStore = {
+      bind: records.bind,
+      get: async (currentJti) => {
+        reads++;
+        return records.get(currentJti);
+      },
+      remove: records.remove,
+    };
     const { service } = await serviceFor(pair.privateKey, bindings);
-    const token = await service.issue(
-      { owner: "org_acme", level: "folder_1", person: "user_mia", automation: "sweep_1" },
-      binding({ purpose: "background-person" }),
-    );
-    const claims = await claimsFrom(token, pair.publicKey);
-    let grantActive = true;
-    let personChecks = 0;
-    let automationChecks = 0;
+    let authorityChecks = 0;
     const authority: ExecutorTokenAuthority = {
-      person: async (current) => {
-        personChecks++;
-        return current.automation === "sweep_1" && grantActive;
+      person: async () => {
+        authorityChecks++;
+        return true;
       },
       turn: async () => false,
       automation: async () => {
-        automationChecks++;
+        authorityChecks++;
         return true;
       },
     };
 
-    expect(await service.authorize(claims, authority)).toEqual({ active: true });
-    grantActive = false;
-    expect(await service.authorize(claims, authority)).toEqual({ active: false });
-    expect(personChecks).toBe(2);
-    expect(automationChecks).toBe(0);
+    expect(
+      await service.authorize(
+        {
+          ...legacyIdentity,
+          iat: NOW,
+          exp: NOW + EXECUTOR_TOKEN_TTL_SECONDS,
+          jti,
+        },
+        authority,
+      ),
+    ).toEqual({ active: false });
+    expect(reads).toBe(0);
+    expect(authorityChecks).toBe(0);
   });
 
   it("checks automation runs independently of correlated thread liveness", async () => {

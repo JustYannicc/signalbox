@@ -320,6 +320,51 @@ describe("Executor token live authority", () => {
     }),
   );
 
+  it.effect("rejects a legacy mixed-role token before reading membership or source grants", () =>
+    Effect.gen(function* () {
+      const fixture = yield* authorityFixture();
+      const personToken = tokenFor(
+        { owner: OWNER, level: fixture.folderId, person: USER },
+        fixture,
+      );
+      const legacyIdentity = { ...personToken.binding.identity, automation: "sweep_legacy" };
+      const claims = { ...personToken.claims, automation: "sweep_legacy" };
+      const binding = {
+        ...personToken.binding,
+        identity: legacyIdentity,
+        purpose: "background-person" as const,
+      };
+      let membershipReads = 0;
+      let sourceGrantChecks = 0;
+      const people = DrivePeople.DrivePeople.of({
+        findByEmail: () => Effect.succeed(null),
+        organizationsOf: () => {
+          membershipReads++;
+          return Effect.succeed([OWNER]);
+        },
+      });
+      const grants = yield* SignInGrants.SignInGrants.pipe(
+        Effect.provide(fixture.cloud.userObject(USER)),
+      );
+      const observedGrants = SignInGrants.SignInGrants.of({
+        ...grants,
+        check: (input) => {
+          sourceGrantChecks++;
+          return grants.check(input);
+        },
+      });
+      const authorized = yield* authorizeExecutorToken(claims, binding).pipe(
+        Effect.provideService(DrivePeople.DrivePeople, people),
+        Effect.provideService(SignInGrants.SignInGrants, observedGrants),
+        Effect.provide(fixture.cloud.userObject(USER)),
+      );
+
+      expect(authorized).toBe(false);
+      expect(membershipReads).toBe(0);
+      expect(sourceGrantChecks).toBe(0);
+    }),
+  );
+
   it.effect("requires an unended interactive Signalbox session", () =>
     Effect.gen(function* () {
       const fixture = yield* authorityFixture();
@@ -466,6 +511,8 @@ export default workflow(async (w) => {
       const identity: ExecutorTokenIdentity = {
         owner: OWNER,
         level: automationFolder.folderId,
+        thread: threadId,
+        turn: "correlation_only",
         automation: started.run.runId,
       };
       const token = tokenFor(identity, {
