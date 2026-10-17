@@ -123,7 +123,19 @@ const OWNER_BY_TYPE: Record<string, string> = { claude: "anthropic", codex: "ope
 export const makeFakeCliProxyApi = () => {
   const accounts = new Map<string, FakeAccount>();
   const catalog = fakeCatalog();
-  const logins = new Map<string, { readonly type: string; done: boolean }>();
+  const logins = new Map<
+    string,
+    { readonly type: string; readonly userCode?: string; saving?: boolean; done: boolean }
+  >();
+  const finishLogin = (state: string) => {
+    const login = logins.get(state);
+    if (!login || login.done) return false;
+    login.done = true;
+    counter += 1;
+    const email = `${login.type}-${counter}@example.test`;
+    accounts.set(`${login.type}-${email}.json`, { type: login.type, email, disabled: false });
+    return true;
+  };
   const configPatches: Array<unknown> = [];
   /** The upstream URLs asked as each account (`requests/api-call`), by account name. */
   const accountRequests: Array<{ readonly name: string; readonly url: string }> = [];
@@ -140,6 +152,7 @@ export const makeFakeCliProxyApi = () => {
   const cooling = (account: FakeAccount) =>
     account.cooldownUntil !== undefined && Date.parse(account.cooldownUntil) > Date.now();
   let counter = 0;
+  let deviceExpiresIn = 900;
   let turn = 0;
   const json = (body: unknown, status = 200) => Response.json(body, { status });
   const modelError = (status: number, message: string) =>
@@ -252,8 +265,33 @@ export const makeFakeCliProxyApi = () => {
         if (provider !== "claude" && provider !== "codex") return json({}, 404);
         counter += 1;
         const state = `state-${counter}`;
+        if (provider === "codex" && url.searchParams.get("flow") === "device") {
+          const userCode = `TEST-${counter}`;
+          logins.set(state, { type: provider, userCode, done: false });
+          return json({
+            url: "https://auth.openai.com/codex/device",
+            state,
+            user_code: userCode,
+            expires_in: deviceExpiresIn,
+          });
+        }
         logins.set(state, { type: provider, done: false });
-        return json({ url: `https://login.example.test/?state=${state}`, state });
+        const manual = provider === "claude" && url.searchParams.get("flow") === "manual";
+        // Each provider's browser flow ends on its CLIProxyAPI listener; Claude manual mode
+        // returns a code directly instead of pretending the hosted callback reached this server.
+        const redirect = manual
+          ? "https://platform.claude.com/oauth/code/callback"
+          : provider === "claude"
+            ? "http://localhost:54545/callback"
+            : "http://localhost:1455/auth/callback";
+        const login = new URL("https://login.example.test/");
+        login.searchParams.set("redirect_uri", redirect);
+        login.searchParams.set("state", state);
+        return json({
+          url: login.toString(),
+          state,
+          ...(manual ? { flow: "manual" } : {}),
+        });
       }
       case "GET oauth/status": {
         const login = logins.get(url.searchParams.get("state") ?? "");
@@ -261,19 +299,28 @@ export const makeFakeCliProxyApi = () => {
         return json({ status: login.done ? "ok" : "wait" });
       }
       case "POST oauth/callback": {
-        const body = (await request.json()) as { readonly redirect_url: string };
-        const state = new URL(body.redirect_url).searchParams.get("state") ?? "";
+        const body = (await request.json()) as {
+          readonly redirect_url?: string;
+          readonly state?: string;
+          readonly code?: string;
+        };
+        const state = body.redirect_url
+          ? (new URL(body.redirect_url).searchParams.get("state") ?? "")
+          : (body.state ?? "");
         const login = logins.get(state);
         if (!login) return json({ status: "error" }, 404);
-        login.done = true;
-        counter += 1;
-        const email = `${login.type}-${counter}@example.test`;
-        accounts.set(`${login.type}-${email}.json`, { type: login.type, email, disabled: false });
+        if (login.userCode !== undefined || (!body.redirect_url && !body.code)) {
+          return json({ status: "error" }, 400);
+        }
+        finishLogin(state);
         return json({ status: "ok" });
       }
-      case "DELETE oauth/session":
-        logins.delete(url.searchParams.get("state") ?? "");
-        return json({ status: "ok" });
+      case "DELETE oauth/session": {
+        const state = url.searchParams.get("state") ?? "";
+        const login = logins.get(state);
+        if (login?.saving) return json({ cancelled: false });
+        return json({ cancelled: logins.delete(state) });
+      }
       case "GET credentials":
         return json({
           files: [...accounts].map(([name, account]) => ({
@@ -360,6 +407,19 @@ export const makeFakeCliProxyApi = () => {
     accountRequests,
     cooldownResets,
     modelDefinitionRequests,
+    authorizeDevice: (userCode: string) => {
+      const found = [...logins].find(([, login]) => login.userCode === userCode);
+      return found !== undefined && finishLogin(found[0]);
+    },
+    beginLoginSave: (userCode: string) => {
+      const found = [...logins.values()].find((login) => login.userCode === userCode);
+      if (!found || found.done) return false;
+      found.saving = true;
+      return true;
+    },
+    setDeviceExpiresIn: (seconds: number) => {
+      deviceExpiresIn = seconds;
+    },
   };
 };
 

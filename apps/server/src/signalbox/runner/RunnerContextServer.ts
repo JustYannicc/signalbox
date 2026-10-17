@@ -34,6 +34,7 @@ import {
   layerBrowserTools,
 } from "./RunnerBrowserTools.ts";
 import { type ContextClient, ContextClientError } from "./RunnerContextClient.ts";
+import type { ContextView } from "@signalbox/runner-protocol/ContextProtocol";
 import {
   CONTEXT_INSTRUCTIONS,
   CONTEXT_SERVER_NAME,
@@ -96,6 +97,8 @@ export interface ContextServer {
   readonly mcpServers: RunnerMcpServers;
   /** Takes this turn's view of the drives; a failure keeps the last one. */
   readonly pin: (client: ContextClient) => Effect.Effect<void>;
+  /** The exact context view pinned for the last turn, when it could be read. */
+  readonly currentView: () => ContextView | null;
   /** The thread's drive, once a turn opens it: what publishing saves first. */
   readonly attachDrive: (drive: BranchDrive) => Effect.Effect<void>;
   /** The `preview_*` tools' browser as people watch it, for the preview tunnel. */
@@ -251,6 +254,7 @@ export const startContextServer = Effect.fn("startContextServer")(function* (inp
           }),
         ),
       ),
+    currentView: view.current,
     attachDrive: (next) =>
       Effect.sync(() => {
         drive = next;
