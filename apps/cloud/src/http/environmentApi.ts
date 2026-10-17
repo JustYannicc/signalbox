@@ -13,6 +13,8 @@ import {
   EnvironmentRequestInvalidError,
   EnvironmentResourceNotFoundError,
   EnvironmentScopeRequiredError,
+  PullRequestOperationError,
+  PullRequestUnavailableError,
   type EnvironmentSessionPrincipalShape,
   type OrchestrationV2ThreadTranscript,
   PROVIDER_SEND_TURN_MAX_FILE_BYTES,
@@ -31,8 +33,8 @@ import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
 import * as CloudSessions from "../auth/CloudSessions.ts";
 import * as CloudConfig from "../CloudConfig.ts";
 import * as Environment from "../environment.ts";
-import * as CloudThreadService from "../thread/CloudThreadService.ts";
-import type { ThreadObjectError } from "../thread/ThreadDirectory.ts";
+import * as Threads from "../thread/Threads.ts";
+import type { ThreadObjectError } from "../thread/ThreadAccess.ts";
 import * as UserDirectory from "../user/UserDirectory.ts";
 import { NO_STORE_HEADERS, requestCredentials, sessionCookie, traceId } from "./credentials.ts";
 
@@ -45,6 +47,7 @@ import { NO_STORE_HEADERS, requestCredentials, sessionCookie, traceId } from "./
 const CloudHttpApi = HttpApi.make("cloud")
   .add(EnvironmentHttpApi.groups.metadata)
   .add(EnvironmentHttpApi.groups.auth)
+  .add(EnvironmentHttpApi.groups.pullRequests)
   .add(EnvironmentHttpApi.groups.orchestration);
 
 const appendNoStore = HttpEffect.appendPreResponseHandler((_request, response) =>
@@ -254,7 +257,7 @@ const layerOrchestration = HttpApiBuilder.group(
   "orchestration",
   Effect.fnUntraced(function* (handlers) {
     const users = yield* UserDirectory.UserDirectory;
-    const threads = yield* CloudThreadService.CloudThreadService;
+    const threads = yield* Threads.Threads;
     const threadNotFound = Effect.flatMap(traceId, (id) =>
       Effect.fail(
         new EnvironmentResourceNotFoundError({
@@ -278,7 +281,7 @@ const layerOrchestration = HttpApiBuilder.group(
     });
     const snapshotOf = (threadId: ThreadId) =>
       actorOf.pipe(
-        Effect.flatMap((actor) => threads.threadSnapshot(actor, threadId)),
+        Effect.flatMap((actor) => threads.snapshot(actor, threadId)),
         Effect.catchTags(threadFailure),
       );
     return handlers
@@ -317,15 +320,49 @@ const layerOrchestration = HttpApiBuilder.group(
       .handle("threadBoundedSnapshot", ({ params }) => snapshotOf(params.threadId))
       .handle("threadHistoryPage", ({ params }) =>
         actorOf.pipe(
-          Effect.flatMap((actor) => threads.threadHistoryPage(actor, params.threadId)),
+          Effect.flatMap((actor) => threads.history(actor, params.threadId)),
           Effect.catchTags(threadFailure),
         ),
       );
   }),
 );
 
+const layerPullRequests = HttpApiBuilder.group(
+  CloudHttpApi,
+  "pullRequests",
+  Effect.fnUntraced(function* (handlers) {
+    const users = yield* UserDirectory.UserDirectory;
+    return handlers.handle("diff", ({ payload }) =>
+      Effect.gen(function* () {
+        const principal = yield* requireScope(AuthOrchestrationReadScope);
+        const reply = yield* users
+          .forUser(userIdOf(principal))
+          .pullRequestDiff(payload)
+          .pipe(
+            Effect.catchTags({ UserObjectError: (error) => internal("internal_error", error) }),
+          );
+        switch (reply._tag) {
+          case "success":
+            return reply.value;
+          case "unavailable":
+            return yield* new PullRequestUnavailableError({
+              reason: reply.reason,
+              ...(reply.provider === undefined ? {} : { provider: reply.provider }),
+            });
+          case "operation-error":
+            return yield* new PullRequestOperationError({
+              operation: reply.operation,
+              detail: reply.detail,
+              ...(reply.reason === undefined ? {} : { reason: reply.reason }),
+            });
+        }
+      }),
+    );
+  }),
+);
+
 /** Every environment API group; needs the cloud services and an auth middleware. */
 export const layer = HttpApiBuilder.layer(CloudHttpApi).pipe(
-  Layer.provide([layerMetadata, layerAuth, layerOrchestration]),
+  Layer.provide([layerMetadata, layerAuth, layerOrchestration, layerPullRequests]),
   Layer.provide(layerAuthenticatedAuth),
 );
