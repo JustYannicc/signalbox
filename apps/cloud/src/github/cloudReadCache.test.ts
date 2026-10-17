@@ -15,6 +15,59 @@ const keyOf = (input: { readonly token: string; readonly repository: string }) =
 });
 const input = { token: "fixture-token", repository: "acme/web" };
 
+it.effect("shares an oversized result with waiting callers without retaining it", () =>
+  Effect.gen(function* () {
+    const cache = makeReadCache();
+    const started = yield* Deferred.make<void>();
+    const release = yield* Deferred.make<void>();
+    const payload = "x".repeat(4_300_000);
+    let calls = 0;
+    const read = cache.memoize(
+      (_input: typeof input) =>
+        Effect.gen(function* () {
+          calls += 1;
+          yield* Deferred.succeed(started, undefined);
+          yield* Deferred.await(release);
+          return payload;
+        }),
+      keyOf,
+    );
+    const first = yield* read(input).pipe(Effect.forkChild);
+    yield* Deferred.await(started);
+    const second = yield* read(input).pipe(Effect.forkChild);
+    yield* Effect.yieldNow;
+    yield* Deferred.succeed(release, undefined);
+    expect(yield* Fiber.join(first)).toBe(payload);
+    expect(yield* Fiber.join(second)).toBe(payload);
+    expect(calls).toBe(1);
+    expect(yield* read(input)).toBe(payload);
+    expect(calls).toBe(2);
+  }),
+);
+
+it.effect("evicts retained results using one budget across different readers", () =>
+  Effect.gen(function* () {
+    const cache = makeReadCache();
+    const payload = "x".repeat(1_500_000);
+    let firstCalls = 0;
+    let otherCalls = 0;
+    const first = cache.memoize(
+      (_input: typeof input) => Effect.sync(() => ({ payload, call: ++firstCalls })),
+      keyOf,
+    );
+    const other = cache.memoize(
+      (_input: typeof input) => Effect.sync(() => ({ payload, call: ++otherCalls })),
+      keyOf,
+    );
+    expect((yield* first(input)).call).toBe(1);
+    expect((yield* other(input)).call).toBe(1);
+    expect((yield* other({ ...input, repository: "acme/other" })).call).toBe(2);
+    expect((yield* other(input)).call).toBe(1);
+    expect((yield* first(input)).call).toBe(2);
+    expect(otherCalls).toBe(2);
+  }),
+);
+
 it.effect("shares concurrent host reads and refreshes only the requested repository", () =>
   Effect.gen(function* () {
     const cache = makeReadCache();

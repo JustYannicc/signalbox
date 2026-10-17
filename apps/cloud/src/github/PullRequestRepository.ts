@@ -110,18 +110,16 @@ const make = Effect.gen(function* () {
       const cached = (yield* Ref.get(viewers)).get(token);
       if (cached !== undefined) return cached;
 
-      const viewer = yield* github.api
-        .viewer(token)
-        .pipe(
-          Effect.mapError(
-            (cause) =>
-              new PullRequestOperationError({
-                operation: "routeIdentity",
-                detail: "Could not verify the GitHub account.",
-                cause,
-              }),
-          ),
-        );
+      const viewer = yield* github.api.viewer(token).pipe(
+        Effect.mapError(
+          (cause) =>
+            new PullRequestOperationError({
+              operation: "routeIdentity",
+              detail: "Could not verify the GitHub account.",
+              cause,
+            }),
+        ),
+      );
       if (viewer === null)
         return yield* new PullRequestOperationError({
           operation: "routeIdentity",
@@ -188,18 +186,16 @@ const make = Effect.gen(function* () {
           detail: "Could not read the project's repository.",
         });
 
-      const role = yield* drives
-        .access(driveId)
-        .pipe(
-          Effect.mapError(
-            (cause) =>
-              new PullRequestOperationError({
-                operation: "routeIdentity",
-                detail: "Could not verify project access.",
-                cause,
-              }),
-          ),
-        );
+      const role = yield* drives.access(driveId).pipe(
+        Effect.mapError(
+          (cause) =>
+            new PullRequestOperationError({
+              operation: "routeIdentity",
+              detail: "Could not verify project access.",
+              cause,
+            }),
+        ),
+      );
       if (role === null)
         return yield* new PullRequestOperationError({
           operation: "routeIdentity",
