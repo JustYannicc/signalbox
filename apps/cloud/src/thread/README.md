@@ -14,7 +14,3 @@ still commit together before publication.
 and owns the browser/preview entry points. `ThreadDirectory.ts` bridges the
 thread transport. The engine, store, runner and Durable Object implement the
 canonical thread model behind these entry points.
-
-Catalog owns discovery, current access and destination shell/status projections.
-Threads owns canonical history and the source outbox. Each projection consumer
-acknowledges its own durable receipt; search delivery has an independent cursor.

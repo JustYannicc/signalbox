@@ -30,17 +30,19 @@ import * as ThreadDirectory from "./ThreadDirectory.ts";
 import type { BrowserReply } from "./threadWire.ts";
 import * as Threads from "./Threads.ts";
 import { resuming } from "./core/resuming.ts";
-import { type Actor, ThreadCommandRejectedError, ThreadNotFoundError } from "./ThreadAccess.ts";
+import type {
+  Actor,
+  ThreadCommandRejectedError,
+  ThreadNotFoundError,
+  ThreadObjectError,
+} from "./ThreadAccess.ts";
 
 /**
  * Compatibility entry for core thread calls alongside browser and preview capabilities.
  * Core callers use Threads; the auxiliary capabilities keep their existing signatures.
  */
 
-export type CloudThreadError =
-  | ThreadNotFoundError
-  | ThreadCommandRejectedError
-  | ThreadDirectory.ThreadObjectError;
+export type CloudThreadError = ThreadNotFoundError | ThreadCommandRejectedError | ThreadObjectError;
 
 type Batch = ReadonlyArray<OrchestrationV2ThreadStreamItem>;
 
@@ -65,16 +67,13 @@ export class CloudThreadService extends Context.Service<
       threadId: ThreadId,
     ) => Effect.Effect<
       OrchestrationV2ThreadBoundedSnapshot,
-      ThreadNotFoundError | ThreadDirectory.ThreadObjectError
+      ThreadNotFoundError | ThreadObjectError
     >;
     /** Older history before a bounded window: none, since the window is the whole thread. */
     readonly threadHistoryPage: (
       actor: Actor,
       threadId: ThreadId,
-    ) => Effect.Effect<
-      OrchestrationV2ThreadHistoryPage,
-      ThreadNotFoundError | ThreadDirectory.ThreadObjectError
-    >;
+    ) => Effect.Effect<OrchestrationV2ThreadHistoryPage, ThreadNotFoundError | ThreadObjectError>;
     /**
      * `subscribeThread` that survives its thread object: when the object is
      * evicted or redeployed mid-stream, the subscription resumes from the last
@@ -91,10 +90,7 @@ export class CloudThreadService extends Context.Service<
     readonly previews: (
       actor: Actor,
       threadId: ThreadId,
-    ) => Stream.Stream<
-      ThreadDirectory.ThreadPreviews,
-      ThreadNotFoundError | ThreadDirectory.ThreadObjectError
-    >;
+    ) => Stream.Stream<ThreadDirectory.ThreadPreviews, ThreadNotFoundError | ThreadObjectError>;
     /**
      * The thread's browser tabs (#585): the record, then every change, with
      * `you` naming the subscriber in the snapshot. Survives its thread object
@@ -104,10 +100,7 @@ export class CloudThreadService extends Context.Service<
       actor: Actor,
       threadId: ThreadId,
       you: BrowsingMember,
-    ) => Stream.Stream<
-      ReadonlyArray<BrowsingStreamItem>,
-      ThreadNotFoundError | ThreadDirectory.ThreadObjectError
-    >;
+    ) => Stream.Stream<ReadonlyArray<BrowsingStreamItem>, ThreadNotFoundError | ThreadObjectError>;
     /** Applies a browsing command as `by`; the record's sequence after it. */
     readonly browse: (
       actor: Actor,
@@ -121,7 +114,7 @@ export class CloudThreadService extends Context.Service<
       threadId: ThreadId,
     ) => Effect.Effect<
       { readonly sequence: number; readonly record: BrowsingRecord },
-      ThreadNotFoundError | ThreadDirectory.ThreadObjectError
+      ThreadNotFoundError | ThreadObjectError
     >;
     /** Whether `actor` can see `threadId` right now. */
     readonly canSee: (actor: Actor, threadId: ThreadId) => Effect.Effect<boolean>;
@@ -131,7 +124,7 @@ export class CloudThreadService extends Context.Service<
       threadId: ThreadId,
       port: number,
       handoff?: boolean,
-    ) => Effect.Effect<PreviewLinkResult, ThreadDirectory.ThreadObjectError>;
+    ) => Effect.Effect<PreviewLinkResult, ThreadObjectError>;
     /**
      * The agent's browser, mirrored, while the stream is read (see
      * `preview/BrowserMirror.ts`). Survives its thread object, starting over
@@ -144,9 +137,7 @@ export class CloudThreadService extends Context.Service<
       tabId: string | null,
     ) => Stream.Stream<
       AgentBrowserUpdate,
-      | ThreadNotFoundError
-      | ThreadDirectory.ThreadObjectError
-      | ThreadDirectory.BrowserWatchBehindError
+      ThreadNotFoundError | ThreadObjectError | ThreadDirectory.BrowserWatchBehindError
     >;
     /** Input from `actor`'s watch stream `viewerId`: take over, drive, hand back. */
     readonly browserInput: (
@@ -154,21 +145,18 @@ export class CloudThreadService extends Context.Service<
       threadId: ThreadId,
       viewerId: string,
       input: AgentBrowserInput,
-    ) => Effect.Effect<BrowserReply<null>, ThreadDirectory.ThreadObjectError>;
+    ) => Effect.Effect<BrowserReply<null>, ThreadObjectError>;
     /** The thread's browser trail, oldest first (see `preview/BrowserTrail.ts`). */
     readonly browserTrail: (
       actor: Actor,
       threadId: ThreadId,
-    ) => Effect.Effect<
-      BrowserReply<ReadonlyArray<AgentBrowserStep>>,
-      ThreadDirectory.ThreadObjectError
-    >;
+    ) => Effect.Effect<BrowserReply<ReadonlyArray<AgentBrowserStep>>, ThreadObjectError>;
     /** One trail step's rrweb recording, a JSON array. */
     readonly browserStep: (
       actor: Actor,
       threadId: ThreadId,
       stepId: string,
-    ) => Effect.Effect<BrowserReply<string>, ThreadDirectory.ThreadObjectError>;
+    ) => Effect.Effect<BrowserReply<string>, ThreadObjectError>;
     /**
      * A turn's diagnostic record (JSON), by its run or trace id, or the
      * thread's recent turns for null: what happened on its machines, the
@@ -179,7 +167,7 @@ export class CloudThreadService extends Context.Service<
       actor: Actor,
       threadId: ThreadId,
       key: string | null,
-    ) => Effect.Effect<string | null, ThreadDirectory.ThreadObjectError>;
+    ) => Effect.Effect<string | null, ThreadObjectError>;
   }
 >()("@signalbox/cloud/thread/CloudThreadService") {}
 

@@ -40,6 +40,7 @@ export const resuming = <A, E>(input: {
             }),
           ),
         ),
+        // catchTags cannot narrow the open E error channel without widening callers' errors.
         Stream.catchIf(
           (error): error is ThreadObjectError => isThreadObjectError(error),
           (error) =>
