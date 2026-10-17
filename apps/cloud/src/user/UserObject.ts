@@ -60,7 +60,8 @@ import * as SearchBackfillLive from "../search/SearchBackfillLive.ts";
 import * as CloudflareSearchIndex from "../search/CloudflareSearchIndex.ts";
 import * as CloudThreadService from "../thread/CloudThreadService.ts";
 import * as ThreadsLive from "../thread/ThreadsLive.ts";
-import * as ModelManifest from "../thread/ModelManifest.ts";
+import * as ModelManifest from "../models/ModelManifest.ts";
+import * as ModelCatalog from "../models/ModelCatalog.ts";
 import { scriptedProviderEnabled } from "../thread/scriptedProvider.ts";
 import type { MachineBackendEnv } from "../thread/runner/MachineBackend.ts";
 import { type PreviewEnv, previewSettings } from "../thread/preview/previewHost.ts";
@@ -93,6 +94,7 @@ import * as UserStore from "./UserStore.ts";
 import * as UserThreadKinds from "./UserThreadKinds.ts";
 import * as UserThreadStatus from "./UserThreadStatus.ts";
 import * as UserModelSettings from "./UserModelSettings.ts";
+import * as UserKeybindings from "./UserKeybindings.ts";
 import * as UserAnalyticsPreference from "./UserAnalyticsPreference.ts";
 import * as ChatArchive from "./chatArchive.ts";
 import { makeProfileId } from "./profileId.ts";
@@ -334,7 +336,7 @@ const makeRuntime = (ctx: DurableObjectState, env: UserObjectEnv) => {
               ),
             ),
           ),
-          Layer.provideMerge(ModelManifest.layer),
+          Layer.provideMerge(ModelCatalog.layer.pipe(Layer.provideMerge(ModelManifest.layer))),
           Layer.provideMerge(
             GitHub.layerForUsers(GitHub.gitHubEndpoints(env)).pipe(
               Layer.provide(FetchHttpClient.layer),
@@ -346,6 +348,7 @@ const makeRuntime = (ctx: DurableObjectState, env: UserObjectEnv) => {
             Layer.mergeAll(
               UserStore.layer,
               UserModelSettings.layer,
+              UserKeybindings.layer,
               UserAnalyticsPreference.layer,
               UserContexts.layerWithDrives,
               ResourceBindings.layer,

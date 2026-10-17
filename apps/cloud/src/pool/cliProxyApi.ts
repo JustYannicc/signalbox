@@ -382,29 +382,6 @@ const definitionsFor = (endpoint: PoolEndpoint, channel: PoolModelDiscovery.Mode
     Effect.map(Option.getOrNull),
   );
 
-const linkedDefinitions = (
-  models: ReadonlyArray<ServedModel>,
-): ReadonlyArray<PoolModelDiscovery.ModelDefinitions> => {
-  const groups = new Map<
-    PoolModelDiscovery.ModelChannel,
-    Array<PoolModelDiscovery.ModelDefinitions["models"][number]>
-  >();
-  for (const model of models) {
-    const channel = model.provider;
-    if (channel !== "claude" && channel !== "codex") continue;
-    const group = groups.get(channel) ?? [];
-    group.push({
-      id: model.id,
-      ...(model.displayName === undefined ? {} : { display_name: model.displayName }),
-      ...(model.reasoningEfforts === undefined
-        ? {}
-        : { thinking: { levels: model.reasoningEfforts } }),
-    });
-    groups.set(channel, group);
-  }
-  return [...groups].map(([channel, definitions]) => ({ channel, models: definitions }));
-};
-
 /**
  * The models the CLIProxyAPI serves now (`GET /v1/models`). Asked without
  * `Anthropic-Version` or a `claude-cli` agent, which would get the
@@ -412,11 +389,14 @@ const linkedDefinitions = (
  */
 export const listModels = (endpoint: PoolEndpoint) =>
   Effect.gen(function* () {
-    const served = yield* servedModels(endpoint);
     if (endpoint.link) {
+      // The linked pool owns discovery. Its cached catalog survives slow or limited accounts.
       const cached = yield* listPoolLinkModels(endpoint);
-      return PoolModelDiscovery.withMetadata(served, linkedDefinitions(cached ?? []));
+      if (cached !== null && cached.length > 0) return cached;
+      const served = yield* servedModels(endpoint);
+      return PoolModelDiscovery.withMetadata(served, []);
     }
+    const served = yield* servedModels(endpoint);
 
     const channels = new Set(
       served.flatMap((model) => {

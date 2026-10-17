@@ -19,11 +19,8 @@ import { DEFAULT_SERVER_SETTINGS } from "@t3tools/contracts/settings";
 import { DEFAULT_RESOLVED_KEYBINDINGS } from "@t3tools/shared/keybindings";
 
 import webPackage from "../../web/package.json" with { type: "json" };
-import {
-  CLOUD_POOL_KINDS,
-  cloudProviderInstances,
-  cloudProviders,
-} from "./thread/providerCatalog.ts";
+import { cloudProviderInstances, cloudProviders } from "./models/ModelCatalog.ts";
+import { CLOUD_POOL_KINDS } from "./models/ModelRouting.ts";
 import { scriptedModelSelection } from "./thread/scriptedProvider.ts";
 
 /**
@@ -137,6 +134,7 @@ export const descriptor = (identity: CloudEnvironmentIdentity): ExecutionEnviron
     worktrees: false,
     serverSettingsWrite: false,
     modelSettingsWrite: true,
+    keybindingsWrite: true,
     analyticsSettings: true,
     devices: false,
     scheduledTasks: false,

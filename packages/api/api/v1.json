@@ -849,7 +849,7 @@
       "access": "read",
       "stream": "snapshot",
       "input": "03c2b661",
-      "output": "c053554a"
+      "output": "5f63282c"
     },
     {
       "name": "preview.adjust",
@@ -1543,7 +1543,7 @@
       "rpc": "server.getConfig",
       "access": "read",
       "input": "03c2b661",
-      "output": "f67764ec"
+      "output": "cb6542ac"
     },
     {
       "name": "server.refreshProviders",
@@ -1580,7 +1580,7 @@
       "access": "read",
       "stream": "snapshot",
       "input": "240ec835",
-      "output": "df22ace3"
+      "output": "5f18d173"
     },
     {
       "name": "settings.get",

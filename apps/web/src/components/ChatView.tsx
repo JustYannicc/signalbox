@@ -53,6 +53,7 @@ import { configuredProjectModelSelection } from "../lib/composerModelPolicy"; //
 import * as Schema from "effect/Schema";
 import {
   AuthOrchestrationOperateScope,
+  AuthOrchestrationReadScope,
   AuthSourceControlWriteScope,
   AuthPreviewOperateScope,
   AuthTerminalReadScope,
@@ -241,6 +242,7 @@ import {
 } from "../previewStateStore";
 import { BrowserSettingsReadError, openUrlInPreview } from "../browser/openFileInPreview";
 import { resolveDiscoveredServerUrl } from "../browser/browserTargetResolver";
+import { browserLauncher } from "../browser/browserLauncher";
 import { previewRuntimeTabId } from "../browser/previewRuntimeTabId";
 import { addBrowserSurface } from "./preview/addBrowserSurface";
 import { ThreadPreviewMiniPlayer } from "./preview/ThreadPreviewMiniPlayer";
@@ -371,6 +373,7 @@ import { selectThreadTerminalUiState, useTerminalUiStateStore } from "../termina
 import { useKnownTerminalSessions, useThreadRunningTerminalIds } from "../state/terminalSessions";
 import { useEnvironmentQuery } from "../state/query";
 import { useEnvironmentScope } from "~/state/session";
+import { useEnvironmentSupportsSignalboxPreviews } from "~/state/signalboxPreviews";
 import {
   readEnvironmentSupports,
   useEnvironmentSupports,
@@ -550,6 +553,7 @@ import { useAtomCommand } from "../state/use-atom-command";
 import { useOrchestrationCommand } from "../state/use-orchestration-command";
 import { useAtomQueryRunner } from "../state/use-atom-query-runner";
 import { Button, InlineButton } from "./ui/button";
+import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from "./ui/empty";
 import {
   AlertDialog,
   AlertDialogClose,
@@ -1703,7 +1707,9 @@ export default function ChatView(props: ChatViewProps) {
   const activeEnvironmentServerBrowser = useEnvironmentSupportsServerBrowser(
     activeThreadRef?.environmentId ?? null,
   );
-  const browserAvailable = isPreviewSupportedInRuntime() || activeEnvironmentServerBrowser;
+  const activeEnvironmentAgentBrowser = useEnvironmentSupportsSignalboxPreviews(
+    activeThreadRef?.environmentId ?? null,
+  );
   const threadBrowser = useThreadBrowserAvailability(
     activeThreadRef,
     activeEnvironmentServerBrowser,
@@ -1802,7 +1808,9 @@ export default function ChatView(props: ChatViewProps) {
     [rightPanelState.surfaces],
   );
   const canReuseTerminal = activeThreadKnownSessionsRaw !== null;
-  const previewPanelOpen = activeRightPanelKind === "preview" && threadBrowser.viewable;
+  const previewPanelOpen =
+    (activeRightPanelKind === "preview" && threadBrowser.viewable) ||
+    (activeRightPanelKind === "agent-browser" && activeEnvironmentAgentBrowser);
   const rightPanelOpen = rightPanelState.isOpen;
   const { active: panelAnimationsActive, durationMs: panelAnimationDurationMs } =
     usePanelAnimationSettings();
@@ -2678,6 +2686,7 @@ export default function ChatView(props: ChatViewProps) {
   const activeThreadModelInstanceId = activeThread?.modelSelection.instanceId;
   const { selectedProviderEntry, requestedDriverKind } = resolveComposerProviderSelection({
     entries: providerInstanceEntries,
+    providerInstances: settings.providerInstances,
     candidateInstanceIds: [
       selectedProviderByThreadId,
       activeRuntime?.providerInstanceId,
@@ -3912,11 +3921,24 @@ export default function ChatView(props: ChatViewProps) {
     activeThreadRef?.environmentId ?? null,
     AuthPreviewOperateScope,
   );
+  const canReadAgentBrowser = useEnvironmentScope(
+    activeThreadRef?.environmentId ?? null,
+    AuthOrchestrationReadScope,
+  );
+  const launcher = browserLauncher({
+    desktop: isPreviewSupportedInRuntime(),
+    serverBrowser: activeEnvironmentServerBrowser,
+    agentBrowser: activeEnvironmentAgentBrowser,
+    canOperatePreview,
+    canReadAgentBrowser,
+  });
+  const canLaunchBrowser = launcher.permitted;
   const createBrowserSurface = (profileId?: string) => {
-    if (!activeThreadRef || !canOperatePreview) return;
+    if (!activeThreadRef || !canLaunchBrowser) return;
     void addBrowserSurface({
       threadRef: activeThreadRef,
       openPreview,
+      target: launcher.target,
       ...(profileId === undefined ? {} : { profileId }),
     }).then((result) => {
       if (result._tag !== "Failure" || isAtomCommandInterrupted(result)) return;
@@ -4052,12 +4074,16 @@ export default function ChatView(props: ChatViewProps) {
   };
   const closePreviewPanelStable = useStableCallback(closePreviewPanel);
   const togglePreviewPanel = () => {
-    if (!activeThreadRef || !threadBrowser.viewable) return;
+    if (!activeThreadRef || (!threadBrowser.viewable && !activeEnvironmentAgentBrowser)) return;
     if (previewPanelOpen) {
       closePreviewPanel();
       return;
     }
-    if (!canOperatePreview) return;
+    if (!canLaunchBrowser) return;
+    if (launcher.target === "agent-browser") {
+      createBrowserSurface();
+      return;
+    }
     const activeTabId = activePreviewState.activeTabId;
     if (activeTabId) {
       useRightPanelStore.getState().openBrowser(activeThreadRef, activeTabId);
@@ -8181,13 +8207,24 @@ export default function ChatView(props: ChatViewProps) {
       <ThreadPullRequestsPanel threadRef={activeThreadRef} />
     ) : renderedRightPanelSurface?.kind === "agent-browser" ? (
       // signalbox: agent browser
-      <Suspense fallback={null}>
-        <AgentBrowserPanel
-          environmentId={activeThreadRef.environmentId}
-          threadId={activeThreadRef.threadId}
-          visible={rightPanelOpen}
-        />
-      </Suspense>
+      isServerThread ? (
+        <Suspense fallback={null}>
+          <AgentBrowserPanel
+            environmentId={activeThreadRef.environmentId}
+            threadId={activeThreadRef.threadId}
+            visible={rightPanelOpen}
+          />
+        </Suspense>
+      ) : (
+        <Empty>
+          <EmptyHeader>
+            <EmptyTitle>Agent's browser</EmptyTitle>
+            <EmptyDescription>
+              Send a message to start this thread. Pages the agent opens will appear here.
+            </EmptyDescription>
+          </EmptyHeader>
+        </Empty>
+      )
     ) : renderedRightPanelSurface?.kind === "device" ? (
       <Suspense fallback={null}>
         <DevicePanel
@@ -9110,7 +9147,8 @@ export default function ChatView(props: ChatViewProps) {
           onAddPullRequest={addPullRequestSurfaceStable}
           onAddPullRequests={addPullRequestsSurfaceStable}
           onAddDevice={addDeviceSurfaceStable}
-          browserAvailable={canOperatePreview && browserAvailable}
+          browserAvailable={canLaunchBrowser && launcher.available}
+          browserProfilesAvailable={launcher.profilesAvailable}
           terminalAvailable={activeProject !== null && canOperateTerminal}
           terminalSupported={terminalSupported}
           devicesSupported={devicesSupported}
@@ -9167,7 +9205,8 @@ export default function ChatView(props: ChatViewProps) {
             onAddPullRequest={addPullRequestSurfaceStable}
             onAddPullRequests={addPullRequestsSurfaceStable}
             onAddDevice={addDeviceSurfaceStable}
-            browserAvailable={canOperatePreview && browserAvailable}
+            browserAvailable={canLaunchBrowser && launcher.available}
+            browserProfilesAvailable={launcher.profilesAvailable}
             terminalAvailable={activeProject !== null && canOperateTerminal}
             terminalSupported={terminalSupported}
             devicesSupported={devicesSupported}
