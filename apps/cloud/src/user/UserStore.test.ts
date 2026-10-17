@@ -4,6 +4,7 @@ import * as Effect from "effect/Effect";
 import * as TestClock from "effect/testing/TestClock";
 
 import { layerMemoryStore } from "../testing.ts";
+import { UserProfile } from "./UserProfile.ts";
 import * as UserStore from "./UserStore.ts";
 
 const MINUTE = 60_000;
@@ -16,10 +17,14 @@ describe("UserStore", () => {
   it.effect("keeps one profile per user, updated on every sign-in", () =>
     Effect.gen(function* () {
       const store = yield* UserStore.UserStore;
+      const reader = yield* UserProfile;
       expect(yield* store.profile).toBeNull();
+      expect(yield* reader.current).toBeNull();
       yield* store.recordSignIn(profile);
+      expect(yield* reader.current).toEqual(profile);
       yield* store.recordSignIn({ ...profile, firstName: "Ada L." });
       expect(yield* store.profile).toEqual({ ...profile, firstName: "Ada L." });
+      expect(yield* reader.current).toEqual({ ...profile, firstName: "Ada L." });
     }).pipe(Effect.provide(layerMemoryStore)),
   );
 

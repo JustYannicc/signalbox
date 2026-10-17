@@ -10,7 +10,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 
-import { UserStore } from "../user/UserStore.ts";
+import { UserProfile } from "../user/UserProfile.ts";
 import { HookStore } from "./hookStore.ts";
 import {
   deliveryKey,
@@ -57,10 +57,10 @@ const decodeDelivery = Schema.decodeUnknownSync(Schema.fromJsonString(Delivery))
 export const layer = Layer.effectContext(
   Effect.gen(function* () {
     const inbox = yield* HookStore;
-    const users = yield* UserStore;
+    const users = yield* UserProfile;
     const origin = yield* HookOrigin;
     const built = yield* Deferred.make<IngressDependencies>();
-    const baseUrl = users.profile.pipe(
+    const baseUrl = users.current.pipe(
       Effect.map((profile) =>
         profile === null ? null : `${origin}/api/hooks/${encodeURIComponent(profile.id)}`,
       ),

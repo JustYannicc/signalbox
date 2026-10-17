@@ -20,7 +20,7 @@ import {
 } from "../automations/webhookRequest.ts";
 import { DriveDirectory } from "../drive/DriveDirectory.ts";
 import { driveOfProject } from "../user/contextProjects.ts";
-import { UserStore } from "../user/UserStore.ts";
+import { UserProfile } from "../user/UserProfile.ts";
 import { GitHub } from "./GitHub.ts";
 import { GitHubConnection } from "./GitHubConnection.ts";
 import { GITHUB_SIGNATURE, parseGitHubPayload } from "./githubEvents.ts";
@@ -46,13 +46,13 @@ const make = Effect.gen(function* () {
   const connection = yield* GitHubConnection;
   const github = yield* GitHub;
   const hooks = makeGitHubHookApi(github.api);
-  const users = yield* UserStore;
+  const users = yield* UserProfile;
   const crypto = yield* Crypto.Crypto;
   const origin = yield* HookOrigin;
   const drives = yield* Effect.serviceOption(DriveDirectory);
   const uuid = crypto.randomUUIDv4().pipe(Effect.orDie);
   const deliverEvent = yield* makeGitHubEventDelivery;
-  const profile = users.profile.pipe(
+  const profile = users.current.pipe(
     Effect.mapError(
       (cause) => new AutomationError({ message: "Couldn't read the GitHub webhook owner.", cause }),
     ),

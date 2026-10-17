@@ -36,6 +36,7 @@ import * as SignInTables from "../signIn/signInTables.ts";
 import * as UserPools from "./UserPools.ts";
 import * as UserSections from "./UserSections.ts";
 import type { ThreadSummary } from "../thread/ThreadEngine.ts";
+import { UserProfile } from "./UserProfile.ts";
 
 /**
  * Everything one user's Durable Object persists: their WorkOS profile, their
@@ -480,4 +481,10 @@ const make = Effect.gen(function* () {
   });
 });
 
-export const layer = Layer.effect(UserStore, make);
+export const layer = Layer.effectContext(
+  make.pipe(
+    Effect.map((store) =>
+      Context.make(UserStore, store).pipe(Context.add(UserProfile, { current: store.profile })),
+    ),
+  ),
+);
