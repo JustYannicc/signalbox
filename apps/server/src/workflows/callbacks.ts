@@ -32,7 +32,7 @@ export const makeCallbacks = (deps: {
   readonly newId: (prefix: string) => Effect.Effect<string, AutomationError>;
   readonly relayHookBaseUrl: Effect.Effect<string | null>;
   /** Delivers an event to one run's waiting steps. */
-  readonly deliverTo: (runId: string, envelope: Envelope) => Effect.Effect<void>;
+  readonly deliverTo: (runId: string, envelope: Envelope) => Effect.Effect<void, AutomationError>;
 }) => {
   const { store } = deps;
 
