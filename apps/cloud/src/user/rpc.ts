@@ -97,6 +97,7 @@ import { CloudAttachments } from "../attachments/CloudAttachments.ts";
 import * as Environment from "../environment.ts";
 import * as GitHubActions from "../github/GitHubActions.ts";
 import * as GitHubBranches from "../github/GitHubBranches.ts";
+import * as CloudPullRequests from "../github/CloudPullRequestsService.ts";
 import { makeGitHubImport } from "../github/GitHubImport.ts";
 import * as DriveBrowsing from "./driveBrowsing.ts";
 import * as CloudThreadService from "../thread/CloudThreadService.ts";
@@ -197,6 +198,23 @@ const SERVED = [
   WS_METHODS.vcsRefreshStatus,
   WS_METHODS.vcsPull,
   WS_METHODS.gitRunStackedAction,
+  // Cloud pull-request reads (`github/CloudPullRequests.ts`).
+  WS_METHODS.pullRequestsList,
+  WS_METHODS.pullRequestsListStats,
+  WS_METHODS.pullRequestsSummary,
+  WS_METHODS.pullRequestsRouting,
+  WS_METHODS.pullRequestsRoutingIdentity,
+  WS_METHODS.pullRequestsStack,
+  WS_METHODS.pullRequestsLinkedThreads,
+  WS_METHODS.pullRequestsDetail,
+  WS_METHODS.pullRequestsPreview,
+  WS_METHODS.pullRequestsChecks,
+  WS_METHODS.pullRequestsActivity,
+  WS_METHODS.pullRequestsThreadComments,
+  WS_METHODS.pullRequestsDiffFileContents,
+  WS_METHODS.pullRequestsInvalidate,
+  WS_METHODS.pullRequestsSubscribeRefreshes,
+  WS_METHODS.gitResolvePullRequest,
   ...Object.values(SIGNALBOX_CONTEXTS_WS_METHODS),
   ...Object.values(SIGNALBOX_DRIVES_WS_METHODS),
   ...Object.values(SIGNALBOX_FOLDERS_WS_METHODS),
@@ -269,6 +287,22 @@ const REQUIRED_SCOPES = {
   [WS_METHODS.vcsRefreshStatus]: AuthOrchestrationReadScope,
   [WS_METHODS.vcsPull]: AuthSourceControlWriteScope,
   [WS_METHODS.gitRunStackedAction]: AuthSourceControlWriteScope,
+  [WS_METHODS.pullRequestsList]: AuthOrchestrationReadScope,
+  [WS_METHODS.pullRequestsListStats]: AuthOrchestrationReadScope,
+  [WS_METHODS.pullRequestsSummary]: AuthOrchestrationReadScope,
+  [WS_METHODS.pullRequestsRouting]: AuthOrchestrationReadScope,
+  [WS_METHODS.pullRequestsRoutingIdentity]: AuthOrchestrationReadScope,
+  [WS_METHODS.pullRequestsStack]: AuthOrchestrationReadScope,
+  [WS_METHODS.pullRequestsLinkedThreads]: AuthOrchestrationReadScope,
+  [WS_METHODS.pullRequestsDetail]: AuthOrchestrationReadScope,
+  [WS_METHODS.pullRequestsPreview]: AuthOrchestrationReadScope,
+  [WS_METHODS.pullRequestsChecks]: AuthOrchestrationReadScope,
+  [WS_METHODS.pullRequestsActivity]: AuthOrchestrationReadScope,
+  [WS_METHODS.pullRequestsThreadComments]: AuthOrchestrationReadScope,
+  [WS_METHODS.pullRequestsDiffFileContents]: AuthOrchestrationReadScope,
+  [WS_METHODS.pullRequestsInvalidate]: AuthOrchestrationReadScope,
+  [WS_METHODS.pullRequestsSubscribeRefreshes]: AuthOrchestrationReadScope,
+  [WS_METHODS.gitResolvePullRequest]: AuthOrchestrationReadScope,
   ...SIGNALBOX_CONTEXTS_REQUIRED_SCOPES,
   ...SIGNALBOX_DRIVES_REQUIRED_SCOPES,
   ...SIGNALBOX_FOLDERS_REQUIRED_SCOPES,
@@ -444,6 +478,7 @@ export const layerHandlers = (input: {
       });
       const branches = yield* GitHubBranches.GitHubBranches;
       const githubActions = yield* GitHubActions.GitHubActions;
+      const pullRequests = yield* CloudPullRequests.CloudPullRequests;
       const attachments = yield* CloudAttachments;
       /**
        * Fails with not-found once the user leaves a context and so can't see
@@ -700,6 +735,24 @@ export const layerHandlers = (input: {
               ...(status.remote ?? { hasUpstream: false, aheadCount: 0, behindCount: 0, pr: null }),
             })),
           ),
+        [WS_METHODS.pullRequestsList]: (request) => pullRequests.list(request),
+        [WS_METHODS.pullRequestsListStats]: (request) => pullRequests.listStats(request),
+        [WS_METHODS.pullRequestsSummary]: (request) => pullRequests.summary(request),
+        [WS_METHODS.pullRequestsRouting]: (request) => pullRequests.routing(request),
+        [WS_METHODS.pullRequestsRoutingIdentity]: (request) =>
+          pullRequests.routingIdentity(request),
+        [WS_METHODS.pullRequestsStack]: (request) => pullRequests.stack(request),
+        [WS_METHODS.pullRequestsLinkedThreads]: (request) => pullRequests.linkedThreads(request),
+        [WS_METHODS.pullRequestsDetail]: (request) => pullRequests.detail(request),
+        [WS_METHODS.pullRequestsPreview]: (request) => pullRequests.preview(request),
+        [WS_METHODS.pullRequestsChecks]: (request) => pullRequests.checks(request),
+        [WS_METHODS.pullRequestsActivity]: (request) => pullRequests.activity(request),
+        [WS_METHODS.pullRequestsThreadComments]: (request) => pullRequests.threadComments(request),
+        [WS_METHODS.pullRequestsDiffFileContents]: (request) =>
+          pullRequests.diffFileContents(request),
+        [WS_METHODS.pullRequestsInvalidate]: (request) => pullRequests.invalidate(request),
+        [WS_METHODS.pullRequestsSubscribeRefreshes]: () => pullRequests.subscribeRefreshes,
+        [WS_METHODS.gitResolvePullRequest]: (request) => pullRequests.resolvePullRequest(request),
         [WS_METHODS.gitRunStackedAction]: (request) =>
           Stream.unwrap(Effect.map(actorNow, (actor) => branches.runAction(actor, request))),
         // A thread's branch only takes commits from its own turns.
