@@ -2,10 +2,12 @@ import {
   automationEventSpec,
   ThreadId,
   type AutomationEventName,
+  type AutomationError,
   type AutomationNotice,
   type OrchestrationV2DomainEvent,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Queue from "effect/Queue";
 
@@ -95,6 +97,7 @@ type Work =
       readonly subs: ReadonlyArray<Subscription>;
       readonly waiting: ReadonlyArray<RunWaitListener>;
       readonly context: DeliveryContext;
+      readonly settled?: Deferred.Deferred<void, AutomationError>;
     };
 
 const isAutomationId = (id: string | null | undefined) => id?.startsWith("automation:") === true;
@@ -294,14 +297,19 @@ export const makeEventTriggers = (deps: EventTriggerDependencies) =>
           threadId,
           ...fields,
         };
+        // Keep starts serialized with domain events, but return failures to the
+        // durable sender so a retry can finish the remaining automations.
+        const settled = yield* Deferred.make<void, AutomationError>();
         yield* enqueue({
           type: "ready",
           envelope,
           subs,
           waiting,
           context: { fromAutomation, depth: 0 },
+          settled,
         });
-      }).pipe(logged("publishing"));
+        yield* Deferred.await(settled);
+      });
 
     const passes = (sub: Subscription, envelope: Envelope, context: DeliveryContext) =>
       Effect.gen(function* () {
@@ -379,17 +387,19 @@ export const makeEventTriggers = (deps: EventTriggerDependencies) =>
       envelope: Envelope,
       subs: ReadonlyArray<Subscription>,
       context: DeliveryContext,
+      strict = false,
     ) =>
       Effect.gen(function* () {
         const byAutomation = Map.groupBy(subs, (sub) => sub.automation.automation_id);
         for (const [automationId, group] of byAutomation) {
           if (automationId === context.sourceAutomationId || paused.has(automationId)) continue;
-          yield* Effect.gen(function* () {
+          const send = Effect.gen(function* () {
             for (const sub of group) {
               if (!(yield* passes(sub, envelope, context))) continue;
               return yield* start(sub.automation, sub.limit, envelope, context);
             }
-          }).pipe(logged(`trigger for ${automationId}`));
+          });
+          yield* strict ? send : send.pipe(logged(`trigger for ${automationId}`));
         }
       });
 
@@ -431,14 +441,18 @@ export const makeEventTriggers = (deps: EventTriggerDependencies) =>
         }
       });
 
+    const handleReady = (item: Extract<Work, { type: "ready" }>) => {
+      const send = deliver(item.envelope, item.subs, item.context, item.settled !== undefined).pipe(
+        Effect.andThen(deps.runWaits.deliver(item.envelope, item.waiting)),
+      );
+      return item.settled ? Deferred.complete(item.settled, send).pipe(Effect.asVoid) : send;
+    };
     const worker = Queue.take(work).pipe(
       Effect.flatMap((item) =>
-        (item.type === "domain"
-          ? handleDomain(item)
-          : deliver(item.envelope, item.subs, item.context).pipe(
-              Effect.andThen(deps.runWaits.deliver(item.envelope, item.waiting)),
-            )
-        ).pipe(logged("delivery"), Effect.ensuring(deps.adjustBusy(-1))),
+        (item.type === "domain" ? handleDomain(item) : handleReady(item)).pipe(
+          logged("delivery"),
+          Effect.ensuring(deps.adjustBusy(-1)),
+        ),
       ),
       Effect.forever,
     );

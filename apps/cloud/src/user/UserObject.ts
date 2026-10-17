@@ -15,6 +15,7 @@ import * as CloudAssets from "../assets/CloudAssets.ts";
 import { AutomationAlarm, CloudAutomations } from "../automations/CloudAutomations.ts";
 import * as PersonBrowsers from "../browser/PersonBrowsers.ts";
 import * as CloudEngine from "../automations/cloudEngine.ts";
+import { HookOrigin } from "../automations/cloudIngress.ts";
 import { layerWorkflows } from "../automations/workflowRunner.ts";
 import { type AttachmentObjects, attachmentStorage } from "../attachments/attachmentObjects.ts";
 import * as CloudAttachments from "../attachments/CloudAttachments.ts";
@@ -104,6 +105,7 @@ export interface UserObjectEnv
   readonly DRIVE_PACKS_PREFIX?: string;
   readonly ENVIRONMENT_ID: string;
   readonly ENVIRONMENT_LABEL?: string;
+  readonly AUTOMATION_HOOK_ORIGIN?: string;
   /** Set by `vp run dev` only. Local workerd has no jurisdictions. */
   readonly LOCAL_WORKERD?: string;
   readonly THREADS: ThreadDirectory.ThreadObjectNamespace;
@@ -194,7 +196,11 @@ const makeRuntime = (storage: DurableObjectStorage, env: UserObjectEnv) => {
     // The user's automations (#434), on the services below.
     CloudEngine.layer.pipe(
       Layer.provide(
-        Layer.mergeAll(layerWorkflows(env.AUTOMATION_RUNS), layerAutomationAlarm(storage)),
+        Layer.mergeAll(
+          layerWorkflows(env.AUTOMATION_RUNS),
+          layerAutomationAlarm(storage),
+          Layer.succeed(HookOrigin, env.AUTOMATION_HOOK_ORIGIN ?? ""),
+        ),
       ),
       // Building it only touches the object's own SQLite, which the object can't run without either.
       Layer.orDie,
@@ -554,6 +560,10 @@ export class UserObject extends DurableObject<UserObjectEnv> implements UserObje
 
   automationHost(call: Parameters<UserObjectApi["automationHost"]>[0]) {
     return this.api.automationHost(call);
+  }
+
+  receiveHook(request: Parameters<UserObjectApi["receiveHook"]>[0]) {
+    return this.api.receiveHook(request);
   }
 
   automationWorkerModule(automationId: string, version: number) {
