@@ -48,6 +48,7 @@ export interface PresenceGuard {
 export class PresenceAccess extends Context.Service<
   PresenceAccess,
   {
+    /** Missing and inaccessible targets both fail PresenceDenied; PresenceUnavailable is only dependency failure. */
     readonly open: (
       actor: PresenceActor,
       target: PresenceTarget,
