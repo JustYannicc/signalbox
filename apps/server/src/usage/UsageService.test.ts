@@ -29,6 +29,7 @@ import * as Layer from "effect/Layer";
 import * as Scheduler from "effect/Scheduler";
 import * as Schema from "effect/Schema";
 import * as TestClock from "effect/testing/TestClock";
+import * as Clock from "effect/Clock"; // signalbox: seed a fresh cache entry for the no-network pricing test
 import { HttpClient, HttpClientResponse } from "effect/http";
 
 import * as ServerConfig from "../config.ts";
@@ -41,6 +42,7 @@ import * as BackgroundPolicy from "../background/BackgroundPolicy.ts";
 import * as AntigravityUsage from "../provider/Drivers/AntigravityUsage.ts";
 import * as ProviderHostLive from "../provider/ProviderHostLive.ts";
 import { totalTokens, type UsageRecord } from "@t3tools/provider-core/server/usage";
+import { lookupRate } from "./usagePricing.ts"; // signalbox: inspect cached model prices in provider metadata units
 import * as UsageService from "./UsageService.ts";
 
 const encodeUnknownJson = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
@@ -248,6 +250,50 @@ function cursorSource(summary: { readonly sources: readonly UsageSource[] }) {
 }
 
 describe("UsageService", () => {
+  // signalbox: provider default enrichment reads disk rates without starting a network refresh
+  it.live("exposes cached model rates without making a network request", () =>
+    Effect.gen(function* () {
+      const { settings, home } = yield* setup;
+      let rateFetches = 0;
+      yield* Effect.gen(function* () {
+        const { stateDir } = yield* ServerConfig.ServerConfig;
+        const fetchedAtMs = yield* Clock.currentTimeMillis;
+        yield* Effect.promise(async () => {
+          await NodeFSP.mkdir(stateDir, { recursive: true });
+          await NodeFSP.writeFile(
+            NodePath.join(stateDir, "usage-model-rates.json"),
+            JSON.stringify({
+              fetchedAtMs,
+              document: {
+                "example-model": {
+                  input_cost_per_token: 3e-6,
+                  output_cost_per_token: 15e-6,
+                },
+              },
+            }),
+          );
+        });
+
+        const service = yield* UsageService.make;
+        const rates = yield* service.cachedRates;
+        assert.strictEqual(lookupRate(rates, "example-model")?.inputCostPerToken, 3e-6);
+        assert.strictEqual(lookupRate(rates, "example-model")?.outputCostPerToken, 15e-6);
+      }).pipe(
+        Effect.provide(
+          layerService({
+            prefix: "usage-service-read-cached-rates-test",
+            home,
+            settings,
+            onRatesFetch: () => {
+              rateFetches += 1;
+            },
+          }),
+        ),
+      );
+      assert.strictEqual(rateFetches, 0);
+    }).pipe(Effect.scoped),
+  );
+
   it.live(
     "reads Pi per-model usage and auxiliary costs once across forks and repeated entries",
     () =>

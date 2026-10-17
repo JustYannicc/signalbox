@@ -54,6 +54,8 @@ export interface KernelBrowserRequest {
 export interface KernelApi {
   /** Creates the profile; one that already exists is fine. */
   readonly ensureProfile: (name: string) => Effect.Effect<void, KernelApiError>;
+  /** Deletes a saved profile. A gone one is fine. */
+  readonly deleteProfile: (name: string) => Effect.Effect<void, KernelApiError>;
   readonly createBrowser: (
     request: KernelBrowserRequest,
   ) => Effect.Effect<KernelBrowser, KernelApiError>;
@@ -158,6 +160,14 @@ export const makeKernelApi = (client: HttpClient.HttpClient, options: KernelOpti
           (error) => error.status === 409,
           () => Effect.void,
         ),
+      ),
+    deleteProfile: (name) =>
+      send(
+        "deleteProfile",
+        HttpClientRequest.make("DELETE")(url(`/profiles/${encodeURIComponent(name)}`)),
+      ).pipe(
+        Effect.asVoid,
+        Effect.catchIf(gone, () => Effect.void),
       ),
     createBrowser: (request) =>
       send(
