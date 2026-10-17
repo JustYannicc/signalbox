@@ -170,6 +170,7 @@ export const hello = (generation: number, token: string) => ({
   token,
   lastAckedSequence: 0,
   drains: true,
+  runtimeResponses: true,
 });
 
 const off = <T extends Record<string, unknown>>(fields: T) =>
@@ -408,3 +409,6 @@ export const hostFor = (
     holdsTurn: () => Promise.resolve(holds()),
     afterChange: () => Promise.resolve(),
   }));
+
+export { onRunnerMessage, pushRunnerWork, type RunnerSocketHost } from "./runner/runnerSockets.ts";
+export type { ThreadRunner } from "./runner/ThreadRunner.ts";

@@ -33,6 +33,8 @@ interface Attachment {
   readonly steers?: boolean | undefined;
   /** How many of `sentRunId`'s steers this socket's Runner was handed; absent: none. */
   readonly sentSteers?: number | undefined;
+  readonly runtimeResponses?: boolean | undefined;
+  readonly sentRuntimeResponses?: ReadonlyArray<string> | undefined;
 }
 
 export interface RunnerSocketHost {
@@ -133,10 +135,12 @@ export async function pushRunnerWork(host: RunnerSocketHost): Promise<ThreadRunn
     if (attachment === null || attachment.generation !== work.generation) continue;
     let sentRunId = attachment.sentRunId;
     let sentSteers = attachment.sentSteers ?? 0;
+    let sentRuntimeResponses = attachment.sentRuntimeResponses ?? [];
     if (sentRunId !== null && sentRunId !== work.activeRunId) {
       send(socket, { type: "interrupt", runId: sentRunId });
       sentRunId = null;
       sentSteers = 0;
+      sentRuntimeResponses = [];
     }
     if (turn !== null && sentRunId !== turn.turn.runId) {
       send(socket, {
@@ -152,6 +156,7 @@ export async function pushRunnerWork(host: RunnerSocketHost): Promise<ThreadRunn
       });
       sentRunId = turn.turn.runId;
       sentSteers = 0;
+      sentRuntimeResponses = [];
     }
     // Steers count from the oldest, so the ones not handed out yet are the tail.
     if (attachment.steers === true && sentRunId !== null && sentRunId === work.activeRunId) {
@@ -159,6 +164,14 @@ export async function pushRunnerWork(host: RunnerSocketHost): Promise<ThreadRunn
         send(socket, { type: "steer", runId: sentRunId, message });
       }
       sentSteers = Math.max(sentSteers, work.steers.length);
+    }
+    if (attachment.runtimeResponses === true && sentRunId === work.activeRunId) {
+      for (const response of work.runtimeResponses) {
+        if (response.runId !== sentRunId || sentRuntimeResponses.includes(response.requestId))
+          continue;
+        send(socket, response);
+        sentRuntimeResponses = [...sentRuntimeResponses, response.requestId];
+      }
     }
     // A drain asked for and not answered yet, once per connection (#493).
     let sentDrainId = attachment.sentDrainId;
@@ -169,13 +182,15 @@ export async function pushRunnerWork(host: RunnerSocketHost): Promise<ThreadRunn
     if (
       sentRunId !== attachment.sentRunId ||
       sentDrainId !== attachment.sentDrainId ||
-      sentSteers !== (attachment.sentSteers ?? 0)
+      sentSteers !== (attachment.sentSteers ?? 0) ||
+      sentRuntimeResponses !== attachment.sentRuntimeResponses
     ) {
       socket.serializeAttachment({
         ...attachment,
         sentRunId,
         sentDrainId,
         sentSteers,
+        sentRuntimeResponses,
       } satisfies Attachment);
     }
   }
@@ -214,6 +229,7 @@ export async function onRunnerMessage(
         connection: result.connection,
         sentRunId: result.heldRunId,
         steers: message.steers === true,
+        runtimeResponses: message.runtimeResponses === true,
       } satisfies Attachment);
       send(socket, {
         type: "welcome",

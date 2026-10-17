@@ -5,7 +5,8 @@ import * as DateTime from "effect/DateTime";
 
 import type { ServedModel } from "../../pool/cliProxyApi.ts";
 import { isHarnessInstance } from "../providerCatalog.ts";
-import { activeRun, isLiveRun } from "../runLifecycle.ts";
+import { activeRun } from "../runLifecycle.ts";
+import { isLiveRun } from "../runState.ts";
 import type { StatusNoteCursor } from "./statusNoteTables.ts";
 
 /**

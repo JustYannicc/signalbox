@@ -7498,7 +7498,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           cause: "This question has already been answered.",
         });
       }
-      if (request.kind !== "user_input" || request.responseCapability.type !== "message") {
+      if (request.kind !== "user_input" || request.responseCapability.type === "not_resumable") {
         return yield* new OrchestratorDispatchError({
           commandId: command.commandId,
           commandType: command.type,
@@ -7512,6 +7512,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           threadId: command.threadId,
           requestId: command.requestId,
           decision: "cancel",
+          ...(request.responseCapability.type === "live" ? { answers: {} } : {}),
         },
         events,
         effects,
