@@ -36,7 +36,10 @@ const pausedSignIn = (params: AccountAuthorizeParams) =>
 const WITH_KEY = { ...WORKOS_TEST_ENV, T3CODE_WORKOS_API_KEY: "sk_test" };
 const run = <A, E>(
   effect: Parameters<typeof runAccountTest<A, E>>[0],
-  options: { readonly exchanges?: Array<Record<string, unknown>> } = {},
+  options: {
+    readonly codes?: WorkOSCodes;
+    readonly exchanges?: Array<Record<string, unknown>>;
+  } = {},
 ) => runAccountTest(effect, { codes: CODES, env: WITH_KEY, ...options });
 
 const verify = (id: string, code: string) =>

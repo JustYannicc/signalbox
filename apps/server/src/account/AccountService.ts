@@ -258,14 +258,14 @@ const make = Effect.gen(function* () {
         code: input.code,
         codeVerifier: attempt.codeVerifier,
       }).pipe(
-        Effect.flatMap((user) => {
-          if (attempt.expectedUserId !== undefined && user.id !== attempt.expectedUserId) {
-            return Effect.fail(
-              new WorkOSClient.WorkOSAuthenticateError({ error: "invalid_response" }),
-            );
-          }
-          return sessions.finish(attempt, user, request);
-        }),
+        Effect.flatMap((user) =>
+          Effect.gen(function* () {
+            if (attempt.expectedUserId !== undefined && user.id !== attempt.expectedUserId) {
+              return yield* new WorkOSClient.WorkOSAuthenticateError({ error: "invalid_response" });
+            }
+            return yield* sessions.finish(attempt, user, request);
+          }),
+        ),
         // WorkOS emailed a code (e.g. GitHub emails are not trusted): the
         // sign-in page collects it, in every mode.
         Effect.catchTags({
