@@ -4,7 +4,10 @@ export function DeviceAgentCommandFailureNotice(props: {
   readonly failure: DeviceAgentCommandFailure;
 }) {
   const { failure } = props;
-  const hasDiagnostics = failure.diagnosticId !== undefined || failure.logPath !== undefined;
+  const hasDiagnostics =
+    failure.reason !== undefined ||
+    failure.diagnosticId !== undefined ||
+    failure.logPath !== undefined;
 
   return (
     <div role="alert" className="border-b bg-destructive/5 px-3 py-2 text-xs text-destructive">
@@ -17,6 +20,12 @@ export function DeviceAgentCommandFailureNotice(props: {
             Diagnostic details
           </summary>
           <dl className="mt-1 grid gap-1 break-words">
+            {failure.reason ? (
+              <div>
+                <dt className="inline font-medium">Reason: </dt>
+                <dd className="inline">{failure.reason}</dd>
+              </div>
+            ) : null}
             {failure.diagnosticId ? (
               <div>
                 <dt className="inline font-medium">Diagnostic ID: </dt>

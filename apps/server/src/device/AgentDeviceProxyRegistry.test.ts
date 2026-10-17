@@ -19,9 +19,13 @@ const session = (
   platform: "ios",
 });
 
-const endpoint = (current: AgentDeviceSession, proxyToken = `proxy-${current.sessionId}`) => ({
+const endpoint = (
+  current: AgentDeviceSession,
+  proxyToken = `proxy-${current.sessionId}`,
+  configPath = `/state/${current.sessionId}-${proxyToken}.json`,
+) => ({
   session: current,
-  configPath: `/state/${current.sessionId}-${proxyToken}.json`,
+  configPath,
   proxyToken,
   endpoint: {
     baseUrl: "http://127.0.0.1:43123",
@@ -110,6 +114,65 @@ describe("agent-device proxy registry", () => {
 
       expect(removed).toEqual([previousRegistration.configPath]);
       expect(yield* registry.get(replacement.sessionId)).toEqual(replacementRegistration);
+    }).pipe(Effect.provide(AgentDeviceProxyRegistry.layer)),
+  );
+
+  it.effect("keeps a shared config path while its replacement registration is live", () =>
+    Effect.gen(function* () {
+      const registry = yield* AgentDeviceProxyRegistry.AgentDeviceProxyRegistry;
+      const configPath = "/state/local/session-1.json";
+      const previous = yield* registry.register(
+        endpoint(session("session-1", "provider-old"), "old-token", configPath),
+      );
+      const replacement = yield* registry.register(
+        endpoint(session("session-1", "provider-new"), "new-token", configPath),
+      );
+      const removed: Array<string> = [];
+
+      yield* registry.pruneSessions(
+        new Map([[replacement.session.sessionId, replacement.session]]),
+        (registration) => Effect.sync(() => void removed.push(registration.configPath)),
+      );
+
+      expect(removed).toEqual([]);
+      expect(yield* registry.get(replacement.session.sessionId)).toEqual(replacement);
+      expect(yield* registry.isCurrent(previous)).toBe(false);
+    }).pipe(Effect.provide(AgentDeviceProxyRegistry.layer)),
+  );
+
+  it.effect("retries shared config cleanup only after its replacement becomes stale", () =>
+    Effect.gen(function* () {
+      const registry = yield* AgentDeviceProxyRegistry.AgentDeviceProxyRegistry;
+      const configPath = "/state/local/session-1.json";
+      yield* registry.register(
+        endpoint(session("session-1", "provider-old"), "old-token", configPath),
+      );
+      const replacement = yield* registry.register(
+        endpoint(session("session-1", "provider-new"), "new-token", configPath),
+      );
+      const removed: Array<string> = [];
+
+      yield* registry.pruneSessions(
+        new Map([[replacement.session.sessionId, replacement.session]]),
+        (registration) => Effect.sync(() => void removed.push(registration.configPath)),
+      );
+      expect(removed).toEqual([]);
+
+      const failedCleanup = yield* registry
+        .pruneSessions(new Map(), () => Effect.fail("disk is busy"))
+        .pipe(
+          Effect.as(false),
+          Effect.catch(() => Effect.succeed(true)),
+        );
+      expect(failedCleanup).toBe(true);
+      expect(yield* registry.get(replacement.session.sessionId)).toEqual(replacement);
+
+      yield* registry.pruneSessions(new Map(), (registration) =>
+        Effect.sync(() => void removed.push(registration.configPath)),
+      );
+
+      expect(removed).toEqual([configPath]);
+      expect(yield* registry.get(replacement.session.sessionId)).toBeNull();
     }).pipe(Effect.provide(AgentDeviceProxyRegistry.layer)),
   );
 });

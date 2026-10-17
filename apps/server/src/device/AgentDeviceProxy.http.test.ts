@@ -153,6 +153,19 @@ it.effect("observes authenticated daemon failures across the real HTTP proxy bou
       const releaseReplacedResponse = yield* Deferred.make<void>();
       const progressRecord = `${JSON.stringify({ type: "progress", text: "x".repeat(2 * 1024 * 1024) })}\n`;
       const typedResponse = `${JSON.stringify({ type: "response", response: JSON.parse(typedFailure) })}\n`;
+      const oversizedNdjsonSuccessRecord = JSON.stringify({
+        type: "response",
+        response: {
+          jsonrpc: "2.0",
+          id: "request-oversized-success",
+          result: { payload: "x".repeat(70 * 1024) },
+        },
+      });
+      const oversizedJsonSuccess = JSON.stringify({
+        jsonrpc: "2.0",
+        id: "request-oversized-json-success",
+        result: { payload: "x".repeat(2 * 1024 * 1024) },
+      });
       const daemonRoute = HttpRouter.add(
         "POST",
         "/rpc",
@@ -170,30 +183,37 @@ it.effect("observes authenticated daemon failures across the real HTTP proxy bou
           const responseBody =
             command === "large"
               ? Stream.fromIterable([encoder.encode(progressRecord), encoder.encode(typedResponse)])
-              : command === "close" || command === "replace"
-                ? Stream.concat(
-                    Stream.make(encoder.encode('{"type":"progress"}\n')),
-                    Stream.fromEffect(
-                      Deferred.await(
-                        command === "close" ? releaseClosedResponse : releaseReplacedResponse,
-                      ).pipe(Effect.as(encoder.encode(typedResponse))),
-                    ),
-                  )
-                : Stream.make(
-                    encoder.encode(
-                      JSON.stringify({
-                        type: "response",
-                        response:
-                          command === "unknown"
-                            ? JSON.parse(unknownFailure)
-                            : { jsonrpc: "2.0", id: "request-success", result: { ok: true } },
-                      }),
-                    ),
-                  );
+              : command === "oversized-ndjson-newline"
+                ? Stream.make(encoder.encode(`${oversizedNdjsonSuccessRecord}\n`))
+                : command === "oversized-ndjson-no-newline"
+                  ? Stream.make(encoder.encode(oversizedNdjsonSuccessRecord))
+                  : command === "oversized-json"
+                    ? Stream.make(encoder.encode(oversizedJsonSuccess))
+                    : command === "close" || command === "replace"
+                      ? Stream.concat(
+                          Stream.make(encoder.encode('{"type":"progress"}\n')),
+                          Stream.fromEffect(
+                            Deferred.await(
+                              command === "close" ? releaseClosedResponse : releaseReplacedResponse,
+                            ).pipe(Effect.as(encoder.encode(typedResponse))),
+                          ),
+                        )
+                      : Stream.make(
+                          encoder.encode(
+                            JSON.stringify({
+                              type: "response",
+                              response:
+                                command === "unknown"
+                                  ? JSON.parse(unknownFailure)
+                                  : { jsonrpc: "2.0", id: "request-success", result: { ok: true } },
+                            }),
+                          ),
+                        );
           return HttpServerResponse.stream(responseBody, {
             status: command === "large" ? 207 : 200,
             headers: {
-              "content-type": "application/x-ndjson",
+              "content-type":
+                command === "oversized-json" ? "application/json" : "application/x-ndjson",
               "x-daemon-response": "kept",
             },
           });
@@ -310,6 +330,25 @@ it.effect("observes authenticated daemon failures across the real HTTP proxy bou
         },
       ]);
 
+      const oversizedSuccessCases = [
+        {
+          command: "oversized-ndjson-newline",
+          body: `${oversizedNdjsonSuccessRecord}\n`,
+        },
+        {
+          command: "oversized-ndjson-no-newline",
+          body: oversizedNdjsonSuccessRecord,
+        },
+        { command: "oversized-json", body: oversizedJsonSuccess },
+      ] as const;
+      const typedDiagnostics = yield* diagnostics.snapshot;
+      for (const testCase of oversizedSuccessCases) {
+        const response = yield* send(testCase.command);
+        expect(response.status).toBe(200);
+        expect(yield* response.text).toBe(testCase.body);
+        expect(yield* diagnostics.snapshot).toEqual(typedDiagnostics);
+      }
+
       const unknown = yield* send("unknown");
       expect(yield* unknown.text).toContain(unknownFailure);
       expect(yield* diagnostics.snapshot).toMatchObject([
@@ -324,6 +363,13 @@ it.effect("observes authenticated daemon failures across the real HTTP proxy bou
       const success = yield* send("success");
       yield* success.text;
       expect(yield* diagnostics.snapshot).toEqual([]);
+
+      for (const testCase of oversizedSuccessCases) {
+        const response = yield* send(testCase.command);
+        expect(response.status).toBe(200);
+        expect(yield* response.text).toBe(testCase.body);
+        expect(yield* diagnostics.snapshot).toEqual([]);
+      }
 
       const closed = yield* send("close");
       yield* SynchronizedRef.set(deviceState, stateWith([]));

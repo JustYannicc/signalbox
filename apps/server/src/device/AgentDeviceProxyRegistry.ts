@@ -90,23 +90,30 @@ const make = Effect.gen(function* () {
         const live = liveSessions.get(registration.session.sessionId);
         return live === undefined || !sameAgentDeviceSession(registration.session, live);
       });
-      const cleanup = [...state.pendingCleanup.values(), ...staleActive];
-      if (cleanup.length === 0) return Effect.succeed([undefined, state] as const);
+      const retainedActive = Array.from(state.active.values()).filter(
+        (registration) => !staleActive.some((stale) => sameRegistration(registration, stale)),
+      );
+      const retainedConfigPaths = new Set(
+        retainedActive.map((registration) => registration.configPath),
+      );
+      const cleanupByConfigPath = new Map<string, RegisteredAgentDeviceEndpoint>();
+      for (const registration of [...state.pendingCleanup.values(), ...staleActive]) {
+        if (!retainedConfigPaths.has(registration.configPath)) {
+          cleanupByConfigPath.set(registration.configPath, registration);
+        }
+      }
+      const cleanup = Array.from(cleanupByConfigPath.values());
+      const nextState: RegistryState = {
+        ...state,
+        active: new Map(
+          retainedActive.map((registration) => [registration.session.sessionId, registration]),
+        ),
+        pendingCleanup: new Map<number, RegisteredAgentDeviceEndpoint>(),
+      };
+      if (cleanup.length === 0) return Effect.succeed([undefined, nextState] as const);
 
       return Effect.forEach(cleanup, removeConfig, { concurrency: 4, discard: true }).pipe(
-        Effect.as([
-          undefined,
-          {
-            ...state,
-            active: new Map(
-              Array.from(state.active).filter(
-                ([, registration]) =>
-                  !staleActive.some((stale) => sameRegistration(registration, stale)),
-              ),
-            ),
-            pendingCleanup: new Map<number, RegisteredAgentDeviceEndpoint>(),
-          },
-        ] as const),
+        Effect.as([undefined, nextState] as const),
       );
     });
 
