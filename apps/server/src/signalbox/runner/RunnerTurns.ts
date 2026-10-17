@@ -769,8 +769,13 @@ export const makeRunnerTurns = Effect.fn("makeRunnerTurns")(function* (input: {
           yield* track(event);
           yield* deliver(event);
           const reason = input.machineClass === "light" ? outgrownByOnce(event) : null;
-          if (reason !== null && latestRunId !== null) {
-            yield* moveUp(latestRunId, reason);
+          if (
+            reason !== null &&
+            originatingRunId !== null &&
+            originatingRunId === latestRunId &&
+            turns.get(originatingRunId)?.status === "running"
+          ) {
+            yield* moveUp(originatingRunId, reason);
           }
         }),
       ),

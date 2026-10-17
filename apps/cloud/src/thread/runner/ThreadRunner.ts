@@ -35,6 +35,7 @@ import { TurnDiagnostics } from "../diagnostics/TurnDiagnostics.ts";
 import { driveToken, isDriveToken } from "../../drive/driveToken.ts";
 import { gatewayProviderFor, poolIdOfInstance } from "../providerCatalog.ts";
 import { holdsNativeSession } from "../session/nativeSession.ts";
+import * as PreviewState from "../preview/PreviewState.ts";
 import { steersOf } from "../steering.ts";
 import { SessionRows } from "../session/SessionRows.ts";
 import { sessionToken } from "../session/sessionToken.ts";
@@ -407,6 +408,7 @@ const needsUpkeep = (lease: ThreadStore.MachineLease, live: boolean, previewHeld
 const make = Effect.gen(function* () {
   const engine = yield* ThreadEngine.ThreadEngine;
   const previews = yield* PreviewHold;
+  const previewState = yield* PreviewState.PreviewState;
   const store = yield* ThreadStore.ThreadStore;
   const sessionRows = yield* SessionRows;
   const crypto = yield* Crypto.Crypto;
@@ -1065,9 +1067,11 @@ const make = Effect.gen(function* () {
           }
           const generation = lease.generation + 1;
           const token = yield* newToken;
+          const savedServices = (yield* Effect.orDie(previewState.configuration)).services;
           const machineClass = machineClassFor({
             worktreePath: projection.thread.worktreePath,
-            movedUp: lease.movedUp === true || lease.machineClass === "heavy",
+            movedUp:
+              lease.movedUp === true || lease.machineClass === "heavy" || savedServices.length > 0,
           });
           if (run !== undefined) {
             yield* diagnostics.machineRequested({ generation, run, now, machineClass });

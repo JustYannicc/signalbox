@@ -131,6 +131,8 @@ const providerTurnStarted = (n: number): ProviderAdapterV2Event =>
 const makeFakeAdapter = Effect.gen(function* () {
   const events = yield* Queue.unbounded<ProviderAdapterV2Event>();
   const loaded = yield* Deferred.make<void>();
+  const secondStarted = yield* Deferred.make<void>();
+  const interrupted = yield* Deferred.make<void>();
   const calls: Array<string> = [];
   /** What each `startTurn` got, beyond what `calls` names. */
   const started: Array<{
@@ -152,7 +154,7 @@ const makeFakeAdapter = Effect.gen(function* () {
       readonly message?: { readonly text: string };
       readonly providerThread: { readonly nativeThreadRef: unknown };
     }) =>
-      Effect.sync(() => {
+      Effect.gen(function* () {
         started.push({
           providerTurnOrdinal: input.providerTurnOrdinal,
           text: input.message?.text,
@@ -163,9 +165,13 @@ const makeFakeAdapter = Effect.gen(function* () {
             ? `start ${input.runId}`
             : `start ${input.runId} continuing ${input.restartContinuationOfRunId}`,
         );
+        if (input.runId === "run-2") yield* Deferred.succeed(secondStarted, undefined);
       }),
     interruptTurn: (input: { readonly providerTurnId: string }) =>
-      Effect.sync(() => void calls.push(`interrupt ${input.providerTurnId}`)),
+      Effect.gen(function* () {
+        calls.push(`interrupt ${input.providerTurnId}`);
+        yield* Deferred.succeed(interrupted, undefined);
+      }),
     steerTurn: (input: {
       readonly providerTurnId: string;
       readonly message: { readonly messageId: string };
@@ -179,7 +185,7 @@ const makeFakeAdapter = Effect.gen(function* () {
     driver,
     openSession: () => Effect.sync(() => (opened.count++, session)),
   } as unknown as ProviderAdapterV2["Service"];
-  return { adapter, events, loaded, calls, started, opened };
+  return { adapter, events, loaded, calls, started, opened, secondStarted, interrupted };
 });
 
 const startWithDependencies = (input: {
@@ -1767,6 +1773,7 @@ describe("RunnerTurns", () => {
           const reported: Array<RunnerItem> = [];
           const started = yield* Deferred.make<void>();
           const handedOff = yield* Deferred.make<void>();
+          const failed = yield* Deferred.make<void>();
           const original = yield* makeFakeSessions(log);
           const sessions: RunnerSessions = {
             ...original.sessions,
@@ -1809,7 +1816,9 @@ describe("RunnerTurns", () => {
                     ? Deferred.succeed(started, undefined)
                     : item.kind === "machine.outgrown"
                       ? Deferred.succeed(handedOff, undefined)
-                      : Effect.void,
+                      : item.kind === "turn.failed"
+                        ? Deferred.succeed(failed, undefined)
+                        : Effect.void,
                 ),
                 Effect.asVoid,
               ),
@@ -1826,7 +1835,7 @@ describe("RunnerTurns", () => {
           });
           yield* Deferred.await(started);
           log.length = 0;
-          return { fake, log, reported, turns, handedOff };
+          return { fake, log, reported, turns, handedOff, failed };
         });
 
       it.effect.each(["drive", "session"] as const)(
@@ -1834,10 +1843,11 @@ describe("RunnerTurns", () => {
         (saveFailure) =>
           Effect.scoped(
             Effect.gen(function* () {
-              const { fake, log, reported } = yield* lightTurn("light", saveFailure);
+              const { fake, log, reported, failed } = yield* lightTurn("light", saveFailure);
               yield* Queue.offer(fake.events, providerTurnStarted(1));
               yield* Queue.offer(fake.events, command("running", "npm run build"));
-              for (let round = 0; round < 30; round++) yield* Effect.yieldNow;
+              yield* Deferred.await(failed);
+              yield* Deferred.await(fake.interrupted);
 
               expect(log).not.toContain("machine.outgrown");
               expect(reported).toContainEqual({
@@ -1859,17 +1869,16 @@ describe("RunnerTurns", () => {
         () =>
           Effect.scoped(
             Effect.gen(function* () {
-              const { fake, reported, turns } = yield* lightTurn("light", "session");
+              const { fake, reported, turns, failed } = yield* lightTurn("light", "session");
               yield* Queue.offer(fake.events, providerTurnStarted(1));
               yield* Queue.offer(fake.events, command("running", "npm run build"));
-              yield* settle;
+              yield* Deferred.await(failed);
               yield* turns.start({
                 turn: turnFor(2),
                 modelToken: "token-2",
                 drive: { driveId: "my/personal/user_1", token: "sbd1.x.y", remoteToken: null },
                 sessions: { token: "sbs1.t.2" },
               });
-              yield* settle;
               yield* Queue.offer(fake.events, command("running", "npm run-script lint"));
               yield* Queue.offer(fake.events, {
                 type: "message.updated",
@@ -1890,7 +1899,7 @@ describe("RunnerTurns", () => {
                 },
               });
               yield* Queue.offer(fake.events, turnEnded(1));
-              for (let round = 0; round < 30; round++) yield* Effect.yieldNow;
+              yield* Deferred.await(fake.secondStarted);
 
               expect(
                 reported.filter((item) => item.kind === "turn.failed").map((item) => item.runId),
@@ -1902,6 +1911,63 @@ describe("RunnerTurns", () => {
                 ),
               ).toBe(false);
               expect(fake.calls).toContain("start run-2");
+            }),
+          ),
+      );
+
+      it.effect(
+        "does not move the current provider's run for a stopped provider's late command",
+        () =>
+          Effect.scoped(
+            Effect.gen(function* () {
+              const first = yield* makeFakeAdapter;
+              const second = yield* makeFakeAdapter;
+              const secondInstance = ProviderInstanceId.make("second-codex");
+              const started = yield* Deferred.make<void>();
+              const oldTerminal = yield* Deferred.make<void>();
+              const reported: Array<RunnerItem> = [];
+              const turns = yield* makeRunnerTurns({
+                threadId,
+                adapters: new Map([
+                  [instanceId, first.adapter],
+                  [secondInstance, { ...second.adapter, instanceId: secondInstance }],
+                ]),
+                cwd: "/tmp",
+                useModelToken: () => Effect.void,
+                usage: Effect.succeed(unmeasured),
+                machineClass: "light",
+                emit: (item) =>
+                  Effect.gen(function* () {
+                    reported.push(item);
+                    if (item.kind === "turn.started" && item.runId === RunId.make("run-1")) {
+                      yield* Deferred.succeed(started, undefined);
+                    }
+                    if (item.kind === "provider" && item.event.type === "turn.terminal") {
+                      yield* Deferred.succeed(oldTerminal, undefined);
+                    }
+                  }),
+              });
+              yield* Deferred.succeed(first.loaded, undefined);
+              yield* Deferred.succeed(second.loaded, undefined);
+              yield* turns.start({ turn: turnFor(1), modelToken: "token-1" });
+              yield* Deferred.await(started);
+              yield* Queue.offer(first.events, providerTurnStarted(1));
+              yield* turns.interrupt(RunId.make("run-1"));
+              const next = turnFor(2);
+              yield* turns.start({
+                turn: {
+                  ...next,
+                  modelSelection: { ...next.modelSelection, instanceId: secondInstance },
+                },
+                modelToken: "token-2",
+              });
+              yield* Deferred.await(second.secondStarted);
+
+              yield* Queue.offer(first.events, command("running", "npm test"));
+              yield* Queue.offer(first.events, turnEnded(1));
+              yield* Deferred.await(oldTerminal);
+              expect(reported.some((item) => item.kind === "machine.outgrown")).toBe(false);
+              expect(second.calls).toEqual(["start run-2"]);
             }),
           ),
       );

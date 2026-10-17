@@ -46,7 +46,7 @@ const HEAVY_TOOLS: ReadonlySet<string> = new Set([
 /** This tool declares a server that the next machine must keep running. */
 const PREVIEW_SERVICE_START_TOOL_NAMES: ReadonlySet<string> = new Set([
   "preview_service_start",
-  // MCP names from the Codex/Cursor/Pi, ACP, and OpenCode adapters.
+  // MCP names from the provider adapters.
   "mcp__signalbox__preview_service_start",
   "signalbox.preview_service_start",
   "signalbox_preview_service_start",

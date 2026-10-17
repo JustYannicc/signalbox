@@ -27,6 +27,7 @@ import {
 import { remoteThreadWorktree } from "../../user/contextProjects.ts";
 import { DRAIN_TIMEOUT_MS } from "./ThreadRunner.ts";
 import * as ThreadStore from "../ThreadStore.ts";
+import * as PreviewState from "../preview/PreviewState.ts";
 
 /** A backend that does nothing, with its class's idle tail. */
 const fakeBackend = (kind: "cloudflare" | "boat", idleTailMs: number): MachineBackendShape => {
@@ -70,6 +71,48 @@ const outgrown = (runId: RunId) =>
   }) as const;
 
 describe("machine classes", () => {
+  it.effect("restores an old light thread's saved preview on heavy without a live turn", () =>
+    Effect.gen(function* () {
+      const filename = freshDatabase();
+      yield* withObject(
+        filename,
+        (engine, runner, context) =>
+          Effect.gen(function* () {
+            yield* launch(engine);
+            const machine = yield* connect(runner);
+            const turn = yield* liveTurn(runner);
+            const report = turnReport(turn.runId, turn.runOrdinal, turn.providerThread);
+            yield* runner.batch({
+              generation: machine.generation,
+              sequence: 1,
+              items: [report.started, report.full, report.terminal],
+            });
+            yield* Context.get(context, PreviewState.PreviewState).saveServices([
+              { port: 5173, command: "npm run dev", cwd: "." },
+            ]);
+            yield* Context.get(context, ThreadStore.ThreadStore).saveMachine({
+              ...ThreadStore.NO_MACHINE,
+              generation: machine.generation,
+              machineClass: "light",
+            });
+          }),
+        options,
+      );
+      yield* withObject(
+        filename,
+        (_engine, runner) =>
+          Effect.gen(function* () {
+            expect(yield* runner.reconcile).toMatchObject({
+              ensure: { generation: 2 },
+              machineClass: "heavy",
+            });
+            expect((yield* runner.work).turn).toBeNull();
+          }),
+        { ...options, previews: { held: true, lastActiveAt: null } },
+      );
+    }),
+  );
+
   it.effect("keeps a pre-upgrade heavy repo thread heavy after an eviction", () =>
     Effect.gen(function* () {
       const filename = freshDatabase();
