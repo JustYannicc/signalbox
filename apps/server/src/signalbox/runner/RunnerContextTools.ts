@@ -1,4 +1,4 @@
-import type { SearchHit } from "@signalbox/runner-protocol/ContextProtocol";
+import { SearchThreadCursor, type SearchHit } from "@signalbox/runner-protocol/ContextProtocol";
 import { NonNegativeInt, PositiveInt } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -26,7 +26,7 @@ export const CONTEXT_INSTRUCTIONS = [
   `Everything your user can read is under ${DRIVES_ROOT}: ${DRIVES_ROOT}/<owner>/My Drive, ${DRIVES_ROOT}/<owner>/Shared drives/<name> and ${DRIVES_ROOT}/<owner>/Shared with me/<name>, where an owner is Personal or one of their organizations.`,
   `It is read-only and pinned to the version at the start of this turn. Your working directory is your own drive, the only one you change: to reuse a file from another drive, copy it into your working directory.`,
   `When the user refers to work done elsewhere ("in drive B we implemented X"), call search_context first, then open_thread and drive_diff on what it found, and reproduce the change from the diff.`,
-  `If search_context answers insufficient_evidence, say that you found nothing, with what you searched; never guess which work was meant.`,
+  `If search_context answers insufficient_evidence and nextThreadCursor is non-null, continue with that cursor before deciding nothing matched. If threadCoverageComplete is false and searched.threadReadFailures is nonzero, rerun from the first page to retry those reads before deciding nothing matched. Never guess which work was meant.`,
   `Where ${DRIVES_ROOT} is not mounted as a folder, list_drives and read_drive_file read the same paths.`,
   `In a drive backed by a GitHub repository, push and create_pr publish this thread's branch; git push has no credential here.`,
   `Before you finish each turn, call set_thread_status with the next step (one line, who acts) and where the work got to (one or two plain sentences for someone new). thread_status and folder_status read what's going on.`,
@@ -136,16 +136,24 @@ export const layerContextTools = (view: DrivesView) => {
       register({
         name: "search_context",
         description:
-          "Search what the user can read for work done before: their threads (titles, changed files, full conversations), each drive's history, and other threads' work not merged yet. Pass the distinctive words (a feature, file, error or term), not a sentence. Each result holds most of the words; when nothing does, the answer is insufficient_evidence, never a guess. Results name threads, commits and files to follow with open_thread, drive_diff and read_drive_file.",
+          "Search what the user can read for work done before: their active threads (titles, changed files, full conversations), each drive's history, and other threads' work not merged yet. Archived threads are omitted unless includeArchived is true. Pass the distinctive words (a feature, file, error or term), not a sentence. Each result holds most of the words; when nothing does, the answer is insufficient_evidence, never a guess. A non-null nextThreadCursor means more threads remain; repeat the same search with it as threadCursor to continue. threadCoverageComplete is true only when every eligible thread was read successfully; if false with nonzero searched.threadReadFailures, rerun from the first page to retry those reads. Thread hits show up to five matching message locations; messagesTruncated means open_thread can show the rest of the turn history. driveHitsTruncated means more drive matches were omitted from this response. Results name threads, commits and files to follow with open_thread, drive_diff and read_drive_file.",
         parameters: Schema.Struct({
           query: Schema.String,
+          includeArchived: Schema.optional(
+            Schema.Boolean.annotate({
+              description: "Include archived threads in the search. Defaults to false.",
+            }),
+          ),
+          threadCursor: Schema.optional(
+            SearchThreadCursor.annotate({ description: "Continue a prior thread search page." }),
+          ),
           drive: Schema.optional(
             DrivePath.annotate({
               description: `Only this drive: its ${DRIVES_ROOT} path, or its name when that is unique.`,
             }),
           ),
         }),
-        handle: ({ query, drive }) =>
+        handle: ({ query, drive, includeArchived, threadCursor }) =>
           Effect.gen(function* () {
             const scope = drive === undefined ? null : view.driveOf(drive);
             if (drive !== undefined && scope === null) {
@@ -156,19 +164,38 @@ export const layerContextTools = (view: DrivesView) => {
             const result = yield* (yield* client).search({
               query,
               driveId: scope?.driveId ?? null,
+              ...(includeArchived === undefined ? {} : { includeArchived }),
+              ...(threadCursor === undefined ? {} : { threadCursor }),
             });
+            const coverage =
+              result.nextThreadCursor === undefined
+                ? {}
+                : {
+                    nextThreadCursor: result.nextThreadCursor,
+                    ...(result.threadCoverageComplete === undefined
+                      ? {}
+                      : { threadCoverageComplete: result.threadCoverageComplete }),
+                  };
+            const driveCoverage =
+              result.driveHitsTruncated === undefined
+                ? {}
+                : { driveHitsTruncated: result.driveHitsTruncated };
             return result._tag === "found"
               ? json({
                   result: "found",
                   words: result.terms,
                   hits: result.hits.map((hit) => presentHit(view, hit)),
                   searched: result.searched,
+                  ...coverage,
+                  ...driveCoverage,
                 })
               : json({
                   result: "insufficient_evidence",
                   words: result.terms,
                   reason: result.reason,
                   searched: result.searched,
+                  ...coverage,
+                  ...driveCoverage,
                 });
           }),
       }),

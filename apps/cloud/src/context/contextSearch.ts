@@ -1,4 +1,9 @@
-import type { SearchHit, SearchResult, Searched } from "@signalbox/runner-protocol/ContextProtocol";
+import type {
+  SearchHit,
+  SearchResult,
+  SearchThreadCursor,
+  Searched,
+} from "@signalbox/runner-protocol/ContextProtocol";
 import { DRIVE_MERGE_MESSAGE } from "@signalbox/runner-protocol/DriveProtocol";
 import type { OrchestrationV2ShellSnapshot } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
@@ -41,7 +46,8 @@ const MAX_WORK = 20;
 /** Matching commits per drive whose changed files are listed. */
 const MAX_COMMIT_HITS = 5;
 const MAX_FILES = 40;
-const MAX_HITS = 15;
+/** Matching drive hits one call returns, separately from its thread page. */
+const MAX_DRIVE_HITS = 15;
 
 const KIND_ORDER: Record<SearchHit["kind"], number> = { thread: 0, work: 1, commit: 2 };
 
@@ -52,12 +58,15 @@ export const searchContext = Effect.fn("searchContext")(function* (input: {
   /** Drives in scope, every one readable. */
   readonly driveIds: ReadonlyArray<string>;
   readonly shell: OrchestrationV2ShellSnapshot;
+  readonly includeArchived?: boolean;
+  readonly threadCursor?: SearchThreadCursor | null;
 }) {
   const threads = yield* ThreadDirectory;
   const directory = yield* DriveDirectory;
   const terms = queryTerms(input.query);
   const searched: { -readonly [K in keyof Searched]: number } = {
     threads: 0,
+    threadReadFailures: 0,
     threadsInScope: 0,
     drives: 0,
     commits: 0,
@@ -68,6 +77,8 @@ export const searchContext = Effect.fn("searchContext")(function* (input: {
     terms,
     reason,
     searched,
+    nextThreadCursor: null,
+    threadCoverageComplete: false,
   });
   if (terms.length === 0) {
     return none(
@@ -76,26 +87,47 @@ export const searchContext = Effect.fn("searchContext")(function* (input: {
   }
   const inScope = new Set(input.driveIds);
   const userId = input.reader.userId;
+  const archivedThreadIds = new Set<string>(input.shell.archivedThreads.map((thread) => thread.id));
 
   // The reader's own threads in scope, the current one aside: it holds the query itself.
   const titles = new Map<string, string>();
-  const ownThreads = [...input.shell.threads, ...input.shell.archivedThreads]
+  const ownThreads = [
+    ...input.shell.threads,
+    ...(input.includeArchived === true ? input.shell.archivedThreads : []),
+  ]
     .filter((thread) => thread.id !== input.reader.threadId)
     .map((thread) => {
       titles.set(thread.id, thread.title);
-      return { thread, driveId: driveOfProject(thread.projectId, userId) };
+      return {
+        thread,
+        driveId: driveOfProject(thread.projectId, userId),
+        archived: thread.archivedAt !== null,
+      };
     })
     .filter(({ driveId }) => driveId !== null && inScope.has(driveId))
     .sort(
       (left, right) =>
         DateTime.toEpochMillis(right.thread.updatedAt) -
-        DateTime.toEpochMillis(left.thread.updatedAt),
+          DateTime.toEpochMillis(left.thread.updatedAt) ||
+        (left.thread.id < right.thread.id ? -1 : left.thread.id > right.thread.id ? 1 : 0),
     );
   searched.threadsInScope = ownThreads.length;
+  const cursor = input.threadCursor ?? null;
+  const remainingThreads = ownThreads.filter(({ thread }) => {
+    if (cursor === null) return true;
+    const updatedAt = DateTime.toEpochMillis(thread.updatedAt);
+    return (
+      updatedAt < cursor.updatedAt ||
+      (updatedAt === cursor.updatedAt && thread.id > cursor.threadId)
+    );
+  });
+  const threadPage = remainingThreads.slice(0, MAX_THREADS);
+  const lastThread = threadPage.at(-1)?.thread;
+  const hasMoreThreads = remainingThreads.length > threadPage.length;
 
-  const threadHits = Effect.forEach(
-    ownThreads.slice(0, MAX_THREADS),
-    ({ thread, driveId }) =>
+  const threadHitEffect = Effect.forEach(
+    threadPage,
+    ({ thread, driveId, archived }) =>
       threads
         .forThread(thread.id)
         .contextMatch(input.actor, terms)
@@ -104,10 +136,23 @@ export const searchContext = Effect.fn("searchContext")(function* (input: {
             searched.threads++;
             return match === null || !isEvidence(terms, match.matched)
               ? []
-              : [{ kind: "thread", threadId: thread.id, driveId, ...match } satisfies SearchHit];
+              : [
+                  {
+                    kind: "thread",
+                    threadId: thread.id,
+                    driveId,
+                    ...match,
+                    ...(input.includeArchived === true && archived ? { archived: true } : {}),
+                  } satisfies SearchHit,
+                ];
           }),
           // One thread that can't answer leaves the rest of the search standing.
-          Effect.catchTags({ ThreadObjectError: () => Effect.succeed([]) }),
+          Effect.catchTags({
+            ThreadObjectError: () => {
+              searched.threadReadFailures = (searched.threadReadFailures ?? 0) + 1;
+              return Effect.succeed([]);
+            },
+          }),
         ),
     { concurrency: 8 },
   );
@@ -122,7 +167,7 @@ export const searchContext = Effect.fn("searchContext")(function* (input: {
       return changed.map((file) => file.path);
     }).pipe(Effect.catchTags({ DriveReadError: () => Effect.succeed([]) }));
 
-  const driveHits = Effect.forEach(
+  const driveHitEffect = Effect.forEach(
     drives,
     (driveId) =>
       Effect.gen(function* () {
@@ -161,7 +206,11 @@ export const searchContext = Effect.fn("searchContext")(function* (input: {
           { concurrency: 4 },
         );
 
-        const others = unreconciled.filter((work) => work.threadId !== input.reader.threadId);
+        const others = unreconciled.filter(
+          (work) =>
+            work.threadId !== input.reader.threadId &&
+            (input.includeArchived === true || !archivedThreadIds.has(work.threadId)),
+        );
         searched.work += others.length;
         const workHits = yield* Effect.forEach(
           others,
@@ -171,6 +220,7 @@ export const searchContext = Effect.fn("searchContext")(function* (input: {
               const title = titles.get(work.threadId) ?? null;
               const matched = matchTerms(terms, [...files, ...(title === null ? [] : [title])]);
               if (!isEvidence(terms, matched)) return [];
+              const archived = archivedThreadIds.has(work.threadId);
               return [
                 {
                   kind: "work",
@@ -181,6 +231,7 @@ export const searchContext = Effect.fn("searchContext")(function* (input: {
                   base: work.base,
                   matched,
                   files: files.slice(0, MAX_FILES),
+                  ...(input.includeArchived === true && archived ? { archived: true } : {}),
                 } satisfies SearchHit,
               ];
             }),
@@ -191,20 +242,73 @@ export const searchContext = Effect.fn("searchContext")(function* (input: {
     { concurrency: 4 },
   );
 
-  const [fromThreads, fromDrives] = yield* Effect.all([threadHits, driveHits], {
+  const [fromThreads, fromDrives] = yield* Effect.all([threadHitEffect, driveHitEffect], {
     concurrency: "unbounded",
   });
-  const hits = [...fromThreads.flat(), ...fromDrives.flat()]
+  const priorThreadReadFailures = cursor?.threadReadFailures ?? 0;
+  const threadReadFailures = searched.threadReadFailures ?? 0;
+  const nextThreadCursor: SearchThreadCursor | null =
+    hasMoreThreads && lastThread !== undefined
+      ? {
+          updatedAt: DateTime.toEpochMillis(lastThread.updatedAt),
+          threadId: lastThread.id,
+          threadReadFailures: priorThreadReadFailures + threadReadFailures,
+        }
+      : null;
+  const threadCoverageComplete =
+    nextThreadCursor === null && priorThreadReadFailures + threadReadFailures === 0;
+  const threadHits = fromThreads
+    .flat()
     .sort(
       (left, right) =>
         right.matched.length - left.matched.length ||
         KIND_ORDER[left.kind] - KIND_ORDER[right.kind],
-    )
-    .slice(0, MAX_HITS);
-  if (hits.length > 0) return { _tag: "found", terms, hits, searched } satisfies SearchResult;
-  return none(
-    `Nothing searched holds at least ${termsNeeded(terms)} of these words: ${terms.join(", ")}. ` +
-      "This is not a guess that it doesn't exist: try other words for it (a file name, an error, " +
-      "a term the conversation used), or name the drive it was done in.",
+    );
+  const allDriveHits = fromDrives
+    .flat()
+    .sort(
+      (left, right) =>
+        right.matched.length - left.matched.length ||
+        KIND_ORDER[left.kind] - KIND_ORDER[right.kind],
+    );
+  const driveHitsTruncated = allDriveHits.length > MAX_DRIVE_HITS;
+  const driveHits = allDriveHits.slice(0, MAX_DRIVE_HITS);
+  const hits = [...threadHits, ...driveHits].sort(
+    (left, right) =>
+      right.matched.length - left.matched.length || KIND_ORDER[left.kind] - KIND_ORDER[right.kind],
   );
+  if (hits.length > 0) {
+    return {
+      _tag: "found",
+      terms,
+      hits,
+      searched,
+      nextThreadCursor,
+      threadCoverageComplete,
+      driveHitsTruncated,
+    } satisfies SearchResult;
+  }
+  return {
+    _tag: "insufficient_evidence",
+    terms,
+    reason:
+      priorThreadReadFailures + threadReadFailures > 0
+        ? `The search could not read ${threadReadFailures} thread conversation(s) on this page and ` +
+          `${priorThreadReadFailures} on earlier pages. ` +
+          "The result is incomplete; rerun from the first page to retry those reads. " +
+          (nextThreadCursor === null
+            ? ""
+            : "More threads also remain; continue with nextThreadCursor. ")
+        : nextThreadCursor === null
+          ? `Nothing searched holds at least ${termsNeeded(terms)} of these words: ${terms.join(", ")}. ` +
+            "This is not a guess that it doesn't exist: try other words for it (a file name, an error, " +
+            "a term the conversation used), or name the drive it was done in."
+          : `Nothing on this page holds at least ${termsNeeded(terms)} of these words: ${terms.join(", ")}. ` +
+            `More threads remain; continue with nextThreadCursor to search the older page. ` +
+            `This page read ${searched.threads} conversations from ${searched.threadsInScope} eligible threads.`,
+    searched,
+    nextThreadCursor,
+    threadCoverageComplete,
+    driveHitsTruncated,
+  } satisfies SearchResult;
 });

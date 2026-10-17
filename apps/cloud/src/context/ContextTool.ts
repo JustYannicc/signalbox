@@ -5,6 +5,7 @@ import {
   type DiffResult,
   MAX_CONTEXT_BLOB_BYTES,
   type SearchResult,
+  type SearchThreadCursor,
   type ThreadResult,
   type TreeResult,
 } from "@signalbox/runner-protocol/ContextProtocol";
@@ -84,7 +85,12 @@ export class ContextTool extends Context.Service<
     ) => Effect.Effect<DiffResult, ContextAccessError | ContextUnavailable>;
     readonly search: (
       reader: ContextReader,
-      request: { readonly query: string; readonly driveId: string | null },
+      request: {
+        readonly query: string;
+        readonly driveId: string | null;
+        readonly includeArchived?: boolean;
+        readonly threadCursor?: SearchThreadCursor | null;
+      },
     ) => Effect.Effect<SearchResult, ContextAccessError | ContextUnavailable>;
     readonly thread: (
       reader: ContextReader,
@@ -291,6 +297,10 @@ const make = Effect.gen(function* () {
         query: request.query,
         driveIds,
         shell,
+        ...(request.includeArchived === undefined
+          ? {}
+          : { includeArchived: request.includeArchived }),
+        ...(request.threadCursor === undefined ? {} : { threadCursor: request.threadCursor }),
       }).pipe(
         Effect.provideService(ThreadDirectory, threads),
         Effect.provideService(DriveDirectory, directory),

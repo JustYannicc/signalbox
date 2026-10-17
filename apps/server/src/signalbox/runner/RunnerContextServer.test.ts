@@ -3,6 +3,7 @@ import type { PublishRequest, PublishResult } from "@signalbox/runner-protocol/B
 import type {
   ContextView,
   SearchResult,
+  SearchThreadCursor,
   TreeResult,
 } from "@signalbox/runner-protocol/ContextProtocol";
 import { describe, expect, it } from "@effect/vitest";
@@ -105,7 +106,13 @@ const BLOBS: Record<string, string> = {
 
 /** What the fake drive and cloud were asked, in order, and what the cloud answers a publish. */
 interface Calls {
-  readonly searches: Array<{ query: string; driveId: string | null }>;
+  readonly searches: Array<{
+    query: string;
+    driveId: string | null;
+    includeArchived?: boolean;
+    threadCursor?: SearchThreadCursor | null;
+  }>;
+  searchResult: SearchResult | null;
   readonly log: Array<string>;
   readonly published: Array<PublishRequest>;
   answer: PublishResult;
@@ -150,6 +157,8 @@ const fakeClient = (calls: Calls): ContextClient => ({
   diff: () => Effect.succeed({ _tag: "diff", patch: "+dark = true\n", truncated: false }),
   search: (request) => {
     calls.searches.push(request);
+    const searchResult = calls.searchResult;
+    if (searchResult !== null) return Effect.succeed(searchResult);
     return Effect.succeed({
       _tag: "found",
       terms: ["dark", "mode"],
@@ -176,6 +185,8 @@ const fakeClient = (calls: Calls): ContextClient => ({
         },
       ],
       searched: { threads: 0, threadsInScope: 0, drives: 1, commits: 2, work: 0 },
+      nextThreadCursor: null,
+      threadCoverageComplete: true,
     } satisfies SearchResult);
   },
   thread: () => Effect.succeed({ _tag: "not_found" }),
@@ -204,7 +215,14 @@ const fakeClient = (calls: Calls): ContextClient => ({
 });
 
 const serve = Effect.gen(function* () {
-  const calls: Calls = { searches: [], log: [], published: [], answer: PUBLISHED, notes: [] };
+  const calls: Calls = {
+    searches: [],
+    searchResult: null,
+    log: [],
+    published: [],
+    answer: PUBLISHED,
+    notes: [],
+  };
   const server = yield* startContextServer({ mountPoint: null });
   yield* server.pin(fakeClient(calls));
   yield* server.attachDrive(fakeDrive(calls));
@@ -300,7 +318,7 @@ describe("context server (#141)", () => {
 
   it.effect("serves the context tool over MCP", () =>
     Effect.gen(function* () {
-      const { mcp, call, searches } = yield* serve;
+      const { mcp, call, searches, calls } = yield* serve;
       const tools = (yield* mcp("tools/list", {})).result.tools as ReadonlyArray<{
         name: string;
         annotations: { readOnlyHint: boolean };
@@ -329,6 +347,8 @@ describe("context server (#141)", () => {
       // Drives come back as the paths the agent reads them at.
       expect(JSON.parse(found.content[0]!.text)).toMatchObject({
         result: "found",
+        nextThreadCursor: null,
+        threadCoverageComplete: true,
         hits: [
           { kind: "commit", drive: "/drives/Acme/Shared drives/Billing", parent: OLD },
           // A drive only a shortcut reaches is named by the shortcut's path.
@@ -336,9 +356,46 @@ describe("context server (#141)", () => {
         ],
       });
 
+      calls.searchResult = {
+        _tag: "insufficient_evidence",
+        terms: ["dark", "mode"],
+        reason: "A thread could not be read.",
+        searched: {
+          threads: 0,
+          threadReadFailures: 1,
+          threadsInScope: 1,
+          drives: 1,
+          commits: 0,
+          work: 0,
+        },
+        nextThreadCursor: null,
+        threadCoverageComplete: false,
+      };
+      const incomplete = yield* call("search_context", { query: "dark mode" });
+      expect(JSON.parse(incomplete.content[0]!.text)).toMatchObject({
+        result: "insufficient_evidence",
+        searched: { threadReadFailures: 1 },
+        nextThreadCursor: null,
+        threadCoverageComplete: false,
+      });
+      calls.searchResult = null;
+
       // A drive's own name does too, when only one drive has it.
       yield* call("search_context", { query: "dark mode", drive: "billing" });
       expect(searches.at(-1)?.driveId).toBe("shared/org_acme/billing");
+      const threadCursor = { updatedAt: 1, threadId: "older-thread" };
+      yield* call("search_context", {
+        query: "dark mode",
+        drive: "billing",
+        includeArchived: true,
+        threadCursor,
+      });
+      expect(searches.at(-1)).toEqual({
+        query: "dark mode",
+        driveId: "shared/org_acme/billing",
+        includeArchived: true,
+        threadCursor,
+      });
       expect((yield* call("search_context", { query: "x", drive: "Payroll" })).isError).toBe(true);
 
       expect((yield* call("list_drives", {})).content[0]!.text).toBe("Personal/\nAcme/");

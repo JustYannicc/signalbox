@@ -141,6 +141,7 @@ export const matchThread = (
     matched,
     files: ranked.slice(0, MAX_HIT_FILES),
     messages: pointed.slice(0, MAX_HIT_MESSAGES),
+    messagesTruncated: pointed.length > MAX_HIT_MESSAGES,
     turns: [...checkpoints.entries()]
       .sort(([left], [right]) => left - right)
       .flatMap(([turn, checkpoint]) => {

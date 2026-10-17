@@ -108,10 +108,22 @@ export const DiffResult = Schema.Union([
 ]);
 export type DiffResult = typeof DiffResult.Type;
 
+export const SearchThreadCursor = Schema.Struct({
+  updatedAt: Schema.Number,
+  threadId: Schema.String,
+  /** Read failures from earlier pages, carried until the final page. */
+  threadReadFailures: Schema.optional(NonNegativeInt),
+});
+export type SearchThreadCursor = typeof SearchThreadCursor.Type;
+
 export const SearchRequest = Schema.Struct({
   query: Schema.String,
   /** Only this drive. Null: every drive the user can read. */
   driveId: Schema.NullOr(Schema.String),
+  /** Archived threads are omitted unless requested. */
+  includeArchived: Schema.optional(Schema.Boolean),
+  /** Resume the thread scan after this thread's position in the stable ordering. */
+  threadCursor: Schema.optional(Schema.NullOr(SearchThreadCursor)),
 });
 
 /** A turn's saved files, as the commits its checkpoint names. */
@@ -143,7 +155,11 @@ export const SearchHit = Schema.Union([
         excerpt: Schema.String,
       }),
     ),
+    /** More matching message locations exist; use open_thread to read the full turns. */
+    messagesTruncated: Schema.optional(Schema.Boolean),
     turns: Schema.Array(TurnCommits),
+    /** Present only when the search explicitly included archived threads. */
+    archived: Schema.optional(Schema.Boolean),
   }),
   Schema.Struct({
     kind: Schema.Literal("commit"),
@@ -166,13 +182,18 @@ export const SearchHit = Schema.Union([
     base: Schema.NullOr(Oid),
     matched,
     files: Schema.Array(Schema.String),
+    /** Present only when the search explicitly included an archived thread. */
+    archived: Schema.optional(Schema.Boolean),
   }),
 ]);
 export type SearchHit = typeof SearchHit.Type;
 
 export const Searched = Schema.Struct({
-  /** Threads whose conversations were read, of `threadsInScope`. */
+  /** Conversations read on this page, of `threadsInScope`. */
   threads: NonNegativeInt,
+  /** Thread conversations that could not be read on this page. */
+  threadReadFailures: Schema.optional(NonNegativeInt),
+  /** Threads in the drive scope after applying the archived option. */
   threadsInScope: NonNegativeInt,
   drives: NonNegativeInt,
   commits: NonNegativeInt,
@@ -186,12 +207,24 @@ export const SearchResult = Schema.Union([
     terms: Schema.Array(Schema.String),
     hits: Schema.Array(SearchHit),
     searched: Searched,
+    /** Resume the thread scan after this page; null when every eligible thread was searched. */
+    nextThreadCursor: Schema.optional(Schema.NullOr(SearchThreadCursor)),
+    /** Whether the search sequence covered every eligible thread without read failures. */
+    threadCoverageComplete: Schema.optional(Schema.Boolean),
+    /** Some matching drive hits were omitted by the response-size limit. */
+    driveHitsTruncated: Schema.optional(Schema.Boolean),
   }),
   Schema.Struct({
     _tag: Schema.Literal("insufficient_evidence"),
     terms: Schema.Array(Schema.String),
     reason: Schema.String,
     searched: Searched,
+    /** Resume the thread scan after this page; null when every eligible thread was searched. */
+    nextThreadCursor: Schema.optional(Schema.NullOr(SearchThreadCursor)),
+    /** Whether the search sequence covered every eligible thread without read failures. */
+    threadCoverageComplete: Schema.optional(Schema.Boolean),
+    /** Some matching drive hits were omitted by the response-size limit. */
+    driveHitsTruncated: Schema.optional(Schema.Boolean),
   }),
 ]);
 export type SearchResult = typeof SearchResult.Type;

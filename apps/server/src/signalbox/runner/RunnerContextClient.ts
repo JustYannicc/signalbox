@@ -24,6 +24,7 @@ import {
   contextJson,
   type DiffResult,
   type SearchResult,
+  type SearchThreadCursor,
   type ThreadResult,
   type TreeResult,
 } from "@signalbox/runner-protocol/ContextProtocol";
@@ -98,6 +99,8 @@ export interface ContextClient {
   readonly search: (request: {
     readonly query: string;
     readonly driveId: string | null;
+    readonly includeArchived?: boolean;
+    readonly threadCursor?: SearchThreadCursor | null;
   }) => Effect.Effect<SearchResult, ContextClientError>;
   readonly thread: (request: {
     readonly threadId: string;
