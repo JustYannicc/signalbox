@@ -2,9 +2,11 @@ import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
-import { contextAllows } from "../drive/driveAccess.ts";
+import { contextAllows, parseDriveId } from "../drive/driveAccess.ts";
 import type { Actor } from "../thread/ThreadEngine.ts";
+import { driveOfProject } from "../user/contextProjects.ts";
 import * as UserContexts from "../user/UserContexts.ts";
+import * as UserDrives from "../user/UserDrives.ts";
 import * as UserStore from "../user/UserStore.ts";
 import type { SearchHome } from "./SearchIndex.ts";
 import { searchHomeForThread } from "./searchHome.ts";
@@ -32,6 +34,7 @@ export class SearchAuthority extends Context.Service<
 const make = Effect.gen(function* () {
   const store = yield* UserStore.UserStore;
   const contexts = yield* UserContexts.UserContexts;
+  const drives = yield* UserDrives.UserDrives;
   return SearchAuthority.of({
     current: (actor) =>
       Effect.gen(function* () {
@@ -48,10 +51,19 @@ const make = Effect.gen(function* () {
         if (profile?.id !== actor.userId) return { actor: currentActor, revision, homes: [] };
         const index = yield* store.threadIndex;
         const homes = new Map<string, { home: SearchHome; threadIds: Array<string> }>();
+        const access = new Map<string, boolean>();
         for (const row of index.threads) {
           if (!contextAllows(contextIds, row.contextId) || row.shell.deletedAt !== null) continue;
           if (actor.projectIds !== undefined && !actor.projectIds.includes(row.shell.projectId))
             continue;
+          const driveId = driveOfProject(row.shell.projectId, actor.userId);
+          if (driveId === null || parseDriveId(driveId)?.contextId !== row.contextId) continue;
+          let allowed = access.get(driveId);
+          if (allowed === undefined) {
+            allowed = (yield* drives.access(driveId)) !== null;
+            access.set(driveId, allowed);
+          }
+          if (!allowed) continue;
           const home = searchHomeForThread(actor.userId, row.contextId, row.shell.projectId);
           const key = `${home.ownerId}/${home.projectId}`;
           const entry = homes.get(key) ?? { home, threadIds: [] };
