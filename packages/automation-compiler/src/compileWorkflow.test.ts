@@ -504,7 +504,7 @@ export default workflow(async (w) => {
       `await w.repeat("R", {}, async (w) => w.done());`,
       "w.repeat needs a max",
     ],
-    ["a judge without outcomes", `await w.judge("J", { input });`, "w.judge needs outcomes"],
+    ["a judge without input or outcomes", `await w.judge("J", {});`, "w.judge needs input"],
     [
       "an operation that isn't a literal",
       `const op = "a.b"; await w.call("C", op, {});`,

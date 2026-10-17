@@ -38,6 +38,7 @@ import type * as DrivePacks from "./drive/DrivePacks.ts";
 import { makeMemoryDrives } from "./drive/driveTesting.ts";
 import * as Platform from "./platform.ts";
 import * as NoteReader from "./notes/NoteReader.ts";
+import * as ModelCompletion from "./models/ModelCompletion.ts";
 import * as UserNotes from "./notes/UserNotes.ts";
 import * as PoolDirectory from "./pool/PoolDirectory.ts";
 import * as PreviewSetup from "./previewSetup/PreviewSetup.ts";
@@ -59,6 +60,11 @@ import * as ThreadEngine from "./thread/ThreadEngine.ts";
 import * as StatusNoteModel from "./thread/statusLine/StatusNoteModel.ts";
 import * as ThreadStatusNotes from "./thread/statusLine/ThreadStatusNotes.ts";
 import * as ThreadKindTurns from "./thread/ThreadKindTurns.ts";
+import * as LearnerService from "./learner/LearnerService.ts";
+import * as LearnerJev from "./learner/LearnerJev.ts";
+import * as LearnerSummary from "./learner/LearnerSummary.ts";
+import * as LearnerHomes from "./user/LearnerHomes.ts";
+import * as UserLearner from "./user/UserLearner.ts";
 import * as KindClassifier from "./threadKinds/KindClassifier.ts";
 import { makeThreadObjectApi } from "./thread/threadObjectApi.ts";
 import { browserUpdateLine, previewsLine } from "./thread/threadWire.ts";
@@ -78,6 +84,7 @@ import * as DriveShortcuts from "./user/DriveShortcuts.ts";
 import * as OnePasswordAccount from "./user/OnePasswordAccount.ts";
 import * as ResourceBindings from "./user/ResourceBindings.ts";
 import * as ThreadContexts from "./user/threadContexts.ts";
+import * as ThreadContextLayers from "./user/threadContextLayers.ts";
 import * as UserContexts from "./user/UserContexts.ts";
 import * as GitHub from "./github/GitHub.ts";
 import * as GitHubActions from "./github/GitHubActions.ts";
@@ -157,6 +164,7 @@ export const layerPersonalThreadContexts = (userId: string) =>
   Layer.succeed(
     ThreadContexts.ThreadContexts,
     ThreadContexts.ThreadContexts.of({
+      initialModelSelection: () => Effect.succeed(null),
       placeOfProject: (projectId) => {
         const contextId = contextOfProject([UserContexts.PERSONAL_CONTEXT], projectId);
         return Effect.succeed(
@@ -289,11 +297,12 @@ const makeUserRuntime = (
   kernel: KernelApi | null,
   logins: { readonly kernel: KernelAuth | null; readonly executor: ExecutorLogins | null },
   noteReader: Layer.Layer<NoteReader.NoteReader>,
+  modelCompletion: Layer.Layer<ModelCompletion.ModelCompletion>,
 ) =>
   ManagedRuntime.make(
     // The user's automations, on the same services the object gives them.
     CloudEngine.layer.pipe(
-      Layer.provide(Layer.mergeAll(runner, alarm)),
+      Layer.provide(Layer.mergeAll(runner, alarm, modelCompletion)),
       Layer.provideMerge(
         // The same branches the socket's RPC uses, so the git panel sees what the agent pushed.
         Layer.mergeAll(
@@ -320,12 +329,13 @@ const makeUserRuntime = (
               SignInGrants.layer,
               PoolSignIns.layer,
               CloudThreadService.layer.pipe(Layer.provideMerge(ThreadsLive.layer)),
+              UserLearner.layer.pipe(Layer.provideMerge(LearnerHomes.layer)),
               PersonBrowsers.layer(kernel),
             ),
           ),
           Layer.provideMerge(
             Layer.mergeAll(
-              ThreadContexts.layer,
+              ThreadContextLayers.layer,
               Platform.layerCrypto,
               UserThreadKinds.layerTurns,
               attachments,
@@ -353,6 +363,11 @@ const makeUserRuntime = (
             Layer.mergeAll(UserDrives.layer, UserPools.layer, UserThreadKinds.layer),
           ),
           Layer.provideMerge(Layer.mergeAll(classifier, ChatArchive.layerAlarmNone)),
+          Layer.provideMerge(
+            Layer.mergeAll(LearnerService.layer, LearnerSummary.layerNone).pipe(
+              Layer.provideMerge(LearnerJev.layerNone),
+            ),
+          ),
           Layer.provideMerge(Layer.mergeAll(layerMemoryStore, ModelManifest.layerBundled)),
           Layer.provideMerge(Layer.mergeAll(drives, people, github)),
           Layer.provideMerge(
@@ -482,6 +497,7 @@ export const makeMemoryCloud = (
       options.kernel ?? null,
       { kernel: options.kernelAuth ?? null, executor: options.executorLogins ?? null },
       options.noteReader ?? NoteReader.layerNone,
+      ModelCompletion.layer((name) => pools.objectFor(name).api),
     );
     const object = { api: makeUserObjectApi((effect) => runtime.runPromise(effect)), runtime };
     users.set(userId, object);
@@ -670,7 +686,7 @@ export const makeMemoryCloud = (
     /** The thread service as `userId`'s object runs it, with that user's contexts. */
     layerFor: (userId: string) =>
       threadService.pipe(
-        Layer.provideMerge(ThreadContexts.layer),
+        Layer.provideMerge(ThreadContextLayers.layer),
         Layer.provideMerge(userObject(userId)),
       ),
     /** The thread service for tests where `userId` has only Personal. */

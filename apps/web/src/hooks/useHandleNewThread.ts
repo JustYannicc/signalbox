@@ -34,11 +34,14 @@ import {
 import {
   hasExplicitComposerModelSelection,
   resolveNewDraftStartFromOrigin,
-  resolveNewThreadModelSelectionOverride,
 } from "../lib/chatThreadActions";
+import {
+  explicitCarryModelSelection,
+  resolveNewThreadInitialModelSelection,
+} from "../lib/newThreadModelSelectionPolicy"; // signalbox: carry explicit choices and resolve implicit defaults.
 import { readT3ProjectFile } from "../lib/t3ProjectFileDefaults";
 import { environmentServerConfigsAtom } from "../state/server";
-import { draftModelSelection, useProjectPoolModelSelection } from "../state/projectPool"; // signalbox
+import { useProjectPoolModelSelection } from "../state/projectPool"; // signalbox: map initial model choices to the destination project's pool.
 import { useDraftFiledAway } from "../components/sidebar/folders/draftFiling"; // signalbox
 import { resolveThreadRouteTarget } from "../threadRoutes";
 import { legacyProjectCwdPreferenceKey, useUiStateStore } from "../uiStateStore";
@@ -82,6 +85,10 @@ export function useNewThreadHandler() {
         replace?: boolean;
         /** signalbox: a new draft even when the project has an empty one (folders share projects). */
         freshDraft?: boolean;
+        /** signalbox: with `freshDraft`, create it without opening it (quick capture). */
+        navigate?: boolean;
+        /** signalbox: with `freshDraft`, fills it the moment it exists, before it opens or can be replaced. */
+        seed?: (draftId: DraftId) => void;
       },
     ): Promise<{ draftId: DraftId; threadId: ThreadId } | null> => {
       const projects = readProjects();
@@ -92,7 +99,6 @@ export function useNewThreadHandler() {
         getDraftSessionByLogicalProjectKey,
         getDraftSession,
         getDraftThread,
-        applyStickyState,
         setDraftThreadContext,
         setLogicalProjectDraftThreadId,
         setModelSelection,
@@ -113,12 +119,8 @@ export function useNewThreadHandler() {
               : currentRouteTarget.draftId,
           )
         : null;
-      const composerActiveProvider = carrySourceComposer?.activeProvider ?? null;
-      const composerModelSelection = composerActiveProvider
-        ? (carrySourceComposer?.modelSelectionByProvider[composerActiveProvider] ?? null)
-        : null;
-      const carryModelSelection =
-        composerModelSelection ?? carrySourceShell?.modelSelection ?? null;
+      // signalbox: only carry a user's explicit model choice into the new draft.
+      const explicitCarrySelection = explicitCarryModelSelection(carrySourceComposer);
       const carryInteractionMode =
         carrySourceComposer?.interactionMode ??
         carrySourceShell?.interactionMode ??
@@ -130,34 +132,39 @@ export function useNewThreadHandler() {
           candidate.environmentId === projectRef.environmentId,
       );
       const abandonedSinceRequest = () =>
-        routeChangedSinceRequest() || (project !== undefined && readProject(projectRef) === null);
+        (options?.navigate !== false && routeChangedSinceRequest()) || // signalbox: quick capture
+        (project !== undefined && readProject(projectRef) === null);
       const projectSettings = resolveProjectSettings(
         targetServerSettings,
         project?.id ?? null,
         project,
       );
-      const projectDefaultModelSelection = projectSettings.settings.defaultModelSelection;
       const defaultRuntimeMode = projectSettings.settings.defaultRuntimeMode;
-      const resolveUpstreamModelSelectionOverride = (destinationDraftId: DraftId) =>
-        resolveNewThreadModelSelectionOverride({
-          projectDefaultSelection: projectDefaultModelSelection ?? null,
-          carrySelection: carryModelSelection,
+      // signalbox: resolve defaults, then translate the choice to the pool the project runs on.
+      const resolveModelSelectionOverride = (destinationDraftId: DraftId) => {
+        const result = resolveNewThreadInitialModelSelection({
+          projectDefaultIsConfigured: projectSettings.sources.defaultModelSelection === "project",
+          projectDefaultSelection: projectSettings.settings.defaultModelSelection,
+          personDefaultSelection: targetServerSettings.defaultModelSelection ?? null,
+          settings: projectSettings.settings,
+          projectId: project?.id ?? null,
+          providers: environmentServerConfigs.get(projectRef.environmentId)?.providers ?? [],
+          explicitCarrySelection,
           carrySourceDraftId:
             currentRouteTarget?.kind === "draft" ? currentRouteTarget.draftId : null,
           destinationDraftId,
         });
-      // signalbox: the thread starts on the pool its project runs on.
-      const resolveModelSelectionOverride = (destinationDraftId: DraftId) => {
-        const override = resolveUpstreamModelSelectionOverride(destinationDraftId);
-        return (
-          projectPool({
-            environmentId: projectRef.environmentId,
-            projectId: project?.id ?? null,
-            selection: override ?? draftModelSelection(getComposerDraft(destinationDraftId)),
-            providerInstances: projectSettings.settings.providerInstances,
-            providers: environmentServerConfigs.get(projectRef.environmentId)?.providers ?? [],
-          }) ?? override
-        );
+        return {
+          ...result,
+          selection:
+            projectPool({
+              environmentId: projectRef.environmentId,
+              projectId: project?.id ?? null,
+              selection: result.selection,
+              providerInstances: projectSettings.settings.providerInstances,
+              providers: environmentServerConfigs.get(projectRef.environmentId)?.providers ?? [],
+            }) ?? result.selection,
+        };
       };
       const resolveDefaultEnvMode = async (): Promise<DraftThreadEnvMode> => {
         const consultProjectFile =
@@ -274,13 +281,13 @@ export function useNewThreadHandler() {
           const storedDraft = getComposerDraft(emptyStoredDraftThread.draftId);
           const storedDraftHasExplicitModelPick = hasExplicitComposerModelSelection(storedDraft);
           if (!storedDraftHasExplicitModelPick) {
-            applyStickyState(emptyStoredDraftThread.draftId);
             const modelSelectionOverride = resolveModelSelectionOverride(
               emptyStoredDraftThread.draftId,
             );
-            if (modelSelectionOverride) {
-              setModelSelection(emptyStoredDraftThread.draftId, modelSelectionOverride, {
+            if (modelSelectionOverride.selection) {
+              setModelSelection(emptyStoredDraftThread.draftId, modelSelectionOverride.selection, {
                 replaceOptions: true,
+                ...(modelSelectionOverride.explicit ? { explicit: true } : {}), // signalbox: retain explicit user intent after pool mapping.
               });
             }
           }
@@ -397,11 +404,15 @@ export function useNewThreadHandler() {
           runtimeMode: defaultRuntimeMode,
           ...(carryInteractionMode ? { interactionMode: carryInteractionMode } : {}),
         });
-        applyStickyState(draftId);
         const modelSelectionOverride = resolveModelSelectionOverride(draftId);
-        if (modelSelectionOverride) {
-          setModelSelection(draftId, modelSelectionOverride, { replaceOptions: true });
+        if (modelSelectionOverride.selection) {
+          setModelSelection(draftId, modelSelectionOverride.selection, {
+            replaceOptions: true,
+            ...(modelSelectionOverride.explicit ? { explicit: true } : {}), // signalbox: retain explicit user intent after pool mapping.
+          });
         }
+        options?.seed?.(draftId); // signalbox: quick capture
+        if (options?.navigate === false) return { draftId, threadId }; // signalbox: quick capture
         await router.navigate({
           to: "/draft/$draftId",
           params: { draftId },

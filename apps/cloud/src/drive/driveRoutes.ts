@@ -44,6 +44,7 @@ import {
   machineRef,
 } from "./DriveStore.ts";
 import { isAutomationApiPath, serveAutomationRequest } from "./automationRoutes.ts";
+import { isLearnerApiPath, serveLearnerRequest } from "./learnerRoutes.ts";
 import { isBranchApiPath, serveBranchRequest } from "./branchRoutes.ts";
 import { isBrowserApiPath, serveBrowserRequest } from "./browserRoutes.ts";
 import { isStatusLineApiPath, serveStatusLineRequest } from "./statusLineRoutes.ts";
@@ -271,6 +272,11 @@ async function route(
         await request.text(),
       ),
     );
+  }
+  // The thread's agent using its level's learner (#668).
+  if (isLearnerApiPath(new URL(request.url).pathname)) {
+    if (request.method !== "POST") return text("Method not allowed.", 405);
+    return await runtime!.runPromise(serveLearnerRequest(auth, await request.text()));
   }
   // The person's browser for the thread's agent, opened as its owner (#574).
   const browserPath = new URL(request.url).pathname;
