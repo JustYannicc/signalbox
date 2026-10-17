@@ -19,6 +19,7 @@ import * as ThreadEngine from "./ThreadEngine.ts";
 import * as ThreadStore from "./ThreadStore.ts";
 import * as MachineBackends from "./runner/machineBackends.ts";
 import type * as MachineBackend from "./runner/MachineBackend.ts";
+import { CONNECT_TIMEOUT_MS } from "./runner/MachineBackend.ts";
 import * as ThreadRunner from "./runner/ThreadRunner.ts";
 import * as TerminalOutbox from "./terminal/TerminalOutbox.ts";
 import * as TerminalStore from "./terminal/TerminalStore.ts";
@@ -30,6 +31,7 @@ export type TerminalOutboxRequirement = TerminalOutbox.TerminalOutbox;
 export type ThreadTerminalsRequirement = ThreadTerminals.ThreadTerminals;
 
 export const layerCloudTerminals = CloudTerminalsLayer.layer;
+export { CONNECT_TIMEOUT_MS };
 export { deliverPendingTerminals };
 
 /** A thread object's services on SQLite, including its terminal state and outbox. */

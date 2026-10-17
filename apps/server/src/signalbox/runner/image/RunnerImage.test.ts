@@ -52,7 +52,7 @@ describe("Runner image pins", () => {
 
   it("installs and exercises the native PTY on the Runner image", () => {
     expect(`^${arg("NODE_PTY_VERSION")}`).toBe(packageJson.dependencies["node-pty"]);
-    expect(dockerfile).toContain("--allow-scripts=node-pty");
+    expect(dockerfile).toContain('"allowScripts":{"node-pty":true}');
     expect(dockerfile).toContain('require("node-pty").spawn("/bin/sh"');
     expect(dockerfile).toContain('output.includes("terminal-image-smoke")');
   });

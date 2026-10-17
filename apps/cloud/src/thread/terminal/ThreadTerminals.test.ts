@@ -11,7 +11,6 @@ import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 
 import type * as ThreadEngine from "../ThreadEngine.ts";
-import { CONNECT_TIMEOUT_MS } from "../runner/MachineBackend.ts";
 import {
   claude,
   connect,
@@ -946,7 +945,7 @@ describe("cloud thread terminals", () => {
         const requested = yield* runner.reconcile;
         const requestedGeneration = requested.ensure?.generation;
         if (requestedGeneration === undefined) throw new Error("expected a machine request");
-        yield* TestClock.adjust(CONNECT_TIMEOUT_MS + 1);
+        yield* TestClock.adjust(TerminalTesting.CONNECT_TIMEOUT_MS + 1);
         yield* terminals.reconcile;
         const timedOut = yield* runner.reconcile;
         expect(timedOut.release).toBe(requestedGeneration);
@@ -979,7 +978,7 @@ describe("cloud thread terminals", () => {
           status: "starting",
           leaseGeneration: requestedGeneration,
         });
-        yield* TestClock.adjust(CONNECT_TIMEOUT_MS + 1);
+        yield* TestClock.adjust(TerminalTesting.CONNECT_TIMEOUT_MS + 1);
         const timedOut = yield* runner.reconcile;
         expect(timedOut.release).toBe(requestedGeneration);
 

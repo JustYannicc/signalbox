@@ -93,8 +93,8 @@ ARG ONEPASSWORD_SDK_VERSION=0.5.0
 ARG OXC_VERSION=0.148.0
 ARG NODE_PTY_VERSION=1.2.0-beta.15
 RUN install -d /opt/signalbox \
+  && printf '%s\n' '{"private":true,"allowScripts":{"node-pty":true}}' > /opt/signalbox/package.json \
   && npm install --prefix /opt/signalbox --no-fund --no-audit --no-save \
-    --allow-scripts=node-pty \
     "playwright-core@${PLAYWRIGHT_CORE_VERSION}" "@rrweb/record@${RRWEB_RECORD_VERSION}" \
     "@1password/sdk@${ONEPASSWORD_SDK_VERSION}" "oxc-parser@${OXC_VERSION}" "oxc-transform@${OXC_VERSION}" \
     "node-pty@${NODE_PTY_VERSION}" \
