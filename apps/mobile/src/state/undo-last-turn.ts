@@ -1,6 +1,6 @@
 import { useAtomValue } from "@effect/atom-react";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
-import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
+import type { CommandId, EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { Atom } from "effect/reactivity";
 
 import { environmentThreadDetails } from "./threads";
@@ -35,4 +35,27 @@ export function useUndoLastTurnTarget(
   threadId: ThreadId,
 ): UndoLastTurnTarget | null {
   return useAtomValue(undoTargetAtomFamily(JSON.stringify({ environmentId, threadId })));
+}
+
+const rollbackFailureAtomFamily = Atom.family((key: string) => {
+  const { environmentId, threadId } = JSON.parse(key) as {
+    readonly environmentId: EnvironmentId;
+    readonly threadId: ThreadId;
+  };
+  const ref = scopeThreadRef(environmentId, threadId);
+  return Atom.make(
+    (get) =>
+      get(environmentThreadDetails.threadAtom(ref))?.projection.thread.rollbackFailure ?? null,
+  );
+});
+
+export function useUndoFailure(
+  environmentId: EnvironmentId,
+  threadId: ThreadId,
+  requestId: CommandId | null,
+): string | null {
+  const failure = useAtomValue(
+    rollbackFailureAtomFamily(JSON.stringify({ environmentId, threadId })),
+  );
+  return failure?.requestId === requestId ? failure.message : null;
 }
