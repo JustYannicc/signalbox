@@ -15,6 +15,7 @@ import type { FromServerEncoded } from "effect/rpc/RpcMessage";
 import { makeMemoryCloud } from "../testing.ts";
 import { openConnection } from "../user/connection.ts";
 import * as ClientRpcTracing from "./clientRpcTracing.ts";
+import { filterTraces } from "./nativeTracesFilter.ts";
 
 const TRACE_ID = "0123456789abcdef0123456789abcdef";
 const CLIENT_SPAN_ID = "0123456789abcdef";
@@ -204,6 +205,16 @@ describe("Cloud client RPC tracing", () => {
         value: { stringValue: userId },
       });
 
+      const filtered = filterTraces(document, { stage: "pr-test", version: "test-release" });
+      const filteredSpan = filtered?.resourceSpans[0]?.scopeSpans[0]?.spans[0];
+      expect(filteredSpan).toMatchObject({
+        traceId: TRACE_ID, parentSpanId: CLIENT_SPAN_ID,
+        name: WS_METHODS.accountPoolCreate, kind: 2,
+      });
+      expect(filteredSpan?.attributes).toContainEqual({
+        key: "rpc.method", value: { stringValue: WS_METHODS.accountPoolCreate },
+      });
+      expect(JSON.stringify(filtered)).not.toContain(CANARY);
       releaseExport(new Response(null, { status: 200 }));
       yield* Effect.promise(() => retained[0]!);
     }).pipe(Effect.scoped),

@@ -13,6 +13,7 @@ import * as ClientTraceLimits from "./ClientTraceLimits.ts";
 import * as CloudSessions from "../auth/CloudSessions.ts";
 import * as ClientTraceIntake from "./ClientTraceIntake.ts";
 import * as Routes from "./clientTraceRoutes.ts";
+import { filterTraces, type OtlpTraces } from "./nativeTracesFilter.ts";
 
 const TRACE = "0123456789abcdef0123456789abcdef";
 const SPAN = "0123456789abcdef";
@@ -65,6 +66,7 @@ const payload = () => ({
 
 const setup = Effect.gen(function* () {
   const sent: Array<{ url: string; body: string; headers: Headers }> = [];
+  const filtered: Array<OtlpTraces | null> = [];
   let requests = 0;
   const cloud = makeMemoryCloud();
   let upstreamStatus = 200;
@@ -100,7 +102,9 @@ const setup = Effect.gen(function* () {
         TRACE_EXPORT: {
           fetch: async (input) => {
             const request = new Request(input);
-            sent.push({ url: request.url, body: await request.text(), headers: request.headers });
+            const body = await request.text();
+            sent.push({ url: request.url, body, headers: request.headers });
+            filtered.push(filterTraces(JSON.parse(body), { stage: "pr-test", version: "test-release" }));
             return new Response(null, { status: upstreamStatus });
           },
         },
@@ -150,6 +154,7 @@ const setup = Effect.gen(function* () {
   return {
     post,
     sent,
+    filtered,
     setUpstreamStatus: (status: number) => {
       upstreamStatus = status;
     },
@@ -161,7 +166,7 @@ describe("Cloud browser trace intake", () => {
     "serves the real browser path and preserves trace joins while stripping all content",
     () =>
       Effect.gen(function* () {
-        const { post, sent } = yield* setup;
+        const { post, sent, filtered } = yield* setup;
         expect((yield* post()).status).toBe(200);
         expect(sent).toHaveLength(1);
         expect(sent[0]?.url).toBe("https://trace-export/v1/traces");
@@ -178,6 +183,15 @@ describe("Cloud browser trace intake", () => {
         expect(exported).toContain(FOLDER);
         expect(exported).toContain(ORG);
         expect(exported).toContain("pr-test");
+        const spans = filtered[0]?.resourceSpans[0]?.scopeSpans[0]?.spans;
+        expect(spans).toHaveLength(1);
+        expect(spans?.[0]).toMatchObject({
+          traceId: TRACE, spanId: SPAN, parentSpanId: "1111111111111111",
+        });
+        for (const dimension of [PERSON, THREAD, FOLDER, ORG]) {
+          expect(JSON.stringify(filtered[0])).toContain(dimension);
+        }
+        expect(JSON.stringify(filtered[0])).not.toContain(CANARY);
         expect(sent[0]?.headers.get("authorization")).toBe("Bearer write-only-ingest-key");
         expect(sent[0]?.headers.get("x-sentry-auth")).toBeNull();
       }),
