@@ -8,6 +8,7 @@ import {
   poolDefaultModelSelection,
   poolFallbackModelSelection,
   poolProviders,
+  modelsForSnapshot,
 } from "./poolViews.ts";
 
 const provider = (signedIn: boolean) =>
@@ -35,6 +36,49 @@ const poolEntry = (source: PoolEntry["source"], models: PoolEntry["models"]): Po
 });
 
 describe("poolFallbackModelSelection", () => {
+  it("does not revive signed-out or paused accounts in an errored or retained snapshot", () => {
+    const checkedAt = "2026-10-16T00:00:00.000Z";
+    const models = [{ id: "gpt-6-astra", ownedBy: "openai", created: 0 }];
+    for (const inactive of [{ signedOut: true }, { disabled: true }]) {
+      const entry = poolEntry(
+        {
+          id: poolSourceId("personal"),
+          kind: "cliproxy",
+          label: "Personal",
+          checkedAt,
+          accounts: [
+            {
+              id: "account",
+              driver: ProviderDriverKind.make("codex"),
+              usageLimits: { checkedAt, windows: [] },
+              ...inactive,
+            },
+          ],
+        },
+        models,
+      );
+      expect(modelsForSnapshot(entry)).toEqual([]);
+      const providers = poolProviders(
+        [
+          {
+            ...entry,
+            source: {
+              ...entry.source,
+              error: "The pool did not refresh in time.",
+            },
+          },
+        ],
+        checkedAt,
+        { version: 1 },
+      );
+      expect(providers.find((candidate) => candidate.driver === "codex")).toMatchObject({
+        auth: { status: "unauthenticated" },
+        models: [],
+      });
+      expect(poolDefaultModelSelection(providers)).toBeNull();
+    }
+  });
+
   it("never invents a model when the pool has no served models", () => {
     const providers = [provider(false)];
     expect(poolDefaultModelSelection(providers)).toBeNull();

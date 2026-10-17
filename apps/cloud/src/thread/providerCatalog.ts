@@ -235,7 +235,7 @@ export const poolServerProvider = (input: {
       : { unavailableReason: input.unavailableReason }),
     checkedAt: input.checkedAt,
     availability: "available",
-    models: input.signedIn ? input.models : [],
+    models: input.signedIn || input.unavailableReason ? input.models : [],
     slashCommands: [],
     skills: [],
   };

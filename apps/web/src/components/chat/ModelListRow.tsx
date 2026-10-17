@@ -34,6 +34,7 @@ export const ModelListRow = memo(function ModelListRow(props: {
   useTriggerLabel?: boolean;
   showNewBadge?: boolean;
   unavailable?: boolean;
+  poolStatusText?: string | undefined;
   jumpLabel?: string | null;
   disabledReason?: string | null;
   onToggleFavorite: () => void;
@@ -87,7 +88,7 @@ export const ModelListRow = memo(function ModelListRow(props: {
               iconClassName="size-3"
             />
             <span className="truncate text-xs font-normal leading-snug text-muted-foreground/70">
-              {providerLabel}
+              {props.poolStatusText ? `${providerLabel} · ${props.poolStatusText}` : providerLabel}
             </span>
           </div>
         )}
@@ -132,7 +133,9 @@ export const ModelListRow = memo(function ModelListRow(props: {
     </ComboboxItem>
   );
 
-  if (!props.disabledReason) {
+  // signalbox: Full pool reset times remain readable when the row truncates.
+  const tooltip = props.disabledReason ?? props.poolStatusText;
+  if (!tooltip) {
     return row;
   }
 
@@ -140,7 +143,7 @@ export const ModelListRow = memo(function ModelListRow(props: {
     <Tooltip>
       <TooltipTrigger render={row} />
       <TooltipPopup side="left" align="center">
-        {props.disabledReason}
+        {tooltip}
       </TooltipPopup>
     </Tooltip>
   );

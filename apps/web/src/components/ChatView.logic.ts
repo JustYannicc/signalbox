@@ -20,6 +20,7 @@ import {
   type ServerProvider,
   type ScopedProjectRef,
   type ScopedThreadRef,
+  type ServerSettings,
   type ThreadContextRecord,
   type ThreadId,
   type ThreadLinkedPullRequest,
@@ -555,6 +556,7 @@ export function shouldWriteThreadErrorToCurrentServerThread(input: {
 
 export function resolveComposerProviderSelection(input: {
   entries: ReadonlyArray<ProviderInstanceEntry>;
+  providerInstances?: ServerSettings["providerInstances"];
   candidateInstanceIds: ReadonlyArray<ProviderInstanceId | null | undefined>;
   lockedProvider: ProviderDriverKind | null;
   lockedInstanceId: ProviderInstanceId | null | undefined;
@@ -593,8 +595,9 @@ export function resolveComposerProviderSelection(input: {
     resolveSelectableProviderInstanceEntry(
       compatibleEntries.filter((entry) => entry.driverKind === requestedDriverKind),
       undefined,
+      input.providerInstances,
     ) ??
-    resolveSelectableProviderInstanceEntry(compatibleEntries, undefined);
+    resolveSelectableProviderInstanceEntry(compatibleEntries, undefined, input.providerInstances);
   const unavailableProviderInstanceId = selectedProviderEntry
     ? undefined
     : input.lockedProvider

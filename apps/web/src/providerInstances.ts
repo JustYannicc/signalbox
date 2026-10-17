@@ -222,9 +222,25 @@ export function getDefaultProviderInstanceModel(
 const isSelectableProviderInstanceEntry = (entry: ProviderInstanceEntry): boolean =>
   entry.enabled && entry.isAvailable;
 
+// signalbox: Preserve an erroring hub's known catalog as the fallback after other usable providers.
+const isUnavailableHubSnapshotSelectable = (
+  entry: ProviderInstanceEntry,
+  providerInstances?: ServerSettings["providerInstances"],
+): boolean =>
+  entry.enabled &&
+  entry.isAvailable &&
+  entry.status === "error" &&
+  entry.snapshot.auth.status === "unknown" &&
+  entry.snapshot.unavailableReason !== undefined &&
+  entry.models.length > 0 &&
+  (entry.instanceId === "claude_hub" ||
+    entry.instanceId === "codex_hub" ||
+    hubInstancePoolId(providerInstances?.[entry.instanceId]?.config) !== null);
+
 export function resolveSelectableProviderInstanceEntry(
   entries: ReadonlyArray<ProviderInstanceEntry>,
   instanceId: ProviderInstanceId | undefined,
+  providerInstances?: ServerSettings["providerInstances"],
 ): ProviderInstanceEntry | undefined {
   if (instanceId !== undefined) {
     const requested = entries.find((entry) => entry.instanceId === instanceId);
@@ -234,16 +250,18 @@ export function resolveSelectableProviderInstanceEntry(
   }
   return (
     entries.find(isProviderInstancePickerReady) ??
-    entries.find((entry) => isSelectableProviderInstanceEntry(entry) && entry.status !== "error")
+    entries.find((entry) => isSelectableProviderInstanceEntry(entry) && entry.status !== "error") ??
+    entries.find((entry) => isUnavailableHubSnapshotSelectable(entry, providerInstances))
   );
 }
 
 export function resolveSelectableProviderInstance(
   providers: ReadonlyArray<ServerProvider>,
   instanceId: ProviderInstanceId | undefined,
+  providerInstances?: ServerSettings["providerInstances"],
 ): ProviderInstanceId | undefined {
   const entries = deriveProviderInstanceEntries(providers);
-  return resolveSelectableProviderInstanceEntry(entries, instanceId)?.instanceId;
+  return resolveSelectableProviderInstanceEntry(entries, instanceId, providerInstances)?.instanceId;
 }
 
 export function resolveDefaultProviderModelSelection(
@@ -251,7 +269,11 @@ export function resolveDefaultProviderModelSelection(
   selection: ModelSelection | null | undefined,
   providerInstances?: ServerSettings["providerInstances"],
 ): ModelSelection | null {
-  const instanceId = resolveSelectableProviderInstance(providers, selection?.instanceId);
+  const instanceId = resolveSelectableProviderInstance(
+    providers,
+    selection?.instanceId,
+    providerInstances,
+  );
   if (instanceId === undefined) return null;
   if (selection?.instanceId === instanceId) return selection;
   const model = getDefaultProviderInstanceModel(providers, instanceId, providerInstances);

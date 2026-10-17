@@ -33,6 +33,90 @@ function entry(status: ServerProvider["status"], driver = "opencode") {
 }
 
 describe("shouldIncludeModelPickerOption", () => {
+  it("keeps known hub models selectable through an unreadable pool snapshot", () => {
+    const poolEntry = deriveProviderInstanceEntries([
+      {
+        instanceId: ProviderInstanceId.make("codex_hub_work"),
+        driver: ProviderDriverKind.make("codex"),
+        enabled: true,
+        installed: true,
+        version: null,
+        status: "error",
+        auth: { status: "unknown" },
+        unavailableReason: "Pool account status could not be refreshed.",
+        checkedAt: "2026-08-28T00:00:00.000Z",
+        models: [
+          {
+            slug: "gpt-6-astra",
+            name: "GPT-6 Astra",
+            isCustom: false,
+            capabilities: null,
+          },
+        ],
+        slashCommands: [],
+        skills: [],
+      },
+    ])[0]!;
+    const option = { slug: "gpt-6-astra", name: "GPT-6 Astra" };
+
+    expect(
+      shouldIncludeModelPickerOption({
+        entry: poolEntry,
+        option,
+        activeInstanceId: poolEntry.instanceId,
+        activeModel: option.slug,
+        isHubInstance: true,
+      }),
+    ).toBe(true);
+    expect(
+      shouldIncludeModelPickerOption({
+        entry: poolEntry,
+        option,
+        activeInstanceId: poolEntry.instanceId,
+        activeModel: option.slug,
+      }),
+    ).toBe(false);
+    expect(
+      shouldIncludeModelPickerOption({
+        entry: { ...poolEntry, isAvailable: false },
+        option,
+        activeInstanceId: poolEntry.instanceId,
+        activeModel: option.slug,
+        isHubInstance: true,
+      }),
+    ).toBe(false);
+    expect(
+      shouldIncludeModelPickerOption({
+        entry: { ...poolEntry, enabled: false },
+        option,
+        activeInstanceId: poolEntry.instanceId,
+        activeModel: option.slug,
+        isHubInstance: true,
+      }),
+    ).toBe(false);
+    expect(
+      shouldIncludeModelPickerOption({
+        entry: {
+          ...poolEntry,
+          snapshot: { ...poolEntry.snapshot, auth: { status: "unauthenticated" as const } },
+        },
+        option,
+        activeInstanceId: poolEntry.instanceId,
+        activeModel: option.slug,
+        isHubInstance: true,
+      }),
+    ).toBe(false);
+    expect(
+      shouldIncludeModelPickerOption({
+        entry: poolEntry,
+        option: { ...option, isUnavailable: true },
+        activeInstanceId: poolEntry.instanceId,
+        activeModel: option.slug,
+        isHubInstance: true,
+      }),
+    ).toBe(false);
+  });
+
   it.each(["ready", "error"] as const)(
     "never offers the internal Antigravity default marker as a model when %s",
     (status) => {

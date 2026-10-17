@@ -112,6 +112,35 @@ describe("project pools", () => {
     });
   });
 
+  it("keeps known pool models selectable while its snapshot is unavailable", () => {
+    const held: ServerProvider = {
+      ...provider("claude_hub", "claudeAgent", ["claude-opus-5-5", "claude-sonnet-5-5"]),
+      status: "error",
+      auth: { status: "unknown" },
+      unavailableReason: "Showing the last known snapshot.",
+    };
+    const input = { pool: personal, providerInstances, providers: [held] };
+    expect(poolNeed(input)).toBeNull();
+    expect(
+      projectPoolModelSelection({
+        ...input,
+        selection: sonnet,
+        snapshot: snapshot(personal),
+        projectId: project,
+      }),
+    ).toEqual(sonnet);
+
+    for (const blocked of [
+      { ...held, auth: { status: "unauthenticated" as const } },
+      { ...held, enabled: false },
+      { ...held, installed: false },
+      { ...held, availability: "unavailable" as const },
+      { ...held, unavailableReason: undefined },
+    ]) {
+      expect(poolNeed({ ...input, providers: [blocked] })).not.toBeNull();
+    }
+  });
+
   it("keeps an unreadable pool distinct from sign-in and a signed-in pool with no models", () => {
     const downId = ProviderInstanceId.make("claude_hub_down");
     const emptyId = ProviderInstanceId.make("codex_hub_no_models");

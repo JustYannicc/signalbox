@@ -2,6 +2,8 @@ import { Toolbar } from "../../components/ui/Toolbar";
 import * as Dialog from "../../components/ui/Dialog";
 import { createV5StackNavigator as createNativeStackNavigator } from "../../native/createV5StackNavigator";
 import { DEFAULT_SERVER_SETTINGS, environmentCanWriteModelSettings } from "@t3tools/contracts";
+import { hubInstancePoolId } from "@t3tools/contracts/accountHub";
+import { formatPoolModelStatus } from "@t3tools/client-runtime/poolModelStatus";
 import {
   modelPreferencesMigrationPatch,
   resolveModelPreferences,
@@ -68,6 +70,7 @@ import { NATIVE_LIQUID_GLASS_SUPPORTED } from "../../native/native-glass";
 import { ChatGptSharingStatus } from "./ChatGptSharingStatus";
 import { ThreadStatusSection } from "./ThreadStatusSection"; // signalbox: status line
 import { environmentServerConfigsAtom, serverEnvironment } from "../../state/server";
+import { useEnvironmentQuery } from "../../state/query";
 import { mobilePreferencesAtom } from "../../state/preferences";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { useNewTaskFlow } from "./new-task-flow-provider";
@@ -304,6 +307,7 @@ type ThreadSettingsSessionValue = {
   readonly threadId?: ThreadId | undefined; // signalbox
   readonly providerInstanceId?: ProviderInstanceId;
   readonly providerGroups: ReadonlyArray<ProviderGroup>;
+  readonly poolStatusByInstance: ReadonlyMap<ProviderInstanceId, string>;
   readonly favoriteKeys: ReadonlySet<string>;
   readonly favoritesLoaded: boolean;
   readonly modelSettingsWritable: boolean;
@@ -345,6 +349,39 @@ function ThreadSettingsSessionProvider(
   const configs = useAtomValue(environmentServerConfigsAtom);
   const config = props.environmentId ? configs.get(props.environmentId) : undefined;
   const settings = config?.settings;
+  // signalbox: Keep quota state member-safe by reading only the shared pool overview.
+  const poolViewsQuery = useEnvironmentQuery(
+    props.environmentId
+      ? serverEnvironment.accountPoolViewsLive({ environmentId: props.environmentId, input: {} })
+      : null,
+  );
+  const poolViews = poolViewsQuery.data ?? [];
+  const poolStatusByInstance = useMemo(() => {
+    const statuses = new Map<ProviderInstanceId, string>();
+    for (const provider of config?.providers ?? []) {
+      const poolId = hubInstancePoolId(settings?.providerInstances[provider.instanceId]?.config);
+      const isKnownPoolInstance =
+        poolId !== null ||
+        provider.instanceId === "claude_hub" ||
+        provider.instanceId === "codex_hub";
+      if (!isKnownPoolInstance) continue;
+      const overview = poolViews.find(
+        (candidate) =>
+          (poolId !== null && candidate.id === poolId) ||
+          candidate.providers.some((entry) => entry.providerInstanceId === provider.instanceId),
+      );
+      const status = formatPoolModelStatus({
+        overview,
+        providerInstanceId: provider.instanceId,
+        now: Date.parse(provider.checkedAt),
+        snapshotUnavailable: provider.status !== "ready" || poolViewsQuery.error !== null,
+      });
+      if (status ?? poolViewsQuery.isPending) {
+        statuses.set(provider.instanceId, status ?? "Refreshing");
+      }
+    }
+    return statuses;
+  }, [config?.providers, poolViews, poolViewsQuery.error, poolViewsQuery.isPending, settings]);
   const modelSettingsWritable = environmentCanWriteModelSettings(config?.environment.capabilities);
   const [manageHidden, setManageHidden] = useState(false);
   const pendingHidden = useRef(new Set<string>());
@@ -635,6 +672,7 @@ function ThreadSettingsSessionProvider(
       threadId: props.threadId, // signalbox
       providerInstanceId: props.providerInstanceId,
       providerGroups,
+      poolStatusByInstance,
       manageHidden,
       setManageHidden: updateManageHidden,
       modelSettingsWritable,
@@ -685,6 +723,7 @@ function ThreadSettingsSessionProvider(
       providerFilter,
       props.onUpdateRuntimeMode,
       providerGroups,
+      poolStatusByInstance,
       manageHidden,
       modelSettingsWritable,
       updateManageHidden,
@@ -770,6 +809,7 @@ function ThreadSettingsModelListRow(props: {
       isFirst={props.isFirst}
       isLast={props.isLast}
       onPress={onPress}
+      poolStatusText={session.poolStatusByInstance.get(props.option.selection.instanceId)}
       isFavorite={session.favoriteKeys.has(props.option.key)}
       favoritesLoaded={session.favoritesLoaded}
       onToggleFavorite={() => session.toggleFavorite(props.option)}

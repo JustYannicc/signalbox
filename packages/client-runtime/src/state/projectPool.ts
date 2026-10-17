@@ -47,11 +47,14 @@ export function isPoolInstance(
   return hubInstancePoolId(providerInstances[instanceId]?.config) === poolId;
 }
 
-/** Whether a provider can take a turn now. */
+/** A snapshot failure doesn't establish whether the pool can take a turn. */
 const usable = (provider: ServerProvider) =>
   provider.enabled &&
   provider.installed &&
-  provider.status !== "error" &&
+  (provider.status !== "error" ||
+    (provider.auth.status === "unknown" &&
+      provider.unavailableReason !== undefined &&
+      provider.models.length > 0)) &&
   provider.availability !== "unavailable" &&
   provider.auth.status !== "unauthenticated";
 
