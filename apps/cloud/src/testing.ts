@@ -15,6 +15,7 @@ import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as ManagedRuntime from "effect/ManagedRuntime";
 
 import * as CloudAccounts from "./account/CloudAccounts.ts";
+import * as IdentityProvider from "./account/IdentityProvider.ts";
 import { API_HEADER, encodeApiCredential, serveApiRequest } from "./api/apiObject.ts";
 import { MCP_PATH, makeMcpHandler } from "./api/mcpObject.ts";
 import * as CloudAssets from "./assets/CloudAssets.ts";
@@ -666,6 +667,7 @@ export const layerAccounts = (
   CloudAccounts.layer.pipe(
     Layer.provideMerge(CloudSessions.layer),
     Layer.provideMerge(CloudTokens.layer),
+    Layer.provideMerge(IdentityProvider.layer),
     Layer.provideMerge(layerConfig(env)),
     Layer.provideMerge(layerMemoryUsers),
     Layer.provideMerge(workosStubLayer(codes, [], memberships)),

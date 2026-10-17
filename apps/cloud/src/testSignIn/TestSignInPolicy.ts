@@ -6,6 +6,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
+import { trustedEnvironment } from "../account/testEnvironment.ts";
 
 export const MAX_BODY_BYTES = 8_192;
 const MAX_EXPIRY_AHEAD_MS = 60_000;
@@ -43,20 +44,6 @@ export class TestSignInDeniedError extends Schema.TaggedError<TestSignInDeniedEr
 }
 
 const denied = (reason: TestSignInDeniedError["reason"]) => new TestSignInDeniedError({ reason });
-
-const trustedEnvironment = (
-  stage: string | undefined,
-  environmentId: string | undefined,
-  localWorkerd: string | undefined,
-) => {
-  if (stage === "dev" && environmentId === "cloud-dev" && localWorkerd === "1") {
-    return environmentId;
-  }
-  const preview = stage?.match(/^pr-([1-9]\d*)$/);
-  if (preview !== undefined && preview !== null && environmentId === `cloud-preview-${preview[1]}`)
-    return environmentId;
-  return undefined;
-};
 
 const signatureBytes = (signature: string | undefined) => {
   if (signature === undefined || !/^[0-9a-fA-F]{64}$/.test(signature)) return undefined;
@@ -96,7 +83,7 @@ const make = Effect.gen(function* () {
 
   const expectedEnvironmentId = trustedEnvironment(
     Option.getOrUndefined(config.stage),
-    Option.getOrUndefined(config.environmentId),
+    Option.getOrUndefined(config.environmentId) ?? "",
     Option.getOrUndefined(config.localWorkerd),
   );
   const secret = Option.getOrUndefined(config.secret);

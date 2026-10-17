@@ -9,6 +9,7 @@ import * as Schema from "effect/Schema";
 import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http";
 
 import type { TestSignInRequest } from "./TestSignInPolicy.ts";
+import * as IdentityProvider from "../account/IdentityProvider.ts";
 
 const EMAILS = {
   richard: "richard@piedpiper.example",
@@ -66,6 +67,7 @@ const make = Effect.gen(function* () {
     yield* Config.Redacted("T3CODE_WORKOS_API_KEY").pipe(Config.option),
   );
   const http = yield* HttpClient.HttpClient;
+  const identityProviders = yield* IdentityProvider.IdentityProviders;
 
   const resolve: TestIdentities["Service"]["resolve"] = Effect.fn("TestIdentities.resolve")(
     function* (name) {
@@ -95,6 +97,17 @@ const make = Effect.gen(function* () {
       if (record.external_id !== externalId || record.email !== EMAILS[name]) {
         return yield* new TestIdentityUnavailable({});
       }
+      const workos = yield* identityProviders
+        .identityProviderForUser(record.id)
+        .pipe(Effect.mapError(() => new TestIdentityUnavailable({})));
+      // A recreated or unregistered sandbox identity must never enter the primary realm.
+      if (
+        workos.clientId !== clientId ||
+        workos.apiKey === undefined ||
+        Redacted.value(workos.apiKey) !== Redacted.value(apiKey)
+      ) {
+        return yield* new TestIdentityUnavailable({});
+      }
       return {
         user: {
           id: record.id,
@@ -102,7 +115,7 @@ const make = Effect.gen(function* () {
           ...(record.first_name ? { firstName: record.first_name } : {}),
           ...(record.last_name ? { lastName: record.last_name } : {}),
         },
-        workos: { clientId, apiKey, apiBaseUrl: "https://api.workos.com" },
+        workos,
       };
     },
   );

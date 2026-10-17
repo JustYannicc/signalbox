@@ -3,10 +3,12 @@ import * as ConfigProvider from "effect/ConfigProvider";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as Redacted from "effect/Redacted";
 import * as TestClock from "effect/testing/TestClock";
 import { HttpClient, HttpClientResponse } from "effect/http";
 
 import * as TestIdentities from "./TestIdentities.ts";
+import * as IdentityProvider from "../account/IdentityProvider.ts";
 
 const ENV = {
   E2E_WORKOS_CLIENT_ID: "client_e2e_sandbox",
@@ -22,6 +24,16 @@ const RICHARD = {
 
 const resolveWith = (http: HttpClient.HttpClient, env: Readonly<Record<string, string>>) => {
   const layer = TestIdentities.layer.pipe(
+    Layer.provide(
+      Layer.succeed(IdentityProvider.IdentityProviders, {
+        identityProviderForUser: () =>
+          Effect.succeed({
+            clientId: ENV.E2E_WORKOS_CLIENT_ID,
+            apiKey: Redacted.make(ENV.E2E_WORKOS_API_KEY),
+            apiBaseUrl: "https://api.workos.com",
+          }),
+      }),
+    ),
     Layer.provide(Layer.succeed(HttpClient.HttpClient, http)),
     Layer.provide(ConfigProvider.layer(ConfigProvider.fromEnv({ env }))),
   );

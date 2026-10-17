@@ -5,6 +5,7 @@ import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 
 import * as CloudAccounts from "../account/CloudAccounts.ts";
+import type { IdentityProviderUnavailable } from "../account/IdentityProvider.ts";
 import * as CloudSessions from "../auth/CloudSessions.ts";
 import type { UserObjectError } from "../user/UserDirectory.ts";
 import * as TestIdentities from "./TestIdentities.ts";
@@ -35,6 +36,7 @@ export class TestSignIn extends Context.Service<
       | TestSignInPolicy.TestSignInDeniedError
       | TestIdentities.TestIdentityUnavailable
       | TestSignInFailed
+      | IdentityProviderUnavailable
       | UserObjectError
     >;
   }

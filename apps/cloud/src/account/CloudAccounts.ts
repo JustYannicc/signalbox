@@ -23,6 +23,7 @@ import * as CloudTokens from "../auth/CloudTokens.ts";
 import * as CloudConfig from "../CloudConfig.ts";
 import * as PreviewSetup from "../previewSetup/PreviewSetup.ts";
 import * as UserDirectory from "../user/UserDirectory.ts";
+import * as IdentityProvider from "./IdentityProvider.ts";
 
 /**
  * WorkOS sign-in for the cloud, the same flow and routes as a self-hosted
@@ -114,7 +115,10 @@ export class CloudAccounts extends Context.Service<
       attempt: CloudTokens.PendingAttempt,
       user: WorkOSClient.WorkOSUser,
       workos?: WorkOSClient.WorkOSConfig,
-    ) => Effect.Effect<SignInResult, UserDirectory.UserObjectError>;
+    ) => Effect.Effect<
+      SignInResult,
+      UserDirectory.UserObjectError | IdentityProvider.IdentityProviderUnavailable
+    >;
     readonly verifyEmail: (
       body: AccountVerifyEmailRequest,
       binding: string | undefined,
@@ -134,7 +138,12 @@ export class CloudAccounts extends Context.Service<
     readonly refreshContexts: (
       userId: string,
       workos?: WorkOSClient.WorkOSConfig,
-    ) => Effect.Effect<void, WorkOSClient.WorkOSOrganizationsError | UserDirectory.UserObjectError>;
+    ) => Effect.Effect<
+      void,
+      | WorkOSClient.WorkOSOrganizationsError
+      | UserDirectory.UserObjectError
+      | IdentityProvider.IdentityProviderUnavailable
+    >;
   }
 >()("@signalbox/cloud/account/CloudAccounts") {}
 
@@ -159,6 +168,7 @@ const make = Effect.gen(function* () {
   const users = yield* UserDirectory.UserDirectory;
   const httpClient = yield* HttpClient.HttpClient;
   const previewSetup = yield* PreviewSetup.PreviewSetupConfig;
+  const identityProviders = yield* IdentityProvider.IdentityProviders;
 
   const workosAuthenticate = (grant: WorkOSClient.WorkOSGrant) =>
     WorkOSClient.authenticate(workos, grant).pipe(
@@ -176,7 +186,9 @@ const make = Effect.gen(function* () {
    */
   const refreshContexts: CloudAccounts["Service"]["refreshContexts"] = Effect.fn(
     "CloudAccounts.refreshContexts",
-  )(function* (userId, identityProvider = workos) {
+  )(function* (userId, override) {
+    const resolved = yield* identityProviders.identityProviderForUser(userId);
+    const identityProvider = override ?? resolved;
     const { apiKey } = identityProvider;
     if (apiKey === undefined) return;
     const organizations = yield* WorkOSClient.listOrganizations(
@@ -263,8 +275,10 @@ const make = Effect.gen(function* () {
   )(function* (
     attempt: CloudTokens.PendingAttempt,
     user: WorkOSClient.WorkOSUser,
-    identityProvider = workos,
+    override?: WorkOSClient.WorkOSConfig,
   ) {
+    const resolved = yield* identityProviders.identityProviderForUser(user.id);
+    const identityProvider = override ?? resolved;
     const userObject = users.forUser(user.id);
     // Contexts are refreshed alongside the profile, so the first shell after
     // signing in already shows every organization.

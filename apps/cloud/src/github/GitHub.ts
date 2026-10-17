@@ -5,6 +5,7 @@ import * as Layer from "effect/Layer";
 import * as Redacted from "effect/Redacted";
 import { HttpClient } from "effect/http";
 
+import * as IdentityProvider from "../account/IdentityProvider.ts";
 import { type GitHubApi, type GitHubEndpoints, makeGitHubApi } from "./GitHubApi.ts";
 
 /**
@@ -73,6 +74,54 @@ const makePipes = (config: WorkOSPipes.PipesConfig, client: HttpClient.HttpClien
   };
 };
 
+const makePipesForUsers = (
+  identityProviders: IdentityProvider.IdentityProviders["Service"],
+  client: HttpClient.HttpClient,
+): GitHubPipes => {
+  const run = Effect.provideService(HttpClient.HttpClient, client);
+  const unavailable = (operation: string) =>
+    new WorkOSPipes.WorkOSPipesError({ operation, status: 0 });
+  const withUserConfig = <A>(
+    operation: string,
+    userId: string,
+    use: (
+      config: WorkOSPipes.PipesConfig,
+    ) => Effect.Effect<A, WorkOSPipes.WorkOSPipesError, HttpClient.HttpClient>,
+  ) =>
+    identityProviders.identityProviderForUser(userId).pipe(
+      Effect.mapError(() => unavailable(operation)),
+      Effect.flatMap((config) =>
+        config.apiKey === undefined
+          ? Effect.fail(unavailable(operation))
+          : run(
+              use({
+                apiKey: config.apiKey,
+                apiBaseUrl: config.apiBaseUrl,
+              }),
+            ),
+      ),
+    );
+
+  return {
+    authorizeUrl: ({ userId, returnTo }) =>
+      withUserConfig("authorize", userId, (config) =>
+        WorkOSPipes.authorizeUrl(config, {
+          provider: GITHUB_PIPES_PROVIDER,
+          userId,
+          returnTo,
+        }),
+      ),
+    accessToken: (userId) =>
+      withUserConfig("token", userId, (config) =>
+        WorkOSPipes.accessToken(config, { provider: GITHUB_PIPES_PROVIDER, userId }),
+      ),
+    disconnect: (userId) =>
+      withUserConfig("disconnect", userId, (config) =>
+        WorkOSPipes.disconnect(config, { provider: GITHUB_PIPES_PROVIDER, userId }),
+      ),
+  };
+};
+
 /** Needs an `HttpClient` (`FetchHttpClient.layer` will do). */
 export const layer = (pipes: WorkOSPipes.PipesConfig | null, endpoints?: GitHubEndpoints) =>
   Layer.effect(
@@ -83,4 +132,18 @@ export const layer = (pipes: WorkOSPipes.PipesConfig | null, endpoints?: GitHubE
         api: makeGitHubApi(client, endpoints),
       }),
     ),
+  );
+
+/** Resolves each user's WorkOS realm before using Pipes for them. */
+export const layerForUsers = (endpoints?: GitHubEndpoints) =>
+  Layer.effect(
+    GitHub,
+    Effect.gen(function* () {
+      const client = yield* HttpClient.HttpClient;
+      const identityProviders = yield* IdentityProvider.IdentityProviders;
+      return GitHub.of({
+        pipes: makePipesForUsers(identityProviders, client),
+        api: makeGitHubApi(client, endpoints),
+      });
+    }),
   );

@@ -52,6 +52,7 @@ const signIn = Effect.gen(function* () {
       ),
     TestIdentityUnavailable: () => failure("test_identity_unavailable", 503),
     TestSignInFailed: () => failure("test_sign_in_failed", 500),
+    IdentityProviderUnavailable: () => failure("test_identity_unavailable", 503),
     UserObjectError: () => failure("test_sign_in_failed", 500),
     HttpServerError: () => failure("invalid_request", 400),
     CookiesError: () => failure("test_sign_in_failed", 500),

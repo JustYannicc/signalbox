@@ -22,6 +22,7 @@ import {
 } from "effect/http";
 
 import * as CloudAccounts from "./account/CloudAccounts.ts";
+import * as IdentityProvider from "./account/IdentityProvider.ts";
 import * as TestIdentities from "./testSignIn/TestIdentities.ts";
 import * as TestSignIn from "./testSignIn/TestSignIn.ts";
 import * as TestSignInPolicy from "./testSignIn/TestSignInPolicy.ts";
@@ -108,10 +109,9 @@ export const layerServices = (input: {
     // The Worker only reads threads; they are created in their user's object.
     Layer.provideMerge(Layer.mergeAll(ThreadContexts.layerWorker, ThreadKindTurns.layerNone)),
     Layer.provideMerge(CloudSessions.layer),
-    Layer.provideMerge(
-      GitHub.layer(GitHub.gitHubPipesConfig(input.vars), GitHub.gitHubEndpoints(input.vars)),
-    ),
+    Layer.provideMerge(GitHub.layerForUsers(GitHub.gitHubEndpoints(input.vars))),
     Layer.provideMerge(CloudTokens.layer),
+    Layer.provideMerge(IdentityProvider.layer),
     Layer.provideMerge(Layer.mergeAll(CloudConfig.layer, PreviewSetup.layerConfig)),
     Layer.provideMerge(
       Layer.mergeAll(
