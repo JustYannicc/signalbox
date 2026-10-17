@@ -22,7 +22,7 @@ import * as Stream from "effect/Stream";
 import * as Tracer from "effect/Tracer";
 import * as Reactivity from "effect/reactivity/Reactivity";
 import * as Client from "effect/sql/SqlClient";
-import type { Connection } from "effect/sql/SqlConnection";
+import type { Borrower, Connection } from "effect/sql/SqlConnection";
 import { SqlError, classifySqliteError } from "effect/sql/SqlError";
 import * as Statement from "effect/sql/Statement";
 
@@ -1266,6 +1266,26 @@ const make = Effect.fn("makeWithDatabase")(function* (
       );
     }),
   );
+  const borrower: Borrower = (f) =>
+    Effect.flatMap(route, (target) =>
+      Effect.withFiber((fiber) => {
+        const useConnection = Effect.suspend(() => f(target.connection));
+        if (
+          !fiber.getRef(References.TracerEnabled) ||
+          !fiber.getRef(Statement.SpanPropagationEnabled)
+        ) {
+          return target.lock.withPermits(1)(useConnection);
+        }
+        const clock = fiber.getRef(Clock.Clock);
+        const start = clock.monotonicTimeNanosUnsafe();
+        return target.lock.withPermits(1)(
+          Effect.andThen(
+            Effect.sync(() => annotateAcquired(fiber, acquired(target, clock, start))),
+            useConnection,
+          ),
+        );
+      }),
+    );
   const transactionAcquirer = Effect.flatMap(route, (target) =>
     Effect.uninterruptibleMask((restore) => {
       const fiber = Fiber.getCurrent()!;
@@ -1285,6 +1305,7 @@ const make = Effect.fn("makeWithDatabase")(function* (
 
   const client = yield* Client.make({
     acquirer,
+    borrower,
     compiler,
     transactionAcquirer,
     // A deferred BEGIN only takes the write lock at the first write. If another
