@@ -13,6 +13,7 @@ import {
   OrchestrationGetFullThreadDiffError,
   OrchestrationGetTurnDiffError,
   OrchestrationV2DispatchCommandError,
+  OrchestrationV2CommandOutputError,
   OrchestrationV2GetShellSnapshotError,
   OrchestrationV2GetThreadProjectionError,
   OrchestrationV2ThreadLaunchError,
@@ -165,6 +166,7 @@ const SERVED = [
   ORCHESTRATION_V2_WS_METHODS.dispatchCommand,
   ORCHESTRATION_V2_WS_METHODS.launchThread,
   ORCHESTRATION_V2_WS_METHODS.subscribeThread,
+  ORCHESTRATION_V2_WS_METHODS.subscribeCommandOutput,
   ORCHESTRATION_V2_WS_METHODS.getThreadProjection,
   // Images tools returned in a thread and attachments (`assets/CloudAssets.ts`).
   WS_METHODS.assetsCreateUrl,
@@ -239,6 +241,7 @@ const REQUIRED_SCOPES = {
   [ORCHESTRATION_V2_WS_METHODS.dispatchCommand]: AuthOrchestrationOperateScope,
   [ORCHESTRATION_V2_WS_METHODS.launchThread]: AuthOrchestrationOperateScope,
   [ORCHESTRATION_V2_WS_METHODS.subscribeThread]: AuthOrchestrationReadScope,
+  [ORCHESTRATION_V2_WS_METHODS.subscribeCommandOutput]: AuthOrchestrationReadScope,
   [ORCHESTRATION_V2_WS_METHODS.getThreadProjection]: AuthOrchestrationReadScope,
   // A cloud serves only tool output images, which a self-hosted server gates on this scope.
   [WS_METHODS.assetsCreateUrl]: AuthOrchestrationReadScope,
@@ -598,6 +601,20 @@ export const layerHandlers = (input: {
                 new OrchestrationV2GetThreadProjectionError({
                   threadId: request.threadId,
                   message: failureMessage(error),
+                }),
+            ),
+          ),
+        [ORCHESTRATION_V2_WS_METHODS.subscribeCommandOutput]: (request) =>
+          Stream.unwrap(
+            Effect.map(actorNow, (actor) => coreThreads.commandOutput(actor, request)),
+          ).pipe(
+            Stream.interruptWhen(lostSight(request.threadId)),
+            Stream.mapError(
+              (cause) =>
+                new OrchestrationV2CommandOutputError({
+                  threadId: request.threadId,
+                  message: "Couldn't read this command's output. It may no longer be available.",
+                  cause,
                 }),
             ),
           ),
