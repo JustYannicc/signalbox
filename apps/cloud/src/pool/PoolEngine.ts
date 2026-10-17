@@ -611,21 +611,24 @@ const make = Effect.gen(function* () {
       const known = new Map(cached.map((account) => [account.name, account]));
       for (const account of live) {
         const before = known.get(account.name);
+        const contributor =
+          before === undefined || before.contributedBy === null ? contributors(account.name) : null;
         if (
           before !== undefined &&
           before.type === account.type &&
           before.email === account.email &&
           before.disabled === account.disabled &&
-          before.signedOut === account.signedOut
+          before.signedOut === account.signedOut &&
+          contributor === null
         )
           continue;
-        const contributor = before === undefined ? contributors(account.name) : null;
         yield* sql`INSERT INTO accounts (name, type, email, disabled, signed_out,
           contributed_by, added_at)
         VALUES (${account.name}, ${account.type}, ${account.email},
           ${account.disabled ? 1 : 0}, ${account.signedOut ? 1 : 0}, ${contributor}, ${now})
         ON CONFLICT (name) DO UPDATE SET type = excluded.type, email = excluded.email,
-          disabled = excluded.disabled, signed_out = excluded.signed_out`;
+          disabled = excluded.disabled, signed_out = excluded.signed_out,
+          contributed_by = COALESCE(accounts.contributed_by, excluded.contributed_by)`;
       }
       const names = new Set(live.map((account) => account.name));
       for (const account of cached) {
@@ -705,7 +708,8 @@ const make = Effect.gen(function* () {
   /**
    * Reads the CLIProxyAPI's accounts into the cache, keeping who contributed
    * each, and writes only what changed. `contributors` names the contributor
-   * of accounts new to the cache. Passive reads, and reads with `probe`, may
+   * of accounts not yet attributed, including ones an alarm cached first.
+   * Passive reads, and reads with `probe`, may
    * ask the providers for windows the pool doesn't know (`poolLimits.ts`);
    * admin actions don't wait on that.
    */
