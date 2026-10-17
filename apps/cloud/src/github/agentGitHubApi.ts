@@ -35,6 +35,15 @@ const RepositoryUploadBody = Schema.Struct({
   ),
 });
 const ListBody = Schema.fromJsonString(Schema.Array(Schema.Unknown));
+const encodeComments = Schema.encodeEffect(
+  Schema.fromJsonString(
+    Schema.Struct({
+      issueComments: Schema.Array(Schema.Unknown),
+      reviewComments: Schema.Array(Schema.Unknown),
+      reviews: Schema.Array(Schema.Unknown),
+    }),
+  ),
+);
 const decodeImageUpload = Schema.decodeUnknownOption(Schema.fromJsonString(ImageUploadBody));
 const decodeRepositoryUpload = Schema.decodeUnknownOption(
   Schema.fromJsonString(RepositoryUploadBody),
@@ -175,7 +184,9 @@ export const makeAgentGitHubApi = (
         { concurrency: 3 },
       );
       if (issueComments === null || reviewComments === null || reviews === null) return null;
-      return JSON.stringify({ issueComments, reviewComments, reviews });
+      return yield* encodeComments({ issueComments, reviewComments, reviews }).pipe(
+        Effect.mapError(() => unreadable("agentComments")),
+      );
     });
 
   const jsonWrite = (
