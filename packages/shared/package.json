@@ -7,6 +7,10 @@
       "types": "./src/keywordSearch.ts",
       "import": "./src/keywordSearch.ts"
     },
+    "./clientTraceSafety": {
+      "types": "./src/clientTraceSafety.ts",
+      "import": "./src/clientTraceSafety.ts"
+    },
     "./pnpmVirtualStore": {
       "types": "./src/pnpmVirtualStore.ts",
       "import": "./src/pnpmVirtualStore.ts",
