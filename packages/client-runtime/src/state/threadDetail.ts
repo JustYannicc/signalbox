@@ -129,12 +129,18 @@ export function createEnvironmentThreadDetailAtoms<E>(
         Option.getOrNull(get(threadStateValueAtomFamily(key)).data)?.thread.worktreePath ?? null,
     ).pipe(Atom.setIdleTTL(0), Atom.withLabel(`environment-thread-worktree:${key}`)),
   );
-  // signalbox: settled tasks are archived (#671); routes keep them on screen.
+  // signalbox: settled tasks are archived (#671); routes keep them on screen, and keep a
+  // reopened one there while it travels back into the live shell.
   const settledTaskAtomFamily = Atom.family((key: string) =>
     Atom.make((get): "settled" | "pending" | "other" => {
       const state = get(threadStateValueAtomFamily(key));
       const thread = Option.getOrNull(state.data)?.thread;
-      if (thread?.settledOverride === "settled" && thread.deletedAt === null) return "settled";
+      if (
+        thread !== undefined &&
+        thread.deletedAt === null &&
+        (thread.settledOverride === "settled" || thread.archivedAt === null)
+      )
+        return "settled";
       const loading = state.status === "empty" || state.status === "synchronizing";
       return thread === undefined && loading && Option.isNone(state.error) ? "pending" : "other";
     }).pipe(Atom.setIdleTTL(0), Atom.withLabel(`environment-thread-settled-task:${key}`)),
