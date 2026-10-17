@@ -49,8 +49,18 @@ const layer = ModelCatalog.layer.pipe(
           codex: {
             profiles: {},
             models: [
-              { slug: "cached-model", name: "Cached", defaultSelection: "economical" },
-              { slug: "ready-model", name: "Ready", defaultSelection: "economical" },
+              {
+                slug: "cached-model",
+                name: "Cached",
+                status: "current",
+                defaultSelection: "economical",
+              },
+              {
+                slug: "ready-model",
+                name: "Ready",
+                status: "current",
+                defaultSelection: "economical",
+              },
             ],
           },
         },
