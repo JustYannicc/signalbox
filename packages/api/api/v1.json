@@ -2111,7 +2111,7 @@
       "access": "read",
       "stream": "snapshot",
       "input": "438e44e7",
-      "output": "6f60ed78"
+      "output": "b37dbe15"
     },
     {
       "name": "threads.subscribeArchived",
