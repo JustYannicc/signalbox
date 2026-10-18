@@ -136,6 +136,7 @@ function telemetryEnv(stage: string) {
       POSTHOG_HOST: yield* optional("POSTHOG_HOST"),
       SIGNALBOX_POSTHOG_ENABLED: yield* optional("SIGNALBOX_POSTHOG_ENABLED"),
       T3CODE_TELEMETRY_ENABLED: yield* optional("T3CODE_TELEMETRY_ENABLED"),
+      SIGNALBOX_DO_STORAGE_ALERT_PERCENT: yield* optional("SIGNALBOX_DO_STORAGE_ALERT_PERCENT"),
     };
   });
 }
