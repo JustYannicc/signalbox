@@ -71,7 +71,8 @@ import * as SourceControlBuiltInDrivers from "./sourceControl/builtInDrivers.ts"
 import * as TextGeneration from "./textGeneration/TextGeneration.ts";
 import * as ProviderInstanceRegistryHydration from "./provider/ProviderInstanceRegistryHydration.ts";
 import * as ProjectSettingsOverrideSweep from "./provider/ProjectSettingsOverrideSweep.ts";
-import * as TerminalManager from "./terminal/Manager.ts";
+// signalbox: the cloud terminal engine must not load self-hosted provider wiring.
+import * as ServerTerminalManager from "./terminal/ServerTerminalManager.ts";
 import * as McpHttpServer from "./mcp/McpHttpServer.ts";
 import * as McpSessionRegistry from "./mcp/McpSessionRegistry.ts";
 import * as PreviewAutomationBroker from "./mcp/PreviewAutomationBroker.ts";
@@ -423,7 +424,7 @@ const layerCheckpointStore = CheckpointStore.layer.pipe(Layer.provide(layerVcsDr
 
 const layerPortScanner = PortScanner.layer.pipe(Layer.provide(ProcessRunner.layer));
 
-const layerTerminal = TerminalManager.layer.pipe(
+const layerTerminal = ServerTerminalManager.layer.pipe(
   Layer.provide(layerPtyAdapter),
   Layer.provide(layerPortScanner),
   Layer.provide(layerNativeTelemetry),

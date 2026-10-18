@@ -48,6 +48,11 @@ export interface BuiltinToolHandler {
  */
 const VOUCHED_TOOLS: ReadonlySet<string> = new Set(["pull_request_action"]);
 
+const isTaskLifecycleRead = (args: unknown) =>
+  typeof args === "object" &&
+  args !== null &&
+  (args as { readonly action?: unknown }).action === "read";
+
 export interface BuiltinToolGuards {
   /** Who stands behind the code of the run's version. */
   readonly approvalOf: (runId: string) => Effect.Effect<VersionApproval | null, AutomationError>;
@@ -62,7 +67,15 @@ export const makeBuiltinTools = (guards: BuiltinToolGuards) => {
   const vouched = (tool: string, input: Omit<BuiltinToolCall, "tool">) =>
     Effect.gen(function* () {
       const approval = yield* guards.approvalOf(input.runId);
-      if (approval !== "signalbox" && approval !== "person")
+      if (approval !== "signalbox" && approval !== "person") {
+        if (tool === "task_lifecycle")
+          return yield* explained(
+            "Only Signalbox's own automations, or one a person published, can change a task's lifecycle.",
+            {
+              why: "Agent-authored automations can read task state, but lifecycle changes need a version a person published.",
+              fix: "Save it as a draft and have a person publish the version in Signalbox.",
+            },
+          );
         return yield* explained(
           `Only Signalbox's own automations, or one a person published, can use signalbox.${tool}.`,
           {
@@ -70,6 +83,7 @@ export const makeBuiltinTools = (guards: BuiltinToolGuards) => {
             fix: "Save it as a draft and have the user publish it in Signalbox, or call merge_pull_request.",
           },
         );
+      }
       const threadId = (input.args as { readonly threadId?: unknown } | null)?.threadId;
       const projectId =
         typeof threadId === "string" ? yield* guards.projectOfThread(threadId) : undefined;
@@ -108,7 +122,9 @@ export const makeBuiltinTools = (guards: BuiltinToolGuards) => {
         );
       }
       const call = handler.call({ ...input, tool });
-      return VOUCHED_TOOLS.has(tool) ? vouched(tool, input).pipe(Effect.andThen(call)) : call;
+      const needsVouch =
+        VOUCHED_TOOLS.has(tool) || (tool === "task_lifecycle" && !isTaskLifecycleRead(input.args));
+      return needsVouch ? vouched(tool, input).pipe(Effect.andThen(call)) : call;
     });
 
   return { register, call };

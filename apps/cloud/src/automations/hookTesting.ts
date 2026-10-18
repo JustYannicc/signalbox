@@ -15,6 +15,7 @@ import * as Layer from "effect/Layer";
 import * as RpcTest from "effect/rpc/RpcTest";
 
 import * as Environment from "../environment.ts";
+import { pauseTaskDone } from "./taskLifecycleTesting.ts";
 import { makeMemoryCloud } from "../testing.ts";
 import { scriptedModelSelection } from "../thread/scriptedProvider.ts";
 import * as CloudRpc from "../user/rpc.ts";
@@ -27,6 +28,7 @@ export const hookTestSetup = (options?: Parameters<typeof makeMemoryCloud>[0]) =
     const cloud = makeMemoryCloud(options);
     const user = cloud.userDirectory.forUser(HOOK_USER);
     yield* user.recordSignIn({ id: HOOK_USER, email: "hooks@example.com" });
+    yield* pauseTaskDone(cloud, HOOK_USER, Environment.SCRATCH_PROJECT_ID);
     const rpc = yield* RpcTest.makeClient(CloudRpc.CloudRpcGroup).pipe(
       Effect.provide(
         Layer.mergeAll(

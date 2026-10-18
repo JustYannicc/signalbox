@@ -35,6 +35,7 @@ vi.mock("../../native/useOpenPullRequest", () => ({ useOpenPullRequest: () => ()
 
 vi.mock("../../state/session", () => ({ useEnvironmentScope: () => true }));
 vi.mock("../../state/environmentCapabilities", () => ({ useEnvironmentSupports: () => true }));
+vi.mock("../folders/usePublishableFolder", () => ({ usePublishableFolder: () => null }));
 vi.mock("../../state/entities", () => ({
   useEnvironmentServerConfig: () => ({ threadFind: true }),
 }));

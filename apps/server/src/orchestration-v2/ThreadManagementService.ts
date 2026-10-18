@@ -373,6 +373,7 @@ export interface ThreadManagementServiceShape {
   readonly listProjectThreads: (input: {
     readonly projectId: ProjectId;
     readonly includeSubagents: boolean;
+    readonly includeArchived?: boolean;
   }) => Effect.Effect<ReadonlyArray<OrchestrationV2ThreadShell>, ThreadManagementError>;
   readonly sendToThread: (
     input: ThreadManagementSendInput,
@@ -755,32 +756,40 @@ const make = Effect.gen(function* () {
       );
 
   const listProjectThreads: ThreadManagementServiceShape["listProjectThreads"] = (input) =>
-    orchestrator.getShellSnapshot({ projectId: input.projectId, location: "active" }).pipe(
-      Effect.mapError(
-        (cause) =>
-          new ThreadManagementProjectThreadsListError({
-            projectId: input.projectId,
-            cause,
-          }),
-      ),
-      Effect.map((snapshot) =>
-        snapshot.threads
-          .filter(
-            (thread) =>
-              input.includeSubagents || thread.lineage.relationshipToParent !== "subagent",
+    orchestrator
+      .getShellSnapshot({
+        projectId: input.projectId,
+        ...(input.includeArchived ? {} : { location: "active" as const }),
+      })
+      .pipe(
+        Effect.mapError(
+          (cause) =>
+            new ThreadManagementProjectThreadsListError({
+              projectId: input.projectId,
+              cause,
+            }),
+        ),
+        Effect.map((snapshot) =>
+          (input.includeArchived
+            ? [...snapshot.threads, ...snapshot.archivedThreads]
+            : snapshot.threads
           )
-          .toSorted(
-            (left, right) =>
-              DateTime.toEpochMillis(right.updatedAt) - DateTime.toEpochMillis(left.updatedAt) ||
-              right.id.localeCompare(left.id),
-          ),
-      ),
-    );
+            .filter(
+              (thread) =>
+                input.includeSubagents || thread.lineage.relationshipToParent !== "subagent",
+            )
+            .toSorted(
+              (left, right) =>
+                DateTime.toEpochMillis(right.updatedAt) - DateTime.toEpochMillis(left.updatedAt) ||
+                right.id.localeCompare(left.id),
+            ),
+        ),
+      );
 
   const sendToThread: ThreadManagementServiceShape["sendToThread"] = (input) =>
     Effect.gen(function* () {
       const target = yield* getProjectThreadRecords(input, ["runs", "providerTurns"]);
-      if (target.thread.archivedAt !== null) {
+      if (target.thread.archivedAt !== null && input.createdBy !== "user") {
         return yield* new ThreadManagementThreadArchivedError({
           threadId: input.threadId,
         });

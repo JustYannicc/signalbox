@@ -43,6 +43,11 @@ import type {
   BrowsingStreamItem,
 } from "@t3tools/contracts/signalboxBrowsing";
 import type { BrowsingDispatched } from "./browsing/ThreadBrowsing.ts";
+import {
+  terminalHandleFor,
+  type TerminalHandle,
+  type TerminalObjectApi,
+} from "./terminal/terminalDirectory.ts";
 import type { SearchBackfillProgress, SearchThreadDocuments } from "./ThreadEngine.ts";
 import { browsingWire } from "./browsing/browsingWire.ts";
 import { ThreadObjectError } from "./ThreadAccess.ts";
@@ -63,6 +68,7 @@ import {
   type LaunchInputWire,
   type ThreadMonitor,
   type ThreadObjectReply,
+  type ThreadWorkspace,
   wire,
 } from "./threadWire.ts";
 
@@ -126,7 +132,7 @@ const ThreadLifecycleReceiptWire = Schema.Struct({
 const decodeLifecycleReceipt = Schema.decodeUnknownSync(ThreadLifecycleReceiptWire);
 
 /** What a thread object answers. `ThreadObject` implements it method for method. */
-export interface ThreadObjectApi {
+export interface ThreadObjectApi extends TerminalObjectApi {
   readonly uploadFeedback: (
     actor: Actor,
     input: ProviderUploadFeedbackInput,
@@ -165,6 +171,7 @@ export interface ThreadObjectApi {
     input: WorktreeSetupCancelInput,
   ) => Promise<ThreadObjectReply<{ readonly cancelled: boolean }>>;
   readonly snapshot: (actor: Actor) => Promise<ThreadObjectReply<unknown>>;
+  readonly workspace: (actor: Actor) => Promise<ThreadObjectReply<unknown>>;
   /** Newline-delimited JSON batches, or null when the actor cannot see the thread. */
   readonly subscribe: (actor: Actor, input: unknown) => Promise<ReadableStream<Uint8Array> | null>;
   readonly commandOutput: (
@@ -281,7 +288,7 @@ export interface ThreadObjectApi {
 
 type CommandFailure = ThreadNotFoundError | ThreadCommandRejectedError | ThreadObjectError;
 
-export interface ThreadHandle {
+export interface ThreadHandle extends TerminalHandle {
   readonly uploadFeedback: (
     actor: Actor,
     input: ProviderUploadFeedbackInput,
@@ -333,6 +340,9 @@ export interface ThreadHandle {
   readonly snapshot: (
     actor: Actor,
   ) => Effect.Effect<ThreadSnapshot, ThreadNotFoundError | ThreadObjectError>;
+  readonly workspace: (
+    actor: Actor,
+  ) => Effect.Effect<ThreadWorkspace, ThreadNotFoundError | ThreadObjectError>;
   /** One subscription. Ends when the object goes away; resuming is the caller's job. */
   readonly subscribe: (
     actor: Actor,
@@ -540,6 +550,7 @@ export function handleFor(api: ThreadObjectApi): ThreadHandle {
       Effect.flatMap((value) => decodeIn(operation, () => decodeLifecycleReceipt(value))),
     );
   return {
+    ...terminalHandleFor(api),
     uploadFeedback: (actor, input) =>
       call("uploadFeedback", () => api.uploadFeedback(actor, input)).pipe(
         Effect.flatMap(fromReply),
@@ -609,6 +620,12 @@ export function handleFor(api: ThreadObjectApi): ThreadHandle {
         // Reads decide no command, so a rejection here is a protocol bug.
         Effect.catchTags({ ThreadCommandRejectedError: (error) => Effect.die(error) }),
         Effect.flatMap((value) => decodeIn("snapshot", () => wire.snapshot.decode(value))),
+      ),
+    workspace: (actor) =>
+      call("workspace", () => api.workspace(actor)).pipe(
+        Effect.flatMap(fromReply),
+        Effect.catchTags({ ThreadCommandRejectedError: Effect.die }),
+        Effect.flatMap((value) => decodeIn("workspace", () => wire.workspace.decode(value))),
       ),
     backfill: (actor, requestKey) =>
       call("backfill", () => api.backfill(actor, requestKey)).pipe(

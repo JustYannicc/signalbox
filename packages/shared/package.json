@@ -587,6 +587,14 @@
     "./agentProcessEnvironment": {
       "types": "./src/agentProcesses/environment.ts",
       "import": "./src/agentProcesses/environment.ts"
+    },
+    "./poolAdvice": {
+      "types": "./src/poolAdvice.ts",
+      "import": "./src/poolAdvice.ts"
+    },
+    "./poolUsageRecording": {
+      "types": "./src/poolUsageRecording.ts",
+      "import": "./src/poolUsageRecording.ts"
     }
   },
   "scripts": {

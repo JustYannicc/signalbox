@@ -938,7 +938,12 @@ export default workflow(async (w) => "hello");`;
         );
       expect(yield* refusal({ ...compiled, format: 99 })).toContain("Update signalbox");
       expect(yield* refusal({ script: 1 })).toContain("isn't a compiled automation");
-      expect(yield* engine((engine) => engine.list())).toEqual([]);
+      const automations = yield* engine((engine) => engine.list());
+      expect(
+        automations.filter(
+          (automation) => automation.name !== "Task done" && automation.name !== "Settle task",
+        ),
+      ).toEqual([]);
     }),
   );
 });

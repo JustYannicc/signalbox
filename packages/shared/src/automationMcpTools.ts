@@ -11,6 +11,7 @@ function tool(labels: T3McpToolDefinition["labels"]): T3McpToolDefinition {
 
 /** Presentation for the automation MCP tools, spread into the T3 tool inventory. */
 export const AUTOMATION_MCP_TOOLS: Readonly<Record<string, T3McpToolDefinition>> = {
+  task_lifecycle: tool(["Update", "Updating", "Updated", "task completion"]),
   automation_reference: tool(["Read", "Reading", "Read", "the automation guide"]),
   automation_validate: tool(["Check", "Checking", "Checked", "an automation"]),
   automation_save: tool(["Save", "Saving", "Saved", "an automation"]),

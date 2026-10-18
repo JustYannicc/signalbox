@@ -2,9 +2,11 @@ import * as Schema from "effect/Schema";
 import { GitPreparePullRequestThreadInput } from "./git.ts";
 import {
   AuthOrchestrationOperateScope,
+  AuthOrchestrationReadScope,
   AuthPreviewOperateScope,
   AuthSettingsWriteScope,
   AuthSourceControlWriteScope,
+  AuthTerminalOperateScope,
   type AuthEnvironmentScope,
 } from "./auth.ts";
 import { ORCHESTRATION_V2_WS_METHODS } from "./orchestrationV2.ts";
@@ -20,12 +22,20 @@ import {
   SIGNALBOX_PREVIEWS_WS_METHODS,
 } from "./signalboxPreviews.ts"; // signalbox: previews
 import { SIGNALBOX_THREAD_KINDS_WS_METHODS } from "./signalboxThreadKinds.ts"; // signalbox: thread kinds
+import { AUTOMATION_WS_METHODS } from "./automationRpc.ts"; // signalbox: automations
 import { SIGNALBOX_PERSON_BROWSER_WS_METHODS } from "./signalboxPersonBrowser.ts";
 import { PERSON_TIMEZONE_WS_METHODS } from "./personTimezone.ts";
 import { SIGNALBOX_ANALYTICS_WS_METHODS } from "./signalboxAnalytics.ts";
 
 /** Incremental client enforcement; the server still authorizes every request. */
 export const CLIENT_GUARDED_RPC_SCOPES = {
+  [WS_METHODS.terminalOpen]: AuthTerminalOperateScope,
+  [WS_METHODS.terminalAttach]: AuthTerminalOperateScope,
+  [WS_METHODS.terminalWrite]: AuthTerminalOperateScope,
+  [WS_METHODS.terminalResize]: AuthTerminalOperateScope,
+  [WS_METHODS.terminalClear]: AuthTerminalOperateScope,
+  [WS_METHODS.terminalRestart]: AuthTerminalOperateScope,
+  [WS_METHODS.terminalClose]: AuthTerminalOperateScope,
   [WS_METHODS.providerUploadFeedback]: AuthOrchestrationOperateScope, // signalbox: feedback uploads require the destination's operate grant
   [WS_METHODS.worktreeSetupCancel]: AuthOrchestrationOperateScope,
   [WS_METHODS.serverUpsertKeybinding]: AuthSettingsWriteScope,
@@ -89,6 +99,7 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   [SIGNALBOX_FOLDERS_WS_METHODS.setPhase]: AuthOrchestrationOperateScope, // signalbox: folders
   [SIGNALBOX_THREAD_KINDS_WS_METHODS.setKind]: AuthOrchestrationOperateScope, // signalbox: thread kinds
   [SIGNALBOX_THREAD_KINDS_WS_METHODS.setArchiveChatsAfterDays]: AuthSettingsWriteScope, // signalbox: thread kinds
+  [AUTOMATION_WS_METHODS.automationsTaskLifecycle]: AuthOrchestrationOperateScope, // signalbox: automations
   [SIGNALBOX_FOLDERS_WS_METHODS.setSecrets]: AuthOrchestrationOperateScope, // signalbox: folders
   [SIGNALBOX_FOLDERS_WS_METHODS.setOnePassword]: AuthOrchestrationOperateScope, // signalbox: folders
   [SIGNALBOX_FOLDERS_WS_METHODS.setGitHubLend]: AuthOrchestrationOperateScope, // signalbox: folders
@@ -114,6 +125,13 @@ export function clientRpcRequiredScopes(
   method: string,
   input: unknown,
 ): readonly AuthEnvironmentScope[] {
+  if (method === AUTOMATION_WS_METHODS.automationsTaskLifecycle) {
+    const action =
+      input !== null && typeof input === "object" && !Array.isArray(input)
+        ? (input as { readonly action?: unknown }).action
+        : undefined;
+    return [action === "read" ? AuthOrchestrationReadScope : AuthOrchestrationOperateScope];
+  }
   if (method === WS_METHODS.gitPreparePullRequestThread && input !== undefined) {
     const payload = decodePrepareThread(input);
     if (payload.mode === "worktree" && payload.threadId !== undefined)

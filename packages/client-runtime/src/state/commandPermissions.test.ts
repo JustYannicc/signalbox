@@ -10,6 +10,7 @@ import {
   AuthOrchestrationOperateScope,
   AuthSettingsWriteScope,
   AuthSourceControlWriteScope,
+  AuthTerminalOperateScope,
   ThreadId,
   EnvironmentId,
   ORCHESTRATION_V2_WS_METHODS,
@@ -82,6 +83,44 @@ describe("command permissions", () => {
       }),
     ),
   );
+  it.effect("requires a terminal grant on the destination for terminal mutations", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const registry = yield* setup;
+        registry.set(sessions(env), AsyncResult.success(grant(true)));
+        const tags = [
+          WS_METHODS.terminalOpen,
+          WS_METHODS.terminalWrite,
+          WS_METHODS.terminalResize,
+          WS_METHODS.terminalClear,
+          WS_METHODS.terminalRestart,
+          WS_METHODS.terminalClose,
+        ] as const;
+        for (const tag of tags) {
+          const terminal = createCommandPermissions(runtime, tag);
+          expect(registry.get(terminal.permissionAtom(env))).toBe(false);
+          expect(
+            (yield* terminal.authorize(registry, env).pipe(Effect.flip)).requiredPermission,
+          ).toBe(AuthTerminalOperateScope);
+        }
+        registry.set(
+          sessions(env),
+          AsyncResult.success({
+            ...grant(false),
+            scopes: [AuthTerminalOperateScope],
+            permissions: [AuthTerminalOperateScope],
+          }),
+        );
+        for (const tag of tags) {
+          const terminal = createCommandPermissions(runtime, tag);
+          expect(registry.get(terminal.permissionAtom(env))).toBe(true);
+          yield* terminal.authorize(registry, env);
+          expect(registry.get(terminal.permissionAtom(other))).toBe(false);
+        }
+      }),
+    ),
+  );
+
   it.effect("requires the current destination operate grant for provider feedback", () =>
     Effect.scoped(
       Effect.gen(function* () {

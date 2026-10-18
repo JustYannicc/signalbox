@@ -2637,6 +2637,10 @@ export const OrchestrationV2Command = Schema.Union([
     type: Schema.Literal("thread.settle"),
     commandId: CommandId,
     threadId: ThreadId,
+    // signalbox: explicit early settlement stops work and holds queued user messages.
+    stopWork: Schema.optional(Schema.Boolean),
+    // signalbox: a done-condition only settles the idle snapshot it checked.
+    snapshotAt: Schema.optional(Schema.DateTimeUtc),
     settledAt: Schema.optional(Schema.DateTimeUtc),
   }),
   /**

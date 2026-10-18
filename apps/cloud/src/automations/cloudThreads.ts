@@ -1,5 +1,6 @@
 import {
   AutomationError,
+  type OrchestrationV2Command,
   type OrchestrationV2DomainEvent,
   type OrchestrationV2ThreadProjection,
   type ThreadId,
@@ -23,6 +24,7 @@ import * as ThreadDirectory from "../thread/ThreadDirectory.ts";
 import { threadShellFromProjection } from "../thread/threadProjection.ts";
 import * as UserDrives from "../user/UserDrives.ts";
 import * as UserStore from "../user/UserStore.ts";
+import * as UserThreadKinds from "../user/UserThreadKinds.ts";
 import { ThreadContexts } from "../user/threadContexts.ts";
 import { isTerminalRunStatus } from "@signalbox/automations/runs";
 
@@ -110,6 +112,7 @@ export const layer = Layer.effect(
     const directory = yield* ThreadDirectory.ThreadDirectory;
     const store = yield* UserStore.UserStore;
     const drives = yield* UserDrives.UserDrives;
+    const kinds = yield* UserThreadKinds.UserThreadKinds;
     const feed = yield* ThreadEventFeed;
     const contexts = yield* ThreadContexts;
 
@@ -117,6 +120,25 @@ export const layer = Layer.effect(
       Effect.provideService(UserStore.UserStore, store),
       Effect.provideService(UserDrives.UserDrives, drives),
     );
+
+    const dispatchLifecycle = (
+      command: Extract<
+        OrchestrationV2Command,
+        {
+          readonly type:
+            | "thread.settle"
+            | "thread.auto-settle"
+            | "thread.unsettle"
+            | "thread.unarchive"
+            | "thread.auto-settle.set";
+        }
+      >,
+    ) =>
+      owner.pipe(
+        Effect.flatMap((actor) => threads.dispatchCommand(actor, command)),
+        Effect.asVoid,
+        Effect.mapError(hostError("Couldn't update thread lifecycle")),
+      );
 
     const projection = (threadId: ThreadId) =>
       owner.pipe(
@@ -217,8 +239,15 @@ export const layer = Layer.effect(
             isAutomationError(cause) ? cause : hostError("Couldn't stop the thread")(cause),
           ),
         ),
-      // Cloud threads aren't settled by automations yet; a model step's thread stays in the list.
-      settle: () => Effect.void,
+      settle: (input) =>
+        dispatchLifecycle({
+          type: "thread.settle",
+          commandId: input.commandId,
+          threadId: input.threadId,
+        }),
+      dispatchLifecycle,
+      getTaskKind: (threadId) =>
+        kinds.kindOf(threadId).pipe(Effect.mapError(hostError("Couldn't read the thread kind"))),
       domainEvents: feed.events,
       monitorsChanged: (threadId, monitors) =>
         owner.pipe(
