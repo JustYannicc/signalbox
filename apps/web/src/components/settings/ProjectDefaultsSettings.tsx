@@ -257,6 +257,11 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
   return (
     <SettingsSection
       serverScoped
+      // signalbox: the personal default model saves where other server settings can't (Signalbox
+      // Cloud). Project overrides don't, so a project scope keeps the stricter gate.
+      {...(category === "general" && !isProjectScope
+        ? { serverCapability: "modelSettingsWrite" as const }
+        : {})}
       id={
         category === "general" || category === "project"
           ? "project-defaults"
