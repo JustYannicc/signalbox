@@ -19,10 +19,10 @@ export function readLintOwnership({ cwd, head = "HEAD", upstreamRef = "upstream/
     throw new TypeError("readLintOwnership requires an explicit Git repository cwd.");
   }
 
-  const git = (args) => {
+  const git = (args, gitCwd = cwd) => {
     try {
       const output = NodeChildProcess.execFileSync("git", args, {
-        cwd,
+        cwd: gitCwd,
         encoding: "utf8",
         stdio: ["ignore", "pipe", "pipe"],
         maxBuffer: GIT_MAX_BUFFER,
@@ -40,7 +40,7 @@ export function readLintOwnership({ cwd, head = "HEAD", upstreamRef = "upstream/
       }
       if (cause.code === "ENOENT" || cause.code === "ENOTDIR") {
         throw new Error(
-          `Cannot read lint ownership: cannot run Git in "${cwd}". Verify cwd exists and Git is installed.`,
+          `Cannot read lint ownership: cannot run Git in "${gitCwd}". Verify cwd exists and Git is installed.`,
           { cause },
         );
       }
@@ -51,15 +51,22 @@ export function readLintOwnership({ cwd, head = "HEAD", upstreamRef = "upstream/
         );
       }
       throw new Error(
-        `Cannot read lint ownership: Git ${args[0]} failed in "${cwd}"${detail ? ` (${detail})` : ""}.`,
+        `Cannot read lint ownership: Git ${args[0]} failed in "${gitCwd}"${detail ? ` (${detail})` : ""}.`,
         { cause },
       );
     }
   };
 
-  const { commit, files } = readUpstreamSource(git, upstreamRef, head);
-  const trackedFiles = git(["ls-files", "--cached", "-z"]).split("\0").filter(Boolean);
-  const upstreamOwnedFiles = [...new Set(trackedFiles.filter((file) => files.has(file)))].sort();
+  const repositoryRoot = git(["rev-parse", "--show-toplevel"]);
+  const gitAtRoot = (args) => git(args, repositoryRoot);
+  const { commit } = readUpstreamSource(gitAtRoot, upstreamRef, head);
+  const upstreamFiles = new Set(
+    gitAtRoot(["ls-tree", "-r", "--name-only", "-z", commit]).split("\0").filter(Boolean),
+  );
+  const trackedFiles = gitAtRoot(["ls-files", "--cached", "-z"]).split("\0").filter(Boolean);
+  const upstreamOwnedFiles = [
+    ...new Set(trackedFiles.filter((file) => upstreamFiles.has(file))),
+  ].sort();
 
   return { commit, upstreamOwnedFiles };
 }

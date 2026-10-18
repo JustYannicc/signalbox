@@ -103,6 +103,55 @@ describe("lint ownership", () => {
     }
   });
 
+  it("preserves raw names and repo-relative paths from a subdirectory", () => {
+    const root = NodeFS.mkdtempSync(
+      NodePath.join(NodeOS.tmpdir(), "signalbox-lint-ownership-paths-"),
+    );
+    const upstreamPaths = [
+      "src/plain.ts",
+      'src/quoted "name".ts',
+      "src/back\\slash.ts",
+      "src/tab\tname.ts",
+      "src/newline\nname.ts",
+      "src/ümlaut.ts",
+      "src/漢字.ts",
+      "outside.ts",
+    ];
+    const stagedPath = "src/staged-after-base.ts";
+    const untrackedPath = "outside-untracked.ts";
+
+    try {
+      git(root, ["init", "--initial-branch=main"]);
+      for (const file of upstreamPaths) writeFile(root, file);
+      commit(root, "upstream base");
+      const base = git(root, ["rev-parse", "HEAD"]);
+
+      git(root, ["checkout", "-b", "candidate"]);
+      writeFile(root, "outside/candidate-only.ts");
+      commit(root, "candidate change");
+      git(root, ["update-ref", "refs/remotes/upstream/main", base]);
+
+      writeFile(root, stagedPath);
+      git(root, ["add", "--", stagedPath]);
+      writeFile(root, untrackedPath);
+
+      const rootResult = readLintOwnership({ cwd: root });
+      NodeAssert.equal(rootResult.commit, base);
+      NodeAssert.deepEqual(rootResult.upstreamOwnedFiles, [...upstreamPaths].sort());
+
+      const result = readLintOwnership({ cwd: NodePath.join(root, "src") });
+
+      NodeAssert.equal(result.commit, base);
+      NodeAssert.deepEqual(result.upstreamOwnedFiles, [...upstreamPaths].sort());
+      NodeAssert.equal(escapeOxlintFileGlob("src/literal [x].ts"), "src/literal \\[x\\].ts");
+      NodeAssert.ok(!result.upstreamOwnedFiles.includes("outside/candidate-only.ts"));
+      NodeAssert.ok(!result.upstreamOwnedFiles.includes(stagedPath));
+      NodeAssert.ok(!result.upstreamOwnedFiles.includes(untrackedPath));
+    } finally {
+      NodeFS.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it("reports missing repositories and upstream refs instead of returning no exemptions", () => {
     const nonRepository = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "signalbox-not-git-"));
     const repository = NodeFS.mkdtempSync(
