@@ -9,16 +9,33 @@ export async function deliverDesktopCapture(
     "readCapture" | "acknowledgeCapture" | "openCaptureMainWindow"
   >,
   pending: DesktopPendingCapture,
-  destinations: ReadonlyArray<CaptureDestination>,
+  getDestinations: () => ReadonlyArray<CaptureDestination>,
   save: ReturnType<typeof useSaveCapture>,
 ) {
-  const destination =
-    pending.destinationKey === null
-      ? destinations[0]
-      : destinations.find((item) => item.key === pending.destinationKey);
-  if (!destination)
-    throw new Error("The capture's folder is unavailable. Reconnect its environment to retry.");
+  const requireCurrentDestination = () => {
+    const destination = getDestinations().find(
+      (item) =>
+        pending.destinationKey !== null &&
+        item.key === pending.destinationKey &&
+        pending.owner !== undefined &&
+        item.environmentId === pending.owner.environmentId &&
+        item.ownerProjectId === pending.owner.ownerProjectId,
+    );
+    if (!destination)
+      throw new Error("The capture's folder is unavailable. Reconnect its environment to retry.");
+    return destination;
+  };
+  requireCurrentDestination();
   const capture = await bridge.readCapture(pending.id);
+  const destination = requireCurrentDestination();
+  if (
+    capture.id !== pending.id ||
+    capture.destinationKey !== pending.destinationKey ||
+    capture.owner?.environmentId !== pending.owner?.environmentId ||
+    capture.owner?.ownerProjectId !== pending.owner?.ownerProjectId
+  ) {
+    throw new Error("The capture's folder is unavailable. Reconnect its environment to retry.");
+  }
   const saved = await save(
     {
       text: capture.text,
@@ -39,6 +56,10 @@ export async function deliverDesktopCapture(
     },
   );
   if (!saved) throw new Error("Couldn't save the draft. Your capture is still kept on this Mac.");
-  if (capture.open) await bridge.openCaptureMainWindow();
+  requireCurrentDestination();
+  if (capture.open) {
+    await bridge.openCaptureMainWindow();
+    requireCurrentDestination();
+  }
   await bridge.acknowledgeCapture(capture.id);
 }

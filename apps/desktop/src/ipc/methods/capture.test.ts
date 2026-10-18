@@ -3,6 +3,7 @@ import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 
+import * as DesktopCaptureShutdown from "../../capture/DesktopCaptureShutdown.ts";
 import * as DesktopQuickCapture from "../../capture/DesktopQuickCapture.ts";
 import { submitCapture } from "./capture.ts";
 
@@ -51,6 +52,13 @@ describe("quick capture IPC sender boundary", () => {
       assert.isTrue(Exit.isFailure(staleContents));
       assert.isTrue(Exit.isFailure(subframe));
       assert.deepEqual(acceptedIds, []);
-    }).pipe(Effect.provide(Layer.succeed(DesktopQuickCapture.DesktopQuickCapture, capture)));
+    }).pipe(
+      Effect.provide(
+        Layer.merge(
+          Layer.succeed(DesktopQuickCapture.DesktopQuickCapture, capture),
+          DesktopCaptureShutdown.layer,
+        ),
+      ),
+    );
   });
 });

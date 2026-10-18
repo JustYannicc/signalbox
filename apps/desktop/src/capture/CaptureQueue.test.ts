@@ -104,7 +104,12 @@ describe("CaptureQueue", () => {
         const first = yield* Effect.gen(function* () {
           const queue = yield* CaptureQueue.CaptureQueue;
           yield* queue.setDestinations([destination]);
-          return yield* queue.submit(capture);
+          const submitted = yield* queue.submit(capture);
+          assert.deepEqual(submitted.owner, {
+            environmentId: destination.environmentId,
+            ownerProjectId: destination.ownerProjectId,
+          });
+          return submitted;
         }).pipe(Effect.provide(queueLayer(homeDirectory)));
 
         yield* Effect.gen(function* () {
@@ -174,13 +179,17 @@ describe("CaptureQueue", () => {
           );
           assert.equal(yield* fs.readFileString(`${corruptDirectory}/capture.json`), "{}");
 
-          const unassigned = yield* Effect.exit(
-            queue.submit({ ...valid, id: "dddd", destinationKey: null }),
+          const unassigned = yield* queue
+            .submit({ ...valid, id: "dddd", destinationKey: null })
+            .pipe(Effect.flip);
+          assert.instanceOf(unassigned, CaptureQueue.CaptureDestinationUnavailableError);
+          assert.equal(
+            unassigned.message,
+            "This capture's folder is unavailable. Reconnect its account or pick a folder to save.",
           );
-          assert.equal(unassigned._tag, "Failure");
           yield* queue.setDestinations([]);
-          const signedOut = yield* Effect.exit(queue.submit({ ...valid, id: "eeee" }));
-          assert.equal(signedOut._tag, "Failure");
+          const signedOut = yield* queue.submit({ ...valid, id: "eeee" }).pipe(Effect.flip);
+          assert.instanceOf(signedOut, CaptureQueue.CaptureDestinationUnavailableError);
           yield* queue.setDestinations([
             {
               ...destination,
@@ -188,12 +197,107 @@ describe("CaptureQueue", () => {
               ownerProjectId: ProjectId.make("account-two"),
             },
           ]);
-          const changedAccount = yield* Effect.exit(queue.submit({ ...valid, id: "ffff" }));
-          assert.equal(changedAccount._tag, "Failure");
+          const changedAccount = yield* queue.submit({ ...valid, id: "ffff" }).pipe(Effect.flip);
+          assert.instanceOf(changedAccount, CaptureQueue.CaptureDestinationUnavailableError);
           assert.deepEqual(yield* queue.listPending, []);
         }).pipe(Effect.provide(queueLayer(homeDirectory)));
       }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
   );
+
+  it.effect("refiles a deleted folder to the same owner's top only when that owner is available", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const homeDirectory = yield* fs.makeTempDirectoryScoped({ prefix: "capture-owner-retry-" });
+      const folderDestination = {
+        ...queuedDestination,
+        key: "account:work",
+        folderId: FolderId.make("folder-work"),
+        label: "Work",
+        inPlace: "in Work",
+      };
+      const destinationB = {
+        ...queuedDestination,
+        key: "account-b:home",
+        environmentId: EnvironmentId.make("environment-b"),
+        ownerProjectId: ProjectId.make("account-b"),
+      };
+      yield* Effect.gen(function* () {
+        const queue = yield* CaptureQueue.CaptureQueue;
+        yield* queue.setDestinations([queuedDestination, folderDestination]);
+        const submitted = yield* queue.submit({
+          ...queuedCapture,
+          destinationKey: folderDestination.key,
+        });
+        yield* queue.reportFailure(submitted.id, "The folder was removed.");
+        yield* queue.setDestinations([queuedDestination]);
+
+        const retried = yield* queue.retryAtOwnerTop(submitted.id);
+        assert.equal(retried.destinationKey, queuedDestination.key);
+        assert.deepEqual(retried.owner, submitted.owner);
+        assert.equal(retried.deliveryError, null);
+
+        yield* queue.setDestinations([destinationB]);
+        const unavailable = yield* queue.retryAtOwnerTop(submitted.id).pipe(Effect.flip);
+        assert.instanceOf(unavailable, CaptureQueue.CaptureDestinationUnavailableError);
+        const preserved = yield* queue.read(submitted.id);
+        assert.equal(preserved.destinationKey, queuedDestination.key);
+        assert.deepEqual(preserved.files[0]?.bytes, Uint8Array.of(97, 98, 99));
+      }).pipe(Effect.provide(queueLayer(homeDirectory)));
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
+
+  it.effect("backfills a legacy queue owner's last validated destination before replacing it", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const homeDirectory = yield* fs.makeTempDirectoryScoped({ prefix: "capture-legacy-owner-" });
+      yield* Effect.gen(function* () {
+        const queue = yield* CaptureQueue.CaptureQueue;
+        const environment = yield* DesktopEnvironment.DesktopEnvironment;
+        const id = "cccc";
+        yield* queue.setDestinations([queuedDestination]);
+        const entryDirectory = `${environment.stateDir}/captures/${id}`;
+        yield* fs.makeDirectory(entryDirectory, { recursive: true });
+        yield* fs.writeFileString(
+          `${entryDirectory}/capture.json`,
+          `${JSON.stringify({
+            id,
+            text: "Kept from the previous queue format",
+            files: [
+              {
+                id: "dddd",
+                name: "note.txt",
+                mimeType: "text/plain",
+                sizeBytes: 3,
+              },
+            ],
+            destinationKey: queuedDestination.key,
+            source: "quick-capture",
+            capturedAt: 123,
+            open: false,
+            deliveryError: "Still waiting.",
+          })}\n`,
+        );
+        yield* fs.writeFile(`${entryDirectory}/dddd.bin`, Uint8Array.of(97, 98, 99));
+
+        yield* queue.setDestinations([
+          {
+            ...queuedDestination,
+            key: "account-b:home",
+            environmentId: EnvironmentId.make("environment-b"),
+            ownerProjectId: ProjectId.make("account-b"),
+          },
+        ]);
+        const pending = (yield* queue.listPending).find((capture) => capture.id === id);
+        assert.deepEqual(pending?.owner, {
+          environmentId: queuedDestination.environmentId,
+          ownerProjectId: queuedDestination.ownerProjectId,
+        });
+        const capture = yield* queue.read(id);
+        assert.deepEqual(capture.files[0]?.bytes, Uint8Array.of(97, 98, 99));
+      }).pipe(Effect.provide(queueLayer(homeDirectory)));
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
+
   it.effect.each(["attachment", "metadata"] as const)(
     "removes staged bytes when the %s write fails and permits retry",
     (failAt) =>

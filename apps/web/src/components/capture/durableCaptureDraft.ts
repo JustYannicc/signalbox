@@ -165,8 +165,7 @@ async function saveCaptureDraftOnce(
   } else {
     const target = DraftId.make(draftId);
     const session = store.getDraftSession(target);
-    const snapshot = readPersistedCaptureDraft(draftId, input.receiptStorage);
-    if (!session || !snapshot?.hasSession) return failed(target, prepared, filed);
+    if (!session) return failed(target, prepared, filed);
 
     try {
       seeded = seedCapture(target, text, prepared);
@@ -177,6 +176,8 @@ async function saveCaptureDraftOnce(
     if (seeded.rejected.length > 0 || prepared.skipped.length > 0) {
       return failed(target, prepared, filed, [...prepared.skipped, ...seeded.rejected]);
     }
+    const reservedDraft = store.getComposerDraft(target);
+    await store.syncPersistedAttachments(target, reservedDraft?.persistedAttachments ?? []);
   }
 
   if (draftId === null) return failed(null, prepared, filed);
@@ -234,6 +235,7 @@ async function saveCaptureDraftOnce(
   });
   if (!ok) return failed(target, prepared, filed);
   const completed = completeCaptureDraftReceipt(captureId, target, input.receiptStorage);
+  releaseUnownedImages(target, prepared);
   return { ok: true, draftId: target, filed: completed.filed, rejected: [] };
 }
 

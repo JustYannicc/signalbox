@@ -120,12 +120,15 @@ export const installDesktopIpcHandlers = Effect.fn("desktop.ipc.installHandlers"
   yield* ipc.handle(dismissSnapShotAnimation);
   yield* ipc.handle(acknowledgeSnapShot);
   yield* ipc.handle(CaptureIpc.getCaptureState);
+  yield* ipc.handle(CaptureIpc.beginCaptureDestinationSync);
   yield* ipc.handle(CaptureIpc.setCaptureDestinations);
   yield* ipc.handle(CaptureIpc.submitCapture);
   yield* ipc.handle(CaptureIpc.listPendingCaptures);
   yield* ipc.handle(CaptureIpc.readCapture);
   yield* ipc.handle(CaptureIpc.acknowledgeCapture);
   yield* ipc.handle(CaptureIpc.reportCaptureFailure);
+  yield* ipc.handle(CaptureIpc.retryCaptureAtOwnerTop);
+  yield* ipc.handle(CaptureIpc.completeCaptureFlush);
   yield* ipc.handle(CaptureIpc.hideCapture);
   yield* ipc.handle(CaptureIpc.openCaptureMainWindow);
   yield* ipc.handle(CaptureIpc.checkCaptureShortcut);

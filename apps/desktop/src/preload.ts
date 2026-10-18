@@ -142,6 +142,8 @@ contextBridge.exposeInMainWorld("desktopBridge", {
     ipcRenderer.invoke(IpcChannels.DISMISS_SNAP_SHOT_ANIMATION_CHANNEL, id),
   acknowledgeSnapShot: (id) => ipcRenderer.invoke(IpcChannels.ACKNOWLEDGE_SNAP_SHOT_CHANNEL, id),
   getCaptureState: () => ipcRenderer.invoke(IpcChannels.GET_CAPTURE_STATE_CHANNEL),
+  beginCaptureDestinationSync: () =>
+    ipcRenderer.invoke(IpcChannels.BEGIN_CAPTURE_DESTINATION_SYNC_CHANNEL),
   setCaptureDestinations: (destinations) =>
     ipcRenderer.invoke(IpcChannels.SET_CAPTURE_DESTINATIONS_CHANNEL, destinations),
   submitCapture: (capture) => ipcRenderer.invoke(IpcChannels.SUBMIT_CAPTURE_CHANNEL, capture),
@@ -150,6 +152,10 @@ contextBridge.exposeInMainWorld("desktopBridge", {
   acknowledgeCapture: (id) => ipcRenderer.invoke(IpcChannels.ACKNOWLEDGE_CAPTURE_CHANNEL, id),
   reportCaptureFailure: (id, message) =>
     ipcRenderer.invoke(IpcChannels.REPORT_CAPTURE_FAILURE_CHANNEL, { id, message }),
+  retryCaptureAtOwnerTop: (id) =>
+    ipcRenderer.invoke(IpcChannels.RETRY_CAPTURE_AT_OWNER_TOP_CHANNEL, id),
+  completeCaptureFlush: (result) =>
+    ipcRenderer.invoke(IpcChannels.COMPLETE_CAPTURE_FLUSH_CHANNEL, result),
   hideCapture: () => ipcRenderer.invoke(IpcChannels.HIDE_CAPTURE_CHANNEL),
   openCaptureMainWindow: () => ipcRenderer.invoke(IpcChannels.OPEN_CAPTURE_MAIN_WINDOW_CHANNEL),
   checkCaptureShortcut: (shortcut) =>

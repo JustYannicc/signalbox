@@ -57,6 +57,7 @@ import * as DesktopClientSettings from "./settings/DesktopClientSettings.ts";
 import * as DesktopSavedEnvironments from "./settings/DesktopSavedEnvironments.ts";
 import * as DesktopSnapShot from "./snapShot/DesktopSnapShot.ts";
 import * as CaptureQueue from "./capture/CaptureQueue.ts";
+import * as DesktopCaptureShutdown from "./capture/DesktopCaptureShutdown.ts";
 import * as DesktopQuickCapture from "./capture/DesktopQuickCapture.ts";
 import * as DesktopAppSettings from "./settings/DesktopAppSettings.ts";
 import * as DesktopPreReadyFileSystem from "./app/DesktopPreReadyFileSystem.ts";
@@ -161,6 +162,7 @@ const layerDesktopFoundation = Layer.mergeAll(
   MacPermissions.layer,
   DesktopState.layer,
   DesktopShutdown.layer,
+  DesktopCaptureShutdown.layer,
   DesktopLegacyLocalStorage.layer,
   DesktopAppSettings.layer,
   DesktopClientSettings.layer,

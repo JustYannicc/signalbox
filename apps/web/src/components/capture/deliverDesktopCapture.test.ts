@@ -20,6 +20,10 @@ const destination: CaptureDestination = {
 };
 const capture: DesktopCapture = {
   id: "aabb",
+  owner: {
+    environmentId: destination.environmentId,
+    ownerProjectId: destination.ownerProjectId,
+  },
   text: "Remember this",
   files: [],
   destinationKey: "home",
@@ -47,7 +51,7 @@ function deliver(
   pending: DesktopPendingCapture,
   save: Parameters<typeof deliverDesktopCapture>[3],
 ) {
-  return deliverDesktopCapture(bridge, pending, [destination], save);
+  return deliverDesktopCapture(bridge, pending, () => [destination], save);
 }
 
 describe("desktop capture delivery", () => {
@@ -94,6 +98,53 @@ describe("desktop capture delivery", () => {
     );
     expect(bridge.readCapture).not.toHaveBeenCalled();
     expect(save).not.toHaveBeenCalled();
+    expect(bridge.acknowledgeCapture).not.toHaveBeenCalled();
+  });
+
+  it("does not deliver an unowned or untagged capture to the first destination", async () => {
+    const bridge = bridgeFor(capture);
+    const save = vi.fn(async () => true);
+    await expect(deliver(bridge, { ...capture, owner: undefined }, save)).rejects.toThrow(
+      "folder is unavailable",
+    );
+    await expect(deliver(bridge, { ...capture, destinationKey: null }, save)).rejects.toThrow(
+      "folder is unavailable",
+    );
+    expect(bridge.readCapture).not.toHaveBeenCalled();
+    expect(save).not.toHaveBeenCalled();
+    expect(bridge.acknowledgeCapture).not.toHaveBeenCalled();
+  });
+
+  it("rechecks ownership after each awaited delivery step before saving or acknowledging", async () => {
+    let currentDestinations: ReadonlyArray<CaptureDestination> = [destination];
+    const bridge = bridgeFor(capture);
+    bridge.readCapture.mockImplementation(async () => {
+      currentDestinations = [];
+      return capture;
+    });
+    const save = vi.fn(async () => true);
+
+    await expect(
+      deliverDesktopCapture(bridge, capture, () => currentDestinations, save),
+    ).rejects.toThrow("folder is unavailable");
+    expect(save).not.toHaveBeenCalled();
+    expect(bridge.acknowledgeCapture).not.toHaveBeenCalled();
+  });
+
+  it("keeps the queue entry when the owner disappears during durable saving", async () => {
+    let currentDestinations: ReadonlyArray<CaptureDestination> = [destination];
+    let finish: ((saved: boolean) => void) | undefined;
+    const persisted = new Promise<boolean>((resolve) => {
+      finish = resolve;
+    });
+    const bridge = bridgeFor(capture);
+    const save = vi.fn(() => persisted);
+    const delivery = deliverDesktopCapture(bridge, capture, () => currentDestinations, save);
+    await Promise.resolve();
+    currentDestinations = [];
+    finish!(true);
+
+    await expect(delivery).rejects.toThrow("folder is unavailable");
     expect(bridge.acknowledgeCapture).not.toHaveBeenCalled();
   });
 

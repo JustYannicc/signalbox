@@ -3,7 +3,7 @@ import { captureDestinations } from "@t3tools/client-runtime/capture/destination
 import { useState } from "react";
 import { folderTreesAtom } from "../sidebar/folders/folderThreads";
 import { CommandDialog, CommandDialogPopup } from "../ui/command";
-import { closeQuickCapture, useQuickCaptureStore } from "./quickCaptureStore";
+import { closeQuickCapture, restoreQuickCapture, useQuickCaptureStore } from "./quickCaptureStore";
 import { QuickCaptureForm } from "./QuickCaptureForm";
 import { useSaveCapture } from "./useSaveCapture";
 
@@ -25,7 +25,25 @@ export function QuickCaptureDialog({ open }: { readonly open: boolean }) {
           destinations={captureDestinations(trees.values())}
           initialCapture={restore}
           dismissRequest={dismissRequest}
-          onSave={(capture, show) => saveCapture(capture, { open: show, restoreOnFailure: false })}
+          allowHideWhileSaving
+          onSave={async (capture, show) => {
+            const restoreIfHidden = () => {
+              const current = useQuickCaptureStore.getState();
+              if (current.open && current.openCount === openCount) return;
+              restoreQuickCapture(capture);
+            };
+            try {
+              const saved = await saveCapture(capture, {
+                open: show,
+                restoreOnFailure: false,
+              });
+              if (!saved) restoreIfHidden();
+              return saved;
+            } catch (cause) {
+              restoreIfHidden();
+              throw cause;
+            }
+          }}
           onClose={() => closeQuickCapture(openCount)}
         />
       </CommandDialogPopup>

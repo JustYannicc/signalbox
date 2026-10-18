@@ -3,6 +3,7 @@ import { Button } from "../ui/button";
 import {
   useEffect,
   useEffectEvent,
+  useLayoutEffect,
   useRef,
   useState,
   type ClipboardEvent,
@@ -18,6 +19,7 @@ import {
   removeTriggerText,
 } from "@t3tools/client-runtime/capture/text";
 import { cn, isMacPlatform, randomUUID } from "../../lib/utils";
+import { useStableCallback } from "../../hooks/useStableCallback";
 import { CommandFooter, CommandFooterAction } from "../ui/command";
 import { shouldHandleComposerAttachmentPaste } from "../chat/composerAttachmentFiles";
 import { Kbd, KbdGroup } from "../ui/kbd";
@@ -41,6 +43,10 @@ export function QuickCaptureForm(props: {
   readonly footerAccessory?: ReactNode;
   readonly canSave?: boolean;
   readonly beforeSave?: (capture: Capture) => Promise<Capture>;
+  readonly draftFiles?: ReadonlyArray<CaptureFile>;
+  readonly onDraftChange?: (capture: Capture) => void | Promise<void>;
+  readonly registerFlush?: (flush: () => Promise<void>) => () => void;
+  readonly allowHideWhileSaving?: boolean;
   readonly onSave: (capture: Capture, open: boolean) => Promise<boolean>;
   readonly onClose: () => void;
   readonly requireDestination?: boolean;
@@ -60,12 +66,15 @@ export function QuickCaptureForm(props: {
   const [isMac] = useState(() => isMacPlatform(navigator.platform));
   // A second Enter (or a dismiss) during saving or the exit animation must not save twice.
   const savedRef = useRef(false);
+  const preparedRef = useRef(false);
+  const preparation = useRef<Promise<Capture> | null>(null);
+  const hideRequested = useRef(false);
   // The bar stays up as Saving… until the draft has everything; usually only a moment.
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const { destinations } = props;
+  const { destinations, registerFlush } = props;
   const [defaultDestination, setDefaultDestination] = useState(() =>
-    captureDefaultDestination(null, destinations),
+    captureDefaultDestination(restore?.destination ?? null, destinations),
   );
   const initialDestination = captureDefaultDestination(defaultDestination, destinations);
   if (initialDestination !== defaultDestination) setDefaultDestination(initialDestination);
@@ -82,37 +91,86 @@ export function QuickCaptureForm(props: {
   const highlighted = Math.min(activeIndex, Math.max(suggestions.length - 1, 0));
   const hasContent = text.trim().length > 0 || files.length > 0 || props.canSave === true;
 
-  const finish = (open: boolean, hiding = false) => {
+  const persistDraft = useStableCallback((capture: Capture) => props.onDraftChange?.(capture));
+  useEffect(() => {
     if (savedRef.current) return;
+    const capture = { text, files: [...files, ...(props.draftFiles ?? [])], destination };
+    void Promise.resolve()
+      .then(() => {
+        if (!savedRef.current) return persistDraft(capture);
+      })
+      .catch((cause: unknown) =>
+        setError(
+          cause instanceof Error ? cause.message : "Couldn't keep this capture on this Mac.",
+        ),
+      );
+  }, [text, files, destination, props.draftFiles, persistDraft]);
+
+  const prepareCapture = (capture: Capture) => {
+    const pending = Promise.resolve().then(async () => {
+      const ready = props.beforeSave
+        ? await props.beforeSave(capture)
+        : { ...capture, files: [...capture.files, ...(props.draftFiles ?? [])] };
+      await props.onDraftChange?.(ready);
+      return ready;
+    });
+    preparation.current = pending;
+    return pending;
+  };
+  const flushDraft = useStableCallback(async () => {
+    // An in-flight submission already persists its immutable snapshot before enqueueing it.
+    if (savedRef.current) {
+      await preparation.current;
+      return;
+    }
+    await prepareCapture({ text: textareaRef.current?.value ?? text, files, destination });
+  });
+  useLayoutEffect(() => registerFlush?.(flushDraft), [registerFlush, flushDraft]);
+
+  const finish = (open: boolean, hiding = false) => {
+    if (savedRef.current) {
+      if (hiding && props.allowHideWhileSaving) {
+        hideRequested.current = true;
+        if (preparedRef.current) props.onClose();
+      }
+      return;
+    }
     if (destinationBlocked) {
       setError(destinationError);
       if (hiding && props.onPreserveClose) {
         savedRef.current = true;
-        void Promise.resolve()
-          .then(() => props.beforeSave?.({ text, files, destination }))
+        setSaving(true);
+        void prepareCapture({ text, files, destination })
+          .then(() => {
+            props.onPreserveClose?.();
+          })
           .catch((cause: unknown) =>
             setError(cause instanceof Error ? cause.message : destinationError),
           )
           .finally(() => {
             savedRef.current = false;
-            props.onPreserveClose?.();
+            setSaving(false);
           });
       }
       return;
     }
     if (!open && !hasContent && !props.beforeSave) {
+      savedRef.current = true;
       props.onClose();
       return;
     }
     savedRef.current = true;
+    hideRequested.current = hiding && props.allowHideWhileSaving === true;
+    preparedRef.current = false;
     setSaving(true);
     setError(null);
     const capture = { text, files, destination };
-    const prepared = Promise.resolve().then(() =>
-      props.beforeSave ? props.beforeSave(capture) : capture,
-    );
+    const prepared = prepareCapture(capture);
     void prepared
       .then((ready) => {
+        // A recording must finish before hiding can unmount its owner.
+        preparedRef.current = true;
+        if (hideRequested.current) props.onClose();
         if (!open && ready.text.trim().length === 0 && ready.files.length === 0) return true;
         return props.onSave(ready, open);
       })
@@ -134,7 +192,7 @@ export function QuickCaptureForm(props: {
   };
   const dismiss = useEffectEvent(() => finish(false, true));
   useEffect(() => {
-    // oxlint-disable-next-line react/set-state-in-effect -- Externally delivered dismiss requests must save the current capture before hiding the native panel.
+    // oxlint-disable-next-line react/set-state-in-effect -- External dismissal follows this surface's save/hide policy.
     if (props.dismissRequest) dismiss();
   }, [props.dismissRequest]);
   useEffect(() => {

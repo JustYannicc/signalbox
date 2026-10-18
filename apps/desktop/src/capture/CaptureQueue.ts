@@ -37,7 +37,6 @@ const CaptureQueueOperation = Schema.Literals([
   "read-destinations",
   "write-destinations",
   "duplicate-id",
-  "invalid-destination",
 ]);
 
 export class CaptureQueueError extends Schema.TaggedError<CaptureQueueError>()(
@@ -49,10 +48,17 @@ export class CaptureQueueError extends Schema.TaggedError<CaptureQueueError>()(
   },
 ) {
   override get message(): string {
-    if (this.operation === "invalid-destination")
-      return "This capture's folder is unavailable. Reconnect its account or pick a folder to save.";
     const capture = this.captureId === null ? "" : ` for capture ${this.captureId}`;
     return `Quick capture queue failed during ${this.operation}${capture}.`;
+  }
+}
+
+export class CaptureDestinationUnavailableError extends Schema.TaggedError<CaptureDestinationUnavailableError>()(
+  "CaptureDestinationUnavailableError",
+  { captureId: Schema.String },
+) {
+  override get message(): string {
+    return "This capture's folder is unavailable. Reconnect its account or pick a folder to save.";
   }
 }
 
@@ -72,7 +78,16 @@ export class CaptureQueue extends Context.Service<
     >;
     readonly submit: (
       input: typeof DesktopSubmitCapture.Type,
-    ) => Effect.Effect<typeof DesktopPendingCapture.Type, CaptureQueueError>;
+    ) => Effect.Effect<
+      typeof DesktopPendingCapture.Type,
+      CaptureQueueError | CaptureDestinationUnavailableError
+    >;
+    readonly retryAtOwnerTop: (
+      id: string,
+    ) => Effect.Effect<
+      typeof DesktopPendingCapture.Type,
+      CaptureQueueError | CaptureDestinationUnavailableError
+    >;
     readonly read: (id: string) => Effect.Effect<typeof DesktopCapture.Type, CaptureQueueError>;
     readonly acknowledge: (id: string) => Effect.Effect<void, CaptureQueueError>;
     readonly reportFailure: (id: string, message: string) => Effect.Effect<void, CaptureQueueError>;
@@ -87,7 +102,10 @@ const equalBytes = (left: Uint8Array, right: Uint8Array): boolean => {
 const equalCapture = (
   left: typeof DesktopCapture.Type,
   right: typeof DesktopSubmitCapture.Type,
+  owner: typeof DesktopCaptureDestination.Type,
 ): boolean =>
+  left.owner?.environmentId === owner.environmentId &&
+  left.owner?.ownerProjectId === owner.ownerProjectId &&
   left.text === right.text &&
   left.destinationKey === right.destinationKey &&
   left.source === right.source &&
@@ -141,6 +159,28 @@ export const make = Effect.gen(function* () {
   const entryMetadataPath = (id: string) => path.join(entryDirectory(id), "capture.json");
 
   const readEntry = (id: string) => readJson(entryMetadataPath(id), decodePendingCapture, id);
+
+  const writePendingEntry = (entry: typeof DesktopPendingCapture.Type) =>
+    Effect.gen(function* () {
+      const suffix = (yield* crypto
+        .randomUUIDv4()
+        .pipe(Effect.mapError((cause) => queueError("write-entry", entry.id, cause)))).replaceAll(
+        "-",
+        "",
+      );
+      const encoded = yield* encodePendingCapture(entry).pipe(
+        Effect.mapError((cause) => queueError("write-entry", entry.id, cause)),
+      );
+      const target = entryMetadataPath(entry.id);
+      const temporary = `${target}.${suffix}.tmp`;
+      yield* fs
+        .writeFileString(temporary, `${encoded}\n`)
+        .pipe(Effect.mapError((cause) => queueError("write-entry", entry.id, cause)));
+      yield* fs.rename(temporary, target).pipe(
+        Effect.mapError((cause) => queueError("write-entry", entry.id, cause)),
+        Effect.ensuring(fs.remove(temporary, { force: true }).pipe(Effect.ignore)),
+      );
+    });
 
   const read = Effect.fn("desktop.captureQueue.read")(function* (id: string) {
     if (!CAPTURE_ID_PATTERN.test(id)) return yield* Effect.fail(queueError("read-entry", id));
@@ -196,6 +236,41 @@ export const make = Effect.gen(function* () {
         yield* fs
           .makeDirectory(directory, { recursive: true })
           .pipe(Effect.mapError((cause) => queueError("write-destinations", null, cause)));
+        const previous = yield* destinations;
+        yield* Effect.forEach(
+          (yield* fs
+            .readDirectory(directory)
+            .pipe(Effect.mapError((cause) => queueError("list-entries", null, cause))))
+            .filter((entry) => CAPTURE_ID_PATTERN.test(entry)),
+          (id) =>
+            readEntry(id).pipe(
+              Effect.flatMap((entry) => {
+                if (entry.owner !== undefined) return Effect.void;
+                const matches = previous.filter(
+                  (destination) => destination.key === entry.destinationKey,
+                );
+                const destination = matches.length === 1 ? matches[0] : undefined;
+                if (destination === undefined) return Effect.void;
+                return writePendingEntry({
+                  ...entry,
+                  owner: {
+                    environmentId: destination.environmentId,
+                    ownerProjectId: destination.ownerProjectId,
+                  },
+                });
+              }),
+              Effect.catchTags({
+                CaptureQueueError: (error) =>
+                  error.operation === "read-entry"
+                    ? Effect.logWarning("Skipping unreadable quick capture owner migration", {
+                        captureId: id,
+                        operation: error.operation,
+                      })
+                    : Effect.fail(error),
+              }),
+            ),
+          { concurrency: 1 },
+        );
         const suffix = yield* crypto
           .randomUUIDv4()
           .pipe(Effect.mapError((cause) => queueError("write-destinations", null, cause)));
@@ -217,18 +292,17 @@ export const make = Effect.gen(function* () {
     mutex.withPermits(1)(
       Effect.gen(function* () {
         const currentDestinations = yield* destinations;
-        if (
-          input.destinationKey === null ||
-          !currentDestinations.some((destination) => destination.key === input.destinationKey)
-        ) {
-          return yield* Effect.fail(queueError("invalid-destination", input.id));
-        }
+        const destination = currentDestinations.find(
+          (item) => item.key === input.destinationKey && input.destinationKey !== null,
+        );
+        if (destination === undefined)
+          return yield* Effect.fail(new CaptureDestinationUnavailableError({ captureId: input.id }));
         const existing = yield* fs
           .exists(entryDirectory(input.id))
           .pipe(Effect.mapError((cause) => queueError("read-entry", input.id, cause)));
         if (existing) {
           const previous = yield* read(input.id);
-          if (!equalCapture(previous, input)) {
+          if (!equalCapture(previous, input, destination)) {
             return yield* Effect.fail(queueError("duplicate-id", input.id));
           }
           return {
@@ -240,6 +314,10 @@ export const make = Effect.gen(function* () {
         const capturedAt = yield* Clock.currentTimeMillis;
         const pending: typeof DesktopPendingCapture.Type = {
           id: input.id,
+          owner: {
+            environmentId: destination.environmentId,
+            ownerProjectId: destination.ownerProjectId,
+          },
           text: input.text,
           files: input.files.map(({ bytes: _bytes, ...file }) => file),
           destinationKey: input.destinationKey,
@@ -285,6 +363,29 @@ export const make = Effect.gen(function* () {
       }),
     );
 
+  const retryAtOwnerTop = (id: string) =>
+    mutex.withPermits(1)(
+      Effect.gen(function* () {
+        if (!CAPTURE_ID_PATTERN.test(id)) return yield* Effect.fail(queueError("read-entry", id));
+        const entry = yield* readEntry(id);
+        const owner = entry.owner;
+        if (owner === undefined)
+          return yield* Effect.fail(new CaptureDestinationUnavailableError({ captureId: id }));
+        const currentDestinations = yield* destinations;
+        const top = currentDestinations.find(
+          (destination) =>
+            destination.folderId === null &&
+            destination.environmentId === owner.environmentId &&
+            destination.ownerProjectId === owner.ownerProjectId,
+        );
+        if (top === undefined)
+          return yield* Effect.fail(new CaptureDestinationUnavailableError({ captureId: id }));
+        const updated = { ...entry, destinationKey: top.key, deliveryError: null };
+        yield* writePendingEntry(updated);
+        return updated;
+      }),
+    );
+
   const acknowledge = (id: string) =>
     mutex.withPermits(1)(
       fs
@@ -300,23 +401,7 @@ export const make = Effect.gen(function* () {
           ...entry,
           deliveryError: message.trim().slice(0, 2_000) || "Couldn't save this capture.",
         };
-        const suffix = (yield* crypto
-          .randomUUIDv4()
-          .pipe(Effect.mapError((cause) => queueError("write-entry", id, cause)))).replaceAll(
-          "-",
-          "",
-        );
-        const encoded = yield* encodePendingCapture(next).pipe(
-          Effect.mapError((cause) => queueError("write-entry", id, cause)),
-        );
-        const temporary = `${entryMetadataPath(id)}.${suffix}.tmp`;
-        yield* fs
-          .writeFileString(temporary, `${encoded}\n`)
-          .pipe(Effect.mapError((cause) => queueError("write-entry", id, cause)));
-        yield* fs.rename(temporary, entryMetadataPath(id)).pipe(
-          Effect.mapError((cause) => queueError("write-entry", id, cause)),
-          Effect.ensuring(fs.remove(temporary, { force: true }).pipe(Effect.ignore)),
-        );
+        yield* writePendingEntry(next);
       }),
     );
 
@@ -329,6 +414,7 @@ export const make = Effect.gen(function* () {
     setDestinations,
     listPending,
     submit,
+    retryAtOwnerTop,
     read,
     acknowledge,
     reportFailure,

@@ -116,6 +116,13 @@ export const DesktopCaptureDestination = Schema.Struct({
 });
 export type DesktopCaptureDestination = typeof DesktopCaptureDestination.Type;
 
+/** The stable owner is carried with a queued capture even if its folder moves or disappears. */
+export const DesktopCaptureOwner = Schema.Struct({
+  environmentId: EnvironmentId,
+  ownerProjectId: ProjectId,
+});
+export type DesktopCaptureOwner = typeof DesktopCaptureOwner.Type;
+
 export const DesktopCaptureFileInput = Schema.Struct({
   id: DesktopCaptureId,
   name: TrimmedNonEmptyString.check(Schema.isMaxLength(255)),
@@ -137,6 +144,8 @@ export type DesktopCaptureFileSummary = typeof DesktopCaptureFileSummary.Type;
 
 export const DesktopPendingCapture = Schema.Struct({
   id: DesktopCaptureId,
+  // Optional only for queue entries persisted before ownership was recorded.
+  owner: Schema.optional(DesktopCaptureOwner),
   text: Schema.String.check(Schema.isMaxLength(100_000)),
   files: Schema.Array(DesktopCaptureFileSummary).check(
     Schema.isMaxLength(PROVIDER_SEND_TURN_MAX_ATTACHMENTS),
@@ -181,6 +190,12 @@ export const DesktopCaptureState = Schema.Struct({
 });
 export type DesktopCaptureState = typeof DesktopCaptureState.Type;
 
+export const DesktopCaptureFlushResult = Schema.Struct({
+  requestId: DesktopCaptureId,
+  error: Schema.NullOr(Schema.String.check(Schema.isMaxLength(2_000))),
+});
+export type DesktopCaptureFlushResult = typeof DesktopCaptureFlushResult.Type;
+
 export const DesktopCaptureEvent = Schema.Union([
   Schema.Struct({ type: Schema.Literal("destinations-changed") }),
   Schema.Struct({ type: Schema.Literal("queued"), capture: DesktopPendingCapture }),
@@ -189,6 +204,11 @@ export const DesktopCaptureEvent = Schema.Union([
     type: Schema.Literal("delivery-error"),
     id: DesktopCaptureId,
     message: Schema.String.check(Schema.isMaxLength(2_000)),
+  }),
+  Schema.Struct({ type: Schema.Literal("flush-requested"), requestId: DesktopCaptureId }),
+  Schema.Struct({
+    type: Schema.Literal("flush-released"),
+    error: Schema.NullOr(Schema.String.check(Schema.isMaxLength(2_000))),
   }),
   Schema.Struct({ type: Schema.Literal("shown") }),
   Schema.Struct({ type: Schema.Literal("dismiss-requested") }),
@@ -1196,6 +1216,7 @@ export interface DesktopBridge {
   dismissSnapShotAnimation?: (id: DesktopSnapShotId) => Promise<void>;
   acknowledgeSnapShot?: (id: string) => Promise<void>;
   getCaptureState?: () => Promise<DesktopCaptureState>;
+  beginCaptureDestinationSync?: () => Promise<void>;
   setCaptureDestinations?: (
     destinations: ReadonlyArray<DesktopCaptureDestination>,
   ) => Promise<void>;
@@ -1204,6 +1225,8 @@ export interface DesktopBridge {
   readCapture?: (id: DesktopCaptureId) => Promise<DesktopCapture>;
   acknowledgeCapture?: (id: DesktopCaptureId) => Promise<void>;
   reportCaptureFailure?: (id: DesktopCaptureId, message: string) => Promise<void>;
+  retryCaptureAtOwnerTop?: (id: DesktopCaptureId) => Promise<DesktopPendingCapture>;
+  completeCaptureFlush?: (result: DesktopCaptureFlushResult) => Promise<void>;
   hideCapture?: () => Promise<void>;
   openCaptureMainWindow?: () => Promise<void>;
   checkCaptureShortcut?: (

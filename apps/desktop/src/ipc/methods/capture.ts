@@ -1,6 +1,7 @@
 import {
   DesktopCapture,
   DesktopCaptureDestination,
+  DesktopCaptureFlushResult,
   DesktopCaptureId,
   DesktopCaptureState,
   DesktopCaptureShortcutAvailability,
@@ -14,6 +15,7 @@ import * as Schema from "effect/Schema";
 
 import * as DesktopEnvironment from "../../app/DesktopEnvironment.ts";
 import * as ElectronWindow from "../../electron/ElectronWindow.ts";
+import * as DesktopCaptureShutdown from "../../capture/DesktopCaptureShutdown.ts";
 import * as DesktopQuickCapture from "../../capture/DesktopQuickCapture.ts";
 import * as IpcChannels from "../channels.ts";
 import * as DesktopIpc from "../DesktopIpc.ts";
@@ -112,6 +114,16 @@ export const getCaptureState = DesktopIpc.makeIpcMethod({
   }),
 });
 
+export const beginCaptureDestinationSync = DesktopIpc.makeIpcMethod({
+  channel: IpcChannels.BEGIN_CAPTURE_DESTINATION_SYNC_CHANNEL,
+  payload: Schema.Void,
+  result: Schema.Void,
+  handler: Effect.fn("desktop.ipc.capture.beginDestinationSync")(function* (_, event) {
+    yield* ensureMainSender(event);
+    yield* (yield* DesktopQuickCapture.DesktopQuickCapture).beginDestinationSync;
+  }),
+});
+
 export const setCaptureDestinations = DesktopIpc.makeIpcMethod({
   channel: IpcChannels.SET_CAPTURE_DESTINATIONS_CHANNEL,
   payload: Schema.Array(DesktopCaptureDestination).check(Schema.isMaxLength(2_000)),
@@ -172,6 +184,26 @@ export const reportCaptureFailure = DesktopIpc.makeIpcMethod({
   handler: Effect.fn("desktop.ipc.capture.reportFailure")(function* ({ id, message }, event) {
     yield* ensureMainSender(event);
     yield* (yield* DesktopQuickCapture.DesktopQuickCapture).reportFailure(id, message);
+  }),
+});
+
+export const retryCaptureAtOwnerTop = DesktopIpc.makeIpcMethod({
+  channel: IpcChannels.RETRY_CAPTURE_AT_OWNER_TOP_CHANNEL,
+  payload: DesktopCaptureId,
+  result: DesktopPendingCapture,
+  handler: Effect.fn("desktop.ipc.capture.retryAtOwnerTop")(function* (id, event) {
+    yield* ensureCapturePanelSender(event);
+    return yield* (yield* DesktopQuickCapture.DesktopQuickCapture).retryAtOwnerTop(id);
+  }),
+});
+
+export const completeCaptureFlush = DesktopIpc.makeIpcMethod({
+  channel: IpcChannels.COMPLETE_CAPTURE_FLUSH_CHANNEL,
+  payload: DesktopCaptureFlushResult,
+  result: Schema.Void,
+  handler: Effect.fn("desktop.ipc.capture.completeFlush")(function* (result, event) {
+    yield* ensureCapturePanelSender(event);
+    yield* (yield* DesktopCaptureShutdown.DesktopCaptureShutdown).complete(result);
   }),
 });
 
