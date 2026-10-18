@@ -34,6 +34,14 @@
     {
       "file": "internal_wasi_fd_calls.ts",
       "reason": "Opted-in stdio receives shared descriptor flags and provides synchronous NONBLOCK I/O or EAGAIN; pipe providers honor the flag while poll remains the readiness path."
+    },
+    {
+      "file": "internal_wasi_lifecycle.ts",
+      "reason": "Optional internal argument transforms decode explicit guest ABI preopen operands before JSPI wrappers; public WASI defaults remain unchanged."
+    },
+    {
+      "file": "internal_wasi_path_calls.ts",
+      "reason": "Internal process creation policy delegates atomic inode metadata creation to the shared filesystem and consumes guest mode hints per syscall. The upstream Storage contract and default WASI behavior remain unchanged."
     }
   ]
 }
