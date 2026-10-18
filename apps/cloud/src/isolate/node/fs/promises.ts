@@ -4,31 +4,15 @@
 import type * as NodeBuffer from "node:buffer";
 import type { KernelFileSystem } from "../../../kernel/KernelFileSystem.ts";
 import { unsupportedFs } from "./errors.ts";
-import { accessSync, statfsSync } from "./sync.ts";
-import { appendFileSync, copyFileSync, readFileSync, writeFileSync } from "./files.ts";
-import {
-  linkSync,
-  mkdirSync,
-  mkdtempSync,
-  readdirSync,
-  renameSync,
-  rmSync,
-  rmdirSync,
-  symlinkSync,
-  unlinkSync,
-} from "./directories.ts";
-import { openFd } from "./io.ts";
-import {
-  lstatSync,
-  realpathSync,
-  readlinkSync,
-  statSync,
-  utimesSync,
-  type TimeLike,
-} from "./metadata-ops.ts";
+import { statfsSync } from "./sync.ts";
+import type { appendFileSync, readFileSync, writeFileSync } from "./files.ts";
+import type { mkdirSync, mkdtempSync, readdirSync, rmSync } from "./directories.ts";
+import type { realpathSync, readlinkSync, TimeLike } from "./metadata-ops.ts";
 import { pathString, type PathLike } from "./path.ts";
 import { normalizeMode, parseOpenFlags } from "./constants.ts";
 import { NodeFileHandle } from "./file-handle.ts";
+import { createAsyncOperations } from "./async-operations.ts";
+import type { AsyncLeafRunner } from "./operations.ts";
 import { NodeFsDir } from "./directory.ts";
 
 export interface OpenDirectoryOptions {
@@ -37,44 +21,46 @@ export interface OpenDirectoryOptions {
   recursive?: boolean;
 }
 
-export function createPromisesApi(kernelFs: KernelFileSystem) {
+export function createPromisesApi(kernelFs: KernelFileSystem, runLeaf?: AsyncLeafRunner) {
+  const operations = createAsyncOperations(kernelFs, runLeaf);
   return {
     async access(path: PathLike, mode = 0): Promise<void> {
-      accessSync(kernelFs, path, mode);
+      await operations.access(path, mode);
     },
     async appendFile(
       path: PathLike | NodeFileHandle | number,
       data: string | ArrayBuffer | ArrayBufferView,
       options?: BufferEncoding | Parameters<typeof appendFileSync>[3],
     ): Promise<void> {
-      appendFileSync(kernelFs, path instanceof NodeFileHandle ? path.fd : path, data, options);
+      if (path instanceof NodeFileHandle) await path.appendFile(data, options ?? undefined);
+      else await operations.appendFile(path, data, options);
     },
     async chmod(path: PathLike, _mode: number): Promise<void> {
       throw unsupportedFs("chmod", pathString(path));
     },
     async copyFile(source: PathLike, destination: PathLike, flags = 0): Promise<void> {
-      copyFileSync(kernelFs, pathString(source), pathString(destination), flags);
+      await operations.copyFile(pathString(source), pathString(destination), flags);
     },
     async link(existingPath: PathLike, newPath: PathLike): Promise<void> {
-      linkSync(kernelFs, existingPath, newPath);
+      await operations.link(existingPath, newPath);
     },
     async lstat(path: PathLike, options?: { bigint?: boolean }) {
-      return lstatSync(kernelFs, path, options);
+      return await operations.lstat(path, options);
     },
     async lutimes(path: PathLike, atime: TimeLike, mtime: TimeLike): Promise<void> {
-      utimesSync(kernelFs, path, atime, mtime, false);
+      await operations.utimes(path, atime, mtime, false);
     },
     async mkdir(
       path: PathLike,
       options?: number | Parameters<typeof mkdirSync>[2],
     ): Promise<string | undefined> {
-      return mkdirSync(kernelFs, path, options);
+      return await operations.mkdir(path, options);
     },
     async mkdtemp(
       prefix: PathLike,
       options?: BufferEncoding | Parameters<typeof mkdtempSync>[2],
     ): Promise<string | NodeBuffer.Buffer> {
-      return mkdtempSync(kernelFs, prefix, options);
+      return await operations.mkdtemp(prefix, options);
     },
     async open(
       path: PathLike,
@@ -82,68 +68,72 @@ export function createPromisesApi(kernelFs: KernelFileSystem) {
       mode?: number,
     ): Promise<NodeFileHandle> {
       const name = pathString(path);
-      const fd = openFd(kernelFs, name, parseOpenFlags(flags), normalizeMode(mode));
-      return new NodeFileHandle(kernelFs, fd, name);
+      const fd = await operations.openFd(name, parseOpenFlags(flags), normalizeMode(mode));
+      return new NodeFileHandle(kernelFs, fd, name, runLeaf);
     },
     async opendir(path: PathLike, options: OpenDirectoryOptions = {}): Promise<NodeFsDir> {
       if (options.recursive) throw unsupportedFs("opendir", pathString(path));
-      return new NodeFsDir(kernelFs, path, options);
+      const entries = await operations.readdir(path, { ...options, withFileTypes: true });
+      return new NodeFsDir(path, entries as import("./metadata.ts").NodeDirentLike[]);
     },
     async readFile(
       path: PathLike | NodeFileHandle | number,
       options?: BufferEncoding | Parameters<typeof readFileSync>[2],
     ): Promise<NodeBuffer.Buffer | string> {
-      return readFileSync(kernelFs, path instanceof NodeFileHandle ? path.fd : path, options);
+      return path instanceof NodeFileHandle
+        ? path.readFile(options ?? undefined)
+        : operations.readFile(path, options);
     },
     async readdir(
       path: PathLike,
       options?: BufferEncoding | Parameters<typeof readdirSync>[2],
     ): Promise<Array<string | NodeBuffer.Buffer | import("./metadata.ts").NodeDirentLike>> {
-      return readdirSync(kernelFs, path, options);
+      return await operations.readdir(path, options);
     },
     async readlink(
       path: PathLike,
       options?: BufferEncoding | Parameters<typeof readlinkSync>[2],
     ): Promise<string | NodeBuffer.Buffer> {
-      return readlinkSync(kernelFs, path, options);
+      return await operations.readlink(path, options);
     },
     async realpath(
       path: PathLike,
       options?: BufferEncoding | Parameters<typeof realpathSync>[2],
     ): Promise<string | NodeBuffer.Buffer> {
-      return realpathSync(kernelFs, path, options);
+      return await operations.realpath(path, options);
     },
     async rename(oldPath: PathLike, newPath: PathLike): Promise<void> {
-      renameSync(kernelFs, oldPath, newPath);
+      await operations.rename(oldPath, newPath);
     },
     async rm(path: PathLike, options?: Parameters<typeof rmSync>[2]): Promise<void> {
-      rmSync(kernelFs, path, options);
+      await operations.rm(path, options);
     },
     async rmdir(path: PathLike, options?: { recursive?: boolean }): Promise<void> {
-      if (options?.recursive) rmSync(kernelFs, path, { recursive: true });
-      else rmdirSync(kernelFs, path);
+      if (options?.recursive) await operations.rm(path, { recursive: true });
+      else await operations.rmdir(path);
     },
     async stat(path: PathLike, options?: { bigint?: boolean }) {
-      return statSync(kernelFs, path, options);
+      return await operations.stat(path, options);
     },
     async statfs(path: PathLike): Promise<never> {
       return statfsSync(path);
     },
     async symlink(target: PathLike, path: PathLike, type?: string): Promise<void> {
-      symlinkSync(kernelFs, target, path, type);
+      await operations.symlink(target, path, type);
     },
     async unlink(path: PathLike): Promise<void> {
-      unlinkSync(kernelFs, path);
+      await operations.unlink(path);
     },
     async utimes(path: PathLike, atime: TimeLike, mtime: TimeLike): Promise<void> {
-      utimesSync(kernelFs, path, atime, mtime);
+      await operations.utimes(path, atime, mtime);
     },
     async writeFile(
       path: PathLike | NodeFileHandle | number,
       data: string | ArrayBuffer | ArrayBufferView,
       options?: BufferEncoding | Parameters<typeof writeFileSync>[3],
     ): Promise<void> {
-      writeFileSync(kernelFs, path instanceof NodeFileHandle ? path.fd : path, data, options);
+      if (path instanceof NodeFileHandle) await path.writeFile(data, options ?? undefined);
+      else await operations.writeFile(path, data, options);
     },
   };
 }

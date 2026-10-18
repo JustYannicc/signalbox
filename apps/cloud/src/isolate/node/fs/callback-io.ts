@@ -1,15 +1,15 @@
 /* Adapted from Rivet agentOS's Node fs bridge at 63ae3b256749d47c7b3a7c463128d5deda57d1bb.
  * Licensed under Apache-2.0; see ../../bun/LICENSE.agentos and ../../bun/NOTICE.agentos.
  */
-import type * as NodeBuffer from "node:buffer";
 import type { KernelFileSystem } from "../../../kernel/KernelFileSystem.ts";
+import { createFileCallbackApi } from "./callback-files.ts";
+import { createAsyncOperations } from "./async-operations.ts";
+import type { AsyncLeafRunner } from "./operations.ts";
 import { unsupportedFs } from "./errors.ts";
-import { appendFileSync, readFileSync, writeFileSync } from "./files.ts";
-import { ioOptions, readSync, writeBufferSync, writeStringSync, type IoOptions } from "./fd-ops.ts";
-import { closeFd, openFd } from "./io.ts";
-import { fstatSync, fsyncSync } from "./metadata-ops.ts";
+import { ioOptions, type IoOptions } from "./fd-ops.ts";
+import type { fstatSync } from "./metadata-ops.ts";
 import { normalizeMode, parseOpenFlags } from "./constants.ts";
-import { pathString, type PathLike, type PathOrFd } from "./path.ts";
+import { pathString, type PathLike } from "./path.ts";
 import { schedule, type FsCallback } from "./callback-utils.ts";
 
 export { type FsCallback } from "./callback-utils.ts";
@@ -19,7 +19,8 @@ type WriteCallback =
   | FsCallback<[number, ArrayBufferView]>
   | FsCallback<[number, string]>;
 
-export function createIoCallbackApi(kernelFs: KernelFileSystem) {
+export function createIoCallbackApi(kernelFs: KernelFileSystem, runLeaf?: AsyncLeafRunner) {
+  const operations = createAsyncOperations(kernelFs, runLeaf);
   function open(path: PathLike, callback: FsCallback<[number]>): void;
   function open(path: PathLike, flags: string | number, callback: FsCallback<[number]>): void;
   function open(
@@ -48,7 +49,12 @@ export function createIoCallbackApi(kernelFs: KernelFileSystem) {
         ? normalizeMode(modeOrCallback)
         : undefined;
     const parsedFlags = parseOpenFlags(flags);
-    schedule<[number]>(callback, () => [openFd(kernelFs, name, parsedFlags, mode)], "open", name);
+    schedule<[number]>(
+      callback,
+      async () => [await operations.openFd(name, parsedFlags, mode)],
+      "open",
+      name,
+    );
   }
 
   function read(
@@ -108,7 +114,7 @@ export function createIoCallbackApi(kernelFs: KernelFileSystem) {
     if (!callback) throw new TypeError("The callback argument is required");
     schedule<[number, ArrayBufferView]>(
       callback,
-      () => [readSync(kernelFs, fd, buffer, options ?? {}), buffer],
+      async () => [await operations.read(fd, buffer, options ?? {}), buffer],
       "read",
     );
   }
@@ -178,7 +184,7 @@ export function createIoCallbackApi(kernelFs: KernelFileSystem) {
         typeof lengthEncodingOrCallback === "string" ? lengthEncodingOrCallback : "utf8";
       schedule<[number, string]>(
         callback as FsCallback<[number, string]>,
-        () => [writeStringSync(kernelFs, fd, data, position, encoding), data],
+        async () => [await operations.writeString(fd, data, position, encoding), data],
         "write",
       );
       return;
@@ -198,97 +204,13 @@ export function createIoCallbackApi(kernelFs: KernelFileSystem) {
           );
     schedule<[number, ArrayBufferView]>(
       callback as FsCallback<[number, ArrayBufferView]>,
-      () => [writeBufferSync(kernelFs, fd, data, options), data],
+      async () => [await operations.writeBuffer(fd, data, options), data],
       "write",
     );
   }
 
-  function readFile(path: PathOrFd, callback: FsCallback<[NodeBuffer.Buffer | string]>): void;
-  function readFile(
-    path: PathOrFd,
-    options: BufferEncoding | Parameters<typeof readFileSync>[2],
-    callback: FsCallback<[NodeBuffer.Buffer | string]>,
-  ): void;
-  function readFile(
-    path: PathOrFd,
-    optionsOrCallback:
-      | BufferEncoding
-      | Parameters<typeof readFileSync>[2]
-      | FsCallback<[NodeBuffer.Buffer | string]>,
-    optionalCallback?: FsCallback<[NodeBuffer.Buffer | string]>,
-  ): void {
-    const callback = typeof optionsOrCallback === "function" ? optionsOrCallback : optionalCallback;
-    const options = typeof optionsOrCallback === "function" ? undefined : optionsOrCallback;
-    if (!callback) throw new TypeError("The callback argument is required");
-    const name = typeof path === "number" ? undefined : pathString(path);
-    schedule<[NodeBuffer.Buffer | string]>(
-      callback,
-      () => [readFileSync(kernelFs, path, options)],
-      "readFile",
-      name,
-    );
-  }
-
-  function writeFile(
-    path: PathOrFd,
-    data: string | ArrayBuffer | ArrayBufferView,
-    callback: FsCallback,
-  ): void;
-  function writeFile(
-    path: PathOrFd,
-    data: string | ArrayBuffer | ArrayBufferView,
-    options: BufferEncoding | Parameters<typeof writeFileSync>[3],
-    callback: FsCallback,
-  ): void;
-  function writeFile(
-    path: PathOrFd,
-    data: string | ArrayBuffer | ArrayBufferView,
-    optionsOrCallback: BufferEncoding | Parameters<typeof writeFileSync>[3] | FsCallback,
-    optionalCallback?: FsCallback,
-  ): void {
-    const callback = typeof optionsOrCallback === "function" ? optionsOrCallback : optionalCallback;
-    const options = typeof optionsOrCallback === "function" ? undefined : optionsOrCallback;
-    if (!callback) throw new TypeError("The callback argument is required");
-    const name = typeof path === "number" ? undefined : pathString(path);
-    schedule<[]>(
-      callback,
-      () => (writeFileSync(kernelFs, path, data, options), []),
-      "writeFile",
-      name,
-    );
-  }
-
-  function appendFile(
-    path: PathOrFd,
-    data: string | ArrayBuffer | ArrayBufferView,
-    callback: FsCallback,
-  ): void;
-  function appendFile(
-    path: PathOrFd,
-    data: string | ArrayBuffer | ArrayBufferView,
-    options: BufferEncoding | Parameters<typeof appendFileSync>[3],
-    callback: FsCallback,
-  ): void;
-  function appendFile(
-    path: PathOrFd,
-    data: string | ArrayBuffer | ArrayBufferView,
-    optionsOrCallback: BufferEncoding | Parameters<typeof appendFileSync>[3] | FsCallback,
-    optionalCallback?: FsCallback,
-  ): void {
-    const callback = typeof optionsOrCallback === "function" ? optionsOrCallback : optionalCallback;
-    const options = typeof optionsOrCallback === "function" ? undefined : optionsOrCallback;
-    if (!callback) throw new TypeError("The callback argument is required");
-    const name = typeof path === "number" ? undefined : pathString(path);
-    schedule<[]>(
-      callback,
-      () => (appendFileSync(kernelFs, path, data, options), []),
-      "appendFile",
-      name,
-    );
-  }
-
   function close(fd: number, callback: FsCallback): void {
-    schedule<[]>(callback, () => (closeFd(kernelFs, fd), []), "close");
+    schedule<[]>(callback, async () => (await operations.closeFd(fd), []), "close");
   }
 
   function fstat(
@@ -301,7 +223,7 @@ export function createIoCallbackApi(kernelFs: KernelFileSystem) {
     if (!callback) throw new TypeError("The callback argument is required");
     schedule<[ReturnType<typeof fstatSync>]>(
       callback,
-      () => [fstatSync(kernelFs, fd, options)],
+      async () => [await operations.fstat(fd, options)],
       "fstat",
     );
   }
@@ -311,16 +233,14 @@ export function createIoCallbackApi(kernelFs: KernelFileSystem) {
     close,
     read,
     write,
-    readFile,
-    writeFile,
-    appendFile,
+    ...createFileCallbackApi(kernelFs, runLeaf),
     fstat,
     fsync: (fd: number, callback: FsCallback) =>
-      schedule<[]>(callback, () => (fsyncSync(kernelFs, fd), []), "fsync"),
+      schedule<[]>(callback, async () => (await operations.fsync(fd), []), "fsync"),
     fchown: (_fd: number, _uid: number, _gid: number, callback: FsCallback) =>
       schedule<[]>(
         callback,
-        () => {
+        async () => {
           throw unsupportedFs("fchown");
         },
         "fchown",
@@ -328,7 +248,7 @@ export function createIoCallbackApi(kernelFs: KernelFileSystem) {
     fchmod: (_fd: number, _mode: number, callback: FsCallback) =>
       schedule<[]>(
         callback,
-        () => {
+        async () => {
           throw unsupportedFs("fchmod");
         },
         "fchmod",
