@@ -358,6 +358,7 @@ const config: ExpoConfig = {
     // plugins earlier in this array, so it cannot strip the entitlement Clerk would add.
     ["@clerk/expo", { theme: "./clerk-theme.json", appleSignIn: !isIosPersonalTeamBuild }],
     "expo-web-browser",
+    "./plugins/withCaptureTile.cjs", // signalbox: capture tile
     [
       "expo-quick-actions",
       {

@@ -11,6 +11,7 @@ import { useAdaptiveWorkspaceLayout } from "../layout/AdaptiveWorkspaceLayout";
 import { NativeStackScreenOptions } from "../../native/StackHeader";
 import { useSavedRemoteConnections } from "../../state/use-remote-environment-registry";
 import { SettingsRow } from "./components/SettingsRow";
+import { CaptureTileSettingsRow } from "./CaptureTileSettingsRow"; // signalbox: capture tile
 import { UsageSettingsRow } from "../usage/UsageSettingsRow";
 import { SettingsSection } from "./components/SettingsSection";
 import { SettingsScreen } from "./components/SettingsScreen";
@@ -190,6 +191,8 @@ function SettingsIndexSections() {
     <>
       <SettingsSection title="Interface">
         <SettingsRow icon="paintbrush" label="Appearance" target="SettingsAppearance" />
+        {/* signalbox: capture tile */}
+        <CaptureTileSettingsRow />
         {targetsSupporting(selectedTargets, "personTimezone").length === 0 &&
         !(noServerTargets && showsEnvironments) ? null : (
           <SettingsRow
