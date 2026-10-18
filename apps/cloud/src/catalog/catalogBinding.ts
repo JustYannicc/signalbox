@@ -3,13 +3,13 @@ import * as Schema from "effect/Schema";
 
 import { AuthorizationFence, SyncFailure, type HomeBinding } from "@signalbox/sync/definition";
 import { catalogHomeKey } from "./catalogHome.ts";
-import { CatalogPersonalRoot, CatalogPolicyActor, CatalogPolicyTarget } from "./catalogPolicy.ts";
+import { CatalogRuntimeHomeSchema, type CatalogRuntimeHome } from "./catalogRuntimeDefinition.ts";
+import { CatalogPolicyActor, CatalogPolicyTarget } from "./catalogPolicy.ts";
 
-type PersonalRoot = typeof CatalogPersonalRoot.Type;
 type Actor = typeof CatalogPolicyActor.Type;
 type Target = typeof CatalogPolicyTarget.Type;
-type Request = {
-  readonly home: PersonalRoot;
+type Request<Home extends CatalogRuntimeHome> = {
+  readonly home: Home;
   readonly kind: "view" | "change" | "receipt";
   readonly operation: string;
   readonly input: unknown;
@@ -18,10 +18,10 @@ type Permit = {
   readonly scope: string;
   readonly localEpoch: number;
   readonly actorId: Actor["userId"];
-  readonly target: Target;
+  readonly target: Target | null;
 };
 
-const decodeHome = Schema.decodeUnknownSync(CatalogPersonalRoot);
+const decodeHome = Schema.decodeUnknownSync(CatalogRuntimeHomeSchema);
 const decodeActor = Schema.decodeUnknownSync(CatalogPolicyActor);
 const decodeTarget = Schema.decodeUnknownSync(CatalogPolicyTarget);
 const decodeFence = Schema.decodeUnknownSync(AuthorizationFence);
@@ -32,14 +32,33 @@ const invalidState = () => new SyncFailure({ reason: "invalid_state" });
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null;
 
-const targetFromRequest = (request: Request): Target | null => {
+const targetFromRequest = (request: Request<CatalogRuntimeHome>): Target | null => {
   const input = request.input;
+  if (request.operation === "referencePlacements") return null;
+  if (request.operation === "moveOrganizationReference" && isRecord(input)) {
+    const filedUnder = input.filedUnder;
+    if (isRecord(filedUnder) && isRecord(filedUnder.home) && isRecord(filedUnder.home.level)) {
+      const level = filedUnder.home.level;
+      const candidate = {
+        folderId: level._tag === "top" ? null : level.id,
+        incarnation: filedUnder.incarnation,
+      };
+      try {
+        return decodeTarget(candidate);
+      } catch {
+        return null;
+      }
+    }
+    return null;
+  }
   const candidate =
     request.operation === "access"
       ? input
       : isRecord(input) && Object.hasOwn(input, "target")
         ? input.target
-        : input;
+        : isRecord(input) && Object.hasOwn(input, "parent")
+          ? input.parent
+          : input;
   try {
     return decodeTarget(candidate);
   } catch {
@@ -49,15 +68,12 @@ const targetFromRequest = (request: Request): Target | null => {
 
 const isEpoch = (epoch: number): boolean => Number.isSafeInteger(epoch) && epoch >= 0;
 
-/**
- * Binds Catalog policy to one canonical personal root. The resolver closes over the current
- * Lunora invocation context, so policy reads share its transaction and never call WorkOS.
- */
-export const makeCatalogHomeBinding = (options: {
-  readonly home: PersonalRoot;
+/** Binds either reviewed root to one Sync guard while preserving its narrow home type. */
+export const makeCatalogHomeBinding = <Home extends CatalogRuntimeHome>(options: {
+  readonly home: Home;
   readonly resolvePolicy: (
     actor: Actor,
-    request: Request,
+    request: Request<Home>,
   ) => Effect.Effect<{ readonly epoch: number }, SyncFailure>;
   /** Checks the installed native fence, not the in-flight transaction's staged policy writes. */
   readonly isLocalEpochCurrent: (scope: string, localEpoch: number) => boolean;
@@ -66,12 +82,12 @@ export const makeCatalogHomeBinding = (options: {
     fence: typeof AuthorizationFence.Type,
   ) => Effect.Effect<void, SyncFailure>;
 }) => {
-  const home = decodeHome(options.home);
+  const home = decodeHome(options.home) as Home;
   const scope = catalogHomeKey(home);
   const trustedIngress = Object.freeze(Object.create(null)) as object;
   const issued = new WeakSet<object>();
 
-  const binding: HomeBinding<Actor, PersonalRoot, object, Permit> = {
+  const binding: HomeBinding<Actor, Home, object, Permit> = {
     home,
     authorization: {
       authorize: (actor, request) =>
@@ -87,8 +103,13 @@ export const makeCatalogHomeBinding = (options: {
           if (requestScope !== scope) return yield* Effect.fail(denied());
 
           const target = targetFromRequest(request);
-          if (target === null) return yield* Effect.fail(denied());
-          const policy = yield* options.resolvePolicy(decodedActor, request);
+          if (target === null && request.operation !== "referencePlacements") {
+            return yield* Effect.fail(denied());
+          }
+          const policy = yield* options.resolvePolicy(decodedActor, {
+            ...request,
+            home,
+          });
           if (!isEpoch(policy.epoch)) return yield* Effect.fail(invalidState());
 
           const permit = Object.freeze({

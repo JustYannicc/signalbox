@@ -41,14 +41,32 @@ export interface CatalogSchedulerClient {
   ) => Promise<string>;
 }
 
-const recoveryTarget = "personalRecovery:sync_recoverFences";
 const schedulerUrl = "https://catalog.invalid";
 
 const recoveryReference = (target: string) => ({ __lunoraRef: target });
 
-const assertRecoveryTarget = (target: string) => {
-  if (target !== recoveryTarget) {
-    throw new Error(`Catalog scheduler only accepts ${recoveryTarget}.`);
+const recoveryTargetFor = (home: typeof CatalogRootHome.Type) =>
+  home.owner._tag === "person"
+    ? "personalRecovery:sync_recoverFences"
+    : "organizationRecovery:sync_recoverFences";
+
+const assertBoundRecovery = (
+  target: string,
+  args: Record<string, unknown>,
+  home: typeof CatalogRootHome.Type,
+) => {
+  const expectedTarget = recoveryTargetFor(home);
+  if (target !== expectedTarget) {
+    throw new Error(`Catalog scheduler only accepts ${expectedTarget} for this home.`);
+  }
+  let targetHome: typeof CatalogRootHome.Type;
+  try {
+    targetHome = decodeCatalogRootHome(args.home);
+  } catch {
+    throw new Error("Catalog recovery schedule must include its canonical home.");
+  }
+  if (catalogHomeKey(targetHome) !== catalogHomeKey(home)) {
+    throw new Error("Catalog recovery schedule home does not match its shard.");
   }
   return recoveryReference(target);
 };
@@ -61,22 +79,33 @@ export const catalogSchedulerFor = (
     namespace: env.CATALOG_SCHEDULER,
     ...(env.LOCAL_WORKERD === "1" ? {} : { jurisdiction: "eu" }),
   });
-  const routedOptions = async (options: RunOptions | undefined) => ({
-    ...options,
-    shardKey: catalogHomeKey(await home()),
-  });
+  const route = async (
+    target: string,
+    args: Record<string, unknown>,
+    options: RunOptions | undefined,
+  ) => {
+    const canonicalHome = decodeCatalogRootHome(await home());
+    const shardKey = catalogHomeKey(canonicalHome);
+    const reference = assertBoundRecovery(target, args, canonicalHome);
+    if (options?.shardKey !== undefined && options.shardKey !== shardKey) {
+      throw new Error("Catalog recovery schedule shard does not match its home.");
+    }
+    return {
+      reference,
+      options: { ...options, shardKey },
+    };
+  };
 
   return {
     cancel: scheduler.cancel,
-    runAfter: async (delayMs, target, args, options) =>
-      scheduler.runAfter(delayMs, assertRecoveryTarget(target), args, await routedOptions(options)),
-    runAt: async (timestampMs, target, args, options) =>
-      scheduler.runAt(
-        timestampMs,
-        assertRecoveryTarget(target),
-        args,
-        await routedOptions(options),
-      ),
+    runAfter: async (delayMs, target, args, options) => {
+      const routed = await route(target, args, options);
+      return scheduler.runAfter(delayMs, routed.reference, args, routed.options);
+    },
+    runAt: async (timestampMs, target, args, options) => {
+      const routed = await route(target, args, options);
+      return scheduler.runAt(timestampMs, routed.reference, args, routed.options);
+    },
   };
 };
 
@@ -89,7 +118,9 @@ export class CatalogScheduler extends SchedulerDO {
   }
 
   protected override async dispatch(record: ScheduleRecord): Promise<boolean | "in-progress"> {
-    if (record.functionPath !== recoveryTarget || typeof record.shardKey !== "string") return false;
+    if (typeof record.functionPath !== "string" || typeof record.shardKey !== "string") {
+      return false;
+    }
 
     let home: typeof CatalogRootHome.Type;
     try {
@@ -98,6 +129,11 @@ export class CatalogScheduler extends SchedulerDO {
       return false;
     }
     if (catalogHomeKey(home) !== record.shardKey) return false;
+    try {
+      assertBoundRecovery(record.functionPath, record.args, home);
+    } catch {
+      return false;
+    }
 
     const localWorkerd = this.catalogEnv.LOCAL_WORKERD === "1";
     const namespace = catalogHomeNamespace(this.catalogEnv.HOMES, localWorkerd);

@@ -1,11 +1,12 @@
 import * as SchemaAST from "effect/SchemaAST";
 import type { Table, TableMap } from "../table.ts";
 
+import { LUNORA_DOMAIN_ID_FIELD, lunoraFieldName } from "./lunoraFields.ts";
 import { emitStoredField, LunoraSchemaEmitError } from "./lunoraValidators.ts";
 export { LunoraSchemaEmitError } from "./lunoraValidators.ts";
 
 const RESERVED_KEY_INDEX = "__sync_key";
-const RESERVED_ROW_FIELDS = new Set(["_id", "_creationTime"]);
+const RESERVED_ROW_FIELDS = new Set(["_id", "_creationTime", LUNORA_DOMAIN_ID_FIELD]);
 
 export interface LunoraSchemaEmission<Tables extends TableMap> {
   readonly source: string;
@@ -71,7 +72,7 @@ function emitTable(name: string, definition: Table, rootPath: string): string {
       );
     }
     rowFields.set(property.name, property.type);
-    return `    ${quote(property.name)}: ${emitStoredField(property.type, `${tablePath}.row.${property.name}`)},`;
+    return `    ${quote(lunoraFieldName(property.name))}: ${emitStoredField(property.type, `${tablePath}.row.${property.name}`)},`;
   });
 
   const checkIndex = (indexName: string, indexFields: readonly string[], path: string) => {
@@ -102,11 +103,12 @@ function emitTable(name: string, definition: Table, rootPath: string): string {
   }
 
   const indexLines = [
-    `  .index(${quote(RESERVED_KEY_INDEX)}, ${JSON.stringify(definition.key)})`,
+    `  .index(${quote(RESERVED_KEY_INDEX)}, ${JSON.stringify(definition.key.map(lunoraFieldName))})`,
     ...Object.entries(definition.indexes)
       .toSorted(([left], [right]) => left.localeCompare(right))
       .map(
-        ([indexName, index]) => `  .index(${quote(indexName)}, ${JSON.stringify(index.fields)})`,
+        ([indexName, index]) =>
+          `  .index(${quote(indexName)}, ${JSON.stringify(index.fields.map(lunoraFieldName))})`,
       ),
   ];
 

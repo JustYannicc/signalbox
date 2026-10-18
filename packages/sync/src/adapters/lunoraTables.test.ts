@@ -23,8 +23,24 @@ const items = table({
     by_rank: { fields: ["tenant", "rank"] },
   },
 });
+const domainIdRows = table({
+  row: Schema.Struct({
+    id: Schema.String,
+    parentId: Schema.String,
+    position: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
+    label: Schema.String,
+  }),
+  key: ["id"],
+  indexes: { byParent: { fields: ["parentId", "position", "id"] } },
+});
 const row = (key: string, rank = 0) => ({ tenant: "a", key, email: `${key}@example.com`, rank });
 const key = (key: string) => ({ tenant: "a", key });
+const folder = (id: string, position: number, label: string) => ({
+  id,
+  parentId: "top",
+  position,
+  label,
+});
 const rankCursor = pageCursorSchema(items, "by_rank");
 const emailCursor = pageCursorSchema(items, "by_email");
 const decodeRankCursor = Schema.decodeUnknownSync(rankCursor);
@@ -46,7 +62,7 @@ const failureReason = <A>(effect: Effect.Effect<A, TableError>) =>
   );
 
 const definition = defineHome(
-  { actor: Schema.String, home: Schema.String, tables: { items } },
+  { actor: Schema.String, home: Schema.String, tables: { items, domainIdRows } },
   ({ view, change }) => ({
     views: {
       page: view({
@@ -209,6 +225,43 @@ const definition = defineHome(
             yield* ctx.tables.items.insert({ ...row("foreign", 1), tenant: "b" });
           }),
       }),
+      domainIdLifecycle: change({
+        input: Schema.Void,
+        output: Schema.Struct({
+          beforePatch: Schema.OptionFromNullOr(domainIdRows.row),
+          afterPatch: Schema.OptionFromNullOr(domainIdRows.row),
+          duplicateFailure: Schema.String,
+          rows: Schema.Array(domainIdRows.row),
+        }),
+        failure: Schema.Never,
+        run: (ctx) =>
+          Effect.gen(function* () {
+            const handle = ctx.tables.domainIdRows;
+            yield* handle.insert(folder("folder-a", 0, "A"));
+            const beforePatch = yield* handle.get("folder-a");
+            yield* handle.patch("folder-a", { label: "A updated" });
+            const afterPatch = yield* handle.get("folder-a");
+            const duplicateFailure = yield* failureReason(
+              handle.insert(folder("folder-a", 2, "duplicate")),
+            );
+            yield* handle.insert(folder("folder-b", 0, "B"));
+            yield* handle.insert({ ...folder("folder-c", 1, "C"), parentId: "other" });
+            const first = yield* handle.page("byParent", { prefix: ["top"], limit: 1 });
+            if (first.after === undefined)
+              return yield* Effect.die("Expected another id-keyed page");
+            const second = yield* handle.page("byParent", {
+              prefix: ["top"],
+              limit: 1,
+              after: first.after,
+            });
+            return {
+              beforePatch,
+              afterPatch,
+              duplicateFailure,
+              rows: [...first.rows, ...second.rows],
+            };
+          }),
+      }),
     },
     projections: {},
   }),
@@ -224,6 +277,14 @@ const schema = defineSchema({
     .index("__sync_key", ["tenant", "key"])
     .index("by_email", ["email"])
     .index("by_rank", ["tenant", "rank"]),
+  domainIdRows: defineTable({
+    __sync_domain_id: v.string(),
+    parentId: v.string(),
+    position: v.number(),
+    label: v.string(),
+  })
+    .index("__sync_key", ["__sync_domain_id"])
+    .index("byParent", ["parentId", "position", "__sync_domain_id"]),
   syncReceipts: defineTable({
     scope: v.string(),
     operationKey: v.string(),
@@ -346,5 +407,15 @@ describe("Lunora home table operations", () => {
         runtime.query("corruptRows")({ ctx, args: { actor: "test", input: undefined } }),
       ),
     ).toEqual(["invalid_row", "invalid_row"]);
+  });
+
+  it("round-trips domain id through the native field and pages on an index that includes it", async () => {
+    const { change } = database();
+    expect(await change("domainIdLifecycle")).toEqual({
+      beforePatch: Option.some(folder("folder-a", 0, "A")),
+      afterPatch: Option.some(folder("folder-a", 0, "A updated")),
+      duplicateFailure: "key_conflict",
+      rows: [folder("folder-a", 0, "A updated"), folder("folder-b", 0, "B")],
+    });
   });
 });

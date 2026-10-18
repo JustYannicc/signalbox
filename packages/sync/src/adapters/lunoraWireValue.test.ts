@@ -64,6 +64,62 @@ describe("Lunora JSON wire values", () => {
     });
   });
 
+  it("returns mutable nested arrays from encoding and validation without adding absent fields", async () => {
+    const children = Schema.Struct({
+      children: Schema.Array(
+        Schema.Struct({
+          placements: Schema.Array(Schema.String),
+          note: Schema.optional(Schema.String),
+        }),
+      ),
+    });
+    const frozenValue = Object.freeze({
+      children: Object.freeze([Object.freeze({ placements: Object.freeze(["top"]) })]),
+    });
+
+    const encoded = await encodeWireValue(children, frozenValue);
+    expect(encoded).toEqual({
+      defined: true,
+      value: { children: [{ placements: ["top"] }] },
+    });
+    if (encoded.defined) {
+      expectTypeOf(encoded.value.children[0]!.placements).toEqualTypeOf<string[]>();
+      expectTypeOf(encoded.value.children[0]!.note).toEqualTypeOf<string | undefined>();
+      expect(Object.isFrozen(encoded.value.children)).toBe(false);
+      expect(Object.isFrozen(encoded.value.children[0]!.placements)).toBe(false);
+      expect(Object.hasOwn(encoded.value.children[0]!, "note")).toBe(false);
+      encoded.value.children[0]!.placements.push("nested");
+      encoded.value.children.push({ placements: [] });
+    }
+
+    const brandedString = Schema.String.pipe(Schema.brand("WireString"));
+    const brandedNumber = Schema.Number.pipe(Schema.brand("WireNumber"));
+    const stringId = Schema.decodeSync(brandedString)("folder_1");
+    const numericId = Schema.decodeSync(brandedNumber)(1);
+    const stringWire = await encodeWireValue(Schema.toType(brandedString), stringId);
+    const numberWire = await encodeWireValue(Schema.toType(brandedNumber), numericId);
+    if (stringWire.defined) expectTypeOf(stringWire.value).toEqualTypeOf<typeof stringId>();
+    if (numberWire.defined) expectTypeOf(numberWire.value).toEqualTypeOf<typeof numericId>();
+
+    const frozenWire = Object.freeze({
+      defined: true as const,
+      value: Object.freeze({
+        children: Object.freeze([Object.freeze({ placements: Object.freeze(["wire"]) })]),
+      }),
+    });
+    const validated = await validateWireValue(children, frozenWire);
+    expect(validated).toEqual({
+      defined: true,
+      value: { children: [{ placements: ["wire"] }] },
+    });
+    if (validated.defined) {
+      expect(Object.isFrozen(validated.value.children)).toBe(false);
+      expect(Object.isFrozen(validated.value.children[0]!.placements)).toBe(false);
+      expect(Object.hasOwn(validated.value.children[0]!, "note")).toBe(false);
+      validated.value.children[0]!.placements.push("validated");
+    }
+  });
+
   it("rejects missing presence tags and undefined present values", async () => {
     for (const malformed of [
       {},

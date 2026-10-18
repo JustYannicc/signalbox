@@ -7,6 +7,9 @@ import { SyncFailure } from "@signalbox/sync/definition";
 import { catalogHomeKey } from "./catalogHome.ts";
 import { makeCatalogHomeBinding } from "./catalogBinding.ts";
 import { CatalogPersonalRoot, CatalogPolicyActor } from "./catalogPolicy.ts";
+import { CatalogOrganizationRoot } from "./catalogOrganizationPolicy.ts";
+
+const decodeOrganizationRoot = Schema.decodeUnknownSync(CatalogOrganizationRoot);
 
 const decodeHome = Schema.decodeUnknownSync(CatalogPersonalRoot);
 const ownerHome = decodeHome({ owner: { _tag: "person", id: "owner" }, level: { _tag: "top" } });
@@ -114,17 +117,67 @@ describe("Catalog home binding", () => {
       }),
   );
 
-  it("rejects homes outside the personal-root authority", () => {
-    expect(() =>
-      makeCatalogHomeBinding({
-        home: {
-          owner: { _tag: "organization", id: "org_one" },
-          level: { _tag: "top" },
-        } as typeof CatalogPersonalRoot.Type,
-        resolvePolicy: () => Effect.succeed({ epoch: 0 }),
+  it.effect("binds the canonical organization root through the shared fence guard", () => {
+    const home = decodeOrganizationRoot({
+      owner: { _tag: "organization", id: "org_one" },
+      level: { _tag: "top" },
+    });
+    return Effect.gen(function* () {
+      const scope = catalogHomeKey(home);
+      const { binding } = makeCatalogHomeBinding({
+        home,
+        resolvePolicy: () => Effect.succeed({ epoch: 7 }),
+        isLocalEpochCurrent: (permitScope, epoch) => permitScope === scope && epoch === 7,
+        installFence: () => Effect.void,
+      });
+      const permit = yield* binding.authorization.authorize(actor, {
+        home,
+        kind: "view",
+        operation: "access",
+        input: { folderId: null, incarnation: 4 },
+      });
+
+      expect(permit).toEqual({
+        scope,
+        localEpoch: 7,
+        actorId: "owner",
+        target: { folderId: null, incarnation: 4 },
+      });
+      expect(binding.authorization.isCurrent(permit)).toBe(true);
+    });
+  });
+
+  it.effect("keeps the root-only and filed-level request shapes on the shared guard", () =>
+    Effect.gen(function* () {
+      const scope = catalogHomeKey(ownerHome);
+      const { binding } = makeCatalogHomeBinding({
+        home: ownerHome,
+        resolvePolicy: () => Effect.succeed({ epoch: 3 }),
         isLocalEpochCurrent: () => true,
         installFence: () => Effect.void,
-      }),
-    ).toThrow();
-  });
+      });
+      const rootOnly = yield* binding.authorization.authorize(actor, {
+        home: ownerHome,
+        kind: "view",
+        operation: "referencePlacements",
+        input: { after: null },
+      });
+      expect(rootOnly.target).toBeNull();
+
+      const filedLevel = yield* binding.authorization.authorize(actor, {
+        home: ownerHome,
+        kind: "change",
+        operation: "moveOrganizationReference",
+        input: {
+          target: {
+            home: { owner: { _tag: "organization", id: "org_one" }, level: { _tag: "top" } },
+            incarnation: 8,
+          },
+          filedUnder: { home: ownerHome, incarnation: 4 },
+        },
+      });
+      expect(filedLevel.target).toEqual({ folderId: null, incarnation: 4 });
+      expect(filedLevel.scope).toBe(scope);
+    }),
+  );
 });

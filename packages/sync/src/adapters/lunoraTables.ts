@@ -3,6 +3,7 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import type { DatabaseReader, DatabaseWriter } from "lunorash/server";
 
+import { decodeLunoraRow, encodeLunoraRow, lunoraFieldName } from "./lunoraFields.ts";
 import {
   TableReadError,
   TableWriteError,
@@ -70,7 +71,7 @@ function makeTable<T extends Table>(
   const decodeStored = async (document: Record<string, unknown>) => {
     const { _id, _creationTime, ...row } = document;
     try {
-      return await decodeRow(row);
+      return await decodeRow(decodeLunoraRow(row));
     } catch {
       throw readError(name, "invalid_row");
     }
@@ -94,8 +95,12 @@ function makeTable<T extends Table>(
     const key = canonicalKey(keys);
     return db
       .query(name)
-      .withIndex(index, (builder) => fields.reduce((q, field, i) => q.eq(field, keys[i]), builder))
-      .filter((document) => canonicalKey(fields.map((field) => document[field])) === key)
+      .withIndex(index, (builder) =>
+        fields.reduce((q, field, i) => q.eq(lunoraFieldName(field), keys[i]), builder),
+      )
+      .filter(
+        (document) => canonicalKey(fields.map((field) => document[lunoraFieldName(field)])) === key,
+      )
       .unique();
   };
   const find = async (key: unknown) =>
@@ -170,15 +175,20 @@ function makeTable<T extends Table>(
         const page = await db
           .query(name)
           .withIndex(index, (builder) => {
-            let range = prefix.reduce((q, value, i) => q.eq(declared.fields[i]!, value), builder);
+            let range = prefix.reduce(
+              (q, value, i) => q.eq(lunoraFieldName(declared.fields[i]!), value),
+              builder,
+            );
             if (next !== undefined && selector.range?.from !== undefined)
-              range = range.gte(next, selector.range.from);
+              range = range.gte(lunoraFieldName(next), selector.range.from);
             if (next !== undefined && selector.range?.to !== undefined)
-              range = range.lte(next, selector.range.to);
+              range = range.lte(lunoraFieldName(next), selector.range.to);
             return range;
           })
           .filter(
-            (document) => canonicalKey(prefixFields.map((field) => document[field])) === prefixKey,
+            (document) =>
+              canonicalKey(prefixFields.map((field) => document[lunoraFieldName(field)])) ===
+              prefixKey,
           )
           .order(order)
           .paginate({ numItems: options.limit, cursor: decodedCursor?.cursor ?? null });
@@ -256,7 +266,7 @@ function makeTable<T extends Table>(
         write(async () => {
           const row = await validate(input);
           await checkUnique(row);
-          await writer.insert(name, row);
+          await writer.insert(name, encodeLunoraRow(row));
         }),
       replace: (key, input) =>
         write(async () => {
@@ -264,7 +274,7 @@ function makeTable<T extends Table>(
           await checkKey(key, row);
           const previous = await existing(key);
           await checkUnique(row, previous);
-          await writer.replace(id(previous), row);
+          await writer.replace(id(previous), encodeLunoraRow(row));
         }),
       patch: (key, patch) =>
         write(async () => {
@@ -277,7 +287,7 @@ function makeTable<T extends Table>(
             ...fields,
           });
           await checkUnique(row, previous);
-          await writer.replace(id(previous), row);
+          await writer.replace(id(previous), encodeLunoraRow(row));
         }),
       delete: (key) =>
         write(async () => {

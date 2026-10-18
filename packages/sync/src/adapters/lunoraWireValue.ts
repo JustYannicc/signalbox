@@ -9,11 +9,28 @@ type WireValueAbsent<Encoded> = undefined extends Encoded
   : void extends Encoded
     ? { readonly defined: false }
     : never;
+
+/** Native Lunora validators return mutable arrays even when Effect encodes them readonly. */
+type MutableWireJson<Value> = Value extends
+  | string
+  | number
+  | boolean
+  | bigint
+  | symbol
+  | null
+  | undefined
+  ? Value
+  : Value extends readonly unknown[]
+    ? { -readonly [Index in keyof Value]: MutableWireJson<Value[Index]> }
+    : Value extends object
+      ? { readonly [Key in keyof Value]: MutableWireJson<Value[Key]> }
+      : Value;
+
 type WireValuePresent<Encoded> =
   Exclude<Encoded, undefined | void> extends infer Present
     ? [Present] extends [never]
       ? never
-      : { readonly defined: true; readonly value: Present }
+      : { readonly defined: true; readonly value: MutableWireJson<Present> }
     : never;
 
 export type WireValue<S extends SyncSchema> =
@@ -22,6 +39,25 @@ export type WireValue<S extends SyncSchema> =
 
 function members(ast: SchemaAST.AST): ReadonlyArray<SchemaAST.AST> {
   return ast._tag === "Union" ? ast.types : [ast];
+}
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    (Object.getPrototypeOf(value) === Object.prototype || Object.getPrototypeOf(value) === null)
+  );
+}
+
+/** Schema validation runs first; this copies its JSON result into arrays Lunora can mutate. */
+function cloneMutableWireJson(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(cloneMutableWireJson);
+  if (isPlainObject(value)) {
+    return Object.fromEntries(
+      Object.entries(value).map(([key, item]) => [key, cloneMutableWireJson(item)]),
+    );
+  }
+  return value;
 }
 
 function acceptsAbsent(ast: SchemaAST.AST): boolean {
@@ -41,11 +77,7 @@ export function canonicalJson(value: unknown, omitUndefinedObjectProperties = tr
   if (typeof value === "number" && Number.isFinite(value)) return JSON.stringify(value);
   if (Array.isArray(value))
     return `[${Array.from(value, (item) => canonicalJson(item, omitUndefinedObjectProperties)).join(",")}]`;
-  if (
-    typeof value === "object" &&
-    value !== null &&
-    (Object.getPrototypeOf(value) === Object.prototype || Object.getPrototypeOf(value) === null)
-  ) {
+  if (isPlainObject(value)) {
     return `{${Object.entries(value)
       .filter(([, item]) => !omitUndefinedObjectProperties || item !== undefined)
       .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
@@ -95,9 +127,10 @@ export async function validateWireValue<S extends SyncSchema>(
   reason: SyncFailure["reason"] = "unavailable",
 ): Promise<WireValue<S>> {
   try {
-    return await Schema.decodeUnknownPromise(wireValueSchema(schema), {
+    const decoded = await Schema.decodeUnknownPromise(wireValueSchema(schema), {
       onExcessProperty: "error",
     })(wire);
+    return cloneMutableWireJson(decoded) as WireValue<S>;
   } catch {
     throw new SyncFailure({ reason });
   }
@@ -111,9 +144,9 @@ export function wireValueCodec<S extends SyncSchema>(
       decode: SchemaGetter.transform((wire) => (wire.defined ? wire.value : undefined)),
       encode: SchemaGetter.transform(
         (value) =>
-          (value === undefined
-            ? { defined: false as const }
-            : { defined: true as const, value }) as WireValue<S>,
+          cloneMutableWireJson(
+            value === undefined ? { defined: false as const } : { defined: true as const, value },
+          ) as WireValue<S>,
       ),
     }),
   );

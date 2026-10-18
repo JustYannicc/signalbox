@@ -8,7 +8,12 @@ const Frame = Schema.Struct({
 const decodeFrame = Schema.decodeUnknownSync(Frame);
 
 /** Drives the native namespace protocol without exposing a public Catalog socket route. */
-export const openCatalogSocket = async (origin: string, homeKey: string, userId: string) => {
+export const openCatalogSocket = async (
+  origin: string,
+  homeKey: string,
+  userId: string,
+  module: "personal" | "organization" = "personal",
+) => {
   const url = new URL("/test/socket", origin);
   url.protocol = "ws:";
   url.searchParams.set("homeKey", homeKey);
@@ -53,7 +58,7 @@ export const openCatalogSocket = async (origin: string, homeKey: string, userId:
           type: "subscribe",
           id,
           query: {
-            functionPath: "personal:view_access",
+            functionPath: `${module}:view_access`,
             args: { input: { defined: true, value: { folderId: null, incarnation: 1 } } },
           },
         }),

@@ -94,6 +94,298 @@ export const view_access = query
     throw asLunoraSyncError(new SyncFailure({ reason: "invalid_state" }));
   });
 
+export const view_children = query
+  .input({
+    input: v.object({
+      defined: v.literal(true),
+      value: v.object({
+        parent: v.object({
+          folderId: v.union(v.string(), v.null()),
+          incarnation: v.number(),
+        }),
+        after: v.union(
+          v.object({
+            folderId: v.string(),
+            incarnation: v.number(),
+          }),
+          v.null(),
+        ),
+      }),
+    }),
+    resume: v.optional(v.string()),
+  })
+  .output(
+    v.union(
+      v.object({
+        _tag: v.literal("Value"),
+        value: v.object({
+          defined: v.literal(true),
+          value: v.object({
+            children: v.array(
+              v.object({
+                level: v.object({
+                  home: v.object({
+                    owner: v.union(
+                      v.object({
+                        _tag: v.literal("person"),
+                        id: v.string(),
+                      }),
+                      v.object({
+                        _tag: v.literal("organization"),
+                        id: v.string(),
+                      }),
+                    ),
+                    level: v.union(
+                      v.object({
+                        _tag: v.literal("top"),
+                      }),
+                      v.object({
+                        _tag: v.literal("folder"),
+                        id: v.string(),
+                      }),
+                    ),
+                    legacySource: v.optional(v.string()),
+                  }),
+                  incarnation: v.number(),
+                }),
+                name: v.string(),
+              }),
+            ),
+            next: v.union(
+              v.object({
+                folderId: v.string(),
+                incarnation: v.number(),
+              }),
+              v.null(),
+            ),
+          }),
+        }),
+        cursor: v.string(),
+      }),
+      v.object({
+        _tag: v.literal("Failure"),
+        failure: v.object({
+          defined: v.literal(true),
+          value: v.object({
+            _tag: v.literal("CatalogPolicyFailure"),
+            reason: v.union(v.literal("denied"), v.literal("invalid_state")),
+          }),
+        }),
+      }),
+    ),
+  )
+  .query(async ({ ctx, args }) => {
+    const { runtime, actor } = await bindHome(ctx);
+    const input = await decodeInput(syncDefinition.views["children"].input, args.input);
+    const result = await runtime.observeWire("children")({
+      ctx: readContext(ctx),
+      args: {
+        actor,
+        input,
+        ...(args.resume === undefined ? {} : { resume: SyncCursor.make(args.resume) }),
+      },
+    });
+    if (result._tag === "Value")
+      return {
+        ...result,
+        value: await validateOutput(syncDefinition.views["children"].output, result.value),
+      };
+    if (result._tag === "Failure")
+      return {
+        ...result,
+        failure: await validateOutput(syncDefinition.views["children"].failure, result.failure),
+      };
+    throw asLunoraSyncError(new SyncFailure({ reason: "invalid_state" }));
+  });
+
+export const view_referencePlacements = query
+  .input({
+    input: v.object({
+      defined: v.literal(true),
+      value: v.object({
+        after: v.union(v.string(), v.null()),
+      }),
+    }),
+    resume: v.optional(v.string()),
+  })
+  .output(
+    v.union(
+      v.object({
+        _tag: v.literal("Value"),
+        value: v.object({
+          defined: v.literal(true),
+          value: v.object({
+            placements: v.array(
+              v.object({
+                target: v.object({
+                  home: v.object({
+                    owner: v.union(
+                      v.object({
+                        _tag: v.literal("person"),
+                        id: v.string(),
+                      }),
+                      v.object({
+                        _tag: v.literal("organization"),
+                        id: v.string(),
+                      }),
+                    ),
+                    level: v.union(
+                      v.object({
+                        _tag: v.literal("top"),
+                      }),
+                      v.object({
+                        _tag: v.literal("folder"),
+                        id: v.string(),
+                      }),
+                    ),
+                    legacySource: v.optional(v.string()),
+                  }),
+                  incarnation: v.number(),
+                }),
+                filedUnder: v.object({
+                  home: v.object({
+                    owner: v.union(
+                      v.object({
+                        _tag: v.literal("person"),
+                        id: v.string(),
+                      }),
+                      v.object({
+                        _tag: v.literal("organization"),
+                        id: v.string(),
+                      }),
+                    ),
+                    level: v.union(
+                      v.object({
+                        _tag: v.literal("top"),
+                      }),
+                      v.object({
+                        _tag: v.literal("folder"),
+                        id: v.string(),
+                      }),
+                    ),
+                    legacySource: v.optional(v.string()),
+                  }),
+                  incarnation: v.number(),
+                }),
+              }),
+            ),
+            next: v.union(v.string(), v.null()),
+          }),
+        }),
+        cursor: v.string(),
+      }),
+      v.object({
+        _tag: v.literal("Failure"),
+        failure: v.object({
+          defined: v.literal(true),
+          value: v.object({
+            _tag: v.literal("CatalogPolicyFailure"),
+            reason: v.union(v.literal("denied"), v.literal("invalid_state")),
+          }),
+        }),
+      }),
+    ),
+  )
+  .query(async ({ ctx, args }) => {
+    const { runtime, actor } = await bindHome(ctx);
+    const input = await decodeInput(syncDefinition.views["referencePlacements"].input, args.input);
+    const result = await runtime.observeWire("referencePlacements")({
+      ctx: readContext(ctx),
+      args: {
+        actor,
+        input,
+        ...(args.resume === undefined ? {} : { resume: SyncCursor.make(args.resume) }),
+      },
+    });
+    if (result._tag === "Value")
+      return {
+        ...result,
+        value: await validateOutput(
+          syncDefinition.views["referencePlacements"].output,
+          result.value,
+        ),
+      };
+    if (result._tag === "Failure")
+      return {
+        ...result,
+        failure: await validateOutput(
+          syncDefinition.views["referencePlacements"].failure,
+          result.failure,
+        ),
+      };
+    throw asLunoraSyncError(new SyncFailure({ reason: "invalid_state" }));
+  });
+
+export const change_createFolder = mutation
+  .input({
+    input: v.object({
+      defined: v.literal(true),
+      value: v.object({
+        parent: v.object({
+          folderId: v.union(v.string(), v.null()),
+          incarnation: v.number(),
+        }),
+        folderId: v.string(),
+        name: v.string(),
+      }),
+    }),
+    operationKey: v.string(),
+  })
+  .output(
+    v.union(
+      v.object({
+        _tag: v.literal("Committed"),
+        value: v.object({
+          defined: v.literal(true),
+          value: v.object({
+            level: v.object({
+              home: v.object({
+                owner: v.union(
+                  v.object({
+                    _tag: v.literal("person"),
+                    id: v.string(),
+                  }),
+                  v.object({
+                    _tag: v.literal("organization"),
+                    id: v.string(),
+                  }),
+                ),
+                level: v.union(
+                  v.object({
+                    _tag: v.literal("top"),
+                  }),
+                  v.object({
+                    _tag: v.literal("folder"),
+                    id: v.string(),
+                  }),
+                ),
+                legacySource: v.optional(v.string()),
+              }),
+              incarnation: v.number(),
+            }),
+          }),
+        }),
+        receipt: v.string(),
+      }),
+      v.object({ _tag: v.literal("Pending"), operationKey: v.string() }),
+    ),
+  )
+  .mutation(async ({ ctx, args }) => {
+    const { runtime, actor } = await bindHome(ctx);
+    const input = await decodeInput(syncDefinition.changes["createFolder"].input, args.input);
+    const result = await runtime.changeWire("createFolder")({
+      ctx: writeContext(ctx),
+      args: { actor, input, operationKey: args.operationKey },
+    });
+    if (result._tag === "Committed") {
+      return {
+        ...result,
+        value: await validateOutput(syncDefinition.changes["createFolder"].output, result.value),
+      };
+    }
+    return result;
+  });
+
 export const change_moveFolder = mutation
   .input({
     input: v.object({
@@ -149,6 +441,102 @@ export const change_moveFolder = mutation
     return result;
   });
 
+export const change_moveOrganizationReference = mutation
+  .input({
+    input: v.object({
+      defined: v.literal(true),
+      value: v.object({
+        target: v.object({
+          home: v.object({
+            owner: v.union(
+              v.object({
+                _tag: v.literal("person"),
+                id: v.string(),
+              }),
+              v.object({
+                _tag: v.literal("organization"),
+                id: v.string(),
+              }),
+            ),
+            level: v.union(
+              v.object({
+                _tag: v.literal("top"),
+              }),
+              v.object({
+                _tag: v.literal("folder"),
+                id: v.string(),
+              }),
+            ),
+            legacySource: v.optional(v.string()),
+          }),
+          incarnation: v.number(),
+        }),
+        filedUnder: v.object({
+          home: v.object({
+            owner: v.union(
+              v.object({
+                _tag: v.literal("person"),
+                id: v.string(),
+              }),
+              v.object({
+                _tag: v.literal("organization"),
+                id: v.string(),
+              }),
+            ),
+            level: v.union(
+              v.object({
+                _tag: v.literal("top"),
+              }),
+              v.object({
+                _tag: v.literal("folder"),
+                id: v.string(),
+              }),
+            ),
+            legacySource: v.optional(v.string()),
+          }),
+          incarnation: v.number(),
+        }),
+      }),
+    }),
+    operationKey: v.string(),
+  })
+  .output(
+    v.union(
+      v.object({
+        _tag: v.literal("Committed"),
+        value: v.object({
+          defined: v.literal(true),
+          value: v.object({
+            changed: v.boolean(),
+          }),
+        }),
+        receipt: v.string(),
+      }),
+      v.object({ _tag: v.literal("Pending"), operationKey: v.string() }),
+    ),
+  )
+  .mutation(async ({ ctx, args }) => {
+    const { runtime, actor } = await bindHome(ctx);
+    const input = await decodeInput(
+      syncDefinition.changes["moveOrganizationReference"].input,
+      args.input,
+    );
+    const result = await runtime.changeWire("moveOrganizationReference")({
+      ctx: writeContext(ctx),
+      args: { actor, input, operationKey: args.operationKey },
+    });
+    if (result._tag === "Committed") {
+      return {
+        ...result,
+        value: await validateOutput(
+          syncDefinition.changes["moveOrganizationReference"].output,
+          result.value,
+        ),
+      };
+    }
+    return result;
+  });
+
 export const change_renameFolder = mutation
   .input({
     input: v.object({
@@ -189,6 +577,94 @@ export const change_renameFolder = mutation
       return {
         ...result,
         value: await validateOutput(syncDefinition.changes["renameFolder"].output, result.value),
+      };
+    }
+    return result;
+  });
+
+export const change_reopenFolder = mutation
+  .input({
+    input: v.object({
+      defined: v.literal(true),
+      value: v.object({
+        target: v.object({
+          folderId: v.string(),
+          incarnation: v.number(),
+        }),
+      }),
+    }),
+    operationKey: v.string(),
+  })
+  .output(
+    v.union(
+      v.object({
+        _tag: v.literal("Committed"),
+        value: v.object({
+          defined: v.literal(true),
+          value: v.object({
+            changed: v.boolean(),
+          }),
+        }),
+        receipt: v.string(),
+      }),
+      v.object({ _tag: v.literal("Pending"), operationKey: v.string() }),
+    ),
+  )
+  .mutation(async ({ ctx, args }) => {
+    const { runtime, actor } = await bindHome(ctx);
+    const input = await decodeInput(syncDefinition.changes["reopenFolder"].input, args.input);
+    const result = await runtime.changeWire("reopenFolder")({
+      ctx: writeContext(ctx),
+      args: { actor, input, operationKey: args.operationKey },
+    });
+    if (result._tag === "Committed") {
+      return {
+        ...result,
+        value: await validateOutput(syncDefinition.changes["reopenFolder"].output, result.value),
+      };
+    }
+    return result;
+  });
+
+export const change_retireFolder = mutation
+  .input({
+    input: v.object({
+      defined: v.literal(true),
+      value: v.object({
+        target: v.object({
+          folderId: v.string(),
+          incarnation: v.number(),
+        }),
+      }),
+    }),
+    operationKey: v.string(),
+  })
+  .output(
+    v.union(
+      v.object({
+        _tag: v.literal("Committed"),
+        value: v.object({
+          defined: v.literal(true),
+          value: v.object({
+            changed: v.boolean(),
+          }),
+        }),
+        receipt: v.string(),
+      }),
+      v.object({ _tag: v.literal("Pending"), operationKey: v.string() }),
+    ),
+  )
+  .mutation(async ({ ctx, args }) => {
+    const { runtime, actor } = await bindHome(ctx);
+    const input = await decodeInput(syncDefinition.changes["retireFolder"].input, args.input);
+    const result = await runtime.changeWire("retireFolder")({
+      ctx: writeContext(ctx),
+      args: { actor, input, operationKey: args.operationKey },
+    });
+    if (result._tag === "Committed") {
+      return {
+        ...result,
+        value: await validateOutput(syncDefinition.changes["retireFolder"].output, result.value),
       };
     }
     return result;
@@ -238,6 +714,78 @@ export const change_setGrant = mutation
       return {
         ...result,
         value: await validateOutput(syncDefinition.changes["setGrant"].output, result.value),
+      };
+    }
+    return result;
+  });
+
+export const project_ensureOrganizationReference = internalMutation
+  .input({
+    input: v.object({
+      defined: v.literal(true),
+      value: v.object({
+        incarnation: v.number(),
+        target: v.object({
+          home: v.object({
+            owner: v.union(
+              v.object({
+                _tag: v.literal("person"),
+                id: v.string(),
+              }),
+              v.object({
+                _tag: v.literal("organization"),
+                id: v.string(),
+              }),
+            ),
+            level: v.union(
+              v.object({
+                _tag: v.literal("top"),
+              }),
+              v.object({
+                _tag: v.literal("folder"),
+                id: v.string(),
+              }),
+            ),
+            legacySource: v.optional(v.string()),
+          }),
+          incarnation: v.number(),
+        }),
+      }),
+    }),
+    operationKey: v.string(),
+  })
+  .output(
+    v.union(
+      v.object({
+        _tag: v.literal("Committed"),
+        value: v.object({
+          defined: v.literal(true),
+          value: v.object({
+            changed: v.boolean(),
+          }),
+        }),
+        receipt: v.string(),
+      }),
+      v.object({ _tag: v.literal("Pending"), operationKey: v.string() }),
+    ),
+  )
+  .mutation(async ({ ctx, args }) => {
+    const { runtime, ingress } = await bindProjectionHome(ctx);
+    const input = await decodeInput(
+      syncDefinition.projections["ensureOrganizationReference"].input,
+      args.input,
+    );
+    const result = await runtime.projectionWire("ensureOrganizationReference")({
+      ctx: writeContext(ctx),
+      args: { ingress, input, operationKey: args.operationKey },
+    });
+    if (result._tag === "Committed") {
+      return {
+        ...result,
+        value: await validateOutput(
+          syncDefinition.projections["ensureOrganizationReference"].output,
+          result.value,
+        ),
       };
     }
     return result;
