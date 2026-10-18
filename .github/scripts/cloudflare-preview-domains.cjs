@@ -111,6 +111,7 @@ function alchemyStageServices(scripts, value) {
     seen.add(script.id);
     if (
       script.tags !== undefined &&
+      script.tags !== null &&
       (!Array.isArray(script.tags) || script.tags.some((tag) => typeof tag !== "string"))
     ) {
       throw new Error("Cloudflare Workers Scripts API returned invalid script tags.");
