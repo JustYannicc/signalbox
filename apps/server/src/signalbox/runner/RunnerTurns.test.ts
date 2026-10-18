@@ -2021,6 +2021,104 @@ describe("RunnerTurns", () => {
     ),
   );
 
+  it.effect("resumes a native session when no fresh-session handoff fits", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fake = yield* makeFakeAdapter;
+        const resumable = {
+          ...providerThread,
+          nativeThreadRef: { driver, nativeId: "native-thread", strength: "strong" as const },
+        };
+        const adapter = {
+          ...fake.adapter,
+          openSession: () =>
+            Effect.succeed({
+              ...fake.session,
+              resumeThread: () => Effect.succeed(resumable),
+            }),
+        };
+        const turns = yield* makeRunnerTurns({
+          threadId,
+          adapters: new Map([[instanceId, adapter]]),
+          cwd: "/tmp",
+          useModelToken: () => Effect.void,
+          usage: Effect.succeed(unmeasured),
+          emit: () => Effect.void,
+        });
+        const text = "x".repeat(100_000);
+        yield* turns.start({
+          turn: {
+            ...turnFor(2, resumable),
+            providerTurnOrdinal: 2,
+            message: {
+              messageId: MessageId.make("large-message"),
+              text,
+              attachments: [],
+              createdBy: "user",
+              creationSource: "web",
+            },
+          },
+          modelToken: "token-1",
+        });
+        yield* Deferred.await(fake.secondStarted);
+        expect(fake.started).toEqual([
+          { providerTurnOrdinal: 2, text, nativeThreadRef: resumable.nativeThreadRef },
+        ]);
+      }),
+    ),
+  );
+
+  it.effect("fails an unavailable resume fallback without losing the conversation", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fake = yield* makeFakeAdapter;
+        const result =
+          yield* Deferred.make<Extract<RunnerItem, { kind: "turn.failed" | "turn.started" }>>();
+        const reported: Array<RunnerItem> = [];
+        const turns = yield* makeRunnerTurns({
+          threadId,
+          adapters: new Map([[instanceId, fake.adapter]]),
+          cwd: "/tmp",
+          useModelToken: () => Effect.void,
+          usage: Effect.succeed(unmeasured),
+          emit: (item) =>
+            Effect.gen(function* () {
+              reported.push(item);
+              if (item.kind === "turn.failed" || item.kind === "turn.started")
+                yield* Deferred.succeed(result, item);
+            }),
+        });
+        yield* Deferred.succeed(fake.loaded, undefined);
+        const resumable = {
+          ...providerThread,
+          nativeThreadRef: { driver, nativeId: "native-thread", strength: "strong" as const },
+        };
+        yield* turns.start({
+          turn: {
+            ...turnFor(2, resumable),
+            providerTurnOrdinal: 2,
+            message: {
+              messageId: MessageId.make("large-message"),
+              text: "x".repeat(100_000),
+              attachments: [],
+              createdBy: "user",
+              creationSource: "web",
+            },
+          },
+          modelToken: "token-1",
+        });
+        const item = yield* Deferred.await(result);
+        expect(item.kind).toBe("turn.failed");
+        expect(item.kind === "turn.failed" && item.message).toContain(
+          "Native resume failed and no conversation handoff is available.",
+        );
+        expect(fake.started).toEqual([]);
+        expect(reported.some((item) => item.kind === "turn.started")).toBe(false);
+        expect(JSON.stringify(reported)).not.toContain("sk-live-resume-secret");
+      }),
+    ),
+  );
+
   describe("shortcut instructions", () => {
     /** A drive whose turn starts answer `prepared`, one per turn, in order. */
     const preparingDrive = (
