@@ -1,4 +1,8 @@
 import { fromLenientJson } from "@t3tools/shared/schemaJson";
+// @effect-diagnostics-next-line nodeBuiltinImport:off - The Keychain identity must be chosen synchronously before Electron initializes crypto.
+import * as NodeCrypto from "node:crypto";
+// @effect-diagnostics-next-line nodeBuiltinImport:off - Normalize the local runtime location before hashing its identity.
+import * as NodePath from "node:path";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
@@ -14,6 +18,21 @@ import {
   resolveDesktopStateDir,
   type JoinPath,
 } from "./DesktopStatePaths.ts";
+
+// signalbox: local default-app launches otherwise share Electron's Keychain item across signatures.
+export function resolveEarlyMacKeychainName(input: {
+  readonly platform: string;
+  readonly isPackaged: boolean;
+  readonly runtimeDirectory: string;
+  readonly isDevelopment: boolean;
+}): string | null {
+  if (input.platform !== "darwin" || input.isPackaged) return null;
+  const suffix = NodeCrypto.createHash("sha256")
+    .update(NodePath.resolve(input.runtimeDirectory))
+    .digest("hex")
+    .slice(0, 12);
+  return `Signalbox ${input.isDevelopment ? "Dev" : "Local"} ${suffix}`;
+}
 
 interface EarlyDesktopSettingsInput {
   readonly env: NodeJS.ProcessEnv;

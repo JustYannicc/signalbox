@@ -6,6 +6,7 @@ import {
   TrimmedNonEmptyString,
 } from "@t3tools/contracts";
 import { DEFAULT_SERVER_SETTINGS } from "@t3tools/contracts/settings";
+import * as Array from "effect/Array";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 
@@ -125,6 +126,31 @@ export const foldWorkSettings = (rootToTarget: ReadonlyArray<RawWorkSettings>) =
     }
     return effective;
   });
+
+export type WorkSettingsClassification =
+  | {
+      readonly _tag: "Ready";
+      readonly local: DeclaredWorkPatch;
+      readonly effective: EffectiveWorkSettings;
+    }
+  | { readonly _tag: "LocalRepairRequired" }
+  | { readonly _tag: "InheritedUnavailable" };
+
+/** Catalog supplies the authenticated nonempty chain; only Catalog can attach write fences. */
+export const classifyWorkSettings = (
+  rootToTarget: readonly [RawWorkSettings, ...RawWorkSettings[]],
+): WorkSettingsClassification => {
+  const inherited = foldWorkSettings(rootToTarget.slice(0, -1));
+  // A local repair cannot restore a complete view while any ancestor remains corrupt.
+  if (Result.isFailure(inherited)) return { _tag: "InheritedUnavailable" };
+  const local = readDeclaredWorkPatch(Array.lastNonEmpty(rootToTarget));
+  if (Result.isFailure(local)) return { _tag: "LocalRepairRequired" };
+  return {
+    _tag: "Ready",
+    local: local.success,
+    effective: { ...inherited.success, ...local.success },
+  };
+};
 
 /** Only local raw values participate in recursive edits. Validation precedes any returned mutation. */
 export const applyWorkSettingsEdit = (rawLocal: unknown, input: unknown) =>

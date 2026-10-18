@@ -1,4 +1,5 @@
 import type { CommitAuthor, DriveAccess } from "@signalbox/runner-protocol/DriveProtocol";
+import type { PullOperation } from "@signalbox/runner-protocol/PullProtocol";
 import type { SessionAccess } from "@signalbox/runner-protocol/SessionProtocol";
 import type { OnePasswordEnvironmentId } from "@t3tools/contracts/signalboxFolders";
 import {
@@ -29,12 +30,17 @@ import type { DriveAuthorization, RemoteAuthorization } from "../ThreadAuthoriza
 import { myDriveId } from "../../drive/driveAccess.ts";
 import { poolObjectName } from "../../pool/PoolDirectory.ts";
 import type { ModelAuthorization } from "../../models/ModelProtocol.ts";
-import { isRemoteToken, remoteToken } from "../../drive/remoteToken.ts";
+import {
+  isRemoteToken,
+  remoteToken,
+  isRemoteOperationToken,
+  remoteOperationToken,
+} from "../../drive/remoteToken.ts";
 import type { UserObjectError } from "../../user/UserDirectory.ts";
 import { traceIdOf } from "../diagnostics/traceId.ts";
 import { TurnDiagnostics } from "../diagnostics/TurnDiagnostics.ts";
 import { driveToken, isDriveToken } from "../../drive/driveToken.ts";
-import { gatewayProviderFor, poolIdOfInstance } from "../providerCatalog.ts";
+import { gatewayProviderFor, poolIdOfInstance } from "../../models/ModelRouting.ts";
 import { holdsNativeSession } from "../session/nativeSession.ts";
 import * as PreviewState from "../PreviewState.ts";
 import { steersOf } from "../steering.ts";
@@ -43,6 +49,7 @@ import { sessionToken } from "../session/sessionToken.ts";
 import * as ThreadEngine from "../ThreadEngine.ts";
 import { applyEvents } from "../threadProjection.ts";
 import * as ThreadStore from "../ThreadStore.ts";
+import * as PullState from "../PullState.ts";
 import type { StopReason } from "../diagnostics/DiagnosticsStore.ts";
 import { isLeaseToken } from "./leaseToken.ts";
 import { MachineBackend, type MachineExit } from "./MachineBackend.ts";
@@ -196,6 +203,11 @@ export interface MachinePlan {
 /** What the connected Runner should be doing right now. */
 export interface RunnerWork {
   readonly generation: number;
+  readonly pull?: {
+    readonly operation: PullOperation;
+    readonly drive: DriveAccess;
+    readonly attempt: number;
+  } | null;
   /** Whether `reconcile` has something to do now: ask, retry, time out or start the idle tail. */
   readonly needsUpkeep: boolean;
   /** A drain asked for and not answered yet (#493): asked again of each connection. */
@@ -361,6 +373,8 @@ const make = Effect.gen(function* () {
   const previews = yield* PreviewHold;
   const previewState = yield* PreviewState.PreviewState;
   const store = yield* ThreadStore.ThreadStore;
+  const pullState = yield* PullState.PullState;
+  const pulls = yield* PullState.PullReports;
   const sessionRows = yield* SessionRows;
   const crypto = yield* Crypto.Crypto;
   const backends = yield* MachineBackend;
@@ -480,26 +494,38 @@ const make = Effect.gen(function* () {
           : hello.takenRunIds.includes(active.id))
           ? active.id
           : null;
-      return Effect.as(diagnostics.runnerConnected({ hello, connection, run, lost, now }), {
-        events,
-        machine: {
-          ...lease,
-          status: "connected",
-          connection,
-          ensuredAt: lease.ensuredAt ?? now,
-          disconnectedAt: null,
-          drains: hello.drains === true,
-          steers: hello.steers === true,
-        },
-        result: {
-          _tag: "welcome",
-          generation: lease.generation,
-          connection,
-          ackedSequence: lease.ackedSequence,
-          activeRunId: active?.id ?? null,
-          heldRunId,
-        },
-      } satisfies ThreadEngine.EngineDecision<HelloResult>);
+      const replay = Effect.gen(function* () {
+        if ((lease.connection ?? 0) === 0) return;
+        const pending = yield* Effect.orDie(pullState.pending);
+        // A process restart and a network reconnect both replay the unfinished attempt.
+        if (pending?.phase === "running" && pending.generation === lease.generation) {
+          yield* Effect.orDie(pullState.lost(pending.id, lease.generation));
+        }
+      });
+      return Effect.as(
+        Effect.andThen(replay, diagnostics.runnerConnected({ hello, connection, run, lost, now })),
+        {
+          events,
+          machine: {
+            ...lease,
+            status: "connected",
+            connection,
+            ensuredAt: lease.ensuredAt ?? now,
+            disconnectedAt: null,
+            drains: hello.drains === true,
+            steers: hello.steers === true,
+            pulls: hello.pulls === true,
+          },
+          result: {
+            _tag: "welcome",
+            generation: lease.generation,
+            connection,
+            ackedSequence: lease.ackedSequence,
+            activeRunId: active?.id ?? null,
+            heldRunId,
+          },
+        } satisfies ThreadEngine.EngineDecision<HelloResult>,
+      );
     });
 
   const batch: ThreadRunner["Service"]["batch"] = (input) =>
@@ -526,15 +552,39 @@ const make = Effect.gen(function* () {
         lease.steers === true,
       );
       const recorded = Effect.andThen(
-        diagnostics.batch({
-          ...input,
-          liveRunId: harnessRun(projection)?.id ?? null,
-          runs: projection.runs,
-          now,
-        }),
-        undecodable.length === 0
-          ? Effect.void
-          : Effect.logWarning("dropped Runner events this build cannot read", { undecodable }),
+        Effect.forEach(
+          input.items,
+          (item) =>
+            item.kind === "git.pull.result"
+              ? pulls.reported(input.generation, item.result)
+              : item.kind === "git.pull.interrupted"
+                ? Effect.gen(function* () {
+                    const pending = yield* Effect.orDie(pullState.pending);
+                    if (pending?.id === item.id && pending.generation === input.generation) {
+                      yield* Effect.orDie(
+                        pullState.retry(
+                          item.id,
+                          input.generation,
+                          input.sequence,
+                          now + Math.min(1_000 * 2 ** pending.attempts, 30_000),
+                        ),
+                      );
+                    }
+                  })
+                : Effect.void,
+          { discard: true },
+        ),
+        Effect.andThen(
+          diagnostics.batch({
+            ...input,
+            liveRunId: harnessRun(projection)?.id ?? null,
+            runs: projection.runs,
+            now,
+          }),
+          undecodable.length === 0
+            ? Effect.void
+            : Effect.logWarning("dropped Runner events this build cannot read", { undecodable }),
+        ),
       );
       const acked = { _tag: "ack", sequence: input.sequence } as const;
       // The Runner saved everything and stopped reporting: its machine is done
@@ -681,6 +731,7 @@ const make = Effect.gen(function* () {
         projection === null ||
         lease.generation !== generation ||
         lease.status !== "connected" ||
+        lease.disconnectedAt !== null ||
         (lease.connection ?? 0) !== connection
       ) {
         return Effect.succeed(keep(undefined));
@@ -740,7 +791,7 @@ const make = Effect.gen(function* () {
       return held ? turn : freshSessionTurn(projection, turn);
     });
 
-  const work: ThreadRunner["Service"]["work"] = withLease(({ projection, lease }) =>
+  const work: ThreadRunner["Service"]["work"] = withLease(({ projection, lease, now }) =>
     Effect.gen(function* () {
       const untraced = projection === null ? null : yield* turnFor(projection);
       const turn =
@@ -749,10 +800,58 @@ const make = Effect.gen(function* () {
           : { ...untraced, traceId: yield* withCrypto(traceIdOf(untraced.runId)) };
       const grant = projection === null ? undefined : modelGrantFor(projection, yield* ownerId);
       const run = projection === null ? undefined : harnessRun(projection);
+      let pending = projection === null ? null : yield* Effect.orDie(pullState.pending);
+      if (pending !== null && lease.status === "connected" && lease.pulls !== true) {
+        yield* pulls.revoke(
+          pending.id,
+          "This thread's machine needs an update before it can pull.",
+        );
+        pending = null;
+      }
+      const pull =
+        pending !== null &&
+        projection !== null &&
+        lease.status === "connected" &&
+        lease.pulls === true &&
+        lease.token !== null &&
+        run === undefined &&
+        pending.attempts < PullState.MAX_PULL_FAILURES &&
+        (pending.retry_at === null || pending.retry_at <= now)
+          ? {
+              operation: pending.operation,
+              attempt: pending.attempts,
+              drive: {
+                driveId: pending.drive_id,
+                token: yield* driveToken(lease.token, projection.thread.id, lease.generation),
+                remoteToken: yield* remoteOperationToken(
+                  lease.token,
+                  projection.thread.id,
+                  pending.id,
+                ),
+              },
+            }
+          : null;
+      if (
+        pull !== null &&
+        (pending?.generation !== lease.generation || pending.phase === "selected")
+      ) {
+        yield* Effect.orDie(pullState.assign(pull.operation.id, lease.generation));
+      }
       const driveId = turn === null || !drivesEnabled ? null : yield* driveOf;
       return keep<RunnerWork>({
         generation: lease.generation,
-        needsUpkeep: needsUpkeep(lease, run !== undefined, yield* previews.held),
+        pull,
+        needsUpkeep:
+          pending?.retry_at != null ||
+          (pending !== null && pending.attempts >= PullState.MAX_PULL_FAILURES) ||
+          needsUpkeep(
+            lease,
+            run !== undefined || pending !== null,
+            projection?.thread.archivedAt != null ||
+              projection?.thread.settledOverride === "settled"
+              ? false
+              : yield* previews.held,
+          ),
         drain: lease.drain?._tag === "asked" ? lease.drain.id : null,
         turn,
         modelToken:
@@ -872,7 +971,16 @@ const make = Effect.gen(function* () {
       const owner = yield* Effect.orDie(store.owner);
       if (owner === null) return deny("This thread has no drive.");
       const driveId = driveIdOf(owner);
+      const pending = yield* Effect.orDie(pullState.pending);
       if (drives._tag === "Some") {
+        if (
+          pending !== null &&
+          !(yield* drives.value
+            .writes(pending.actor_id, driveId)
+            .pipe(Effect.orElseSucceed(() => false)))
+        ) {
+          return deny("The person who requested this pull can no longer change this drive.");
+        }
         const writes = yield* drives.value.writes(owner.userId, driveId).pipe(Effect.result);
         if (writes._tag === "Failure") {
           yield* Effect.logWarning("drive access check failed", { cause: writes.failure });
@@ -887,6 +995,7 @@ const make = Effect.gen(function* () {
         driveId,
         generation: current.generation,
         live: harnessRun(projection) !== undefined,
+        pullOperationId: pending?.generation === current.generation ? pending.id : null,
       } satisfies DriveAuthorization;
     });
 
@@ -897,19 +1006,37 @@ const make = Effect.gen(function* () {
       if (!drivesEnabled) return deny("This cloud stores no drives.");
       const projection = yield* engine.projection;
       const run = projection === null ? undefined : harnessRun(projection);
-      const leaseToken = run === undefined ? null : (yield* lease).token;
-      if (projection === null || run === undefined || leaseToken === null) {
-        return deny("No turn is running on this thread.");
+      const current = projection === null ? null : yield* lease;
+      const leaseToken = current?.token ?? null;
+      if (projection === null || leaseToken === null || current?.status === "none") {
+        return deny("This thread has no machine.");
       }
+      const pending = yield* Effect.orDie(pullState.pending);
+      if (run === undefined && pending === null) return deny("No turn is running on this thread.");
       const threadId = projection.thread.id;
-      if (!(yield* isRemoteToken(token, leaseToken, threadId, run.id))) {
-        return deny("This token is not for the running turn.");
+      const forTurn =
+        run !== undefined && (yield* isRemoteToken(token, leaseToken, threadId, run.id));
+      const forPull =
+        pending !== null &&
+        pending.generation === current?.generation &&
+        (yield* isRemoteOperationToken(token, leaseToken, threadId, pending.id));
+      if (!forTurn && !forPull) {
+        return deny("This token is not for the running turn or pull.");
       }
       const owner = yield* Effect.orDie(store.owner);
       if (owner === null) return deny("This thread has no drive.");
       const driveId = driveIdOf(owner);
       // Fetching acts with the owner's GitHub connection, so it needs their access to the drive.
       if (drives._tag === "Some") {
+        if (
+          forPull &&
+          pending !== null &&
+          !(yield* drives.value
+            .writes(pending.actor_id, driveId)
+            .pipe(Effect.orElseSucceed(() => false)))
+        ) {
+          return deny("The person who requested this pull can no longer change this drive.");
+        }
         const writes = yield* drives.value.writes(owner.userId, driveId).pipe(Effect.result);
         if (writes._tag === "Failure") {
           yield* Effect.logWarning("drive access check failed", { cause: writes.failure });
@@ -971,6 +1098,58 @@ const make = Effect.gen(function* () {
       Effect.gen(function* () {
         const backend = backends[classOf(lease)];
         const run = projection === null ? undefined : harnessRun(projection);
+        const closing =
+          projection !== null &&
+          (projection.thread.archivedAt !== null ||
+            projection.thread.settledOverride === "settled");
+        let pending = projection === null ? null : yield* Effect.orDie(pullState.pending);
+        if (
+          pending !== null &&
+          lease.status === "none" &&
+          pending.generation === lease.generation
+        ) {
+          yield* Effect.orDie(pullState.lost(pending.id, lease.generation));
+          pending = yield* Effect.orDie(pullState.pending);
+        }
+        let exhausted = false;
+        if (
+          pending !== null &&
+          pending.phase === "selected" &&
+          pending.attempts >= PullState.MAX_PULL_FAILURES
+        ) {
+          if (
+            closing &&
+            lease.status !== "none" &&
+            !(lease.drain?._tag === "answered" && lease.drain.unsaved.length === 0)
+          ) {
+            // Exhaustion fences the drive's writer. Drain this closing machine before that fence.
+            pending = null;
+          } else {
+            yield* pulls.exhausted(pending.id, lease.generation);
+            pending = yield* Effect.orDie(pullState.pending);
+            exhausted = pending === null;
+          }
+        }
+        let revoked = false;
+        if (pending !== null && drives._tag === "Some") {
+          const actorWrites = yield* drives.value
+            .writes(pending.actor_id, pending.drive_id)
+            .pipe(Effect.result);
+          const owner = yield* Effect.orDie(store.owner);
+          const ownerWrites =
+            owner === null
+              ? null
+              : yield* drives.value.writes(owner.userId, pending.drive_id).pipe(Effect.result);
+          if (
+            (actorWrites._tag === "Success" && !actorWrites.success) ||
+            owner === null ||
+            (ownerWrites?._tag === "Success" && !ownerWrites.success)
+          ) {
+            yield* pulls.revoke(pending.id);
+            pending = null;
+            revoked = true;
+          }
+        }
         const runId = run?.id ?? null;
         /**
          * Lets the machine go. `failure` fails the live run with it; `recover`
@@ -994,7 +1173,7 @@ const make = Effect.gen(function* () {
                   ? []
                   : failRunEvents(projection, run, unknownFailure(input.failure), ctx);
           const after = projection === null ? null : applyEvents(projection, events);
-          const continues = after !== null && harnessRun(after) !== undefined;
+          const continues = pending !== null || (after !== null && harnessRun(after) !== undefined);
           return Effect.as(
             projection === null ? Effect.void : sessionEnded(lease, { ...input, runId, now }),
             {
@@ -1010,12 +1189,21 @@ const make = Effect.gen(function* () {
             } satisfies ThreadEngine.EngineDecision<MachinePlan>,
           );
         };
+        if (exhausted || (revoked && !closing)) {
+          return yield* release({
+            reason: "idle",
+            detail: exhausted
+              ? "The pull exhausted its retry budget."
+              : "The pull stopped because drive access changed.",
+          });
+        }
         if (lease.status === "none") {
-          const previewHeld = yield* previews.held;
-          if ((run === undefined && !previewHeld) || projection === null) {
+          const previewHeld = !closing && (yield* previews.held);
+          if ((run === undefined && pending === null && !previewHeld) || projection === null) {
             return keep(UNNEEDED);
           }
           const generation = lease.generation + 1;
+          if (pending !== null) yield* Effect.orDie(pullState.assign(pending.id, generation));
           const token = yield* newToken;
           const savedServices = (yield* Effect.orDie(previewState.configuration)).services;
           const machineClass = machineClassFor({
@@ -1046,9 +1234,20 @@ const make = Effect.gen(function* () {
           };
         }
         if (lease.status === "requested") {
+          // A preview can open its writable checkout before the main hello.
+          // Let that Runner connect and drain before closing its machine.
+          if (closing) {
+            const token = lease.ensuredAt === null ? lease.token : null;
+            return keep<MachinePlan>({
+              ...IDLE,
+              ensure: token === null ? null : { generation: lease.generation, token },
+              wakeAt: now + (token === null ? DRAIN_TIMEOUT_MS : ENSURE_RETRY_MS),
+              runId,
+            });
+          }
           // A preview can keep the request alive without a run to fail.
-          const previewHeld = yield* previews.held;
-          if (run === undefined && !previewHeld) {
+          const previewHeld = !closing && (yield* previews.held);
+          if (run === undefined && pending === null && !previewHeld) {
             return yield* release({ reason: "idle", detail: "No turn needs it any more." });
           }
           const deadline = (lease.requestedAt ?? now) + backend.connectTimeoutMs;
@@ -1074,6 +1273,12 @@ const make = Effect.gen(function* () {
         if (lease.disconnectedAt !== null) {
           const deadline = lease.disconnectedAt + RECONNECT_TIMEOUT_MS;
           if (now < deadline) return keep({ ...IDLE, wakeAt: deadline, runId });
+          // A lost socket says nothing about the machine's last writes. Closing
+          // work waits for its Runner to reconnect and confirm those saves.
+          const saved = lease.drain?._tag === "answered" && lease.drain.unsaved.length === 0;
+          if (closing && !saved) {
+            return keep({ ...IDLE, wakeAt: now + DRAIN_TIMEOUT_MS, runId });
+          }
           return yield* release({
             reason: "error",
             detail: `The Runner did not reconnect within ${RECONNECT_TIMEOUT_MS / 1000} s.`,
@@ -1081,8 +1286,8 @@ const make = Effect.gen(function* () {
             recover: run !== undefined,
           });
         }
-        if (run !== undefined || (yield* previews.held)) {
-          const busy = { ...BUSY, runId };
+        if (run !== undefined || pending !== null || (!closing && (yield* previews.held))) {
+          const busy = { ...BUSY, runId, wakeAt: pending?.retry_at ?? null };
           // Needed again: a drain under way no longer leads anywhere.
           return lease.idleSince === null && lease.drain === undefined
             ? keep(busy)
@@ -1095,15 +1300,33 @@ const make = Effect.gen(function* () {
         const idleSince = lease.idleSince ?? now;
         // An open preview pushes the tail out to its last traffic.
         const tailFrom = Math.max(idleSince, (yield* previews.lastActiveAt) ?? 0);
-        if (now - tailFrom >= backend.idleTailMs) {
+        if (closing || now - tailFrom >= backend.idleTailMs) {
           const idle = `Idle for ${formatDuration(now - tailFrom)}.`;
-          // The machine saves everything it wrote before its tokens go (#493);
-          // a Runner from before drains is let go as it always was.
+          // The machine saves everything it wrote before its tokens go (#493).
           if (lease.drains !== true) {
+            if (closing)
+              return {
+                events: [],
+                machine: { ...lease, idleSince },
+                result: { ...IDLE, wakeAt: now + DRAIN_TIMEOUT_MS },
+              };
             return yield* release({ reason: "idle", detail: idle, idleSince: tailFrom });
           }
           if (lease.drain?._tag === "answered") {
             const unsaved = lease.drain.unsaved;
+            if (closing && unsaved.length > 0) {
+              const retryAt = lease.drain.id + DRAIN_TIMEOUT_MS;
+              if (now < retryAt) return keep({ ...IDLE, wakeAt: retryAt });
+              return {
+                events: [],
+                machine: { ...lease, idleSince, drain: { _tag: "asked", id: now } as const },
+                result: {
+                  ...IDLE,
+                  drain: { generation: lease.generation, id: now },
+                  wakeAt: now + DRAIN_TIMEOUT_MS,
+                },
+              };
+            }
             return yield* release({
               reason: "idle",
               detail:
@@ -1126,6 +1349,17 @@ const make = Effect.gen(function* () {
           }
           const deadline = lease.drain.id + DRAIN_TIMEOUT_MS;
           if (now < deadline) return keep({ ...IDLE, wakeAt: deadline });
+          if (closing) {
+            return {
+              events: [],
+              machine: { ...lease, drain: { _tag: "asked", id: now } as const },
+              result: {
+                ...IDLE,
+                drain: { generation: lease.generation, id: now },
+                wakeAt: now + DRAIN_TIMEOUT_MS,
+              },
+            };
+          }
           return yield* release({
             reason: "idle",
             detail: `${idle} It didn't confirm its last saves within ${DRAIN_TIMEOUT_MS / 1000} s, so anything it wrote after its last save may be lost.`,

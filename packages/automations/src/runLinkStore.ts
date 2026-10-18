@@ -1,4 +1,4 @@
-import { AutomationError } from "@t3tools/contracts";
+import { AutomationError, RunId, type WorkflowEventCursor } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as SqlClient from "effect/sql/SqlClient";
 import type { SqlError } from "effect/sql/SqlError";
@@ -120,6 +120,21 @@ export const make = Effect.gen(function* () {
           )
           ORDER BY i.seq
         `,
+      ),
+    /** Captures the run's inbox high-watermark; an empty inbox starts at sequence zero. */
+    captureEventCursor: (runId: string) =>
+      run(
+        "captureEventCursor",
+        sql<{ sequence: number }>`
+          SELECT COALESCE(MAX(seq), 0) AS sequence
+          FROM signalbox_automation_run_inbox
+          WHERE run_id = ${runId}
+        `,
+      ).pipe(
+        Effect.map((rows): WorkflowEventCursor => ({
+          runId: RunId.make(runId),
+          sequence: rows[0]?.sequence ?? 0,
+        })),
       ),
     /**
      * Gives event `seq` to step `stepKey`. False when another step took it

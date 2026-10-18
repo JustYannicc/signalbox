@@ -95,6 +95,14 @@
       "types": "./src/rpc/index.ts",
       "default": "./src/rpc/index.ts"
     },
+    "./observability/client-issues": {
+      "types": "./src/observability/clientIssues.ts",
+      "default": "./src/observability/clientIssues.ts"
+    },
+    "./observability/client-issue-http": {
+      "types": "./src/observability/clientIssueHttp.ts",
+      "default": "./src/observability/clientIssueHttp.ts"
+    },
     "./operations": {
       "types": "./src/operations/index.ts",
       "default": "./src/operations/index.ts"
@@ -118,6 +126,10 @@
     "./providerUpdateRequiredModels": {
       "types": "./src/providerUpdateRequiredModels.ts",
       "default": "./src/providerUpdateRequiredModels.ts"
+    },
+    "./poolModelStatus": {
+      "types": "./src/poolModelStatus.ts",
+      "default": "./src/poolModelStatus.ts"
     },
     "./voice-input": {
       "types": "./src/voice-input/index.ts",
@@ -302,6 +314,10 @@
     "./state/signalboxSignIn": {
       "types": "./src/state/signalboxSignIn.ts",
       "default": "./src/state/signalboxSignIn.ts"
+    },
+    "./state/signalboxPersonBrowser": {
+      "types": "./src/state/signalboxPersonBrowser.ts",
+      "default": "./src/state/signalboxPersonBrowser.ts"
     },
     "./state/signalboxPreviews": {
       "types": "./src/state/signalboxPreviews.ts",

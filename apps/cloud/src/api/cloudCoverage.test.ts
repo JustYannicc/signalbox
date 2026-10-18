@@ -4,6 +4,17 @@ import { describe, expect, it } from "vite-plus/test";
 import { CLOUD_UNSERVED, cloudServes, cloudUnserved, coverageKeyMatches } from "./cloudCoverage.ts";
 
 describe("cloud API coverage", () => {
+  it("serves both keybinding edits rather than leaving the editor with unknown RPCs", () => {
+    const keybindings = operations.filter((operation) => operation.name.startsWith("keybindings."));
+    expect(keybindings.map((operation) => operation.name).sort()).toEqual([
+      "keybindings.remove",
+      "keybindings.upsert",
+    ]);
+    expect(
+      keybindings.filter((operation) => !cloudServes(operation)).map((operation) => operation.name),
+    ).toEqual([]);
+  });
+
   it("serves analytics preferences instead of leaving Settings with unknown RPCs", () => {
     const analytics = operations.filter((operation) => operation.name.startsWith("analytics."));
     expect(analytics.map((operation) => operation.name).sort()).toEqual([
@@ -58,6 +69,13 @@ describe("cloud API coverage", () => {
       .filter((operation) => !cloudServes(operation) && cloudUnserved(operation) === undefined)
       .map((operation) => operation.name);
     expect(silent).toEqual([]);
+  });
+
+  it("serves starting a folder from another folder through the cloud RPC", () => {
+    const operation = operations.find((candidate) => candidate.name === "folders.startFrom");
+    expect(operation).toBeDefined();
+    expect(cloudServes(operation!)).toBe(true);
+    expect(cloudUnserved(operation!)).toBeUndefined();
   });
 
   it("lists nothing the cloud serves", () => {

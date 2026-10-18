@@ -19,6 +19,10 @@
       "types": "./src/DriveProtocol.ts",
       "import": "./src/DriveProtocol.ts"
     },
+    "./PullProtocol": {
+      "types": "./src/PullProtocol.ts",
+      "import": "./src/PullProtocol.ts"
+    },
     "./SessionProtocol": {
       "types": "./src/SessionProtocol.ts",
       "import": "./src/SessionProtocol.ts"
@@ -61,7 +65,7 @@
     }
   },
   "scripts": {
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc-rs --noEmit"
   },
   "dependencies": {
     "@t3tools/contracts": "workspace:*",

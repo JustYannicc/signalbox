@@ -40,6 +40,8 @@ import * as UserShell from "./UserShell.ts";
 import * as UserStore from "./UserStore.ts";
 import * as UserThreadKinds from "./UserThreadKinds.ts";
 import * as UserThreadStatus from "./UserThreadStatus.ts";
+import * as UserFolders from "./UserFolders.ts";
+import * as ClientTraceContext from "../observability/clientTraceContext.ts";
 
 const decodeDriveEvents = Schema.decodeUnknownSync(Schema.Array(DriveRefEvent));
 
@@ -67,6 +69,7 @@ export const makeUserObjectApi = (
       | GitHubBranches.GitHubBranches
       | UserThreadKinds.UserThreadKinds
       | UserThreadStatus.UserThreadStatus
+      | UserFolders.UserFolders
       | LocalKeys.LocalKeys
       | ResourceBindings.ResourceBindings
       | OnePasswordAccount.OnePasswordAccount
@@ -198,6 +201,9 @@ export const makeUserObjectApi = (
     onePasswordToken: () =>
       run(OnePasswordAccount.OnePasswordAccount.use((account) => account.token)),
     contextIds: () => run(UserDrives.UserDrives.use((drives) => drives.contextIds)),
+    clientTraceDimensions: (threadIds) => run(ClientTraceContext.clientTraceDimensions(threadIds)),
+    clientFolderDimensions: (folderIds) =>
+      run(ClientTraceContext.clientFolderDimensions(folderIds)),
     recordDriveAccess: (entry) =>
       run(UserDriveIndex.UserDriveIndex.use((index) => index.record(entry))),
     driveAccess: (driveId) => run(UserDrives.UserDrives.use((drives) => drives.access(driveId))),

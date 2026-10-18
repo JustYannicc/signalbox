@@ -48,9 +48,11 @@ import {
   TYPE_TO_FOCUS_FLOATING_LAYER_SELECTOR,
 } from "./chat/composerFocusRedirect";
 import { getTerminalLabel } from "@t3tools/shared/terminalLabels";
+import { configuredProjectModelSelection } from "../lib/composerModelPolicy"; // signalbox: distinguish explicit project defaults from inherited person defaults.
 import * as Schema from "effect/Schema";
 import {
   AuthOrchestrationOperateScope,
+  AuthOrchestrationReadScope,
   AuthSourceControlWriteScope,
   AuthPreviewOperateScope,
   AuthTerminalReadScope,
@@ -58,7 +60,6 @@ import {
   type AssistantCitation,
   type ChatFileAttachment,
   CommandId,
-  DEFAULT_MODEL,
   isProviderNativeSubagentThread,
   type EnvironmentId,
   type MessageId,
@@ -241,6 +242,7 @@ import {
 } from "../previewStateStore";
 import { BrowserSettingsReadError, openUrlInPreview } from "../browser/openFileInPreview";
 import { resolveDiscoveredServerUrl } from "../browser/browserTargetResolver";
+import { browserLauncher } from "../browser/browserLauncher";
 import { previewRuntimeTabId } from "../browser/previewRuntimeTabId";
 import { addBrowserSurface } from "./preview/addBrowserSurface";
 import { ThreadPreviewMiniPlayer } from "./preview/ThreadPreviewMiniPlayer";
@@ -371,6 +373,7 @@ import { selectThreadTerminalUiState, useTerminalUiStateStore } from "../termina
 import { useKnownTerminalSessions, useThreadRunningTerminalIds } from "../state/terminalSessions";
 import { useEnvironmentQuery } from "../state/query";
 import { useEnvironmentScope } from "~/state/session";
+import { useEnvironmentSupportsSignalboxPreviews } from "~/state/signalboxPreviews";
 import {
   readEnvironmentSupports,
   useEnvironmentSupports,
@@ -456,6 +459,9 @@ import {
   shouldShowThreadErrorBanner,
   ThreadErrorBanner,
 } from "./chat/ThreadErrorBanner";
+import { failureShownInTimeline } from "./chat/failureShownInTimeline"; // signalbox
+import { runtimeIsSettingUp } from "./chat/runtimeIsSettingUp"; // signalbox
+import { createVisitDedupe, visitStampFor } from "./chat/threadVisit"; // signalbox
 import { QueuedRunsControl, type QueuedRunsControlHandle } from "./chat/QueuedRunsControl";
 import { useThreadLinkedPullRequest } from "./pullRequest/useThreadLinkedPullRequest";
 import { useProactivePanels } from "../hooks/useProactivePanels";
@@ -547,6 +553,7 @@ import { useAtomCommand } from "../state/use-atom-command";
 import { useOrchestrationCommand } from "../state/use-orchestration-command";
 import { useAtomQueryRunner } from "../state/use-atom-query-runner";
 import { Button, InlineButton } from "./ui/button";
+import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from "./ui/empty";
 import {
   AlertDialog,
   AlertDialogClose,
@@ -1249,7 +1256,8 @@ export default function ChatView(props: ChatViewProps) {
     (store) => store.threadLastVisitedAtById[routeThreadKey],
   );
   const visitThreadMutation = useAtomCommand(threadEnvironment.visit, { reportFailure: false });
-  const lastDispatchedVisitRef = useRef<string | null>(null);
+  const visitDedupe = useRef(createVisitDedupe()).current; // signalbox: forgets on thread switch
+
   const lastVisitDispatchAtRef = useRef(0);
   const settings = useEnvironmentSettings(environmentId);
   const clientSettingsHydrated = useClientSettingsHydrated();
@@ -1694,7 +1702,9 @@ export default function ChatView(props: ChatViewProps) {
   const activeEnvironmentServerBrowser = useEnvironmentSupportsServerBrowser(
     activeThreadRef?.environmentId ?? null,
   );
-  const browserAvailable = isPreviewSupportedInRuntime() || activeEnvironmentServerBrowser;
+  const activeEnvironmentAgentBrowser = useEnvironmentSupportsSignalboxPreviews(
+    activeThreadRef?.environmentId ?? null,
+  );
   const threadBrowser = useThreadBrowserAvailability(
     activeThreadRef,
     activeEnvironmentServerBrowser,
@@ -1711,6 +1721,16 @@ export default function ChatView(props: ChatViewProps) {
     visibleThreadError === serverRuntime.lastError
       ? null
       : visibleThreadError;
+  // signalbox: the failure row already says it, with its cause.
+  const bannerThreadError =
+    localServerError === null &&
+    failureShownInTimeline(
+      serverProjection?.turnItems ?? [],
+      serverLatestRun?.runId,
+      timelineThreadError,
+    )
+      ? null
+      : timelineThreadError;
 
   const [timelineAnchor, setTimelineAnchor] = useState<{
     readonly threadKey: string | null;
@@ -1783,7 +1803,9 @@ export default function ChatView(props: ChatViewProps) {
     [rightPanelState.surfaces],
   );
   const canReuseTerminal = activeThreadKnownSessionsRaw !== null;
-  const previewPanelOpen = activeRightPanelKind === "preview" && threadBrowser.viewable;
+  const previewPanelOpen =
+    (activeRightPanelKind === "preview" && threadBrowser.viewable) ||
+    (activeRightPanelKind === "agent-browser" && activeEnvironmentAgentBrowser);
   const rightPanelOpen = rightPanelState.isOpen;
   const { active: panelAnimationsActive, durationMs: panelAnimationDurationMs } =
     usePanelAnimationSettings();
@@ -2020,7 +2042,8 @@ export default function ChatView(props: ChatViewProps) {
     retryProjectClone,
     runProjectCloneActionStable,
   ]);
-  const activeProjectDefaultModelSelection = activeProjectSettings.settings.defaultModelSelection;
+  // signalbox: pass only a configured project choice as the project's default.
+  const activeProjectDefaultModelSelection = configuredProjectModelSelection(activeProjectSettings);
   const handleNewThreadInActiveProject = () => {
     startNewThreadForProject(activeProjectRef, handleNewThread);
   };
@@ -2338,7 +2361,11 @@ export default function ChatView(props: ChatViewProps) {
 
   useEffect(() => {
     if (!serverThread?.id) return;
-    const threadUpdatedAt = Date.parse(serverThread.updatedAt);
+    // signalbox: a cached shell renders before the environment connects, and a visit sent then
+    // fails with nothing to resend it; this effect re-runs once the connection is up.
+    if (activeEnvironmentUnavailable) return;
+    const visitStamp = visitStampFor(serverThread); // signalbox: at least the latest run's end
+    const threadUpdatedAt = Date.parse(visitStamp);
     if (Number.isNaN(threadUpdatedAt)) return;
     const effectiveLastVisitedAt = resolveThreadLastVisitedAt(
       serverThread.lastVisitedAt,
@@ -2352,14 +2379,16 @@ export default function ChatView(props: ChatViewProps) {
       // lands. The dedupe also keeps a mark-unread on the open thread sticky:
       // the rewind leaves updatedAt untouched, so the already-dispatched key
       // skips a fresh visit until new activity lands or the thread is reopened.
-      const dispatchKey = `${routeThreadKey}:${serverThread.updatedAt}`;
-      if (lastDispatchedVisitRef.current === dispatchKey) return;
+      const dispatchKey = `${routeThreadKey}:${visitStamp}`;
+      if (visitDedupe.isDuplicate(routeThreadKey, dispatchKey)) return; // signalbox
       const dispatch = () => {
-        lastDispatchedVisitRef.current = dispatchKey;
+        visitDedupe.sent(routeThreadKey, dispatchKey); // signalbox
         lastVisitDispatchAtRef.current = Date.now();
         void visitThreadMutation({
           environmentId: serverThread.environmentId,
-          input: { threadId: serverThread.id, visitedAt: serverThread.updatedAt },
+          input: { threadId: serverThread.id, visitedAt: visitStamp },
+        }).then((result) => {
+          if (result._tag === "Failure") visitDedupe.failed(dispatchKey); // signalbox: retry
         });
       };
       const latestRunCompletedAtMs = serverThread.latestRun?.completedAt
@@ -2382,6 +2411,7 @@ export default function ChatView(props: ChatViewProps) {
       serverThread.updatedAt,
     );
   }, [
+    activeEnvironmentUnavailable, // signalbox
     activeThreadLocalLastVisitedAt,
     markThreadVisited,
     routeThreadKey,
@@ -2651,6 +2681,7 @@ export default function ChatView(props: ChatViewProps) {
   const activeThreadModelInstanceId = activeThread?.modelSelection.instanceId;
   const { selectedProviderEntry, requestedDriverKind } = resolveComposerProviderSelection({
     entries: providerInstanceEntries,
+    providerInstances: settings.providerInstances,
     candidateInstanceIds: [
       selectedProviderByThreadId,
       activeRuntime?.providerInstanceId,
@@ -3301,7 +3332,7 @@ export default function ChatView(props: ChatViewProps) {
   )
     ? activeProviderStatus
     : null;
-  const hasTimelineTopBanner = Boolean(timelineThreadError) || visibleProviderStatus !== null;
+  const hasTimelineTopBanner = Boolean(bannerThreadError) || visibleProviderStatus !== null;
   const activeProjectCwd = activeProject?.workspaceRoot ?? null;
   const activeThreadWorktreePath = activeThread?.worktreePath ?? null;
   const activeWorkspaceRoot = activeThreadWorktreePath ?? activeProjectCwd ?? undefined;
@@ -3885,11 +3916,24 @@ export default function ChatView(props: ChatViewProps) {
     activeThreadRef?.environmentId ?? null,
     AuthPreviewOperateScope,
   );
+  const canReadAgentBrowser = useEnvironmentScope(
+    activeThreadRef?.environmentId ?? null,
+    AuthOrchestrationReadScope,
+  );
+  const launcher = browserLauncher({
+    desktop: isPreviewSupportedInRuntime(),
+    serverBrowser: activeEnvironmentServerBrowser,
+    agentBrowser: activeEnvironmentAgentBrowser,
+    canOperatePreview,
+    canReadAgentBrowser,
+  });
+  const canLaunchBrowser = launcher.permitted;
   const createBrowserSurface = (profileId?: string) => {
-    if (!activeThreadRef || !canOperatePreview) return;
+    if (!activeThreadRef || !canLaunchBrowser) return;
     void addBrowserSurface({
       threadRef: activeThreadRef,
       openPreview,
+      target: launcher.target,
       ...(profileId === undefined ? {} : { profileId }),
     }).then((result) => {
       if (result._tag !== "Failure" || isAtomCommandInterrupted(result)) return;
@@ -4025,12 +4069,16 @@ export default function ChatView(props: ChatViewProps) {
   };
   const closePreviewPanelStable = useStableCallback(closePreviewPanel);
   const togglePreviewPanel = () => {
-    if (!activeThreadRef || !threadBrowser.viewable) return;
+    if (!activeThreadRef || (!threadBrowser.viewable && !activeEnvironmentAgentBrowser)) return;
     if (previewPanelOpen) {
       closePreviewPanel();
       return;
     }
-    if (!canOperatePreview) return;
+    if (!canLaunchBrowser) return;
+    if (launcher.target === "agent-browser") {
+      createBrowserSurface();
+      return;
+    }
     const activeTabId = activePreviewState.activeTabId;
     if (activeTabId) {
       useRightPanelStore.getState().openBrowser(activeThreadRef, activeTabId);
@@ -7202,11 +7250,8 @@ export default function ChatView(props: ChatViewProps) {
       }
     }
     const title = truncate(titleSeed);
-    const threadCreateModelSelection = createModelSelection(
-      ctxSelectedModelSelection.instanceId,
-      ctxSelectedModel || activeProjectDefaultModelSelection?.model || DEFAULT_MODEL,
-      ctxSelectedModelSelection.options,
-    );
+    // signalbox: create the thread with the selection resolved for this draft.
+    const threadCreateModelSelection = ctxSelectedModelSelection;
 
     let failure: AtomCommandResult<unknown, unknown> | null = null;
 
@@ -8157,13 +8202,24 @@ export default function ChatView(props: ChatViewProps) {
       <ThreadPullRequestsPanel threadRef={activeThreadRef} />
     ) : renderedRightPanelSurface?.kind === "agent-browser" ? (
       // signalbox: agent browser
-      <Suspense fallback={null}>
-        <AgentBrowserPanel
-          environmentId={activeThreadRef.environmentId}
-          threadId={activeThreadRef.threadId}
-          visible={rightPanelOpen}
-        />
-      </Suspense>
+      isServerThread ? (
+        <Suspense fallback={null}>
+          <AgentBrowserPanel
+            environmentId={activeThreadRef.environmentId}
+            threadId={activeThreadRef.threadId}
+            visible={rightPanelOpen}
+          />
+        </Suspense>
+      ) : (
+        <Empty>
+          <EmptyHeader>
+            <EmptyTitle>Agent's browser</EmptyTitle>
+            <EmptyDescription>
+              Send a message to start this thread. Pages the agent opens will appear here.
+            </EmptyDescription>
+          </EmptyHeader>
+        </Empty>
+      )
     ) : renderedRightPanelSurface?.kind === "device" ? (
       <Suspense fallback={null}>
         <DevicePanel
@@ -8474,7 +8530,7 @@ export default function ChatView(props: ChatViewProps) {
                 onOpenProviderSetup={openProviderSetupStable}
               />
               <ThreadErrorBanner
-                error={timelineThreadError}
+                error={bannerThreadError}
                 errorClass={
                   localServerError === null && visibleThreadError === serverRuntime?.lastError
                     ? (serverRuntime?.lastErrorClass ?? null)
@@ -8526,6 +8582,9 @@ export default function ChatView(props: ChatViewProps) {
                   : {})}
                 {...(onOpenWorktreeSetupTerminal ? { onOpenWorktreeSetupTerminal } : {})}
                 isPreparingWorktree={!paintOnlyDisplayedTimeline && isPreparingWorktree}
+                settingUpMachine={
+                  !paintOnlyDisplayedTimeline && runtimeIsSettingUp(serverRuntime?.status)
+                }
                 footer={
                   paintOnlyDisplayedTimeline ? null : pendingHandoff === null ? (
                     threadStatusLine
@@ -8804,6 +8863,11 @@ export default function ChatView(props: ChatViewProps) {
                               activeProjectDefaultModelSelection={
                                 activeProjectDefaultModelSelection
                               }
+                              personDefaultModelSelection={
+                                /* signalbox: pass the person's fallback when this project has no configured default. */
+                                environmentById.get(environmentId)?.serverConfig?.settings
+                                  .defaultModelSelection ?? null
+                              }
                               activeThreadModelSelection={activeThread?.modelSelection}
                               activeProjectId={activeProject?.id ?? null}
                               activeContextWindow={activeContextWindow}
@@ -9078,7 +9142,8 @@ export default function ChatView(props: ChatViewProps) {
           onAddPullRequest={addPullRequestSurfaceStable}
           onAddPullRequests={addPullRequestsSurfaceStable}
           onAddDevice={addDeviceSurfaceStable}
-          browserAvailable={canOperatePreview && browserAvailable}
+          browserAvailable={canLaunchBrowser && launcher.available}
+          browserProfilesAvailable={launcher.profilesAvailable}
           terminalAvailable={activeProject !== null && canOperateTerminal}
           terminalSupported={terminalSupported}
           devicesSupported={devicesSupported}
@@ -9135,7 +9200,8 @@ export default function ChatView(props: ChatViewProps) {
             onAddPullRequest={addPullRequestSurfaceStable}
             onAddPullRequests={addPullRequestsSurfaceStable}
             onAddDevice={addDeviceSurfaceStable}
-            browserAvailable={canOperatePreview && browserAvailable}
+            browserAvailable={canLaunchBrowser && launcher.available}
+            browserProfilesAvailable={launcher.profilesAvailable}
             terminalAvailable={activeProject !== null && canOperateTerminal}
             terminalSupported={terminalSupported}
             devicesSupported={devicesSupported}

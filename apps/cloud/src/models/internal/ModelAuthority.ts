@@ -6,6 +6,7 @@ import type { ModelGatewayRecord, ModelUsage } from "../ModelRecords.ts";
 import type {
   LocalModelAuthorization,
   ModelAuthorization,
+  ModelCallTrace,
   ModelForwardReply,
   ModelPoolRoute,
 } from "../ModelProtocol.ts";
@@ -24,6 +25,7 @@ export class ModelAuthority extends Context.Service<
       path: string,
       request: Request,
       thread?: string,
+      trace?: ModelCallTrace,
     ) => Promise<ModelForwardReply>;
     readonly recordThread: (threadId: ThreadId, record: ModelGatewayRecord) => Promise<void>;
     readonly recordLocal: (
