@@ -7,7 +7,8 @@ import type { Node } from "oxc-parser";
 
 import { durationMs } from "@signalbox/automations/stepPolicy";
 import { eventTriggerProblem } from "@signalbox/automations/compiler/eventTriggers";
-import { evaluateLiteral } from "./literals.ts";
+import { evaluateLiteral, propertyKey, unwrap } from "./literals.ts";
+import { compileSchemaContract } from "./schemaContract.ts";
 import type { WorkflowSource } from "./source.ts";
 
 const decodeMeta = Schema.decodeUnknownResult(WorkflowMeta);
@@ -17,29 +18,69 @@ const META_HINT =
   'Write meta as a plain object, e.g. export const meta = { name: "Weekly report", triggers: [{ cron: "0 9 * * 1" }] } as const';
 
 /**
- * Reads `export const meta = { … }`. It must be a pure literal so the server
- * can list the automation and schedule its triggers without running any code.
+ * Reads `export const meta = { … }`. All values are literals except `input`
+ * and `output`, which accept statically recognized Effect Schema expressions.
  */
-export function readMeta(source: WorkflowSource, init: Node): WorkflowMeta | null {
-  const literal = evaluateLiteral(init);
-  if (!literal.ok) {
+export function readMeta(
+  source: WorkflowSource,
+  init: Node,
+  schemaImports: ReadonlySet<string>,
+): WorkflowMeta | null {
+  const object = unwrap(init);
+  if (object.type !== "ObjectExpression") {
     source.error(
       init,
-      "meta has to be a plain literal: no variables, calls, or computed values.",
+      "meta has to be a plain object literal. Its input and output contracts must use Effect Schema.",
       META_HINT,
     );
     return null;
   }
+
+  const literal: Record<string, unknown> = {};
+  const fields = new Set<string>();
+  for (const property of object.properties) {
+    const key = propertyKey(property);
+    if (key === null || property.type !== "Property" || property.shorthand) {
+      source.error(
+        init,
+        "meta has to be a plain literal: no variables, calls, or computed values.",
+        META_HINT,
+      );
+      return null;
+    }
+    if (fields.has(key)) {
+      source.error(property, `meta can't declare "${key}" more than once.`);
+      return null;
+    }
+    fields.add(key);
+
+    if (key === "input" || key === "output") {
+      const contract = compileSchemaContract(source, key, property.value, schemaImports);
+      if (!contract) return null;
+      literal[key] = contract;
+      continue;
+    }
+
+    const value = evaluateLiteral(property.value);
+    if (!value.ok) {
+      source.error(
+        property.value,
+        "meta has to be a plain literal: no variables, calls, or computed values.",
+        META_HINT,
+      );
+      return null;
+    }
+    literal[key] = value.value;
+  }
+
   const triggerProblem = eventTriggerProblem(
-    literal.value && typeof literal.value === "object"
-      ? (literal.value as { readonly triggers?: unknown }).triggers
-      : undefined,
+    Object.hasOwn(literal, "triggers") ? literal.triggers : undefined,
   );
   if (triggerProblem) {
     source.error(init, triggerProblem.message, triggerProblem.hint);
     return null;
   }
-  const decoded = decodeMeta(literal.value);
+  const decoded = decodeMeta(literal);
   if (Result.isFailure(decoded)) {
     source.error(init, `meta is invalid: ${formatIssue(decoded.failure.issue)}`, META_HINT);
     return null;

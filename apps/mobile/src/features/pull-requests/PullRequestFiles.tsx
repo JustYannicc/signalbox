@@ -37,7 +37,11 @@ export function usePullRequestFilesContent(props: {
   const navigation = useNavigation();
   const result = usePullRequestDiff(props.params);
   const detail = useEnvironmentQuery(composerPullRequests.detail(requestTarget(props.params)));
-  const viewed = usePullRequestFilesViewed(props.params, props.params.commit ? null : detail.data);
+  const viewed = usePullRequestFilesViewed(
+    props.params,
+    props.params.commit ? null : detail.data,
+    result.revision,
+  );
   const filter = usePullRequestFileFilter(result.parsed);
   const parsed = filter.parsed;
   const loading = result.isPending && parsed.kind === "empty" && !result.error;

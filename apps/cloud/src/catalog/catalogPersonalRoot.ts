@@ -1,29 +1,47 @@
 import { defineHome } from "@signalbox/sync/definition";
 import * as Effect from "effect/Effect";
-import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
+import { CatalogSetGrant, setCatalogGrant } from "./adapters/catalogGrant.ts";
+import {
+  CatalogChildren,
+  CatalogCreatedFolder,
+  CatalogCreateFolder,
+  CatalogFolderLifecycle,
+  CatalogListChildren,
+  catalogLifecycle,
+} from "./adapters/catalogLifecycle.ts";
 import { resolveCatalogAccess } from "./adapters/catalogRootPolicy.ts";
 import {
-  CatalogRenameFolder,
   CatalogMoveFolder,
-  renameCatalogFolder,
-  moveCatalogFolder,
+  CatalogRenameFolder,
+  catalogTopology,
 } from "./adapters/catalogTopology.ts";
-import { CatalogPersonId, catalogHomeKey } from "./catalogHome.ts";
-import { catalogRootTables } from "./catalogHomeTables.ts";
 import {
-  CatalogGrantRole,
+  CatalogEnsureOrganizationReference,
+  CatalogListReferencePlacements,
+  CatalogMoveOrganizationReference,
+  CatalogReferencePlacements,
+  catalogOrganizationReferences as references,
+} from "./catalogOrganizationReferences.ts";
+import { catalogPersonalTables } from "./catalogPersonalTables.ts";
+import {
   CatalogPersonalRoot,
   CatalogPolicyActor,
   CatalogPolicyFailure,
   CatalogPolicyTarget,
   CatalogRole,
+  type CatalogPolicyReadContext,
+  type CatalogPolicyWriteContext,
 } from "./catalogPolicy.ts";
 
+const topology = catalogTopology<CatalogPolicyWriteContext>(resolveCatalogAccess);
+const lifecycle = catalogLifecycle<CatalogPolicyReadContext>(resolveCatalogAccess);
+const Changed = Schema.Struct({ changed: Schema.Boolean });
+
 export const catalogPersonalRoot = defineHome(
-  { actor: CatalogPolicyActor, home: CatalogPersonalRoot, tables: catalogRootTables },
-  ({ view, change }) => ({
+  { actor: CatalogPolicyActor, home: CatalogPersonalRoot, tables: catalogPersonalTables },
+  ({ view, change, projection }) => ({
     views: {
       access: view({
         input: CatalogPolicyTarget,
@@ -32,69 +50,72 @@ export const catalogPersonalRoot = defineHome(
         run: (ctx, target) =>
           resolveCatalogAccess(ctx, target).pipe(Effect.map(({ role }) => ({ role }))),
       }),
+      children: view({
+        input: CatalogListChildren,
+        output: CatalogChildren,
+        failure: CatalogPolicyFailure,
+        run: lifecycle.listChildren,
+      }),
+      // Internal raw filing; the public Catalog filters it by current organization policy.
+      referencePlacements: view({
+        input: CatalogListReferencePlacements,
+        output: CatalogReferencePlacements,
+        failure: CatalogPolicyFailure,
+        run: references.referencePlacements,
+      }),
     },
     changes: {
+      createFolder: change({
+        input: CatalogCreateFolder,
+        output: CatalogCreatedFolder,
+        failure: CatalogPolicyFailure,
+        run: lifecycle.createFolder,
+      }),
+      retireFolder: change({
+        input: CatalogFolderLifecycle,
+        output: Changed,
+        failure: CatalogPolicyFailure,
+        run: lifecycle.retireFolder,
+      }),
+      reopenFolder: change({
+        input: CatalogFolderLifecycle,
+        output: Changed,
+        failure: CatalogPolicyFailure,
+        run: lifecycle.reopenFolder,
+      }),
       renameFolder: change({
         input: CatalogRenameFolder,
-        output: Schema.Struct({ changed: Schema.Boolean }),
+        output: Changed,
         failure: CatalogPolicyFailure,
-        run: renameCatalogFolder,
+        run: topology.renameFolder,
       }),
       moveFolder: change({
         input: CatalogMoveFolder,
-        output: Schema.Struct({ changed: Schema.Boolean }),
+        output: Changed,
         failure: CatalogPolicyFailure,
-        run: moveCatalogFolder,
+        run: topology.moveFolder,
       }),
       setGrant: change({
-        input: Schema.Struct({
-          target: CatalogPolicyTarget,
-          personId: CatalogPersonId,
-          role: Schema.NullOr(CatalogGrantRole),
-        }),
-        output: Schema.Struct({ changed: Schema.Boolean }),
+        input: CatalogSetGrant,
+        output: Changed,
         failure: CatalogPolicyFailure,
-        run: (ctx, input) =>
-          Effect.gen(function* () {
-            const access = yield* resolveCatalogAccess(ctx, input.target);
-            if (access.role !== "Owner" && access.role !== "Admin") {
-              return yield* Effect.fail(new CatalogPolicyFailure({ reason: "denied" }));
-            }
-            const key = {
-              folderId: input.target.folderId,
-              incarnation: input.target.incarnation,
-              personId: input.personId,
-            };
-            const existing = yield* ctx.tables.grants.get(key);
-            if (
-              (input.role === null && Option.isNone(existing)) ||
-              (Option.isSome(existing) && existing.value.role === input.role)
-            ) {
-              return { changed: false };
-            }
-            if (
-              access.root.authEpoch === Number.MAX_SAFE_INTEGER ||
-              access.state.revision === Number.MAX_SAFE_INTEGER
-            ) {
-              return yield* Effect.fail(new CatalogPolicyFailure({ reason: "invalid_state" }));
-            }
-
-            if (input.role === null) {
-              yield* ctx.tables.grants.delete(key);
-            } else {
-              const row = { ...key, role: input.role };
-              yield* Option.isSome(existing)
-                ? ctx.tables.grants.replace(key, row)
-                : ctx.tables.grants.insert(row);
-            }
-            const epoch = access.root.authEpoch + 1;
-            yield* ctx.tables.root.patch("root", { authEpoch: epoch });
-            yield* ctx.tables.state.patch("state", { revision: access.state.revision + 1 });
-            yield* ctx.requireAuthorizationFence({ scope: catalogHomeKey(ctx.home), epoch });
-            return { changed: true };
-          }),
+        run: setCatalogGrant<CatalogPolicyWriteContext>(resolveCatalogAccess),
+      }),
+      moveOrganizationReference: change({
+        input: CatalogMoveOrganizationReference,
+        output: Changed,
+        failure: CatalogPolicyFailure,
+        run: references.moveOrganizationReference,
       }),
     },
-    projections: {},
+    projections: {
+      // Trusted membership fan-in only; references never grant organization access.
+      ensureOrganizationReference: projection({
+        input: CatalogEnsureOrganizationReference,
+        output: Changed,
+        failure: CatalogPolicyFailure,
+        run: references.ensureOrganizationReference,
+      }),
+    },
   }),
 );

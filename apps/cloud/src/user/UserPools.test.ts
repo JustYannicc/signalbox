@@ -148,7 +148,6 @@ describe("UserPools config subscriptions", () => {
       const originalAccounts = personal.api.accounts;
       const pendingReads: Array<() => void> = [];
       let accountCalls = 0;
-      let lastAccountReply: unknown;
       let blocked = true;
       let signalStart!: () => void;
       let started = new Promise<void>((resolve) => {
@@ -162,11 +161,7 @@ describe("UserPools config subscriptions", () => {
           accounts: (reader) => {
             accountCalls += 1;
             if (!blocked) {
-              const reply = originalAccounts(reader);
-              void reply.then((value) => {
-                lastAccountReply = value;
-              });
-              return reply;
+              return originalAccounts(reader);
             }
             if (!didSignalStart) {
               didSignalStart = true;
@@ -254,21 +249,15 @@ describe("UserPools config subscriptions", () => {
       expect(cachedClaude?.status).toBe("error");
       expect(config.settings.defaultModelSelection?.instanceId).toBe("claude_hub");
 
-      // A live config subscription retries on its ordinary pool refresh interval.
+      // The shared snapshot's deadline also drives subscriptions opened after it was cached.
       const recovered = yield* Deferred.make<void>();
       const recoverySnapshot = yield* Deferred.make<void>();
-      let lastRecoverySource: unknown;
       const recoveryStream = rpc[WS_METHODS.subscribeServerConfig]({
         usageLimitSources: true,
       }).pipe(
         Stream.tap((event) =>
           Effect.gen(function* () {
             if (event.type === "snapshot") yield* Deferred.succeed(recoverySnapshot, undefined);
-            if (event.type === "usageLimitSourcesUpdated") {
-              lastRecoverySource = event.payload.sources.find(
-                (entry) => entry.label === "Personal",
-              );
-            }
             if (
               event.type === "usageLimitSourcesUpdated" &&
               event.payload.sources.some(
@@ -285,32 +274,11 @@ describe("UserPools config subscriptions", () => {
       yield* recoveryStream;
       yield* Deferred.await(recoverySnapshot);
       const callsBeforePolling = accountCalls;
-      const pollingAt = (yield* Clock.currentTimeMillis) + 30_001;
+      const pollingAt = poolsRead.completedAt + PoolEngine.ACCOUNTS_FRESH_MS;
       vi.setSystemTime(pollingAt);
-      yield* TestClock.adjust(30_001);
+      yield* TestClock.adjust(pollingAt - (yield* Clock.currentTimeMillis));
       expect(accountCalls).toBeGreaterThan(callsBeforePolling);
-      const recoveryCheck = yield* Effect.forkChild(
-        Deferred.await(recovered).pipe(
-          Effect.as(true),
-          Effect.timeoutOrElse({ duration: 1_000, orElse: () => Effect.succeed(false) }),
-        ),
-      );
-      const recoveryDeadlineAt = (yield* Clock.currentTimeMillis) + 1_000;
-      vi.setSystemTime(recoveryDeadlineAt);
-      yield* TestClock.adjust(1_000);
-      const didRecover = yield* Fiber.join(recoveryCheck);
-      if (!didRecover) {
-        expect(lastAccountReply).toMatchObject({
-          _tag: "ok",
-          value: {
-            accounts: expect.arrayContaining([
-              expect.objectContaining({ email: "claude-1@example.test" }),
-            ]),
-          },
-        });
-        expect(lastRecoverySource).toMatchObject({ error: undefined });
-      }
-      expect(didRecover).toBe(true);
+      yield* Deferred.await(recovered);
     }).pipe(Effect.scoped, Effect.ensuring(Effect.sync(() => vi.useRealTimers())));
   });
 

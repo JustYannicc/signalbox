@@ -20,6 +20,13 @@ Otherwise port: keep our side of the code we replaced, and bring over only the u
 want, by hand or with `git cherry-pick -x <sha>` on a branch off `main`. A file that conflicts on
 sync after sync is the signal to switch that area to porting for good.
 
+The eight recorded conflict issues through #526, checked on 2026-10-18, show recurring conflicts in
+`apps/server/src/mcp/toolkits/orchestrator/tools.ts` (five issues), `docs/user/install.md` (five), and
+`apps/mobile/src/features/home/HomeHeader.tsx` (four). See #115, #168, #181, #194, #196, #204,
+#209, and #526 for the per-sync file lists. Use these counts to choose where to inspect first, then
+make the merge-or-port call from the current conflict diff. Keep each sync's details in its issue or
+PR, and refresh these counts when new conflict history changes the ranking.
+
 The rule for persistence migrations in AGENTS.md lasts as long as we merge upstream's
 `apps/server/src/persistence`. Stopping upstream merges altogether is Yannic's call; flag it rather
 than skipping syncs quietly.

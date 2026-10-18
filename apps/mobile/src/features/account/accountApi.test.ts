@@ -5,7 +5,9 @@ import { parseGitHubConnectReturn, startGitHubConnect } from "./accountApi";
 const RETURN_URL = "signalbox://account-return";
 
 function answer(status: number, body: unknown) {
-  const fetch = vi.fn(async () => new Response(JSON.stringify(body), { status }));
+  const fetch = vi.fn<typeof globalThis.fetch>(
+    async () => new Response(JSON.stringify(body), { status }),
+  );
   vi.stubGlobal("fetch", fetch);
   return fetch;
 }
@@ -20,14 +22,15 @@ describe("starting to connect GitHub", () => {
     await expect(startGitHubConnect("https://cloud.example/", "token-1", RETURN_URL)).resolves.toBe(
       "https://cloud.example/api/github/connect/one-time",
     );
-    expect(fetch).toHaveBeenCalledWith(
-      "https://cloud.example/api/github/connect",
-      expect.objectContaining({
-        method: "POST",
-        headers: { authorization: "Bearer token-1", "content-type": "application/json" },
-        body: JSON.stringify({ returnUrl: RETURN_URL }),
-      }),
-    );
+    const [url, init] = fetch.mock.calls[0]!;
+    const headers = new Headers(init?.headers);
+    const body = await new Response(init?.body).text();
+
+    expect(String(url)).toBe("https://cloud.example/api/github/connect");
+    expect(init?.method).toBe("POST");
+    expect(headers.get("authorization")).toBe("Bearer token-1");
+    expect(headers.get("content-type")).toBe("application/json");
+    expect(body).toBe(JSON.stringify({ returnUrl: RETURN_URL }));
   });
 
   it("says why when the server refuses", async () => {

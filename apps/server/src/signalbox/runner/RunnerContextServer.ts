@@ -1,3 +1,4 @@
+import { layerAskTools } from "./RunnerAskTools.ts";
 // @effect-diagnostics nodeBuiltinImport:off - the context server is a Node HTTP boundary.
 import * as NodeHttp from "node:http";
 
@@ -200,6 +201,7 @@ export const startContextServer = Effect.fn("startContextServer")(function* (inp
     layerContextTools(view),
     layerBranchTools(view, () => drive),
     layerAutomationTools(view),
+    layerAskTools(view),
     layerPullRequestReviewTools(view),
     layerRunnerPullRequestTools(view).pipe(
       Layer.provide(Layer.mergeAll(NodeFileSystem.layer, NodePath.layer)),

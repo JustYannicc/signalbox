@@ -97,6 +97,7 @@ export function usePullRequestDiff(params: PullRequestDiffParams) {
   return {
     ...query,
     refresh,
+    revision: pages[0]?.result.revision,
     parsed,
     patch,
     nextCursor,
