@@ -29,12 +29,12 @@ export interface PackageBundleOptions {
   readonly stdin?: (entryPath: string) => string;
   readonly define?: Readonly<Record<string, string>>;
   /** Actual userland source for legacy core specifiers in the pinned package graph. */
-  readonly nodeBuiltinPackageEntries?: Readonly<
-    Record<"punycode" | "node:punycode", string>
-  >;
+  readonly nodeBuiltinPackageEntries?: Readonly<Record<"punycode" | "node:punycode", string>>;
 }
 
-export async function bundleInstalledPackage(options: PackageBundleOptions): Promise<PackageBundle> {
+export async function bundleInstalledPackage(
+  options: PackageBundleOptions,
+): Promise<PackageBundle> {
   const entryPath = resolvePackageFile(options.packageEntry, options.entryMember);
   const manifest = packageManifest(entryPath);
   if (manifest.name !== options.packageName) {
@@ -42,7 +42,10 @@ export async function bundleInstalledPackage(options: PackageBundleOptions): Pro
       `[node-web-environment] expected package ${options.packageName}; found ${manifest.name}`,
     );
   }
-  if (manifest.version !== options.expectedVersion || manifest.license !== options.expectedLicense) {
+  if (
+    manifest.version !== options.expectedVersion ||
+    manifest.license !== options.expectedLicense
+  ) {
     throw new Error(
       `[node-web-environment] expected ${options.packageName}@${options.expectedVersion} (${options.expectedLicense}); found ${manifest.version} (${manifest.license})`,
     );
@@ -75,7 +78,9 @@ export async function bundleInstalledPackage(options: PackageBundleOptions): Pro
   const source = result.outputFiles?.[0]?.text;
   const metafile = result.metafile;
   if (!source || !metafile) {
-    throw new Error(`[node-web-environment] ${options.packageName} bundle omitted source or metafile`);
+    throw new Error(
+      `[node-web-environment] ${options.packageName} bundle omitted source or metafile`,
+    );
   }
   const nativeImports = assertClosedPackageGraph(metafile, options.packageName);
   const inputs = inspectPackageInputs(metafile, workingDirectory);
@@ -159,7 +164,8 @@ function canonicalBuiltinPlugin(
     name: "signalbox-node-web-environment-builtins",
     setup(build) {
       build.onResolve({ filter: /.*/, namespace: "file" }, (args) => {
-        const userlandEntry = nodeBuiltinPackageEntries?.[args.path as "punycode" | "node:punycode"];
+        const userlandEntry =
+          nodeBuiltinPackageEntries?.[args.path as "punycode" | "node:punycode"];
         if (userlandEntry) return { path: userlandEntry };
         const name = canonicalNodeBuiltin(args.path);
         if (name) return { path: name, namespace: builtinNamespace };

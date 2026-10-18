@@ -51,7 +51,9 @@ export interface NodeWebEnvironmentBuildProvenance {
   readonly schemaVersion: 1;
   readonly moduleMapBytes: number;
   readonly moduleMapSha256: string;
-  readonly modules: Readonly<Record<NodeWebEnvironmentPackageName, NodeWebEnvironmentModuleProvenance>>;
+  readonly modules: Readonly<
+    Record<NodeWebEnvironmentPackageName, NodeWebEnvironmentModuleProvenance>
+  >;
 }
 
 export interface NodeWebEnvironmentBuild {
@@ -68,10 +70,7 @@ export async function buildNodeWebEnvironment(
   const wsRequirement = NODE_WEB_ENVIRONMENT_PACKAGE_REQUIREMENTS.ws;
   const fetchRequirement = NODE_WEB_ENVIRONMENT_PACKAGE_REQUIREMENTS["node-fetch"];
   const wsImportEntry = resolveImportEntry(packageEntries.ws);
-  const wsEntryPath = resolvePackageFile(
-    packageEntries.ws,
-    getPackageMain(packageEntries.ws),
-  );
+  const wsEntryPath = resolvePackageFile(packageEntries.ws, getPackageMain(packageEntries.ws));
   const punycodeEntry = resolvePunycodeEntry();
   const fetchManifest = packageManifest(packageEntries["node-fetch"]);
   if (typeof fetchManifest === "undefined") {
@@ -90,8 +89,9 @@ export async function buildNodeWebEnvironment(
     entryMember: NodePath.relative(packageRoot(packageEntries.ws), wsEntryPath),
     sourcefile: "node-web-environment-ws.mjs",
     // ws's CJS root owns its static aliases; expose those same values as ESM named exports.
-    stdin: (entryPath) => [
-      `import WebSocketEsm, {
+    stdin: (entryPath) =>
+      [
+        `import WebSocketEsm, {
   WebSocket as NamedWebSocket,
   WebSocketServer,
   createWebSocketStream,
@@ -101,12 +101,12 @@ export async function buildNodeWebEnvironment(
   Sender,
   subprotocol,
 } from ${JSON.stringify(wsImportEntry)};`,
-      `const WebSocketModule = require(${JSON.stringify(entryPath)});`,
-      'if (WebSocketEsm !== WebSocketModule) throw new Error("ws ESM and CJS roots differ");',
-      "export default WebSocketModule;",
-      "export const WebSocket = NamedWebSocket;",
-      "export { WebSocketServer, createWebSocketStream, extension, PerMessageDeflate, Receiver, Sender, subprotocol };",
-    ].join("\n"),
+        `const WebSocketModule = require(${JSON.stringify(entryPath)});`,
+        'if (WebSocketEsm !== WebSocketModule) throw new Error("ws ESM and CJS roots differ");',
+        "export default WebSocketModule;",
+        "export const WebSocket = NamedWebSocket;",
+        "export { WebSocketServer, createWebSocketStream, extension, PerMessageDeflate, Receiver, Sender, subprotocol };",
+      ].join("\n"),
     define: {
       "process.env.WS_NO_BUFFER_UTIL": "true",
       "process.env.WS_NO_UTF_8_VALIDATE": "true",
@@ -123,15 +123,16 @@ export async function buildNodeWebEnvironment(
       punycode: punycodeEntry,
       "node:punycode": punycodeEntry,
     },
-    stdin: (entryPath) => [
-      `import fetch from ${JSON.stringify(entryPath)};`,
-      "export default fetch;",
-      "export const AbortError = fetch.AbortError;",
-      "export const FetchError = fetch.FetchError;",
-      "export const Headers = fetch.Headers;",
-      "export const Request = fetch.Request;",
-      "export const Response = fetch.Response;",
-    ].join("\n"),
+    stdin: (entryPath) =>
+      [
+        `import fetch from ${JSON.stringify(entryPath)};`,
+        "export default fetch;",
+        "export const AbortError = fetch.AbortError;",
+        "export const FetchError = fetch.FetchError;",
+        "export const Headers = fetch.Headers;",
+        "export const Request = fetch.Request;",
+        "export const Response = fetch.Response;",
+      ].join("\n"),
   });
 
   const bunJscPath = NodeURL.fileURLToPath(new URL("./NodeBunJsc.ts", import.meta.url));
@@ -219,7 +220,9 @@ function resolveImportEntry(packageEntry: string): string {
   const manifest: unknown = JSON.parse(NodeFS.readFileSync(manifestPath, "utf8"));
   const rootExports = isRecord(manifest) ? Reflect.get(manifest, "exports") : undefined;
   const packageRootExports = isRecord(rootExports) ? Reflect.get(rootExports, ".") : undefined;
-  const importTarget = isRecord(packageRootExports) ? Reflect.get(packageRootExports, "import") : undefined;
+  const importTarget = isRecord(packageRootExports)
+    ? Reflect.get(packageRootExports, "import")
+    : undefined;
   if (typeof importTarget !== "string" || !importTarget.startsWith("./")) {
     throw new Error("[node-web-environment] ws does not declare an ESM import entry");
   }
@@ -231,7 +234,11 @@ function resolvePunycodeEntry(): string {
   const entry = NodeModule.createRequire(import.meta.url).resolve("punycode/");
   const manifest = packageManifest(entry);
   const requirement = NODE_WEB_ENVIRONMENT_PACKAGE_REQUIREMENTS.punycode;
-  if (manifest.name !== "punycode" || manifest.version !== requirement.version || manifest.license !== requirement.license) {
+  if (
+    manifest.name !== "punycode" ||
+    manifest.version !== requirement.version ||
+    manifest.license !== requirement.license
+  ) {
     throw new Error(
       `[node-web-environment] expected punycode@${requirement.version} (${requirement.license}); found ${manifest.name}@${manifest.version} (${manifest.license})`,
     );

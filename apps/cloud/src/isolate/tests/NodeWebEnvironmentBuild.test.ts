@@ -66,14 +66,56 @@ describe("Node web environment package build", () => {
     });
     expect(environment.provenance.modules["node-fetch"].packageClosure).toEqual(
       expect.arrayContaining([
-        { name: "node-fetch", version: "2.7.0", license: "MIT", licenseFile: "LICENSE.md", licenseSha256: expect.any(String) },
-        { name: "whatwg-url", version: "5.0.0", license: "MIT", licenseFile: expect.any(String), licenseSha256: expect.any(String) },
+        {
+          name: "node-fetch",
+          version: "2.7.0",
+          license: "MIT",
+          licenseFile: "LICENSE.md",
+          licenseSha256: expect.any(String),
+        },
+        {
+          name: "whatwg-url",
+          version: "5.0.0",
+          license: "MIT",
+          licenseFile: expect.any(String),
+          licenseSha256: expect.any(String),
+        },
         { name: "tr46", version: "0.0.3", license: "MIT", licenseFile: null, licenseSha256: null },
-        { name: "webidl-conversions", version: "3.0.1", license: "BSD-2-Clause", licenseFile: expect.any(String), licenseSha256: expect.any(String) },
-        { name: "punycode", version: "2.3.1", license: "MIT", licenseFile: "LICENSE-MIT.txt", licenseSha256: expect.any(String) },
-        { name: "encoding", version: "0.1.13", license: "MIT", licenseFile: expect.any(String), licenseSha256: expect.any(String) },
-        { name: "iconv-lite", version: "0.6.3", license: "MIT", licenseFile: expect.any(String), licenseSha256: expect.any(String) },
-        { name: "safer-buffer", version: "2.1.2", license: "MIT", licenseFile: expect.any(String), licenseSha256: expect.any(String) },
+        {
+          name: "webidl-conversions",
+          version: "3.0.1",
+          license: "BSD-2-Clause",
+          licenseFile: expect.any(String),
+          licenseSha256: expect.any(String),
+        },
+        {
+          name: "punycode",
+          version: "2.3.1",
+          license: "MIT",
+          licenseFile: "LICENSE-MIT.txt",
+          licenseSha256: expect.any(String),
+        },
+        {
+          name: "encoding",
+          version: "0.1.13",
+          license: "MIT",
+          licenseFile: expect.any(String),
+          licenseSha256: expect.any(String),
+        },
+        {
+          name: "iconv-lite",
+          version: "0.6.3",
+          license: "MIT",
+          licenseFile: expect.any(String),
+          licenseSha256: expect.any(String),
+        },
+        {
+          name: "safer-buffer",
+          version: "2.1.2",
+          license: "MIT",
+          licenseFile: expect.any(String),
+          licenseSha256: expect.any(String),
+        },
       ]),
     );
     expect(environment.provenance.modules["node-fetch"].nativeImports).not.toContain(
@@ -84,8 +126,11 @@ describe("Node web environment package build", () => {
       expect(module.outputBytes).toBe(
         NodeBuffer.Buffer.byteLength(environment.environmentPackageModules[module.specifier]),
       );
-      expect(module.outputSha256).toBe(digest(environment.environmentPackageModules[module.specifier]));
-      for (const sourceFile of module.sourceFiles) expect(sourceFile.sha256).toMatch(/^[0-9a-f]{64}$/u);
+      expect(module.outputSha256).toBe(
+        digest(environment.environmentPackageModules[module.specifier]),
+      );
+      for (const sourceFile of module.sourceFiles)
+        expect(sourceFile.sha256).toMatch(/^[0-9a-f]{64}$/u);
       for (const packageLicense of module.packageClosure) {
         if (packageLicense.licenseFile) {
           expect(packageLicense.licenseSha256).toMatch(/^[0-9a-f]{64}$/u);
@@ -151,9 +196,7 @@ describe("Node web environment package build", () => {
     expect(Array.from(body)).toEqual([0, 255, 1, 2]);
 
     const Request = fetchModule.Request as new (input: string) => { readonly url: string };
-    expect(new Request("https://münich.example/").url).toBe(
-      "https://xn--mnich-kva.example/",
-    );
+    expect(new Request("https://münich.example/").url).toBe("https://xn--mnich-kva.example/");
     expect(new Request("https://𝒜.example/").url).toBe("https://a.example/");
   });
 
@@ -167,7 +210,11 @@ describe("Node web environment package build", () => {
       addons: [],
     });
     const module = createNodeModule(
-      { require: (specifier) => { throw new Error(`Unexpected builtin request: ${specifier}`); } },
+      {
+        require: (specifier) => {
+          throw new Error(`Unexpected builtin request: ${specifier}`);
+        },
+      },
       resolver,
     );
     const require = module.createRequire("/signalbox/release.js");
@@ -247,7 +294,9 @@ describe("Node web environment package build", () => {
   it("imports bun:jsc safely and fails only when the V8-incompatible members are called", () => {
     expect(typeof jscModule.edenGC).toBe("function");
     expect(typeof jscModule.heapStats).toBe("function");
-    const BunJscUnavailableError = jscModule.BunJscUnavailableError as new (...args: never[]) => Error & {
+    const BunJscUnavailableError = jscModule.BunJscUnavailableError as new (
+      ...args: never[]
+    ) => Error & {
       readonly code: string;
       readonly runtime: string;
       readonly member: string;
@@ -275,7 +324,9 @@ describe("Node web environment package build", () => {
 
 async function importPrepared(name: string, source: string): Promise<Record<string, unknown>> {
   const base64 = NodeBuffer.Buffer.from(source).toString("base64");
-  const namespace: unknown = await import(/* @vite-ignore */ `data:text/javascript;base64,${base64}`);
+  const namespace: unknown = await import(
+    /* @vite-ignore */ `data:text/javascript;base64,${base64}`
+  );
   if (typeof namespace === "function" && name === "node-fetch") {
     // Vite unwraps this CJS-shaped graph to its default; the real function carries these aliases.
     const aliases = Object.fromEntries(
@@ -287,7 +338,9 @@ async function importPrepared(name: string, source: string): Promise<Record<stri
     return Object.assign({ default: namespace }, aliases);
   }
   if (typeof namespace !== "object" || namespace === null) {
-    throw new TypeError(`Prepared package ${name} did not return an ESM namespace (got ${typeof namespace})`);
+    throw new TypeError(
+      `Prepared package ${name} did not return an ESM namespace (got ${typeof namespace})`,
+    );
   }
   return namespace as Record<string, unknown>;
 }

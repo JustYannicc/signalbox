@@ -62,7 +62,9 @@ export function inspectPackageInputs(
     if (!NodeFS.existsSync(absolutePath) || !NodeFS.statSync(absolutePath).isFile()) continue;
     const sourcePath = NodeFS.realpathSync(absolutePath);
     if (sourcePath.endsWith(".node")) {
-      throw new Error(`[node-web-environment] native addon entered the package graph: ${inputPath}`);
+      throw new Error(
+        `[node-web-environment] native addon entered the package graph: ${inputPath}`,
+      );
     }
     const located = locatePackage(sourcePath);
     if (!located) continue;
