@@ -1,4 +1,3 @@
-import { resolveInitialModelSelection } from "@t3tools/shared/defaultModelSelection";
 import {
   type AccountHubConnection,
   type AccountPool,
@@ -10,21 +9,16 @@ import {
   poolSourceId,
 } from "@t3tools/contracts/accountHub";
 import {
-  type ModelSelection,
   type ProviderDriverKind,
-  type ProviderInstanceConfig,
-  type ProviderInstanceId,
-  type ServerProvider,
   type UsageLimitSourceAccount,
   type UsageLimitSourceSnapshot,
 } from "@t3tools/contracts";
 
-import type { ModelManifestCatalogs } from "@t3tools/shared/modelManifest";
 import { makeUnavailableUsageLimits } from "@t3tools/provider-core/server/usageLimits";
 import { hasQuota, pooledUsage, takesTurns } from "@t3tools/shared/poolUsage";
 import * as DateTime from "effect/DateTime";
 
-import { CLOUD_POOL_KINDS, harnessModels, poolServerProvider } from "../thread/providerCatalog.ts";
+import { CLOUD_POOL_KINDS, servesModel } from "../models/ModelRouting.ts";
 import type { ServedModel } from "./cliProxyApi.ts";
 import type { PoolAccounts, PoolRole } from "./PoolEngine.ts";
 import { READS_LIMITS } from "./poolLimits.ts";
@@ -54,6 +48,8 @@ export interface PoolEntry {
   readonly role: PoolRole | null;
   /** How it spreads turns, when the user may change it. */
   readonly routing: PoolRouting | null;
+  /** Member-safe quota information held across a failed account read. */
+  readonly lastKnownOverview?: AccountPoolOverview;
 }
 
 /** A pool as the user's clients list it, with its routing when they may change it. */
@@ -147,6 +143,18 @@ const running = (source: UsageLimitSourceSnapshot, driver: ProviderDriverKind) =
 const canRun = (source: UsageLimitSourceSnapshot, driver: ProviderDriverKind) =>
   running(source, driver).length > 0;
 
+/** Stale reads must not revive providers whose accounts were signed out or paused. */
+export const modelsForSnapshot = (entry: PoolEntry): ReadonlyArray<ServedModel> =>
+  entry.lastKnownOverview !== undefined
+    ? entry.models
+    : entry.models.filter((model) =>
+        CLOUD_POOL_KINDS.some(
+          (kind) =>
+            canRun(entry.source, POOL_INSTANCE_KINDS[kind].driver) &&
+            servesModel(kind, [model], model.id),
+        ),
+      );
+
 const instanceOf = (kind: (typeof CLOUD_POOL_KINDS)[number], pool: UserPool) =>
   poolInstanceEntry(kind, { id: pool.id, name: pool.personal ? undefined : pool.name });
 
@@ -162,6 +170,8 @@ export const overview = (
 ): AccountPoolOverview => ({
   id: pool.id,
   name: pool.name,
+  checkedAt: source.checkedAt,
+  ...(source.error ? { error: source.error } : {}),
   providers: CLOUD_POOL_KINDS.map((kind): AccountPoolProvider => {
     const [providerInstanceId] = instanceOf(kind, pool);
     const { driver, displayName } = POOL_INSTANCE_KINDS[kind];
@@ -175,56 +185,6 @@ export const overview = (
     };
   }),
 });
-
-/** Each pool's provider instances, for `ServerConfig.providers`. */
-export const poolProviders = (
-  pools: ReadonlyArray<PoolEntry>,
-  checkedAt: string,
-  manifest: ModelManifestCatalogs,
-): ReadonlyArray<ServerProvider> =>
-  pools.flatMap(({ pool, source, models }) =>
-    CLOUD_POOL_KINDS.map((kind) => {
-      const [instanceId, config] = instanceOf(kind, pool);
-      const signedIn = canRun(source, POOL_INSTANCE_KINDS[kind].driver);
-      return poolServerProvider({
-        kind,
-        instanceId,
-        displayName: config.displayName ?? POOL_INSTANCE_KINDS[kind].displayName,
-        signedIn,
-        ...(source.error ? { unavailableReason: source.error } : {}),
-        models: harnessModels(kind, models, manifest),
-        checkedAt,
-      });
-    }),
-  );
-
-/** The economical initial selection from pools ready to run. */
-export const poolDefaultModelSelection = (
-  providers: ReadonlyArray<ServerProvider>,
-): ModelSelection | null =>
-  resolveInitialModelSelection({
-    providers: providers.filter(
-      (provider) =>
-        provider.enabled &&
-        provider.installed &&
-        provider.status !== "error" &&
-        provider.availability !== "unavailable" &&
-        provider.auth.status !== "unauthenticated",
-    ),
-  });
-
-/** An automation may use an unavailable provider's cached economical model. */
-export const poolFallbackModelSelection = (
-  providers: ReadonlyArray<ServerProvider>,
-): ModelSelection | null => resolveInitialModelSelection({ providers });
-
-/** Settings list each instance with its pool, which is how clients group instances by pool. */
-export const poolProviderInstances = (
-  pools: ReadonlyArray<UserPool>,
-): Record<ProviderInstanceId, ProviderInstanceConfig> =>
-  Object.fromEntries(
-    pools.flatMap((pool) => CLOUD_POOL_KINDS.map((kind) => instanceOf(kind, pool))),
-  );
 
 /** The pool and kind behind one of these instances, or null for any other instance. */
 export const poolOfInstance = (

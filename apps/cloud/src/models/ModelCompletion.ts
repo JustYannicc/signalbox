@@ -12,7 +12,7 @@ import {
   decodeCompletionReply,
   type CompletionProvider,
 } from "./internal/completionProtocol.ts";
-import { poolKindOfInstance } from "../thread/providerCatalog.ts";
+import { poolKindOfInstance } from "./ModelRouting.ts";
 
 export class ModelCompletionError extends Schema.TaggedError<ModelCompletionError>()(
   "ModelCompletionError",

@@ -1825,7 +1825,11 @@ function useComposerProviderSelection(
     providerInstanceEntries,
     poolNeed, // signalbox: pools
     mapModelSelectionToPool, // signalbox: pass pool mapping into default resolution.
-    ...resolveComposerProviderSelection({ ...selection, entries: providerInstanceEntries }),
+    ...resolveComposerProviderSelection({
+      ...selection,
+      entries: providerInstanceEntries,
+      providerInstances: settings.providerInstances, // signalbox: identify cached custom pools.
+    }),
   };
 }
 
