@@ -6,6 +6,7 @@ import {
   isThreadWokeUnseen,
   mergeDirectPreviewAnnotation,
   resolveBackgroundDraftWorkspaceOptions,
+  resolveComposerStop,
   resolveDraftHeroState,
   shouldDockDraftHeroForSubmission,
 } from "./ChatView.logic";
@@ -3026,6 +3027,8 @@ export default function ChatView(props: ChatViewProps) {
     isPreparingWorktree,
     blocksSend: worktreeSetupBlocksSend,
     retryableRunIds: retryableWorkspacePreparationRunIds,
+    actions: worktreeSetupActions,
+    awaitingSnapshot: awaitingWorktreeSetupSnapshot,
     begin: beginWorktreeSetup,
     cancel: cancelWorktreeSetup,
     retryPreparation: onRetryWorkspacePreparationStable,
@@ -3043,7 +3046,6 @@ export default function ChatView(props: ChatViewProps) {
     // follow-up is on screen rather than when the server echoes it back.
     followUpSent: timelineMessages.filter((message) => message.role === "user").length > 1,
   });
-  const onCancelWorktreeSetupStable = useStableCallback(() => void cancelWorktreeSetup());
   const [dockedDraftHeroThreadKey, setDockedDraftHeroThreadKey] = useState<string | null>(null);
   const draftHeroDockRequested =
     activeThreadKey !== null && dockedDraftHeroThreadKey === activeThreadKey;
@@ -3493,8 +3495,19 @@ export default function ChatView(props: ChatViewProps) {
   const focusComposerStable = useStableCallback(focusComposer);
   const canInterruptRunningThread =
     canOperateThread && deriveCanInterruptRunningThread(activeThread !== undefined, activeRuntime);
+  const composerStop = resolveComposerStop({
+    setupSnapshot: worktreeSetup,
+    awaitingSetupSnapshot: awaitingWorktreeSetupSnapshot,
+    setupCancel: worktreeSetupActions?.cancel ?? null,
+    canInterrupt: canInterruptRunningThread,
+  });
   const onInterrupt = async () => {
+    if (composerStop === "cancel-setup") {
+      worktreeSetupActions?.onCancel();
+      return;
+    }
     if (
+      composerStop !== "interrupt" ||
       !activeThread ||
       !readEnvironmentScope(activeThread.environmentId, AuthOrchestrationOperateScope)
     )
@@ -5833,7 +5846,7 @@ export default function ChatView(props: ChatViewProps) {
         composerRef.current?.isCaretAtStart() === true &&
         queuedRunsControlRef.current?.editLatest(event.repeat) === true,
       "thread.stop": ({ event }) => {
-        if (!canInterruptRunningThread) return false;
+        if (composerStop === null) return false;
         if (!event.repeat) void onInterruptStable();
       },
     },
@@ -7802,8 +7815,10 @@ export default function ChatView(props: ChatViewProps) {
     if (!worktreeSetup || worktreeSetup.phase !== "running" || !draftId) {
       return;
     }
-    void cancelWorktreeSetup().then((cancelled) => {
-      if (cancelled) setWorkLocallyResendDraftId(draftId);
+    // Resend locally only once the server confirms setup stopped; an error or
+    // timeout leaves the draft with the setup that may still be running.
+    void cancelWorktreeSetup().then((outcome) => {
+      if (outcome === "stopped") setWorkLocallyResendDraftId(draftId);
     });
   };
   const onWorktreeSetupWorkLocallyStable = useStableCallback(onWorktreeSetupWorkLocally);
@@ -8277,7 +8292,7 @@ export default function ChatView(props: ChatViewProps) {
                 }
                 activeTurnStartedAt={paintOnlyDisplayedTimeline ? null : activeWorkStartedAt}
                 worktreeSetup={paintOnlyDisplayedTimeline ? null : worktreeSetup}
-                onCancelWorktreeSetup={onCancelWorktreeSetupStable}
+                worktreeSetupActions={paintOnlyDisplayedTimeline ? null : worktreeSetupActions}
                 {...(paintOnlyDisplayedTimeline
                   ? {}
                   : {
@@ -8507,7 +8522,7 @@ export default function ChatView(props: ChatViewProps) {
                               }
                               phase={phase}
                               isCompacting={isCompacting}
-                              canInterrupt={canInterruptRunningThread}
+                              canInterrupt={composerStop !== null}
                               isConnecting={isConnecting}
                               isSendBusy={
                                 (isSendBusy && !sendQueuesBehindSetup) ||

@@ -57,6 +57,7 @@ const withThread = <A, E>(
     readonly notificationCount: () => number;
     readonly waitForCard: Effect.Effect<OrchestrationV2ThreadProjection>;
   }) => Effect.Effect<A, E>,
+  protocolVersion = RUNNER_PROTOCOL_VERSION,
 ) =>
   Effect.scoped(
     Effect.gen(function* () {
@@ -100,7 +101,7 @@ const withThread = <A, E>(
       const generation = plan.ensure.generation;
       yield* runner.hello({
         type: "hello",
-        protocolVersion: RUNNER_PROTOCOL_VERSION,
+        protocolVersion,
         imageVersion: "test",
         machineId: "machine",
         threadId,
@@ -365,39 +366,53 @@ describe("cloud secret requests", () => {
     ),
   );
 
-  it.effect(
-    "a delayed started frame records the session while its private card keeps the run waiting",
-    () =>
-      withThread(({ engine, runner, secrets, generation, request, requestId, waitForCard }) =>
-        Effect.gen(function* () {
-          const turn = (yield* runner.work).turn;
-          if (turn === null) throw new Error("Expected active runner turn");
-          const waiting = yield* secrets.request(generation, request).pipe(Effect.forkChild);
-          const pending = yield* waitForCard;
-          expect(pending.runs.find((run) => run.id === request.runId)?.status).toBe("waiting");
-          const report = turnReport(turn.runId, turn.runOrdinal, turn.providerThread);
-          yield* runner.batch({ generation, sequence: 1, items: [report.started] });
-          const afterStarted = yield* engine.projection;
-          expect(afterStarted?.runs.find((run) => run.id === request.runId)).toMatchObject({
-            status: "waiting",
-          });
-          expect(afterStarted?.providerSessions).toHaveLength(1);
-          expect(afterStarted?.providerThreads[0]?.nativeThreadRef?.nativeId).toBe(
-            "claude-session-1",
-          );
-          expect(
-            afterStarted?.attempts.find((attempt) => attempt.id === request.attemptId)?.status,
-          ).toBe("running");
-          yield* secrets.answer(owner, {
-            threadId,
-            turnItemId: requestId,
-            answer: { type: "decline" },
-          });
-          expect(yield* Fiber.join(waiting)).toEqual({ status: "declined" });
-          expect(
-            (yield* engine.projection)?.runs.find((run) => run.id === request.runId)?.status,
-          ).toBe("running");
-        }),
+  it.effect.each([6, RUNNER_PROTOCOL_VERSION])(
+    "a delayed started frame records the session while its private card keeps the run waiting with protocol %i",
+    (protocolVersion) =>
+      withThread(
+        ({ engine, runner, secrets, generation, request, requestId, waitForCard }) =>
+          Effect.gen(function* () {
+            const turn = (yield* runner.work).turn;
+            if (turn === null) throw new Error("Expected active runner turn");
+            const preparationGeneration = turn.preparationGeneration;
+            if (preparationGeneration !== undefined) {
+              yield* runner.batch({
+                generation,
+                sequence: 1,
+                items: [{ kind: "preparation.ready", runId: turn.runId, preparationGeneration }],
+              });
+            }
+            const waiting = yield* secrets.request(generation, request).pipe(Effect.forkChild);
+            const pending = yield* waitForCard;
+            expect(pending.runs.find((run) => run.id === request.runId)?.status).toBe("waiting");
+            const report = turnReport(turn.runId, turn.runOrdinal, turn.providerThread);
+            yield* runner.batch({
+              generation,
+              sequence: preparationGeneration === undefined ? 1 : 2,
+              items: [{ ...report.started, preparationGeneration }],
+            });
+            const afterStarted = yield* engine.projection;
+            expect(afterStarted?.runs.find((run) => run.id === request.runId)).toMatchObject({
+              status: "waiting",
+            });
+            expect(afterStarted?.providerSessions).toHaveLength(1);
+            expect(afterStarted?.providerThreads[0]?.nativeThreadRef?.nativeId).toBe(
+              "claude-session-1",
+            );
+            expect(
+              afterStarted?.attempts.find((attempt) => attempt.id === request.attemptId)?.status,
+            ).toBe("running");
+            yield* secrets.answer(owner, {
+              threadId,
+              turnItemId: requestId,
+              answer: { type: "decline" },
+            });
+            expect(yield* Fiber.join(waiting)).toEqual({ status: "declined" });
+            expect(
+              (yield* engine.projection)?.runs.find((run) => run.id === request.runId)?.status,
+            ).toBe("running");
+          }),
+        protocolVersion,
       ),
   );
 });

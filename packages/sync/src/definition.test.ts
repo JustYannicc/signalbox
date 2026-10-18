@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { tableErrorToSyncFailure } from "./definition.ts";
-import { TableReadError, TableWriteError } from "./table.ts";
+import { tableErrorToSyncFailure } from "@signalbox/sync/definition";
+import { TableReadError, TableWriteError } from "@signalbox/sync/table";
 
 describe("table error recovery", () => {
   it("distinguishes permanent row conflicts from unavailable storage", () => {

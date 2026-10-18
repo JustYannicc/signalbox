@@ -35,6 +35,7 @@ export interface RunnerSocketAttachment {
   readonly inactive?: true | undefined;
   /** The run this socket's Runner was handed, until it ends or is stopped. */
   readonly sentRunId: RunId | null;
+  readonly sentPreparationGeneration?: number | undefined;
   readonly sentPullId?: string;
   /** The drain this socket's Runner was asked for (#493); absent: none. */
   readonly sentDrainId?: number | undefined;
@@ -126,7 +127,11 @@ export async function pushRunnerWork(host: RunnerSocketHost): Promise<ThreadRunn
     handedOut !== null &&
     host.ctx.getWebSockets(RUNNER_TAG).some((socket) => {
       const attachment = attachmentOf(socket);
-      return attachment?.generation === work.generation && attachment.sentRunId !== handedOut;
+      return (
+        attachment?.generation === work.generation &&
+        (attachment.sentRunId !== handedOut ||
+          attachment.sentPreparationGeneration !== turn?.turn.preparationGeneration)
+      );
     });
   // Asked only when a turn is handed out, and before the sends: it's a call to the owner's
   // object, and nothing may run between reading a socket's attachment and writing it back.
@@ -180,16 +185,30 @@ export async function pushRunnerWork(host: RunnerSocketHost): Promise<ThreadRunn
       sentWorkflowStops = workflowStopsDigest;
     }
     let sentRunId = attachment.sentRunId;
+    let sentPreparationGeneration = attachment.sentPreparationGeneration;
     let sentPullId = attachment.sentPullId;
     let sentSteers = attachment.sentSteers ?? 0;
     let sentRuntimeResponses = attachment.sentRuntimeResponses ?? [];
     if (sentRunId !== null && sentRunId !== work.activeRunId) {
-      send(socket, { type: "interrupt", runId: sentRunId });
+      if (work.preparation?.runId !== sentRunId || work.preparation.snapshot.turnStarted === true) {
+        send(socket, {
+          type: "interrupt",
+          runId: sentRunId,
+          ...(sentPreparationGeneration === undefined
+            ? {}
+            : { preparationGeneration: sentPreparationGeneration }),
+        });
+      }
       sentRunId = null;
+      sentPreparationGeneration = undefined;
       sentSteers = 0;
       sentRuntimeResponses = [];
     }
-    if (turn !== null && sentRunId !== turn.turn.runId) {
+    if (
+      turn !== null &&
+      (sentRunId !== turn.turn.runId ||
+        sentPreparationGeneration !== turn.turn.preparationGeneration)
+    ) {
       send(socket, {
         type: "turn.start",
         turn: freshSessionText === null ? turn.turn : { ...turn.turn, freshSessionText },
@@ -205,8 +224,33 @@ export async function pushRunnerWork(host: RunnerSocketHost): Promise<ThreadRunn
         },
       });
       sentRunId = turn.turn.runId;
+      sentPreparationGeneration = turn.turn.preparationGeneration;
       sentSteers = 0;
       sentRuntimeResponses = [];
+    }
+    const preparation = work.preparation;
+    if (
+      preparation !== undefined &&
+      preparation !== null &&
+      preparation.machineGeneration === work.generation
+    ) {
+      if (preparation.status === "cancelling") {
+        send(socket, {
+          type: "preparation.cancel",
+          runId: preparation.runId,
+          preparationGeneration: preparation.generation,
+        });
+      } else if (
+        preparation.status === "handoff" &&
+        sentPreparationGeneration === preparation.generation &&
+        sentRunId === preparation.runId
+      ) {
+        send(socket, {
+          type: "preparation.handoff",
+          runId: preparation.runId,
+          preparationGeneration: preparation.generation,
+        });
+      }
     }
     if (
       work.pull != null &&
@@ -240,6 +284,7 @@ export async function pushRunnerWork(host: RunnerSocketHost): Promise<ThreadRunn
     if (
       sentWorkflowStops !== attachment.sentWorkflowStops ||
       sentRunId !== attachment.sentRunId ||
+      sentPreparationGeneration !== attachment.sentPreparationGeneration ||
       sentPullId !== attachment.sentPullId ||
       sentDrainId !== attachment.sentDrainId ||
       sentSteers !== (attachment.sentSteers ?? 0) ||
@@ -248,6 +293,7 @@ export async function pushRunnerWork(host: RunnerSocketHost): Promise<ThreadRunn
       socket.serializeAttachment({
         ...attachment,
         sentRunId,
+        sentPreparationGeneration,
         sentWorkflowStops,
         ...(sentPullId === undefined ? {} : { sentPullId }),
         sentDrainId,
@@ -302,6 +348,9 @@ export async function onRunnerMessage(
         connection: result.connection,
         lastActivityAt: receivedAt,
         sentRunId: result.heldRunId,
+        sentPreparationGeneration: message.takenPreparations?.find(
+          (attempt) => attempt.runId === result.heldRunId,
+        )?.preparationGeneration,
         steers: message.steers === true,
         runtimeResponses: message.runtimeResponses === true,
       } satisfies Attachment);

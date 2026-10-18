@@ -456,6 +456,41 @@ export const makeFakeGitHub = (options: {
         message: "Pull Request successfully merged",
       });
     }
+    const comparing = new RegExp(
+      `^/repos/${options.repository}/compare/([0-9a-f]{40})\\.\\.\\.([0-9a-f]{40})$`,
+    ).exec(path);
+    if (method === "GET" && comparing !== null) {
+      const [, base, compared] = comparing as unknown as [string, string, string];
+      if (!has(base) || !has(compared)) return json({ message: "Not Found" }, 404);
+      const mergeBase = git(["merge-base", base, compared]).toString().trim();
+      const status =
+        base === compared
+          ? "identical"
+          : mergeBase === base
+            ? "ahead"
+            : mergeBase === compared
+              ? "behind"
+              : "diverged";
+      const [behindBy, aheadBy] = git([
+        "rev-list",
+        "--left-right",
+        "--count",
+        `${base}...${compared}`,
+      ])
+        .toString()
+        .trim()
+        .split(/\s+/)
+        .map(Number);
+      return json({
+        status,
+        base_commit: { sha: base },
+        merge_base_commit: { sha: mergeBase },
+        ahead_by: aheadBy,
+        behind_by: behindBy,
+        commits: [],
+        files: [],
+      });
+    }
     const refPrefix = `/repos/${options.repository}/git/ref/heads/`;
     const comparePrefix = `/repos/${options.repository}/compare/`;
     if (method === "GET" && path.startsWith(comparePrefix)) {

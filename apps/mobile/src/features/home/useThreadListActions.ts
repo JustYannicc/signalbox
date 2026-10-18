@@ -7,6 +7,7 @@ import * as Haptics from "expo-haptics";
 import { useCallback, useRef } from "react";
 
 import { withThreadDismissal } from "./thread-dismissal";
+import { beginLedgerThreadMove } from "./ledgerThreadMove"; // signalbox: optimistic ledger
 import * as Dialog from "../../components/ui/Dialog";
 import { scopedThreadKey } from "../../lib/scopedEntities";
 import { refreshArchivedThreadsForEnvironment } from "../archive/useArchivedThreadSnapshots";
@@ -659,6 +660,23 @@ export function useThreadListActions(): {
           return false;
       }
       selectionHaptic();
+      // signalbox: the optimistic ledger owns pin moves
+      const ledgerMove = beginLedgerThreadMove({
+        thread,
+        section,
+        crossSection,
+        lifecycle,
+        assignments,
+        shellByKey,
+        commands: {
+          pin: pinMutation,
+          unpin: unpinMutation,
+          reorder: section === "pinned" ? reorderPinnedMutation : reorderActiveMutation,
+          unsettleThread,
+          unsnoozeThread,
+        },
+      });
+      if (ledgerMove !== null) return ledgerMove;
       appAtomRegistry.set(threadDropBusyAtom, true);
       const pending = crossSection
         ? null
@@ -733,6 +751,7 @@ export function useThreadListActions(): {
       reorderActiveMutation,
       reorderPinnedMutation,
       pinMutation,
+      unpinMutation,
       unpinThread,
       unsettleThread,
       unsnoozeThread,
