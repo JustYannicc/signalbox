@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
+import * as TestClock from "effect/testing/TestClock";
 
 import * as PoolContainer from "./PoolContainer.ts";
 
@@ -11,6 +12,8 @@ import * as PoolContainer from "./PoolContainer.ts";
 const fakeContainer = (
   respond: (request: Request) => Promise<Response>,
   models?: (request: Request) => Promise<Response>,
+  ready: (request: Request) => Promise<Response> = () =>
+    Promise.resolve(new Response(null, { status: 404 })),
 ) => {
   const calls: Array<string> = [];
   let running = false;
@@ -35,7 +38,7 @@ const fakeContainer = (
       fetch: (input: RequestInfo) => {
         const request = typeof input === "string" ? new Request(input) : input;
         const { pathname } = new URL(request.url);
-        if (pathname === "/") return Promise.resolve(new Response(null, { status: 404 }));
+        if (pathname === "/") return ready(request);
         return pathname === "/v1/models" && models !== undefined
           ? models(request)
           : respond(request);
@@ -91,6 +94,26 @@ describe("PoolContainer", () => {
         `start http://${PoolContainer.STORE_HOST}`,
       ]);
     }).pipe(Effect.provide(pool.layer));
+  });
+
+  it.effect("returns a tagged error when CLIProxyAPI never becomes ready", () => {
+    let probes = 0;
+    const fake = fakeContainer(
+      async () => new Response("unused"),
+      undefined,
+      async () => {
+        probes += 1;
+        throw new Error("not listening");
+      },
+    );
+    fake.container.start({ enableInternet: true });
+    return Effect.gen(function* () {
+      const fiber = yield* Effect.forkChild(PoolContainer.waitUntilReady(fake.container));
+      yield* TestClock.adjust(PoolContainer.READY_TIMEOUT_MS);
+      const error = yield* Effect.flip(Fiber.join(fiber));
+      expect(error._tag).toBe("PoolContainerReadinessTimeoutError");
+      expect(probes).toBeGreaterThan(1);
+    });
   });
 
   it.effect("sleeps once nothing has reached it for the idle timeout, never mid-request", () => {

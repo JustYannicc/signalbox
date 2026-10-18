@@ -1,8 +1,12 @@
-// @effect-diagnostics globalTimers:off globalDate:off - the container lifecycle is promise code on the Durable Object's own clock.
+// @effect-diagnostics globalTimers:off globalDate:off - model loading polls in the container boundary; activity uses the Durable Object's wall clock.
 import * as Context from "effect/Context";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
+import * as Schedule from "effect/Schedule";
+import * as Schema from "effect/Schema";
 
 import { CLI_PROXY_API_PORT, listModels, type PoolEndpoint } from "./cliProxyApi.ts";
 import {
@@ -40,7 +44,7 @@ export const IDLE_TIMEOUT_MS = 2 * 60_000;
 const BACKSTOP_TIMEOUT_MS = IDLE_TIMEOUT_MS + 60_000;
 
 /** How long a cold start may take before a request fails. */
-const READY_TIMEOUT_MS = 30_000;
+export const READY_TIMEOUT_MS = 30_000;
 const READY_POLL_MS = 100;
 
 /**
@@ -97,6 +101,58 @@ const containerEnv = (store: StoreCredentials): Record<string, string> => ({
   OBJECTSTORE_SECRET_KEY: store.secretKey,
   OBJECTSTORE_LOCAL_PATH: "/tmp/cliproxyapi",
 });
+
+class PoolContainerReadinessProbeError extends Schema.TaggedError<PoolContainerReadinessProbeError>()(
+  "PoolContainerReadinessProbeError",
+  { cause: Schema.Defect() },
+) {
+  override get message() {
+    return "The pool's container is not ready yet.";
+  }
+}
+
+class PoolContainerExitedDuringStartError extends Schema.TaggedError<PoolContainerExitedDuringStartError>()(
+  "PoolContainerExitedDuringStartError",
+  {},
+) {
+  override get message() {
+    return "The pool's container exited while starting.";
+  }
+}
+
+class PoolContainerReadinessTimeoutError extends Schema.TaggedError<PoolContainerReadinessTimeoutError>()(
+  "PoolContainerReadinessTimeoutError",
+  {},
+) {
+  override get message() {
+    return "The pool's container did not start in time.";
+  }
+}
+
+/** A failed startup probe retries on the Effect clock and keeps its failure typed. */
+export const waitUntilReady = (container: Container) =>
+  Effect.gen(function* () {
+    const port = container.getTcpPort(CLI_PROXY_API_PORT);
+    const probe = Effect.gen(function* () {
+      if (!container.running) return yield* new PoolContainerExitedDuringStartError();
+      yield* Effect.tryPromise({
+        try: async (signal) => {
+          const response = await port.fetch(new Request(`${CONTAINER_ORIGIN}/`, { signal }));
+          await response.body?.cancel();
+        },
+        catch: (cause) => new PoolContainerReadinessProbeError({ cause }),
+      });
+    });
+
+    const ready = yield* probe.pipe(
+      Effect.retry({
+        schedule: Schedule.spaced(Duration.millis(READY_POLL_MS)),
+        while: Schema.is(PoolContainerReadinessProbeError),
+      }),
+      Effect.timeoutOption(Duration.millis(READY_TIMEOUT_MS)),
+    );
+    if (Option.isNone(ready)) return yield* new PoolContainerReadinessTimeoutError();
+  });
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -227,22 +283,6 @@ export const layerCloudflare = (input: {
     });
   };
 
-  const waitUntilReady = async (startedAt: number) => {
-    const port = container.getTcpPort(CLI_PROXY_API_PORT);
-    while (performance.now() - startedAt < READY_TIMEOUT_MS) {
-      if (!container.running) throw new Error("The pool's container exited while starting.");
-      try {
-        // Any answer means CLIProxyAPI pulled its store and is listening.
-        const response = await port.fetch(`${CONTAINER_ORIGIN}/`);
-        await response.body?.cancel();
-        return;
-      } catch {
-        await sleep(READY_POLL_MS);
-      }
-    }
-    throw new Error("The pool's container did not start in time.");
-  };
-
   const start = async (store: StoreCredentials) => {
     const startedAt = performance.now();
     release.reset();
@@ -251,7 +291,8 @@ export const layerCloudflare = (input: {
     modelsReady = undefined;
     container.start({ enableInternet: true, env: containerEnv(store) });
     await container.setInactivityTimeout(BACKSTOP_TIMEOUT_MS);
-    await waitUntilReady(startedAt);
+    // This promise-shaped fetch adapter bridges Cloudflare's Container API to the Effect schedule.
+    await Effect.runPromise(waitUntilReady(container));
     log("pool.container.started", {
       cliProxyApi: unknownRelease,
       readyMs: Math.round(performance.now() - startedAt),
