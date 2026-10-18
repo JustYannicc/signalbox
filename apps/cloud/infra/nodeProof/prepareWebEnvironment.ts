@@ -155,7 +155,7 @@ import fetch, {
   Response,
 } from "node-fetch";
 import * as bunJsc from "bun:jsc";
-import Buffer from "node:buffer";
+import { Buffer } from "node:buffer";
 import nodeModule from "node:module";
 
 export async function check() {
