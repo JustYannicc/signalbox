@@ -1,9 +1,12 @@
 // @effect-diagnostics globalDate:off - measure the workerd wall clock without adding runtime overhead.
 import { DurableObject } from "cloudflare:workers";
+import { codeGenerationBinding } from "./codeGeneration.ts";
 import { FACET_SOURCE } from "./facetSource.ts";
 import { JSPI_WASM } from "./wasmFixture.ts";
 import { probe } from "./generated/runtime.js";
 import { decodeModuleTransport, MODULE_TRANSPORT_CONTENT_TYPE } from "./moduleTransport.ts";
+
+export { CodeGeneration } from "./codeGeneration.ts";
 
 interface ProbeInput {
   id: string;
@@ -14,6 +17,7 @@ interface ProbeInput {
   count?: number;
   generatedValue?: number;
   allowOutbound?: unknown;
+  allowGeneratedCode?: boolean;
 }
 
 const record = (value: unknown): value is Record<string, unknown> =>
@@ -136,18 +140,27 @@ export class ProbeSession extends DurableObject<Env> {
             : module,
         ]),
       );
-      const worker = this.env.LOADER.get(input.id, () => ({
+      const generatedCode = input.allowGeneratedCode === true;
+      const namespace = JSON.stringify([
+        this.ctx.id.toString(),
+        input.id,
+        input.mode ?? "facet",
+        input.entrypoint ?? null,
+      ]);
+      const workerId = generatedCode ? `code-generation-fixture:${namespace}` : input.id;
+      const worker = this.env.LOADER.get(workerId, () => ({
         compatibilityDate: "2026-10-18",
         compatibilityFlags: ["nodejs_compat"],
         mainModule: input.mainModule ?? "main.js",
         modules: decodedModules,
+        ...(generatedCode ? { env: { CODE_GENERATION: codeGenerationBinding(namespace) } } : {}),
         ...(input.allowOutbound === true ? {} : { globalOutbound: null }),
       }));
       const probeRequest = new Request(`https://probe.invalid${input.path ?? "/status"}`);
       const stub =
         input.mode === "worker"
           ? worker.getEntrypoint(input.entrypoint)
-          : this.ctx.facets.get(input.id, () => ({
+          : this.ctx.facets.get(workerId, () => ({
               class: worker.getDurableObjectClass(input.entrypoint ?? "ProbeFacet"),
             }));
       const response = await stub.fetch(probeRequest);
