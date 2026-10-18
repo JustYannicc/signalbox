@@ -87,7 +87,9 @@
         "src/kernel/KernelWasi.ts", // Public integration entry for executable personalities.
         "src/kernel/Wasi.ts", // Public preview1 carry API.
         "infra/codexExecProof/prepare.ts",
+        "infra/codexExecProof/prepareExecution.ts",
         "src/kernel/CodexExecProtocolProof.ts",
+        "src/kernel/CodexExecExecutionProof.ts",
         "infra/syncProbe/alchemy.run.ts!",
         "infra/syncProbe/worker.ts!",
         "infra/isolateProbe/alchemy.run.ts!",
