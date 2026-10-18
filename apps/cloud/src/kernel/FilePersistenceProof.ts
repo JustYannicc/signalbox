@@ -4,6 +4,7 @@ import { createFacetFilePersistence } from "./FacetFilePersistence.ts";
 import { FILE_CHUNK_BYTES, createFacetSqliteStorage } from "./FacetSqliteStorage.ts";
 import { createMemoryFilePersistencePorts } from "./MemoryFilePersistencePorts.ts";
 import { KernelWakeRegistry } from "./KernelAbi.ts";
+import { runPosixStorageProof, readPosixStorageProof } from "./PosixStorageProof.ts";
 import type { Stat } from "./storage.ts";
 import type { FacetStorage } from "./FacetSqliteStorage.ts";
 
@@ -121,6 +122,7 @@ export async function runFilePersistenceProof(database: FacetStorage) {
     ports: persistencePorts,
   });
   const storage = persistence.storage;
+  checks.push(runPosixStorageProof(storage));
   let completedCommit: string | undefined;
   const retained = new Set<bigint>();
   const hold = (inode: bigint) => (retained.add(inode), inode);
@@ -134,7 +136,11 @@ export async function runFilePersistenceProof(database: FacetStorage) {
       unlinkIfPresent(storage, name);
     }
     const sourceInode = hold(
-      storage.create(storage.root, "source", { type: "file", exclusive: true }),
+      storage.posix.create(storage.root, "source", {
+        type: "file",
+        exclusive: true,
+        metadata: { mode: 0o644, uid: 1001, gid: 1002 },
+      }),
     );
     storage.truncate(sourceInode, BigInt(source.byteLength));
     const before = statKey(storage.stat(sourceInode));
@@ -167,6 +173,7 @@ export async function runFilePersistenceProof(database: FacetStorage) {
     assert(retry.value === source.byteLength, "Hydration returned the wrong byte count");
     assert(equalBytes(hydrated, source), "Hydration changed file bytes across a chunk boundary");
     assert(statKey(storage.stat(sourceInode)) === before, "Hydration changed inode metadata");
+    assert(storage.posix.get(sourceInode).uid === 1001, "Hydration changed POSIX ownership");
     assert(ports.fetchCalls.length === 1, "One inode read must share one remote fetch");
     record("unhydrated read blocks, fetches exact bytes, and preserves metadata");
 
@@ -197,12 +204,15 @@ export async function runFilePersistenceProof(database: FacetStorage) {
     expected[0] = 0xf0;
     expected[1] = 0x0d;
     const changedAfterSnapshot = source[source.byteLength - 1]! ^ 0xff;
-    mutateDuringCommit = () =>
+    mutateDuringCommit = () => {
       storage.write(
         sourceInode,
         BigInt(source.byteLength - 1),
         new Uint8Array([changedAfterSnapshot]),
       );
+      storage.posix.chmod(sourceInode, 0o600);
+      storage.posix.chown(sourceInode, { uid: 3, gid: 4 });
+    };
     const receipt = await persistence.commitTurn({
       at,
       turnId,
@@ -224,6 +234,14 @@ export async function runFilePersistenceProof(database: FacetStorage) {
     assert(alias !== undefined && alias.data instanceof Uint8Array, "Hard link data is missing");
     assert(equalBytes(renamed.data, expected), "The commit snapshot lost file edits");
     assert(equalBytes(alias.data, expected), "Hard links did not commit the same inode bytes");
+    assert(
+      renamed.posix?.mode === 0o644 && renamed.posix.uid === 1001 && renamed.posix.gid === 1002,
+      "The commit snapshot lost POSIX metadata while the live inode changed",
+    );
+    assert(
+      alias.posix?.mode === renamed.posix.mode && alias.posix.uid === renamed.posix.uid,
+      "Hard links did not commit the same POSIX metadata",
+    );
     const liveFinalByte = new Uint8Array(1);
     assert(
       storage.readInto(sourceInode, BigInt(source.byteLength - 1), liveFinalByte) === 1 &&
@@ -317,7 +335,10 @@ export function readFilePersistenceProof(database: FacetStorage) {
     assert(equalBytes(actual, persistenceBytes), "Persisted file bytes changed across requests");
     return {
       ok: true,
-      checks: [{ name: "facet file bytes survived a new request", ok: true }],
+      checks: [
+        { name: "facet file bytes survived a new request", ok: true },
+        readPosixStorageProof(persistence.storage),
+      ],
     };
   } finally {
     persistence.dispose();

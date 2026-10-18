@@ -1,4 +1,5 @@
 import type { Inode, Stat } from "./storage.ts";
+import type { PosixMetadata } from "./PosixStorage.ts";
 
 export interface ForkCommit {
   readonly repository: string;
@@ -39,6 +40,7 @@ export interface ChangedInode {
 export interface CommitInode extends ChangedInode {
   readonly stat: Readonly<Stat> | null;
   readonly symlinkTarget: string | null;
+  readonly posix?: Readonly<PosixMetadata> | null;
   /** Chunk streams read an immutable SQLite snapshot; consume them before commit settles. */
   readChunks(): AsyncIterable<Uint8Array>;
 }

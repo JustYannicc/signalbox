@@ -6,13 +6,9 @@ import type * as NodeBuffer from "node:buffer";
 import * as NodeCrypto from "node:crypto";
 import * as NodePath from "node:path";
 import type { KernelFileSystem } from "../../../kernel/KernelFileSystem.ts";
-import { callFs, codedError } from "./errors.ts";
-import {
-  encodedPath,
-  nodeDirent,
-  type KernelDirectoryEntry,
-  type NodeDirentLike,
-} from "./metadata.ts";
+import { codedError } from "./errors.ts";
+import { fsOperation, leaf, runSync, type FsOperation } from "./operations.ts";
+import { encodedPath, nodeDirent, type NodeDirentLike } from "./metadata.ts";
 import { pathString, type PathLike } from "./path.ts";
 
 export interface ReaddirOptions {
@@ -34,21 +30,30 @@ function appendChildPath(parent: string, child: string): string {
   return parent.endsWith("/") ? `${parent}${child}` : `${parent}/${child}`;
 }
 
-export function readdirSync(
+export function* readdirOperation(
   kernelFs: KernelFileSystem,
   path: PathLike,
   options?: BufferEncoding | ReaddirOptions | null,
-): Array<string | NodeBuffer.Buffer | NodeDirentLike> {
+): FsOperation<Array<string | NodeBuffer.Buffer | NodeDirentLike>> {
   const name = pathString(path);
   const normalized = parseReaddirOptions(options);
   const encoding = normalized.encoding ?? "utf8";
-  return callFs("scandir", name, () =>
-    kernelFs.readdir(name).map((entryName) => {
-      if (!normalized.withFileTypes) return encodedPath(entryName, encoding);
-      const entryPath = appendChildPath(name, entryName);
-      const entry: KernelDirectoryEntry = { name: entryName, type: kernelFs.lstat(entryPath).type };
-      return nodeDirent(entry, name, encoding);
-    }),
+  return yield* fsOperation(
+    "scandir",
+    name,
+    (function* (): FsOperation<Array<string | NodeBuffer.Buffer | NodeDirentLike>> {
+      const names = yield* leaf(() => kernelFs.readdir(name));
+      const entries: Array<string | NodeBuffer.Buffer | NodeDirentLike> = [];
+      for (const entryName of names) {
+        if (!normalized.withFileTypes) entries.push(encodedPath(entryName, encoding));
+        else {
+          const entryPath = appendChildPath(name, entryName);
+          const type = (yield* leaf(() => kernelFs.lstat(entryPath))).type;
+          entries.push(nodeDirent({ name: entryName, type }, name, encoding));
+        }
+      }
+      return entries;
+    })(),
   );
 }
 
@@ -61,7 +66,10 @@ function codeOf(error: unknown): string | undefined {
     : undefined;
 }
 
-function mkdirRecursive(kernelFs: KernelFileSystem, path: string): string | undefined {
+function* mkdirRecursive(
+  kernelFs: KernelFileSystem,
+  path: string,
+): FsOperation<string | undefined> {
   if (path.length === 0) throw codedError("ENOENT", "no such file or directory", "mkdir");
   const absolute = NodePath.posix.isAbsolute(path);
   let current = absolute ? "/" : "";
@@ -72,29 +80,29 @@ function mkdirRecursive(kernelFs: KernelFileSystem, path: string): string | unde
     current =
       current === "/" ? `/${component}` : current === "" ? component : `${current}/${component}`;
     try {
-      if (kernelFs.stat(current).type !== "directory") {
+      if ((yield* leaf(() => kernelFs.stat(current))).type !== "directory") {
         throw codedError("ENOTDIR", "not a directory", "mkdir");
       }
     } catch (error) {
       if (codeOf(error) !== "ENOENT") throw error;
-      kernelFs.mkdir(current);
+      yield* leaf(() => kernelFs.mkdir(current));
       firstCreated ??= current;
     }
   }
 
   if (current === "") current = ".";
-  if (components.length === 0 && kernelFs.stat(current).type !== "directory") {
+  if (components.length === 0 && (yield* leaf(() => kernelFs.stat(current))).type !== "directory") {
     throw codedError("ENOTDIR", "not a directory", "mkdir");
   }
 
   return firstCreated;
 }
 
-export function mkdirSync(
+export function* mkdirOperation(
   kernelFs: KernelFileSystem,
   path: PathLike,
   options?: number | MkdirOptions,
-): string | undefined {
+): FsOperation<string | undefined> {
   const name = pathString(path);
   const normalized = typeof options === "number" ? { mode: options } : (options ?? {});
   if (normalized.mode !== undefined) {
@@ -102,90 +110,123 @@ export function mkdirSync(
       path: name,
     });
   }
-  if (normalized.recursive) return callFs("mkdir", name, () => mkdirRecursive(kernelFs, name));
-  callFs("mkdir", name, () => kernelFs.mkdir(name));
+  if (normalized.recursive)
+    return yield* fsOperation("mkdir", name, mkdirRecursive(kernelFs, name));
+  yield* fsOperation(
+    "mkdir",
+    name,
+    leaf(() => kernelFs.mkdir(name)),
+  );
   return undefined;
 }
 
-export function rmdirSync(kernelFs: KernelFileSystem, path: PathLike): void {
+export function* rmdirOperation(kernelFs: KernelFileSystem, path: PathLike): FsOperation<void> {
   const name = pathString(path);
-  callFs("rmdir", name, () => kernelFs.rmdir(name));
+  yield* fsOperation(
+    "rmdir",
+    name,
+    leaf(() => kernelFs.rmdir(name)),
+  );
 }
 
-export function unlinkSync(kernelFs: KernelFileSystem, path: PathLike): void {
+export function* unlinkOperation(kernelFs: KernelFileSystem, path: PathLike): FsOperation<void> {
   const name = pathString(path);
-  callFs("unlink", name, () => kernelFs.unlink(name));
+  yield* fsOperation(
+    "unlink",
+    name,
+    leaf(() => kernelFs.unlink(name)),
+  );
 }
 
-export function renameSync(kernelFs: KernelFileSystem, oldPath: PathLike, newPath: PathLike): void {
+export function* renameOperation(
+  kernelFs: KernelFileSystem,
+  oldPath: PathLike,
+  newPath: PathLike,
+): FsOperation<void> {
   const source = pathString(oldPath);
   const destination = pathString(newPath);
-  callFs("rename", source, () => kernelFs.rename(source, destination), destination);
+  yield* fsOperation(
+    "rename",
+    source,
+    leaf(() => kernelFs.rename(source, destination)),
+    destination,
+  );
 }
 
-export function linkSync(
+export function* linkOperation(
   kernelFs: KernelFileSystem,
   existingPath: PathLike,
   newPath: PathLike,
-): void {
+): FsOperation<void> {
   const source = pathString(existingPath);
   const destination = pathString(newPath);
-  callFs("link", source, () => kernelFs.link(source, destination), destination);
+  yield* fsOperation(
+    "link",
+    source,
+    leaf(() => kernelFs.link(source, destination)),
+    destination,
+  );
 }
 
-export function symlinkSync(
+export function* symlinkOperation(
   kernelFs: KernelFileSystem,
   target: PathLike,
   path: PathLike,
   _type?: string,
-): void {
+): FsOperation<void> {
   const targetName = pathString(target);
   const name = pathString(path);
-  callFs("symlink", name, () => kernelFs.symlink(targetName, name));
+  yield* fsOperation(
+    "symlink",
+    name,
+    leaf(() => kernelFs.symlink(targetName, name)),
+  );
 }
 
-export function rmSync(
+export function* rmOperation(
   kernelFs: KernelFileSystem,
   path: PathLike,
   options: { force?: boolean; recursive?: boolean } = {},
-): void {
+): FsOperation<void> {
   const name = pathString(path);
-  const remove = (target: string) => {
+  const remove = function* (target: string): FsOperation<void> {
     let stat;
     try {
-      stat = kernelFs.lstat(target);
+      stat = yield* leaf(() => kernelFs.lstat(target));
     } catch (error) {
       if (options.force && codeOf(error) === "ENOENT") return;
       throw error;
     }
     if (stat.type === "directory") {
       if (options.recursive) {
-        for (const entryName of kernelFs.readdir(target))
-          remove(appendChildPath(target, entryName));
-        kernelFs.rmdir(target);
+        for (const entryName of yield* leaf(() => kernelFs.readdir(target)))
+          yield* remove(appendChildPath(target, entryName));
+        yield* leaf(() => kernelFs.rmdir(target));
         return;
       }
       throw codedError("EISDIR", "is a directory", "rm");
     }
-    kernelFs.unlink(target);
+    yield* leaf(() => kernelFs.unlink(target));
   };
-  callFs("rm", name, () => remove(name));
+  yield* fsOperation("rm", name, remove(name));
 }
 
-export function mkdtempSync(
+export function* mkdtempOperation(
   kernelFs: KernelFileSystem,
   prefix: PathLike,
   options?: BufferEncoding | { encoding?: BufferEncoding | "buffer" },
-): string | NodeBuffer.Buffer {
+): FsOperation<string | NodeBuffer.Buffer> {
   const base = pathString(prefix);
   const encoding = typeof options === "string" ? options : (options?.encoding ?? "utf8");
   for (let attempt = 0; attempt < 8; attempt++) {
     const candidate = `${base}${NodeCrypto.randomUUID().replaceAll("-", "").slice(0, 6)}`;
     try {
-      const created = callFs("mkdtemp", base, () => {
-        kernelFs.mkdir(candidate);
-        return candidate;
-      });
+      yield* fsOperation(
+        "mkdtemp",
+        base,
+        leaf(() => kernelFs.mkdir(candidate)),
+      );
+      const created = candidate;
       return encodedPath(created, encoding);
     } catch (error) {
       if (codeOf(error) !== "EEXIST") throw error;
@@ -196,3 +237,29 @@ export function mkdtempSync(
     { path: base },
   );
 }
+
+export const readdirSync = (...args: Parameters<typeof readdirOperation>) =>
+  runSync(readdirOperation(...args));
+
+export const mkdirSync = (...args: Parameters<typeof mkdirOperation>) =>
+  runSync(mkdirOperation(...args));
+
+export const rmdirSync = (...args: Parameters<typeof rmdirOperation>) =>
+  runSync(rmdirOperation(...args));
+
+export const unlinkSync = (...args: Parameters<typeof unlinkOperation>) =>
+  runSync(unlinkOperation(...args));
+
+export const renameSync = (...args: Parameters<typeof renameOperation>) =>
+  runSync(renameOperation(...args));
+
+export const linkSync = (...args: Parameters<typeof linkOperation>) =>
+  runSync(linkOperation(...args));
+
+export const symlinkSync = (...args: Parameters<typeof symlinkOperation>) =>
+  runSync(symlinkOperation(...args));
+
+export const rmSync = (...args: Parameters<typeof rmOperation>) => runSync(rmOperation(...args));
+
+export const mkdtempSync = (...args: Parameters<typeof mkdtempOperation>) =>
+  runSync(mkdtempOperation(...args));
