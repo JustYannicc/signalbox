@@ -1,5 +1,9 @@
 import { makeProviderTextDeltaCoalescer } from "./ProviderTextDeltaCoalescer.ts";
-import { claudeTaskOutputRoot, tailClaudeTaskOutput } from "./ClaudeTaskOutputTail.ts";
+import {
+  claudeTaskOutputRoot,
+  drainClaudePersistedOutput,
+  tailClaudeTaskOutput,
+} from "./ClaudeTaskOutputTail.ts";
 import {
   dynamicToolTitle,
   formatReadToolLabel,
@@ -2195,6 +2199,15 @@ function claudeCommandOutputText(output: ClaudeNativeToolOutput): string {
   return claudeNativeToolOutputText(output);
 }
 
+function claudePersistedOutputPath(output: ClaudeNativeToolOutput): string | undefined {
+  const value = claudeNativeToolOutputValue(output);
+  const path =
+    typeof value === "object" && value !== null
+      ? Reflect.get(value, "persistedOutputPath")
+      : undefined;
+  return typeof path === "string" && path.trim().length > 0 ? path : undefined;
+}
+
 function claudeSubagentResultText(output: ClaudeNativeToolOutput): string {
   const value = claudeNativeToolOutputValue(output);
   const content = Array.isArray(value)
@@ -3403,18 +3416,21 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
         // Foreground Bash calls whose output file is being tailed, by tool_use_id.
         const taskOutputTails = new Map<
           string,
-          { readonly fiber: Fiber.Fiber<void>; readonly stop: Deferred.Deferred<void> }
+          {
+            readonly fiber: Fiber.Fiber<void>;
+            readonly stop: Deferred.Deferred<string | undefined>;
+          }
         >();
         const taskOutputRoot = claudeTaskOutputRoot(adapterOptions.environment, path);
         // Waits for the tail's last read so its output lands before the call settles.
-        const stopTaskOutputTail = (toolUseId: string) =>
+        const stopTaskOutputTail = (toolUseId: string, persistedOutputPath?: string) =>
           Effect.suspend(() => {
             const tail = taskOutputTails.get(toolUseId);
-            if (tail === undefined) return Effect.void;
+            if (tail === undefined) return Effect.succeed(false);
             taskOutputTails.delete(toolUseId);
-            return Deferred.succeed(tail.stop, undefined).pipe(
+            return Deferred.succeed(tail.stop, persistedOutputPath).pipe(
               Effect.andThen(Fiber.await(tail.fiber)),
-              Effect.asVoid,
+              Effect.as(true),
             );
           });
         const sdkMessageLock = yield* Semaphore.make(1);
@@ -4255,6 +4271,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           const webSearchResults = webSearchResultsFromClaudeOutput(input.output);
           const webFetchUrl = firstStringInputField(input.toolInput, ["url"])?.trim();
           const outputValue = claudeNativeToolOutputValue(input.output);
+          const persistedOutputPath = claudePersistedOutputPath(input.output);
           const outputText =
             itemType === "command_execution"
               ? claudeCommandOutputText(input.output)
@@ -4266,6 +4283,8 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                   type: "command_execution",
                   input: commandInputFromClaudeTool(input.toolName, input.toolInput),
                   ...(outputText.length === 0 ? {} : { output: outputText }),
+                  // signalbox: Claude's inline prefix cannot replace the drained full-output tail.
+                  ...(persistedOutputPath !== undefined ? { outputTruncated: true } : {}),
                 }
               : itemType === "file_change"
                 ? {
@@ -6972,7 +6991,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                   driver: CLAUDE_PROVIDER,
                   nativeItemId: tailedCall.nativeItemId,
                 });
-                const stop = yield* Deferred.make<void>();
+                const stop = yield* Deferred.make<string | undefined>();
                 const fiber = yield* tailClaudeTaskOutput({
                   root: taskOutputRoot,
                   sessionId: message.session_id,
@@ -7297,7 +7316,27 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               updatedAt: completedAt,
               presentation: toolCall.presentation,
             });
-            yield* stopTaskOutputTail(toolCall.nativeItemId);
+            const persistedOutputPath =
+              artifacts.turnItem.type === "command_execution"
+                ? claudePersistedOutputPath(output)
+                : undefined;
+            const hadTail = yield* stopTaskOutputTail(toolCall.nativeItemId, persistedOutputPath);
+            if (!hadTail && persistedOutputPath !== undefined) {
+              yield* drainClaudePersistedOutput({
+                path: persistedOutputPath,
+                onChunk: (chunk) =>
+                  emitProviderEvent({
+                    type: "command_output.delta",
+                    driver: CLAUDE_PROVIDER,
+                    threadId: artifacts.turnItem.threadId,
+                    itemId: artifacts.turnItem.id,
+                    chunk,
+                  }),
+              }).pipe(
+                Effect.provideService(FileSystem.FileSystem, fileSystem),
+                Effect.provideService(Path.Path, path),
+              );
+            }
             yield* emitToolCallArtifacts(artifacts);
             toolCallsFor(context, toolCall).delete(toolCall.nativeItemId);
             if (parentToolUseId === null && !isClaudeToolResultError(toolResult)) {

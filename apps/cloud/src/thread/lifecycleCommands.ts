@@ -6,7 +6,8 @@ import {
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 
-import { cancelQueuedEvents, isLiveRun } from "./runLifecycle.ts";
+import { cancelQueuedEvents } from "./runLifecycle.ts";
+import { isLiveRun } from "./runState.ts";
 import { type DecisionContext, nodeEvent, threadEvent, unstampedEventId } from "./threadEvents.ts";
 import { applyEvents } from "./threadProjection.ts";
 
