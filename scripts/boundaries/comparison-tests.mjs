@@ -50,6 +50,10 @@ NodeTest.test("old PRs use current main's baseline but still fail for their own 
     const oldBase = commit("cycles before boundary enforcement");
     git(["checkout", "-b", "old-pr"]);
     write("apps/example/feature.ts", "export const feature = 1;");
+    write("apps/cloud/package.json", JSON.stringify({ name: "@test/cloud" }));
+    const vendorRoot = "apps/cloud/src/isolate/node/vm/vendor/nimbus/";
+    write(`${vendorRoot}a.ts`, 'import "./b.ts";');
+    write(`${vendorRoot}b.ts`, 'import "./a.ts";');
     const head = commit("unrelated feature");
     git(["checkout", "main"]);
     write(
@@ -74,6 +78,10 @@ NodeTest.test("old PRs use current main's baseline but still fail for their own 
     const passed = check(head);
     NodeAssert.equal(passed.status, 0, passed.stderr || passed.stdout);
     NodeAssert.match(passed.stdout, /1 inherited target violations/);
+    NodeAssert.doesNotMatch(
+      passed.stdout,
+      /no-circular: apps\/cloud\/src\/isolate\/node\/vm\/vendor\//,
+    );
     NodeAssert.equal(git(["rev-parse", "HEAD"]), checkout);
     NodeAssert.equal(git(["show-ref"]), refsBefore);
     NodeAssert.equal(git(["status", "--porcelain"]), "");
