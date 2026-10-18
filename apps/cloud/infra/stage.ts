@@ -77,6 +77,25 @@ export interface CloudStage {
   readonly vars: Readonly<Record<string, string>>;
 }
 
+/**
+ * Preview-only paths that serve the gateway and trace receiver from the app
+ * origin. The app owns the preview's only custom domain.
+ */
+export const stageWorkerRouting = (
+  target: CloudStage,
+  productionDomain: string,
+  paths: readonly string[],
+) =>
+  target.production
+    ? { domain: { name: productionDomain, zoneId: SIGNALBOX_ZONE_ID } }
+    : {
+        domain: null,
+        routes: paths.map((path) => ({
+          pattern: `${target.cloudDomain}${path}*`,
+          zoneId: SIGNALBOX_ZONE_ID,
+        })),
+      };
+
 export const PRODUCTION_STAGE = "production";
 export const PREVIEW_DRIVE_PACKS_BUCKET = "signalbox-drives-preview";
 
@@ -115,6 +134,7 @@ export const cloudStage = (stage: string): CloudStage => {
       drivePacksBucket: "signalbox-drives",
       automationWorkflow: "signalbox-cloud-automations",
       vars: {
+        SIGNALBOX_STAGE: PRODUCTION_STAGE,
         // Production identity. Never reuse it for another deployment.
         ENVIRONMENT_ID: "4bfb70e5-7954-458a-9b75-4834c0ab4e13",
         ENVIRONMENT_LABEL: "Signalbox Cloud",
@@ -146,10 +166,11 @@ export const cloudStage = (stage: string): CloudStage => {
     drivePacksBucket: PREVIEW_DRIVE_PACKS_BUCKET,
     automationWorkflow: `signalbox-cloud-pr-${number}-automations`,
     vars: {
+      SIGNALBOX_STAGE: stage,
       ENVIRONMENT_ID: `cloud-preview-${number}`,
       ENVIRONMENT_LABEL: `Signalbox Cloud (PR #${number})`,
       EXECUTOR_TOKEN_ISSUER: `https://${cloudDomain}`,
-      ...urls(cloudDomain, gatewayDomain),
+      ...urls(cloudDomain, cloudDomain),
       PREVIEW_DOMAIN: previews,
       DRIVE_PACKS_PREFIX: `pr-${number}/`,
       // Where a preview takes each user's setup from (`src/previewSetup/`).

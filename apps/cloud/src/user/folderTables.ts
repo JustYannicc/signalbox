@@ -61,3 +61,9 @@ export const addPhases = Effect.gen(function* () {
   yield* sql`ALTER TABLE folders ADD COLUMN phases TEXT`;
   yield* sql`ALTER TABLE folders ADD COLUMN phase TEXT`;
 });
+
+/** `UserStore`'s `0023` migration: the fixed source of a folder started from another (#678). */
+export const addLineage = Effect.gen(function* () {
+  const sql = yield* SqlClient.SqlClient;
+  yield* sql`ALTER TABLE folders ADD COLUMN origin TEXT`;
+});

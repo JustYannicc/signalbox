@@ -18,6 +18,32 @@ Prefer a container? See [Dev container](../internals/devcontainer.md) for VS Cod
 ## Choosing a dev process
 
 Use `vp run dev` for server and web, or `vp run dev:desktop` for the Electron client.
+
+On macOS and Linux, dev and Metro scripts register their processes for cleanup. Use
+`vp run agents:run -- <command>` for another watcher or long-running command. Pass
+`--session-id <id>` before `--` to set an owner ID explicitly. Claude Code exports it
+automatically; Codex commands use their exact runtime thread ID. Commands without
+an agent owner get a separate ID, so ending an agent session cannot stop a person's server.
+Review and trust the repository hooks when the harness prompts, so session cleanup can run.
+Claude native subagents inherit their parent's environment. While children are active,
+`agents:run` requires the explicit `--session-id` from the hook context.
+
+`vp run agents:stop` stops your session's registrations using Codex's exact runtime
+thread ID or an explicit `--session-id <id>`. Claude stops always need the explicit ID
+from the hook context, because an inherited environment cannot prove ownership. Pass `--all`
+only when you intend to stop every registration in the checkout, including other sessions.
+`vp run agents:reap` retries stale registrations across the repository, and `vp run agents:status --all` shows
+registered PIDs, ports, memory and CPU. These commands check process identity and cwd before
+signaling. Other processes remain untouched. A missing checkout or unverifiable cwd keeps
+the registration for inspection.
+
+macOS requires `/usr/bin/python3` to read the precise
+process start time from libproc; registration fails if it cannot verify that identity.
+Windows commands still run, but automatic process cleanup is unavailable there.
+Worktree removal follows the configured Storage rules.
+If interrupted lock recovery leaves a lock behind, the command reports its path. Inspect
+its recorded owner before removing that lock.
+
 `dev:server` and `dev:web` start those processes separately.
 See the [mobile README](../../apps/mobile/README.md) for native builds and Metro.
 
@@ -115,11 +141,19 @@ vp run --filter <package> typecheck
 ```
 
 TypeScript workspaces typecheck with tsc-rs, which has Effect diagnostics built in.
-Keep `typescript`, `@effect/tsgo`, and the SDK prepare step: editors use the
-generated SDK for Effect quick fixes and refactors. It points at Effect's bundled
-compiler without changing packages in pnpm's shared store. Keep `@effect/tsgo` on the
-effect-tsgo version that tsc-rs ports (see the tsc-rs README), or the two disagree
-on rule names.
+Editors use the generated native SDK, and Codex's LSP plugin uses the repository's
+`.codex/lsp-client.json`. Other stdio clients can run `./node_modules/.bin/tsc-rs --lsp --stdio`
+from the repository root. The config selects the server; it does not install an LSP client.
+Cloud runner LSP provisioning remains tracked in [#352](https://github.com/JustYannicc/signalbox/issues/352).
+
+Keep `typescript` and `@effect/tsgo` as diagnostic parity references. tsc-rs 0.7.0 ports
+TypeScript 7.1.0-dev and Effect 0.51.1, while the declared compiler is TypeScript 7.0.2.
+CI compares full diagnostics when compiler setup changes and keeps Cloud source and infrastructure
+parity checks on other source PRs. It reports sequential compiler timings separately from the
+actual full typecheck benchmark, which preserves concurrency two and samples aggregate process-tree RSS.
+For a focused comparison, run `node scripts/typecheck-parity.ts <tsconfig...>`. The declared
+TypeScript binary must be unmodified; the checker rejects an Effect-patched shared binary.
+Use `--typescript <pristine-binary>` to check against a separate copy of the declared compiler.
 Marketing keeps `astro check` for Astro files.
 
 Use `vp run lint:mobile` for native mobile changes. CI owns the full suite; see

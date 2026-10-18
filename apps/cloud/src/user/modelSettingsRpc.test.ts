@@ -105,13 +105,13 @@ describe("cloud model settings RPC", () => {
       );
       expect(event.payload.settings.defaultModelSelection).toEqual(scriptedModelSelection);
 
-      // A temporarily empty catalog hides stale choices from clients, while the
-      // user-owned durable state survives and reappears when the model returns.
+      // Catalog preferences disappear temporarily, but a saved default stays
+      // selected instead of silently switching work to another model.
       const withoutCatalog = yield* connectTo(cloud, "without-catalog", false);
       const empty = yield* withoutCatalog[WS_METHODS.serverGetConfig]({});
       expect(empty.settings.favorites).toEqual([]);
       expect(empty.settings.providerModelPreferences).toEqual({});
-      expect(empty.settings.defaultModelSelection).toBeNull();
+      expect(empty.settings.defaultModelSelection).toEqual(scriptedModelSelection);
 
       const restored = yield* writer[WS_METHODS.serverGetConfig]({});
       expect(restored.settings.favorites).toEqual(saved.favorites);

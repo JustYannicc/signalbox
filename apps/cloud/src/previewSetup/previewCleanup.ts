@@ -1,4 +1,5 @@
-// @effect-diagnostics globalConsole:off -- report internal cleanup failures to Worker logs.
+import { log } from "evlog";
+
 import {
   runPreviewCleanup,
   type PreviewCleanupBindings,
@@ -77,7 +78,10 @@ export const handlePreviewCleanup = async (
     if ("error" in decoded) return Response.json({ error: decoded.error }, { status: 400 });
     return Response.json(await runPreviewCleanup(decoded, env));
   } catch (cause) {
-    console.error("Preview cleanup failed.", cause);
+    log.error({
+      action: "preview.cleanup",
+      error: cause instanceof Error ? cause : new Error(String(cause)),
+    });
     return Response.json({ error: "Preview cleanup failed." }, { status: 500 });
   }
 };

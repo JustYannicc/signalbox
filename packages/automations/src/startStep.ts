@@ -17,13 +17,23 @@ import { fail } from "./errors.ts";
 import { isExternalRunSystem, type ExternalRuns } from "./external.ts";
 import { asRecord, fromJson, toJson } from "./json.ts";
 import { modelPrompt } from "./modelSteps.ts";
-import type { AutomationFunctions, CallbackLink } from "./host.ts";
+import type { AutomationFunctions, AutomationModelSteps, CallbackLink } from "./host.ts";
 import { waitsOnEvents } from "./events/runWaits.ts";
+import { eventCursorForRun } from "./events/cursor.ts";
 import { explained } from "./runLog.ts";
+import { runModelStep } from "./runModelStep.ts";
 import { retryAfterMs, retryPolicy, stepTimeoutMs } from "./stepPolicy.ts";
-import { httpRequest, isRetryableStatus, launchAgent, wakeAt, type StepStart } from "./steps.ts";
+import {
+  httpRequest,
+  isRetryableStatus,
+  completionModelFor,
+  launchAgent,
+  wakeAt,
+  type StepStart,
+} from "./steps.ts";
 import { nowIso } from "./time.ts";
 import type { AutomationRow, RunRow, StepRow, WorkflowStore } from "./WorkflowStore.ts";
+import type { RunLinkStore } from "./runLinkStore.ts";
 
 /**
  * Starts the real work behind a step the code just reached: everything that
@@ -40,8 +50,10 @@ export type StepOutcome =
 
 export interface StartStepDependencies {
   readonly store: WorkflowStore;
+  readonly links: RunLinkStore;
   readonly services: Context.Context<EngineServices>;
   readonly functions: AutomationFunctions["Service"];
+  readonly models: AutomationModelSteps["Service"] | undefined;
   /** `w.run` on another system's runners. */
   readonly external: Pick<ExternalRuns, "start">;
   readonly connections: Effect.Success<typeof makeConnections>;
@@ -83,8 +95,30 @@ export const makeStartStep =
         return thread();
       case "llm":
       case "judge":
-      case "extract":
-        return thread(modelPrompt(step.verb, step.label, asRecord(first)));
+      case "extract": {
+        const verb = step.verb;
+        const options = asRecord(first);
+        const models = deps.models;
+        if (models === undefined) return thread(modelPrompt(verb, step.label, options));
+        return runModelStep({
+          verb,
+          label: step.label,
+          options,
+          complete: (prompt) =>
+            completionModelFor(options, defaults(), automation.project_id).pipe(
+              Effect.flatMap((modelSelection) =>
+                models.complete({
+                  projectId: automation.project_id,
+                  modelSelection,
+                  prompt,
+                }),
+              ),
+            ),
+        }).pipe(
+          Effect.provideContext(deps.services),
+          Effect.map((value): StepOutcome => ({ type: "done", value })),
+        );
+      }
       case "http":
         return Effect.gen(function* () {
           const value = yield* httpRequest(first, {
@@ -105,10 +139,16 @@ export const makeStartStep =
         return wakeAt(first).pipe(
           Effect.map((at): StepOutcome => ({ type: "waiting", wakeAt: at })),
         );
+      case "eventCursor":
+        return deps.links
+          .captureEventCursor(step.run_id)
+          .pipe(Effect.map((value): StepOutcome => ({ type: "done", value })));
       case "waitFor": {
-        const { event, timeout, on, watch } = asRecord(first);
+        const { event, timeout, on, watch, after } = asRecord(first);
         // `on` steps wait without a name; runWaits.ts hands them matching events.
         const named = typeof event === "string" ? { event } : {};
+        if (after !== undefined && named.event)
+          return fail("w.waitFor `after` only works with `on` or `watch` events.");
         if (!waitsOnEvents(step) && !named.event)
           return fail("w.waitFor needs `on`, `watch` or an event name.");
         // A computed `on` or `watch` skipped the compiler's check.
@@ -117,6 +157,7 @@ export const makeStartStep =
           (watch === undefined ? null : sourceWatchProblem(watch, on));
         if (problem) return Effect.fail(explained(problem.message, { fix: problem.hint }));
         return Effect.gen(function* () {
+          if (after !== undefined) yield* eventCursorForRun(after, step.run_id);
           const at = timeout === undefined ? undefined : yield* wakeAt(timeout);
           return { type: "waiting", ...named, ...(at ? { wakeAt: at } : {}) } satisfies StepStart;
         });

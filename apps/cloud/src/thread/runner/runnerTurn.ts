@@ -17,7 +17,7 @@ import {
 import * as Exit from "effect/Exit";
 import * as Schema from "effect/Schema";
 
-import { isHarnessInstance, runnerInstanceFor } from "../providerCatalog.ts";
+import { isHarnessInstance, runnerInstanceFor } from "../../models/ModelRouting.ts";
 import { activeRun, finishRunEvents, providerThreadFor, type RunEnding } from "../runLifecycle.ts";
 import {
   attemptEvent,
@@ -30,7 +30,7 @@ import {
   turnItemEvent,
 } from "../threadEvents.ts";
 import { applyEvents } from "../threadProjection.ts";
-import { checkpointEvents, noticeEvents } from "./driveItems.ts";
+import { checkpointEvents, dependencyProgressEvents, noticeEvents } from "../driveEvents.ts";
 import {
   ERROR_ITEM_BAND_POSITION,
   type Json,
@@ -249,7 +249,14 @@ function itemEvents(
 ): ReadonlyArray<OrchestrationV2DomainEvent> | "undecodable" {
   const run = harnessRun(projection);
   // Usage and log lines are for the turn's diagnostics, not its events; a drain is the lease's.
-  if (item.kind === "usage" || item.kind === "log" || item.kind === "machine.drained") return [];
+  if (
+    item.kind === "usage" ||
+    item.kind === "log" ||
+    item.kind === "machine.drained" ||
+    item.kind === "git.pull.result" ||
+    item.kind === "git.pull.interrupted"
+  )
+    return [];
   if (item.kind === "provider") {
     return stringField(item.event, "type") === "turn.terminal"
       ? terminalEvents(projection, item.event, ctx)
@@ -266,6 +273,8 @@ function itemEvents(
       return checkpointEvents(projection, run, item, ctx);
     case "drive.notice":
       return noticeEvents(projection, run, item, ctx);
+    case "dependencies.progress":
+      return dependencyProgressEvents(projection, run, item, ctx);
     // Why the Runner stopped the turn.
     case "session.notice":
       return systemNoticeEvents(

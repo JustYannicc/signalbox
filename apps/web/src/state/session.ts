@@ -6,14 +6,18 @@ import {
   type EnvironmentId,
   sessionGrantsScope,
 } from "@t3tools/contracts";
-import { useMemo } from "react";
 import * as Option from "effect/Option";
 import { AsyncResult, Atom } from "effect/reactivity";
 
 import { connectionAtomRuntime } from "../connection/runtime";
 import { appAtomRegistry } from "../rpc/atomRegistry";
+import { environmentAtomList, environmentIdsKey } from "./environmentAtomList";
 
 export const environmentSession = createEnvironmentSessionAtoms(connectionAtomRuntime);
+export const environmentSessionStatesAtom = environmentAtomList(
+  "web-environment-session-states",
+  environmentSession.sessionStateAtom,
+);
 
 const EMPTY_SESSION_STATE_ATOM = Atom.make(AsyncResult.initial<AuthSessionState>());
 
@@ -37,25 +41,56 @@ function sessionHasScope(
   return result._tag !== "Failure" && session !== null && sessionGrantsScope(session, scope);
 }
 
+// Keyed by scope and ids so callers get one Set per session change, not one per render.
+const environmentsWithScopeAtom = Atom.family((key: string) => {
+  const [scope, idsKey = ""] = key.split(/\n(.*)/s) as [AuthEnvironmentScope, string?];
+  const ids = idsKey === "" ? [] : (idsKey.split("\n") as EnvironmentId[]);
+  const statesAtom = environmentSessionStatesAtom(idsKey);
+  return Atom.make((get) => {
+    const states = get(statesAtom);
+    return new Set(ids.filter((_, index) => sessionHasScope(states[index]!, scope)));
+  }).pipe(Atom.withLabel(`web-environments-with-scope:${key}`));
+});
+
 export function useEnvironmentsWithScope(
   environments: ReadonlyArray<{ readonly environmentId: EnvironmentId }>,
   scope: AuthEnvironmentScope,
 ): ReadonlySet<EnvironmentId> {
-  const permitted = useMemo(
-    () =>
-      Atom.make((get) => {
-        const ids = new Set<EnvironmentId>();
-        for (const { environmentId } of environments) {
-          const result = get(environmentSession.sessionStateAtom(environmentId));
-          if (sessionHasScope(result, scope)) {
-            ids.add(environmentId);
-          }
-        }
-        return ids;
-      }),
-    [environments, scope],
+  return useAtomValue(
+    environmentsWithScopeAtom(
+      `${scope}\n${environmentIdsKey(environments.map(({ environmentId }) => environmentId))}`,
+    ),
   );
-  return useAtomValue(permitted);
+}
+
+export type EnvironmentScopeResolution = "granted" | "denied" | "unresolved";
+
+function resolveEnvironmentScope(
+  result: AsyncResult.AsyncResult<AuthSessionState, unknown>,
+  scope: AuthEnvironmentScope,
+): EnvironmentScopeResolution {
+  if (result._tag === "Failure") return "unresolved";
+  const session = Option.getOrNull(AsyncResult.value(result));
+  if (session === null) return "unresolved";
+  return sessionGrantsScope(session, scope) ? "granted" : "denied";
+}
+
+/** Permissions whose session has not arrived stay unresolved instead of looking denied. */
+export function useEnvironmentsWithScopeResolution(
+  environments: ReadonlyArray<{ readonly environmentId: EnvironmentId }>,
+  scope: AuthEnvironmentScope,
+): ReadonlyMap<EnvironmentId, EnvironmentScopeResolution> {
+  const resolutions = Atom.make((get) => {
+    const byId = new Map<EnvironmentId, EnvironmentScopeResolution>();
+    for (const { environmentId } of environments) {
+      byId.set(
+        environmentId,
+        resolveEnvironmentScope(get(environmentSession.sessionStateAtom(environmentId)), scope),
+      );
+    }
+    return byId;
+  });
+  return useAtomValue(resolutions);
 }
 
 export function readEnvironmentScope(

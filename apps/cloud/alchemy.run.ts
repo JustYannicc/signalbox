@@ -18,8 +18,11 @@ import * as Cloudflare from "alchemy/Cloudflare";
 import * as Config from "effect/Config";
 import * as Effect from "effect/Effect";
 import * as Redacted from "effect/Redacted";
+import { MODEL_GATEWAY_PATHS } from "@signalbox/runner-protocol/RunnerProtocol";
+import { testSignInEnv } from "./infra/testSignInEnv.ts";
 
 import { executorSigningJwk } from "./infra/executorSigningKey.ts";
+import { nativeTraceExport } from "./infra/nativeTraceExport.ts";
 import {
   AUTOMATION_BINDINGS as AUTOMATION,
   COMPATIBILITY_DATE,
@@ -29,6 +32,7 @@ import {
   PREVIEW_DRIVE_PACKS_BUCKET,
   PREVIEW_ZONE,
   SIGNALBOX_ZONE_ID,
+  stageWorkerRouting,
 } from "./infra/stage.ts";
 import type {
   DriveObject,
@@ -48,7 +52,8 @@ const compatibility = {
   flags: ["nodejs_compat", "legacy_module_registry"],
 };
 
-const workerObservability = { enabled: true, logs: { enabled: true, invocationLogs: true } };
+// Each request's wide event (`evlog.config.ts`) is its log line, so Cloudflare's own would repeat it.
+const workerObservability = { enabled: true, logs: { enabled: true, invocationLogs: false } };
 
 /** A Durable Object class's container, placed as wrangler placed it: tiers 1 and 2, EU only. */
 const euContainer = <Shape>(
@@ -103,7 +108,8 @@ export default Alchemy.Stack(
     const { stage } = yield* Alchemy.Stack;
     const target = cloudStage(stage);
     const env = yield* workerEnv(target);
-    return yield* deploy(target, env).pipe(
+    const telemetry = yield* telemetryEnv(stage);
+    return yield* deploy(target, env, telemetry).pipe(
       // Production and open previews were made by wrangler. Names come only
       // from the stage, so a preview can never claim production's.
       Alchemy.AdoptPolicy.adopt(true),
@@ -112,6 +118,25 @@ export default Alchemy.Stack(
     );
   }),
 );
+
+/**
+ * Where both Workers' wide events go (`evlog.config.ts`, #285), and which
+ * release and stage they belong to. All optional: without a key, that drain is off.
+ */
+function telemetryEnv(stage: string) {
+  return Effect.gen(function* () {
+    return {
+      SIGNALBOX_STAGE: stage,
+      // The deployed commit, which evlog reports as the release.
+      APP_VERSION: yield* optional("APP_VERSION"),
+      SENTRY_DSN: yield* optionalSecret("SENTRY_DSN"),
+      POSTHOG_API_KEY: yield* optionalSecret("POSTHOG_API_KEY"),
+      POSTHOG_HOST: yield* optional("POSTHOG_HOST"),
+      SIGNALBOX_POSTHOG_ENABLED: yield* optional("SIGNALBOX_POSTHOG_ENABLED"),
+      T3CODE_TELEMETRY_ENABLED: yield* optional("T3CODE_TELEMETRY_ENABLED"),
+    };
+  });
+}
 
 /** Vars and secrets from CI's environment, next to the stage's own vars. */
 function workerEnv(target: CloudStage) {
@@ -126,6 +151,8 @@ function workerEnv(target: CloudStage) {
       MACHINE_BACKEND: yield* optional("MACHINE_BACKEND"),
       // Optional: the MCP authorization server (`src/api/mcpRoutes.ts`); unset, MCP takes keys only.
       WORKOS_AUTHKIT_DOMAIN: yield* optional("WORKOS_AUTHKIT_DOMAIN"),
+      // Operators enable a deployed preview temporarily; every normal deploy disables its drills.
+      RECOVERY_DRILLS: "",
       // Optional: the Executor local harness setup adds as an MCP server (`src/localKeys/`).
       EXECUTOR_MCP_URL: yield* optional("EXECUTOR_MCP_URL"),
       SESSION_SECRET: yield* Config.Redacted("SESSION_SECRET"),
@@ -164,7 +191,7 @@ function workerEnv(target: CloudStage) {
           RUNNER_IMAGE: yield* optional("RUNNER_IMAGE"),
         };
 
-    return { ...target.vars, ...shared, ...stageEnv };
+    return { ...target.vars, ...shared, ...stageEnv, ...(yield* testSignInEnv(target.production)) };
   });
 }
 
@@ -176,8 +203,15 @@ function deploy(
       string | Redacted.Redacted<string> | AlchemyOutput.Output<Redacted.Redacted<string>, unknown>
     >
   >,
+  telemetry: Effect.Success<ReturnType<typeof telemetryEnv>>,
 ) {
   return Effect.gen(function* () {
+    const traceExport = yield* nativeTraceExport(target, telemetry);
+    const observability = {
+      ...workerObservability,
+      ...(traceExport !== null && { traces: traceExport.traces }),
+    };
+
     // The web app, built by CI before the deploy. Same origin as the API.
     const assets = {
       directory: here("../web/dist"),
@@ -214,11 +248,20 @@ function deploy(
       // Threads' dev servers (`PREVIEW_DOMAIN`), on this stage's preview hosts only.
       routes: [{ pattern: `${target.previewHost}/*`, zoneId: PREVIEW_ZONE.id }],
       assets,
-      observability: workerObservability,
+      observability,
       // Checking a directly uploaded drive pack streams through all of it (#406): up to 5 GiB.
       limits: { cpuMs: 300_000 },
       env: {
         ...env,
+        ...telemetry,
+        CLIENT_TRACE_LIMITER: Cloudflare.Workers.RateLimit("ClientTraceLimiter", {
+          namespaceId: 866,
+          simple: { limit: 300, period: 60 },
+        }),
+        ...(traceExport !== null && {
+          TRACE_EXPORT: traceExport.worker,
+          TRACE_EXPORT_TOKEN: traceExport.token,
+        }),
         AUTOMATION_HOOK_ORIGIN: `https://${target.cloudDomain}`,
         // Binding and class names are the Durable Objects' identity.
         USERS: Cloudflare.DurableObject<UserObject>(DO.USERS),
@@ -265,12 +308,17 @@ function deploy(
     // no keys: the cloud's `ModelGrants` entrypoint checks every token.
     const gateway = yield* Cloudflare.Worker("ModelGateway", {
       name: target.gatewayWorker,
-      main: here("src/modelGateway/worker.ts"),
+      main: here("src/models/gatewayWorker.ts"),
       compatibility,
       workersDev: false,
-      domain: { name: target.gatewayDomain, zoneId: SIGNALBOX_ZONE_ID },
-      observability: workerObservability,
+      // Preview provider paths share the app origin; production keeps its gateway domain.
+      ...stageWorkerRouting(target, target.gatewayDomain, [
+        MODEL_GATEWAY_PATHS.anthropic,
+        MODEL_GATEWAY_PATHS.openai,
+      ]),
+      observability,
       env: {
+        ...telemetry,
         GRANTS: Cloudflare.WorkerEntrypoint<ModelGrants>(cloud, "ModelGrants"),
       },
     });

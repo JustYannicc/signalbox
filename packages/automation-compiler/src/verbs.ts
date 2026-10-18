@@ -147,6 +147,8 @@ export function readStepDetail(
     }
     case "run":
       return { detail: {} };
+    case "eventCursor":
+      return { detail: {} };
     case "llm":
     case "extract": {
       const { detail, properties } = optionsDetail(source, second);
@@ -171,12 +173,17 @@ export function readStepDetail(
       const { detail, properties } = optionsDetail(source, second);
       const outcomesNode = properties?.get("outcomes");
       if (!outcomesNode) {
-        source.error(
-          call,
-          "w.judge needs outcomes.",
-          'w.judge("Real bug or noise?", { input: issue, outcomes: ["bug", "noise"] })',
-        );
-        return null;
+        if (
+          !ensure(
+            source,
+            call,
+            properties?.has("input"),
+            "w.judge needs input.",
+            'w.judge("Is it done?", { input: evidence })',
+          )
+        )
+          return null;
+        return { detail };
       }
       const outcomes = readOutcomes(source, outcomesNode, "Judge outcomes");
       if (!outcomes) return null;
@@ -227,10 +234,28 @@ export function readStepDetail(
         )
       )
         return null;
+      if (properties?.has("after") && properties.has("event")) {
+        source.error(
+          properties.get("after")!,
+          "w.waitFor `after` only works with `on` or `watch` events.",
+          "Use w.eventCursor before a read, then pass it to w.waitFor with `on` or `watch`.",
+        );
+        return null;
+      }
       // A literal `on` is known from the diagram, so the run keeps matching events from its
       // start. A computed one (a built-in waiting on what its caller named) is checked when the
       // step starts and collects from then on.
       const literal = on ? evaluateLiteral(on) : undefined;
+      const watchNode = properties?.get("watch");
+      const watch = watchNode ? evaluateLiteral(watchNode) : undefined;
+      if (properties?.has("after") && !literal?.ok && !(on === undefined && watch?.ok)) {
+        source.error(
+          properties.get("after")!,
+          "w.waitFor `after` needs a literal `on`, or a literal `watch` without `on`.",
+          'Keep the event pattern visible in the workflow, e.g. { on: "pr.merged", after }.',
+        );
+        return null;
+      }
       if (on && literal?.ok) {
         const problem = waitForEventProblem(literal.value, properties?.has("watch") === true);
         if (problem) {
@@ -239,8 +264,6 @@ export function readStepDetail(
         }
       }
       // A literal watch is checked now and shows its service's logo; a computed one is checked when the step starts.
-      const watchNode = properties?.get("watch");
-      const watch = watchNode ? evaluateLiteral(watchNode) : undefined;
       if (watchNode && watch?.ok) {
         const problem = sourceWatchProblem(watch.value, literal?.ok ? literal.value : undefined);
         if (problem) {

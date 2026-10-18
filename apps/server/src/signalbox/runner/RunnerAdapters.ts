@@ -27,9 +27,9 @@ import { type ClaudeGatewaySettings, claudeGatewaySettings } from "./RunnerGatew
 import {
   claudeSettings,
   codexSettings,
-  harnessEnvironment,
   machineLayout,
   prepareMachine,
+  runnerEnvironments,
   type RunnerMcpServers,
 } from "./RunnerModelAccess.ts";
 
@@ -146,6 +146,8 @@ const layerAdapterServices = (
  */
 export const makeRunnerAdapters = Effect.fn("makeRunnerAdapters")(function* (machine: {
   readonly root: string;
+  /** The drive checkout path the provider shells should use. */
+  readonly cwd: string;
   readonly gatewayUrl: string;
   /** Claude's query runner; upstream's own by default. */
   readonly claudeQueryRunner?: ClaudeQueryRunnerLayer;
@@ -160,12 +162,13 @@ export const makeRunnerAdapters = Effect.fn("makeRunnerAdapters")(function* (mac
 }) {
   const layout = machineLayout(yield* Path.Path, machine.root);
   const stderr = makeHarnessStderr(machine.mask);
-  yield* prepareMachine(layout, machine.gatewayUrl, machine.mcpServers);
-  const environment = harnessEnvironment(
+  yield* prepareMachine(layout, machine.gatewayUrl, machine.mcpServers, machine.cwd);
+  const { dependencyEnvironment, toolEnvironment: environment } = runnerEnvironments(
     yield* HostProcess.Environment,
     layout,
     machine.gatewayUrl,
     machine.caches,
+    machine.cwd,
   );
   const services = yield* Layer.build(
     layerAdapterServices(
@@ -192,6 +195,7 @@ export const makeRunnerAdapters = Effect.fn("makeRunnerAdapters")(function* (mac
     layout,
     stderr,
     environment,
+    dependencyEnvironment,
     /** Where the adapters read a turn's attachments from (`RunnerAttachments.ts`). */
     attachmentsDir: Context.get(services, ServerConfig.ServerConfig).attachmentsDir,
     /** What the harnesses' environment sets, each adapter's own config home included. */

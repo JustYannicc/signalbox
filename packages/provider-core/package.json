@@ -127,6 +127,10 @@
       "types": "./src/server/randomUuid.ts",
       "import": "./src/server/randomUuid.ts"
     },
+    "./server/resetCredits": {
+      "types": "./src/server/resetCredits.ts",
+      "import": "./src/server/resetCredits.ts"
+    },
     "./server/runtimeInstructions": {
       "types": "./src/server/runtimeInstructions.ts",
       "import": "./src/server/runtimeInstructions.ts"

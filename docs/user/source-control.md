@@ -41,12 +41,24 @@ In Signalbox Cloud there is nothing to install. Open **Settings → Source Contr
 repositories need the organization to allow Signalbox: **Organization access** opens the page on
 GitHub where you grant or request it.
 
+After connecting GitHub and adding a repository, open **Pull Requests** to read its reviews,
+checks, conversations and changed files on web, desktop or mobile. A thread can also link a
+review from another GitHub repository your account can access. If GitHub cannot provide the
+review, Signalbox reports the problem so you can retry. The Pull Requests view is read-only;
+open the pull request on GitHub to comment or merge.
+
 To work on a repository, choose **Add project → GitHub repository** and pick it from your
 repositories, or type its `owner/name`. Signalbox doesn't copy
 anything up front: each new thread starts from the latest commit on the default branch. Every
 thread has its own branch, `signalbox/…`. Push it or open a pull request from the thread's git
 panel, or ask the agent to: it can push the branch and open the pull request itself, as you.
 Once the pull request is merged on GitHub, new threads start from the merged commit.
+
+Ask the agent to update its pull request description, post a comment, reply to a review, or
+attach a screenshot. It uses the same GitHub connection to act on its own branch's pull request;
+you don't need to give it a token or finish the action on GitHub.
+You can edit or delete comments on GitHub, and remove a screenshot from the description or
+comment that displays it.
 
 Signalbox saves a thread's files as it goes. Those saves stay in Signalbox; only the thread's
 commits are pushed: the one each turn ends with, and the one an agent makes when it publishes. Imported repositories appear under Personal for now.

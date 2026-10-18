@@ -9,6 +9,7 @@ import type { SqlError } from "effect/sql/SqlError";
 
 import { DriveRemote } from "@signalbox/runner-protocol/DriveProtocol";
 import type { DriveCheckpointRecord } from "@signalbox/runner-protocol/DriveProtocol";
+import type { PullResult, PullSaveRequest } from "@signalbox/runner-protocol/PullProtocol";
 import type {
   DriveWriter,
   ThreadRefs,
@@ -24,8 +25,10 @@ import * as Migrations from "../storage/migrations.ts";
 import { canWrite } from "./driveAccess.ts";
 import * as DriveEvents from "./DriveEvents.ts";
 import * as DriveMembers from "./DriveMembers.ts";
+import * as DrivePullStore from "./DrivePullStore.ts";
 import * as DriveRevisions from "./DriveRevisions.ts";
 import * as DriveRevisionStore from "./DriveRevisionStore.ts";
+import * as DriveHistory from "./DriveHistory.ts";
 import { isWithin } from "./DriveReader.ts";
 import type { ObjectType, Oid } from "./git/gitObjects.ts";
 
@@ -67,9 +70,9 @@ export type {
  * Every move of `main` or a thread's branch is also recorded for the drive's
  * people's automations (`DriveEvents`), in the same transaction.
  *
- * A drive backed by a remote repository records it here. Its `main` mirrors
- * the remote's default branch instead (`mirror`), and is never reconciled:
- * the remote is where work lands.
+ * A drive backed by a remote repository normally mirrors its default branch
+ * (`mirror`), where work lands. A source-only remote supplies historical
+ * objects while the drive reconciles new work onto its own `main`.
  */
 
 export const MAIN_REF = "main";
@@ -140,6 +143,7 @@ export interface ObjectLocation {
   readonly length: number;
   readonly type: ObjectType;
   readonly size: number;
+  readonly storageDriveId?: string;
 }
 
 export class DriveStore extends Context.Service<
@@ -172,6 +176,18 @@ export class DriveStore extends Context.Service<
       { readonly _tag: "ok" } | { readonly _tag: "missing"; readonly oids: ReadonlyArray<Oid> },
       SqlError
     >;
+    readonly packStorage: (name: string) => Effect.Effect<string | null, SqlError>;
+    readonly history: (userId: string) => Effect.Effect<DriveHistory.HistoryResult, SqlError>;
+    readonly historyOrigin: (
+      userId: string,
+    ) => Effect.Effect<DriveHistory.HistoryOrigin | null, SqlError>;
+    readonly startFromHistory: (
+      userId: string,
+      history: DriveHistory.HistorySnapshot,
+    ) => Effect.Effect<
+      DriveHistory.HistoryStartResult,
+      SqlError | import("./DriveHistoryTransfer.ts").HistoryTransferError
+    >;
     readonly updateRefs: (
       writer: DriveWriter,
       updates: ReadonlyArray<{
@@ -180,6 +196,16 @@ export class DriveStore extends Context.Service<
         readonly new: Oid;
       }>,
     ) => Effect.Effect<RefWrite, SqlError>;
+    /** Saves a pull's thread refs and immutable retry receipt in one transaction. */
+    readonly savePull: (
+      writer: DriveWriter,
+      request: PullSaveRequest,
+    ) => Effect.Effect<PullResult, SqlError>;
+    /** Reads the exact result retained for one thread's pull operation. */
+    readonly pullReceipt: (
+      writer: DriveWriter,
+      id: string,
+    ) => Effect.Effect<PullResult | null, SqlError>;
     readonly reconcile: (
       writer: DriveWriter,
       request: { readonly expectedMain: Oid | null; readonly newMain: Oid },
@@ -402,6 +428,9 @@ const migrations = Migrator.fromRecord({
   // Undo snapshots for restores already tracked by 0007.
   "0008_drive_restore_snapshots": DriveRevisions.createRestoreTables,
   "0009_ref_deletions": DriveEvents.allowDeletedRefs,
+  "0010_drive_pull_receipts": DrivePullStore.createTables,
+  "0010_shared_history_packs": DriveHistory.createTables,
+  "0011_shared_history_transfers": DriveHistory.createTransferTables,
 });
 
 /** Applies every migration not recorded yet (`storage/migrations.ts`). Never edit or rename a merged one. */
@@ -416,6 +445,7 @@ const RemoteRow = Schema.Struct({
   provider: DriveRemote.fields.provider,
   repository: Schema.String,
   default_branch: Schema.String,
+  mode: Schema.NullOr(Schema.Literal("source")),
 });
 const ObjectTypeSchema = Schema.Literals(["commit", "tree", "blob", "tag"]);
 const LocationRow = Schema.Struct({
@@ -425,6 +455,7 @@ const LocationRow = Schema.Struct({
   length: Schema.Number,
   type: ObjectTypeSchema,
   size: Schema.Number,
+  storageDriveId: Schema.NullOr(Schema.String),
 });
 const CommitRow = Schema.Struct({
   oid: Schema.String,
@@ -439,7 +470,11 @@ const decodeRefRows = Schema.decodeUnknownSync(Schema.Array(RefRow));
 const decodePackRows = Schema.decodeUnknownSync(Schema.Array(PackRow));
 const decodeThreadRows = Schema.decodeUnknownSync(Schema.Array(DriveRevisions.ThreadRevisionRow));
 const decodeRemoteRows = Schema.decodeUnknownSync(Schema.Array(RemoteRow));
-const decodeLocationRows = Schema.decodeUnknownSync(Schema.Array(LocationRow));
+const decodeLocations = Schema.decodeUnknownSync(Schema.Array(LocationRow));
+const decodeLocationRows = (input: unknown): ReadonlyArray<ObjectLocation> =>
+  decodeLocations(input).map(({ storageDriveId, ...location }) =>
+    storageDriveId === null ? location : { ...location, storageDriveId },
+  );
 const decodeCommitRows = Schema.decodeUnknownSync(Schema.Array(CommitRow));
 const decodeShortcutRows = Schema.decodeUnknownSync(
   Schema.Array(Schema.Struct({ path: Schema.String, target: Schema.String })),
@@ -477,7 +512,7 @@ const chunks = <A>(items: ReadonlyArray<A>) =>
     items.slice(i * CHUNK, (i + 1) * CHUNK),
   );
 
-const make = Effect.gen(function* () {
+const make = Effect.fn("DriveStore.make")(function* (driveId: string) {
   const sql = yield* SqlClient.SqlClient;
   const members = yield* DriveMembers.DriveMembers;
   const events = yield* DriveEvents.DriveEvents;
@@ -498,7 +533,7 @@ const make = Effect.gen(function* () {
     );
 
   const remote: DriveStore["Service"]["remote"] =
-    sql`SELECT provider, repository, default_branch FROM remote WHERE id = 1`.pipe(
+    sql`SELECT provider, repository, default_branch, mode FROM remote WHERE id = 1`.pipe(
       Effect.map((rows) => {
         const row = decodeRemoteRows(rows)[0];
         return row === undefined
@@ -507,15 +542,16 @@ const make = Effect.gen(function* () {
               provider: row.provider,
               repository: row.repository,
               defaultBranch: row.default_branch,
+              ...(row.mode === null ? {} : { mode: row.mode }),
             };
       }),
     );
 
   const setRemote: DriveStore["Service"]["setRemote"] = (next) =>
-    sql`INSERT INTO remote (id, provider, repository, default_branch)
-      VALUES (1, ${next.provider}, ${next.repository}, ${next.defaultBranch})
+    sql`INSERT INTO remote (id, provider, repository, default_branch, mode)
+      VALUES (1, ${next.provider}, ${next.repository}, ${next.defaultBranch}, ${next.mode ?? null})
       ON CONFLICT (id) DO UPDATE SET provider = excluded.provider,
-        repository = excluded.repository, default_branch = excluded.default_branch`.pipe(
+        repository = excluded.repository, default_branch = excluded.default_branch, mode = excluded.mode`.pipe(
       Effect.asVoid,
     );
 
@@ -796,18 +832,25 @@ const make = Effect.gen(function* () {
         } as const;
       }
       if (!(yield* writes(writer))) return NO_ACCESS;
-      if ((yield* remote) !== null) {
+      const source = yield* remote;
+      if (source !== null && source.mode !== "source") {
         return { _tag: "refused", reason: "This drive's work lands on its remote." } as const;
       }
       if (!(yield* fence(writer))) return STALE;
       if ((yield* ref(threadRef(writer.threadId))) !== request.newMain) {
-        return { _tag: "refused", reason: "main only moves to the thread's own branch." } as const;
+        return {
+          _tag: "refused",
+          reason: "main only moves to the thread's own branch.",
+        } as const;
       }
       const current = yield* ref(MAIN_REF);
       if (current === request.newMain)
         return { _tag: "ok", refs: yield* refs(writer.threadId, writer.packsAfter) } as const;
       if (current !== request.expectedMain) {
-        return { _tag: "conflict", refs: yield* refs(writer.threadId, writer.packsAfter) } as const;
+        return {
+          _tag: "conflict",
+          refs: yield* refs(writer.threadId, writer.packsAfter),
+        } as const;
       }
       if (current !== null && !(yield* isAncestor(current, request.newMain))) {
         return { _tag: "refused", reason: "main only moves forward: merge it first." } as const;
@@ -824,7 +867,8 @@ const make = Effect.gen(function* () {
           reason: "main only moves while the thread's turn runs.",
         } as const;
       }
-      if ((yield* remote) === null) {
+      const source = yield* remote;
+      if (source === null || source.mode === "source") {
         return { _tag: "refused", reason: "This drive has no remote to mirror." } as const;
       }
       if (!(yield* writes(writer))) return NO_ACCESS;
@@ -856,6 +900,7 @@ const make = Effect.gen(function* () {
         out.push(
           ...decodeLocationRows(
             yield* sql`SELECT o.oid, p.name AS pack, o.offset, o.length, o.type, o.size
+              , p.storage_drive_id AS storageDriveId
               FROM objects o JOIN packs p ON p.seq = o.pack_seq WHERE o.oid IN ${sql.in(chunk)}`,
           ),
         );
@@ -865,6 +910,7 @@ const make = Effect.gen(function* () {
 
   const locateAt: DriveStore["Service"]["locateAt"] = (pack, offset) =>
     sql`SELECT e.oid, p.name AS pack, e.offset, e.length, e.type, e.size
+      , p.storage_drive_id AS storageDriveId
       FROM pack_entries e JOIN packs p ON p.seq = e.pack_seq
       WHERE p.name = ${pack} AND e.offset = ${offset}`.pipe(
       Effect.map((rows) => decodeLocationRows(rows)[0] ?? null),
@@ -995,6 +1041,19 @@ const make = Effect.gen(function* () {
     internalRef: storedRef,
     fence,
   });
+  const pullOperations = DrivePullStore.makeOperations({
+    sql,
+    role: members.role,
+    threadRow,
+    ref,
+    missing,
+    isCommit,
+    threadRef,
+    wipRef,
+    setRef,
+    removeRef: (name) => sql`DELETE FROM refs WHERE name = ${name}`.pipe(Effect.asVoid),
+    land,
+  });
 
   /** Every commit `main` reaches, as a recursive CTE to join against. */
   const REACH = sql`reach(oid) AS (
@@ -1046,6 +1105,16 @@ const make = Effect.gen(function* () {
       );
     });
 
+  const historyOperations = DriveHistory.makeOperations({
+    driveId,
+    sql,
+    role: members.role,
+    ref: storedRef,
+    setRef,
+    remote,
+    setRemote,
+  });
+
   return DriveStore.of({
     initialize: Effect.asVoid(migrate.pipe(Effect.provideService(SqlClient.SqlClient, sql))),
     open,
@@ -1054,6 +1123,10 @@ const make = Effect.gen(function* () {
     missing,
     promised,
     registerPack,
+    packStorage: historyOperations.packStorage,
+    history: historyOperations.history,
+    historyOrigin: historyOperations.historyOrigin,
+    startFromHistory: historyOperations.startFromHistory,
     updateRefs,
     reconcile,
     setRemote,
@@ -1070,12 +1143,13 @@ const make = Effect.gen(function* () {
     removeShortcut,
     unreconciled,
     ...revisionOperations,
+    ...pullOperations,
   });
 });
 
 /** The store, its events and the members of the drive named `driveId`, on the object's SQLite. */
 export const layer = (driveId: string) =>
-  Layer.effect(DriveStore, make).pipe(
+  Layer.effect(DriveStore, make(driveId)).pipe(
     Layer.provideMerge(DriveEvents.layer(driveId)),
     Layer.provideMerge(DriveMembers.layer(driveId)),
   );

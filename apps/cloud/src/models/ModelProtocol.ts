@@ -8,6 +8,12 @@ export interface ModelPoolRoute {
   readonly userId: string;
 }
 
+/** The granted turn's existing correlation ids, independent of caller-supplied headers. */
+export interface ModelCallTrace {
+  readonly runId: RunId;
+  readonly traceId: string;
+}
+
 export type ModelForwardReply =
   | {
       readonly _tag: "forwarded";

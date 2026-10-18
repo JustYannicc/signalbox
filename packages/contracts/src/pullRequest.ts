@@ -631,7 +631,15 @@ export const PullRequestOmittedFileStat = Schema.Struct({
 });
 export type PullRequestOmittedFileStat = typeof PullRequestOmittedFileStat.Type;
 
+/** The immutable comparison that produced a displayed patch and its file expansions. */
+export const PullRequestDiffRevision = Schema.Struct({
+  baseSha: Schema.String.check(Schema.isPattern(/^[0-9a-f]{40}(?:[0-9a-f]{24})?$/i)),
+  headSha: Schema.String.check(Schema.isPattern(/^[0-9a-f]{40}(?:[0-9a-f]{24})?$/i)),
+});
+export type PullRequestDiffRevision = typeof PullRequestDiffRevision.Type;
+
 export const PullRequestDiffResult = Schema.Struct({
+  revision: Schema.optional(PullRequestDiffRevision),
   patch: Schema.String,
   /**
    * Something inside this slice could not be shown — a binary file, or a hunk the host declined
@@ -645,6 +653,7 @@ export type PullRequestDiffResult = typeof PullRequestDiffResult.Type;
 
 export const PullRequestDiffFileContentsInput = Schema.Struct({
   ...PullRequestRef.fields,
+  revision: Schema.optional(PullRequestDiffRevision),
   commit: Schema.optional(TrimmedNonEmptyString),
   changeType: Schema.Literals(["change", "rename-pure", "rename-changed", "new", "deleted"]),
   oldPath: TrimmedNonEmptyString,

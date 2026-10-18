@@ -4,7 +4,7 @@ import {
   type RunId,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
-import { useMemo, useRef } from "react";
+import { useState } from "react";
 
 import type { TimelineLatestRun } from "./MessagesTimeline.logic";
 
@@ -58,10 +58,12 @@ export function settledRunSummaries(
 export function useSettledRunSummaries(
   runs: ReadonlyArray<SettledRunInput>,
 ): ReadonlyMap<RunId, TimelineLatestRun> {
-  const previous = useRef<ReadonlyMap<RunId, TimelineLatestRun> | null>(null);
-  return useMemo(() => {
-    const next = settledRunSummaries(runs, previous.current);
-    previous.current = next;
-    return next;
-  }, [runs]);
+  const [latest, setLatest] = useState(() => ({
+    runs,
+    summaries: settledRunSummaries(runs, null),
+  }));
+  if (latest.runs === runs) return latest.summaries;
+  const summaries = settledRunSummaries(runs, latest.summaries);
+  setLatest({ runs, summaries });
+  return summaries;
 }
