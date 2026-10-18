@@ -3,6 +3,8 @@ import type { PreviewPort } from "@signalbox/runner-protocol/PreviewTunnel";
 import type { ModelGatewayProvider } from "@signalbox/runner-protocol/RunnerProtocol";
 import type { StatusNoteView } from "@signalbox/runner-protocol/StatusLineProtocol";
 import type {
+  SecretRequestAnswerInput,
+  SecretRequestFailureReason,
   OrchestrationV2Command,
   OrchestrationV2CommandOutputFrame,
   OrchestrationV2SubscribeCommandOutputInput,
@@ -11,6 +13,7 @@ import type {
   OrchestrationV2ThreadStreamItem,
   ThreadId,
 } from "@t3tools/contracts";
+import { SecretRequestError } from "@t3tools/contracts";
 import type { PullResult } from "@signalbox/runner-protocol/PullProtocol";
 import type {
   AgentBrowserInput,
@@ -89,6 +92,10 @@ const isBehind = Schema.is(BrowserWatchBehind);
 export interface ThreadObjectApi {
   readonly getWorkflowScript: (actor: Actor, input: unknown) => Promise<ThreadObjectReply<unknown>>;
   readonly stopWorkflow: (actor: Actor, input: unknown) => Promise<ThreadObjectReply<unknown>>;
+  readonly answerSecret: (
+    actor: Actor,
+    input: unknown,
+  ) => Promise<SecretRequestFailureReason | null>;
   readonly dispatch: (
     actor: Actor,
     command: unknown,
@@ -200,6 +207,10 @@ type CommandFailure = ThreadNotFoundError | ThreadCommandRejectedError | ThreadO
 export interface ThreadHandle {
   readonly getWorkflowScript: Threads["Service"]["getWorkflowScript"];
   readonly stopWorkflow: Threads["Service"]["stopWorkflow"];
+  readonly answerSecret: (
+    actor: Actor,
+    input: SecretRequestAnswerInput,
+  ) => Effect.Effect<void, SecretRequestError | ThreadObjectError>;
   readonly dispatch: (
     actor: Actor,
     command: OrchestrationV2Command,
@@ -419,6 +430,12 @@ export function handleFor(api: ThreadObjectApi): ThreadHandle {
           decodeIn("stopWorkflow", () => wire.workflowStopReply.decode(value)),
         ),
         Effect.flatMap((reply) => (reply._tag === "ok" ? Effect.void : Effect.fail(reply.error))),
+      ),
+    answerSecret: (actor, input) =>
+      call("answerSecret", () => api.answerSecret(actor, wire.secretAnswer.encode(input))).pipe(
+        Effect.flatMap((reason) =>
+          reason === null ? Effect.void : Effect.fail(new SecretRequestError({ reason })),
+        ),
       ),
     commandOutput: (actor, input) =>
       lines(

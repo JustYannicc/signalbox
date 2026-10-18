@@ -54,6 +54,7 @@ const setup = (
   const directory = Layer.succeed(ThreadDirectory.ThreadDirectory, {
     forThread: (threadId) =>
       ThreadDirectory.handleFor({
+        answerSecret: async () => "not_found",
         dispatch: async (_actor, command, creation) => {
           options.onArchive?.();
           if (threadId === options.failing) throw new Error("object down");

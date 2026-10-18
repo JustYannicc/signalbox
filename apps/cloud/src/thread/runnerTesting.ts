@@ -197,6 +197,7 @@ export const hello = (generation: number, token: string) => ({
   token,
   lastAckedSequence: 0,
   drains: true,
+  runtimeResponses: true,
   pulls: true,
 });
 
@@ -457,5 +458,7 @@ export const sendRunnerFrame = (
 ) => Effect.promise(() => onRunnerMessage(host, socket.socket, runnerFrame.encode(message)));
 
 export { recordedEvents } from "./runner/runnerEvents.ts";
+export { onRunnerMessage, pushRunnerWork, type RunnerSocketHost } from "./runner/runnerSockets.ts";
+export { ThreadRunner } from "./runner/ThreadRunner.ts";
+export { recoverRunEvents } from "./runner/runRecovery.ts";
 export { IDLE_TAIL_MS } from "./runner/MachineBackend.ts";
-export { onRunnerMessage, pushRunnerWork } from "./runner/runnerSockets.ts";
