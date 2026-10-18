@@ -132,8 +132,10 @@ export class RunnerExecChild implements KernelCommandChild {
       });
       this.#started = true;
     } catch (error) {
-      if (startCreatedNoProcess(error)) this.#startSent = false;
+      const noProcess = startCreatedNoProcess(error);
+      if (noProcess) this.#startSent = false;
       this.fail(asError(error));
+      if (noProcess) this.#finishOwnership();
       throw error;
     }
     if (signal.aborted || abortedWhileStarting) {

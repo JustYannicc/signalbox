@@ -376,6 +376,34 @@ describe("ThreadExecForwarder", () => {
     expect(released).toHaveBeenCalledOnce();
   });
 
+  it("releases a confirmed rejected start when disconnect wins the start continuation", async () => {
+    const leaseReleased = deferred<void>();
+    const released = vi.fn(async () => leaseReleased.resolve());
+    const fixture = setup({
+      lease: { acquire: async () => ({ generation: 4, connection: 2, release: released }) },
+      workspace: { canonicalCwd: async () => "/workspace" },
+      policy: { authorize: async () => undefined },
+    });
+    const spawning = fixture.forwarder.spawn(command, new AbortController().signal);
+    const rejected = expect(spawning).rejects.toThrow("workspace_not_ready");
+    const start = await fixture.startSent.promise;
+    fixture.report({
+      type: "ack",
+      generation: 4,
+      processId: start.processId,
+      operation: "start",
+      requestId: start.requestId,
+      applied: false,
+      error: { code: "workspace_not_ready", message: "No process was created" },
+    });
+    await Promise.resolve();
+    fixture.forwarder.socketHost.disconnected(fixture.socket, 4, 2);
+    await rejected;
+    await leaseReleased.promise;
+    await fixture.forwarder.dispose();
+    expect(released).toHaveBeenCalledOnce();
+  });
+
   it("retains the child and lease after rejected cancellation and retries cleanup", async () => {
     const released = vi.fn(async () => undefined);
     const fixture = setup({
