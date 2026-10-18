@@ -65,7 +65,6 @@ export const CLOUD_UNSERVED: Readonly<Record<string, Unserved>> = {
 
   // Files in folders without a machine.
   "projects.writeFile": gap("#439"),
-  "projects.searchContents": gap("#439"),
   "projects.createNew": exempt("Folders hold projects; create one with folders.create."),
   "projects.mutate": exempt("Folders hold projects; change them with folders.*."),
 

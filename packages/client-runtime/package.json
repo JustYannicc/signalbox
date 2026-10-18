@@ -95,6 +95,10 @@
       "types": "./src/rpc/index.ts",
       "default": "./src/rpc/index.ts"
     },
+    "./rpc/contentSearch": {
+      "types": "./src/rpc/contentSearch.ts",
+      "default": "./src/rpc/contentSearch.ts"
+    },
     "./observability/client-issues": {
       "types": "./src/observability/clientIssues.ts",
       "default": "./src/observability/clientIssues.ts"
