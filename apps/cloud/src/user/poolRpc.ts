@@ -57,6 +57,8 @@ export const POOL_METHODS = [
   WS_METHODS.providerAuthStart,
   WS_METHODS.providerAuthComplete,
   WS_METHODS.providerAuthCancel,
+  WS_METHODS.providerAuthRespond,
+  WS_METHODS.providerAuthLogout,
 ] as const;
 
 /** The scopes a self-hosted server requires for these (`apps/server/src/accountHub/poolRpcScopes.ts`). */
@@ -81,6 +83,8 @@ export const POOL_REQUIRED_SCOPES = {
   [WS_METHODS.providerAuthStart]: AuthProvidersManageScope,
   [WS_METHODS.providerAuthComplete]: AuthProvidersManageScope,
   [WS_METHODS.providerAuthCancel]: AuthProvidersManageScope,
+  [WS_METHODS.providerAuthRespond]: AuthProvidersManageScope,
+  [WS_METHODS.providerAuthLogout]: AuthProvidersManageScope,
 } as const satisfies Record<(typeof POOL_METHODS)[number], AuthEnvironmentScope>;
 
 /** What pools the cloud can't hold yet say instead of failing as unknown requests. */
@@ -109,6 +113,9 @@ const settingsKey = (config: ReturnType<typeof Environment.serverConfig>) =>
     config.settings.defaultModelSelection,
     config.settings.favorites,
     config.settings.providerModelPreferences,
+    config.settings.reviewGuidesEnabled,
+    config.settings.reviewGuideModelSelection,
+    config.settings.reviewGuideInstructions,
   ]);
 
 /** Up to 30 seconds between reads of pools that can't be read right now. */
@@ -183,6 +190,10 @@ export const makePoolHandlers = (input: {
           providerModelPreferences: filtered.providerModelPreferences,
           defaultModelSelection:
             saved.defaultModelSelection ?? config.settings.defaultModelSelection,
+          reviewGuidesEnabled: saved.reviewGuidesEnabled,
+          reviewGuideModelSelection:
+            saved.reviewGuideModelSelection ?? config.settings.reviewGuideModelSelection,
+          reviewGuideInstructions: saved.reviewGuideInstructions,
         },
       };
     };
@@ -390,6 +401,10 @@ export const makePoolHandlers = (input: {
         signIns.complete(actor, request),
       [WS_METHODS.providerAuthCancel]: (request: Parameters<typeof signIns.cancel>[1]) =>
         signIns.cancel(actor, request),
+      [WS_METHODS.providerAuthRespond]: (request: Parameters<typeof signIns.respond>[1]) =>
+        signIns.respond(actor, request),
+      [WS_METHODS.providerAuthLogout]: (request: Parameters<typeof signIns.logout>[1]) =>
+        signIns.logout(actor, request),
       [WS_METHODS.serverUpdateSettings]: updateModelSettings,
     };
     return { handlers, configStream, configNow, updateModelSettings };

@@ -134,6 +134,14 @@ export const makeUserObjectApi = (
     exchangeCredential: (input) => use((store) => store.exchangeCredential(input)),
     syncOrganizations: (organizations) =>
       run(UserContexts.UserContexts.use((contexts) => contexts.syncOrganizations(organizations))),
+    reserveOrganizationRefresh: () =>
+      run(UserContexts.UserContexts.use((contexts) => contexts.reserveOrganizationRefresh)),
+    completeOrganizationRefresh: (sequence, organizations) =>
+      run(
+        UserContexts.UserContexts.use((contexts) =>
+          contexts.completeOrganizationRefresh(sequence, organizations),
+        ),
+      ),
     shellSnapshot: async () => shellSnapshotWire.encode(await shell((service) => service.snapshot)),
     recordThreadSummary: (encoded) => {
       const summary = wire.summary.decode(encoded);

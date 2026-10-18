@@ -1107,7 +1107,9 @@ describe("ThreadRunner", () => {
             providerThread: { nativeThreadRef: null },
           });
           expect(next.restartContinuationOfRunId).toBeUndefined();
-          expect(next.message.text).toContain("User:\nHi\n\nAssistant:\nHel\n\n");
+          expect(next.message.text).toContain("[Historical user;");
+          expect(next.message.text).toContain("]\nHi\n\n[Historical assistant;");
+          expect(next.message.text).toContain("]\nHel\n\n");
           expect(next.message.text.endsWith(`User message:\n${CONTINUE_PROMPT}`)).toBe(true);
         }),
       ),
@@ -1134,7 +1136,9 @@ describe("ThreadRunner", () => {
           providerTurnOrdinal: 1,
           providerThread: { nativeThreadRef: null },
         });
-        expect(fresh.message.text).toContain("User:\nHi\n\nAssistant:\nHello!\n\n");
+        expect(fresh.message.text).toContain("[Historical user;");
+        expect(fresh.message.text).toContain("]\nHi\n\n[Historical assistant;");
+        expect(fresh.message.text).toContain("]\nHello!\n\n");
         expect(fresh.message.text.endsWith("User message:\nAgain")).toBe(true);
 
         // The fresh session is the one the thread resumes from then on.

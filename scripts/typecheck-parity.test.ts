@@ -16,13 +16,14 @@ const typeError =
   "src/file.ts(4,2): error TS2322: Type 'string' is not assignable to type 'number'.\n";
 const effectError = "src/file.ts(9,3): error TS377033: Use the Effect clock. effect(globalDate)\n";
 
-test("parity retains both Cloud compiler configs after its known codegen prerequisite", () => {
-  expect(
-    compilerProjects(
-      "apps/cloud",
-      "node infra/syncProbe/prepare.mjs && tsc-rs --noEmit && tsc-rs --noEmit -p tsconfig.infra.json",
-    ),
-  ).toEqual(["apps/cloud/tsconfig.json", "apps/cloud/tsconfig.infra.json"]);
+test("parity retains both Cloud compiler configs after its declared codegen prerequisites", () => {
+  const cloud = JSON.parse(
+    NodeFS.readFileSync(new URL("../apps/cloud/package.json", import.meta.url), "utf8"),
+  );
+  expect(compilerProjects("apps/cloud", cloud.scripts.typecheck)).toEqual([
+    "apps/cloud/tsconfig.json",
+    "apps/cloud/tsconfig.infra.json",
+  ]);
 });
 
 test("parity rejects unknown commands and the Cloud prerequisite in other workspaces", () => {
@@ -32,6 +33,9 @@ test("parity rejects unknown commands and the Cloud prerequisite in other worksp
   expect(() => compilerProjects("apps/web", "node infra/syncProbe/prepare.mjs")).toThrow(
     "Unrecognized typecheck",
   );
+  expect(() =>
+    compilerProjects("apps/web", "node --experimental-strip-types infra/isolateProbe/prepare.ts"),
+  ).toThrow("Unrecognized typecheck");
 });
 
 test("parity rejects same-version Effect patches through compiler symlinks", () => {
