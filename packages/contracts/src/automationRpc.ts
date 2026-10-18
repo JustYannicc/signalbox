@@ -277,7 +277,7 @@ export type AutomationValidateResult = typeof AutomationValidateResult.Type;
  * only its own, so a `signalbox` older or newer than the cloud is told to
  * update instead of saving code the cloud can't load.
  */
-export const AUTOMATION_COMPILED_FORMAT = 1;
+export const AUTOMATION_COMPILED_FORMAT = 2;
 
 /**
  * An automation file compiled where the caller runs: the cloud can't compile

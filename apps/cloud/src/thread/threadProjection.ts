@@ -108,7 +108,11 @@ export function threadShellFromProjection(
       : [],
   );
   const pendingRequest = [
-    ...projection.runtimeRequests.filter((request) => request.status === "pending"),
+    ...projection.runtimeRequests.filter(
+      (request) =>
+        request.status === "pending" &&
+        (request.kind !== "user_input" || request.responseCapability.type === "live"),
+    ),
     ...secretRequests,
   ].toSorted(
     (left, right) =>
@@ -145,6 +149,7 @@ export function threadShellFromProjection(
     activityRunStartedAt:
       activityRun === null ? null : orchestrationV2RunWorkStartedAt(activityRun),
     status: latestRun?.status ?? "idle",
+    asks: thread.asks?.filter((ask) => ask.status === "pending"),
     pendingRuntimeRequest:
       pendingRequest === undefined
         ? null
@@ -179,7 +184,16 @@ export function threadShellFromProjection(
       }),
     ],
     providerInstanceHistory:
-      projection.providerThreads.length > 0 ? [thread.providerInstanceId] : [],
+      projection.providerThreads.length > 0
+        ? [
+            ...new Set([
+              ...projection.providerThreads.map(
+                (providerThread) => providerThread.providerInstanceId,
+              ),
+              thread.providerInstanceId,
+            ]),
+          ]
+        : [],
     goal: null,
     itemCount: projection.visibleTurnItems.length,
     visibleItemCount: projection.visibleTurnItems.length,

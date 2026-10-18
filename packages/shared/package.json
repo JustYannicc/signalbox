@@ -3,6 +3,18 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./waitingCost": {
+      "types": "./src/waitingCost.ts",
+      "import": "./src/waitingCost.ts"
+    },
+    "./askKit": {
+      "types": "./src/askKit.ts",
+      "import": "./src/askKit.ts"
+    },
+    "./askKitAnswer": {
+      "types": "./src/askKitAnswer.ts",
+      "import": "./src/askKitAnswer.ts"
+    },
     "./keywordSearch": {
       "types": "./src/keywordSearch.ts",
       "import": "./src/keywordSearch.ts"
@@ -15,6 +27,18 @@
       "types": "./src/pnpmVirtualStore.ts",
       "import": "./src/pnpmVirtualStore.ts",
       "require": "./src/pnpmVirtualStore.ts"
+    },
+    "./signalboxAsks": {
+      "types": "./src/signalboxAsks.ts",
+      "import": "./src/signalboxAsks.ts"
+    },
+    "./signalboxNativeAsks": {
+      "types": "./src/signalboxNativeAsks.ts",
+      "import": "./src/signalboxNativeAsks.ts"
+    },
+    "./nativeElicitation": {
+      "types": "./src/nativeElicitation.ts",
+      "import": "./src/nativeElicitation.ts"
     },
     "./agentProcesses": {
       "types": "./src/agentProcesses/registry.ts",

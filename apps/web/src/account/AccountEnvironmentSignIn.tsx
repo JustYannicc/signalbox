@@ -8,9 +8,10 @@ import { toastManager } from "../components/ui/toast";
 import { connectPairing as connectPairingAtom } from "../connection/onboarding";
 import { useAtomCommand } from "../state/use-atom-command";
 import {
-  AccountFlowError,
+  accountFlowError,
   cancelNativeSignIn,
   completeEnvironmentSignIn,
+  isAccountFlowError,
   isDesktop,
   readPendingEnvironmentSignIn,
   startNativeSignIn,
@@ -58,15 +59,15 @@ export function useFinishEnvironmentSignIn() {
     const pendingOrigin = readPendingEnvironmentSignIn();
     const startedOnSignIn = pendingOrigin !== null && pendingOrigin === cloudDefaultOrigin();
     const finish = async () => {
-      if (accountReturn._tag === "error") throw new AccountFlowError(accountReturn.error);
+      if (accountReturn._tag === "error") throw accountFlowError(accountReturn.error);
       const { origin, credential } = await completeEnvironmentSignIn(accountReturn.handoff);
       const added = await connectPairing({ host: origin, pairingCode: credential });
-      if (added._tag === "Failure") throw new AccountFlowError("failed");
+      if (added._tag === "Failure") throw accountFlowError("failed");
       reloadAt("/");
     };
     finish().catch((error: unknown) => {
       cancelNativeSignIn();
-      const cancelled = error instanceof AccountFlowError && error.code === "cancelled";
+      const cancelled = isAccountFlowError(error) && error.code === "cancelled";
       toastManager.add({
         type: cancelled ? "info" : "error",
         title: cancelled

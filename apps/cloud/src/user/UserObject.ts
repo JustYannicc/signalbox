@@ -12,6 +12,7 @@ import * as Schema from "effect/Schema";
 
 import * as CloudAssets from "../assets/CloudAssets.ts";
 import * as Evlog from "../observability/Evlog.ts";
+import * as ClientActionTimings from "../observability/ClientActionTimings.ts";
 import { makeStorageObserver } from "../observability/DurableObjectStorage.ts";
 import * as ClientRpcTracing from "../observability/clientRpcTracing.ts";
 import * as IdentityProvider from "../account/IdentityProvider.ts";
@@ -408,7 +409,11 @@ const makeRuntime = (ctx: DurableObjectState, env: UserObjectEnv) => {
               Layer.orDie,
             ),
           ),
-          Layer.provideMerge(ClientRpcTracing.layer(env, (promise) => ctx.waitUntil(promise))),
+          Layer.provideMerge(
+            ClientActionTimings.layer(env, (promise) => ctx.waitUntil(promise)).pipe(
+              Layer.provideMerge(ClientRpcTracing.layer(env, (promise) => ctx.waitUntil(promise))),
+            ),
+          ),
         ),
       ),
     );

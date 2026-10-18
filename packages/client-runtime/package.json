@@ -3,6 +3,14 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./capture/text": {
+      "types": "./src/capture/text.ts",
+      "default": "./src/capture/text.ts"
+    },
+    "./capture/destinations": {
+      "types": "./src/capture/destinations.ts",
+      "default": "./src/capture/destinations.ts"
+    },
     "./composerThreadItems": {
       "types": "./src/composerThreadItems.ts",
       "default": "./src/composerThreadItems.ts"
@@ -291,6 +299,10 @@
       "types": "./src/state/orchestrationV2Projection.ts",
       "default": "./src/state/orchestrationV2Projection.ts"
     },
+    "./state/orchestration-v2-test-fixtures": {
+      "types": "./src/state/orchestrationV2TestFixtures.ts",
+      "default": "./src/state/orchestrationV2TestFixtures.ts"
+    },
     "./state/optimistic-ledger": {
       "types": "./src/state/optimisticLedger.ts",
       "default": "./src/state/optimisticLedger.ts"
@@ -374,6 +386,10 @@
     "./state/threadStatusLine": {
       "types": "./src/state/threadStatusLine.ts",
       "default": "./src/state/threadStatusLine.ts"
+    },
+    "./state/signalboxAsks": {
+      "types": "./src/state/signalboxAsks.ts",
+      "default": "./src/state/signalboxAsks.ts"
     },
     "./state/signalboxThreadKinds": {
       "types": "./src/state/signalboxThreadKinds.ts",
@@ -646,6 +662,14 @@
     "./pull-request-write-attempt": {
       "types": "./src/pullRequestWriteAttempt.ts",
       "default": "./src/pullRequestWriteAttempt.ts"
+    },
+    "./observability/action-timing": {
+      "types": "./src/observability/actionTiming.ts",
+      "default": "./src/observability/actionTiming.ts"
+    },
+    "./observability/action-timing-queue": {
+      "types": "./src/observability/actionTimingQueue.ts",
+      "default": "./src/observability/actionTimingQueue.ts"
     }
   },
   "scripts": {
