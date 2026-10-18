@@ -297,6 +297,7 @@ export const makeRunnerHost = Effect.fn("makeRunnerHost")(function* (config: Run
                 emit,
                 dependencies,
                 preparing,
+                previewDrive: () => openedDrive?.drive ?? null,
                 secrets,
                 registerSecrets,
                 openDrive,
