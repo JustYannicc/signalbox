@@ -167,4 +167,3 @@ function normalizeParameters(params: readonly string[] | undefined): string[] {
   for (let i = 0; i < params.length; i++) names[i] = stringOf(params[i]);
   return names;
 }
-

@@ -267,4 +267,3 @@ function sameDescriptor(
 function isObjectOrFunction(value: unknown): value is object | Function {
   return value !== null && (typeof value === "object" || typeof value === "function");
 }
-
