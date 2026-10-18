@@ -101,6 +101,8 @@ jobs:
       # The MCP authorization server (`apps/cloud/src/api/mcpRoutes.ts`); unset, MCP takes keys only.
       WORKOS_AUTHKIT_DOMAIN: ${{ vars.WORKOS_AUTHKIT_DOMAIN }}
       MACHINE_BACKEND: ${{ vars.MACHINE_BACKEND }}
+      SEARCH_INDEX_GENERATION: ${{ vars.SEARCH_INDEX_GENERATION }}
+      SEARCH_INDEX_DISABLED: ${{ vars.SEARCH_INDEX_DISABLED }}
       # Optional: the Executor local harness setup adds as an MCP server (src/localKeys/).
       EXECUTOR_MCP_URL: ${{ vars.EXECUTOR_MCP_URL }}
       # Optional: `cloud.*` usage analytics (#116). Production only, so
@@ -364,6 +366,8 @@ jobs:
       # The MCP authorization server (`apps/cloud/src/api/mcpRoutes.ts`); unset, MCP takes keys only.
       WORKOS_AUTHKIT_DOMAIN: ${{ vars.WORKOS_AUTHKIT_DOMAIN }}
       MACHINE_BACKEND: ${{ vars.MACHINE_BACKEND }}
+      SEARCH_INDEX_GENERATION: ${{ vars.SEARCH_INDEX_GENERATION }}
+      SEARCH_INDEX_DISABLED: ${{ vars.SEARCH_INDEX_DISABLED }}
       # Optional: the Executor local harness setup adds as an MCP server (src/localKeys/).
       EXECUTOR_MCP_URL: ${{ vars.EXECUTOR_MCP_URL }}
       T3CODE_WORKOS_API_KEY: ${{ secrets.T3CODE_WORKOS_API_KEY }}

@@ -3,6 +3,10 @@ import { SIGNALBOX_PERSON_BROWSER_WS_METHODS } from "@t3tools/contracts/signalbo
 
 /** Signalbox's own RPC groups (`SIGNALBOX_WS_RPCS` in contracts' rpc.ts). */
 export const SIGNALBOX_RPC_REACH = {
+  "signalbox.search.query": read({
+    name: "threads.query",
+    summary: "Search thread items across the folders you can see, with anchors and index coverage.",
+  }),
   "signalbox.timezone.get": read({ name: "timezone.get" }),
   "signalbox.timezone.set": write({
     name: "timezone.set",

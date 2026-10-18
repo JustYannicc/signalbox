@@ -103,6 +103,10 @@
       "types": "./src/signalboxRepositories.ts",
       "import": "./src/signalboxRepositories.ts"
     },
+    "./signalboxSearch": {
+      "types": "./src/signalboxSearch.ts",
+      "import": "./src/signalboxSearch.ts"
+    },
     "./signalboxLearner": {
       "types": "./src/signalboxLearner.ts",
       "import": "./src/signalboxLearner.ts"
