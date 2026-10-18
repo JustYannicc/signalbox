@@ -19,6 +19,7 @@ import type {
 import type { OnePasswordEnvironmentId } from "@t3tools/contracts/signalboxFolders";
 import type { FolderInstructions } from "@signalbox/runner-protocol/DriveProtocol";
 import { contextAllows } from "../drive/driveAccess.ts";
+import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
@@ -607,6 +608,16 @@ const make = Effect.gen(function* () {
           );
         }
         if (pending === null) {
+          const publication = yield* Effect.orDie(pullState.publication);
+          if (
+            (yield* Effect.orDie(pullState.pending)) !== null ||
+            (publication !== null && publication.until_ms > (yield* Clock.currentTimeMillis))
+          ) {
+            return yield* ThreadCommandRejectedError.forCommand(
+              { id: command.commandId, type: command.type },
+              "Wait for this thread's Git operation to finish before undoing.",
+            );
+          }
           const machine = yield* Effect.orDie(store.machine);
           const operation = yield* rollbackService
             .prepare(thread.projection, thread.owner, command, machine.generation)
@@ -732,16 +743,11 @@ const make = Effect.gen(function* () {
     serialized(
       Effect.gen(function* () {
         const current = yield* Ref.get(state);
-        const decision = yield* decideWith(current.thread?.projection ?? null, yield* context);
-        if (
-          current.thread !== null &&
-          (yield* Effect.orDie(store.pendingRollback)) !== null &&
-          (decision.events.length > 0 ||
-            decision.machine !== undefined ||
-            decision.command !== undefined)
-        ) {
+        // Callbacks can persist Git state before returning an empty event decision.
+        if (current.thread !== null && (yield* Effect.orDie(store.pendingRollback)) !== null) {
           return yield* Effect.die("Undo recovery blocks thread writes.");
         }
+        const decision = yield* decideWith(current.thread?.projection ?? null, yield* context);
         if (decision.events.length > 0 || decision.command !== undefined) {
           yield* commit({
             events: decision.events,
