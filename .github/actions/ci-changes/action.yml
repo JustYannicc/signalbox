@@ -51,11 +51,11 @@ runs:
           base=$BEFORE_SHA
           # A depth-limited fetch can re-shallow a full checkout and hide the
           # upstream ancestry that later guards in this job need.
-          depth=()
+          fetch_args=(--quiet --no-tags --filter=blob:none)
           if [[ $(git rev-parse --is-shallow-repository) == true ]]; then
-            depth=(--depth=1)
+            fetch_args+=(--depth=1)
           fi
-          git fetch --quiet --no-tags "${depth[@]}" --filter=blob:none origin "$base" \
+          git fetch "${fetch_args[@]}" origin "$base" \
             || fail_open "Could not fetch ${base}."
           # main keeps a full run as the backstop for anything the gate misses.
           mode=(--full)
