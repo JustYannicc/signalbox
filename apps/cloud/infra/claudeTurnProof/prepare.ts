@@ -248,8 +248,8 @@ if (process.argv[1] === import.meta.filename) {
   const tokens = values["context-token-equivalent"];
   if (tokens !== undefined && tokens !== "50000" && tokens !== "200000")
     throw new Error("context-token-equivalent must be50000 or200000");
-  console.log(
-    JSON.stringify(
+  process.stdout.write(
+    `${JSON.stringify(
       await prepareClaudeTurnProof({
         releaseDir: values.release,
         outputDir: values.output,
@@ -260,6 +260,6 @@ if (process.argv[1] === import.meta.filename) {
           ? {}
           : { contextTokenEquivalent: tokens === "50000" ? 50_000 : 200_000 }),
       }),
-    ),
+    )}\n`,
   );
 }

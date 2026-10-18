@@ -1,3 +1,4 @@
+// @effect-diagnostics nodeBuiltinImport:off - native hashes independently check the Web Crypto asset decoder.
 import * as NodeCrypto from "node:crypto";
 import { describe, expect, it } from "@effect/vitest";
 
