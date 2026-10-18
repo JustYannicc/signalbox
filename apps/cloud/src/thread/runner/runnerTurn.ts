@@ -18,7 +18,8 @@ import {
 import * as Exit from "effect/Exit";
 import * as Schema from "effect/Schema";
 
-import { isHarnessInstance, runnerInstanceFor } from "../../models/ModelRouting.ts";
+import { driverFor, isHarnessInstance, runnerInstanceFor } from "../../models/ModelRouting.ts";
+import { deliveredHandoffEvents } from "./freshSession.ts";
 import { activeRun, finishRunEvents, providerThreadFor, type RunEnding } from "../runLifecycle.ts";
 import {
   attemptEvent,
@@ -171,6 +172,18 @@ function startedEvents(
     return [];
   const threadId = projection.thread.id;
   const current = providerThreadFor(projection, run, "active", ctx);
+  const driver = driverFor(run.providerInstanceId);
+  if (
+    item.providerThread.id !== current.id ||
+    item.providerThread.driver !== driver ||
+    item.providerSession.driver !== driver ||
+    (item.providerSession.providerInstanceId !== run.providerInstanceId &&
+      item.providerSession.providerInstanceId !== runnerInstanceFor(run.providerInstanceId)) ||
+    (item.providerThread.nativeThreadRef !== null &&
+      item.providerThread.nativeThreadRef.driver !== driver)
+  )
+    return [];
+  const delivered = deliveredHandoffEvents(projection, run, item.providerThread, ctx);
   // The harness's native state, under the thread's own identity for the record.
   const providerThread = {
     ...item.providerThread,
@@ -182,7 +195,12 @@ function startedEvents(
     ownerNodeId: current.ownerNodeId,
     firstRunOrdinal: current.firstRunOrdinal,
     lastRunOrdinal: run.ordinal,
-    handoffIds: current.handoffIds,
+    handoffIds:
+      delivered.some(
+        (event) => event.type === "turn-item.updated" && event.payload.type === "handoff",
+      ) && run.contextHandoffId !== null
+        ? [...new Set([...current.handoffIds, run.contextHandoffId])]
+        : current.handoffIds,
     forkedFrom: current.forkedFrom,
     status: "active" as const,
     createdAt: current.createdAt,
@@ -191,6 +209,7 @@ function startedEvents(
   const node = projection.nodes.find((candidate) => candidate.id === run.rootNodeId);
   const nativeThreadId = providerThread.nativeThreadRef?.nativeId;
   return [
+    ...delivered,
     providerSessionEvent(ctx, threadId, item.providerSession),
     providerThreadEvent(ctx, threadId, providerThread),
     runEvent(ctx, "run.updated", {
@@ -267,6 +286,12 @@ function itemEvents(
   )
     return [];
   if (item.kind === "provider") {
+    if (
+      stringField(item.event, "type") === "turn.terminal" &&
+      projection.runs.find((candidate) => candidate.ordinal === item.event.runOrdinal)?.id !==
+        item.runId
+    )
+      return [];
     return stringField(item.event, "type") === "turn.terminal"
       ? terminalEvents(projection, item.event, ctx)
       : recordedEvents(projection, item, run?.id, ctx);

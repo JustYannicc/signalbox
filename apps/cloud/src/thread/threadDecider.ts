@@ -82,6 +82,7 @@ const CLOUD_COMMAND_TYPES = [
   "thread.visit",
   "thread.metadata.update",
   "thread.model-selection.set",
+  "provider.switch",
   "thread.runtime-mode.set",
   "thread.interaction-mode.set",
   "thread.pull-request.link",
@@ -460,10 +461,14 @@ export function decide(
       );
       return sent._tag === "rejected" ? sent : accept([...resolved.events, ...sent.events]);
     }
+    case "provider.switch":
     case "thread.model-selection.set":
       return updateThread(
         projection,
-        "thread.model-selection-updated",
+        command.type === "provider.switch" ||
+          projection.thread.providerInstanceId !== command.modelSelection.instanceId
+          ? "thread.provider-switched"
+          : "thread.model-selection-updated",
         {
           modelSelection: command.modelSelection,
           providerInstanceId: command.modelSelection.instanceId,

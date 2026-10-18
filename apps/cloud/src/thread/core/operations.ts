@@ -104,6 +104,7 @@ const PICKS_A_POOL: ReadonlySet<OrchestrationV2Command["type"]> = new Set([
   "thread.create",
   "message.dispatch",
   "thread.model-selection.set",
+  "provider.switch",
   "runtime-request.respond",
 ]);
 

@@ -179,7 +179,16 @@ export function threadShellFromProjection(
       }),
     ],
     providerInstanceHistory:
-      projection.providerThreads.length > 0 ? [thread.providerInstanceId] : [],
+      projection.providerThreads.length > 0
+        ? [
+            ...new Set([
+              ...projection.providerThreads.map(
+                (providerThread) => providerThread.providerInstanceId,
+              ),
+              thread.providerInstanceId,
+            ]),
+          ]
+        : [],
     goal: null,
     itemCount: projection.visibleTurnItems.length,
     visibleItemCount: projection.visibleTurnItems.length,
