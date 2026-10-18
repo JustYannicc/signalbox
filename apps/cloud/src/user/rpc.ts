@@ -823,17 +823,8 @@ export const layerHandlers = (input: {
         [WS_METHODS.gitResolvePullRequest]: (request) => pullRequests.resolvePullRequest(request),
         [WS_METHODS.gitRunStackedAction]: (request) =>
           Stream.unwrap(Effect.map(actorNow, (actor) => branches.runAction(actor, request))),
-        // A thread's branch only takes commits from its own turns.
         [WS_METHODS.vcsPull]: (request) =>
-          Effect.fail(
-            new GitCommandError({
-              operation: "pull",
-              command: "git pull",
-              cwd: request.cwd,
-              detail:
-                "The branch on GitHub has commits this thread doesn't. Signalbox can't bring them into a thread yet.",
-            }),
-          ),
+          Effect.flatMap(actorNow, (actor) => branches.pull(actor, request)),
         [SIGNALBOX_CONTEXTS_WS_METHODS.subscribe]: () => Stream.orDie(contexts.changes),
         [SIGNALBOX_DRIVES_WS_METHODS.subscribe]: () => Stream.orDie(userDrives.changes),
         [SIGNALBOX_DRIVES_WS_METHODS.create]: (request) =>

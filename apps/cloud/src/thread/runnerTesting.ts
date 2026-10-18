@@ -187,6 +187,7 @@ export const hello = (generation: number, token: string) => ({
   lastAckedSequence: 0,
   drains: true,
   runtimeResponses: true,
+  pulls: true,
 });
 
 const off = <T extends Record<string, unknown>>(fields: T) =>
@@ -429,3 +430,4 @@ export const hostFor = (
 
 export { onRunnerMessage, pushRunnerWork, type RunnerSocketHost } from "./runner/runnerSockets.ts";
 export type { ThreadRunner } from "./runner/ThreadRunner.ts";
+export { IDLE_TAIL_MS } from "./runner/MachineBackend.ts";
