@@ -226,6 +226,41 @@ describe("BoatMachineBackend", () => {
     }),
   );
 
+  it.effect("distinguishes permanent access rejection from retryable provider failures", () =>
+    Effect.gen(function* () {
+      for (const [status, retryable, code] of [
+        [401, false, "machine_access_denied"],
+        [429, true, "machine_rate_limited"],
+        [0, true, "machine_backend_unavailable"],
+      ] as const) {
+        const boat = makeFakeBoat();
+        const store = makeStore();
+        const backend = yield* makeBackend(
+          {
+            ...boat,
+            api: {
+              ...boat.api,
+              create: () =>
+                Effect.fail(
+                  new BoatApiError({
+                    operation: "create",
+                    status,
+                    code: null,
+                    message: "opaque provider response body",
+                  }),
+                ),
+            },
+          },
+          store,
+        );
+        const error = yield* Effect.flip(backend.ensure(request(1)));
+        expect(error.startupProblem).toMatchObject({ retryable, code });
+        expect(JSON.stringify(error.startupProblem)).not.toContain("opaque provider response body");
+        expect(store.current().createKey).not.toBeNull();
+      }
+    }),
+  );
+
   it.effect("a lost create answer, retried after the object went down, finds the same VM", () =>
     Effect.gen(function* () {
       const boat = makeFakeBoat();
@@ -267,6 +302,37 @@ describe("BoatMachineBackend", () => {
       expect((yield* backend.ensure(request(2))).actual).toBe("running");
       expect(boat.sandboxes.size).toBe(1);
       expect(boat.config("bx_1")?.generation).toBe(2);
+    }),
+  );
+
+  it.effect("keeps the resumed VM and old config until its disk is hydrated", () =>
+    Effect.gen(function* () {
+      const boat = makeFakeBoat();
+      const store = makeStore();
+      const backend = yield* makeBackend(boat, store);
+      yield* backend.ensure(request(1));
+      boat.settle();
+      yield* backend.ensure(request(1));
+      yield* backend.stop(threadId);
+      boat.settle();
+      yield* backend.ensure(request(2));
+      boat.settle();
+      boat.sandboxes.get("bx_1")!.hydrated = false;
+      const waiting = yield* backend.ensure(request(2));
+      expect(waiting).toMatchObject({
+        actual: "starting",
+        startupProblem: { code: "machine_disk_restore", retryable: true },
+      });
+      expect(boat.config("bx_1")?.generation).toBe(1);
+      const resumed = yield* makeBackend(boat, store);
+      expect((yield* resumed.ensure(request(2))).actual).toBe("starting");
+      expect(boat.config("bx_1")?.generation).toBe(1);
+      boat.sandboxes.get("bx_1")!.hydrated = true;
+      expect((yield* resumed.ensure(request(2))).actual).toBe("running");
+      expect(boat.config("bx_1")?.generation).toBe(2);
+      expect(boat.sandboxes.size).toBe(1);
+      expect(boat.calls.filter((call) => call === "resume")).toHaveLength(1);
+      expect(boat.calls).not.toContain("delete");
     }),
   );
 

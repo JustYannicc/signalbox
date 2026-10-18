@@ -10,11 +10,12 @@ import { OnePasswordEnvironmentId } from "@t3tools/contracts/signalboxFolders";
 import { describe, expect, it } from "@effect/vitest";
 import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
 import * as TestClock from "effect/testing/TestClock";
 
 import { UserObjectError } from "../../user/UserDirectory.ts";
 import { HARNESS_MODES_UNSUPPORTED } from "../threadDecider.ts";
-import { CONNECT_TIMEOUT_MS, IDLE_TAIL_MS } from "./MachineBackend.ts";
+import { CONNECT_TIMEOUT_MS, IDLE_TAIL_MS, MachineBackend } from "./MachineBackend.ts";
 import { DRAIN_TIMEOUT_MS } from "./ThreadRunner.ts";
 import { CONTINUE_PROMPT, MAX_CONTINUATIONS } from "./runRecovery.ts";
 import {
@@ -40,6 +41,21 @@ import {
 const POOL_CLAUDE = {
   instanceId: ProviderInstanceId.make("claude_hub"),
   model: "claude-fable-5-1",
+};
+
+const startupBackend = {
+  kind: "boat" as const,
+  shape: "small",
+  image: "runner:test",
+  connectTimeoutMs: 300_000,
+  idleTailMs: IDLE_TAIL_MS,
+  ensure: () => Effect.die("the object, not the lease, calls the backend"),
+  stop: () => Effect.die("the object, not the lease, calls the backend"),
+  destroy: () => Effect.die("the object, not the lease, calls the backend"),
+  inspect: () => Effect.die("the object, not the lease, calls the backend"),
+  refresh: () => Effect.void,
+  refreshEveryMs: null,
+  pending: Effect.succeed(false),
 };
 
 describe("ThreadRunner", () => {
@@ -436,13 +452,148 @@ describe("ThreadRunner", () => {
         expect(projection.runs.map((run) => run.status)).toEqual(["failed"]);
         const error = projection.turnItems.find((item) => item.type === "error");
         expect(error).toMatchObject({
-          failure: { message: "No machine came up to run this turn." },
+          failure: { code: "machine_backend_not_configured", retryable: false },
         });
         expect(yield* runner.hello(hello(1, plan.ensure?.token ?? ""))).toMatchObject({
           reason: "stale_generation",
         });
       }),
     ),
+  );
+
+  it.effect("retries a Boat startup timeout before any Runner takes the turn", () => {
+    return withObject(
+      freshDatabase(),
+      (engine, runner) =>
+        Effect.gen(function* () {
+          yield* launch(engine);
+          const first = yield* runner.reconcile;
+          yield* TestClock.adjust(startupBackend.connectTimeoutMs);
+          const retry = yield* runner.reconcile;
+          expect(retry).toMatchObject({ release: null, stop: false, ensure: first.ensure });
+          expect((yield* snapshot(engine)).projection.runs.map((run) => run.status)).toEqual([
+            "starting",
+          ]);
+          yield* runner.ensured(first.ensure!.generation);
+          expect(
+            yield* runner.hello(hello(first.ensure!.generation, first.ensure!.token)),
+          ).toMatchObject({
+            _tag: "welcome",
+          });
+          expect((yield* runner.work).turn?.message.text).toBe("Hi");
+        }),
+      { machines: Layer.succeed(MachineBackend, { light: startupBackend, heavy: startupBackend }) },
+    );
+  });
+
+  it.effect(
+    "persists the startup retry limit and backend reason across object reconstruction",
+    () =>
+      Effect.gen(function* () {
+        const filename = freshDatabase();
+        const machines = Layer.succeed(MachineBackend, {
+          light: startupBackend,
+          heavy: startupBackend,
+        });
+        const problem = {
+          code: "machine_disk_restore",
+          message: "Boat is still restoring the machine's disk.",
+          retryable: true,
+        };
+        const first = yield* withObject(
+          filename,
+          (engine, runner) =>
+            Effect.gen(function* () {
+              yield* launch(engine);
+              const plan = yield* runner.reconcile;
+              yield* runner.machineReported({
+                generation: plan.ensure!.generation,
+                runId: plan.runId,
+                operation: "ensure",
+                status: {
+                  desired: "running",
+                  actual: "starting",
+                  machineId: "boat-1",
+                  startupProblem: problem,
+                },
+              });
+              yield* TestClock.adjust(startupBackend.connectTimeoutMs);
+              expect((yield* runner.reconcile).release).toBeNull();
+              return plan;
+            }),
+          { machines },
+        );
+        yield* withObject(
+          filename,
+          (engine, runner) =>
+            Effect.gen(function* () {
+              expect((yield* runner.reconcile).ensure).toEqual(first.ensure);
+              // A late report from another generation cannot erase this attempt's reason.
+              yield* runner.machineReported({
+                generation: first.ensure!.generation - 1,
+                runId: first.runId,
+                operation: "ensure",
+                status: { desired: "running", actual: "running", machineId: "old" },
+              });
+              yield* TestClock.adjust(startupBackend.connectTimeoutMs);
+              expect(yield* runner.reconcile).toMatchObject({ release: 1, stop: true });
+              const failed = yield* snapshot(engine);
+              expect(failed.projection.runs.map((run) => run.status)).toEqual(["failed"]);
+              expect(
+                failed.projection.turnItems.find((item) => item.type === "error"),
+              ).toMatchObject({
+                failure: {
+                  code: problem.code,
+                  message: expect.stringContaining(problem.message),
+                  retryable: true,
+                },
+              });
+              yield* runner.reconcile;
+              expect((yield* snapshot(engine)).head).toBe(failed.head);
+              expect(
+                yield* runner.hello(hello(first.ensure!.generation, first.ensure!.token)),
+              ).toMatchObject({
+                reason: "stale_generation",
+              });
+            }),
+          { machines },
+        );
+      }),
+  );
+
+  it.effect(
+    "fails a permanent machine rejection without retrying or exposing the provider body",
+    () =>
+      withObject(
+        freshDatabase(),
+        (engine, runner) =>
+          Effect.gen(function* () {
+            yield* launch(engine);
+            const first = yield* runner.reconcile;
+            yield* runner.machineReported({
+              generation: first.ensure!.generation,
+              runId: first.runId,
+              operation: "ensure",
+              error: "opaque provider response body",
+              startupProblem: {
+                code: "machine_access_denied",
+                message: "Boat rejected this server's machine credentials or access.",
+                retryable: false,
+              },
+            });
+            expect(yield* runner.reconcile).toMatchObject({ release: 1, stop: true });
+            const error = (yield* snapshot(engine)).projection.turnItems.find(
+              (item) => item.type === "error",
+            );
+            expect(error).toMatchObject({
+              failure: { code: "machine_access_denied", retryable: false },
+            });
+            expect(JSON.stringify(error)).not.toContain("opaque provider response body");
+          }),
+        {
+          machines: Layer.succeed(MachineBackend, { light: startupBackend, heavy: startupBackend }),
+        },
+      ),
   );
 
   it.effect("drains an idle machine after its tail, and lets it go once its saves land", () =>
