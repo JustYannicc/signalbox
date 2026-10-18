@@ -12,13 +12,14 @@ import { addBrowserSurface } from "./preview/addBrowserSurface";
 import { selectThreadRightPanelState, useRightPanelStore } from "~/rightPanelStore";
 
 vi.mock("~/hooks/useTheme", () => ({ useTheme: () => ({ resolvedTheme: "light" }) }));
-vi.mock("~/browser/browserDefaults", () => ({
-  useBrowserDefaults: () => ({
+vi.mock(import("~/browser/browserDefaults"), async (original) => ({
+  ...(await original()),
+  useBrowserDefaults: (() => ({
     profiles: [
       { id: "default", name: "Default" },
       { id: "work", name: "Work" },
     ],
-  }),
+  })) as never,
 }));
 
 let root: Root;
