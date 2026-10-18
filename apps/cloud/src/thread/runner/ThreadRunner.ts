@@ -37,6 +37,7 @@ import {
   remoteOperationToken,
 } from "../../drive/remoteToken.ts";
 import type { UserObjectError } from "../../user/UserDirectory.ts";
+import { runnerOutputBatch } from "../commandOutput/runnerOutput.ts";
 import { traceIdOf } from "../diagnostics/traceId.ts";
 import { TurnDiagnostics } from "../diagnostics/TurnDiagnostics.ts";
 import { driveToken, isDriveToken } from "../../drive/driveToken.ts";
@@ -63,7 +64,6 @@ import {
   failRunEvents,
   awaitsHandoff,
   harnessRun,
-  runnerBatchEvents,
   runnerMessageOf,
   runnerTurnFor,
   unknownFailure,
@@ -545,7 +545,7 @@ const make = Effect.gen(function* () {
           keep<BatchResult>({ _tag: "out_of_order", ackedSequence: lease.ackedSequence }),
         );
       }
-      const { events, undecodable, outgrown, drained } = runnerBatchEvents(
+      const { events, commandOutput, undecodable, outgrown, drained } = runnerOutputBatch(
         projection,
         input.items,
         ctx,
@@ -594,12 +594,13 @@ const make = Effect.gen(function* () {
           recorded,
           Effect.map(
             machineGone({ projection, lease, now, ctx, detail: outgrown, moveUp: true, events }),
-            (gone) => ({ ...gone, result: acked }),
+            (gone) => ({ ...gone, commandOutput, result: acked }),
           ),
         );
       }
       return Effect.as(recorded, {
         events,
+        commandOutput,
         machine: {
           ...lease,
           ackedSequence: input.sequence,
