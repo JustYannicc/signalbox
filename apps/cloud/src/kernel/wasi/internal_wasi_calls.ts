@@ -36,17 +36,20 @@ export function runSync<T>(call: WasiCall<T>): T {
   return result.value;
 }
 
-export async function runAsync<T>(call: WasiCall<T>): Promise<T> {
-  let result = call.next();
+export async function runAsync<T>(
+  call: WasiCall<T>,
+  runStep: <V>(step: () => V) => V = (step) => step(),
+): Promise<T> {
+  let result = runStep(() => call.next());
   while (!result.done) {
     let value: unknown;
     try {
       value = await result.value;
     } catch (error) {
-      result = call.throw(error);
+      result = runStep(() => call.throw(error));
       continue;
     }
-    result = call.next(value);
+    result = runStep(() => call.next(value));
   }
   return result.value;
 }
