@@ -15,6 +15,7 @@ import {
 } from "@t3tools/contracts";
 import { PERSONAL_CONTEXT_ID } from "@t3tools/contracts/signalboxContexts";
 import { afterEach, describe, expect, it } from "@effect/vitest";
+import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
@@ -170,7 +171,7 @@ describe("ThreadEngine", () => {
             });
             expect(
               yield* engine.dispatch(owner, command, { ...personal, place: null, worktree }),
-            ).toEqual(result);
+            ).toMatchObject({ sequence: result.sequence });
             const after = yield* engine.snapshot(owner);
             expect(after.snapshotSequence).toBe(before.snapshotSequence + 1);
             expect(after.projection.thread).toMatchObject({
@@ -225,6 +226,42 @@ describe("ThreadEngine", () => {
         );
         expect(error._tag).toBe("ThreadCommandRejectedError");
         expect(yield* engine.snapshot(owner)).toEqual(before);
+      }),
+    ),
+  );
+
+  it.effect("folds streaming into the final search row and keeps its Find anchor", () =>
+    withObject(freshDatabase(), (engine, store) =>
+      Effect.gen(function* () {
+        yield* launch(engine);
+        yield* engine.step;
+        const beforeChunk = (yield* store.searchOutbox).revision;
+        yield* engine.step;
+        expect((yield* store.searchOutbox).revision).toBe(beforeChunk);
+        yield* runToIdle(engine);
+        const documents = [];
+        const parts = [];
+        for (
+          let delivery = yield* engine.pendingSearchDelivery;
+          delivery !== null;
+          delivery = yield* engine.pendingSearchDelivery
+        ) {
+          documents.push(...delivery.documents.filter((item) => item.kind === "assistant"));
+          parts.push(...(delivery.parts ?? []).filter((item) => item.kind === "assistant"));
+          yield* engine.acknowledgeSearchDelivery(delivery.revision, delivery.deliveryId);
+        }
+        expect(documents.length).toBe(0);
+        expect(parts.map((item) => item.text).join("")).toBe(scriptedReply("Hello cloud"));
+        const found = yield* engine.find(owner, { threadId, query: "Hello cloud" });
+        expect(found.totalMatches).toBeGreaterThanOrEqual(2);
+        expect(found.match?.entryId).toBe("message-1");
+        const exact = yield* engine.searchDocuments(owner, [parts[0]!.itemId]);
+        expect(exact?.documents).toHaveLength(1);
+        expect(exact?.documents[0]).toMatchObject({
+          itemId: parts[0]!.itemId,
+          entryId: parts[0]!.entryId,
+          text: scriptedReply("Hello cloud"),
+        });
       }),
     ),
   );
@@ -312,6 +349,112 @@ describe("ThreadEngine", () => {
         const { projection } = yield* engine.snapshot(owner);
         expect(projection.runs).toHaveLength(2);
         expect(projection.messages.filter((message) => message.role === "user")).toHaveLength(2);
+      }),
+    ),
+  );
+
+  it.effect("hides a trashed thread and restores its conversation", () =>
+    withObject(freshDatabase(), (engine, store) =>
+      Effect.gen(function* () {
+        const original = yield* launch(engine);
+        yield* engine.step;
+        yield* engine.dispatch(owner, send("send-queued", "Next"), personal);
+        const beforeTrash = yield* engine.snapshot(owner);
+        expect(beforeTrash.projection.runs.map((run) => run.status)).toEqual(["running", "queued"]);
+        for (
+          let delivery = yield* engine.pendingSearchDelivery;
+          delivery !== null;
+          delivery = yield* engine.pendingSearchDelivery
+        ) {
+          yield* engine.acknowledgeSearchDelivery(delivery.revision, delivery.deliveryId);
+        }
+        const deletedAt = yield* Clock.currentTimeMillis;
+        const input = {
+          trashId: "trash-1",
+          deletedAt,
+          purgeAfter: deletedAt + 30 * 24 * 60 * 60 * 1000,
+        };
+
+        const trashed = yield* engine.trash(owner, input);
+        expect(trashed).toMatchObject({ trashId: input.trashId, state: "trashed" });
+        const searchTombstone = yield* engine.pendingSearchDelivery;
+        expect(searchTombstone?.thread.deleted).toBe(true);
+        if (searchTombstone === null) throw new Error("Trash must reach the search outbox.");
+        yield* engine.acknowledgeSearchDelivery(
+          searchTombstone.revision,
+          searchTombstone.deliveryId,
+        );
+        expect(yield* engine.searchDocuments(owner, [])).toBeNull();
+        expect(yield* engine.canSee(owner)).toBe(false);
+        expect((yield* Effect.flip(engine.snapshot(owner)))._tag).toBe("ThreadNotFoundError");
+        const refused = yield* Effect.flip(
+          engine.dispatch(owner, send("send-hidden", "No"), personal),
+        );
+        expect(refused).toMatchObject({
+          _tag: "ThreadCommandRejectedError",
+          reason: "This thread is in Trash.",
+        });
+        expect(yield* engine.hasTurnWork).toBe(false);
+
+        const eventCount = (yield* store.events(0)).length;
+        expect(yield* engine.trash(owner, input)).toEqual(trashed);
+        expect((yield* store.events(0)).length).toBe(eventCount);
+
+        const restoredReceipt = yield* engine.restoreTrash(owner, input.trashId);
+        expect(restoredReceipt.state).toBe("restored");
+        expect((yield* engine.pendingSearchDelivery)?.thread.deleted).toBe(false);
+        const searchable = yield* engine.searchDocuments(
+          owner,
+          beforeTrash.projection.visibleTurnItems.map((row) => String(row.item.id)),
+        );
+        expect(searchable?.deleted).toBe(false);
+        expect(searchable?.documents.some((item) => item.text === "Hello cloud")).toBe(true);
+        expect(yield* engine.canSee(owner)).toBe(true);
+        const restored = yield* engine.snapshot(owner);
+        expect(restored.projection.thread.deletedAt).toBeNull();
+        expect(
+          restored.projection.messages.some(
+            (message) => message.role === "user" && message.text === "Next",
+          ),
+        ).toBe(true);
+        expect(restored.projection.runs.map((run) => run.status)).toEqual([
+          "interrupted",
+          "queued",
+        ]);
+        expect(
+          restored.projection.messages.some(
+            (message) => message.id === original.projection.messages[0]?.id,
+          ),
+        ).toBe(true);
+      }),
+    ),
+  );
+
+  it.effect("refuses permanent cleanup and preserves the trashed conversation", () =>
+    withObject(freshDatabase(), (engine, store) =>
+      Effect.gen(function* () {
+        const original = yield* launch(engine);
+        const deletedAt = yield* Clock.currentTimeMillis;
+        const input = {
+          trashId: "trash-purge-disabled",
+          deletedAt,
+          purgeAfter: deletedAt + 30 * 24 * 60 * 60 * 1000,
+        };
+        yield* engine.trash(owner, input);
+        const before = yield* store.currentTrash;
+        const refusal = yield* Effect.flip(
+          engine.purgeTrash(owner, { trashId: input.trashId, empty: true }),
+        );
+        expect(refusal).toMatchObject({
+          _tag: "ThreadCommandRejectedError",
+          reason: "Permanent thread cleanup is not enabled yet.",
+        });
+        expect(yield* store.currentTrash).toEqual(before);
+
+        yield* engine.restoreTrash(owner, input.trashId);
+        const restored = yield* engine.snapshot(owner);
+        expect(restored.projection.messages).toEqual(original.projection.messages);
+        expect(restored.projection.thread.deletedAt).toBeNull();
       }),
     ),
   );

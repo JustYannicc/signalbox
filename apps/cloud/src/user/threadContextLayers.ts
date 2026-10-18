@@ -13,7 +13,7 @@ import * as UserModelSettings from "./UserModelSettings.ts";
 import * as ModelCatalog from "../models/ModelCatalog.ts";
 import { forThread } from "../thread/turnPool.ts";
 
-import { ThreadContexts } from "./threadContexts.ts";
+import { ThreadFolderTrashedError, ThreadContexts } from "./threadContexts.ts";
 
 /** In a user's object: their current contexts and drives. */
 export const layer = Layer.effect(
@@ -28,21 +28,29 @@ export const layer = Layer.effect(
     return ThreadContexts.of({
       initialModelSelection: (projectId, threadId = ThreadId.make("model-default")) =>
         Effect.gen(function* () {
-          const userId = yield* drives.userId;
+          const userId = yield* drives.userId.pipe(Effect.orDie);
           if (userId === null) return null;
-          const saved = yield* modelSettings.snapshot;
-          const turn = yield* folders.turn({ threadId, projectId });
+          const saved = yield* modelSettings.snapshot.pipe(Effect.orDie);
+          const turn = yield* folders.turn({ threadId, projectId }).pipe(
+            Effect.catchTags({
+              ThreadHomeTrashedError: () => Effect.fail(new ThreadFolderTrashedError()),
+              SqlError: Effect.die,
+            }),
+          );
           const pool = projectId === null ? turn.pools.top : forThread(turn.pools, projectId);
-          return yield* catalog.initialSelection({
-            pools: yield* pools.state({ userId }),
-            checkedAt: DateTime.formatIso(yield* DateTime.now),
-            poolId: pool,
-            personDefault: saved.defaultModelSelection,
-          });
-        }).pipe(Effect.orDie),
+          const poolState = yield* pools.state({ userId }).pipe(Effect.orDie);
+          return yield* catalog
+            .initialSelection({
+              pools: poolState,
+              checkedAt: DateTime.formatIso(yield* DateTime.now),
+              poolId: pool,
+              personDefault: saved.defaultModelSelection,
+            })
+            .pipe(Effect.orDie);
+        }),
       placeOfProject: (projectId, options) =>
         Effect.gen(function* () {
-          const userId = yield* drives.userId;
+          const userId = yield* drives.userId.pipe(Effect.orDie);
           const driveId = userId === null ? null : driveOfProject(projectId, userId);
           const parsed = driveId === null ? null : parseDriveId(driveId);
           if (driveId === null || parsed === null) return null;
@@ -51,25 +59,32 @@ export const layer = Layer.effect(
             if (
               parsed.kind === "my" ||
               directory._tag === "None" ||
-              (yield* directory.value.forDrive(driveId).remote()) === null
+              (yield* directory.value.forDrive(driveId).remote().pipe(Effect.orDie)) === null
             )
               return null;
-            if (!canWrite(yield* drives.access(driveId))) return null;
+            if (!canWrite(yield* drives.access(driveId).pipe(Effect.orDie))) return null;
+            if (yield* folders.driveIsTrashed(driveId).pipe(Effect.orDie)) return null;
             return { contextId: parsed.contextId, driveId, remote: true };
           }
           // `access` also says whether the user is still in the drive's context.
-          if (!canWrite(yield* drives.access(driveId))) return null;
+          if (!canWrite(yield* drives.access(driveId).pipe(Effect.orDie))) return null;
+          if (yield* folders.driveIsTrashed(driveId).pipe(Effect.orDie)) {
+            return yield* Effect.fail(new ThreadFolderTrashedError());
+          }
           // A My Drive is always its own home; any other drive says whether a remote is.
           const remote =
             parsed.kind !== "my" &&
             directory._tag === "Some" &&
-            (yield* directory.value.forDrive(driveId).remote()) !== null;
+            (yield* directory.value.forDrive(driveId).remote().pipe(Effect.orDie)) !== null;
           return { contextId: parsed.contextId, driveId, remote };
-        }).pipe(
-          // A storage or drive failure is a bug or an outage, not a rejected command.
-          Effect.orDie,
+        }),
+      turn: (threadId, projectId) =>
+        folders.turn({ threadId, projectId }).pipe(
+          Effect.catchTags({
+            ThreadHomeTrashedError: () => Effect.fail(new ThreadFolderTrashedError()),
+            SqlError: Effect.die,
+          }),
         ),
-      turn: (threadId, projectId) => Effect.orDie(folders.turn({ threadId, projectId })),
     });
   }),
 );

@@ -13,7 +13,8 @@ import { browsingWire, encodeBrowsingLine } from "./browsing/browsingWire.ts";
 import { ThreadBrowsing } from "./browsing/ThreadBrowsing.ts";
 import { ThreadSecretRequests } from "./secrets/ThreadSecretRequests.ts";
 import { TurnReports } from "./diagnostics/TurnReports.ts";
-import type { ThreadObjectApi } from "./ThreadDirectory.ts";
+import * as ThreadFeedback from "./ThreadFeedback.ts";
+import type { ThreadLifecycleReceipt, ThreadObjectApi } from "./ThreadDirectory.ts";
 import * as ThreadEngine from "./ThreadEngine.ts";
 import * as ThreadRunner from "./runner/ThreadRunner.ts";
 import { encodeBatchLine, jsonLine, type ThreadObjectReply, wire } from "./threadWire.ts";
@@ -41,6 +42,7 @@ export const makeThreadObjectApi = (
       | ThreadSecretRequests
       | ThreadPulls.ThreadPulls
       | PullRequestSync.PullRequestSync
+      | ThreadFeedback.ThreadFeedback
       | ThreadRunner.ThreadRunner
     >,
   ) => Promise<A>,
@@ -58,6 +60,7 @@ export const makeThreadObjectApi = (
       | ThreadBrowsing
       | ThreadPulls.ThreadPulls
       | PullRequestSync.PullRequestSync
+      | ThreadFeedback.ThreadFeedback
     >,
   ): Promise<ThreadObjectReply<A>> =>
     run(
@@ -77,6 +80,55 @@ export const makeThreadObjectApi = (
     );
   const engine = ThreadEngine.ThreadEngine;
   return {
+    uploadFeedback: (actor, input) =>
+      reply(ThreadFeedback.ThreadFeedback.use((service) => service.upload(actor, input))),
+    trash: async (actor, input) => {
+      const result = await reply(
+        engine.use((service) =>
+          Effect.map(service.trash(actor, input), (receipt): ThreadLifecycleReceipt => ({
+            trashId: receipt.trashId,
+            deletedAt: receipt.deletedAt,
+            purgeAfter: receipt.purgeAfter,
+            state: receipt.state,
+          })),
+        ),
+      );
+      await afterChange();
+      return result;
+    },
+    restore: async (actor, input) => {
+      const result = await reply(
+        engine.use((service) =>
+          Effect.map(service.restoreTrash(actor, input.trashId), (receipt) => ({
+            trashId: receipt.trashId,
+            deletedAt: receipt.deletedAt,
+            purgeAfter: receipt.purgeAfter,
+            state: receipt.state,
+          })),
+        ),
+      );
+      await afterChange();
+      return result;
+    },
+    purge: (actor, input) => reply(engine.use((service) => service.purgeTrash(actor, input))),
+    subscribePreparation: (actor) =>
+      run(
+        engine.use((service) =>
+          service.subscribePreparation(actor).pipe(
+            Effect.map((stream) =>
+              stream.pipe(
+                Stream.map((snapshot) =>
+                  new TextEncoder().encode(
+                    `${JSON.stringify(wire.preparation.encode(snapshot))}\n`,
+                  ),
+                ),
+                Stream.toReadableStream(),
+              ),
+            ),
+            Effect.catchTags({ ThreadNotFoundError: () => Effect.succeed(null) }),
+          ),
+        ),
+      ),
     getWorkflowScript: (actor, input) =>
       reply(
         engine.use((service) =>
@@ -127,6 +179,25 @@ export const makeThreadObjectApi = (
           ),
         ),
       ),
+    cancelPreparation: (actor, input) =>
+      reply(
+        engine.use((service) =>
+          service.cancelPreparation(actor, input, Effect.promise(afterChange)).pipe(
+            Effect.catchTags({
+              WorktreeSetupError: (error) =>
+                Effect.fail(
+                  ThreadEngine.ThreadCommandRejectedError.forCommand(
+                    {
+                      id: `preparation:${input.runId}:${input.preparationGeneration}`,
+                      type: "worktreeSetup.cancel",
+                    },
+                    error.message,
+                  ),
+                ),
+            }),
+          ),
+        ),
+      ),
     dispatch: async (actor, command, creation) => {
       const result = await reply(
         engine.use((service) => service.dispatch(actor, wire.command.decode(command), creation)),
@@ -150,6 +221,16 @@ export const makeThreadObjectApi = (
       reply(engine.use((service) => Effect.map(service.snapshot(actor), wire.snapshot.encode))),
     workspace: (actor) =>
       reply(engine.use((service) => Effect.map(service.workspace(actor), wire.workspace.encode))),
+    backfill: async (actor, requestKey) => {
+      const value = await run(engine.use((service) => service.backfill(actor, requestKey)));
+      if (value === null) return { _tag: "not_found" };
+      if (value.revision > 0 || value.complete) await afterChange();
+      return { _tag: "ok", value };
+    },
+    searchDocuments: (actor, itemIds) =>
+      run(engine.use((service) => service.searchDocuments(actor, itemIds))),
+    find: (actor, input) =>
+      reply(engine.use((service) => service.find(actor, wire.findInput.decode(input)))),
     subscribe: (actor, input) =>
       run(
         engine.use((service) =>

@@ -9,12 +9,10 @@ import { TRIGGERS } from "./content/triggers.ts";
 
 /**
  * The built-in `signalbox-automations` skill: the one source of truth for how
- * agents write automations. installSkill.ts puts these files in every
+ * agents write cloud automations. Cloud runners put these files in each
  * harness's skills folder; `automation_reference` serves the same text to
  * harnesses that don't load skills.
  */
-export const SKILL_NAME = "signalbox-automations";
-
 /** `automation_reference` topics and the files they serve. */
 export const SKILL_TOPICS = {
   steps: STEPS,

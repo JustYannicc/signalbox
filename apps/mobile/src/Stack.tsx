@@ -84,6 +84,7 @@ import {
   automationStackScreens,
 } from "./features/automations/routes"; // signalbox: automations
 import { signInSettingsScreens } from "./features/signIn/routes"; // signalbox: sign-in grants
+import { trashSettingsScreens } from "./features/trash/routes"; // signalbox: trash
 import { AddProjectDestinationRoute } from "./features/projects/AddProjectDestinationRoute";
 import { AddProjectLocalRoute } from "./features/projects/AddProjectLocalRoute";
 import { AddProjectNewRoute } from "./features/projects/AddProjectNewRoute";
@@ -141,6 +142,7 @@ import { SettingsAboutRouteScreen } from "./features/settings/SettingsAboutRoute
 import { SettingsNotificationsRouteScreen } from "./features/settings/SettingsNotificationsRouteScreen";
 import { SettingsRouteScreen } from "./features/settings/SettingsRouteScreen";
 import { SettingsThreadsRouteScreen } from "./features/settings/SettingsThreadsRouteScreen";
+import { SettingsPersonTimezoneRouteScreen } from "./features/settings/SettingsPersonTimezoneRouteScreen"; // signalbox: person timezone
 import { SettingsEnvironmentFilterProvider } from "./features/settings/settings-environment-filter";
 import { ShowcaseCaptureCoordinator } from "./features/showcase/ShowcaseCaptureCoordinator";
 import {
@@ -351,8 +353,15 @@ const SettingsContentStack = createV5SheetStackNavigator({
         headerTitleStyle: { fontSize: 16, fontWeight: "800" },
       },
     }),
+    SettingsTimeZone: createNativeStackScreen({
+      // signalbox: person timezone
+      screen: SettingsPersonTimezoneRouteScreen,
+      linking: "time-zone",
+      options: { title: "Time zone" },
+    }),
     ...automationSettingsScreens(), // signalbox: automations
     ...signInSettingsScreens(), // signalbox: sign-in grants
+    ...trashSettingsScreens(), // signalbox: trash
     SettingsScheduledTaskNew: createNativeStackScreen({
       screen: SettingsScheduledTaskNewRouteScreen,
       linking: "scheduled-tasks/new",

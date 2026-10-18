@@ -13,26 +13,23 @@ import * as Effect from "effect/Effect";
 import * as Semaphore from "effect/Semaphore";
 
 import { automationTriggers, stepArgs } from "./columns.ts";
-import type { EndRun, EngineServices, LaunchRun, Settlement } from "./engineTypes.ts";
+import type { EngineServices, LaunchRun, Settlement } from "./engineTypes.ts";
 import type { ExternalRuns } from "./external.ts";
 import type { AutomationFunctions, AutomationThreads } from "./host.ts";
 import { asRecord } from "./json.ts";
 import type { Change } from "./liveFeed.ts";
 import { isModelVerb, modelResult } from "./modelSteps.ts";
-import type { ReplayQueue } from "./replayQueue.ts";
 import type { RunLinkStore } from "./runLinkStore.ts";
 import type { RunLogs } from "./runLog.ts";
-import { describeDuration, retries, stepOptions, stepTimeoutMs } from "./stepPolicy.ts";
+import { describeDuration, stepOptions, stepTimeoutMs } from "./stepPolicy.ts";
 import { agentResult } from "./steps.ts";
 import { isoAt, isoMs } from "./time.ts";
 import { nextRunAt } from "./views.ts";
 import type { AutomationRow, StepRow, WorkflowStore } from "./WorkflowStore.ts";
 
 /**
- * The engine's time-driven work, run by the scheduler's tick: due crons,
- * timers, timeouts, parked retries, a slow sweep of agent threads, and hourly
- * cleanup. Each item runs on its own, so one broken step or automation never
- * holds up the rest.
+ * The host's due crons, cleanup, and settlement of waiting steps. Each item
+ * runs on its own, so one broken step or automation never holds up the rest.
  */
 
 /** A cron the server slept through longer than this is skipped, not caught up. */
@@ -40,13 +37,6 @@ const MISSED_CRON_WINDOW_MS = 60 * 60 * 1000;
 const RETENTION_INTERVAL_MS = 60 * 60 * 1000;
 const RETENTION_AGE_MS = 30 * 24 * 60 * 60 * 1000;
 const RETENTION_KEEP = 50;
-/**
- * Agent threads settle their steps from domain events as they finish. This
- * sweep (also the first tick after a start) catches any a restart or a
- * dropped event missed.
- */
-const THREAD_SWEEP_INTERVAL_MS = 60 * 1000;
-
 /** What the timed work needs from the engine's run core. */
 export interface EngineCore {
   readonly store: WorkflowStore;
@@ -58,8 +48,6 @@ export interface EngineCore {
   readonly runLogs: RunLogs;
   readonly changed: (change: Change) => Effect.Effect<void>;
   readonly runChanged: (runId: string, summary: boolean) => Effect.Effect<void, AutomationError>;
-  /** Failed replays to retry; hosts without a replay core have none. */
-  readonly replays: Pick<ReplayQueue, "retryDue">;
   readonly complete: (
     runId: string,
     key: string,
@@ -70,8 +58,6 @@ export interface EngineCore {
     error: string,
     options?: { readonly detail?: AutomationErrorDetail | null },
   ) => Effect.Effect<boolean, AutomationError>;
-  readonly execute: (automation: AutomationRow, step: StepRow) => Effect.Effect<void>;
-  readonly endRun: EndRun;
   readonly launchRun: LaunchRun;
   readonly automationOfRun: (
     runId: string,
@@ -180,18 +166,7 @@ export const makeTimedWork = (core: EngineCore) =>
       );
     };
 
-    /** Starts the next attempt of a step parked for a retry. */
-    const retryStep = (step: StepRow) =>
-      Effect.gen(function* () {
-        const restarted = yield* store.restartStep(step.run_id, step.step_key, step.attempt);
-        if (!restarted) return;
-        const automation = yield* core.automationOfRun(step.run_id);
-        if (!automation) return;
-        yield* core.runChanged(step.run_id, false);
-        yield* core.execute(automation, restarted);
-      });
-
-    /** A waiting step whose timer, timeout or retry is due. */
+    /** A waiting step whose timer or timeout is due. */
     const wakeStep = (step: StepRow) =>
       Effect.gen(function* () {
         // Its run is read on its own schedule; waking means it ran out of time.
@@ -200,24 +175,8 @@ export const makeTimedWork = (core: EngineCore) =>
           if (!(yield* settleThreadStep(step))) yield* timeOutThreadStep(step);
           return;
         }
-        if (retries(step.verb)) return yield* retryStep(step);
         if (step.verb === "ask") return yield* timeOutAsk(step);
         yield* complete(step.run_id, step.step_key, { ok: true, value: null });
-      });
-
-    /** Fails a run past its `meta.timeout`. */
-    const timeOutRun = (runId: string) =>
-      Effect.gen(function* () {
-        const run = yield* store.getRun(runId);
-        if (!run?.deadline_at) return;
-        const limit =
-          DateTime.makeUnsafe(run.deadline_at).epochMilliseconds -
-          DateTime.makeUnsafe(run.started_at).epochMilliseconds;
-        yield* core.endRun(run, {
-          status: "failed",
-          error: `The run didn't finish within its ${describeDuration(limit)} timeout.`,
-          detail: detail("Raise meta.timeout, or split the work into smaller runs."),
-        });
       });
 
     /** Starts a due cron run, unless it was missed long ago or the last run is still going. */
@@ -272,38 +231,8 @@ export const makeTimedWork = (core: EngineCore) =>
       });
 
     let lastPrune = Number.NEGATIVE_INFINITY;
-    let lastThreadSweep = Number.NEGATIVE_INFINITY;
-    // The scheduler and callers may tick at once; one at a time keeps each item handled once.
     const tickLock = yield* Semaphore.make(1);
-    const tick: Effect.Effect<void, AutomationError> = Effect.gen(function* () {
-      const now = yield* DateTime.now;
-      const nowText = DateTime.formatIso(now);
-      for (const automation of yield* store.dueAutomations(nowText)) {
-        yield* fireCron(automation, now).pipe(core.ignoreFailure("cron"));
-      }
-      for (const step of yield* store.dueSteps(nowText)) {
-        yield* wakeStep(step).pipe(core.ignoreFailure("waiting step"));
-      }
-      if (now.epochMilliseconds - lastThreadSweep >= THREAD_SWEEP_INTERVAL_MS) {
-        lastThreadSweep = now.epochMilliseconds;
-        for (const step of yield* store.threadSteps()) {
-          yield* settleThreadStep(step).pipe(core.ignoreFailure("agent step"));
-        }
-      }
-      for (const runId of yield* store.overdueRuns(nowText)) {
-        yield* timeOutRun(runId).pipe(core.ignoreFailure("run timeout"));
-      }
-      yield* core.replays.retryDue(now.epochMilliseconds);
-      if (now.epochMilliseconds - lastPrune >= RETENTION_INTERVAL_MS) {
-        lastPrune = now.epochMilliseconds;
-        yield* prune(now).pipe(core.ignoreFailure("cleanup"));
-      }
-    }).pipe(tickLock.withPermits(1));
-
-    /**
-     * Due crons and cleanup only, for hosts whose backend runs every step's
-     * timer itself (see runner/): the rest of `tick` is the replay core's.
-     */
+    /** Due crons and cleanup. Cloudflare owns each run's timers and retries. */
     const crons: Effect.Effect<void, AutomationError> = Effect.gen(function* () {
       const now = yield* DateTime.now;
       for (const automation of yield* store.dueAutomations(DateTime.formatIso(now))) {
@@ -320,5 +249,5 @@ export const makeTimedWork = (core: EngineCore) =>
       .nextCronAt()
       .pipe(Effect.map((due) => (due === null ? null : isoMs(due))));
 
-    return { settleThreadStep, wakeStep, tick, crons, nextCronAt };
+    return { settleThreadStep, wakeStep, crons, nextCronAt };
   });

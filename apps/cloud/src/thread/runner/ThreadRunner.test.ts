@@ -539,19 +539,48 @@ describe("ThreadRunner", () => {
         Effect.gen(function* () {
           yield* launch(engine);
           const first = yield* runner.reconcile;
+          const preparation = yield* engine.preparation;
           yield* TestClock.adjust(startupBackend.connectTimeoutMs);
           const retry = yield* runner.reconcile;
           expect(retry).toMatchObject({ release: null, stop: false, ensure: first.ensure });
+          expect(yield* engine.preparation).toEqual(preparation);
           expect((yield* snapshot(engine)).projection.runs.map((run) => run.status)).toEqual([
             "starting",
           ]);
           yield* runner.ensured(first.ensure!.generation);
           expect(
-            yield* runner.hello(hello(first.ensure!.generation, first.ensure!.token)),
+            yield* runner.hello({
+              ...hello(first.ensure!.generation, first.ensure!.token),
+              protocolVersion: RUNNER_PROTOCOL_VERSION,
+            }),
           ).toMatchObject({
             _tag: "welcome",
           });
           expect((yield* runner.work).turn?.message.text).toBe("Hi");
+          expect(yield* engine.preparation).toMatchObject({
+            generation: preparation!.generation,
+            machineGeneration: first.ensure!.generation,
+            status: "preparing",
+            snapshot: { turnStarted: false },
+          });
+          const target = {
+            threadId,
+            runId: preparation!.runId,
+            preparationGeneration: preparation!.generation,
+          };
+          expect(
+            yield* engine.cancelPreparation(
+              owner,
+              target,
+              runner
+                .batch({
+                  generation: first.ensure!.generation,
+                  sequence: 1,
+                  items: [{ kind: "preparation.cancelled", ...target }],
+                })
+                .pipe(Effect.asVoid),
+            ),
+          ).toEqual({ cancelled: true });
         }),
       { machines: Layer.succeed(MachineBackend, { light: startupBackend, heavy: startupBackend }) },
     );
@@ -609,6 +638,11 @@ describe("ThreadRunner", () => {
               yield* TestClock.adjust(startupBackend.connectTimeoutMs);
               expect(yield* runner.reconcile).toMatchObject({ release: 1, stop: true });
               const failed = yield* snapshot(engine);
+              const preparation = yield* engine.preparation;
+              expect(preparation).toMatchObject({
+                status: "failed",
+                snapshot: { phase: "failed", turnStarted: false },
+              });
               expect(failed.projection.runs.map((run) => run.status)).toEqual(["failed"]);
               expect(
                 failed.projection.turnItems.find((item) => item.type === "error"),
@@ -625,6 +659,31 @@ describe("ThreadRunner", () => {
                 yield* runner.hello(hello(first.ensure!.generation, first.ensure!.token)),
               ).toMatchObject({
                 reason: "stale_generation",
+              });
+              yield* engine.dispatch(
+                owner,
+                {
+                  type: "prepared-run.retry",
+                  commandId: CommandId.make("retry-exhausted-startup"),
+                  threadId,
+                  runId: preparation!.runId,
+                  preparationGeneration: preparation!.generation,
+                },
+                personal,
+              );
+              const next = (yield* runner.reconcile).ensure!;
+              expect(next.generation).toBe(first.ensure!.generation + 1);
+              yield* runner.hello({
+                ...hello(next.generation, next.token),
+                protocolVersion: RUNNER_PROTOCOL_VERSION,
+              });
+              expect((yield* runner.work).turn).toMatchObject({
+                runId: preparation!.runId,
+                preparationGeneration: preparation!.generation + 1,
+              });
+              expect(yield* engine.preparation).toMatchObject({
+                status: "preparing",
+                machineGeneration: next.generation,
               });
             }),
           { machines },

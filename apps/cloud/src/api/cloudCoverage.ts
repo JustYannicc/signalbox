@@ -42,11 +42,8 @@ export const CLOUD_UNSERVED: Readonly<Record<string, Unserved>> = {
   "threads.mergeBack": gap("#439"),
   "threads.switchProvider": gap("#439"),
   "threads.stopSubagent": gap("#439"),
-  "threads.retryPreparation": gap("#439"),
   "threads.getTurnItem": gap("#439"),
   "threads.rollback": gap("#398"),
-  "threads.search": gap("#334"),
-  "threads.searchOne": gap("#334"),
 
   // Pull-request reads are served by `github/CloudPullRequests.ts` (#814).
   // The later slices own writes and personal review state.
@@ -54,10 +51,6 @@ export const CLOUD_UNSERVED: Readonly<Record<string, Unserved>> = {
   "pullRequests.generateReviewGuide": gap("#815"),
   "pullRequests.filesViewed": gap("#815"),
   "pullRequests.setFilesViewed": gap("#815"),
-  "pullRequests.comment": gap("#816"),
-  "pullRequests.updateComment": gap("#816"),
-  "pullRequests.submitReview": gap("#816"),
-  "pullRequests.setReaction": gap("#816"),
   "pullRequests.runAction": gap("#817"),
   "pullRequests.update": gap("#817"),
   "pullRequests.reviewerCandidates": gap("#817"),
@@ -75,7 +68,6 @@ export const CLOUD_UNSERVED: Readonly<Record<string, Unserved>> = {
   "projects.searchContents": gap("#439"),
   "projects.createNew": exempt("Folders hold projects; create one with folders.create."),
   "projects.mutate": exempt("Folders hold projects; change them with folders.*."),
-  "assets.persistChatAttachments": gap("#813"),
 
   // Pools: the cloud signs in Claude and ChatGPT accounts only.
   "pools.advice": gap("#819"),
@@ -87,7 +79,6 @@ export const CLOUD_UNSERVED: Readonly<Record<string, Unserved>> = {
   ),
   "provider.consumeResetCredit": gap("#820"),
   "provider.install.*": poolHarnesses,
-  "provider.uploadFeedback": gap("#822"),
   "server.updateProvider": poolHarnesses,
 
   "acpRegistry.*": exempt("ACP agents install on a host; cloud threads run on pool harnesses."),
@@ -96,6 +87,7 @@ export const CLOUD_UNSERVED: Readonly<Record<string, Unserved>> = {
   "backgroundPolicy.subscribe": noHost,
   "device.*": noHost,
   "deviceState.subscribe": noHost,
+  "deviceAgentDiagnostics.subscribe": noHost,
   "diagnostics.*": noHost,
   "discoveredLocalServers.subscribe": noHost,
   "filesystem.*": noHost,
@@ -116,7 +108,6 @@ export const CLOUD_UNSERVED: Readonly<Record<string, Unserved>> = {
   "vcs.createWorktree": ownBranch,
   "vcs.removeWorktree": ownBranch,
   "vcs.init": githubImports,
-  "worktreeSetup.*": ownBranch,
 };
 
 /** Whether `name` falls under `key`, an operation name or a `prefix.*`. */

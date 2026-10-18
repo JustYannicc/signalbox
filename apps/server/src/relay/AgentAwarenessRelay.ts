@@ -190,15 +190,12 @@ function sanitizeRelayAgentActivityState(
   return detail ? { ...rest, detail } : rest;
 }
 
-export function relayEnvironmentClient(token: string) {
+function relayEnvironmentClient(token: string) {
   return HttpClient.mapRequest(HttpClientRequest.setHeader("authorization", `Bearer ${token}`));
 }
 
 /** A Connect secret as text, or null when it isn't set. */
-export const readRelaySecret = (
-  secrets: ServerSecretStore.ServerSecretStore["Service"],
-  name: string,
-) =>
+const readRelaySecret = (secrets: ServerSecretStore.ServerSecretStore["Service"], name: string) =>
   secrets
     .get(name)
     .pipe(
@@ -206,7 +203,7 @@ export const readRelaySecret = (
     );
 
 /** The relay this environment is linked to, or null while it isn't linked. */
-export const readRelayLink = (secrets: ServerSecretStore.ServerSecretStore["Service"]) =>
+const readRelayLink = (secrets: ServerSecretStore.ServerSecretStore["Service"]) =>
   Effect.gen(function* () {
     const [url, issuer, environmentCredential] = yield* Effect.all([
       readRelaySecret(secrets, RELAY_URL_SECRET),
@@ -269,7 +266,7 @@ function signRelayAgentActivityPublishProof(input: {
 }
 
 /** The claims every proof this environment signs for the relay carries; it expires in five minutes. */
-export const relayEnvironmentProofClaims = Effect.fnUntraced(function* (input: {
+const relayEnvironmentProofClaims = Effect.fnUntraced(function* (input: {
   readonly relayIssuer: string;
   readonly environmentId: string;
   readonly jti: string;

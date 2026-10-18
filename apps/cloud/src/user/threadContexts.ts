@@ -2,6 +2,7 @@ import type { ModelSelection, ProjectId, ThreadId } from "@t3tools/contracts";
 import type { SignalboxContextId } from "@t3tools/contracts/signalboxContexts";
 import * as Context from "effect/Context";
 import type * as Effect from "effect/Effect";
+import * as Schema from "effect/Schema";
 
 import type { TurnInstructions, TurnPools, TurnSecrets } from "../thread/turnPool.ts";
 
@@ -20,6 +21,16 @@ export interface ThreadTurn {
   readonly secrets: TurnSecrets;
 }
 
+/** A thread's home is hidden, so the user needs to restore it before a turn can start. */
+export class ThreadFolderTrashedError extends Schema.TaggedError<ThreadFolderTrashedError>()(
+  "ThreadFolderTrashedError",
+  {},
+) {
+  override get message(): string {
+    return "This thread's folder is in Trash.";
+  }
+}
+
 /**
  * What `CloudThreadService` needs to know about the user's tree: where a new
  * thread works, and what its turns run on and follow.
@@ -35,15 +46,18 @@ export class ThreadContexts extends Context.Service<
     readonly placeOfProject: (
       projectId: ProjectId,
       options?: { readonly remoteOnly: true },
-    ) => Effect.Effect<ThreadPlace | null>;
+    ) => Effect.Effect<ThreadPlace | null, ThreadFolderTrashedError>;
     readonly initialModelSelection: (
       projectId: ProjectId | null,
       threadId?: ThreadId,
-    ) => Effect.Effect<ModelSelection | null>;
+    ) => Effect.Effect<ModelSelection | null, ThreadFolderTrashedError>;
     /**
      * The thread's turn now, resolved from its home's chain (`folderTree.ts`).
      * `projectId`: the thread's, when the caller knows it (a create does).
      */
-    readonly turn: (threadId: ThreadId, projectId: ProjectId | null) => Effect.Effect<ThreadTurn>;
+    readonly turn: (
+      threadId: ThreadId,
+      projectId: ProjectId | null,
+    ) => Effect.Effect<ThreadTurn, ThreadFolderTrashedError>;
   }
 >()("@signalbox/cloud/user/threadContexts") {}

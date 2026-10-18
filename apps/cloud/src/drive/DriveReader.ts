@@ -245,10 +245,19 @@ export const makeDriveReader = Effect.fn("makeDriveReader")(function* (
   const treeOf = (oid: Oid | null) =>
     oid === null ? Effect.succeed(EMPTY_TREE) : Effect.map(commit(oid), (found) => found.tree);
 
-  /** A `git diff --patch` from commit `from` (null: nothing) to commit `to`. */
-  const diff = (from: Oid | null, to: Oid, options: { readonly ignoreWhitespace: boolean }) =>
+  /**
+   * Each changed file's `git diff --patch` from commit `from` (null: nothing)
+   * to commit `to`, by path; only `paths` when given. Unchanged files are left out.
+   */
+  const patches = (
+    from: Oid | null,
+    to: Oid,
+    options: { readonly ignoreWhitespace: boolean; readonly paths?: ReadonlyArray<string> },
+  ) =>
     Effect.gen(function* () {
-      const changed = yield* changes(yield* treeOf(from), yield* treeOf(to));
+      const all = yield* changes(yield* treeOf(from), yield* treeOf(to));
+      const wanted = options.paths === undefined ? null : new Set(options.paths);
+      const changed = wanted === null ? all : all.filter((file) => wanted.has(file.path));
       const blobs = changed.flatMap((file) =>
         [file.before, file.after].flatMap((entry) => (entry === null ? [] : [entry.oid])),
       );
@@ -269,19 +278,36 @@ export const makeDriveReader = Effect.fn("makeDriveReader")(function* (
                 content,
               }),
             );
-      const patches = yield* Effect.forEach(
+      const patched = yield* Effect.forEach(
         changed,
         (file) =>
           Effect.map(
             Effect.all([side(file.before, file.path), side(file.after, file.path)]),
-            ([before, after]) => filePatch(before, after, options),
+            ([before, after]) => ({ path: file.path, patch: filePatch(before, after, options) }),
           ),
         { concurrency: 8 },
       );
-      return patches.join("");
+      return patched.filter((file) => file.patch !== "");
     });
 
-  return { object, commit, tree, blob, sizes, entryAt, files, changes, treeOf, diff, drive };
+  /** A `git diff --patch` from commit `from` (null: nothing) to commit `to`. */
+  const diff = (from: Oid | null, to: Oid, options: { readonly ignoreWhitespace: boolean }) =>
+    Effect.map(patches(from, to, options), (files) => files.map((file) => file.patch).join(""));
+
+  return {
+    object,
+    commit,
+    tree,
+    blob,
+    sizes,
+    entryAt,
+    files,
+    changes,
+    treeOf,
+    patches,
+    diff,
+    drive,
+  };
 });
 
 export type DriveReader = Effect.Success<ReturnType<typeof makeDriveReader>>;

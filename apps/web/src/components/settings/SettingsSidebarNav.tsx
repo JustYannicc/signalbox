@@ -22,6 +22,7 @@ import {
   PanelsTopLeftIcon,
   SearchIcon,
   Settings2Icon,
+  Trash2Icon,
   XIcon,
   createLucideIcon,
 } from "lucide-react";
@@ -55,6 +56,7 @@ import {
 } from "./useAvailableSettingsSearchItems";
 import { validateSettingsScopeSearch } from "./settingsScope";
 import { useSignInGrantsEnvironmentId } from "../../state/signalboxSignIn"; // signalbox: sign-in grants
+import { useTrashEnvironments } from "../../state/signalboxTrash"; // signalbox: trash
 
 const SnapShotIcon = createLucideIcon("snap-shot", [
   [
@@ -97,6 +99,7 @@ const SETTINGS_SECTION_ICONS: Readonly<
   "/settings/storage": HardDriveIcon,
   "/settings/connections": Link2Icon,
   "/settings/archived": ArchiveIcon,
+  "/settings/trash": Trash2Icon, // signalbox: trash
 };
 
 const SETTINGS_NAV_ITEMS: ReadonlyArray<{
@@ -123,10 +126,12 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
   const scopeSearch = validateSettingsScopeSearch(currentSearch);
   const unsupportedCapabilities = useUnsupportedSettingsCapabilities(scopeSearch);
   const signInGrants = useSignInGrantsEnvironmentId() !== null; // signalbox: sign-in grants
+  const trash = useTrashEnvironments().length > 0; // signalbox: trash
   const navItems = SETTINGS_NAV_ITEMS.filter(
     (item) =>
       (item.to !== "/settings/projects" || isSettingsOverviewVisible(scopeSearch)) &&
       (item.to !== "/settings/sign-in" || signInGrants) && // signalbox: sign-in grants
+      (item.to !== "/settings/trash" || trash) && // signalbox: trash
       isSettingsPathAvailable(item.to, unsupportedCapabilities),
   );
   const { isMobile, setOpenMobile, open, setOpen } = useSidebar();

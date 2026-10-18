@@ -51,6 +51,10 @@ import {
   type EnvironmentThreadShell,
 } from "@t3tools/client-runtime/state/models";
 import {
+  serverConfigSupportsSignalboxTrash,
+  threadDeleteConfirmationMessage,
+} from "@t3tools/client-runtime/state/signalboxTrash";
+import {
   parseScopedThreadKey,
   scopeProjectRef,
   scopeThreadRef,
@@ -293,6 +297,7 @@ import {
 import { readThreadKind, useThreadKind } from "../state/signalboxThreadKinds"; // signalbox: thread kinds
 import { ThreadKindAge, ThreadKindButton } from "./threadKind/ThreadKindIcon"; // signalbox: thread kinds
 import { selectThreadKindMenuItem } from "./threadKind/threadKindMenu"; // signalbox: thread kinds
+import { beginLedgerThreadDrop } from "./sidebar/ledgerThreadDrop"; // signalbox: optimistic ledger
 import { useShowsEnvironmentUi } from "../state/environmentCapabilities";
 import { environmentCopy } from "../state/oneEnvironmentCopy"; // signalbox: one-environment copy for missing access
 import { useThreadRouteTarget } from "../hooks/useThreadRouteTarget";
@@ -3714,6 +3719,22 @@ export default function Sidebar() {
       )
     )
       return;
+    if (
+      beginLedgerThreadDrop({
+        plan,
+        threadRef,
+        threadByKey,
+        actions: {
+          pinThread,
+          unpinThread,
+          unsettleThread,
+          unsnoozeThread,
+          reorderPinnedThread,
+          reorderActiveThread,
+        },
+      })
+    )
+      return; // signalbox: the optimistic ledger owns pin drops
     const drop = {
       key: activeKey,
       sourceSection: activeSection,
@@ -4062,11 +4083,17 @@ export default function Sidebar() {
       }
       if (clicked.value !== "delete") return;
       if (confirmThreadDelete) {
+        const cloud = selectedThreads.some((thread) =>
+          serverConfigSupportsSignalboxTrash(serverConfigs.get(thread.environmentId)),
+        );
+        const other = selectedThreads.some(
+          (thread) => !serverConfigSupportsSignalboxTrash(serverConfigs.get(thread.environmentId)),
+        );
         const confirmed = await settlePromise(() =>
           api.dialogs.confirm(
             [
               `Delete ${count} thread${count === 1 ? "" : "s"}?`,
-              "This permanently clears conversation history for these threads.",
+              threadDeleteConfirmationMessage({ cloud, other, scope: "threads" }),
             ].join("\n"),
             { variant: "destructive" },
           ),
@@ -4415,7 +4442,15 @@ export default function Sidebar() {
                 api.dialogs.confirm(
                   [
                     `Delete thread "${thread.title}"?`,
-                    "This permanently clears conversation history for this thread.",
+                    threadDeleteConfirmationMessage({
+                      cloud: serverConfigSupportsSignalboxTrash(
+                        serverConfigs.get(thread.environmentId),
+                      ),
+                      other: !serverConfigSupportsSignalboxTrash(
+                        serverConfigs.get(thread.environmentId),
+                      ),
+                      scope: "thread",
+                    }),
                   ].join("\n"),
                   { variant: "destructive" },
                 ),

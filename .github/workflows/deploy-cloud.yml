@@ -101,6 +101,8 @@ jobs:
       # The MCP authorization server (`apps/cloud/src/api/mcpRoutes.ts`); unset, MCP takes keys only.
       WORKOS_AUTHKIT_DOMAIN: ${{ vars.WORKOS_AUTHKIT_DOMAIN }}
       MACHINE_BACKEND: ${{ vars.MACHINE_BACKEND }}
+      SEARCH_INDEX_GENERATION: ${{ vars.SEARCH_INDEX_GENERATION }}
+      SEARCH_INDEX_DISABLED: ${{ vars.SEARCH_INDEX_DISABLED }}
       # Optional: the Executor local harness setup adds as an MCP server (src/localKeys/).
       EXECUTOR_MCP_URL: ${{ vars.EXECUTOR_MCP_URL }}
       # Optional: `cloud.*` usage analytics (#116). Production only, so
@@ -135,6 +137,7 @@ jobs:
       # Leave unset until #358 lands; credentials alone never enable sends.
       SIGNALBOX_POSTHOG_ENABLED: ${{ vars.SIGNALBOX_POSTHOG_ENABLED }}
       T3CODE_TELEMETRY_ENABLED: ${{ vars.T3CODE_TELEMETRY_ENABLED }}
+      SIGNALBOX_DO_STORAGE_ALERT_PERCENT: ${{ vars.SIGNALBOX_DO_STORAGE_ALERT_PERCENT }}
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -256,7 +259,7 @@ jobs:
           # runner-image.yml's paths, without what never ships.
           shipped="$(grep -Ev '\.(test\.tsx?|md)$' <<< "$files" || true)"
           if [[ "$complete" != "true" ]] ||
-            grep -Eq '^(apps/server/src/signalbox/runner/|apps/server/src/preview/|apps/server/src/orchestration-v2/Adapters/|apps/server/src/workflows/|packages/automation-compiler/|packages/runner-protocol/|packages/automations/|\.github/workflows/runner-image\.yml$)' <<< "$shipped"; then
+            grep -Eq '^(apps/server/src/signalbox/runner/|apps/server/src/preview/|apps/server/src/orchestration-v2/Adapters/|apps/server/src/workflows/|packages/automation-compiler/|packages/runner-protocol/|packages/automations/|apps/cloud/infra/runner-images\.alchemy\.ts$|apps/cloud/infra/runnerImagePublication\.ts$|\.github/workflows/runner-image\.yml$)' <<< "$shipped"; then
             echo "changed=true" >> "$GITHUB_OUTPUT"
           else
             echo "changed=false" >> "$GITHUB_OUTPUT"
@@ -364,6 +367,8 @@ jobs:
       # The MCP authorization server (`apps/cloud/src/api/mcpRoutes.ts`); unset, MCP takes keys only.
       WORKOS_AUTHKIT_DOMAIN: ${{ vars.WORKOS_AUTHKIT_DOMAIN }}
       MACHINE_BACKEND: ${{ vars.MACHINE_BACKEND }}
+      SEARCH_INDEX_GENERATION: ${{ vars.SEARCH_INDEX_GENERATION }}
+      SEARCH_INDEX_DISABLED: ${{ vars.SEARCH_INDEX_DISABLED }}
       # Optional: the Executor local harness setup adds as an MCP server (src/localKeys/).
       EXECUTOR_MCP_URL: ${{ vars.EXECUTOR_MCP_URL }}
       T3CODE_WORKOS_API_KEY: ${{ secrets.T3CODE_WORKOS_API_KEY }}
@@ -392,6 +397,7 @@ jobs:
       # Leave unset until #358 lands; credentials alone never enable sends.
       SIGNALBOX_POSTHOG_ENABLED: ${{ vars.SIGNALBOX_POSTHOG_ENABLED }}
       T3CODE_TELEMETRY_ENABLED: ${{ vars.T3CODE_TELEMETRY_ENABLED }}
+      SIGNALBOX_DO_STORAGE_ALERT_PERCENT: ${{ vars.SIGNALBOX_DO_STORAGE_ALERT_PERCENT }}
     steps:
       # Sparse checkout implicitly uses blob:none. A later merge can then need
       # blobs through a PR merge ref GitHub has already replaced (#842).

@@ -10,7 +10,7 @@ import { makeMemoryObjects } from "../attachments/attachmentTesting.ts";
 import * as Platform from "../platform.ts";
 import { layerAttachments, makeMemoryCloud } from "../testing.ts";
 import { remoteThreadWorktree } from "../user/contextProjects.ts";
-import { ThreadContexts } from "../user/threadContexts.ts";
+import { ThreadContexts, ThreadFolderTrashedError } from "../user/threadContexts.ts";
 import { scriptedModelSelection } from "./scriptedProvider.ts";
 import * as ThreadDirectory from "./ThreadDirectory.ts";
 import * as ThreadKindTurns from "./ThreadKindTurns.ts";
@@ -25,6 +25,7 @@ const threadId = ThreadId.make("existing-thread");
 const fixture = Effect.gen(function* () {
   const cloud = makeMemoryCloud();
   let published = false;
+  let trashed = false;
   const service = yield* Threads.Threads.pipe(
     Effect.provide(
       ThreadsLive.layer.pipe(
@@ -33,17 +34,25 @@ const fixture = Effect.gen(function* () {
           Layer.succeed(ThreadContexts, {
             initialModelSelection: () => Effect.succeed(null),
             placeOfProject: (id) =>
-              Effect.sync(() =>
-                id === projectId
-                  ? { contextId: PERSONAL_CONTEXT_ID, driveId, remote: published }
-                  : null,
+              Effect.suspend(() =>
+                trashed
+                  ? Effect.fail(new ThreadFolderTrashedError())
+                  : Effect.succeed(
+                      id === projectId
+                        ? { contextId: PERSONAL_CONTEXT_ID, driveId, remote: published }
+                        : null,
+                    ),
               ),
             turn: () =>
-              Effect.succeed({
-                pools: { top: PERSONAL_POOL_ID, projects: {} },
-                instructions: { top: [], projects: {} },
-                secrets: { top: [], projects: {} },
-              }),
+              Effect.suspend(() =>
+                trashed
+                  ? Effect.fail(new ThreadFolderTrashedError())
+                  : Effect.succeed({
+                      pools: { top: PERSONAL_POOL_ID, projects: {} },
+                      instructions: { top: [], projects: {} },
+                      secrets: { top: [], projects: {} },
+                    }),
+              ),
           }),
         ),
         Layer.provide(ThreadKindTurns.layerNone),
@@ -84,10 +93,34 @@ const fixture = Effect.gen(function* () {
     publish: () => {
       published = true;
     },
+    setTrashed: (value: boolean) => {
+      trashed = value;
+    },
   };
 });
 
 describe("thread workspace publication", () => {
+  it.effect("leaves a trashed folder's workspace alone until it is restored", () =>
+    Effect.gen(function* () {
+      const { cloud, service, launch, publish, dispatch, setTrashed } = yield* fixture;
+      yield* launch();
+      yield* cloud.settle;
+      const before = yield* service.snapshot(actor, threadId);
+      publish();
+      setTrashed(true);
+      expect(yield* service.snapshot(actor, threadId)).toEqual(before);
+      const refused = yield* Effect.flip(dispatch("while-trashed"));
+      expect(refused._tag).toBe("ThreadCommandRejectedError");
+      expect(yield* service.snapshot(actor, threadId)).toEqual(before);
+      setTrashed(false);
+      yield* dispatch("after-restore");
+      expect((yield* service.snapshot(actor, threadId)).projection.thread.worktreePath).toBe(
+        remoteThreadWorktree(driveId, threadId).path,
+      );
+      yield* cloud.settle;
+    }),
+  );
+
   it.effect(
     "updates an active thread's projection and stream once without replacing its work or sessions",
     () =>

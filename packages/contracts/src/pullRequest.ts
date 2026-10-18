@@ -631,10 +631,14 @@ export const PullRequestOmittedFileStat = Schema.Struct({
 });
 export type PullRequestOmittedFileStat = typeof PullRequestOmittedFileStat.Type;
 
+export const PullRequestReviewHeadSha = Schema.String.check(
+  Schema.isPattern(/^[0-9a-f]{40}(?:[0-9a-f]{24})?$/i),
+);
+
 /** The immutable comparison that produced a displayed patch and its file expansions. */
 export const PullRequestDiffRevision = Schema.Struct({
-  baseSha: Schema.String.check(Schema.isPattern(/^[0-9a-f]{40}(?:[0-9a-f]{24})?$/i)),
-  headSha: Schema.String.check(Schema.isPattern(/^[0-9a-f]{40}(?:[0-9a-f]{24})?$/i)),
+  baseSha: PullRequestReviewHeadSha,
+  headSha: PullRequestReviewHeadSha,
 });
 export type PullRequestDiffRevision = typeof PullRequestDiffRevision.Type;
 
@@ -724,7 +728,15 @@ export type PullRequestActionInput = typeof PullRequestActionInput.Type;
 // spaces are a line break.
 const CommentBody = Schema.String.check(Schema.isNonEmpty()).check(Schema.isMaxLength(65_536));
 
+export const PullRequestOperationId = TrimmedNonEmptyString.check(Schema.isMaxLength(128)).annotate(
+  {
+    description:
+      "Required by Cloud for comment, review, and thread-reply writes. Reuse it when retrying the exact same write.",
+  },
+);
+
 export const PullRequestCommentInput = Schema.Struct({
+  operationId: Schema.optional(PullRequestOperationId),
   ...PullRequestRef.fields,
   body: CommentBody,
 });
@@ -781,7 +793,14 @@ export const PullRequestReviewCommentDraft = Schema.Struct({
 export type PullRequestReviewCommentDraft = typeof PullRequestReviewCommentDraft.Type;
 
 export const PullRequestSubmitReviewInput = Schema.Struct({
+  operationId: Schema.optional(PullRequestOperationId),
   ...PullRequestRef.fields,
+  headSha: Schema.optional(
+    PullRequestReviewHeadSha.annotate({
+      description:
+        "Required by Cloud. The head SHA of the version reviewed, from pullRequests.detail.",
+    }),
+  ),
   verdict: PullRequestReviewVerdict,
   body: Schema.String.check(Schema.isMaxLength(65_536)),
   comments: Schema.Array(PullRequestReviewCommentDraft),
@@ -800,13 +819,6 @@ export const PullRequestThreadCommentsResult = Schema.Struct({
   nextCursor: Schema.NullOr(TrimmedNonEmptyString),
 });
 export type PullRequestThreadCommentsResult = typeof PullRequestThreadCommentsResult.Type;
-
-export const PullRequestOperationId = TrimmedNonEmptyString.check(Schema.isMaxLength(128)).annotate(
-  {
-    description:
-      "Required for cloud replies. Reuse the same operation id when retrying this exact reply.",
-  },
-);
 
 export const PullRequestThreadReplyInput = Schema.Struct({
   operationId: Schema.optional(PullRequestOperationId),

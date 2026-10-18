@@ -1,12 +1,17 @@
 import type { ThreadMoveDestination } from "../threads/threadOrder";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
 import { canSnooze, effectiveSnoozed } from "@t3tools/client-runtime/state/thread-settled";
+import {
+  serverConfigSupportsSignalboxTrash,
+  threadDeleteConfirmationMessage,
+} from "@t3tools/client-runtime/state/signalboxTrash";
 import { AuthOrchestrationOperateScope } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Haptics from "expo-haptics";
 import { useCallback, useRef } from "react";
 
 import { withThreadDismissal } from "./thread-dismissal";
+import { beginLedgerThreadMove } from "./ledgerThreadMove"; // signalbox: optimistic ledger
 import * as Dialog from "../../components/ui/Dialog";
 import { scopedThreadKey } from "../../lib/scopedEntities";
 import { refreshArchivedThreadsForEnvironment } from "../archive/useArchivedThreadSnapshots";
@@ -77,6 +82,12 @@ function environmentSupportsTitleRegeneration(
   return (
     appAtomRegistry.get(environmentServerConfigsAtom).get(environmentId)?.environment.capabilities
       .threadTitleRegeneration === true
+  );
+}
+
+function environmentSupportsSignalboxTrash(environmentId: EnvironmentThreadShell["environmentId"]) {
+  return serverConfigSupportsSignalboxTrash(
+    appAtomRegistry.get(environmentServerConfigsAtom).get(environmentId),
   );
 }
 
@@ -213,7 +224,17 @@ function useConfirmDeleteThread(
     (thread: EnvironmentThreadShell) => {
       if (!checkThreadOperationPermission(thread, actionFailureTitle("delete"))) return;
       const title = "Delete thread?";
-      const message = `“${thread.title}” will be permanently deleted, including its terminal history.`;
+      const usesSignalboxTrash = environmentSupportsSignalboxTrash(thread.environmentId);
+      const message = usesSignalboxTrash
+        ? [
+            `“${thread.title}”`,
+            threadDeleteConfirmationMessage({
+              cloud: true,
+              other: false,
+              scope: "thread",
+            }),
+          ].join("\n")
+        : `“${thread.title}” will be permanently deleted, including its terminal history.`;
       Dialog.confirm({
         title,
         message,
@@ -659,6 +680,23 @@ export function useThreadListActions(): {
           return false;
       }
       selectionHaptic();
+      // signalbox: the optimistic ledger owns pin moves
+      const ledgerMove = beginLedgerThreadMove({
+        thread,
+        section,
+        crossSection,
+        lifecycle,
+        assignments,
+        shellByKey,
+        commands: {
+          pin: pinMutation,
+          unpin: unpinMutation,
+          reorder: section === "pinned" ? reorderPinnedMutation : reorderActiveMutation,
+          unsettleThread,
+          unsnoozeThread,
+        },
+      });
+      if (ledgerMove !== null) return ledgerMove;
       appAtomRegistry.set(threadDropBusyAtom, true);
       const pending = crossSection
         ? null
@@ -733,6 +771,7 @@ export function useThreadListActions(): {
       reorderActiveMutation,
       reorderPinnedMutation,
       pinMutation,
+      unpinMutation,
       unpinThread,
       unsettleThread,
       unsnoozeThread,

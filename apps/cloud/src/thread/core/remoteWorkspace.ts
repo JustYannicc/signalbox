@@ -24,7 +24,9 @@ export const makeWorkspaceRefresh =
       const handle = directory.forThread(threadId);
       const workspace = known ?? (yield* handle.workspace(actor));
       if (workspace.branch !== null || workspace.worktreePath !== null) return false;
-      const place = yield* threadContexts.placeOfProject(workspace.projectId, { remoteOnly: true });
+      const place = yield* threadContexts
+        .placeOfProject(workspace.projectId, { remoteOnly: true })
+        .pipe(Effect.catchTags({ ThreadFolderTrashedError: () => Effect.succeed(null) }));
       if (place?.remote !== true) return false;
       yield* handle.dispatch(
         actor,
