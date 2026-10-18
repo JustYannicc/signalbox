@@ -31,11 +31,19 @@
     "effect": "catalog:",
     "evlog": "https://github.com/JustYannicc/evlog/releases/download/evlog-effect-preview.2/evlog-2.32.0-effect.2.tgz",
     "fractional-indexing": "4.0.0",
+    "fzstd": "0.1.1",
     "ignore": "7.0.12",
     "jose": "catalog:",
     "lunorash": "1.0.0-alpha.398",
     "re2js": "2.8.6",
-    "tldts": "catalog:"
+    "semver": "7.8.5",
+    "slice-ansi": "9.0.1",
+    "smol-toml": "1.9.0",
+    "string-width": "8.2.1",
+    "strip-ansi": "7.2.0",
+    "tldts": "catalog:",
+    "wrap-ansi": "9.0.2",
+    "yaml": "catalog:"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20260604.1",
@@ -45,7 +53,9 @@
     "@noble/hashes": "catalog:",
     "@signalbox/automation-compiler": "workspace:*",
     "@types/node": "catalog:",
+    "@types/semver": "7.8.0",
     "alchemy": "2.0.0-beta.80",
+    "esbuild": "0.28.2",
     "typescript": "catalog:",
     "vite-plus": "catalog:",
     "wrangler": "^4.147.0"
