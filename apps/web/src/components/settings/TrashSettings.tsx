@@ -145,13 +145,9 @@ function TrashSection({
   const run = async (key: string, command: () => Promise<string | null>) => {
     setPending(key);
     setError(null);
-    try {
-      const failure = await command();
-      setError(failure);
-      return failure === null;
-    } finally {
-      setPending(null);
-    }
+    const failure = await command().finally(() => setPending(null));
+    setError(failure);
+    return failure === null;
   };
   const restoreEntry = (entry: TrashEntry) =>
     void run(entry.id, async () =>
