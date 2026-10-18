@@ -1,5 +1,6 @@
 import {
   AuthOrchestrationReadScope,
+  AuthOrchestrationOperateScope,
   AuthSourceControlWriteScope,
   EnvironmentId,
   PullRequestOperationError,
@@ -64,6 +65,18 @@ const connect = (canWrite: boolean, fail = false) =>
         Effect.sync(() => {
           calls.push(input);
         }),
+      reviewGuide: () => Effect.succeed({ guide: null, run: null, currentHeadSha: "a".repeat(40) }),
+      filesViewed: () => Effect.succeed({ files: [], truncated: false }),
+      generateReviewGuide: () =>
+        Effect.succeed({
+          guide: null,
+          run: { _tag: "Running", headSha: "a".repeat(40), startedAt: "2026-10-18T00:00:00.000Z" },
+          currentHeadSha: "a".repeat(40),
+        }),
+      setFilesViewed: (input) =>
+        Effect.sync(() => {
+          calls.push(input);
+        }),
     });
     const rpc = yield* RpcTest.makeClient(CloudRpc.CloudRpcGroup).pipe(
       Effect.provide(
@@ -85,6 +98,32 @@ const connect = (canWrite: boolean, fail = false) =>
   });
 
 describe("public cloud PR collaboration RPCs", () => {
+  it.effect("reads guide/viewed state with read scope and guards their mutations", () =>
+    Effect.gen(function* () {
+      const f = yield* connect(false);
+      expect(yield* f.rpc[WS_METHODS.pullRequestsReviewGuide](reference)).toMatchObject({
+        guide: null,
+      });
+      expect(yield* f.rpc[WS_METHODS.pullRequestsFilesViewed](reference)).toEqual({
+        files: [],
+        truncated: false,
+      });
+      expect(
+        yield* f.rpc[WS_METHODS.pullRequestsGenerateReviewGuide]({
+          ...reference,
+          operationId: "guide",
+          headSha: "a".repeat(40),
+        }).pipe(Effect.flip),
+      ).toMatchObject({ requiredScope: AuthOrchestrationOperateScope });
+      expect(
+        yield* f.rpc[WS_METHODS.pullRequestsSetFilesViewed]({
+          ...reference,
+          files: [{ path: "a.ts", viewed: true }],
+        }).pipe(Effect.flip),
+      ).toMatchObject({ requiredScope: AuthSourceControlWriteScope });
+      expect(f.calls).toEqual([]);
+    }).pipe(Effect.scoped),
+  );
   it.effect("requires source-control write authority before calling the service", () =>
     Effect.gen(function* () {
       const f = yield* connect(false);

@@ -3,6 +3,7 @@ import {
   type ChatGptReconnectProfile,
   type ChatGptTransferredProfile,
   type ProviderAuthRespondInput,
+  type ProviderAuthLogoutInput,
   type ProviderAuthStartInput,
   type ProviderAuthState,
   type ProviderInstanceId,
@@ -52,7 +53,7 @@ export class ProviderAuthService extends Context.Service<
       ownerSessionId: string,
     ) => Effect.Effect<ProviderAuthState, ProviderSetupError>;
     readonly logout: (
-      input: ProviderAuthTarget,
+      input: ProviderAuthLogoutInput,
     ) => Effect.Effect<ProviderAuthState, ProviderSetupError>;
     readonly subscribe: (
       input: ProviderAuthTarget,
@@ -259,6 +260,14 @@ export const makeProviderAuthService = Effect.gen(function* () {
       return yield* auth.cancel(ownerSessionId, input.flowId);
     }),
     logout: Effect.fn("ProviderAuthService.logout")(function* (input) {
+      // signalbox: never widen an account-scoped request into an instance-wide logout.
+      if (input.accountId !== undefined) {
+        return yield* new ProviderSetupError({
+          instanceId: input.instanceId,
+          operation: "logout",
+          detail: "Account-scoped logout is only supported by cloud pools.",
+        });
+      }
       return yield* credentialChanges.withPermit(
         Effect.gen(function* () {
           const auth = yield* getController(input.instanceId, "logout");
