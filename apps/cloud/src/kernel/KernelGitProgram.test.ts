@@ -4,6 +4,7 @@ import {
   KernelProgramRegistry,
   KernelWakeRegistry,
   callKernel,
+  kernelError,
   kernelOk,
   type KernelHandle,
   type KernelResult,
@@ -739,6 +740,93 @@ describe("KernelGitProgram public entry", () => {
       wakes.dispose();
     }
   });
+
+  it.each(["CANCELLED", "NOT_FOUND", "INVALID_HANDLE"] as const)(
+    "retains a live Git child when SIGKILL is rejected with %s",
+    async (rejectedCode) => {
+      const { filesystem, fixture } = createFilesystem();
+      const wakes = new KernelWakeRegistry();
+      const childStarted = deferred<KernelHandle<"process">>();
+      const releaseChild = deferred<void>();
+      const waitToken = deferred<WakeToken>();
+      const gitRunSettled = deferred<void>();
+      let childHandle: KernelHandle<"process"> | undefined;
+      const childRun = {
+        kind: "async" as const,
+        run: async (context: KernelAsyncProgramContext) => {
+          childHandle = context.identity.handle;
+          childStarted.resolve(context.identity.handle);
+          await releaseChild.promise;
+          return { exitCode: 0, signal: 0, coreDumped: false };
+        },
+      } satisfies KernelProgramBinding["implementation"];
+      const { host } = createPublicHost(
+        filesystem,
+        gitGuest("wait"),
+        childRun,
+        credentials,
+        undefined,
+        wakes,
+        () => gitRunSettled.resolve(),
+      );
+      observeWaitpidTokens(host, (token) => {
+        waitToken.resolve(token);
+      });
+      const signal = host.processes.signal.bind(host.processes);
+      host.processes.signal = (handle, requested) => {
+        if (handle.id === childHandle?.id && requested === 9) {
+          return kernelError(rejectedCode, "Injected SIGKILL rejection");
+        }
+        return signal(handle, requested);
+      };
+
+      try {
+        const git = spawnGit(host, filesystem);
+        const child = await childStarted.promise;
+        const token = await waitToken.promise;
+        expect(wakes.size).toBe(1);
+
+        expect(wakes.cancel(token)).toBe(true);
+        await gitRunSettled.promise;
+        await expect(host.exitStatus(git)).resolves.toMatchObject({
+          status: "error",
+          error: { code: "IO_ERROR" },
+        });
+
+        expect(host.processes.info(child)).toMatchObject({ status: "ok" });
+        const childInfo = host.processes.info(child);
+        if (childInfo.status !== "ok") throw new Error("Rejected SIGKILL lost the owned child");
+        expect(host.processes.lookupPid(childInfo.value.pid)).toMatchObject({
+          status: "ok",
+          value: { status: "running" },
+        });
+        expect(host.processes.size).toBe(2);
+
+        expect(host.reap(git)).toMatchObject({
+          status: "error",
+          error: { code: "IO_ERROR" },
+        });
+        releaseChild.resolve();
+        await expect(host.exitStatus(child)).resolves.toMatchObject({
+          status: "ok",
+          value: { exitCode: 0, signal: 0 },
+        });
+        expect(host.reap(child)).toEqual({ status: "ok", value: undefined });
+        expect(host.processes.info(child)).toMatchObject({
+          status: "error",
+          error: { code: "INVALID_HANDLE" },
+        });
+        expect(host.processes.size).toBe(0);
+        expect(wakes.size).toBe(0);
+      } finally {
+        releaseChild.resolve();
+        await host.processes.dispose();
+        filesystem.dispose();
+        fixture.close();
+        wakes.dispose();
+      }
+    },
+  );
 
   it("reaps blocked children on repeated parent cancellation and drops unstarted requests", async () => {
     const { filesystem, fixture } = createFilesystem();

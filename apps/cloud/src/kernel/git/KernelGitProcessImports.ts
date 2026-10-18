@@ -362,14 +362,18 @@ export class KernelGitProcessImports {
       this.#options.context.wakes.release(result.wakeToken);
       throw new Error("Git child termination would block");
     }
+    if (result.status !== "error") return;
+
     if (
-      result.status === "error" &&
-      result.error.code !== "CANCELLED" &&
-      result.error.code !== "INVALID_HANDLE" &&
-      result.error.code !== "NOT_FOUND"
+      result.error.code === "CANCELLED" ||
+      result.error.code === "INVALID_HANDLE" ||
+      result.error.code === "NOT_FOUND"
     ) {
-      throw new Error(`Git child cleanup failed: ${result.error.message}`);
+      const ownership = this.#options.context.processes.info(handle);
+      if (ownership.status === "error" && ownership.error.code === "INVALID_HANDLE") return;
     }
+
+    throw new Error(`Git child cleanup failed: ${result.error.message}`);
   }
 
   #allocatePid(): number | undefined {
