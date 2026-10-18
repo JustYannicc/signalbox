@@ -467,3 +467,23 @@ describe("RPC trace filtering", () => {
     ).toBe(true);
   });
 });
+
+describe("client issue trace metadata", () => {
+  it.each([128, 129])("bounds environment IDs at 128 characters: %s", (length) => {
+    const input = structuredClone(nativeExport);
+    const environmentId = "e".repeat(length);
+    const release = "1.0.1-nightly.20260905.123";
+    input.resourceSpans[0]!.scopeSpans[0]!.spans[0]!.attributes = [
+      str("environment.id", environmentId),
+      str("client.release", release),
+      str("thread.id", "canary-private-".repeat(8)),
+    ];
+    const filtered = filterTraces(input, trusted);
+    const attributes = filtered?.resourceSpans[0]?.scopeSpans[0]?.spans[0]?.attributes;
+    expect(attributes).toEqual([
+      ...(length === 128 ? [str("environment.id", environmentId)] : []),
+      str("client.release", release),
+    ]);
+    expect(JSON.stringify(filtered)).not.toContain("canary-private");
+  });
+});
