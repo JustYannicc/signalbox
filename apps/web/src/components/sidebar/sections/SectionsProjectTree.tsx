@@ -1,7 +1,7 @@
 import type { SectionTreeNode } from "@t3tools/client-runtime/state/sections";
 import type { EnvironmentId, ProjectId } from "@t3tools/contracts";
 import { ChevronRightIcon, FolderClosedIcon } from "lucide-react";
-import { useMemo, type ReactNode } from "react";
+import { type ReactNode } from "react";
 
 import { SidebarMenu, SidebarMenuItem } from "../../ui/sidebar";
 import {
@@ -28,7 +28,7 @@ function ProjectRows(props: {
   sectionId: string | null;
   renderProject: RenderProject;
 }) {
-  const siblingIds = useMemo(() => props.rows.map((row) => row.id), [props.rows]);
+  const siblingIds = props.rows.map((row) => row.id);
   return props.rows.map((project) =>
     props.renderProject(
       props.environment.environmentId,

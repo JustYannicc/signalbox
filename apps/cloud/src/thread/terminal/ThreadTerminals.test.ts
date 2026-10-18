@@ -23,7 +23,7 @@ import {
   threadId,
   turnReport,
   withObject,
-} from "../RunnerTesting.ts";
+} from "../runnerTesting.ts";
 import * as TerminalTesting from "../TerminalTesting.ts";
 
 type TerminalTestServices = ReturnType<typeof TerminalTesting.terminalTestServices>;

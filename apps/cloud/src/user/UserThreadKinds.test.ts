@@ -72,6 +72,7 @@ const setup = (
         terminalAttach: async () => ({ _tag: "not_found" }),
         subscribe: async () => null,
         summary: async () => null,
+        requestPullRequestSync: async () => ({ _tag: "not_found" }),
         diagnostics: async () => null,
         previews: async () => null,
         previewLink: async () => ({ _tag: "unavailable", message: "none" }),
@@ -85,6 +86,11 @@ const setup = (
         browsing: async () => null,
         browse: async () => ({ _tag: "not_found" }),
         browsingRecord: async () => ({ _tag: "not_found" }),
+        pull: async () => ({ _tag: "not_found" }),
+        pullOwner: async () => null,
+        pullTarget: async () => null,
+        reservePublication: async () => ({ _tag: "not_found" }),
+        releasePublication: async () => undefined,
       }),
   });
   const recordedAlarm = Layer.succeed(

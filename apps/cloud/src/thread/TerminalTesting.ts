@@ -5,6 +5,10 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
 import * as Platform from "../platform.ts";
+import type * as DriveDirectory from "../drive/DriveDirectory.ts";
+import * as ThreadPulls from "./ThreadPulls.ts";
+import * as PullState from "./PullState.ts";
+import * as PreviewState from "./PreviewState.ts";
 import * as UserDirectory from "../user/UserDirectory.ts";
 import * as CloudTerminalsLayer from "./CloudTerminalsLayer.ts";
 import * as CloudAnalytics from "./diagnostics/CloudAnalytics.ts";
@@ -40,6 +44,7 @@ export const layerThreadObject = (
   machines: Layer.Layer<MachineBackend.MachineBackend> = MachineBackends.layerNone,
   options: {
     readonly drives?: boolean;
+    readonly driveDirectory?: Layer.Layer<DriveDirectory.DriveDirectory>;
     readonly writes?: (
       userId: string,
       driveId: string,
@@ -57,6 +62,8 @@ export const layerThreadObject = (
 ) =>
   ThreadTerminals.layer.pipe(
     Layer.provideMerge(ThreadRunner.layer.pipe(Layer.provide(ThreadTerminals.holdLayer))),
+    Layer.provideMerge(ThreadPulls.layerReports.pipe(Layer.provideMerge(ThreadPulls.layer))),
+    Layer.provideMerge(options.driveDirectory ?? Layer.empty),
     Layer.provideMerge(
       Layer.succeed(ThreadRunner.ThreadDrives, {
         enabled: options.drives === true,
@@ -82,7 +89,9 @@ export const layerThreadObject = (
     Layer.provideMerge(options.analytics ?? CloudAnalytics.layerOff),
     Layer.provideMerge(machines),
     Layer.provideMerge(DiagnosticsStore.layer),
-    Layer.provideMerge(Layer.mergeAll(ThreadStore.layer, SessionRows.layer)),
+    Layer.provideMerge(
+      Layer.mergeAll(ThreadStore.layer, SessionRows.layer, PreviewState.layer, PullState.layer),
+    ),
     Layer.provideMerge(Layer.mergeAll(NodeSqliteClient.layer({ filename }), Platform.layerCrypto)),
   );
 

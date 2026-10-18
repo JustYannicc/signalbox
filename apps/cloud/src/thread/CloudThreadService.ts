@@ -8,6 +8,7 @@ import {
   type OrchestrationV2ThreadStreamItem,
   type ThreadId,
 } from "@t3tools/contracts";
+import type { PullResult } from "@signalbox/runner-protocol/PullProtocol";
 import type {
   BrowsingCommand,
   BrowsingMember,
@@ -36,6 +37,7 @@ import type {
   ThreadNotFoundError,
   ThreadObjectError,
 } from "./ThreadAccess.ts";
+import type { PullInput } from "./threadWire.ts";
 
 /**
  * Compatibility entry for core thread calls alongside browser and preview capabilities.
@@ -74,6 +76,12 @@ export class CloudThreadService extends Context.Service<
       actor: Actor,
       threadId: ThreadId,
     ) => Effect.Effect<OrchestrationV2ThreadHistoryPage, ThreadNotFoundError | ThreadObjectError>;
+    /** Asks the thread's owner token to refresh one link currently visible on the thread. */
+    readonly requestPullRequestSync: (
+      actor: Actor,
+      threadId: ThreadId,
+      key: string,
+    ) => Effect.Effect<void, CloudThreadError>;
     /**
      * `subscribeThread` that survives its thread object: when the object is
      * evicted or redeployed mid-stream, the subscription resumes from the last
@@ -168,6 +176,42 @@ export class CloudThreadService extends Context.Service<
       threadId: ThreadId,
       key: string | null,
     ) => Effect.Effect<string | null, ThreadObjectError>;
+    /** Pulls one thread-owned remote branch through its persisted operation. */
+    readonly pull: (
+      actor: Actor,
+      threadId: ThreadId,
+      input: PullInput,
+    ) => Effect.Effect<PullResult, CloudThreadError>;
+    /** The persisted thread owner's id after checking its home and the actor's write access. */
+    readonly pullOwner: (
+      actor: Actor,
+      threadId: ThreadId,
+      driveId: string,
+    ) => Effect.Effect<
+      { readonly userId: string; readonly driveId: string } | null,
+      CloudThreadError
+    >;
+    /** The remote head already recorded for this operation, even after it completes. */
+    readonly pullTarget: (
+      actor: Actor,
+      threadId: ThreadId,
+      driveId: string,
+      operationId: string,
+      branch: string,
+    ) => Effect.Effect<string | null, CloudThreadError>;
+    /** Claims the thread while GitHub publication reads its exact branch refs. */
+    readonly reservePublication: (
+      actor: Actor,
+      threadId: ThreadId,
+      driveId: string,
+      operationId: string,
+    ) => Effect.Effect<void, CloudThreadError>;
+    readonly releasePublication: (
+      actor: Actor,
+      threadId: ThreadId,
+      driveId: string,
+      operationId: string,
+    ) => Effect.Effect<void, CloudThreadError>;
   }
 >()("@signalbox/cloud/thread/CloudThreadService") {}
 
@@ -239,9 +283,20 @@ const make = Effect.gen(function* () {
     launchThread: threads.launch,
     threadSnapshot: threads.snapshot,
     threadHistoryPage: threads.history,
+    requestPullRequestSync: (actor, threadId, key) =>
+      directory.forThread(threadId).requestPullRequestSync(actor, key),
     subscribeThread: threads.subscribe,
     turnDiagnostics: (actor, threadId, key) =>
       directory.forThread(threadId).diagnostics(actor, key),
+    pull: (actor, threadId, input) => directory.forThread(threadId).pull(actor, input),
+    pullOwner: (actor, threadId, driveId) =>
+      directory.forThread(threadId).pullOwner(actor, driveId),
+    pullTarget: (actor, threadId, driveId, operationId, branch) =>
+      directory.forThread(threadId).pullTarget(actor, driveId, operationId, branch),
+    reservePublication: (actor, threadId, driveId, operationId) =>
+      directory.forThread(threadId).reservePublication(actor, driveId, operationId),
+    releasePublication: (actor, threadId, driveId, operationId) =>
+      directory.forThread(threadId).releasePublication(actor, driveId, operationId),
   });
 });
 

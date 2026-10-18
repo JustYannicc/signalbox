@@ -1,5 +1,4 @@
 import * as SqliteClient from "@effect/sql-sqlite-do/SqliteClient";
-import * as AccountConfig from "@signalbox/account/AccountConfig";
 import { EnvironmentId } from "@t3tools/contracts";
 import type { AccountProfile } from "@t3tools/contracts/account";
 import { DurableObject } from "cloudflare:workers";
@@ -12,9 +11,14 @@ import * as ManagedRuntime from "effect/ManagedRuntime";
 import * as Schema from "effect/Schema";
 
 import * as CloudAssets from "../assets/CloudAssets.ts";
+import * as Evlog from "../observability/Evlog.ts";
+import * as ClientRpcTracing from "../observability/clientRpcTracing.ts";
+import * as IdentityProvider from "../account/IdentityProvider.ts";
+import * as CloudConfig from "../CloudConfig.ts";
 import { AutomationAlarm, CloudAutomations } from "../automations/CloudAutomations.ts";
 import * as PersonBrowsers from "../browser/PersonBrowsers.ts";
 import * as CloudEngine from "../automations/cloudEngine.ts";
+import { layerModelCompletion } from "../models/cloudflare.ts";
 import { HookOrigin } from "../automations/cloudIngress.ts";
 import { layerWorkflows } from "../automations/workflowRunner.ts";
 import { type AttachmentObjects, attachmentStorage } from "../attachments/attachmentObjects.ts";
@@ -27,10 +31,18 @@ import * as Environment from "../environment.ts";
 import * as GitHub from "../github/GitHub.ts";
 import * as GitHubActions from "../github/GitHubActions.ts";
 import * as GitHubBranches from "../github/GitHubBranches.ts";
+import * as AgentPullRequests from "../github/AgentPullRequests.ts";
+import * as CloudPullRequests from "../github/CloudPullRequests.ts";
+import * as PullRequestRepository from "../github/PullRequestRepository.ts";
 import * as ConnectionLinks from "../connections/ConnectionLinks.ts";
 import * as GitHubConnection from "../github/GitHubConnection.ts";
 import { API_HEADER, decodeApiCredential, serveApiRequest } from "../api/apiObject.ts";
 import { MCP_PATH, makeMcpHandler } from "../api/mcpObject.ts";
+import * as LearnerService from "../learner/LearnerService.ts";
+import * as LearnerJev from "../learner/LearnerJev.ts";
+import * as LearnerSummary from "../learner/LearnerSummary.ts";
+import * as LearnerHomes from "./LearnerHomes.ts";
+import * as UserLearner from "./UserLearner.ts";
 import * as LocalKeys from "../localKeys/LocalKeys.ts";
 import * as LoginService from "../signIn/LoginService.ts";
 import * as NoteReader from "../notes/NoteReader.ts";
@@ -43,7 +55,8 @@ import * as PushNotifier from "../push/PushNotifier.ts";
 import * as CloudThreadService from "../thread/CloudThreadService.ts";
 import * as CloudTerminalsLayer from "../thread/CloudTerminalsLayer.ts";
 import * as ThreadsLive from "../thread/ThreadsLive.ts";
-import * as ModelManifest from "../thread/ModelManifest.ts";
+import * as ModelManifest from "../models/ModelManifest.ts";
+import * as ModelCatalog from "../models/ModelCatalog.ts";
 import { scriptedProviderEnabled } from "../thread/scriptedProvider.ts";
 import type { MachineBackendEnv } from "../thread/runner/MachineBackend.ts";
 import { type PreviewEnv, previewSettings } from "../thread/preview/previewHost.ts";
@@ -64,20 +77,25 @@ import * as DriveSharing from "./DriveSharing.ts";
 import * as DriveShortcuts from "./DriveShortcuts.ts";
 import * as OnePasswordAccount from "./OnePasswordAccount.ts";
 import * as ResourceBindings from "./ResourceBindings.ts";
-import * as ThreadContexts from "./threadContexts.ts";
+import * as ThreadContextLayers from "./threadContextLayers.ts";
 import * as UserContexts from "./UserContexts.ts";
 import * as UserDrives from "./UserDrives.ts";
 import { makeUserObjectApi } from "./userObjectApi.ts";
 import * as UserPools from "./UserPools.ts";
 import * as LegacySections from "./legacySections.ts";
 import * as UserFolders from "./UserFolders.ts";
+import * as FolderStarts from "./FolderStarts.ts";
 import * as UserShell from "./UserShell.ts";
 import * as UserStore from "./UserStore.ts";
 import * as UserThreadKinds from "./UserThreadKinds.ts";
 import * as UserThreadStatus from "./UserThreadStatus.ts";
 import * as UserTerminals from "./UserTerminals.ts";
 import * as UserModelSettings from "./UserModelSettings.ts";
+import * as UserKeybindings from "./UserKeybindings.ts";
+import * as UserAnalyticsPreference from "./UserAnalyticsPreference.ts";
+import * as UserTimezone from "./UserTimezone.ts";
 import * as ChatArchive from "./chatArchive.ts";
+import { makeProfileId } from "./profileId.ts";
 
 /**
  * One per WorkOS user, named by their user id, always in the EU jurisdiction.
@@ -95,6 +113,7 @@ export interface UserObjectEnv
     MachineBackendEnv,
     PreviewEnv,
     GitHub.GitHubEnv,
+    LearnerJev.LearnerJevEnv,
     KindClassifier.KindClassifierEnv,
     PersonBrowsers.PersonBrowsersEnv,
     LoginService.LoginServiceEnv {
@@ -117,6 +136,10 @@ export interface UserObjectEnv
   readonly POOLS: PoolDirectory.PoolObjectNamespace;
   /** `1` in dev and tests: clients may pick the scripted provider (`scriptedProvider.ts`). */
   readonly SCRIPTED_PROVIDER?: string;
+  /** The Worker binding that accepts filtered client RPC trace batches. */
+  readonly TRACE_EXPORT?: Pick<Fetcher, "fetch">;
+  /** Secret shared with the Worker-side trace intake. */
+  readonly TRACE_EXPORT_TOKEN?: string;
 }
 
 const decodeEnvironmentId = Schema.decodeSync(EnvironmentId);
@@ -140,14 +163,21 @@ const layerDrives = (env: UserObjectEnv) => {
     DriveDirectory.layerDurableObjects(env.DRIVES, { localWorkerd: env.LOCAL_WORKERD === "1" }),
     DrivePacks.layerBucket(env.DRIVE_PACKS, env.DRIVE_PACKS_PREFIX),
   );
-  // The Worker's own account settings, read the same way.
   const people = Layer.unwrap(
-    AccountConfig.read.pipe(
-      // Unreadable settings leave sharing without anyone to find, not the object down.
-      Effect.orElseSucceed(() => undefined),
-      Effect.map((accounts) => DrivePeople.layerWorkOS(accounts?.workos)),
+    Effect.map(makeProfileId, (profileId) =>
+      DrivePeople.layerForUser(
+        profileId.pipe(
+          Effect.flatMap((id) =>
+            id === null
+              ? Effect.fail(
+                  new DrivePeople.DrivePeopleError({ message: "Sign in before sharing." }),
+                )
+              : Effect.succeed(id),
+          ),
+        ),
+      ),
     ),
-  ).pipe(Layer.provide(ConfigProvider.layer(ConfigProvider.fromEnv({ env: stringVars(env) }))));
+  ).pipe(Layer.provide(FetchHttpClient.layer));
   return {
     store,
     services: Layer.mergeAll(DriveSharing.layer, DriveShortcuts.layer, DriveFiles.layer).pipe(
@@ -193,7 +223,8 @@ const layerAlarm = (storage: DurableObjectStorage) =>
   );
 
 // The whole storage, not just `storage.sql`: migrations run in transactions.
-const makeRuntime = (storage: DurableObjectStorage, env: UserObjectEnv) => {
+const makeRuntime = (ctx: DurableObjectState, env: UserObjectEnv) => {
+  const { storage } = ctx;
   const drives = layerDrives(env);
   return ManagedRuntime.make(
     // The user's automations (#434), on the services below.
@@ -202,6 +233,7 @@ const makeRuntime = (storage: DurableObjectStorage, env: UserObjectEnv) => {
         Layer.mergeAll(
           layerWorkflows(env.AUTOMATION_RUNS),
           layerAutomationAlarm(storage),
+          layerModelCompletion({ pools: env.POOLS }, { localWorkerd: env.LOCAL_WORKERD === "1" }),
           Layer.succeed(HookOrigin, env.AUTOMATION_HOOK_ORIGIN ?? ""),
         ),
       ),
@@ -210,7 +242,9 @@ const makeRuntime = (storage: DurableObjectStorage, env: UserObjectEnv) => {
       Layer.provideMerge(
         Layer.mergeAll(
           GitHubBranches.layer,
+          AgentPullRequests.layer,
           GitHubActions.layer,
+          CloudPullRequests.layer.pipe(Layer.provideMerge(PullRequestRepository.layer)),
           UserPreviewSetup.layer,
           CloudAssets.layer,
           // Agents' sign-ins (#576): Kernel's Managed Auth, answered from 1Password through Executor.
@@ -233,6 +267,7 @@ const makeRuntime = (storage: DurableObjectStorage, env: UserObjectEnv) => {
               UserTerminals.layer,
               CloudTerminalsLayer.layer,
               CloudThreadService.layer.pipe(Layer.provideMerge(ThreadsLive.layer)),
+              UserLearner.layer.pipe(Layer.provideMerge(LearnerHomes.layer)),
               PoolSignIns.layer,
               drives.services,
               ConnectionLinks.layer,
@@ -244,8 +279,7 @@ const makeRuntime = (storage: DurableObjectStorage, env: UserObjectEnv) => {
           Layer.provideMerge(GitHubConnection.layer),
           Layer.provideMerge(
             Layer.mergeAll(
-              ThreadContexts.layer,
-              UserPools.layer,
+              ThreadContextLayers.layer.pipe(Layer.provideMerge(UserPools.layer)),
               UserThreadKinds.layerTurns,
               // The person's browser for real sites (#574), on Kernel.
               PersonBrowsers.layerFromEnv(env).pipe(Layer.provide(FetchHttpClient.layer)),
@@ -277,9 +311,24 @@ const makeRuntime = (storage: DurableObjectStorage, env: UserObjectEnv) => {
           ),
           Layer.provideMerge(LegacySections.layer),
           Layer.provideMerge(UserFolders.layer),
-          Layer.provideMerge(ModelManifest.layer),
+          Layer.provideMerge(FolderStarts.layer),
           Layer.provideMerge(
-            GitHub.layer(GitHub.gitHubPipesConfig(env), GitHub.gitHubEndpoints(env)).pipe(
+            Layer.mergeAll(
+              LearnerService.layer,
+              LearnerSummary.layer((objectName) =>
+                PoolDirectory.poolObjectStub(env.POOLS, objectName, {
+                  localWorkerd: env.LOCAL_WORKERD === "1",
+                }),
+              ),
+            ).pipe(
+              Layer.provideMerge(
+                LearnerJev.layerFromEnv(env).pipe(Layer.provide(FetchHttpClient.layer)),
+              ),
+            ),
+          ),
+          Layer.provideMerge(ModelCatalog.layer.pipe(Layer.provideMerge(ModelManifest.layer))),
+          Layer.provideMerge(
+            GitHub.layerForUsers(GitHub.gitHubEndpoints(env)).pipe(
               Layer.provide(FetchHttpClient.layer),
             ),
           ),
@@ -288,6 +337,9 @@ const makeRuntime = (storage: DurableObjectStorage, env: UserObjectEnv) => {
             Layer.mergeAll(
               UserStore.layer,
               UserModelSettings.layer,
+              UserKeybindings.layer,
+              UserAnalyticsPreference.layer,
+              UserTimezone.layer,
               UserContexts.layerWithDrives,
               ResourceBindings.layer,
               OnePasswordAccount.layer,
@@ -304,7 +356,21 @@ const makeRuntime = (storage: DurableObjectStorage, env: UserObjectEnv) => {
               }),
             ),
           ),
-          Layer.provideMerge(Layer.mergeAll(SqliteClient.layer({ storage }), Platform.layerCrypto)),
+          Layer.provideMerge(
+            Layer.mergeAll(
+              SqliteClient.layer({ storage }),
+              Platform.layerCrypto,
+              Evlog.layer,
+              Evlog.layerWaitUntil(ctx),
+            ),
+          ),
+          Layer.provideMerge(
+            IdentityProvider.layer.pipe(
+              Layer.provide(CloudConfig.layer),
+              Layer.provide(ConfigProvider.layer(ConfigProvider.fromEnv({ env: stringVars(env) }))),
+              Layer.orDie,
+            ),
+          ),
           // Signs asset URLs (`CloudAssets`) with the Worker's keys, from the same vars.
           Layer.provideMerge(
             CloudTokens.layerSessionSecret.pipe(
@@ -312,6 +378,7 @@ const makeRuntime = (storage: DurableObjectStorage, env: UserObjectEnv) => {
               Layer.orDie,
             ),
           ),
+          Layer.provideMerge(ClientRpcTracing.layer(env, (promise) => ctx.waitUntil(promise))),
         ),
       ),
     ),
@@ -342,7 +409,7 @@ export class UserObject extends DurableObject<UserObjectEnv> implements UserObje
       attachments: env.DRIVE_PACKS !== undefined,
       drives: env.DRIVES !== undefined && env.DRIVE_PACKS !== undefined,
     };
-    this.runtime = makeRuntime(ctx.storage, env);
+    this.runtime = makeRuntime(ctx, env);
     this.sockets = new ClientSockets({
       ctx,
       identity: this.identity,
@@ -512,12 +579,24 @@ export class UserObject extends DurableObject<UserObjectEnv> implements UserObje
     return this.api.githubCommitAuthor();
   }
 
+  pullRequestDiff(input: Parameters<UserObjectApi["pullRequestDiff"]>[0]) {
+    return this.api.pullRequestDiff(input);
+  }
+
   onePasswordToken() {
     return this.api.onePasswordToken();
   }
 
   contextIds() {
     return this.api.contextIds();
+  }
+
+  clientTraceDimensions(threadIds: Parameters<UserObjectApi["clientTraceDimensions"]>[0]) {
+    return this.api.clientTraceDimensions(threadIds);
+  }
+
+  clientFolderDimensions(folderIds: Parameters<UserObjectApi["clientFolderDimensions"]>[0]) {
+    return this.api.clientFolderDimensions(folderIds);
   }
 
   recordDriveAccess(entry: Parameters<UserObjectApi["recordDriveAccess"]>[0]) {
@@ -542,6 +621,10 @@ export class UserObject extends DurableObject<UserObjectEnv> implements UserObje
 
   driveEvents(input: Parameters<UserObjectApi["driveEvents"]>[0]) {
     return this.api.driveEvents(input);
+  }
+
+  learnerTool(threadId: string, name: string, input: unknown) {
+    return this.api.learnerTool(threadId, name, input);
   }
 
   automationTool(threadId: string, name: string, input: unknown) {
@@ -663,6 +746,12 @@ export class UserObject extends DurableObject<UserObjectEnv> implements UserObje
           ),
         ],
         { discard: true },
+      ).pipe(
+        // Named by the person's user id (`UserDirectory`).
+        Evlog.withUnit(
+          "user.alarm",
+          this.ctx.id.name === undefined ? {} : { person: { id: this.ctx.id.name } },
+        ),
       ),
     );
   }

@@ -53,12 +53,12 @@ export function CloudGitHubSettings({
 
   const disconnect = async () => {
     setDisconnecting(true);
-    try {
+    await (async () => {
       await fetch(pageUrl("/api/github/disconnect"), { method: "POST", credentials: "include" });
       onChanged();
-    } finally {
+    })().finally(() => {
       setDisconnecting(false);
-    }
+    });
   };
 
   return (

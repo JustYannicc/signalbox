@@ -19,11 +19,8 @@ import { DEFAULT_SERVER_SETTINGS } from "@t3tools/contracts/settings";
 import { DEFAULT_RESOLVED_KEYBINDINGS } from "@t3tools/shared/keybindings";
 
 import webPackage from "../../web/package.json" with { type: "json" };
-import {
-  CLOUD_POOL_KINDS,
-  cloudProviderInstances,
-  cloudProviders,
-} from "./thread/providerCatalog.ts";
+import { cloudProviderInstances, cloudProviders } from "./models/ModelCatalog.ts";
+import { CLOUD_POOL_KINDS } from "./models/ModelRouting.ts";
 import { scriptedModelSelection } from "./thread/scriptedProvider.ts";
 
 /**
@@ -109,10 +106,16 @@ export const descriptor = (identity: CloudEnvironmentIdentity): ExecutionEnviron
     threadKinds: true,
     // Threads' status notes, written by their agents or the runtime (`user/UserThreadStatus.ts`).
     threadStatusNotes: true,
+    threadSettlement: true,
+    threadPinning: true,
+    threadPinReorder: true,
+    threadAutoSettleOptOut: true,
     // The thread object picks start or queue itself, so clients skip reading the projection first.
     serverResolvedCommandContext: true,
+    commandOutputStreaming: true,
     // Each account pool reports its accounts as a source (`pool/poolViews.ts`).
     usageLimitSources: true,
+    usageHistory: false,
     // Pools only sign in Claude and ChatGPT accounts, for now: no API keys, imports or OpenCode.
     poolFeatures: CLOUD_POOL_KINDS,
     signalboxPreviews: identity.previews === true,
@@ -126,13 +129,18 @@ export const descriptor = (identity: CloudEnvironmentIdentity): ExecutionEnviron
       : {}),
     // Importing a GitHub repository registers it at once (`github/GitHubImport.ts`).
     projectCloneTracking: true,
-    // Threads link pull requests and keep their state synced (`thread/pullRequests/`), so the
-    // sidebar badge and Thread details show them. The `pullRequests.*` reads and watching are #397.
+    // Threads link pull requests and keep their state synced (`thread/pullRequests/`), and this
+    // environment serves PR reads through `github/CloudPullRequests.ts` (#814).
+    pullRequests: true,
+    pullRequestChecks: true,
     threadPullRequests: true,
     terminal: identity.drives === true,
     worktrees: false,
     serverSettingsWrite: false,
     modelSettingsWrite: true,
+    keybindingsWrite: true,
+    analyticsSettings: true,
+    personTimezone: true,
     devices: false,
     scheduledTasks: false,
     localFilesystem: false,

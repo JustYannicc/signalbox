@@ -11,14 +11,16 @@ import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
-import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
+import { AuthPreviewOperateScope, type EnvironmentId, type ThreadId } from "@t3tools/contracts";
 import type { AgentBrowserInput, AgentBrowserTab } from "@t3tools/contracts/signalboxPreviews";
 import { GlobeIcon, ServerIcon, TriangleAlertIcon } from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { openOwnCopy } from "~/browsing/openOwnCopy";
 import { cn } from "~/lib/utils";
+import { useRightPanelStore } from "~/rightPanelStore";
 import { useEnvironmentSupportsThreadBrowsing } from "~/state/browsing";
+import { useEnvironmentScope } from "~/state/session";
 import { signalboxAgentBrowser, useAgentBrowserTrail } from "~/state/signalboxAgentBrowser";
 import { useEnvironmentQuery } from "~/state/query";
 import { useAtomCommand } from "~/state/use-atom-command";
@@ -56,11 +58,12 @@ export function AgentBrowserPanel(props: {
   const [pinnedTabId, setPinnedTabId] = useState<string | null>(null);
   const [selectedStepId, setSelectedStepId] = useState<string | null>(null);
   const canDrive = useAtomValue(signalboxAgentBrowser.input.permissionAtom(environmentId));
-  const canCopy = useEnvironmentSupportsThreadBrowsing(environmentId);
-  const onCopy = useCallback(
-    (url: string) => void openOwnCopy({ environmentId, threadId }, url),
-    [environmentId, threadId],
-  );
+  const threadBrowsingSupported = useEnvironmentSupportsThreadBrowsing(environmentId);
+  const canOperatePreview = useEnvironmentScope(environmentId, AuthPreviewOperateScope);
+  const canOpenThreadTabs = threadBrowsingSupported && canOperatePreview;
+  const openThreadTabs = () =>
+    useRightPanelStore.getState().openBrowser({ environmentId, threadId }, null);
+  const onCopy = (url: string) => void openOwnCopy({ environmentId, threadId }, url);
   const sendInput = useAtomCommand(signalboxAgentBrowser.input, { reportFailure: false });
 
   const watch = useEnvironmentQuery(
@@ -72,10 +75,10 @@ export function AgentBrowserPanel(props: {
   // A watch that failed (the cloud cuts a view that fell behind) opens again
   // once the person is around, not in a loop on its own.
   const { error: watchError, refresh: refreshWatch } = watch;
-  const onActivity = useCallback(() => {
+  const onActivity = () => {
     noteActivity();
     if (watchError !== null) refreshWatch();
-  }, [noteActivity, refreshWatch, watchError]);
+  };
   useEffect(() => {
     if (watchError === null || !watching) return;
     const reopen = () => refreshWatch();
@@ -97,10 +100,7 @@ export function AgentBrowserPanel(props: {
     setPinnedTabId(null);
   }
 
-  const steps = useMemo(
-    () => mergeAgentBrowserSteps(trail.steps, view?.steps ?? []),
-    [trail.steps, view?.steps],
-  );
+  const steps = mergeAgentBrowserSteps(trail.steps, view?.steps ?? []);
   // Steps that landed while watching live only in the stream, which pausing
   // drops; read the stored trail once then, and only if it lacks some.
   const unstored = steps.length > (trail.steps?.length ?? 0);
@@ -128,14 +128,11 @@ export function AgentBrowserPanel(props: {
   const driving = live && view.control === "you";
   const interactive = driving && watching && selectedStepId === null;
 
-  const send = useCallback(
-    (input: AgentBrowserInput) => {
-      if (viewerId === null) return Promise.resolve(null);
-      return sendInput({ environmentId, input: { threadId, viewerId, input } });
-    },
-    [environmentId, sendInput, threadId, viewerId],
-  );
-  const onInput = useMemo(() => createAgentBrowserInputSender(send), [send]);
+  const send = (input: AgentBrowserInput) => {
+    if (viewerId === null) return Promise.resolve(null);
+    return sendInput({ environmentId, input: { threadId, viewerId, input } });
+  };
+  const onInput = createAgentBrowserInputSender(send);
   const changeControl = (input: AgentBrowserInput) => {
     void send(input).then((result) => {
       if (result === null || isAtomCommandInterrupted(result) || result._tag === "Success") return;
@@ -231,6 +228,11 @@ export function AgentBrowserPanel(props: {
             </>
           )}
         </p>
+        {canOpenThreadTabs ? (
+          <Button variant="outline" size="xs" onClick={openThreadTabs}>
+            Thread tabs
+          </Button>
+        ) : null}
         {selectedStepId !== null ? (
           <Button variant="outline" size="xs" onClick={() => setSelectedStepId(null)}>
             Live
@@ -278,7 +280,7 @@ export function AgentBrowserPanel(props: {
           interactive={interactive}
           onInput={onInput}
           onActivity={onActivity}
-          {...(canCopy ? { onCopy } : {})}
+          {...(threadBrowsingSupported ? { onCopy } : {})}
         />
         {frame.kind === "blank" || (frame.kind === "step" && recording.error !== null) ? (
           <div className="absolute inset-0 flex bg-background">

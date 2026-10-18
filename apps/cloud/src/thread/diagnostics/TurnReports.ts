@@ -5,12 +5,13 @@ import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
-import { isHarnessInstance } from "../providerCatalog.ts";
+import { isHarnessInstance } from "../../models/ModelRouting.ts";
 import { isLiveRun } from "../runLifecycle.ts";
 import * as ThreadStore from "../ThreadStore.ts";
 import { CloudAnalytics } from "./CloudAnalytics.ts";
 import { DiagnosticsStore } from "./DiagnosticsStore.ts";
 import { traceIdOf } from "./traceId.ts";
+import { emitTurnEvent } from "./turnEvent.ts";
 import {
   epochMs,
   machineSessionProperties,
@@ -25,7 +26,7 @@ import {
  * Turns what `TurnDiagnostics` recorded into a diagnostic record per turn and
  * the `cloud.*` analytics events. `finalize`, from the object's alarm, closes
  * a turn once it ended (after a short grace, so the ModelGateway's last report
- * lands first): it logs the record under the turn's trace id and queues
+ * lands first): it emits the turn's wide event (`turnEvent.ts`) and queues
  * `cloud.turn.completed`. An ended machine session queues
  * `cloud.machine.session`. Turns from before diagnostics existed have no
  * record and are passed over, so an old thread does not report its history.
@@ -81,9 +82,8 @@ const make = Effect.gen(function* () {
           )
         : Effect.succeed(known);
     });
-  const ownerHash = Effect.flatMap(Effect.orDie(threads.owner), (owner) =>
-    hashOnce(`user:${owner?.userId ?? "unknown"}`),
-  );
+  const ownerId = Effect.map(Effect.orDie(threads.owner), (owner) => owner?.userId ?? null);
+  const ownerHash = Effect.flatMap(ownerId, (owner) => hashOnce(`user:${owner ?? "unknown"}`));
 
   const recordOf = (projection: Projection, run: OrchestrationV2Run) =>
     Effect.gen(function* () {
@@ -121,25 +121,34 @@ const make = Effect.gen(function* () {
             break;
           }
           const { diagnostics, backend, record } = yield* recordOf(projection, run);
-          if (diagnostics !== null) {
-            yield* Effect.logInfo("cloud turn diagnostic", record).pipe(
-              Effect.annotateLogs({ traceId: record.traceId, runId: run.id }),
-            );
+          const properties =
+            diagnostics === null
+              ? null
+              : turnCompletedProperties({
+                  projection,
+                  run,
+                  diagnostics,
+                  backend: backend === "none" ? null : backend,
+                  threadHash: yield* hashOnce(projection.thread.id),
+                  projectHash: yield* hashOnce(projection.thread.projectId),
+                });
+          if (properties !== null) {
+            yield* emitTurnEvent({
+              projection,
+              run,
+              traceId: record.traceId,
+              owner: yield* ownerId,
+              failure: record.failure,
+              properties,
+            });
           }
           // Only a turn that reached its harness did work worth pricing.
-          if (diagnostics !== null && run.startedAt !== null) {
+          if (properties !== null && run.startedAt !== null) {
             yield* analytics.enqueue({
               event: "cloud.turn.completed",
               distinctId: yield* ownerHash,
               at: epochMs(run.completedAt) ?? now,
-              properties: turnCompletedProperties({
-                projection,
-                run,
-                diagnostics,
-                backend: backend === "none" ? null : backend,
-                threadHash: yield* hashOnce(projection.thread.id),
-                projectHash: yield* hashOnce(projection.thread.projectId),
-              }),
+              properties,
             });
           }
         }

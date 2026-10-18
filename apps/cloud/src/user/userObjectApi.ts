@@ -1,12 +1,15 @@
 import { statusLineJson } from "@signalbox/runner-protocol/StatusLineProtocol";
-import { AutomationError, ThreadId } from "@t3tools/contracts";
+import { AutomationError, ThreadId, type PullRequestDiffInput } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
+import { learnerTool } from "./learnerTool.ts";
+import * as UserLearner from "./UserLearner.ts";
 import { automationTool } from "../automations/automationTool.ts";
 import * as PersonBrowsers from "../browser/PersonBrowsers.ts";
 import * as CloudAutomations from "../automations/CloudAutomations.ts";
+import * as CloudPullRequests from "../github/CloudPullRequestsService.ts";
 import * as ConnectionLinks from "../connections/ConnectionLinks.ts";
 import { DriveRefEvent } from "../drive/DriveEvents.ts";
 import { linkedConnections, linkedToken } from "../connections/linkedConnections.ts";
@@ -24,7 +27,11 @@ import {
 import * as UserPreviewSetup from "../previewSetup/UserPreviewSetup.ts";
 import { wire as terminalWire } from "../thread/terminalSync.ts";
 import { wire } from "../thread/threadWire.ts";
-import { shellSnapshotWire, type UserObjectApi } from "./UserDirectory.ts";
+import {
+  shellSnapshotWire,
+  type PullRequestDiffReply,
+  type UserObjectApi,
+} from "./UserDirectory.ts";
 import * as UserContexts from "./UserContexts.ts";
 import * as OnePasswordAccount from "./OnePasswordAccount.ts";
 import * as UserDriveIndex from "./UserDriveIndex.ts";
@@ -35,6 +42,8 @@ import * as UserStore from "./UserStore.ts";
 import * as UserThreadKinds from "./UserThreadKinds.ts";
 import * as UserThreadStatus from "./UserThreadStatus.ts";
 import * as UserTerminals from "./UserTerminals.ts";
+import * as UserFolders from "./UserFolders.ts";
+import * as ClientTraceContext from "../observability/clientTraceContext.ts";
 
 const decodeDriveEvents = Schema.decodeUnknownSync(Schema.Array(DriveRefEvent));
 
@@ -49,8 +58,10 @@ export const makeUserObjectApi = (
     effect: Effect.Effect<
       A,
       E,
+      | UserLearner.UserLearner
       | UserStore.UserStore
       | UserShell.UserShell
+      | CloudPullRequests.CloudPullRequests
       | UserContexts.UserContexts
       | GitHubConnection.GitHubConnection
       | ConnectionLinks.ConnectionLinks
@@ -61,6 +72,7 @@ export const makeUserObjectApi = (
       | UserThreadKinds.UserThreadKinds
       | UserThreadStatus.UserThreadStatus
       | UserTerminals.UserTerminals
+      | UserFolders.UserFolders
       | LocalKeys.LocalKeys
       | ResourceBindings.ResourceBindings
       | OnePasswordAccount.OnePasswordAccount
@@ -170,9 +182,35 @@ export const makeUserObjectApi = (
     importPreviewSetup: (input) =>
       run(UserPreviewSetup.UserPreviewSetup.use((setup) => setup.apply(input))),
     githubCommitAuthor: () => github((service) => service.commitAuthor),
+    pullRequestDiff: (input: PullRequestDiffInput) =>
+      run(
+        CloudPullRequests.CloudPullRequests.use((service) =>
+          service.diff(input).pipe(
+            Effect.map((value) => ({ _tag: "success", value }) as const),
+            Effect.catchTags({
+              PullRequestUnavailableError: (error) =>
+                Effect.succeed<PullRequestDiffReply>({
+                  _tag: "unavailable",
+                  reason: error.reason,
+                  ...(error.provider === undefined ? {} : { provider: error.provider }),
+                }),
+              PullRequestOperationError: (error) =>
+                Effect.succeed<PullRequestDiffReply>({
+                  _tag: "operation-error",
+                  operation: error.operation,
+                  detail: error.detail,
+                  ...(error.reason === undefined ? {} : { reason: error.reason }),
+                }),
+            }),
+          ),
+        ),
+      ),
     onePasswordToken: () =>
       run(OnePasswordAccount.OnePasswordAccount.use((account) => account.token)),
     contextIds: () => run(UserDrives.UserDrives.use((drives) => drives.contextIds)),
+    clientTraceDimensions: (threadIds) => run(ClientTraceContext.clientTraceDimensions(threadIds)),
+    clientFolderDimensions: (folderIds) =>
+      run(ClientTraceContext.clientFolderDimensions(folderIds)),
     recordDriveAccess: (entry) =>
       run(UserDriveIndex.UserDriveIndex.use((index) => index.record(entry))),
     driveAccess: (driveId) => run(UserDrives.UserDrives.use((drives) => drives.access(driveId))),
@@ -191,6 +229,7 @@ export const makeUserObjectApi = (
           status.folderStatus(ThreadId.make(threadId)),
         ).pipe(Effect.map(statusLineJson.folder.encode)),
       ),
+    learnerTool: (threadId, name, input) => run(learnerTool(threadId, name, input)),
     browserSession: (input) =>
       run(PersonBrowsers.PersonBrowsers.use((browsers) => browsers.open(input))),
     browserSignIn: (input) => run(LoginService.LoginService.use((logins) => logins.signIn(input))),

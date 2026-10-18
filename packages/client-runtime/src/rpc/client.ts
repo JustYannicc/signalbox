@@ -1,4 +1,5 @@
 import { withTerminalCommandId } from "./terminalCommandId.ts";
+import { clientThreadAttributes } from "@t3tools/shared/clientTraceSafety";
 import {
   EnvironmentAuthorizationError,
   clientRpcRequiredScopes,
@@ -222,6 +223,7 @@ const sendRequest = Effect.fn("EnvironmentRpc.request")(function* <
   const supervisor = yield* EnvironmentSupervisor.EnvironmentSupervisor;
   yield* Effect.annotateCurrentSpan({
     "environment.id": supervisor.target.environmentId,
+    ...clientThreadAttributes(input),
     "rpc.method": tag,
   });
   const session = yield* currentSession();
@@ -264,7 +266,7 @@ export function runStreamGuarded<TTag extends EnvironmentStreamCommandRpcTag>(
     ),
   ).pipe(
     Stream.withSpan("EnvironmentRpc.runStream", {
-      attributes: { "rpc.method": tag },
+      attributes: { "rpc.method": tag, ...clientThreadAttributes(input) },
     }),
   );
 }
@@ -348,7 +350,12 @@ function subscribeDynamicMapped<TTag extends EnvironmentSubscriptionRpcTag, A>(
                           }),
                         ),
                       );
-                      return stream.pipe(Stream.ensuring(completeObservation));
+                      return stream.pipe(
+                        Stream.ensuring(completeObservation),
+                        Stream.withSpan("EnvironmentRpc.subscribe", {
+                          attributes: { "rpc.method": tag, ...clientThreadAttributes(input) },
+                        }),
+                      );
                     }),
                   ).pipe(
                     Stream.tapCause((cause) =>
@@ -422,10 +429,6 @@ function subscribeDynamicMapped<TTag extends EnvironmentSubscriptionRpcTag, A>(
           }),
         ),
       );
-    }),
-  ).pipe(
-    Stream.withSpan("EnvironmentRpc.subscribe", {
-      attributes: { "rpc.method": tag },
     }),
   );
 }

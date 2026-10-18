@@ -333,6 +333,11 @@ packageExtensions:
   "expo-quick-actions@6.0.2":
     dependencies:
       "@expo/config-plugins": 58.0.9
+  # Android widget bundle scripts and Metro config import these, but the package ships them as devDependencies.
+  "expo-widgets@58.0.20":
+    dependencies:
+      "@expo/spawn-async": 1.8.0
+      resolve-workspace-root: 2.0.1
   # dependency-cruiser needs the JS compiler API; the app uses native TypeScript 7.
   "dependency-cruiser@18.6.0":
     dependencies:
@@ -350,6 +355,7 @@ packageExtensions:
       vite-plus: "catalog:"
 
 patchedDependencies:
+  "@distilled.cloud/cloudflare@1.0.0-rc.13": patches/cloudflare-observability-destinations.patch
   alchemy@2.0.0-beta.80: patches/alchemy@2.0.0-beta.80.patch
   expo-audio@58.0.9: patches/expo-audio@58.0.9.patch
   "@clerk/expo-native-components@0.2.0": patches/@clerk__expo-native-components@0.2.0.patch

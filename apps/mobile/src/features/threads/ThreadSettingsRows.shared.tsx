@@ -7,6 +7,7 @@ import type { ModelOption } from "../../lib/modelOptions";
 
 export type ModelRowProps = {
   readonly option: ModelOption;
+  readonly poolStatusText?: string | undefined;
   readonly selected: boolean;
   readonly onPress: () => void;
   readonly isFavorite: boolean;
@@ -50,7 +51,9 @@ export function ModelRowContent(
       )}
     >
       <Pressable
-        accessibilityLabel={[props.option.label, props.option.subtitle].filter(Boolean).join(", ")}
+        accessibilityLabel={[props.option.label, props.option.subtitle, props.poolStatusText]
+          .filter(Boolean)
+          .join(", ")}
         accessibilityRole="radio"
         accessibilityState={{
           checked: props.selected,
@@ -92,6 +95,12 @@ export function ModelRowContent(
               numberOfLines={props.labelNumberOfLines}
             >
               {props.option.subtitle}
+            </Text>
+          ) : null}
+          {/* signalbox: Keep pool reset times readable on narrow screens. */}
+          {props.poolStatusText ? (
+            <Text className="text-xs text-foreground-muted" numberOfLines={2}>
+              {props.poolStatusText}
             </Text>
           ) : null}
         </View>
