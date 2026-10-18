@@ -140,7 +140,7 @@ export function PullRequestReviewForm({
         toastManager.add({
           type: "error",
           title: "The provider rejected this review",
-          description: "Your summary and comments are kept. Check them and submit again.",
+          description: "Your summary and comments are kept.",
         });
         return;
       }
