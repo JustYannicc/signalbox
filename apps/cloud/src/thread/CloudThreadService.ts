@@ -8,6 +8,8 @@ import {
   type OrchestrationV2ThreadLaunchResult,
   type OrchestrationV2ThreadStreamItem,
   type ThreadId,
+  SecretRequestError,
+  type SecretRequestAnswerInput,
 } from "@t3tools/contracts";
 import type { PullResult } from "@signalbox/runner-protocol/PullProtocol";
 import type {
@@ -62,6 +64,10 @@ export class CloudThreadService extends Context.Service<
       caller: ThreadId,
       command: typeof SignalboxAskAnswerCommand.Type,
     ) => Effect.Effect<{ readonly sequence: number }, CloudThreadError>;
+    readonly answerSecret: (
+      actor: Actor,
+      input: SecretRequestAnswerInput,
+    ) => Effect.Effect<void, SecretRequestError>;
     readonly dispatchCommand: (
       actor: Actor,
       command: OrchestrationV2Command,
@@ -279,6 +285,15 @@ const make = Effect.gen(function* () {
   return CloudThreadService.of({
     syncAutomationAsk: threads.syncAutomationAsk,
     answerAskAsAssistant: threads.answerAskAsAssistant,
+    answerSecret: (actor, input) =>
+      directory
+        .forThread(input.threadId)
+        .answerSecret(actor, input)
+        .pipe(
+          Effect.catchTags({
+            ThreadObjectError: () => Effect.fail(new SecretRequestError({ reason: "load_failed" })),
+          }),
+        ),
     canSee,
     previews,
     browsing,

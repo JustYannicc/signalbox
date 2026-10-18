@@ -199,7 +199,7 @@ export const makeRunnerSession = Effect.fn("makeRunnerSession")(function* (
       case "steer":
         return turns.steer(message.runId, message.message);
       case "runtime-request.respond":
-        return turns.respondToRuntimeRequest(message.response);
+        return turns.respondRuntimeRequest(message);
       case "drain":
         // Outlives this connection: the answer goes out on whichever one is open by then.
         return turns.drain.pipe(
@@ -236,7 +236,7 @@ export const makeRunnerSession = Effect.fn("makeRunnerSession")(function* (
         build: input.build,
         drains: true,
         steers: true,
-        runtimeRequestResponses: true,
+        runtimeResponses: true,
         pulls: true,
         // A started run missing here went with an earlier process on this machine.
         takenRunIds: yield* turns.taken,

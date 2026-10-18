@@ -14,7 +14,6 @@ import {
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 
-import { isHarnessInstance } from "../models/ModelRouting.ts";
 import { decideLifecycleCommand } from "./lifecycleCommands.ts";
 import { pullRequestLinkEvents } from "./pullRequests/pullRequestLinks.ts";
 import {
@@ -59,11 +58,7 @@ export interface ThreadWorktree {
 }
 
 /** The rejection for a command the cloud does not serve yet. */
-export const unsupported = (commandType: string) =>
-  `${commandType} is not available in the cloud yet.`;
-
-export const HARNESS_MODES_UNSUPPORTED =
-  "Claude and Codex in the cloud run with full access and without plan mode until all selected runners support approval responses.";
+export const unsupported = () => "This action isn't available in the cloud yet.";
 
 const CLOUD_COMMAND_TYPES = [
   "thread.create",
@@ -87,6 +82,7 @@ const CLOUD_COMMAND_TYPES = [
   "thread.pull-request-link.sync",
   "thread.archive",
   "thread.unarchive",
+  "thread.user-input.dismiss",
   "thread.settle",
   "thread.auto-settle",
   "thread.unsettle",
@@ -186,15 +182,6 @@ function dispatchMessage(
     updates.push(threadEvent(ctx, "thread.model-selection-updated", current));
   }
 
-  // Older runners cannot deliver approval responses. Keep the existing mode limit
-  // until runner selection enforces runtimeRequestResponses (#410).
-  if (
-    isHarnessInstance(current.providerInstanceId) &&
-    (current.runtimeMode !== "full-access" || current.interactionMode === "plan")
-  ) {
-    return reject(HARNESS_MODES_UNSUPPORTED);
-  }
-
   const ordinal = projection.runs.length + 1;
   const runId = ids.run(thread.id, ordinal);
   const live = activeRun(projection);
@@ -274,7 +261,7 @@ export function decide(
   /** `idleSinceMs`: archive only a thread unchanged since then (the idle-chat sweep's). */
   expected: { readonly idleSinceMs?: number; readonly personId?: string } = {},
 ): Decision {
-  if (!isCloudCommand(command)) return reject(unsupported(command.type));
+  if (!isCloudCommand(command)) return reject(unsupported());
   if (command.type === "thread.create") {
     return projection === null ? createThread(command, ctx) : reject("This thread already exists.");
   }
@@ -286,9 +273,18 @@ export function decide(
     case "thread.ask.withdraw":
     case "thread.ask.sync":
       return decideAsk(projection, command, ctx, dispatchMessage, (state, response, at) =>
-        runtimeResponseEvents(state, response, at, dispatchMessage),
+        runtimeResponseEvents(
+          state,
+          response,
+          at,
+          dispatchMessage,
+          command.type === "thread.ask.answer"
+            ? command.answeredBy
+            : { kind: "person", personId: expected.personId ?? "thread-owner" },
+        ),
       );
     case "runtime-request.respond":
+    case "thread.user-input.dismiss":
       return runtimeResponseEvents(projection, command, ctx, dispatchMessage, {
         kind: "person",
         personId: expected.personId ?? "thread-owner",
@@ -300,7 +296,7 @@ export function decide(
     case "thread.pin":
     case "thread.unpin":
     case "thread.pin.reorder":
-      return decideLifecycleCommand(projection, command, ctx) ?? reject(unsupported(command.type));
+      return decideLifecycleCommand(projection, command, ctx) ?? reject(unsupported());
     case "message.dispatch":
       return dispatchMessage(projection, command, ctx);
     case "run.interrupt": {

@@ -38,8 +38,8 @@ export interface RunnerSocketAttachment {
   readonly steers?: boolean | undefined;
   /** How many of `sentRunId`'s steers this socket's Runner was handed; absent: none. */
   readonly sentSteers?: number | undefined;
-  readonly runtimeRequestResponses?: boolean | undefined;
   /** Ids only; the committed projection owns the answer values. Reset on reconnect. */
+  readonly runtimeResponses?: boolean | undefined;
   readonly sentRuntimeResponses?: ReadonlyArray<string> | undefined;
 }
 
@@ -185,11 +185,11 @@ export async function pushRunnerWork(host: RunnerSocketHost): Promise<ThreadRunn
       }
       sentSteers = Math.max(sentSteers, work.steers.length);
     }
-    if (attachment.runtimeRequestResponses === true && sentRunId === work.activeRunId) {
+    if (attachment.runtimeResponses === true && sentRunId === work.activeRunId) {
       const sent = new Set(sentRuntimeResponses);
       for (const response of work.runtimeResponses) {
         if (response.runId !== sentRunId || sent.has(response.requestId)) continue;
-        send(socket, { type: "runtime-request.respond", response });
+        send(socket, response);
         sent.add(response.requestId);
       }
       sentRuntimeResponses = [...sent];
@@ -264,7 +264,7 @@ export async function onRunnerMessage(
         lastActivityAt: receivedAt,
         sentRunId: result.heldRunId,
         steers: message.steers === true,
-        runtimeRequestResponses: message.runtimeRequestResponses === true,
+        runtimeResponses: message.runtimeResponses === true,
       } satisfies Attachment);
       send(socket, {
         type: "welcome",

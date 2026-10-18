@@ -1144,8 +1144,7 @@ function deriveTurnFolds(input: {
     // terminal message — take whichever ended last.
     const lastEntryEnd =
       lastEntry.kind === "message" ? lastEntry.message.updatedAt : lastEntry.createdAt;
-    const workStartedAt =
-      (run && "workStartedAt" in run ? run.workStartedAt : null) ?? run?.startedAt;
+    const workStartedAt = run?.workStartedAt ?? run?.startedAt;
     const elapsedMs =
       workStartedAt && run?.completedAt
         ? computeElapsedMs(workStartedAt, run.completedAt)

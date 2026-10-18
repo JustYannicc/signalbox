@@ -57,9 +57,16 @@ export function decideAsk(
       item?.type === "user_input_request" &&
       item.questions.some((question) => question.native?.isSecret === true);
     // The public mirror cannot complete a callback that also requires secrets.
-    if (!containsSecret && request !== undefined && canAnswerLiveRequest(projection, request)) {
-      // A live callback takes the complete answer once. Earlier rounds stay durable while it waits.
-      if (answered.ask.status !== "answered") return { _tag: "accepted", events: [changed] };
+    const live = request !== undefined && canAnswerLiveRequest(projection, request);
+    if (!containsSecret && live && answered.ask.status !== "answered")
+      return { _tag: "accepted", events: [changed] };
+    if (
+      !containsSecret &&
+      request?.status === "pending" &&
+      answered.ask.status === "answered" &&
+      (live || request.responseCapability.type === "message")
+    ) {
+      // Resolve the native card and public mirror together on either response path.
       const response = respond(
         withAsk,
         {

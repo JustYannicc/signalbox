@@ -6,6 +6,7 @@ import {
   type RunnerItem,
   type RunnerTurn,
 } from "@signalbox/runner-protocol/RunnerProtocol";
+import { secretRequestJson } from "@signalbox/runner-protocol/SecretRequestProtocol";
 import {
   MessageId,
   NodeId,
@@ -17,9 +18,9 @@ import {
   ProviderSessionId,
   ProviderThreadId,
   ProviderTurnId,
+  RuntimeRequestId,
   RunAttemptId,
   RunId,
-  RuntimeRequestId,
   ThreadId,
   TurnItemId,
 } from "@t3tools/contracts";
@@ -29,10 +30,13 @@ import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Queue from "effect/Queue";
+import * as Ref from "effect/Ref";
 import * as PlatformError from "effect/PlatformError";
 import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
+import * as HttpClient from "effect/http/HttpClient";
+import * as HttpClientResponse from "effect/http/HttpClientResponse";
 
 import type {
   ProviderAdapterV2Event,
@@ -48,6 +52,7 @@ import type { RunnerSessions } from "./RunnerSessions.ts";
 import { DriveTooLargeError } from "./RunnerDriveClient.ts";
 import type { RunnerDependencies } from "./RunnerDependencies.ts";
 import { makeRunnerTurns } from "./RunnerTurns.ts";
+import { makeRunnerSecretRequests } from "./RunnerSecretTools.ts";
 
 const threadId = ThreadId.make("thread-1");
 const instanceId = ProviderInstanceId.make("codex");
@@ -58,6 +63,7 @@ const providerThread = {
   id: ProviderThreadId.make("pt-1"),
   nativeThreadRef: null,
 } as unknown as OrchestrationV2ProviderThread;
+const providerSessionId = ProviderSessionId.make("session-1");
 const claudeProviderThread = {
   id: ProviderThreadId.make("pt-claude"),
   nativeThreadRef: null,
@@ -145,6 +151,26 @@ const providerTurnStarted = (n: number): ProviderAdapterV2Event =>
     },
   }) as unknown as ProviderAdapterV2Event;
 
+const runtimeRequestPending = (
+  requestId: RuntimeRequestId,
+  providerTurnId = ProviderTurnId.make("native-1"),
+): ProviderAdapterV2Event =>
+  ({
+    type: "runtime_request.updated",
+    driver,
+    runtimeRequest: {
+      id: requestId,
+      nodeId: NodeId.make(`node-${requestId}`),
+      providerTurnId,
+      nativeRequestRef: null,
+      kind: "permission",
+      status: "pending",
+      responseCapability: { type: "live", providerSessionId },
+      createdAt: DateTime.makeUnsafe(0),
+      resolvedAt: null,
+    },
+  }) as unknown as ProviderAdapterV2Event;
+
 /**
  * An adapter whose session the test drives: `ensureThread` waits until the
  * test lets it finish, and every call is recorded.
@@ -157,9 +183,11 @@ const makeFakeAdapterFor = (selection: {
   Effect.gen(function* () {
     const events = yield* Queue.unbounded<ProviderAdapterV2Event>();
     const loaded = yield* Deferred.make<void>();
+    const failNextResponse = yield* Ref.make(false);
     const secondStarted = yield* Deferred.make<void>();
     const interrupted = yield* Deferred.make<void>();
     const calls: Array<string> = [];
+    const responses: Array<ProviderAdapterV2RuntimeRequestResponseInput> = [];
     /** What each `startTurn` got, beyond what `calls` names. */
     const started: Array<{
       readonly providerTurnOrdinal: number;
@@ -168,9 +196,8 @@ const makeFakeAdapterFor = (selection: {
     }> = [];
     const startedRuns = yield* Queue.unbounded<string>();
     const opened = { count: 0 };
-    const runtimeResponses: Array<ProviderAdapterV2RuntimeRequestResponseInput> = [];
     const session = {
-      providerSessionId: ProviderSessionId.make("session-1"),
+      providerSessionId,
       providerSession: {},
       events: Stream.fromQueue(events),
       ensureThread: () => Effect.as(Deferred.await(loaded), selection.providerThread),
@@ -208,8 +235,13 @@ const makeFakeAdapterFor = (selection: {
         Effect.sync(
           () => void calls.push(`steer ${input.providerTurnId} ${input.message.messageId}`),
         ),
-      respondToRuntimeRequest: (response: ProviderAdapterV2RuntimeRequestResponseInput) =>
-        Effect.sync(() => void runtimeResponses.push(response)),
+      respondToRuntimeRequest: (input: ProviderAdapterV2RuntimeRequestResponseInput) =>
+        Effect.gen(function* () {
+          if (yield* Ref.getAndSet(failNextResponse, false)) {
+            return yield* Effect.fail({ _tag: "ResponseFailed" as const });
+          }
+          responses.push(input);
+        }),
     } as unknown as ProviderAdapterV2SessionRuntime;
     const adapter = {
       instanceId: selection.instanceId,
@@ -224,7 +256,8 @@ const makeFakeAdapterFor = (selection: {
       started,
       startedRuns,
       opened,
-      runtimeResponses,
+      responses,
+      failNextResponse,
       secondStarted,
       interrupted,
     };
@@ -239,6 +272,39 @@ const makeFakeClaudeAdapter = makeFakeAdapterFor({
   driver: claudeDriver,
   providerThread: claudeProviderThread,
 });
+
+/** The cloud accepts only the run attempt it issued, never a local conflict step's id. */
+const secretRequestsFor = (run: RunnerTurn, laterRuns: ReadonlyArray<RunnerTurn> = []) =>
+  makeRunnerSecretRequests("https://cloud.test").pipe(
+    Effect.provideService(
+      HttpClient.HttpClient,
+      HttpClient.make((request) =>
+        Effect.sync(() => {
+          if (request.body._tag !== "Uint8Array") throw new Error("Expected request metadata");
+          const binding = secretRequestJson.request.decode(
+            new TextDecoder().decode(request.body.body),
+          );
+          const accepted =
+            [run, ...laterRuns].some(
+              (candidate) =>
+                binding.runId === candidate.runId && binding.attemptId === candidate.attemptId,
+            ) && request.headers.authorization === "Bearer session-token";
+          return HttpClientResponse.fromWeb(
+            request,
+            new Response(
+              accepted
+                ? secretRequestJson.result.encode({ status: "declined" })
+                : "Stopped attempt.",
+              { status: accepted ? 200 : 403 },
+            ),
+          );
+        }),
+      ),
+    ),
+  );
+
+const requestSecret = { label: "Token", reason: "For this task.", clientRequestId: "request-1" };
+
 const startWithDependencies = (input: {
   readonly machineClass: "light" | "heavy";
   readonly resume?: boolean;
@@ -350,10 +416,7 @@ describe("RunnerTurns", () => {
           nativeRequestRef: null,
           kind: "user_input",
           status: "pending",
-          responseCapability: {
-            type: "live",
-            providerSessionId: ProviderSessionId.make("session-1"),
-          },
+          responseCapability: { type: "live", providerSessionId },
           createdAt: DateTime.makeUnsafe(0),
           resolvedAt: null,
         };
@@ -378,24 +441,82 @@ describe("RunnerTurns", () => {
           runtimeRequest: request,
         });
         yield* Deferred.await(observed);
+
         const response = {
+          type: "runtime-request.respond",
           runId: RunId.make("run-1"),
+          attemptId: RunAttemptId.make("attempt-1"),
+          providerSessionId,
           requestId: request.id,
-          providerSessionId: ProviderSessionId.make("session-1"),
-          providerTurnId: ProviderTurnId.make("native-1"),
           answers: { answer: "continue" },
-        };
-        yield* turns.respondToRuntimeRequest(response);
-        yield* turns.respondToRuntimeRequest(response);
-        expect(fake.runtimeResponses).toEqual([
-          { requestId: request.id, answers: response.answers },
-        ]);
+        } as const;
+        yield* turns.respondRuntimeRequest(response);
+        yield* turns.respondRuntimeRequest(response);
+        expect(fake.responses).toEqual([{ requestId: request.id, answers: response.answers }]);
+
         yield* turns.interrupt(response.runId);
-        yield* turns.respondToRuntimeRequest({
-          ...response,
-          requestId: RuntimeRequestId.make("stale"),
+        yield* turns.respondRuntimeRequest(response);
+        expect(fake.responses).toHaveLength(1);
+      }),
+    ),
+  );
+
+  it.effect("only answers a request observed on the matching live attempt and session", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fake = yield* makeFakeAdapter;
+        const turns = yield* makeRunnerTurns({
+          threadId,
+          adapters: new Map([[instanceId, fake.adapter]]),
+          cwd: "/tmp",
+          useModelToken: () => Effect.void,
+          usage: Effect.succeed(unmeasured),
+          emit: () => Effect.void,
         });
-        expect(fake.runtimeResponses).toHaveLength(1);
+        yield* Deferred.succeed(fake.loaded, undefined);
+        yield* turns.start({ turn: turnFor(1), modelToken: "token-1" });
+        yield* settle;
+        yield* Queue.offer(fake.events, providerTurnStarted(1));
+        yield* settle;
+
+        const requestId = RuntimeRequestId.make("request-1");
+        const response = {
+          type: "runtime-request.respond",
+          runId: RunId.make("run-1"),
+          attemptId: RunAttemptId.make("attempt-1"),
+          providerSessionId,
+          requestId,
+          decision: "accept",
+        } as const;
+
+        // A response frame cannot create permission to answer a request the harness never raised.
+        yield* turns.respondRuntimeRequest(response);
+        expect(fake.responses).toEqual([]);
+
+        yield* Queue.offer(fake.events, runtimeRequestPending(requestId));
+        yield* settle;
+        yield* turns.respondRuntimeRequest({
+          ...response,
+          attemptId: RunAttemptId.make("attempt-2"),
+        });
+        yield* turns.respondRuntimeRequest({ ...response, runId: RunId.make("run-2") });
+        yield* turns.respondRuntimeRequest({
+          ...response,
+          providerSessionId: ProviderSessionId.make("another-session"),
+        });
+        expect(fake.responses).toEqual([]);
+
+        yield* Ref.set(fake.failNextResponse, true);
+        yield* turns.respondRuntimeRequest(response);
+        expect(fake.responses).toEqual([]);
+
+        // A failed adapter call remains eligible for the cloud's committed replay.
+        yield* turns.respondRuntimeRequest(response);
+        yield* turns.respondRuntimeRequest(response);
+        yield* Queue.offer(fake.events, runtimeRequestPending(requestId));
+        yield* settle;
+        yield* turns.respondRuntimeRequest(response);
+        expect(fake.responses).toEqual([{ requestId, decision: "accept" }]);
       }),
     ),
   );
@@ -479,7 +600,7 @@ describe("RunnerTurns", () => {
         expect(blocked).toEqual([
           "This thread is busy; wait for its current turn to finish before pulling.",
         ]);
-        expect(reported.map(label)).toContain(`git.pull.result ${operation.id}`);
+        expect(reported.map(label)).toContain("git.pull.result " + operation.id);
       }),
     ),
   );
@@ -934,6 +1055,7 @@ describe("RunnerTurns", () => {
               }),
           };
           const reported: Array<RunnerItem> = [];
+          const secretRequests = yield* secretRequestsFor(turnFor(1));
           const turns = yield* makeRunnerTurns({
             threadId,
             adapters: new Map([[instanceId, fake.adapter]]),
@@ -942,6 +1064,7 @@ describe("RunnerTurns", () => {
             usage: Effect.succeed(unmeasured),
             emit: (item) => Effect.sync(() => void reported.push(item)),
             openDrive: () => Effect.succeed(drive),
+            secretRequests,
           });
           const settle = Effect.forEach(Array.from({ length: 20 }), () => Effect.yieldNow, {
             discard: true,
@@ -960,6 +1083,7 @@ describe("RunnerTurns", () => {
           yield* turns.start({
             turn,
             modelToken: "token-1",
+            sessions: { token: "session-token" },
             drive: {
               driveId: "my/personal/user_1",
               token: "sbd1.x.y",
@@ -1009,6 +1133,7 @@ describe("RunnerTurns", () => {
           expect(driveCalls).toEqual(["prepare sbr1.x.y", "autosave", "finish"]);
           expect(prompts).toHaveLength(2);
           expect(prompts[1]).toContain("notes.md");
+          expect(yield* secretRequests.request(requestSecret)).toEqual({ status: "declined" });
           const kinds = () =>
             reported.map((item) => (item.kind === "provider" ? `${item.event.type}` : item.kind));
           expect(kinds()).toEqual([
@@ -1049,6 +1174,9 @@ describe("RunnerTurns", () => {
             "provider_turn.updated",
             "turn.terminal",
           ]);
+          expect(yield* secretRequests.request(requestSecret).pipe(Effect.result)).toMatchObject({
+            _tag: "Failure",
+          });
         }),
       ),
   );
@@ -1306,6 +1434,14 @@ describe("RunnerTurns", () => {
               hasWorkingTreeChanges: false,
             }),
         };
+        const turn = {
+          ...turnFor(1),
+          appThread: { pullRequests: [{ number: 7 }] },
+          message: { messageId: MessageId.make("message-1"), text: "Next thing", attachments: [] },
+          runOrdinal: 1,
+          providerTurnOrdinal: 1,
+        } as unknown as RunnerTurn;
+        const secretRequests = yield* secretRequestsFor(turn, [turnFor(2)]);
         const reported: Array<RunnerItem> = [];
         const turns = yield* makeRunnerTurns({
           threadId,
@@ -1315,18 +1451,13 @@ describe("RunnerTurns", () => {
           usage: Effect.succeed(unmeasured),
           emit: (item) => Effect.sync(() => void reported.push(item)),
           openDrive: () => Effect.succeed(drive),
+          secretRequests,
         });
         yield* Deferred.succeed(fake.loaded, undefined);
-        const turn = {
-          ...turnFor(1),
-          appThread: { pullRequests: [{ number: 7 }] },
-          message: { messageId: MessageId.make("message-1"), text: "Next thing", attachments: [] },
-          runOrdinal: 1,
-          providerTurnOrdinal: 1,
-        } as unknown as RunnerTurn;
         yield* turns.start({
           turn,
           modelToken: "token-1",
+          sessions: { token: "session-token" },
           drive: { driveId: "my/personal/user_1", token: "sbd1.x.y", remoteToken: "sbr1.x.y" },
         });
         yield* settle;
@@ -1370,8 +1501,119 @@ describe("RunnerTurns", () => {
           mergeStepNamed,
           mergeStepEnded,
           notices,
+          secretRequests,
         };
       });
+
+    it.effect(
+      "keeps secret requests bound to the cloud attempt during conflict resolution and the original turn",
+      () =>
+        Effect.scoped(
+          Effect.gen(function* () {
+            const { turns, secretRequests, prompts, mergeStepNamed, mergeStepEnded } =
+              yield* conflicted();
+            expect(yield* secretRequests.request(requestSecret)).toEqual({ status: "declined" });
+            yield* mergeStepNamed();
+            yield* mergeStepEnded("completed");
+            yield* settle;
+            expect(prompts).toHaveLength(2);
+            expect(yield* secretRequests.request(requestSecret)).toEqual({ status: "declined" });
+            yield* turns.interrupt(RunId.make("run-1"));
+            expect(yield* secretRequests.request(requestSecret).pipe(Effect.result)).toMatchObject({
+              _tag: "Failure",
+            });
+          }),
+        ),
+    );
+
+    it.effect("answers a runtime request from a native helper using the cloud attempt", () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const { fake, turns, mergeStepNamed } = yield* conflicted();
+          const requestId = RuntimeRequestId.make("helper-request");
+          yield* mergeStepNamed();
+          yield* settle;
+          yield* Queue.offer(
+            fake.events,
+            runtimeRequestPending(requestId, ProviderTurnId.make("native-sync-1")),
+          );
+          yield* settle;
+
+          yield* turns.respondRuntimeRequest({
+            type: "runtime-request.respond",
+            runId: RunId.make("run-1"),
+            attemptId: RunAttemptId.make("attempt-1"),
+            providerSessionId,
+            requestId,
+            decision: "accept",
+          });
+
+          expect(fake.responses).toEqual([{ requestId, decision: "accept" }]);
+        }),
+      ),
+    );
+
+    it.effect("drops a helper response after a newer helper becomes current", () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const { fake, turns, mergeStepNamed, mergeStepEnded } = yield* conflicted(false);
+          const staleRequestId = RuntimeRequestId.make("stale-helper-request");
+          const response = {
+            type: "runtime-request.respond" as const,
+            runId: RunId.make("run-1"),
+            attemptId: RunAttemptId.make("attempt-1"),
+            providerSessionId,
+            requestId: staleRequestId,
+            decision: "accept" as const,
+          };
+
+          yield* mergeStepNamed(1);
+          yield* settle;
+          yield* Queue.offer(
+            fake.events,
+            runtimeRequestPending(staleRequestId, ProviderTurnId.make("native-sync-1")),
+          );
+          yield* settle;
+          yield* mergeStepEnded("completed", 1);
+          yield* settle;
+
+          // The response for helper 1 keeps the cloud attempt id, which also names helper 2.
+          yield* turns.respondRuntimeRequest(response);
+          expect(fake.responses).toEqual([]);
+
+          yield* mergeStepNamed(2);
+          yield* settle;
+          const currentRequestId = RuntimeRequestId.make("current-helper-request");
+          yield* Queue.offer(
+            fake.events,
+            runtimeRequestPending(currentRequestId, ProviderTurnId.make("native-sync-2")),
+          );
+          yield* settle;
+          yield* turns.respondRuntimeRequest({ ...response, requestId: currentRequestId });
+
+          expect(fake.responses).toEqual([{ requestId: currentRequestId, decision: "accept" }]);
+        }),
+      ),
+    );
+
+    it.effect("an old conflict turn ending cannot clear a newer run's secret binding", () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const { turns, secretRequests, mergeStepNamed, mergeStepEnded } = yield* conflicted();
+          yield* turns.interrupt(RunId.make("run-1"));
+          const next = turnFor(2);
+          secretRequests.pin({
+            runId: next.runId,
+            attemptId: next.attemptId,
+            sessions: { token: "session-token" },
+          });
+          yield* mergeStepNamed();
+          yield* mergeStepEnded("interrupted");
+          yield* settle;
+          expect(yield* secretRequests.request(requestSecret)).toEqual({ status: "declined" });
+        }),
+      ),
+    );
 
     it.effect("has the agent resolve a conflict with main before the turn's own message", () =>
       Effect.scoped(

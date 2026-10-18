@@ -8,15 +8,13 @@ import {
   OrchestrationV2ConversationMessage,
   OrchestrationV2ProviderSession,
   OrchestrationV2ProviderThread,
+  OrchestrationV2RuntimeRequest,
   PositiveInt,
   ProviderInteractionMode,
   ProviderSessionId,
-  ProviderTurnId,
-  ProviderApprovalDecision,
-  ProviderUserInputAnswers,
-  RuntimeRequestId,
   RunAttemptId,
   RunId,
+  RuntimeRequestId,
   RuntimeMode,
   ThreadId,
 } from "@t3tools/contracts";
@@ -77,17 +75,6 @@ import { SessionAccess } from "./SessionProtocol.ts";
 export const RUNNER_PROTOCOL_VERSION = 6;
 /** Version 5 remains readable while existing machines finish their image rollout. */
 export const MIN_RUNNER_PROTOCOL_VERSION = 5;
-
-/** Additive frames are gated by hello capabilities, so existing v5 Runners still connect. */
-export const RunnerRuntimeResponse = Schema.Struct({
-  runId: RunId,
-  requestId: RuntimeRequestId,
-  providerSessionId: ProviderSessionId,
-  providerTurnId: ProviderTurnId,
-  decision: Schema.optional(ProviderApprovalDecision),
-  answers: Schema.optional(ProviderUserInputAnswers),
-});
-export type RunnerRuntimeResponse = typeof RunnerRuntimeResponse.Type;
 
 export const RUNNER_HEARTBEAT_PING = "ping";
 export const RUNNER_HEARTBEAT_PONG = "pong";
@@ -333,8 +320,8 @@ export const RunnerHello = Schema.Struct({
   takenRunIds: Schema.optional(Schema.Array(RunId)),
   /** The Runner takes `steer` (#562). Absent: an older one, which closes on frames it can't read. */
   steers: Schema.optional(Schema.Boolean),
-  /** Takes `runtime-request.respond`; absent on older v5 Runners. */
-  runtimeRequestResponses: Schema.optional(Schema.Boolean),
+  /** The Runner can answer a pending native provider request. */
+  runtimeResponses: Schema.optional(Schema.Boolean),
   /** The Runner takes `git.pull`; protocol 6 images shipped before Pull may lack it. */
   pulls: Schema.optional(Schema.Boolean),
 });
@@ -377,6 +364,16 @@ export const ThreadMessage = Schema.Union([
     message: Schema.String,
   }),
   Schema.Struct({ type: Schema.Literal("ack"), sequence: PositiveInt }),
+  /** A committed response to a native request this live run observed on its harness session. */
+  Schema.Struct({
+    type: Schema.Literal("runtime-request.respond"),
+    runId: RunId,
+    attemptId: RunAttemptId,
+    providerSessionId: ProviderSessionId,
+    requestId: RuntimeRequestId,
+    decision: OrchestrationV2RuntimeRequest.fields.decision,
+    answers: OrchestrationV2RuntimeRequest.fields.answers,
+  }),
   Schema.Struct({
     type: Schema.Literal("turn.start"),
     turn: RunnerTurn,
@@ -396,11 +393,6 @@ export const ThreadMessage = Schema.Union([
    * Only to a Runner whose `hello` said it `steers`.
    */
   Schema.Struct({ type: Schema.Literal("steer"), runId: RunId, message: RunnerMessageInput }),
-  /** Replayed from committed runtime requests on reconnect; never sent to an older Runner. */
-  Schema.Struct({
-    type: Schema.Literal("runtime-request.respond"),
-    response: RunnerRuntimeResponse,
-  }),
   /**
    * The thread is about to let the machine go (#493): save everything it
    * wrote, then answer `machine.drained` with this `id`. Its tokens hold until

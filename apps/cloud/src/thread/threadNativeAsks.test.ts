@@ -227,8 +227,8 @@ describe("cloud native asks", () => {
         }
         const { projection } = yield* snapshot(engine);
         const request = projection.runtimeRequests.find((entry) => entry.id === requestId);
-        expect(request?.status).toBe(secret || nonBlocking ? "pending" : "resolved");
-        expect(request?.answers).toEqual(secret || nonBlocking ? undefined : { public: "Zurich" });
+        expect(request?.status).toBe(secret ? "pending" : "resolved");
+        expect(request?.answers).toEqual(secret ? undefined : { public: "Zurich" });
         expect(projection.thread.asks?.[0]?.status).toBe("answered");
         expect(projection.thread.asks?.[0]?.questions.map((question) => question.id)).toEqual([
           "public",

@@ -1,6 +1,9 @@
 import type { SignalboxAsk, SignalboxAskAnswerCommand } from "@t3tools/contracts/signalboxAsks";
 import type {
   OrchestrationV2Command,
+  OrchestrationV2CommandOutputError,
+  OrchestrationV2CommandOutputFrame,
+  OrchestrationV2SubscribeCommandOutputInput,
   OrchestrationV2SubscribeThreadInput,
   OrchestrationV2ThreadBoundedSnapshot,
   OrchestrationV2ThreadHistoryPage,
@@ -54,6 +57,10 @@ export class Threads extends Context.Service<
       actor: Actor,
       threadId: ThreadId,
     ) => Effect.Effect<OrchestrationV2ThreadHistoryPage, ThreadReadError>;
+    readonly commandOutput: (
+      actor: Actor,
+      input: OrchestrationV2SubscribeCommandOutputInput,
+    ) => Stream.Stream<OrchestrationV2CommandOutputFrame, OrchestrationV2CommandOutputError>;
     /** Snapshot or replay, optional synchronization marker, then committed events; recovery owns the cursor. */
     readonly subscribe: (
       actor: Actor,

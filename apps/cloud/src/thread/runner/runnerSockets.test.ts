@@ -57,7 +57,7 @@ const runningTurn = (
   engine: Parameters<Parameters<typeof withObject>[1]>[0],
   runner: ThreadRunner.ThreadRunner["Service"],
   steers: boolean,
-  runtimeRequestResponses = false,
+  runtimeResponses = false,
 ) =>
   Effect.gen(function* () {
     yield* launch(engine);
@@ -72,7 +72,7 @@ const runningTurn = (
       ...hello(plan.ensure.generation, plan.ensure.token),
       takenRunIds: [],
       ...(steers ? { steers: true } : {}),
-      ...(runtimeRequestResponses ? { runtimeRequestResponses: true } : {}),
+      runtimeResponses,
     });
     const start = socket.sent.find((message) => message.type === "turn.start");
     if (start?.type !== "turn.start") throw new Error("expected the turn");
@@ -174,11 +174,11 @@ describe("runnerSockets", () => {
             runId: live.turn.runId,
             requestId: request.id,
             providerSessionId: ProviderSessionId.make("session-1"),
-            providerTurnId: request.providerTurnId,
+            attemptId: live.turn.attemptId,
             answers: request.answers,
           };
           yield* Effect.promise(() => pushRunnerWork(live.host));
-          expect(live.socket.sent).toEqual([{ type: "runtime-request.respond", response }]);
+          expect(live.socket.sent).toEqual([{ type: "runtime-request.respond", ...response }]);
           yield* Effect.promise(() => pushRunnerWork(live.host));
           expect(live.socket.sent).toHaveLength(1);
           // Hibernation attachments store ids, never answer values.
@@ -190,11 +190,11 @@ describe("runnerSockets", () => {
           yield* say(live.host, again, {
             ...hello(live.generation, live.token),
             takenRunIds: [live.turn.runId],
-            runtimeRequestResponses: true,
+            runtimeResponses: true,
           });
           expect(
             again.sent.filter((message) => message.type === "runtime-request.respond"),
-          ).toEqual([{ type: "runtime-request.respond", response }]);
+          ).toEqual([{ type: "runtime-request.respond", ...response }]);
           return { generation: live.generation, token: live.token, response };
         }),
       );
@@ -206,11 +206,11 @@ describe("runnerSockets", () => {
           yield* say(host, socket, {
             ...hello(saved.generation, saved.token),
             takenRunIds: [saved.response.runId],
-            runtimeRequestResponses: true,
+            runtimeResponses: true,
           });
           expect(
             socket.sent.filter((message) => message.type === "runtime-request.respond"),
-          ).toEqual([{ type: "runtime-request.respond", response: saved.response }]);
+          ).toEqual([{ type: "runtime-request.respond", ...saved.response }]);
         }),
       );
     }),
@@ -313,7 +313,7 @@ describe("runnerSockets", () => {
         expect(
           socket.sent
             .filter((message) => message.type === "runtime-request.respond")
-            .map((message) => message.response.requestId),
+            .map((message) => message.requestId),
         ).toEqual(["resolved"]);
       }),
     ),
