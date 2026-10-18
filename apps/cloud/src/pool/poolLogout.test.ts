@@ -56,9 +56,10 @@ describe("pool account logout", () => {
         yield* TestClock.setTime(T0);
         yield* engine.create(actor, { name: "Work", personal: false });
         yield* engine.setBacking(actor, backing);
-        const unrelated = (yield* engine.accounts(actor)).accounts.find(
-          (entry) => entry.name === other,
+        const unrelated = SqlClient.SqlClient.use(
+          (sql) => sql`SELECT * FROM accounts WHERE name = ${other}`,
         );
+        const before = yield* Effect.promise(() => object.runtime.runPromise(unrelated));
         yield* Effect.promise(() =>
           object.runtime.runPromise(
             SqlClient.SqlClient.use(
@@ -81,7 +82,7 @@ describe("pool account logout", () => {
         yield* TestClock.setTime(T0 + PoolEngine.ACCOUNTS_FRESH_MS + 1);
         expect((yield* refreshed.accounts(actor)).accounts).toEqual([
           expect.objectContaining({ name: target, signedOut: true }),
-          unrelated,
+          expect.objectContaining({ name: other, signedOut: false }),
         ]);
         expect(
           yield* Effect.promise(() =>
@@ -100,7 +101,10 @@ describe("pool account logout", () => {
           reason: "Sign in to this account again first.",
         });
         yield* refreshed.updateAccount(actor, target, "remove");
-        expect((yield* refreshed.accounts(actor)).accounts).toEqual([unrelated]);
+        expect((yield* refreshed.accounts(actor)).accounts).toEqual([
+          expect.objectContaining({ name: other, signedOut: false }),
+        ]);
+        expect(yield* Effect.promise(() => next.runtime.runPromise(unrelated))).toEqual(before);
         expect(deletions).toEqual([target]);
         expect([...backend.accounts.keys()]).toEqual([other]);
       }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
