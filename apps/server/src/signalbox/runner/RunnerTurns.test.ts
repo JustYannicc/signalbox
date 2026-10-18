@@ -20,6 +20,7 @@ import {
   MessageId,
   NodeId,
   OrchestrationV2TurnItem,
+  type OrchestrationV2RuntimeRequest,
   OrchestrationV2Subagent,
   type OrchestrationV2ProviderThread,
   ProviderDriverKind,
@@ -49,6 +50,7 @@ import * as HttpClientResponse from "effect/http/HttpClientResponse";
 
 import type {
   ProviderAdapterV2Event,
+  ProviderAdapterV2RuntimeRequestResponseInput,
   ProviderAdapterV2SessionRuntime,
   ProviderAdapterV2,
 } from "@t3tools/provider-core/server/ProviderAdapter";
@@ -199,7 +201,7 @@ const makeFakeAdapterFor = (selection: {
     const firstStarted = yield* Deferred.make<void>();
     const interrupted = yield* Deferred.make<void>();
     const calls: Array<string> = [];
-    const responses: Array<{ readonly requestId: string; readonly decision?: string }> = [];
+    const responses: Array<ProviderAdapterV2RuntimeRequestResponseInput> = [];
     /** What each `startTurn` got, beyond what `calls` names. */
     const started: Array<{
       readonly providerTurnOrdinal: number;
@@ -248,10 +250,7 @@ const makeFakeAdapterFor = (selection: {
         Effect.sync(
           () => void calls.push(`steer ${input.providerTurnId} ${input.message.messageId}`),
         ),
-      respondToRuntimeRequest: (input: {
-        readonly requestId: string;
-        readonly decision?: string;
-      }) =>
+      respondToRuntimeRequest: (input: ProviderAdapterV2RuntimeRequestResponseInput) =>
         Effect.gen(function* () {
           if (yield* Ref.getAndSet(failNextResponse, false)) {
             return yield* Effect.fail({ _tag: "ResponseFailed" as const });
@@ -423,6 +422,62 @@ const startWithDependencies = (input: {
   );
 
 describe("RunnerTurns", () => {
+  it.effect("answers the live native callback and ignores its reconnect replay", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fake = yield* makeFakeAdapter;
+        const request: OrchestrationV2RuntimeRequest = {
+          id: RuntimeRequestId.make("question-1"),
+          nodeId: NodeId.make("node-1"),
+          providerTurnId: ProviderTurnId.make("native-1"),
+          nativeRequestRef: null,
+          kind: "user_input",
+          status: "pending",
+          responseCapability: { type: "live", providerSessionId },
+          createdAt: DateTime.makeUnsafe(0),
+          resolvedAt: null,
+        };
+        const observed = yield* Deferred.make<void>();
+        const turns = yield* makeRunnerTurns({
+          threadId,
+          adapters: new Map([[instanceId, fake.adapter]]),
+          cwd: "/tmp",
+          useModelToken: () => Effect.void,
+          usage: Effect.succeed(unmeasured),
+          emit: (item) =>
+            item.kind === "provider" && item.event.type === "runtime_request.updated"
+              ? Deferred.succeed(observed, undefined).pipe(Effect.asVoid)
+              : Effect.void,
+        });
+        yield* Deferred.succeed(fake.loaded, undefined);
+        yield* turns.start({ turn: turnFor(1), modelToken: "token-1" });
+        yield* Queue.offer(fake.events, providerTurnStarted(1));
+        yield* Queue.offer(fake.events, {
+          type: "runtime_request.updated",
+          driver,
+          runtimeRequest: request,
+        });
+        yield* Deferred.await(observed);
+
+        const response = {
+          type: "runtime-request.respond",
+          runId: RunId.make("run-1"),
+          attemptId: RunAttemptId.make("attempt-1"),
+          providerSessionId,
+          requestId: request.id,
+          answers: { answer: "continue" },
+        } as const;
+        yield* turns.respondRuntimeRequest(response);
+        yield* turns.respondRuntimeRequest(response);
+        expect(fake.responses).toEqual([{ requestId: request.id, answers: response.answers }]);
+
+        yield* turns.interrupt(response.runId);
+        yield* turns.respondRuntimeRequest(response);
+        expect(fake.responses).toHaveLength(1);
+      }),
+    ),
+  );
+
   it.effect("only answers a request observed on the matching live attempt and session", () =>
     Effect.scoped(
       Effect.gen(function* () {
@@ -2865,9 +2920,33 @@ describe("RunnerTurns", () => {
                   updatedAt: DateTime.makeUnsafe(0),
                 },
               });
+              yield* Queue.offer(fake.events, {
+                type: "runtime_request.updated",
+                driver,
+                runtimeRequest: {
+                  id: RuntimeRequestId.make("late-old-question"),
+                  nodeId: NodeId.make("node-1"),
+                  providerTurnId: ProviderTurnId.make("native-1"),
+                  nativeRequestRef: null,
+                  kind: "user_input",
+                  status: "pending",
+                  responseCapability: {
+                    type: "live",
+                    providerSessionId: ProviderSessionId.make("session-1"),
+                  },
+                  createdAt: DateTime.makeUnsafe(0),
+                  resolvedAt: null,
+                },
+              });
               yield* Queue.offer(fake.events, turnEnded(1));
               yield* Deferred.await(fake.secondStarted);
 
+              expect(
+                reported.some(
+                  (item) =>
+                    item.kind === "provider" && item.event.type === "runtime_request.updated",
+                ),
+              ).toBe(false);
               expect(
                 reported.filter((item) => item.kind === "turn.failed").map((item) => item.runId),
               ).toEqual([RunId.make("run-1")]);

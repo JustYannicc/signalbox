@@ -1,13 +1,6 @@
-import type { T3McpToolDefinition } from "./t3McpToolPresentation.ts";
+import type { SectionMcpToolSummaryAction, T3McpToolDefinition } from "./t3McpToolTypes.ts";
 
-export type SectionMcpToolSummaryAction =
-  | "section-list"
-  | "section-chain"
-  | "section-create"
-  | "section-update"
-  | "section-move"
-  | "section-delete"
-  | "project-section-move";
+export type { SectionMcpToolSummaryAction } from "./t3McpToolTypes.ts";
 
 export function sectionMcpToolDefinitions(
   define: (
