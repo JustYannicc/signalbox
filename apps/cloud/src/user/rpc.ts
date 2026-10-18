@@ -668,7 +668,7 @@ export const layerHandlers = (input: {
       const signIn = yield* makeSignInHandlers({ userId });
       const keybindings = yield* makeKeybindingHandlers;
       const personBrowser = yield* LoginService.LoginService;
-      const analytics = yield* makeAnalyticsHandlers;
+      const analytics = yield* makeAnalyticsHandlers({ userId: input.userId });
       const timezone = yield* makeTimezoneHandlers;
       return {
         ...terminals,

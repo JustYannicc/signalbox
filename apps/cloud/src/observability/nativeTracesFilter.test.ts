@@ -352,6 +352,68 @@ describe("filterTraces", () => {
     expect(traces?.resourceSpans[0]?.scopeSpans[0]?.spans[0]?.name).toBe("fetch");
   });
 
+  it("keeps closed client action dimensions and drops correlation IDs from attributes", () => {
+    const privateText = "private-setting-value";
+    const traces = filterTraces(
+      {
+        resourceSpans: [
+          {
+            resource: {
+              attributes: [str("service.name", "t3code-mobile"), str("person.id", PERSON)],
+            },
+            scopeSpans: [
+              {
+                spans: [
+                  {
+                    traceId: TRACE,
+                    spanId: "7777777777777777",
+                    name: "client.action",
+                    kind: 1,
+                    startTimeUnixNano: "1760000000000000000",
+                    endTimeUnixNano: "1760000000000000000",
+                    attributes: [
+                      str("client.action.id", "thread.send"),
+                      str("client.action.entry_point", "native_menu"),
+                      str("client.action.client", "ios"),
+                      str("client.action.os", "ios"),
+                      str("client.action.device", "phone"),
+                      str("client.release", "1.2.3"),
+                      str("client.action.connection", "reconnecting"),
+                      str("client.action.mode", "cloud"),
+                      str("client.action.path", "optimistic"),
+                      str("client.action.outcome", "success"),
+                      str("client.action.event_timing_status", "no_entry"),
+                      { key: "client.action.input_time_ms", value: { doubleValue: 12.5 } },
+                      str("client.action.correlation_id", privateText),
+                      str("client.action.id", privateText),
+                    ],
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+      },
+      trusted,
+    );
+    const span = traces?.resourceSpans[0]?.scopeSpans[0]?.spans[0];
+    expect(span?.name).toBe("client.action");
+    expect(span?.attributes).toEqual([
+      str("client.action.id", "thread.send"),
+      str("client.action.entry_point", "native_menu"),
+      str("client.action.client", "ios"),
+      str("client.action.os", "ios"),
+      str("client.action.device", "phone"),
+      str("client.release", "1.2.3"),
+      str("client.action.connection", "reconnecting"),
+      str("client.action.mode", "cloud"),
+      str("client.action.path", "optimistic"),
+      str("client.action.outcome", "success"),
+      str("client.action.event_timing_status", "no_entry"),
+    ]);
+    expect(JSON.stringify(traces)).not.toContain(privateText);
+  });
+
   it("keeps a root marked with an all-zero parent, and pads short ids", () => {
     const span = (spanId: string, parentSpanId?: string) => ({
       traceId: TRACE,
