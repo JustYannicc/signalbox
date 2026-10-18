@@ -11,6 +11,7 @@ import { PERSONAL_CONTEXT_ID } from "@t3tools/contracts/signalboxContexts";
 import { DurableObject } from "cloudflare:workers";
 import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
+import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as ManagedRuntime from "effect/ManagedRuntime";
@@ -67,6 +68,12 @@ import { noteView } from "./statusLine/statusNotePolicy.ts";
 import * as PullRequestSync from "./pullRequests/PullRequestSync.ts";
 import * as StatusNoteModel from "./statusLine/StatusNoteModel.ts";
 import * as ThreadStatusNotes from "./statusLine/ThreadStatusNotes.ts";
+import {
+  makeRecoveryDrill,
+  type RecoveryDrillEnv,
+  type RecoveryDrillState,
+} from "./RecoveryDrill.ts";
+import { withRecoveryInspection } from "./RecoveryEvidence.ts";
 
 /**
  * One per thread, named by its thread id, always in the EU jurisdiction. It
@@ -93,6 +100,7 @@ export interface ThreadObjectEnv
     MachineBackend.MachineBackendEnv,
     CloudAnalytics.CloudAnalyticsEnv,
     PreviewEnv,
+    RecoveryDrillEnv,
     GitHub.GitHubEnv {
   /** Set by `vp run dev` only. Local workerd has no jurisdictions. */
   readonly LOCAL_WORKERD?: string;
@@ -249,6 +257,7 @@ export class ThreadObject extends DurableObject<ThreadObjectEnv> implements Thre
   private readonly api: ReturnType<typeof makeThreadObjectApi>;
   private readonly runnerHost: RunnerSocketHost;
   private readonly gateway: PreviewGateway;
+  private readonly recovery: ReturnType<typeof makeRecoveryDrill>;
 
   constructor(ctx: DurableObjectState, env: ThreadObjectEnv) {
     super(ctx, env);
@@ -309,6 +318,36 @@ export class ThreadObject extends DurableObject<ThreadObjectEnv> implements Thre
       async () => this.armAlarm(await pushRunnerWork(this.runnerHost)),
       (at) => this.setAlarmNoLaterThan(at),
     );
+    this.recovery = makeRecoveryDrill(env, {
+      incarnation: () =>
+        this.runtime.runPromise(Effect.flatMap(Crypto.Crypto, (crypto) => crypto.randomUUIDv4())),
+      load: () => ctx.storage.get<RecoveryDrillState>("recovery-drill-v1"),
+      save: async (state, arm) => {
+        const at = arm ? await this.now() : undefined;
+        await ctx.storage.transaction(async (transaction) => {
+          await transaction.put("recovery-drill-v1", state);
+          if (at !== undefined) await transaction.setAlarm(at);
+        });
+        await ctx.storage.sync();
+      },
+      reset: () => ctx.abort("recovery-drill: intentional object reset"),
+      exclusive: (work) =>
+        this.runtime.runPromise(
+          withRecoveryInspection((inspect) =>
+            Effect.promise(() =>
+              ctx.blockConcurrencyWhile(() =>
+                work((userId, commandIds) => this.runtime.runPromise(inspect(userId, commandIds))),
+              ),
+            ),
+          ),
+        ),
+      rearm: async () => {
+        const deferred = this.deferredAlarmAt;
+        this.deferredAlarmAt = null;
+        if (deferred !== null) await this.setAlarmNoLaterThan(deferred);
+        await this.armAlarm();
+      },
+    });
     // Runner heartbeats are answered without waking a hibernating object.
     ctx.setWebSocketAutoResponse(
       new WebSocketRequestResponsePair(RUNNER_HEARTBEAT_PING, RUNNER_HEARTBEAT_PONG),
@@ -341,6 +380,10 @@ export class ThreadObject extends DurableObject<ThreadObjectEnv> implements Thre
 
   diagnostics(...args: Parameters<ThreadObjectApi["diagnostics"]>) {
     return this.api.diagnostics(...args);
+  }
+
+  recoveryDrill(userId: string, input: unknown) {
+    return this.recovery.command(userId, input);
   }
 
   requestPullRequestSync(...args: Parameters<ThreadObjectApi["requestPullRequestSync"]>) {
@@ -566,8 +609,14 @@ export class ThreadObject extends DurableObject<ThreadObjectEnv> implements Thre
     return this.runtime.runPromise(Clock.currentTimeMillis);
   }
 
+  private deferredAlarmAt: number | null = null;
+
   /** Sets the alarm for `at` unless one is already due sooner. */
   private async setAlarmNoLaterThan(at: number) {
+    if (await this.recovery.preservesAlarm()) {
+      this.deferredAlarmAt = Math.min(this.deferredAlarmAt ?? at, at);
+      return;
+    }
     const current = await this.ctx.storage.getAlarm();
     if (current === null || current > at) await this.ctx.storage.setAlarm(at);
   }
@@ -839,9 +888,11 @@ export class ThreadObject extends DurableObject<ThreadObjectEnv> implements Thre
    * throwing: Cloudflare stops retrying a failing alarm after a few attempts,
    * and a turn must not stop for good because one step failed.
    */
-  override async alarm() {
-    return this.runtime.runPromise(
-      Evlog.unit("thread.alarm", { thread: { id: this.threadId() } }, (log) => this.tick(log)),
+  override async alarm(info?: AlarmInvocationInfo) {
+    return this.recovery.alarm(info, () =>
+      this.runtime.runPromise(
+        Evlog.unit("thread.alarm", { thread: { id: this.threadId() } }, (log) => this.tick(log)),
+      ),
     );
   }
 

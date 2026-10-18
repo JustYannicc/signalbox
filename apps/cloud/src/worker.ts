@@ -1,4 +1,5 @@
 import type { ModelGatewayProvider } from "@signalbox/runner-protocol/RunnerProtocol";
+import { ThreadId } from "@t3tools/contracts";
 import { isDevProxiedPath } from "@t3tools/shared/devProxy";
 import { WorkerEntrypoint } from "cloudflare:workers";
 import { withEvlog } from "evlog/workers";
@@ -29,6 +30,8 @@ import type { AutomationWorkflowEnv } from "./automations/automationWorkflow.ts"
 import { isApiPath } from "./api/apiPaths.ts";
 import { MCP_PATH } from "./api/mcpObject.ts";
 import { PROTECTED_RESOURCE_PATHS } from "./api/mcpRoutes.ts";
+import { recoveryDrillsEnabled } from "./thread/RecoveryDrill.ts";
+import { threadObjectStub } from "./thread/ThreadDirectory.ts";
 
 export { PoolObject, PoolStoreGateway } from "./pool/PoolObject.ts";
 export { PreviewLinkRegistry } from "./pool/PreviewLinkRegistryDO.ts";
@@ -45,7 +48,12 @@ export { AutomationHost, AutomationWorkflow } from "./automations/automationWork
  */
 
 export interface CloudEnv
-  extends UserObjectEnv, ThreadObjectEnv, PoolObjectEnv, PreviewCleanupEnv, AutomationWorkflowEnv {
+  extends
+    UserObjectEnv,
+    Omit<ThreadObjectEnv, "ENVIRONMENT_ID">,
+    PoolObjectEnv,
+    PreviewCleanupEnv,
+    AutomationWorkflowEnv {
   readonly CLIENT_TRACE_LIMITER?: Pick<RateLimit, "limit">;
   readonly ASSETS: { readonly fetch: (request: Request) => Promise<Response> };
   readonly TRACE_EXPORT?: Fetcher;
@@ -189,5 +197,17 @@ export class ModelGrants extends WorkerEntrypoint<CloudEnv> {
     const decoded = decodeModelGatewayRecord(record);
     if (decoded._tag === "None") return;
     await modelAccessFor(this.env).report(decoded.value);
+  }
+}
+
+/** Account operators bind a temporary probe Worker to this entrypoint; it has no public route. */
+export class RecoveryDrillOperator extends WorkerEntrypoint<CloudEnv> {
+  async thread(threadId: string, userId: string, input: unknown) {
+    if (!recoveryDrillsEnabled(this.env)) return { error: "disabled" };
+    const stub = threadObjectStub(this.env.THREADS, ThreadId.make(threadId), {
+      localWorkerd: false,
+    });
+    if (stub.recoveryDrill === undefined) return { error: "unsupported" };
+    return stub.recoveryDrill(userId, input);
   }
 }
