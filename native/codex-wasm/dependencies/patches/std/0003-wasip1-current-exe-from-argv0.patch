@@ -1,0 +1,35 @@
+--- a/library/std/src/sys/pal/wasi/os.rs
++++ b/library/std/src/sys/pal/wasi/os.rs
+@@ -113,8 +113,31 @@
+ 
+ impl crate::error::Error for JoinPathsError {}
+ 
++// agentOS: WASI has no executable path, but agentOS runs commands from real VFS
++// paths. Resolve argv[0] (absolute, relative with a separator, or via $PATH) so
++// programs that re-exec themselves (Codex: apply_patch, packaged config) work.
+ pub fn current_exe() -> io::Result<PathBuf> {
+-    unsupported()
++    let argv0 = crate::env::args_os().next().ok_or(io::const_error!(
++        io::ErrorKind::Unsupported,
++        "current_exe: no argv[0]",
++    ))?;
++    let argv0 = PathBuf::from(argv0);
++    if argv0.is_absolute() {
++        return Ok(argv0);
++    }
++    if argv0.components().count() > 1 {
++        return Ok(getcwd()?.join(argv0));
++    }
++    if let Some(paths) = crate::env::var_os("PATH") {
++        for dir in crate::env::split_paths(&paths) {
++            let candidate = dir.join(&argv0);
++            if candidate.is_file() {
++                return Ok(candidate);
++            }
++        }
++    }
++    let fallback = PathBuf::from("/opt/agentos/bin").join(&argv0);
++    if fallback.is_file() { Ok(fallback) } else { unsupported() }
+ }
+ 
+ #[allow(dead_code)]

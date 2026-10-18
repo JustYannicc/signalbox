@@ -1,0 +1,32 @@
+{
+  "reference": "DigiBugCat/codex-wasi-agentos@45eca7daf24bbac603689cc3229693310d184e51",
+  "rules": [
+    {
+      "rule": "shutdown-signal",
+      "path": "codex-rs/app-server/src/lib.rs",
+      "before": [
+        "}",
+        "",
+        "async fn shutdown_signal() -> IoResult<ShutdownSignal> {",
+        "    #[cfg(unix)]",
+        "    {",
+        "        use tokio::signal::unix::SignalKind;"
+      ],
+      "after": [
+        "}",
+        "",
+        "async fn shutdown_signal() -> IoResult<ShutdownSignal> {",
+        "    // wasm32-wasip1 (agentOS): no OS signals; shutdown comes from the client.",
+        "    #[cfg(target_os = \"wasi\")]",
+        "    {",
+        "        std::future::pending::<()>().await;",
+        "        Ok(ShutdownSignal::Forceable)",
+        "    }",
+        "",
+        "    #[cfg(unix)]",
+        "    {",
+        "        use tokio::signal::unix::SignalKind;"
+      ]
+    }
+  ]
+}

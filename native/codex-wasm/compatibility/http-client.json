@@ -1,0 +1,78 @@
+{
+  "reference": "DigiBugCat/codex-wasi-agentos@45eca7daf24bbac603689cc3229693310d184e51",
+  "rules": [
+    {
+      "rule": "native-tls-remove",
+      "path": "codex-rs/http-client/Cargo.toml",
+      "before": [
+        "http = { workspace = true }",
+        "http-body = \"1.0.1\"",
+        "httpdate = { workspace = true }",
+        "native-tls = \"0.2\"",
+        "opentelemetry = { workspace = true }",
+        "reqwest = { workspace = true, features = [\"json\", \"rustls-tls\", \"rustls-tls-native-roots\", \"stream\"] }",
+        "rustls = { workspace = true }"
+      ],
+      "after": [
+        "http = { workspace = true }",
+        "http-body = \"1.0.1\"",
+        "httpdate = { workspace = true }",
+        "opentelemetry = { workspace = true }",
+        "reqwest = { workspace = true, features = [\"json\", \"rustls-tls\", \"rustls-tls-native-roots\", \"stream\"] }",
+        "rustls = { workspace = true }"
+      ]
+    },
+    {
+      "rule": "native-tls-target",
+      "path": "codex-rs/http-client/Cargo.toml",
+      "before": [
+        "tracing-opentelemetry = { workspace = true }",
+        "zstd = { workspace = true }",
+        "",
+        "[target.'cfg(target_os = \"macos\")'.dependencies]",
+        "system-configuration = { workspace = true }",
+        ""
+      ],
+      "after": [
+        "tracing-opentelemetry = { workspace = true }",
+        "zstd = { workspace = true }",
+        "",
+        "# wasm32-wasip1 (agentOS): no OpenSSL; TLS is host-brokered.",
+        "[target.'cfg(not(target_os = \"wasi\"))'.dependencies]",
+        "native-tls = \"0.2\"",
+        "",
+        "[target.'cfg(target_os = \"macos\")'.dependencies]",
+        "system-configuration = { workspace = true }",
+        ""
+      ]
+    },
+    {
+      "rule": "native-tls-error",
+      "path": "codex-rs/http-client/src/route_aware_client_pool.rs",
+      "before": [
+        "",
+        "        let mut source: Option<&(dyn std::error::Error + 'static)> = Some(self);",
+        "        while let Some(error) = source {",
+        "            if error.downcast_ref::<rustls::Error>().is_some()",
+        "                || error.downcast_ref::<native_tls::Error>().is_some()",
+        "            {",
+        "                return Some(RouteFailureClass::TlsError);",
+        "            }",
+        "            if error.to_string() == \"tunnel error: proxy authorization required\" {"
+      ],
+      "after": [
+        "",
+        "        let mut source: Option<&(dyn std::error::Error + 'static)> = Some(self);",
+        "        while let Some(error) = source {",
+        "            #[cfg(not(target_os = \"wasi\"))]",
+        "            let is_native_tls = error.downcast_ref::<native_tls::Error>().is_some();",
+        "            #[cfg(target_os = \"wasi\")]",
+        "            let is_native_tls = false;",
+        "            if error.downcast_ref::<rustls::Error>().is_some() || is_native_tls {",
+        "                return Some(RouteFailureClass::TlsError);",
+        "            }",
+        "            if error.to_string() == \"tunnel error: proxy authorization required\" {"
+      ]
+    }
+  ]
+}

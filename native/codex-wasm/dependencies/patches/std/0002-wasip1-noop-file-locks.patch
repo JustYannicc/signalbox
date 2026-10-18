@@ -1,0 +1,57 @@
+--- a/library/std/src/sys/fs/unix.rs
++++ b/library/std/src/sys/fs/unix.rs
+@@ -1503,6 +1503,10 @@
+         target_vendor = "apple",
+     )))]
+     pub fn lock(&self) -> io::Result<()> {
++        // agentOS wasm32-wasip1: advisory locks are no-ops (one VM, cooperative processes).
++        #[cfg(target_os = "wasi")]
++        return Ok(());
++        #[allow(unreachable_code)]
+         Err(io::const_error!(io::ErrorKind::Unsupported, "lock() not supported"))
+     }
+ 
+@@ -1546,6 +1550,10 @@
+         target_vendor = "apple",
+     )))]
+     pub fn lock_shared(&self) -> io::Result<()> {
++        // agentOS wasm32-wasip1: advisory locks are no-ops (one VM, cooperative processes).
++        #[cfg(target_os = "wasi")]
++        return Ok(());
++        #[allow(unreachable_code)]
+         Err(io::const_error!(io::ErrorKind::Unsupported, "lock_shared() not supported"))
+     }
+ 
+@@ -1605,6 +1613,10 @@
+         target_vendor = "apple",
+     )))]
+     pub fn try_lock(&self) -> Result<(), TryLockError> {
++        // agentOS wasm32-wasip1: advisory locks are no-ops (one VM, cooperative processes).
++        #[cfg(target_os = "wasi")]
++        return Ok(());
++        #[allow(unreachable_code)]
+         Err(TryLockError::Error(io::const_error!(
+             io::ErrorKind::Unsupported,
+             "try_lock() not supported"
+@@ -1667,6 +1679,10 @@
+         target_vendor = "apple",
+     )))]
+     pub fn try_lock_shared(&self) -> Result<(), TryLockError> {
++        // agentOS wasm32-wasip1: advisory locks are no-ops (one VM, cooperative processes).
++        #[cfg(target_os = "wasi")]
++        return Ok(());
++        #[allow(unreachable_code)]
+         Err(TryLockError::Error(io::const_error!(
+             io::ErrorKind::Unsupported,
+             "try_lock_shared() not supported"
+@@ -1713,6 +1729,10 @@
+         target_vendor = "apple",
+     )))]
+     pub fn unlock(&self) -> io::Result<()> {
++        // agentOS wasm32-wasip1: advisory locks are no-ops (one VM, cooperative processes).
++        #[cfg(target_os = "wasi")]
++        return Ok(());
++        #[allow(unreachable_code)]
+         Err(io::const_error!(io::ErrorKind::Unsupported, "unlock() not supported"))
+     }
+ 
