@@ -194,6 +194,7 @@ export function installGuestRuntime() {
       notify: step("notify"),
       sleep: step("sleep"),
       waitFor: step("waitFor"),
+      eventCursor: step("eventCursor"),
       hook: step("hook"),
       recall: step("recall"),
       remember: step("remember"),

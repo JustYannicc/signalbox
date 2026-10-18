@@ -9,6 +9,8 @@ export type DriveAuthorization =
       readonly generation: number;
       /** Whether a turn runs: `main` only moves during one. */
       readonly live: boolean;
+      /** The pending pull this machine may persist; normal saves do not need one. */
+      readonly pullOperationId?: string | null;
     }
   | { readonly _tag: "denied"; readonly reason: string }
   /** The owner's access couldn't be checked just now; the Runner retries. */
