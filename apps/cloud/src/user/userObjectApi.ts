@@ -202,6 +202,8 @@ export const makeUserObjectApi = (
       run(OnePasswordAccount.OnePasswordAccount.use((account) => account.token)),
     contextIds: () => run(UserDrives.UserDrives.use((drives) => drives.contextIds)),
     clientTraceDimensions: (threadIds) => run(ClientTraceContext.clientTraceDimensions(threadIds)),
+    clientFolderDimensions: (folderIds) =>
+      run(ClientTraceContext.clientFolderDimensions(folderIds)),
     recordDriveAccess: (entry) =>
       run(UserDriveIndex.UserDriveIndex.use((index) => index.record(entry))),
     driveAccess: (driveId) => run(UserDrives.UserDrives.use((drives) => drives.access(driveId))),
