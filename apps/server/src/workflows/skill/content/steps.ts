@@ -24,15 +24,17 @@ Hands real work to an agent in a normal Signalbox thread the user can open and s
 
 ### \`w.llm(label, { prompt, input?, timeout?, retry? })\` → string
 
-Writes or summarizes text. Runs as a short read-only model thread.
+Writes or summarizes the supplied text. In the cloud, model steps call the folder's pool directly without an agent, tools or workspace. Use \`w.agent\` when work needs tools.
 
 ### \`w.judge(label, { input, outcomes, question?, timeout?, retry? })\` → one of \`outcomes\`
 
 Makes a decision. \`outcomes\` must be a literal array; each becomes a path in the diagram when you branch on the answer.
 
+Without \`outcomes\`, \`w.judge(label, { input, question? })\` returns \`{ verdict: boolean, reason: string }\`.
+
 ### \`w.extract(label, { input, schema, timeout?, retry? })\` → object
 
-Pulls structured data out of text. \`schema\` describes the shape: \`{ total: "number", vendor: "string", lines: [{ item: "string", amount: "number" }] }\`.
+Pulls structured data out of text and checks the result against \`schema\`: \`{ total: "number", vendor: "string", lines: [{ item: "string", amount: "number" }] }\`. Shapes support \`"string"\`, \`"number"\`, \`"boolean"\`, \`"null"\`, nested objects and single-item array shapes. Missing fields and wrong types fail the step.
 
 ## People
 
@@ -91,7 +93,8 @@ Runs the function on a GitHub Actions runner of the folder's repository instead,
 | Step | Returns | Use it to |
 |---|---|---|
 | \`w.sleep(label, duration \\| { until: iso })\` | null | Wait minutes or days, once; costs nothing while waiting. Not in a loop or \`w.repeat\`: repeats are a cron trigger. |
-| \`w.waitFor(label, { on?, watch?, where?, timeout? })\` | the event (envelope and fields, as a trigger gets it), or null on timeout | Wait for something to happen in Signalbox: \`{ on: ["pr.checks.failed", "pr.merged"], where: { number: pr.number } }\`. \`on\` and \`where\` work like event triggers (\`triggers.md\`). With a literal \`on\`, events are kept from the run's start, so one that happens between steps isn't missed; a computed \`on\` (\`on: input.event\`) collects only once its step waits. Each event goes to one waiting step. With \`watch\` (same shape as on a trigger, \`triggers.md\`), it waits for a change in a connected source; \`on\` defaults to \`source.item.*\`. |
+| \`w.eventCursor(label)\` | \`{ runId, sequence }\` | Capture this run's event inbox boundary before a read. Pass it as \`after\` to \`w.waitFor\` with a literal \`on\`, or a literal \`watch\` without \`on\`, to skip earlier buffered events while keeping events that arrive after capture. |
+| \`w.waitFor(label, { on?, watch?, where?, after?, timeout? })\` | the event (envelope and fields, as a trigger gets it), or null on timeout | Wait for something to happen in Signalbox: \`{ on: ["pr.checks.failed", "pr.merged"], where: { number: pr.number } }\`. \`on\` and \`where\` work like event triggers (\`triggers.md\`). With a literal \`on\`, events are kept from the run's start, so one that happens between steps isn't missed; a computed \`on\` (\`on: input.event\`) collects only once its step waits. Each event goes to one waiting step. Use \`after\` only for a literal \`on\` or a literal \`watch\` without \`on\` to ignore inbox events at or before the cursor sequence; without it, waits keep their existing buffering behavior. With \`watch\` (same shape as on a trigger, \`triggers.md\`), it waits for a change in a connected source; \`on\` defaults to \`source.item.*\`. |
 | \`w.waitFor(label, { event, timeout? })\` | the event's payload, or null on timeout | Wait for a named event, e.g. \`\` \`reply:\${ticket.id}\` \`\`. Agents raise events with the \`automation_emit\` tool. |
 | \`w.hook(label)\` | \`{ hookId, url, path }\` | A callback link to hand to someone else (a payment provider's "notify me" URL, a form). A request to it is a \`hook.called\` event: \`w.waitFor("Wait for the payment", { on: "hook.called", where: { hookId: link.hookId } })\` gets its \`body\`, \`method\` and \`query\`. \`url\` is null until the server has a public address; \`path\` is relative to it. It stops answering when the run ends. |
 | \`w.recall(label, key)\` | the stored value or null | Memory across runs: cursors, already-handled ids. |

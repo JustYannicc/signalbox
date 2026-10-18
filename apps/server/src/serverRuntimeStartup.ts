@@ -1,12 +1,9 @@
 import {
   CommandId,
-  DEFAULT_MODEL,
   DEFAULT_PROVIDER_INTERACTION_MODE,
   DEFAULT_SERVER_SETTINGS,
-  type ModelSelection,
   type Project,
   ProjectId,
-  ProviderInstanceId,
   ThreadId,
 } from "@t3tools/contracts";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
@@ -174,11 +171,6 @@ const recordStartupHeartbeat = Effect.gen(function* () {
   });
 });
 
-export const getAutoBootstrapThreadModelSelection = (): ModelSelection => ({
-  instanceId: ProviderInstanceId.make("codex"),
-  model: DEFAULT_MODEL,
-});
-
 interface AutoBootstrapWelcomeTargets {
   readonly bootstrapProjectId?: ProjectId;
   readonly bootstrapThreadId?: ThreadId;
@@ -268,7 +260,6 @@ const resolveAutoBootstrapWelcomeTargets = Effect.gen(function* () {
   let bootstrapThreadId: ThreadId | undefined;
 
   if (serverConfig.autoBootstrapProjectFromCwd) {
-    const threadModelSelection = getAutoBootstrapThreadModelSelection();
     const { project } = yield* projects.bootstrap({
       commandId: CommandId.make(yield* randomUUID),
       projectId: ProjectId.make(yield* randomUUID),
@@ -283,22 +274,32 @@ const resolveAutoBootstrapWelcomeTargets = Effect.gen(function* () {
     if (existingThread === undefined) {
       const serverSettings = yield* ServerSettings.ServerSettingsService;
       const settings = yield* serverSettings.getSettings;
-      const launched = yield* threadLaunch.launch({
-        commandId: CommandId.make(yield* randomUUID),
-        projectId: project.id,
-        title: "New thread",
-        modelSelection:
-          resolveProjectSettings(settings, project.id, project).settings.defaultModelSelection ??
-          threadModelSelection,
-        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
-        runtimeMode: resolveProjectSettings(settings, project.id, project).settings
-          .defaultRuntimeMode,
-        workspaceStrategy: { type: "root" },
-        createdBy: "system",
-        creationSource: "server",
-      });
+      // signalbox: Auto-created welcome threads use the same model policy and can be skipped when none exists.
+      const launched = yield* threadLaunch
+        .launch({
+          commandId: CommandId.make(yield* randomUUID),
+          projectId: project.id,
+          title: "New thread",
+          interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+          runtimeMode: resolveProjectSettings(settings, project.id, project).settings
+            .defaultRuntimeMode,
+          workspaceStrategy: { type: "root" },
+          createdBy: "system",
+          creationSource: "server",
+        })
+        .pipe(
+          Effect.map((result) => result.threadId),
+          Effect.catchTags({
+            ThreadLaunchError: (error) =>
+              error.operation === "resolve-model"
+                ? Effect.logInfo("Skipped automatic welcome thread because no model is available", {
+                    projectId: project.id,
+                  }).pipe(Effect.as(null))
+                : Effect.fail(error),
+          }),
+        );
       bootstrapProjectId = project.id;
-      bootstrapThreadId = launched.threadId;
+      if (launched !== null) bootstrapThreadId = launched;
     } else {
       bootstrapProjectId = project.id;
       bootstrapThreadId = existingThread.id;
@@ -325,7 +326,24 @@ const resolveStartupBrowserTarget = Effect.gen(function* () {
     : yield* serverAuth.issueStartupPairingUrl(baseTarget);
 });
 
-const maybeOpenBrowser = (target: string) =>
+/**
+ * Prints the startup pairing URL to stdout, where `t3` users and the dev runner
+ * read it. The URL carries a one-time admin token, so it skips the logger: log
+ * records also land in the trace file and any configured OTLP collector.
+ */
+export const announceStartupPairingUrl = (pairingUrl: string) =>
+  Effect.logInfo("Authentication required. Open Signalbox using the pairing URL.").pipe(
+    // Indented to match the annotation line the pretty logger printed before.
+    Effect.andThen(Console.log(`  pairingUrl: ${pairingUrl}`)),
+  );
+
+// No URL here: the browser target carries the pairing token, which
+// announceStartupPairingUrl has already printed to stdout.
+export const logBrowserAutoOpenUnavailable = Effect.logInfo("browser auto-open unavailable", {
+  hint: "Open the pairing URL above in your browser.",
+});
+
+export const maybeOpenBrowser = (target: string) =>
   Effect.gen(function* () {
     const serverConfig = yield* ServerConfig.ServerConfig;
     if (serverConfig.noBrowser) {
@@ -334,11 +352,10 @@ const maybeOpenBrowser = (target: string) =>
     const externalLauncher = yield* ExternalLauncher.ExternalLauncher;
 
     yield* externalLauncher.launchBrowser(target).pipe(
-      Effect.catch(() =>
-        Effect.logInfo("browser auto-open unavailable", {
-          hint: `Open ${target} in your browser.`,
-        }),
-      ),
+      // The target carries the pairing token, and a failed launch records its
+      // command line on the span, so this call stays out of traces.
+      Effect.withTracerEnabled(false),
+      Effect.catch(() => logBrowserAutoOpenUnavailable),
     );
   });
 
@@ -596,9 +613,7 @@ const make = (options?: StartupOptions) =>
             yield* Effect.logDebug("startup phase: browser open check");
             const startupBrowserTarget = yield* resolveStartupBrowserTarget;
             if (serverConfig.mode !== "desktop") {
-              yield* Effect.logInfo(
-                "Authentication required. Open Signalbox using the pairing URL.",
-              ).pipe(Effect.annotateLogs({ pairingUrl: startupBrowserTarget }));
+              yield* announceStartupPairingUrl(startupBrowserTarget);
             }
             yield* runStartupPhase("browser.open", maybeOpenBrowser(startupBrowserTarget));
           }

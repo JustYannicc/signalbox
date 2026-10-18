@@ -1,5 +1,27 @@
 import * as Schema from "effect/Schema";
 
+const PREVIEW_BASE32 = "abcdefghijklmnopqrstuvwxyz234567";
+
+/** Stable across machine generations; changing this would move existing preview origins. */
+export async function previewLabel(threadId: string, port: number): Promise<string> {
+  const digest = await globalThis.crypto.subtle.digest(
+    "SHA-256",
+    new TextEncoder().encode(`signalbox-preview\n${threadId}\n${port}`),
+  );
+  let bits = 0;
+  let value = 0;
+  let label = "";
+  for (const byte of new Uint8Array(digest)) {
+    value = (value << 8) | byte;
+    bits += 8;
+    while (bits >= 5) {
+      label += PREVIEW_BASE32[(value >>> (bits - 5)) & 31];
+      bits -= 5;
+    }
+  }
+  return label.slice(0, 26);
+}
+
 const TAB_ID_PREFIX = "tab_";
 let nextPreviewTabSequence = 0;
 

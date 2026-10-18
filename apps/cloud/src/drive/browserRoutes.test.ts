@@ -5,7 +5,7 @@ import * as Effect from "effect/Effect";
 
 import { memoryKernel } from "../browser/memoryKernel.ts";
 import { makeMemoryCloud } from "../testing.ts";
-import type { DriveAuthorization } from "../thread/runner/ThreadRunner.ts";
+import type { DriveAuthorization } from "../thread/ThreadAuthorization.ts";
 import type { DriveRouteEnv } from "./driveRoutes.ts";
 import { handleDriveRequest } from "./driveRoutes.ts";
 import { driveToken } from "./driveToken.ts";

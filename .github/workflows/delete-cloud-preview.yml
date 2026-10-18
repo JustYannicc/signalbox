@@ -1,0 +1,85 @@
+# Deletes preview resources even when the deploy workflow's path filter no
+# longer matches a pull request at close time.
+name: Delete Signalbox Cloud preview
+
+on:
+  pull_request:
+    types: [closed]
+
+permissions:
+  contents: read
+
+jobs:
+  stop_preview_deploys:
+    name: Stop preview deploys
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    permissions:
+      contents: read
+      pull-requests: read
+      actions: write
+    env:
+      PR_NUMBER: ${{ github.event.pull_request.number }}
+    steps:
+      - name: Checkout trusted cancellation
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          sparse-checkout: .github/scripts
+
+      # An old Runner build can enter the deploy lock and cancel its current job.
+      # Stop the whole pipeline before cleanup enters that lock.
+      - name: Stop this PR's preview deploys
+        uses: actions/github-script@v8
+        with:
+          script: |
+            const cancelPreviewDeploys = require('./.github/scripts/cancel-preview-deploys.cjs');
+            await cancelPreviewDeploys({ github, context, core, prNumber: process.env.PR_NUMBER });
+
+  delete_preview:
+    name: Delete preview cloud
+    needs: stop_preview_deploys
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    concurrency:
+      group: cloud-preview-${{ github.event.pull_request.number }}
+      cancel-in-progress: true
+    environment:
+      name: cloud-preview
+    permissions:
+      contents: read
+      pull-requests: read
+      # Deletes the preview's Runner image (pr-<number>).
+      packages: write
+    env:
+      CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      GH_TOKEN: ${{ github.token }}
+      PR_NUMBER: ${{ github.event.pull_request.number }}
+    steps:
+      # Only main's code runs here: no PR code ever sees the token in this job.
+      - name: Checkout trusted cleanup
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          # Keep the default persist-credentials: with false, checkout runs
+          # `git submodule foreach` in this step, which dies on the vendored
+          # gitlink under .repos/ that has no .gitmodules entry.
+          sparse-checkout: |
+            /*
+            !/.repos/
+          sparse-checkout-cone-mode: false
+
+      - name: Setup Vite+
+        uses: voidzero-dev/setup-vp@v1
+        with:
+          node-version-file: package.json
+          cache: true
+          run-install: |
+            args:
+              - --filter=@signalbox/cloud...
+
+      - name: Delete preview resources
+        run: bash .github/scripts/delete-cloud-preview.sh

@@ -10,6 +10,7 @@ import * as PoolEngine from "./PoolEngine.ts";
 import * as PoolLinks from "./PoolLinks.ts";
 import { makePoolObjectApi } from "./poolObjectApi.ts";
 import * as PoolStore from "./poolStore.ts";
+import { PoolTelemetry, type PoolCallEvent } from "./PoolTelemetry.ts";
 
 /**
  * Test doubles for pools: a CLIProxyAPI that answers the management calls a
@@ -430,6 +431,7 @@ export const makeFakeCliProxyApi = () => {
 export const makeMemoryPoolObject = (
   external: (request: Request) => Promise<Response> = () =>
     Promise.reject(new Error("No external CLIProxyAPI in this test")),
+  submit: (event: PoolCallEvent) => void = () => {},
 ) => {
   const cliProxyApi = makeFakeCliProxyApi();
   const container = PoolContainer.makeFake((request) => cliProxyApi.serve(request));
@@ -446,6 +448,7 @@ export const makeMemoryPoolObject = (
       Layer.provideMerge(
         Layer.mergeAll(NodeSqliteClient.layer({ filename: ":memory:" }), Platform.layerCrypto),
       ),
+      Layer.provideMerge(Layer.succeed(PoolTelemetry, { submit })),
     ),
   );
   let erased = false;

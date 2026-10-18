@@ -17,6 +17,10 @@
       "vite": { "entry": [".github/**/*.test.cjs"] },
       "vitest": { "entry": [".github/**/*.test.cjs"] },
     },
+    "packages/shared": {
+      "includeEntryExports": true,
+      "entry": ["src/agentProcesses/cli.ts", "src/agentProcesses/preload.ts"], // Lifecycle hooks and Node's --import.
+    },
     "scripts": {
       // Knip loads its preprocessor through a CLI option; native verification and
       // worktree setup (from t3.json) run directly.
@@ -24,9 +28,12 @@
         "knip-schemas.ts",
         "mobile-native-client.ts",
         "setup-worktree.ts",
+        "release-artifacts-smoke.ts", // signalbox: invoked as a subprocess by release-smoke.ts
         "workload-cost-replay.ts", // signalbox: workload analytics
         "boundaries/check.mjs", // signalbox: module boundaries
         "boundaries/tests.mjs", // signalbox: module boundaries
+        "deploy-workflow-policy.tests.mjs", // Node runs these directly in Signalbox CI.
+        "deploy-plan.tests.mjs",
       ],
       // The `t3` npm package's files: copied into the package, never imported.
       "ignore": [
@@ -38,6 +45,7 @@
       // Vite+ pack entries and the launcher used by installed background services.
       "entry": [
         "src/bin.ts!",
+        "src/signalbox/runner/main.ts!", // Started through the process cleanup wrapper.
         "src/claude-history-worker.ts!",
         "scripts/cli.ts",
         "scripts/evaluate-thread-titles.ts",
@@ -67,18 +75,19 @@
     "apps/cloud": {
       // Workers and Alchemy stacks load these entries by filename.
       "entry": [
-        "src/modelGateway/worker.ts!",
+        "src/models/gatewayWorker.ts!",
         "src/boxdSpike/worker.ts!",
         "alchemy.run.ts!",
         "infra/boxd-spike.alchemy.ts!",
         "infra/check-plan.ts",
       ],
       // `cloudflare:workers` is a Workers runtime module, not a package.
-      "ignoreDependencies": ["cloudflare"],
+      "ignoreDependencies": ["cloudflare", "wrangler"], // Wrangler runs through the process cleanup wrapper.
     },
     "apps/desktop": {
       // Electron loads these bundles by filename rather than importing them.
       "entry": [
+        "scripts/start-electron.mjs", // Started through the process cleanup wrapper.
         "gnome-extension/extension.js!",
         "src/electron/WindowsForegroundFocusWorker.ts!",
         "src/snapShot/GlobalShiftShortcutWorker.ts!",
