@@ -15,6 +15,10 @@
       "types": "./src/clientIssues.ts",
       "import": "./src/clientIssues.ts"
     },
+    "./clientActionTiming": {
+      "types": "./src/clientActionTiming.ts",
+      "import": "./src/clientActionTiming.ts"
+    },
     ".": {
       "types": "./src/index.ts",
       "import": "./src/index.ts"

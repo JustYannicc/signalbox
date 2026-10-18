@@ -3,6 +3,14 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./capture/text": {
+      "types": "./src/capture/text.ts",
+      "default": "./src/capture/text.ts"
+    },
+    "./capture/destinations": {
+      "types": "./src/capture/destinations.ts",
+      "default": "./src/capture/destinations.ts"
+    },
     "./composerThreadItems": {
       "types": "./src/composerThreadItems.ts",
       "default": "./src/composerThreadItems.ts"
@@ -650,6 +658,14 @@
     "./pull-request-write-attempt": {
       "types": "./src/pullRequestWriteAttempt.ts",
       "default": "./src/pullRequestWriteAttempt.ts"
+    },
+    "./observability/action-timing": {
+      "types": "./src/observability/actionTiming.ts",
+      "default": "./src/observability/actionTiming.ts"
+    },
+    "./observability/action-timing-queue": {
+      "types": "./src/observability/actionTimingQueue.ts",
+      "default": "./src/observability/actionTimingQueue.ts"
     }
   },
   "scripts": {

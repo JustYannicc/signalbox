@@ -6,7 +6,7 @@
 import { create } from "zustand";
 
 import type { CaptureFile } from "./captureAttachments";
-import type { CaptureDestination } from "./captureDestinations";
+import type { CaptureDestination } from "@t3tools/client-runtime/capture/destinations";
 
 /** A capture whose save failed, reopened as it was. */
 export interface CaptureRestore {
