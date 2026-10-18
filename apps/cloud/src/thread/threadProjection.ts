@@ -3,6 +3,7 @@ import {
   type OrchestrationV2Run,
   type OrchestrationV2ThreadProjection,
   type OrchestrationV2ThreadShell,
+  RuntimeRequestId,
   orchestrationV2RunWorkStartedAt,
 } from "@t3tools/contracts";
 import { applyOrchestrationV2ProjectionEvent } from "@t3tools/client-runtime/state/orchestration-v2-projection";
@@ -11,7 +12,7 @@ import { latestUnheldRun } from "@t3tools/shared/orchestrationV2ThreadError";
 import { threadPullRequestsOf } from "@t3tools/shared/threadPullRequests";
 import * as DateTime from "effect/DateTime";
 
-import { isLiveRun } from "./runLifecycle.ts";
+import { isLiveRun } from "./runState.ts";
 import type { ThreadMonitor } from "./threadWire.ts";
 
 /**
@@ -78,8 +79,7 @@ const byOrdinalDesc = (left: OrchestrationV2Run, right: OrchestrationV2Run) =>
 
 /**
  * The thread's sidebar row. Follows upstream's `threadShellFromProjection` for
- * everything a cloud thread can have; runtime requests and goals never occur
- * here yet, so they stay empty. Its only background work is `monitors`, the
+ * everything a cloud thread can have. Its background work is `monitors`, the
  * automation runs attached to it, which show and hold it in Working exactly
  * as upstream's monitors do.
  */
@@ -92,6 +92,28 @@ export function threadShellFromProjection(
   const latestRun = latestUnheldRun(projection.runs);
   const activeRun = runs.find((run) => isLiveRun(run) && run.status !== "waiting") ?? null;
   const activityRun = runs.find(isLiveRun) ?? null;
+  const liveRunIds = new Set(runs.filter(isLiveRun).map((run) => run.id));
+  const secretRequests = projection.turnItems.flatMap((item) =>
+    item.type === "secret_request" &&
+    item.secretStatus === "pending" &&
+    item.runId !== null &&
+    liveRunIds.has(item.runId)
+      ? [
+          {
+            id: RuntimeRequestId.make(item.id),
+            kind: "user_input" as const,
+            createdAt: item.startedAt ?? item.updatedAt,
+          },
+        ]
+      : [],
+  );
+  const pendingRequest = [
+    ...projection.runtimeRequests.filter((request) => request.status === "pending"),
+    ...secretRequests,
+  ].toSorted(
+    (left, right) =>
+      DateTime.toEpochMillis(right.createdAt) - DateTime.toEpochMillis(left.createdAt),
+  )[0];
   const userMessages = projection.messages
     .filter((message) => message.role === "user")
     .toSorted(
@@ -123,7 +145,14 @@ export function threadShellFromProjection(
     activityRunStartedAt:
       activityRun === null ? null : orchestrationV2RunWorkStartedAt(activityRun),
     status: latestRun?.status ?? "idle",
-    pendingRuntimeRequest: null,
+    pendingRuntimeRequest:
+      pendingRequest === undefined
+        ? null
+        : {
+            id: pendingRequest.id,
+            kind: pendingRequest.kind,
+            createdAt: pendingRequest.createdAt,
+          },
     latestVisibleMessage: null,
     latestUserMessageAt: userMessages[0]?.updatedAt ?? null,
     latestUserAuthoredMessageAt:

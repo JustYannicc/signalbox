@@ -2,6 +2,8 @@ import type { PreviewPort } from "@signalbox/runner-protocol/PreviewTunnel";
 import type { ModelGatewayProvider } from "@signalbox/runner-protocol/RunnerProtocol";
 import type { StatusNoteView } from "@signalbox/runner-protocol/StatusLineProtocol";
 import type {
+  SecretRequestAnswerInput,
+  SecretRequestFailureReason,
   OrchestrationV2Command,
   OrchestrationV2CommandOutputFrame,
   OrchestrationV2SubscribeCommandOutputInput,
@@ -10,6 +12,7 @@ import type {
   OrchestrationV2ThreadStreamItem,
   ThreadId,
 } from "@t3tools/contracts";
+import { SecretRequestError } from "@t3tools/contracts";
 import type { PullResult } from "@signalbox/runner-protocol/PullProtocol";
 import type {
   AgentBrowserInput,
@@ -86,6 +89,10 @@ const isBehind = Schema.is(BrowserWatchBehind);
 
 /** What a thread object answers. `ThreadObject` implements it method for method. */
 export interface ThreadObjectApi {
+  readonly answerSecret: (
+    actor: Actor,
+    input: unknown,
+  ) => Promise<SecretRequestFailureReason | null>;
   readonly dispatch: (
     actor: Actor,
     command: unknown,
@@ -195,6 +202,10 @@ export interface ThreadObjectApi {
 type CommandFailure = ThreadNotFoundError | ThreadCommandRejectedError | ThreadObjectError;
 
 export interface ThreadHandle {
+  readonly answerSecret: (
+    actor: Actor,
+    input: SecretRequestAnswerInput,
+  ) => Effect.Effect<void, SecretRequestError | ThreadObjectError>;
   readonly dispatch: (
     actor: Actor,
     command: OrchestrationV2Command,
@@ -391,6 +402,12 @@ const lines = <A>(
 /** Wraps any `ThreadObjectApi` (a Durable Object stub, or a test double) as Effects. */
 export function handleFor(api: ThreadObjectApi): ThreadHandle {
   return {
+    answerSecret: (actor, input) =>
+      call("answerSecret", () => api.answerSecret(actor, wire.secretAnswer.encode(input))).pipe(
+        Effect.flatMap((reason) =>
+          reason === null ? Effect.void : Effect.fail(new SecretRequestError({ reason })),
+        ),
+      ),
     commandOutput: (actor, input) =>
       lines(
         "commandOutput",

@@ -145,10 +145,19 @@ const makeStore = () => {
   };
 };
 
-const makeBackend = (boat: ReturnType<typeof makeFakeBoat>, store: ReturnType<typeof makeStore>) =>
+const makeBackend = (
+  boat: ReturnType<typeof makeFakeBoat>,
+  store: ReturnType<typeof makeStore>,
+  image = settings.image,
+) =>
   Effect.gen(function* () {
     const crypto = yield* Crypto.Crypto;
-    return makeBoatMachineBackend({ settings, api: boat.api, records: store.records, crypto });
+    return makeBoatMachineBackend({
+      settings: { ...settings, image },
+      api: boat.api,
+      records: store.records,
+      crypto,
+    });
   }).pipe(Effect.provide(Platform.layerCrypto));
 
 const request = (generation: number) => ({
@@ -159,6 +168,27 @@ const request = (generation: number) => ({
 });
 
 describe("BoatMachineBackend", () => {
+  it.effect(
+    "updates an old launcher and hands the same VM the current image at its new generation",
+    () =>
+      Effect.gen(function* () {
+        const boat = makeFakeBoat();
+        const store = makeStore();
+        const backend = yield* makeBackend(boat, store);
+        yield* backend.ensure(request(1));
+        boat.settle();
+        yield* backend.ensure(request(1));
+        yield* store.records.save({ ...store.current(), setupKey: "bx_1:boat-runner-1" });
+        const image = "ghcr.io/test/runner:current";
+        const updated = yield* makeBackend(boat, store, image);
+        yield* updated.ensure(request(2));
+        yield* updated.ensure(request(2));
+        expect(boat.sandboxes.size).toBe(1);
+        expect(boat.calls.filter((call) => call === "execute")).toHaveLength(2);
+        expect(boat.config("bx_1")).toMatchObject({ generation: 2, image });
+      }),
+  );
+
   it.effect("starts one VM on demand and hands its Runner the generation", () =>
     Effect.gen(function* () {
       const boat = makeFakeBoat();
