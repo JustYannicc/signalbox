@@ -1041,8 +1041,8 @@
       "name": "projects.searchContents",
       "rpc": "projects.searchContents",
       "access": "read",
-      "input": "c4f338d5",
-      "output": "ca8afba2"
+      "input": "9931fa7a",
+      "output": "497ac6a2"
     },
     {
       "name": "projects.searchEntries",
@@ -2122,7 +2122,7 @@
       "rpc": "orchestration.searchThread",
       "access": "read",
       "input": "25dbd2df",
-      "output": "07c54253"
+      "output": "fdea3c3b"
     },
     {
       "name": "threads.send",
