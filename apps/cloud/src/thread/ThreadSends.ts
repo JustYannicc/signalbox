@@ -21,7 +21,8 @@ import type { SendAnswer, SendRequest } from "./egressTypes.ts";
 import { UserDirectory } from "../user/UserDirectory.ts";
 import { systemNoticeEvents } from "./runner/runnerEvents.ts";
 import { activeRun } from "./runLifecycle.ts";
-import { approvalRequestEvents } from "./runtimeRequests.ts";
+import { secretSendRequestId } from "./secretSendIdentity.ts";
+import { approvalRequestEvents, isCloudApprovalRequest } from "./runtimeRequests.ts";
 import * as ThreadEngine from "./ThreadEngine.ts";
 import { ThreadStore } from "./ThreadStore.ts";
 import { makeEgressDispatch, type EgressDispatchAnswer } from "./EgressDispatch.ts";
@@ -30,7 +31,6 @@ import {
   markAskKept,
   readSecretAsks,
   readSecretSources,
-  saveSecretAsk,
   type SecretAsk,
 } from "./egress/secretSendTables.ts";
 
@@ -76,18 +76,22 @@ const askOptions = (host: string) =>
     { decision: "accept", label: "Send this turn" },
   ] as const;
 
-const askRequestId = (runId: string, ordinal: number) =>
-  RuntimeRequestId.make(`runtime-request:secret-send:${runId}:${ordinal}`);
-
 /** What the person said to each ask, from the thread's own events. */
 const answersOf = (projection: OrchestrationV2ThreadProjection) => {
   const requests = new Map(projection.runtimeRequests.map((request) => [request.id, request]));
-  return (ask: SecretAsk) => answerOf(requests.get(RuntimeRequestId.make(ask.requestId)));
+  return (ask: SecretAsk) => {
+    const request = requests.get(RuntimeRequestId.make(ask.requestId));
+    const run = projection.runs.find((run) => run.id === ask.runId);
+    return request?.nodeId === run?.rootNodeId ? answerOf(projection, request) : null;
+  };
 };
 
 /** "pending" while they haven't answered; null for an ask whose request never committed. */
-const answerOf = (request: OrchestrationV2RuntimeRequest | undefined) => {
-  if (request === undefined) return null;
+const answerOf = (
+  projection: OrchestrationV2ThreadProjection,
+  request: OrchestrationV2RuntimeRequest | undefined,
+) => {
+  if (request === undefined || !isCloudApprovalRequest(projection, request)) return null;
   if (request.status === "pending") return "pending" as const;
   return request.status === "resolved" ? (request.decision ?? null) : "expired";
 };
@@ -181,35 +185,36 @@ export const layer = Layer.effect(
       host: string,
       names: ReadonlyArray<string>,
     ) =>
-      Effect.gen(function* () {
-        const ordinal = (yield* Effect.orDie(withSql(countSecretAsks))) + 1;
-        const requestId = askRequestId(run.id, ordinal);
-        yield* Effect.orDie(
-          withSql(saveSecretAsk({ requestId, runId: run.id, folderId, host, names })),
-        );
-        const plural = names.length === 1 ? "this secret" : "these secrets";
-        return yield* engine.apply((projection, ctx) => {
-          const events =
-            projection === null
-              ? null
-              : approvalRequestEvents(
-                  projection,
-                  run,
-                  {
-                    requestId,
-                    title: "Send a secret?",
-                    prompt: `An agent wants to send ${plural} to ${host}: ${listedNames(names)}`,
-                    appName: "Secrets",
-                    options: askOptions(host),
-                  },
-                  ctx,
-                );
-          return Effect.succeed({
-            events: events ?? [],
-            result: events === null ? null : requestId,
-          });
-        });
-      });
+      engine.apply((projection, ctx) =>
+        Effect.gen(function* () {
+          const current = projection === null ? undefined : activeRun(projection);
+          if (projection === null || current === undefined || current.id !== run.id) {
+            return { events: [], result: null };
+          }
+          const ordinal = (yield* Effect.orDie(withSql(countSecretAsks))) + 1;
+          const requestId = secretSendRequestId(current.id, ordinal);
+          const plural = names.length === 1 ? "this secret" : "these secrets";
+          const events = approvalRequestEvents(
+            projection,
+            current,
+            {
+              requestId,
+              title: "Send a secret?",
+              prompt: `An agent wants to send ${plural} to ${host}: ${listedNames(names)}`,
+              appName: "Secrets",
+              options: askOptions(host),
+            },
+            ctx,
+          );
+          return events === null
+            ? { events: [], result: null }
+            : {
+                events,
+                secretAsk: { requestId, runId: current.id, folderId, host, names },
+                result: requestId,
+              };
+        }),
+      );
 
     const decide = (
       host: string,
@@ -347,7 +352,8 @@ export const layer = Layer.effect(
       if (projection === null) return;
       const requests = new Map(projection.runtimeRequests.map((request) => [request.id, request]));
       for (const [requestId, deferred] of waiting) {
-        if (answerOf(requests.get(RuntimeRequestId.make(requestId))) === "pending") continue;
+        if (answerOf(projection, requests.get(RuntimeRequestId.make(requestId))) === "pending")
+          continue;
         yield* Deferred.succeed(deferred, undefined);
         waiting.delete(requestId);
       }

@@ -51,6 +51,8 @@ import {
   migrateSecretSends,
   migrateSecretSendFolderScope,
   saveSecretSources,
+  saveSecretAsk,
+  type NewSecretAsk,
 } from "./egress/secretSendTables.ts";
 import { migratePullRequestPolls } from "./pullRequests/PullRequestPolls.ts";
 import { migrateStatusNote, readNote, writeNote } from "./statusLine/statusNoteTables.ts";
@@ -229,6 +231,7 @@ export class ThreadStore extends Context.Service<
       readonly machine?: MachineLease;
       /** The run that owns current secret substitutions after these events, or null when none does. */
       readonly secretRun?: { readonly generation: number; readonly runId: RunId | null };
+      readonly secretAsk?: NewSecretAsk;
       readonly commandOutputSeeds?: ReadonlyArray<CommandOutputKey>;
       readonly commandOutput?: ReadonlyArray<CommandOutputDelta>;
       /** The instructions of the thread's chain, for the run these events start. */
@@ -595,6 +598,9 @@ const make = Effect.gen(function* () {
       yield* recordCurrentItemState(sequence, event).pipe(
         Effect.provideService(SqlClient.SqlClient, sql),
       );
+    }
+    if (input.secretAsk) {
+      yield* saveSecretAsk(input.secretAsk).pipe(Effect.provideService(SqlClient.SqlClient, sql));
     }
     if (input.command) {
       yield* sql`INSERT INTO receipts

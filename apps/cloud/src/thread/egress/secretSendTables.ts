@@ -117,7 +117,9 @@ export const countSecretAsks = Effect.gen(function* () {
   return row?.n ?? 0;
 });
 
-export const saveSecretAsk = (ask: Omit<SecretAsk, "keptAt" | "folderScoped">) =>
+export type NewSecretAsk = Omit<SecretAsk, "keptAt" | "folderScoped">;
+
+export const saveSecretAsk = (ask: NewSecretAsk) =>
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
     yield* sql`INSERT INTO secret_send_asks

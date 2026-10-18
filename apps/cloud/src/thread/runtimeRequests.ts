@@ -13,6 +13,7 @@ import {
 import type { ThreadMessage } from "@signalbox/runner-protocol/RunnerProtocol";
 import { isRunAttemptOrContinuation } from "@signalbox/runner-protocol/RunAttemptIdentity";
 
+import { isSecretSendId } from "./secretSendIdentity.ts";
 import { isLiveRun } from "./runState.ts";
 import {
   type Decision,
@@ -397,6 +398,7 @@ export function runtimeRequestEvents(
   event: Extract<OrchestrationV2DomainEvent, { type: "runtime-request.updated" }>,
   ctx: DecisionContext,
 ) {
+  if (isSecretSendId(event.payload.id)) return [];
   const existing = projection.runtimeRequests.find(
     (candidate) => candidate.id === event.payload.id,
   );

@@ -7,12 +7,14 @@ import {
 } from "./runner/secretValues.ts";
 import {
   migrateSecretSends,
+  readSecretAsks,
+  saveSecretAsk,
   readSecretSources,
   saveSecretSources,
 } from "./egress/secretSendTables.ts";
 
 export { beginSecretRun, readSecretValues, registerSecretValues } from "./runner/secretValues.ts";
-export { readSecretSources, saveSecretSources };
+export { readSecretAsks, saveSecretAsk, readSecretSources, saveSecretSources };
 
 /** Applies the storage steps before run identity so tests can stage an upgrade. */
 export const migrateSecretRegistrationThroughCurrentValues = Effect.gen(function* () {

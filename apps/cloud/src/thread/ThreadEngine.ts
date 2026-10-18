@@ -62,6 +62,7 @@ import { activeRun } from "./runLifecycle.ts";
 import { noteKey, noteRunId, supersedes } from "./statusLine/statusNotePolicy.ts";
 import { type Actor, ThreadNotFoundError, ThreadCommandRejectedError } from "./ThreadAccess.ts";
 import * as ThreadStore from "./ThreadStore.ts";
+import type { NewSecretAsk } from "./egress/secretSendTables.ts";
 import * as PullState from "./PullState.ts";
 import * as TurnModels from "./TurnModels.ts";
 import {
@@ -138,6 +139,7 @@ export interface EngineDecision<A> {
   readonly scripts?: ReadonlyArray<RetainedWorkflowScript>;
   readonly events: ReadonlyArray<OrchestrationV2DomainEvent>;
   readonly machine?: ThreadStore.MachineLease;
+  readonly secretAsk?: NewSecretAsk;
   readonly commandOutput?: ReadonlyArray<CommandOutputDelta>;
   readonly result: A;
 }
@@ -368,6 +370,7 @@ const make = Effect.gen(function* () {
     /** Set by the commit that creates the thread. */
     readonly owner?: ThreadStore.ThreadOwner;
     readonly machine?: ThreadStore.MachineLease;
+    readonly secretAsk?: NewSecretAsk;
     readonly commandOutput?: ReadonlyArray<CommandOutputDelta>;
     /** The chain's instructions for the run this commit starts. */
     readonly instructions?: {
@@ -462,6 +465,7 @@ const make = Effect.gen(function* () {
       const head = yield* store.commit({
         head: current.head,
         events,
+        ...(input.secretAsk === undefined ? {} : { secretAsk: input.secretAsk }),
         ...(input.scripts === undefined ? {} : { scripts: input.scripts }),
         ...(input.command ? { command: input.command } : {}),
         ...(input.instructions === undefined ? {} : { instructions: input.instructions }),
@@ -874,6 +878,7 @@ const make = Effect.gen(function* () {
         ) {
           yield* commit({
             events: decision.events,
+            ...(decision.secretAsk === undefined ? {} : { secretAsk: decision.secretAsk }),
             ...(decision.scripts === undefined ? {} : { scripts: decision.scripts }),
             ...(decision.commandOutput === undefined
               ? {}

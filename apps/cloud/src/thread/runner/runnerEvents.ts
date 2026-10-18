@@ -1,3 +1,4 @@
+import { isSecretSendId } from "../secretSendIdentity.ts";
 import { workflowNodes } from "../workflowControl.ts";
 import type { RunnerItem } from "@signalbox/runner-protocol/RunnerProtocol";
 import {
@@ -111,6 +112,16 @@ export function recordedEvents(
       : undefined;
   const payload = recorded === undefined ? undefined : event[recorded.payload];
   if (recorded === undefined || !isRecord(payload)) return [];
+  if (
+    (recorded.type === "runtime-request.updated" ||
+      recorded.type === "turn-item.updated" ||
+      recorded.type === "node.updated") &&
+    ["id", "requestId", "runtimeRequestId"].some((key) => {
+      const id = stringField(payload, key);
+      return id !== undefined && isSecretSendId(id);
+    })
+  )
+    return [];
   // A run already ended (stopped, or failed for want of a machine) keeps its
   // last transcript rows, but not the harness's view of its session.
   if (LIVE_RUN_ONLY.has(recorded.type) && liveRunId !== item.runId) return [];
