@@ -57,6 +57,8 @@ export default defineConfig({
   },
   test: {
     environment: "node",
+    // signalbox: exercise the kernel's real suspending WASI imports on Node 24.
+    execArgv: ["--experimental-wasm-jspi"],
     exclude: [
       "**/.repos/**",
       "**/.t3/**",
