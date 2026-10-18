@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test"
 
 import {
   DraftId,
+  COMPOSER_DRAFT_STORAGE_KEY,
   useComposerDraftStore,
   type ComposerFileAttachment,
   type ComposerImageAttachment,
@@ -95,10 +96,10 @@ describe("durable capture pipeline", () => {
   });
 
   afterEach(() => {
+    vi.restoreAllMocks();
     resetDraftStore();
     vi.runOnlyPendingTimers();
     storage.clear();
-    vi.restoreAllMocks();
     vi.useRealTimers();
   });
 
@@ -196,6 +197,41 @@ describe("durable capture pipeline", () => {
     ).resolves.toMatchObject({ ok: true, draftId });
     expect(createDraft).not.toHaveBeenCalled();
     expect(readCaptureDraftReceipt("capture-present", storage)?.phase).toBe("completed");
+  });
+
+  it("retries a reserved live draft after its initial composer write fails", async () => {
+    const originalSetItem = storage.setItem;
+    const failComposerWrite = vi.spyOn(storage, "setItem").mockImplementation((key, value) => {
+      if (key === COMPOSER_DRAFT_STORAGE_KEY) throw new Error("Disk full");
+      originalSetItem(key, value);
+    });
+    const draftId = DraftId.make("write-retry");
+    const createDraft = vi.fn(async (seed: (id: DraftId) => void) => {
+      seed(registerDraft(draftId));
+      return { draftId, filed: true };
+    });
+    try {
+      await expect(
+        saveInput({ captureId: "capture-write-retry", text: "Keep this", createDraft }),
+      ).resolves.toMatchObject({ ok: false, draftId });
+    } finally {
+      failComposerWrite.mockRestore();
+    }
+    expect(readCaptureDraftReceipt("capture-write-retry", storage)).toMatchObject({
+      phase: "reserved",
+      draftId,
+    });
+    expect(readPersistedCaptureDraft(draftId, storage)).toBeNull();
+    expect(useComposerDraftStore.getState().getComposerDraft(draftId)?.prompt).toBe("Keep this");
+    await expect(
+      saveInput({ captureId: "capture-write-retry", text: "Keep this", createDraft }),
+    ).resolves.toMatchObject({ ok: true, draftId });
+    expect(createDraft).toHaveBeenCalledTimes(1);
+    expect(readPersistedCaptureDraft(draftId, storage)).toMatchObject({
+      hasSession: true,
+      prompt: "Keep this",
+    });
+    expect(readCaptureDraftReceipt("capture-write-retry", storage)?.phase).toBe("completed");
   });
 
   it("relocates a receipt after New removes its empty draft", async () => {
@@ -304,6 +340,48 @@ describe("durable capture pipeline", () => {
     expect(revokeObjectUrl).toHaveBeenCalledTimes(1);
     expect(revokeObjectUrl).toHaveBeenCalledWith("blob:prepared-capture");
     expect(revokeObjectUrl).not.toHaveBeenCalledWith("blob:user-owned");
+  });
+
+  it("releases a retry preview after reusing the draft's existing image", async () => {
+    const draftId = registerDraft("reserved-image-retry");
+    reserveCaptureDraftReceipt("capture-image-retry", draftId, true, storage);
+    const file = new File(["image"], "photo.png", { type: "image/png" });
+    const image: ComposerImageAttachment = {
+      type: "image",
+      id: "capture:image:retry",
+      name: file.name,
+      mimeType: file.type,
+      sizeBytes: file.size,
+      previewUrl: "blob:owned-image",
+      file,
+    };
+    const store = useComposerDraftStore.getState();
+    store.setPrompt(draftId, "Keep the image");
+    store.addImages(draftId, [image]);
+    await persistDraft(draftId);
+    const revoke = vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => {});
+    await expect(
+      saveInput({
+        captureId: "capture-image-retry",
+        text: "Keep the image",
+        prepared: {
+          images: [
+            {
+              image: { ...image, previewUrl: "blob:retry-image" },
+              dataUrl: "data:image/png;base64,aW1hZ2U=",
+            },
+          ],
+          files: [],
+          skipped: [],
+        },
+        createDraft: vi.fn(async () => null),
+      }),
+    ).resolves.toMatchObject({ ok: true, draftId });
+    expect(revoke).toHaveBeenCalledWith("blob:retry-image");
+    expect(revoke).not.toHaveBeenCalledWith("blob:owned-image");
+    expect(useComposerDraftStore.getState().getComposerDraft(draftId)?.images[0]?.previewUrl).toBe(
+      "blob:owned-image",
+    );
   });
 
   it("never relocates or recreates a completed receipt", async () => {
