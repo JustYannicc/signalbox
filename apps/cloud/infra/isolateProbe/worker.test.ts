@@ -28,10 +28,15 @@ beforeAll(async () => {
 }, 15000);
 
 afterAll(async () => {
-  await harness?.close();
-  await new Promise<void>((resolve, reject) =>
-    server.close((error) => (error ? reject(error) : resolve())),
-  );
+  try {
+    await harness?.close();
+  } finally {
+    if (server.listening) {
+      await new Promise<void>((resolve, reject) =>
+        server.close((error) => (error ? reject(error) : resolve())),
+      );
+    }
+  }
 });
 
 const run = async (id: string, allowOutbound?: unknown) => {
