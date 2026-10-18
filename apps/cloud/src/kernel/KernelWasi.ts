@@ -26,6 +26,7 @@ export function createKernelAsyncWasi(input: KernelAsyncWasiOptions) {
     {
       table: input.filesystem.descriptors,
       ownership: "borrowed",
+      pathCheck: input.filesystem.assertWasiPathVisible.bind(input.filesystem),
       creation: {
         createInode: input.filesystem.createInode.bind(input.filesystem),
         takeCreateMode: input.filesystem.takeNextCreateMode.bind(input.filesystem),
