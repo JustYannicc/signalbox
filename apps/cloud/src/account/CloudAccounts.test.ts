@@ -66,12 +66,17 @@ describe("CloudAccounts", () => {
       const client = HttpClient.make((request) =>
         Effect.sync(() => {
           requests.push({ url: request.url, authorization: request.headers.authorization });
+          const { pathname } = new URL(request.url);
           return HttpClientResponse.fromWeb(
             request,
-            Response.json({
-              data: [{ organization_id: "org_sandbox", organization_name: "Test company" }],
-              list_metadata: { after: null },
-            }),
+            pathname === "/user_management/organization_memberships"
+              ? Response.json({
+                  data: [{ organization_id: "org_sandbox", organization_name: "Test company" }],
+                  list_metadata: { after: null },
+                })
+              : pathname === "/organizations/external_id/personal%3Auser_sandbox"
+                ? Response.json({ code: "entity_not_found" }, { status: 404 })
+                : Response.json({ error: "unexpected request" }, { status: 500 }),
           );
         }),
       );
@@ -92,7 +97,12 @@ describe("CloudAccounts", () => {
           ),
         ),
       );
-      expect(requests).toEqual([
+      // The listing and the personal organization come from the same realm and key.
+      expect(requests.toSorted((a, b) => a.url.localeCompare(b.url))).toEqual([
+        {
+          url: "https://sandbox.workos.test/organizations/external_id/personal%3Auser_sandbox",
+          authorization: "Bearer sk_test_sandbox",
+        },
         {
           url: "https://sandbox.workos.test/user_management/organization_memberships",
           authorization: "Bearer sk_test_sandbox",

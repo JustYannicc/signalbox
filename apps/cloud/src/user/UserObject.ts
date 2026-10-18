@@ -569,6 +569,17 @@ export class UserObject extends DurableObject<UserObjectEnv> implements UserObje
     return this.api.syncOrganizations(organizations);
   }
 
+  reserveOrganizationRefresh() {
+    return this.api.reserveOrganizationRefresh();
+  }
+
+  completeOrganizationRefresh(
+    sequence: Parameters<UserObjectApi["completeOrganizationRefresh"]>[0],
+    organizations: Parameters<UserObjectApi["completeOrganizationRefresh"]>[1],
+  ) {
+    return this.api.completeOrganizationRefresh(sequence, organizations);
+  }
+
   shellSnapshot() {
     return this.api.shellSnapshot();
   }
