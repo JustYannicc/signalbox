@@ -65,6 +65,7 @@ describe("command output with current-item history", () => {
               { migration_id: 12, name: "preparation" },
               { migration_id: 12, name: "search_outbox" },
               { migration_id: 12, name: "secret_send_folder_scope" },
+              { migration_id: 12, name: "trash" },
               { migration_id: 12, name: "workflow_scripts" },
               { migration_id: 13, name: "current_item_expansion" },
               { migration_id: 13, name: "search_outbox_parts" },

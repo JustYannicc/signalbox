@@ -836,9 +836,6 @@ importers:
       effect:
         specifier: 4.0.5
         version: 4.0.5
-      evlog:
-        specifier: 2.30.0
-        version: 2.30.0(@types/node@24.12.4)(@types/react@19.3.0)(ai@7.0.127(zod@4.6.5))(esbuild@0.28.2)(express@5.2.1(supports-color@10.2.2))(h3@1.15.11)(hono@4.13.7)(jiti@2.7.0)(ofetch@1.5.1)(react@19.3.0)(terser@5.48.0)(typescript@7.0.2)(unrun@0.2.39)(yaml@2.9.0)
       jose:
         specifier: 'catalog:'
         version: 6.2.2
@@ -1338,9 +1335,6 @@ importers:
 
   packages/automations:
     dependencies:
-      '@jitl/quickjs-wasmfile-release-sync':
-        specifier: 0.32.0
-        version: 0.32.0
       '@noble/hashes':
         specifier: 'catalog:'
         version: 1.8.0
@@ -1359,9 +1353,6 @@ importers:
       evlog:
         specifier: 2.30.0
         version: 2.30.0(@types/node@24.12.4)(@types/react@19.3.0)(ai@7.0.127(zod@4.6.5))(esbuild@0.28.2)(express@5.2.1(supports-color@10.2.2))(h3@1.15.11)(hono@4.13.7)(jiti@2.7.0)(ofetch@1.5.1)(react@19.3.0)(terser@5.48.0)(typescript@7.0.2)(unrun@0.2.39)(yaml@2.9.0)
-      quickjs-emscripten-core:
-        specifier: 0.32.0
-        version: 0.32.0
     devDependencies:
       '@effect/vitest':
         specifier: 4.0.5
@@ -4919,12 +4910,6 @@ packages:
   '@jest/types@29.6.3':
     resolution: {integrity: sha512-u3UPsIilWKOM3F9CXtrG8LEJmNxwoCQC/XVj4IKYXvvpx7QIi/Kg1LI5uDmDpKlac62NUtX7eLjRh+jVZcLOzw==}
     engines: {node: ^14.15.0 || ^16.10.0 || >=18.0.0}
-
-  '@jitl/quickjs-ffi-types@0.32.0':
-    resolution: {integrity: sha512-v9T+GQpmk43VDJ7d72sf0Nexhk+ArvtUihW27dy7lqAl0zBObFKtSBBIm5RBjwIhE8VwsPPm9PNuvPvNqLWUEg==}
-
-  '@jitl/quickjs-wasmfile-release-sync@0.32.0':
-    resolution: {integrity: sha512-BKNDI/TPBfGlLNGYpLrhcDGXmIk4xHm4MRAisOBnOzpXVn9HZWsfmMAc9WMBrAHjvvds6HOikKeaOBKdPdpVrg==}
 
   '@jridgewell/gen-mapping@0.3.13':
     resolution: {integrity: sha512-2kkt/7niJ6MgEPxF0bYdQ6etZaA+fQvDcLKckhy1yIQOzaoKjBBjSj63/aLVjYE3qhRt5dvM+uUyfCg6UKCBbA==}
@@ -13423,9 +13408,6 @@ packages:
     resolution: {integrity: sha512-WuyALRjWPDGtt/wzJiadO5AXY+8hZ80hVpe6MyivgraREW751X3SbhRvG3eLKOYN+8VEvqLcf3wdnt44Z4S4SA==}
     engines: {node: '>=10'}
 
-  quickjs-emscripten-core@0.32.0:
-    resolution: {integrity: sha512-QFnPfjFey8EqknSrSxe1hZrf1/8z7/6s1QzGOmKo6++02r7QRRX7ZoyNaZh7JuVjWsVW87KnQrbZqnHkOAzUyg==}
-
   quicktype-core@26.0.0:
     resolution: {integrity: sha512-tLSe2RkSj7c7ocTc+QMuQDGgEetGhZvKXLv1vNwpAQX2x8oOGYU9KSgJdIP9Qvy5hm47S2k3ZAX1LQAdS75JaA==}
     engines: {node: '>=20.0.0'}
@@ -18218,12 +18200,6 @@ snapshots:
       '@types/node': 24.12.4
       '@types/yargs': 17.0.35
       chalk: 4.1.2
-
-  '@jitl/quickjs-ffi-types@0.32.0': {}
-
-  '@jitl/quickjs-wasmfile-release-sync@0.32.0':
-    dependencies:
-      '@jitl/quickjs-ffi-types': 0.32.0
 
   '@jridgewell/gen-mapping@0.3.13':
     dependencies:
@@ -27933,10 +27909,6 @@ snapshots:
       side-channel: 1.1.1
 
   quick-lru@5.1.1: {}
-
-  quickjs-emscripten-core@0.32.0:
-    dependencies:
-      '@jitl/quickjs-ffi-types': 0.32.0
 
   quicktype-core@26.0.0:
     dependencies:

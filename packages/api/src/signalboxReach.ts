@@ -149,6 +149,25 @@ export const SIGNALBOX_RPC_REACH = {
     summary: "Turn a note's offer into a task in its folder, starting with the note's words.",
   }),
 
+  "signalbox.trash.list": read({
+    summary: "List recently trashed threads and folders with their lifecycle status.",
+  }),
+  "signalbox.trash.restore": write({ summary: "Restore a recently trashed thread or folder." }),
+  "signalbox.trash.empty": write({
+    destructive: true,
+    summary: "Permanently delete selected trashed items, or empty Trash.",
+  }),
+  "signalbox.trash.thread": write({
+    destructive: true,
+    agentCallable: true,
+    summary: "Move a thread and its data to Trash.",
+  }),
+  "signalbox.trash.folder": write({
+    destructive: true,
+    agentCallable: true,
+    summary: "Move a folder and its contents to Trash.",
+  }),
+
   "signalbox.threadKinds.subscribe": read({
     name: "threadKinds.list",
     summary: "Which threads are chats and which are tasks, and when idle chats archive.",

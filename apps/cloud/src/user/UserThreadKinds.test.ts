@@ -54,6 +54,9 @@ const setup = (
   const directory = Layer.succeed(ThreadDirectory.ThreadDirectory, {
     forThread: (threadId) =>
       ThreadDirectory.handleFor({
+        trash: async () => ({ _tag: "not_found" }),
+        restore: async () => ({ _tag: "not_found" }),
+        purge: async () => ({ _tag: "not_found" }),
         answerSecret: async () => "not_found",
         dispatch: async (_actor, command, creation) => {
           options.onArchive?.();

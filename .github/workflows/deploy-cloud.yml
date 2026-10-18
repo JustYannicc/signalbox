@@ -137,6 +137,7 @@ jobs:
       # Leave unset until #358 lands; credentials alone never enable sends.
       SIGNALBOX_POSTHOG_ENABLED: ${{ vars.SIGNALBOX_POSTHOG_ENABLED }}
       T3CODE_TELEMETRY_ENABLED: ${{ vars.T3CODE_TELEMETRY_ENABLED }}
+      SIGNALBOX_DO_STORAGE_ALERT_PERCENT: ${{ vars.SIGNALBOX_DO_STORAGE_ALERT_PERCENT }}
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -397,6 +398,7 @@ jobs:
       # Leave unset until #358 lands; credentials alone never enable sends.
       SIGNALBOX_POSTHOG_ENABLED: ${{ vars.SIGNALBOX_POSTHOG_ENABLED }}
       T3CODE_TELEMETRY_ENABLED: ${{ vars.T3CODE_TELEMETRY_ENABLED }}
+      SIGNALBOX_DO_STORAGE_ALERT_PERCENT: ${{ vars.SIGNALBOX_DO_STORAGE_ALERT_PERCENT }}
     steps:
       # Sparse checkout implicitly uses blob:none. A later merge can then need
       # blobs through a PR merge ref GitHub has already replaced (#842).

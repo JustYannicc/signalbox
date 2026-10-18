@@ -6,6 +6,14 @@ self-hosted server, and one User Durable Object per WorkOS user, always in the
 EU jurisdiction. It serves the web app from its own origin. The design is in
 issue #110.
 
+## Trash retention
+
+Deleted threads and folders can be restored for 30 days in Settings → Trash.
+Permanent cleanup is disabled in this release, including Empty Trash. Expired
+items remain stored but cannot be restored through the app. Trash records the
+resource scopes planned for cleanup separately from actual removal receipts.
+The permanent cleanup cascade is tracked in #474 and ships separately.
+
 ## Local development
 
 ```sh
@@ -904,6 +912,26 @@ and `cloud-production`), passed through `alchemy.run.ts`. Each is optional:
 
 After each deploy, CI sends one `release` event naming the stage and commit
 (`apps/cloud/infra/release-event.ts`).
+
+User objects report `durableObject.storage` at most hourly during normal
+activity. Sampling reads Cloudflare's database-size counter, never rows, and
+does not wake idle objects. In Sentry Logs, filter by that action, group by
+`durableObject.id`, `durableObject.kind` and `durableObject.level`, and sort
+`max(storage.bytes)` descending. `storage.utilizationPercent` compares the
+sample with the paid-plan cap of 10,000,000,000 bytes. Level labels distinguish
+person and organisation top levels from folders; object IDs are opaque.
+
+Samples at or above 70% create a `DurableObjectStorageCapacity` Sentry issue.
+Configure a production alert for every event whose `exception.type` equals
+`DurableObjectStorageCapacity`, with no notification interval. Capacity events
+share one issue, so a new-issue or priority-only rule can miss later objects.
+The deployment variable `SIGNALBOX_DO_STORAGE_ALERT_PERCENT` overrides that
+threshold. To verify production alerting, temporarily lower it, redeploy,
+trigger normal object activity, verify the exact release and the alert's
+trigger time in Sentry, then
+restore the variable and redeploy. An hour between samples can delay an
+alert after a large write. Home storage is not sampled until Catalog
+provisions home objects; legacy catalog copies stay inactive.
 
 ### Usage analytics
 

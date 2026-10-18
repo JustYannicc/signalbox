@@ -67,6 +67,10 @@
       "types": "./src/signalboxNotes.ts",
       "import": "./src/signalboxNotes.ts"
     },
+    "./signalboxTrash": {
+      "types": "./src/signalboxTrash.ts",
+      "import": "./src/signalboxTrash.ts"
+    },
     "./signalboxThreadKinds": {
       "types": "./src/signalboxThreadKinds.ts",
       "import": "./src/signalboxThreadKinds.ts"

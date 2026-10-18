@@ -34,6 +34,8 @@ export interface DerivedReach {
   readonly humanOnly?: boolean;
   /** Deletes something. Agents need a decision gate first (#335 decision 5). */
   readonly destructive?: boolean;
+  /** Explicitly available to agents despite being destructive, with the same RPC scopes. */
+  readonly agentCallable?: boolean;
   /** Streams only. Defaults to `snapshot` for reads and `final` for writes. */
   readonly stream?: StreamRead;
   /**

@@ -20,12 +20,12 @@ import { RpcInstrumentation } from "../observability/RpcInstrumentation.ts";
 import { makeSectionsWsHandlers } from "../sections/rpc.ts";
 import * as UsageLimitSources from "../usage/UsageLimitSources.ts";
 import { automationRpcHandlers } from "../workflows/rpcHandlers.ts";
-import * as WorkflowEngine from "@signalbox/automations/WorkflowEngine";
 import { makeSignalboxAnalyticsWsHandlers } from "./analytics/rpc.ts";
 import { signalboxContextsWsHandlers } from "./contexts/rpc.ts";
 import { signalboxDrivesWsHandlers } from "./drives/rpc.ts";
 import { signalboxFoldersWsHandlers } from "./folders/rpc.ts";
 import { signalboxNotesWsHandlers } from "./notes/rpc.ts";
+import { signalboxTrashWsHandlers } from "./trash/rpc.ts";
 import { signalboxPreviewsWsHandlers } from "./previews/rpc.ts";
 import { signalboxBrowsingWsHandlers } from "./browsing/rpc.ts";
 import { signalboxPushWsHandlers } from "./push/rpc.ts";
@@ -56,7 +56,6 @@ export const layer = (clientAnalyticsProps: Readonly<Record<string, unknown>>) =
   SignalboxWsRpcGroup.toLayer(
     Effect.gen(function* () {
       const analytics = yield* makeSignalboxAnalyticsWsHandlers(clientAnalyticsProps);
-      const automations = yield* WorkflowEngine.WorkflowEngine;
       const usageLimitSources = yield* UsageLimitSources.UsageLimitSources;
       const pools = yield* AccountPools.AccountPools;
       const poolUsage = yield* PoolUsageHistory.PoolUsageHistory;
@@ -84,12 +83,13 @@ export const layer = (clientAnalyticsProps: Readonly<Record<string, unknown>>) =
               message: "Person timezone settings require Signalbox Cloud.",
             }),
           ),
-        ...automationRpcHandlers(automations),
+        ...automationRpcHandlers(),
         ...sections,
         ...signalboxContextsWsHandlers,
         ...signalboxDrivesWsHandlers,
         ...signalboxFoldersWsHandlers,
         ...signalboxNotesWsHandlers,
+        ...signalboxTrashWsHandlers,
         ...signalboxPreviewsWsHandlers,
         ...signalboxBrowsingWsHandlers,
         ...signalboxPushWsHandlers,

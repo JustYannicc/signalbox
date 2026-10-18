@@ -400,32 +400,31 @@ describe("UserNotes", () => {
     },
   );
 
-  it.effect("moves a deleted folder's notes up, making notes that reach the top private", () => {
+  it.effect("hides a folder's notes in Trash and restores their original home and reading", () => {
     const test = setup();
     return Effect.gen(function* () {
       const { notes, folders } = yield* services;
-      const { payments, cards } = yield* world;
+      const { cards } = yield* world;
       yield* notes.create({ home: folderHome(cards), text: "rotate keys", visibility: "team" });
       yield* until(readOf("rotate keys"));
+      const before = noteWith(yield* notes.snapshot, "rotate keys");
 
-      yield* folders.delete({ id: cards });
-      let note = noteWith(yield* notes.snapshot, "rotate keys");
-      expect(note).toMatchObject({ home: folderHome(payments), visibility: "team" });
-      expect(note.reading).toMatchObject({ reader: "folder" });
-
-      yield* folders.delete({ id: payments });
-      note = noteWith(
-        yield* until((snapshot) => snapshot.notes[0]?.home._tag === "top"),
-        "rotate keys",
+      const trashed = yield* folders.trash({ id: cards });
+      expect((yield* notes.snapshot).notes.some((note) => note.id === before.id)).toBe(false);
+      expect(yield* messageOf(notes.update({ id: before.id, text: "change while hidden" }))).toBe(
+        "That folder no longer exists.",
       );
-      // Its reader was Payments' agent, who can't see it anymore.
-      expect(note).toMatchObject({ home: { _tag: "top" }, visibility: "private" });
-      expect(note.reading).toBeUndefined();
+      expect(yield* messageOf(notes.readAgain({ id: before.id }))).toBe(
+        "That folder no longer exists.",
+      );
+
+      yield* folders.restoreTrash(trashed.trash.trashId);
+      expect(noteWith(yield* notes.snapshot, "rotate keys")).toEqual(before);
     }).pipe(Effect.provide(test.layer));
   });
 
   it.effect(
-    "stops a read when its folder is deleted, so no reading lands in the wrong place",
+    "stops a read when its folder is trashed and restores the note without a stale reading",
     () => {
       const started = Deferred.makeUnsafe<void>();
       const interrupted = Deferred.makeUnsafe<void>();
@@ -437,14 +436,18 @@ describe("UserNotes", () => {
       );
       return Effect.gen(function* () {
         const { notes, folders } = yield* services;
-        const { payments, cards } = yield* world;
+        const { cards } = yield* world;
         yield* notes.create({ home: folderHome(cards), text: "rotate keys", visibility: "team" });
         yield* Deferred.await(started);
 
-        yield* folders.delete({ id: cards });
+        const trashed = yield* folders.trash({ id: cards });
         yield* Deferred.await(interrupted);
+        expect((yield* notes.snapshot).notes.some((note) => note.text === "rotate keys")).toBe(
+          false,
+        );
+        yield* folders.restoreTrash(trashed.trash.trashId);
         const note = noteWith(yield* notes.snapshot, "rotate keys");
-        expect(note.home).toEqual(folderHome(payments));
+        expect(note.home).toEqual(folderHome(cards));
         expect(note.reading).toBeUndefined();
       }).pipe(Effect.provide(test.layer));
     },
