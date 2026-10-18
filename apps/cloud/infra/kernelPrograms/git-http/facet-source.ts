@@ -77,7 +77,10 @@ export class KernelGitHttpFacet extends DurableObject {
       host = new KernelProgramHost({
         registry,
         wakes,
-        programs: new Map([["/usr/bin/git", { manifest: KERNEL_GIT_PROGRAM_MANIFEST, implementation }]]),
+        programs: new Map([[
+          "/usr/bin/git",
+          { manifest: KERNEL_GIT_PROGRAM_MANIFEST, implementation: { kind: "async", run: implementation.run } },
+        ]]),
       });
 
       const alreadyCloned = fs.existsSync("/work/repo/.git/HEAD");
@@ -119,7 +122,15 @@ export class KernelGitHttpFacet extends DurableObject {
     } catch (error) {
       return Response.json({ ok: false, error: error instanceof Error ? error.message : String(error) }, { status: 500 });
     } finally {
-      filesystem?.dispose();
+      try {
+        const disposed = await host?.processes.dispose();
+        if (disposed && disposed.status !== "ok") {
+          throw new Error("Git process cleanup failed: " + JSON.stringify(disposed));
+        }
+      } finally {
+        filesystem?.dispose();
+        wakes.dispose();
+      }
     }
   }
 }
