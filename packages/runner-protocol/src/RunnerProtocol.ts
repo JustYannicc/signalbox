@@ -380,6 +380,8 @@ export const RunnerHello = Schema.Struct({
   ),
   /** The Runner takes `steer` (#562). Absent: an older one, which closes on frames it can't read. */
   steers: Schema.optional(Schema.Boolean),
+  /** Secret registrations are scoped to each run. Absent: an older Runner. */
+  runScopedSecrets: Schema.optional(Schema.Boolean),
   /** Accepts one-shot provider feedback requests. Older runners must never receive them. */
   feedback: Schema.optional(Schema.Boolean),
   workflowStops: Schema.optional(Schema.Boolean),
@@ -529,6 +531,13 @@ export type MachineEnsureRequest = typeof MachineEnsureRequest.Type;
  * absolute paths working. The Runner image creates it; a boat VM mounts its disk there.
  */
 export const MACHINE_HOME = "/home/user/signalbox";
+
+/**
+ * Where Cloudflare puts the CA a light machine's intercepted HTTPS is re-signed
+ * with when its container starts (#592): the backend points Node at it, the
+ * Runner trusts it for everything else.
+ */
+export const EGRESS_CA = "/etc/cloudflare/certs/cloudflare-containers-ca.crt";
 
 /**
  * What a VM's Runner runs: the file a machine backend writes onto a thread's

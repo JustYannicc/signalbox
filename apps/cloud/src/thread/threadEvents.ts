@@ -9,6 +9,7 @@ import {
   type OrchestrationV2ProviderSession,
   type OrchestrationV2ProviderThread,
   type OrchestrationV2Run,
+  type OrchestrationV2RuntimeRequest,
   type OrchestrationV2RunAttempt,
   type OrchestrationV2TurnItem,
   ProviderThreadId,
@@ -151,6 +152,19 @@ export const messageEvent = (
   ...(message.runId === null ? {} : { runId: message.runId }),
   type: "message.updated",
   payload: message,
+});
+
+export const runtimeRequestEvent = (
+  ctx: DecisionContext,
+  threadId: ThreadId,
+  runId: RunId,
+  request: OrchestrationV2RuntimeRequest,
+): OrchestrationV2DomainEvent => ({
+  ...base(ctx, threadId),
+  runId,
+  nodeId: request.nodeId,
+  type: "runtime-request.updated",
+  payload: request,
 });
 
 export const turnItemEvent = (

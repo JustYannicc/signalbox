@@ -102,6 +102,7 @@
   "worker_loaders": [{ "binding": "LOADER" }],
   "vars": {
     "SIGNALBOX_STAGE": "production",
+    "PREVIEW_SYNTHETIC_SECRETS": "0",
     // Production identity. Never reuse it for another deployment.
     "ENVIRONMENT_ID": "4bfb70e5-7954-458a-9b75-4834c0ab4e13",
     "ENVIRONMENT_LABEL": "Signalbox Cloud",

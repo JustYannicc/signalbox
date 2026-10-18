@@ -1,22 +1,31 @@
-import type {
-  OrchestrationV2Command,
-  OrchestrationV2DomainEvent,
-  OrchestrationV2RuntimeRequest,
-  OrchestrationV2ThreadProjection,
+import {
+  TurnItemId,
+  type OrchestrationV2Command,
+  type OrchestrationV2DomainEvent,
+  type OrchestrationV2Run,
+  type OrchestrationV2RuntimeRequest,
+  type OrchestrationV2ThreadProjection,
+  type OrchestrationV2TurnItem,
+  type ProviderApprovalDecision,
+  type ProviderApprovalOption,
+  type RuntimeRequestId,
 } from "@t3tools/contracts";
 import type { ThreadMessage } from "@signalbox/runner-protocol/RunnerProtocol";
 import { isRunAttemptOrContinuation } from "@signalbox/runner-protocol/RunAttemptIdentity";
 
+import { isSecretSendId } from "./secretSendIdentity.ts";
 import { isLiveRun } from "./runState.ts";
 import * as Schema from "effect/Schema";
 import {
   type Decision,
   type DecisionContext,
   nodeEvent,
+  runtimeRequestEvent,
   runEvent,
   turnItemEvent,
   unstampedEventId,
 } from "./threadEvents.ts";
+import { positionTurnItem } from "./turnItemPosition.ts";
 
 const isJson = Schema.is(Schema.Json);
 const hasAnswer = (answer: unknown) =>
@@ -24,6 +33,168 @@ const hasAnswer = (answer: unknown) =>
 
 type Projection = OrchestrationV2ThreadProjection;
 type Request = OrchestrationV2RuntimeRequest;
+type Run = OrchestrationV2Run;
+
+/** The deterministic approval row created by the cloud egress gate. */
+export const requestItemId = (requestId: RuntimeRequestId) =>
+  TurnItemId.make(`turn-item:${requestId}`);
+
+/** Cloud egress approvals use the root and their own card ID; native requests use allocator IDs. */
+export function isCloudApprovalRequest(projection: Projection, request: Request): boolean {
+  if (
+    request.kind !== "permission" ||
+    request.providerTurnId !== null ||
+    request.nativeRequestRef !== null
+  )
+    return false;
+  const run = projection.runs.find((candidate) => candidate.rootNodeId === request.nodeId);
+  if (run === undefined) return false;
+  return projection.turnItems.some(
+    (item) =>
+      item.id === requestItemId(request.id) &&
+      item.type === "approval_request" &&
+      item.requestId === request.id &&
+      item.nodeId === run.rootNodeId &&
+      item.runId === run.id,
+  );
+}
+
+/** An approval the cloud asks the person on `run`, or null when it can't. */
+export function approvalRequestEvents(
+  projection: Projection,
+  run: Run,
+  approval: {
+    readonly requestId: RuntimeRequestId;
+    readonly title: string;
+    readonly prompt: string;
+    readonly appName: string;
+    readonly options: ReadonlyArray<ProviderApprovalOption>;
+  },
+  ctx: DecisionContext,
+): ReadonlyArray<OrchestrationV2DomainEvent> | null {
+  const session = projection.providerSessions.at(-1);
+  if (run.rootNodeId === null || session === undefined) return null;
+  const request: Request = {
+    id: approval.requestId,
+    nodeId: run.rootNodeId,
+    providerTurnId: null,
+    nativeRequestRef: null,
+    kind: "permission",
+    status: "pending",
+    responseCapability: { type: "live", providerSessionId: session.id },
+    createdAt: ctx.now,
+    resolvedAt: null,
+  };
+  const item: OrchestrationV2TurnItem = {
+    id: requestItemId(approval.requestId),
+    threadId: projection.thread.id,
+    runId: run.id,
+    nodeId: run.rootNodeId,
+    providerThreadId: run.providerThreadId,
+    providerTurnId: null,
+    nativeItemRef: null,
+    parentItemId: null,
+    ordinal: 0,
+    status: "waiting",
+    title: approval.title,
+    startedAt: ctx.now,
+    completedAt: null,
+    updatedAt: ctx.now,
+    type: "approval_request",
+    requestId: approval.requestId,
+    requestKind: "permission",
+    prompt: approval.prompt,
+    appName: approval.appName,
+    options: approval.options,
+  };
+  return [
+    runtimeRequestEvent(ctx, projection.thread.id, run.id, request),
+    turnItemEvent(ctx, positionTurnItem(projection, item)),
+  ];
+}
+
+const runOf = (projection: Projection, request: Request) =>
+  projection.runs.find((run) => run.rootNodeId === request.nodeId);
+
+const settledEvents = (
+  projection: Projection,
+  request: Request,
+  settled:
+    | { readonly status: "resolved"; readonly decision: ProviderApprovalDecision }
+    | { readonly status: "expired" },
+  ctx: DecisionContext,
+): ReadonlyArray<OrchestrationV2DomainEvent> => {
+  const run = runOf(projection, request);
+  if (run === undefined) return [];
+  const item = projection.turnItems.find((candidate) => candidate.id === requestItemId(request.id));
+  const declined =
+    settled.status === "expired" || settled.decision === "decline" || settled.decision === "cancel";
+  return [
+    runtimeRequestEvent(ctx, projection.thread.id, run.id, {
+      ...request,
+      status: settled.status,
+      resolvedAt: ctx.now,
+      ...(settled.status === "resolved" ? { decision: settled.decision } : {}),
+    }),
+    ...(item === undefined
+      ? []
+      : [
+          turnItemEvent(ctx, {
+            ...item,
+            status: declined ? "cancelled" : "completed",
+            completedAt: ctx.now,
+            updatedAt: ctx.now,
+          }),
+        ]),
+  ];
+};
+
+/** A decision for a cloud-owned approval; native provider callbacks use respondToRuntimeRequest. */
+export function answerRequestEvents(
+  projection: Projection,
+  requestId: RuntimeRequestId,
+  decision: ProviderApprovalDecision | undefined,
+  ctx: DecisionContext,
+): ReadonlyArray<OrchestrationV2DomainEvent> | string {
+  const request = projection.runtimeRequests.find((candidate) => candidate.id === requestId);
+  if (!request || !isCloudApprovalRequest(projection, request) || request.status !== "pending")
+    return "That request isn't waiting for an answer anymore.";
+  if (decision === undefined) return "Answer it with one of its choices.";
+  const item = projection.turnItems.find((candidate) => candidate.id === requestItemId(requestId));
+  const options = item?.type === "approval_request" ? item.options : undefined;
+  if (options !== undefined && !options.some((option) => option.decision === decision)) {
+    return "That isn't one of this request's choices.";
+  }
+  const events = settledEvents(projection, request, { status: "resolved", decision }, ctx);
+  const run = runOf(projection, request);
+  if (run === undefined || run.status !== "waiting") return events;
+  const otherPending = projection.runtimeRequests.some(
+    (candidate) =>
+      candidate.id !== request.id &&
+      candidate.status === "pending" &&
+      runtimeRequestContext(projection, candidate)?.run.id === run.id,
+  );
+  return !otherPending && !hasPendingSecret(projection, run.id)
+    ? [...events, runEvent(ctx, "run.updated", { ...run, status: "running" })]
+    : events;
+}
+
+/** Expires a cloud approval without changing the root node's native callback state. */
+export function expireRequestEvents(
+  projection: Projection,
+  run: Run,
+  ctx: DecisionContext,
+): ReadonlyArray<OrchestrationV2DomainEvent> {
+  return projection.runtimeRequests
+    .filter(
+      (request) =>
+        request.status === "pending" &&
+        request.nodeId === run.rootNodeId &&
+        isCloudApprovalRequest(projection, request),
+    )
+    .flatMap((request) => settledEvents(projection, request, { status: "expired" }, ctx));
+}
+
 type ResponseCommand = Extract<
   OrchestrationV2Command,
   {
@@ -101,6 +272,7 @@ export function runtimeResponses(
     if (
       request.status !== "resolved" ||
       request.responseCapability.type !== "live" ||
+      isCloudApprovalRequest(projection, request) ||
       !runNodes.has(request.nodeId)
     )
       return [];
@@ -131,6 +303,8 @@ export function respondToRuntimeRequest(
     (candidate) => candidate.id === command.requestId,
   );
   if (request === undefined) return reject("This request was not found.");
+  if (isCloudApprovalRequest(projection, request))
+    return reject("This request is answered by the thread.");
   if (request.status !== "pending")
     return reject("This request has already been answered or ended.");
   if (request.responseCapability.type === "not_resumable")
@@ -223,11 +397,17 @@ export function runtimeRequestEvents(
   event: Extract<OrchestrationV2DomainEvent, { type: "runtime-request.updated" }>,
   ctx: DecisionContext,
 ) {
+  if (isSecretSendId(event.payload.id)) return [];
   const existing = projection.runtimeRequests.find(
     (candidate) => candidate.id === event.payload.id,
   );
-  if (existing !== undefined && existing.status !== "pending") return [];
+  if (
+    existing !== undefined &&
+    (existing.status !== "pending" || isCloudApprovalRequest(projection, existing))
+  )
+    return [];
   const request = event.payload;
+  if (isCloudApprovalRequest(projection, request)) return [];
   const context = runtimeRequestContext(projection, request);
   if (context === null) return [];
   const otherPending = projection.runtimeRequests.some(
@@ -266,6 +446,9 @@ export function expireRuntimeRequests(
         projection.nodes.some((node) => node.id === request.nodeId && node.runId === runId),
     )
     .flatMap((request): ReadonlyArray<OrchestrationV2DomainEvent> => {
+      if (isCloudApprovalRequest(projection, request)) {
+        return settledEvents(projection, request, { status: "expired" }, ctx);
+      }
       const node = projection.nodes.find((node) => node.id === request.nodeId);
       const item = projection.turnItems.find(
         (item) =>

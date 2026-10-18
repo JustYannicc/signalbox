@@ -51,8 +51,11 @@ ENV SIGNALBOX_BROWSER_EXECUTABLE=/opt/chrome-headless-shell/chrome-headless-shel
 # Anything a project needs beyond that comes from its environment (#123).
 RUN apt-get update \
   && apt-get install -y --no-install-recommends ca-certificates fuse3 git lsof openssh-client procps rclone ripgrep \
-    python3 make g++ pkg-config curl wget jq unzip git-lfs \
+    python3 make g++ pkg-config curl wget jq unzip git-lfs libnss3-tools \
   && rm -rf /var/lib/apt/lists/* \
+  # A light machine's HTTPS is re-signed by its egress check (#592); the Runner
+  # adds that CA to the system bundle as it starts (RunnerEgressTrust.ts).
+  && chown node /etc/ssl/certs/ca-certificates.crt \
   && git lfs install --system \
   && install -d -o node -g node /drives
 

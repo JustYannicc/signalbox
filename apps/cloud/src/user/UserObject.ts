@@ -52,6 +52,7 @@ import * as UserLearner from "./UserLearner.ts";
 import * as LocalKeys from "../localKeys/LocalKeys.ts";
 import * as LoginService from "../signIn/LoginService.ts";
 import * as NoteReader from "../notes/NoteReader.ts";
+import * as PreviewSecrets from "../previewSecrets.ts";
 import * as UserNotes from "../notes/UserNotes.ts";
 import * as SignInGrants from "../signIn/SignInGrants.ts";
 import * as Platform from "../platform.ts";
@@ -89,6 +90,7 @@ import * as DrivePeople from "./DrivePeople.ts";
 import * as DriveSharing from "./DriveSharing.ts";
 import * as DriveShortcuts from "./DriveShortcuts.ts";
 import * as OnePasswordAccount from "./OnePasswordAccount.ts";
+import * as SecretSends from "./SecretSends.ts";
 import * as ResourceBindings from "./ResourceBindings.ts";
 import * as ThreadContextLayers from "./threadContextLayers.ts";
 import * as UserContexts from "./UserContexts.ts";
@@ -142,8 +144,10 @@ export interface UserObjectEnv
   /** Also where pasted screenshots and files live (`attachments/`). */
   readonly DRIVE_PACKS?: DrivePacks.PackBucket & AttachmentObjects;
   readonly DRIVE_PACKS_PREFIX?: string;
+  readonly SIGNALBOX_STAGE?: string;
   readonly ENVIRONMENT_ID: string;
   readonly ENVIRONMENT_LABEL?: string;
+  readonly PREVIEW_SYNTHETIC_SECRETS?: string;
   readonly AUTOMATION_HOOK_ORIGIN?: string;
   /** Set by `vp run dev` only. Local workerd has no jurisdictions. */
   readonly LOCAL_WORKERD?: string;
@@ -353,7 +357,16 @@ const makeRuntime = (ctx: DurableObjectState, env: UserObjectEnv) => {
             ),
           ),
           Layer.provideMerge(LegacySections.layer),
-          Layer.provideMerge(UserFolders.layer),
+          Layer.provideMerge(
+            UserFolders.layer.pipe(
+              Layer.provide(
+                Layer.succeed(
+                  PreviewSecrets.SyntheticSecretsEnabled,
+                  PreviewSecrets.previewSyntheticSecretsEnabled(env),
+                ),
+              ),
+            ),
+          ),
           Layer.provideMerge(FolderStarts.layer),
           Layer.provideMerge(
             Layer.mergeAll(
@@ -387,6 +400,7 @@ const makeRuntime = (ctx: DurableObjectState, env: UserObjectEnv) => {
               UserContexts.layerWithDrives,
               ResourceBindings.layer,
               OnePasswordAccount.layer,
+              SecretSends.layer,
             ),
           ),
           Layer.provideMerge(Layer.mergeAll(drives.store, drives.people)),
@@ -682,6 +696,18 @@ export class UserObject extends DurableObject<UserObjectEnv> implements UserObje
 
   onePasswordToken() {
     return this.api.onePasswordToken();
+  }
+
+  secretSendFolder(threadId: Parameters<UserObjectApi["secretSendFolder"]>[0]) {
+    return this.api.secretSendFolder(threadId);
+  }
+
+  secretSendsAllowed(input: Parameters<UserObjectApi["secretSendsAllowed"]>[0]) {
+    return this.api.secretSendsAllowed(input);
+  }
+
+  keepSecretSends(input: Parameters<UserObjectApi["keepSecretSends"]>[0]) {
+    return this.api.keepSecretSends(input);
   }
 
   contextIds() {

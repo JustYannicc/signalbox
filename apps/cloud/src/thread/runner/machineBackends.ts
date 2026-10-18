@@ -81,6 +81,7 @@ const NONE: MachineBackendShape = {
   image: null,
   connectTimeoutMs: CONNECT_TIMEOUT_MS,
   idleTailMs: IDLE_TAIL_MS,
+  guardsSends: false,
   ensure: noBackend("This cloud has no machine backend."),
   stop: nothing("stopped"),
   destroy: nothing("destroyed"),
@@ -146,7 +147,11 @@ export const layerFromEnv = (env: MachineBackendEnv, machine: MachineHost = {}) 
       const light =
         cloudflare === null
           ? null
-          : makeCloudflareMachineBackend({ ...cloudflare, onExit: machine.onExit ?? (() => {}) });
+          : makeCloudflareMachineBackend({
+              ...cloudflare,
+              egress: machine.egress ?? null,
+              onExit: machine.onExit ?? (() => {}),
+            });
       const heavy = yield* heavyFromEnv(env);
       if (light === null && heavy === null) return { light: NONE, heavy: NONE };
       return { light: light ?? heavy ?? NONE, heavy: heavy ?? light ?? NONE };

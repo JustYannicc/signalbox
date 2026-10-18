@@ -237,6 +237,28 @@ export const makeUserObjectApi = (
       ),
     onePasswordToken: () =>
       run(OnePasswordAccount.OnePasswordAccount.use((account) => account.token)),
+    secretSendFolder: (threadId) =>
+      run(
+        UserFolders.UserFolders.use((folders) =>
+          folders.threadHome(ThreadId.make(threadId)).pipe(Effect.map(({ home }) => home)),
+        ),
+      ),
+    secretSendsAllowed: async ({ folderId, host, sends }) => [
+      ...(await run(
+        UserFolders.UserFolders.use((folders) =>
+          folders.allowedSends(
+            host,
+            sends.map((send) => ({ ...send, folderId })),
+          ),
+        ),
+      )),
+    ],
+    keepSecretSends: ({ folderId, grants }) =>
+      run(
+        UserFolders.UserFolders.use((folders) =>
+          folders.keepSends(grants.map((grant) => ({ ...grant, folderId }))),
+        ),
+      ),
     contextIds: () => run(UserDrives.UserDrives.use((drives) => drives.contextIds)),
     clientTraceDimensions: (threadIds) => run(ClientTraceContext.clientTraceDimensions(threadIds)),
     clientFolderDimensions: (folderIds) =>

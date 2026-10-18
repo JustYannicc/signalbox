@@ -46,6 +46,7 @@ import {
   type PreviewTunnel,
 } from "./RunnerPreviewTunnel.ts";
 import { onePasswordSdk, type OnePassword } from "./RunnerOnePassword.ts";
+import { withSecretFill } from "./RunnerSecretFill.ts";
 import { makeRunnerSecrets, makeSecretsRegistrar } from "./RunnerSecrets.ts";
 import { makeRunnerSecretRequests } from "./RunnerSecretTools.ts";
 import { makeRunnerSession, RunnerConnectionError, type RunnerSession } from "./RunnerSession.ts";
@@ -216,7 +217,7 @@ export const makeRunnerHost = Effect.fn("makeRunnerHost")(function* (config: Run
             cwd,
             gatewayUrl: request.modelGatewayUrl,
             claudeQueryRunner: layerSessionQueryRunner(sessions.claude, (runner) =>
-              withContextServer(runner, context.mcpServers),
+              withSecretFill(withContextServer(runner, context.mcpServers), secrets.fillable),
             ),
             mcpServers: context.mcpServers,
             caches: caches.environment,

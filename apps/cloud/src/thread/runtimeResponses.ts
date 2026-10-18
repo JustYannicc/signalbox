@@ -9,7 +9,12 @@ import {
   type OrchestrationV2ThreadProjection,
   type OrchestrationV2RuntimeRequest,
 } from "@t3tools/contracts";
-import { respondToRuntimeRequest, runtimeRequestContext } from "./runtimeRequests.ts";
+import {
+  answerRequestEvents,
+  isCloudApprovalRequest,
+  respondToRuntimeRequest,
+  runtimeRequestContext,
+} from "./runtimeRequests.ts";
 import { activeRun } from "./runLifecycle.ts";
 import { canSteer } from "./steering.ts";
 import { applyEvents } from "./threadProjection.ts";
@@ -50,6 +55,18 @@ export function runtimeResponseEvents(
   answerer: SignalboxAskAnswerer = { kind: "person", personId: "thread-owner" },
 ): Decision {
   const request = projection.runtimeRequests.find((entry) => entry.id === command.requestId);
+  if (
+    command.type === "runtime-request.respond" &&
+    request !== undefined &&
+    isCloudApprovalRequest(projection, request)
+  ) {
+    if (answerer.kind !== "person")
+      return { _tag: "rejected", message: "Only a person can answer a secret-send approval." };
+    const answered = answerRequestEvents(projection, request.id, command.decision, ctx);
+    return typeof answered === "string"
+      ? { _tag: "rejected", message: answered }
+      : { _tag: "accepted", events: answered };
+  }
   const item = projection.turnItems.find(
     (entry) => entry.type === "user_input_request" && entry.requestId === command.requestId,
   );

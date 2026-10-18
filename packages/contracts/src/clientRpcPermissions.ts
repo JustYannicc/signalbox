@@ -106,6 +106,7 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   [AUTOMATION_WS_METHODS.automationsTaskLifecycle]: AuthOrchestrationOperateScope, // signalbox: automations
   [SIGNALBOX_FOLDERS_WS_METHODS.setSecrets]: AuthOrchestrationOperateScope, // signalbox: folders
   [SIGNALBOX_FOLDERS_WS_METHODS.setOnePassword]: AuthOrchestrationOperateScope, // signalbox: folders
+  [SIGNALBOX_FOLDERS_WS_METHODS.revokeSecretSend]: AuthOrchestrationOperateScope, // signalbox: folders
   [SIGNALBOX_FOLDERS_WS_METHODS.setGitHubLend]: AuthOrchestrationOperateScope, // signalbox: folders
   [SIGNALBOX_NOTES_WS_METHODS.create]: AuthOrchestrationOperateScope, // signalbox: notes
   [SIGNALBOX_NOTES_WS_METHODS.update]: AuthOrchestrationOperateScope, // signalbox: notes

@@ -8,6 +8,7 @@ import { FolderInstructions } from "@signalbox/runner-protocol/DriveProtocol";
 import { MachineClass } from "@signalbox/runner-protocol/RunnerProtocol";
 import {
   CommandId,
+  type RunId,
   type NodeId,
   type OrchestrationV2DomainEvent,
   OrchestrationV2DomainEventJson,
@@ -54,6 +55,13 @@ import {
 } from "./currentItemHistory.ts";
 import { migrateDiagnostics } from "./diagnostics/DiagnosticsStore.ts";
 import { migrateBrowsing } from "./browsing/browsingTables.ts";
+import {
+  migrateSecretSends,
+  migrateSecretSendFolderScope,
+  saveSecretSources,
+  saveSecretAsk,
+  type NewSecretAsk,
+} from "./egress/secretSendTables.ts";
 import { migratePullRequestPolls } from "./pullRequests/PullRequestPolls.ts";
 import { migrateStatusNote, readNote, writeNote } from "./statusLine/statusNoteTables.ts";
 import { migratePulls } from "./PullState.ts";
@@ -65,7 +73,11 @@ import {
 } from "./runner/MachineBackend.ts";
 import {
   migrateSecretValues,
+  migrateCurrentSecretValues,
+  migrateSecretRunIdentity,
   readSecretValues,
+  readSecretRevision,
+  beginSecretRun as startSecretRun,
   registerSecretValues,
   type SecretValues,
 } from "./runner/secretValues.ts";
@@ -169,6 +181,10 @@ export interface MachineLease {
   readonly drains?: boolean | undefined;
   /** This generation's Runner takes `steer` (#562), as its `hello` said. */
   readonly steers?: boolean | undefined;
+  /** Once true, this generation can never fall back to legacy secret registration. */
+  readonly runScopedSecrets?: boolean | undefined;
+  /** Sources of this legacy generation's last redaction-only registration. Never current fills. */
+  readonly legacySecretEnvironments?: ReadonlyArray<OnePasswordEnvironmentId> | undefined;
   readonly preparations?: boolean | undefined;
   readonly workflowStops?: boolean | undefined;
   /** This generation's Runner can receive committed native answers. */
@@ -279,6 +295,9 @@ export class ThreadStore extends Context.Service<
       readonly summaryChanged: boolean;
       /** The machine lease as of these events, such as a Runner batch's acknowledgement. */
       readonly machine?: MachineLease;
+      /** The run that owns current secret substitutions after these events, or null when none does. */
+      readonly secretRun?: { readonly generation: number; readonly runId: RunId | null };
+      readonly secretAsk?: NewSecretAsk;
       readonly preparation?: PreparationState;
       readonly commandOutputSeeds?: ReadonlyArray<CommandOutputKey>;
       readonly commandOutput?: ReadonlyArray<CommandOutputDelta>;
@@ -352,11 +371,17 @@ export class ThreadStore extends Context.Service<
     readonly secrets: Effect.Effect<ReadonlyArray<OnePasswordEnvironmentId>, SqlError>;
     /** Their values, as the machine registered them (`runner/secretValues.ts`). Never log them. */
     readonly secretValues: Effect.Effect<SecretValues, SqlError>;
+    /** A compact fence for concurrent egress decisions; changes with current values or sources. */
+    readonly secretRevision: Effect.Effect<number, SqlError>;
+    /** Clears current values and sources when a new run or machine takes over. */
+    readonly beginSecretRun: (generation: number, runId: RunId) => Effect.Effect<void, SqlError>;
     /** Run it in the transaction that checks `generation` still holds the lease. */
     readonly registerSecretValues: (
       generation: number,
+      runId: RunId,
       secrets: ReadonlyArray<SecretValue>,
-    ) => Effect.Effect<void, SqlError>;
+      current: ReadonlyArray<SecretValue>,
+    ) => Effect.Effect<boolean, SqlError>;
     readonly currentTrash: Effect.Effect<ThreadTrashReceipt | null, SqlError>;
     readonly beginTrash: (input: {
       readonly trashId: string;
@@ -455,8 +480,13 @@ const migrations = Migrator.fromRecord({
   // The thread's browser tabs and their recent changes (#585, `browsing/browsingTables.ts`).
   // Same id as the one above on purpose: the runner keys by id and name (`storage/migrations.ts`).
   "0010_browsing": migrateBrowsing,
+  // Where its secrets come from and when it asked to send them (#592, `egress/secretSendTables.ts`).
+  "0011_secret_sends": migrateSecretSends,
   // The thread's status note and the runtime's cursor through ended runs (#670, `statusLine/`).
   "0011_status_note": migrateStatusNote,
+  "0012_current_secret_values": migrateCurrentSecretValues,
+  "0012_secret_send_folder_scope": migrateSecretSendFolderScope,
+  "0013_secret_run_identity": migrateSecretRunIdentity,
   "0012_trash": Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
     yield* sql`CREATE TABLE thread_trash (
@@ -722,6 +752,8 @@ const MachineLeaseJson = Schema.fromJsonString(
     movedUp: Schema.optional(Schema.Boolean),
     drains: Schema.optional(Schema.Boolean),
     steers: Schema.optional(Schema.Boolean),
+    runScopedSecrets: Schema.optional(Schema.Boolean),
+    legacySecretEnvironments: Schema.optional(Schema.Array(OnePasswordEnvironmentId)),
     preparations: Schema.optional(Schema.Boolean),
     workflowStops: Schema.optional(Schema.Boolean),
     runtimeResponses: Schema.optional(Schema.Boolean),
@@ -775,6 +807,11 @@ const toStoredEvent = (row: typeof EventRow.Type): StoredEvent => {
 
 const make = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
+  const withSql = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+    Effect.provideService(effect, SqlClient.SqlClient, sql);
+  const startRun = (generation: number, runId: RunId | null) =>
+    withSql(startSecretRun(generation, runId));
+  const clearSources = () => withSql(saveSecretSources([]));
 
   const owner: ThreadStore["Service"]["owner"] =
     sql`SELECT user_id, context_id, drive_id FROM owner`.pipe(
@@ -814,9 +851,23 @@ const make = Effect.gen(function* () {
       Effect.map((rows) => decodeMachineRows(rows)[0]?.lease ?? NO_MACHINE),
     );
 
-  const saveMachine: ThreadStore["Service"]["saveMachine"] = (lease) =>
+  const writeMachine = (lease: MachineLease) =>
     sql`INSERT INTO machine (id, lease) VALUES (1, ${encodeMachine(lease)})
       ON CONFLICT (id) DO UPDATE SET lease = excluded.lease`.pipe(Effect.asVoid);
+
+  const clearSecretsForGeneration = (generation: number) =>
+    Effect.gen(function* () {
+      const changed = yield* startRun(generation, null);
+      if (changed) yield* clearSources();
+    });
+
+  const saveMachine: ThreadStore["Service"]["saveMachine"] = (lease) =>
+    Effect.gen(function* () {
+      const previous = yield* machine;
+      yield* writeMachine(lease);
+      if (previous.generation !== lease.generation)
+        yield* clearSecretsForGeneration(lease.generation);
+    }).pipe(sql.withTransaction);
 
   const machineRecord: ThreadStore["Service"]["machineRecord"] =
     sql`SELECT record FROM machine_record WHERE id = 1`.pipe(
@@ -891,6 +942,9 @@ const make = Effect.gen(function* () {
       yield* recordCurrentItemState(sequence, event).pipe(
         Effect.provideService(SqlClient.SqlClient, sql),
       );
+    }
+    if (input.secretAsk) {
+      yield* saveSecretAsk(input.secretAsk).pipe(Effect.provideService(SqlClient.SqlClient, sql));
     }
     if (input.command) {
       yield* sql`INSERT INTO receipts
@@ -1064,7 +1118,17 @@ const make = Effect.gen(function* () {
       // Past a revision its attached runs moved beyond the head, too.
       yield* sql`UPDATE outbox SET revision = MAX(${sequence}, revision + 1) WHERE id = 1`;
     }
-    if (input.machine) yield* saveMachine(input.machine);
+    const previousMachine = yield* machine;
+    if (input.machine) yield* writeMachine(input.machine);
+    if (input.secretRun) {
+      const changed = yield* startRun(input.secretRun.generation, input.secretRun.runId);
+      if (changed) yield* clearSources();
+    } else if (
+      input.machine !== undefined &&
+      input.machine.generation !== previousMachine.generation
+    ) {
+      yield* clearSecretsForGeneration(input.machine.generation);
+    }
     if (input.preparation) {
       yield* sql`INSERT INTO preparation (id, state) VALUES (1, ${encodePreparation(input.preparation)})
         ON CONFLICT (id) DO UPDATE SET state = excluded.state`;
@@ -1764,8 +1828,14 @@ const make = Effect.gen(function* () {
     instructions,
     secrets,
     secretValues: readSecretValues.pipe(Effect.provideService(SqlClient.SqlClient, sql)),
-    registerSecretValues: (generation, values) =>
-      registerSecretValues(generation, values).pipe(
+    secretRevision: readSecretRevision.pipe(Effect.provideService(SqlClient.SqlClient, sql)),
+    beginSecretRun: (generation, runId) =>
+      Effect.gen(function* () {
+        const changed = yield* startRun(generation, runId);
+        if (changed) yield* clearSources();
+      }).pipe(sql.withTransaction, Effect.provideService(SqlClient.SqlClient, sql)),
+    registerSecretValues: (generation, runId, values, current) =>
+      registerSecretValues(generation, runId, values, current).pipe(
         Effect.provideService(SqlClient.SqlClient, sql),
       ),
     saveMachineRecord,

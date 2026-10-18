@@ -43,6 +43,7 @@ import { spawnAndCollect } from "@t3tools/provider-core/server/snapshotProbe";
 import { runRunnerHost } from "./RunnerHost.ts";
 import { runRunnerMachine } from "./RunnerMachine.ts";
 import { makeSecretMask, maskingLogger } from "./secretMask.ts";
+import { trustEgressCa } from "./RunnerEgressTrust.ts";
 
 const { values, positionals } = NodeUtil.parseArgs({
   allowPositionals: true,
@@ -86,6 +87,8 @@ const runnerBuild = Effect.gen(function* () {
 const secretMask = makeSecretMask();
 
 const program = Effect.gen(function* () {
+  // Before anything starts: a light machine's HTTPS is re-signed by its egress check.
+  yield* trustEgressCa(process.env, NodeOS.homedir());
   if (positionals[0] === "machine") {
     return yield* runRunnerMachine({
       configPath: NodePath.resolve(values.config),

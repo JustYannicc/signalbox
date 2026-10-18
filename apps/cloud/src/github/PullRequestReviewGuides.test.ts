@@ -58,6 +58,7 @@ const setup = Effect.gen(function* () {
     revision: 0,
     onePasswordConnectedAt: null,
     githubLends: new Map(),
+    secretSends: [],
     tree: {
       folders: [],
       topInstructions: "Explain the accepted contract.",

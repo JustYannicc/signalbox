@@ -1,15 +1,18 @@
 import { ThreadId } from "@t3tools/contracts";
 import { PERSONAL_CONTEXT_ID, SignalboxContextId } from "@t3tools/contracts/signalboxContexts";
 import {
+  FolderId,
   OnePasswordEnvironmentId,
   type SignalboxFoldersSnapshot,
 } from "@t3tools/contracts/signalboxFolders";
+import { SYNTHETIC_SECRET_ENVIRONMENT } from "@signalbox/runner-protocol/SyntheticSecrets";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as TestClock from "effect/testing/TestClock";
 
 import * as Environment from "../environment.ts";
+import * as PreviewSecrets from "../previewSecrets.ts";
 import { layerMemoryStore } from "../testing.ts";
 import { projectIdForDrive } from "./contextProjects.ts";
 import * as LegacySections from "./legacySections.ts";
@@ -72,6 +75,42 @@ const give = (driveId: string, name: string) =>
   );
 
 describe("UserFolders", () => {
+  it.effect("refuses the reserved synthetic Environment outside an enabled preview", () =>
+    Effect.gen(function* () {
+      const { folders } = yield* services;
+      const ordinary = OnePasswordEnvironmentId.make("env-normal");
+      const reserved = OnePasswordEnvironmentId.make(SYNTHETIC_SECRET_ENVIRONMENT);
+
+      const snapshot = yield* folders.setSecrets({
+        level: { _tag: "top" },
+        secrets: { environmentId: ordinary },
+      });
+      expect(snapshot.top).toEqual({ secrets: { environmentId: ordinary } });
+      expect(
+        yield* reasonOf(
+          folders.setSecrets({ level: { _tag: "top" }, secrets: { environmentId: reserved } }),
+        ),
+      ).toBe("invalid");
+      expect((yield* folders.snapshot).top).toEqual({ secrets: { environmentId: ordinary } });
+    }).pipe(Effect.provide(layerMemoryStore)),
+  );
+
+  it.effect("allows the reserved synthetic Environment in an enabled preview", () =>
+    Effect.gen(function* () {
+      const { folders } = yield* services;
+      const reserved = OnePasswordEnvironmentId.make(SYNTHETIC_SECRET_ENVIRONMENT);
+      const snapshot = yield* folders.setSecrets({
+        level: { _tag: "top" },
+        secrets: { environmentId: reserved },
+      });
+      expect(snapshot.top).toEqual({ secrets: { environmentId: reserved } });
+    }).pipe(
+      Effect.provide(layerMemoryStore),
+      // UserFolders captures this value when the outer layer builds its service.
+      Effect.provideService(PreviewSecrets.SyntheticSecretsEnabled, true),
+    ),
+  );
+
   it.effect("nests folders at any depth, and moves them anywhere in their owner's tree", () =>
     Effect.gen(function* () {
       const { folders, contexts } = yield* services;
@@ -213,6 +252,102 @@ describe("UserFolders", () => {
           ),
         ).toEqual(["Top level", "Work / Clients"]);
       }).pipe(Effect.provide(layerMemoryStore)),
+  );
+
+  it.effect("keeps where agents may always send a secret, shows it, and stops it on revoke", () =>
+    Effect.gen(function* () {
+      const { folders, store } = yield* services;
+      yield* store.recordSignIn({ id: USER, email: "a@b.c" });
+      const environmentId = OnePasswordEnvironmentId.make("env-work");
+      const grant = {
+        folderId: null,
+        environmentId,
+        name: "STRIPE_KEY",
+        host: "api.stripe.com",
+      };
+
+      yield* folders.keepSends([grant]);
+      // Keeping it again changes nothing.
+      yield* folders.keepSends([grant]);
+      expect(
+        (yield* folders.snapshot).secretSends?.map(({ folderId, environmentId, name, host }) => ({
+          folderId,
+          environmentId,
+          name,
+          host,
+        })),
+      ).toEqual([grant]);
+      expect([
+        ...(yield* folders.allowedSends("api.stripe.com", [
+          { folderId: null, environmentId, name: "STRIPE_KEY" },
+        ])),
+      ]).toEqual(["STRIPE_KEY"]);
+      expect(
+        (yield* folders.allowedSends("api.stripe.com", [
+          {
+            folderId: undefined as never,
+            environmentId,
+            name: "STRIPE_KEY",
+          },
+        ])).size,
+      ).toBe(0);
+
+      const missingFolder = { ...grant, folderId: undefined as never };
+      yield* folders.keepSends([missingFolder]);
+      expect((yield* folders.snapshot).secretSends).toMatchObject([grant]);
+      expect((yield* folders.revokeSecretSend(missingFolder)).secretSends).toMatchObject([grant]);
+
+      // Another Environment's variable of the same name is another secret.
+      expect(
+        (yield* folders.allowedSends("api.stripe.com", [
+          {
+            folderId: null,
+            environmentId: OnePasswordEnvironmentId.make("env-other"),
+            name: "STRIPE_KEY",
+          },
+        ])).size,
+      ).toBe(0);
+
+      const revoked = yield* folders.revokeSecretSend(grant);
+      expect(revoked.secretSends).toBeUndefined();
+      expect(
+        (yield* folders.allowedSends("api.stripe.com", [
+          { folderId: null, environmentId, name: "STRIPE_KEY" },
+        ])).size,
+      ).toBe(0);
+    }).pipe(Effect.provide(layerMemoryStore)),
+  );
+
+  it.effect("keeps Always grants to their folder and only revokes that folder's grant", () =>
+    Effect.gen(function* () {
+      const { folders, store } = yield* services;
+      yield* store.recordSignIn({ id: USER, email: "a@b.c" });
+      let snapshot = yield* folders.create({ name: "A", parentId: null });
+      snapshot = yield* folders.create({ name: "B", parentId: null });
+      const folderA = FolderId.make(idOf(snapshot, "A"));
+      const folderB = FolderId.make(idOf(snapshot, "B"));
+      const environmentId = OnePasswordEnvironmentId.make("shared-environment");
+      const send = { environmentId, name: "API_KEY", host: "api.example.test" };
+      const grantA = { ...send, folderId: folderA };
+      const grantB = { ...send, folderId: folderB };
+
+      yield* folders.keepSends([grantA]);
+      expect([...(yield* folders.allowedSends(send.host, [grantA]))]).toEqual(["API_KEY"]);
+      expect([...(yield* folders.allowedSends(send.host, [grantB]))]).toEqual([]);
+
+      yield* folders.keepSends([grantB]);
+      snapshot = yield* folders.snapshot;
+      expect(snapshot.secretSends).toHaveLength(2);
+      expect(snapshot.secretSends).toEqual(
+        expect.arrayContaining([expect.objectContaining(grantA), expect.objectContaining(grantB)]),
+      );
+
+      snapshot = yield* folders.revokeSecretSend(grantB);
+      expect(snapshot.secretSends).toHaveLength(1);
+      expect(snapshot.secretSends).toEqual([expect.objectContaining(grantA)]);
+      expect([...(yield* folders.allowedSends(send.host, [grantA]))]).toEqual(["API_KEY"]);
+      expect([...(yield* folders.allowedSends(send.host, [grantB]))]).toEqual([]);
+    }).pipe(Effect.provide(layerMemoryStore)),
   );
 
   it.effect(

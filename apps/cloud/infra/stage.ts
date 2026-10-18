@@ -100,6 +100,12 @@ export const stageWorkerRouting = (
 export const PRODUCTION_STAGE = "production";
 export const PREVIEW_DRIVE_PACKS_BUCKET = "signalbox-drives-preview";
 
+/** Only an explicit opt-in naming this preview may enable synthetic secret resolution. */
+export const syntheticSecretVars = (target: CloudStage, optIn: string) => ({
+  PREVIEW_SYNTHETIC_SECRETS:
+    !target.production && optIn === target.vars.SIGNALBOX_STAGE ? "1" : "0",
+});
+
 const PREVIEW_STAGE = /^pr-([1-9][0-9]*)$/;
 
 /** The pull request number of a preview stage, or null for any other stage. */
@@ -168,6 +174,8 @@ export const cloudStage = (stage: string): CloudStage => {
     automationWorkflow: `signalbox-cloud-pr-${number}-automations`,
     vars: {
       SIGNALBOX_STAGE: stage,
+      // Alchemy tracks this existing preview binding; removing it is a forbidden unbind.
+      DEPLOYMENT_STAGE: stage,
       ENVIRONMENT_ID: `cloud-preview-${number}`,
       ENVIRONMENT_LABEL: `Signalbox Cloud (PR #${number})`,
       EXECUTOR_TOKEN_ISSUER: `https://${cloudDomain}`,

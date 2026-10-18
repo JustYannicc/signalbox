@@ -1,4 +1,4 @@
-import { machineEnsureJson } from "@signalbox/runner-protocol/RunnerProtocol";
+import { EGRESS_CA, machineEnsureJson } from "@signalbox/runner-protocol/RunnerProtocol";
 import { ThreadId } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
@@ -32,6 +32,7 @@ const makeFakeContainer = (refusals = 0) => {
       container.running = true;
       refusing = refusals;
       log.push(`start ${options?.entrypoint?.join(" ")}`);
+      if (options?.env !== undefined) log.push(`env ${JSON.stringify(options.env)}`);
     },
     monitor: () =>
       new Promise<void>((resolve, reject) => {
@@ -44,6 +45,12 @@ const makeFakeContainer = (refusals = 0) => {
     },
     async setInactivityTimeout(ms: number) {
       log.push(`timeout ${ms}`);
+    },
+    async interceptOutboundHttps(addr: string, binding: unknown) {
+      log.push(`intercept https ${addr} ${String(binding)}`);
+    },
+    async interceptAllOutboundHttp(binding: unknown) {
+      log.push(`intercept http ${String(binding)}`);
     },
     getTcpPort(port: number) {
       return {
@@ -74,7 +81,12 @@ describe("CloudflareMachineBackend", () => {
     () =>
       Effect.gen(function* () {
         const fake = makeFakeContainer(2);
-        const backend = makeCloudflareMachineBackend({ ...fake, settings, onExit: () => {} });
+        const backend = makeCloudflareMachineBackend({
+          ...fake,
+          settings,
+          egress: null,
+          onExit: () => {},
+        });
 
         expect(yield* backend.ensure(request(1))).toMatchObject({
           actual: "running",
@@ -112,12 +124,36 @@ describe("CloudflareMachineBackend", () => {
       }),
   );
 
+  it.effect("sends every request the container makes through the thread's egress check", () =>
+    Effect.gen(function* () {
+      const fake = makeFakeContainer();
+      const backend = makeCloudflareMachineBackend({
+        ...fake,
+        settings,
+        egress: () => "egress" as unknown as Fetcher,
+        onExit: () => {},
+      });
+
+      yield* backend.ensure(request(1));
+
+      expect(backend.guardsSends).toBe(true);
+      // Set before the start, so the container gets the CA its HTTPS is signed with.
+      expect(fake.log.slice(0, 2)).toEqual(["intercept https * egress", "intercept http egress"]);
+      expect(fake.log[3]).toBe(`env ${JSON.stringify({ NODE_EXTRA_CA_CERTS: EGRESS_CA })}`);
+    }),
+  );
+
   // A thread moves between classes mid-run; its working directory, home and
   // folder instructions must sit at the same paths on both (#620).
   it.effect("runs its Runner in the same home as a boat machine's", () =>
     Effect.gen(function* () {
       const fake = makeFakeContainer();
-      const backend = makeCloudflareMachineBackend({ ...fake, settings, onExit: () => {} });
+      const backend = makeCloudflareMachineBackend({
+        ...fake,
+        settings,
+        egress: null,
+        onExit: () => {},
+      });
       yield* backend.ensure(request(1));
       const boatHome = CONFIG_PATH.slice(0, CONFIG_PATH.lastIndexOf("/"));
       expect(fake.log[0]).toContain(` --home ${boatHome} `);
@@ -127,7 +163,12 @@ describe("CloudflareMachineBackend", () => {
   it.effect("hands the same container another class's generation, and stops cheaply", () =>
     Effect.gen(function* () {
       const fake = makeFakeContainer();
-      const backend = makeCloudflareMachineBackend({ ...fake, settings, onExit: () => {} });
+      const backend = makeCloudflareMachineBackend({
+        ...fake,
+        settings,
+        egress: null,
+        onExit: () => {},
+      });
       yield* backend.ensure(request(1));
       yield* backend.ensure(request(2, "heavy"));
       expect(fake.log.filter((line) => line.startsWith("start"))).toHaveLength(1);
@@ -144,6 +185,7 @@ describe("CloudflareMachineBackend", () => {
       const fake = makeFakeContainer();
       const exits: Array<string> = [];
       const backend = makeCloudflareMachineBackend({
+        egress: null,
         ...fake,
         settings,
         onExit: (exit, generation) => void exits.push(`${generation}: ${exit.detail}`),
@@ -170,6 +212,7 @@ describe("CloudflareMachineBackend", () => {
           const backend = makeCloudflareMachineBackend({
             ...fake,
             settings,
+            egress: null,
             onExit: (exit) => void exits.push(exit),
           });
           yield* backend.ensure(request(1));

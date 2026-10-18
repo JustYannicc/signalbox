@@ -35,6 +35,7 @@ import * as Evlog from "../observability/Evlog.ts";
 import * as Platform from "../platform.ts";
 import * as CloudflareSearchIndex from "../search/CloudflareSearchIndex.ts";
 import * as PoolDirectory from "../pool/PoolDirectory.ts";
+import * as PreviewSecrets from "../previewSecrets.ts";
 import * as PreviewState from "./PreviewState.ts";
 import * as BrowserTrail from "./preview/BrowserTrail.ts";
 import { PreviewGateway } from "./preview/PreviewGateway.ts";
@@ -70,6 +71,8 @@ import { deliverPendingSummary } from "./summaryOutbox.ts";
 import { deliverPendingSearch } from "./searchOutbox.ts";
 import { THREAD_OBJECT_JURISDICTION, type ThreadObjectApi } from "./ThreadDirectory.ts";
 import * as ThreadBrowsing from "./browsing/ThreadBrowsing.ts";
+import type { ThreadEgressExports } from "./ThreadEgress.ts";
+import * as ThreadSends from "./ThreadSends.ts";
 import * as ThreadEngine from "./ThreadEngine.ts";
 import * as ThreadSecretRequests from "./secrets/ThreadSecretRequests.ts";
 import * as RunnerLiveness from "./RunnerLiveness.ts";
@@ -116,8 +119,11 @@ export interface ThreadObjectEnv
     PreviewEnv,
     RecoveryDrillEnv,
     GitHub.GitHubEnv {
+  readonly SIGNALBOX_STAGE?: string;
+  readonly ENVIRONMENT_ID: string;
   /** Set by `vp run dev` only. Local workerd has no jurisdictions. */
   readonly LOCAL_WORKERD?: string;
+  readonly PREVIEW_SYNTHETIC_SECRETS?: string;
   readonly USERS: UserDirectory.UserObjectNamespace;
   /** Pools' objects: a turn starts only on a model its pool serves (`TurnModels.ts`). */
   readonly POOLS: PoolDirectory.PoolObjectNamespace;
@@ -222,6 +228,8 @@ const makeRuntime = (
         ),
         // The thread's browser tabs (#585), beside its conversation.
         Layer.provideMerge(ThreadBrowsing.layer),
+        // Where its machine may send its secrets (#592).
+        Layer.provideMerge(ThreadSends.layer),
         Layer.provideMerge(
           ThreadFeedback.layer.pipe(
             Layer.provide(Layer.succeed(ThreadFeedback.FeedbackTransport, feedback)),
@@ -257,6 +265,8 @@ const makeRuntime = (
           ),
         ),
         Layer.provideMerge(Layer.mergeAll(TurnDiagnostics.layer, TurnReports.layer)),
+      )
+      .pipe(
         Layer.provideMerge(CloudAnalytics.layerFromEnv(env)),
         Layer.provideMerge(layerMachineBackend(env, machine)),
         Layer.provideMerge(BoatRecoveryControl.layer(settings?.kind === "boat" ? settings : null)),
@@ -342,6 +352,10 @@ export class ThreadObject extends DurableObject<ThreadObjectEnv> implements Thre
       this.gateway,
       {
         container: ctx.container,
+        egress: () =>
+          (ctx as unknown as { readonly exports: ThreadEgressExports }).exports.ThreadEgress({
+            props: { threadId: this.threadId() },
+          }),
         onExit: (exit, generation) =>
           void this.machineExited(exit, generation).catch((cause: unknown) =>
             this.runtime.runPromise(Effect.logError("machine exit failed", String(cause))),
@@ -353,6 +367,7 @@ export class ThreadObject extends DurableObject<ThreadObjectEnv> implements Thre
     );
     this.runnerHost = {
       ctx,
+      syntheticSecrets: PreviewSecrets.previewSyntheticSecretsEnabled(env),
       feedbackResult: (socket, response) => feedback.receive(socket, response),
       now: () => this.now(),
       run: (effect) => this.runtime.runPromise(effect),
@@ -363,7 +378,11 @@ export class ThreadObject extends DurableObject<ThreadObjectEnv> implements Thre
     };
     this.api = makeThreadObjectApi(
       (effect) => this.runtime.runPromise(effect),
-      async () => this.armAlarm(await pushRunnerWork(this.runnerHost)),
+      async () => {
+        // An answer the egress check waits on, or an "Always" to keep (`ThreadSends.ts`).
+        await this.runtime.runPromise(ThreadSends.ThreadSends.use((sends) => sends.settle));
+        await this.armAlarm(await pushRunnerWork(this.runnerHost));
+      },
       (at) => this.setAlarmNoLaterThan(at),
     );
     this.recovery = makeRecoveryDrill(env, {
@@ -617,6 +636,36 @@ export class ThreadObject extends DurableObject<ThreadObjectEnv> implements Thre
   authorizeModel(token: string, provider: ModelGatewayProvider) {
     return this.runtime.runPromise(
       ThreadRunner.ThreadRunner.use((runner) => runner.authorizeModel(token, provider)),
+    );
+  }
+
+  /** The machine's egress check: the values its requests are read for (`Egress.ts`). */
+  egressSecrets() {
+    return this.runtime.runPromise(ThreadStore.ThreadStore.use((store) => store.secretValues));
+  }
+
+  egressUploadDrive() {
+    return this.runtime.runPromise(
+      ThreadRunner.ThreadRunner.use((runner) =>
+        Effect.gen(function* () {
+          const access = yield* runner.previewDrive;
+          if (access === null) return null;
+          const authorization = yield* runner.authorizeDrive(access.token);
+          return authorization._tag === "granted" ? authorization.driveId : null;
+        }),
+      ),
+    );
+  }
+
+  /** The machine's egress check: whether a request may take its secrets to its host. */
+  authorizeSend(input: ThreadSends.SendRequest) {
+    return this.runtime.runPromise(ThreadSends.ThreadSends.use((sends) => sends.authorize(input)));
+  }
+
+  /** Starts a checked request atomically with respect to secret registration. */
+  dispatchSend(request: Request, revision: number) {
+    return this.runtime.runPromise(
+      ThreadSends.ThreadSends.use((sends) => sends.dispatch(request, revision)),
     );
   }
 

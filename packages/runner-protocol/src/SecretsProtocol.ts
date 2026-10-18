@@ -1,8 +1,10 @@
 import { OnePasswordEnvironmentId } from "@t3tools/contracts/signalboxFolders";
+import { RunId } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 
 import { jsonCodec } from "./jsonCodec.ts";
 import { SecretValue } from "./SecretScrubber.ts";
+import { SecretProtectionWarning } from "./SecretProtection.ts";
 
 /**
  * A thread's secrets (#395): the 1Password Environments its folders name,
@@ -26,6 +28,15 @@ export const SecretsAccess = Schema.Struct({
   token: Schema.NullOr(Schema.String),
   /** Top level first; a nearer folder's variable replaces one of the same name from above. */
   environments: Schema.Array(OnePasswordEnvironmentId),
+  /** Trusted preview deployment capability; never supplied by a folder assignment or token. */
+  synthetic: Schema.optionalKey(Schema.Literal(true)),
+  /**
+   * This machine's outbound requests pass through the thread's egress check
+   * (#592), which asks before a secret goes to a new host. Only on a guarded
+   * machine can its broker resolve placeholders; local files and commands
+   * keep them literal. Absent: placeholders stay literal everywhere.
+   */
+  guarded: Schema.optionalKey(Schema.Boolean),
 });
 export type SecretsAccess = typeof SecretsAccess.Type;
 
@@ -34,7 +45,45 @@ export type SecretsAccess = typeof SecretsAccess.Type;
  * still says the machine has none. Values only join; the thread keeps every
  * one it was given, since an old value may still sit in the conversation.
  */
-export const SecretsRegistration = Schema.Struct({ secrets: Schema.Array(SecretValue) });
+export const SecretsRegistration = Schema.Struct({
+  /** The turn this registration belongs to; session tokens live across turns. */
+  runId: RunId,
+  /** Every hidden value read for this turn, added to the thread's redaction history. */
+  secrets: Schema.Array(SecretValue),
+  /** The nearest hidden value for each name, used for outbound placeholders only. */
+  current: Schema.Array(SecretValue),
+  /**
+   * The Environment each secret came from right now, nearest folder winning:
+   * what the person's "always send" answers are kept against (#592). Absent
+   * from a Runner older than this field.
+   */
+  sources: Schema.optionalKey(
+    Schema.Array(Schema.Struct({ name: Schema.String, environment: OnePasswordEnvironmentId })),
+  ),
+});
 export type SecretsRegistration = typeof SecretsRegistration.Type;
 
-export const secretsJson = { registration: jsonCodec(SecretsRegistration) };
+/** Only the original shape may omit run identity; partial new payloads never fall back. */
+const LegacySecretsRegistration = Schema.Struct({
+  secrets: Schema.Array(SecretValue),
+  runId: Schema.optionalKey(Schema.Never),
+  current: Schema.optionalKey(Schema.Never),
+  sources: Schema.optionalKey(Schema.Never),
+}).annotate({ parseOptions: { onExcessProperty: "error" } });
+
+const SecretsRegistrationRequest = Schema.Union([SecretsRegistration, LegacySecretsRegistration]);
+export type SecretsRegistrationRequest = typeof SecretsRegistrationRequest.Type;
+
+const SecretsRegistrationResult = Schema.Struct({
+  warnings: Schema.Array(SecretProtectionWarning),
+});
+
+export const secretsJson = {
+  registration: jsonCodec(SecretsRegistration),
+  registrationResult: jsonCodec(SecretsRegistrationResult),
+  registrationRequest: {
+    decode: Schema.decodeUnknownSync(Schema.fromJsonString(SecretsRegistrationRequest), {
+      onExcessProperty: "error",
+    }),
+  },
+};

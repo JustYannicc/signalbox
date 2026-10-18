@@ -150,7 +150,12 @@ export const launch = (
   );
 
 /** The user sends message `n` of the thread, to start right away. */
-export const send = (engine: ThreadEngine.ThreadEngine["Service"], n: number, text: string) =>
+export const send = (
+  engine: ThreadEngine.ThreadEngine["Service"],
+  n: number,
+  text: string,
+  creation: ThreadEngine.ThreadCreation = personal,
+) =>
   engine.dispatch(
     owner,
     {
@@ -165,7 +170,7 @@ export const send = (engine: ThreadEngine.ThreadEngine["Service"], n: number, te
       dispatchMode: { type: "start_immediately" },
       deliveryIntent: "auto",
     },
-    personal,
+    creation,
   );
 
 export const appendSession = (
@@ -473,6 +478,7 @@ export { ThreadRunner } from "./runner/ThreadRunner.ts";
 export { recoverRunEvents } from "./runner/runRecovery.ts";
 export { IDLE_TAIL_MS } from "./runner/MachineBackend.ts";
 
+export { runtimeResponseUpgrade } from "./runner/runtimeResponseUpgrade.ts";
 export const claudeModelSelection = claude;
 
 export interface RunnerConnection {

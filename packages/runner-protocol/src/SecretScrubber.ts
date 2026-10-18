@@ -28,10 +28,15 @@ export const SecretValue = Schema.Struct({
 export type SecretValue = typeof SecretValue.Type;
 
 /**
- * Shorter values are left alone: masking `1` or `true` would garble every
- * transcript and hides nothing.
+ * By default, shorter values are left alone: masking `1` or `true` would
+ * garble every transcript and hides nothing. Egress can opt into shorter forms.
  */
 export const MIN_SCRUBBED_LENGTH = 7;
+
+interface SecretScrubberOptions {
+  /** Shortest secret form to scrub. Egress uses 1; model/log scrubbing keeps the default. */
+  readonly minLength?: number;
+}
 
 /** What a secret reads as wherever it was scrubbed. */
 export const secretPlaceholder = (name: string) => `{{secret:${name}}}`;
@@ -64,9 +69,15 @@ const asciiEscaped = (text: string) =>
  * The forms a value is scrubbed in: as it is, shell-quoted, URL-encoded, hex,
  * base64 at each alignment (standard and URL-safe), and each of those inside
  * a JSON string, once or twice escaped (tool output that is itself JSON).
- * Distinct, and none shorter than `MIN_SCRUBBED_LENGTH`.
+ * Distinct, and none shorter than `minLength` (7 by default). Empty forms are
+ * never included, even when callers lower the minimum.
  */
-export const secretForms = (value: string): ReadonlyArray<string> => {
+export const secretForms = (
+  value: string,
+  options?: SecretScrubberOptions,
+): ReadonlyArray<string> => {
+  const minLength = resolveMinLength(options);
+  if (value.length === 0) return [];
   const bytes = utf8.encode(value);
   const url = encodeURIComponent(value);
   const hex = Hex.encode(bytes);
@@ -88,10 +99,18 @@ export const secretForms = (value: string): ReadonlyArray<string> => {
     const once = jsonEscaped(base);
     const twice = jsonEscaped(once);
     for (const form of [base, once, twice, asciiEscaped(once), asciiEscaped(twice)]) {
-      if (form.length >= MIN_SCRUBBED_LENGTH) forms.add(form);
+      if (form.length > 0 && form.length >= minLength) forms.add(form);
     }
   }
   return [...forms];
+};
+
+const resolveMinLength = (options?: SecretScrubberOptions) => {
+  const minLength = options?.minLength ?? MIN_SCRUBBED_LENGTH;
+  if (!Number.isSafeInteger(minLength) || minLength < 1) {
+    throw new RangeError("Secret scrubber minLength must be a positive integer");
+  }
+  return minLength;
 };
 
 export interface SecretTextStream {
@@ -132,12 +151,16 @@ interface Span {
   readonly names: Array<string>;
 }
 
-export const makeSecretScrubber = (secrets: Iterable<SecretValue>): SecretScrubber => {
+export const makeSecretScrubber = (
+  secrets: Iterable<SecretValue>,
+  options?: SecretScrubberOptions,
+): SecretScrubber => {
+  const minLength = resolveMinLength(options);
   const forms: Array<{ readonly form: string; readonly name: string }> = [];
   const seen = new Set<string>();
   for (const { name, value } of secrets) {
-    if (value.length < MIN_SCRUBBED_LENGTH) continue;
-    for (const form of secretForms(value)) {
+    if (value.length === 0 || value.length < minLength) continue;
+    for (const form of secretForms(value, { minLength })) {
       // A value under two names keeps the first: the same text, the same placeholder.
       if (seen.has(form)) continue;
       seen.add(form);

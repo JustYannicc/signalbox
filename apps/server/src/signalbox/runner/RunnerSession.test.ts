@@ -63,6 +63,8 @@ const makeFakeThread = Effect.gen(function* () {
   const welcomed = yield* Deferred.make<void>();
   const acked = yield* Ref.make(0);
   const hellos = yield* Ref.make<ReadonlyArray<number>>([]);
+  /** Whether each hello says registrations are fenced to that process's runs. */
+  const helloRunScopedSecrets = yield* Ref.make<ReadonlyArray<boolean | undefined>>([]);
   const workflowStopCapabilities = yield* Ref.make<ReadonlyArray<boolean | undefined>>([]);
   const runtimeResponseCapabilities = yield* Ref.make<ReadonlyArray<boolean | undefined>>([]);
   const helloPulls = yield* Deferred.make<boolean>();
@@ -93,6 +95,7 @@ const makeFakeThread = Effect.gen(function* () {
               yield* Ref.update(feedbackCapabilities, (all) => [...all, message.feedback === true]);
               yield* Deferred.succeed(helloPulls, message.pulls === true);
               yield* Ref.update(hellos, (all) => [...all, message.lastAckedSequence]);
+              yield* Ref.update(helloRunScopedSecrets, (all) => [...all, message.runScopedSecrets]);
               yield* Ref.update(workflowStopCapabilities, (all) => [...all, message.workflowStops]);
               yield* Ref.update(terminalProcessIds, (all) => [...all, message.terminalProcessId]);
               yield* Ref.update(runtimeResponseCapabilities, (all) => [
@@ -146,6 +149,7 @@ const makeFakeThread = Effect.gen(function* () {
     committed,
     acked,
     hellos,
+    helloRunScopedSecrets,
     workflowStopCapabilities,
     helloPulls,
     terminalProcessIds,
@@ -804,6 +808,7 @@ it.layer(NodeCrypto.layer)("RunnerSession", (it) => {
         expect(yield* Ref.get(thread.hellos)).toEqual([0, 1]);
         // And with the turn it holds, so the thread knows it is still running here.
         expect(yield* Ref.get(thread.helloRuns)).toEqual([[], [runId]]);
+        expect(yield* Ref.get(thread.helloRunScopedSecrets)).toEqual([true, true]);
       }),
     ),
   );

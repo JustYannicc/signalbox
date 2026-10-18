@@ -11,6 +11,8 @@ import {
   MIN_RUNNER_PROTOCOL_VERSION,
   RUNNER_PROTOCOL_VERSION,
 } from "@signalbox/runner-protocol/RunnerProtocol";
+import { OnePasswordEnvironmentId } from "@t3tools/contracts/signalboxFolders";
+import { SYNTHETIC_SECRET_ENVIRONMENT } from "@signalbox/runner-protocol/SyntheticSecrets";
 import { describe, expect, it } from "@effect/vitest";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -141,6 +143,77 @@ const command = <T extends object>(type: string, fields: T) => ({
 });
 
 describe("runnerSockets", () => {
+  it.effect("does not fetch the owner's token for synthetic-only secrets", () => {
+    let ownerTokenReads = 0;
+    return withObject(
+      freshDatabase(),
+      (engine, runner) =>
+        Effect.gen(function* () {
+          const environment = OnePasswordEnvironmentId.make(SYNTHETIC_SECRET_ENVIRONMENT);
+          yield* launch(engine, "synthetic-preview", {
+            ...personal,
+            secrets: { top: [], projects: {}, thread: [environment] },
+          });
+          const plan = yield* runner.reconcile;
+          if (plan.ensure === null) throw new Error("expected a machine request");
+          yield* runner.ensured(plan.ensure.generation);
+
+          const socket = fakeSocket();
+          const sockets = [socket.socket];
+          const host = {
+            ...(yield* hostFor(runner, sockets)),
+            syntheticSecrets: true,
+          };
+          yield* say(host, socket, {
+            ...hello(plan.ensure.generation, plan.ensure.token),
+            takenRunIds: [],
+          });
+
+          const start = socket.sent.find((message) => message.type === "turn.start");
+          if (start?.type !== "turn.start") throw new Error("expected the turn");
+          expect(start.secrets).toMatchObject({
+            token: null,
+            environments: [environment],
+            synthetic: true,
+          });
+          expect(ownerTokenReads).toBe(0);
+        }),
+      {
+        secretsToken: () =>
+          Effect.sync(() => {
+            ownerTokenReads += 1;
+            return "real-owner-token";
+          }),
+      },
+    );
+  });
+
+  it.effect("omits the synthetic capability for a host without it", () =>
+    withObject(freshDatabase(), (engine, runner) =>
+      Effect.gen(function* () {
+        const environment = OnePasswordEnvironmentId.make(SYNTHETIC_SECRET_ENVIRONMENT);
+        yield* launch(engine, "synthetic-imported-assignment", {
+          ...personal,
+          secrets: { top: [], projects: {}, thread: [environment] },
+        });
+        const plan = yield* runner.reconcile;
+        if (plan.ensure === null) throw new Error("expected a machine request");
+        yield* runner.ensured(plan.ensure.generation);
+
+        const socket = fakeSocket();
+        const host = yield* hostFor(runner, [socket.socket]);
+        yield* say(host, socket, {
+          ...hello(plan.ensure.generation, plan.ensure.token),
+          takenRunIds: [],
+        });
+
+        const start = socket.sent.find((message) => message.type === "turn.start");
+        if (start?.type !== "turn.start") throw new Error("expected the turn");
+        expect(start.secrets).toEqual({ token: null, environments: [environment] });
+      }),
+    ),
+  );
+
   it.effect("replays committed native answers after socket reconnect and object restart", () =>
     Effect.gen(function* () {
       const filename = freshDatabase();
@@ -485,6 +558,10 @@ describe("runnerSockets", () => {
         holds = false;
         yield* Effect.promise(() => pushRunnerWork(host));
         expect(socket.sent.map((message) => message.type)).toEqual(["welcome", "turn.start"]);
+        expect(socket.sent.find((message) => message.type === "turn.start")).toMatchObject({
+          type: "turn.start",
+          secrets: { token: null, environments: [] },
+        });
       }),
     ),
   );

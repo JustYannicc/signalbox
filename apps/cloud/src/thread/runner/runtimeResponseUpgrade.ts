@@ -2,6 +2,7 @@ import type { OrchestrationV2Run, OrchestrationV2ThreadProjection } from "@t3too
 
 import type { MachineLease } from "../ThreadStore.ts";
 import { awaitsHandoff } from "./runnerTurn.ts";
+import { isCloudApprovalRequest } from "../runtimeRequests.ts";
 
 /** A warm Runner needs updating only when this turn can use a native callback. */
 export function needsRuntimeResponses(
@@ -15,6 +16,7 @@ export function needsRuntimeResponses(
     projection.runtimeRequests.some(
       (request) =>
         request.responseCapability.type === "live" &&
+        !isCloudApprovalRequest(projection, request) &&
         (request.status === "pending" || request.status === "resolved") &&
         projection.nodes.some((node) => node.id === request.nodeId && node.runId === run.id),
     )

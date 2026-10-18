@@ -80,7 +80,9 @@ them.
 ### Secrets
 
 Each level can load secrets from a 1Password Environment, so threads there get them as environment
-variables for things like `vp run dev` or tests. Signalbox never shows their values.
+variables for things like `vp run dev` or tests. Signalbox masks values marked hidden in 1Password
+when they appear in thread history or model requests. Values of 6 characters or fewer, and values
+1Password marks visible by default, aren't masked.
 
 1. In the 1Password desktop app, create an Environment under **Developer › View Environments**. You
    can import a `.env` file there. Copy its ID from **Manage environment › Copy environment ID**.
@@ -98,10 +100,36 @@ secrets loading everywhere.
   set the same name, the nearer folder wins.
 - Variables the agent needs for its own model access (`ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`,
   `CLAUDE_CODE_OAUTH_TOKEN`) and ones Signalbox sets itself, such as `HOME` or `PATH`, are skipped.
-- The agent's model never sees a value. Wherever a value would show, in a transcript or in what
-  the model reads, base64, URL-encoded and other common forms included, it reads
-  `{{secret:NAME}}` instead. Variables set to show their value by default in 1Password, and values
-  of 6 characters or fewer, aren't hidden.
+- The agent's model sees `{{secret:NAME}}` where a hidden value longer than 6 characters would
+  appear in a transcript or model request, including common encoded forms. Values 1Password marks
+  visible by default, and values of 6 characters or fewer, aren't hidden.
+
+#### Using a secret by name
+
+An agent uses a secret by writing `{{secret:NAME}}` in an HTTPS request's URL, header or text body.
+Files and commands keep the placeholder literally. On a light machine, Signalbox fills it only as
+the request leaves the machine, after you allow the destination, and hides any value the destination
+echoes back. Repository machines leave placeholders unchanged.
+
+The first time a secret goes to a new host, the thread asks you: **Don't send**, **Send this
+turn**, or **Always send to** that host. Until you answer, the request waits briefly, then the
+agent is told it's waiting on you. "Always" answers are listed under **Agents always send** in the
+folder's **Secrets…**; **Stop** makes the next send there ask again.
+
+- For now this works on threads that run on a light machine, with Claude or Codex.
+- After a thread has loaded hidden secrets, external request bodies must be inspectable UTF-8
+  text no larger than 1 MiB. Git clone/fetch and Signalbox's own drive uploads are supported;
+  binary uploads such as Git pushes are refused.
+- Downloads still work. Text responses in a supported declared charset are decoded, have every
+  nonempty loaded hidden value replaced, including short ones, and arrive as UTF-8.
+- Binary downloads keep their bytes and are scanned for exact values at least 8 UTF-8 bytes long.
+  Shorter values are not covered; Signalbox warns by name, not value, below that limit. A match
+  stops the transfer before those bytes arrive, though headers or a safe prefix may already have
+  arrived. Signalbox decodes HTTP compression but does not unpack archives. The binary scan cannot
+  reliably detect values in another encoding, including text mislabeled as binary.
+- A program that reads a value and sends it somewhere is checked too, as long as the value is
+  still recognizable. One that scrambles it first can't be stopped, so only give a thread secrets
+  you'd trust it with.
 
 ### Scratch pad
 

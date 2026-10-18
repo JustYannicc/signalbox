@@ -1,3 +1,4 @@
+import { isSecretSendId } from "../secretSendIdentity.ts";
 import { workflowNodes } from "../workflowControl.ts";
 import type { RunnerItem } from "@signalbox/runner-protocol/RunnerProtocol";
 import {
@@ -19,7 +20,9 @@ import {
   turnItemEvent,
   unstampedEventId,
 } from "../threadEvents.ts";
-import { runtimeRequestEvents } from "../runtimeRequests.ts";
+import { positionTurnItem } from "../turnItemPosition.ts";
+export { positionTurnItem, ERROR_ITEM_BAND_POSITION } from "../turnItemPosition.ts";
+import { isCloudApprovalRequest, runtimeRequestEvents } from "../runtimeRequests.ts";
 import { driverFor, runnerInstanceFor } from "../../models/ModelRouting.ts";
 
 /**
@@ -28,9 +31,6 @@ import { driverFor, runnerInstanceFor } from "../../models/ModelRouting.ts";
  * position store places them. The Runner sends events opaque, so they are
  * checked against the domain event schema here.
  */
-
-/** Turn items fill a run's band from the bottom; a failure row sits at its top. */
-export const ERROR_ITEM_BAND_POSITION = 999_999;
 
 /**
  * Adapter event type to the domain event it becomes, and the field holding
@@ -68,26 +68,6 @@ const payloadThreadId = (event: Json, payload: Json) =>
   stringField(payload, "appThreadId") ??
   stringField(payload, "threadId") ??
   stringField(event, "threadId");
-
-/**
- * Turn items are placed in their run's band in the order they first appear,
- * as upstream's position store does, whatever ordinal the adapter chose.
- */
-export function positionTurnItem(
-  projection: OrchestrationV2ThreadProjection,
-  item: OrchestrationV2TurnItem,
-) {
-  const existing = projection.turnItems.find((candidate) => candidate.id === item.id);
-  if (existing !== undefined) return { ...item, ordinal: existing.ordinal };
-  const run = projection.runs.find((candidate) => candidate.id === item.runId);
-  const low = itemOrdinal(run?.ordinal ?? 0, 0);
-  const high = itemOrdinal(run?.ordinal ?? 0, ERROR_ITEM_BAND_POSITION - 1);
-  const last = projection.turnItems
-    .map((candidate) => candidate.ordinal)
-    .filter((ordinal) => ordinal >= low && ordinal <= high)
-    .reduce((max, ordinal) => Math.max(max, ordinal), low);
-  return { ...item, ordinal: last + 1 };
-}
 
 /** A `system_notice` row in `run`'s transcript, after what it already shows. */
 export function systemNoticeEvents(
@@ -138,6 +118,16 @@ export function recordedEvents(
       : undefined;
   const payload = recorded === undefined ? undefined : event[recorded.payload];
   if (recorded === undefined || !isRecord(payload)) return [];
+  if (
+    (recorded.type === "runtime-request.updated" ||
+      recorded.type === "turn-item.updated" ||
+      recorded.type === "node.updated") &&
+    ["id", "requestId", "runtimeRequestId"].some((key) => {
+      const id = stringField(payload, key);
+      return id !== undefined && isSecretSendId(id);
+    })
+  )
+    return [];
   // A run already ended (stopped, or failed for want of a machine) keeps its
   // last transcript rows, but not the harness's view of its session.
   if (LIVE_RUN_ONLY.has(recorded.type) && liveRunId !== item.runId) return [];
@@ -216,6 +206,17 @@ export function recordedEvents(
     if (liveRunId !== item.runId) return [];
     return runtimeRequestEvents(projection, domainEvent, ctx);
   }
+  if (domainEvent.type === "turn-item.updated") {
+    const itemId = domainEvent.payload.id;
+    const existing = projection.turnItems.find((item) => item.id === itemId);
+    if (existing?.type === "approval_request") {
+      const request = projection.runtimeRequests.find(
+        (request) => request.id === existing.requestId,
+      );
+      // Cloud card ownership survives a runner changing the payload's type or request ID.
+      if (request !== undefined && isCloudApprovalRequest(projection, request)) return [];
+    }
+  }
   const requestId =
     domainEvent.type === "node.updated"
       ? domainEvent.payload.runtimeRequestId
@@ -226,7 +227,11 @@ export function recordedEvents(
         : null;
   if (requestId !== null) {
     const request = projection.runtimeRequests.find((request) => request.id === requestId);
-    if (request !== undefined && request.status !== "pending") return [];
+    if (
+      request !== undefined &&
+      (request.status !== "pending" || isCloudApprovalRequest(projection, request))
+    )
+      return [];
   }
   const stopped = new Set<string>();
   const nativeStopped = new Set<string>();

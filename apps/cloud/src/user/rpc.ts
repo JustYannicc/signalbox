@@ -1186,6 +1186,8 @@ export const layerHandlers = (input: {
           folderCall(folders.setSecrets(request)),
         [SIGNALBOX_FOLDERS_WS_METHODS.setOnePassword]: (request) =>
           folderCall(folders.setOnePassword(request)),
+        [SIGNALBOX_FOLDERS_WS_METHODS.revokeSecretSend]: (request) =>
+          folderCall(folders.revokeSecretSend(request)),
         [WS_METHODS.sectionsSubscribe]: () =>
           sections.changes.pipe(
             Stream.tapError((cause) => Effect.logError("cloud sections stream failed", { cause })),

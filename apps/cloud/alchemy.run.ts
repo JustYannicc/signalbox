@@ -34,6 +34,7 @@ import {
   PREVIEW_ZONE,
   SIGNALBOX_ZONE_ID,
   stageWorkerRouting,
+  syntheticSecretVars,
 } from "./infra/stage.ts";
 import type {
   DriveObject,
@@ -54,8 +55,15 @@ const compatibility = {
   flags: ["nodejs_compat", "legacy_module_registry"],
 };
 
-// Each request's wide event (`evlog.config.ts`) is its log line, so Cloudflare's own would repeat it.
-const workerObservability = { enabled: true, logs: { enabled: true, invocationLogs: false } };
+const workerObservability = {
+  enabled: true,
+  logs: {
+    enabled: true,
+    // Wide events are the request log; invocation logs repeat them and include
+    // request URLs that can carry auth material.
+    invocationLogs: false,
+  },
+};
 
 /** A Durable Object class's container, placed as wrangler placed it: tiers 1 and 2, EU only. */
 const euContainer = <Shape>(
@@ -213,7 +221,13 @@ function workerEnv(target: CloudStage) {
           RUNNER_IMAGE: yield* optional("RUNNER_IMAGE"),
         };
 
-    return { ...target.vars, ...shared, ...stageEnv, ...(yield* testSignInEnv(target.production)) };
+    return {
+      ...target.vars,
+      ...shared,
+      ...stageEnv,
+      ...(yield* testSignInEnv(target.production)),
+      ...syntheticSecretVars(target, yield* optional("PREVIEW_SYNTHETIC_SECRET_SOURCE")),
+    };
   });
 }
 

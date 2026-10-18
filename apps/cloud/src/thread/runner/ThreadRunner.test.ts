@@ -46,6 +46,7 @@ const POOL_CLAUDE = {
 
 const startupBackend = {
   kind: "boat" as const,
+  guardsSends: false,
   shape: "small",
   image: "runner:test",
   connectTimeoutMs: 300_000,

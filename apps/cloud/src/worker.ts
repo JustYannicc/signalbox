@@ -46,6 +46,7 @@ export { PreviewLinkRegistry } from "./pool/PreviewLinkRegistryDO.ts";
 export { DriveObject } from "./drive/DriveObject.ts";
 export { SearchIndexObject } from "./search/CloudflareSearchIndex.ts";
 export { ThreadObject } from "./thread/ThreadObject.ts";
+export { ThreadEgress } from "./thread/ThreadEgress.ts";
 export { UserObject } from "./user/UserObject.ts";
 export { ExecutorTokenBindingObject } from "./executor/ExecutorTokenBindingObject.ts";
 export { AutomationHost, AutomationWorkflow } from "./automations/automationWorkflow.ts";

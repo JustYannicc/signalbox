@@ -134,6 +134,7 @@ export const SIGNALBOX_RPC_REACH = {
   }),
   "signalbox.folders.setSecrets": write(),
   "signalbox.folders.setOnePassword": write(),
+  "signalbox.folders.revokeSecretSend": write(),
   "signalbox.folders.setGitHubLend": write({
     summary: "Lend your connected GitHub to a folder's CI steps, or stop lending it.",
   }),

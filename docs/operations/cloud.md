@@ -97,18 +97,104 @@ everything except the CLIProxyAPI's own time to its response headers (the
 token check, the hops, the pool's access check and a cold container's start).
 The turn's diagnostics show it on each request's line.
 
-A turn whose folders have secrets (#395) never sends their values to a
-provider. The Runner registers the values with the thread before the harness
-gets them, and the cloud's side of the gateway replaces every value, in any
-common encoding, with `{{secret:NAME}}` as the request body streams to the
-pool (`scrubModelRequest.ts`). Until the machine running the turn has
-registered, the gateway refuses the turn's requests with "This machine hasn't
-registered the folder's secrets to hide them yet."
+Cloudflare invocation logs include request and response metadata, and Fetch
+records include the request URL. A query string can carry credentials, so the
+Cloud and ModelGateway workers keep custom logs but disable invocation logs in
+`workerObservability` (`apps/cloud/alchemy.run.ts`).
+See [Cloudflare Workers Logs](https://developers.cloudflare.com/workers/observability/logs/workers-logs/).
+
+A turn whose folders have secrets (#395) sends placeholders for values hidden
+by 1Password in model requests. The Runner registers those values with the
+thread before the harness gets them, and the cloud's side of the gateway
+replaces each hidden value longer than six characters, in any common encoding,
+with `{{secret:NAME}}` as the request body streams to the pool
+(`scrubModelRequest.ts`). Until the machine running the turn has registered,
+the gateway refuses the turn's requests with "This machine hasn't registered
+the folder's secrets to hide them yet."
+
+Local files and commands keep placeholders literally, including names the
+thread doesn't have. The Runner does not reject a local edit or command because
+of its placeholders. A light machine's HTTP and HTTPS requests go through the
+thread's egress check outside the container (`interceptOutboundHttps("*")`,
+`thread/egress/`). It fills
+`{{secret:NAME}}` only after the person allows the destination, then redacts
+values echoed in the response. Secret-bearing requests require HTTPS.
+While secret history exists, outbound request bodies must be inspectable UTF-8
+text no larger than 1 MiB. Git clone/fetch negotiation also permits gzip or
+deflate, with the same limit on both compressed and decoded bytes; binary Git
+push bodies remain refused. Every external response is checked, even when its
+request carried no secret. Declared text, JSON, XML and form responses decode
+through the runtime's WHATWG `TextDecoder` using their declared charset, then
+redact every nonempty loaded hidden value and its common encodings. They return
+UTF-8 with the corresponding content type. ASCII and Latin-1 labels normalize
+to Windows-1252; UTF-16 byte order follows its encoding label. Unsupported or
+invalid charsets are refused, and malformed text aborts without passing its
+unredacted bytes. The model-facing text scrubber keeps its existing
+seven-character minimum. Binary responses are scanned against the exact bytes
+of loaded hidden values at least eight UTF-8 bytes long. Shorter values are not
+covered in binary responses; registration returns a names-only warning for a
+hidden value below that threshold. Clean identity-encoded binary responses
+retain their representation headers; decoding, text rewriting or a scrubbed
+representation header removes them. Standard HTTP content encodings are decoded
+before checking; archive formats are not unpacked. Unsupported encodings or
+malformed streams fail closed.
+Before charset decoding, text responses also scan raw UTF-8 bytes of hidden
+values that the declared decoder would change, with the same eight-byte minimum.
+The guarded fetch requests raw response encoding with `encodeResponseBody: "manual"`;
+otherwise Workers can decompress while the broker reads, causing a second decode.
+
+The binary scanner withholds the longest possible match across chunks. A match
+aborts the body before any byte of that secret is delivered. Headers or a safe
+prefix may already have arrived, so a late match truncates the response rather
+than changing its HTTP status. Errors identify the secret's name, never its value.
+An unknown content type uses at most 64 KiB of prefix bytes to choose its path.
+A valid UTF-8 text prefix selects streaming text redaction, including for larger
+bodies; a code point split at the limit waits for its remaining bytes. Later
+invalid UTF-8 aborts that stream. Other prefixes use the exact byte scanner,
+with the same eight-byte minimum. Known binary content types always use that
+scanner.
+
+Platform drive uploads use a separate capability check: the configured storage
+endpoint, authorized drive, signed object path, expiry and byte length must
+match. The pack streams through without buffering; storage responses return
+only their status.
+
+Each run transition clears current substitution values and sources atomically,
+while retaining old values for response and ModelGateway redaction. Registration
+with a run id and machine generation must match the live run. A legacy
+`{ secrets }` registration is accepted for the active lease and run as
+redaction-only compatibility: it keeps the values in redaction history and
+records their Environment source ids for that machine generation, while
+leaving current values and sources empty. It cannot fill placeholders or grant
+a send. Later turns can reuse that history for redaction only when their
+Environment sources match. Changed sources stay unregistered until the Runner
+reloads the secrets and posts registration; a replacement lease must register
+again. Runners advertise `runScopedSecrets` in
+`RunnerHello`. The thread records this capability on the lease after the hello
+or a successful run-scoped registration, and reconnects or legacy posts never
+clear it. A pre-0013 legacy generation receipt without `run_id` retains masking
+only while the lease lacks that capability; it never enables placeholder filling.
+An advertised upgrade requires a fresh registration for the current run.
+Turns without configured environments skip registration
+after the run transition clears current values and sources. "Always" grants
+belong to their folder; sharing a 1Password Environment never shares an
+approval. The
+container trusts the CA Cloudflare re-signs its HTTPS with: the backend sets
+`NODE_EXTRA_CA_CERTS`, and the Runner adds the CA to the system bundle and the
+browser's NSS database as it starts (`RunnerEgressTrust.ts`). A client with
+its own baked-in roots refuses intercepted HTTPS. Boat machines have no egress
+check yet, so placeholders stay unchanged there. Other ports leave the
+container unchecked.
 
 Production's gateway is `signalbox-model-gateway` at `gateway.signalbox.run`,
 deployed after the cloud Worker. Preview gateways use `/anthropic` and
 `/openai` routes on the preview app origin. The preview's `MODEL_GATEWAY_URL`
 uses that origin; production keeps its gateway domain.
+
+To enable the synthetic secret source for one preview, set the `cloud-preview`
+Actions environment variable `PREVIEW_SYNTHETIC_SECRET_SOURCE=pr-N` before its
+deployment. Remove the variable after verification. The runtime also requires
+matching preview bindings; production always disables the source.
 
 `POST http://127.0.0.1:8790/machines/drop-sockets` cuts every Runner's socket,
 to watch one reconnect mid-turn and resend what the thread has not acknowledged.
@@ -614,7 +700,7 @@ changed (or the last read fell short). Changed variables restart the harness
 session, resumed natively, like changed instructions. A value changed in
 1Password reaches a thread on its next machine.
 
-Values never leave the machine as they are. The host's mask
+The Runner masks values in its records. Its host mask
 (`apps/server/src/signalbox/runner/secretMask.ts`) replaces every value
 1Password hides by default, and the token, with `***` in every frame, every
 session row and the Runner's own log. Values of 6 characters or fewer stay

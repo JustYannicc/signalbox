@@ -75,14 +75,15 @@ import { traceIdOf } from "./diagnostics/traceId.ts";
 import { hasPendingTurnWork, scriptedStep } from "./scriptedTurn.ts";
 import { decide, decideLaunch, type Decision, type ThreadWorktree } from "./threadDecider.ts";
 import { threadEvent, type DecisionContext } from "./threadEvents.ts";
-import { expireEndedRuntimeRequests } from "./runtimeRequests.ts";
-import { activeRun } from "./runLifecycle.ts";
+import { expireEndedRuntimeRequests, isCloudApprovalRequest } from "./runtimeRequests.ts";
 import * as ThreadSecretStore from "./secrets/ThreadSecretStore.ts";
 import { settleSecretRequests } from "./secrets/secretLifecycle.ts";
 import { applyEvents, threadShellFromProjection, workStartedAt } from "./threadProjection.ts";
+import { activeRun } from "./runLifecycle.ts";
 import { noteKey, noteRunId, supersedes } from "./statusLine/statusNotePolicy.ts";
 import { type Actor, ThreadNotFoundError, ThreadCommandRejectedError } from "./ThreadAccess.ts";
 import * as ThreadStore from "./ThreadStore.ts";
+import type { NewSecretAsk } from "./egress/secretSendTables.ts";
 import * as ThreadTrash from "./threadTrash.ts";
 import * as PullState from "./PullState.ts";
 import * as TurnModels from "./TurnModels.ts";
@@ -192,6 +193,7 @@ export interface EngineDecision<A> {
   readonly scripts?: ReadonlyArray<RetainedWorkflowScript>;
   readonly events: ReadonlyArray<OrchestrationV2DomainEvent>;
   readonly machine?: ThreadStore.MachineLease;
+  readonly secretAsk?: NewSecretAsk;
   readonly preparation?: PreparationState;
   readonly commandOutput?: ReadonlyArray<CommandOutputDelta>;
   readonly result: A;
@@ -542,6 +544,7 @@ const make = Effect.gen(function* () {
     /** Set by the commit that creates the thread. */
     readonly owner?: ThreadStore.ThreadOwner;
     readonly machine?: ThreadStore.MachineLease;
+    readonly secretAsk?: NewSecretAsk;
     readonly preparation?: PreparationState;
     readonly commandOutput?: ReadonlyArray<CommandOutputDelta>;
     /** The chain's instructions for the run this commit starts. */
@@ -706,15 +709,18 @@ const make = Effect.gen(function* () {
           ? [{ itemId: item.id, runId: item.runId }]
           : [];
       });
+      const machine = input.machine ?? (yield* store.machine);
       const head = yield* store.commit({
         head: current.head,
         events,
+        ...(input.secretAsk === undefined ? {} : { secretAsk: input.secretAsk }),
         ...(input.scripts === undefined ? {} : { scripts: input.scripts }),
         ...(input.command ? { command: input.command } : {}),
         ...(input.instructions === undefined ? {} : { instructions: input.instructions }),
         ...(input.secrets === undefined ? {} : { secrets: input.secrets }),
         ...(current.thread === null ? { owner } : {}),
         ...(input.machine ? { machine: input.machine } : {}),
+        secretRun: { generation: machine.generation, runId: activeRun(projection)?.id ?? null },
         ...(preparation === current.preparation || preparation === null ? {} : { preparation }),
         commandOutputSeeds,
         ...(input.commandOutput === undefined ? {} : { commandOutput: input.commandOutput }),
@@ -883,7 +889,9 @@ const make = Effect.gen(function* () {
           (event) =>
             event.type === "runtime-request.updated" &&
             event.payload.status === "resolved" &&
-            event.payload.responseCapability.type === "live",
+            event.payload.responseCapability.type === "live" &&
+            current.thread !== null &&
+            !isCloudApprovalRequest(current.thread.projection, event.payload),
         );
         if (answersNativeRequest) {
           const machine = yield* Effect.orDie(store.machine);
@@ -1392,6 +1400,7 @@ const make = Effect.gen(function* () {
         ) {
           yield* commit({
             events: decision.events,
+            ...(decision.secretAsk === undefined ? {} : { secretAsk: decision.secretAsk }),
             ...(decision.scripts === undefined ? {} : { scripts: decision.scripts }),
             ...(decision.commandOutput === undefined
               ? {}
