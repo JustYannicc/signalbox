@@ -43,7 +43,7 @@ export function createKernelCoreutilsProgram(
         options: {
           version: "preview1",
           args: [...context.args],
-          env: { ...context.env },
+          env: { ...context.env, PWD: context.filesystem.cwd },
         },
       });
 

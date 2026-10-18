@@ -103,6 +103,12 @@ try {
   results.push(await run("rm", ["moved.txt"]));
   NodeAssert.equal(readFile(filesystem, "/work/moved.txt"), undefined);
 
+  const conflictingPwd = await run("pwd", [], { PWD: "/" });
+  assertResult(conflictingPwd, "/work\n");
+  const relativeReadWithConflictingPwd = await run("cat", ["source.txt"], { PWD: "/" });
+  assertResult(relativeReadWithConflictingPwd, "alpha line\nalpha line\nbeta\n");
+  NodeAssert.equal(readFile(filesystem, "/source.txt"), "wrong root decoy\n");
+
   NodeAssert.equal(results.length, KERNEL_COREUTILS_COMMANDS.length);
   assertResult(results[0], "coreutils echo\n");
   assertResult(results[1], "coreutils printf\n");
@@ -153,6 +159,13 @@ try {
       filesystem: "canonical KernelFileSystem over in-memory SQLite storage",
       cwd: "/work",
       commands: results,
+      cwdValidation: {
+        missingPwd: { pwd: results[2], relativeRead: results[5] },
+        conflictingPwd: {
+          pwd: conflictingPwd,
+          relativeRead: relativeReadWithConflictingPwd,
+        },
+      },
       mkdirModes,
       metadata: {
         source: filesystem.getPosixMetadata("/work/source.txt"),
@@ -174,7 +187,7 @@ try {
   wakes.dispose();
 }
 
-async function run(command, args) {
+async function run(command, args, extraEnv = {}) {
   const executable = `/bin/${command}`;
   const resolved = host.resolve(executable);
   NodeAssert.equal(resolved.status, "ok", `${executable} must resolve from the real registry`);
@@ -195,7 +208,7 @@ async function run(command, args) {
     const spawned = callKernel(host.backend(piped.prepared), "process.spawn", {
       program: resolved.value,
       args: [executable, ...args],
-      env: { PATH: "/bin", PWD: "/work" },
+      env: { PATH: "/bin", ...extraEnv },
     });
     NodeAssert.equal(spawned.status, "ok", `${command} process admission must succeed`);
     if (spawned.status !== "ok") throw new Error(`${command} admission failed`);

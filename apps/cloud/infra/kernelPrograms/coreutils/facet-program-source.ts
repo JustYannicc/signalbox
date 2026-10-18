@@ -92,6 +92,7 @@ export class KernelCoreutilsProgramFacet extends DurableObject {
     host: KernelProgramHost,
     filesystem: KernelFileSystem,
     cwd: string,
+    env: Readonly<Record<string, string>> = {},
   ) {
     const executable = `/bin/${command}`;
     const resolved = host.resolve(executable);
@@ -113,7 +114,7 @@ export class KernelCoreutilsProgramFacet extends DurableObject {
       const spawned = callKernel(host.backend(piped.prepared), "process.spawn", {
         program: resolved.value,
         args: [executable, ...args],
-        env: { PATH: "/bin", PWD: cwd },
+        env: { PATH: "/bin", ...env },
       });
       assert(spawned.status === "ok", `${command} admission failed: ${JSON.stringify(spawned)}`);
       if (spawned.status !== "ok") throw new Error(`${command} admission failed`);
@@ -201,8 +202,37 @@ export class KernelCoreutilsProgramFacet extends DurableObject {
       results.push(await this.run("wc", ["-l", "-w", "-c", "source.txt"], host, filesystem, cwd));
       results.push(await this.run("uniq", ["source.txt"], host, filesystem, cwd));
       results.push(await this.run("cp", ["source.txt", "copied.txt"], host, filesystem, cwd));
+      assert(
+        readFile(filesystem, `${cwd}/copied.txt`) === "alpha line\nalpha line\nbeta\n",
+        "cp did not create the copied file",
+      );
+      assert(
+        readFile(filesystem, `${cwd}/source.txt`) === "alpha line\nalpha line\nbeta\n",
+        "cp changed its source",
+      );
       results.push(await this.run("mv", ["copied.txt", "moved.txt"], host, filesystem, cwd));
+      assert(
+        readFile(filesystem, `${cwd}/copied.txt`) === undefined,
+        "mv left the source file behind",
+      );
+      assert(
+        readFile(filesystem, `${cwd}/moved.txt`) === "alpha line\nalpha line\nbeta\n",
+        "mv did not preserve the moved file",
+      );
       results.push(await this.run("rm", ["moved.txt"], host, filesystem, cwd));
+      assert(readFile(filesystem, `${cwd}/moved.txt`) === undefined, "rm left the moved file");
+
+      const conflictingPwd = await this.run("pwd", [], host, filesystem, cwd, { PWD: "/" });
+      assertResult(conflictingPwd, `${cwd}\n`);
+      const relativeReadWithConflictingPwd = await this.run(
+        "cat",
+        ["source.txt"],
+        host,
+        filesystem,
+        cwd,
+        { PWD: "/" },
+      );
+      assertResult(relativeReadWithConflictingPwd, "alpha line\nalpha line\nbeta\n");
       assert(results.length === KERNEL_COREUTILS_COMMANDS.length, "command proof count differs");
       assertResult(results[0]!, "coreutils echo\n");
       assertResult(results[1]!, "coreutils printf\n");
@@ -275,6 +305,13 @@ export class KernelCoreutilsProgramFacet extends DurableObject {
       return Response.json({
         ok: true,
         commands: results,
+        cwdValidation: {
+          missingPwd: { pwd: results[2], relativeRead: results[5] },
+          conflictingPwd: {
+            pwd: conflictingPwd,
+            relativeRead: relativeReadWithConflictingPwd,
+          },
+        },
         mkdirModes: {
           explicit: filesystem.getPosixMetadata(`${cwd}/relative-dir`),
           recursiveParent: filesystem.getPosixMetadata(`${cwd}/nested-parent`),
