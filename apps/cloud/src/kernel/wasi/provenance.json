@@ -30,6 +30,10 @@
     {
       "file": "internal_wasi_stdio.ts",
       "reason": "Shared stdio types moved unchanged into a leaf module to avoid a type-only descriptor/open-description cycle. Original descriptor exports remain available."
+    },
+    {
+      "file": "internal_wasi_fd_calls.ts",
+      "reason": "Opted-in stdio receives shared descriptor flags and provides synchronous NONBLOCK I/O or EAGAIN; pipe providers honor the flag while poll remains the readiness path."
     }
   ]
 }

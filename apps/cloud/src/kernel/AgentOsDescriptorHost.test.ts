@@ -63,9 +63,9 @@ describe("AgentOS host_process descriptor imports", () => {
       }
 
       const payload = new Uint8Array([7, 8, 9]);
-      expect(await writer.write(payload)).toBe(3);
+      expect(await writer.write(payload, 0)).toBe(3);
       const received = new Uint8Array(3);
-      expect(await reader.readInto(received)).toBe(3);
+      expect(await reader.readInto(received, 0)).toBe(3);
       expect(received).toEqual(payload);
     } finally {
       test.dispose();
@@ -82,17 +82,21 @@ describe("AgentOS host_process descriptor imports", () => {
       const readDescriptor = test.fileSystem.descriptors.get(readFd);
       test.fileSystem.descriptors.get(readAlias).flags = NONBLOCK_FLAG;
       expect(readDescriptor.flags).toBe(NONBLOCK_FLAG);
-      await expect(readDescriptor.stdio?.readInto?.(new Uint8Array(1))).rejects.toMatchObject({
-        code: "EAGAIN",
-      });
+      expect(() =>
+        readDescriptor.stdio?.readInto?.(new Uint8Array(1), readDescriptor.flags),
+      ).toThrowError(
+        expect.objectContaining({
+          code: "EAGAIN",
+        }),
+      );
 
       const writer = test.fileSystem.descriptors.get(writeFd).stdio;
       if (writer?.write === undefined) throw new Error("Pipe writer must expose write behavior");
       test.fileSystem.descriptors.get(writeFd).flags = NONBLOCK_FLAG;
-      expect(await writer.write(new Uint8Array(65_536))).toBe(65_536);
-      await expect(writer.write(new Uint8Array(1))).rejects.toMatchObject({
-        code: "EAGAIN",
-      });
+      expect(await writer.write(new Uint8Array(65_536), NONBLOCK_FLAG)).toBe(65_536);
+      expect(() => writer.write!(new Uint8Array(1), NONBLOCK_FLAG)).toThrowError(
+        expect.objectContaining({ code: "EAGAIN" }),
+      );
     } finally {
       test.dispose();
     }
@@ -111,7 +115,7 @@ describe("AgentOS host_process descriptor imports", () => {
       expect(waiting).toBeInstanceOf(Promise);
       expect(test.wakes.size).toBe(1);
 
-      expect(await writer.write(new Uint8Array([2, 4, 6]))).toBe(3);
+      expect(await writer.write(new Uint8Array([2, 4, 6]), 0)).toBe(3);
       expect(await waiting).toEqual({ bytes: 3n });
       expect(test.wakes.size).toBe(0);
     } finally {
@@ -126,7 +130,7 @@ describe("AgentOS host_process descriptor imports", () => {
     try {
       const [readFd] = test.pair();
       current = abort.signal;
-      const read = test.fileSystem.descriptors.get(readFd).stdio?.readInto?.(new Uint8Array(1));
+      const read = test.fileSystem.descriptors.get(readFd).stdio?.readInto?.(new Uint8Array(1), 0);
       abort.abort();
       await expect(read).rejects.toMatchObject({ code: "ECANCELED" });
       expect(test.wakes.size).toBe(0);
@@ -180,7 +184,7 @@ describe("AgentOS host_process descriptor imports", () => {
       const reader = test.fileSystem.descriptors.get(readFd).stdio;
       if (reader?.readInto === undefined) throw new Error("Pipe reader must expose read behavior");
       const bytes = new Uint8Array(1);
-      expect(await reader.readInto(bytes)).toBe(0);
+      expect(await reader.readInto(bytes, 0)).toBe(0);
     } finally {
       test.dispose();
     }
