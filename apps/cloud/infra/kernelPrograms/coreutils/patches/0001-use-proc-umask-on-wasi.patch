@@ -1,0 +1,33 @@
+diff --git a/toolchain/stubs/uucore/src/lib/features/mode.rs b/toolchain/stubs/uucore/src/lib/features/mode.rs
+--- a/toolchain/stubs/uucore/src/lib/features/mode.rs
++++ b/toolchain/stubs/uucore/src/lib/features/mode.rs
+@@ -10,6 +10,9 @@
+-// wasmVM: On non-unix, non-WASI platforms, use libc umask.
+-// WASI has no umask syscall so we stub it below.
+-#[cfg(not(any(unix, target_os = "wasi")))]
++// WASI uses the custom libc umask shim. Other non-Unix targets use libc.
++#[cfg(all(not(unix), not(target_os = "wasi")))]
+ use libc::umask;
++#[cfg(target_os = "wasi")]
++unsafe extern "C" {
++    fn umask(mask: u32) -> u32;
++}
+ #[cfg(any(target_os = "linux", target_os = "android"))]
+ use std::fs;
+@@ -206,10 +209,14 @@ pub fn get_umask() -> u32 {
+         mask.bits() as u32
+     }
+ 
+-    // wasmVM: WASI has no umask syscall — return standard default 022
++    // AgentOS wasi-libc routes umask through the host_process import.
+     #[cfg(target_os = "wasi")]
+     {
+-        0o022
++        // SAFETY: The host call only updates this process's umask. This command
++        // runs in a single-threaded WASM instance, so restoring it is race-free.
++        let mask = unsafe { umask(0) };
++        unsafe { umask(mask) };
++        mask as u32
+     }
+ 
+     #[cfg(not(any(unix, target_os = "wasi")))]
