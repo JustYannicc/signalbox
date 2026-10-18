@@ -98,7 +98,9 @@ export default workflow(async (w) => {
   });
 });
 `,
-  "work-through-tickets.ts": `// Requires a GitHub folder, the Signalbox step workflow, and a lent GitHub account with access to the target repository.
+  "work-through-tickets.ts": `// Requires a GitHub folder, the Signalbox step workflow, and a lent GitHub account.
+// Add a repository secret named GH_TOKEN with access to the target repository:
+// issues and pull requests read/write, checks and Actions read, contents write for merging and deleting branches.
 import { execFileSync } from "node:child_process";
 
 export const meta = {
@@ -297,7 +299,7 @@ function slots(size: number) {
 }
 
 export default workflow(async (w, settings: Settings) => {
-  const tickets = await w.run("Read the tickets and their blockers", { on: "github-actions" }, readTickets, settings.repo, settings.tickets);
+  const tickets = await w.run("Read the tickets and their blockers", { on: "github-actions", secrets: ["GH_TOKEN"] }, readTickets, settings.repo, settings.tickets);
   const external = new Set(settings.external ?? []);
   // Each ticket settles once: true when it merged (or was already closed).
   const finish = new Map<number, (merged: boolean) => void>();
@@ -373,11 +375,11 @@ async function land(w, settings: Settings, ticket: Ticket, external: boolean, st
   const repo = settings.repo;
   const check = settings.check ?? "Check";
   const branch = \`tickets/\${ticket.number}\`;
-  let pr = await w.run(\`Look for #\${ticket.number}'s pull request\`, { on: "github-actions" }, findPullRequest, repo, ticket.number, branch);
+  let pr = await w.run(\`Look for #\${ticket.number}'s pull request\`, { on: "github-actions", secrets: ["GH_TOKEN"] }, findPullRequest, repo, ticket.number, branch);
   // Another thread is building it?
   if (!pr && external) {
     const waited = await w.repeat("Wait for the other thread's pull request", { max: 48 }, async (w) => {
-      const found = await w.run("Look again", { on: "github-actions" }, waitForPullRequest, repo, ticket.number, branch, 14);
+      const found = await w.run("Look again", { on: "github-actions", secrets: ["GH_TOKEN"] }, waitForPullRequest, repo, ticket.number, branch, 14);
       if (found) return w.done(found);
     });
     pr = waited.done ? waited.value : null;
@@ -391,14 +393,14 @@ async function land(w, settings: Settings, ticket: Ticket, external: boolean, st
       timeout: { hours: 24 },
     });
     state.thread = built.threadId;
-    pr = await w.run("Find its pull request", { on: "github-actions" }, findPullRequest, repo, ticket.number, branch);
+    pr = await w.run("Find its pull request", { on: "github-actions", secrets: ["GH_TOKEN"] }, findPullRequest, repo, ticket.number, branch);
     // Did it forget to open one?
     if (!pr) {
       await w.agent("Ask for the pull request", {
         prompt: \`Push \\\`\${branch}\\\` and open the pull request against main with "Closes #\${ticket.number}" in the body.\`,
         thread: state.thread,
       });
-      pr = await w.run("Find it again", { on: "github-actions" }, findPullRequest, repo, ticket.number, branch);
+      pr = await w.run("Find it again", { on: "github-actions", secrets: ["GH_TOKEN"] }, findPullRequest, repo, ticket.number, branch);
     }
     // Still none?
     if (!pr) return { merged: false, why: "Its agent finished without opening a pull request." };
@@ -408,7 +410,7 @@ async function land(w, settings: Settings, ticket: Ticket, external: boolean, st
 
   const landed = await w.repeat(\`Land \${pr.url}\`, { max: 5 }, async (w, round) => {
     const ci = await w.repeat("Wait for CI", { max: 24 }, async (w) => {
-      const status = await w.run("Check CI", { on: "github-actions" }, checkPullRequest, repo, pr.number, check, 14);
+      const status = await w.run("Check CI", { on: "github-actions", secrets: ["GH_TOKEN"] }, checkPullRequest, repo, pr.number, check, 14);
       // Settled?
       if (status.state !== "pending") return w.done(status);
     });
@@ -440,7 +442,7 @@ async function land(w, settings: Settings, ticket: Ticket, external: boolean, st
       await fix(w, settings, ticket, pr, state, round, \`A reviewer asked for changes:\\n\\n\${review.text}\`);
       return;
     }
-    const merge = await w.run(\`Merge \${pr.url}\`, { on: "github-actions" }, mergePullRequest, repo, pr.number);
+    const merge = await w.run(\`Merge \${pr.url}\`, { on: "github-actions", secrets: ["GH_TOKEN"] }, mergePullRequest, repo, pr.number);
     // Did GitHub take it?
     if (merge.ok) return w.done({ merged: true });
     await fix(w, settings, ticket, pr, state, round, \`GitHub refused the merge: \${merge.error}\`);

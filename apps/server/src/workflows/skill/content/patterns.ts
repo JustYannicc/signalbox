@@ -5,10 +5,10 @@ Shapes that work. Each has a complete version in \`examples/\`.
 
 ## Supervise agents with code
 
-For processes where agents do the work and something has to decide order, quality and completion: build → check → fix → review → land. Code steps use GitHub Actions after the setup in \`github-actions.md\`.
+For processes where agents do the work and something has to decide order, quality and completion: build → check → fix → review → land. Code steps use GitHub Actions after the setup in \`github-actions.md\`. For \`gh\`, provision a repository \`GH_TOKEN\` secret with the target-repository permissions the commands need, and pass \`secrets: ["GH_TOKEN"]\` on each step. Lending GitHub authenticates dispatch, not the CLI inside the job.
 
 - One \`w.agent\` per unit of work, on its own branch: \`worktree: { base: "main", branch: \\\`tickets/\${n}\\\` }\`.
-- Read where the work lives from the result (\`branch\`, \`pullRequest\`), or look it up deterministically with \`gh\` in \`w.run(label, { on: "github-actions" }, fn, ...args)\`. Don't parse the agent's prose.
+- Read where the work lives from the result (\`branch\`, \`pullRequest\`), or look it up deterministically with \`gh\` in \`w.run(label, { on: "github-actions", secrets: ["GH_TOKEN"] }, fn, ...args)\`. Don't parse the agent's prose.
 - Send problems back to the same agent with \`thread: built.threadId\`; it keeps its context and worktree.
 - Gate on facts, not on the agent saying it's done: CI status from \`gh pr checks\`, an independent reviewer agent (a different model is a good second opinion), and a \`w.judge\` over the reviewer's verdict.
 - Confirm every side effect from the source of truth before acting on it: a merge counts when the API says \`merged: true\`, not when a command printed something. Treat a CLI's non-zero exit as failure unless you've checked that command's exit codes (\`gh pr checks\` exits non-zero while checks are pending).
@@ -42,11 +42,11 @@ The built-in "Watch pull request" (\`builtin:watch-pull-request\`, \`examples/wa
 
 ## Wait for something slow outside
 
-For an external system without an event or webhook, a GitHub Actions step can poll it with a bounded function. GitHub Actions setup is required:
+For an external system without an event or webhook, a GitHub Actions step can poll it with a bounded function. GitHub Actions setup is required. This \`gh\` helper also needs a repository \`GH_TOKEN\` secret with permission to read the target repository's checks:
 
 \`\`\`ts
 const ci = await w.repeat("Wait for CI", { max: 24 }, async (w) => {
-  const status = await w.run("Check CI", { on: "github-actions" }, checkPullRequest, repo, pr.number, 14);
+  const status = await w.run("Check CI", { on: "github-actions", secrets: ["GH_TOKEN"] }, checkPullRequest, repo, pr.number, 14);
   if (status.state !== "pending") return w.done(status);
 });
 \`\`\`
