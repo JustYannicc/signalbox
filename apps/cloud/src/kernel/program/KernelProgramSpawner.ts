@@ -345,6 +345,7 @@ export class KernelProgramSpawner {
     }
 
     const runtime = createKernelWasiRuntime(implementation.module, {
+      ...(implementation.agentOsPreopens ? { agentOsPreopens: true } : {}),
       prepared,
       args,
       env,

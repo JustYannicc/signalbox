@@ -15,6 +15,10 @@ import type { ValidatedOptions } from "./internal_wasi_options.ts";
 type WasmArgument = number | bigint;
 type WasmFunction = (...args: WasmArgument[]) => unknown;
 type ImportFunction = (...args: WasmArgument[]) => WasiCall<number>;
+export type WasiImportArgumentTransform = (
+  name: string,
+  args: readonly WasmArgument[],
+) => readonly WasmArgument[];
 interface Instance {
   exports: Record<string, unknown>;
 }
@@ -60,6 +64,7 @@ export class WasiLifecycle {
     options: ValidatedOptions,
     asyncMode: boolean,
     descriptorContext?: WasiDescriptorContext,
+    transformArguments?: WasiImportArgumentTransform,
   ) {
     this.#async = asyncMode;
     this.#returnOnExit = options.returnOnExit;
@@ -96,7 +101,7 @@ export class WasiLifecycle {
         ? new (getJSPI().Suspending)(async (...args): Promise<number> => {
             try {
               if (this.#closed) throw stateError("WASI has been closed");
-              return await runAsync(handler(...args));
+              return await runAsync(handler(...(transformArguments?.(name, args) ?? args)));
             } catch (error) {
               return mapErrno(error);
             }
@@ -104,7 +109,7 @@ export class WasiLifecycle {
         : (...args: WasmArgument[]): number => {
             try {
               if (this.#closed) throw stateError("WASI has been closed");
-              return runSync(handler(...args));
+              return runSync(handler(...(transformArguments?.(name, args) ?? args)));
             } catch (error) {
               return mapErrno(error);
             }

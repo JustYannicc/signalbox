@@ -185,6 +185,7 @@ export class KernelProgramHost {
         });
       }
       const runtime = createKernelWasiRuntime(implementation.module, {
+        ...(implementation.agentOsPreopens ? { agentOsPreopens: true } : {}),
         prepared,
         args,
         env: withHome(prepared, env),

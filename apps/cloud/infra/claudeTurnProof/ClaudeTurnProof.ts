@@ -8,10 +8,12 @@ import { createNodeFs } from "../../src/isolate/NodeFs.ts";
 import { createNodeProcess } from "../../src/isolate/NodeProcess.ts";
 import { createNodePath } from "../../src/isolate/NodePath.ts";
 import { createNodeOs } from "../../src/isolate/NodeOs.ts";
-import { createNodeModule } from "../../src/isolate/NodeModule.ts";
+import * as NodeConstants from "node:constants";
+import { createNodeConstants } from "../../src/isolate/NodeConstants.ts";
+import { createProofEnvironment, type ProofPackages } from "./proofEnvironment.ts";
 import { bootNodeRelease } from "../../src/isolate/NodeBootstrap.ts";
 import type { NodeBridge } from "../../src/isolate/NodeBridge.ts";
-import { createBunShim } from "../../src/isolate/BunShim.ts";
+import { createProofBun } from "./proofBun.ts";
 import { decodeVerifiedAssetBundle } from "./assetBundle.ts";
 import { createMockMessagesApi } from "./mockMessages.ts";
 import { getNativeHostModules } from "./proofNativeModules.ts";
@@ -32,6 +34,8 @@ export interface ClaudeTurnProofConfig {
   readonly pins: Readonly<Record<string, unknown>>;
   readonly requireSeed: boolean;
   readonly assetsOnly?: boolean;
+  readonly packagesOnly?: boolean;
+  readonly loadPackages: () => Promise<ProofPackages>;
   readonly scenario: ProofScenario;
   readonly contextTokenEquivalent?: ContextTokenEquivalent;
   readonly loadRelease: () => Promise<unknown>;
@@ -59,7 +63,7 @@ export function createClaudeTurnProofClass(
           return Response.json(await verifySeededAssets(this.filesystem().fs, config.assets));
         }
         if (config.assetsOnly) return new Response("Asset verification only", { status: 404 });
-        if (path !== "/boot")
+        if (path !== (config.packagesOnly ? "/verify-packages" : "/boot"))
           return Response.json({ ok: false, error: "Unknown proof endpoint" }, { status: 404 });
         if (config.requireSeed && !this.assetsSeeded)
           throw new Error("ERR_DIAGNOSTIC_ASSETS_NOT_SEEDED");
@@ -137,34 +141,18 @@ export function createClaudeTurnProofClass(
           complete("process-exit");
         });
         let bridge: NodeBridge;
-        const module = createNodeModule({ require: (specifier) => bridge.require(specifier) });
+        const environment = createProofEnvironment({
+          bridge: () => bridge,
+          loadPackages: config.loadPackages,
+          onBuiltinFailure: (specifier) => output.builtinMissing.push(specifier),
+        });
+        let packageLoad: Awaited<ReturnType<typeof environment.load>> | undefined;
         const path = createNodePath(filesystem);
-        const { bun } = createBunShim({
+        const bun = createProofBun({
+          fs,
           env,
-          main: "/$bunfs/root/cli",
-          version: "1.3.11",
-          files: {
-            readFile: async (target) => {
-              if (
-                typeof target === "string" &&
-                Object.hasOwn(config.assets, target) &&
-                !this.assetsSeeded
-              ) {
-                throw Object.assign(new Error(`Diagnostic asset bytes not seeded: ${target}`), {
-                  code: "ERR_DIAGNOSTIC_ASSET_UNSEEDED",
-                });
-              }
-              const bytes = fs.fs.readFileSync(target);
-              return typeof bytes === "string" ? new TextEncoder().encode(bytes) : bytes;
-            },
-            writeFile: async (target, bytes) => {
-              fs.fs.writeFileSync(target, bytes);
-            },
-            stat: async (target) =>
-              typeof target === "number" ? fs.fs.fstatSync(target) : fs.fs.statSync(target),
-            statSync: (target) =>
-              typeof target === "number" ? fs.fs.fstatSync(target) : fs.fs.statSync(target),
-          },
+          assets: config.assets,
+          isSeeded: () => this.assetsSeeded,
           onMissing: (member) => output.bunMissing.push(member),
         });
         const modules = {
@@ -175,7 +163,8 @@ export function createClaudeTurnProofClass(
           path,
           "path/posix": path.posix,
           "path/win32": path.win32,
-          module,
+          module: environment.module,
+          constants: createNodeConstants(NodeConstants, fs.fs),
         };
         output.milestones.push("host-ready");
         observation.startDeadline();
@@ -183,6 +172,13 @@ export function createClaudeTurnProofClass(
           await Promise.race([
             bootNodeRelease({ modules, globals: { Bun: bun, process } }, async (installed) => {
               bridge = installed;
+              output.milestones.push("package-load-start");
+              packageLoad = await environment.load();
+              output.milestones.push("package-load-returned");
+              if (config.packagesOnly) {
+                complete("package-load-success");
+                return;
+              }
               output.milestones.push("release-import-start");
               const release = await config.loadRelease();
               output.milestones.push("release-import-returned");
@@ -209,12 +205,15 @@ export function createClaudeTurnProofClass(
             : undefined;
         return Response.json({
           ...output,
+          packageLoad,
           scenario: config.scenario,
           prompt: { estimatedTokens: prompt.estimatedTokens, paddingBytes: prompt.paddingBytes },
           scenarioResult,
           pins: config.pins,
           assetsSeeded: this.assetsSeeded,
-          ok: terminalSuccess(output) && (scenarioResult?.ok ?? mock.complete),
+          ok: config.packagesOnly
+            ? packageLoad !== undefined && output.errors.length === 0
+            : terminalSuccess(output) && (scenarioResult?.ok ?? mock.complete),
           mock: { requests: mock.requests, denied: mock.deniedRequests, complete: mock.complete },
           process: {
             same: Object.is(globalThis.process, process),
