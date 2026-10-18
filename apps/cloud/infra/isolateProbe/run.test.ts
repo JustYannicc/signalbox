@@ -199,11 +199,14 @@ describe("probe subprocess bounds", () => {
 });
 
 describe("deployed probe URL validation", () => {
+  const credentialUrl = new URL("https://sb-isolate-probe-12345678.account.workers.dev");
+  credentialUrl.username = "user";
+  credentialUrl.password = "password";
   it.each([
     "https://sb-isolate-probe-12345678.evil.workers.dev.evil.test",
     "https://sb-isolate-probe-12345678.other.test",
     "https://sb-isolate-probe-1234567890.account.workers.dev",
-    "https://user:password@sb-isolate-probe-12345678.account.workers.dev",
+    credentialUrl.href,
     "https://sb-isolate-probe-12345678.account.workers.dev/run",
   ])("rejects %s", (url) => {
     expect(() => probeUrl(`url: '${url}'`, "isolate-probe-12345678")).toThrow();
