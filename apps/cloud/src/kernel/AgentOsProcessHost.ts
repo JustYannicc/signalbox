@@ -5,6 +5,7 @@ import {
   type AgentOsSpawnRequest,
 } from "./AgentOsProcessWire.ts";
 import { kernelError, type KernelHandle, type KernelResult } from "./KernelAbi.ts";
+import { runCurrentKernelCpuAsyncSystemImport } from "./KernelCpuExecution.ts";
 import type { KernelProcessTable } from "./KernelProcessTable.ts";
 import type { KernelWakeRegistry } from "./KernelWakeRegistry.ts";
 
@@ -93,25 +94,30 @@ export class AgentOsProcessHost {
     };
   }
 
-  async #spawn(args: readonly number[]): Promise<number> {
-    if (this.#options.signal?.aborted) return 11;
-    const decoded = decodeAgentOsSpawnRequest(this.#options.memory(), args, this.#options.limits);
-    if (decoded.status !== "ok") return decoded.errno;
-    const result = await this.#options.spawn(decoded.value);
-    if (result.status === "would_block") {
-      this.#options.wakes.release(result.wakeToken);
-      // The prepared spawn owner must await admission itself; repeating spawn
-      // here could launch a second child or repeat its file actions.
-      return 29;
-    }
-    if (result.status !== "ok") return kernelErrno(result.error.code);
-    const child = this.#options.processes.info(result.value);
-    if (child.status === "would_block") {
-      this.#options.wakes.release(child.wakeToken);
-      return EAGAIN;
-    }
-    if (child.status === "error") return kernelErrno(child.error.code);
-    return writeAgentOsPid(this.#options.memory(), decoded.value.pidPointer, child.value.pid);
+  #spawn(args: readonly number[]): Promise<number> {
+    // Spawn admission can await preparation without going through a wake token.
+    return runCurrentKernelCpuAsyncSystemImport(async (runSystem) => {
+      if (this.#options.signal?.aborted) return 11;
+      const decoded = decodeAgentOsSpawnRequest(this.#options.memory(), args, this.#options.limits);
+      if (decoded.status !== "ok") return decoded.errno;
+      const result = await this.#options.spawn(decoded.value);
+      return runSystem(() => {
+        if (result.status === "would_block") {
+          this.#options.wakes.release(result.wakeToken);
+          // The prepared spawn owner must await admission itself; repeating spawn
+          // here could launch a second child or repeat its file actions.
+          return 29;
+        }
+        if (result.status !== "ok") return kernelErrno(result.error.code);
+        const child = this.#options.processes.info(result.value);
+        if (child.status === "would_block") {
+          this.#options.wakes.release(child.wakeToken);
+          return EAGAIN;
+        }
+        if (child.status === "error") return kernelErrno(child.error.code);
+        return writeAgentOsPid(this.#options.memory(), decoded.value.pidPointer, child.value.pid);
+      });
+    });
   }
 
   async #waitpid(pid: number, options: number, pointers: readonly number[]): Promise<number> {

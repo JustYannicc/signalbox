@@ -5,13 +5,14 @@ import {
   KernelCpuAccounting,
   type KernelCpuProcess,
   type KernelCpuSnapshot,
+  type KernelCpuSliceOwner,
 } from "./KernelCpuAccounting.ts";
 
 type CpuMode = "user" | "system";
 
 interface ScopeFrame {
   readonly mode: CpuMode;
-  activeLeave: (() => void) | undefined;
+  runnable: boolean;
   closed: boolean;
 }
 
@@ -22,6 +23,14 @@ interface ExecutionState {
 
 const executionContexts = new NodeAsyncHooks.AsyncLocalStorage<ExecutionState>();
 const noOp = () => {};
+const processChecks = new WeakMap<KernelCpuProcessExecution, () => void>();
+const executionOwners = new WeakMap<KernelCpuProcessExecution, ExecutionOwner>();
+const executionMeters = new WeakMap<KernelCpuExecution, ExecutionOwner>();
+
+interface ExecutionOwner {
+  readonly states: Set<ExecutionState>;
+  readonly meter: ReturnType<KernelCpuAccounting["createExecutionMeter"]>;
+}
 
 /** A logical process context; `run` propagates identity but does not charge async waits. */
 export class KernelCpuProcessExecution {
@@ -35,6 +44,8 @@ export class KernelCpuProcessExecution {
     this.#execution = execution;
     this.pid = pid;
     this.#accounting = accounting;
+    processChecks.set(this, () => this.#assertUsable());
+    executionOwners.set(this, executionMeters.get(execution)!);
   }
 
   /** Selects this PID for sync and detached async work without holding a CPU scope. */
@@ -77,15 +88,6 @@ export class KernelCpuProcessExecution {
     this.#finalSnapshot = snapshot;
     this.#execution.forget(this);
     return snapshot;
-  }
-
-  _assertUsable(): void {
-    this.#assertUsable();
-  }
-
-  _enter(mode: CpuMode): () => void {
-    this.#assertUsable();
-    return mode === "user" ? this.#accounting.enterUser() : this.#accounting.enterSystem();
   }
 
   #runMode<T>(mode: CpuMode, run: () => T): T {
@@ -132,6 +134,17 @@ export class KernelCpuExecution {
 
   constructor(accounting: KernelCpuAccounting) {
     this.#accounting = accounting;
+    const states = new Set<ExecutionState>();
+    executionMeters.set(this, {
+      states,
+      meter: accounting.createExecutionMeter(
+        () => {
+          const state = executionContexts.getStore();
+          return state && states.has(state) ? scopeOwner(state) : undefined;
+        },
+        (pid) => [...states].some((state) => state.process.pid === pid),
+      ),
+    });
     this.root = this.forProcess(1);
   }
 
@@ -151,10 +164,25 @@ export class KernelCpuExecution {
   }
 
   run<T>(process: KernelCpuProcessExecution, run: () => T): T {
-    process._assertUsable();
+    processChecks.get(process)!();
     const current = executionContexts.getStore();
     if (current?.process === process) return run();
-    return executionContexts.run({ process, frames: [] }, run);
+    const owner = executionMeters.get(this)!;
+    const previous =
+      current && executionOwners.get(current.process) === owner ? current : undefined;
+    if (previous) owner.meter.checkpoint(scopeOwner(previous));
+    const state: ExecutionState = { process, frames: [] };
+    try {
+      return executionContexts.run(state, run);
+    } finally {
+      if (previous) {
+        try {
+          if (state.frames.length !== 0) owner.meter.checkpoint(scopeOwner(state));
+        } finally {
+          selectOwner(previous);
+        }
+      }
+    }
   }
 
   forget(process: KernelCpuProcessExecution): void {
@@ -184,11 +212,15 @@ export function runCurrentKernelCpuSystemImport<T>(run: () => T): T {
   const state = executionContexts.getStore();
   if (!state) return run();
   const resume = pauseState(state);
+  let result: T;
   try {
-    return state.process.runSystem(run);
-  } finally {
-    resume();
+    result = state.process.runSystem(run);
+  } catch (error) {
+    resume(false);
+    throw error;
   }
+  resume();
+  return result;
 }
 
 /** Runs generator steps as system work while leaving each yielded Promise uncharged. */
@@ -199,34 +231,59 @@ export async function runCurrentKernelCpuAsyncSystemImport<T>(
   if (!state) return await run((step) => step());
   const resume = pauseState(state);
   try {
-    const leaveSystem = enterScope(state, "system");
     let result: T | PromiseLike<T>;
     try {
-      result = run((step) => runCurrentKernelCpuSystem(step));
-    } finally {
-      leaveSystem();
+      const leaveSystem = enterScope(state, "system");
+      try {
+        result = run((step) => runCurrentKernelCpuSystem(step));
+      } finally {
+        leaveSystem();
+      }
+    } catch (error) {
+      resume(false);
+      throw error;
     }
     const value = await result;
-    return state.process.runSystem(() => value);
+    try {
+      return state.process.runSystem(() => value);
+    } catch (error) {
+      resume(false);
+      throw error;
+    }
   } finally {
     resume();
   }
 }
 
-/** Wraps async host imports whose only blocking path is a KernelWakeRegistry wait. */
+/** Wraps host imports whose blocking paths explicitly pause their current CPU scope. */
 export async function runCurrentKernelCpuAwaitableSystemImport<T>(
   run: () => T | PromiseLike<T>,
 ): Promise<T> {
   const state = executionContexts.getStore();
   if (!state) return await run();
   const resumeUser = pauseState(state);
-  const leaveSystem = enterScope(state, "system");
+  let leaveSystem: () => void;
+  try {
+    leaveSystem = enterScope(state, "system");
+  } catch (error) {
+    resumeUser(false);
+    throw error;
+  }
   try {
     return await run();
   } finally {
-    leaveSystem();
-    resumeUser();
+    leaveAndResume(leaveSystem, resumeUser);
   }
+}
+
+function leaveAndResume(leave: () => void, resume: (observe?: boolean) => void) {
+  try {
+    leave();
+  } catch (error) {
+    resume(false);
+    throw error;
+  }
+  resume();
 }
 
 /** Captures identity and a pause hook so a wake callback cannot inherit its signaler's PID. */
@@ -240,44 +297,66 @@ export function captureKernelCpuExecution(): KernelCpuExecutionCapture | undefin
 }
 
 function enterScope(state: ExecutionState, mode: CpuMode): () => void {
-  const previous = state.frames.at(-1);
-  const resumePrevious = previous?.activeLeave !== undefined;
-  if (previous?.activeLeave) {
-    previous.activeLeave();
-    previous.activeLeave = undefined;
-  }
-
-  const frame: ScopeFrame = { mode, activeLeave: undefined, closed: false };
+  const owner = executionOwners.get(state.process)!;
+  owner.meter.checkpoint(scopeOwner(state));
+  const frame: ScopeFrame = { mode, runnable: true, closed: false };
   state.frames.push(frame);
-  frame.activeLeave = state.process._enter(mode);
-  let left = false;
+  owner.states.add(state);
+  selectOwner(state);
   return () => {
-    if (left) throw new Error("CPU execution scope has already been left");
+    if (frame.closed) throw new Error("CPU execution scope has already been left");
     if (state.frames.at(-1) !== frame) {
       throw new Error("CPU execution scopes must be left in reverse entry order");
     }
-    frame.activeLeave?.();
-    frame.activeLeave = undefined;
-    frame.closed = true;
-    state.frames.pop();
-    const resumed = state.frames.at(-1);
-    if (resumed && resumePrevious) resumed.activeLeave = state.process._enter(resumed.mode);
-    left = true;
+    try {
+      owner.meter.checkpoint(scopeOwner(state));
+    } finally {
+      frame.closed = true;
+      state.frames.pop();
+      if (state.frames.length === 0) owner.states.delete(state);
+      selectOwner(state);
+    }
   };
 }
 
-function pauseState(state: ExecutionState): () => void {
+function pauseState(state: ExecutionState): (observe?: boolean) => void {
   const frame = state.frames.at(-1);
-  if (!frame?.activeLeave) return noOp;
-  frame.activeLeave();
-  frame.activeLeave = undefined;
+  if (!frame?.runnable) return noOp;
+  const owner = executionOwners.get(state.process)!;
+  owner.meter.checkpoint(scopeOwner(state));
+  frame.runnable = false;
+  selectOwner(state);
   let resumed = false;
-  return () => {
+  return (observe = true) => {
     if (resumed || frame.closed) return;
-    if (state.frames.at(-1) !== frame || frame.activeLeave !== undefined) return;
-    frame.activeLeave = state.process._enter(frame.mode);
-    resumed = true;
+    if (state.frames.at(-1) !== frame || frame.runnable) return;
+    try {
+      if (observe) owner.meter.checkpoint(scopeOwner(state));
+    } finally {
+      frame.runnable = true;
+      selectOwner(state);
+      resumed = true;
+    }
   };
+}
+
+function scopeOwner(state: ExecutionState): KernelCpuSliceOwner | undefined {
+  const frame = state.frames.at(-1);
+  return frame?.runnable ? { processId: state.process.pid, mode: frame.mode } : undefined;
+}
+
+function selectOwner(state: ExecutionState) {
+  const owner = executionOwners.get(state.process)!;
+  let next = scopeOwner(state);
+  if (!next) {
+    for (const candidate of owner.states) {
+      next = scopeOwner(candidate);
+      if (next) break;
+    }
+  }
+  // Promise finalizers can select siblings before either user continuation runs.
+  // Selection never charges time; the next explicit boundary identifies its owner.
+  owner.meter.select(next);
 }
 
 function isPromiseLike(value: unknown): value is PromiseLike<unknown> {

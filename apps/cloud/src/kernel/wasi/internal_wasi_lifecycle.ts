@@ -242,12 +242,16 @@ export class WasiLifecycle {
       throw new ERR_INVALID_ARG_VALUE("fn", fn, "must be an export of the bound instance");
     }
     this.#active = true;
-    const leaveUser = enterCurrentKernelCpuUser();
+    let leaveUser: (() => void) | undefined;
     try {
+      leaveUser = enterCurrentKernelCpuUser();
       return await getJSPI().promising(fn)(...args);
     } finally {
-      leaveUser();
-      this.#active = false;
+      try {
+        leaveUser?.();
+      } finally {
+        this.#active = false;
+      }
     }
   }
 

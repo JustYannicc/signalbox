@@ -20,6 +20,18 @@ export interface KernelCpuProcess {
 
 type CpuMode = "user" | "system";
 
+export interface KernelCpuSliceOwner {
+  readonly processId: number;
+  readonly mode: CpuMode;
+}
+
+interface ExecutionMeter {
+  readonly currentOwner: () => KernelCpuSliceOwner | undefined;
+  readonly hasScopes: (processId: number) => boolean;
+  owner: KernelCpuSliceOwner | undefined;
+  startedAt: bigint | undefined;
+}
+
 interface ProcessRecord {
   userNs: bigint;
   systemNs: bigint;
@@ -49,9 +61,32 @@ export class KernelCpuAccounting {
   readonly #handles = new Map<number, KernelCpuProcess>();
   readonly #scopes: Array<ActiveScope> = [];
   #lastObserved: bigint | undefined;
+  #executionMeter: ExecutionMeter | undefined;
 
   constructor(readClock: () => bigint) {
     this.#readClock = readClock;
+  }
+
+  /** One physical interval, attributed at explicit execution boundaries, never per-owner wall time. */
+  createExecutionMeter(
+    currentOwner: () => KernelCpuSliceOwner | undefined,
+    hasScopes: (processId: number) => boolean,
+  ) {
+    if (this.#executionMeter) throw new Error("CPU accounting already has an execution meter");
+    const meter: ExecutionMeter = {
+      currentOwner,
+      hasScopes,
+      owner: undefined,
+      startedAt: undefined,
+    };
+    this.#executionMeter = meter;
+    return {
+      checkpoint: (owner: KernelCpuSliceOwner | undefined) => this.#checkpointExecution(owner),
+      select: (owner: KernelCpuSliceOwner | undefined) => {
+        meter.owner = owner;
+        meter.startedAt = owner && this.#scopes.length === 0 ? this.#lastObserved : undefined;
+      },
+    };
   }
 
   /** Returns the stable accounting handle for one logical process id. */
@@ -87,7 +122,10 @@ export class KernelCpuAccounting {
       },
       dispose: () => {
         assertUsable();
-        if (this.#scopes.some((scope) => scope.processId === processId)) {
+        if (
+          this.#scopes.some((scope) => scope.processId === processId) ||
+          this.#executionMeter?.hasScopes(processId)
+        ) {
           throw new Error("Cannot dispose CPU accounting while a process scope is open");
         }
         this.#records.delete(processId);
@@ -133,8 +171,37 @@ export class KernelCpuAccounting {
     else record.systemNs += elapsed;
   }
 
+  #settleExecution(endedAt: bigint, owner: KernelCpuSliceOwner | undefined) {
+    const startedAt = this.#executionMeter?.startedAt;
+    if (owner && startedAt !== undefined) this.#settle({ ...owner, startedAt }, endedAt);
+  }
+
+  #checkpointExecution(owner: KernelCpuSliceOwner | undefined) {
+    const meter = this.#executionMeter!;
+    let endedAt: bigint | undefined;
+    let failed = false;
+    let failure: unknown;
+    try {
+      endedAt = this.#observeClock();
+    } catch (error) {
+      endedAt = this.#lastObserved;
+      failed = true;
+      failure = error;
+    }
+    // Resume finalizers are readiness notifications. The executing boundary's
+    // owner identifies the measured slice, regardless of their notification order.
+    if (endedAt !== undefined) this.#settleExecution(endedAt, owner);
+    meter.startedAt = meter.owner && this.#scopes.length === 0 ? endedAt : undefined;
+    if (failed) throw failure;
+  }
+
   #enter(processId: number, mode: CpuMode) {
     const startedAt = this.#observeClock();
+    const meter = this.#executionMeter;
+    if (meter) {
+      this.#settleExecution(startedAt, meter.currentOwner() ?? meter.owner);
+      meter.startedAt = undefined;
+    }
     const previous = this.#scopes.at(-1);
     if (previous) this.#settle(previous, startedAt);
 
@@ -164,6 +231,7 @@ export class KernelCpuAccounting {
       this.#scopes.pop();
       const resumed = this.#scopes.at(-1);
       if (resumed) resumed.startedAt = endedAt;
+      else if (meter?.owner) meter.startedAt = endedAt;
       left = true;
       if (clockFailed) throw clockError;
     };
@@ -188,6 +256,10 @@ export class KernelCpuAccounting {
   }
 
   #snapshot(processId: number): KernelCpuSnapshot {
+    const meter = this.#executionMeter;
+    if (meter?.startedAt !== undefined) {
+      this.#checkpointExecution(meter.currentOwner() ?? meter.owner);
+    }
     const record = this.#records.get(processId);
     if (!record) return emptySnapshot();
 

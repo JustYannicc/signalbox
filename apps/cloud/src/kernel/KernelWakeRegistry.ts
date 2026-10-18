@@ -102,13 +102,17 @@ export class KernelWakeRegistry {
     if (entry.waiter) return Promise.resolve(failure("ALREADY_WAITING", "Wake token has a waiter"));
     const cpuContext = captureKernelCpuExecution();
     const resumeCpu = cpuContext?.pause();
-    return new Promise((resolve) => {
+    return new Promise((resolve, reject) => {
       const abort = () => this.cancel(token);
       entry.waiter = (result) => {
         signal?.removeEventListener("abort", abort);
         const complete = () => {
-          resumeCpu?.();
-          resolve(result);
+          try {
+            resumeCpu?.();
+            resolve(result);
+          } catch (error) {
+            reject(error);
+          }
         };
         if (cpuContext) queueMicrotask(() => cpuContext.run(complete));
         else complete();

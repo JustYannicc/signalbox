@@ -5,6 +5,7 @@ import * as NodeURL from "node:url";
 import * as Esbuild from "esbuild";
 
 import { createNodeBridgeLayerModules } from "../../src/isolate/NodeBridge.ts";
+import { cpuPollReactor, cpuReturnReactor, cpuWasmCheckMethods } from "./prepareCpuWasm.ts";
 
 export async function prepareNodeCpuProof(destination: string): Promise<void> {
   await NodeFSP.mkdir(destination, { recursive: true });
@@ -32,6 +33,7 @@ export {bootNodeRelease} from './isolate/NodeBootstrap.ts';`,
   const runtimeSource = runtime.outputFiles?.[0]?.text;
   if (!runtimeSource) throw new Error("CPU proof runtime bundle was empty");
   await NodeFSP.writeFile(NodePath.join(destination, "runtime.js"), runtimeSource);
+  await NodeFSP.writeFile(NodePath.join(destination, "return.wasm"), cpuReturnReactor);
   const layer = createNodeBridgeLayerModules(["process"]);
   const release = await Esbuild.build({
     stdin: {
@@ -69,23 +71,14 @@ export function read(previous) {
   const releaseSource = release.outputFiles?.[0]?.text;
   if (!releaseSource) throw new Error("CPU proof release bundle was empty");
   await NodeFSP.writeFile(NodePath.join(destination, "release.js"), releaseSource);
-  // The existing kernel runtime proof uses this poll_oneoff reactor as well.
-  await NodeFSP.writeFile(
-    NodePath.join(destination, "poll.wasm"),
-    new Uint8Array([
-      0, 97, 115, 109, 1, 0, 0, 0, 1, 9, 1, 96, 4, 127, 127, 127, 127, 1, 127, 2, 38, 1, 22, 119,
-      97, 115, 105, 95, 115, 110, 97, 112, 115, 104, 111, 116, 95, 112, 114, 101, 118, 105, 101,
-      119, 49, 11, 112, 111, 108, 108, 95, 111, 110, 101, 111, 102, 102, 0, 0, 3, 2, 1, 0, 5, 3, 1,
-      0, 1, 7, 16, 2, 6, 109, 101, 109, 111, 114, 121, 2, 0, 3, 114, 117, 110, 0, 1, 10, 14, 1, 12,
-      0, 32, 0, 32, 1, 32, 2, 32, 3, 16, 0, 11,
-    ]),
-  );
+  await NodeFSP.writeFile(NodePath.join(destination, "poll.wasm"), cpuPollReactor);
   await NodeFSP.writeFile(
     NodePath.join(destination, "main.js"),
     `import {DurableObject} from 'cloudflare:workers';
 import * as NativeProcess from 'node:process';
 import {PassThrough} from 'node:stream';
 import pollReactor from './poll.wasm';
+import returnReactor from './return.wasm';
 import {KernelCpuAccounting,KernelProgramHost,KernelProgramRegistry,KernelWakeRegistry,
   createNodeProcess,bootNodeRelease,createFacetSqliteStorage,KernelFileSystem,createKernelAsyncWasi} from './runtime.js';
 
@@ -163,6 +156,8 @@ export class ProcessCpuFacet extends DurableObject {
       child.stop();
       this.root.runSystem(()=>{checksum^=work();});
       await this.root.run(()=>this.checkWasm(checks));
+      await this.checkWasmSiblings(checks);
+      await this.checkWasmClockFailures(checks);
       const final=release.read().value;
       checks.monotonic=final.user>=initial.value.user && final.system>=initial.value.system;
       const difference=release.read(initial.value).value;
@@ -187,36 +182,7 @@ export class ProcessCpuFacet extends DurableObject {
       return Response.json({ok:false,checks,error:String(error),stack:error.stack},{status:500});
     }
   }
-  async checkWasm(checks) {
-    const storage=createFacetSqliteStorage(this.ctx.storage,readClock);
-    const filesystem=new KernelFileSystem({mounts:[{path:'/',storage}]});
-    const {wasi,descriptors}=createKernelAsyncWasi({filesystem,wakes:this.wakes});
-    let ready,notify;
-    const subscribed=Promise.withResolvers();
-    const fd=descriptors.register({ready:()=>ready,
-      subscribe:(_direction,wake)=>{notify=wake;subscribed.resolve();return ()=>{notify=undefined;};},
-      close(){}});
-    try {
-      const instance=new WebAssembly.Instance(pollReactor,wasi.getImportObject());
-      await wasi.initialize(instance);
-      const memory=instance.exports.memory;
-      const view=new DataView(memory.buffer);
-      new Uint8Array(memory.buffer,0,48).fill(0);
-      view.setBigUint64(0,123n,true);view.setUint8(8,1);view.setUint32(16,fd,true);
-      const pending=wasi.run(instance.exports.run,0,64,1,96);
-      await subscribed.promise;
-      const blocked=this.process.cpuUsage();
-      await new Promise(resolve=>setTimeout(resolve,10));
-      checks.jspiWaitExcluded=equal(blocked,this.process.cpuUsage());
-      checks.jspiWakeRegistered=this.wakes.size===1;
-      ready={bytes:7n};notify();
-      checks.jspiWasmResumed=await pending===0 && view.getUint32(96,true)===1 && view.getBigUint64(80,true)===7n;
-    } finally {
-      await wasi.close();
-      descriptors.close(fd);
-      filesystem.dispose();
-    }
-  }
+${cpuWasmCheckMethods}
 }
 `,
   );
@@ -236,6 +202,7 @@ export class ProcessCpuFacet extends DurableObject {
             ]),
           ),
           "poll.wasm": { path: "poll.wasm", type: "wasm" },
+          "return.wasm": { path: "return.wasm", type: "wasm" },
         },
         paths: ["/status", "/again"],
       },

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "@effect/vitest";
 
 import { KernelCpuAccounting } from "./KernelCpuAccounting.ts";
+import { KernelCpuExecution } from "./KernelCpuExecution.ts";
 
 const makeClock = (initial = 0n) => {
   let now = initial;
@@ -16,6 +17,21 @@ const makeClock = (initial = 0n) => {
 };
 
 describe("KernelCpuAccounting", () => {
+  it("shares the clock with direct core scopes without double charging execution slices", () => {
+    const clock = makeClock();
+    const accounting = new KernelCpuAccounting(clock.read);
+    const execution = new KernelCpuExecution(accounting);
+    const direct = accounting.forProcess(2);
+    execution.root.runUser(() => {
+      clock.advance(2n);
+      direct.runSystem(() => clock.advance(3n));
+      clock.advance(5n);
+      expect(execution.root.snapshot()).toEqual({ userNs: 7n, systemNs: 0n });
+    });
+    expect(execution.root.stop()).toEqual({ userNs: 7n, systemNs: 0n });
+    expect(direct.snapshot()).toEqual({ userNs: 0n, systemNs: 3n });
+    direct.dispose();
+  });
   it("accounts exact user and system time through nested syscalls", () => {
     const clock = makeClock();
     const process = new KernelCpuAccounting(clock.read).forProcess(1);

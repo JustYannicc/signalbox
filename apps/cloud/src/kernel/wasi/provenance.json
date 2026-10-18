@@ -37,7 +37,7 @@
     },
     {
       "file": "internal_wasi_lifecycle.ts",
-      "reason": "Optional internal argument transforms decode explicit guest ABI preopen operands before JSPI wrappers. Configured kernel CPU scopes charge WASM exports as user work and synchronous import steps as system work, pausing the user scope during suspension; unconfigured WASI behavior remains unchanged."
+      "reason": "Optional internal argument transforms decode explicit guest ABI preopen operands before JSPI wrappers. Configured kernel CPU scopes charge WASM exports as user work and synchronous import steps as system work, pausing the user scope during suspension. Reactor entry and exit always release the active flag even when the accounting clock fails; unconfigured WASI behavior remains unchanged."
     },
     {
       "file": "internal_wasi_calls.ts",
