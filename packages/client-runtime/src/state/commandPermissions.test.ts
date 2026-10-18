@@ -62,6 +62,22 @@ const setup = Effect.gen(function* () {
 });
 
 describe("command permissions", () => {
+  it.effect("requires the current destination operate grant for provider feedback", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const registry = yield* setup;
+        const feedback = createCommandPermissions(runtime, WS_METHODS.providerUploadFeedback);
+        registry.set(sessions(env), AsyncResult.success(grant(true)));
+        expect(registry.get(feedback.permissionAtom(env))).toBe(true);
+        yield* feedback.authorize(registry, env);
+        registry.set(sessions(env), AsyncResult.success(grant(false)));
+        expect(registry.get(feedback.permissionAtom(env))).toBe(false);
+        expect((yield* feedback.authorize(registry, env).pipe(Effect.flip))._tag).toBe(
+          "EnvironmentAuthorizationError",
+        );
+      }),
+    ),
+  );
   it.effect("requires the destination's orchestration grant to cancel preparation", () =>
     Effect.scoped(
       Effect.gen(function* () {
