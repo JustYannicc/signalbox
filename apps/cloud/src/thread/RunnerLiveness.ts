@@ -7,6 +7,21 @@ import {
 
 export const RUNNER_SILENCE_LIMIT_MS = 45_000;
 
+/** Returns another alarm deadline even when recording a disconnect fails. */
+export const tend = async (
+  host: RunnerSocketHost,
+  now: number,
+  retryAt: number,
+  onFailure: (cause: unknown) => Promise<void>,
+): Promise<number | null> => {
+  try {
+    return await inspect(host, now);
+  } catch (cause) {
+    await onFailure(cause);
+    return retryAt;
+  }
+};
+
 /** Checks only when the Runner could have missed the same three pings as its client. */
 export const inspect = async (host: RunnerSocketHost, now: number): Promise<number | null> => {
   let wakeAt: number | null = null;

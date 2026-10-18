@@ -642,7 +642,7 @@ export class ThreadObject extends DurableObject<ThreadObjectEnv> implements Thre
    */
   private async armAlarm(work?: ThreadRunner.RunnerWork) {
     const now = await this.now();
-    const runnerWakeAt = await RunnerLiveness.inspect(this.runnerHost, now);
+    const runnerWakeAt = await this.tendRunnerLiveness(now);
     const hasWork = await this.runtime.runPromise(
       Effect.gen(function* () {
         const engine = yield* ThreadEngine.ThreadEngine;
@@ -920,9 +920,17 @@ export class ThreadObject extends DurableObject<ThreadObjectEnv> implements Thre
     return this.runtime.runPromise(Evlog.provideLogger(effect, log));
   }
 
+  private tendRunnerLiveness(now: number) {
+    return RunnerLiveness.tend(this.runnerHost, now, now + retryDelay(1), async (cause) => {
+      await this.runtime
+        .runPromise(Effect.logError("Runner liveness check failed; retrying", String(cause)))
+        .catch(() => undefined);
+    });
+  }
+
   private async tick(log: Evlog.UnitLog) {
     const now = await this.now();
-    const runnerWakeAt = await RunnerLiveness.inspect(this.runnerHost, now);
+    const runnerWakeAt = await this.tendRunnerLiveness(now);
     const step = await this.run(
       log,
       ThreadEngine.ThreadEngine.use((engine) => engine.step).pipe(

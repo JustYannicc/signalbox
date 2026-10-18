@@ -47,6 +47,54 @@ const runningRunner = (
   });
 
 describe("RunnerLiveness", () => {
+  it.effect("keeps an alarm deadline through repeated disconnect write failures", () =>
+    withObject(freshDatabase(), (engine, runner, context) =>
+      Effect.gen(function* () {
+        const sockets: Array<WebSocket> = [];
+        yield* runningRunner(engine, runner, context, sockets);
+        const host = yield* hostFor(runner, sockets);
+        let attempts = 0;
+        const failingHost: typeof host = {
+          ...host,
+          run: (effect) => {
+            attempts += 1;
+            return attempts <= 8
+              ? Promise.reject(new Error("disconnect write failed"))
+              : host.run(effect);
+          },
+        };
+        yield* TestClock.adjust("45 seconds");
+        const failures: Array<unknown> = [];
+        for (let attempt = 0; attempt < 8; attempt += 1) {
+          const now = yield* Clock.currentTimeMillis;
+          const retryAt = now + 5_000;
+          expect(
+            yield* Effect.promise(() =>
+              RunnerLiveness.tend(failingHost, now, retryAt, async (cause) => {
+                failures.push(cause);
+              }),
+            ),
+          ).toBe(retryAt);
+          expect(yield* runner.reconcile).toMatchObject({ busy: true, wakeAt: null });
+          yield* TestClock.adjust("5 seconds");
+        }
+        expect(failures).toHaveLength(8);
+        const recoveredAt = yield* Clock.currentTimeMillis;
+        expect(
+          yield* Effect.promise(() =>
+            RunnerLiveness.tend(failingHost, recoveredAt, recoveredAt + 5_000, async () => {
+              throw new Error("disconnect should succeed");
+            }),
+          ),
+        ).toBeNull();
+        expect(yield* runner.reconcile).toMatchObject({ wakeAt: recoveredAt + 60_000 });
+        yield* TestClock.adjust("60 seconds");
+        expect(yield* runner.reconcile).toMatchObject({ lost: true, release: 1 });
+        expect((yield* snapshot(engine)).projection.runs).toHaveLength(2);
+      }),
+    ),
+  );
+
   it.effect("retries a failed disconnect write before starting recovery", () =>
     withObject(freshDatabase(), (engine, runner, context) =>
       Effect.gen(function* () {
