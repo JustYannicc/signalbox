@@ -32,10 +32,6 @@ const poolHarnesses = exempt("Pools run each harness; nothing installs per user.
 export const CLOUD_UNSERVED: Readonly<Record<string, Unserved>> = {
   "settings.get": gap("#440"),
 
-  // Waiting on you: questions and secret requests. Approvals the thread raises are served.
-  "threads.dismissQuestion": gap("#410"),
-  "secrets.answer": gap("#410"),
-
   // The rest of a thread's lifecycle.
   "threads.delete": gap("#439"),
   "threads.snooze": gap("#439"),
@@ -49,10 +45,7 @@ export const CLOUD_UNSERVED: Readonly<Record<string, Unserved>> = {
   "threads.switchProvider": gap("#439"),
   "threads.stopSubagent": gap("#439"),
   "threads.retryPreparation": gap("#439"),
-  "threads.commandOutput": gap("#439"),
   "threads.getTurnItem": gap("#439"),
-  "threads.getWorkflowScript": gap("#439"),
-  "threads.stopWorkflow": gap("#439"),
   "threads.rollback": gap("#398"),
   "threads.search": gap("#334"),
   "threads.searchOne": gap("#334"),
@@ -122,7 +115,7 @@ export const CLOUD_UNSERVED: Readonly<Record<string, Unserved>> = {
   "terminal.*": gap("#744"),
   "terminalEvents.subscribe": gap("#744"),
   "terminalMetadata.subscribe": gap("#744"),
-  "usage.*": exempt("Pools report usage per account (`pool/poolViews.ts`)."),
+  "usage.*": gap("#786"),
   "vcs.createRef": ownBranch,
   "vcs.switchRef": ownBranch,
   "vcs.createWorktree": ownBranch,

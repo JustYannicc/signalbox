@@ -1,3 +1,4 @@
+import { workflowNodes } from "../workflowControl.ts";
 import type { RunnerItem } from "@signalbox/runner-protocol/RunnerProtocol";
 import {
   type OrchestrationV2DomainEvent,
@@ -12,12 +13,10 @@ import * as DateTime from "effect/DateTime";
 import * as Exit from "effect/Exit";
 import * as Schema from "effect/Schema";
 
-import {
-  type DecisionContext,
-  itemOrdinal,
-  turnItemEvent,
-  unstampedEventId,
-} from "../threadEvents.ts";
+import { type DecisionContext, turnItemEvent, unstampedEventId } from "../threadEvents.ts";
+import { positionTurnItem } from "../turnItemPosition.ts";
+export { positionTurnItem, ERROR_ITEM_BAND_POSITION } from "../turnItemPosition.ts";
+import { runtimeRequestEvents } from "../runtimeRequests.ts";
 
 /**
  * What a provider adapter's events become in a thread's log, following
@@ -25,9 +24,6 @@ import {
  * position store places them. The Runner sends events opaque, so they are
  * checked against the domain event schema here.
  */
-
-/** Turn items fill a run's band from the bottom; a failure row sits at its top. */
-export const ERROR_ITEM_BAND_POSITION = 999_999;
 
 /**
  * Adapter event type to the domain event it becomes, and the field holding
@@ -65,26 +61,6 @@ const payloadThreadId = (event: Json, payload: Json) =>
   stringField(payload, "appThreadId") ??
   stringField(payload, "threadId") ??
   stringField(event, "threadId");
-
-/**
- * Turn items are placed in their run's band in the order they first appear,
- * as upstream's position store does, whatever ordinal the adapter chose.
- */
-export function positionTurnItem(
-  projection: OrchestrationV2ThreadProjection,
-  item: OrchestrationV2TurnItem,
-) {
-  const existing = projection.turnItems.find((candidate) => candidate.id === item.id);
-  if (existing !== undefined) return { ...item, ordinal: existing.ordinal };
-  const run = projection.runs.find((candidate) => candidate.id === item.runId);
-  const low = itemOrdinal(run?.ordinal ?? 0, 0);
-  const high = itemOrdinal(run?.ordinal ?? 0, ERROR_ITEM_BAND_POSITION - 1);
-  const last = projection.turnItems
-    .map((candidate) => candidate.ordinal)
-    .filter((ordinal) => ordinal >= low && ordinal <= high)
-    .reduce((max, ordinal) => Math.max(max, ordinal), low);
-  return { ...item, ordinal: last + 1 };
-}
 
 /** A `system_notice` row in `run`'s transcript, after what it already shows. */
 export function systemNoticeEvents(
@@ -151,7 +127,7 @@ export function recordedEvents(
   // `turn.started` keeps it, or the next turn takes it for a provider switch and
   // starts over without the harness's session.
   const recordedPayload =
-    recorded.type === "provider-thread.updated"
+    recorded.type === "provider-thread.updated" || recorded.type === "subagent.updated"
       ? { ...payload, providerInstanceId: runInstance }
       : payload;
   const decoded = decodeDomainEvent({
@@ -170,7 +146,93 @@ export function recordedEvents(
     payload: recordedPayload,
   });
   if (Exit.isFailure(decoded)) return "undecodable";
-  const domainEvent = decoded.value;
+  let domainEvent = decoded.value;
+  if (domainEvent.type === "runtime-request.updated") {
+    if (liveRunId !== item.runId) return [];
+    return runtimeRequestEvents(projection, domainEvent, ctx);
+  }
+  const requestId =
+    domainEvent.type === "node.updated"
+      ? domainEvent.payload.runtimeRequestId
+      : domainEvent.type === "turn-item.updated" &&
+          (domainEvent.payload.type === "approval_request" ||
+            domainEvent.payload.type === "user_input_request")
+        ? domainEvent.payload.requestId
+        : null;
+  if (requestId !== null) {
+    const request = projection.runtimeRequests.find((request) => request.id === requestId);
+    if (request !== undefined && request.status !== "pending") return [];
+  }
+  const stopped = new Set<string>();
+  const nativeStopped = new Set<string>();
+  for (const coordinator of projection.subagents) {
+    if (coordinator.workflow?.stop?.status !== "stopped") continue;
+    for (const id of workflowNodes(projection, coordinator.id)) stopped.add(id);
+  }
+  if (domainEvent.type === "node.updated" || domainEvent.type === "subagent.updated") {
+    const payload = domainEvent.payload;
+    if (
+      stopped.has(payload.id) ||
+      (payload.parentNodeId !== null && stopped.has(payload.parentNodeId))
+    )
+      return [];
+  }
+  for (const task of projection.subagents) {
+    if (stopped.has(task.id) && task.nativeTaskRef?.nativeId)
+      nativeStopped.add(task.nativeTaskRef.nativeId);
+  }
+  if (domainEvent.type === "provider-thread.updated") {
+    domainEvent = {
+      ...domainEvent,
+      payload: {
+        ...domainEvent.payload,
+        pendingBackgroundTasks: (domainEvent.payload.pendingBackgroundTasks ?? []).filter(
+          (task) => !stopped.has(task.taskId) && !nativeStopped.has(task.taskId),
+        ),
+      },
+    };
+  }
+  if (domainEvent.type === "turn-item.updated") {
+    const item = domainEvent.payload;
+    if (
+      (item.nodeId !== null && stopped.has(item.nodeId)) ||
+      (item.type === "subagent" && stopped.has(item.subagentId))
+    ) {
+      domainEvent = {
+        ...domainEvent,
+        payload: { ...item, status: "cancelled", completedAt: item.completedAt ?? ctx.now },
+      };
+    }
+  }
+  if (domainEvent.type === "subagent.updated") {
+    const task = domainEvent.payload;
+    const previous = projection.subagents.find((each) => each.id === task.id);
+    const { stop: _runnerStop, ...workflow } = task.workflow ?? { phases: [], agents: [] };
+    const retained = previous?.workflow?.runHandles;
+    domainEvent = {
+      ...domainEvent,
+      payload: {
+        ...task,
+        ...(task.workflow === undefined && previous?.workflow === undefined
+          ? {}
+          : {
+              workflow: {
+                ...(task.workflow === undefined ? previous!.workflow! : workflow),
+                ...(previous?.workflow?.stop === undefined ? {} : { stop: previous.workflow.stop }),
+                ...(retained?.scriptRevision === undefined
+                  ? {}
+                  : {
+                      runHandles: {
+                        ...task.workflow?.runHandles,
+                        scriptPath: retained.scriptPath,
+                        scriptRevision: retained.scriptRevision,
+                      },
+                    }),
+              },
+            }),
+      },
+    };
+  }
   return domainEvent.type === "turn-item.updated"
     ? [{ ...domainEvent, payload: positionTurnItem(projection, domainEvent.payload) }]
     : [domainEvent];

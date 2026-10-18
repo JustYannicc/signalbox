@@ -1,9 +1,43 @@
 import { operations } from "@signalbox/api/catalog";
+import { EnvironmentId } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
+import { descriptor } from "../environment.ts";
 import { CLOUD_UNSERVED, cloudServes, cloudUnserved, coverageKeyMatches } from "./cloudCoverage.ts";
 
 describe("cloud API coverage", () => {
+  it("serves workflow inspection and stop through the generated API and MCP reach", () => {
+    for (const [name, access] of [
+      ["threads.getWorkflowScript", "read"],
+      ["threads.stopWorkflow", "write"],
+    ]) {
+      const operation = operations.find((candidate) => candidate.name === name)!;
+      expect(operation.access).toBe(access);
+      expect(operation.humanOnly).toBe(false);
+      expect(operation.destructive).toBe(false);
+      expect(cloudServes(operation)).toBe(true);
+      expect(cloudUnserved(operation)).toBeUndefined();
+    }
+  });
+
+  it("tracks usage history as missing rather than treating account quotas as its replacement", () => {
+    const { capabilities } = descriptor({
+      environmentId: EnvironmentId.make("cloud"),
+      label: "Cloud",
+    });
+    expect(capabilities.usageHistory).toBe(false);
+    expect(capabilities.usageLimitSources).toBe(true);
+    const usage = operations.filter((operation) => operation.name.startsWith("usage."));
+    expect(usage.map((operation) => operation.name).sort()).toEqual([
+      "usage.refreshRates",
+      "usage.summary",
+    ]);
+    for (const operation of usage) {
+      expect(cloudServes(operation)).toBe(false);
+      expect(cloudUnserved(operation)).toEqual({ _tag: "gap", issue: "#786" });
+    }
+  });
+
   it("serves both keybinding edits rather than leaving the editor with unknown RPCs", () => {
     const keybindings = operations.filter((operation) => operation.name.startsWith("keybindings."));
     expect(keybindings.map((operation) => operation.name).sort()).toEqual([

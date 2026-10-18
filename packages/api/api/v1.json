@@ -1557,7 +1557,7 @@
       "rpc": "server.getConfig",
       "access": "read",
       "input": "03c2b661",
-      "output": "93625743"
+      "output": "47e8e074"
     },
     {
       "name": "server.refreshProviders",
@@ -1594,7 +1594,7 @@
       "access": "read",
       "stream": "snapshot",
       "input": "240ec835",
-      "output": "ac601420"
+      "output": "274f0093"
     },
     {
       "name": "settings.get",
@@ -1803,14 +1803,14 @@
       "access": "read",
       "stream": "snapshot",
       "input": "0d4296e3",
-      "output": "1c4ef6b6"
+      "output": "c93f5a6f"
     },
     {
       "name": "threads.create",
       "rpc": "orchestration.launchThread",
       "access": "write",
       "input": "d5a4dd19",
-      "output": "c719de80"
+      "output": "52f9de1a"
     },
     {
       "name": "threads.delete",
@@ -1843,7 +1843,7 @@
       "rpc": "orchestration.getThreadProjection",
       "access": "read",
       "input": "1276a316",
-      "output": "0425f088"
+      "output": "ee88fbda"
     },
     {
       "name": "threads.getFullThreadDiff",
@@ -1864,14 +1864,14 @@
       "rpc": "orchestration.getTurnItem",
       "access": "read",
       "input": "049d9a37",
-      "output": "150d0e5e"
+      "output": "87de6eed"
     },
     {
       "name": "threads.getWorkflowScript",
       "rpc": "orchestration.getWorkflowScript",
       "access": "read",
-      "input": "81c8125b",
-      "output": "6ac5e7bf"
+      "input": "5e5c20a0",
+      "output": "eb77b4fc"
     },
     {
       "name": "threads.interactionMode.set",
@@ -2123,7 +2123,7 @@
       "access": "read",
       "stream": "snapshot",
       "input": "438e44e7",
-      "output": "b9fc6dec"
+      "output": "d1bad755"
     },
     {
       "name": "threads.subscribeArchived",

@@ -3,7 +3,9 @@ import {
   type OrchestrationV2Run,
   type OrchestrationV2ThreadProjection,
   type OrchestrationV2ThreadShell,
+  RuntimeRequestId,
   orchestrationV2RunWorkStartedAt,
+  isOrchestrationV2WorkActive,
 } from "@t3tools/contracts";
 import { applyOrchestrationV2ProjectionEvent } from "@t3tools/client-runtime/state/orchestration-v2-projection";
 import { derivePendingBackgroundWork } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
@@ -11,7 +13,7 @@ import { latestUnheldRun } from "@t3tools/shared/orchestrationV2ThreadError";
 import { threadPullRequestsOf } from "@t3tools/shared/threadPullRequests";
 import * as DateTime from "effect/DateTime";
 
-import { isLiveRun } from "./runLifecycle.ts";
+import { isLiveRun } from "./runState.ts";
 import type { ThreadMonitor } from "./threadWire.ts";
 
 /**
@@ -73,28 +75,13 @@ export function workStartedAt(projection: OrchestrationV2ThreadProjection): Date
   return earliest;
 }
 
-/** The newest request waiting on the person, as upstream's shell picks it. */
-const pendingRequestOf = (projection: OrchestrationV2ThreadProjection) => {
-  const newest = projection.runtimeRequests
-    .filter((request) => request.status === "pending")
-    .toSorted(
-      (left, right) =>
-        DateTime.toEpochMillis(right.createdAt) - DateTime.toEpochMillis(left.createdAt),
-    )[0];
-  return newest === undefined
-    ? null
-    : { id: newest.id, kind: newest.kind, createdAt: newest.createdAt };
-};
-
 const byOrdinalDesc = (left: OrchestrationV2Run, right: OrchestrationV2Run) =>
   right.ordinal - left.ordinal;
 
 /**
  * The thread's sidebar row. Follows upstream's `threadShellFromProjection` for
- * everything a cloud thread can have: its newest request still waiting on its
- * person (`runtimeRequests.ts`), as upstream's; goals never occur here yet. Its only background work is `monitors`, the
- * automation runs attached to it, which show and hold it in Working exactly
- * as upstream's monitors do.
+ * everything a cloud thread can have. Native workflows and attached automation
+ * runs keep a settled thread in Working until they end.
  */
 export function threadShellFromProjection(
   projection: OrchestrationV2ThreadProjection,
@@ -105,6 +92,28 @@ export function threadShellFromProjection(
   const latestRun = latestUnheldRun(projection.runs);
   const activeRun = runs.find((run) => isLiveRun(run) && run.status !== "waiting") ?? null;
   const activityRun = runs.find(isLiveRun) ?? null;
+  const liveRunIds = new Set(runs.filter(isLiveRun).map((run) => run.id));
+  const secretRequests = projection.turnItems.flatMap((item) =>
+    item.type === "secret_request" &&
+    item.secretStatus === "pending" &&
+    item.runId !== null &&
+    liveRunIds.has(item.runId)
+      ? [
+          {
+            id: RuntimeRequestId.make(item.id),
+            kind: "user_input" as const,
+            createdAt: item.startedAt ?? item.updatedAt,
+          },
+        ]
+      : [],
+  );
+  const pendingRequest = [
+    ...projection.runtimeRequests.filter((request) => request.status === "pending"),
+    ...secretRequests,
+  ].toSorted(
+    (left, right) =>
+      DateTime.toEpochMillis(right.createdAt) - DateTime.toEpochMillis(left.createdAt),
+  )[0];
   const userMessages = projection.messages
     .filter((message) => message.role === "user")
     .toSorted(
@@ -136,7 +145,14 @@ export function threadShellFromProjection(
     activityRunStartedAt:
       activityRun === null ? null : orchestrationV2RunWorkStartedAt(activityRun),
     status: latestRun?.status ?? "idle",
-    pendingRuntimeRequest: pendingRequestOf(projection),
+    pendingRuntimeRequest:
+      pendingRequest === undefined
+        ? null
+        : {
+            id: pendingRequest.id,
+            kind: pendingRequest.kind,
+            createdAt: pendingRequest.createdAt,
+          },
     latestVisibleMessage: null,
     latestUserMessageAt: userMessages[0]?.updatedAt ?? null,
     latestUserAuthoredMessageAt:
@@ -148,7 +164,18 @@ export function threadShellFromProjection(
         providerThreads: [],
         turnItems: [],
         runs: projection.runs,
-        monitors: monitors.map((monitor) => ({ ...monitor, kind: "monitor" as const })),
+        monitors: [
+          ...monitors.map((monitor) => ({ ...monitor, kind: "monitor" as const })),
+          ...projection.subagents
+            .filter(
+              (task) => task.workflow !== undefined && isOrchestrationV2WorkActive(task.status),
+            )
+            .map((task) => ({
+              taskId: task.id,
+              kind: "subagent" as const,
+              description: task.workflow?.name ?? task.title ?? task.prompt,
+            })),
+        ],
       }),
     ],
     providerInstanceHistory:

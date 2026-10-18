@@ -78,7 +78,14 @@ export const migrateDiagnostics = Effect.gen(function* () {
 });
 
 /** Why a machine session ended. `outgrown`: its run moved to a heavy machine (#134). */
-export const StopReason = Schema.Literals(["idle", "ttl", "reaper", "error", "outgrown"]);
+export const StopReason = Schema.Literals([
+  "idle",
+  "ttl",
+  "reaper",
+  "error",
+  "outgrown",
+  "updated",
+]);
 export type StopReason = typeof StopReason.Type;
 
 /** One awake period of the thread's machine: everything from its request to its release. */

@@ -66,6 +66,7 @@ import * as ThreadBrowsing from "./browsing/ThreadBrowsing.ts";
 import type { ThreadEgressExports } from "./ThreadEgress.ts";
 import * as ThreadSends from "./ThreadSends.ts";
 import * as ThreadEngine from "./ThreadEngine.ts";
+import * as ThreadSecretRequests from "./secrets/ThreadSecretRequests.ts";
 import * as RunnerLiveness from "./RunnerLiveness.ts";
 import { makeThreadObjectApi } from "./threadObjectApi.ts";
 import { type BrowserReply, wire } from "./threadWire.ts";
@@ -201,76 +202,92 @@ const makeRuntime = (
   previews: PreviewGateway,
   machine: MachineBackend.MachineHost,
   threadId: () => ThreadId,
+  secretChanged: () => Promise<void>,
 ) => {
   const settings = machineSettings(env);
   return ManagedRuntime.make(
-    ThreadRunner.layer.pipe(
-      Layer.provide(
-        Layer.succeed(ThreadRunner.PreviewHold, {
-          held: Effect.sync(() => previews.held),
-          lastActiveAt: Effect.sync(() => previews.lastActiveAt),
-        }),
-      ),
-      Layer.provideMerge(Layer.mergeAll(layerThreadDrives(env), layerThreadSecrets)),
-      Layer.provideMerge(ThreadPulls.layerReports.pipe(Layer.provideMerge(ThreadPulls.layer))),
-      Layer.provideMerge(
-        env.DRIVES === undefined
-          ? Layer.empty
-          : layerDriveDirectory(env.DRIVES, { localWorkerd: env.LOCAL_WORKERD === "1" }),
-      ),
-      // Its linked pull requests' sync reads GitHub only through the API, with the owner's token.
-      Layer.provideMerge(
-        PullRequestSync.layer.pipe(Layer.provide(GitHub.layer(null, GitHub.gitHubEndpoints(env)))),
-      ),
-      // The thread's browser tabs (#585), beside its conversation.
-      Layer.provideMerge(ThreadBrowsing.layer),
-      // Where its machine may send its secrets (#592).
-      Layer.provideMerge(ThreadSends.layer),
-      // Its status note (#670), written by the runtime through the owner's pool when the agent didn't.
-      Layer.provideMerge(
-        ThreadStatusNotes.layer.pipe(
-          Layer.provide(
-            StatusNoteModel.layerPools(env.POOLS, { localWorkerd: env.LOCAL_WORKERD === "1" }),
+    ThreadRunner.layer
+      .pipe(
+        Layer.provide(
+          Layer.succeed(ThreadRunner.PreviewHold, {
+            held: Effect.sync(() => previews.held),
+            lastActiveAt: Effect.sync(() => previews.lastActiveAt),
+          }),
+        ),
+        Layer.provideMerge(Layer.mergeAll(layerThreadDrives(env), layerThreadSecrets)),
+        Layer.provideMerge(ThreadPulls.layerReports.pipe(Layer.provideMerge(ThreadPulls.layer))),
+        Layer.provideMerge(
+          env.DRIVES === undefined
+            ? Layer.empty
+            : layerDriveDirectory(env.DRIVES, { localWorkerd: env.LOCAL_WORKERD === "1" }),
+        ),
+        // Its linked pull requests' sync reads GitHub only through the API, with the owner's token.
+        Layer.provideMerge(
+          PullRequestSync.layer.pipe(
+            Layer.provide(GitHub.layer(null, GitHub.gitHubEndpoints(env))),
           ),
         ),
-      ),
-      Layer.provideMerge(ThreadEngine.layer),
-      Layer.provideMerge(
-        TurnModels.layer({ scripted: scriptedProviderEnabled(env) }).pipe(
-          Layer.provide(
-            PoolDirectory.layerDurableObjects(env.POOLS, {
-              localWorkerd: env.LOCAL_WORKERD === "1",
-            }),
+        // The thread's browser tabs (#585), beside its conversation.
+        Layer.provideMerge(ThreadBrowsing.layer),
+        // Where its machine may send its secrets (#592).
+        Layer.provideMerge(ThreadSends.layer),
+        // Its status note (#670), written by the runtime through the owner's pool when the agent didn't.
+        Layer.provideMerge(
+          ThreadStatusNotes.layer.pipe(
+            Layer.provide(
+              StatusNoteModel.layerPools(env.POOLS, { localWorkerd: env.LOCAL_WORKERD === "1" }),
+            ),
           ),
         ),
-      ),
-      Layer.provideMerge(Layer.mergeAll(TurnDiagnostics.layer, TurnReports.layer)),
-      Layer.provideMerge(CloudAnalytics.layerFromEnv(env)),
-      Layer.provideMerge(layerMachineBackend(env, machine)),
-      Layer.provideMerge(BoatRecoveryControl.layer(settings?.kind === "boat" ? settings : null)),
-      Layer.provideMerge(DiagnosticsStore.layer),
-      Layer.provideMerge(ThreadStore.layerMachineRecords),
-      Layer.provideMerge(
-        Layer.mergeAll(
-          ThreadStore.layer,
-          PullState.layer,
-          SessionRows.layer,
-          PreviewState.layer,
-          BrowserTrail.layer(attachmentStorage(env), threadId),
+        Layer.provideMerge(
+          ThreadSecretRequests.layer.pipe(
+            Layer.provide(
+              Layer.succeed(
+                ThreadSecretRequests.SecretRequestChanged,
+                Effect.promise(secretChanged),
+              ),
+            ),
+          ),
         ),
-      ),
-      Layer.provideMerge(
-        UserDirectory.layerDurableObjects(env.USERS, { localWorkerd: env.LOCAL_WORKERD === "1" }),
-      ),
-      Layer.provideMerge(
-        Layer.mergeAll(
-          SqliteClient.layer({ storage }),
-          Platform.layerCrypto,
-          FetchHttpClient.layer,
+        Layer.provideMerge(ThreadEngine.layer),
+        Layer.provideMerge(
+          TurnModels.layer({ scripted: scriptedProviderEnabled(env) }).pipe(
+            Layer.provide(
+              PoolDirectory.layerDurableObjects(env.POOLS, {
+                localWorkerd: env.LOCAL_WORKERD === "1",
+              }),
+            ),
+          ),
         ),
+        Layer.provideMerge(Layer.mergeAll(TurnDiagnostics.layer, TurnReports.layer)),
+      )
+      .pipe(
+        Layer.provideMerge(CloudAnalytics.layerFromEnv(env)),
+        Layer.provideMerge(layerMachineBackend(env, machine)),
+        Layer.provideMerge(BoatRecoveryControl.layer(settings?.kind === "boat" ? settings : null)),
+        Layer.provideMerge(DiagnosticsStore.layer),
+        Layer.provideMerge(ThreadStore.layerMachineRecords),
+        Layer.provideMerge(
+          Layer.mergeAll(
+            ThreadStore.layer,
+            PullState.layer,
+            SessionRows.layer,
+            PreviewState.layer,
+            BrowserTrail.layer(attachmentStorage(env), threadId),
+          ),
+        ),
+        Layer.provideMerge(
+          UserDirectory.layerDurableObjects(env.USERS, { localWorkerd: env.LOCAL_WORKERD === "1" }),
+        ),
+        Layer.provideMerge(
+          Layer.mergeAll(
+            SqliteClient.layer({ storage }),
+            Platform.layerCrypto,
+            FetchHttpClient.layer,
+          ),
+        ),
+        Layer.provideMerge(Layer.mergeAll(Evlog.layer, Evlog.layerWaitUntil({ waitUntil }))),
       ),
-      Layer.provideMerge(Layer.mergeAll(Evlog.layer, Evlog.layerWaitUntil({ waitUntil }))),
-    ),
   );
 };
 
@@ -331,6 +348,7 @@ export class ThreadObject extends DurableObject<ThreadObjectEnv> implements Thre
           ),
       },
       () => this.threadId(),
+      () => this.armAlarm(),
     );
     this.runnerHost = {
       ctx,
@@ -400,7 +418,18 @@ export class ThreadObject extends DurableObject<ThreadObjectEnv> implements Thre
     void ctx.blockConcurrencyWhile(() => this.armAlarm());
   }
 
+  getWorkflowScript(...args: Parameters<ThreadObjectApi["getWorkflowScript"]>) {
+    return this.api.getWorkflowScript(...args);
+  }
+
+  stopWorkflow(...args: Parameters<ThreadObjectApi["stopWorkflow"]>) {
+    return this.api.stopWorkflow(...args);
+  }
+
   // Durable Object RPC dispatches to prototype methods, so each one is spelled out.
+  answerSecret(...args: Parameters<ThreadObjectApi["answerSecret"]>) {
+    return this.api.answerSecret(...args);
+  }
   dispatch(...args: Parameters<ThreadObjectApi["dispatch"]>) {
     return this.api.dispatch(...args);
   }
@@ -435,6 +464,10 @@ export class ThreadObject extends DurableObject<ThreadObjectEnv> implements Thre
 
   subscribe(...args: Parameters<ThreadObjectApi["subscribe"]>) {
     return this.api.subscribe(...args);
+  }
+
+  commandOutput(...args: Parameters<ThreadObjectApi["commandOutput"]>) {
+    return this.api.commandOutput(...args);
   }
 
   summary(...args: Parameters<ThreadObjectApi["summary"]>) {

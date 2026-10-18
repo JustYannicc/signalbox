@@ -11,7 +11,8 @@ import {
 import * as DateTime from "effect/DateTime";
 
 import { driverFor, runnerInstanceFor } from "../models/ModelRouting.ts";
-import { expireRequestEvents } from "./runtimeRequests.ts";
+import { expireRuntimeRequests } from "./runtimeRequests.ts";
+import { isLiveRun } from "./runState.ts";
 import {
   attemptEvent,
   type DecisionContext,
@@ -56,15 +57,6 @@ function wakeWorkStartedAt(
     )[0]?.run;
   return previous === undefined ? undefined : orchestrationV2RunWorkStartedAt(previous);
 }
-
-type LiveRun = Run & { readonly status: "preparing" | "starting" | "running" | "waiting" };
-
-/** A run the provider is (or is about to be) working on. */
-export const isLiveRun = (run: Run): run is LiveRun =>
-  run.status === "preparing" ||
-  run.status === "starting" ||
-  run.status === "running" ||
-  run.status === "waiting";
 
 /** The run the provider is working on, if any. */
 export const activeRun = (projection: Projection): Run | undefined =>
@@ -257,8 +249,7 @@ export function finishRunEvents(
       : [];
   return [
     ...(options.leading ?? []),
-    // Nothing waits on its person's answers once it's over (`runtimeRequests.ts`).
-    ...expireRequestEvents(projection, run, ctx),
+    ...expireRuntimeRequests(projection, run.id, ctx, status === "completed"),
     ...projection.turnItems.flatMap((item) =>
       item.runId === run.id &&
       item.id.startsWith(`turn-item:${run.id}:dependencies:`) &&

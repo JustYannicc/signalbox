@@ -26,6 +26,10 @@ import type * as DateTime from "effect/DateTime";
  * after a crash names the same records.
  */
 
+export type Decision =
+  | { readonly _tag: "accepted"; readonly events: ReadonlyArray<OrchestrationV2DomainEvent> }
+  | { readonly _tag: "rejected"; readonly message: string };
+
 export interface DecisionContext {
   readonly now: DateTime.Utc;
 }
