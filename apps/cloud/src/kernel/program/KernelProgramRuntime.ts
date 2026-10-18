@@ -78,6 +78,12 @@ export function createKernelWasiRuntime(
     {
       table: options.prepared.filesystem.descriptors,
       ownership: options.descriptorOwnership ?? "owned",
+      creation: {
+        createInode: options.prepared.filesystem.createInode.bind(options.prepared.filesystem),
+        takeCreateMode: options.prepared.filesystem.takeNextCreateMode.bind(
+          options.prepared.filesystem,
+        ),
+      },
     },
     options.agentOsPreopens
       ? createAgentOsWasiArgumentTransform(options.prepared.filesystem)

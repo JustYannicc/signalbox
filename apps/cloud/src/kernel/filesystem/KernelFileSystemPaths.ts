@@ -1,4 +1,5 @@
-import type { Inode, Times } from "../storage.ts";
+import type { CreateOptions, Inode, Times } from "../storage.ts";
+import type { PosixMetadata } from "../PosixStorage.ts";
 import {
   RIGHTS,
   WasiDescriptorTable,
@@ -13,6 +14,7 @@ import { descriptorPathAlias } from "./KernelPathAliases.ts";
 import { kernelError, runKernelSync, withKernelErrors } from "./KernelFileSystemErrors.ts";
 import { KernelPathResolver, type ResolveOptions } from "./KernelPathResolver.ts";
 import type { KernelStat } from "./KernelFileSystemTypes.ts";
+import { KernelPosix } from "./KernelPosix.ts";
 import { deviceInfoForDescriptor, deviceStat, virtualDevice } from "./KernelVirtualDevices.ts";
 
 const encoder = new TextEncoder();
@@ -20,10 +22,12 @@ const encoder = new TextEncoder();
 export class KernelFileSystemPaths {
   readonly resolver: KernelPathResolver;
   readonly #descriptors: WasiDescriptorTable;
+  readonly #posix: KernelPosix;
 
-  constructor(resolver: KernelPathResolver, descriptors: WasiDescriptorTable) {
+  constructor(resolver: KernelPathResolver, descriptors: WasiDescriptorTable, posix: KernelPosix) {
     this.resolver = resolver;
     this.#descriptors = descriptors;
+    this.#posix = posix;
   }
 
   get cwd(): string {
@@ -134,15 +138,65 @@ export class KernelFileSystemPaths {
     });
   }
 
-  mkdir(path: string): void {
+  createInode(
+    mount: WasiResolvedPath["mount"],
+    parent: Inode,
+    name: string,
+    options: CreateOptions,
+    mode?: number,
+  ): Inode {
+    return this.#posix.createInode(mount, parent, name, options, mode);
+  }
+
+  getPosixMetadata(path: string, follow = true): PosixMetadata {
+    const resolved = this.resolve(path, { followFinal: follow });
+    return this.#posix.getMetadata(resolved.mount.storage, resolved.inode);
+  }
+
+  getPosixMetadataForFd(fd: number): PosixMetadata {
+    const descriptor = this.#descriptors.get(fd);
+    if (descriptor.mount === undefined || descriptor.inode === undefined) {
+      throw kernelError("ENOTSUP");
+    }
+    return this.#posix.getMetadata(descriptor.mount.storage, descriptor.inode);
+  }
+
+  chmod(path: string, mode: number, follow = true): void {
+    const resolved = this.resolve(path, { followFinal: follow });
+    this.#posix.chmod(resolved.mount, resolved.inode, mode);
+  }
+
+  fchmod(fd: number, mode: number): void {
+    const descriptor = this.#descriptors.get(fd);
+    if (descriptor.mount === undefined || descriptor.inode === undefined) {
+      throw kernelError("ENOTSUP");
+    }
+    this.#posix.chmod(descriptor.mount, descriptor.inode, mode);
+  }
+
+  chown(path: string, uid: number, gid: number, follow = true): void {
+    const resolved = this.resolve(path, { followFinal: follow });
+    this.#posix.chown(resolved.mount, resolved.inode, uid, gid);
+  }
+
+  fchown(fd: number, uid: number, gid: number): void {
+    const descriptor = this.#descriptors.get(fd);
+    if (descriptor.mount === undefined || descriptor.inode === undefined) {
+      throw kernelError("ENOTSUP");
+    }
+    this.#posix.chown(descriptor.mount, descriptor.inode, uid, gid);
+  }
+
+  mkdir(path: string, mode = 0o777): void {
     withKernelErrors(() => {
       const parent = this.resolveParent(path);
       this.#assertWritable(parent.mount);
-      const inode = runKernelSync(
-        parent.mount.storage.create(parent.parent, parent.name, {
-          type: "directory",
-          exclusive: true,
-        }),
+      const inode = this.createInode(
+        parent.mount,
+        parent.parent,
+        parent.name,
+        { type: "directory", exclusive: true },
+        mode,
       );
       runKernelSync(parent.mount.storage.release(inode));
     });
@@ -154,12 +208,16 @@ export class KernelFileSystemPaths {
       this.#assertWritable(parent.mount);
       if (target.startsWith("/"))
         this.#assertAbsoluteTarget(target, parent.mount.id, parent.mount.path);
-      const inode = runKernelSync(
-        parent.mount.storage.create(parent.parent, parent.name, {
+      const inode = this.createInode(
+        parent.mount,
+        parent.parent,
+        parent.name,
+        {
           type: "symlink",
           exclusive: true,
           target,
-        }),
+        },
+        0o777,
       );
       runKernelSync(parent.mount.storage.release(inode));
     });

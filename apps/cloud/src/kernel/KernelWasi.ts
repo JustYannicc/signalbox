@@ -23,7 +23,14 @@ export function createKernelAsyncWasi(input: KernelAsyncWasiOptions) {
   const lifecycle = new WasiLifecycle(
     validateOptions(input.options ?? { version: "preview1" }),
     true,
-    { table: input.filesystem.descriptors, ownership: "borrowed" },
+    {
+      table: input.filesystem.descriptors,
+      ownership: "borrowed",
+      creation: {
+        createInode: input.filesystem.createInode.bind(input.filesystem),
+        takeCreateMode: input.filesystem.takeNextCreateMode.bind(input.filesystem),
+      },
+    },
     input.agentOsPreopens ? createAgentOsWasiArgumentTransform(input.filesystem) : undefined,
   );
   return {
