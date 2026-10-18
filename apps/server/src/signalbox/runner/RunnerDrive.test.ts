@@ -543,6 +543,7 @@ describe("RunnerDrive", () => {
             yield* first.runner.autosave;
             yield* first.runner.flush;
             const expectedWip = drive.refs("t1").wip;
+            write(first.cwd, "local.txt", "keep this newer unsaved change\n");
 
             const branch = threadRemoteBranch("t1");
             git(upstream.dir, "switch", "-q", "-c", "thread/pull", base);
@@ -581,12 +582,12 @@ describe("RunnerDrive", () => {
               hasWorkingTreeChanges: true,
             });
             expect(read(first.cwd, "feature.txt")).toBe("selected branch\n");
-            expect(read(first.cwd, "local.txt")).toBe("keep this local change\n");
+            expect(read(first.cwd, "local.txt")).toBe("keep this newer unsaved change\n");
             expect(NodeFS.existsSync(NodePath.join(first.cwd, "later.txt"))).toBe(false);
             expect(NodeFS.existsSync(NodePath.join(first.cwd, "main-only.txt"))).toBe(false);
             expect(git(first.cwd, "show", `${result.wip}:feature.txt`)).toBe("selected branch");
             expect(git(first.cwd, "show", `${result.wip}:local.txt`)).toBe(
-              "keep this local change",
+              "keep this newer unsaved change",
             );
             expect(drive.refs("t1")).toMatchObject({ main: base, thread: target, wip: result.wip });
             // The fetched branch tip advanced beyond this selection. Only target is incorporated.
@@ -611,12 +612,109 @@ describe("RunnerDrive", () => {
             );
             expect(replay).toMatchObject({ outcome: "up_to_date", head: target });
             expect(read(replacement.cwd, "feature.txt")).toBe("selected branch\n");
-            expect(read(replacement.cwd, "local.txt")).toBe("keep this local change\n");
+            expect(read(replacement.cwd, "local.txt")).toBe("keep this newer unsaved change\n");
             expect(NodeFS.existsSync(NodePath.join(replacement.cwd, "main-only.txt"))).toBe(false);
             expect(drive.refs("t1").main).toBe(base);
           }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
         ),
     );
+
+    for (const selection of [
+      "previous head",
+      "new descendant",
+      "previous head from an empty start",
+    ] as const) {
+      it.effect(`reconciles a reused checkout after undo before pulling the ${selection}`, () =>
+        scopedTest((root) =>
+          Effect.gen(function* () {
+            const upstream = makeUpstream(root);
+            const drive = makeFakeDrive(root, { upstream: upstream.dir });
+            const first = yield* machine(drive, root, "vm-1", "t1");
+            yield* first.runner.prepare("remote-token");
+            const base = drive.refs("t1").thread!;
+            const branch = threadRemoteBranch("t1");
+            git(upstream.dir, "switch", "-q", "-c", branch, base);
+            const previous = upstream.commit("feature.txt", "selected branch\n", "Feature");
+            const descendant = upstream.commit("newer.txt", "new descendant\n", "Descendant");
+            git(upstream.dir, "switch", "-q", "main");
+            upstream.commit("main-only.txt", "leave this on main\n", "Main only");
+
+            const beforeUndo = yield* first.runner.pull(
+              {
+                id: "pull-before-undo",
+                target: previous,
+                expectedThread: base,
+                expectedWip: drive.refs("t1").wip,
+                revision: null,
+                branch,
+              },
+              "remote-token",
+            );
+            expect(beforeUndo).toMatchObject({ outcome: "pulled", head: previous });
+            write(first.cwd, "README.md", "discard this tracked edit\n");
+            write(first.cwd, "discarded.txt", "discard this saved WIP\n");
+            yield* first.runner.autosave;
+            yield* first.runner.flush;
+            write(first.cwd, "unsaved.txt", "discard this unsaved WIP too\n");
+
+            const restored = selection === "previous head from an empty start" ? null : base;
+            drive.pinToCheckpoint("t1", restored, { shortcuts: [], context: null });
+            const revision = drive.refs("t1").revision;
+            // A new Runner instance on the same machine must notice the restore on disk.
+            const reused = yield* machine(drive, root, "vm-1", "t1");
+            const target = selection === "new descendant" ? descendant : previous;
+            const operation: PullOperation = {
+              id: "pull-after-undo",
+              target,
+              expectedThread: restored,
+              expectedWip: restored,
+              revision,
+              branch,
+            };
+            const result = yield* reused.runner.pull(operation, "remote-token");
+            expect(result).toMatchObject({
+              outcome: "pulled",
+              head: target,
+              wip: target,
+              reason: null,
+              hasWorkingTreeChanges: false,
+            });
+            expect(git(reused.cwd, "rev-parse", "HEAD")).toBe(target);
+            expect(read(reused.cwd, "README.md")).toBe("hello\n");
+            expect(read(reused.cwd, "feature.txt")).toBe("selected branch\n");
+            for (const file of ["discarded.txt", "unsaved.txt", "main-only.txt"]) {
+              expect(NodeFS.existsSync(NodePath.join(reused.cwd, file))).toBe(false);
+              expect(gitOk(reused.cwd, "cat-file", "-e", `${result.wip}:${file}`)).toBe(false);
+            }
+            expect(status(reused.cwd)).toEqual([]);
+            expect(drive.refs("t1")).toMatchObject({ main: base, thread: target, wip: target });
+            expect(read(reused.cwd, ".git/signalbox-revision")).toBe(revision);
+
+            write(reused.cwd, "local.txt", "keep this edit after the restore\n");
+            expect(yield* reused.runner.pull(operation, "remote-token")).toEqual(result);
+            expect(read(reused.cwd, "local.txt")).toBe("keep this edit after the restore\n");
+            const next = yield* reused.runner.pull(
+              {
+                ...operation,
+                id: "pull-unchanged-revision",
+                expectedThread: target,
+                expectedWip: target,
+              },
+              "remote-token",
+            );
+            expect(next).toMatchObject({
+              outcome: "up_to_date",
+              head: target,
+              hasWorkingTreeChanges: true,
+            });
+            expect(git(reused.cwd, "show", `${next.wip}:local.txt`)).toBe(
+              "keep this edit after the restore",
+            );
+            expect(drive.refs("t1").main).toBe(base);
+          }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+        ),
+      );
+    }
 
     it.effect("leases only the selected remote target when a later push races", () =>
       scopedTest((root) =>
@@ -790,8 +888,10 @@ describe("RunnerDrive", () => {
           expect(drive.refs("t1").thread).toBe(target);
           const packsAfterCommit = drive.packs.length;
 
+          write(cwd, "unsaved.txt", "new edit after losing the response\n");
           const replay = yield* runner.pull(operation, "remote-token");
           expect(replay).toMatchObject({ outcome: "pulled", head: target });
+          expect(read(cwd, "unsaved.txt")).toBe("new edit after losing the response\n");
           expect(git(cwd, "rev-parse", `refs/remotes/origin/${branch}`)).toBe(target);
           expect(drive.packs).toHaveLength(packsAfterCommit);
           expect(yield* runner.pull(operation, "remote-token")).toEqual(replay);

@@ -572,6 +572,37 @@ export const makeRunnerDrive = Effect.fn("makeRunnerDrive")(function* (input: {
       yield* git.run(state.thread === null ? ["read-tree", "--empty"] : ["reset", "-q"]);
     });
 
+  const reconcileCheckout = (state: DriveRefs, restore: boolean) =>
+    Effect.gen(function* () {
+      pinnedContinuation = state.pinnedViews !== null;
+      const revisionFile = path.join(gitDir, "signalbox-revision");
+      const localRevision = yield* fs.readFileString(revisionFile).pipe(
+        Effect.map((value) => value.trim() || null),
+        Effect.orElseSucceed(() => null),
+      );
+      const revisionChanged =
+        state.revision !== undefined && (state.revision ?? "") !== (localRevision ?? "");
+      if (!restore && !revisionChanged) return;
+      conflicted = [];
+      // The branch may still have files where a shortcut is mounted read-only.
+      yield* shortcuts.release;
+      if (revisionChanged) yield* git.run(["clean", "-ffdq"]);
+      yield* checkout(state).pipe(
+        Effect.catchTags({
+          RunnerGitError: (error) =>
+            remote === null || remote === undefined
+              ? Effect.fail(error)
+              : // A remote-backed drive keeps the remote's files on the remote (#406).
+                Effect.fail(
+                  new RunnerGitError({
+                    message: `Checking this thread out needs files ${remote.repository} keeps on GitHub, and GitHub can't be reached through Signalbox right now. ${error.message}`,
+                  }),
+                ),
+        }),
+      );
+      yield* fs.writeFileString(revisionFile, state.revision ?? "");
+    });
+
   /**
    * Makes the drive's remote `origin`, fetches its whole history blobless
    * (commits and folders; files on demand, #394) and answers its default
@@ -720,35 +751,8 @@ export const makeRunnerDrive = Effect.fn("makeRunnerDrive")(function* (input: {
           if (fetched?._tag === "fetched") fetchedMain = fetched.head;
         }
         const state = yield* drive.open;
-        pinnedContinuation = state.pinnedViews !== null;
-        const revisionFile = path.join(gitDir, "signalbox-revision");
-        const localRevision = yield* fs.readFileString(revisionFile).pipe(
-          Effect.map((value) => value.trim() || null),
-          Effect.orElseSucceed(() => null),
-        );
-        const revisionChanged =
-          state.revision !== undefined && (state.revision ?? "") !== (localRevision ?? "");
+        yield* reconcileCheckout(state, !existed || localThread !== state.thread);
         const notices: Array<string> = [];
-        if (!existed || localThread !== state.thread || revisionChanged) {
-          conflicted = [];
-          // The branch may still have files where a shortcut is mounted read-only.
-          yield* shortcuts.release;
-          if (revisionChanged) yield* git.run(["clean", "-ffdq"]);
-          yield* checkout(state).pipe(
-            Effect.catchTags({
-              RunnerGitError: (error) =>
-                remote === null || remote === undefined
-                  ? Effect.fail(error)
-                  : // A remote-backed drive keeps the remote's files on the remote (#406).
-                    Effect.fail(
-                      new RunnerGitError({
-                        message: `Checking this thread out needs files ${remote.repository} keeps on GitHub, and GitHub can't be reached through Signalbox right now. ${error.message}`,
-                      }),
-                    ),
-            }),
-          );
-          yield* fs.writeFileString(revisionFile, state.revision ?? "");
-        }
         // A new machine: the last one's machine state comes back on top of the checkout.
         if (!existed && machineState !== null && state.machine !== null) {
           yield* machineState.restore(state.machine, state.wip ?? state.thread).pipe(
@@ -1001,10 +1005,10 @@ export const makeRunnerDrive = Effect.fn("makeRunnerDrive")(function* (input: {
 
   const restorePullCheckout = (existed: boolean) =>
     Effect.gen(function* () {
-      if (existed) return;
       const known = drive.known();
-      yield* checkout(known);
-      if (machineState !== null && known.machine !== null) {
+      // An unchanged revision may hold newer edits or an interrupted pull, even when refs differ.
+      yield* reconcileCheckout(known, !existed);
+      if (!existed && machineState !== null && known.machine !== null) {
         yield* machineState.restore(known.machine, known.wip ?? known.thread);
       }
     });
@@ -1098,6 +1102,16 @@ export const makeRunnerDrive = Effect.fn("makeRunnerDrive")(function* (input: {
               yield* unchanged("The selected remote branch name is invalid."),
             );
           }
+          const credentialFile = remoteCredentialFile(input.cwd);
+          yield* fs.writeFileString(
+            credentialFile,
+            `username=signalbox\npassword=${remoteToken}\n`,
+            { mode: 0o600 },
+          );
+          yield* git.usePromisor(input.client.remoteUrl, credentialFile);
+
+          yield* restorePullCheckout(existed);
+
           const inProgress =
             (yield* git.resolve("MERGE_HEAD")) !== null ||
             (yield* Effect.forEach(REBASE_DIRS, (name) => fs.exists(path.join(gitDir, name)))).some(
@@ -1109,16 +1123,6 @@ export const makeRunnerDrive = Effect.fn("makeRunnerDrive")(function* (input: {
               yield* unchanged("A merge or rebase is already in progress in this thread."),
             );
           }
-
-          const credentialFile = remoteCredentialFile(input.cwd);
-          yield* fs.writeFileString(
-            credentialFile,
-            `username=signalbox\npassword=${remoteToken}\n`,
-            { mode: 0o600 },
-          );
-          yield* git.usePromisor(input.client.remoteUrl, credentialFile);
-
-          yield* restorePullCheckout(existed);
 
           const source = `refs/signalbox/pull-source/${operation.target}`;
           const shallow = yield* fs.exists(path.join(gitDir, "shallow"));
