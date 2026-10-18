@@ -149,6 +149,14 @@ describe("Catalog HomeObject in workerd", () => {
         args: { input: { defined: true, value: root } },
       }),
     ).rejects.toMatchObject({ code: "FORBIDDEN" });
+    await expect(
+      client.call("personal:view_access", {
+        input: { defined: true, value: { folderId: null, incarnation: "invalid" } },
+      }),
+    ).rejects.toMatchObject({
+      code: "SYNC_FAILURE",
+      data: { _tag: "SyncFailure", reason: "invalid_input" },
+    });
   });
 
   it("keeps a failed fence pending across eviction and commits only after native recovery", async () => {

@@ -17,7 +17,7 @@ import { query, v } from "./_generated/server.js";
 const decodeHome = Schema.decodeUnknownSync(CatalogPersonalRoot);
 const decodeActor = Schema.decodeUnknownSync(CatalogPolicyActor);
 
-/** Native delivery checks re-read committed policy; only the physical object's private caller uses this. */
+/** Native in-object query reads require public visibility; delivery ingress still refuses this path. */
 export const deliveryPermit = query
   .input({ userId: v.string(), functionPath: v.string(), args: v.any() })
   .output(v.object({ scope: v.string(), epoch: v.number() }))
@@ -49,7 +49,11 @@ export const deliveryPermit = query
     ) {
       throw new LunoraError("FORBIDDEN", "Unknown Catalog operation.");
     }
-    const input = await decodeWireValue(op.input, args.args.input, "invalid_input");
+    const input = await decodeWireValue(op.input, args.args.input, "invalid_input").catch(
+      (error: unknown) => {
+        throw asLunoraSyncError(error);
+      },
+    );
     const result = await Effect.runPromise(
       Effect.result(
         resolveCatalogRuntimePolicy(
