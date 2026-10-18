@@ -7,9 +7,10 @@
 #   publishes it as the Runner image's `nightly`, which production's boat
 #   machines run.
 # - Pull requests from JustYannicc deploy the `pr-<number>` stage at
-#   preview-<number>.signalbox.run: its own Worker, Durable Objects and
-#   ModelGateway (gateway-preview-<number>), destroyed when the pull request
-#   closes. They also plan production, to show what merging would do.
+#   preview-<number>.signalbox.run. The gateway and trace receiver use paths
+#   on that app origin; production keeps its own Worker domains. Preview
+#   resources are destroyed when the pull request closes. They also plan
+#   production, to show what merging would do.
 #
 # Every deploy plans first and stops if the plan replaces, deletes, orphans or
 # unbinds anything (apps/cloud/infra/plan.sh). Plans are in the job summary.
@@ -471,16 +472,15 @@ jobs:
           fi
 
       - name: Verify preview Worker domains
-        run: node .trusted-main/.github/scripts/cloudflare-preview-domains.cjs verify
+        run: node .trusted-main/.github/scripts/cloudflare-preview-domains.cjs verify-one-domain
 
-      # Until a new preview's hosts serve their own certificates, opening one
-      # breaks app.signalbox.run and the other previews in that browser (#618,
-      # see the script). The hosts are infra/stage.ts's cloud and gateway domains.
+      # Wait until the preview app host serves its own certificate. Until then,
+      # opening it breaks app.signalbox.run and other previews in that browser (#618).
       - name: Wait for the preview's own certificates
         timeout-minutes: 35
         run: >-
           node .trusted-main/.github/scripts/wait-own-certificate.cjs
-          "preview-$PR_NUMBER.signalbox.run" "gateway-preview-$PR_NUMBER.signalbox.run"
+          "preview-$PR_NUMBER.signalbox.run"
 
       # Production runs main as it is now, which can be ahead of this checkout:
       # merge it in, and rebuild when it brought anything.

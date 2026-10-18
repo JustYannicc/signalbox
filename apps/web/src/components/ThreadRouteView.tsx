@@ -12,9 +12,9 @@ import ChatView from "./ChatView";
 import { resolveDraftPromotionNavigationTarget, threadHasStarted } from "./ChatView.logic";
 import { waitForDraftHeroTransition } from "./chat/draftHeroTransition";
 import { useAtomCommand } from "../state/use-atom-command";
-import { SidebarInset } from "./ui/sidebar";
 import { Alert, AlertAction, AlertDescription, AlertTitle } from "./ui/alert";
 import { Button } from "./ui/button";
+import { SidebarInset } from "./ui/sidebar";
 import {
   finalizePromotedDraftThreadByRef,
   markPromotedDraftThreadByRef,
@@ -30,8 +30,7 @@ import {
   useThreadShell,
   useThreadStatus,
 } from "../state/entities";
-import { useEnvironmentQuery } from "../state/query";
-import { environmentShell } from "../state/shell";
+import { useEnvironmentShellStatus } from "../state/shell";
 import {
   buildThreadRouteParams,
   isThreadRouteSnapshotAuthoritative,
@@ -61,7 +60,7 @@ export function ThreadRouteView({ target }: { target: ThreadRouteTarget }) {
     : null;
   const serverThreadRef: ScopedThreadRef | null =
     target.kind === "server" ? target.threadRef : (draftSession?.promotedTo ?? inferredThreadRef);
-  const serverThreadShell = useThreadShell(serverThreadRef);
+  const serverThread = useThreadShell(serverThreadRef);
   const backgroundSubmissionPending = useBackgroundDraftSubmissionPending(
     target.kind === "draft" ? serverThreadRef : null,
   );
@@ -69,16 +68,15 @@ export function ThreadRouteView({ target }: { target: ThreadRouteTarget }) {
     target.kind === "draft"
       ? resolveDraftPromotionNavigationTarget({
           serverThreadRef,
-          serverThread: serverThreadShell,
+          serverThread,
           backgroundSubmissionPending,
         })
       : null;
 
-  const shell = useEnvironmentQuery(
-    serverThreadRef === null ? null : environmentShell.stateAtom(serverThreadRef.environmentId),
-  );
+  const shellStatus = useEnvironmentShellStatus(serverThreadRef?.environmentId ?? null);
+  const serverThreadShell = serverThread;
   const environmentThreadRefs = useEnvironmentThreadRefs(serverThreadRef?.environmentId ?? null);
-  const bootstrapComplete = isThreadRouteSnapshotAuthoritative(shell.data?.status);
+  const bootstrapComplete = isThreadRouteSnapshotAuthoritative(shellStatus);
   const draftThread = useComposerDraftStore((store) =>
     serverThreadRef ? store.getDraftThreadByRef(serverThreadRef) : null,
   );

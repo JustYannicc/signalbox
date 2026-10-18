@@ -202,7 +202,7 @@
       "access": "read",
       "stream": "snapshot",
       "input": "e4926bda",
-      "output": "24d42c5f"
+      "output": "db56df35"
     },
     {
       "name": "automations.githubSubscriptions",
@@ -261,7 +261,7 @@
       "access": "read",
       "stream": "snapshot",
       "input": "5b9c822a",
-      "output": "022797fa"
+      "output": "3998d94e"
     },
     {
       "name": "automations.runs.retry",
@@ -276,7 +276,7 @@
       "access": "write",
       "compiles": true,
       "input": "e4a20fc8",
-      "output": "ca09aba7"
+      "output": "07cb0ccd"
     },
     {
       "name": "automations.setEnabled",
@@ -305,7 +305,7 @@
       "access": "read",
       "compiles": true,
       "input": "b2a7717d",
-      "output": "7c407bde"
+      "output": "c6e7ea50"
     },
     {
       "name": "backgroundPolicy.subscribe",
@@ -650,15 +650,15 @@
       "name": "keybindings.remove",
       "rpc": "server.removeKeybinding",
       "access": "write",
-      "input": "c5599a9e",
-      "output": "364842b6"
+      "input": "d47a6f3a",
+      "output": "6b0d3bc2"
     },
     {
       "name": "keybindings.upsert",
       "rpc": "server.upsertKeybinding",
       "access": "write",
-      "input": "e570ce3e",
-      "output": "364842b6"
+      "input": "3d1d0d0a",
+      "output": "6b0d3bc2"
     },
     {
       "name": "keys.create",
@@ -1550,7 +1550,7 @@
       "rpc": "server.getConfig",
       "access": "read",
       "input": "03c2b661",
-      "output": "8c38ad32"
+      "output": "16f25035"
     },
     {
       "name": "server.refreshProviders",
@@ -1587,7 +1587,7 @@
       "access": "read",
       "stream": "snapshot",
       "input": "240ec835",
-      "output": "d3e93665"
+      "output": "181c6a5a"
     },
     {
       "name": "settings.get",
@@ -1803,7 +1803,7 @@
       "rpc": "orchestration.launchThread",
       "access": "write",
       "input": "d5a4dd19",
-      "output": "1f509429"
+      "output": "c719de80"
     },
     {
       "name": "threads.delete",
@@ -1836,7 +1836,7 @@
       "rpc": "orchestration.getThreadProjection",
       "access": "read",
       "input": "1276a316",
-      "output": "493e2671"
+      "output": "0425f088"
     },
     {
       "name": "threads.getFullThreadDiff",
@@ -1888,14 +1888,14 @@
       "access": "read",
       "stream": "snapshot",
       "input": "9b1960e6",
-      "output": "96399a4c"
+      "output": "bbbd32e7"
     },
     {
       "name": "threads.listArchived",
       "rpc": "orchestration.getArchivedShellSnapshot",
       "access": "read",
       "input": "03c2b661",
-      "output": "99b6eac5"
+      "output": "afaf884a"
     },
     {
       "name": "threads.markRead",
@@ -2123,7 +2123,7 @@
       "access": "read",
       "stream": "snapshot",
       "input": "438e44e7",
-      "output": "b7ddde4c"
+      "output": "b9fc6dec"
     },
     {
       "name": "threads.subscribeArchived",
@@ -2131,7 +2131,7 @@
       "access": "read",
       "stream": "snapshot",
       "input": "03c2b661",
-      "output": "118e49b8"
+      "output": "f9b5e74e"
     },
     {
       "name": "threads.switchProvider",
@@ -2228,7 +2228,7 @@
       "name": "vcs.createWorktree",
       "rpc": "vcs.createWorktree",
       "access": "write",
-      "input": "4adbaf91",
+      "input": "31750d9d",
       "output": "6e13b7c2"
     },
     {

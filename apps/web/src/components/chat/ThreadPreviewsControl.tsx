@@ -11,7 +11,7 @@ import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import type { SignalboxPreviewPort } from "@t3tools/contracts/signalboxPreviews";
 import { useAtomValue } from "@effect/atom-react";
 import { AppWindowIcon, ChevronDownIcon, GlobeIcon } from "lucide-react";
-import { memo, useCallback, useRef } from "react";
+import { memo, useRef } from "react";
 
 import { isElectron } from "~/env";
 import { ensureLocalApi } from "~/localApi";
@@ -45,43 +45,38 @@ function previewTitle(port: SignalboxPreviewPort) {
 function useOpenThreadPreview(environmentId: EnvironmentId, threadId: ThreadId) {
   const open = useAtomCommand(signalboxPreviews.open, { reportFailure: false });
   const opening = useRef(false);
-  return useCallback(
-    (port: number) => {
-      if (opening.current) return;
-      const toastFailure = (description: string) =>
-        toastManager.add({ type: "error", title: `Couldn't open preview :${port}`, description });
-      const pending = isElectron ? null : window.open("", "_blank");
-      if (!isElectron && pending === null) {
-        // A blocked tab stays blocked after the await, so there's nothing to fall back to.
-        toastFailure(
-          "Your browser blocked the new tab. Allow pop-ups for this site and try again.",
-        );
-        return;
-      }
-      if (pending) pending.opener = null;
-      opening.current = true;
-      const fail = (error: unknown) => {
-        pending?.close();
-        toastFailure(previewOpenFailureMessage(error));
-      };
-      void open({ environmentId, input: { threadId, port } })
-        .then(async (result) => {
-          if (isAtomCommandInterrupted(result)) {
-            pending?.close();
-            return;
-          }
-          if (result._tag === "Failure") return fail(squashAtomCommandFailure(result));
-          // Without a reserved tab this is desktop, which hands the link to the system browser.
-          if (pending) pending.location.href = result.value.url;
-          else await ensureLocalApi().shell.openExternal(result.value.url);
-        })
-        .catch(fail)
-        .finally(() => {
-          opening.current = false;
-        });
-    },
-    [environmentId, open, threadId],
-  );
+  return (port: number) => {
+    if (opening.current) return;
+    const toastFailure = (description: string) =>
+      toastManager.add({ type: "error", title: `Couldn't open preview :${port}`, description });
+    const pending = isElectron ? null : window.open("", "_blank");
+    if (!isElectron && pending === null) {
+      // A blocked tab stays blocked after the await, so there's nothing to fall back to.
+      toastFailure("Your browser blocked the new tab. Allow pop-ups for this site and try again.");
+      return;
+    }
+    if (pending) pending.opener = null;
+    opening.current = true;
+    const fail = (error: unknown) => {
+      pending?.close();
+      toastFailure(previewOpenFailureMessage(error));
+    };
+    void open({ environmentId, input: { threadId, port } })
+      .then(async (result) => {
+        if (isAtomCommandInterrupted(result)) {
+          pending?.close();
+          return;
+        }
+        if (result._tag === "Failure") return fail(squashAtomCommandFailure(result));
+        // Without a reserved tab this is desktop, which hands the link to the system browser.
+        if (pending) pending.location.href = result.value.url;
+        else await ensureLocalApi().shell.openExternal(result.value.url);
+      })
+      .catch(fail)
+      .finally(() => {
+        opening.current = false;
+      });
+  };
 }
 
 /**

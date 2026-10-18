@@ -20,6 +20,7 @@ import {
   type OrchestrationV2TurnItem,
 } from "@t3tools/contracts";
 import { resolveUserMessagePresentation } from "@t3tools/client-runtime/user-message";
+import { deriveRunContinuations } from "@t3tools/client-runtime/state/thread-execution";
 import { summarizeToolGroup } from "@t3tools/client-runtime/work-log/presentation";
 import * as DateTime from "effect/DateTime";
 import { describe, expect, it } from "vite-plus/test";
@@ -1089,6 +1090,248 @@ describe("buildThreadFeed", () => {
       "work-toggle",
       "message",
     ]);
+  });
+
+  it("folds a machine continuation under its initiating run and uses cumulative timing", () => {
+    const rootRunId = runId;
+    const continuationRunId = RunId.make("run-resume");
+    const at = (value: string) => DateTime.makeUnsafe(value);
+    const runContinuations = deriveRunContinuations([
+      {
+        id: rootRunId,
+        ordinal: 1,
+        status: "interrupted",
+        requestedAt: at("2026-06-20T00:00:00.000Z"),
+        startedAt: at("2026-06-20T00:00:01.000Z"),
+        workStartedAt: at("2026-06-20T00:00:00.000Z"),
+        completedAt: at("2026-06-20T00:00:30.000Z"),
+      },
+      {
+        id: continuationRunId,
+        ordinal: 2,
+        restartContinuationOfRunId: rootRunId,
+        status: "completed",
+        requestedAt: at("2026-06-20T00:00:31.000Z"),
+        startedAt: at("2026-06-20T00:00:35.000Z"),
+        workStartedAt: at("2026-06-20T00:00:00.000Z"),
+        completedAt: at("2026-06-20T00:01:24.000Z"),
+      },
+    ]);
+    const resumedCommand = {
+      ...command("2026-06-20T00:00:55.000Z"),
+      id: TurnItemId.make("item-resumed-command"),
+      runId: continuationRunId,
+      ordinal: 3,
+    };
+    const finalMessage = {
+      ...assistantMessage("2026-06-20T00:01:24.000Z"),
+      id: TurnItemId.make("item-resumed-assistant"),
+      messageId: MessageId.make("message-resumed-assistant"),
+      runId: continuationRunId,
+      ordinal: 4,
+    };
+    const feed = buildThreadFeed([
+      projected({ ...userMessage(), runId: rootRunId }, 0),
+      projected({ ...assistantMessage("2026-06-20T00:00:10.000Z"), text: "Starting." }, 1),
+      projected(command("2026-06-20T00:00:20.000Z"), 2),
+      projected(resumedCommand, 3),
+      projected(finalMessage, 4),
+    ]);
+    const latestRun = {
+      runId: continuationRunId,
+      status: "completed" as const,
+      startedAt: "2026-06-20T00:00:00.000Z",
+      completedAt: "2026-06-20T00:01:24.000Z",
+      runContinuations,
+    };
+
+    const collapsed = deriveThreadFeedPresentation(feed, latestRun, new Set());
+    expect(collapsed.filter((entry) => entry.type === "run-fold")).toEqual([
+      expect.objectContaining({
+        id: `run-fold:${rootRunId}`,
+        runId: rootRunId,
+        label: "Worked for 1m 24s",
+      }),
+    ]);
+
+    const expanded = deriveThreadFeedPresentation(feed, latestRun, new Set([continuationRunId]));
+    expect(expanded.find((entry) => entry.type === "run-fold")).toMatchObject({ expanded: true });
+    const visibleRunIds = expanded.flatMap((entry) =>
+      entry.type === "activity-group"
+        ? [entry.runId, ...entry.activities.map((activity) => activity.runId)]
+        : entry.type === "work-toggle"
+          ? [entry.runId]
+          : [],
+    );
+    expect(visibleRunIds).toEqual(expect.arrayContaining([rootRunId, continuationRunId]));
+  });
+
+  it("keeps a stopped machine-loss continuation prompt visible and its fold boundary local", () => {
+    const rootRunId = RunId.make("run-machine-lost");
+    const continuationRunId = RunId.make("run-machine-resume");
+    const unrelatedRunId = RunId.make("run-after-resume");
+    const at = (value: string) => DateTime.makeUnsafe(value);
+    const runContinuations = deriveRunContinuations([
+      {
+        id: rootRunId,
+        ordinal: 1,
+        status: "interrupted",
+        requestedAt: at("2026-06-20T00:00:00.000Z"),
+        startedAt: at("2026-06-20T00:00:01.000Z"),
+        workStartedAt: at("2026-06-20T00:00:00.000Z"),
+        completedAt: at("2026-06-20T00:00:30.000Z"),
+      },
+      {
+        id: continuationRunId,
+        ordinal: 2,
+        restartContinuationOfRunId: rootRunId,
+        status: "interrupted",
+        requestedAt: at("2026-06-20T00:00:31.000Z"),
+        startedAt: at("2026-06-20T00:00:35.000Z"),
+        workStartedAt: at("2026-06-20T00:00:00.000Z"),
+        completedAt: at("2026-06-20T00:01:24.000Z"),
+      },
+    ]);
+    const continuationPromptId = MessageId.make("message-machine-lost-continuation");
+    const continuationPrompt = {
+      ...userMessage("2026-06-20T00:00:40.000Z"),
+      id: TurnItemId.make("item-machine-lost-continuation"),
+      messageId: continuationPromptId,
+      runId: continuationRunId,
+      text: "Continue where you left off.",
+    };
+    const rootWork = {
+      ...command("2026-06-20T00:00:20.000Z"),
+      id: TurnItemId.make("item-machine-lost-work"),
+      runId: rootRunId,
+    };
+    const continuationWork = {
+      ...command("2026-06-20T00:00:55.000Z"),
+      id: TurnItemId.make("item-machine-resumed-work"),
+      runId: continuationRunId,
+    };
+    const unrelatedWork = (id: string, createdAt: string) => {
+      const built = buildThreadFeed([
+        projected(
+          {
+            ...command(createdAt),
+            id: TurnItemId.make(id),
+            runId: unrelatedRunId,
+          },
+          0,
+        ),
+      ])[0];
+      if (built?.type !== "activity-group") throw new Error("Expected an activity group.");
+      return { ...built, id, createdAt };
+    };
+    const feed = [
+      ...buildThreadFeed([
+        projected({ ...userMessage("2026-06-20T00:00:00.000Z"), runId: rootRunId }, 0),
+        projected(rootWork, 1),
+      ]),
+      ...buildThreadFeed([projected(continuationPrompt, 0), projected(continuationWork, 1)]),
+      unrelatedWork("unrelated-start", "2026-06-20T00:02:00.000Z"),
+      unrelatedWork("unrelated-end", "2026-06-20T00:02:10.000Z"),
+    ];
+    const latestRun = {
+      runId: continuationRunId,
+      status: "interrupted" as const,
+      startedAt: "2026-06-20T00:00:00.000Z",
+      completedAt: "2026-06-20T00:01:24.000Z",
+      runContinuations,
+    };
+
+    const collapsed = deriveThreadFeedPresentation(feed, latestRun, new Set());
+    const continuationPromptIndex = collapsed.findIndex(
+      (entry) => entry.type === "message" && entry.message.id === continuationPromptId,
+    );
+    const rootFoldIndex = collapsed.findIndex(
+      (entry) => entry.type === "run-fold" && entry.runId === rootRunId,
+    );
+    expect(collapsed[continuationPromptIndex]).toMatchObject({
+      type: "message",
+      message: { role: "user", text: "Continue where you left off." },
+    });
+    expect(rootFoldIndex).toBeGreaterThan(continuationPromptIndex);
+    expect(collapsed[rootFoldIndex]).toMatchObject({
+      label: "You stopped after 1m 24s",
+      expanded: false,
+    });
+    expect(
+      collapsed.find((entry) => entry.type === "run-fold" && entry.runId === unrelatedRunId),
+    ).toMatchObject({
+      label: "Worked for 10s",
+    });
+
+    const expanded = deriveThreadFeedPresentation(feed, latestRun, new Set([continuationRunId]));
+    expect(
+      expanded.find((entry) => entry.type === "run-fold" && entry.runId === rootRunId),
+    ).toMatchObject({
+      expanded: true,
+    });
+    const visibleRunIds = expanded.flatMap((entry) =>
+      entry.type === "activity-group"
+        ? [entry.runId, ...entry.activities.map((activity) => activity.runId)]
+        : entry.type === "work-toggle"
+          ? [entry.runId]
+          : [],
+    );
+    expect(visibleRunIds).toEqual(expect.arrayContaining([rootRunId, continuationRunId]));
+  });
+
+  it("keeps an unlinked interrupted run labeled as stopped", () => {
+    const interruptedRunId = RunId.make("interrupted-run");
+    const at = (value: string) => DateTime.makeUnsafe(value);
+    const runContinuations = deriveRunContinuations([
+      {
+        id: interruptedRunId,
+        ordinal: 1,
+        status: "interrupted",
+        requestedAt: at("2026-06-20T00:00:00.000Z"),
+        startedAt: at("2026-06-20T00:00:01.000Z"),
+        workStartedAt: at("2026-06-20T00:00:00.000Z"),
+        completedAt: at("2026-06-20T00:00:47.000Z"),
+      },
+    ]);
+    const feed = buildThreadFeed([
+      projected({ ...userMessage(), runId: interruptedRunId }, 0),
+      projected(
+        {
+          ...assistantMessage("2026-06-20T00:00:10.000Z"),
+          id: TurnItemId.make("interrupted-opening"),
+          messageId: MessageId.make("interrupted-opening-message"),
+          runId: interruptedRunId,
+          text: "I will check.",
+        },
+        1,
+      ),
+      projected({ ...command("2026-06-20T00:00:20.000Z"), runId: interruptedRunId }, 2),
+      projected(
+        {
+          ...assistantMessage("2026-06-20T00:00:47.000Z"),
+          id: TurnItemId.make("interrupted-final"),
+          messageId: MessageId.make("interrupted-final-message"),
+          runId: interruptedRunId,
+        },
+        3,
+      ),
+    ]);
+
+    const presented = deriveThreadFeedPresentation(
+      feed,
+      {
+        runId: interruptedRunId,
+        status: "interrupted",
+        startedAt: "2026-06-20T00:00:00.000Z",
+        completedAt: "2026-06-20T00:00:47.000Z",
+        runContinuations,
+      },
+      new Set(),
+    );
+    expect(presented.find((entry) => entry.type === "run-fold")).toMatchObject({
+      runId: interruptedRunId,
+      label: "You stopped after 47s",
+    });
   });
 
   it("keeps an active run expanded and detects failures from completed command output", () => {

@@ -315,6 +315,10 @@
       "types": "./src/state/notes.ts",
       "default": "./src/state/notes.ts"
     },
+    "./state/signalboxPoolSignIn": {
+      "types": "./src/state/signalboxPoolSignIn.ts",
+      "default": "./src/state/signalboxPoolSignIn.ts"
+    },
     "./state/signalboxSignIn": {
       "types": "./src/state/signalboxSignIn.ts",
       "default": "./src/state/signalboxSignIn.ts"
@@ -483,6 +487,10 @@
       "types": "./src/state/orchestrationV2TestFixtures.ts",
       "default": "./src/state/orchestrationV2TestFixtures.ts"
     },
+    "./state/thread-fold-expansion": {
+      "types": "./src/state/threadFoldExpansion.ts",
+      "default": "./src/state/threadFoldExpansion.ts"
+    },
     "./state/thread-requests": {
       "types": "./src/state/threadRequests.ts",
       "default": "./src/state/threadRequests.ts"
@@ -606,6 +614,10 @@
     "./pull-request-markdown": {
       "types": "./src/pullRequestMarkdown.ts",
       "default": "./src/pullRequestMarkdown.ts"
+    },
+    "./pull-request-query": {
+      "types": "./src/pullRequestQuery.ts",
+      "default": "./src/pullRequestQuery.ts"
     },
     "./pull-request-diff-revision": {
       "types": "./src/pullRequestDiffRevision.ts",
