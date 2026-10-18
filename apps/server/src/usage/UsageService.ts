@@ -41,7 +41,11 @@ import type {
   UsageRecord,
 } from "@t3tools/provider-core/server/usage";
 import { resolveModelAliases, UsageAggregator } from "./usageAggregation.ts";
-import { createOverrideRateTable, parseRateTable, type RateTable } from "./usagePricing.ts";
+import {
+  createOverrideRateTable,
+  parseRateTable,
+  type RateTable,
+} from "@t3tools/provider-core/server/usagePricing";
 import {
   listTranscriptFiles,
   readDirectoryVolumeId,
