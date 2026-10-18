@@ -14,6 +14,7 @@ import * as Layer from "effect/Layer";
 import * as TestClock from "effect/testing/TestClock";
 
 import { UserObjectError } from "../../user/UserDirectory.ts";
+import { threadEvent } from "../threadEvents.ts";
 import { CONNECT_TIMEOUT_MS, IDLE_TAIL_MS, MachineBackend } from "./MachineBackend.ts";
 import { DRAIN_TIMEOUT_MS } from "./ThreadRunner.ts";
 import { CONTINUE_PROMPT, MAX_CONTINUATIONS } from "./runRecovery.ts";
@@ -789,6 +790,58 @@ describe("ThreadRunner", () => {
           items: [{ kind: "machine.drained", id: asked.drain!.id, unsaved: [] }],
         });
         expect(yield* runner.reconcile).toMatchObject({ busy: true, release: null });
+      }),
+    ),
+  );
+
+  it.effect("drops a settled task's drain when a new message reopens it", () =>
+    withObject(freshDatabase(), (engine, runner) =>
+      Effect.gen(function* () {
+        yield* launch(engine);
+        const machine = yield* connect(runner);
+        const turn = yield* liveTurn(runner);
+        const report = turnReport(turn.runId, turn.runOrdinal, turn.providerThread);
+        yield* runner.batch({
+          generation: machine.generation,
+          sequence: 1,
+          items: [report.started, report.full, report.terminal],
+        });
+        // A settled task is archived too (#671), so its machine drains straight away.
+        yield* engine.apply((projection, ctx) =>
+          Effect.succeed({
+            events: [
+              threadEvent(ctx, "thread.settled", {
+                ...projection!.thread,
+                archivedAt: ctx.now,
+                settledOverride: "settled",
+                settledAt: ctx.now,
+                updatedAt: ctx.now,
+              }),
+            ],
+            result: undefined,
+          }),
+        );
+        const drain = yield* runner.reconcile;
+        expect(drain.drain?.generation).toBe(machine.generation);
+
+        yield* send(engine, 2, "Please continue");
+        expect(yield* runner.reconcile).toMatchObject({ busy: true, release: null, stop: false });
+        // The answer to the old drain lets nothing go: the reopened task is working again.
+        yield* runner.batch({
+          generation: machine.generation,
+          sequence: 2,
+          items: [{ kind: "machine.drained", id: drain.drain!.id, unsaved: [] }],
+        });
+        expect(yield* runner.reconcile).toMatchObject({ busy: true, release: null, stop: false });
+        const work = yield* runner.work;
+        expect(work.drain).toBeNull();
+        expect(work.turn?.message.text).toContain("Please continue");
+        const { thread } = (yield* snapshot(engine)).projection;
+        expect([thread.settledOverride, thread.settledAt, thread.archivedAt]).toEqual([
+          null,
+          null,
+          null,
+        ]);
       }),
     ),
   );

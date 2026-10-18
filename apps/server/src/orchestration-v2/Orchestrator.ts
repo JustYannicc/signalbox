@@ -79,6 +79,7 @@ import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
 import * as ProjectStore from "./ProjectStore.ts";
+import * as TaskLifecycle from "./TaskLifecycle.ts";
 import {
   isCheckpointRestoreIsolated,
   SHARED_WORKSPACE_RESTORE_MESSAGE,
@@ -2415,7 +2416,14 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     >,
     events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
     effects: Ref.Ref<Array<PendingOrchestrationEffectV2>>,
+    options: { readonly preserveSettlementOnly?: boolean } = {},
   ) {
+    let cancelUnsettledEffects:
+      | {
+          readonly effectTypes: ReadonlyArray<OrchestrationEffectRequestV2["type"]>;
+          readonly reason: string;
+        }
+      | undefined;
     const thread = yield* projectionStore.getThread(command.threadId).pipe(
       Effect.mapError(
         (cause) =>
@@ -2539,7 +2547,6 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     }
     if (
       (command.type === "thread.settle" ||
-        command.type === "thread.unsettle" ||
         command.type === "thread.snooze" ||
         command.type === "thread.unsnooze" ||
         command.type === "thread.auto-settle.set" ||
@@ -2612,11 +2619,55 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       }
     }
     if (command.type === "thread.settle") {
-      const projection = yield* loadProjectionForCommand(
+      let projection = yield* loadProjectionForCommand(
         command,
         ["runs", "runtimeRequests", "messages"],
         { turnItemTypes: [], messageRoles: ["user"] },
       );
+      const earlyStop = command.stopWork === true && command.snapshotAt === undefined;
+      if (
+        command.snapshotAt !== undefined &&
+        TaskLifecycle.taskCompletionSnapshotIsStale({
+          thread,
+          runs: projection.runs,
+          snapshotAt: command.snapshotAt,
+        })
+      ) {
+        yield* emit(
+          events,
+          command,
+        )({
+          type: "thread.metadata-updated",
+          threadId: command.threadId,
+          providerInstanceId: thread.providerInstanceId,
+          occurredAt: yield* DateTime.now,
+          payload: thread,
+        });
+        return;
+      }
+      if (earlyStop) {
+        const reason = "Task settled early";
+        cancelUnsettledEffects = yield* dispatchThreadStop(
+          {
+            type: "thread.stop",
+            commandId: command.commandId,
+            threadId: command.threadId,
+            reason,
+          },
+          events,
+          effects,
+        );
+        yield* Ref.update(effects, (existing) => [
+          ...existing,
+          {
+            id: `effect:${command.commandId}:delegated-tasks.stop`,
+            commandId: command.commandId,
+            threadId: command.threadId,
+            request: { type: "delegated-tasks.stop", reason },
+          } satisfies PendingOrchestrationEffectV2,
+        ]);
+        projection = yield* getProjectionWithPendingEvents(command.threadId, events);
+      }
       const automaticMessageIds = new Set(
         projection.messages
           .filter(
@@ -2632,7 +2683,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         ["preparing", "starting", "running", "waiting"].includes(run.status),
       );
       const queuedMessageExists = projection.runs.some(
-        (run) => run.status === "queued" && !automaticQueuedRuns.includes(run),
+        (run) =>
+          run.status === "queued" &&
+          !automaticQueuedRuns.includes(run) &&
+          !(earlyStop && run.queueHeld === true),
       );
       const pendingRequests = projection.runtimeRequests.filter(
         (request) => request.status === "pending",
@@ -2640,13 +2694,14 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       const blockingRequestExists = pendingRequests.some(
         (request) => request.kind !== "user_input" || request.responseCapability.type !== "message",
       );
-      const blocker = blockingRequestExists
-        ? "is waiting on an approval or question. Answer it before settling."
-        : runningRunExists
-          ? "is still running. Stop it before settling."
-          : queuedMessageExists
-            ? "has a queued message. Send it or remove it from the queue before settling."
-            : null;
+      const blocker =
+        blockingRequestExists && !earlyStop
+          ? "is waiting on an approval or question. Answer it before settling."
+          : runningRunExists && !earlyStop
+            ? "is still running. Stop it before settling."
+            : queuedMessageExists
+              ? "has a queued message. Send it or remove it from the queue before settling."
+              : null;
       if (blocker !== null) {
         return yield* new OrchestratorDispatchError({
           commandId: command.commandId,
@@ -2827,8 +2882,16 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             updatedAt: now,
           };
         case "thread.unarchive":
-          return { ...thread, archivedAt: null, updatedAt: now };
+          return TaskLifecycle.reopenArchivedTask(thread, now);
         case "thread.settle": {
+          if (options.preserveSettlementOnly !== true) {
+            return {
+              ...TaskLifecycle.archiveSettledTask(thread, command.settledAt ?? now),
+              pullRequests: thread.pullRequests?.map((link) =>
+                withPullRequestWatch(link, undefined),
+              ),
+            };
+          }
           const wasPinned = thread.pinnedAt != null;
           const alreadySettled =
             thread.settledOverride === "settled" && thread.settledAt !== null && !wasPinned;
@@ -2848,6 +2911,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           const alreadyPinnedActive = thread.settledOverride === "active";
           return {
             ...thread,
+            archivedAt: null,
             settledOverride: "active",
             settledAt: null,
             unsettledAt: alreadyPinnedActive ? (thread.unsettledAt ?? null) : now,
@@ -3453,6 +3517,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         } satisfies PendingOrchestrationEffectV2,
       ]);
     }
+    return cancelUnsettledEffects;
   });
 
   const dispatchProviderSessionDetach = Effect.fn("orchestrationV2.dispatch.providerSessionDetach")(
@@ -4603,7 +4668,26 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         (run) => run.id === command.restartContinuationOfRunId,
       )?.delegatedTaskId;
 
-      if (projection.thread.settledOverride !== null) {
+      const userReopensLifecycle =
+        command.createdBy === "user" &&
+        !isNativeMaintenanceCommand(command) &&
+        (projection.thread.archivedAt !== null || projection.thread.settledOverride !== null);
+      if (userReopensLifecycle) {
+        const wasArchived = projection.thread.archivedAt !== null;
+        const now = yield* DateTime.now;
+        const thread = TaskLifecycle.reopenForUserMessage(projection.thread, now);
+        yield* emit(
+          events,
+          command,
+        )({
+          type: wasArchived ? "thread.unarchived" : "thread.unsettled",
+          threadId: command.threadId,
+          providerInstanceId: thread.providerInstanceId,
+          occurredAt: now,
+          payload: thread,
+        });
+        projection = yield* getProjectionWithPendingEvents(command.threadId, events);
+      } else if (projection.thread.settledOverride !== null) {
         const now = yield* DateTime.now;
         const thread: OrchestrationV2AppThread = {
           ...projection.thread,
@@ -10691,6 +10775,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           },
           events,
           effects,
+          { preserveSettlementOnly: true },
         );
         break;
       }
@@ -10721,9 +10806,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           }),
         );
       }
+      case "thread.settle":
+        cancelUnsettledEffects = yield* dispatchThreadMutation(command, events, effects);
+        break;
       case "thread.archive":
       case "thread.unarchive":
-      case "thread.settle":
       case "thread.unsettle":
       case "thread.snooze":
       case "thread.unsnooze":

@@ -22,8 +22,19 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as PubSub from "effect/PubSub";
 import * as Queue from "effect/Queue";
+import * as Schema from "effect/Schema";
 import type * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
+
+import {
+  TaskLifecycleInput as TaskLifecycleInputSchema,
+  TaskLifecycleResult as TaskLifecycleResultSchema,
+  type TaskLifecycleInput,
+  type TaskLifecycleResult,
+} from "@t3tools/contracts/taskLifecycle";
+import { makeTaskRecords } from "./taskLifecycle.ts";
+import { makeTaskLifecycleActions } from "./taskLifecycleActions.ts";
+import { makeTaskLifecycleRuns } from "./taskLifecycleRuns.ts";
 
 import { makeAttachments } from "./attachments.ts";
 import { makeBuiltinTools, type BuiltinToolHandler } from "./builtinTools/runner.ts";
@@ -75,11 +86,17 @@ import { scopeOf, sourceIdOf } from "./sources/watch.ts";
 import { watchersOf } from "./sources/watchers.ts";
 import * as WorkflowStore from "./WorkflowStore.ts";
 
+const decodeTaskLifecycle = Schema.decodeUnknownEffect(TaskLifecycleInputSchema);
+const encodeTaskLifecycleResult = Schema.encodeSync(Schema.toCodecJson(TaskLifecycleResultSchema));
+
 type Store = WorkflowStore.WorkflowStore;
 
 export type { AuthorizeAutomation, ExternalEvent };
 
 export interface WorkflowEngineShape extends CatalogShape {
+  readonly taskLifecycle: (
+    input: TaskLifecycleInput,
+  ) => Effect.Effect<TaskLifecycleResult, AutomationError>;
   /** Stops its running runs, then deletes it with everything it stored and installed. */
   readonly remove: (automationId: string) => Effect.Effect<void, AutomationError>;
   /** Starts a run, also of a paused automation: someone asked for this one. */
@@ -118,7 +135,7 @@ export interface WorkflowEngineShape extends CatalogShape {
   readonly registerPullRequestReads: (reads: PullRequestReads) => Effect.Effect<void>;
   /** A host that reaches another system's runners lets `w.run(…, { on })` send functions there. */
   readonly registerExternalRunner: ExternalRuns["register"];
-  /** When `tick` next has an external run to read (epoch ms), for a host that sleeps until then. */
+  /** When `tick` next has recovery or external-run work, for a host that sleeps until then. */
   readonly nextExternalPollAt: ExternalRuns["nextPollAt"];
   /** Sets or clears (null) the webhook signing secret; it is never read back. */
   readonly setWebhookSecret: <E = never>(input: {
@@ -196,6 +213,8 @@ export const makeEngine = <R>(
     });
     const crypto = yield* Crypto.Crypto;
     const threads = yield* AutomationThreads;
+    const taskRecords = yield* makeTaskRecords;
+    const taskActions = makeTaskLifecycleActions({ threads, records: taskRecords });
     // Steps run in forked fibers; they get the services they use from here.
     const required = yield* Effect.context<EngineServices>();
     // The host's models, when it has a catalog, tell agent steps each model's option names.
@@ -731,6 +750,18 @@ export const makeEngine = <R>(
       cancel: (runId) => endRunById(runId, { status: "cancelled" }),
     });
 
+    const taskLifecycleRuns = makeTaskLifecycleRuns({
+      actions: taskActions,
+      records: taskRecords,
+      links,
+      store,
+      threads,
+      attachments,
+      startRun,
+      endRunById: (runId) => endRunById(runId, { status: "cancelled" }),
+    });
+    const taskLifecycle: WorkflowEngineShape["taskLifecycle"] = taskLifecycleRuns.act;
+
     const internals: EngineInternals = {
       store,
       links,
@@ -779,25 +810,42 @@ export const makeEngine = <R>(
     );
     yield* forkRoot(
       Stream.runForEach(threads.domainEvents, (event) =>
-        events
-          .offer(event)
-          .pipe(
-            Effect.andThen(
-              attachments.onDomainEvent(event).pipe(logFailure("Automation detach failed")),
-            ),
-            Effect.andThen(
-              event.type === "run.updated" && isTerminalRunStatus(event.payload.status)
-                ? built
-                    .adjustBusy(1)
-                    .pipe(Effect.andThen(Queue.offer(settles, event.threadId)), Effect.asVoid)
-                : Effect.void,
-            ),
+        taskLifecycleRuns.onDomainEvent(event).pipe(
+          logFailure("Task reopen record failed"),
+          Effect.andThen(
+            Effect.gen(function* () {
+              if (!BUILT_IN_AUTOMATIONS.some((item) => item.defaultOn?.includes(event.type)))
+                return;
+              const shell = yield* threads.getThreadShell(event.threadId);
+              if (!shell) return;
+              yield* builtIns.ensureDefaultsForEvent(event.type, {
+                projectId: shell.projectId,
+                defaults: {
+                  modelSelection: shell.modelSelection,
+                  runtimeMode: shell.runtimeMode,
+                  interactionMode: shell.interactionMode,
+                },
+              });
+            }).pipe(logFailure("Default automation setup failed")),
           ),
+          Effect.andThen(events.offer(event)),
+          Effect.andThen(
+            attachments.onDomainEvent(event).pipe(logFailure("Automation detach failed")),
+          ),
+          Effect.andThen(
+            event.type === "run.updated" && isTerminalRunStatus(event.payload.status)
+              ? built
+                  .adjustBusy(1)
+                  .pipe(Effect.andThen(Queue.offer(settles, event.threadId)), Effect.asVoid)
+              : Effect.void,
+          ),
+        ),
       ),
     );
 
     // Attached runs' monitors come back after a restart (the driver recovers its own runs).
     yield* forkRoot(attachments.recover.pipe(logFailure("Automation recovery failed")));
+    yield* taskLifecycleRuns.recoverPending.pipe(logFailure("Task completion recovery failed"));
 
     return {
       ...catalog,
@@ -816,13 +864,41 @@ export const makeEngine = <R>(
       stopWait: waits.stop,
       watchPullRequest: waits.watchPullRequest,
       requestMerge: waits.requestMerge,
-      registerBuiltinTools: builtinTools.register,
+      taskLifecycle,
+      registerBuiltinTools: (handler) =>
+        builtinTools.register({
+          tools: [...handler.tools, "task_lifecycle"],
+          call: (call) =>
+            call.tool === "task_lifecycle"
+              ? Effect.gen(function* () {
+                  const input = yield* decodeTaskLifecycle({
+                    ...asRecord(call.args),
+                    commandId: `automation:${call.requestKey}:lifecycle`,
+                    ...(asRecord(call.args).action === "propose" ? { runId: call.runId } : {}),
+                  }).pipe(
+                    Effect.mapError((cause) =>
+                      automationError("Invalid task lifecycle input.", { cause }),
+                    ),
+                  );
+                  if ((yield* projectOfThread(input.threadId)) !== call.projectId)
+                    return yield* fail(
+                      "Task lifecycle steps only act in their automation's folder.",
+                    );
+                  return encodeTaskLifecycleResult(yield* taskLifecycle(input));
+                })
+              : handler.call(call),
+        }),
       registerPullRequestReads: (reads) =>
         Effect.sync(() => {
           pullRequestReads = reads;
         }),
       registerExternalRunner: external.register,
-      nextExternalPollAt: external.nextPollAt,
+      nextExternalPollAt: Effect.all([external.nextPollAt, taskLifecycleRuns.nextRecoveryAt]).pipe(
+        Effect.map((times) => {
+          const due = times.filter((at) => at !== null);
+          return due.length === 0 ? null : Math.min(...due);
+        }),
+      ),
       setWebhookSecret,
       cancelRun,
       retryRun,
@@ -839,7 +915,13 @@ export const makeEngine = <R>(
       subscribeRun: (runId) => feed.watch(`run:${runId}`, catalog.getRun(runId), runShows(runId)),
       subscribeNotices: PubSub.subscribe(notices).pipe(Effect.map(Stream.fromSubscription)),
       // One failing doesn't hold up the other.
-      tick: built.tick.pipe(Effect.ensuring(sources.tick), Effect.ensuring(external.poll)),
+      tick: built.tick.pipe(
+        Effect.ensuring(sources.tick),
+        Effect.ensuring(external.poll),
+        Effect.ensuring(
+          taskLifecycleRuns.recoverPending.pipe(logFailure("Task completion recovery failed")),
+        ),
+      ),
       drain: built.drain,
     } satisfies WorkflowEngineShape;
   });

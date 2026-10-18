@@ -14,6 +14,7 @@ const unavailable = () =>
   );
 
 export const layer = McpToolAccess.toLayer(AutomationToolkit, {
+  task_lifecycle: McpToolAccess.reads(unavailable),
   automation_reference: McpToolAccess.reads(unavailable),
   automation_validate: McpToolAccess.reads(unavailable),
   automation_save: McpToolAccess.reads(unavailable),

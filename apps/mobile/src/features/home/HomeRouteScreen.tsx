@@ -35,6 +35,7 @@ import { projectFilterOptions as buildProjectFilterOptions } from "../sections/s
 import { useFolderFilter, useFolderFilterOptions } from "../folders/use-folder-filter"; // signalbox: folders
 import { usePendingTaskListActions } from "./usePendingTaskListActions";
 import { useThreadListActions } from "./useThreadListActions";
+import { useWithSettledArchivedThreads } from "./settledArchivedThreads"; // signalbox: tasks
 import { getConnectionAwareBrandHeaderOptions } from "./WorkspaceConnectionTitle";
 import { useWorkspaceTabs } from "../workspace/WorkspaceTabsContext";
 import { useShowsEnvironmentUi } from "../../state/environmentCapabilities"; // signalbox
@@ -54,10 +55,9 @@ export function HomeRouteScreen() {
   // Streaming turns rewrite thread shells many times a second. While a Thread
   // covers Home, rebuilding this list is invisible work.
   const visible = useHomeRouteVisible();
-  const threads = useAtomValueWhileVisible(
-    environmentThreadShells.navigationThreadShellsAtom,
-    visible,
-  );
+  const threads = useWithSettledArchivedThreads(
+    useAtomValueWhileVisible(environmentThreadShells.navigationThreadShellsAtom, visible),
+  ); // signalbox: tasks
   const { environments: workspaceEnvironments, state: catalogState } = useWorkspaceState();
   const { savedConnectionsById } = useSavedRemoteConnections();
   const navigation = useNavigation();
