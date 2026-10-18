@@ -7,6 +7,10 @@
   ],
   "type": "module",
   "exports": {
+    "./waitingCost": {
+      "types": "./src/waitingCost.ts",
+      "import": "./src/waitingCost.ts"
+    },
     "./clientIssues": {
       "types": "./src/clientIssues.ts",
       "import": "./src/clientIssues.ts"
