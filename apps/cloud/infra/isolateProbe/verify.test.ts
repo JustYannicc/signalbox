@@ -28,7 +28,8 @@ describe("isolate proof verification", () => {
           path: "/capabilities",
           status: 200,
           result: {
-            functionConstructor: { ok: true },
+            requireEsm: { ok: true },
+            functionConstructor: { ok: true, restored: true },
             wasm: { ok: true },
             jspi: { ok: false },
           },
@@ -43,5 +44,34 @@ describe("isolate proof verification", () => {
       "/capabilities: jspi failed",
       "request-time-codegen: generated code returned the wrong value",
     ]);
+  });
+
+  it("rejects missing results and incomplete capability proofs", () => {
+    expect(
+      verificationErrors([
+        {
+          path: "/capabilities",
+          response: {
+            status: 200,
+            result: {
+              requireEsm: { ok: false },
+              functionConstructor: { ok: true, restored: false },
+              wasm: { ok: true },
+              jspi: { ok: true },
+            },
+          },
+        },
+        { path: "/status", response: { status: 200 } },
+        { path: "/jspi", response: { status: 200, result: {} } },
+        { scenario: "request-time-codegen", generatedValue: 42, response: {} },
+      ]),
+    ).toEqual([
+      "/capabilities: requireEsm failed",
+      "/capabilities: Function was not restored",
+      "/status: missing result",
+      "/jspi: missing behavioral assertion",
+      "request-time-codegen: missing result",
+    ]);
+    expect(verificationErrors([])).toEqual(["No evidence rows recorded"]);
   });
 });

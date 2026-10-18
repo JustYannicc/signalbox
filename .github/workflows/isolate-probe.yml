@@ -104,7 +104,7 @@ jobs:
         run: node --experimental-strip-types apps/cloud/infra/isolateProbe/measure.ts --url "$PROBE_URL" --output "$RUNNER_TEMP/deployed.json"
 
       - name: Destroy isolated probe stack
-        if: always() && (steps.deploy.outcome == 'success' || steps.deploy.outcome == 'failure')
+        if: always() && contains(fromJSON('["success", "failure", "cancelled"]'), steps.deploy.outcome)
         working-directory: apps/cloud
         shell: bash
         run: |

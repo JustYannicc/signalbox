@@ -6,6 +6,7 @@ import * as NodeUtil from "node:util";
 import { createTestHarness } from "wrangler";
 import { prepare } from "./prepare.ts";
 import { verificationErrors } from "./verify.ts";
+import { requestJson } from "./transport.ts";
 
 interface Fixture {
   id: string;
@@ -36,35 +37,14 @@ const endpoint = values.url ?? (await harness!.listen()).url.toString();
 const runId = NodeCrypto.randomBytes(8).toString("hex");
 const rows: unknown[] = [];
 const send = async (input: object, session: string) => {
-  const started = performance.now();
   const url = new URL("/run", endpoint);
   url.searchParams.set("session", session);
-  try {
-    const response = await fetch(url, {
-      method: "POST",
-      headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
-      body: JSON.stringify(input),
-      signal: AbortSignal.timeout(60_000),
-    });
-    const text = await response.text();
-    return {
-      clientWallMs: performance.now() - started,
-      response: response.ok
-        ? JSON.parse(text)
-        : {
-            status: response.status,
-            error: text.slice(0, 1000).replaceAll(new URL(endpoint).host, "[probe]"),
-          },
-    };
-  } catch (error) {
-    return {
-      clientWallMs: performance.now() - started,
-      response: {
-        error: String(error).replaceAll(new URL(endpoint).host, "[probe]"),
-        transportFailure: true,
-      },
-    };
-  }
+  return requestJson(url, {
+    method: "POST",
+    headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+    body: JSON.stringify(input),
+    signal: AbortSignal.timeout(60_000),
+  });
 };
 
 try {
@@ -112,17 +92,17 @@ try {
     for (const path of ["/status", "/capabilities", "/jspi", "/wasm", "/sqlite?mib=16"]) {
       const url = new URL(`/root${path}`, endpoint);
       url.searchParams.set("session", `${runId}-root-${rows.length}`);
-      const started = performance.now();
-      const response = await fetch(url, {
-        headers: { authorization: `Bearer ${token}` },
-        signal: AbortSignal.timeout(60_000),
-      });
       rows.push({
         target: "do",
         path,
-        clientWallMs: performance.now() - started,
-        status: response.status,
-        result: await response.json(),
+        ...(await requestJson(
+          url,
+          {
+            headers: { authorization: `Bearer ${token}` },
+            signal: AbortSignal.timeout(60_000),
+          },
+          true,
+        )),
       });
     }
     for (const path of ["/status", "/capabilities", "/jspi", "/wasm", "/sqlite?mib=16"]) {
