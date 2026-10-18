@@ -152,7 +152,9 @@ const setup = Effect.gen(function* () {
       Effect.gen(function* () {
         state.refreshes += 1;
         const [latest] = yield* sql<{ readonly status: string }>`
-          SELECT status FROM pull_request_guide_jobs ORDER BY sequence DESC LIMIT 1`;
+          SELECT status FROM pull_request_guide_jobs ORDER BY sequence DESC LIMIT 1`.pipe(
+          Effect.orDie,
+        );
         if (latest?.status === "finished" || latest?.status === "failed")
           yield* Queue.offer(completions, undefined);
       }),
