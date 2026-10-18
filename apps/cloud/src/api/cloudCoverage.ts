@@ -51,10 +51,6 @@ export const CLOUD_UNSERVED: Readonly<Record<string, Unserved>> = {
   "pullRequests.generateReviewGuide": gap("#815"),
   "pullRequests.filesViewed": gap("#815"),
   "pullRequests.setFilesViewed": gap("#815"),
-  "pullRequests.comment": gap("#816"),
-  "pullRequests.updateComment": gap("#816"),
-  "pullRequests.submitReview": gap("#816"),
-  "pullRequests.setReaction": gap("#816"),
   "pullRequests.runAction": gap("#817"),
   "pullRequests.update": gap("#817"),
   "pullRequests.reviewerCandidates": gap("#817"),
@@ -73,7 +69,6 @@ export const CLOUD_UNSERVED: Readonly<Record<string, Unserved>> = {
   "projects.searchContents": gap("#439"),
   "projects.createNew": exempt("Folders hold projects; create one with folders.create."),
   "projects.mutate": exempt("Folders hold projects; change them with folders.*."),
-  "assets.persistChatAttachments": gap("#813"),
 
   // Pools: the cloud signs in Claude and ChatGPT accounts only.
   "pools.advice": gap("#819"),

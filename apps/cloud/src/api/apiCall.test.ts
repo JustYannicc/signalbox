@@ -98,6 +98,46 @@ describe("public API calls", () => {
       expect(JSON.stringify(unsupported.body)).not.toContain("private canary");
     }),
   );
+
+  it.effect("persists legacy images through the API before creating their thread", () =>
+    Effect.gen(function* () {
+      const { call } = yield* setup;
+      const input = {
+        threadId: "api-image-thread",
+        messageId: "api-image-message",
+        attachments: [
+          {
+            type: "image",
+            name: "shot.png",
+            mimeType: "image/png",
+            sizeBytes: 3,
+            dataUrl: "data:image/png;base64,AQID",
+          },
+        ],
+      };
+      const saved = json(yield* call("assets.persistChatAttachments", input));
+      expect(saved).toMatchObject({
+        status: 200,
+        body: {
+          attachments: [
+            {
+              type: "image",
+              name: "shot.png",
+              mimeType: "image/png",
+              sizeBytes: 3,
+            },
+          ],
+        },
+      });
+      expect(json(yield* call("assets.persistChatAttachments", input))).toEqual(saved);
+      expect(
+        json(
+          yield* call("assets.persistChatAttachments", input, person([AuthOrchestrationReadScope])),
+        ).status,
+      ).toBe(403);
+    }),
+  );
+
   it.effect("explains when an independently trashed child needs its parent restored first", () =>
     Effect.gen(function* () {
       const { call } = yield* setup;
@@ -370,6 +410,7 @@ describe("public API calls", () => {
       expect(missing.body).toMatchObject({ error: { _tag: "OrchestrationV2CommandOutputError" } });
     }),
   );
+
   it.effect("saves and removes a keybinding through the public reach map", () =>
     Effect.gen(function* () {
       const { call } = yield* setup;
