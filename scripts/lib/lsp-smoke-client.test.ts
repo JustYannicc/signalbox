@@ -57,7 +57,7 @@ test.each(["missing-ack", "error-ack"])(
   },
 );
 
-test.each(["signal", "malformed", "panic", "fatal"])(
+test.each(["signal", "malformed", "panic", "fatal", "rust-panic", "rust-panic-thread-id"])(
   "shutdown fails for %s after acknowledgement",
   async (mode) => {
     const client = spawnServer(mode);

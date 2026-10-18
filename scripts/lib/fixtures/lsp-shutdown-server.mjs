@@ -37,6 +37,12 @@ NodeProcess.stdin.on("data", (chunk) => {
       }
     } else if (message.method === "exit") {
       if (mode === "signal") NodeProcess.kill(NodeProcess.pid, "SIGKILL");
+      if (mode === "rust-panic") {
+        NodeProcess.stderr.write("thread 'main' panicked at src/lsp.rs:42:5:\n");
+      }
+      if (mode === "rust-panic-thread-id") {
+        NodeProcess.stderr.write("thread '<unnamed>' (123) panicked at src/lsp.rs:42:5:\n");
+      }
       if (mode === "panic")
         NodeProcess.stderr.write("panic: runtime error: invalid memory address\n");
       if (mode === "fatal") NodeProcess.stderr.write("fatal: unrelated failure\n");
@@ -45,7 +51,7 @@ NodeProcess.stdin.on("data", (chunk) => {
       }
       NodeProcess.stderr.write("context canceled\nAdded new watch: program files\n");
       NodeProcess.stdout.write(frame(lateRequest("after-exit")), () =>
-        NodeProcess.exit(Number(mode) || 0),
+        NodeProcess.exit(mode.startsWith("rust-panic") ? 101 : Number(mode) || 0),
       );
     } else if (message.method) {
       NodeProcess.stdout.write(frame({ id: message.id, result: message.method }));

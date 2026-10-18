@@ -292,7 +292,7 @@ export class LspSmokeClient {
       const result = await this.waitUntilClosed(5_000);
       // time reports its own exit status when its measured child dies from a signal.
       const crash = this.stderrText.match(
-        /^(?:time: command terminated abnormally|Command terminated by signal \d+|panic:.*|fatal(?: error)?:.*)$/m,
+        /^(?:time: command terminated abnormally|Command terminated by signal \d+|panic:.*|fatal(?: error)?:.*|thread '[^'\r\n]*'(?: \(\d+\))? panicked at .*)$/m,
       );
       const error =
         this.protocolError?.message ??
