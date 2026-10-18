@@ -77,6 +77,37 @@ describe("Node process facet", () => {
     expect(second.cwd()).toBe("/work/two");
     expect(second.env.MARKER).toBeUndefined();
     expect(second.argv).toEqual(["node", "/work/42.js"]);
+    expect(Object.hasOwn(first, "execArgv")).toBe(true);
+    expect(first.execArgv).toEqual([]);
+    expect(second.execArgv).toEqual([]);
+    first.execArgv.push("--first-only");
+    expect(second.execArgv).toEqual([]);
+  });
+
+  it("copies explicit guest execArgv without inheriting host runtime flags", () => {
+    const callerArgs = ["--enable-source-maps", "--trace-warnings"];
+    const base = host(43);
+    const context: NodeProcessHostContext = {
+      ...base,
+      identity: { ...base.identity, execArgv: callerArgs },
+    };
+    const process = createNodeProcess(context);
+
+    callerArgs.push("--host-only-flag");
+    process.execArgv.push("--guest-mutable-flag");
+
+    expect(process.execArgv).toEqual([
+      "--enable-source-maps",
+      "--trace-warnings",
+      "--guest-mutable-flag",
+    ]);
+    expect(callerArgs).toEqual(["--enable-source-maps", "--trace-warnings", "--host-only-flag"]);
+    expect(() =>
+      createNodeProcess({
+        ...base,
+        identity: { ...base.identity, execArgv: ["--valid", 7] as unknown as readonly string[] },
+      }),
+    ).toThrow("execArgv must be a string array");
   });
 
   it("exports own bound methods that remain callable after destructuring", async () => {
