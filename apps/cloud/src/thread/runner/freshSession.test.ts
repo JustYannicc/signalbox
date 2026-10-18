@@ -35,8 +35,10 @@ describe("fresh-session handoff delivery", () => {
     { ending: "interrupted", attempt: "none", type: "assistant_message" },
     { ending: "interrupted", attempt: "sync", type: "assistant_message" },
     { ending: "interrupted", attempt: "sync", type: "command_execution" },
+    { ending: "interrupted", attempt: "sync", type: "file_change" },
     { ending: "interrupted", attempt: "active", type: "assistant_message" },
     { ending: "interrupted", attempt: "active", type: "command_execution" },
+    { ending: "interrupted", attempt: "active", type: "file_change" },
   ] as const)(
     "checks handoff receipt after $ending with $attempt $type output",
     ({ ending, attempt, type }) =>
@@ -153,7 +155,9 @@ describe("fresh-session handoff delivery", () => {
                             text: "Working on it.",
                             streaming: false,
                           }
-                        : { type, input: "git status", output: "On branch main", exitCode: 0 }),
+                        : type === "command_execution"
+                          ? { type, input: "git status", output: "On branch main", exitCode: 0 }
+                          : { type, fileName: "README.md", additions: 1, deletions: 0 }),
                     }),
                   },
                 },

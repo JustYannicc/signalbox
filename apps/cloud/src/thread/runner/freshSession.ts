@@ -47,8 +47,14 @@ export function hasUnconfirmedHandoff(projection: Projection, turn: Turn): boole
     !projection.turnItems.some(
       (item) =>
         item.runId === previous.id &&
-        (item.type === "command_execution" ||
-          (item.type === "assistant_message" && item.text !== "")) &&
+        item.type !== "user_message" &&
+        item.type !== "handoff" &&
+        item.type !== "system_notice" &&
+        item.type !== "error" &&
+        item.type !== "checkpoint" &&
+        item.type !== "run_interrupt_request" &&
+        item.type !== "run_interrupt_result" &&
+        (item.type !== "assistant_message" || item.text !== "") &&
         // Sync attempts can emit output before the run's handoff prompt starts.
         previous.activeAttemptId !== null &&
         projection.providerTurns.some(
