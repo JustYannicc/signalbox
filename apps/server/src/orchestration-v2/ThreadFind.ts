@@ -8,6 +8,10 @@ import {
   TurnItemId,
 } from "@t3tools/contracts";
 import { searchableMessageSegments, searchablePlanSegments } from "@t3tools/shared/threadFindText";
+import {
+  createThreadFindMatchEvidence,
+  type ThreadFindEvidenceDocument,
+} from "@t3tools/shared/threadFindMatchEvidence";
 import { countThreadSearchOccurrences } from "@t3tools/shared/threadSearch";
 import * as Cache from "effect/Cache";
 import * as Data from "effect/Data";
@@ -36,6 +40,7 @@ interface FindDocument extends FindRow {
   readonly entryId: string;
   readonly runId: OrchestrationV2TurnItem["runId"];
   readonly count: number;
+  readonly text: ThreadFindEvidenceDocument;
 }
 class TextKey extends Data.Class<{
   text: string;
@@ -97,7 +102,12 @@ function searchableRows(items: readonly OrchestrationV2ProjectedTurnItem[]) {
   );
 }
 
-function documentFor(row: OrchestrationV2ProjectedTurnItem, count: number): FindDocument {
+function documentFor(
+  row: OrchestrationV2ProjectedTurnItem,
+  segments: readonly string[],
+  source: string,
+  query: string,
+): FindDocument {
   return {
     position: row.position,
     visibility: row.visibility,
@@ -108,7 +118,8 @@ function documentFor(row: OrchestrationV2ProjectedTurnItem, count: number): Find
         ? row.item.messageId
         : row.item.id,
     runId: row.item.runId,
-    count,
+    count: countSegments(segments, query),
+    text: { source, segments: segments.map((text) => ({ text })) },
   };
 }
 
@@ -151,19 +162,28 @@ export function findProjectedThreadItems(
   cwd?: string,
 ): OrchestrationV2SearchThreadResult {
   const rows = searchableRows(items);
-  const docs = rows.map((row) =>
-    documentFor(
-      row,
-      countSegments(parseText(textKey(row.item, cwd, input.skills ?? [])), input.query),
-    ),
-  );
-  return resultForSelection(selectMatch(docs, input), docs, snapshotSequence);
+  const docs = rows.map((row) => {
+    const key = textKey(row.item, cwd, input.skills ?? []);
+    return documentFor(row, parseText(key), key.text, input.query);
+  });
+  return resultForSelection(selectMatch(docs, input), docs, snapshotSequence, input.query);
+}
+
+function matchFor(document: FindDocument, occurrence: number, query: string) {
+  const evidence = createThreadFindMatchEvidence(document.text, query, occurrence);
+  return {
+    entryId: document.entryId,
+    runId: document.runId,
+    occurrence,
+    ...(evidence === null ? {} : { evidence }),
+  };
 }
 
 function resultForSelection(
   selected: ReturnType<typeof selectMatch>,
   documents: readonly FindDocument[],
   snapshotSequence: number,
+  query: string,
 ): OrchestrationV2SearchThreadResult {
   let startIndex = 0;
   const entries = documents.flatMap(({ entryId, runId, count }) => {
@@ -185,13 +205,7 @@ function resultForSelection(
     activeIndex: selected.activeIndex,
     navigation,
     match:
-      selected.document === null
-        ? null
-        : {
-            entryId: selected.document.entryId,
-            runId: selected.document.runId,
-            occurrence: selected.occurrence,
-          },
+      selected.document === null ? null : matchFor(selected.document, selected.occurrence, query),
   };
 }
 
@@ -322,7 +336,9 @@ export const makeThreadFind = Effect.fn("makeThreadFind")(function* (
         const selected = selectMatch(cached.documents, input);
         scans.delete(cacheKey);
         scans.set(cacheKey, cached);
-        return { result: resultForSelection(selected, cached.documents, cached.sequence) };
+        return {
+          result: resultForSelection(selected, cached.documents, cached.sequence, input.query),
+        };
       }
       const index = yield* readIndex(threadId);
       const sourceThreadIds = [...new Set([threadId, ...index.map((row) => row.sourceThreadId)])];
@@ -387,7 +403,7 @@ export const makeThreadFind = Effect.fn("makeThreadFind")(function* (
             key.text.length <= 32_768 ? textCache : largeTextCache,
             key,
           );
-          const document = documentFor(decoded, countSegments(segments, input.query));
+          const document = documentFor(decoded, segments, key.text, input.query);
           documents.set(row.position, document);
           yield* Effect.yieldNow;
           return document;
@@ -401,7 +417,7 @@ export const makeThreadFind = Effect.fn("makeThreadFind")(function* (
             const oldest = scans.keys().next().value;
             if (oldest !== undefined) scans.delete(oldest);
           }
-          return resultForSelection(selectMatch(ordered, input), ordered, sequence);
+          return resultForSelection(selectMatch(ordered, input), ordered, sequence, input.query);
         });
         if (input.index !== undefined || (input.offset ?? 0) !== 0)
           return Stream.fromEffect(finish);
@@ -424,7 +440,7 @@ export const makeThreadFind = Effect.fn("makeThreadFind")(function* (
             snapshotSequence: sequence,
             totalMatches: 1,
             activeIndex: 0,
-            match: { entryId: document.entryId, runId: document.runId, occurrence },
+            match: matchFor(document, occurrence, input.query),
           };
           return Stream.concat(Stream.succeed(first), Stream.fromEffect(finish));
         }

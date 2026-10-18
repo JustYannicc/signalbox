@@ -61,8 +61,15 @@ export function compareDiagnostics(declared: string, effect: string, rust: strin
 export function compilerProjects(directory: string, command: string) {
   const result = [];
   for (const part of command.split(" && ")) {
-    // Cloud's declared typecheck generates the probe before parity compares its two compiler configs.
-    if (directory === "apps/cloud" && part === "node infra/syncProbe/prepare.mjs") continue;
+    // Cloud generates its probes before parity compares the two compiler configs.
+    if (
+      directory === "apps/cloud" &&
+      [
+        "node infra/syncProbe/prepare.mjs",
+        "node --experimental-strip-types infra/isolateProbe/prepare.ts",
+      ].includes(part)
+    )
+      continue;
     const match = /^(?:tsc|tsc-rs) --noEmit(?: -p (\S+))?$/.exec(part);
     if (!match) throw new Error(`Unrecognized typecheck in ${directory}: ${part}`);
     result.push(NodePath.posix.join(directory, match[1] ?? "tsconfig.json"));

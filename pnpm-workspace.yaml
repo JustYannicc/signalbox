@@ -27,7 +27,7 @@ allowBuilds:
   objc-js: false
   # Neither the SDK web entry nor codegen needs protobufjs install hooks.
   protobufjs: false
-  "react-native-enriched-markdown@file:apps/mobile/deps/react-native-enriched-markdown-1.2.0-t3.15.tgz": true
+  "react-native-enriched-markdown@file:apps/mobile/deps/react-native-enriched-markdown-1.2.0-t3.16.tgz": true
   sharp: true
   ssh2: false
   tsc-rs: true

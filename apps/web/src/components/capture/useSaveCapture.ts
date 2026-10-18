@@ -12,7 +12,6 @@ import { useContext } from "react";
 
 import { useComposerDraftStore, type DraftId } from "../../composerDraftStore";
 import { useHandleNewThread } from "../../hooks/useHandleNewThread";
-import { startAttachmentUpload } from "../../lib/attachmentUploadQueue";
 import { environmentServerConfigsAtom } from "../../state/server";
 import { useStartInFolder } from "../sidebar/folders/useStartInFolder";
 import { stackedThreadToast, toastManager } from "../ui/toast";
@@ -21,9 +20,16 @@ import {
   type CaptureFile,
   type PreparedCaptureAttachments,
 } from "./captureAttachments";
+import { seedCaptureDraft } from "./captureDraftSeeding";
 import type { CaptureDestination } from "@t3tools/client-runtime/capture/destinations";
 import { captureTitle } from "@t3tools/client-runtime/capture/text";
 import { restoreQuickCapture } from "./quickCaptureStore";
+import { captureAttachmentId, runCaptureOnce } from "./durableCapture";
+import { saveCaptureDraftDurably } from "./durableCaptureDraft";
+import {
+  startCaptureUploadsAndPersistFiles,
+  startOrRetryCaptureUpload,
+} from "./captureUploadPersistence";
 
 export interface Capture {
   readonly text: string;
@@ -32,57 +38,11 @@ export interface Capture {
   readonly destination: CaptureDestination | null;
 }
 
-interface Seeded {
-  readonly draftId: DraftId;
-  /** Names the draft didn't take. */
-  readonly rejected: ReadonlyArray<string>;
-  readonly acceptedImageIds: ReadonlyArray<string>;
-  readonly persisting: Promise<void>;
-}
-
-/**
- * Fills a fresh draft with everything at once, the moment it exists: it never
- * sits empty (an empty draft can be replaced), opens already filled, and
- * nothing arrives late to race with what the user does next.
- */
-function seedDraft(draftId: DraftId, text: string, prepared: PreparedCaptureAttachments): Seeded {
-  const store = useComposerDraftStore.getState();
-  if (text.length > 0) store.setPrompt(draftId, text);
-  const images = prepared.images.map((entry) => entry.image);
-  const acceptedImages = new Set(images.length > 0 ? store.addImages(draftId, images) : []);
-  const acceptedFiles = new Set(
-    prepared.files.length > 0
-      ? store.addFiles(draftId, prepared.files, { appendReference: true })
-      : [],
-  );
-  // A fresh draft has no persisted images yet, so this list is all of them.
-  const persisted = prepared.images.flatMap(({ image, dataUrl }) =>
-    acceptedImages.has(image.id)
-      ? [
-          {
-            id: image.id,
-            name: image.name,
-            mimeType: image.mimeType,
-            sizeBytes: image.sizeBytes,
-            dataUrl,
-          },
-        ]
-      : [],
-  );
-  const persisting =
-    persisted.length > 0 ? store.syncPersistedAttachments(draftId, persisted) : Promise.resolve();
-  for (const image of images) {
-    if (!acceptedImages.has(image.id)) URL.revokeObjectURL(image.previewUrl);
-  }
-  return {
-    draftId,
-    rejected: [
-      ...images.filter((image) => !acceptedImages.has(image.id)).map((image) => image.name),
-      ...prepared.files.filter((file) => !acceptedFiles.has(file.id)).map((file) => file.name),
-    ],
-    acceptedImageIds: [...acceptedImages],
-    persisting,
-  };
+export interface SaveCaptureOptions {
+  readonly open: boolean;
+  readonly captureId?: string;
+  readonly requirePersistence?: boolean;
+  readonly restoreOnFailure?: boolean;
 }
 
 export function useSaveCapture() {
@@ -103,19 +63,124 @@ export function useSaveCapture() {
     const files =
       maxFileBytes === null ? [] : draft.files.filter((file) => file.sizeBytes <= maxFileBytes);
     for (const attachment of [...draft.images, ...files]) {
-      startAttachmentUpload({ environmentId, image: attachment, draftTarget: draftId });
+      startOrRetryCaptureUpload({ environmentId, image: attachment, draftTarget: draftId });
     }
   };
 
-  return async (capture: Capture, options: { readonly open: boolean }): Promise<boolean> => {
+  const save = async (capture: Capture, options: SaveCaptureOptions): Promise<boolean> => {
     const text = capture.text.trim();
     const { destination } = capture;
-    const prepared = await prepareCaptureAttachments(capture.files);
-    let seeded: Seeded | null = null;
-    const seed = (draftId: DraftId) => {
-      seeded = seedDraft(draftId, text, prepared);
+    const requirePersistence = options.requirePersistence === true;
+    const captureId = options.captureId?.trim();
+    const restoreOnFailure = options.restoreOnFailure !== false;
+    const restore = () => {
+      if (restoreOnFailure) {
+        restoreQuickCapture({ text: capture.text, files: capture.files, destination });
+      }
     };
+    if (requirePersistence && !captureId) {
+      toastManager.add({ type: "error", title: "Capture id is required for durable saving" });
+      restore();
+      return false;
+    }
+
+    let prepared: PreparedCaptureAttachments;
+    try {
+      prepared = await prepareCaptureAttachments(
+        capture.files,
+        requirePersistence
+          ? (file, kind, index) => captureAttachmentId(captureId!, file.id, kind, index)
+          : undefined,
+      );
+    } catch {
+      toastManager.add({ type: "error", title: "Couldn't prepare the capture" });
+      restore();
+      return false;
+    }
+
     const environmentId = destination?.environmentId ?? defaultProjectRef?.environmentId ?? null;
+    if (requirePersistence) {
+      let result: Awaited<ReturnType<typeof saveCaptureDraftDurably>>;
+      try {
+        result = await saveCaptureDraftDurably({
+          captureId: captureId!,
+          text,
+          prepared,
+          createDraft: async (seedDraft) => {
+            const opened = destination
+              ? await startInFolder({
+                  environmentId: destination.environmentId,
+                  ownerProjectId: destination.ownerProjectId,
+                  folderId: destination.folderId,
+                  navigate: false,
+                  seed: seedDraft,
+                })
+              : defaultProjectRef
+                ? await handleNewThread(defaultProjectRef, {
+                    freshDraft: true,
+                    navigate: false,
+                    seed: seedDraft,
+                  })
+                    .then((draft) => draft && { ...draft, filed: true })
+                    .catch(() => null)
+                : null;
+            return opened ? { draftId: opened.draftId, filed: opened.filed } : null;
+          },
+          startUploadsAndPersistFiles: async (draftId, targetEnvironmentId) => {
+            const capabilities = registry.get(environmentServerConfigsAtom).get(targetEnvironmentId)
+              ?.environment.capabilities;
+            const advertised = capabilities?.fileAttachments?.maxUploadBytes ?? null;
+            return startCaptureUploadsAndPersistFiles({
+              draftId,
+              environmentId: targetEnvironmentId,
+              files: prepared.files,
+              uploadsSupported: capabilities?.attachmentUploads === true,
+              maxFileBytes: advertised === null ? null : clampFileAttachmentUploadBytes(advertised),
+            });
+          },
+        });
+      } catch (error) {
+        toastManager.add({
+          type: "error",
+          title: "Capture is still queued",
+          description:
+            error instanceof Error ? error.message : "The durable draft could not be confirmed.",
+        });
+        restore();
+        return false;
+      }
+      if (!result.ok || result.draftId === null) {
+        toastManager.add({
+          type: "error",
+          title: "Capture is still queued",
+          description:
+            result.rejected.length > 0
+              ? `Couldn't persist: ${result.rejected.join(", ")}`
+              : "The draft or its attachments aren't durable yet.",
+        });
+        restore();
+        return false;
+      }
+      if (!result.filed && destination) {
+        toastManager.add({
+          type: "warning",
+          title: `Couldn't file it ${destination.inPlace}`,
+          description:
+            "The draft was saved. Use Move thread to folder… in the command palette to file it.",
+        });
+      }
+      if (options.open) {
+        await navigate({ to: "/draft/$draftId", params: { draftId: result.draftId } });
+      } else {
+        showSavedToast(result.draftId, text, result.filed ? destination : null, navigate);
+      }
+      return true;
+    }
+
+    let seeded: ReturnType<typeof seedCaptureDraft> | null = null;
+    const seed = (draftId: DraftId) => {
+      seeded = seedCaptureDraft(draftId, text, prepared);
+    };
     const opened = destination
       ? await startInFolder({
           environmentId: destination.environmentId,
@@ -134,12 +199,11 @@ export function useSaveCapture() {
             .catch(() => null)
         : null;
     // Assigned inside the callback, which TypeScript can't follow.
-    const filled = seeded as Seeded | null;
+    const filled = seeded as ReturnType<typeof seedCaptureDraft> | null;
     if (filled === null) {
       for (const { image } of prepared.images) URL.revokeObjectURL(image.previewUrl);
       toastManager.add({ type: "error", title: "Couldn't save the draft" });
-      // Nothing is lost: it reopens with what was written, files included.
-      restoreQuickCapture({ text: capture.text, files: capture.files, destination });
+      restore();
       return false;
     }
     // A draft filled before a later step failed (opening it, filing it) is saved, not retried.
@@ -177,6 +241,13 @@ export function useSaveCapture() {
       });
     }
     return true;
+  };
+
+  return (capture: Capture, options: SaveCaptureOptions): Promise<boolean> => {
+    const captureId = options.captureId?.trim();
+    return options.requirePersistence === true && captureId
+      ? runCaptureOnce(captureId, () => save(capture, options))
+      : save(capture, options);
   };
 }
 
