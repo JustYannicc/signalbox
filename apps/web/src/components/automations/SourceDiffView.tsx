@@ -7,13 +7,12 @@ import {
   foldUnchanged,
   lineDiff,
 } from "@t3tools/client-runtime/automations/sourceDiff";
-import { useMemo } from "react";
 
 import { cn } from "~/lib/utils";
 import { ScrollArea } from "../ui/scroll-area";
 
 export function SourceDiffView(props: { before: string; after: string }) {
-  const { rows, counts, digits } = useMemo(() => {
+  const { rows, counts, digits } = (() => {
     const lines = lineDiff(props.before, props.after);
     const last = lines.at(-1);
     return {
@@ -21,7 +20,7 @@ export function SourceDiffView(props: { before: string; after: string }) {
       counts: diffCounts(lines),
       digits: String(Math.max(last?.before ?? 0, last?.after ?? 0)).length,
     };
-  }, [props.before, props.after]);
+  })();
   const gutter = { width: `calc(${digits}ch + 0.75rem)` };
 
   if (counts.added === 0 && counts.removed === 0) {

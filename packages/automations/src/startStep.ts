@@ -19,6 +19,7 @@ import { asRecord, fromJson, toJson } from "./json.ts";
 import { modelPrompt } from "./modelSteps.ts";
 import type { AutomationFunctions, AutomationModelSteps, CallbackLink } from "./host.ts";
 import { waitsOnEvents } from "./events/runWaits.ts";
+import { eventCursorForRun } from "./events/cursor.ts";
 import { explained } from "./runLog.ts";
 import { runModelStep } from "./runModelStep.ts";
 import { retryAfterMs, retryPolicy, stepTimeoutMs } from "./stepPolicy.ts";
@@ -32,6 +33,7 @@ import {
 } from "./steps.ts";
 import { nowIso } from "./time.ts";
 import type { AutomationRow, RunRow, StepRow, WorkflowStore } from "./WorkflowStore.ts";
+import type { RunLinkStore } from "./runLinkStore.ts";
 
 /**
  * Starts the real work behind a step the code just reached: everything that
@@ -48,6 +50,7 @@ export type StepOutcome =
 
 export interface StartStepDependencies {
   readonly store: WorkflowStore;
+  readonly links: RunLinkStore;
   readonly services: Context.Context<EngineServices>;
   readonly functions: AutomationFunctions["Service"];
   readonly models: AutomationModelSteps["Service"] | undefined;
@@ -136,10 +139,16 @@ export const makeStartStep =
         return wakeAt(first).pipe(
           Effect.map((at): StepOutcome => ({ type: "waiting", wakeAt: at })),
         );
+      case "eventCursor":
+        return deps.links
+          .captureEventCursor(step.run_id)
+          .pipe(Effect.map((value): StepOutcome => ({ type: "done", value })));
       case "waitFor": {
-        const { event, timeout, on, watch } = asRecord(first);
+        const { event, timeout, on, watch, after } = asRecord(first);
         // `on` steps wait without a name; runWaits.ts hands them matching events.
         const named = typeof event === "string" ? { event } : {};
+        if (after !== undefined && named.event)
+          return fail("w.waitFor `after` only works with `on` or `watch` events.");
         if (!waitsOnEvents(step) && !named.event)
           return fail("w.waitFor needs `on`, `watch` or an event name.");
         // A computed `on` or `watch` skipped the compiler's check.
@@ -148,6 +157,7 @@ export const makeStartStep =
           (watch === undefined ? null : sourceWatchProblem(watch, on));
         if (problem) return Effect.fail(explained(problem.message, { fix: problem.hint }));
         return Effect.gen(function* () {
+          if (after !== undefined) yield* eventCursorForRun(after, step.run_id);
           const at = timeout === undefined ? undefined : yield* wakeAt(timeout);
           return { type: "waiting", ...named, ...(at ? { wakeAt: at } : {}) } satisfies StepStart;
         });

@@ -98,10 +98,9 @@ registered, the gateway refuses the turn's requests with "This machine hasn't
 registered the folder's secrets to hide them yet."
 
 Production's gateway is `signalbox-model-gateway` at `gateway.signalbox.run`,
-deployed after the cloud Worker. Each pull request preview gets its own,
-`signalbox-model-gateway-pr-<number>` at
-`gateway-preview-<number>.signalbox.run`, bound to the preview's Worker and
-deleted with it. Previews set their `MODEL_GATEWAY_URL` themselves.
+deployed after the cloud Worker. Preview gateways use `/anthropic` and
+`/openai` routes on the preview app origin. The preview's `MODEL_GATEWAY_URL`
+uses that origin; production keeps its gateway domain.
 
 `POST http://127.0.0.1:8790/machines/drop-sockets` cuts every Runner's socket,
 to watch one reconnect mid-turn and resend what the thread has not acknowledged.
@@ -800,10 +799,11 @@ and `cloud-production`), passed through `alchemy.run.ts`. Each is optional:
   production's). Native exports must never point directly at Sentry: they
   include SQL statements, full URLs and storage keys outside evlog's redactor.
   Unfiltered trace persistence in Cloudflare is disabled. Each stage has its
-  own destination and receiver at `traces-<app-origin>/v1/traces`, accepting
-  OTLP JSON, plain or gzip, with bearer auth using the DSN's public ingest
-  key. Cloud intake uses the `TRACE_EXPORT` service binding and
-  `TRACE_EXPORT_TOKEN` with that same protocol. The receiver keeps trace IDs,
+  own destination and receiver. Production uses
+  `traces-app.signalbox.run/v1/traces`; previews use `/v1/traces` on the app
+  origin. The receiver accepts OTLP JSON, plain or gzip, with bearer auth
+  using the DSN's public ingest key. Cloud intake uses the `TRACE_EXPORT`
+  service binding and `TRACE_EXPORT_TOKEN` with that same protocol. The receiver keeps trace IDs,
   approved enums, counts and timings; unknown fields, events and content
   are dropped. It has no tracing of its own, preventing export loops.
 - `POSTHOG_API_KEY` with the `POSTHOG_HOST` variable, both required (no

@@ -22,9 +22,6 @@ import { Threads } from "../thread/Threads.ts";
 import * as UserDirectory from "../user/UserDirectory.ts";
 import * as UserModelSettings from "../user/UserModelSettings.ts";
 import { handleMcpRequest, protectedResourceMetadata } from "./mcpRoutes.ts";
-import { PERSONAL_CONTEXT_ID } from "@t3tools/contracts/signalboxContexts";
-import { ThreadId } from "@t3tools/contracts";
-import { scriptedModelSelection } from "../thread/scriptedProvider.ts";
 
 const userId = "user_1";
 const repos: Array<ReturnType<typeof makeRepo>> = [];

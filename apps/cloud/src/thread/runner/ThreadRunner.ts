@@ -733,6 +733,7 @@ const make = Effect.gen(function* () {
         projection === null ||
         lease.generation !== generation ||
         lease.status !== "connected" ||
+        lease.disconnectedAt !== null ||
         (lease.connection ?? 0) !== connection
       ) {
         return Effect.succeed(keep(undefined));

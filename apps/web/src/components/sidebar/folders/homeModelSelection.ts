@@ -23,7 +23,7 @@ import { PERSONAL_CONTEXT_ID } from "@t3tools/contracts/signalboxContexts";
 import type { FolderId } from "@t3tools/contracts/signalboxFolders";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import { resolveInitialModelSelection } from "@t3tools/shared/defaultModelSelection";
-import { useCallback, useContext } from "react";
+import { useContext } from "react";
 
 import { readProjects } from "../../../state/entities";
 import { environmentServerConfigsAtom } from "../../../state/server";
@@ -65,58 +65,55 @@ export function selectionOnPool(input: {
  */
 export function useHomeModelSelection() {
   const registry = useContext(RegistryContext);
-  return useCallback(
-    (environmentId: EnvironmentId, folderId: FolderId | null): ModelSelection | null => {
-      const config = registry.get(environmentServerConfigsAtom).get(environmentId);
-      const snapshot = registry.get(environmentFoldersAtom).get(environmentId)?.snapshot ?? null;
-      const contexts = registry.get(environmentContextsAtom).get(environmentId)?.contexts ?? [];
-      const ownerId =
-        folderId === null
-          ? (contexts.find((context) => context.kind === "personal")?.id ?? PERSONAL_CONTEXT_ID)
-          : snapshot?.folders.find((folder) => folder.id === folderId)?.ownerId;
-      const owner = contexts.find((context) => context.id === ownerId);
-      const ownerProjectId = owner === undefined ? null : ownerFilesProject(owner);
-      const projectId =
-        snapshot === null || ownerProjectId === null
-          ? null
-          : newThreadIn(snapshot, folderId, ownerProjectId).projectId;
-      const project = readProjects().find(
-        (candidate) => candidate.environmentId === environmentId && candidate.id === projectId,
-      );
-      const projectSettings = resolveProjectSettings(
-        config?.settings ?? DEFAULT_SERVER_SETTINGS,
-        projectId,
-        project,
-      );
-      const settings = projectSettings.settings;
-      const personDefaultModelSelection = config?.settings.defaultModelSelection ?? null;
-      const selection = resolveInitialModelSelection({
-        projectDefault:
-          projectSettings.sources.defaultModelSelection === "project"
-            ? settings.defaultModelSelection
-            : null,
-        personDefault:
-          personDefaultModelSelection &&
-          resolveProjectProviderInstanceEnabled(
-            settings,
-            projectId,
-            personDefaultModelSelection.instanceId,
-          )
-            ? personDefaultModelSelection
-            : null,
-        providers: (config?.providers ?? []).filter(
-          (provider) =>
-            provider.enabled &&
-            provider.installed &&
-            provider.auth.status !== "unauthenticated" &&
-            provider.availability !== "unavailable" &&
-            resolveProjectProviderInstanceEnabled(settings, projectId, provider.instanceId),
-        ),
-      });
-      const pool = snapshot && poolOfHome(snapshot, folderId);
-      if (!pool) return selection;
-      return selectionOnPool({ config, settings, selection, poolId: pool.poolId }) ?? selection;
-    },
-    [registry],
-  );
+  return (environmentId: EnvironmentId, folderId: FolderId | null): ModelSelection | null => {
+    const config = registry.get(environmentServerConfigsAtom).get(environmentId);
+    const snapshot = registry.get(environmentFoldersAtom).get(environmentId)?.snapshot ?? null;
+    const contexts = registry.get(environmentContextsAtom).get(environmentId)?.contexts ?? [];
+    const ownerId =
+      folderId === null
+        ? (contexts.find((context) => context.kind === "personal")?.id ?? PERSONAL_CONTEXT_ID)
+        : snapshot?.folders.find((folder) => folder.id === folderId)?.ownerId;
+    const owner = contexts.find((context) => context.id === ownerId);
+    const ownerProjectId = owner === undefined ? null : ownerFilesProject(owner);
+    const projectId =
+      snapshot === null || ownerProjectId === null
+        ? null
+        : newThreadIn(snapshot, folderId, ownerProjectId).projectId;
+    const project = readProjects().find(
+      (candidate) => candidate.environmentId === environmentId && candidate.id === projectId,
+    );
+    const projectSettings = resolveProjectSettings(
+      config?.settings ?? DEFAULT_SERVER_SETTINGS,
+      projectId,
+      project,
+    );
+    const settings = projectSettings.settings;
+    const personDefaultModelSelection = config?.settings.defaultModelSelection ?? null;
+    const selection = resolveInitialModelSelection({
+      projectDefault:
+        projectSettings.sources.defaultModelSelection === "project"
+          ? settings.defaultModelSelection
+          : null,
+      personDefault:
+        personDefaultModelSelection &&
+        resolveProjectProviderInstanceEnabled(
+          settings,
+          projectId,
+          personDefaultModelSelection.instanceId,
+        )
+          ? personDefaultModelSelection
+          : null,
+      providers: (config?.providers ?? []).filter(
+        (provider) =>
+          provider.enabled &&
+          provider.installed &&
+          provider.auth.status !== "unauthenticated" &&
+          provider.availability !== "unavailable" &&
+          resolveProjectProviderInstanceEnabled(settings, projectId, provider.instanceId),
+      ),
+    });
+    const pool = snapshot && poolOfHome(snapshot, folderId);
+    if (!pool) return selection;
+    return selectionOnPool({ config, settings, selection, poolId: pool.poolId }) ?? selection;
+  };
 }
