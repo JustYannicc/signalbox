@@ -22,9 +22,13 @@ const RUNNER_TAG = "runner";
 /** Close codes. 4000s are ours; the Runner reconnects after any of them but `refused`. */
 const CLOSE = { refused: 4001, replaced: 4002, protocol: 4003, released: 4004 } as const;
 
-interface Attachment {
+export interface RunnerSocketAttachment {
   readonly generation: number;
   readonly connection: number;
+  /** Last Runner frame handled by the object, persisted through hibernation. */
+  readonly lastActivityAt?: number | undefined;
+  /** The server ended or replaced this connection. */
+  readonly inactive?: true | undefined;
   /** The run this socket's Runner was handed, until it ends or is stopped. */
   readonly sentRunId: RunId | null;
   readonly sentPreparationGeneration?: number | undefined;
@@ -37,8 +41,11 @@ interface Attachment {
   readonly sentSteers?: number | undefined;
 }
 
+type Attachment = RunnerSocketAttachment;
+
 export interface RunnerSocketHost {
   readonly ctx: DurableObjectState;
+  readonly now: () => Promise<number>;
   readonly run: <A>(effect: Effect.Effect<A, never, ThreadRunner.ThreadRunner>) => Promise<A>;
   /**
    * Whether the turn waits for its pull requests' reads, which the object's
@@ -83,7 +90,9 @@ export const isRunnerSocket = (ctx: DurableObjectState, socket: WebSocket) =>
 /** Tells every socket of `generation` to go away: its machine's lease is over. */
 export function endRunners(ctx: DurableObjectState, generation: number, reason: string) {
   for (const socket of ctx.getWebSockets(RUNNER_TAG)) {
-    if (attachmentOf(socket)?.generation !== generation) continue;
+    const attachment = attachmentOf(socket);
+    if (attachment?.generation !== generation) continue;
+    socket.serializeAttachment({ ...attachment, inactive: true });
     send(socket, { type: "end", reason });
     close(socket, CLOSE.released, reason);
   }
@@ -253,6 +262,14 @@ export async function onRunnerMessage(
     return;
   }
   const attachment = attachmentOf(socket);
+  if (attachment?.inactive === true && message.type !== "hello") {
+    close(socket, CLOSE.replaced, "This Runner connection is no longer active.");
+    return;
+  }
+  const receivedAt = await host.now();
+  if (attachment !== null) {
+    socket.serializeAttachment({ ...attachment, lastActivityAt: receivedAt } satisfies Attachment);
+  }
   switch (message.type) {
     case "hello": {
       const result = await host.run(runner.use((service) => service.hello(message)));
@@ -263,13 +280,17 @@ export async function onRunnerMessage(
       }
       // One Runner per thread: a reconnect replaces the socket it left behind.
       for (const other of host.ctx.getWebSockets(RUNNER_TAG)) {
-        if (other !== socket) close(other, CLOSE.replaced, "Replaced by a newer connection.");
+        if (other === socket) continue;
+        const previous = attachmentOf(other);
+        if (previous !== null) other.serializeAttachment({ ...previous, inactive: true });
+        close(other, CLOSE.replaced, "Replaced by a newer connection.");
       }
       // A reconnect already holds its live run: what the thread decides about
       // that run (a Stop above all) is told on this connection.
       socket.serializeAttachment({
         generation: result.generation,
         connection: result.connection,
+        lastActivityAt: receivedAt,
         sentRunId: result.heldRunId,
         sentPreparationGeneration: message.takenPreparations?.find(
           (attempt) => attempt.runId === result.heldRunId,
@@ -319,6 +340,8 @@ export async function onRunnerMessage(
         await host.run(
           runner.use((service) => service.ended(attachment.generation, message.reason)),
         );
+        const current = attachmentOf(socket);
+        if (current !== null) socket.serializeAttachment({ ...current, inactive: true });
         await host.afterChange();
       }
       close(socket, 1000, "end");
@@ -337,15 +360,31 @@ export async function onRunnerClose(
   code = 1000,
   reason = "",
 ) {
-  // 1005 and 1006 only describe a close; they cannot be sent.
-  close(socket, code === 1005 || code === 1006 ? 1000 : code, reason);
   const attachment = attachmentOf(socket);
-  if (attachment === null) return;
-  const replaced = host.ctx
-    .getWebSockets(RUNNER_TAG)
-    .some((other) => other !== socket && attachmentOf(other)?.generation === attachment.generation);
-  if (replaced) return;
-  const detail = `code ${code}${reason === "" ? "" : `, ${reason}`}`;
-  await host.run(runner.use((service) => service.disconnected({ ...attachment, detail })));
-  await host.afterChange();
+  if (attachment === null || attachment.inactive === true) {
+    close(socket, code === 1005 || code === 1006 ? 1000 : code, reason);
+    return;
+  }
+  const replaced = host.ctx.getWebSockets(RUNNER_TAG).some((other) => {
+    const replacement = other === socket ? null : attachmentOf(other);
+    return (
+      replacement?.generation === attachment.generation &&
+      replacement.connection > attachment.connection
+    );
+  });
+  if (!replaced) {
+    const detail = `code ${code}${reason === "" ? "" : `, ${reason}`}`;
+    await host.run(runner.use((service) => service.disconnected({ ...attachment, detail })));
+  }
+  const current = attachmentOf(socket);
+  if (
+    current?.generation === attachment.generation &&
+    current.connection === attachment.connection
+  ) {
+    // A failed disconnect must remain eligible for the next alarm retry.
+    socket.serializeAttachment({ ...current, inactive: true });
+    // 1005 and 1006 only describe a close; they cannot be sent.
+    close(socket, code === 1005 || code === 1006 ? 1000 : code, reason);
+  }
+  if (!replaced) await host.afterChange();
 }

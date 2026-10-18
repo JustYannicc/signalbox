@@ -20,6 +20,10 @@ import type { HandoffEndpoints } from "@t3tools/client-runtime/handoff";
 import { resolveUserMessagePresentation } from "@t3tools/client-runtime/user-message";
 import { canForkProjectedAssistantItem } from "@t3tools/client-runtime/state/thread-workflows";
 import {
+  toggleRunFoldExpansion,
+  transitionRunFoldExpansion,
+} from "@t3tools/client-runtime/state/thread-fold-expansion";
+import {
   type OrchestrationMessageContext,
   ThreadId,
   type ChatAttachment,
@@ -1673,6 +1677,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
   const disclosureSettleSecondFrameRef = useRef<number | null>(null);
   const disclosureAnchorKeyRef = useRef<string | null>(null);
   const previousLatestTurnRef = useRef(props.latestRun);
+  const runContinuations = props.latestRun?.runContinuations;
   const userScrollSettleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const headerMaterialVisibleRef = useRef(false);
   const { width: windowWidth, fontScale } = useWindowDimensions();
@@ -2205,28 +2210,19 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
   useEffect(() => {
     const previous = previousLatestTurnRef.current;
     previousLatestTurnRef.current = props.latestRun;
-    if (!props.latestRun || !previous) {
-      return;
-    }
-    if (props.latestRun.runId === previous.runId) {
-      if (previous.status === "running" && props.latestRun.status === "interrupted") {
-        const interruptedTurnId = props.latestRun.runId;
-        setInteractionState((current) => ({
-          ...current,
-          expandedTurnIds: new Set(current.expandedTurnIds).add(interruptedTurnId),
-        }));
-      }
-      return;
-    }
+    if (!props.latestRun || !previous) return;
     setInteractionState((current) => {
-      if (!current.expandedTurnIds.has(previous.runId)) {
-        return current;
-      }
-      const next = new Set(current.expandedTurnIds);
-      next.delete(previous.runId);
-      return { ...current, expandedTurnIds: next };
+      const expandedTurnIds = transitionRunFoldExpansion(
+        current.expandedTurnIds,
+        previous,
+        props.latestRun,
+        runContinuations,
+      );
+      return expandedTurnIds === current.expandedTurnIds
+        ? current
+        : { ...current, expandedTurnIds };
     });
-  }, [props.latestRun]);
+  }, [props.latestRun, runContinuations]);
 
   useEffect(() => {
     return () => {
@@ -2350,16 +2346,15 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
     (runId: RunId) => {
       suspendEndScrollMaintenanceForDisclosure(`run-fold:${runId}`);
       setInteractionState((current) => {
-        const next = new Set(current.expandedTurnIds);
-        if (next.has(runId)) {
-          next.delete(runId);
-        } else {
-          next.add(runId);
-        }
-        return { ...current, expandedTurnIds: next };
+        const expandedTurnIds = toggleRunFoldExpansion(
+          current.expandedTurnIds,
+          runId,
+          runContinuations,
+        );
+        return { ...current, expandedTurnIds };
       });
     },
-    [suspendEndScrollMaintenanceForDisclosure],
+    [runContinuations, suspendEndScrollMaintenanceForDisclosure],
   );
 
   const onPressPreview = useCallback((source: FilePreviewSource) => {

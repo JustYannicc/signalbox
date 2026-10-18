@@ -9,7 +9,7 @@ import * as PoolContainer from "./PoolContainer.ts";
  * `models` answers CLIProxyAPI's `/v1/models` when a test needs it.
  */
 const fakeContainer = (
-  respond: () => Promise<Response>,
+  respond: (request: Request) => Promise<Response>,
   models?: (request: Request) => Promise<Response>,
 ) => {
   const calls: Array<string> = [];
@@ -36,7 +36,9 @@ const fakeContainer = (
         const request = typeof input === "string" ? new Request(input) : input;
         const { pathname } = new URL(request.url);
         if (pathname === "/") return Promise.resolve(new Response(null, { status: 404 }));
-        return pathname === "/v1/models" && models !== undefined ? models(request) : respond();
+        return pathname === "/v1/models" && models !== undefined
+          ? models(request)
+          : respond(request);
       },
     }),
   } as unknown as Container;
@@ -47,17 +49,18 @@ const store = { accessKey: "a", secretKey: "s" };
 const T0 = Date.UTC(2026, 9, 8, 9, 0, 0);
 const IDLE = PoolContainer.IDLE_TIMEOUT_MS;
 
-const makePool = (respond: () => Promise<Response>, running = false) => {
+const makePool = (respond: (request: Request) => Promise<Response>, running = false) => {
   const fake = fakeContainer(respond);
   if (running) fake.container.start({ enableInternet: true });
   const wakes: Array<number> = [];
+  const events: Array<{ readonly action: string; readonly fields: Record<string, unknown> }> = [];
   const layer = PoolContainer.layerCloudflare({
     container: fake.container,
     storeGateway: {} as Fetcher,
     wakeAt: (at) => wakes.push(at),
-    log: () => {},
+    log: (action, fields) => events.push({ action, fields }),
   });
-  return { ...fake, wakes, layer };
+  return { ...fake, wakes, events, layer };
 };
 
 const send = (path: string) =>
@@ -169,5 +172,93 @@ describe("PoolContainer", () => {
       expect(yield* sleepIfIdle(T0)).toBeNull();
       expect(pool.calls).toContain("destroy");
     }).pipe(Effect.provide(pool.layer));
+  });
+
+  it.effect(
+    "identifies a surviving container only from management replies, even refused ones",
+    () => {
+      let metadata = true;
+      const pool = makePool(
+        async () =>
+          new Response("unread body", {
+            status: 403,
+            headers: metadata ? { "x-cpa-version": "8.0.31" } : {},
+          }),
+        true,
+      );
+      return PoolContainer.PoolContainer.use((container) =>
+        Effect.gen(function* () {
+          expect(container.release().source).toBe("unknown");
+          const model = yield* send("/v1/messages");
+          expect(container.release().source).toBe("unknown");
+          yield* Effect.promise(() => model.text());
+          const management = yield* send("/v8/management/config");
+          expect(container.release()).toMatchObject({
+            source: "management-headers",
+            version: "8.0.31",
+          });
+          expect(yield* Effect.promise(() => management.text())).toBe("unread body");
+          expect(pool.events).toContainEqual({
+            action: "pool.container.release_observed",
+            fields: { cliProxyApi: container.release() },
+          });
+          metadata = false;
+          const unsupported = yield* send("/v8/management/config");
+          yield* Effect.promise(() => unsupported.text());
+          expect(container.release().source).toBe("unknown");
+          metadata = true;
+          const identified = yield* send("/v8/management/config");
+          yield* Effect.promise(() => identified.text());
+          yield* sleepIfIdle(T0 + IDLE);
+          expect(container.release().source).toBe("unknown");
+          expect(pool.events.at(-1)).toMatchObject({
+            action: "pool.container.slept",
+            fields: { cliProxyApi: { version: "8.0.31" } },
+          });
+        }),
+      ).pipe(Effect.provide(pool.layer));
+    },
+  );
+
+  it.effect("does not revive evidence from a management reply that outlived its container", () => {
+    const entered = Promise.withResolvers<void>();
+    const pending = Promise.withResolvers<Response>();
+    let late = false;
+    const pool = makePool(async (request) => {
+      if (new URL(request.url).pathname.startsWith("/v8/management/")) {
+        if (late) {
+          entered.resolve();
+          return pending.promise;
+        }
+        return new Response(null, { headers: { "x-cpa-version": "8.0.31" } });
+      }
+      return new Response(null);
+    });
+    return PoolContainer.PoolContainer.use((container) =>
+      Effect.gen(function* () {
+        yield* send("/v8/management/config");
+        expect(container.release().version).toBe("8.0.31");
+        late = true;
+        const old = yield* Effect.forkChild(send("/v8/management/credentials"));
+        yield* Effect.promise(() => entered.promise);
+        yield* container.stop;
+        yield* send("/v1/messages");
+        expect(container.release().source).toBe("unknown");
+        pending.resolve(new Response(null, { headers: { "x-cpa-version": "8.0.31" } }));
+        yield* Fiber.join(old);
+        expect(container.release().source).toBe("unknown");
+        const starts = pool.events.filter((event) => event.action === "pool.container.started");
+        expect(starts).toHaveLength(2);
+        for (const event of starts) {
+          expect(event.fields.cliProxyApi).toMatchObject({ source: "unknown", version: null });
+        }
+        late = false;
+        yield* send("/v8/management/config");
+        yield* Effect.promise(() => pool.container.destroy());
+        expect(container.release().source).toBe("unknown");
+        yield* send("/v1/messages");
+        expect(container.release().source).toBe("unknown");
+      }),
+    ).pipe(Effect.provide(pool.layer));
   });
 });

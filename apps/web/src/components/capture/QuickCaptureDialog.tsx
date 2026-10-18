@@ -19,7 +19,6 @@ import {
 import { formatAttachmentSize } from "@t3tools/client-runtime/state/attachments";
 import { PROVIDER_SEND_TURN_MAX_ATTACHMENTS } from "@t3tools/contracts";
 import {
-  useMemo,
   useRef,
   useState,
   type ClipboardEvent,
@@ -77,16 +76,13 @@ export function QuickCaptureDialog(props: { readonly open: boolean }) {
   const saveCapture = useSaveCapture();
 
   const trees = useAtomValue(folderTreesAtom);
-  const destinations = useMemo(() => captureDestinations(trees.values()), [trees]);
+  const destinations = captureDestinations(trees.values());
   const destination = picked ?? destinations[0] ?? null;
 
   const typedTrigger = findFolderTrigger(text, caret);
   const trigger = typedTrigger && typedTrigger.start !== dismissedAt ? typedTrigger : null;
   const query = trigger?.query ?? null;
-  const suggestions = useMemo(
-    () => (query === null ? [] : rankByLabel(destinations, query, MAX_SUGGESTIONS)),
-    [destinations, query],
-  );
+  const suggestions = query === null ? [] : rankByLabel(destinations, query, MAX_SUGGESTIONS);
   const highlighted = Math.min(activeIndex, Math.max(suggestions.length - 1, 0));
   const hasContent = text.trim().length > 0 || files.length > 0;
 

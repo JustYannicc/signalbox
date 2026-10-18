@@ -718,11 +718,6 @@ export function collectUserMessageBlobPreviewUrls(message: ChatMessage): string[
   return previewUrls;
 }
 
-export interface PullRequestDialogState {
-  initialReference: string | null;
-  key: number;
-}
-
 export { readFileAsDataUrl } from "../lib/imageCompression";
 
 export function resolveSendEnvMode(input: {
@@ -750,21 +745,7 @@ export function resolveBackgroundDraftWorkspaceOptions(input: {
   };
 }
 
-export function cloneComposerImageForRetry(
-  image: ComposerImageAttachment,
-): ComposerImageAttachment {
-  if (typeof URL === "undefined" || !image.previewUrl.startsWith("blob:")) {
-    return image;
-  }
-  try {
-    return {
-      ...image,
-      previewUrl: URL.createObjectURL(image.file),
-    };
-  } catch {
-    return image;
-  }
-}
+export { cloneComposerImageForRetry } from "../composerSubmissionRecovery";
 
 export function deriveComposerSendState(options: {
   prompt: string;

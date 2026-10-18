@@ -92,6 +92,7 @@ import * as UserContexts from "./user/UserContexts.ts";
 import * as GitHub from "./github/GitHub.ts";
 import * as GitHubActions from "./github/GitHubActions.ts";
 import * as GitHubBranches from "./github/GitHubBranches.ts";
+import * as AgentPullRequests from "./github/AgentPullRequests.ts";
 import * as CloudPullRequests from "./github/CloudPullRequests.ts";
 import * as PullRequestRepository from "./github/PullRequestRepository.ts";
 import * as ConnectionLinks from "./connections/ConnectionLinks.ts";
@@ -105,6 +106,7 @@ import * as CloudEngine from "./automations/cloudEngine.ts";
 import type { AutomationRunner } from "@signalbox/automations/runner/AutomationRunner";
 import { makeMemoryWorkflows } from "./automations/memoryWorkflows.ts";
 import * as UserFolders from "./user/UserFolders.ts";
+import * as FolderStarts from "./user/FolderStarts.ts";
 import * as UserDirectory from "./user/UserDirectory.ts";
 import * as UserDrives from "./user/UserDrives.ts";
 import { makeUserObjectApi } from "./user/userObjectApi.ts";
@@ -319,6 +321,7 @@ const makeUserRuntime = (
         // The same branches the socket's RPC uses, so the git panel sees what the agent pushed.
         Layer.mergeAll(
           GitHubBranches.layer,
+          AgentPullRequests.layer,
           GitHubActions.layer,
           CloudPullRequests.layer.pipe(Layer.provideMerge(PullRequestRepository.layer)),
           UserPreviewSetup.layer,
@@ -387,6 +390,7 @@ const makeUserRuntime = (
             ),
           ),
           Layer.provideMerge(Layer.mergeAll(drives, people, github)),
+          Layer.provideMerge(FolderStarts.layer),
           Layer.provideMerge(
             Layer.mergeAll(
               Layer.succeed(UserDirectory.UserDirectory, users),
