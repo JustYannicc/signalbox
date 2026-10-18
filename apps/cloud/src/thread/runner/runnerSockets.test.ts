@@ -538,3 +538,149 @@ describe("runnerSockets", () => {
     ),
   );
 });
+
+describe("queue edits delivered to the Runner", () => {
+  it.effect(
+    "hands over the edited reordered head once and keeps cancellation in the same order",
+    () =>
+      withObject(freshDatabase(), (engine, runner) =>
+        Effect.gen(function* () {
+          const { host, socket, report } = yield* runningTurn(engine, runner, false);
+          for (const n of [2, 3, 4]) yield* send(engine, n, `Queued ${n}`);
+          const before = yield* snapshot(engine);
+          const second = before.projection.runs[1]!;
+          const third = before.projection.runs[2]!;
+          const fourth = before.projection.runs[3]!;
+          const edit = {
+            type: "queued-run.edit" as const,
+            commandId: CommandId.make("edit-fourth"),
+            threadId,
+            runId: fourth.id,
+            text: "Edited fourth",
+          };
+          const reorder = {
+            type: "queued-run.reorder" as const,
+            commandId: CommandId.make("fourth-first"),
+            threadId,
+            runId: fourth.id,
+            beforeRunId: second.id,
+          };
+          for (const change of [edit, reorder])
+            yield* dispatched(host, engine.dispatch(owner, change, personal));
+          yield* dispatched(
+            host,
+            engine.dispatch(
+              owner,
+              {
+                type: "queued-run.cancel",
+                commandId: CommandId.make("cancel-third"),
+                threadId,
+                runId: third.id,
+              },
+              personal,
+            ),
+          );
+          expect(socket.sent.filter((message) => message.type === "turn.start")).toHaveLength(0);
+          yield* say(host, socket, {
+            type: "batch",
+            sequence: 2,
+            items: [report.full, report.terminal],
+          });
+          const starts = socket.sent.filter((message) => message.type === "turn.start");
+          expect(starts).toHaveLength(1);
+          expect(starts[0]?.turn).toMatchObject({
+            runId: fourth.id,
+            message: { text: expect.stringContaining("User message:\nEdited fourth") },
+          });
+          yield* dispatched(host, engine.dispatch(owner, edit, personal));
+          yield* dispatched(host, engine.dispatch(owner, reorder, personal));
+          expect(socket.sent.filter((message) => message.type === "turn.start")).toHaveLength(1);
+          const head = yield* snapshot(engine);
+          expect(
+            head.projection.runs.map((run) => [run.ordinal, run.status, run.queuePosition]),
+          ).toEqual([
+            [1, "completed", null],
+            [2, "queued", 1],
+            [3, "cancelled", null],
+            [4, "starting", null],
+          ]);
+          for (const change of [edit, reorder]) {
+            const stale = yield* engine
+              .dispatch(
+                owner,
+                { ...change, commandId: CommandId.make(`stale-${change.type}`) },
+                personal,
+              )
+              .pipe(Effect.flip);
+            expect(stale._tag).toBe("ThreadCommandRejectedError");
+          }
+          expect((yield* snapshot(engine)).projection.messages).toEqual(head.projection.messages);
+        }),
+      ),
+  );
+
+  it.effect(
+    "rejects edits and reorders after promotion while preserving the delivered message",
+    () =>
+      withObject(freshDatabase(), (engine, runner) =>
+        Effect.gen(function* () {
+          const { host, socket, turn } = yield* runningTurn(engine, runner, true);
+          yield* engine.dispatch(
+            owner,
+            {
+              type: "message.dispatch",
+              commandId: CommandId.make("queue-promotion"),
+              createdBy: "user",
+              creationSource: "web",
+              threadId,
+              messageId: MessageId.make("promoted-message"),
+              text: "Keep this message",
+              attachments: [],
+              dispatchMode: { type: "queue_after_active" },
+            },
+            personal,
+          );
+          const queued = (yield* snapshot(engine)).projection.runs[1]!;
+          yield* dispatched(
+            host,
+            engine.dispatch(
+              owner,
+              {
+                type: "queued-message.promote-to-steer",
+                commandId: CommandId.make("promote-queued"),
+                threadId,
+                queuedRunId: queued.id,
+                targetRunId: turn.runId,
+              },
+              personal,
+            ),
+          );
+          const promoted = yield* snapshot(engine);
+          for (const change of [
+            {
+              type: "queued-run.edit" as const,
+              commandId: CommandId.make("edit-promoted"),
+              threadId,
+              runId: queued.id,
+              text: "Stale edit",
+            },
+            {
+              type: "queued-run.reorder" as const,
+              commandId: CommandId.make("reorder-promoted"),
+              threadId,
+              runId: queued.id,
+              beforeRunId: null,
+            },
+          ]) {
+            expect((yield* engine.dispatch(owner, change, personal).pipe(Effect.flip))._tag).toBe(
+              "ThreadCommandRejectedError",
+            );
+          }
+          expect((yield* snapshot(engine)).projection).toEqual(promoted.projection);
+          expect(socket.sent.filter((message) => message.type === "steer")).toMatchObject([
+            { message: { messageId: "promoted-message", text: "Keep this message" } },
+          ]);
+        }),
+      ),
+  );
+});

@@ -31,6 +31,7 @@
       { "name": "POOLS", "class_name": "PoolObject" },
       { "name": "DRIVES", "class_name": "DriveObject" },
       { "name": "PREVIEW_LINKS", "class_name": "PreviewLinkRegistry" },
+      { "name": "EXECUTOR_TOKEN_BINDINGS", "class_name": "ExecutorTokenBindingObject" },
     ],
   },
   "migrations": [
@@ -39,6 +40,7 @@
     { "tag": "v3", "new_sqlite_classes": ["DriveObject"] },
     { "tag": "v4", "new_sqlite_classes": ["PoolObject"] },
     { "tag": "v5", "new_sqlite_classes": ["PreviewLinkRegistry"] },
+    { "tag": "v6", "new_sqlite_classes": ["ExecutorTokenBindingObject"] },
   ],
   // Containers bound to Durable Objects. One entry per class: each object of
   // `class_name` gets its own container from `image`, started and stopped
@@ -102,6 +104,7 @@
     // Production identity. Never reuse it for another deployment.
     "ENVIRONMENT_ID": "4bfb70e5-7954-458a-9b75-4834c0ab4e13",
     "ENVIRONMENT_LABEL": "Signalbox Cloud",
+    "EXECUTOR_TOKEN_ISSUER": "http://localhost",
     // Previews that may take a signed-in user's setup (`src/previewSetup/`).
     "PREVIEW_SETUP_ORIGINS": "https://preview-*.signalbox.run",
   },
@@ -128,6 +131,7 @@
           { "name": "POOLS", "class_name": "PoolObject" },
           { "name": "DRIVES", "class_name": "DriveObject" },
           { "name": "PREVIEW_LINKS", "class_name": "PreviewLinkRegistry" },
+          { "name": "EXECUTOR_TOKEN_BINDINGS", "class_name": "ExecutorTokenBindingObject" },
         ],
       },
       // Local only: `wrangler dev` simulates the bucket under .wrangler/.

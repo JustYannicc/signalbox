@@ -48,6 +48,7 @@ import { ProjectDefaultsSettings } from "./ProjectDefaultsSettings";
 import { projectGroupTitleNeedsUpdate } from "./ProjectSettingsPanel.logic";
 import { useSettingsProjectGroups } from "./useSettingsProjectGroups";
 import { settingsScopeEnvironmentLabels } from "./settingsScopeAxis";
+import { readShowsEnvironmentUi } from "~/state/environmentCapabilities"; // signalbox: the cloud's folders have no path or environment to name
 
 const ProjectIconPickerDialog = lazy(() =>
   import("./ProjectIconPickerDialog").then((module) => ({
@@ -330,12 +331,14 @@ function ProjectDetail({
             ? `Remove ${targetKind} "${targetLabel}" and delete its ${projectThreads.length} thread${projectThreads.length === 1 ? "" : "s"}?`
             : `Remove ${targetKind} "${targetLabel}"?`,
           ...(singleMember
-            ? [
-                `Path: ${singleMember.workspaceRoot}`,
-                ...(singleMember.environmentLabel
-                  ? [`Environment: ${singleMember.environmentLabel}`]
-                  : []),
-              ]
+            ? !readShowsEnvironmentUi() // signalbox: the cloud's folders have no path or environment to name
+              ? []
+              : [
+                  `Path: ${singleMember.workspaceRoot}`,
+                  ...(singleMember.environmentLabel
+                    ? [`Environment: ${singleMember.environmentLabel}`]
+                    : []),
+                ]
             : [`This removes ${members.length} grouped project entries.`]),
           ...(projectThreads.length > 0
             ? [

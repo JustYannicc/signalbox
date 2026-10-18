@@ -400,7 +400,11 @@ export function runtimeRequestEvents(
   const existing = projection.runtimeRequests.find(
     (candidate) => candidate.id === event.payload.id,
   );
-  if (existing !== undefined && existing.status !== "pending") return [];
+  if (
+    existing !== undefined &&
+    (existing.status !== "pending" || isCloudApprovalRequest(projection, existing))
+  )
+    return [];
   const request = event.payload;
   if (isCloudApprovalRequest(projection, request)) return [];
   const context = runtimeRequestContext(projection, request);

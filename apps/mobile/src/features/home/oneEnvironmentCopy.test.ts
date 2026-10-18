@@ -44,6 +44,29 @@ describe("environment copy with only Signalbox Cloud", () => {
     );
   });
 
+  it("rewords the relay's hinted invalid-credential error", () => {
+    expect(
+      oneEnvironmentCopy("The environment credential is invalid. Check this device's clock."),
+    ).toBe("Signalbox couldn't verify your sign-in. Check this device's clock.");
+    expect(
+      oneEnvironmentCopy("Your cloud sign-in changed. Sign in again to authorize the environment."),
+    ).toBe("Your sign-in changed. Sign in again.");
+  });
+
+  it("says a feature the cloud lacks isn't available yet", () => {
+    expect(oneEnvironmentCopy("This server does not support file attachments.")).toBe(
+      "File attachments aren't available in Signalbox yet.",
+    );
+    expect(
+      oneEnvironmentCopy(
+        "This environment's server does not support reordering these threads. Update the server to arrange them.",
+      ),
+    ).toBe("Moving threads isn't available in Signalbox yet.");
+    expect(
+      oneEnvironmentCopy("'report.pdf' was skipped because this server does not support files."),
+    ).toBe("'report.pdf' was skipped because Signalbox doesn't support files yet.");
+  });
+
   it("leaves text it doesn't know as upstream wrote it", () => {
     expect(oneEnvironmentCopy("Couldn't load pull requests")).toBe("Couldn't load pull requests");
   });

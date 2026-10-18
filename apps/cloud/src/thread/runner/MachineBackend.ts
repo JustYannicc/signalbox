@@ -55,9 +55,21 @@ export interface MachineBackendEnv {
   readonly BOAT_TTL_SECONDS?: string;
 }
 
+/** Safe to show in a failed turn. Raw provider responses stay in diagnostics. */
+export const MachineStartupProblem = Schema.Struct({
+  code: Schema.String,
+  message: Schema.String,
+  retryable: Schema.Boolean,
+});
+export type MachineStartupProblem = typeof MachineStartupProblem.Type;
+
 export class MachineBackendError extends Schema.TaggedError<MachineBackendError>()(
   "MachineBackendError",
-  { message: Schema.String, cause: Schema.optional(Schema.Defect()) },
+  {
+    message: Schema.String,
+    cause: Schema.optional(Schema.Defect()),
+    startupProblem: Schema.optional(MachineStartupProblem),
+  },
 ) {}
 
 /** What a backend last saw of the thread's machine, against what the thread wants. */
@@ -68,6 +80,7 @@ export interface MachineStatus {
   readonly machineId: string | null;
   /** Why the machine is not where the thread wants it, for logs. */
   readonly detail?: string;
+  readonly startupProblem?: MachineStartupProblem;
   /**
    * How this answer brought the machine up: created (`cold`), resumed from its
    * disk (`disk_resume`) or from memory (`memory_restore`), or found running

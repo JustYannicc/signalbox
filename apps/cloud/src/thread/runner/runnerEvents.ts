@@ -16,7 +16,7 @@ import * as Schema from "effect/Schema";
 import { type DecisionContext, turnItemEvent, unstampedEventId } from "../threadEvents.ts";
 import { positionTurnItem } from "../turnItemPosition.ts";
 export { positionTurnItem, ERROR_ITEM_BAND_POSITION } from "../turnItemPosition.ts";
-import { runtimeRequestEvents } from "../runtimeRequests.ts";
+import { isCloudApprovalRequest, runtimeRequestEvents } from "../runtimeRequests.ts";
 
 /**
  * What a provider adapter's events become in a thread's log, following
@@ -151,6 +151,17 @@ export function recordedEvents(
     if (liveRunId !== item.runId) return [];
     return runtimeRequestEvents(projection, domainEvent, ctx);
   }
+  if (domainEvent.type === "turn-item.updated") {
+    const itemId = domainEvent.payload.id;
+    const existing = projection.turnItems.find((item) => item.id === itemId);
+    if (existing?.type === "approval_request") {
+      const request = projection.runtimeRequests.find(
+        (request) => request.id === existing.requestId,
+      );
+      // Cloud card ownership survives a runner changing the payload's type or request ID.
+      if (request !== undefined && isCloudApprovalRequest(projection, request)) return [];
+    }
+  }
   const requestId =
     domainEvent.type === "node.updated"
       ? domainEvent.payload.runtimeRequestId
@@ -161,7 +172,11 @@ export function recordedEvents(
         : null;
   if (requestId !== null) {
     const request = projection.runtimeRequests.find((request) => request.id === requestId);
-    if (request !== undefined && request.status !== "pending") return [];
+    if (
+      request !== undefined &&
+      (request.status !== "pending" || isCloudApprovalRequest(projection, request))
+    )
+      return [];
   }
   const stopped = new Set<string>();
   const nativeStopped = new Set<string>();

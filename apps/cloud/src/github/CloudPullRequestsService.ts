@@ -23,6 +23,8 @@ import type {
   PullRequestRoutingResult,
   PullRequestStack,
   PullRequestSummary,
+  PullRequestThreadReplyInput,
+  PullRequestThreadResolutionInput,
   PullRequestThreadCommentsInput,
   PullRequestThreadCommentsResult,
   PullRequestUnavailableError,
@@ -78,6 +80,12 @@ export class CloudPullRequests extends Context.Service<
     readonly routingIdentity: (
       input: PullRequestRoutingIdentityInput,
     ) => Effect.Effect<PullRequestRoutingIdentityResult, PullRequestReadError>;
+    readonly replyToThread: (
+      input: PullRequestThreadReplyInput,
+    ) => Effect.Effect<void, PullRequestReadError>;
+    readonly setThreadResolution: (
+      input: PullRequestThreadResolutionInput,
+    ) => Effect.Effect<void, PullRequestReadError>;
     readonly invalidate: (input: PullRequestInvalidateInput) => Effect.Effect<void>;
     readonly subscribeRefreshes: Stream.Stream<number>;
     readonly resolvePullRequest: (

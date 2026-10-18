@@ -30,7 +30,7 @@ import * as ThreadsLive from "./ThreadsLive.ts";
 import { pushFor } from "../push/pushRules.ts";
 import { derivePendingThreadRequests } from "@t3tools/client-runtime/state/thread-requests";
 import { unsupported } from "./threadDecider.ts";
-import { nodeEvent, runEvent, runtimeRequestEvent, turnItemEvent } from "./threadEvents.ts";
+import { nodeEvent, runEvent, turnItemEvent } from "./threadEvents.ts";
 import { threadShellFromProjection } from "./threadProjection.ts";
 import {
   approvalRequestEvents,
@@ -570,19 +570,30 @@ describe("cloud native runtime requests", () => {
           appName: "Codex",
           options: [{ decision: "accept", label: "Allow" }],
         };
-        yield* engine.apply(() =>
-          Effect.succeed({
-            events: [
-              nodeEvent(
-                { now: before.updatedAt },
-                { ...root, runtimeRequestId: nativeRootRequestId },
-              ),
-              runtimeRequestEvent({ now: before.updatedAt }, threadId, turn.runId, request),
-              turnItemEvent({ now: before.updatedAt }, nativeItem),
-            ],
-            result: undefined,
-          }),
-        );
+        yield* runner.batch({
+          generation: machine.generation,
+          sequence: 2,
+          items: [
+            {
+              kind: "provider",
+              runId: turn.runId,
+              event: {
+                type: "node.updated",
+                node: encodeNode({ ...root, runtimeRequestId: nativeRootRequestId }),
+              },
+            },
+            {
+              kind: "provider",
+              runId: turn.runId,
+              event: { type: "runtime_request.updated", runtimeRequest: encodeRequest(request) },
+            },
+            {
+              kind: "provider",
+              runId: turn.runId,
+              event: { type: "turn_item.updated", turnItem: encodeItem(nativeItem) },
+            },
+          ],
+        });
 
         const pending = (yield* snapshot(engine)).projection;
         const pendingRequest = pending.runtimeRequests.find(
