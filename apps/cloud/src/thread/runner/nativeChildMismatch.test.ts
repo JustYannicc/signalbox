@@ -83,6 +83,8 @@ describe("native child mismatch relay", () => {
             const childProviderId = ProviderThreadId.make(`native-child-provider-${suffix}`);
             const appThread: typeof OrchestrationV2AppThread.Type = {
               ...parent.thread,
+              providerInstanceId: turn.modelSelection.instanceId,
+              modelSelection: turn.modelSelection,
               id: childThreadId,
               createdBy: "agent",
               creationSource: "provider",

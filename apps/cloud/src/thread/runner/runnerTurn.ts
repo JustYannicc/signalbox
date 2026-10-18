@@ -145,10 +145,11 @@ const nativeChildFailure = (
   }
   if (appThread.forkedFrom?.type !== "node") return "creation_fork_origin_mismatch";
   if (appThread.forkedFrom.nodeId !== subagent.id) return "creation_node_mismatch";
-  if (appThread.providerInstanceId !== subagent.providerInstanceId) {
+  const instanceId = runnerInstanceFor(subagent.providerInstanceId) ?? subagent.providerInstanceId;
+  if (appThread.providerInstanceId !== instanceId) {
     return "creation_provider_mismatch";
   }
-  if (appThread.modelSelection.instanceId !== subagent.providerInstanceId) {
+  if (appThread.modelSelection.instanceId !== instanceId) {
     return "creation_model_mismatch";
   }
   if (appThread.activeProviderThreadId !== subagent.providerThreadId) {

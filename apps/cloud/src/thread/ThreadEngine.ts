@@ -37,6 +37,7 @@ import type {
 import type { OnePasswordEnvironmentId } from "@t3tools/contracts/signalboxFolders";
 import type { FolderInstructions } from "@signalbox/runner-protocol/DriveProtocol";
 import { contextAllows } from "../drive/driveAccess.ts";
+import { runnerInstanceFor } from "../models/ModelRouting.ts";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
@@ -1129,6 +1130,9 @@ const make = Effect.gen(function* () {
         }
 
         const appThread = input.appThread;
+        const instanceId =
+          runnerInstanceFor(input.attestation.providerInstanceId) ??
+          input.attestation.providerInstanceId;
         if (
           appThread.id !== input.childThreadId ||
           appThread.id !== (childProjection?.thread.id ?? appThread.id)
@@ -1146,7 +1150,7 @@ const make = Effect.gen(function* () {
           input.attestation.childThreadId !== input.childThreadId ||
           appThread.forkedFrom?.type !== "node" ||
           appThread.forkedFrom.nodeId !== input.attestation.id ||
-          appThread.providerInstanceId !== input.attestation.providerInstanceId ||
+          appThread.providerInstanceId !== instanceId ||
           appThread.activeProviderThreadId !== input.attestation.providerThreadId
         ) {
           return yield* Effect.die("A native child batch did not match its parent lineage.");

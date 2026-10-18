@@ -97,6 +97,8 @@ describe("provider-native child history", () => {
               };
               const appThread: typeof OrchestrationV2AppThread.Type = {
                 ...parent.thread,
+                providerInstanceId: turn.modelSelection.instanceId,
+                modelSelection: turn.modelSelection,
                 id: childThreadId,
                 createdBy: "agent",
                 creationSource: "provider",
