@@ -6,6 +6,7 @@ import * as Schema from "effect/Schema";
 
 import { compileForCloud } from "@signalbox/automation-compiler/compileForCloud";
 import * as WorkflowEngine from "@signalbox/automations/WorkflowEngine";
+import { FakeWorkflows } from "@signalbox/automations/workflow/testing";
 import { SIGNALBOX_THREAD_KINDS_WS_METHODS } from "@t3tools/contracts/signalboxThreadKinds";
 import { TaskLifecycleResult } from "@t3tools/contracts/taskLifecycle";
 
@@ -85,6 +86,112 @@ const compiledOf = (source: string) => {
 };
 
 describe("cloud Task done automation", () => {
+  it.effect(
+    "keeps a verifier follow-up that finishes before the worker reads its initial reply",
+    () => {
+      const proof: { state: VerificationReply["state"]; evidence: string } = {
+        state: "unknown",
+        evidence: "Production access is missing. Please supply it here.",
+      };
+      withVerificationReply(proof);
+      const { cloud, github, open, tool, getRun, run } = makeDeployedThread();
+      const reached = Promise.withResolvers<void>();
+      const isVerifierResult = Schema.is(
+        Schema.Struct({ text: Schema.String, threadId: Schema.String }),
+      );
+      const sendEvent = FakeWorkflows.prototype.sendEvent;
+      let release: (() => void) | undefined;
+      vi.spyOn(FakeWorkflows.prototype, "sendEvent").mockImplementation(function (
+        this: FakeWorkflows,
+        type,
+        settlement,
+      ) {
+        if (!release && settlement.ok && isVerifierResult(settlement.value)) {
+          // The host has stored the initial reply; delay its delivery to the compiled worker.
+          release = () => sendEvent.call(this, type, settlement);
+          reached.resolve();
+          return;
+        }
+        sendEvent.call(this, type, settlement);
+      });
+      return run(
+        Effect.gen(function* () {
+          const { rpc, turn: commit } = yield* open;
+          yield* rpc[ORCHESTRATION_V2_WS_METHODS.dispatchCommand]({
+            type: "message.dispatch",
+            commandId: CommandId.make("task-done-early-follow-up-request"),
+            threadId,
+            messageId: MessageId.make("task-done-early-follow-up-request"),
+            text: "Finish this useful task.",
+            attachments: [],
+            createdBy: "user",
+            creationSource: "web",
+            dispatchMode: { type: "start_immediately" },
+            deliveryIntent: "auto",
+          });
+          yield* cloud.settle;
+          github.merge(1);
+          yield* cloud.syncPullRequests(threadId);
+          yield* cloud.settle;
+          yield* Effect.promise(() => reached.promise);
+          const waiting = yield* taskRecord(tool);
+          const heldRunId = waiting.record!.condition!.runId!;
+          let verifierId = "";
+          try {
+            const evaluation = yield* getRun(heldRunId!);
+            const verifier = yield* decodeVerifierReply(
+              evaluation.steps.find((step) => step.label === "Verify the merged work is live")!
+                .result,
+            );
+            verifierId = verifier.threadId;
+            expect(JSON.parse(verifier.text).state).toBe("unknown");
+            proof.state = "live";
+            proof.evidence = "Production smoke passed.";
+            yield* rpc[ORCHESTRATION_V2_WS_METHODS.dispatchCommand]({
+              type: "message.dispatch",
+              commandId: CommandId.make("task-done-early-verifier-follow-up"),
+              threadId: ThreadId.make(verifierId),
+              messageId: MessageId.make("task-done-early-verifier-follow-up"),
+              text: `This is a read-only verification task. The actual merge commit is ${commit}. Access is supplied; check again.`,
+              attachments: [],
+              createdBy: "user",
+              creationSource: "web",
+              dispatchMode: { type: "start_immediately" },
+              deliveryIntent: "auto",
+            });
+            yield* cloud.settleThreads;
+            yield* cloud.inUser(
+              userId,
+              WorkflowEngine.WorkflowEngine.use((engine) => engine.drain),
+            );
+            const projection = yield* rpc[ORCHESTRATION_V2_WS_METHODS.getThreadProjection]({
+              threadId: ThreadId.make(verifierId),
+            });
+            const reply = projection.messages.findLast((message) => message.role === "assistant")!;
+            expect(JSON.parse(reply.text)).toMatchObject({ state: "live", commit });
+          } finally {
+            release!();
+          }
+          yield* cloud.settle;
+
+          const completed = yield* taskRecord(tool);
+          expect(completed.record?.condition?.runId).toBe(heldRunId);
+          expect(completed.thread.archivedAt).not.toBeNull();
+          expect(completed.record?.outcome).toContain("[Live at ");
+          const evaluation = yield* getRun(heldRunId!);
+          expect(evaluation.steps).toContainEqual(
+            expect.objectContaining({
+              label: "Wait for deployment evidence",
+              status: "succeeded",
+              result: expect.objectContaining({ event: "turn.finished", threadId: verifierId }),
+            }),
+          );
+          expect(evaluation.run.error).toBeNull();
+        }),
+      );
+    },
+  );
+
   it.effect.each(["evidence", "repair"] as const)(
     "keeps a queued turn finish after a PR wake during the %s wait",
     (phase) => {

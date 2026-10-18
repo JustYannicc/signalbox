@@ -296,6 +296,8 @@ async function verifyMergedPullRequests(w, threadId: string, state: Lifecycle, g
       continue;
     }
     retryMinutes = 1;
+    // Capture before launch and keep this boundary across wakes so early verifier finishes stay queued.
+    const evidenceAfter = await w.eventCursor("Before checking deployment evidence");
     const result = await w.agent("Verify the merged work is live", {
       prompt: [
         "You represent this project folder. Verify completion of " + pr.url + ". This is a read-only verification task; do not change files, merge, deploy, or publish anything.",
@@ -304,8 +306,6 @@ async function verifyMergedPullRequests(w, threadId: string, state: Lifecycle, g
         "Return only JSON with state (live, none, failed, or unknown), commit (exactly " + merge.commit + "), runId (the numeric GitHub Actions deployment run id as a string, required for live or failed), and evidence (specific observed deployment/smoke results, or affirmative repository configuration showing no deployment). Use failed when the deploy OR its configured smoke check fails. Use live only after the deploy succeeds and the configured smoke check passes, if there is one. Use none only after inspecting configuration and establishing there is no deploy. Use unknown for missing access, other deployment hosts, or missing proof, and ask for what is missing in this verification thread.",
       ].join("\\n\\n"),
     });
-    // Keep the same boundary across wakes so a queued verifier finish cannot be skipped.
-    const evidenceAfter = await w.eventCursor("Before checking deployment evidence");
     state = await read(w, threadId);
     if (!current(state)) return { valid: false, state, outcome: "" };
     if (!currentLinks(state).some((link) => link.url === pr.url)) continue;
