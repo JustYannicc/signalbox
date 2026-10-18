@@ -113,12 +113,13 @@ folder's **Secrets…**; **Stop** makes the next send there ask again.
 - After a thread has loaded hidden secrets, external request bodies must be inspectable UTF-8
   text no larger than 1 MiB. Git clone/fetch and Signalbox's own drive uploads are supported;
   binary uploads such as Git pushes are refused.
-- Downloads still work. UTF-8 text responses replace every nonempty loaded hidden value, including
-  short ones. Binary downloads and text declared in another charset keep their bytes and are scanned
-  for exact values at least 8 UTF-8 bytes long. Shorter values are not covered in binary downloads;
-  Signalbox warns by name, not value, when a hidden value falls below that limit. A match stops the
-  transfer before those bytes arrive, though headers or a safe prefix may already have arrived. It
-  decodes HTTP compression but does not unpack archives.
+- Downloads still work. Text responses in a supported declared charset are decoded, have every
+  nonempty loaded hidden value replaced, including short ones, and arrive as UTF-8.
+- Binary downloads keep their bytes and are scanned for exact values at least 8 UTF-8 bytes long.
+  Shorter values are not covered; Signalbox warns by name, not value, below that limit. A match
+  stops the transfer before those bytes arrive, though headers or a safe prefix may already have
+  arrived. Signalbox decodes HTTP compression but does not unpack archives. The binary scan cannot
+  reliably detect values in another encoding, including text mislabeled as binary.
 - A program that reads a value and sends it somewhere is checked too, as long as the value is
   still recognizable. One that scrambles it first can't be stopped, so only give a thread secrets
   you'd trust it with.

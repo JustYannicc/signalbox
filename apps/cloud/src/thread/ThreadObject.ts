@@ -109,7 +109,7 @@ export interface ThreadObjectEnv
     PreviewEnv,
     RecoveryDrillEnv,
     GitHub.GitHubEnv {
-  readonly DEPLOYMENT_STAGE?: string;
+  readonly SIGNALBOX_STAGE?: string;
   readonly ENVIRONMENT_ID: string;
   /** Set by `vp run dev` only. Local workerd has no jurisdictions. */
   readonly LOCAL_WORKERD?: string;

@@ -101,7 +101,7 @@ export const PREVIEW_DRIVE_PACKS_BUCKET = "signalbox-drives-preview";
 /** Only an explicit opt-in naming this preview may enable synthetic secret resolution. */
 export const syntheticSecretVars = (target: CloudStage, optIn: string) => ({
   PREVIEW_SYNTHETIC_SECRETS:
-    !target.production && optIn === target.vars.DEPLOYMENT_STAGE ? "1" : "0",
+    !target.production && optIn === target.vars.SIGNALBOX_STAGE ? "1" : "0",
 });
 
 const PREVIEW_STAGE = /^pr-([1-9][0-9]*)$/;
@@ -140,7 +140,6 @@ export const cloudStage = (stage: string): CloudStage => {
       automationWorkflow: "signalbox-cloud-automations",
       vars: {
         SIGNALBOX_STAGE: PRODUCTION_STAGE,
-        DEPLOYMENT_STAGE: PRODUCTION_STAGE,
         // Production identity. Never reuse it for another deployment.
         ENVIRONMENT_ID: "4bfb70e5-7954-458a-9b75-4834c0ab4e13",
         ENVIRONMENT_LABEL: "Signalbox Cloud",
@@ -172,7 +171,6 @@ export const cloudStage = (stage: string): CloudStage => {
     automationWorkflow: `signalbox-cloud-pr-${number}-automations`,
     vars: {
       SIGNALBOX_STAGE: stage,
-      DEPLOYMENT_STAGE: stage,
       ENVIRONMENT_ID: `cloud-preview-${number}`,
       ENVIRONMENT_LABEL: `Signalbox Cloud (PR #${number})`,
       ...urls(cloudDomain, cloudDomain),

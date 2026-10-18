@@ -40,18 +40,18 @@ const wrangler = readWrangler("wrangler.jsonc") as WranglerConfig;
 describe("cloudStage", () => {
   it("never enables synthetic secrets in production, even when explicitly requested", () => {
     const production = cloudStage("production");
-    expect(production.vars.DEPLOYMENT_STAGE).toBe("production");
+    expect(production.vars.SIGNALBOX_STAGE).toBe("production");
     expect(syntheticSecretVars(production, "production")).toEqual({
       PREVIEW_SYNTHETIC_SECRETS: "0",
     });
     expect(syntheticSecretVars(production, "pr-656")).toEqual({ PREVIEW_SYNTHETIC_SECRETS: "0" });
-    expect(wrangler.vars.DEPLOYMENT_STAGE).toBe("production");
+    expect(wrangler.vars.SIGNALBOX_STAGE).toBe("production");
     expect(wrangler.vars.PREVIEW_SYNTHETIC_SECRETS).toBe("0");
   });
 
   it("requires an opt-in naming the exact preview for synthetic secrets", () => {
     const preview = cloudStage("pr-656");
-    expect(preview.vars.DEPLOYMENT_STAGE).toBe("pr-656");
+    expect(preview.vars.SIGNALBOX_STAGE).toBe("pr-656");
     expect(syntheticSecretVars(preview, "")).toEqual({ PREVIEW_SYNTHETIC_SECRETS: "0" });
     expect(syntheticSecretVars(preview, "1")).toEqual({ PREVIEW_SYNTHETIC_SECRETS: "0" });
     expect(syntheticSecretVars(preview, "pr-65")).toEqual({ PREVIEW_SYNTHETIC_SECRETS: "0" });

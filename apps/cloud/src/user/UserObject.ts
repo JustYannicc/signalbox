@@ -125,7 +125,7 @@ export interface UserObjectEnv
   /** Also where pasted screenshots and files live (`attachments/`). */
   readonly DRIVE_PACKS?: DrivePacks.PackBucket & AttachmentObjects;
   readonly DRIVE_PACKS_PREFIX?: string;
-  readonly DEPLOYMENT_STAGE?: string;
+  readonly SIGNALBOX_STAGE?: string;
   readonly ENVIRONMENT_ID: string;
   readonly ENVIRONMENT_LABEL?: string;
   readonly PREVIEW_SYNTHETIC_SECRETS?: string;
