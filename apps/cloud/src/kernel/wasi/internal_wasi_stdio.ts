@@ -8,8 +8,10 @@ export interface WasiPollResult {
 }
 
 export interface WasiStdio {
-  readInto?: (target: Uint8Array) => number | Promise<number>;
-  write?: (source: Uint8Array) => number | Promise<number>;
+  /** Opts into synchronous I/O or EAGAIN whenever the passed flags include NONBLOCK. */
+  readonly supportsNonblocking?: boolean;
+  readInto?: (target: Uint8Array, flags: number) => number | Promise<number>;
+  write?: (source: Uint8Array, flags: number) => number | Promise<number>;
   sync?: () => void | Promise<void>;
   /** Completes when ready; abort detaches a pending readiness subscription. */
   poll?: (

@@ -69,7 +69,9 @@ export class KernelFileSystemIo {
     if (descriptor.kind === "stdio") {
       const stream = descriptor.stdio;
       if (stream?.readInto === undefined || target.byteLength === 0) return 0;
-      const count = yield* complete(stream.readInto(target));
+      const count = yield* complete(
+        nonblockingResult(stream.readInto(target, descriptor.flags), descriptor.flags),
+      );
       this.#count(count, target.byteLength);
       return count;
     }
@@ -97,7 +99,9 @@ export class KernelFileSystemIo {
       const stream = descriptor.stdio;
       if (stream?.write === undefined) throw kernelError("EIO");
       if (source.byteLength === 0) return 0;
-      const count = yield* complete(stream.write(source));
+      const count = yield* complete(
+        nonblockingResult(stream.write(source, descriptor.flags), descriptor.flags),
+      );
       this.#count(count, source.byteLength);
       yield* this.#syncAfterWrite(descriptor);
       return count;
@@ -183,4 +187,12 @@ export class KernelFileSystemIo {
   #run<T>(call: WasiCall<T>): T {
     return withKernelErrors(() => runSync(call));
   }
+}
+
+function nonblockingResult(result: number | Promise<number>, flags: number) {
+  if ((flags & FDFLAGS.NONBLOCK) !== 0 && typeof result !== "number") {
+    void Promise.resolve(result).catch(() => undefined);
+    throw kernelError("ENOTSUP");
+  }
+  return result;
 }
