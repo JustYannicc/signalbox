@@ -1,5 +1,6 @@
 import * as AccountFlow from "@signalbox/account/AccountFlow";
 import * as WorkOSClient from "@signalbox/account/WorkOSClient";
+import * as WorkOSOrganizations from "@signalbox/account/WorkOSOrganizations";
 import type {
   AccountAuthorizeParams,
   AccountHandoffRequest,
@@ -141,6 +142,7 @@ export class CloudAccounts extends Context.Service<
     ) => Effect.Effect<
       void,
       | WorkOSClient.WorkOSOrganizationsError
+      | WorkOSOrganizations.WorkOSPersonalOrganizationError
       | UserDirectory.UserObjectError
       | IdentityProvider.IdentityProviderUnavailable
     >;
@@ -176,13 +178,13 @@ const make = Effect.gen(function* () {
     );
 
   /**
-   * Refreshes the user's work contexts from their WorkOS memberships. Best
-   * effort: a failure keeps the contexts from the previous sign-in, and
-   * without the API key there are no work contexts at all.
-   */
-  /**
-   * Makes the user's work contexts their WorkOS memberships now. Without the
-   * API key there are no work contexts to refresh.
+   * Makes the user's work contexts their WorkOS memberships now, minus their
+   * personal organization: Personal is already a context of its own. Without
+   * the API key there are no work contexts to refresh.
+   *
+   * The sequence is reserved before WorkOS is asked, so of two refreshes that
+   * overlap only the later one writes, whichever finishes first (see
+   * `user/organizationRefresh.ts`). A failed read writes nothing.
    */
   const refreshContexts: CloudAccounts["Service"]["refreshContexts"] = Effect.fn(
     "CloudAccounts.refreshContexts",
@@ -191,18 +193,36 @@ const make = Effect.gen(function* () {
     const identityProvider = override ?? resolved;
     const { apiKey } = identityProvider;
     if (apiKey === undefined) return;
-    const organizations = yield* WorkOSClient.listOrganizations(
-      { ...identityProvider, apiKey },
-      userId,
-    ).pipe(
-      Effect.provideService(HttpClient.HttpClient, httpClient),
-      // Sign-in waits for this, so a slow WorkOS must not hold it up.
-      Effect.timeout(CONTEXTS_SYNC_TIMEOUT),
-      Effect.catchTags({
-        TimeoutError: () => Effect.fail(new WorkOSClient.WorkOSOrganizationsError({})),
-      }),
+    const userObject = users.forUser(userId);
+    const sequence = yield* userObject.reserveOrganizationRefresh();
+    // Both reads go to the same WorkOS realm, so the personal id matches the listing.
+    const realm = { ...identityProvider, apiKey };
+    const [organizations, personalId] = yield* Effect.all(
+      [
+        WorkOSClient.listOrganizations(realm, userId).pipe(
+          // Sign-in waits for this, so a slow WorkOS must not hold it up.
+          Effect.timeout(CONTEXTS_SYNC_TIMEOUT),
+          Effect.catchTags({
+            TimeoutError: () => Effect.fail(new WorkOSClient.WorkOSOrganizationsError({})),
+          }),
+        ),
+        WorkOSOrganizations.resolvePersonalOrganization(realm, userId).pipe(
+          Effect.timeout(CONTEXTS_SYNC_TIMEOUT),
+          Effect.catchTags({
+            TimeoutError: () =>
+              Effect.fail(
+                new WorkOSOrganizations.WorkOSPersonalOrganizationError({ operation: "resolve" }),
+              ),
+          }),
+        ),
+      ],
+      { concurrency: 2 },
+    ).pipe(Effect.provideService(HttpClient.HttpClient, httpClient));
+    const applied = yield* userObject.completeOrganizationRefresh(
+      sequence,
+      organizations.filter((organization) => organization.id !== personalId),
     );
-    yield* users.forUser(userId).syncOrganizations(organizations);
+    yield* Effect.annotateCurrentSpan({ sequence, applied });
   });
 
   /** At sign-in: best effort, so a failure keeps the contexts from the previous one. */
@@ -211,7 +231,10 @@ const make = Effect.gen(function* () {
       Effect.catch((error) =>
         Effect.logWarning("cloud contexts sync failed", {
           errorTag: error._tag,
-          ...(error._tag === "WorkOSOrganizationsError" ? { status: error.status } : {}),
+          ...(error._tag === "WorkOSOrganizationsError" ||
+          error._tag === "WorkOSPersonalOrganizationError"
+            ? { status: error.status }
+            : {}),
         }),
       ),
     );
