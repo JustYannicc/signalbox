@@ -922,6 +922,7 @@ export class ThreadObject extends DurableObject<ThreadObjectEnv> implements Thre
                   noteMachine({
                     operation,
                     error: error.message,
+                    startupProblem: error.startupProblem,
                     generation: ensure?.generation,
                     runId: plan.runId,
                   }),
