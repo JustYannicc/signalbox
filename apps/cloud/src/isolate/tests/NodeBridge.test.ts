@@ -1,3 +1,4 @@
+// @effect-diagnostics nodeBuiltinImport:off - verifies the native module supplied to the Node bridge.
 import * as NodeConsole from "node:console";
 import * as NodeDiagnosticsChannel from "node:diagnostics_channel";
 import { describe, expect, it } from "@effect/vitest";
