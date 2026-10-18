@@ -91,6 +91,13 @@ describe("cloud API coverage", () => {
     expect(silent).toEqual([]);
   });
 
+  it("serves starting a folder from another folder through the cloud RPC", () => {
+    const operation = operations.find((candidate) => candidate.name === "folders.startFrom");
+    expect(operation).toBeDefined();
+    expect(cloudServes(operation!)).toBe(true);
+    expect(cloudUnserved(operation!)).toBeUndefined();
+  });
+
   it("lists nothing the cloud serves", () => {
     const stale = operations
       .filter((operation) => cloudServes(operation) && cloudUnserved(operation) !== undefined)

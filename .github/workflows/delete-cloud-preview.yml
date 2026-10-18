@@ -10,8 +10,36 @@ permissions:
   contents: read
 
 jobs:
+  stop_preview_deploys:
+    name: Stop preview deploys
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    permissions:
+      contents: read
+      pull-requests: read
+      actions: write
+    env:
+      PR_NUMBER: ${{ github.event.pull_request.number }}
+    steps:
+      - name: Checkout trusted cancellation
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          sparse-checkout: .github/scripts
+
+      # An old Runner build can enter the deploy lock and cancel its current job.
+      # Stop the whole pipeline before cleanup enters that lock.
+      - name: Stop this PR's preview deploys
+        uses: actions/github-script@v8
+        with:
+          script: |
+            const cancelPreviewDeploys = require('./.github/scripts/cancel-preview-deploys.cjs');
+            await cancelPreviewDeploys({ github, context, core, prNumber: process.env.PR_NUMBER });
+
   delete_preview:
     name: Delete preview cloud
+    needs: stop_preview_deploys
     if: github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
     timeout-minutes: 20

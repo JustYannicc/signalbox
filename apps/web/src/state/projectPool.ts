@@ -17,7 +17,6 @@ import type {
 import type { PoolLevel, SectionsSnapshot } from "@t3tools/contracts/sections";
 import type { FolderLevel, SignalboxFoldersSnapshot } from "@t3tools/contracts/signalboxFolders";
 import { Atom } from "effect/reactivity";
-import { useCallback } from "react";
 
 import { environmentCatalog } from "../connection/catalog";
 import { environmentSections } from "./sections";
@@ -77,22 +76,19 @@ function resolvePool(
  */
 export function useProjectPoolModelSelection() {
   const sources = useAtomValue(poolSourcesAtom);
-  return useCallback(
-    (
-      input: PoolTarget & {
-        readonly environmentId: EnvironmentId;
-        /** What the thread would otherwise start on. */
-        readonly selection: ModelSelection | null;
-        readonly providerInstances: Readonly<Record<string, { readonly config?: unknown }>>;
-        readonly providers: ReadonlyArray<ServerProvider>;
-      },
-    ): ModelSelection | null =>
-      poolModelSelection({
-        ...input,
-        pool: resolvePool(sources.get(input.environmentId), input),
-      }),
-    [sources],
-  );
+  return (
+    input: PoolTarget & {
+      readonly environmentId: EnvironmentId;
+      /** What the thread would otherwise start on. */
+      readonly selection: ModelSelection | null;
+      readonly providerInstances: Readonly<Record<string, { readonly config?: unknown }>>;
+      readonly providers: ReadonlyArray<ServerProvider>;
+    },
+  ): ModelSelection | null =>
+    poolModelSelection({
+      ...input,
+      pool: resolvePool(sources.get(input.environmentId), input),
+    });
 }
 
 /** The pool a thread (or a new thread in `projectId`) runs on; see `resolvePool`. */
