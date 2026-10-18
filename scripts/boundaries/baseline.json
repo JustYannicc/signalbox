@@ -80,8 +80,6 @@
     "no-circular | packages/automations/src/events/normalize.ts | packages/automations/src/events/turnItems.ts",
     "no-circular | packages/automations/src/events/normalize.ts | packages/automations/src/events/turns.ts",
     "no-circular | packages/automations/src/events/runWaits.ts | packages/automations/src/events/subscriptions.ts",
-    "no-circular | packages/shared/src/automationMcpTools.ts | packages/shared/src/t3McpToolPresentation.ts",
-    "no-circular | packages/shared/src/sectionsMcpTools.ts | packages/shared/src/t3McpToolPresentation.ts",
     "tests-through-entrypoints | apps/cloud/infra/stage.test.ts | apps/cloud/src/thread/preview/previewHost.ts",
     "tests-through-entrypoints | apps/cloud/src/attachments/attachments.test.ts | apps/cloud/src/thread/runner/ThreadRunner.ts",
     "tests-through-entrypoints | apps/cloud/src/drive/directUploads.test.ts | apps/cloud/src/drive/git/gitObjects.ts",

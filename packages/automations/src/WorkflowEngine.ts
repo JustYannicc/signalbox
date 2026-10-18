@@ -16,6 +16,7 @@ import {
   type AutomationRunSummary,
   type AutomationRunTrigger,
 } from "@t3tools/contracts";
+import type { SignalboxAsk, SignalboxAskAnswerCommand } from "@t3tools/contracts/signalboxAsks";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
@@ -39,6 +40,7 @@ import { makeTaskLifecycleActions } from "./taskLifecycleActions.ts";
 import { makeTaskLifecycleRuns } from "./taskLifecycleRuns.ts";
 
 import { makeAttachments } from "./attachments.ts";
+import { makeAsks, type AutomationAnswerContext } from "./asks.ts";
 import { decodeWorkflowInput, decodeWorkflowOutput } from "./blockContracts.ts";
 import { childSettlement, makeChildRuns } from "./childRuns.ts";
 import { makeBuiltinTools, type BuiltinToolHandler } from "./builtinTools/runner.ts";
@@ -113,6 +115,7 @@ export interface WorkflowEngineShape extends CatalogShape {
     readonly authorize?: AuthorizeAutomation<E>;
     /** Binds the run to a thread (see attachments.ts). */
     readonly attach?: AutomationRunAttach | undefined;
+    readonly originThreadId?: string | undefined;
     /**
      * For a `builtin:<slug>` id: the project to run it in (default: the
      * attached thread's) and the defaults its host row starts with there.
@@ -158,8 +161,14 @@ export interface WorkflowEngineShape extends CatalogShape {
     input: {
       readonly runId: string;
       readonly stepKey: string;
-    } & AutomationAskAnswerInput,
+    } & AutomationAskAnswerInput &
+      AutomationAnswerContext,
   ) => Effect.Effect<void, AutomationError>;
+  readonly answerSignalboxAsk: (
+    command: typeof SignalboxAskAnswerCommand.Type,
+    ask: SignalboxAsk,
+  ) => Effect.Effect<void, AutomationError>;
+  readonly nextAskSyncAt: Effect.Effect<number | null, AutomationError>;
   /** Delivers an event to every running `waitFor` step waiting on it; returns how many it woke. */
   readonly emit: (input: {
     readonly event: string;
@@ -221,6 +230,13 @@ export const makeEngine = <R>(
     });
     const crypto = yield* Crypto.Crypto;
     const threads = yield* AutomationThreads;
+    const asks = makeAsks({
+      store,
+      links,
+      threads,
+      complete: (...args) => complete(...args),
+      runChanged: (...args) => runChanged(...args),
+    });
     const taskRecords = yield* makeTaskRecords;
     const taskActions = makeTaskLifecycleActions({ threads, records: taskRecords });
     // Steps run in forked fibers; they get the services they use from here.
@@ -352,6 +368,7 @@ export const makeEngine = <R>(
     /** Called only on a step's one transition into waiting or done, so each step notifies once. */
     const announce = (automation: WorkflowStore.AutomationRow, step: WorkflowStore.StepRow) =>
       Effect.gen(function* () {
+        if (step.verb === "ask") yield* asks.open(automation, step).pipe(ignoreFailure("ask sync"));
         const notice = automationNotice({ automation, step, at: yield* nowIso });
         if (notice) yield* PubSub.publish(notices, notice);
         if (step.verb === "ask")
@@ -376,21 +393,41 @@ export const makeEngine = <R>(
       });
 
     /** Settles a step once and lets the driver wake its run. False when it was already settled. */
-    const complete = (runId: string, key: string, outcome: Settlement) =>
+    const complete = (
+      runId: string,
+      key: string,
+      outcome: Settlement,
+      context?: AutomationAnswerContext,
+    ) =>
       Effect.gen(function* () {
-        const settled = yield* store.completeStep(
-          runId,
-          key,
-          outcome.ok
-            ? { ok: true, value: toJson(outcome.value ?? null) }
-            : {
-                ok: false,
-                error: outcome.error,
-                errorDetail: outcome.detail ? toJson(outcome.detail) : null,
-              },
-          yield* nowIso,
+        const now = yield* nowIso;
+        const result = yield* store.withTransaction(
+          Effect.gen(function* () {
+            const settled = yield* store.completeStep(
+              runId,
+              key,
+              outcome.ok
+                ? { ok: true, value: toJson(outcome.value ?? null) }
+                : {
+                    ok: false,
+                    error: outcome.error,
+                    errorDetail: outcome.detail ? toJson(outcome.detail) : null,
+                  },
+              now,
+            );
+            if (!settled) return undefined;
+            const ask =
+              settled.verb === "ask"
+                ? yield* asks.settled(settled, now, context, outcome.ok ? outcome.value : undefined)
+                : undefined;
+            if (context?.command)
+              yield* store.keepAskReceipt(runId, key, context.command.commandId);
+            return { settled, ask };
+          }),
         );
-        if (!settled) return false;
+        if (!result) return false;
+        const { settled, ask } = result;
+        if (ask) yield* asks.sync(settled, ask).pipe(ignoreFailure("ask sync"));
         const duration = runLogs.durationOf(settled);
         yield* runLogs.step(settled, {
           status: outcome.ok ? "succeeded" : "failed",
@@ -580,6 +617,12 @@ export const makeEngine = <R>(
             : "The run ended before this step finished.",
           nowText,
         );
+        for (const step of steps) {
+          if (step.verb !== "ask" || (step.status !== "running" && step.status !== "waiting"))
+            continue;
+          const ask = yield* asks.settled(step, nowText);
+          if (ask) yield* asks.sync(step, ask).pipe(ignoreFailure("ask sync"));
+        }
         if (status === "cancelled") {
           for (const child of yield* store.runningChildren(run.run_id))
             yield* endRunById(child, { status: "cancelled" });
@@ -666,6 +709,7 @@ export const makeEngine = <R>(
                   ? asRecord(fromJson(launch.triggerJson))
                   : {
                       type: launch.trigger,
+                      ...(launch.originThreadId ? { originThreadId: launch.originThreadId } : {}),
                       ...launch.webhook,
                       ...launch.event,
                       ...(launch.link?.thread_id
@@ -793,6 +837,7 @@ export const makeEngine = <R>(
           automation,
           input: input.input,
           trigger: input.trigger,
+          originThreadId: input.originThreadId,
           ...attached,
         })).run;
       });
@@ -827,7 +872,14 @@ export const makeEngine = <R>(
           return yield* fail("That question was already answered.", { runId: input.runId });
         const resolved = resolveAutomationAskAnswer(stepAsk(step).ask, input);
         if (!resolved.ok) return yield* fail(resolved.error, { runId: input.runId });
-        yield* complete(input.runId, input.stepKey, { ok: true, value: resolved.value });
+        const answeredBy =
+          input.answeredBy ?? (threads.askAnswerer ? yield* threads.askAnswerer : undefined);
+        yield* complete(
+          input.runId,
+          input.stepKey,
+          { ok: true, value: resolved.value },
+          { ...input, ...(answeredBy ? { answeredBy } : {}) },
+        );
       });
 
     const emit: WorkflowEngineShape["emit"] = (input) =>
@@ -990,6 +1042,7 @@ export const makeEngine = <R>(
 
     // Attached runs' monitors come back after a restart (the driver recovers its own runs).
     yield* forkRoot(attachments.recover.pipe(logFailure("Automation recovery failed")));
+    yield* forkRoot(asks.recover.pipe(logFailure("Automation ask recovery failed")));
     yield* forkRoot(recoverChildren.pipe(logFailure("Child automation recovery failed")));
     yield* taskLifecycleRuns.recoverPending.pipe(logFailure("Task completion recovery failed"));
 
@@ -1049,6 +1102,16 @@ export const makeEngine = <R>(
       cancelRun,
       retryRun,
       answer,
+      answerSignalboxAsk: asks.answer,
+      nextAskSyncAt: store
+        .asksToSync()
+        .pipe(
+          Effect.flatMap((pending) =>
+            pending.length
+              ? DateTime.now.pipe(Effect.map((now) => now.epochMilliseconds + 30_000))
+              : Effect.succeed(null),
+          ),
+        ),
       emit,
       deliverEvent: events.externalEvent,
       subscribeList: () => feed.watch("list", catalog.list(), listShows, { keepOnFailure: true }),
@@ -1061,7 +1124,8 @@ export const makeEngine = <R>(
       subscribeRun: (runId) => feed.watch(`run:${runId}`, catalog.getRun(runId), runShows(runId)),
       subscribeNotices: PubSub.subscribe(notices).pipe(Effect.map(Stream.fromSubscription)),
       // One failing doesn't hold up the other.
-      tick: built.tick.pipe(
+      tick: asks.recover.pipe(
+        Effect.andThen(built.tick),
         Effect.ensuring(recoverChildren.pipe(logFailure("Child automation recovery failed"))),
         Effect.ensuring(sources.tick),
         Effect.ensuring(external.poll),
@@ -1069,6 +1133,8 @@ export const makeEngine = <R>(
           taskLifecycleRuns.recoverPending.pipe(logFailure("Task completion recovery failed")),
         ),
       ),
-      drain: built.drain,
+      drain: built.drain.pipe(
+        Effect.andThen(asks.recover.pipe(logFailure("Automation ask recovery failed"))),
+      ),
     } satisfies WorkflowEngineShape;
   });

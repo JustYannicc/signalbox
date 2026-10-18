@@ -59,6 +59,51 @@ describe("composed automation runs", () => {
     }),
   );
 
+  it.effect("passes a person's answer to an awaited child back to its parent", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeCompositionHarness();
+      yield* harness.save(
+        source(
+          "Question child",
+          `return await w.ask("Should I continue?", { options: ["continue", "stop"] });`,
+        ),
+      );
+      const parent = yield* harness.save(
+        source("Question parent", `return await w.start("Question child", null);`),
+      );
+
+      const parentRun = yield* harness.start(parent.id);
+      yield* harness.cloud.workflows.idle;
+      const link = (yield* harness.childLinks(parentRun.id))[0];
+      if (!link) return yield* Effect.die("The parent didn't record its child run.");
+      const waitingChild = yield* harness.getRun(link.child_run_id);
+      const question = waitingChild.steps.find((step) => step.verb === "ask");
+      if (!question) return yield* Effect.die("The child didn't record its ask step.");
+
+      expect(waitingChild.run.status).toBe("running");
+      expect(question.status).toBe("waiting");
+
+      yield* harness.cloud.inUser(
+        COMPOSITION_TEST_USER,
+        WorkflowEngine.WorkflowEngine.use((engine) =>
+          engine.answer({
+            runId: link.child_run_id,
+            stepKey: question.key,
+            choice: "continue",
+          }),
+        ),
+      );
+      yield* harness.cloud.workflows.idle;
+
+      const childDone = yield* harness.getRun(link.child_run_id);
+      const parentDone = yield* harness.getRun(parentRun.id);
+      expect(childDone.run.status).toBe("succeeded");
+      expect(childDone.output).toBe("continue");
+      expect(parentDone.run.status).toBe("succeeded");
+      expect(parentDone.output).toBe("continue");
+    }),
+  );
+
   it.effect("fails the parent with a link when its awaited child fails", () =>
     Effect.gen(function* () {
       const harness = yield* makeCompositionHarness();

@@ -133,6 +133,9 @@ export interface StepRow {
   readonly status: AutomationStepStatus;
   readonly args_json: string;
   readonly result_json: string | null;
+  readonly ask_json?: string | null;
+  readonly ask_synced_at?: string | null;
+  readonly ask_receipts_json?: string;
   readonly error: string | null;
   /** Why it failed and how to fix it, as `AutomationErrorDetail` JSON. */
   readonly error_detail_json: string | null;
@@ -172,7 +175,7 @@ export type RunSummaryRow = Pick<
 /** A waiting `ask` step as automation views show it. */
 export type WaitingAskRow = Pick<
   StepRow,
-  "run_id" | "step_key" | "label" | "args_json" | "started_at"
+  "run_id" | "step_key" | "label" | "args_json" | "started_at" | "ask_json"
 > & { readonly automation_id: string };
 
 /** A saved version as clients show it: the file, its diagram, and when it was saved. */
@@ -657,6 +660,59 @@ export const make = Effect.gen(function* () {
         "listSteps",
         sql<StepRow>`SELECT * FROM signalbox_automation_steps WHERE run_id = ${runId} ORDER BY started_at, step_key`,
       ),
+    setStepAsk: (runId: string, key: string, ask: string) =>
+      run(
+        "setStepAsk",
+        sql`
+        UPDATE signalbox_automation_steps SET ask_json = ${ask}, ask_synced_at = NULL
+        WHERE run_id = ${runId} AND step_key = ${key}
+      `,
+      ),
+    insertStepAsk: (runId: string, key: string, ask: string) =>
+      run(
+        "insertStepAsk",
+        sql`
+        UPDATE signalbox_automation_steps SET ask_json = ${ask}, ask_synced_at = NULL
+        WHERE run_id = ${runId} AND step_key = ${key} AND ask_json IS NULL
+      `,
+      ),
+    updateWaitingAsk: (runId: string, key: string, previous: string | null, ask: string) =>
+      run(
+        "updateWaitingAsk",
+        sql<{ step_key: string }>`
+        UPDATE signalbox_automation_steps SET ask_json = ${ask}, ask_synced_at = NULL
+        WHERE run_id = ${runId} AND step_key = ${key} AND status = 'waiting'
+          AND ask_json IS ${previous}
+        RETURNING step_key
+      `,
+      ).pipe(Effect.map(changedRows)),
+    keepAskReceipt: (runId: string, key: string, commandId: string) =>
+      run(
+        "keepAskReceipt",
+        sql`
+        UPDATE signalbox_automation_steps
+        SET ask_receipts_json = json_insert(ask_receipts_json, '$[#]', ${commandId})
+        WHERE run_id = ${runId} AND step_key = ${key}
+      `,
+      ),
+    markAskSynced: (runId: string, key: string, ask: string, at: string) =>
+      run(
+        "markAskSynced",
+        sql`
+        UPDATE signalbox_automation_steps SET ask_synced_at = ${at}
+        WHERE run_id = ${runId} AND step_key = ${key} AND ask_json = ${ask}
+      `,
+      ),
+    asksToSync: () =>
+      run(
+        "asksToSync",
+        sql<StepRow>`
+        SELECT s.* FROM signalbox_automation_steps s
+        JOIN signalbox_automation_runs r ON r.run_id = s.run_id
+        WHERE (s.ask_json IS NOT NULL AND s.ask_synced_at IS NULL)
+          OR (s.verb = 'ask' AND s.status = 'waiting' AND s.ask_json IS NULL AND r.status = 'running')
+      `,
+      ),
     /** Records a step the code reached. False when another replay already recorded it. */
     insertStep: (row: StepRow) =>
       run(
@@ -833,7 +889,7 @@ export const make = Effect.gen(function* () {
       run(
         "waitingQuestions",
         sql<WaitingAskRow>`
-          SELECT s.run_id, s.step_key, s.label, s.args_json, s.started_at, r.automation_id
+          SELECT s.run_id, s.step_key, s.label, s.args_json, s.started_at, s.ask_json, r.automation_id
           FROM signalbox_automation_steps s
           JOIN signalbox_automation_runs r ON r.run_id = s.run_id
           WHERE s.verb = 'ask' AND s.status = 'waiting' AND r.status = 'running'

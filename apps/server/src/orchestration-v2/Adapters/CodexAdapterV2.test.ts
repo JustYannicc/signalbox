@@ -18,6 +18,7 @@ import {
   type OrchestrationV2ProviderThread,
   type OrchestrationV2ProviderTurn,
   type OrchestrationV2TurnItem,
+  type OrchestrationV2RuntimeRequest,
   ProjectId,
   type ProviderApprovalDecision,
   ProviderInstanceId,
@@ -2635,6 +2636,206 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         ? [event.turnItem]
         : [],
     );
+
+  it.effect("rejects secret questions before publishing a runtime request", () =>
+    Effect.gen(function* () {
+      const nativeThreadId = "secret-question-thread";
+      const nativeTurnId = "secret-question-turn";
+      const transcript = makeCodexReplayTranscript({
+        scenario: "secret-question-rejection",
+        entries: [
+          ...codexReplayPreamble({ nativeThreadId, nativeTurnId, prompt: "Ask securely." }),
+          {
+            type: "emit_inbound",
+            label: "secret question",
+            frame: {
+              id: 100,
+              method: "item/tool/requestUserInput",
+              params: {
+                threadId: nativeThreadId,
+                turnId: nativeTurnId,
+                itemId: "secret",
+                isBlocking: true,
+                questions: [
+                  { id: "token", header: "Token", question: "Provide a token", isSecret: true },
+                ],
+              },
+            },
+          },
+          {
+            type: "expect_outbound",
+            label: "reject secret",
+            frame: {
+              id: 100,
+              error: {
+                code: -32602,
+                message:
+                  "Secret questions must use request_secret or URL elicitation. No question was published.",
+              },
+            },
+          },
+          {
+            type: "emit_inbound",
+            label: "complete",
+            frame: {
+              method: "turn/completed",
+              params: {
+                threadId: nativeThreadId,
+                turn: makeCodexReplayTurn({ id: nativeTurnId, status: "completed" }),
+              },
+            },
+          },
+        ],
+      });
+      const harness = yield* makeCodexReplayHarness(transcript);
+      yield* harness.runtime.startTurn(
+        makeCodexTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now: yield* DateTime.now,
+          attemptId: RunAttemptId.make("secret-rejection-attempt"),
+          text: "Ask securely.",
+        }),
+      );
+      yield* harness.firstTerminal;
+      assert.isFalse(harness.events.some((event) => event.type === "runtime_request.updated"));
+      assert.isFalse(
+        harness.events.some(
+          (event) =>
+            event.type === "turn_item.updated" && event.turnItem.type === "user_input_request",
+        ),
+      );
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+      ),
+    ),
+  );
+
+  it.effect.each(["native", "mcp"] as const)(
+    "maps %s questions to live user input and returns the user's answers",
+    (source) =>
+      Effect.gen(function* () {
+        const nativeThreadId = `native-question-${source}`;
+        const nativeTurnId = `native-question-${source}-turn`;
+        const pending = yield* Deferred.make<OrchestrationV2RuntimeRequest>();
+        const request =
+          source === "native"
+            ? {
+                method: "item/tool/requestUserInput",
+                params: {
+                  threadId: nativeThreadId,
+                  turnId: nativeTurnId,
+                  itemId: "question-item",
+                  isBlocking: false,
+                  questions: [
+                    {
+                      id: "region",
+                      header: "Region",
+                      question: "Choose a region",
+                      isOther: false,
+                      isSecret: false,
+                      options: [{ label: "Europe", description: "European region" }],
+                    },
+                  ],
+                },
+              }
+            : {
+                method: "mcpServer/elicitation/request",
+                params: {
+                  threadId: nativeThreadId,
+                  turnId: nativeTurnId,
+                  mode: "form",
+                  serverName: "reports",
+                  message: "Choose a region",
+                  requestedSchema: {
+                    type: "object",
+                    required: ["region"],
+                    properties: {
+                      region: { type: "string", oneOf: [{ const: "eu", title: "Europe" }] },
+                    },
+                  },
+                },
+              };
+        const transcript = makeCodexReplayTranscript({
+          scenario: `native-question-${source}`,
+          entries: [
+            ...codexReplayPreamble({ nativeThreadId, nativeTurnId, prompt: "Ask me." }),
+            { type: "emit_inbound", label: "question", frame: { id: 100, ...request } },
+            {
+              type: "expect_outbound",
+              label: "answer",
+              frame: {
+                id: 100,
+                result:
+                  source === "native"
+                    ? { answers: { region: { answers: ["Europe"] } } }
+                    : { action: "accept", content: { region: "eu" } },
+              },
+            },
+            {
+              type: "emit_inbound",
+              label: "complete",
+              frame: {
+                method: "turn/completed",
+                params: {
+                  threadId: nativeThreadId,
+                  turn: makeCodexReplayTurn({ id: nativeTurnId, status: "completed" }),
+                },
+              },
+            },
+          ],
+        });
+        const harness = yield* makeCodexReplayHarness(transcript, (event) =>
+          event.type === "runtime_request.updated"
+            ? Deferred.succeed(pending, event.runtimeRequest)
+            : Effect.void,
+        );
+        yield* harness.runtime.startTurn(
+          makeCodexTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make(`native-question-${source}-attempt`),
+            text: "Ask me.",
+          }),
+        );
+        const runtimeRequest = yield* Deferred.await(pending);
+        assert.equal(runtimeRequest.kind, "user_input");
+        assert.equal(runtimeRequest.responseCapability.type, "live");
+        const item = harness.events.flatMap((event) =>
+          event.type === "turn_item.updated" && event.turnItem.type === "user_input_request"
+            ? [event.turnItem]
+            : [],
+        )[0];
+        assert.isDefined(item);
+        if (source === "native") {
+          assert.deepEqual(item?.questions[0]?.native, { isBlocking: false, isSecret: false });
+          assert.equal(item?.questions[0]?.allowCustomAnswer, false);
+        } else {
+          assert.deepEqual(item?.questions[0]?.options, [
+            { label: "Europe", description: "Europe", value: "eu" },
+          ]);
+        }
+        yield* harness.runtime.respondToRuntimeRequest({
+          requestId: runtimeRequest.id,
+          answers: { region: source === "native" ? ["Europe"] : ["eu"] },
+        });
+        yield* harness.firstTerminal;
+        assert.isFalse(
+          harness.events.some(
+            (event) =>
+              event.type === "turn_item.updated" && event.turnItem.type === "approval_request",
+          ),
+        );
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
+      ),
+  );
 
   it.effect("keeps an asynchronous Codex question actionable after the turn completes", () =>
     Effect.scoped(
@@ -9452,4 +9653,88 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       ),
     );
   });
+  it.effect.each(["decline", "cancel", "acceptForSession", "acceptAlways"] as const)(
+    "preserves MCP approval %s and its persistence on the live callback",
+    (decision) =>
+      Effect.gen(function* () {
+        const nativeThreadId = `mcp-approval-${decision}`;
+        const nativeTurnId = `${nativeThreadId}-turn`;
+        const pending = yield* Deferred.make<OrchestrationV2RuntimeRequest>();
+        const persist = decision === "acceptForSession" ? "session" : "always";
+        const transcript = makeCodexReplayTranscript({
+          scenario: nativeThreadId,
+          entries: [
+            ...codexReplayPreamble({ nativeThreadId, nativeTurnId, prompt: "Use Safari." }),
+            {
+              type: "emit_inbound",
+              label: "approval",
+              frame: {
+                id: 100,
+                method: "mcpServer/elicitation/request",
+                params: {
+                  threadId: nativeThreadId,
+                  turnId: nativeTurnId,
+                  mode: "form",
+                  serverName: "computer-use",
+                  message: "Allow ChatGPT to use Safari?",
+                  _meta: { persist: ["session", "always"] },
+                  requestedSchema: {
+                    type: "object",
+                    properties: {
+                      approval: { type: "string", enum: ["once", "session", "always"] },
+                    },
+                    required: ["approval"],
+                  },
+                },
+              },
+            },
+            {
+              type: "expect_outbound",
+              label: "answer",
+              frame: {
+                id: 100,
+                result:
+                  decision === "decline" || decision === "cancel"
+                    ? { action: decision }
+                    : { action: "accept", _meta: { persist }, content: { approval: persist } },
+              },
+            },
+            {
+              type: "emit_inbound",
+              label: "complete",
+              frame: {
+                method: "turn/completed",
+                params: {
+                  threadId: nativeThreadId,
+                  turn: makeCodexReplayTurn({ id: nativeTurnId, status: "completed" }),
+                },
+              },
+            },
+          ],
+        });
+        const harness = yield* makeCodexReplayHarness(transcript, (event) =>
+          event.type === "runtime_request.updated"
+            ? Deferred.succeed(pending, event.runtimeRequest)
+            : Effect.void,
+        );
+        yield* harness.runtime.startTurn(
+          makeCodexTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make(`${nativeThreadId}-attempt`),
+            text: "Use Safari.",
+          }),
+        );
+        const request = yield* Deferred.await(pending);
+        assert.equal(request.kind, "mcp-elicitation");
+        yield* harness.runtime.respondToRuntimeRequest({ requestId: request.id, decision });
+        yield* harness.firstTerminal;
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
+      ),
+  );
 });
