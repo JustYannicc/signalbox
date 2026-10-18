@@ -399,6 +399,10 @@ export type ThreadMessage = typeof ThreadMessage.Type;
 export const MachineClass = Schema.Literals(["light", "heavy"]);
 export type MachineClass = typeof MachineClass.Type;
 
+/** A harmless shell command that asks a light Runner to move the turn to heavy. */
+export const REQUEST_HEAVY_MACHINE_COMMAND = ": request-heavy-machine";
+export const REQUEST_HEAVY_MACHINE_REASON = "The agent requested a heavy machine.";
+
 /**
  * What a thread asks a machine backend for: a Runner for this thread at this
  * generation, holding this token, whose harnesses reach their models through

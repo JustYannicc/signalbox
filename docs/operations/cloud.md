@@ -216,16 +216,20 @@ A light thread moves to the heavy class for good when its Runner sees a
 command it should not run there: a build, test, install, dev server, package
 script/executor or Node command
 (`apps/server/src/signalbox/runner/RunnerMachineClass.ts`), or one killed for
-memory (exit 137). The Runner saves the turn's files and session rows, reports
-`machine.outgrown`, and the thread continues the run on a heavy machine the
-same way it continues one whose machine was lost (below): the command shows as
-interrupted and the agent runs it again there. This command-start classifier is
-best effort; commands hidden behind an unrecognized wrapper can stay light.
-If files or session rows cannot be saved, the turn fails with that cause instead
-of continuing from stale state. A light container that runs out
-of memory mid-turn (exit 137) moves its run up too. Any other exit, including
-Cloudflare restarting the container for a deploy's rollout, is a lost machine:
-the run continues on a new light one.
+memory (exit 137), or the agent's explicit `: request-heavy-machine` request.
+The command-start classifier is best effort; commands hidden behind an
+unrecognized wrapper can stay light. For a heavy work command, the Runner saves
+the turn's files and session rows, reports `machine.outgrown`, and the thread
+continues the run on a heavy machine the same way it continues one whose
+machine was lost (below): the command shows as interrupted and the agent runs
+it again there. An explicit request follows the same save and resume path. The
+Runner records the move reason in machine diagnostics. The explicit request
+stays internal; neither it nor a move notice appears in the conversation
+transcript. If files or session rows cannot be saved, the turn fails with the
+save error instead of continuing from stale state. A light container that runs
+out of memory mid-turn (exit 137) moves its run up too. Any other exit,
+including Cloudflare restarting the container during a deploy rollout, is a
+lost machine. The run continues on a new light one.
 
 Each preview gets its own container application,
 `signalbox-cloud-pr-<number>-threads`, deleted with the preview. Containers

@@ -95,6 +95,7 @@ import { useAcknowledgeThreadWoke, useThreadActions } from "../hooks/useThreadAc
 import {
   deriveProviderSubagentStatus,
   deriveReportedModelSelection,
+  deriveRunContinuations,
   formatModelSelectionEffort,
   deriveRunlessWorkStartedAt,
   deriveThreadActivityRun,
@@ -1501,8 +1502,9 @@ export default function ChatView(props: ChatViewProps) {
   const activeRuntime = isServerThread ? serverRuntime : (activeThread?.runtime ?? null);
   // signalbox: older turns keep how their own run ended (settledRunSummaries)
   const settledRuns = useSettledRunSummaries(serverProjection?.runs ?? EMPTY_RUNS);
+  const runContinuations = deriveRunContinuations(serverProjection?.runs ?? EMPTY_RUNS);
   const timelineLatestRun =
-    activeActivityRun === null ? null : { ...activeActivityRun, settledRuns };
+    activeActivityRun === null ? null : { ...activeActivityRun, settledRuns, runContinuations };
   const hasHeldQueuedRuns =
     isServerThread &&
     serverProjection?.runs.some((run) => run.status === "queued" && run.queueHeld === true) ===
