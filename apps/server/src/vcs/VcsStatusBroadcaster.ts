@@ -453,7 +453,11 @@ export const make = Effect.gen(function* () {
         const latest = yield* getCachedStatus(cwd);
         let local = latest?.local?.value ?? (yield* workflow.localStatus({ cwd }));
         const remoteRead = yield* readRemoteStatus(cwd);
-        if (remoteRead.branchChanged || local.refName !== remoteRead.branch) {
+        if (remoteRead.branchChanged) {
+          local = yield* refreshLocalStatusCore(cwd);
+          return mergeGitStatusParts(local, null);
+        }
+        if (local.refName !== remoteRead.branch) {
           local = yield* refreshLocalStatusCore(cwd);
         }
         return yield* updateCachedStatus(cwd, local, remoteRead.remote, remoteRead.branch);

@@ -782,6 +782,15 @@ sees it, and `src/observability/wideEvents.test.ts` fails if a turn's prompt or
 reply reaches one. Lint fails on `console.*` or another logger in
 `apps/cloud/src`.
 
+Pool HTTP hops emit `pool.call` with response-header latency and the
+CLIProxyAPI release reported by management response headers. A managed
+container keeps that evidence only for its running lifetime; an object that
+finds an old container still running starts with an unknown release until a
+management read identifies it. The deployment pin is never runtime evidence.
+External management replies identify only their own hop. External and linked
+model hops remain unknown because their responses have no verified release
+metadata contract. These events do not measure stream completion or CPU/RAM.
+
 Where they go depends on the deploy environment's secrets (`cloud-preview`
 and `cloud-production`), passed through `alchemy.run.ts`. Each is optional:
 

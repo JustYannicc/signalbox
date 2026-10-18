@@ -109,6 +109,7 @@ import * as CloudEngine from "./automations/cloudEngine.ts";
 import type { AutomationRunner } from "@signalbox/automations/runner/AutomationRunner";
 import { makeMemoryWorkflows } from "./automations/memoryWorkflows.ts";
 import * as UserFolders from "./user/UserFolders.ts";
+import * as FolderStarts from "./user/FolderStarts.ts";
 import * as UserDirectory from "./user/UserDirectory.ts";
 import * as UserDrives from "./user/UserDrives.ts";
 import { makeUserObjectApi } from "./user/userObjectApi.ts";
@@ -403,6 +404,7 @@ const makeUserRuntime = (
             ),
           ),
           Layer.provideMerge(Layer.mergeAll(drives, people, github)),
+          Layer.provideMerge(FolderStarts.layer),
           Layer.provideMerge(
             Layer.mergeAll(
               Layer.succeed(UserDirectory.UserDirectory, users),
