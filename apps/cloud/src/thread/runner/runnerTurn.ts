@@ -251,7 +251,14 @@ function itemEvents(
   if (item.kind === "workflow.stopped") return workflowStopResult(projection, item, ctx);
   const run = harnessRun(projection);
   // Usage and log lines are for the turn's diagnostics, not its events; a drain is the lease's.
-  if (item.kind === "usage" || item.kind === "log" || item.kind === "machine.drained") return [];
+  if (
+    item.kind === "usage" ||
+    item.kind === "log" ||
+    item.kind === "machine.drained" ||
+    item.kind === "git.pull.result" ||
+    item.kind === "git.pull.interrupted"
+  )
+    return [];
   if (item.kind === "provider") {
     return stringField(item.event, "type") === "turn.terminal"
       ? terminalEvents(projection, item.event, ctx)

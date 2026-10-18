@@ -1,4 +1,9 @@
 import {
+  PERSON_TIMEZONE_REQUIRED_SCOPES,
+  PERSON_TIMEZONE_WS_METHODS,
+} from "@t3tools/contracts/personTimezone";
+import { makeTimezoneHandlers } from "./timezoneRpc.ts";
+import {
   type ProjectId,
   type AuthEnvironmentScope,
   AuthFilesystemReadScope,
@@ -258,6 +263,7 @@ const SERVED = [
   ...AUTOMATION_METHODS,
   ...KEYBINDING_METHODS,
   ...ANALYTICS_METHODS,
+  ...Object.values(PERSON_TIMEZONE_WS_METHODS),
 ] as const;
 type ServedTag = (typeof SERVED)[number];
 type WsRpcs = RpcGroup.Rpcs<typeof WsRpcGroup>;
@@ -280,6 +286,7 @@ const REQUIRED_SCOPES = {
   [WS_METHODS.serverUpdateSettings]: AuthSettingsWriteScope,
   ...KEYBINDING_REQUIRED_SCOPES,
   ...ANALYTICS_REQUIRED_SCOPES,
+  ...PERSON_TIMEZONE_REQUIRED_SCOPES,
   [WS_METHODS.serverProbe]: AuthOrchestrationReadScope,
   [WS_METHODS.serverReportClientActivity]: AuthOrchestrationReadScope,
   [WS_METHODS.subscribeServerLifecycle]: AuthOrchestrationReadScope,
@@ -594,6 +601,7 @@ export const layerHandlers = (input: {
       const keybindings = yield* makeKeybindingHandlers;
       const personBrowser = yield* LoginService.LoginService;
       const analytics = yield* makeAnalyticsHandlers;
+      const timezone = yield* makeTimezoneHandlers;
       return {
         ...pools.handlers,
         ...pushes,
@@ -613,6 +621,7 @@ export const layerHandlers = (input: {
             "Cloud browser sign-ins could not be cleared. Try again.",
           ),
         ...analytics,
+        ...timezone,
         [WS_METHODS.subscribeServerConfig]: (request) => pools.configStream(request),
         [WS_METHODS.serverGetConfig]: () => pools.configNow,
         [WS_METHODS.serverProbe]: () => Effect.succeed({}),
@@ -870,17 +879,8 @@ export const layerHandlers = (input: {
         [WS_METHODS.gitResolvePullRequest]: (request) => pullRequests.resolvePullRequest(request),
         [WS_METHODS.gitRunStackedAction]: (request) =>
           Stream.unwrap(Effect.map(actorNow, (actor) => branches.runAction(actor, request))),
-        // A thread's branch only takes commits from its own turns.
         [WS_METHODS.vcsPull]: (request) =>
-          Effect.fail(
-            new GitCommandError({
-              operation: "pull",
-              command: "git pull",
-              cwd: request.cwd,
-              detail:
-                "The branch on GitHub has commits this thread doesn't. Signalbox can't bring them into a thread yet.",
-            }),
-          ),
+          Effect.flatMap(actorNow, (actor) => branches.pull(actor, request)),
         [SIGNALBOX_CONTEXTS_WS_METHODS.subscribe]: () => Stream.orDie(contexts.changes),
         [SIGNALBOX_DRIVES_WS_METHODS.subscribe]: () => Stream.orDie(userDrives.changes),
         [SIGNALBOX_DRIVES_WS_METHODS.create]: (request) =>

@@ -32,6 +32,7 @@ export class HubProviderRateLimited extends Schema.TaggedError<HubProviderRateLi
 export const isHubProviderRateLimited = Schema.is(HubProviderRateLimited);
 
 interface Entry {
+  readonly identity: string;
   readonly good: { readonly read: UsageLimitSourceAccount; readonly at: number } | undefined;
   readonly nextProbeAt: number;
   readonly rateLimited: boolean;
@@ -41,20 +42,25 @@ export const makeHubProbeCache = Effect.gen(function* () {
   const entries = yield* Ref.make(new Map<string, Entry>());
   const remember = (key: string, entry: Entry) =>
     Ref.update(entries, (current) => new Map(current).set(key, entry));
+  const keepable = (entry: Entry | undefined, now: number) =>
+    entry?.good && now - entry.good.at < KEEP_GOOD_READ_MS ? entry.good : undefined;
 
   /**
    * `probe`, unless `key` was read within the minute or is backing off from a
    * 429; then the last good read. A failure shows the last good read while it
    * is under a quarter hour old, and fails otherwise.
+   * Identity distinguishes credentials replaced under the same file key.
    */
   const read = <E, R>(
     key: string,
     probe: Effect.Effect<UsageLimitSourceAccount, E, R>,
+    identity = key,
   ): Effect.Effect<UsageLimitSourceAccount, E | HubProviderRateLimited, R> =>
     Effect.gen(function* () {
       const now = yield* Clock.currentTimeMillis;
-      const entry = (yield* Ref.get(entries)).get(key);
-      const good = entry?.good && now - entry.good.at < KEEP_GOOD_READ_MS ? entry.good : undefined;
+      const cached = (yield* Ref.get(entries)).get(key);
+      const entry = cached?.identity === identity ? cached : undefined;
+      const good = keepable(entry, now);
       if (entry && now < entry.nextProbeAt) {
         if (good) return good.read;
         if (entry.rateLimited) {
@@ -64,12 +70,19 @@ export const makeHubProbeCache = Effect.gen(function* () {
       return yield* probe.pipe(
         Effect.flatMap((fresh) =>
           Effect.gen(function* () {
+            const good = keepable(entry, yield* Clock.currentTimeMillis);
             // Numbers missing from a read that succeeded count as a failed read.
             if (fresh.usageLimits.unavailable?.reason === "probeFailed" && good) {
-              yield* remember(key, { good, nextProbeAt: now + PROBE_EVERY_MS, rateLimited: false });
+              yield* remember(key, {
+                identity,
+                good,
+                nextProbeAt: now + PROBE_EVERY_MS,
+                rateLimited: false,
+              });
               return good.read;
             }
             yield* remember(key, {
+              identity,
               good: { read: fresh, at: now },
               nextProbeAt: now + PROBE_EVERY_MS,
               rateLimited: false,
@@ -79,8 +92,10 @@ export const makeHubProbeCache = Effect.gen(function* () {
         ),
         Effect.catch((error) =>
           Effect.gen(function* () {
+            const good = keepable(entry, yield* Clock.currentTimeMillis);
             const rateLimited = isHubProviderRateLimited(error);
             yield* remember(key, {
+              identity,
               good,
               nextProbeAt: now + (rateLimited ? RATE_LIMITED_BACKOFF_MS : PROBE_EVERY_MS),
               rateLimited,

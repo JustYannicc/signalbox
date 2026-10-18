@@ -457,6 +457,26 @@ export const makeFakeGitHub = (options: {
       });
     }
     const refPrefix = `/repos/${options.repository}/git/ref/heads/`;
+    const comparePrefix = `/repos/${options.repository}/compare/`;
+    if (method === "GET" && path.startsWith(comparePrefix)) {
+      const [base, headOid] = decodeURIComponent(path.slice(comparePrefix.length)).split("...");
+      if (base === undefined || headOid === undefined) return json({ message: "Not Found" }, 404);
+      try {
+        const mergeBase = git(["merge-base", base, headOid]).toString().trim();
+        const [behind, ahead] = git(["rev-list", "--left-right", "--count", `${base}...${headOid}`])
+          .toString()
+          .trim()
+          .split(/\s+/)
+          .map(Number);
+        return json({
+          ahead_by: ahead,
+          behind_by: behind,
+          merge_base_commit: { sha: mergeBase },
+        });
+      } catch {
+        return json({ message: "Not Found" }, 404);
+      }
+    }
     if (method === "GET" && path.startsWith(refPrefix)) {
       const oid = head(decodeURIComponent(path.slice(refPrefix.length)));
       return oid === null ? json({ message: "Not Found" }, 404) : json({ object: { sha: oid } });

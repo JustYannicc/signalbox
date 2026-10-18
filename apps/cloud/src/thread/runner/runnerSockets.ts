@@ -28,6 +28,7 @@ interface Attachment {
   readonly connection: number;
   /** The run this socket's Runner was handed, until it ends or is stopped. */
   readonly sentRunId: RunId | null;
+  readonly sentPullId?: string;
   /** The drain this socket's Runner was asked for (#493); absent: none. */
   readonly sentDrainId?: number | undefined;
   /** This socket's Runner takes `steer` (#562), as its `hello` said. */
@@ -161,6 +162,7 @@ export async function pushRunnerWork(host: RunnerSocketHost): Promise<ThreadRunn
       sentWorkflowStops = workflowStopsDigest;
     }
     let sentRunId = attachment.sentRunId;
+    let sentPullId = attachment.sentPullId;
     let sentSteers = attachment.sentSteers ?? 0;
     if (sentRunId !== null && sentRunId !== work.activeRunId) {
       send(socket, { type: "interrupt", runId: sentRunId });
@@ -182,6 +184,14 @@ export async function pushRunnerWork(host: RunnerSocketHost): Promise<ThreadRunn
       sentRunId = turn.turn.runId;
       sentSteers = 0;
     }
+    if (
+      work.pull != null &&
+      sentPullId !== `${work.pull.operation.id}:${work.pull.attempt}` &&
+      sentRunId === null
+    ) {
+      send(socket, { type: "git.pull", operation: work.pull.operation, drive: work.pull.drive });
+      sentPullId = `${work.pull.operation.id}:${work.pull.attempt}`;
+    }
     // Steers count from the oldest, so the ones not handed out yet are the tail.
     if (attachment.steers === true && sentRunId !== null && sentRunId === work.activeRunId) {
       for (const message of work.steers.slice(sentSteers)) {
@@ -198,6 +208,7 @@ export async function pushRunnerWork(host: RunnerSocketHost): Promise<ThreadRunn
     if (
       sentWorkflowStops !== attachment.sentWorkflowStops ||
       sentRunId !== attachment.sentRunId ||
+      sentPullId !== attachment.sentPullId ||
       sentDrainId !== attachment.sentDrainId ||
       sentSteers !== (attachment.sentSteers ?? 0)
     ) {
@@ -205,6 +216,7 @@ export async function pushRunnerWork(host: RunnerSocketHost): Promise<ThreadRunn
         ...attachment,
         sentRunId,
         sentWorkflowStops,
+        ...(sentPullId === undefined ? {} : { sentPullId }),
         sentDrainId,
         sentSteers,
       } satisfies Attachment);

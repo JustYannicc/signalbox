@@ -82,6 +82,11 @@ const setup = (
         browsing: async () => null,
         browse: async () => ({ _tag: "not_found" }),
         browsingRecord: async () => ({ _tag: "not_found" }),
+        pull: async () => ({ _tag: "not_found" }),
+        pullOwner: async () => null,
+        pullTarget: async () => null,
+        reservePublication: async () => ({ _tag: "not_found" }),
+        releasePublication: async () => undefined,
       }),
   });
   const recordedAlarm = Layer.succeed(
