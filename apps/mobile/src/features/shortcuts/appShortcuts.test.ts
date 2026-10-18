@@ -61,7 +61,7 @@ describe("buildShortcutActions", () => {
   it("leads with the static new-task action", () => {
     const actions = buildShortcutActions([thread("a")]);
     expect(actions[0]?.id).toBe(NEW_TASK_SHORTCUT_ID);
-    expect(actions[0]?.params?.href).toBe("/new");
+    expect(actions[0]?.params?.href).toBe("/capture");
     expect(actions).toHaveLength(2);
   });
 
@@ -81,6 +81,8 @@ describe("buildShortcutActions", () => {
 
 describe("shortcutHref", () => {
   it("accepts exactly the destinations shortcuts can produce", () => {
+    expect(shortcutHref({ id: "x", title: "x", params: { href: "/capture" } })).toBe("/capture");
+    // Existing launcher entries survive upgrades until the OS refreshes its shortcut list.
     expect(shortcutHref({ id: "x", title: "x", params: { href: "/new" } })).toBe("/new");
     expect(shortcutHref({ id: "x", title: "x", params: { href: "/threads/env-1/thread-2" } })).toBe(
       "/threads/env-1/thread-2",
@@ -101,6 +103,7 @@ describe("shortcutHref", () => {
       "/threads/a/b?x=1",
       "/threads/a/b#frag",
       "/new/extra",
+      "/capture/extra",
     ]) {
       expect(shortcutHref({ id: "x", title: "x", params: { href } })).toBe(null);
     }

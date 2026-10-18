@@ -102,6 +102,7 @@ import {
 } from "./features/threads/ThreadSettingsSheet";
 import { NewTaskFlowProvider } from "./features/threads/new-task-flow-provider";
 import { NewTaskRouteScreen } from "./features/threads/NewTaskRouteScreen";
+import { CaptureRouteScreen } from "./features/capture/CaptureRouteScreen";
 import { SettingsAppearanceRouteScreen } from "./features/settings/SettingsAppearanceRouteScreen";
 import { SettingsClientStorageRouteScreen } from "./features/settings/SettingsClientStorageRouteScreen";
 import { SettingsDiagnosticsRouteScreen } from "./features/diagnostics/SettingsDiagnosticsRouteScreen";
@@ -1026,6 +1027,18 @@ const RootStackConfig = createWorkspaceStackNavigator({
         ...NESTED_NAVIGATOR_OPTIONS,
         gestureEnabled: true,
         headerShown: false,
+      },
+    }),
+    Capture: createNativeStackScreen({
+      screen: CaptureRouteScreen,
+      linking: "capture",
+      options: {
+        ...SHEET_GLASS_HEADER_OPTIONS,
+        ...FORM_SHEET_PRESENTATION_OPTIONS,
+        contentStyle: Platform.OS === "ios" ? { backgroundColor: "transparent" } : undefined,
+        headerShown: Platform.OS !== "android",
+        sheetAllowedDetents: Platform.OS === "ios" ? "fitToContents" : undefined,
+        sheetGrabberVisible: Platform.OS === "ios",
       },
     }),
     ...automationStackScreens({ glass: GLASS_HEADER_OPTIONS, solid: SOLID_HEADER_OPTIONS }), // signalbox: automations

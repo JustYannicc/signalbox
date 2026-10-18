@@ -8,6 +8,7 @@ export const MAX_RECENT_THREAD_SHORTCUTS = 3;
 
 export const NEW_TASK_SHORTCUT_ID = "new-task";
 const NEW_TASK_SHORTCUT_HREF = "/new";
+const CAPTURE_SHORTCUT_HREF = "/capture";
 
 const SHORTCUT_ICON = "shortcut_icon";
 
@@ -76,7 +77,11 @@ export function shortcutHref(action: Action): string | null {
     return null;
   }
 
-  return href === NEW_TASK_SHORTCUT_HREF || THREAD_SHORTCUT_HREF_PATTERN.test(href) ? href : null;
+  return href === CAPTURE_SHORTCUT_HREF ||
+    href === NEW_TASK_SHORTCUT_HREF ||
+    THREAD_SHORTCUT_HREF_PATTERN.test(href)
+    ? href
+    : null;
 }
 
 export function withRecentThreadShortcut(
@@ -104,7 +109,7 @@ export function buildShortcutActions(recents: ReadonlyArray<RecentThreadShortcut
       id: NEW_TASK_SHORTCUT_ID,
       title: "New task",
       icon: SHORTCUT_ICON,
-      params: { href: NEW_TASK_SHORTCUT_HREF },
+      params: { href: CAPTURE_SHORTCUT_HREF },
     },
     ...recents.slice(0, MAX_RECENT_THREAD_SHORTCUTS).map((thread): Action => ({
       // The encoded href doubles as the launcher id: URI-encoding makes the
