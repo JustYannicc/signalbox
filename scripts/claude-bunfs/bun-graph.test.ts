@@ -3,10 +3,10 @@ import { decodeModule, readBunGraph } from "./bun-graph.ts";
 
 import { fixture } from "./graph-fixture.ts";
 
-function legacy24Fixture(recordSize = 36) {
+function legacy24Fixture(recordSize = 36, unexplainedBytes = 0) {
   const current = fixture(recordSize);
   const prefix = current.bytes.length - current.byteCount - 48 - 8;
-  const byteCount = current.byteCount - 1;
+  const byteCount = current.byteCount - 1 + unexplainedBytes;
   const footerOffset = prefix + byteCount;
   const bytes = new Uint8Array(prefix + byteCount + 24 + 16 + 8);
   bytes.set(current.bytes.subarray(0, footerOffset));
@@ -67,6 +67,11 @@ describe("Bun graph validation", () => {
     const f = fixture();
     f.data.setUint32(f.byteCount + 28, 1 << 20, true);
     await expect(readBunGraph(f.reader)).rejects.toThrow("unknown graph flags");
+  });
+  it("rejects unexplained trailing data in the 24-byte format", async () => {
+    await expect(readBunGraph(legacy24Fixture(36, 4).reader)).rejects.toThrow(
+      "unrecognized data after legacy module table",
+    );
   });
   it("rejects contents outside the graph", async () => {
     const f = fixture();

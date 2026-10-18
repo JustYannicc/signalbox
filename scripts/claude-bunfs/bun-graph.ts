@@ -126,6 +126,12 @@ export async function readBunGraph(reader: BinaryReader) {
     `expected one known module layout, found ${candidates.length}`,
   );
   const candidate = candidates[0]!;
+  if (footerSize === 24) {
+    invariant(
+      table.offset + table.length === byteCount,
+      "unrecognized data after legacy module table",
+    );
+  }
   // Flagged extension records follow the module table, before the compile argv.
   if (flags !== undefined && argv) {
     let cursor = table.offset + table.length;
