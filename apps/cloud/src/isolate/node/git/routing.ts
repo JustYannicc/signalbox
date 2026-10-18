@@ -1,33 +1,17 @@
 import type { NodeGitRoute } from "./types.ts";
+import { parseGitGlobalOptions } from "./global-options.ts";
 
 const NETWORK_COMMANDS = new Set(["clone", "fetch", "pull", "push", "ls-remote"]);
 
 /** Pick the Git implementation before it performs filesystem or transport work. */
 export function selectNodeGitRoute(argv: readonly string[]): NodeGitRoute {
-  const args = argv.slice(1);
-  const cwd: string[] = [];
-  let index = 0;
-
-  while (index < args.length) {
-    const arg = args[index]!;
-    if (arg === "-C") {
-      const path = args[index + 1];
-      if (path === undefined || path.length === 0) return { kind: "local" };
-      cwd.push(path);
-      index += 2;
-      continue;
-    }
-    if (arg === "--no-pager" || arg === "-P") {
-      index += 1;
-      continue;
-    }
-    if (arg.startsWith("-")) return { kind: "local" };
-    break;
-  }
-
-  const command = args[index];
+  const { command, commandArgs, cwd, unsupportedOption } = parseGitGlobalOptions(argv);
   if (command === undefined || !NETWORK_COMMANDS.has(command)) return { kind: "local" };
-  const commandArgs = args.slice(index + 1);
+  if (unsupportedOption !== undefined) {
+    return reject(
+      `git ${command} global option is not supported by the HTTP adapter: ${unsupportedOption}`,
+    );
+  }
   if (command === "pull" || command === "push" || command === "ls-remote") {
     // Push remains refused because it needs streaming request bodies.
     return {
@@ -95,7 +79,7 @@ function selectCloneRoute(args: readonly string[], cwd: readonly string[]): Node
   if (positional.length < 1 || positional.length > 2) {
     return reject("usage: git clone [--depth N] [--branch NAME] [--single-branch] URL [DIRECTORY]");
   }
-  const url = validateHttpUrl(positional[0]!);
+  const url = validateNodeGitHttpUrl(positional[0]!);
   if (typeof url !== "string") return url;
   const dir = positional[1] ?? repositoryDirectory(url);
   if (dir.length === 0) return reject("git clone requires a destination directory");
@@ -169,7 +153,6 @@ function selectFetchRoute(args: readonly string[], cwd: readonly string[]): Node
     return {
       kind: "fetch",
       cwd,
-      remote: "origin",
       ...(depth === undefined ? {} : { depth }),
       tags,
       prune,
@@ -178,7 +161,7 @@ function selectFetchRoute(args: readonly string[], cwd: readonly string[]): Node
     };
   }
   if (remote.includes("://")) {
-    const url = validateHttpUrl(remote);
+    const url = validateNodeGitHttpUrl(remote);
     if (typeof url !== "string") return url;
     return {
       kind: "fetch",
@@ -227,7 +210,9 @@ function positiveInteger(value: string): number | undefined {
   return Number.isSafeInteger(number) && number > 0 ? number : undefined;
 }
 
-function validateHttpUrl(value: string): string | NodeGitRoute {
+type NodeGitRejectRoute = Extract<NodeGitRoute, { readonly kind: "reject" }>;
+
+export function validateNodeGitHttpUrl(value: string): string | NodeGitRejectRoute {
   try {
     const url = new URL(value);
     if (url.protocol !== "http:" && url.protocol !== "https:") {
@@ -249,6 +234,6 @@ function repositoryDirectory(url: string): string {
   return path.endsWith(".git") ? path.slice(0, -4) : path;
 }
 
-function reject(message: string): NodeGitRoute {
+function reject(message: string): NodeGitRejectRoute {
   return { kind: "reject", exitCode: 129, message };
 }

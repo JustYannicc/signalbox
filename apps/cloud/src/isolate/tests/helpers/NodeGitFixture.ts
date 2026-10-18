@@ -28,6 +28,31 @@ const manifest = Object.freeze({
 
 export const GIT_FIXTURE_COMMIT = "218b1da7cb6be4a4873f6bca0681b387b4cecab4";
 
+export function gitFixturePack(): Uint8Array {
+  return new Uint8Array(pack);
+}
+
+export function packWithOversizedDeclaredObject(): Uint8Array {
+  const oversized = gitFixturePack();
+  oversized[13] = 0x7f;
+  return oversized;
+}
+
+export function packWithOversizedInflatedObject(): Uint8Array {
+  const malformed = gitFixturePack();
+  const output = new Uint8Array(malformed.byteLength - 1);
+  output.set(malformed.subarray(0, 12));
+  output[12] = 0x11;
+  output.set(malformed.subarray(14), 13);
+  return output;
+}
+
+export function malformedGitPack(): Uint8Array {
+  const malformed = gitFixturePack();
+  malformed[12] = 0;
+  return malformed;
+}
+
 export function createNodeGitFixture(readOnly = false) {
   const database = sqliteFixture();
   const storage = createFacetSqliteStorage(database.storage, () => 1_800_000_000_000_000_001n);
@@ -85,6 +110,7 @@ export async function spawnGit(
   env: Readonly<Record<string, string>> = {},
   cwd = "/work",
   signal?: AbortSignal,
+  beforeSpawn?: (filesystem: KernelFileSystem) => void,
 ) {
   const wakes = new KernelWakeRegistry();
   const registry = new KernelProgramRegistry();
@@ -101,6 +127,7 @@ export async function spawnGit(
     { filesystem, home: "/home/test", ...(signal === undefined ? {} : { signal }) },
     { cwd },
   );
+  beforeSpawn?.(prepared.filesystem);
   const resolved = host.resolve("/usr/bin/git");
   if (resolved.status !== "ok") throw new Error("Registered Git program did not resolve");
   const spawned = callKernel(host.backend(prepared), "process.spawn", {
@@ -124,25 +151,44 @@ export async function finishGit(
   return result.value;
 }
 
-export function createSmartHttpServer(options: { readonly authenticate: boolean }) {
-  const requests: { readonly method: string; readonly authorization: string | null }[] = [];
+export function createSmartHttpServer(options: {
+  readonly authenticate: boolean;
+  readonly commit?: string;
+  readonly pack?: Uint8Array;
+}) {
+  const requests: {
+    readonly method: string;
+    readonly authorization: string | null;
+    readonly url: string;
+  }[] = [];
   let rejectedUnauthenticated = false;
+  let cancelledUnauthorizedBodies = 0;
   const fetch: typeof globalThis.fetch = async (input, init) => {
     const url = new URL(String(input));
     const method = init?.method ?? "GET";
     const authorization = new Headers(init?.headers).get("authorization");
-    requests.push({ method, authorization });
+    requests.push({ method, authorization, url: `${url.origin}${url.pathname}` });
     if (options.authenticate && authorization === null && !rejectedUnauthenticated) {
       rejectedUnauthenticated = true;
-      return new Response("authentication required", { status: 401 });
+      return new Response(
+        new ReadableStream<Uint8Array>({
+          start(controller) {
+            controller.enqueue(encoder.encode("authentication required"));
+          },
+          cancel() {
+            cancelledUnauthorizedBodies += 1;
+          },
+        }),
+        { status: 401 },
+      );
     }
     if (method === "GET" && url.pathname.endsWith("/info/refs")) {
-      return new Response(responseBuffer(advertisement()), {
+      return new Response(responseBuffer(advertisement(options.commit ?? GIT_FIXTURE_COMMIT)), {
         headers: { "content-type": "application/x-git-upload-pack-advertisement" },
       });
     }
     if (method === "POST" && url.pathname.endsWith("/git-upload-pack")) {
-      const sidebandPack = joinBytes(new Uint8Array([1]), pack);
+      const sidebandPack = joinBytes(new Uint8Array([1]), options.pack ?? pack);
       return new Response(
         responseBuffer(joinBytes(packet("NAK\n"), packet(sidebandPack), encoder.encode("0000"))),
         {
@@ -152,7 +198,13 @@ export function createSmartHttpServer(options: { readonly authenticate: boolean 
     }
     return new Response("not found", { status: 404 });
   };
-  return { fetch, requests };
+  return {
+    fetch,
+    requests,
+    get cancelledUnauthorizedBodies() {
+      return cancelledUnauthorizedBodies;
+    },
+  };
 }
 
 export function deferred<T>() {
@@ -181,21 +233,19 @@ function stdio(output: { stdout: string[]; stderr: string[] }) {
   ] as const;
 }
 
-function advertisement(): Uint8Array {
+function advertisement(commit: string): Uint8Array {
   return joinBytes(
     packet("# service=git-upload-pack\n"),
     encoder.encode("0000"),
-    packet(
-      `${GIT_FIXTURE_COMMIT} HEAD\0multi_ack ofs-delta side-band-64k symref=HEAD:refs/heads/main\n`,
-    ),
-    packet(`${GIT_FIXTURE_COMMIT} refs/heads/main\n`),
+    packet(`${commit} HEAD\0multi_ack ofs-delta side-band-64k symref=HEAD:refs/heads/main\n`),
+    packet(`${commit} refs/heads/main\n`),
     encoder.encode("0000"),
   );
 }
 
 function packet(value: string | Uint8Array): Uint8Array {
   const body = typeof value === "string" ? encoder.encode(value) : value;
-  return joinBytes(encoder.encode(`${(body.byteLength + 4).toString(16).padStart(4, "0")}`), body);
+  return joinBytes(encoder.encode((body.byteLength + 4).toString(16).padStart(4, "0")), body);
 }
 
 function joinBytes(...chunks: readonly Uint8Array[]): Uint8Array {

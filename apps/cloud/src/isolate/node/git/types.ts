@@ -8,6 +8,12 @@ export interface NodeGitProgramOptions {
   readonly onAuth?: AuthCallback;
   /** Allows deterministic smart-HTTP fixtures while production uses the Workers Fetch API. */
   readonly fetch?: typeof globalThis.fetch;
+  /** Per-command HTTP request and response bytes accepted. Defaults to 16 MiB. */
+  readonly maxTransferBytes?: number;
+  /** Largest inflated Git object accepted from a pack. Defaults to 8 MiB. */
+  readonly maxObjectBytes?: number;
+  /** Total inflated and reconstructed object bytes accepted from a pack. Defaults to 32 MiB. */
+  readonly maxTotalObjectBytes?: number;
 }
 
 export type NodeGitRoute =
