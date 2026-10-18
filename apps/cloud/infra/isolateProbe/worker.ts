@@ -263,6 +263,11 @@ export default {
     if (!session || !/^[a-zA-Z0-9-]{1,100}$/.test(session)) {
       return new Response("Invalid session", { status: 400 });
     }
-    return env.PROBE.get(env.PROBE.idFromName(session)).fetch(request);
+    try {
+      return await env.PROBE.get(env.PROBE.idFromName(session)).fetch(request);
+    } catch (error) {
+      // Keep native DO failures in the proof evidence instead of an opaque HTML error page.
+      return Response.json({ error: String(error) }, { status: 500 });
+    }
   },
 } satisfies ExportedHandler<Env>;

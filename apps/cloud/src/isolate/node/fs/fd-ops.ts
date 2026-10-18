@@ -3,8 +3,8 @@
  */
 import * as NodeBuffer from "node:buffer";
 import type { KernelFileSystem } from "../../../kernel/KernelFileSystem.ts";
-import { callFs } from "./errors.ts";
-import { readInto, writeFrom, writeAll, sliceView } from "./io.ts";
+import { fsOperation, runSync, type FsOperation } from "./operations.ts";
+import { readIntoOperation, writeFromOperation, writeAllOperation, sliceView } from "./io.ts";
 import { finitePosition } from "./path.ts";
 
 export interface IoOptions {
@@ -36,45 +36,66 @@ function ioArgs(
   };
 }
 
-export function readSync(
+export function* readOperation(
   kernelFs: KernelFileSystem,
   fd: number,
   buffer: ArrayBufferView,
   offsetOrOptions: number | IoOptions = 0,
   length?: number,
   position?: number | null,
-): number {
+): FsOperation<number> {
   const options =
     typeof offsetOrOptions === "object"
       ? offsetOrOptions
       : ioOptions(offsetOrOptions, length, position);
   const args = ioArgs(buffer, options);
-  return callFs("read", undefined, () => readInto(kernelFs, fd, args.buffer, args.position));
+  return yield* fsOperation(
+    "read",
+    undefined,
+    readIntoOperation(kernelFs, fd, args.buffer, args.position),
+  );
 }
 
-export function writeBufferSync(
+export function* writeBufferOperation(
   kernelFs: KernelFileSystem,
   fd: number,
   buffer: ArrayBufferView,
   offsetOrOptions: number | IoOptions = 0,
   length?: number,
   position?: number | null,
-): number {
+): FsOperation<number> {
   const options =
     typeof offsetOrOptions === "object"
       ? offsetOrOptions
       : ioOptions(offsetOrOptions, length, position);
   const args = ioArgs(buffer, options);
-  return callFs("write", undefined, () => writeFrom(kernelFs, fd, args.buffer, args.position));
+  return yield* fsOperation(
+    "write",
+    undefined,
+    writeFromOperation(kernelFs, fd, args.buffer, args.position),
+  );
 }
 
-export function writeStringSync(
+export function* writeStringOperation(
   kernelFs: KernelFileSystem,
   fd: number,
   data: string,
   position?: number | null,
   encoding: BufferEncoding = "utf8",
-): number {
+): FsOperation<number> {
   const bytes = NodeBuffer.Buffer.from(data, encoding);
-  return callFs("write", undefined, () => writeAll(kernelFs, fd, bytes, finitePosition(position)));
+  return yield* fsOperation(
+    "write",
+    undefined,
+    writeAllOperation(kernelFs, fd, bytes, finitePosition(position)),
+  );
 }
+
+export const readSync = (...args: Parameters<typeof readOperation>) =>
+  runSync(readOperation(...args));
+
+export const writeBufferSync = (...args: Parameters<typeof writeBufferOperation>) =>
+  runSync(writeBufferOperation(...args));
+
+export const writeStringSync = (...args: Parameters<typeof writeStringOperation>) =>
+  runSync(writeStringOperation(...args));

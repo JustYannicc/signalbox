@@ -3,47 +3,66 @@
  */
 import * as NodeBuffer from "node:buffer";
 import type { KernelFileSystem } from "../../../kernel/KernelFileSystem.ts";
-import { callFs } from "./errors.ts";
+import { fsOperation, leaf, runSync, type FsOperation } from "./operations.ts";
 
 export const IO_CHUNK_BYTES = 64 * 1024;
 
-export function openFd(
+export function* openFdOperation(
   kernelFs: KernelFileSystem,
   path: string,
   flags: number,
   mode?: number,
-): number {
-  return callFs("open", path, () => kernelFs.open(path, flags, mode));
+): FsOperation<number> {
+  return yield* fsOperation(
+    "open",
+    path,
+    leaf(() => kernelFs.open(path, flags, mode)),
+  );
 }
 
-export function closeFd(kernelFs: KernelFileSystem, fd: number): void {
-  callFs("close", undefined, () => kernelFs.close(fd));
+export function* closeFdOperation(kernelFs: KernelFileSystem, fd: number): FsOperation<void> {
+  yield* fsOperation(
+    "close",
+    undefined,
+    leaf(() => kernelFs.close(fd), true),
+  );
 }
 
-export function readInto(
+export function* readIntoOperation(
   kernelFs: KernelFileSystem,
   fd: number,
   target: Uint8Array,
   position: bigint | null,
-): number {
-  return callFs("read", undefined, () => kernelFs.read(fd, target, position));
+): FsOperation<number> {
+  return yield* fsOperation(
+    "read",
+    undefined,
+    leaf(() => kernelFs.read(fd, target, position)),
+  );
 }
 
-export function writeFrom(
+export function* writeFromOperation(
   kernelFs: KernelFileSystem,
   fd: number,
   source: Uint8Array,
   position: bigint | null,
-): number {
-  return callFs("write", undefined, () => kernelFs.write(fd, source, position));
+): FsOperation<number> {
+  return yield* fsOperation(
+    "write",
+    undefined,
+    leaf(() => kernelFs.write(fd, source, position)),
+  );
 }
 
-export function readAll(kernelFs: KernelFileSystem, fd: number): NodeBuffer.Buffer {
+export function* readAllOperation(
+  kernelFs: KernelFileSystem,
+  fd: number,
+): FsOperation<NodeBuffer.Buffer> {
   const chunks: NodeBuffer.Buffer[] = [];
   let length = 0;
   while (true) {
     const chunk = NodeBuffer.Buffer.allocUnsafe(IO_CHUNK_BYTES);
-    const bytesRead = readInto(kernelFs, fd, chunk, null);
+    const bytesRead = yield* readIntoOperation(kernelFs, fd, chunk, null);
     if (bytesRead === 0) break;
     chunks.push(chunk.subarray(0, bytesRead));
     length += bytesRead;
@@ -51,16 +70,22 @@ export function readAll(kernelFs: KernelFileSystem, fd: number): NodeBuffer.Buff
   return NodeBuffer.Buffer.concat(chunks, length);
 }
 
-export function writeAll(
+export function* writeAllOperation(
   kernelFs: KernelFileSystem,
   fd: number,
   source: Uint8Array,
   position: bigint | null = null,
-): number {
+  onWrite?: (bytes: number) => void,
+): FsOperation<number> {
   let bytesWritten = 0;
   let nextPosition = position;
   while (bytesWritten < source.byteLength) {
-    const written = writeFrom(kernelFs, fd, source.subarray(bytesWritten), nextPosition);
+    const written = yield* writeFromOperation(
+      kernelFs,
+      fd,
+      source.subarray(bytesWritten),
+      nextPosition,
+    );
     if (written === 0) {
       const error = new Error("The filesystem returned a zero-byte write") as Error & {
         code: string;
@@ -69,6 +94,7 @@ export function writeAll(
       throw error;
     }
     bytesWritten += written;
+    onWrite?.(written);
     if (nextPosition !== null) nextPosition += BigInt(written);
   }
   return bytesWritten;
@@ -97,3 +123,21 @@ export function sliceView(view: ArrayBufferView, offset: number, length: number)
   }
   return new Uint8Array(view.buffer, view.byteOffset + offset, length);
 }
+
+export const openFd = (...args: Parameters<typeof openFdOperation>) =>
+  runSync(openFdOperation(...args));
+
+export const closeFd = (...args: Parameters<typeof closeFdOperation>) =>
+  runSync(closeFdOperation(...args));
+
+export const readInto = (...args: Parameters<typeof readIntoOperation>) =>
+  runSync(readIntoOperation(...args));
+
+export const writeFrom = (...args: Parameters<typeof writeFromOperation>) =>
+  runSync(writeFromOperation(...args));
+
+export const readAll = (...args: Parameters<typeof readAllOperation>) =>
+  runSync(readAllOperation(...args));
+
+export const writeAll = (...args: Parameters<typeof writeAllOperation>) =>
+  runSync(writeAllOperation(...args));
