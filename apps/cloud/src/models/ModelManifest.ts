@@ -74,6 +74,7 @@ export const BUNDLED_MODEL_CATALOGS: ModelManifestCatalogs = {
 export class ModelManifest extends Context.Service<
   ModelManifest,
   { readonly current: Effect.Effect<ModelManifestCatalogs> }
+  // @effect-diagnostics-next-line deterministicKeys:off -- preserve the service identity when moving its module.
 >()("@signalbox/cloud/thread/ModelManifest") {}
 
 export const layer = Layer.succeed(
