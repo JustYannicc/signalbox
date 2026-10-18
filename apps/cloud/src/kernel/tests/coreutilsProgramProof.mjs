@@ -3,22 +3,18 @@ import * as NodeCrypto from "node:crypto";
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 import * as NodeURL from "node:url";
-import { createFacetSqliteStorage } from "../../../src/kernel/FacetSqliteStorage.ts";
-import {
-  KernelProgramRegistry,
-  KernelWakeRegistry,
-  callKernel,
-} from "../../../src/kernel/KernelAbi.ts";
-import { KernelFileSystem, KernelOpenFlags } from "../../../src/kernel/KernelFileSystem.ts";
-import { KernelProgramHost } from "../../../src/kernel/KernelProgramHost.ts";
-import { KernelProcessTable } from "../../../src/kernel/KernelProcessTable.ts";
-import { createKernelAsyncWasi } from "../../../src/kernel/KernelWasi.ts";
-import { createKernelCoreutilsImports } from "../../../src/kernel/KernelCoreutilsImports.ts";
+import { createFacetSqliteStorage } from "../FacetSqliteStorage.ts";
+import { KernelProgramRegistry, KernelWakeRegistry, callKernel } from "../KernelAbi.ts";
+import { KernelFileSystem, KernelOpenFlags } from "../KernelFileSystem.ts";
+import { KernelProgramHost } from "../KernelProgramHost.ts";
+import { KernelProcessTable } from "../KernelProcessTable.ts";
+import { createKernelAsyncWasi } from "../KernelWasi.ts";
+import { createKernelCoreutilsImports } from "../KernelCoreutilsImports.ts";
 import {
   KERNEL_COREUTILS_COMMANDS,
   registerKernelCoreutilsPrograms,
-} from "../../../src/kernel/KernelCoreutilsPrograms.ts";
-import { sqliteFixture } from "../../../src/kernel/tests/sqliteFixture.ts";
+} from "../KernelCoreutilsPrograms.ts";
+import { sqliteFixture } from "./sqliteFixture.ts";
 
 class RecordingProcessTable extends KernelProcessTable {
   failure;
@@ -43,7 +39,8 @@ class RecordingProcessTable extends KernelProcessTable {
 }
 
 const preparedDirectory = NodePath.resolve(
-  process.argv[2] ?? NodeURL.fileURLToPath(new URL("./", import.meta.url)),
+  process.argv[2] ??
+    NodeURL.fileURLToPath(new URL("../../../infra/kernelPrograms/coreutils/", import.meta.url)),
 );
 const artifactDirectory = NodePath.join(preparedDirectory, "bin");
 const provenance = JSON.parse(
