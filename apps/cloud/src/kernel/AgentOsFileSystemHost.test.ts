@@ -1,19 +1,21 @@
 import { describe, expect, it } from "vite-plus/test";
 import { createFacetSqliteStorage } from "./FacetSqliteStorage.ts";
+import { createAgentOsHostFsArgumentTransform, resolveHiddenPreopenFd } from "./AgentOsWasi.ts";
 import { KernelFileSystem, KernelOpenFlags } from "./KernelFileSystem.ts";
 import { AgentOsFileSystemHost } from "./AgentOsFileSystemHost.ts";
 import { sqliteFixture } from "./tests/sqliteFixture.ts";
+import { wasmImportReactor } from "./tests/wasmGuest.ts";
 
 const U64_MAX = (1n << 64n) - 1n;
 const now = () => 1_800_000_000_000_000_001n;
 const encoder = new TextEncoder();
 
-function fixture() {
+function fixture(agentOsPreopens = false) {
   const database = sqliteFixture();
   const storage = createFacetSqliteStorage(database.storage, now);
   const fileSystem = new KernelFileSystem({ mounts: [{ path: "/", storage }] });
   const memory = new WebAssembly.Memory({ initial: 1 });
-  const host = new AgentOsFileSystemHost({ memory: () => memory, fileSystem });
+  const host = new AgentOsFileSystemHost({ memory: () => memory, fileSystem, agentOsPreopens });
 
   fileSystem.mkdir("/work");
   const directoryFd = fileSystem.open(
@@ -168,4 +170,143 @@ describe("AgentOS host_fs imports", () => {
       test.close();
     }
   });
+
+  it("maps only tagged path-directory operands when the preopen adapter is enabled", () => {
+    const test = fixture(true);
+    try {
+      const preopenFd = [...test.fileSystem.descriptors.entries()].find(
+        ([, descriptor]) => descriptor.preopen === true,
+      )?.[0];
+      if (preopenFd === undefined) throw new Error("Root preopen is missing");
+      const taggedPreopen = 0x4000_0000 | preopenFd;
+      const filePathLength = test.writePath(64, "work/file");
+      const linkPathLength = test.writePath(96, "published");
+      const directoryPathLength = test.writePath(160, "work");
+      const transform = createAgentOsHostFsArgumentTransform(test.fileSystem);
+
+      expect(resolveHiddenPreopenFd(taggedPreopen, test.fileSystem)).toBe(preopenFd);
+      expect(test.host.imports.path_size(taggedPreopen, 64, filePathLength, 1)).toBe(5n);
+      expect(test.host.imports.path_owner(taggedPreopen, 64, filePathLength, 1, 128, 132)).toBe(58);
+      expect(test.host.imports.path_access(taggedPreopen, 64, filePathLength, 4, 0)).toBe(58);
+      expect(
+        test.host.imports.open_tmpfile(taggedPreopen, 160, directoryPathLength, 0, 0o600, 136),
+      ).toBe(58);
+      expect(test.host.imports.fd_link(test.fileFd, taggedPreopen, 96, linkPathLength)).toBe(58);
+
+      const taggedFile = 0x4000_0000 | test.fileFd;
+      expect(test.host.imports.fd_size(taggedFile)).toBe(U64_MAX);
+      expect(test.host.imports.ftruncate(taggedFile, 2n)).toBe(8);
+      expect(test.host.imports.fd_link(taggedFile, taggedPreopen, 96, linkPathLength)).toBe(8);
+      expect(
+        test.host.imports.path_owner(0x8000_0000 | preopenFd, 64, filePathLength, 1, 128, 132),
+      ).toBe(8);
+      expect(
+        test.host.imports.path_owner(0x4000_0000 | 0x3fff_ffff, 64, filePathLength, 1, 128, 132),
+      ).toBe(8);
+
+      const positions: Readonly<Record<string, readonly number[]>> = {
+        fd_link: [1],
+        open_tmpfile: [0],
+        path_access: [0],
+        path_blocks: [0],
+        path_mode: [0],
+        path_owner: [0],
+        path_size: [0],
+      };
+      for (const [name, indexes] of Object.entries(positions)) {
+        const args = Array<number>(6).fill(12);
+        for (const index of indexes) args[index] = taggedPreopen;
+        const expected = [...args];
+        for (const index of indexes) expected[index] = preopenFd;
+        expect(transform(name, args), name).toEqual(expected);
+      }
+      const untouchedFdLinkSource = transform("fd_link", [
+        taggedFile,
+        taggedPreopen,
+        96,
+        linkPathLength,
+      ]);
+      expect(untouchedFdLinkSource).toEqual([taggedFile, preopenFd, 96, linkPathLength]);
+      const ordinaryMutation = [taggedFile, 2n] as const;
+      expect(transform("ftruncate", ordinaryMutation)).toBe(ordinaryMutation);
+    } finally {
+      test.close();
+    }
+  });
+
+  it("keeps the adapter opt-in and exercises translated host_fs operands in WASM", () => {
+    const enabled = fixture(true);
+    const disabled = fixture();
+    const enabledSize = hostFsWasmRunner(
+      enabled.fileSystem,
+      "path_size",
+      ["i32", "i32", "i32", "i32"],
+      ["i64"],
+      true,
+    );
+    const disabledOwner = hostFsWasmRunner(
+      disabled.fileSystem,
+      "path_owner",
+      ["i32", "i32", "i32", "i32", "i32", "i32"],
+      ["i32"],
+      false,
+    );
+
+    try {
+      const enabledPreopen = [...enabled.fileSystem.descriptors.entries()].find(
+        ([, descriptor]) => descriptor.preopen === true,
+      )?.[0];
+      const disabledPreopen = [...disabled.fileSystem.descriptors.entries()].find(
+        ([, descriptor]) => descriptor.preopen === true,
+      )?.[0];
+      if (enabledPreopen === undefined || disabledPreopen === undefined) {
+        throw new Error("Root preopen is missing");
+      }
+
+      const enabledLength = writePath(enabledSize.memory, 64, "work/file");
+      expect(enabledSize.run(0x4000_0000 | enabledPreopen, 64, enabledLength, 1)).toBe(5n);
+      const disabledLength = writePath(disabledOwner.memory, 64, "work/file");
+      expect(
+        disabledOwner.run(0x4000_0000 | disabledPreopen, 64, disabledLength, 1, 128, 132),
+      ).toBe(8);
+    } finally {
+      enabled.close();
+      disabled.close();
+    }
+  });
 });
+
+function hostFsWasmRunner(
+  fileSystem: KernelFileSystem,
+  importName: string,
+  params: readonly ("i32" | "i64")[],
+  results: readonly ("i32" | "i64")[],
+  agentOsPreopens: boolean,
+) {
+  let instance: WebAssembly.Instance | undefined;
+  const host = new AgentOsFileSystemHost({
+    memory: () => {
+      const memory = instance?.exports.memory;
+      if (!(memory instanceof WebAssembly.Memory)) throw new Error("Guest memory is missing");
+      return memory;
+    },
+    fileSystem,
+    agentOsPreopens,
+  });
+  const hostFsImports: Record<string, WebAssembly.ImportValue> = {};
+  if (importName === "path_size") hostFsImports.path_size = host.imports.path_size;
+  else if (importName === "path_owner") hostFsImports.path_owner = host.imports.path_owner;
+  else throw new Error(`Unsupported host_fs test import: ${importName}`);
+  instance = new WebAssembly.Instance(wasmImportReactor("host_fs", importName, params, results), {
+    host_fs: hostFsImports,
+  });
+  const memory = instance.exports.memory as WebAssembly.Memory;
+  const run = instance.exports.run as (...args: Array<number | bigint>) => number | bigint;
+  return { memory, run: (...args: Array<number | bigint>) => run(...args) };
+}
+
+function writePath(memory: WebAssembly.Memory, pointer: number, path: string): number {
+  const bytes = encoder.encode(path);
+  new Uint8Array(memory.buffer, pointer, bytes.byteLength).set(bytes);
+  return bytes.byteLength;
+}

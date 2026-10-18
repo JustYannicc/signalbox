@@ -19,29 +19,32 @@ const FD_ARGUMENTS = Object.freeze({
   path_unlink_file: Object.freeze([0]),
 } satisfies Readonly<Record<string, readonly number[]>>);
 
+// These slots carry libc's resolved path dirfd; fd_link's source fd stays explicit.
+const HOST_FS_DIRECTORY_ARGUMENTS = Object.freeze({
+  fd_link: Object.freeze([1]),
+  open_tmpfile: Object.freeze([0]),
+  path_access: Object.freeze([0]),
+  path_blocks: Object.freeze([0]),
+  path_mode: Object.freeze([0]),
+  path_owner: Object.freeze([0]),
+  path_size: Object.freeze([0]),
+} satisfies Readonly<Record<string, readonly number[]>>);
+
 /** Adapts AgentOS's tagged hidden-preopen operands to this filesystem's real fds. */
 export function createAgentOsWasiArgumentTransform(
   filesystem: Pick<KernelFileSystem, "descriptors">,
 ): (name: string, args: readonly (number | bigint)[]) => readonly (number | bigint)[] {
-  return (name, args) => {
-    const indexes = FD_ARGUMENTS[name as keyof typeof FD_ARGUMENTS];
-    if (indexes === undefined) return args;
-
-    let transformed: (number | bigint)[] | undefined;
-    for (const index of indexes) {
-      const fd = args[index];
-      if (typeof fd !== "number") continue;
-
-      const preopenFd = resolveHiddenPreopenFd(fd, filesystem);
-      if (preopenFd === fd) continue;
-      transformed ??= [...args];
-      transformed[index] = preopenFd;
-    }
-    return transformed ?? args;
-  };
+  return (name, args) => transformArguments(name, args, FD_ARGUMENTS, filesystem);
 }
 
-function resolveHiddenPreopenFd(
+/** Maps only AgentOS host_fs path-directory operands, preserving descriptor operands. */
+export function createAgentOsHostFsArgumentTransform(
+  filesystem: Pick<KernelFileSystem, "descriptors">,
+): (name: string, args: readonly (number | bigint)[]) => readonly (number | bigint)[] {
+  return (name, args) => transformArguments(name, args, HOST_FS_DIRECTORY_ARGUMENTS, filesystem);
+}
+
+export function resolveHiddenPreopenFd(
   fd: number,
   filesystem: Pick<KernelFileSystem, "descriptors">,
 ): number {
@@ -55,4 +58,26 @@ function resolveHiddenPreopenFd(
   } catch {
     return fd;
   }
+}
+
+function transformArguments(
+  name: string,
+  args: readonly (number | bigint)[],
+  argumentIndexes: Readonly<Record<string, readonly number[]>>,
+  filesystem: Pick<KernelFileSystem, "descriptors">,
+): readonly (number | bigint)[] {
+  const indexes = argumentIndexes[name];
+  if (indexes === undefined) return args;
+
+  let transformed: (number | bigint)[] | undefined;
+  for (const index of indexes) {
+    const fd = args[index];
+    if (typeof fd !== "number") continue;
+
+    const preopenFd = resolveHiddenPreopenFd(fd, filesystem);
+    if (preopenFd === fd) continue;
+    transformed ??= [...args];
+    transformed[index] = preopenFd;
+  }
+  return transformed ?? args;
 }

@@ -118,6 +118,7 @@ export function createKernelWasiRuntime(
       const fileSystemHost = new AgentOsFileSystemHost({
         memory: () => lifecycle.memory.memory,
         fileSystem: options.prepared.filesystem,
+        ...(options.agentOsPreopens ? { agentOsPreopens: true } : {}),
       });
       const requested = new Set(
         moduleImports.filter((item) => item.module === namespace).map((item) => item.name),

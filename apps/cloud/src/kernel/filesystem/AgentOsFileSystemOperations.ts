@@ -16,6 +16,8 @@ const UINT64_MAX = (1n << 64n) - 1n;
 export interface AgentOsFileSystemHostOptions {
   readonly memory: () => WebAssembly.Memory;
   readonly fileSystem: KernelFileSystem;
+  /** Enables AgentOS's tagged hidden-preopen operands for path operations. */
+  readonly agentOsPreopens?: boolean;
 }
 
 export interface AgentOsFileSystemImports {
