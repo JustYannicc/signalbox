@@ -1,8 +1,13 @@
 import * as Schema from "effect/Schema";
 
 import { SnapShotSource } from "./chatAttachment.ts";
-import { EnvironmentId, TrimmedNonEmptyString } from "./baseSchemas.ts";
+import {
+  PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
+  PROVIDER_SEND_TURN_MAX_FILE_BYTES,
+} from "./chatAttachment.ts";
+import { EnvironmentId, ProjectId, TrimmedNonEmptyString } from "./baseSchemas.ts";
 import { BrowserProfileId } from "./browserProfile.ts";
+import { FolderId } from "./signalboxFolders.ts";
 import type {
   BrowserImportResult,
   BrowserImportSource,
@@ -13,7 +18,7 @@ import { AdvertisedEndpoint } from "./remoteAccess.ts";
 import { ExecutionEnvironmentDescriptor } from "./environment.ts";
 import { type ClientSettings, type QuitConfirmationMode, SnapShotShortcut } from "./settings.ts";
 import type { EditorId } from "./editor.ts";
-import type { PreviewForwardedShortcut } from "./keybindings.ts";
+import { KeybindingShortcut, type PreviewForwardedShortcut } from "./keybindings.ts";
 
 import type {
   DesktopAppActivationRequest,
@@ -93,6 +98,121 @@ export const DesktopRuntimeArchSchema = Schema.Literals(["arm64", "x64", "other"
 export const DesktopThemeSchema = Schema.Literals(["light", "dark", "system"]);
 export const DesktopUpdateChannelSchema = Schema.Literals(["latest", "nightly"]);
 export const DesktopAppStageLabelSchema = Schema.Literals(["Alpha", "Beta", "Dev", "Nightly"]);
+
+export const DesktopCaptureId = TrimmedNonEmptyString.check(
+  Schema.isMaxLength(64),
+  Schema.isPattern(/^[a-f0-9-]+$/i),
+);
+export type DesktopCaptureId = typeof DesktopCaptureId.Type;
+
+export const DesktopCaptureDestination = Schema.Struct({
+  key: TrimmedNonEmptyString,
+  environmentId: EnvironmentId,
+  folderId: Schema.NullOr(FolderId),
+  ownerProjectId: ProjectId,
+  label: Schema.String,
+  detail: Schema.NullOr(Schema.String),
+  inPlace: Schema.String,
+});
+export type DesktopCaptureDestination = typeof DesktopCaptureDestination.Type;
+
+export const DesktopCaptureFileInput = Schema.Struct({
+  id: DesktopCaptureId,
+  name: TrimmedNonEmptyString.check(Schema.isMaxLength(255)),
+  mimeType: TrimmedNonEmptyString.check(Schema.isMaxLength(255)),
+  sizeBytes: Schema.Int.check(
+    Schema.isBetween({ minimum: 1, maximum: PROVIDER_SEND_TURN_MAX_FILE_BYTES }),
+  ),
+  bytes: Schema.Uint8Array,
+});
+export type DesktopCaptureFileInput = typeof DesktopCaptureFileInput.Type;
+
+export const DesktopCaptureFileSummary = Schema.Struct({
+  id: DesktopCaptureId,
+  name: TrimmedNonEmptyString.check(Schema.isMaxLength(255)),
+  mimeType: TrimmedNonEmptyString.check(Schema.isMaxLength(255)),
+  sizeBytes: Schema.Int.check(Schema.isGreaterThanOrEqualTo(1)),
+});
+export type DesktopCaptureFileSummary = typeof DesktopCaptureFileSummary.Type;
+
+export const DesktopPendingCapture = Schema.Struct({
+  id: DesktopCaptureId,
+  text: Schema.String.check(Schema.isMaxLength(100_000)),
+  files: Schema.Array(DesktopCaptureFileSummary).check(
+    Schema.isMaxLength(PROVIDER_SEND_TURN_MAX_ATTACHMENTS),
+  ),
+  destinationKey: Schema.NullOr(TrimmedNonEmptyString),
+  source: Schema.Literal("quick-capture"),
+  capturedAt: Schema.Number.check(Schema.isFinite(), Schema.isGreaterThanOrEqualTo(0)),
+  open: Schema.Boolean,
+  deliveryError: Schema.NullOr(Schema.String.check(Schema.isMaxLength(2_000))),
+});
+export type DesktopPendingCapture = typeof DesktopPendingCapture.Type;
+
+export const DesktopCaptureSummary = Schema.Struct({
+  ...DesktopPendingCapture.fields,
+  text: Schema.optional(Schema.String.check(Schema.isMaxLength(100_000))),
+});
+export type DesktopCaptureSummary = typeof DesktopCaptureSummary.Type;
+
+export const DesktopCapture = Schema.Struct({
+  ...DesktopPendingCapture.fields,
+  files: Schema.Array(
+    Schema.Struct({
+      ...DesktopCaptureFileSummary.fields,
+      bytes: Schema.Uint8Array,
+    }),
+  ).check(Schema.isMaxLength(PROVIDER_SEND_TURN_MAX_ATTACHMENTS)),
+});
+export type DesktopCapture = typeof DesktopCapture.Type;
+
+export const DesktopCaptureShortcutState = Schema.Struct({
+  enabled: Schema.Boolean,
+  shortcut: KeybindingShortcut,
+  registered: Schema.Boolean,
+  message: Schema.NullOr(Schema.String),
+});
+export type DesktopCaptureShortcutState = typeof DesktopCaptureShortcutState.Type;
+
+export const DesktopCaptureState = Schema.Struct({
+  destinations: Schema.Array(DesktopCaptureDestination).check(Schema.isMaxLength(2_000)),
+  pending: Schema.Array(DesktopCaptureSummary),
+  shortcut: DesktopCaptureShortcutState,
+});
+export type DesktopCaptureState = typeof DesktopCaptureState.Type;
+
+export const DesktopCaptureEvent = Schema.Union([
+  Schema.Struct({ type: Schema.Literal("destinations-changed") }),
+  Schema.Struct({ type: Schema.Literal("queued"), capture: DesktopPendingCapture }),
+  Schema.Struct({ type: Schema.Literal("removed"), id: DesktopCaptureId }),
+  Schema.Struct({
+    type: Schema.Literal("delivery-error"),
+    id: DesktopCaptureId,
+    message: Schema.String.check(Schema.isMaxLength(2_000)),
+  }),
+  Schema.Struct({ type: Schema.Literal("shown") }),
+  Schema.Struct({ type: Schema.Literal("dismiss-requested") }),
+  Schema.Struct({ type: Schema.Literal("shortcut-changed") }),
+]);
+export type DesktopCaptureEvent = typeof DesktopCaptureEvent.Type;
+
+export const DesktopSubmitCapture = Schema.Struct({
+  id: DesktopCaptureId,
+  text: Schema.String.check(Schema.isMaxLength(100_000)),
+  files: Schema.Array(DesktopCaptureFileInput).check(
+    Schema.isMaxLength(PROVIDER_SEND_TURN_MAX_ATTACHMENTS),
+  ),
+  destinationKey: Schema.NullOr(TrimmedNonEmptyString),
+  source: Schema.Literal("quick-capture"),
+  open: Schema.Boolean,
+});
+export type DesktopSubmitCapture = typeof DesktopSubmitCapture.Type;
+
+export const DesktopCaptureShortcutAvailability = Schema.Struct({
+  available: Schema.Boolean,
+  message: Schema.NullOr(Schema.String),
+});
+export type DesktopCaptureShortcutAvailability = typeof DesktopCaptureShortcutAvailability.Type;
 
 export interface DesktopAppBranding {
   baseName: string;
@@ -1075,6 +1195,22 @@ export interface DesktopBridge {
   ) => Promise<void>;
   dismissSnapShotAnimation?: (id: DesktopSnapShotId) => Promise<void>;
   acknowledgeSnapShot?: (id: string) => Promise<void>;
+  getCaptureState?: () => Promise<DesktopCaptureState>;
+  setCaptureDestinations?: (
+    destinations: ReadonlyArray<DesktopCaptureDestination>,
+  ) => Promise<void>;
+  submitCapture?: (capture: DesktopSubmitCapture) => Promise<DesktopPendingCapture>;
+  listPendingCaptures?: () => Promise<ReadonlyArray<DesktopPendingCapture>>;
+  readCapture?: (id: DesktopCaptureId) => Promise<DesktopCapture>;
+  acknowledgeCapture?: (id: DesktopCaptureId) => Promise<void>;
+  reportCaptureFailure?: (id: DesktopCaptureId, message: string) => Promise<void>;
+  hideCapture?: () => Promise<void>;
+  openCaptureMainWindow?: () => Promise<void>;
+  checkCaptureShortcut?: (
+    shortcut: KeybindingShortcut,
+  ) => Promise<DesktopCaptureShortcutAvailability>;
+  setCaptureShortcutSuppressed?: (suppressed: boolean) => Promise<void>;
+  onCaptureEvent?: (listener: (event: DesktopCaptureEvent) => void) => () => void;
   ensureSshEnvironment: (
     target: DesktopSshEnvironmentTarget,
     options?: { issuePairingToken?: boolean },

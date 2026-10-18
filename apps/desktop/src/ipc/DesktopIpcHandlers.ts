@@ -69,6 +69,7 @@ import {
   setSnapShotAnimationDestination,
   setSnapShotShortcutSuppressed,
 } from "./methods/snapShot.ts";
+import * as CaptureIpc from "./methods/capture.ts";
 import * as PreviewIpc from "./methods/preview.ts";
 import * as AppActivationIpc from "./methods/appActivation.ts";
 import * as WebLinksIpc from "./methods/webLinks.ts";
@@ -118,6 +119,17 @@ export const installDesktopIpcHandlers = Effect.fn("desktop.ipc.installHandlers"
   yield* ipc.handle(setSnapShotAnimationDestination);
   yield* ipc.handle(dismissSnapShotAnimation);
   yield* ipc.handle(acknowledgeSnapShot);
+  yield* ipc.handle(CaptureIpc.getCaptureState);
+  yield* ipc.handle(CaptureIpc.setCaptureDestinations);
+  yield* ipc.handle(CaptureIpc.submitCapture);
+  yield* ipc.handle(CaptureIpc.listPendingCaptures);
+  yield* ipc.handle(CaptureIpc.readCapture);
+  yield* ipc.handle(CaptureIpc.acknowledgeCapture);
+  yield* ipc.handle(CaptureIpc.reportCaptureFailure);
+  yield* ipc.handle(CaptureIpc.hideCapture);
+  yield* ipc.handle(CaptureIpc.openCaptureMainWindow);
+  yield* ipc.handle(CaptureIpc.checkCaptureShortcut);
+  yield* ipc.handle(CaptureIpc.setCaptureShortcutSuppressed);
   yield* ipc.handle(setConnectionCatalog);
   yield* ipc.handle(clearConnectionCatalog);
 

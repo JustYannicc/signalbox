@@ -7,6 +7,8 @@ import type {
   DesktopPreviewTabState,
   DesktopSnapShotEvent,
 } from "@t3tools/contracts";
+import { DesktopCaptureEvent as DesktopCaptureEventSchema } from "@t3tools/contracts";
+import * as Schema from "effect/Schema";
 import { exposeClerkBridge } from "@clerk/electron/preload";
 import { contextBridge, ipcRenderer, webFrame, webUtils } from "electron";
 
@@ -29,6 +31,8 @@ function isSnapShotEvent(value: unknown): value is DesktopSnapShotEvent {
     (id === undefined || typeof id === "string")
   );
 }
+
+const isCaptureEvent = Schema.is(DesktopCaptureEventSchema);
 
 exposeClerkBridge({ passkeys: true });
 
@@ -137,6 +141,29 @@ contextBridge.exposeInMainWorld("desktopBridge", {
   dismissSnapShotAnimation: (id) =>
     ipcRenderer.invoke(IpcChannels.DISMISS_SNAP_SHOT_ANIMATION_CHANNEL, id),
   acknowledgeSnapShot: (id) => ipcRenderer.invoke(IpcChannels.ACKNOWLEDGE_SNAP_SHOT_CHANNEL, id),
+  getCaptureState: () => ipcRenderer.invoke(IpcChannels.GET_CAPTURE_STATE_CHANNEL),
+  setCaptureDestinations: (destinations) =>
+    ipcRenderer.invoke(IpcChannels.SET_CAPTURE_DESTINATIONS_CHANNEL, destinations),
+  submitCapture: (capture) => ipcRenderer.invoke(IpcChannels.SUBMIT_CAPTURE_CHANNEL, capture),
+  listPendingCaptures: () => ipcRenderer.invoke(IpcChannels.LIST_PENDING_CAPTURES_CHANNEL),
+  readCapture: (id) => ipcRenderer.invoke(IpcChannels.READ_CAPTURE_CHANNEL, id),
+  acknowledgeCapture: (id) => ipcRenderer.invoke(IpcChannels.ACKNOWLEDGE_CAPTURE_CHANNEL, id),
+  reportCaptureFailure: (id, message) =>
+    ipcRenderer.invoke(IpcChannels.REPORT_CAPTURE_FAILURE_CHANNEL, { id, message }),
+  hideCapture: () => ipcRenderer.invoke(IpcChannels.HIDE_CAPTURE_CHANNEL),
+  openCaptureMainWindow: () => ipcRenderer.invoke(IpcChannels.OPEN_CAPTURE_MAIN_WINDOW_CHANNEL),
+  checkCaptureShortcut: (shortcut) =>
+    ipcRenderer.invoke(IpcChannels.CHECK_CAPTURE_SHORTCUT_CHANNEL, shortcut),
+  setCaptureShortcutSuppressed: (suppressed) =>
+    ipcRenderer.invoke(IpcChannels.SET_CAPTURE_SHORTCUT_SUPPRESSED_CHANNEL, suppressed),
+  onCaptureEvent: (listener) => {
+    const wrappedListener = (_event: Electron.IpcRendererEvent, value: unknown) => {
+      if (!isCaptureEvent(value)) return;
+      listener(value);
+    };
+    ipcRenderer.on(IpcChannels.CAPTURE_EVENT_CHANNEL, wrappedListener);
+    return () => ipcRenderer.removeListener(IpcChannels.CAPTURE_EVENT_CHANNEL, wrappedListener);
+  },
   getConnectionCatalog: () => ipcRenderer.invoke(IpcChannels.GET_CONNECTION_CATALOG_CHANNEL),
   setConnectionCatalog: (catalog) =>
     ipcRenderer.invoke(IpcChannels.SET_CONNECTION_CATALOG_CHANNEL, catalog),

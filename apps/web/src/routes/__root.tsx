@@ -25,6 +25,10 @@ import { FirstRunGate } from "../components/onboarding/FirstRunGate";
 import { ConnectOnboardingDialog } from "../components/cloud/ConnectOnboardingDialog";
 import { RelayClientInstallDialog } from "../components/cloud/RelayClientInstallDialog";
 import { SshPasswordPromptDialog } from "../components/desktop/SshPasswordPromptDialog";
+import {
+  DesktopCaptureCoordinator,
+  DesktopCaptureSignedOut,
+} from "../components/desktop/DesktopCaptureCoordinator";
 import { SnapShotCoordinator } from "../components/desktop/SnapShotCoordinator";
 import { DesktopAppActivationCoordinator } from "../components/desktop/DesktopAppActivationCoordinator";
 import { DesktopWebLinkCoordinator } from "../components/desktop/DesktopWebLinkCoordinator";
@@ -171,6 +175,7 @@ function RootRouteView() {
       <>
         <DocumentTitleSync />
         <BrowserChromeThemeSync key={pathname} />
+        {pathname === "/sign-in" ? <DesktopCaptureSignedOut /> : null}
         <Outlet />
       </>
     );
@@ -256,6 +261,7 @@ function RootRouteView() {
             </>
           ) : null}
           <SnapShotCoordinator />
+          <DesktopCaptureCoordinator />
           <ThreadNotificationCoordinator />
           <ReopenClosedViewShortcut />
           {/* signalbox: automations */}

@@ -6,6 +6,7 @@ import * as Scope from "effect/Scope";
 
 export interface DesktopIpcInvokeEvent {
   readonly sender: { readonly id: number };
+  readonly senderFrame?: { readonly url: string; readonly parent: unknown | null } | null;
 }
 
 export interface DesktopIpcSyncEvent {
