@@ -160,7 +160,7 @@ export function findBunApiUses(moduleName: string, source: string): ReadonlyArra
     if (path.length) uses.push({ ...location(node), path: path.join("."), access });
   };
   const addDynamic = (node: ts.Node, base: BunValue, access: BunApiAccess): void => {
-    if (base.kind === "bun" || base.kind === "member") {
+    if (isBunRelated(base)) {
       uses.push({
         ...location(node),
         basePath: base.kind === "member" ? base.path.join(".") : "",
@@ -228,13 +228,13 @@ export function findBunApiUses(moduleName: string, source: string): ReadonlyArra
     if (ts.isObjectBindingPattern(pattern)) {
       for (const element of pattern.elements) {
         if (element.dotDotDotToken) {
-          if (base?.kind === "bun" || base?.kind === "member") addDynamic(element, base, "read");
+          if (base && isBunRelated(base)) addDynamic(element, base, "read");
           bindUnknown(element.name, scope);
           continue;
         }
         const key = bindingKey(element);
         const next = append(base, key);
-        if (key === undefined && (base?.kind === "bun" || base?.kind === "member")) {
+        if (key === undefined && base && isBunRelated(base)) {
           addDynamic(element.propertyName ?? element, base, "read");
         } else if (
           next?.kind === "member" &&
@@ -243,14 +243,26 @@ export function findBunApiUses(moduleName: string, source: string): ReadonlyArra
         ) {
           addMember(element.propertyName ?? element.name, next.path, "read");
         }
-        bindPattern(element.name, next, scope);
+        bindPattern(
+          element.name,
+          element.initializer ? mergeValues([next, valueOf(element.initializer, scope)]) : next,
+          scope,
+        );
       }
       return;
     }
     for (const element of pattern.elements) {
-      if (!ts.isOmittedExpression(element)) bindUnknown(element.name, scope);
+      if (!ts.isOmittedExpression(element)) {
+        bindPattern(
+          element.name,
+          element.initializer
+            ? mergeValues([undefined, valueOf(element.initializer, scope)])
+            : undefined,
+          scope,
+        );
+      }
     }
-    if (base?.kind === "bun" || base?.kind === "member") addDynamic(pattern, base, "read");
+    if (base && isBunRelated(base)) addDynamic(pattern, base, "read");
   };
 
   const bindAssignmentPattern = (
@@ -258,7 +270,17 @@ export function findBunApiUses(moduleName: string, source: string): ReadonlyArra
     base: BunValue | undefined,
     scope: Scope,
   ): void => {
-    if (ts.isIdentifier(pattern)) {
+    pattern = unwrap(pattern);
+    if (
+      ts.isBinaryExpression(pattern) &&
+      pattern.operatorToken.kind === ts.SyntaxKind.EqualsToken
+    ) {
+      bindAssignmentPattern(
+        pattern.left,
+        mergeValues([base, valueOf(pattern.right, scope)]),
+        scope,
+      );
+    } else if (ts.isIdentifier(pattern)) {
       scope.set(pattern.text, base);
     } else if (ts.isObjectLiteralExpression(pattern)) {
       for (const property of pattern.properties) {
@@ -269,23 +291,25 @@ export function findBunApiUses(moduleName: string, source: string): ReadonlyArra
         } else if (ts.isPropertyAssignment(property)) {
           const key = propertyKey(property.name);
           const next = append(base, key);
-          if (key === undefined && (base?.kind === "bun" || base?.kind === "member")) {
+          if (key === undefined && base && isBunRelated(base)) {
             addDynamic(property.name, base, "read");
           } else if (next?.kind === "member") {
             addMember(property.name, next.path, "read");
           }
           bindAssignmentPattern(property.initializer, next, scope);
-        } else if (
-          ts.isSpreadAssignment(property) &&
-          (base?.kind === "bun" || base?.kind === "member")
-        ) {
+        } else if (ts.isSpreadAssignment(property) && base && isBunRelated(base)) {
           addDynamic(property, base, "read");
         }
       }
     } else if (ts.isArrayLiteralExpression(pattern)) {
-      if (base?.kind === "bun" || base?.kind === "member") addDynamic(pattern, base, "read");
+      if (base && isBunRelated(base)) addDynamic(pattern, base, "read");
       for (const element of pattern.elements) {
-        if (ts.isIdentifier(element)) scope.set(element.text, undefined);
+        if (ts.isOmittedExpression(element)) continue;
+        bindAssignmentPattern(
+          ts.isSpreadElement(element) ? element.expression : element,
+          undefined,
+          scope,
+        );
       }
     }
   };
@@ -383,7 +407,8 @@ export function findBunApiUses(moduleName: string, source: string): ReadonlyArra
       return;
     }
     if (ts.isForStatement(node) || ts.isForInStatement(node) || ts.isForOfStatement(node)) {
-      const loop = scope.fork();
+      const writes = scope.fork();
+      const loop = new Scope(writes);
       if (node.initializer && ts.isVariableDeclarationList(node.initializer)) {
         if (node.initializer.flags & ts.NodeFlags.BlockScoped)
           bindUnknownList(node.initializer, loop);
@@ -397,7 +422,7 @@ export function findBunApiUses(moduleName: string, source: string): ReadonlyArra
       }
       if (ts.isForStatement(node) && node.incrementor) visit(node.incrementor, loop);
       visit(node.statement, loop);
-      scope.merge([loop, scope.fork()]);
+      scope.merge([writes, scope.fork()]);
       return;
     }
     if (ts.isWhileStatement(node) || ts.isDoStatement(node)) {
@@ -629,7 +654,10 @@ function visitAssignmentTarget(
   visit: (node: ts.Node, scope: Scope) => void,
 ): void {
   target = unwrap(target);
-  if (ts.isPropertyAccessExpression(target)) visit(target.expression, scope);
+  if (ts.isBinaryExpression(target) && target.operatorToken.kind === ts.SyntaxKind.EqualsToken) {
+    visitAssignmentTarget(target.left, scope, visit);
+    visit(target.right, scope);
+  } else if (ts.isPropertyAccessExpression(target)) visit(target.expression, scope);
   else if (ts.isElementAccessExpression(target)) {
     visit(target.expression, scope);
     if (target.argumentExpression) visit(target.argumentExpression, scope);

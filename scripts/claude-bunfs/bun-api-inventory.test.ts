@@ -361,6 +361,8 @@ describe("inventoryBunApis", () => {
           "const { [Bun.bindingKey()]: computed } = other;",
           "out[Bun.assignmentTarget()] = value;",
           "({ [Bun.assignmentPatternKey()]: out.value, fallback = Bun.assignmentDefault() } = other);",
+          "[value = Bun.arrayDefault()] = other;",
+          "({ x: value = Bun.renamedDefault() } = other);",
           "const object = { [Bun.computedMethodName()]() {} };",
         ].join("\n"),
       },
@@ -372,15 +374,108 @@ describe("inventoryBunApis", () => {
         accesses: occurrences.map(({ access }) => access),
       })),
       [
+        { path: "arrayDefault", accesses: ["call"] },
         { path: "assignmentDefault", accesses: ["call"] },
         { path: "assignmentPatternKey", accesses: ["call"] },
         { path: "assignmentTarget", accesses: ["call"] },
         { path: "bindingDefault", accesses: ["call"] },
         { path: "bindingKey", accesses: ["call"] },
         { path: "computedMethodName", accesses: ["call"] },
+        { path: "renamedDefault", accesses: ["call"] },
       ],
     );
     assert.deepStrictEqual(inventory.dynamicAccesses, []);
+  });
+
+  it("keeps outer Bun aliases when a loop header shadows them", () => {
+    const inventory = inventoryBunApis([
+      {
+        name: "loop-shadow.js",
+        source: "let api = Bun.hash; for (let api = 0; api < 1; api++) {} api();",
+      },
+    ]);
+
+    assert.deepStrictEqual(
+      inventory.members.map(({ path, occurrences }) => ({
+        path,
+        accesses: occurrences.map(({ access }) => access),
+      })),
+      [{ path: "hash", accesses: ["read", "call"] }],
+    );
+    assert.deepStrictEqual(inventory.dynamicAccesses, []);
+  });
+
+  it("does not invent Bun aliases from loop-local declarations", () => {
+    const inventory = inventoryBunApis([
+      {
+        name: "loop-local.js",
+        source: "let api = {}; for (let api = Bun; false;) {} api.newAPI();",
+      },
+    ]);
+
+    assert.deepStrictEqual(inventory.members, []);
+    assert.deepStrictEqual(inventory.dynamicAccesses, []);
+  });
+
+  it("reports unresolved destructuring from uncertain Bun values", () => {
+    for (const source of [
+      "const {[key]: api} = flag ? Bun : other; api();",
+      "const {...api} = flag ? Bun : other; api.newAPI();",
+      "const [api] = flag ? Bun : other; api();",
+      "let api; ({[key]: api} = flag ? Bun : other); api();",
+      "let api; ({...api} = flag ? Bun : other); api.newAPI();",
+      "let api; [api] = flag ? Bun : other; api();",
+    ]) {
+      const inventory = inventoryBunApis([{ name: "uncertain-pattern.js", source }]);
+
+      assert.deepStrictEqual(inventory.members, [], source);
+      assert.deepStrictEqual(
+        inventory.dynamicAccesses.map(({ basePath, access }) => ({ basePath, access })),
+        [{ basePath: "", access: "read" }],
+        source,
+      );
+    }
+  });
+
+  it("preserves possible Bun member aliases supplied by pattern defaults", () => {
+    for (const source of [
+      "let api; [api = Bun.fs] = []; api.readFile();",
+      "let api; ({value: api = Bun.fs} = other); api.readFile();",
+      "const [api = Bun.fs] = []; api.readFile();",
+      "const {value: api = Bun.fs} = other; api.readFile();",
+    ]) {
+      const inventory = inventoryBunApis([{ name: "default-alias.js", source }]);
+
+      assert.deepStrictEqual(
+        inventory.members.map(({ path }) => path),
+        ["fs"],
+        source,
+      );
+      assert.ok(
+        inventory.dynamicAccesses.some(
+          ({ basePath, access }) => basePath === "" && access === "call",
+        ),
+        source,
+      );
+    }
+  });
+
+  it("clears stale aliases overwritten by non-Bun pattern defaults", () => {
+    for (const pattern of ["[api = 0] = [1]", "({value: api = 0} = other)"]) {
+      const inventory = inventoryBunApis([
+        { name: "overwritten-default.js", source: `let api = Bun.hash; ${pattern}; api();` },
+      ]);
+
+      assert.deepStrictEqual(
+        inventory.members.map(({ path, occurrences }) => ({
+          path,
+          accesses: occurrences.map(({ access }) => access),
+        })),
+        [{ path: "hash", accesses: ["read"] }],
+        pattern,
+      );
+      assert.deepStrictEqual(inventory.dynamicAccesses, [], pattern);
+    }
   });
 
   it("keeps short-circuit Bun aliases as uncertain accesses", () => {
