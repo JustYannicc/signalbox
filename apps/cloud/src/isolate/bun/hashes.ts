@@ -1,4 +1,4 @@
-// Wyhash is adapted from Bun 25ef6936's src/wyhash/lib.rs, declared MIT in its LICENSE.md.
+// Wyhash is adapted from Bun 25ef6936's src/wyhash/lib.rs; MIT, see LICENSE.bun.
 // Bun cites Wang Yi's public-domain wyhash 77e50f2 as the reference for final4.
 // XXH64 is adapted from Bun's scalar xxhash3.cpp and xxHash v0.8.2.
 // Copyright (c) 2012-2021 Yann Collet. BSD-2-Clause; see LICENSE.xxhash.

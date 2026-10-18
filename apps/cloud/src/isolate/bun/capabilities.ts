@@ -12,6 +12,7 @@ export const BUN_API_CAPABILITIES = {
   "YAML.parse": "implemented",
   "YAML.stringify": "implemented",
   "TOML.parse": "implemented",
+  JSONL: "implemented",
   "JSONL.parse": "implemented",
   "JSONL.parseChunk": "implemented",
   stringWidth: "implemented",
