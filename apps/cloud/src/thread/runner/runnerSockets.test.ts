@@ -11,6 +11,7 @@ import {
   MIN_RUNNER_PROTOCOL_VERSION,
   RUNNER_PROTOCOL_VERSION,
 } from "@signalbox/runner-protocol/RunnerProtocol";
+import type { ExecReport } from "@signalbox/runner-protocol/ExecProtocol";
 import { describe, expect, it } from "@effect/vitest";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -40,6 +41,7 @@ import {
   withObject,
 } from "../runnerTesting.ts";
 import { onRunnerMessage, pushRunnerWork, type RunnerSocketHost } from "./runnerSockets.ts";
+import type { RunnerExecSocketHost } from "../ThreadExecForwarder.ts";
 import { unstampedEventId } from "../threadEvents.ts";
 
 /**
@@ -141,6 +143,83 @@ const command = <T extends object>(type: string, fields: T) => ({
 });
 
 describe("runnerSockets", () => {
+  it.effect("routes exec reports only for the current connection that negotiated protocol 8", () =>
+    Effect.gen(function* () {
+      const callbacks: Array<string> = [];
+      let currentSocket: WebSocket;
+      const exec: RunnerExecSocketHost = {
+        connected: (socket, connection) => {
+          callbacks.push(
+            `connected:${connection.generation}:${connection.connection}:${connection.exec}`,
+          );
+          expect(socket).toBe(currentSocket);
+        },
+        report: (_socket, generation, connection, report) => {
+          callbacks.push(`report:${generation}:${connection}:${report.type}`);
+        },
+        disconnected: (_socket, generation, connection) => {
+          callbacks.push(`disconnected:${generation}:${connection}`);
+        },
+        generationEnded: (generation) => callbacks.push(`ended:${generation}`),
+      };
+      const filename = freshDatabase();
+      yield* withObject(filename, (engine, runner) =>
+        Effect.gen(function* () {
+          yield* launch(engine);
+          const plan = yield* runner.reconcile;
+          if (plan.ensure === null) throw new Error("expected a machine request");
+          yield* runner.ensured(plan.ensure.generation);
+          const sockets: Array<WebSocket> = [];
+          const base = yield* hostFor(runner, sockets);
+          const host = { ...base, exec };
+
+          const legacy = fakeSocket();
+          currentSocket = legacy.socket;
+          sockets.push(legacy.socket);
+          yield* say(host, legacy, {
+            ...hello(plan.ensure.generation, plan.ensure.token),
+            protocolVersion: 7,
+            exec: true,
+          });
+          expect(callbacks).toContain(`connected:${plan.ensure.generation}:1:false`);
+
+          const modern = fakeSocket();
+          currentSocket = modern.socket;
+          sockets.push(modern.socket);
+          yield* say(host, modern, {
+            ...hello(plan.ensure.generation, plan.ensure.token),
+            protocolVersion: 8,
+            exec: true,
+          });
+          expect(callbacks).toContain(`connected:${plan.ensure.generation}:2:true`);
+          const report: ExecReport = {
+            type: "ack",
+            generation: plan.ensure.generation,
+            processId: "process-1",
+            operation: "start",
+            requestId: "request-1",
+            applied: true,
+          };
+          yield* say(host, modern, { type: "exec.report", report });
+          expect(callbacks).toContain(`report:${plan.ensure.generation}:2:ack`);
+
+          const replaced = fakeSocket();
+          currentSocket = replaced.socket;
+          sockets.push(replaced.socket);
+          yield* say(host, replaced, {
+            ...hello(plan.ensure.generation, plan.ensure.token),
+            protocolVersion: 8,
+            exec: false,
+          });
+          expect(callbacks).toContain(`disconnected:${plan.ensure.generation}:2`);
+          expect(callbacks).toContain(`connected:${plan.ensure.generation}:3:false`);
+          yield* say(host, modern, { type: "exec.report", report });
+          expect(callbacks.filter((callback) => callback.includes("report:"))).toHaveLength(1);
+        }),
+      );
+    }),
+  );
+
   it.effect("replays committed native answers after socket reconnect and object restart", () =>
     Effect.gen(function* () {
       const filename = freshDatabase();

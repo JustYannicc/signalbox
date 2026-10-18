@@ -1,0 +1,152 @@
+{
+  "reference": "DigiBugCat/codex-wasi-agentos@45eca7daf24bbac603689cc3229693310d184e51",
+  "rules": [
+    {
+      "rule": "path-uri-encode",
+      "path": "codex-rs/utils/path-uri/src/lib.rs",
+      "before": [
+        "            return uri;",
+        "        }",
+        "",
+        "        #[cfg(unix)]",
+        "        let path_bytes = {",
+        "            use std::os::unix::ffi::OsStrExt;",
+        "            path.as_path().as_os_str().as_bytes().to_vec()",
+        "        };",
+        "        #[cfg(windows)]"
+      ],
+      "after": [
+        "            return uri;",
+        "        }",
+        "",
+        "        #[cfg(any(unix, target_os = \"wasi\"))]",
+        "        let path_bytes = {",
+        "            #[cfg(unix)]",
+        "            use std::os::unix::ffi::OsStrExt;",
+        "            #[cfg(target_os = \"wasi\")]",
+        "            use std::os::wasi::ffi::OsStrExt;",
+        "            path.as_path().as_os_str().as_bytes().to_vec()",
+        "        };",
+        "        #[cfg(windows)]"
+      ]
+    },
+    {
+      "rule": "path-uri-decode",
+      "path": "codex-rs/utils/path-uri/src/lib.rs",
+      "before": [
+        "            ));",
+        "        }",
+        "        if let Some(path_bytes) = decode_bad_path_uri(&self.0) {",
+        "            #[cfg(unix)]",
+        "            let decoded_path = {",
+        "                use std::os::unix::ffi::OsStringExt;",
+        "                Some(std::path::PathBuf::from(std::ffi::OsString::from_vec(",
+        "                    path_bytes,",
+        "                )))"
+      ],
+      "after": [
+        "            ));",
+        "        }",
+        "        if let Some(path_bytes) = decode_bad_path_uri(&self.0) {",
+        "            #[cfg(any(unix, target_os = \"wasi\"))]",
+        "            let decoded_path = {",
+        "                #[cfg(unix)]",
+        "                use std::os::unix::ffi::OsStringExt;",
+        "                #[cfg(target_os = \"wasi\")]",
+        "                use std::os::wasi::ffi::OsStringExt;",
+        "                Some(std::path::PathBuf::from(std::ffi::OsString::from_vec(",
+        "                    path_bytes,",
+        "                )))"
+      ]
+    },
+    {
+      "rule": "path-convention",
+      "path": "codex-rs/utils/path-uri/src/lib.rs",
+      "before": [
+        "    }",
+        "",
+        "    /// Returns the path convention used by the current process.",
+        "    #[cfg(unix)]",
+        "    pub const fn native() -> Self {",
+        "        Self::Posix",
+        "    }"
+      ],
+      "after": [
+        "    }",
+        "",
+        "    /// Returns the path convention used by the current process.",
+        "    #[cfg(any(unix, target_os = \"wasi\"))]",
+        "    pub const fn native() -> Self {",
+        "        Self::Posix",
+        "    }"
+      ]
+    },
+    {
+      "rule": "platform-native",
+      "path": "codex-rs/utils/path-uri/src/platform.rs",
+      "before": [
+        "",
+        "    /// Return the platform of the current process.",
+        "    pub const fn native() -> Self {",
+        "        if cfg!(target_os = \"linux\") {",
+        "            Self::Linux",
+        "        } else if cfg!(target_os = \"macos\") {",
+        "            Self::Macos"
+      ],
+      "after": [
+        "",
+        "    /// Return the platform of the current process.",
+        "    pub const fn native() -> Self {",
+        "        // agentOS: the wasm32-wasip1 VM presents a Linux userland.",
+        "        if cfg!(any(target_os = \"linux\", target_os = \"wasi\")) {",
+        "            Self::Linux",
+        "        } else if cfg!(target_os = \"macos\") {",
+        "            Self::Macos"
+      ]
+    },
+    {
+      "rule": "installation-roots",
+      "path": "codex-rs/utils/path-utils/src/system_commands.rs",
+      "before": [
+        "    })",
+        "}",
+        "",
+        "#[cfg(unix)]",
+        "fn installation_roots() -> Vec<PathBuf> {",
+        "    [",
+        "        \"/usr/bin\","
+      ],
+      "after": [
+        "    })",
+        "}",
+        "",
+        "#[cfg(any(unix, target_os = \"wasi\"))]",
+        "fn installation_roots() -> Vec<PathBuf> {",
+        "    [",
+        "        \"/usr/bin\","
+      ]
+    },
+    {
+      "rule": "system-directories",
+      "path": "codex-rs/utils/path-utils/src/system_commands.rs",
+      "before": [
+        "}",
+        "",
+        "fn system_directories() -> Vec<PathBuf> {",
+        "    #[cfg(unix)]",
+        "    let directories = [",
+        "        \"/opt/homebrew/bin\",",
+        "        \"/usr/local/bin\","
+      ],
+      "after": [
+        "}",
+        "",
+        "fn system_directories() -> Vec<PathBuf> {",
+        "    #[cfg(any(unix, target_os = \"wasi\"))]",
+        "    let directories = [",
+        "        \"/opt/homebrew/bin\",",
+        "        \"/usr/local/bin\","
+      ]
+    }
+  ]
+}

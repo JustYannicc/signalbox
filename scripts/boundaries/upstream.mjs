@@ -4,3 +4,11 @@ export function readUpstreamSource(git, ref, head = "HEAD") {
   const files = new Set(git(["ls-tree", "-r", "--name-only", commit]).split("\n"));
   return { commit, files };
 }
+
+// Nimbus stays byte-preserved at its recorded pin; Signalbox owns the adapters outside this root.
+const VENDORED_ROOTS = ["apps/cloud/src/isolate/node/vm/vendor/"];
+
+export function sourceOwnership(upstream, file) {
+  if (VENDORED_ROOTS.some((root) => file.startsWith(root))) return "vendored";
+  return upstream.files.has(file) ? "upstream" : "fork";
+}

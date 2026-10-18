@@ -13,7 +13,11 @@ Apps without exports keep their internal test conventions.
 Cloud modules use [root-file entry points](../apps/cloud/src/README.md).
 Cycles, including type-only cycles, are checked across the workspace graph.
 
-Severity follows the importing file's presence in `git merge-base HEAD upstream/main`:
+Byte-preserved third-party code under the vendored roots declared in
+`scripts/boundaries/upstream.mjs` is excluded from boundary checks. Adapters outside
+those roots follow the normal ownership rules.
+
+For other code, severity follows the importing file's presence in `git merge-base HEAD upstream/main`:
 present means warning, absent means fork-owned and error. Using the merged upstream
 history keeps severity stable when upstream deletes a file before we sync it.
 A modified upstream file still warns, including its `signalbox:` hook lines.

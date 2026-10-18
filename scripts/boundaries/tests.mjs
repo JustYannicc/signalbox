@@ -11,7 +11,7 @@ import { checkBaseline, violationKey } from "./baseline.mjs";
 import { cyclicViolations } from "./cycles.mjs";
 import "./cycle-tests.mjs";
 import "./comparison-tests.mjs";
-import { readUpstreamSource } from "./upstream.mjs";
+import { readUpstreamSource, sourceOwnership } from "./upstream.mjs";
 import { workspaceAliases, workspaceTarget, workspaceViolations } from "./workspaces.mjs";
 
 NodeTest.test(
@@ -223,4 +223,20 @@ NodeTest.test("upstream deletions cannot reclassify files before the candidate m
   } finally {
     NodeFS.rmSync(root, { recursive: true, force: true });
   }
+});
+
+NodeTest.test("vendored ownership stops at its root and leaves adapters fork-owned", () => {
+  const root = "apps/cloud/src/isolate/node/vm/vendor/";
+  const upstream = { files: new Set(["upstream.ts"]) };
+  NodeAssert.equal(
+    sourceOwnership(upstream, `${root}nimbus/core/src/interpreter/runtime.ts`),
+    "vendored",
+  );
+  NodeAssert.equal(sourceOwnership(upstream, `${root}new-upstream-module.ts`), "vendored");
+  NodeAssert.equal(sourceOwnership(upstream, `${root.slice(0, -1)}-adapter/runtime.ts`), "fork");
+  NodeAssert.equal(
+    sourceOwnership(upstream, "apps/cloud/src/isolate/node/vm/runtime-contract.ts"),
+    "fork",
+  );
+  NodeAssert.equal(sourceOwnership(upstream, "upstream.ts"), "upstream");
 });

@@ -18,6 +18,7 @@ interface Fixture {
   mainModule: string;
   mode?: "facet" | "worker";
   allowOutbound?: boolean;
+  allowGeneratedCode?: boolean;
   entrypoint: string;
   modules: Record<string, { path: string; type: "js" | "cjs" | "text" | "wasm" }>;
   paths: string[];
@@ -90,6 +91,7 @@ try {
             id,
             mode: fixture.mode ?? "facet",
             allowOutbound: fixture.allowOutbound === true,
+            allowGeneratedCode: fixture.allowGeneratedCode === true,
             path,
             mainModule: fixture.mainModule,
             entrypoint: fixture.entrypoint,

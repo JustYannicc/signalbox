@@ -16,11 +16,13 @@ import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import type * as Scope from "effect/Scope";
 import * as Semaphore from "effect/Semaphore";
+import * as Stream from "effect/Stream";
 
 import { RunnerConnectionError } from "./RunnerConnectionError.ts";
 import { runnerLog } from "./runnerLog.ts";
 import type { RunnerTurns } from "./RunnerTurns.ts";
 import type { RunnerTerminals } from "./RunnerTerminals.ts";
+import type { RunnerExecHost } from "./RunnerExecHost.ts";
 
 export { RunnerConnectionError };
 
@@ -72,6 +74,8 @@ export interface RunnerSessionInput {
     emit: (report: TerminalReport) => Effect.Effect<void, RunnerConnectionError>,
     watchDrive: RunnerTurns["watchDrive"],
   ) => Effect.Effect<RunnerTerminals, never, Scope.Scope | Crypto.Crypto>;
+  /** Builds the non-PTY process host for this Runner generation. */
+  readonly makeExec?: () => Effect.Effect<RunnerExecHost, never, Scope.Scope>;
 }
 
 export interface RunnerSession {
@@ -136,6 +140,21 @@ export const makeRunnerSession = Effect.fn("makeRunnerSession")(function* (
       ),
     turns.watchDrive,
   );
+  const exec = input.makeExec === undefined ? null : yield* input.makeExec();
+  if (exec !== null) {
+    yield* Stream.runForEach(exec.reports, (report) =>
+      Effect.flatMap(Ref.get(current), (connection) =>
+        connection === null
+          ? Effect.void
+          : connection
+              .send({ type: "exec.report", report })
+              .pipe(Effect.catchCause(() => Effect.void)),
+      ),
+    ).pipe(
+      Effect.catchCause(() => Effect.void),
+      Effect.forkScoped,
+    );
+  }
   const drainAll = Effect.gen(function* () {
     const terminalUnsaved = yield* terminals.drain;
     const turnUnsaved = yield* turns.drain;
@@ -231,6 +250,10 @@ export const makeRunnerSession = Effect.fn("makeRunnerSession")(function* (
         return turns.start(message);
       case "terminal.command":
         return terminals.handleCommand(message);
+      case "exec.command":
+        return exec === null
+          ? Effect.void
+          : Effect.asVoid(Effect.forkIn(exec.handleCommand(message), scope));
       case "preparation.cancel":
         return turns.cancelPreparation(message.runId, message.preparationGeneration);
       case "preparation.handoff":
@@ -289,6 +312,7 @@ export const makeRunnerSession = Effect.fn("makeRunnerSession")(function* (
         workflowStops: turns.stopWorkflow !== undefined,
         runtimeResponses: true,
         pulls: true,
+        exec: exec !== null,
         // A started run missing here went with an earlier process on this machine.
         takenRunIds: yield* turns.taken,
         takenPreparations: yield* turns.preparationsTaken,
