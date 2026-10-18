@@ -63,6 +63,7 @@ const setup = (
           return { _tag: "ok", value: { sequence: 1 } };
         },
         launch: async () => ({ _tag: "not_found" }),
+        commandOutput: async () => null,
         snapshot: async () => ({ _tag: "not_found" }),
         subscribe: async () => null,
         summary: async () => null,
@@ -80,6 +81,11 @@ const setup = (
         browsing: async () => null,
         browse: async () => ({ _tag: "not_found" }),
         browsingRecord: async () => ({ _tag: "not_found" }),
+        pull: async () => ({ _tag: "not_found" }),
+        pullOwner: async () => null,
+        pullTarget: async () => null,
+        reservePublication: async () => ({ _tag: "not_found" }),
+        releasePublication: async () => undefined,
       }),
   });
   const recordedAlarm = Layer.succeed(

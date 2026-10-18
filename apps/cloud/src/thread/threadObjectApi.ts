@@ -14,8 +14,9 @@ import { TurnReports } from "./diagnostics/TurnReports.ts";
 import * as ThreadFeedback from "./ThreadFeedback.ts";
 import type { ThreadObjectApi } from "./ThreadDirectory.ts";
 import * as ThreadEngine from "./ThreadEngine.ts";
+import { encodeBatchLine, jsonLine, type ThreadObjectReply, wire } from "./threadWire.ts";
+import * as ThreadPulls from "./ThreadPulls.ts";
 import * as PullRequestSync from "./pullRequests/PullRequestSync.ts";
-import { encodeBatchLine, type ThreadObjectReply, wire } from "./threadWire.ts";
 
 // Diagnostic records are plain JSON values already (ISO times, no class instances).
 const encodeRecord = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
@@ -35,6 +36,7 @@ export const makeThreadObjectApi = (
       | ThreadEngine.ThreadEngine
       | TurnReports
       | ThreadBrowsing
+      | ThreadPulls.ThreadPulls
       | PullRequestSync.PullRequestSync
       | ThreadFeedback.ThreadFeedback
     >,
@@ -51,6 +53,7 @@ export const makeThreadObjectApi = (
       ThreadEngine.ThreadNotFoundError | ThreadEngine.ThreadCommandRejectedError,
       | ThreadEngine.ThreadEngine
       | ThreadBrowsing
+      | ThreadPulls.ThreadPulls
       | PullRequestSync.PullRequestSync
       | ThreadFeedback.ThreadFeedback
     >,
@@ -74,6 +77,17 @@ export const makeThreadObjectApi = (
   return {
     uploadFeedback: (actor, input) =>
       reply(ThreadFeedback.ThreadFeedback.use((service) => service.upload(actor, input))),
+    commandOutput: (actor, input) =>
+      run(
+        engine.use((service) =>
+          service.commandOutput(actor, wire.commandOutputInput.decode(input)).pipe(
+            Effect.map((stream) =>
+              stream.pipe(Stream.map(jsonLine(wire.commandOutputFrame)), Stream.toReadableStream()),
+            ),
+            Effect.catchTags({ ThreadNotFoundError: () => Effect.succeed(null) }),
+          ),
+        ),
+      ),
     dispatch: async (actor, command, creation) => {
       const result = await reply(
         engine.use((service) => service.dispatch(actor, wire.command.decode(command), creation)),
@@ -221,6 +235,37 @@ export const makeThreadObjectApi = (
           Effect.map(browsing.record(actor), browsingWire.head.encode),
         ),
       ),
+    pullOwner: (actor, driveId) =>
+      run(ThreadPulls.ThreadPulls.use((pulls) => pulls.owner(actor, driveId))),
+    pullTarget: (actor, driveId, operationId, branch) =>
+      run(
+        ThreadPulls.ThreadPulls.use((pulls) => pulls.target(actor, driveId, operationId, branch)),
+      ),
+    reservePublication: (actor, driveId, operationId) =>
+      reply(
+        ThreadPulls.ThreadPulls.use((pulls) =>
+          pulls.reservePublication(actor, driveId, operationId),
+        ),
+      ),
+    releasePublication: (actor, driveId, operationId) =>
+      run(
+        ThreadPulls.ThreadPulls.use((pulls) =>
+          pulls.releasePublication(actor, driveId, operationId),
+        ),
+      ),
+    pull: async (actor, input) => {
+      const decoded = wire.pullInput.decode(input);
+      const begun = await reply(
+        ThreadPulls.ThreadPulls.use((pulls) => pulls.begin(actor, decoded)),
+      );
+      if (begun._tag !== "ok") return begun;
+      await afterChange();
+      return reply(
+        ThreadPulls.ThreadPulls.use((pulls) =>
+          Effect.map(pulls.wait(actor, decoded.operationId), wire.pullResult.encode),
+        ),
+      );
+    },
     summary: (actor) =>
       run(
         engine.use((service) =>

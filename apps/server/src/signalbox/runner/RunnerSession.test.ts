@@ -48,6 +48,7 @@ const makeFakeThread = Effect.gen(function* () {
   const committed = yield* Ref.make<ReadonlyArray<RunnerItem>>([]);
   const acked = yield* Ref.make(0);
   const hellos = yield* Ref.make<ReadonlyArray<number>>([]);
+  const helloPulls = yield* Deferred.make<boolean>();
   /** The runs each `hello` said its process holds. */
   const helloRuns = yield* Ref.make<ReadonlyArray<ReadonlyArray<RunId> | undefined>>([]);
   const dropAfterCommit = yield* Ref.make(false);
@@ -70,6 +71,7 @@ const makeFakeThread = Effect.gen(function* () {
           switch (message.type) {
             case "hello":
               yield* Ref.update(feedbackCapabilities, (all) => [...all, message.feedback === true]);
+              yield* Deferred.succeed(helloPulls, message.pulls === true);
               yield* Ref.update(hellos, (all) => [...all, message.lastAckedSequence]);
               yield* Ref.update(helloRuns, (all) => [...all, message.takenRunIds]);
               yield* reply({
@@ -112,6 +114,7 @@ const makeFakeThread = Effect.gen(function* () {
     committed,
     acked,
     hellos,
+    helloPulls,
     helloRuns,
     dropAfterCommit,
     toCurrent,
@@ -128,18 +131,39 @@ const makeFakeTurns = Effect.gen(function* () {
   /** How often everything was saved for a drain, and what each drain says it couldn't save. */
   const drains = yield* Ref.make(0);
   const unsaved = yield* Ref.make<ReadonlyArray<string>>([]);
+  const pullEntered = yield* Deferred.make<string>();
+  const finishPull = yield* Deferred.make<void>();
   const make = (emit: (item: RunnerItem) => Effect.Effect<void>) =>
     Effect.as(Deferred.succeed(emitRef, emit), {
       start: (next) => Ref.update(startedTurns, (all) => [...all, next.turn.runId]),
       interrupt: () => Effect.void,
       keepOnly: () => Effect.void,
       steer: () => Effect.void,
+      pull: ({ operation }) =>
+        Deferred.succeed(pullEntered, operation.id).pipe(
+          Effect.andThen(Deferred.await(finishPull)),
+          Effect.andThen(
+            emit({
+              kind: "git.pull.result",
+              result: {
+                id: operation.id,
+                target: operation.target,
+                head: operation.expectedThread,
+                wip: operation.expectedWip,
+                outcome: "up_to_date",
+                reason: null,
+                hasWorkingTreeChanges: false,
+              },
+            }),
+          ),
+          Effect.asVoid,
+        ),
       drain: Ref.update(drains, (count) => count + 1).pipe(Effect.andThen(Ref.get(unsaved))),
       taken: Ref.get(startedTurns),
     } satisfies RunnerTurns);
   const emit = (reported: RunnerItem) =>
     Effect.flatMap(Deferred.await(emitRef), (send) => send(reported));
-  return { make, emit, startedTurns, drains, unsaved };
+  return { make, emit, startedTurns, drains, unsaved, pullEntered, finishPull };
 });
 
 /** Lets the session's fibers run until `done` holds, advancing the test clock past reconnect waits. */
@@ -227,6 +251,56 @@ describe("RunnerSession", () => {
       }),
     ),
   );
+  it.effect("keeps receiving while a selected pull is running", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const thread = yield* makeFakeThread;
+        const turns = yield* makeFakeTurns;
+        yield* sessionOf(thread, turns);
+        expect(yield* Deferred.await(thread.helloPulls)).toBe(true);
+        yield* settle(
+          Effect.map(Ref.get(thread.hellos), (all) => all.length === 1),
+          "hello",
+        );
+        const operation = {
+          id: "pull-1",
+          target: "a".repeat(40),
+          expectedThread: "b".repeat(40),
+          expectedWip: null,
+          revision: null,
+          branch: "threads/thread-1",
+        } as const;
+        yield* thread.toCurrent({
+          type: "git.pull",
+          operation,
+          drive: { driveId: "drive-1", token: "drive-token", remoteToken: "remote-token" },
+        });
+        expect(yield* Deferred.await(turns.pullEntered)).toBe("pull-1");
+
+        // A long fetch must not block the next command on this socket.
+        yield* thread.toCurrent({ type: "drain", id: 9 });
+        yield* settle(
+          Effect.map(Ref.get(thread.committed), (all) => all.length === 1),
+          "drain while pull runs",
+        );
+        expect((yield* Ref.get(thread.committed))[0]).toMatchObject({
+          kind: "machine.drained",
+          id: 9,
+        });
+
+        yield* Deferred.succeed(turns.finishPull, undefined);
+        yield* settle(
+          Effect.map(Ref.get(thread.committed), (all) => all.length === 2),
+          "pull result",
+        );
+        expect((yield* Ref.get(thread.committed))[1]).toMatchObject({
+          kind: "git.pull.result",
+          result: { id: "pull-1", outcome: "up_to_date" },
+        });
+      }),
+    ),
+  );
+
   it.effect("answers a drain once it saved everything, saying what it couldn't", () =>
     Effect.scoped(
       Effect.gen(function* () {

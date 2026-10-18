@@ -1,6 +1,6 @@
 import {
   AuthDiagnosticsReadScope,
-  type AuthSessionState,
+  environmentSupports,
   sessionGrantsScope,
   type SessionGrantInput,
 } from "@t3tools/contracts";
@@ -11,6 +11,7 @@ export function resolveUsageAccess(input: {
   readonly connectionPhase: EnvironmentConnectionPhase;
   readonly session: SessionGrantInput | null;
   readonly hasSessionError: boolean;
+  readonly capabilities?: { readonly usageHistory?: boolean } | null | undefined;
 }) {
   if (input.hasSessionError) {
     return {
@@ -33,6 +34,13 @@ export function resolveUsageAccess(input: {
     };
   }
   const canReadDiagnostics = sessionGrantsScope(input.session, AuthDiagnosticsReadScope);
+  if (canReadDiagnostics && !environmentSupports(input.capabilities, "usageHistory")) {
+    return {
+      canReadDiagnostics: false,
+      isPending: false,
+      error: "Cost and token history is not available yet. Account limits are available in Limits.",
+    };
+  }
   return {
     canReadDiagnostics,
     isPending: false,

@@ -5,11 +5,14 @@ import type { FeedbackOutcome } from "@signalbox/runner-protocol/FeedbackProtoco
 import type { ProviderUploadFeedbackInput } from "@t3tools/contracts";
 import type {
   OrchestrationV2Command,
+  OrchestrationV2CommandOutputFrame,
+  OrchestrationV2SubscribeCommandOutputInput,
   OrchestrationV2SubscribeThreadInput,
   OrchestrationV2ThreadLaunchResult,
   OrchestrationV2ThreadStreamItem,
   ThreadId,
 } from "@t3tools/contracts";
+import type { PullResult } from "@signalbox/runner-protocol/PullProtocol";
 import type {
   AgentBrowserInput,
   AgentBrowserStep,
@@ -33,6 +36,7 @@ import type {
 import type { BrowsingDispatched } from "./browsing/ThreadBrowsing.ts";
 import { browsingWire } from "./browsing/browsingWire.ts";
 import { ThreadObjectError } from "./ThreadAccess.ts";
+import type { PullInput } from "./threadWire.ts";
 import type { PreviewLinkResult } from "./preview/PreviewGateway.ts";
 import type { DriveAuthorization, RemoteAuthorization } from "./ThreadAuthorization.ts";
 import {
@@ -101,6 +105,10 @@ export interface ThreadObjectApi {
   readonly snapshot: (actor: Actor) => Promise<ThreadObjectReply<unknown>>;
   /** Newline-delimited JSON batches, or null when the actor cannot see the thread. */
   readonly subscribe: (actor: Actor, input: unknown) => Promise<ReadableStream<Uint8Array> | null>;
+  readonly commandOutput: (
+    actor: Actor,
+    input: unknown,
+  ) => Promise<ReadableStream<Uint8Array> | null>;
   /** The thread's current summary, when `actor` owns it. */
   readonly summary: (actor: Actor) => Promise<unknown>;
   /** Reads a linked pull request now, when `actor` can see the thread and link. */
@@ -164,6 +172,30 @@ export interface ThreadObjectApi {
   ) => Promise<ThreadObjectReply<unknown>>;
   /** The browsing record now, in its JSON encoding. */
   readonly browsingRecord: (actor: Actor) => Promise<ThreadObjectReply<unknown>>;
+  /** Whether the actor can pull this thread, and the persisted thread owner's drive. */
+  readonly pullOwner: (
+    actor: Actor,
+    driveId: string,
+  ) => Promise<{ readonly userId: string; readonly driveId: string } | null>;
+  /** Selects and applies one remote head, replaying the same operation id after a lost response. */
+  readonly pull: (actor: Actor, input: unknown) => Promise<ThreadObjectReply<unknown>>;
+  /** The remote head already recorded for this operation, even after it completes. */
+  readonly pullTarget: (
+    actor: Actor,
+    driveId: string,
+    operationId: string,
+    branch: string,
+  ) => Promise<string | null>;
+  readonly reservePublication: (
+    actor: Actor,
+    driveId: string,
+    operationId: string,
+  ) => Promise<ThreadObjectReply<void>>;
+  readonly releasePublication: (
+    actor: Actor,
+    driveId: string,
+    operationId: string,
+  ) => Promise<void>;
 }
 
 type CommandFailure = ThreadNotFoundError | ThreadCommandRejectedError | ThreadObjectError;
@@ -195,6 +227,10 @@ export interface ThreadHandle {
     ThreadNotFoundError | ThreadObjectError
   >;
   readonly summary: (actor: Actor) => Effect.Effect<ThreadSummary | null, ThreadObjectError>;
+  readonly commandOutput: (
+    actor: Actor,
+    input: OrchestrationV2SubscribeCommandOutputInput,
+  ) => Stream.Stream<OrchestrationV2CommandOutputFrame, ThreadNotFoundError | ThreadObjectError>;
   /** Asks GitHub to refresh one current link; invisible threads and missing links are not found. */
   readonly requestPullRequestSync: (
     actor: Actor,
@@ -272,6 +308,36 @@ export interface ThreadHandle {
     { readonly sequence: number; readonly record: BrowsingRecord },
     ThreadNotFoundError | ThreadObjectError
   >;
+  readonly pullOwner: (
+    actor: Actor,
+    driveId: string,
+  ) => Effect.Effect<
+    { readonly userId: string; readonly driveId: string } | null,
+    ThreadObjectError
+  >;
+  readonly pullTarget: (
+    actor: Actor,
+    driveId: string,
+    operationId: string,
+    branch: string,
+  ) => Effect.Effect<string | null, ThreadObjectError>;
+  readonly reservePublication: (
+    actor: Actor,
+    driveId: string,
+    operationId: string,
+  ) => Effect.Effect<void, ThreadNotFoundError | ThreadCommandRejectedError | ThreadObjectError>;
+  readonly releasePublication: (
+    actor: Actor,
+    driveId: string,
+    operationId: string,
+  ) => Effect.Effect<void, ThreadObjectError>;
+  readonly pull: (
+    actor: Actor,
+    input: PullInput,
+  ) => Effect.Effect<
+    PullResult,
+    ThreadNotFoundError | ThreadCommandRejectedError | ThreadObjectError
+  >;
 }
 
 export class ThreadDirectory extends Context.Service<
@@ -339,6 +405,12 @@ export function handleFor(api: ThreadObjectApi): ThreadHandle {
       call("uploadFeedback", () => api.uploadFeedback(actor, input)).pipe(
         Effect.flatMap(fromReply),
         Effect.catchTags({ ThreadCommandRejectedError: (error) => Effect.die(error) }),
+      ),
+    commandOutput: (actor, input) =>
+      lines(
+        "commandOutput",
+        () => api.commandOutput(actor, wire.commandOutputInput.encode(input)),
+        wire.commandOutputFrame.decode,
       ),
     dispatch: (actor, command, creation) =>
       call("dispatch", () => api.dispatch(actor, wire.command.encode(command), creation)).pipe(
@@ -439,6 +511,20 @@ export function handleFor(api: ThreadObjectApi): ThreadHandle {
         Effect.flatMap((value) =>
           decodeIn("browsingRecord", () => browsingWire.head.decode(value)),
         ),
+      ),
+    pullOwner: (actor, driveId) => call("pullOwner", () => api.pullOwner(actor, driveId)),
+    pullTarget: (actor, driveId, operationId, branch) =>
+      call("pullTarget", () => api.pullTarget(actor, driveId, operationId, branch)),
+    reservePublication: (actor, driveId, operationId) =>
+      call("reservePublication", () => api.reservePublication(actor, driveId, operationId)).pipe(
+        Effect.flatMap(fromReply),
+      ),
+    releasePublication: (actor, driveId, operationId) =>
+      call("releasePublication", () => api.releasePublication(actor, driveId, operationId)),
+    pull: (actor, input) =>
+      call("pull", () => api.pull(actor, wire.pullInput.encode(input))).pipe(
+        Effect.flatMap(fromReply),
+        Effect.flatMap((value) => decodeIn("pull", () => wire.pullResult.decode(value))),
       ),
     summary: (actor) =>
       call("summary", () => api.summary(actor)).pipe(

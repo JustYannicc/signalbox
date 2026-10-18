@@ -20,7 +20,10 @@ import * as FetchHttpClient from "effect/http/FetchHttpClient";
 
 import { canWrite, myDriveId } from "../drive/driveAccess.ts";
 import type { ModelGatewayRecord } from "../models/ModelRecords.ts";
-import type { DriveObjectNamespace } from "../drive/DriveDirectory.ts";
+import {
+  type DriveObjectNamespace,
+  layerDurableObjects as layerDriveDirectory,
+} from "../drive/DriveDirectory.ts";
 import { type AttachmentObjects, attachmentStorage } from "../attachments/attachmentObjects.ts";
 import {
   isRunnerAttachmentsPath,
@@ -40,7 +43,8 @@ import * as CloudAnalytics from "./diagnostics/CloudAnalytics.ts";
 import * as DiagnosticsStore from "./diagnostics/DiagnosticsStore.ts";
 import * as TurnDiagnostics from "./diagnostics/TurnDiagnostics.ts";
 import * as TurnReports from "./diagnostics/TurnReports.ts";
-import { layerFromEnv as layerMachineBackend } from "./runner/machineBackends.ts";
+import { layerFromEnv as layerMachineBackend, machineSettings } from "./runner/machineBackends.ts";
+import * as BoatRecoveryControl from "./RecoveryDrillBoat.ts";
 import * as MachineBackend from "./runner/MachineBackend.ts";
 import {
   acceptRunnerSocket,
@@ -61,20 +65,20 @@ import { deliverPendingSummary } from "./summaryOutbox.ts";
 import { THREAD_OBJECT_JURISDICTION, type ThreadObjectApi } from "./ThreadDirectory.ts";
 import * as ThreadBrowsing from "./browsing/ThreadBrowsing.ts";
 import * as ThreadEngine from "./ThreadEngine.ts";
+import * as RunnerLiveness from "./RunnerLiveness.ts";
 import { makeThreadObjectApi } from "./threadObjectApi.ts";
 import { type BrowserReply, wire } from "./threadWire.ts";
 import * as ThreadStore from "./ThreadStore.ts";
+import * as ThreadPulls from "./ThreadPulls.ts";
+import * as PullState from "./PullState.ts";
 import * as TurnModels from "./TurnModels.ts";
 import { scriptedProviderEnabled } from "./scriptedProvider.ts";
 import { noteView } from "./statusLine/statusNotePolicy.ts";
 import * as PullRequestSync from "./pullRequests/PullRequestSync.ts";
 import * as StatusNoteModel from "./statusLine/StatusNoteModel.ts";
 import * as ThreadStatusNotes from "./statusLine/ThreadStatusNotes.ts";
-import {
-  makeRecoveryDrill,
-  type RecoveryDrillEnv,
-  type RecoveryDrillState,
-} from "./RecoveryDrill.ts";
+import { makeRecoveryDrill } from "./RecoveryDrill.ts";
+import type { RecoveryDrillEnv, RecoveryDrillState } from "./RecoveryDrillProtocol.ts";
 import { withRecoveryInspection } from "./RecoveryEvidence.ts";
 
 /**
@@ -194,8 +198,9 @@ const makeRuntime = (
   machine: MachineBackend.MachineHost,
   threadId: () => ThreadId,
   feedback: FeedbackSockets,
-) =>
-  ManagedRuntime.make(
+) => {
+  const settings = machineSettings(env);
+  return ManagedRuntime.make(
     ThreadRunner.layer.pipe(
       Layer.provide(
         Layer.succeed(ThreadRunner.PreviewHold, {
@@ -204,6 +209,12 @@ const makeRuntime = (
         }),
       ),
       Layer.provideMerge(Layer.mergeAll(layerThreadDrives(env), layerThreadSecrets)),
+      Layer.provideMerge(ThreadPulls.layerReports.pipe(Layer.provideMerge(ThreadPulls.layer))),
+      Layer.provideMerge(
+        env.DRIVES === undefined
+          ? Layer.empty
+          : layerDriveDirectory(env.DRIVES, { localWorkerd: env.LOCAL_WORKERD === "1" }),
+      ),
       // Its linked pull requests' sync reads GitHub only through the API, with the owner's token.
       Layer.provideMerge(
         PullRequestSync.layer.pipe(Layer.provide(GitHub.layer(null, GitHub.gitHubEndpoints(env)))),
@@ -236,11 +247,13 @@ const makeRuntime = (
       Layer.provideMerge(Layer.mergeAll(TurnDiagnostics.layer, TurnReports.layer)),
       Layer.provideMerge(CloudAnalytics.layerFromEnv(env)),
       Layer.provideMerge(layerMachineBackend(env, machine)),
+      Layer.provideMerge(BoatRecoveryControl.layer(settings?.kind === "boat" ? settings : null)),
       Layer.provideMerge(DiagnosticsStore.layer),
       Layer.provideMerge(ThreadStore.layerMachineRecords),
       Layer.provideMerge(
         Layer.mergeAll(
           ThreadStore.layer,
+          PullState.layer,
           SessionRows.layer,
           PreviewState.layer,
           BrowserTrail.layer(attachmentStorage(env), threadId),
@@ -259,6 +272,7 @@ const makeRuntime = (
       Layer.provideMerge(Layer.mergeAll(Evlog.layer, Evlog.layerWaitUntil({ waitUntil }))),
     ),
   );
+};
 
 export class ThreadObject extends DurableObject<ThreadObjectEnv> implements ThreadObjectApi {
   private readonly runtime: ReturnType<typeof makeRuntime>;
@@ -319,6 +333,7 @@ export class ThreadObject extends DurableObject<ThreadObjectEnv> implements Thre
     this.runnerHost = {
       ctx,
       feedbackResult: (socket, response) => feedback.receive(socket, response),
+      now: () => this.now(),
       run: (effect) => this.runtime.runPromise(effect),
       holdsTurn: () =>
         this.runtime.runPromise(PullRequestSync.PullRequestSync.use((sync) => sync.holdsTurn)),
@@ -352,6 +367,17 @@ export class ThreadObject extends DurableObject<ThreadObjectEnv> implements Thre
             ),
           ),
         ),
+      boatControl: async () => {
+        const control = await this.runtime.runPromise(
+          Effect.map(BoatRecoveryControl.BoatRecoveryControl, (service) => service),
+        );
+        return control === null
+          ? null
+          : {
+              inspect: (machineId) => this.runtime.runPromise(control.inspect(machineId)),
+              remove: (machineId) => this.runtime.runPromise(control.remove(machineId)),
+            };
+      },
       rearm: async () => {
         const deferred = this.deferredAlarmAt;
         this.deferredAlarmAt = null;
@@ -381,8 +407,32 @@ export class ThreadObject extends DurableObject<ThreadObjectEnv> implements Thre
     return this.api.snapshot(...args);
   }
 
+  pull(...args: Parameters<ThreadObjectApi["pull"]>) {
+    return this.api.pull(...args);
+  }
+
+  pullOwner(...args: Parameters<ThreadObjectApi["pullOwner"]>) {
+    return this.api.pullOwner(...args);
+  }
+
+  pullTarget(...args: Parameters<ThreadObjectApi["pullTarget"]>) {
+    return this.api.pullTarget(...args);
+  }
+
+  reservePublication(...args: Parameters<ThreadObjectApi["reservePublication"]>) {
+    return this.api.reservePublication(...args);
+  }
+
+  releasePublication(...args: Parameters<ThreadObjectApi["releasePublication"]>) {
+    return this.api.releasePublication(...args);
+  }
+
   subscribe(...args: Parameters<ThreadObjectApi["subscribe"]>) {
     return this.api.subscribe(...args);
+  }
+
+  commandOutput(...args: Parameters<ThreadObjectApi["commandOutput"]>) {
+    return this.api.commandOutput(...args);
   }
 
   summary(...args: Parameters<ThreadObjectApi["summary"]>) {
@@ -642,6 +692,8 @@ export class ThreadObject extends DurableObject<ThreadObjectEnv> implements Thre
    * just read it.
    */
   private async armAlarm(work?: ThreadRunner.RunnerWork) {
+    const now = await this.now();
+    const runnerWakeAt = await this.tendRunnerLiveness(now);
     const hasWork = await this.runtime.runPromise(
       Effect.gen(function* () {
         const engine = yield* ThreadEngine.ThreadEngine;
@@ -669,13 +721,13 @@ export class ThreadObject extends DurableObject<ThreadObjectEnv> implements Thre
         );
       }),
     );
-    if (hasWork) return this.setAlarmNoLaterThan(await this.now());
+    if (hasWork) return this.setAlarmNoLaterThan(now);
+    if (runnerWakeAt !== null) await this.setAlarmNoLaterThan(runnerWakeAt);
     // An alarm that fires now sets the next pull request read and share end itself.
     const pullRequestsAt = await this.runtime.runPromise(
       PullRequestSync.PullRequestSync.use((sync) => sync.dueAt),
     );
     if (pullRequestsAt !== null) await this.setAlarmNoLaterThan(pullRequestsAt);
-    const now = await this.now();
     const statusNoteAt = await this.runtime.runPromise(
       ThreadStatusNotes.ThreadStatusNotes.use((notes) => notes.dueAt(now)),
     );
@@ -919,8 +971,17 @@ export class ThreadObject extends DurableObject<ThreadObjectEnv> implements Thre
     return this.runtime.runPromise(Evlog.provideLogger(effect, log));
   }
 
+  private tendRunnerLiveness(now: number) {
+    return RunnerLiveness.tend(this.runnerHost, now, now + retryDelay(1), async (cause) => {
+      await this.runtime
+        .runPromise(Effect.logError("Runner liveness check failed; retrying", String(cause)))
+        .catch(() => undefined);
+    });
+  }
+
   private async tick(log: Evlog.UnitLog) {
     const now = await this.now();
+    const runnerWakeAt = await this.tendRunnerLiveness(now);
     const step = await this.run(
       log,
       ThreadEngine.ThreadEngine.use((engine) => engine.step).pipe(
@@ -1012,6 +1073,7 @@ export class ThreadObject extends DurableObject<ThreadObjectEnv> implements Thre
       summaryAt,
       eventsAt,
       machineWakeAt,
+      runnerWakeAt,
       diagnosticsWakeAt,
       pullRequestsWakeAt,
       sharingWakeAt,

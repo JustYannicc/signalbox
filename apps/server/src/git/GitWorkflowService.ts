@@ -347,14 +347,14 @@ export const make = Effect.gen(function* () {
             .execute({
               operation: "GitWorkflowService.currentBranch",
               cwd,
-              args: ["symbolic-ref", "--quiet", "--short", "HEAD"],
+              args: ["symbolic-ref", "--quiet", "HEAD"],
               allowNonZeroExit: true,
               timeoutMs: 5_000,
             })
             .pipe(
               Effect.flatMap((result) => {
                 if (result.exitCode === 0) {
-                  const branch = result.stdout.trim();
+                  const branch = result.stdout.trim().replace(/^refs\/heads\//, "");
                   return Effect.succeed(branch.length > 0 ? branch : null);
                 }
                 if (result.exitCode === 1) return Effect.succeed(null);
@@ -363,7 +363,7 @@ export const make = Effect.gen(function* () {
                     operation: "GitWorkflowService.currentBranch",
                     command: "git symbolic-ref",
                     cwd,
-                    argumentCount: 4,
+                    argumentCount: 3,
                     ...(result.exitCode === null ? {} : { exitCode: result.exitCode }),
                     stdoutLength: result.stdout.length,
                     stderrLength: result.stderr.length,

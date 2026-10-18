@@ -13,8 +13,10 @@ import {
   type OrchestrationV2ProviderGoal,
   type ServerProviderModel,
   type OrchestrationV2ExecutionNode,
+  type OrchestrationV2Run,
   type OrchestrationV2ThreadProjection,
   orchestrationV2RunWorkStartedAt,
+  type RunId,
   type ThreadId,
 } from "@t3tools/contracts";
 import {
@@ -57,6 +59,9 @@ function summarizeThreadRun(
     status: run.status,
     requestedAt: DateTime.formatIso(run.requestedAt),
     startedAt: run.startedAt === null ? null : DateTime.formatIso(run.startedAt),
+    ...(run.workStartedAt === undefined
+      ? {}
+      : { workStartedAt: DateTime.formatIso(run.workStartedAt) }),
     completedAt: run.completedAt === null ? null : DateTime.formatIso(run.completedAt),
     assistantMessageId:
       projection.messages.findLast(
@@ -99,6 +104,102 @@ export function deriveThreadActivityRun(
     latestMatchingRun(projection, (candidate) => ACTIVITY_RUN_STATUSES.has(candidate.status)) ??
     presentedLatestRun(projection);
   return run === null ? null : summarizeThreadRun(projection, run);
+}
+
+export interface RunContinuationSummary {
+  readonly rootRunId: RunId;
+  readonly terminalRunId: RunId;
+  readonly status: OrchestrationV2ThreadProjection["runs"][number]["status"];
+  readonly startedAt: string;
+  readonly completedAt: string | null;
+}
+
+type RunContinuationInput = Pick<
+  OrchestrationV2Run,
+  | "id"
+  | "ordinal"
+  | "restartContinuationOfRunId"
+  | "status"
+  | "requestedAt"
+  | "startedAt"
+  | "workStartedAt"
+  | "completedAt"
+>;
+
+/**
+ * Maps physical runs to the logical response they continue. Missing parents
+ * and cycles stay isolated; a provider thread ID alone never joins runs.
+ */
+export function deriveRunContinuations(
+  runs: ReadonlyArray<RunContinuationInput>,
+): ReadonlyMap<RunId, RunContinuationSummary> {
+  const byId = new Map(runs.map((run) => [run.id, run]));
+  const rootByRunId = new Map<RunId, RunId | null>();
+
+  for (const run of runs) {
+    if (rootByRunId.has(run.id)) continue;
+    const path: Array<(typeof runs)[number]> = [];
+    const seen = new Set<RunId>();
+    let cursor = run;
+    let rootRunId: RunId | null;
+    while (true) {
+      if (rootByRunId.has(cursor.id)) {
+        rootRunId = rootByRunId.get(cursor.id) ?? null;
+        break;
+      }
+      if (seen.has(cursor.id)) {
+        rootRunId = null;
+        break;
+      }
+      seen.add(cursor.id);
+      path.push(cursor);
+
+      const parentId = cursor.restartContinuationOfRunId;
+      if (parentId === undefined) {
+        rootRunId = cursor.id;
+        break;
+      }
+      const parent = byId.get(parentId);
+      if (parent === undefined) {
+        rootRunId = cursor.id;
+        break;
+      }
+      cursor = parent;
+    }
+    for (const member of path) rootByRunId.set(member.id, rootRunId);
+  }
+
+  const terminalByRoot = new Map<RunId, (typeof runs)[number]>();
+  for (const run of runs) {
+    const rootRunId = rootByRunId.get(run.id);
+    if (rootRunId === undefined || rootRunId === null) continue;
+    const current = terminalByRoot.get(rootRunId);
+    if (current === undefined || run.ordinal > current.ordinal) terminalByRoot.set(rootRunId, run);
+  }
+
+  return new Map(
+    runs.flatMap((run) => {
+      const rootRunId = rootByRunId.get(run.id);
+      const terminal =
+        rootRunId === undefined || rootRunId === null
+          ? run
+          : (terminalByRoot.get(rootRunId) ?? run);
+      if (rootRunId === undefined) return [];
+      return [
+        [
+          run.id,
+          {
+            rootRunId: rootRunId ?? run.id,
+            terminalRunId: terminal.id,
+            status: terminal.status,
+            startedAt: DateTime.formatIso(orchestrationV2RunWorkStartedAt(terminal)),
+            completedAt:
+              terminal.completedAt === null ? null : DateTime.formatIso(terminal.completedAt),
+          },
+        ] as const,
+      ];
+    }),
+  );
 }
 
 /**

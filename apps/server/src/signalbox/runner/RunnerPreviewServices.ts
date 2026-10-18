@@ -60,6 +60,8 @@ const within = (path: Path.Path, root: string, child: string) => {
 export const makePreviewServices = Effect.fn("makePreviewServices")(function* (input: {
   /** The thread's checked-out drive. */
   readonly cwd: string;
+  /** The filtered Runner tool environment, read on each start so current folder secrets apply. */
+  readonly environment: () => NodeJS.ProcessEnv;
 }) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -164,6 +166,7 @@ export const makePreviewServices = Effect.fn("makePreviewServices")(function* (i
         spawner.spawn(
           ChildProcess.make(service.command, [], {
             cwd,
+            env: { ...input.environment(), PWD: cwd },
             shell: true,
             stdin: "ignore",
             stdout: "ignore",
