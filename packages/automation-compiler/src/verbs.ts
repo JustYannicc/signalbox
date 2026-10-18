@@ -291,21 +291,24 @@ export function readStepDetail(
       const value = verb === "remember" && third ? { value: detailValue(source, third) } : {};
       return { detail: { key: detailValue(source, second), ...value } };
     }
-    case "start":
-      if (!second || readString(second) === null) {
+    case "start": {
+      const name = readString(call.arguments[0]);
+      if (!name) {
         source.error(
           call,
-          "w.start needs the automation's name as a string.",
-          'w.start("Kick off the weekly report", "Weekly report", { week })',
+          "w.start needs a literal automation name.",
+          'w.start("Weekly report", { week }, { wait: false })',
         );
         return null;
       }
       return {
         detail: {
-          automation: detailValue(source, second),
-          ...(third ? { input: detailValue(source, third) } : {}),
+          automation: { literal: name },
+          ...(second ? { input: detailValue(source, second) } : {}),
+          ...optionsDetail(source, third).detail,
         },
       };
+    }
   }
 }
 

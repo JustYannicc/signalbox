@@ -865,7 +865,9 @@ describe("runnerSockets", () => {
           message: { text: "Again" },
           providerThread: { nativeThreadRef: { nativeId: "claude-session-1" } },
         });
-        expect(start.turn.freshSessionText).toContain("User:\nHi\n\nAssistant:\nHello!\n\n");
+        expect(start.turn.freshSessionText).toContain("[Historical user;");
+        expect(start.turn.freshSessionText).toContain("]\nHi\n\n[Historical assistant;");
+        expect(start.turn.freshSessionText).toContain("]\nHello!\n\n");
         expect(start.turn.freshSessionText?.endsWith("User message:\nAgain")).toBe(true);
       }),
     ),

@@ -14,10 +14,16 @@ import * as DateTime from "effect/DateTime";
 import * as Exit from "effect/Exit";
 import * as Schema from "effect/Schema";
 
-import { type DecisionContext, turnItemEvent, unstampedEventId } from "../threadEvents.ts";
+import {
+  type DecisionContext,
+  itemOrdinal,
+  turnItemEvent,
+  unstampedEventId,
+} from "../threadEvents.ts";
 import { positionTurnItem } from "../turnItemPosition.ts";
 export { positionTurnItem, ERROR_ITEM_BAND_POSITION } from "../turnItemPosition.ts";
 import { isCloudApprovalRequest, runtimeRequestEvents } from "../runtimeRequests.ts";
+import { driverFor, runnerInstanceFor } from "../../models/ModelRouting.ts";
 
 /**
  * What a provider adapter's events become in a thread's log, following
@@ -125,22 +131,60 @@ export function recordedEvents(
   // A run already ended (stopped, or failed for want of a machine) keeps its
   // last transcript rows, but not the harness's view of its session.
   if (LIVE_RUN_ONLY.has(recorded.type) && liveRunId !== item.runId) return [];
+  const run = projection.runs.find((candidate) => candidate.id === item.runId);
+  if (run === undefined) return [];
+  if (event.driver !== undefined && event.driver !== driverFor(run.providerInstanceId)) return [];
+  if (payload.runId !== undefined && payload.runId !== item.runId) return [];
+  if (liveRunId !== run.id && projection.thread.activeProviderThreadId !== run.providerThreadId)
+    return [];
+  const providerThread = projection.providerThreads.find(
+    (candidate) => candidate.id === run.providerThreadId,
+  );
+  if (recorded.type === "provider-thread.updated") {
+    if (
+      providerThread === undefined ||
+      payload.id !== providerThread.id ||
+      payload.driver !== driverFor(run.providerInstanceId) ||
+      (isRecord(payload.nativeThreadRef) &&
+        payload.nativeThreadRef.driver !== driverFor(run.providerInstanceId)) ||
+      (providerThread.nativeThreadRef !== null &&
+        isRecord(payload.nativeThreadRef) &&
+        payload.nativeThreadRef.nativeId !== providerThread.nativeThreadRef.nativeId)
+    )
+      return [];
+  }
+  if (
+    recorded.type === "provider-session.updated" &&
+    (payload.driver !== driverFor(run.providerInstanceId) ||
+      (payload.providerInstanceId !== run.providerInstanceId &&
+        payload.providerInstanceId !== runnerInstanceFor(run.providerInstanceId)) ||
+      (providerThread?.providerSessionId != null &&
+        payload.id !== providerThread.providerSessionId))
+  )
+    return [];
   const threadId = projection.thread.id;
   // Subagents' own threads are not served yet; their rows stay on the machine.
   const owner = payloadThreadId(event, payload);
   if (owner !== undefined && owner !== threadId) return [];
   const ownNode = recorded.type === "node.updated" || recorded.type === "subagent.updated";
-  const runInstance =
-    projection.runs.find((run) => run.id === item.runId)?.providerInstanceId ??
-    projection.thread.providerInstanceId;
+  const runInstance = run.providerInstanceId;
   // The Runner names the harness's own instance, not the pool's (`runnerTurnFor`).
   // The provider thread is the thread's record: on the run's instance, as
   // `turn.started` keeps it, or the next turn takes it for a provider switch and
   // starts over without the harness's session.
   const recordedPayload =
-    recorded.type === "provider-thread.updated" || recorded.type === "subagent.updated"
-      ? { ...payload, providerInstanceId: runInstance }
-      : payload;
+    recorded.type === "provider-thread.updated" && providerThread !== undefined
+      ? {
+          ...payload,
+          providerInstanceId: runInstance,
+          firstRunOrdinal: providerThread.firstRunOrdinal,
+          lastRunOrdinal: run.ordinal,
+          handoffIds: providerThread.handoffIds,
+          createdAt: DateTime.formatIso(providerThread.createdAt),
+        }
+      : recorded.type === "subagent.updated"
+        ? { ...payload, providerInstanceId: runInstance }
+        : payload;
   const decoded = decodeDomainEvent({
     id: unstampedEventId,
     type: recorded.type,

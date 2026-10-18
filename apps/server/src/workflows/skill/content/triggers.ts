@@ -55,5 +55,7 @@ Connected-service \`watch\` and \`source.item.*\` triggers are unavailable in cl
 
 ## From another automation
 
-\`await w.start("Start the report", "Weekly report", { week })\` starts another automation in the same project; its \`trigger.type\` is \`"automation"\`.
+\`const report = await w.start("Weekly report", { week })\` runs another automation and returns its output; its \`trigger.type\` is \`"automation"\`. Names resolve in this folder, then its parents, then built-ins. Pass \`{ wait: false }\` as the third argument to continue without waiting.
+
+Declare optional \`meta.input\` and \`meta.output\` Effect Schemas to check values at start and return. Import \`* as Schema from "effect/Schema"\` and use, for example, \`input: Schema.Struct({ week: Schema.Number })\`. Undeclared contracts accept and return unknown values.
 `;

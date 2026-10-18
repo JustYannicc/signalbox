@@ -907,6 +907,13 @@ const make = Effect.gen(function* () {
         }
         // The receipt names the turn this command started, so a client's retry finds its trace.
         const started = decision.events.find((event) => event.type === "run.created");
+        const selected = decision.events.flatMap((event) =>
+          event.type === "thread.provider-switched" ||
+          event.type === "thread.model-selection-updated"
+            ? [event.payload.modelSelection]
+            : [],
+        )[0];
+        const selection = started?.payload.modelSelection ?? selected;
         if (
           started !== undefined &&
           current.thread !== null &&
@@ -920,19 +927,24 @@ const make = Effect.gen(function* () {
         // that can't be asked right now leaves no receipt, so a retry asks
         // again. Asked under the lock, from the pool's cache: only a pool whose
         // models were never read wakes its container here, once.
-        if (started !== undefined) {
+        if (selection !== undefined) {
           if (pool === undefined) return yield* refuse(POOLS_UNRESOLVED, { record: false });
+          const target = applyEvents(projection, decision.events)?.thread;
           yield* turnModels
             .check({
               ownerId: current.thread?.owner.userId ?? actor.userId,
               pool,
-              selection: started.payload.modelSelection,
+              selection,
+              ...(target === undefined
+                ? {}
+                : { runtimeMode: target.runtimeMode, interactionMode: target.interactionMode }),
             })
             .pipe(
               Effect.catchTags({
                 ModelNotServedError: (error) => refuse(error.message, { record: true }),
                 PoolNeededError: (error) => refuse(error.message, { record: true }),
                 ProviderUnavailableError: (error) => refuse(error.message, { record: true }),
+                ProviderModeUnavailableError: (error) => refuse(error.message, { record: true }),
                 PoolRejectedError: (error) => refusePool(error),
                 PoolObjectError: (error) => refusePool(error),
               }),

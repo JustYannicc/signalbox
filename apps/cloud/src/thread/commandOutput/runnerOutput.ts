@@ -17,6 +17,7 @@ export function runnerOutputBatch(
   items: ReadonlyArray<RunnerItem>,
   ctx: DecisionContext,
   steers: boolean,
+  handoffTokenCap: number,
 ) {
   const events: Array<OrchestrationV2DomainEvent> = [];
   const commandOutput: Array<CommandOutputDelta> = [];
@@ -44,7 +45,7 @@ export function runnerOutputBatch(
       }
       continue;
     }
-    const next = runnerBatchEvents(current, [item], ctx, steers);
+    const next = runnerBatchEvents(current, [item], ctx, steers, handoffTokenCap);
     events.push(...next.events);
     undecodable.push(...next.undecodable);
     drained = next.drained ?? drained;

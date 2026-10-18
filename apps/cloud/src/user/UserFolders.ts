@@ -37,7 +37,13 @@ import type { SqlError } from "effect/sql/SqlError";
 import { parseDriveId } from "../drive/driveAccess.ts";
 import * as PreviewSecrets from "../previewSecrets.ts";
 import type { TurnInstructions, TurnPools, TurnSecrets } from "../thread/turnPool.ts";
-import { contextOfProject, driveOfProject, projectIdForDrive } from "./contextProjects.ts";
+import {
+  contextOfProject,
+  driveOfProject,
+  projectIdForContext,
+  projectIdForDrive,
+  projectOfDrive,
+} from "./contextProjects.ts";
 import { foldDrives } from "./driveFolders.ts";
 import * as FolderStartReservations from "./folderStartReservations.ts";
 import {
@@ -57,6 +63,7 @@ import {
   instructionsOf,
   isWithin,
   levelOf,
+  poolTreeOf,
   poolResolver,
   sameOrder,
   secretsOf,
@@ -64,6 +71,7 @@ import {
   type TreeFolder,
   withSoundParents,
 } from "./folderTree.ts";
+import { chainOf } from "./poolChain.ts";
 import {
   decodeFolderRows,
   decodePlacementRows,
@@ -160,6 +168,10 @@ export class UserFolders extends Context.Service<
     readonly threadHome: (
       threadId: ThreadId,
     ) => Effect.Effect<{ readonly state: FolderState; readonly home: FolderId | null }, SqlError>;
+    /** Project scopes visible to an automation, nearest folder first, then its owner's top level. */
+    readonly automationProjects: (
+      projectId: ProjectId,
+    ) => Effect.Effect<ReadonlyArray<ProjectId>, SqlError>;
     /** `states` as snapshots. */
     readonly changes: Stream.Stream<SignalboxFoldersSnapshot, SqlError>;
     readonly create: (input: FolderCreateInput) => Effect.Effect<SignalboxFoldersSnapshot, Failure>;
@@ -449,6 +461,32 @@ const make = Effect.gen(function* () {
         ownerId: indexed?.contextId ?? null,
       });
       return { state: current, home };
+    });
+
+  const automationProjects: UserFolders["Service"]["automationProjects"] = (projectId) =>
+    Effect.gen(function* () {
+      const current = yield* state;
+      const currentUserId = yield* userId;
+      const home = folderOfProject(current.tree, projectId);
+      const levels = chainOf(poolTreeOf(current.tree), levelOf(home));
+      const foldersById = new Map(current.tree.folders.map((folder) => [folder.id, folder]));
+      const projects = new Set<ProjectId>([projectId]);
+
+      for (const level of levels) {
+        if (level._tag === "top") continue;
+        const driveId = foldersById.get(level.folderId)?.driveId;
+        if (driveId === undefined || driveId === null) continue;
+        const ancestorProject =
+          currentUserId === null ? null : projectOfDrive(driveId, currentUserId);
+        if (ancestorProject !== null) projects.add(ancestorProject);
+      }
+
+      const ownerId = home === null ? undefined : foldersById.get(home)?.ownerId;
+      if (ownerId !== undefined && levels.some((level) => level._tag === "top")) {
+        projects.add(projectIdForContext(ownerId));
+      }
+
+      return [...projects];
     });
 
   const states: UserFolders["Service"]["states"] = Stream.unwrap(
@@ -1232,6 +1270,7 @@ const make = Effect.gen(function* () {
     state,
     snapshot,
     threadHome,
+    automationProjects,
     changes,
     create,
     reserveStart,

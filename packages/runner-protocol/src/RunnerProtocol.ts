@@ -123,7 +123,8 @@ export const RunnerTurn = Schema.Struct({
    * `message`'s text for a new harness session: the conversation so far, then
    * the message. Set on a turn that resumes a session natively, so a Runner
    * whose resume fails starts fresh on it (`onFreshSession`) rather than with
-   * no conversation (#653).
+   * no conversation (#653). Omitted when no safe handoff fits; a later native
+   * turn must then fail if its resume fails.
    */
   freshSessionText: Schema.optional(Schema.String),
 });

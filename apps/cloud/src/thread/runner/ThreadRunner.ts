@@ -40,6 +40,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as SqlClient from "effect/sql/SqlClient";
 import { formatDuration } from "@t3tools/shared/orchestrationTiming";
+import { handoffTokenCapConfig } from "@t3tools/provider-core/server/handoffBudget";
 
 import {
   beginPreparation,
@@ -83,7 +84,7 @@ import { MAX_STARTUP_RETRIES, startupFailure } from "./machineStartup.ts";
 import { machineClassFor } from "./machineClass.ts";
 import { REQUEST_HEAVY_MACHINE_INSTRUCTIONS } from "./machineInstructions.ts";
 import { isModelToken, type ModelGrant, modelToken } from "../ModelTokens.ts";
-import { freshSessionText, freshSessionTurn } from "./freshSession.ts";
+import { hasUnconfirmedHandoff, prepareFreshSession } from "./freshSession.ts";
 import { continuedRun, recoverRunEvents } from "./runRecovery.ts";
 import { systemNoticeEvents } from "./runnerEvents.ts";
 import { runtimeResponseUpgrade } from "./runtimeResponseUpgrade.ts";
@@ -354,12 +355,6 @@ export class ThreadRunner extends Context.Service<
      */
     readonly commitAuthor: Effect.Effect<CommitAuthor | null>;
     /**
-     * `turn`'s prompt on a new harness session, for the Runner to start fresh
-     * on should its native resume fail (#653); null for a turn already on a new
-     * session. Asked only as a turn goes out: it reads the whole conversation.
-     */
-    readonly freshSessionText: (turn: Omit<RunnerTurn, "traceId">) => Effect.Effect<string | null>;
-    /**
      * The owner's 1Password service account token, for a turn being handed
      * out (`ThreadSecrets`); null without one, or when their object didn't answer.
      */
@@ -439,6 +434,7 @@ const needsUpkeep = (lease: ThreadStore.MachineLease, live: boolean, previewHeld
 
 const make = Effect.gen(function* () {
   const engine = yield* ThreadEngine.ThreadEngine;
+  const handoffTokenCap = yield* handoffTokenCapConfig;
   const previews = yield* PreviewHold;
   const terminals = yield* TerminalHold;
   const previewState = yield* PreviewState.PreviewState;
@@ -645,6 +641,7 @@ const make = Effect.gen(function* () {
           ),
           ctx,
           lease.steers === true,
+          handoffTokenCap,
         );
         const events = [...prepared.events, ...runnerEvents];
         const preparation =
@@ -941,16 +938,34 @@ const make = Effect.gen(function* () {
    * to resume: no session ref, or one the store never got a row of (#465).
    * When the store can't be read, the turn resumes as the thread says.
    */
-  const turnFor = (projection: OrchestrationV2ThreadProjection) =>
+  const turnFor = (
+    projection: OrchestrationV2ThreadProjection,
+    ctx: Parameters<Parameters<typeof engine.apply>[0]>[1],
+  ) =>
     Effect.gen(function* () {
       const turn = runnerTurnFor(projection);
-      if (turn === null) return null;
+      if (turn === null) return { turn: null, events: [] };
       const held = yield* holdsNativeSession(sessionRows, turn.providerThread).pipe(
         Effect.catch((error) =>
           Effect.as(Effect.logWarning("reading the harness session failed", { error }), true),
         ),
       );
-      return held ? turn : freshSessionTurn(projection, turn);
+      const prepared = prepareFreshSession(
+        projection,
+        turn,
+        ctx,
+        handoffTokenCap,
+        !held || hasUnconfirmedHandoff(projection, turn),
+      );
+      if (prepared._tag === "ready") return prepared;
+      const run = harnessRun(projection);
+      return {
+        turn: null,
+        events:
+          run === undefined
+            ? []
+            : failRunEvents(projection, run, unknownFailure(prepared.message), ctx),
+      };
     });
 
   const work: ThreadRunner["Service"]["work"] = withLease(({ projection, lease, now }, ctx) =>
@@ -964,7 +979,9 @@ const make = Effect.gen(function* () {
         !projection.turnItems.some(
           (item) => item.id === `turn-item:${run.id}:runner-update-blocked:${lease.generation}`,
         );
-      const untraced = projection === null ? null : yield* turnFor(projection);
+      const prepared =
+        projection === null ? { turn: null, events: [] } : yield* turnFor(projection, ctx);
+      const untraced = prepared.turn;
       let preparation = yield* engine.preparation;
       const previous = preparation;
       const stoppingPrevious = preparation?.status === "cancelling";
@@ -1097,7 +1114,9 @@ const make = Effect.gen(function* () {
         sessions:
           turn === null || lease.token === null || projection === null
             ? null
-            : { token: yield* sessionTokenOf(lease.token, projection.thread.id, lease.generation) },
+            : {
+                token: yield* sessionTokenOf(lease.token, projection.thread.id, lease.generation),
+              },
         secrets: turn === null ? [] : yield* Effect.orDie(store.secrets),
         guarded: backends[classOf(lease)].guardsSends,
         activeRunId: run?.id ?? null,
@@ -1112,6 +1131,7 @@ const make = Effect.gen(function* () {
       const changed = preparation !== previous ? preparation : null;
       return {
         events: [
+          ...prepared.events,
           ...settled,
           ...(changed !== null && projection !== null
             ? preparationEvents(projection, changed, ctx)
@@ -1361,13 +1381,6 @@ const make = Effect.gen(function* () {
       ),
     );
   });
-
-  const freshSessionTextOf: ThreadRunner["Service"]["freshSessionText"] = (turn) =>
-    Effect.map(engine.projection, (projection) =>
-      projection === null || turn.providerThread.nativeThreadRef === null
-        ? null
-        : freshSessionText(projection, turn),
-    );
 
   // Like drive calls, session writes read committed state without the lock;
   // the session API checks the generation again as it writes.
@@ -1931,7 +1944,6 @@ const make = Effect.gen(function* () {
     registerSecrets,
     authorizeRemote,
     commitAuthor,
-    freshSessionText: freshSessionTextOf,
     secretsToken,
   });
 });
