@@ -1,4 +1,4 @@
-// @effect-diagnostics nodeBuiltinImport:off - tests reopen an isolated SQLite file after disposing its runtime.
+// @effect-diagnostics nodeBuiltinImport:off - tests close and reopen an isolated SQLite file.
 import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
@@ -7,7 +7,6 @@ import { describe, expect, it } from "@effect/vitest";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import * as ManagedRuntime from "effect/ManagedRuntime";
 import * as SqlClient from "effect/sql/SqlClient";
 
 import * as DriveDirectory from "./DriveDirectory.ts";
@@ -31,81 +30,102 @@ const source: DriveMetadata.MetadataSource = {
   },
 };
 
-const runtimeFor = (filename: string) =>
-  ManagedRuntime.make(
-    DriveStore.layer(DRIVE).pipe(Layer.provideMerge(NodeSqliteClient.layer({ filename }))),
+type ApiRequest = Parameters<Parameters<typeof makeDriveObjectApi>[0]>[0];
+
+// The test fiber evaluates each requested Effect; the Promise adapter owns no runtime.
+const scopedApi = () => {
+  let requested: Effect.Effect<void, never, Effect.Services<ApiRequest>> | undefined;
+  const api = makeDriveObjectApi(
+    (effect) =>
+      new Promise((resolve, reject) => {
+        requested = effect.pipe(Effect.match({ onSuccess: resolve, onFailure: reject }));
+      }),
   );
+  return <A>(call: (api: DriveDirectory.DriveObjectApi) => Promise<A>) =>
+    Effect.gen(function* () {
+      const result = call(api);
+      const request = requested;
+      requested = undefined;
+      if (request === undefined)
+        return yield* Effect.die("The object API did not request an Effect.");
+      yield* request;
+      return yield* Effect.promise(() => result);
+    });
+};
 
 describe("drive object metadata API", () => {
-  it("resumes persisted metadata through a new object API after its runtime is disposed", async () => {
-    const directory = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "drive-metadata-api-"));
-    const filename = NodePath.join(directory, "state.sqlite");
-    let runtime = runtimeFor(filename);
-    try {
-      await runtime.runPromise(DriveStore.DriveStore.use((store) => store.initialize));
-      const first = DriveDirectory.handleFor(
-        makeDriveObjectApi((effect) => runtime.runPromise(effect)),
-      );
-      expect(await runtime.runPromise(first.metadataStatus(oid))).toBeNull();
-      const initial = await runtime.runPromise(first.metadataBegin(oid, source));
-      expect(initial.source).toEqual(source);
-      const partial = await runtime.runPromise(
-        first.metadataAdvance({
-          oid,
-          expectedRevision: 0,
-          expectedBytesWritten: 0,
-          chunks: [new Uint8Array([1, 2, 3])],
-          checkpoint: "v1:partial object and hash state",
-          complete: false,
-        }),
-      );
-      expect(partial._tag).toBe("advanced");
-      await runtime.dispose();
-
-      runtime = runtimeFor(filename);
-      await runtime.runPromise(DriveStore.DriveStore.use((store) => store.initialize));
-      const resumed = DriveDirectory.handleFor(
-        makeDriveObjectApi((effect) => runtime.runPromise(effect)),
-      );
-      expect(await runtime.runPromise(resumed.metadataStatus(oid))).toEqual(partial.state);
-      expect(
-        await runtime.runPromise(
-          resumed.metadataBegin(oid, {
-            kind: "remote",
-            repository: "different/repository",
-            size: null,
-          }),
+  it.effect("resumes persisted metadata through a new object API after closing its SQL scope", () =>
+    Effect.gen(function* () {
+      const directory = yield* Effect.acquireRelease(
+        Effect.sync(() =>
+          NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "drive-metadata-api-")),
         ),
-      ).toEqual(partial.state);
-      expect(await runtime.runPromise(resumed.metadataBytes(oid, 1, 6))).toEqual({
-        _tag: "pending",
-        bytes: new Uint8Array([2, 3]),
-        nextOffset: 3,
-      });
-      const final = await runtime.runPromise(
-        resumed.metadataAdvance({
-          oid,
-          expectedRevision: 1,
-          expectedBytesWritten: 3,
-          chunks: [new Uint8Array([4, 5, 6])],
-          checkpoint: null,
-          complete: true,
-        }),
+        (directory) =>
+          Effect.sync(() => NodeFS.rmSync(directory, { recursive: true, force: true })),
       );
-      expect(final).toMatchObject({
-        _tag: "advanced",
-        state: { revision: 2, bytesWritten: 6, checkpoint: null, complete: true },
-      });
-      expect(await runtime.runPromise(resumed.metadataBytes(oid, 0, 6))).toEqual({
-        _tag: "complete",
-        bytes: new Uint8Array([1, 2, 3, 4, 5, 6]),
-        nextOffset: 6,
-      });
-    } finally {
-      await runtime.dispose();
-      NodeFS.rmSync(directory, { recursive: true, force: true });
-    }
-  });
+      const filename = NodePath.join(directory, "state.sqlite");
+      const layerFor = () =>
+        DriveStore.layer(DRIVE).pipe(Layer.provideMerge(NodeSqliteClient.layer({ filename })));
+      const partial = yield* Effect.gen(function* () {
+        yield* DriveStore.DriveStore.use((store) => store.initialize);
+        const first = scopedApi();
+        expect(yield* first((api) => api.metadataStatus(oid))).toBeNull();
+        const initial = yield* first((api) => api.metadataBegin(oid, source));
+        expect(initial.source).toEqual(source);
+        const partial = yield* first((api) =>
+          api.metadataAdvance({
+            oid,
+            expectedRevision: 0,
+            expectedBytesWritten: 0,
+            chunks: [new Uint8Array([1, 2, 3])],
+            checkpoint: "v1:partial object and hash state",
+            complete: false,
+          }),
+        );
+        expect(partial._tag).toBe("advanced");
+        return partial;
+      }).pipe(Effect.provide(layerFor()), Effect.scoped);
+
+      yield* Effect.gen(function* () {
+        yield* DriveStore.DriveStore.use((store) => store.initialize);
+        const resumed = scopedApi();
+        expect(yield* resumed((api) => api.metadataStatus(oid))).toEqual(partial.state);
+        expect(
+          yield* resumed((api) =>
+            api.metadataBegin(oid, {
+              kind: "remote",
+              repository: "different/repository",
+              size: null,
+            }),
+          ),
+        ).toEqual(partial.state);
+        expect(yield* resumed((api) => api.metadataBytes(oid, 1, 6))).toEqual({
+          _tag: "pending",
+          bytes: new Uint8Array([2, 3]),
+          nextOffset: 3,
+        });
+        const final = yield* resumed((api) =>
+          api.metadataAdvance({
+            oid,
+            expectedRevision: 1,
+            expectedBytesWritten: 3,
+            chunks: [new Uint8Array([4, 5, 6])],
+            checkpoint: null,
+            complete: true,
+          }),
+        );
+        expect(final).toMatchObject({
+          _tag: "advanced",
+          state: { revision: 2, bytesWritten: 6, checkpoint: null, complete: true },
+        });
+        expect(yield* resumed((api) => api.metadataBytes(oid, 0, 6))).toEqual({
+          _tag: "complete",
+          bytes: new Uint8Array([1, 2, 3, 4, 5, 6]),
+          nextOffset: 6,
+        });
+      }).pipe(Effect.provide(layerFor()), Effect.scoped);
+    }).pipe(Effect.scoped),
+  );
 
   it.effect("adds metadata storage to an existing drive despite a higher migration id", () =>
     Effect.gen(function* () {
