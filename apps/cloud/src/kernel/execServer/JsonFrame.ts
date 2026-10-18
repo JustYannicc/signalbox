@@ -56,7 +56,7 @@ export function preflightJsonFrame(text: string): string | undefined {
       }
       if (character !== '"') fail("Expected an object key");
       const key: unknown = JSON.parse(quoted());
-      if (typeof key !== "string") fail("Invalid object key");
+      if (typeof key !== "string") return fail("Invalid object key");
       if (frame.keys.has(key)) fail("Duplicate JSON object key");
       frame.keys.add(key);
       frame.key = key;

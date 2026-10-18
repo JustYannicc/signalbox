@@ -137,11 +137,12 @@ describe("Codex exec-server sessions", () => {
 
   it("rejects resume after the deadline even when the cleanup timer has not run", async () => {
     vi.useFakeTimers();
+    vi.setSystemTime(0);
     const fixture = setup();
     try {
       const id = await fixture.initialize();
       fixture.connection.disconnect();
-      vi.setSystemTime(Date.now() + 30_000);
+      vi.setSystemTime(30_000);
       const replies: (Reply | Notification)[] = [];
       const replacement = fixture.sessions.connect((message) => {
         replies.push(message);

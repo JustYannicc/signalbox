@@ -1,4 +1,4 @@
-// @effect-diagnostics cryptoRandomUUID:off globalTimers:off - connection-owned protocol sessions do not require an Effect runtime.
+// @effect-diagnostics cryptoRandomUUID:off globalTimers:off globalDate:off - the portable session boundary owns its wall-clock expiry without an Effect runtime.
 import {
   decodeMessage,
   initializeParams,
