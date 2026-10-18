@@ -1,7 +1,10 @@
 import {
   ModelSelection,
   NonNegativeInt,
+  SecretRequestAnswerInput,
   OrchestrationV2Command,
+  OrchestrationV2CommandOutputFrame,
+  OrchestrationV2SubscribeCommandOutputInput,
   OrchestrationV2DomainEventJson,
   OrchestrationV2SearchThreadInput,
   OrchestrationV2SearchThreadResult,
@@ -91,6 +94,7 @@ const PullInputWire = Schema.Struct({
 export type PullInput = typeof PullInputWire.Type;
 
 export const wire = {
+  secretAnswer: jsonCodec(SecretRequestAnswerInput),
   summary: jsonCodec(ThreadSummaryWire),
   command: jsonCodec(OrchestrationV2Command),
   launchInput: jsonCodec(LaunchInputWire),
@@ -99,6 +103,8 @@ export const wire = {
   subscribeInput: jsonCodec(OrchestrationV2SubscribeThreadInput),
   findInput: jsonCodec(OrchestrationV2SearchThreadInput),
   findResult: jsonCodec(OrchestrationV2SearchThreadResult),
+  commandOutputInput: jsonCodec(OrchestrationV2SubscribeCommandOutputInput),
+  commandOutputFrame: jsonCodec(OrchestrationV2CommandOutputFrame),
   batch: jsonCodec(Schema.Array(OrchestrationV2ThreadStreamItem)),
   /** `SignalboxThreadPreviews` without its thread id, which the stream's caller knows. */
   previews: jsonCodec(

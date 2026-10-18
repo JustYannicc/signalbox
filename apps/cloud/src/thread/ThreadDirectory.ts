@@ -2,14 +2,19 @@ import type { PreviewPort } from "@signalbox/runner-protocol/PreviewTunnel";
 import type { ModelGatewayProvider } from "@signalbox/runner-protocol/RunnerProtocol";
 import type { StatusNoteView } from "@signalbox/runner-protocol/StatusLineProtocol";
 import type {
+  SecretRequestAnswerInput,
+  SecretRequestFailureReason,
   OrchestrationV2Command,
   OrchestrationV2SearchThreadInput,
   OrchestrationV2SearchThreadResult,
+  OrchestrationV2CommandOutputFrame,
+  OrchestrationV2SubscribeCommandOutputInput,
   OrchestrationV2SubscribeThreadInput,
   OrchestrationV2ThreadLaunchResult,
   OrchestrationV2ThreadStreamItem,
   ThreadId,
 } from "@t3tools/contracts";
+import { SecretRequestError } from "@t3tools/contracts";
 import type { PullResult } from "@signalbox/runner-protocol/PullProtocol";
 import type {
   AgentBrowserInput,
@@ -87,6 +92,10 @@ const isBehind = Schema.is(BrowserWatchBehind);
 
 /** What a thread object answers. `ThreadObject` implements it method for method. */
 export interface ThreadObjectApi {
+  readonly answerSecret: (
+    actor: Actor,
+    input: unknown,
+  ) => Promise<SecretRequestFailureReason | null>;
   readonly dispatch: (
     actor: Actor,
     command: unknown,
@@ -100,6 +109,10 @@ export interface ThreadObjectApi {
   readonly snapshot: (actor: Actor) => Promise<ThreadObjectReply<unknown>>;
   /** Newline-delimited JSON batches, or null when the actor cannot see the thread. */
   readonly subscribe: (actor: Actor, input: unknown) => Promise<ReadableStream<Uint8Array> | null>;
+  readonly commandOutput: (
+    actor: Actor,
+    input: unknown,
+  ) => Promise<ReadableStream<Uint8Array> | null>;
   /** The thread's current summary, when `actor` owns it. */
   readonly summary: (actor: Actor) => Promise<unknown>;
   /** Requests/restarts a durable backfill; `not_found` keeps the actor check at the thread. */
@@ -206,6 +219,10 @@ export interface ThreadObjectApi {
 type CommandFailure = ThreadNotFoundError | ThreadCommandRejectedError | ThreadObjectError;
 
 export interface ThreadHandle {
+  readonly answerSecret: (
+    actor: Actor,
+    input: SecretRequestAnswerInput,
+  ) => Effect.Effect<void, SecretRequestError | ThreadObjectError>;
   readonly dispatch: (
     actor: Actor,
     command: OrchestrationV2Command,
@@ -240,6 +257,10 @@ export interface ThreadHandle {
     actor: Actor,
     input: OrchestrationV2SearchThreadInput,
   ) => Effect.Effect<OrchestrationV2SearchThreadResult, ThreadNotFoundError | ThreadObjectError>;
+  readonly commandOutput: (
+    actor: Actor,
+    input: OrchestrationV2SubscribeCommandOutputInput,
+  ) => Stream.Stream<OrchestrationV2CommandOutputFrame, ThreadNotFoundError | ThreadObjectError>;
   /** Asks GitHub to refresh one current link; invisible threads and missing links are not found. */
   readonly requestPullRequestSync: (
     actor: Actor,
@@ -410,6 +431,18 @@ const lines = <A>(
 /** Wraps any `ThreadObjectApi` (a Durable Object stub, or a test double) as Effects. */
 export function handleFor(api: ThreadObjectApi): ThreadHandle {
   return {
+    answerSecret: (actor, input) =>
+      call("answerSecret", () => api.answerSecret(actor, wire.secretAnswer.encode(input))).pipe(
+        Effect.flatMap((reason) =>
+          reason === null ? Effect.void : Effect.fail(new SecretRequestError({ reason })),
+        ),
+      ),
+    commandOutput: (actor, input) =>
+      lines(
+        "commandOutput",
+        () => api.commandOutput(actor, wire.commandOutputInput.encode(input)),
+        wire.commandOutputFrame.decode,
+      ),
     dispatch: (actor, command, creation) =>
       call("dispatch", () => api.dispatch(actor, wire.command.encode(command), creation)).pipe(
         Effect.flatMap(fromReply),
