@@ -1,4 +1,5 @@
 import type { EnvironmentId } from "@t3tools/contracts";
+import type { Atom } from "effect/reactivity";
 import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 import { visitElements } from "../../test/reactElementTree";
@@ -32,18 +33,35 @@ vi.mock("react/compiler-runtime", async () => {
   return { c: reactHookHarness.useMemoCache };
 });
 
-vi.mock("@effect/atom-react", () => ({
-  useAtomValue: (atom: string) => (atom === "config-path" ? "/fixture/keybindings.json" : []),
-}));
+vi.mock("@effect/atom-react", async () => {
+  const { AtomRegistry } = await import("effect/reactivity");
+  return {
+    useAtomValue: <A,>(atom: Atom.Atom<A>) => {
+      const registry = AtomRegistry.make();
+      try {
+        return registry.get(atom);
+      } finally {
+        registry.dispose();
+      }
+    },
+  };
+});
 
 vi.mock("@tanstack/react-router", () => ({ useLocation: () => "" }));
 vi.mock("../ProjectFavicon", () => ({ ProjectFavicon: () => null }));
-vi.mock("../../state/server", () => ({
-  primaryServerKeybindingsAtom: "keybindings",
-  primaryServerKeybindingsConfigPathAtom: "config-path",
-  primaryServerAvailableEditorsAtom: "editors",
-  serverEnvironment: { upsertKeybinding: state.upsert, removeKeybinding: state.remove },
-}));
+vi.mock("../../state/server", async () => {
+  const { Atom } = await import("effect/reactivity");
+  const permissionAtom = (environmentId: EnvironmentId) =>
+    Atom.make(environmentId === "primary-settings" && state.canWriteSettings);
+  return {
+    primaryServerConfigAtom: Atom.make(null),
+    environmentServerConfigsAtom: Atom.make(new Map()),
+    serverEnvironment: {
+      upsertKeybinding: Object.assign(state.upsert, { permissionAtom }),
+      removeKeybinding: Object.assign(state.remove, { permissionAtom }),
+    },
+  };
+});
 
 vi.mock("../../state/environments", () => ({
   usePrimaryEnvironment: () => ({ environmentId: "primary-settings" }),
@@ -75,7 +93,6 @@ vi.mock("../../state/session", () => {
   return {
     useEnvironmentScope: hasScope,
     readEnvironmentScope: hasScope,
-    useEnvironmentsWithScope: () => new Set(state.canWriteSettings ? ["primary-settings"] : []),
   };
 });
 
@@ -114,7 +131,11 @@ describe("KeybindingsSettings unsupported writes", () => {
     );
     if (!groups) throw new Error("Missing keybinding reference groups");
     (groups.props.onSave as (input: unknown) => void)({ command: "chat.new", key: "mod+n" });
-    (groups.props.onRemove as (row: unknown) => void)({ command: "chat.new", key: "mod+n" });
+    (groups.props.onRemove as (row: unknown) => void)({
+      command: "chat.new",
+      key: "mod+n",
+      when: "",
+    });
     expect(state.upsert).not.toHaveBeenCalled();
     expect(state.remove).not.toHaveBeenCalled();
     expect(groups.props.readOnly).toBe(true);

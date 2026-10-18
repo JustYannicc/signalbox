@@ -1,6 +1,5 @@
 import { findOperation, jsonSchemaOf, type Operation, operations } from "@signalbox/api/catalog";
 import * as WorkOSClient from "@signalbox/account/WorkOSClient";
-import { AuthStandardClientScopes } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import { HttpClient } from "effect/http";
@@ -11,6 +10,7 @@ import { isLocalKey, signLocalKey, verifyLocalKey } from "../localKeys/LocalKeys
 import * as UserDirectory from "../user/UserDirectory.ts";
 import { cloudServes, cloudUnserved } from "./cloudCoverage.ts";
 import { API_PREFIX } from "./apiPaths.ts";
+import { CLOUD_CLIENT_SCOPES } from "../auth/CloudScopes.ts";
 
 /**
  * The public API's HTTP surface (#436), under `/api/v1/`:
@@ -63,7 +63,7 @@ const detailOf = (operation: Operation) => {
 };
 
 /** What a personal key made by `signalbox login` may do: what a signed-in app may. */
-const CLI_KEY_SCOPES = AuthStandardClientScopes;
+const CLI_KEY_SCOPES = CLOUD_CLIENT_SCOPES;
 
 const LoginToken = Schema.Struct({
   deviceCode: Schema.String,

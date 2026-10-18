@@ -53,16 +53,18 @@ describe("targetsWithRepositoryIdentity", () => {
 });
 
 describe("targetsWithProviderAccounts", () => {
-  const withProviders = (id: string, providers: { driver: string; installed: boolean }[]) => ({
-    id,
-    serverConfig: { providers },
-  });
-
   it("keeps only targets with an installed ACP agent to sign in", () => {
-    const cloud = withProviders("cloud", [{ driver: "codex", installed: true }]);
-    const notInstalled = withProviders("idle", [{ driver: "acpRegistry", installed: false }]);
-    const acp = withProviders("acp", [{ driver: "acpRegistry", installed: true }]);
+    const [cloud, idle, acp] = [
+      { environmentId: "cloud" },
+      { environmentId: "idle" },
+      { environmentId: "acp" },
+    ];
+    const providers = new Map([
+      ["cloud", [{ driver: "codex", installed: true }]],
+      ["idle", [{ driver: "acpRegistry", installed: false }]],
+      ["acp", [{ driver: "acpRegistry", installed: true }]],
+    ]);
 
-    expect(targetsWithProviderAccounts([cloud, notInstalled, acp])).toEqual([acp]);
+    expect(targetsWithProviderAccounts([cloud, idle, acp], providers)).toEqual([acp]);
   });
 });

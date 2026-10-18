@@ -5,12 +5,14 @@ import {
   type AtomCommandResult,
 } from "@t3tools/client-runtime/state/runtime";
 import type { ProviderAuthResponse, ServerProvider } from "@t3tools/contracts";
+import { useAtomValue } from "@effect/atom-react";
 import { useRef, useState } from "react";
 import { Linking, Pressable, ScrollView, TextInput, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { AppText as Text } from "../../components/ui/AppText";
 import { ScreenScrollView } from "../../components/ui/ScreenScrollView";
+import { environmentPresentations } from "../../state/presentation";
 import { useEnvironmentQuery } from "../../state/query";
 import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
@@ -26,6 +28,7 @@ import { signsInHere } from "./signalboxSettingsTargets"; // signalbox: ACP-only
 
 export function SettingsProviderAccountsRouteScreen() {
   const { selectedTargets } = useSettingsEnvironmentFilter();
+  const providersByEnvironment = useAtomValue(environmentPresentations.providersByEnvironmentAtom);
   const insets = useSafeAreaInsets();
   return (
     <>
@@ -42,7 +45,7 @@ export function SettingsProviderAccountsRouteScreen() {
           ) : (
             selectedTargets.map((environment) => (
               <SettingsSection key={environment.environmentId} title={environment.label}>
-                {environment.serverConfig.providers
+                {(providersByEnvironment.get(environment.environmentId) ?? [])
                   // signalbox: provider accounts live in pools; only ACP agents sign in here.
                   .filter(signsInHere)
                   .map((provider) => (
@@ -52,7 +55,9 @@ export function SettingsProviderAccountsRouteScreen() {
                       provider={provider}
                     />
                   ))}
-                {!environment.serverConfig.providers.some(signsInHere) ? ( // signalbox: pools hint when no ACP agent
+                {!(providersByEnvironment.get(environment.environmentId) ?? []).some(
+                  signsInHere,
+                ) ? ( // signalbox: pools hint when no ACP agent
                   <Text className="p-4 text-foreground-muted">
                     Accounts live in pools on Usage → Limits. ACP agents that sign in show here.
                   </Text>

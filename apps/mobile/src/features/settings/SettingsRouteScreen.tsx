@@ -28,6 +28,8 @@ import { AutomationsSettingsRows } from "../automations/AutomationsSettingsRows"
 import { SignInSettingsRow } from "../signIn/SignInSettingsRow"; // signalbox: sign-in grants
 import { OnlyEnvironmentAccountSections } from "../account/EnvironmentAccountSection"; // signalbox
 import { useShowsEnvironmentUi } from "../../state/environmentCapabilities"; // signalbox
+import { useAtomValue } from "@effect/atom-react"; // signalbox: provider accounts gate
+import { environmentPresentations } from "../../state/presentation"; // signalbox: provider accounts gate
 
 export function SettingsRouteScreen() {
   const navigation = useNavigation();
@@ -158,6 +160,8 @@ function LocalSettingsRouteScreen() {
 function SettingsIndexSections() {
   const { selectedTargets, projectGroups, selectedProjectKey } = useSettingsEnvironmentFilter();
   const showsEnvironments = useShowsEnvironmentUi();
+  // signalbox: Provider accounts only shows where an ACP agent can sign in
+  const providersByEnvironment = useAtomValue(environmentPresentations.providersByEnvironmentAtom);
   const noServerTargets = selectedTargets.length === 0;
   // signalbox: connected, but none of them takes server settings (Signalbox Cloud).
   const serverSettingsTargets = targetsSupporting(selectedTargets, "serverSettingsWrite");
@@ -261,7 +265,8 @@ function SettingsIndexSections() {
       <SettingsSection title="App">
         <UsageSettingsRow />
         {/* signalbox: only ACP agents sign in here, and the cloud runs none */}
-        {hidesServerSettings && targetsWithProviderAccounts(selectedTargets).length > 0 ? (
+        {hidesServerSettings &&
+        targetsWithProviderAccounts(selectedTargets, providersByEnvironment).length > 0 ? (
           <SettingsRow
             icon="person.crop.circle"
             label="Provider accounts"

@@ -13,6 +13,8 @@ import {
   EnvironmentRequestInvalidError,
   EnvironmentResourceNotFoundError,
   EnvironmentScopeRequiredError,
+  PullRequestOperationError,
+  PullRequestUnavailableError,
   type EnvironmentSessionPrincipalShape,
   type OrchestrationV2ThreadTranscript,
   PROVIDER_SEND_TURN_MAX_FILE_BYTES,
@@ -45,6 +47,7 @@ import { NO_STORE_HEADERS, requestCredentials, sessionCookie, traceId } from "./
 const CloudHttpApi = HttpApi.make("cloud")
   .add(EnvironmentHttpApi.groups.metadata)
   .add(EnvironmentHttpApi.groups.auth)
+  .add(EnvironmentHttpApi.groups.pullRequests)
   .add(EnvironmentHttpApi.groups.orchestration);
 
 const appendNoStore = HttpEffect.appendPreResponseHandler((_request, response) =>
@@ -324,8 +327,42 @@ const layerOrchestration = HttpApiBuilder.group(
   }),
 );
 
+const layerPullRequests = HttpApiBuilder.group(
+  CloudHttpApi,
+  "pullRequests",
+  Effect.fnUntraced(function* (handlers) {
+    const users = yield* UserDirectory.UserDirectory;
+    return handlers.handle("diff", ({ payload }) =>
+      Effect.gen(function* () {
+        const principal = yield* requireScope(AuthOrchestrationReadScope);
+        const reply = yield* users
+          .forUser(userIdOf(principal))
+          .pullRequestDiff(payload)
+          .pipe(
+            Effect.catchTags({ UserObjectError: (error) => internal("internal_error", error) }),
+          );
+        switch (reply._tag) {
+          case "success":
+            return reply.value;
+          case "unavailable":
+            return yield* new PullRequestUnavailableError({
+              reason: reply.reason,
+              ...(reply.provider === undefined ? {} : { provider: reply.provider }),
+            });
+          case "operation-error":
+            return yield* new PullRequestOperationError({
+              operation: reply.operation,
+              detail: reply.detail,
+              ...(reply.reason === undefined ? {} : { reason: reply.reason }),
+            });
+        }
+      }),
+    );
+  }),
+);
+
 /** Every environment API group; needs the cloud services and an auth middleware. */
 export const layer = HttpApiBuilder.layer(CloudHttpApi).pipe(
-  Layer.provide([layerMetadata, layerAuth, layerOrchestration]),
+  Layer.provide([layerMetadata, layerAuth, layerOrchestration, layerPullRequests]),
   Layer.provide(layerAuthenticatedAuth),
 );

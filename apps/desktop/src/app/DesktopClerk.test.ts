@@ -38,6 +38,7 @@ import * as DesktopClerk from "./DesktopClerk.ts";
 import * as DesktopWebLinks from "./DesktopWebLinks.ts";
 import * as DesktopEnvironment from "./DesktopEnvironment.ts";
 import * as DesktopPreReadyFileSystem from "./DesktopPreReadyFileSystem.ts";
+import { resolveEarlyMacKeychainName } from "./DesktopEarlyElectronStartup.ts";
 
 const ignoreWebLinks = DesktopWebLinks.DesktopWebLinks.of({
   receive: () => Effect.void,
@@ -56,12 +57,14 @@ const layerDesktopClerk = (
     openSystemSettings: () => Effect.succeed(false),
     copyText: () => Effect.void,
   },
+  runtime = { isPackaged: true, dirname: "/repo/apps/desktop/dist-electron" },
 ) => {
   const environment = DesktopEnvironment.DesktopEnvironment.of({
     stateDir: "/tmp/t3-state",
     isDevelopment,
     appDataDirectory: "/tmp/app-data",
     platform,
+    ...runtime,
   } as unknown as DesktopEnvironment.DesktopEnvironment["Service"]);
 
   const electronApp = {
@@ -88,6 +91,43 @@ describe("DesktopClerk", () => {
   beforeEach(() => {
     createClerkBridgeMock.mockReset();
     storageMock.mockReset();
+  });
+
+  it("initializes a local Mac bridge synchronously with matching cookie and token storage", () => {
+    const runtime = { isPackaged: false, dirname: "/local/apps/desktop/dist-electron" };
+    const identity = resolveEarlyMacKeychainName({
+      platform: "darwin",
+      ...runtime,
+      runtimeDirectory: runtime.dirname,
+      isDevelopment: true,
+    });
+    const profile = `/tmp/app-data/${identity}`;
+    const events: string[] = [];
+    storageMock.mockReturnValue(storageAdapter);
+    createClerkBridgeMock.mockImplementation(() => {
+      assert.deepEqual(events, [`setPath:userData:${profile}`, `setPath:sessionData:${profile}`]);
+      assert.deepEqual(storageMock.mock.calls, [[{ path: profile }]]);
+      return { cleanup: vi.fn(), isPrimaryInstance: true };
+    });
+    // oxlint-disable-next-line t3code/no-manual-effect-runtime-in-tests -- The bridge must be initialized before Electron can advance to ready.
+    Effect.runSync(
+      Effect.scoped(
+        Layer.build(
+          layerDesktopClerk(
+            true,
+            events,
+            "darwin",
+            FileSystem.layerNoop({
+              exists: () => Effect.succeed(false),
+              makeDirectory: () => Effect.void,
+            }),
+            undefined,
+            runtime,
+          ),
+        ),
+      ),
+    );
+    assert.equal(createClerkBridgeMock.mock.calls.length, 1);
   });
 
   it.effect("acquires and releases the SDK bridge with the layer", () => {

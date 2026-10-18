@@ -50,14 +50,16 @@ export function signsInHere(provider: {
 }
 
 /** Targets where Provider accounts has something to sign in. The cloud runs no ACP agents. */
-export function targetsWithProviderAccounts<
-  T extends {
-    readonly serverConfig: {
-      readonly providers: ReadonlyArray<{ readonly driver: string; readonly installed: boolean }>;
-    };
-  },
->(targets: readonly T[]): readonly T[] {
-  return targets.filter((target) => target.serverConfig.providers.some(signsInHere));
+export function targetsWithProviderAccounts<T extends { readonly environmentId: string }>(
+  targets: readonly T[],
+  providersByEnvironment: ReadonlyMap<
+    string,
+    ReadonlyArray<{ readonly driver: string; readonly installed: boolean }>
+  >,
+): readonly T[] {
+  return targets.filter((target) =>
+    (providersByEnvironment.get(target.environmentId) ?? []).some(signsInHere),
+  );
 }
 
 /** Stable while `targets` is, so scope subscriptions keyed on it don't churn. */
