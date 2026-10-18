@@ -17,7 +17,7 @@ import {
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
-import { isLiveRun } from "../runLifecycle.ts";
+import { isLiveRun } from "../runState.ts";
 
 export const MAX_COMMAND_OUTPUT_TAILS = 64;
 
