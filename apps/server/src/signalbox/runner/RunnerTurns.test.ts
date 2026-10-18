@@ -229,7 +229,10 @@ const makeFakeAdapterFor = (selection: {
         Effect.sync(
           () => void calls.push(`steer ${input.providerTurnId} ${input.message.messageId}`),
         ),
-      respondToRuntimeRequest: (input: { readonly requestId: string; readonly decision?: string }) =>
+      respondToRuntimeRequest: (input: {
+        readonly requestId: string;
+        readonly decision?: string;
+      }) =>
         Effect.gen(function* () {
           if (yield* Ref.getAndSet(failNextResponse, false)) {
             return yield* Effect.fail({ _tag: "ResponseFailed" as const });
