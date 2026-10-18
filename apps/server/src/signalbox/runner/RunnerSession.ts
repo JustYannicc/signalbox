@@ -190,6 +190,22 @@ export const makeRunnerSession = Effect.fn("makeRunnerSession")(function* (
 
   const handle = (connection: RunnerConnection, message: ThreadMessage) => {
     switch (message.type) {
+      case "feedback.upload":
+        return (
+          turns.uploadFeedback?.(message) ??
+          Effect.succeed({ _tag: "failed", failure: "unsupported" } as const)
+        ).pipe(
+          Effect.flatMap((outcome) =>
+            connection.send({
+              type: "feedback.result",
+              requestId: message.requestId,
+              outcome,
+            }),
+          ),
+          Effect.ignore,
+          Effect.forkIn(scope),
+          Effect.asVoid,
+        );
       case "ack":
         return acknowledge(message.sequence);
       case "turn.start":
@@ -245,6 +261,7 @@ export const makeRunnerSession = Effect.fn("makeRunnerSession")(function* (
         drains: true,
         steers: true,
         runScopedSecrets: true,
+        feedback: turns.uploadFeedback !== undefined,
         workflowStops: turns.stopWorkflow !== undefined,
         runtimeResponses: true,
         pulls: true,

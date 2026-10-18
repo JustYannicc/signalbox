@@ -1,4 +1,4 @@
-import { ProviderInstanceId } from "@t3tools/contracts";
+import { PersistChatAttachmentsResult, ProviderInstanceId } from "@t3tools/contracts";
 import { afterEach, describe, expect, it } from "@effect/vitest";
 import {
   CommandId,
@@ -54,6 +54,9 @@ const SearchAnswer = Schema.Struct({
 });
 const decodeAnswer = Schema.decodeUnknownSync(Schema.fromJsonString(JsonRpcAnswer));
 const decodeToolResult = Schema.decodeUnknownEffect(ToolResult);
+const decodeAttachments = Schema.decodeUnknownEffect(
+  Schema.fromJsonString(PersistChatAttachmentsResult),
+);
 const decodeToolList = Schema.decodeUnknownEffect(ToolList);
 const decodeSearch = Schema.decodeUnknownEffect(Schema.fromJsonString(SearchAnswer));
 const decodeJson = Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.Unknown));
@@ -120,6 +123,94 @@ const connect = Effect.gen(function* () {
 });
 
 describe("Signalbox's MCP", () => {
+  it.effect(
+    "lets an agent explicitly request provider feedback and reports unsupported harnesses",
+    () =>
+      Effect.gen(function* () {
+        const { tool } = yield* connect;
+        const created = yield* tool("signalbox_call", {
+          operation: "threads.create",
+          input: {
+            commandId: "mcp-feedback-create",
+            threadId: "mcp-feedback",
+            projectId: Environment.SCRATCH_PROJECT_ID,
+            title: "Feedback",
+            modelSelection: scriptedModelSelection,
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            workspaceStrategy: { type: "root" },
+            initialMessage: { messageId: "mcp-feedback-message", text: "Hello", attachments: [] },
+          },
+        });
+        expect(created.isError ?? false).toBe(false);
+        const result = yield* tool("signalbox_call", {
+          operation: "provider.uploadFeedback",
+          input: {
+            threadId: "mcp-feedback",
+            requestId: "mcp-feedback-1",
+            reason: "private MCP canary",
+          },
+        });
+        expect(result.isError).toBe(true);
+        expect(JSON.parse(result.content[0]!.text)).toMatchObject({
+          error: { error: { _tag: "ProviderUploadFeedbackError", failure: "unsupported" } },
+        });
+        expect(JSON.stringify(result)).not.toContain("private MCP canary");
+      }),
+  );
+
+  it.effect("persists legacy image metadata before the thread exists and claims it on launch", () =>
+    Effect.gen(function* () {
+      const { tool } = yield* connect;
+      const input = {
+        threadId: "mcp-image-thread",
+        messageId: "mcp-image-message",
+        attachments: [
+          {
+            type: "image",
+            name: "shot.png",
+            mimeType: "image/png",
+            sizeBytes: 3,
+            dataUrl: "data:image/png;base64,AQID",
+          },
+        ],
+      };
+      const saved = yield* tool("signalbox_call", {
+        operation: "assets.persistChatAttachments",
+        input,
+      });
+      expect(saved.isError ?? false).toBe(false);
+      const parsed = yield* decodeAttachments(saved.content[0]!.text);
+      expect(parsed.attachments[0]?.id).toMatch(/^pending-/);
+      expect(saved.content[0]!.text).not.toContain("data:image/");
+      const launched = yield* tool("signalbox_call", {
+        operation: "threads.create",
+        input: {
+          commandId: "mcp-image-launch",
+          threadId: input.threadId,
+          projectId: Environment.SCRATCH_PROJECT_ID,
+          title: "Image via MCP",
+          modelSelection: scriptedModelSelection,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          workspaceStrategy: { type: "root" },
+          initialMessage: {
+            messageId: input.messageId,
+            text: "Look",
+            attachments: parsed.attachments,
+          },
+        },
+      });
+      expect(launched.isError ?? false).toBe(false);
+      expect(launched.content[0]!.text).toContain("mcp-image-thread-");
+      const repeated = yield* tool("signalbox_call", {
+        operation: "assets.persistChatAttachments",
+        input,
+      });
+      expect(yield* decodeAttachments(repeated.content[0]!.text)).toEqual(parsed);
+    }),
+  );
+
   it.effect("reads a bounded command output snapshot without waiting for its live stream", () =>
     Effect.gen(function* () {
       const { tool, cloud } = yield* connect;
@@ -196,6 +287,7 @@ describe("Signalbox's MCP", () => {
       expect(missing.content[0]!.text).not.toContain("final line");
     }),
   );
+
   it.effect(
     "runs cloud lifecycle actions and reversals through the generated API with receipts",
     () =>

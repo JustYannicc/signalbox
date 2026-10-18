@@ -1171,7 +1171,7 @@
       "name": "provider.uploadFeedback",
       "rpc": "provider.uploadFeedback",
       "access": "write",
-      "input": "d0c0d40f",
+      "input": "46ba7a16",
       "output": "597e8af2"
     },
     {
@@ -1192,7 +1192,7 @@
       "name": "pullRequests.comment",
       "rpc": "pullRequests.comment",
       "access": "write",
-      "input": "fa46166d",
+      "input": "a9574c96",
       "output": "794c92c1"
     },
     {
@@ -1353,7 +1353,7 @@
       "name": "pullRequests.submitReview",
       "rpc": "pullRequests.submitReview",
       "access": "write",
-      "input": "69ff938f",
+      "input": "366b3a10",
       "output": "794c92c1"
     },
     {

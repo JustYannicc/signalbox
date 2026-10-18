@@ -6,6 +6,9 @@ import {
   ChatAttachmentId,
   getProviderAttachmentLimitError,
   isProviderSendTurnSupportedImageMimeType,
+  type PersistChatAttachmentsInput,
+  type PersistChatAttachmentsResult,
+  PersistChatAttachmentsError,
 } from "@t3tools/contracts";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
@@ -14,10 +17,12 @@ import * as Effect from "effect/Effect";
 import * as Hex from "effect/encoding/Hex";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
+import * as Semaphore from "effect/Semaphore";
 
 import * as CloudTokens from "../auth/CloudTokens.ts";
 import * as Ids from "./attachmentIds.ts";
 import { type AttachmentStorage, exactly } from "./attachmentObjects.ts";
+import { decodeLegacyImages } from "./legacyImages.ts";
 
 /**
  * Pasted screenshots and files in cloud threads, in the EU drives bucket under
@@ -96,6 +101,10 @@ export interface Claimed {
 export class CloudAttachments extends Context.Service<
   CloudAttachments,
   {
+    readonly persistImages: (
+      userId: string,
+      input: PersistChatAttachmentsInput,
+    ) => Effect.Effect<PersistChatAttachmentsResult, PersistChatAttachmentsError>;
     readonly issueUpload: (
       userId: string,
       input: AttachmentCreateUploadUrlInput,
@@ -200,46 +209,58 @@ export const layer = ({ objects, prefix }: AttachmentStorage) =>
     Effect.gen(function* () {
       const tokens = yield* CloudTokens.CloudTokens;
       const crypto = yield* Crypto.Crypto;
+      // Sweep snapshots/deletion and deterministic retries must share this layer's lock.
+      const persisting = yield* Semaphore.make(1);
       const uuid = Effect.orDie(crypto.randomUUIDv4());
       const keyOf = (id: string) => attachmentKey(prefix, id);
-      let lastSweep = Number.NEGATIVE_INFINITY;
+      const lastSweeps = new Map<string, number>();
 
-      /** Deletes pending uploads older than a day, at most every 15 min. */
-      const sweep = Effect.gen(function* () {
-        const now = yield* Clock.currentTimeMillis;
-        let cursor: string | undefined;
-        let deleted = 0;
-        for (let page = 0; page < SWEEP_MAX_PAGES; page++) {
-          const listed = yield* storage("list", () =>
-            objects.list({
-              prefix: pendingPrefix(prefix),
-              limit: 1000,
-              ...(cursor === undefined ? {} : { cursor }),
-            }),
-          );
-          const stale = listed.objects
-            .filter((object) => now - object.uploaded.getTime() > PENDING_MAX_AGE_MS)
-            .map((object) => object.key);
-          if (stale.length > 0) yield* storage("delete", () => objects.delete(stale));
-          deleted += stale.length;
-          if (!listed.truncated || listed.cursor === undefined) break;
-          cursor = listed.cursor;
-        }
-        if (deleted > 0) yield* Effect.logInfo("removed expired attachment uploads", { deleted });
-      }).pipe(
-        Effect.catchTags({
-          AttachmentStorageError: (failure) =>
-            Effect.logWarning("attachment sweep failed", failure),
-        }),
-      );
+      /** Deletes this owner's pending uploads older than a day. */
+      const sweep = (userId: string) =>
+        Effect.gen(function* () {
+          const now = yield* Clock.currentTimeMillis;
+          let cursor: string | undefined;
+          let deleted = 0;
+          for (let page = 0; page < SWEEP_MAX_PAGES; page++) {
+            const listed = yield* storage("list", () =>
+              objects.list({
+                prefix: pendingPrefix(prefix),
+                limit: 1000,
+                include: ["customMetadata"],
+                ...(cursor === undefined ? {} : { cursor }),
+              }),
+            );
+            const stale = listed.objects
+              // Other owners can recreate their keys concurrently in their own UserObject.
+              .filter(
+                (object) =>
+                  object.customMetadata?.owner === userId &&
+                  now - object.uploaded.getTime() > PENDING_MAX_AGE_MS,
+              )
+              .map((object) => object.key);
+            if (stale.length > 0) yield* storage("delete", () => objects.delete(stale));
+            deleted += stale.length;
+            if (!listed.truncated || listed.cursor === undefined) break;
+            cursor = listed.cursor;
+          }
+          if (deleted > 0) yield* Effect.logInfo("removed expired attachment uploads", { deleted });
+        }).pipe(
+          persisting.withPermits(1),
+          Effect.catchTags({
+            AttachmentStorageError: (failure) =>
+              Effect.logWarning("attachment sweep failed", failure),
+          }),
+        );
 
-      /** Starts a sweep beside the request when one is due; the upload never waits for it. */
-      const sweepWhenDue = Effect.gen(function* () {
-        const now = yield* Clock.currentTimeMillis;
-        if (now - lastSweep < SWEEP_INTERVAL_MS) return;
-        lastSweep = now;
-        yield* Effect.forkDetach(sweep);
-      });
+      /** Schedules a detached sweep when one is due. */
+      const sweepWhenDue = (userId: string) =>
+        Effect.gen(function* () {
+          const now = yield* Clock.currentTimeMillis;
+          if (now - (lastSweeps.get(userId) ?? Number.NEGATIVE_INFINITY) < SWEEP_INTERVAL_MS)
+            return;
+          lastSweeps.set(userId, now);
+          yield* Effect.forkDetach(sweep(userId));
+        });
 
       const issueUpload = Effect.fn("CloudAttachments.issueUpload")(function* (
         userId: string,
@@ -251,7 +272,7 @@ export const layer = ({ objects, prefix }: AttachmentStorage) =>
           "attachment.type": type,
           "attachment.bytes": input.sizeBytes,
         });
-        yield* sweepWhenDue;
+        yield* sweepWhenDue(userId);
         const attachmentId = Ids.pendingId(
           yield* uuid,
           type === "file" ? Ids.fileExtension(input.name) : null,
@@ -501,7 +522,83 @@ export const layer = ({ objects, prefix }: AttachmentStorage) =>
         } satisfies Claimed;
       });
 
+      const persistImages: CloudAttachments["Service"]["persistImages"] = (userId, input) =>
+        Effect.gen(function* () {
+          const images = yield* decodeLegacyImages(input);
+          yield* sweepWhenDue(userId);
+          const pending = yield* Effect.forEach(images, ({ attachment, bytes }, index) =>
+            Effect.gen(function* () {
+              const hash = yield* crypto.digest("SHA-256", bytes).pipe(Effect.orDie);
+              const key = [userId, input.threadId, input.messageId, String(index), Hex.encode(hash)]
+                .map((part) => `${part.length}:${part}`)
+                .join("");
+              const digest = yield* crypto
+                .digest("SHA-256", new TextEncoder().encode(key))
+                .pipe(Effect.orDie);
+              const id = ChatAttachmentId.make(Ids.pendingId(Ids.uuidOf(Hex.encode(digest)), null));
+              const pending = {
+                type: "image" as const,
+                id,
+                name: attachment.name,
+                mimeType: attachment.mimeType,
+                sizeBytes: bytes.byteLength,
+                ...(attachment.source === undefined ? {} : { source: attachment.source }),
+              };
+              const unavailable = () =>
+                new PersistChatAttachmentsError({
+                  message: "Attachments can't be stored right now. Try again.",
+                });
+              const existing = yield* storage("head", () => objects.head(keyOf(id))).pipe(
+                Effect.mapError(unavailable),
+              );
+              // Unexpired successes must survive retries even when another write would fail.
+              if (existing !== null) {
+                const saved = metaOf(existing);
+                if (
+                  existing.size !== bytes.byteLength ||
+                  saved.owner !== userId ||
+                  saved.type !== "image" ||
+                  saved.mime !== attachment.mimeType
+                ) {
+                  return yield* new PersistChatAttachmentsError({
+                    message: "The stored attachment does not match this image.",
+                  });
+                }
+                if (
+                  (yield* Clock.currentTimeMillis) - existing.uploaded.getTime() <=
+                  PENDING_MAX_AGE_MS
+                ) {
+                  return pending;
+                }
+                yield* storage("delete", () => objects.delete(keyOf(id))).pipe(
+                  Effect.mapError(unavailable),
+                );
+              }
+              const token = yield* tokens.sign({
+                _tag: "attachment-upload",
+                u: userId,
+                a: id,
+                t: "image",
+                m: attachment.mimeType,
+                s: bytes.byteLength,
+                exp: (yield* Clock.currentTimeMillis) + ATTACHMENT_UPLOAD_URL_TTL_MS,
+              });
+              const stored = yield* storeUpload(
+                token,
+                new Blob([bytes.slice()]).stream(),
+                bytes.byteLength,
+              );
+              if (stored._tag !== "stored") {
+                return yield* unavailable();
+              }
+              return pending;
+            }),
+          );
+          return { attachments: pending };
+        }).pipe(persisting.withPermits(1));
+
       return CloudAttachments.of({
+        persistImages,
         issueUpload,
         storeUpload,
         deletePending,

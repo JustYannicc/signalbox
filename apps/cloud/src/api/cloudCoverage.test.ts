@@ -6,6 +6,11 @@ import { descriptor } from "../environment.ts";
 import { CLOUD_UNSERVED, cloudServes, cloudUnserved, coverageKeyMatches } from "./cloudCoverage.ts";
 
 describe("cloud API coverage", () => {
+  it("serves explicit provider feedback requests through the runner", () => {
+    const operation = operations.find((operation) => operation.name === "provider.uploadFeedback")!;
+    expect(cloudServes(operation)).toBe(true);
+    expect(cloudUnserved(operation)).toBeUndefined();
+  });
   it("serves workflow inspection and stop through the generated API and MCP reach", () => {
     for (const [name, access] of [
       ["threads.getWorkflowScript", "read"],
@@ -115,7 +120,14 @@ describe("cloud API coverage", () => {
   });
 
   it("serves review replies and resolution through the public API", () => {
-    for (const name of ["pullRequests.replyToThread", "pullRequests.setThreadResolution"]) {
+    for (const name of [
+      "pullRequests.comment",
+      "pullRequests.updateComment",
+      "pullRequests.submitReview",
+      "pullRequests.setReaction",
+      "pullRequests.replyToThread",
+      "pullRequests.setThreadResolution",
+    ]) {
       const operation = operations.find((entry) => entry.name === name)!;
       expect(cloudServes(operation)).toBe(true);
       expect(cloudUnserved(operation)).toBeUndefined();

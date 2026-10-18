@@ -91,7 +91,7 @@ const optional = (name: string) => Config.String(name).pipe(Config.withDefault("
 const optionalSecret = (name: string) =>
   Config.Redacted(name).pipe(Config.withDefault(Redacted.make("")));
 
-const drivePacks = (id: string, name: string) =>
+const drivePacks = (id: string, name: string, expirePendingAttachments = false) =>
   Cloudflare.R2.Bucket(id, {
     name,
     jurisdiction: "eu",
@@ -102,6 +102,19 @@ const drivePacks = (id: string, name: string) =>
         id: "Default Multipart Abort Rule",
         abortMultipartUploadsTransition: { condition: { type: "Age", maxAge: 7 * 24 * 60 * 60 } },
       },
+      // R2 ages the current object, so expiry cannot delete a freshly recreated pending key.
+      // Preview stages share a bucket; their PR-close cleanup owns each entire prefix instead.
+      ...(expirePendingAttachments
+        ? [
+            {
+              id: "Expire Pending Attachments",
+              prefix: "attachments/pending/",
+              deleteObjectsTransition: {
+                condition: { type: "Age" as const, maxAge: 2 * 24 * 60 * 60 },
+              },
+            },
+          ]
+        : []),
     ],
   }).pipe(
     // Shared across stages and full of drives: no stage ever deletes one.
@@ -246,7 +259,7 @@ function deploy(
 
     const previewPacks = yield* drivePacks("PreviewDrivePacks", PREVIEW_DRIVE_PACKS_BUCKET);
     const packs = target.production
-      ? yield* drivePacks("DrivePacks", target.drivePacksBucket)
+      ? yield* drivePacks("DrivePacks", target.drivePacksBucket, true)
       : previewPacks;
 
     // Every stage's dev-server previews resolve through one proxied wildcard,

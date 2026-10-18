@@ -7,6 +7,7 @@ import {
 } from "@signalbox/runner-protocol/RunnerProtocol";
 import type { RunId } from "@t3tools/contracts";
 import { OnePasswordEnvironmentId } from "@t3tools/contracts/signalboxFolders";
+import type { FeedbackResponse } from "@signalbox/runner-protocol/FeedbackProtocol";
 import type * as Effect from "effect/Effect";
 import * as Hex from "effect/encoding/Hex";
 
@@ -29,6 +30,7 @@ const CLOSE = { refused: 4001, replaced: 4002, protocol: 4003, released: 4004 } 
 export interface RunnerSocketAttachment {
   readonly generation: number;
   readonly connection: number;
+  readonly feedback?: boolean | undefined;
   /** Last Runner frame handled by the object, persisted through hibernation. */
   readonly lastActivityAt?: number | undefined;
   /** The server ended or replaced this connection. */
@@ -54,6 +56,7 @@ type Attachment = RunnerSocketAttachment;
 export interface RunnerSocketHost {
   readonly ctx: DurableObjectState;
   readonly syntheticSecrets?: boolean | undefined;
+  readonly feedbackResult?: (socket: WebSocket, response: FeedbackResponse) => void;
   readonly now: () => Promise<number>;
   readonly run: <A>(effect: Effect.Effect<A, never, ThreadRunner.ThreadRunner>) => Promise<A>;
   /**
@@ -327,6 +330,9 @@ export async function onRunnerMessage(
     socket.serializeAttachment({ ...attachment, lastActivityAt: receivedAt } satisfies Attachment);
   }
   switch (message.type) {
+    case "feedback.result":
+      if (attachment !== null) host.feedbackResult?.(socket, message);
+      return;
     case "hello": {
       const result = await host.run(runner.use((service) => service.hello(message)));
       if (result._tag === "refused") {
@@ -352,6 +358,7 @@ export async function onRunnerMessage(
           (attempt) => attempt.runId === result.heldRunId,
         )?.preparationGeneration,
         steers: message.steers === true,
+        feedback: message.feedback === true,
         runtimeResponses: message.runtimeResponses === true,
       } satisfies Attachment);
       send(socket, {

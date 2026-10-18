@@ -3,6 +3,7 @@ import {
   AuthOrchestrationReadScope,
   AuthPreviewOperateScope,
   type AuthEnvironmentScope,
+  type ChatAttachment,
   CommandId,
   EnvironmentId,
   MessageId,
@@ -13,6 +14,7 @@ import {
   ThreadId,
   TurnItemId,
   WS_METHODS,
+  PersistChatAttachmentsResult,
 } from "@t3tools/contracts";
 import { SIGNALBOX_PERSON_BROWSER_WS_METHODS } from "@t3tools/contracts/signalboxPersonBrowser";
 import { describe, expect, it } from "@effect/vitest";
@@ -39,6 +41,7 @@ import * as CloudRpc from "./rpc.ts";
 const identity = { environmentId: EnvironmentId.make("cloud-test"), label: "Cloud" };
 const userId = "user_1";
 const threadId = ThreadId.make("thread-1");
+const isPersisted = Schema.is(PersistChatAttachmentsResult);
 
 /** A socket to `userId`'s object in a fresh in-memory cloud, as the RPC test client. */
 const connect = (
@@ -46,16 +49,17 @@ const connect = (
     AuthOrchestrationReadScope,
     AuthOrchestrationOperateScope,
   ],
+  cloud = makeMemoryCloud(),
+  callerId = userId,
 ) =>
   Effect.gen(function* () {
-    const cloud = makeMemoryCloud();
-    yield* cloud.userDirectory.forUser(userId).recordSignIn({ id: userId, email: "a@b.c" });
+    yield* cloud.userDirectory.forUser(callerId).recordSignIn({ id: callerId, email: "a@b.c" });
     const rpc = yield* RpcTest.makeClient(CloudRpc.CloudRpcGroup).pipe(
       Effect.provide(
         Layer.mergeAll(
-          CloudRpc.layerHandlers({ identity, userId, sid: "test-session" }),
+          CloudRpc.layerHandlers({ identity, userId: callerId, sid: "test-session" }),
           CloudRpc.layerScopeAuthorization(scopes),
-        ).pipe(Layer.provide(cloud.layerFor(userId))),
+        ).pipe(Layer.provide(cloud.layerFor(callerId))),
       ),
     );
     return { cloud, rpc };
@@ -66,7 +70,11 @@ const client = (scopes?: ReadonlyArray<AuthEnvironmentScope>) =>
 
 type Rpc = Effect.Success<ReturnType<typeof client>>;
 
-const launch = (rpc: Rpc, commandId = "launch-1") =>
+const launch = (
+  rpc: Rpc,
+  commandId = "launch-1",
+  attachments: ReadonlyArray<ChatAttachment> = [],
+) =>
   rpc[ORCHESTRATION_V2_WS_METHODS.launchThread]({
     commandId: CommandId.make(commandId),
     threadId,
@@ -76,10 +84,15 @@ const launch = (rpc: Rpc, commandId = "launch-1") =>
     runtimeMode: "full-access",
     interactionMode: "default",
     workspaceStrategy: { type: "root" },
-    initialMessage: { messageId: MessageId.make("message-1"), text: "Hello", attachments: [] },
+    initialMessage: { messageId: MessageId.make("message-1"), text: "Hello", attachments },
   });
 
-const send = (rpc: Rpc, commandId: string, text: string) =>
+const send = (
+  rpc: Rpc,
+  commandId: string,
+  text: string,
+  attachments: ReadonlyArray<ChatAttachment> = [],
+) =>
   rpc[ORCHESTRATION_V2_WS_METHODS.dispatchCommand]({
     type: "message.dispatch",
     commandId: CommandId.make(commandId),
@@ -88,7 +101,7 @@ const send = (rpc: Rpc, commandId: string, text: string) =>
     threadId,
     messageId: MessageId.make(`message-${commandId}`),
     text,
-    attachments: [],
+    attachments,
     dispatchMode: { type: "start_immediately" },
     deliveryIntent: "auto",
   });
@@ -111,6 +124,46 @@ const sidebar = (rpc: Rpc) =>
   );
 
 describe("cloud RPC", () => {
+  it.effect("persists before launch and authorizes the thread when claiming images", () =>
+    Effect.gen(function* () {
+      const { rpc, cloud } = yield* connect();
+      const input = {
+        threadId,
+        messageId: MessageId.make("image-message"),
+        attachments: [
+          {
+            type: "image" as const,
+            name: "shot.png",
+            mimeType: "image/png",
+            sizeBytes: 3,
+            dataUrl: "data:image/png;base64,AQID",
+          },
+        ],
+      };
+      const result = yield* rpc[WS_METHODS.assetsPersistChatAttachments](input);
+      expect(isPersisted(result)).toBe(true);
+      expect(result.attachments).toHaveLength(1);
+      expect(result.attachments[0]?.id).toMatch(/^pending-/);
+      const launched = yield* launch(rpc, "launch-1", result.attachments);
+      const kept = launched.projection.messages[0]?.attachments[0];
+      expect(kept?.id).toMatch(/^thread-1-/);
+      expect(yield* rpc[WS_METHODS.assetsPersistChatAttachments](input)).toEqual(result);
+      const stranger = (yield* connect(undefined, cloud, "user_2")).rpc;
+      const privateUpload = yield* stranger[WS_METHODS.assetsPersistChatAttachments](input);
+      expect(privateUpload.attachments[0]?.id).not.toBe(result.attachments[0]?.id);
+      expect(
+        (yield* Effect.flip(send(stranger, "unauthorized-send", "Look", privateUpload.attachments)))
+          ._tag,
+      ).toBe("OrchestrationV2DispatchCommandError");
+      const snapshot = yield* rpc[ORCHESTRATION_V2_WS_METHODS.getThreadProjection]({ threadId });
+      expect(snapshot.messages.flatMap((message) => message.attachments)).toEqual([kept]);
+      const readOnly = yield* client([AuthOrchestrationReadScope]);
+      expect(
+        (yield* Effect.flip(readOnly[WS_METHODS.assetsPersistChatAttachments](input)))._tag,
+      ).toBe("EnvironmentAuthorizationError");
+    }).pipe(Effect.scoped),
+  );
+
   it.effect.each([
     { archived: false, state: "active" },
     { archived: true, state: "archived" },
@@ -200,6 +253,7 @@ describe("cloud RPC", () => {
       expect(error).toMatchObject({ _tag: "OrchestrationV2CommandOutputError", threadId, message });
     }).pipe(Effect.scoped),
   );
+
   it.effect("serves the person's one managed browser profile through the user RPC", () =>
     Effect.gen(function* () {
       const rpc = yield* client([AuthOrchestrationReadScope, AuthPreviewOperateScope]);
