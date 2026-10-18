@@ -183,6 +183,13 @@
       "output": "03c2b661"
     },
     {
+      "name": "automations.deploymentEvidence",
+      "rpc": "automations.deploymentEvidence",
+      "access": "read",
+      "input": "b4fca1c2",
+      "output": "d32cee2a"
+    },
+    {
       "name": "automations.discardDraft",
       "rpc": "automations.discardDraft",
       "access": "write",

@@ -14,7 +14,10 @@ import * as ScriptedProvider from "../thread/scriptedProvider.ts";
 const userId = "user_1";
 const decodeVerifierReply = Schema.decodeUnknownEffect(Schema.Struct({ text: Schema.String }));
 
-afterEach(() => vi.restoreAllMocks());
+afterEach(() => {
+  vi.restoreAllMocks();
+  vi.useRealTimers();
+});
 
 type VerificationReply = {
   readonly state: "live" | "none" | "failed" | "unknown";
@@ -78,6 +81,115 @@ const compiledOf = (source: string) => {
 };
 
 describe("cloud Task done automation", () => {
+  it.effect("keeps the evaluator waiting without GitHub and resumes after reconnecting", () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    withVerificationReply({ state: "live", evidence: "Production smoke passed." });
+    const { cloud, github, open, tool, getRun, run } = makeDeployedThread();
+    return run(
+      Effect.gen(function* () {
+        yield* open;
+        yield* cloud.settle;
+        github.merge(1);
+        yield* cloud.syncPullRequests(threadId);
+        const user = cloud.userDirectory.forUser(userId);
+        yield* user.disconnectGitHub();
+        yield* cloud.settle;
+
+        const waiting = yield* taskRecord(tool);
+        const runId = waiting.record!.condition!.runId!;
+        const evaluation = yield* getRun(runId);
+        expect(evaluation.run).toMatchObject({ status: "running", error: null });
+        expect(evaluation.steps).toContainEqual(
+          expect.objectContaining({
+            label: "Wait for merge evidence access",
+            status: "waiting",
+          }),
+        );
+        expect(evaluation.steps.some((step) => step.verb === "agent")).toBe(false);
+        expect(waiting.thread.archivedAt).toBeNull();
+        expect(waiting.record?.outcome).toBeNull();
+
+        yield* user.beginGitHubConnect({
+          grantId: "reconnect",
+          returnTo: "http://localhost:8787/api/github/callback",
+        });
+        github.authorize(userId);
+        yield* user.completeGitHubConnect("reconnect");
+        yield* cloud.workflows.advance(60_001);
+        yield* cloud.settle;
+
+        const completed = yield* taskRecord(tool);
+        expect(completed.record?.condition?.runId).toBe(runId);
+        expect(completed.thread.archivedAt).not.toBeNull();
+        expect(completed.record?.outcome).toContain("[Live at ");
+        expect((yield* getRun(runId)).run.error).toBeNull();
+      }),
+    );
+  });
+
+  it.effect("unlink wakes a verifier wait and archives from the remaining live PR", () => {
+    const scriptedReply = ScriptedProvider.scriptedReply;
+    vi.spyOn(ScriptedProvider, "scriptedReply").mockImplementation((prompt) => {
+      if (!prompt.includes("This is a read-only verification task")) return scriptedReply(prompt);
+      return JSON.stringify({
+        state: prompt.includes("/pull/2") ? "unknown" : "live",
+        commit: prompt.match(/actual merge commit is ([a-f0-9]{40})/)?.[1],
+        runId: "123",
+        evidence: "Deployment verification result.",
+      });
+    });
+    const { cloud, github, open, tool, getRun, run } = makeDeployedThread();
+    return run(
+      Effect.gen(function* () {
+        const { rpc } = yield* open;
+        github.pulls.push({ ...github.pulls[0]!, number: 2 });
+        yield* rpc[ORCHESTRATION_V2_WS_METHODS.dispatchCommand]({
+          type: "thread.pull-request.link",
+          commandId: CommandId.make("task-done-link-second-pr"),
+          threadId,
+          host: "github.test",
+          repository: "owner/repo",
+          number: 2,
+          url: "https://github.test/owner/repo/pull/2",
+          source: "manual",
+        });
+        yield* cloud.syncPullRequests(threadId);
+        yield* cloud.settle;
+        github.merge(1);
+        github.merge(2);
+        yield* cloud.forgetPullRequestPolls(threadId);
+        yield* cloud.syncPullRequests(threadId);
+        yield* cloud.settle;
+
+        const waiting = yield* taskRecord(tool);
+        const runId = waiting.record!.condition!.runId!;
+        expect(waiting.thread.archivedAt).toBeNull();
+        expect((yield* getRun(runId)).steps).toContainEqual(
+          expect.objectContaining({
+            label: "Wait for deployment evidence",
+            status: "waiting",
+          }),
+        );
+
+        yield* rpc[ORCHESTRATION_V2_WS_METHODS.dispatchCommand]({
+          type: "thread.pull-request.unlink",
+          commandId: CommandId.make("task-done-unlink-second-pr"),
+          threadId,
+          host: "github.test",
+          repository: "owner/repo",
+          number: 2,
+        });
+        yield* cloud.settle;
+
+        const completed = yield* taskRecord(tool);
+        expect(completed.record?.condition?.runId).toBe(runId);
+        expect(completed.thread.archivedAt).not.toBeNull();
+        expect(completed.record?.outcome).toContain("[Live at ");
+        expect((yield* getRun(runId)).run.error).toBeNull();
+      }),
+    );
+  });
+
   it.effect.each(["deploy", "smoke"] as const)(
     "wakes the task agent once across workflow replays with the failed %s and deployment link",
     (failure) => {
