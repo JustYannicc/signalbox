@@ -16,6 +16,14 @@ describe("no-effect-expression-body", () => {
   rule.valid("allows other hooks", `useMemo(() => element.focus(), []);`);
   rule.valid("allows methods outside effects", `const focus = () => element.focus();`);
   rule.valid("allows unknown return types", `useEffect(() => start(), []);`);
+  rule.valid(
+    "allows local functions named like DOM methods",
+    `const select = () => () => disconnect(); useEffect(() => select(), []);`,
+  );
+  rule.valid(
+    "allows imported functions named like DOM methods",
+    `import { focus } from "store"; useEffect(() => focus(), []);`,
+  );
   rule.invalid("rejects assignments", `useEffect(() => (ref.current = value), [value]);`);
   rule.invalid(
     "rejects optional DOM calls",
@@ -32,6 +40,14 @@ describe("no-effect-expression-body", () => {
   rule.invalid("rejects arrays", `useEffect(() => [], []);`);
   rule.invalid("unwraps assertions", `useEffect(() => (input.focus() as unknown), []);`);
   rule.invalid("unwraps callbacks", `useEffect((() => input.focus()) as EffectCallback, []);`);
+  rule.invalid(
+    "unwraps satisfies on the body",
+    `useEffect(() => (ref.current = value) satisfies unknown, []);`,
+  );
+  rule.invalid(
+    "unwraps satisfies on the callback",
+    `useEffect((() => input.focus()) satisfies EffectCallback, []);`,
+  );
   rule.invalid(
     "checks static computed names",
     `React["useEffect"](() => el["scrollIntoView"](), []);`,

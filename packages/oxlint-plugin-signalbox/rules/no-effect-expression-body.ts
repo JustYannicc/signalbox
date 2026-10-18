@@ -37,6 +37,7 @@ function unwrap(node: ESTree.Node): ESTree.Node {
     case "ParenthesizedExpression":
     case "TSNonNullExpression":
     case "TSAsExpression":
+    case "TSSatisfiesExpression":
     case "TSTypeAssertion":
       return unwrap(node.expression);
     default:
@@ -60,6 +61,7 @@ function leaksNonCleanup(body: ESTree.Node): boolean {
   const expression = unwrap(body);
   if (NON_CLEANUP_BODY_TYPES.has(expression.type)) return true;
   if (expression.type !== "CallExpression") return false;
+  if (unwrap(expression.callee).type !== "MemberExpression") return false;
   const name = calleeName(expression.callee);
   return name !== undefined && NON_CLEANUP_METHODS.has(name);
 }
