@@ -8,6 +8,7 @@ import { makeModelAccess } from "./testing.ts";
 import type {
   LocalModelAuthorization,
   ModelAuthorization,
+  ModelCallTrace,
   ModelForwardReply,
   ModelPoolRoute,
   ModelRequest,
@@ -46,6 +47,7 @@ const access = (overrides: Partial<Parameters<typeof makeModelAccess>[0]> = {}) 
       path: string;
       request: Request;
       thread: string | undefined;
+      trace: ModelCallTrace | undefined;
     }>,
     threadRecords: [] as Array<{ threadId: string; record: ModelGatewayRecord }>,
     localsRecords: [] as Array<{
@@ -63,8 +65,8 @@ const access = (overrides: Partial<Parameters<typeof makeModelAccess>[0]> = {}) 
       calls.locals.push(token);
       return { _tag: "denied", reason: "denied" };
     },
-    forward: async (route, path, req, thread) => {
-      calls.forwards.push({ pool: route, path, request: req, thread });
+    forward: async (route, path, req, thread, trace) => {
+      calls.forwards.push({ pool: route, path, request: req, thread, trace });
       return forwarded();
     },
     recordThread: async (id, record) => {
@@ -161,6 +163,7 @@ describe("ModelAccess", () => {
         pool,
         path: "/v1/messages?stream=true",
         thread: "thread-a",
+        trace: { runId, traceId: "trace-1" },
       });
       const sent = yield* Effect.promise(() => calls.forwards[0]!.request.text());
       expect(sent).toContain(secretPlaceholder("API_KEY"));

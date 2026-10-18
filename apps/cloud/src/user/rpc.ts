@@ -12,13 +12,13 @@ import {
   AuthSettingsWriteScope,
   AuthPreviewOperateScope,
   AuthSourceControlWriteScope,
-  AuthStandardClientScopes,
   EnvironmentAuthorizationError,
   GitCommandError,
   ORCHESTRATION_V2_WS_METHODS,
   OrchestrationGetFullThreadDiffError,
   OrchestrationGetTurnDiffError,
   OrchestrationV2DispatchCommandError,
+  OrchestrationV2CommandOutputError,
   OrchestrationV2GetShellSnapshotError,
   OrchestrationV2GetThreadProjectionError,
   OrchestrationV2ThreadLaunchError,
@@ -141,6 +141,7 @@ import * as FolderStarts from "./FolderStarts.ts";
 import * as UserShell from "./UserShell.ts";
 import * as UserThreadKinds from "./UserThreadKinds.ts";
 import * as UserThreadStatus from "./UserThreadStatus.ts";
+import { CLOUD_CLIENT_SCOPES } from "../auth/CloudScopes.ts";
 
 /**
  * The slice of the environment RPC protocol a user's object serves: enough
@@ -187,9 +188,11 @@ const SERVED = [
   WS_METHODS.subscribeServerLifecycle,
   ORCHESTRATION_V2_WS_METHODS.subscribeShell,
   ORCHESTRATION_V2_WS_METHODS.getArchivedShellSnapshot,
+  ORCHESTRATION_V2_WS_METHODS.subscribeArchivedShell,
   ORCHESTRATION_V2_WS_METHODS.dispatchCommand,
   ORCHESTRATION_V2_WS_METHODS.launchThread,
   ORCHESTRATION_V2_WS_METHODS.subscribeThread,
+  ORCHESTRATION_V2_WS_METHODS.subscribeCommandOutput,
   ORCHESTRATION_V2_WS_METHODS.getThreadProjection,
   // Images tools returned in a thread and attachments (`assets/CloudAssets.ts`).
   WS_METHODS.assetsCreateUrl,
@@ -287,9 +290,11 @@ const REQUIRED_SCOPES = {
   [WS_METHODS.subscribeServerLifecycle]: AuthOrchestrationReadScope,
   [ORCHESTRATION_V2_WS_METHODS.subscribeShell]: AuthOrchestrationReadScope,
   [ORCHESTRATION_V2_WS_METHODS.getArchivedShellSnapshot]: AuthOrchestrationReadScope,
+  [ORCHESTRATION_V2_WS_METHODS.subscribeArchivedShell]: AuthOrchestrationReadScope,
   [ORCHESTRATION_V2_WS_METHODS.dispatchCommand]: AuthOrchestrationOperateScope,
   [ORCHESTRATION_V2_WS_METHODS.launchThread]: AuthOrchestrationOperateScope,
   [ORCHESTRATION_V2_WS_METHODS.subscribeThread]: AuthOrchestrationReadScope,
+  [ORCHESTRATION_V2_WS_METHODS.subscribeCommandOutput]: AuthOrchestrationReadScope,
   [ORCHESTRATION_V2_WS_METHODS.getThreadProjection]: AuthOrchestrationReadScope,
   // A cloud serves only tool output images, which a self-hosted server gates on this scope.
   [WS_METHODS.assetsCreateUrl]: AuthOrchestrationReadScope,
@@ -588,7 +593,7 @@ export const layerHandlers = (input: {
       const notes = yield* makeNotesHandlers({ newThreadModel });
       const keys = yield* makeKeysHandlers({
         userId,
-        scopes: input.scopes ?? AuthStandardClientScopes,
+        scopes: input.scopes ?? CLOUD_CLIENT_SCOPES,
       });
       const signIn = yield* makeSignInHandlers({ userId });
       const keybindings = yield* makeKeybindingHandlers;
@@ -652,6 +657,18 @@ export const layerHandlers = (input: {
               ),
             ),
           ),
+        [ORCHESTRATION_V2_WS_METHODS.subscribeArchivedShell]: () =>
+          Stream.unwrap(
+            shell.subscribeArchived.pipe(
+              Effect.mapError(
+                (cause) =>
+                  new OrchestrationV2GetShellSnapshotError({
+                    message: "Archived threads are unavailable right now.",
+                    cause,
+                  }),
+              ),
+            ),
+          ),
         // Settings' Archived list: the shell's archived threads.
         [ORCHESTRATION_V2_WS_METHODS.getArchivedShellSnapshot]: () =>
           shell.snapshot.pipe(
@@ -702,6 +719,21 @@ export const layerHandlers = (input: {
                   threadId: request.threadId,
                   message: failureMessage(error),
                 }),
+            ),
+          ),
+        [ORCHESTRATION_V2_WS_METHODS.subscribeCommandOutput]: (request) =>
+          Stream.unwrap(
+            Effect.map(actorNow, (actor) => coreThreads.commandOutput(actor, request)),
+          ).pipe(
+            Stream.interruptWhen(lostSight(request.threadId)),
+            Stream.mapError((cause) =>
+              cause._tag === "OrchestrationV2CommandOutputError"
+                ? cause
+                : new OrchestrationV2CommandOutputError({
+                    threadId: request.threadId,
+                    message: "Couldn't read this command's output. It may no longer be available.",
+                    cause,
+                  }),
             ),
           ),
         [ORCHESTRATION_V2_WS_METHODS.getThreadProjection]: (request) =>

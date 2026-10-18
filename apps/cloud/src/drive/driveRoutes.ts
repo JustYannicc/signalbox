@@ -303,6 +303,9 @@ async function route(
     if (request.method !== "POST") return text("Method not allowed.", 405);
     const body = decodeBody(pullJson.save.decode, await request.text());
     if (body === null) return text("Unreadable request.", 400);
+    if (auth.pullOperationId !== body.operation.id) {
+      return text("This pull is no longer running on this machine.", 403);
+    }
     const result = await run(Effect.flatMap(drive, (handle) => handle.savePull(writer, body)));
     return json(pullJson.result.encode(result));
   }

@@ -66,6 +66,10 @@
     "./FeedbackProtocol": {
       "types": "./src/FeedbackProtocol.ts",
       "import": "./src/FeedbackProtocol.ts"
+    },
+    "./PullRequestTools": {
+      "types": "./src/PullRequestTools.ts",
+      "import": "./src/PullRequestTools.ts"
     }
   },
   "scripts": {
