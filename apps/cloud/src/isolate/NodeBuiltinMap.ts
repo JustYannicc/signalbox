@@ -31,6 +31,7 @@ export const NODE_BUILTIN_ROUTES = {
   "stream/consumers": "workerd",
   "stream/promises": "workerd",
   string_decoder: "workerd",
+  timers: "workerd",
   "timers/promises": "workerd",
   tls: "workerd-and-loopback",
   tty: "kernel-terminal",
