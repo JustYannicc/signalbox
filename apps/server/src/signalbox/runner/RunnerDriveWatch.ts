@@ -26,6 +26,8 @@ export const watchChanges = <E>(input: {
   readonly save: Effect.Effect<void, string>;
   /** What the thread should hear. */
   readonly notice: (message: string) => Effect.Effect<void>;
+  /** Runs once after a failed save recovers. */
+  readonly onSavedAgain?: Effect.Effect<void>;
 }) =>
   Effect.gen(function* () {
     let failing = false;
@@ -48,6 +50,7 @@ export const watchChanges = <E>(input: {
       } else if (failing) {
         failing = false;
         yield* input.notice(SAVED_AGAIN_NOTICE);
+        if (input.onSavedAgain !== undefined) yield* input.onSavedAgain;
       }
     }
   });

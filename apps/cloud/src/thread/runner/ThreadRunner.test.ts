@@ -1556,7 +1556,7 @@ describe("ThreadRunner", () => {
           });
           expect(yield* runner.authorizeRemote(remoteToken)).toMatchObject({
             _tag: "denied",
-            reason: "No turn is running on this thread.",
+            reason: "This token is not for a live turn or terminal on this machine.",
           });
         }),
       { drives: true },

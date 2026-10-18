@@ -5,6 +5,7 @@ import {
   AuthPreviewOperateScope,
   AuthSettingsWriteScope,
   AuthSourceControlWriteScope,
+  AuthTerminalOperateScope,
   type AuthEnvironmentScope,
 } from "./auth.ts";
 import { ORCHESTRATION_V2_WS_METHODS } from "./orchestrationV2.ts";
@@ -26,6 +27,13 @@ import { SIGNALBOX_ANALYTICS_WS_METHODS } from "./signalboxAnalytics.ts";
 
 /** Incremental client enforcement; the server still authorizes every request. */
 export const CLIENT_GUARDED_RPC_SCOPES = {
+  [WS_METHODS.terminalOpen]: AuthTerminalOperateScope,
+  [WS_METHODS.terminalAttach]: AuthTerminalOperateScope,
+  [WS_METHODS.terminalWrite]: AuthTerminalOperateScope,
+  [WS_METHODS.terminalResize]: AuthTerminalOperateScope,
+  [WS_METHODS.terminalClear]: AuthTerminalOperateScope,
+  [WS_METHODS.terminalRestart]: AuthTerminalOperateScope,
+  [WS_METHODS.terminalClose]: AuthTerminalOperateScope,
   [WS_METHODS.providerUploadFeedback]: AuthOrchestrationOperateScope, // signalbox: feedback uploads require the destination's operate grant
   [WS_METHODS.worktreeSetupCancel]: AuthOrchestrationOperateScope,
   [WS_METHODS.serverUpsertKeybinding]: AuthSettingsWriteScope,

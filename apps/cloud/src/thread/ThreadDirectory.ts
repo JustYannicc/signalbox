@@ -43,6 +43,11 @@ import type {
   BrowsingStreamItem,
 } from "@t3tools/contracts/signalboxBrowsing";
 import type { BrowsingDispatched } from "./browsing/ThreadBrowsing.ts";
+import {
+  terminalHandleFor,
+  type TerminalHandle,
+  type TerminalObjectApi,
+} from "./terminal/terminalDirectory.ts";
 import type { SearchBackfillProgress, SearchThreadDocuments } from "./ThreadEngine.ts";
 import { browsingWire } from "./browsing/browsingWire.ts";
 import { ThreadObjectError } from "./ThreadAccess.ts";
@@ -127,7 +132,7 @@ const ThreadLifecycleReceiptWire = Schema.Struct({
 const decodeLifecycleReceipt = Schema.decodeUnknownSync(ThreadLifecycleReceiptWire);
 
 /** What a thread object answers. `ThreadObject` implements it method for method. */
-export interface ThreadObjectApi {
+export interface ThreadObjectApi extends TerminalObjectApi {
   readonly uploadFeedback: (
     actor: Actor,
     input: ProviderUploadFeedbackInput,
@@ -283,7 +288,7 @@ export interface ThreadObjectApi {
 
 type CommandFailure = ThreadNotFoundError | ThreadCommandRejectedError | ThreadObjectError;
 
-export interface ThreadHandle {
+export interface ThreadHandle extends TerminalHandle {
   readonly uploadFeedback: (
     actor: Actor,
     input: ProviderUploadFeedbackInput,
@@ -545,6 +550,7 @@ export function handleFor(api: ThreadObjectApi): ThreadHandle {
       Effect.flatMap((value) => decodeIn(operation, () => decodeLifecycleReceipt(value))),
     );
   return {
+    ...terminalHandleFor(api),
     uploadFeedback: (actor, input) =>
       call("uploadFeedback", () => api.uploadFeedback(actor, input)).pipe(
         Effect.flatMap(fromReply),

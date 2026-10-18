@@ -102,6 +102,7 @@ export const layerServices = (input: {
   readonly users: UserDirectory.UserObjectNamespace;
   readonly threads: ThreadDirectory.ThreadObjectNamespace;
   readonly localWorkerd: boolean;
+  readonly drives?: boolean;
   readonly traceExport?: Pick<Fetcher, "fetch">;
   readonly traceLimiter?: Pick<RateLimit, "limit">;
   /** The drives bucket and its preview prefix, where attachments live. */
@@ -143,7 +144,9 @@ export const layerServices = (input: {
     Layer.provideMerge(GitHub.layerForUsers(GitHub.gitHubEndpoints(input.vars))),
     Layer.provideMerge(CloudTokens.layer),
     Layer.provideMerge(IdentityProvider.layer),
-    Layer.provideMerge(Layer.mergeAll(CloudConfig.layer, PreviewSetup.layerConfig)),
+    Layer.provideMerge(
+      Layer.mergeAll(CloudConfig.layerWithDrives(input.drives === true), PreviewSetup.layerConfig),
+    ),
     Layer.provideMerge(
       Layer.mergeAll(
         UserDirectory.layerDurableObjects(input.users, { localWorkerd: input.localWorkerd }),

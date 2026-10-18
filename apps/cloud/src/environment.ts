@@ -75,6 +75,7 @@ export interface CloudEnvironmentIdentity {
   readonly scripted?: boolean;
   /** Whether threads take pasted screenshots and files (`attachments/`): the cloud has a bucket. */
   readonly attachments?: boolean;
+  readonly drives?: boolean;
   readonly searchDisabled?: boolean;
 }
 
@@ -135,8 +136,7 @@ export const descriptor = (identity: CloudEnvironmentIdentity): ExecutionEnviron
     pullRequests: true,
     pullRequestChecks: true,
     threadPullRequests: true,
-    // Threads run on machines nobody operates, and the user never runs this server.
-    terminal: false,
+    terminal: identity.drives === true,
     worktrees: false,
     serverSettingsWrite: false,
     modelSettingsWrite: true,

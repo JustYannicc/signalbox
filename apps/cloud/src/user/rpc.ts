@@ -126,6 +126,7 @@ import * as CloudThreadService from "../thread/CloudThreadService.ts";
 import { ProviderUploadFeedbackError } from "@t3tools/contracts";
 import * as Threads from "../thread/Threads.ts";
 import { deviceMember, makeBrowsingHandlers } from "../thread/browsing/browsingRpc.ts";
+import { makeTerminalHandlers, TERMINAL_METHODS, TERMINAL_SCOPES } from "./terminalRpc.ts";
 import { type Actor, ThreadNotFoundError } from "../thread/ThreadAccess.ts";
 import type { BrowserReply } from "../thread/threadWire.ts";
 import { DriveSharing } from "./DriveSharing.ts";
@@ -199,6 +200,7 @@ const SECTION_METHODS = [
 ] as const;
 
 const SERVED = [
+  ...TERMINAL_METHODS,
   WS_METHODS.providerUploadFeedback,
   WS_METHODS.subscribeWorktreeSetup,
   WS_METHODS.worktreeSetupCancel,
@@ -317,6 +319,7 @@ export const CloudRpcGroup = WsRpcGroup.omit(
 
 /** Same scopes the self-hosted server requires for these RPCs. */
 const REQUIRED_SCOPES = {
+  ...TERMINAL_SCOPES,
   [WS_METHODS.providerUploadFeedback]: AuthOrchestrationOperateScope,
   [WS_METHODS.subscribeServerConfig]: AuthOrchestrationReadScope,
   [WS_METHODS.serverGetConfig]: AuthOrchestrationReadScope,
@@ -609,6 +612,7 @@ export const layerHandlers = (input: {
             Stream.runHead,
           );
         }).pipe(Effect.andThen(Effect.fail(new ThreadNotFoundError())));
+      const terminals = yield* makeTerminalHandlers(actorNow, lostSight);
       /** Calls a drive service, which only a cloud that stores drives has. */
       const withDrives =
         <S>(service: Option.Option<S>) =>
@@ -661,6 +665,7 @@ export const layerHandlers = (input: {
       const analytics = yield* makeAnalyticsHandlers;
       const timezone = yield* makeTimezoneHandlers;
       return {
+        ...terminals,
         [WS_METHODS.providerUploadFeedback]: (request) =>
           Effect.flatMap(actorNow, (actor) => threads.uploadFeedback(actor, request)).pipe(
             Effect.catchTags({
