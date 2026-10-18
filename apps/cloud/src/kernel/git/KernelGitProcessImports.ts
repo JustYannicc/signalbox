@@ -205,8 +205,11 @@ export class KernelGitProcessImports {
     if (child?.kernelPid === undefined) return ECHILD;
     const result = await this.#waitForChild(child.kernelPid, options >>> 0);
     if (result.status === "error") {
-      if (result.error.code === "CANCELLED" || result.error.code === "IO_ERROR") {
-        this.#children.delete(pid | 0);
+      if (child.handle !== undefined) {
+        const ownership = this.#options.context.processes.info(child.handle);
+        if (ownership.status === "error" && ownership.error.code === "INVALID_HANDLE") {
+          this.#children.delete(pid | 0);
+        }
       }
       return gitErrnoForKernelError(result.error.code);
     }
@@ -334,13 +337,19 @@ export class KernelGitProcessImports {
 
   async cleanupChildren(): Promise<void> {
     const errors: unknown[] = [];
-    const children = [...this.#children.values()];
-    this.#children.clear();
-    for (const child of children) {
-      if (child.handle === undefined) continue;
+    for (const [pid, child] of this.#children) {
+      if (child.handle === undefined) {
+        this.#children.delete(pid);
+        continue;
+      }
       try {
         await this.#terminateAndReap(child.handle);
+        this.#children.delete(pid);
       } catch (error) {
+        const ownership = this.#options.context.processes.info(child.handle);
+        if (ownership.status === "error" && ownership.error.code === "INVALID_HANDLE") {
+          this.#children.delete(pid);
+        }
         errors.push(error);
       }
     }
@@ -348,53 +357,18 @@ export class KernelGitProcessImports {
   }
 
   async #terminateAndReap(handle: KernelHandle<"process">): Promise<void> {
-    const processes = this.#options.context.processes;
-    let terminal = processes.exitStatus(handle);
-    if (terminal.status === "error" && terminal.error.code === "INVALID_HANDLE") return;
-    if (terminal.status === "would_block") {
-      this.#options.context.wakes.release(terminal.wakeToken);
-      const signalled = processes.signal(handle, 9);
-      if (signalled.status === "would_block") {
-        this.#options.context.wakes.release(signalled.wakeToken);
-      }
-      if (
-        signalled.status === "error" &&
-        signalled.error.code !== "NOT_FOUND" &&
-        signalled.error.code !== "INVALID_HANDLE"
-      ) {
-        throw new Error(`Git child could not be killed: ${signalled.error.message}`);
-      }
-      terminal = await this.#waitForTerminal(handle);
+    const result = await this.#options.context.processes.terminateAndReap(handle);
+    if (result.status === "would_block") {
+      this.#options.context.wakes.release(result.wakeToken);
+      throw new Error("Git child termination would block");
     }
-
-    const reaped = processes.reap(handle);
     if (
-      reaped.status === "error" &&
-      reaped.error.code !== "CANCELLED" &&
-      reaped.error.code !== "INVALID_HANDLE" &&
-      reaped.error.code !== "NOT_FOUND"
+      result.status === "error" &&
+      result.error.code !== "CANCELLED" &&
+      result.error.code !== "INVALID_HANDLE" &&
+      result.error.code !== "NOT_FOUND"
     ) {
-      throw new Error(`Git child could not be reaped: ${reaped.error.message}`);
-    }
-    if (terminal.status === "error" && terminal.error.code === "IO_ERROR") {
-      throw new Error(`Git child failed before cleanup: ${terminal.error.message}`);
-    }
-  }
-
-  async #waitForTerminal(handle: KernelHandle<"process">) {
-    const processes = this.#options.context.processes;
-    for (;;) {
-      const result = processes.exitStatus(handle);
-      if (result.status !== "would_block") return result;
-      const token = result.wakeToken;
-      try {
-        const woken = await this.#options.context.wakes.wait(token);
-        if (woken.status !== "ok" && woken.error.code !== "EXPIRED") {
-          throw new Error(`Git child cleanup wait failed: ${woken.error.message}`);
-        }
-      } finally {
-        this.#options.context.wakes.release(token);
-      }
+      throw new Error(`Git child cleanup failed: ${result.error.message}`);
     }
   }
 
@@ -426,6 +400,7 @@ export class KernelGitProcessImports {
         if (woken.status !== "ok") {
           if (this.#options.context.signal.aborted)
             throw new KernelProcessCancelledError("Git child wait cancelled");
+          if (woken.error.code === "EXPIRED") continue;
           return kernelError("CANCELLED", woken.error.message);
         }
       } finally {

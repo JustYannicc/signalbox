@@ -7,6 +7,7 @@ import {
   kernelOk,
   type KernelHandle,
   type KernelResult,
+  type WakeToken,
 } from "./KernelAbi.ts";
 import type { KernelAsyncProgramContext } from "./KernelAsyncProgram.ts";
 import { KernelFileSystem, KernelOpenFlags } from "./KernelFileSystem.ts";
@@ -107,8 +108,9 @@ function createPublicHost(
   childRun: KernelProgramBinding["implementation"],
   gitCredentials = credentials,
   onGitComplete?: (filesystem: KernelFileSystem) => void,
+  wakes = new KernelWakeRegistry(),
+  onGitRunSettled?: () => void,
 ) {
-  const wakes = new KernelWakeRegistry();
   const registry = new KernelProgramRegistry();
   for (const manifest of [KERNEL_GIT_PROGRAM_MANIFEST, PROBE_MANIFEST]) {
     const registration = registry.register(manifest);
@@ -118,9 +120,13 @@ function createPublicHost(
   const observedGitProgram = {
     kind: "async" as const,
     run: async (context: KernelAsyncProgramContext) => {
-      const status = await gitProgram.run(context);
-      onGitComplete?.(context.filesystem);
-      return status;
+      try {
+        const status = await gitProgram.run(context);
+        onGitComplete?.(context.filesystem);
+        return status;
+      } finally {
+        onGitRunSettled?.();
+      }
     },
   };
   const host = new KernelProgramHost({
@@ -185,6 +191,15 @@ function childReader(
       return { exitCode: 0, signal: 0, coreDumped: false };
     },
   } satisfies KernelProgramBinding["implementation"];
+}
+
+function observeWaitpidTokens(host: KernelProgramHost, onToken: (token: WakeToken) => void) {
+  const waitpid = host.processes.waitpid.bind(host.processes);
+  host.processes.waitpid = ((parentHandle, selector, options) => {
+    const result = waitpid(parentHandle, selector, options);
+    if (result.status === "would_block") onToken(result.wakeToken);
+    return result;
+  }) as typeof host.processes.waitpid;
 }
 
 function gitGuest(
@@ -574,6 +589,150 @@ describe("KernelGitProgram public entry", () => {
       expect(host.processes.size).toBe(0);
       expect(wakes.size).toBe(0);
     } finally {
+      await host.processes.dispose();
+      filesystem.dispose();
+      fixture.close();
+      wakes.dispose();
+    }
+  });
+
+  it("retries Git waitpid after its readiness token expires", async () => {
+    const { filesystem, fixture } = createFilesystem();
+    const readStarted = deferred<{
+      readonly handle: KernelAsyncProgramContext["identity"]["handle"];
+    }>();
+    const firstWait = deferred<WakeToken>();
+    const secondWait = deferred<WakeToken>();
+    const processWaitTokenIds = new Set<string>();
+    let waitCount = 0;
+    let expired = false;
+    const { host, wakes } = createPublicHost(
+      filesystem,
+      gitGuest("wait"),
+      childReader(({ identity }) => readStarted.resolve({ handle: identity.handle })),
+    );
+    const wait = wakes.wait.bind(wakes);
+    wakes.wait = async (token, signal) => {
+      if (!expired && processWaitTokenIds.has(token.id)) {
+        expired = true;
+        wakes.release(token);
+        return { status: "error", error: { code: "EXPIRED", message: "Test expiry" } };
+      }
+      return wait(token, signal);
+    };
+    observeWaitpidTokens(host, (token) => {
+      processWaitTokenIds.add(token.id);
+      waitCount++;
+      if (waitCount === 1) firstWait.resolve(token);
+      else if (waitCount === 2) secondWait.resolve(token);
+    });
+    try {
+      const git = spawnGit(host, filesystem);
+      const child = await readStarted.promise;
+      const expiredToken = await firstWait.promise;
+      const retryToken = await secondWait.promise;
+      expect(expired).toBe(true);
+      expect(retryToken.id).not.toBe(expiredToken.id);
+      expect(wakes.has(expiredToken)).toBe(false);
+      expect(wakes.has(retryToken)).toBe(true);
+
+      expect(host.processes.signal(child.handle, 15).status).toBe("ok");
+      await expect(finishGit(host, git)).resolves.toMatchObject({ exitCode: 15, signal: 0 });
+      expect(host.processes.info(child.handle)).toMatchObject({
+        status: "error",
+        error: { code: "INVALID_HANDLE" },
+      });
+      expect(host.processes.size).toBe(0);
+      expect(wakes.size).toBe(0);
+    } finally {
+      await host.processes.dispose();
+      filesystem.dispose();
+      fixture.close();
+      wakes.dispose();
+    }
+  });
+
+  it("kills and reaps an owned Git child while the wake registry is full", async () => {
+    const { filesystem, fixture } = createFilesystem();
+    const wakes = new KernelWakeRegistry({ maxTokens: 1 });
+    const childStarted = deferred<KernelHandle<"process">>();
+    const releaseChild = deferred<void>();
+    const replacementHeld = deferred<WakeToken>();
+    const gitRunSettled = deferred<void>();
+    const waitTokenIds = new Set<string>();
+    const waitToken = deferred<WakeToken>();
+    let replacement: WakeToken | undefined;
+    let childHandle: KernelHandle<"process"> | undefined;
+    const signals: number[] = [];
+    const childRun = {
+      kind: "async" as const,
+      run: async (context: KernelAsyncProgramContext) => {
+        childHandle = context.identity.handle;
+        childStarted.resolve(context.identity.handle);
+        await releaseChild.promise;
+        return { exitCode: 0, signal: 0, coreDumped: false };
+      },
+    } satisfies KernelProgramBinding["implementation"];
+    const { host } = createPublicHost(
+      filesystem,
+      gitGuest("wait"),
+      childRun,
+      credentials,
+      undefined,
+      wakes,
+      () => gitRunSettled.resolve(),
+    );
+    observeWaitpidTokens(host, (token) => {
+      waitTokenIds.add(token.id);
+      waitToken.resolve(token);
+    });
+    const release = wakes.release.bind(wakes);
+    wakes.release = (token) => {
+      const released = release(token);
+      if (waitTokenIds.has(token.id) && replacement === undefined) {
+        const held = wakes.register(() => () => undefined);
+        if (held.status !== "ok") throw new Error("Could not hold replacement wake token");
+        replacement = held.value;
+        replacementHeld.resolve(held.value);
+      }
+      return released;
+    };
+    const signal = host.processes.signal.bind(host.processes);
+    host.processes.signal = (handle, requested) => {
+      const result = signal(handle, requested);
+      if (handle.id === childHandle?.id && result.status === "ok") {
+        signals.push(requested);
+        if (requested === 9) releaseChild.resolve();
+      }
+      return result;
+    };
+
+    try {
+      const git = spawnGit(host, filesystem);
+      const child = await childStarted.promise;
+      expect(await waitToken.promise).toMatchObject({ id: expect.any(String) });
+      expect(wakes.size).toBe(1);
+
+      expect(host.processes.signal(git, 15).status).toBe("ok");
+      const heldToken = await replacementHeld.promise;
+      expect(wakes.has(heldToken)).toBe(true);
+      expect(wakes.size).toBe(1);
+      await gitRunSettled.promise;
+
+      expect(signals).toEqual([9]);
+      expect(host.processes.info(child)).toMatchObject({
+        status: "error",
+        error: { code: "INVALID_HANDLE" },
+      });
+      expect(host.processes.size).toBe(1);
+      expect(wakes.size).toBe(1);
+
+      wakes.release(heldToken);
+      await expect(finishGit(host, git)).resolves.toMatchObject({ exitCode: 0, signal: 15 });
+      expect(host.processes.size).toBe(0);
+      expect(wakes.size).toBe(0);
+    } finally {
+      if (replacement !== undefined) wakes.release(replacement);
       await host.processes.dispose();
       filesystem.dispose();
       fixture.close();
