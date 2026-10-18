@@ -34,6 +34,9 @@
         "boundaries/tests.mjs", // signalbox: module boundaries
         "deploy-workflow-policy.tests.mjs", // Node runs these directly in Signalbox CI.
         "deploy-plan.tests.mjs",
+        // signalbox: the canary reads facet source and spawns its comparator by filename.
+        "claude-bunfs/proof-worker.mts!",
+        "claude-bunfs/prove.ts",
       ],
       // The `t3` npm package's files: copied into the package, never imported.
       "ignore": [
