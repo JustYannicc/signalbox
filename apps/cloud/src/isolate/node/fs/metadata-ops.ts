@@ -4,7 +4,7 @@
 // @effect-diagnostics globalDate:off - Node fs utimes accepts the literal "now" synchronously.
 import type * as NodeBuffer from "node:buffer";
 import type { KernelFileSystem } from "../../../kernel/KernelFileSystem.ts";
-import { callFs } from "./errors.ts";
+import { fsOperation, leaf, runSync, type FsOperation } from "./operations.ts";
 import {
   encodedPath,
   nodeStats,
@@ -18,8 +18,6 @@ export type TimeLike = Date | number | string;
 export interface StatOptions {
   bigint?: boolean;
 }
-
-type StatResult = NodeStats | BigIntStats;
 
 function timeNs(value: TimeLike): bigint {
   const milliseconds =
@@ -41,157 +39,250 @@ function timeNs(value: TimeLike): bigint {
   return BigInt(Math.trunc(nanoseconds));
 }
 
-export function statSync(
-  kernelFs: KernelFileSystem,
-  path: PathLike,
-  options: { bigint: true },
-): BigIntStats;
-export function statSync(
-  kernelFs: KernelFileSystem,
-  path: PathLike,
-  options?: { bigint?: false },
-): NodeStats;
-export function statSync(
+export function* statOperation(
   kernelFs: KernelFileSystem,
   path: PathLike,
   options?: StatOptions,
-): StatResult;
-export function statSync(
-  kernelFs: KernelFileSystem,
-  path: PathLike,
-  options?: StatOptions,
-): NodeStatsLike {
+): FsOperation<NodeStatsLike> {
   const name = pathString(path);
   return nodeStats(
-    callFs("stat", name, () => kernelFs.stat(name)),
+    yield* fsOperation(
+      "stat",
+      name,
+      leaf(() => kernelFs.stat(name)),
+    ),
     options?.bigint,
   );
 }
 
-export function lstatSync(
-  kernelFs: KernelFileSystem,
-  path: PathLike,
-  options: { bigint: true },
-): BigIntStats;
-export function lstatSync(
-  kernelFs: KernelFileSystem,
-  path: PathLike,
-  options?: { bigint?: false },
-): NodeStats;
-export function lstatSync(
+export function* lstatOperation(
   kernelFs: KernelFileSystem,
   path: PathLike,
   options?: StatOptions,
-): StatResult;
-export function lstatSync(
-  kernelFs: KernelFileSystem,
-  path: PathLike,
-  options?: StatOptions,
-): NodeStatsLike {
+): FsOperation<NodeStatsLike> {
   const name = pathString(path);
   return nodeStats(
-    callFs("lstat", name, () => kernelFs.lstat(name)),
+    yield* fsOperation(
+      "lstat",
+      name,
+      leaf(() => kernelFs.lstat(name)),
+    ),
     options?.bigint,
   );
 }
 
-export function fstatSync(
-  kernelFs: KernelFileSystem,
-  fd: number,
-  options: { bigint: true },
-): BigIntStats;
-export function fstatSync(
-  kernelFs: KernelFileSystem,
-  fd: number,
-  options?: { bigint?: false },
-): NodeStats;
-export function fstatSync(
+export function* fstatOperation(
   kernelFs: KernelFileSystem,
   fd: number,
   options?: StatOptions,
-): StatResult;
-export function fstatSync(
-  kernelFs: KernelFileSystem,
-  fd: number,
-  options?: StatOptions,
-): NodeStatsLike {
+): FsOperation<NodeStatsLike> {
   return nodeStats(
-    callFs("fstat", undefined, () => kernelFs.fstat(fd)),
+    yield* fsOperation(
+      "fstat",
+      undefined,
+      leaf(() => kernelFs.fstat(fd)),
+    ),
     options?.bigint,
   );
 }
 
-export function realpathSync(
+export function* realpathOperation(
   kernelFs: KernelFileSystem,
   path: PathLike,
   options?: BufferEncoding | { encoding?: BufferEncoding | "buffer" | null } | null,
-): string | NodeBuffer.Buffer {
+): FsOperation<string | NodeBuffer.Buffer> {
   const name = pathString(path);
-  const result = callFs("realpath", name, () => kernelFs.realpath(name));
+  const result = yield* fsOperation(
+    "realpath",
+    name,
+    leaf(() => kernelFs.realpath(name)),
+  );
   const encoding = typeof options === "string" ? options : options?.encoding;
   return encodedPath(result, encoding ?? "utf8");
 }
 
-export function readlinkSync(
+export function* readlinkOperation(
   kernelFs: KernelFileSystem,
   path: PathLike,
   options?: BufferEncoding | { encoding?: BufferEncoding | "buffer" | null } | null,
-): string | NodeBuffer.Buffer {
+): FsOperation<string | NodeBuffer.Buffer> {
   const name = pathString(path);
-  const result = callFs("readlink", name, () => kernelFs.readlink(name));
+  const result = yield* fsOperation(
+    "readlink",
+    name,
+    leaf(() => kernelFs.readlink(name)),
+  );
   const encoding = typeof options === "string" ? options : options?.encoding;
   return encodedPath(result, encoding ?? "utf8");
 }
 
-export function utimesSync(
+export function* utimesOperation(
   kernelFs: KernelFileSystem,
   path: PathLike,
   atime: TimeLike,
   mtime: TimeLike,
   follow = true,
-): void {
+): FsOperation<void> {
   const name = pathString(path);
   const times = { atimeNs: timeNs(atime), mtimeNs: timeNs(mtime) };
-  callFs("utimes", name, () => kernelFs.setTimes(name, times, follow));
+  yield* fsOperation(
+    "utimes",
+    name,
+    leaf(() => kernelFs.setTimes(name, times, follow)),
+  );
 }
 
-export function futimesSync(
+export function* futimesOperation(
   kernelFs: KernelFileSystem,
   fd: number,
   atime: TimeLike,
   mtime: TimeLike,
-): void {
+): FsOperation<void> {
   const times = { atimeNs: timeNs(atime), mtimeNs: timeNs(mtime) };
-  callFs("futimes", undefined, () => kernelFs.fsetTimes(fd, times));
+  yield* fsOperation(
+    "futimes",
+    undefined,
+    leaf(() => kernelFs.fsetTimes(fd, times)),
+  );
 }
 
-export function truncateSync(
+export function* truncateOperation(
   kernelFs: KernelFileSystem,
   path: PathLike | number,
   length = 0,
-): void {
+): FsOperation<void> {
   if (!Number.isSafeInteger(length) || length < 0) {
     throw Object.assign(new RangeError('The "len" argument must be a non-negative safe integer'), {
       code: "ERR_OUT_OF_RANGE",
     });
   }
   if (typeof path === "number") {
-    ftruncateSync(kernelFs, path, length);
+    yield* ftruncateOperation(kernelFs, path, length);
     return;
   }
   const name = pathString(path);
-  callFs("truncate", name, () => kernelFs.truncate(name, BigInt(length)));
+  yield* fsOperation(
+    "truncate",
+    name,
+    leaf(() => kernelFs.truncate(name, BigInt(length))),
+  );
 }
 
-export function ftruncateSync(kernelFs: KernelFileSystem, fd: number, length = 0): void {
+export function* ftruncateOperation(
+  kernelFs: KernelFileSystem,
+  fd: number,
+  length = 0,
+): FsOperation<void> {
   if (!Number.isSafeInteger(length) || length < 0) {
     throw Object.assign(new RangeError('The "len" argument must be a non-negative safe integer'), {
       code: "ERR_OUT_OF_RANGE",
     });
   }
-  callFs("ftruncate", undefined, () => kernelFs.ftruncate(fd, BigInt(length)));
+  yield* fsOperation(
+    "ftruncate",
+    undefined,
+    leaf(() => kernelFs.ftruncate(fd, BigInt(length))),
+  );
 }
 
-export function fsyncSync(kernelFs: KernelFileSystem, fd: number, dataOnly = false): void {
-  callFs(dataOnly ? "fdatasync" : "fsync", undefined, () => kernelFs.sync(fd, dataOnly));
+export function* fsyncOperation(
+  kernelFs: KernelFileSystem,
+  fd: number,
+  dataOnly = false,
+): FsOperation<void> {
+  yield* fsOperation(
+    dataOnly ? "fdatasync" : "fsync",
+    undefined,
+    leaf(() => kernelFs.sync(fd, dataOnly)),
+  );
 }
+
+export function statSync(
+  kernelFs: KernelFileSystem,
+  path: PathLike,
+  options: { bigint: true },
+): BigIntStats;
+export function statSync(
+  kernelFs: KernelFileSystem,
+  path: PathLike,
+  options?: { bigint?: false },
+): NodeStats;
+export function statSync(
+  kernelFs: KernelFileSystem,
+  path: PathLike,
+  options?: StatOptions,
+): NodeStatsLike;
+export function statSync(
+  kernelFs: KernelFileSystem,
+  path: PathLike,
+  options?: StatOptions,
+): NodeStatsLike {
+  return runSync(statOperation(kernelFs, path, options));
+}
+
+export function lstatSync(
+  kernelFs: KernelFileSystem,
+  path: PathLike,
+  options: { bigint: true },
+): BigIntStats;
+export function lstatSync(
+  kernelFs: KernelFileSystem,
+  path: PathLike,
+  options?: { bigint?: false },
+): NodeStats;
+export function lstatSync(
+  kernelFs: KernelFileSystem,
+  path: PathLike,
+  options?: StatOptions,
+): NodeStatsLike;
+export function lstatSync(
+  kernelFs: KernelFileSystem,
+  path: PathLike,
+  options?: StatOptions,
+): NodeStatsLike {
+  return runSync(lstatOperation(kernelFs, path, options));
+}
+
+export function fstatSync(
+  kernelFs: KernelFileSystem,
+  fd: number,
+  options: { bigint: true },
+): BigIntStats;
+export function fstatSync(
+  kernelFs: KernelFileSystem,
+  fd: number,
+  options?: { bigint?: false },
+): NodeStats;
+export function fstatSync(
+  kernelFs: KernelFileSystem,
+  fd: number,
+  options?: StatOptions,
+): NodeStatsLike;
+export function fstatSync(
+  kernelFs: KernelFileSystem,
+  fd: number,
+  options?: StatOptions,
+): NodeStatsLike {
+  return runSync(fstatOperation(kernelFs, fd, options));
+}
+
+export const realpathSync = (...args: Parameters<typeof realpathOperation>) =>
+  runSync(realpathOperation(...args));
+
+export const readlinkSync = (...args: Parameters<typeof readlinkOperation>) =>
+  runSync(readlinkOperation(...args));
+
+export const utimesSync = (...args: Parameters<typeof utimesOperation>) =>
+  runSync(utimesOperation(...args));
+
+export const futimesSync = (...args: Parameters<typeof futimesOperation>) =>
+  runSync(futimesOperation(...args));
+
+export const truncateSync = (...args: Parameters<typeof truncateOperation>) =>
+  runSync(truncateOperation(...args));
+
+export const ftruncateSync = (...args: Parameters<typeof ftruncateOperation>) =>
+  runSync(ftruncateOperation(...args));
+
+export const fsyncSync = (...args: Parameters<typeof fsyncOperation>) =>
+  runSync(fsyncOperation(...args));

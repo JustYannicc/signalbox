@@ -3,8 +3,10 @@
  */
 import * as NodeBuffer from "node:buffer";
 import type { KernelFileSystem } from "../../../kernel/KernelFileSystem.ts";
-import { callFs, codedError } from "./errors.ts";
-import { bytesOf, openFd, readAll, writeAll } from "./io.ts";
+import { checkAbort } from "./abort.ts";
+import { codedError } from "./errors.ts";
+import { bytesOf, openFdOperation, readAllOperation, writeAllOperation } from "./io.ts";
+import { fsOperation, leaf, runSync, type FsOperation } from "./operations.ts";
 import { normalizeMode, parseOpenFlags } from "./constants.ts";
 import { pathOrFd, type PathOrFd } from "./path.ts";
 
@@ -20,149 +22,152 @@ export interface WriteFileOptions extends Omit<ReadFileOptions, "encoding"> {
   flush?: boolean;
 }
 
-function readOptions(options?: BufferEncoding | ReadFileOptions | null): ReadFileOptions {
+export function readOptions(options?: BufferEncoding | ReadFileOptions | null): ReadFileOptions {
   if (typeof options === "string") return { encoding: options };
   return options ?? {};
 }
 
-function writeOptions(options?: BufferEncoding | WriteFileOptions | null): WriteFileOptions {
+export function writeOptions(options?: BufferEncoding | WriteFileOptions | null): WriteFileOptions {
   if (typeof options === "string") return { encoding: options };
   return options ?? {};
-}
-
-function signalCheck(signal: AbortSignal | undefined): void {
-  if (signal?.aborted) {
-    const error = new Error("The operation was aborted") as Error & {
-      code: string;
-      cause?: unknown;
-    };
-    error.code = "ABORT_ERR";
-    error.cause = signal.reason;
-    throw error;
-  }
 }
 
 function decoded(bytes: NodeBuffer.Buffer, encoding: BufferEncoding | "buffer" | null | undefined) {
   return encoding && encoding !== "buffer" ? bytes.toString(encoding) : bytes;
 }
 
-export function readFileSync(
+export function* readFileOperation(
   kernelFs: KernelFileSystem,
   path: PathOrFd,
   options?: BufferEncoding | ReadFileOptions | null,
-): NodeBuffer.Buffer | string {
+): FsOperation<NodeBuffer.Buffer | string> {
   const input = pathOrFd(path);
   const normalized = readOptions(options);
-  signalCheck(normalized.signal);
-  const operation = () => {
-    if (typeof input === "number") return decoded(readAll(kernelFs, input), normalized.encoding);
-    const fd = openFd(kernelFs, input, parseOpenFlags(normalized.flag ?? "r"));
+  checkAbort(normalized.signal);
+  const operation = function* (): FsOperation<NodeBuffer.Buffer | string> {
+    if (typeof input === "number")
+      return decoded(yield* readAllOperation(kernelFs, input), normalized.encoding);
+    const fd = yield* openFdOperation(kernelFs, input, parseOpenFlags(normalized.flag ?? "r"));
     try {
-      signalCheck(normalized.signal);
-      return decoded(readAll(kernelFs, fd), normalized.encoding);
+      checkAbort(normalized.signal);
+      return decoded(yield* readAllOperation(kernelFs, fd), normalized.encoding);
     } finally {
-      kernelFs.close(fd);
+      yield* leaf(() => kernelFs.close(fd), true);
     }
   };
-  return callFs("readFile", typeof input === "string" ? input : undefined, operation);
+  return yield* fsOperation("readFile", typeof input === "string" ? input : undefined, operation());
 }
 
-export function writeFileSync(
+export function* writeFileOperation(
   kernelFs: KernelFileSystem,
   path: PathOrFd,
   data: string | ArrayBuffer | ArrayBufferView,
   options?: BufferEncoding | WriteFileOptions | null,
-): void {
+): FsOperation<void> {
   const input = pathOrFd(path);
   const normalized = writeOptions(options);
-  signalCheck(normalized.signal);
+  checkAbort(normalized.signal);
   const bytes = bytesOf(data, normalized.encoding ?? "utf8");
-  const operation = () => {
+  const operation = function* (): FsOperation<void> {
     if (typeof input === "number") {
-      writeAll(kernelFs, input, bytes);
-      if (normalized.flush) kernelFs.sync(input, false);
+      yield* writeAllOperation(kernelFs, input, bytes);
+      if (normalized.flush) yield* leaf(() => kernelFs.sync(input, false));
       return;
     }
-    const fd = openFd(
+    const fd = yield* openFdOperation(
       kernelFs,
       input,
       parseOpenFlags(normalized.flag ?? "w"),
       normalizeMode(normalized.mode),
     );
     try {
-      writeAll(kernelFs, fd, bytes);
-      if (normalized.flush) kernelFs.sync(fd, false);
+      yield* writeAllOperation(kernelFs, fd, bytes);
+      if (normalized.flush) yield* leaf(() => kernelFs.sync(fd, false));
     } finally {
-      kernelFs.close(fd);
+      yield* leaf(() => kernelFs.close(fd), true);
     }
   };
-  callFs("writeFile", typeof input === "string" ? input : undefined, operation);
+  yield* fsOperation("writeFile", typeof input === "string" ? input : undefined, operation());
 }
 
-export function appendFileSync(
+export function* appendFileOperation(
   kernelFs: KernelFileSystem,
   path: PathOrFd,
   data: string | ArrayBuffer | ArrayBufferView,
   options?: BufferEncoding | WriteFileOptions | null,
-): void {
+): FsOperation<void> {
   const input = pathOrFd(path);
   const normalized = writeOptions(options);
-  signalCheck(normalized.signal);
+  checkAbort(normalized.signal);
   const bytes = bytesOf(data, normalized.encoding ?? "utf8");
-  const operation = () => {
+  const operation = function* (): FsOperation<void> {
     if (typeof input === "number") {
-      writeAll(kernelFs, input, bytes);
-      if (normalized.flush) kernelFs.sync(input, false);
+      yield* writeAllOperation(kernelFs, input, bytes);
+      if (normalized.flush) yield* leaf(() => kernelFs.sync(input, false));
       return;
     }
-    const fd = openFd(
+    const fd = yield* openFdOperation(
       kernelFs,
       input,
       parseOpenFlags(normalized.flag ?? "a"),
       normalizeMode(normalized.mode),
     );
     try {
-      writeAll(kernelFs, fd, bytes);
-      if (normalized.flush) kernelFs.sync(fd, false);
+      yield* writeAllOperation(kernelFs, fd, bytes);
+      if (normalized.flush) yield* leaf(() => kernelFs.sync(fd, false));
     } finally {
-      kernelFs.close(fd);
+      yield* leaf(() => kernelFs.close(fd), true);
     }
   };
-  callFs("appendFile", typeof input === "string" ? input : undefined, operation);
+  yield* fsOperation("appendFile", typeof input === "string" ? input : undefined, operation());
 }
 
-export function copyFileSync(
+export function* copyFileOperation(
   kernelFs: KernelFileSystem,
   source: string,
   destination: string,
   flags = 0,
-): void {
+): FsOperation<void> {
   const exclusive = (flags & 1) !== 0;
-  if ((flags & ~3) !== 0) {
-    throw callFs(
-      "copyfile",
-      source,
-      () => {
-        throw codedError("ENOTSUP", "forced reflink copying is not supported", "copyfile");
-      },
-      destination,
-    );
-  }
-  callFs(
+  yield* fsOperation(
     "copyfile",
     source,
-    () => {
-      const sourceFd = openFd(kernelFs, source, parseOpenFlags("r"));
+    (function* (): FsOperation<void> {
+      if ((flags & ~3) !== 0)
+        throw codedError("ENOTSUP", "forced reflink copying is not supported", "copyfile");
+      const sourceFd = yield* openFdOperation(kernelFs, source, parseOpenFlags("r"));
       let destinationFd: number | undefined;
       try {
-        const data = readAll(kernelFs, sourceFd);
-        destinationFd = openFd(kernelFs, destination, parseOpenFlags(exclusive ? "wx" : "w"));
-        writeAll(kernelFs, destinationFd, data);
+        const data = yield* readAllOperation(kernelFs, sourceFd);
+        destinationFd = yield* openFdOperation(
+          kernelFs,
+          destination,
+          parseOpenFlags(exclusive ? "wx" : "w"),
+        );
+        yield* writeAllOperation(kernelFs, destinationFd, data);
       } finally {
-        kernelFs.close(sourceFd);
-        if (destinationFd !== undefined) kernelFs.close(destinationFd);
+        try {
+          yield* leaf(() => kernelFs.close(sourceFd), true);
+        } finally {
+          if (destinationFd !== undefined) {
+            const fd = destinationFd;
+            yield* leaf(() => kernelFs.close(fd), true);
+          }
+        }
       }
-    },
+    })(),
     destination,
   );
 }
+
+export const readFileSync = (...args: Parameters<typeof readFileOperation>) =>
+  runSync(readFileOperation(...args));
+
+export const writeFileSync = (...args: Parameters<typeof writeFileOperation>) =>
+  runSync(writeFileOperation(...args));
+
+export const appendFileSync = (...args: Parameters<typeof appendFileOperation>) =>
+  runSync(appendFileOperation(...args));
+
+export const copyFileSync = (...args: Parameters<typeof copyFileOperation>) =>
+  runSync(copyFileOperation(...args));

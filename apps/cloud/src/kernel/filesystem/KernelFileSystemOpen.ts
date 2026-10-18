@@ -26,7 +26,7 @@ export class KernelFileSystemOpen {
     this.#paths = paths;
   }
 
-  open(path: string, flags: number, _mode?: number): number {
+  open(path: string, flags: number, mode = 0o666): number {
     return withKernelErrors(() => {
       const parsed = parseOpenFlags(flags);
       const device = virtualDevice(path);
@@ -40,11 +40,15 @@ export class KernelFileSystemOpen {
         if (!parsed.create) throw kernelError("ENOENT");
         if (parsed.directory) throw kernelError("EINVAL");
         if (lookup.parent.mount.readOnly) throw kernelError("EROFS");
-        const inode = runKernelSync(
-          lookup.parent.mount.storage.create(lookup.parent.parent, lookup.parent.name, {
+        const inode = this.#paths.createInode(
+          lookup.parent.mount,
+          lookup.parent.parent,
+          lookup.parent.name,
+          {
             type: "file",
             exclusive: true,
-          }),
+          },
+          mode,
         );
         let stat: Stat;
         try {

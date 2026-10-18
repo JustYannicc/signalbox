@@ -1,4 +1,5 @@
 import type { Mount, Storage, Times } from "./storage.ts";
+import type { CreateOptions, Inode } from "./storage.ts";
 import { WasiFileSystem } from "./wasi/internal_wasi_fs.ts";
 import { WasiMemory } from "./wasi/internal_wasi_memory.ts";
 import { runSync } from "./wasi/internal_wasi_calls.ts";
@@ -22,10 +23,16 @@ import {
   withKernelErrors,
 } from "./filesystem/KernelFileSystemErrors.ts";
 import { KernelOpenFlags } from "./filesystem/KernelOpenFlags.ts";
-import type { KernelStat } from "./filesystem/KernelFileSystemTypes.ts";
+import { KernelPosix } from "./filesystem/KernelPosix.ts";
+import type {
+  KernelPosixCredentials,
+  KernelPosixMetadata,
+  KernelPosixOptions,
+  KernelStat,
+} from "./filesystem/KernelFileSystemTypes.ts";
 
 export { KernelOpenFlags };
-export type { KernelStat };
+export type { KernelPosixCredentials, KernelPosixMetadata, KernelPosixOptions, KernelStat };
 export type { WasiStdio } from "./wasi/internal_wasi_descriptors.ts";
 
 export interface KernelFileSystemConfig {
@@ -33,6 +40,7 @@ export interface KernelFileSystemConfig {
   readonly stdio?: readonly [WasiStdio, WasiStdio, WasiStdio];
   readonly cwd?: string;
   readonly descriptors?: WasiDescriptorTable;
+  readonly posix?: KernelPosixOptions;
 }
 
 const forkContextSymbol: unique symbol = Symbol("KernelFileSystem.forkContext");
@@ -40,6 +48,7 @@ const forkContextSymbol: unique symbol = Symbol("KernelFileSystem.forkContext");
 interface KernelFileSystemForkContext {
   readonly mounts: readonly WasiMountedStorage[];
   readonly cwdAnchor?: WasiPathAnchor;
+  readonly posix?: KernelPosixOptions;
 }
 
 type KernelFileSystemInternalConfig = KernelFileSystemConfig & {
@@ -53,6 +62,7 @@ export class KernelFileSystem {
   readonly #paths: KernelFileSystemPaths;
   readonly #open: KernelFileSystemOpen;
   readonly #io: KernelFileSystemIo;
+  readonly #posix: KernelPosix;
   readonly #mounts: Mount<Storage>[];
   readonly #mountedMounts: readonly WasiMountedStorage[];
   readonly #ownsDescriptors: boolean;
@@ -62,6 +72,7 @@ export class KernelFileSystem {
   constructor(config: KernelFileSystemConfig) {
     const forkContext = (config as KernelFileSystemInternalConfig)[forkContextSymbol];
     this.#mounts = config.mounts.map((mount) => ({ ...mount }));
+    this.#posix = new KernelPosix(forkContext?.posix ?? config.posix);
     this.#ownsDescriptors = config.descriptors === undefined;
     this.#wasi = new WasiFileSystem(
       new WasiMemory(),
@@ -82,7 +93,7 @@ export class KernelFileSystem {
         this.descriptors,
         forkContext?.cwdAnchor,
       );
-      this.#paths = new KernelFileSystemPaths(resolver, this.descriptors);
+      this.#paths = new KernelFileSystemPaths(resolver, this.descriptors, this.#posix);
       this.#open = new KernelFileSystemOpen(this.descriptors, this.#paths);
       this.#io = new KernelFileSystemIo(this.descriptors);
       if (forkContext?.cwdAnchor !== undefined) {
@@ -130,6 +141,14 @@ export class KernelFileSystem {
     return joinGuestPath(anchor.mount.path, anchor.pathComponents);
   }
 
+  get posixCredentials(): KernelPosixCredentials | undefined {
+    return this.#posix.credentials;
+  }
+
+  get posixPolicy(): KernelPosixOptions | undefined {
+    return this.#posix.policy;
+  }
+
   fork(descriptors: WasiDescriptorTable): KernelFileSystem {
     this.#assertOpen();
     const cwdAnchor = this.#cwdAnchor;
@@ -139,6 +158,7 @@ export class KernelFileSystem {
       [forkContextSymbol]: {
         mounts: this.#mountedMounts,
         ...(cwdAnchor === undefined ? {} : { cwdAnchor: copyAnchor(cwdAnchor) }),
+        ...(this.#posix.policy === undefined ? {} : { posix: this.#posix.policy }),
       },
     };
     return new KernelFileSystem(config);
@@ -152,6 +172,71 @@ export class KernelFileSystem {
   open(path: string, flags: number, mode?: number): number {
     this.#assertOpen();
     return this.#open.open(path, flags, mode);
+  }
+
+  createInode(
+    mount: WasiMountedStorage,
+    parent: Inode,
+    name: string,
+    options: CreateOptions,
+    mode?: number,
+  ): Inode {
+    this.#assertOpen();
+    return this.#posix.createInode(mount, parent, name, options, mode);
+  }
+
+  /** Returns and replaces this process's current umask. */
+  setUmask(mask: number): number {
+    this.#assertOpen();
+    return this.#posix.setUmask(mask);
+  }
+
+  /** Supplies the mode hint consumed by the next WASI creation call. */
+  setNextCreateMode(mode: number): void {
+    this.#assertOpen();
+    this.#posix.setNextCreateMode(mode);
+  }
+
+  /** Called at WASI creation-call entry so errors or existing paths cannot leak the hint. */
+  takeNextCreateMode(): number | undefined {
+    this.#assertOpen();
+    return this.#posix.takeNextCreateMode();
+  }
+
+  getPosixMetadata(path: string, follow = true): KernelPosixMetadata {
+    this.#assertOpen();
+    return this.#paths.getPosixMetadata(path, follow);
+  }
+
+  getPosixMetadataForFd(fd: number): KernelPosixMetadata {
+    this.#assertOpen();
+    return this.#paths.getPosixMetadataForFd(fd);
+  }
+
+  chmod(path: string, mode: number, follow = true): void {
+    this.#assertOpen();
+    this.#paths.chmod(path, mode, follow);
+  }
+
+  fchmod(fd: number, mode: number): void {
+    this.#assertOpen();
+    this.#paths.fchmod(fd, mode);
+  }
+
+  chown(path: string, uid: number, gid: number, follow = true): void {
+    this.#assertOpen();
+    this.#paths.chown(path, uid, gid, follow);
+  }
+
+  fchown(fd: number, uid: number, gid: number): void {
+    this.#assertOpen();
+    this.#paths.fchown(fd, uid, gid);
+  }
+
+  /** Checks pathname access using the process's real or effective credentials. */
+  access(path: string, mode: number, effectiveIds = false): void {
+    this.#assertOpen();
+    this.#paths.access(path, mode, effectiveIds);
   }
 
   close(fd: number): void {
@@ -194,9 +279,9 @@ export class KernelFileSystem {
     this.#io.ftruncate(fd, size);
   }
 
-  mkdir(path: string): void {
+  mkdir(path: string, mode = 0o777): void {
     this.#assertOpen();
-    this.#paths.mkdir(path);
+    this.#paths.mkdir(path, mode);
   }
 
   readdir(path: string): string[] {

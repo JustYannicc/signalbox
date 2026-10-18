@@ -3,30 +3,16 @@
  */
 import type * as NodeBuffer from "node:buffer";
 import type { KernelFileSystem } from "../../../kernel/KernelFileSystem.ts";
+import { createAsyncOperations } from "./async-operations.ts";
+import type { AsyncLeafRunner } from "./operations.ts";
 import { unsupportedFs } from "./errors.ts";
-import {
-  linkSync,
-  mkdirSync,
-  mkdtempSync,
-  readdirSync,
-  renameSync,
-  rmSync,
-  rmdirSync,
-  symlinkSync,
-  unlinkSync,
-} from "./directories.ts";
-import {
-  lstatSync,
-  readlinkSync,
-  realpathSync,
-  statSync,
-  utimesSync,
-  type TimeLike,
-} from "./metadata-ops.ts";
+import type { mkdirSync, mkdtempSync, readdirSync, rmSync } from "./directories.ts";
+import type { lstatSync, readlinkSync, realpathSync, statSync, TimeLike } from "./metadata-ops.ts";
 import { pathString, type PathLike } from "./path.ts";
 import { schedule, type FsCallback } from "./callback-utils.ts";
 
-export function createPathCallbackApi(kernelFs: KernelFileSystem) {
+export function createPathCallbackApi(kernelFs: KernelFileSystem, runLeaf?: AsyncLeafRunner) {
+  const operations = createAsyncOperations(kernelFs, runLeaf);
   return {
     stat: (
       path: PathLike,
@@ -40,7 +26,7 @@ export function createPathCallbackApi(kernelFs: KernelFileSystem) {
       const name = pathString(path);
       schedule<[ReturnType<typeof statSync>]>(
         callback,
-        () => [statSync(kernelFs, path, options)],
+        async () => [await operations.stat(path, options)],
         "stat",
         name,
       );
@@ -57,7 +43,7 @@ export function createPathCallbackApi(kernelFs: KernelFileSystem) {
       const name = pathString(path);
       schedule<[ReturnType<typeof lstatSync>]>(
         callback,
-        () => [lstatSync(kernelFs, path, options)],
+        async () => [await operations.lstat(path, options)],
         "lstat",
         name,
       );
@@ -79,7 +65,7 @@ export function createPathCallbackApi(kernelFs: KernelFileSystem) {
       const name = pathString(path);
       schedule<[ReturnType<typeof readdirSync>]>(
         callback,
-        () => [readdirSync(kernelFs, path, options)],
+        async () => [await operations.readdir(path, options)],
         "scandir",
         name,
       );
@@ -99,7 +85,7 @@ export function createPathCallbackApi(kernelFs: KernelFileSystem) {
       const name = pathString(path);
       schedule<[ReturnType<typeof readlinkSync>]>(
         callback,
-        () => [readlinkSync(kernelFs, path, options)],
+        async () => [await operations.readlink(path, options)],
         "readlink",
         name,
       );
@@ -119,7 +105,7 @@ export function createPathCallbackApi(kernelFs: KernelFileSystem) {
       const name = pathString(path);
       schedule<[ReturnType<typeof realpathSync>]>(
         callback,
-        () => [realpathSync(kernelFs, path, options)],
+        async () => [await operations.realpath(path, options)],
         "realpath",
         name,
       );
@@ -129,7 +115,7 @@ export function createPathCallbackApi(kernelFs: KernelFileSystem) {
       const destination = pathString(to);
       schedule<[]>(
         callback,
-        () => (renameSync(kernelFs, source, destination), []),
+        async () => (await operations.rename(source, destination), []),
         "rename",
         source,
         destination,
@@ -150,7 +136,7 @@ export function createPathCallbackApi(kernelFs: KernelFileSystem) {
       const name = pathString(path);
       schedule<[ReturnType<typeof mkdirSync>]>(
         callback,
-        () => [mkdirSync(kernelFs, path, options)],
+        async () => [await operations.mkdir(path, options)],
         "mkdir",
         name,
       );
@@ -170,18 +156,18 @@ export function createPathCallbackApi(kernelFs: KernelFileSystem) {
       const name = pathString(prefix);
       schedule<[ReturnType<typeof mkdtempSync>]>(
         callback,
-        () => [mkdtempSync(kernelFs, prefix, options)],
+        async () => [await operations.mkdtemp(prefix, options)],
         "mkdtemp",
         name,
       );
     },
     unlink: (path: PathLike, callback: FsCallback) => {
       const name = pathString(path);
-      schedule<[]>(callback, () => (unlinkSync(kernelFs, path), []), "unlink", name);
+      schedule<[]>(callback, async () => (await operations.unlink(path), []), "unlink", name);
     },
     rmdir: (path: PathLike, callback: FsCallback) => {
       const name = pathString(path);
-      schedule<[]>(callback, () => (rmdirSync(kernelFs, path), []), "rmdir", name);
+      schedule<[]>(callback, async () => (await operations.rmdir(path), []), "rmdir", name);
     },
     rm: (
       path: PathLike,
@@ -193,14 +179,14 @@ export function createPathCallbackApi(kernelFs: KernelFileSystem) {
       if (typeof callback !== "function") throw new TypeError("The callback argument is required");
       const options = typeof optionsOrCallback === "function" ? undefined : optionsOrCallback;
       const name = pathString(path);
-      schedule<[]>(callback, () => (rmSync(kernelFs, path, options), []), "rm", name);
+      schedule<[]>(callback, async () => (await operations.rm(path, options), []), "rm", name);
     },
     link: (from: PathLike, to: PathLike, callback: FsCallback) => {
       const source = pathString(from);
       const destination = pathString(to);
       schedule<[]>(
         callback,
-        () => (linkSync(kernelFs, source, destination), []),
+        async () => (await operations.link(source, destination), []),
         "link",
         source,
         destination,
@@ -218,20 +204,25 @@ export function createPathCallbackApi(kernelFs: KernelFileSystem) {
       const name = pathString(path);
       schedule<[]>(
         callback,
-        () => (symlinkSync(kernelFs, target, path, type), []),
+        async () => (await operations.symlink(target, path, type), []),
         "symlink",
         name,
       );
     },
     utimes: (path: PathLike, atime: TimeLike, mtime: TimeLike, callback: FsCallback) => {
       const name = pathString(path);
-      schedule<[]>(callback, () => (utimesSync(kernelFs, path, atime, mtime), []), "utimes", name);
+      schedule<[]>(
+        callback,
+        async () => (await operations.utimes(path, atime, mtime), []),
+        "utimes",
+        name,
+      );
     },
     chmod: (path: PathLike, _mode: number, callback: FsCallback) => {
       const name = pathString(path);
       schedule<[]>(
         callback,
-        () => {
+        async () => {
           throw unsupportedFs("chmod", name);
         },
         "chmod",
