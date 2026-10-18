@@ -116,6 +116,7 @@ const pullRequestTarget = (caller: OrchestrationV2ThreadShell, input: Input) =>
 export const makeCloudTools = (deps: {
   readonly engine: WorkflowEngineShape;
   readonly compiler: CloudCompiler["Service"];
+  readonly timezone: Effect.Effect<string, AutomationError>;
   readonly threads: AutomationThreadsShape;
   readonly folders: UserFolders["Service"];
   readonly github: GitHubWebhooks["Service"];
@@ -135,6 +136,8 @@ export const makeCloudTools = (deps: {
       });
 
   return {
+    /** Internal runner bridge for schedule_task's person-zone default. */
+    person_timezone: () => deps.timezone.pipe(Effect.map((timezone) => ({ timezone }))),
     automation_github_subscriptions: () =>
       deps.github.status.pipe(Effect.map((subscriptions) => ({ subscriptions }))),
     automation_save: (caller, input) =>
@@ -145,6 +148,12 @@ export const makeCloudTools = (deps: {
             "Save from a cloud thread's machine, which compiles the file first.",
           );
         const compiled = yield* acceptCompiled(input.compiled);
+        const defaultTimezone =
+          compiled.meta.triggers?.some(
+            (trigger) => "cron" in trigger && trigger.timezone === undefined,
+          ) === true
+            ? yield* deps.timezone
+            : undefined;
         const automationId = text(input, "automationId");
         const saved = yield* deps.compiler.withStaged(
           source,
@@ -158,6 +167,8 @@ export const makeCloudTools = (deps: {
               ...(input.draft === true ? { draft: true } : {}),
             },
             withinCaller(caller),
+            undefined,
+            defaultTimezone,
           ),
         );
         return saveResult(saved);

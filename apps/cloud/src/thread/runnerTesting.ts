@@ -5,16 +5,22 @@ import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
 import {
+  runnerFrame,
   RUNNER_PROTOCOL_VERSION,
   type RunnerItem,
+  type RunnerMessage,
   type ThreadMessage,
   threadFrame,
 } from "@signalbox/runner-protocol/RunnerProtocol";
-import { CLAUDE_STREAM_PREFIX } from "@signalbox/runner-protocol/SessionProtocol";
+import {
+  CLAUDE_STREAM_PREFIX,
+  type SessionAppend,
+} from "@signalbox/runner-protocol/SessionProtocol";
 import {
   CommandId,
   MessageId,
   type OrchestrationV2ProviderCapabilities,
+  type OrchestrationV2ThreadProjection,
   OrchestrationV2ProviderThread,
   OrchestrationV2TurnItem,
   ProjectId,
@@ -30,6 +36,7 @@ import {
 import { PERSONAL_CONTEXT_ID } from "@t3tools/contracts/signalboxContexts";
 import { afterEach, expect } from "@effect/vitest";
 import * as Context from "effect/Context";
+import * as Clock from "effect/Clock";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -38,7 +45,8 @@ import * as Schema from "effect/Schema";
 import { layerThreadObject } from "../testing.ts";
 import * as SessionRows from "./session/SessionRows.ts";
 import * as ThreadEngine from "./ThreadEngine.ts";
-import type { RunnerSocketHost } from "./runner/runnerSockets.ts";
+import * as TurnReports from "./diagnostics/TurnReports.ts";
+import { onRunnerMessage, type RunnerSocketHost } from "./runner/runnerSockets.ts";
 import * as ThreadRunner from "./runner/ThreadRunner.ts";
 
 /** A Claude thread's object with its Runner, and what a Runner reports, for tests. */
@@ -114,8 +122,16 @@ export const launch = (
   engine: ThreadEngine.ThreadEngine["Service"],
   commandId = "launch-1",
   creation: ThreadEngine.ThreadCreation = personal,
-  projectId = ProjectId.make("scratch"),
-  modelSelection: ModelSelection = claude,
+  {
+    projectId = ProjectId.make("scratch"),
+    modelSelection = claude,
+    text = "Hi",
+  }: {
+    readonly projectId?: ProjectId;
+    readonly modelSelection?: ModelSelection;
+    /** The first message's text. */
+    readonly text?: string;
+  } = {},
 ) =>
   engine.launch(
     owner,
@@ -128,7 +144,7 @@ export const launch = (
       runtimeMode: "full-access",
       interactionMode: "default",
       workspaceStrategy: { type: "root" },
-      initialMessage: { messageId: MessageId.make("message-1"), text: "Hi", attachments: [] },
+      initialMessage: { messageId: MessageId.make("message-1"), text, attachments: [] },
     },
     creation,
   );
@@ -152,6 +168,11 @@ export const send = (engine: ThreadEngine.ThreadEngine["Service"], n: number, te
     personal,
   );
 
+export const appendSession = (
+  context: Context.Context<SessionRows.SessionRows>,
+  input: SessionAppend,
+) => Context.get(context, SessionRows.SessionRows).append(input);
+
 /** Stores a row of Claude's session `nativeId`, as a machine's session store does. */
 export const saveSession = (context: Context.Context<SessionRows.SessionRows>, nativeId: string) =>
   Context.get(context, SessionRows.SessionRows).append({
@@ -159,6 +180,12 @@ export const saveSession = (context: Context.Context<SessionRows.SessionRows>, n
     offset: 0,
     rows: [JSON.stringify({ type: "user", uuid: "row-1" })],
   });
+
+export const readTurnReport = (
+  context: Context.Context<TurnReports.TurnReports>,
+  projection: OrchestrationV2ThreadProjection,
+  runId: RunId,
+) => Context.get(context, TurnReports.TurnReports).turn(projection, runId);
 
 export const hello = (generation: number, token: string) => ({
   type: "hello" as const,
@@ -170,6 +197,7 @@ export const hello = (generation: number, token: string) => ({
   token,
   lastAckedSequence: 0,
   drains: true,
+  pulls: true,
 });
 
 const off = <T extends Record<string, unknown>>(fields: T) =>
@@ -284,6 +312,7 @@ export const turnReport = (
   runId: RunId,
   runOrdinal: number,
   providerThread: OrchestrationV2ProviderThread,
+  { replyText = "Hello!" }: { readonly replyText?: string } = {},
 ) => {
   const reply = (text: string, done: boolean) =>
     encodeTurnItem({
@@ -333,8 +362,8 @@ export const turnReport = (
         nativeThreadRef: { driver: claudeDriver, nativeId: "claude-session-1", strength: "strong" },
       },
     } satisfies RunnerItem,
-    partial: provider({ type: "turn_item.updated", turnItem: reply("Hel", false) }),
-    full: provider({ type: "turn_item.updated", turnItem: reply("Hello!", true) }),
+    partial: provider({ type: "turn_item.updated", turnItem: reply(replyText.slice(0, 3), false) }),
+    full: provider({ type: "turn_item.updated", turnItem: reply(replyText, true) }),
     terminal: provider({
       type: "turn.terminal",
       providerThreadId: providerThread.id,
@@ -376,6 +405,10 @@ export interface FakeSocket {
   readonly sent: Array<ThreadMessage>;
 }
 
+export interface FakeRunnerSocketHost extends RunnerSocketHost {
+  readonly recordAutoResponse: (socket: WebSocket, at: number) => void;
+}
+
 export const fakeSocket = (): FakeSocket => {
   const sent: Array<ThreadMessage> = [];
   let attachment: unknown = null;
@@ -395,16 +428,33 @@ export const hostFor = (
   runner: ThreadRunner.ThreadRunner["Service"],
   sockets: Array<WebSocket>,
   holds: () => boolean = () => false,
-) =>
-  Effect.map(Effect.context<never>(), (context): RunnerSocketHost => ({
-    ctx: {
-      getWebSockets: () => sockets,
-      getTags: () => ["runner"],
-    } as unknown as DurableObjectState,
-    run: (effect) =>
-      Effect.runPromiseWith(context)(
-        Effect.provideService(effect, ThreadRunner.ThreadRunner, runner),
-      ),
-    holdsTurn: () => Promise.resolve(holds()),
-    afterChange: () => Promise.resolve(),
-  }));
+): Effect.Effect<FakeRunnerSocketHost> =>
+  Effect.map(Effect.context<never>(), (context) => {
+    const autoResponses = new WeakMap<WebSocket, Date>();
+    return {
+      ctx: {
+        getWebSockets: () => sockets,
+        getTags: () => ["runner"],
+        getWebSocketAutoResponseTimestamp: (socket: WebSocket) => autoResponses.get(socket) ?? null,
+      } as unknown as DurableObjectState,
+      now: () => Effect.runPromiseWith(context)(Clock.currentTimeMillis),
+      run: (effect) =>
+        Effect.runPromiseWith(context)(
+          Effect.provideService(effect, ThreadRunner.ThreadRunner, runner),
+        ),
+      holdsTurn: () => Promise.resolve(holds()),
+      afterChange: () => Promise.resolve(),
+      recordAutoResponse: (socket, at) =>
+        autoResponses.set(socket, DateTime.toDate(DateTime.makeUnsafe(at))),
+    };
+  });
+
+/** Sends a frame through the same socket handler used by the Durable Object. */
+export const sendRunnerFrame = (
+  host: RunnerSocketHost,
+  socket: FakeSocket,
+  message: RunnerMessage,
+) => Effect.promise(() => onRunnerMessage(host, socket.socket, runnerFrame.encode(message)));
+
+export { IDLE_TAIL_MS } from "./runner/MachineBackend.ts";
+export { onRunnerMessage, pushRunnerWork } from "./runner/runnerSockets.ts";

@@ -2,7 +2,9 @@ import { layerAskTools } from "./RunnerAskTools.ts";
 // @effect-diagnostics nodeBuiltinImport:off - the context server is a Node HTTP boundary.
 import * as NodeHttp from "node:http";
 
+import * as NodeFileSystem from "@effect/platform-node/NodeFileSystem";
 import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
+import * as NodePath from "@effect/platform-node/NodePath";
 import type { DriveAccess } from "@signalbox/runner-protocol/DriveProtocol";
 import type { PreviewService } from "@signalbox/runner-protocol/PreviewServices";
 import * as HostProcess from "@t3tools/shared/HostProcess";
@@ -19,6 +21,8 @@ import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import packageJson from "../../../package.json" with { type: "json" };
 import type { ClaudeAgentSdkQueryRunnerShape } from "../../orchestration-v2/Adapters/ClaudeAdapterV2.ts";
 import { automationCaller, layerAutomationTools } from "./RunnerAutomationTools.ts";
+import { layerRunnerPullRequestTools } from "./RunnerPullRequestTools.ts";
+import { layerLearnerTools } from "./RunnerLearnerTools.ts";
 import { type BranchDrive, layerBranchTools } from "./RunnerBranchTools.ts";
 import {
   BROWSER_EXECUTABLE_ENV,
@@ -194,6 +198,10 @@ export const startContextServer = Effect.fn("startContextServer")(function* (inp
     layerBranchTools(view, () => drive),
     layerAutomationTools(view),
     layerAskTools(view),
+    layerRunnerPullRequestTools(view).pipe(
+      Layer.provide(Layer.mergeAll(NodeFileSystem.layer, NodePath.layer)),
+    ),
+    layerLearnerTools(view),
     layerScheduledTaskTools(view, input.threadId ?? null),
     previewServiceTools,
     layerStatusLineTools(view),

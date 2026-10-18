@@ -25,6 +25,7 @@ import { Atom } from "effect/reactivity";
 
 import { writeFileAtomically } from "../lib/atomic-file";
 import { createComposerContextHistory, referencedComposerContext } from "../lib/composerContext";
+import { uuidv4 } from "../lib/uuid";
 import { isQueuedEditDraftKey } from "./queued-edit-draft-key";
 import {
   collectComposerContextReferences,
@@ -322,6 +323,7 @@ export class ComposerDraftPersistenceError extends Schema.TaggedError<ComposerDr
 }
 
 export interface ComposerDraft {
+  readonly draftRevision?: string;
   readonly text: string;
   readonly context?: OrchestrationMessageContext;
   readonly attachments: ReadonlyArray<DraftComposerAttachment>;
@@ -381,6 +383,7 @@ const PersistedComposerContextSchema = Schema.Struct({
 });
 
 const ComposerDraftSchema = Schema.Struct({
+  draftRevision: Schema.optional(Schema.String),
   text: Schema.String,
   context: Schema.optional(PersistedComposerContextSchema),
   attachments: Schema.Array(DraftComposerAttachmentSchema),
@@ -772,6 +775,16 @@ export async function flushComposerDrafts(): Promise<void> {
     // gated behind its own hydration await inside the queue.
     await persistenceQueue.run(() => Promise.resolve());
   } while (persistTimer !== null || persistRetryNeeded);
+}
+
+export async function flushComposerDraftsAfterOutboxWrite(
+  outboxWrite: Promise<unknown>,
+): Promise<void> {
+  // The outbox must own a durable copy before the cleared composer replaces its
+  // persisted draft. Flush the latest state after that boundary, including any
+  // newer text entered while the outbox write was in flight.
+  await outboxWrite;
+  await flushComposerDrafts();
 }
 
 function signedOutAttachmentOwners() {
@@ -1187,37 +1200,40 @@ export async function restoreCloudComposerDrafts(accountId: string): Promise<voi
         .some((current) => current.messageId === message.messageId);
       if (!alreadyQueued) await threadOutboxManager.enqueue(message);
     }
-    updateComposerDrafts((current) => {
-      const restored = { ...current };
-      for (const [key, draft] of Object.entries(saved.drafts)) {
-        const existing = current[key];
-        const attachmentIds = new Set(existing?.attachments.map((attachment) => attachment.id));
-        restored[key] = existing
-          ? {
-              ...draft,
-              ...existing,
-              text: mergeComposerDraftText(existing.text, draft.text),
-              context: mergeReferencedComposerContext(
-                mergeComposerDraftText(existing.text, draft.text),
-                draft.context,
-                existing.context,
-              ),
-              // A concurrent import must not lose files, even above the send limit.
-              attachments: [
-                ...existing.attachments,
-                ...draft.attachments.filter((attachment) => !attachmentIds.has(attachment.id)),
-              ],
-              importedShareIds: [
-                ...new Set([
-                  ...(existing.importedShareIds ?? []),
-                  ...(draft.importedShareIds ?? []),
-                ]),
-              ],
-            }
-          : draft;
-      }
-      return restored;
-    });
+    updateComposerDrafts(
+      (current) => {
+        const restored = { ...current };
+        for (const [key, draft] of Object.entries(saved.drafts)) {
+          const existing = current[key];
+          const attachmentIds = new Set(existing?.attachments.map((attachment) => attachment.id));
+          restored[key] = existing
+            ? {
+                ...draft,
+                ...existing,
+                text: mergeComposerDraftText(existing.text, draft.text),
+                context: mergeReferencedComposerContext(
+                  mergeComposerDraftText(existing.text, draft.text),
+                  draft.context,
+                  existing.context,
+                ),
+                // A concurrent import must not lose files, even above the send limit.
+                attachments: [
+                  ...existing.attachments,
+                  ...draft.attachments.filter((attachment) => !attachmentIds.has(attachment.id)),
+                ],
+                importedShareIds: [
+                  ...new Set([
+                    ...(existing.importedShareIds ?? []),
+                    ...(draft.importedShareIds ?? []),
+                  ]),
+                ],
+              }
+            : draft;
+        }
+        return restored;
+      },
+      { preserveNewDraftRevisions: true },
+    );
   }
   const signedOut = { ...cloud.signedOut };
   delete signedOut[accountId];
@@ -1228,14 +1244,93 @@ export async function restoreCloudComposerDrafts(accountId: string): Promise<voi
 
 function updateComposerDrafts(
   update: (current: Record<string, ComposerDraft>) => Record<string, ComposerDraft>,
+  options?: { readonly preserveNewDraftRevisions?: boolean },
 ): void {
   const current = appAtomRegistry.get(composerDraftsAtom);
-  const next = update(current);
-  if (next === current) {
+  const updated = update(current);
+  if (updated === current) {
     return;
   }
+  const next = withChangedComposerDraftRevisions(current, updated, options);
   appAtomRegistry.set(composerDraftsAtom, next);
   schedulePersistComposerState();
+}
+
+function sameComposerDraftRevisionSource(left: ComposerDraft, right: ComposerDraft): boolean {
+  return (
+    left.text === right.text &&
+    JSON.stringify(left.context ?? null) === JSON.stringify(right.context ?? null) &&
+    left.attachments.length === right.attachments.length &&
+    left.attachments.every((attachment, index) => {
+      const next = right.attachments[index];
+      return (
+        next !== undefined &&
+        attachment.id === next.id &&
+        attachment.type === next.type &&
+        attachment.name === next.name &&
+        attachment.mimeType === next.mimeType &&
+        attachment.sizeBytes === next.sizeBytes &&
+        (attachment.type === "image" && next.type === "image"
+          ? attachment.previewUri === next.previewUri &&
+            attachment.fileUri === next.fileUri &&
+            attachment.dataUrl === next.dataUrl
+          : attachment.type === "file" &&
+            next.type === "file" &&
+            attachment.fileUri === next.fileUri &&
+            JSON.stringify(attachment.source ?? null) === JSON.stringify(next.source ?? null))
+      );
+    }) &&
+    JSON.stringify(left.importedShareIds ?? null) ===
+      JSON.stringify(right.importedShareIds ?? null) &&
+    JSON.stringify(left.modelSelection ?? null) === JSON.stringify(right.modelSelection ?? null) &&
+    left.runtimeMode === right.runtimeMode &&
+    left.interactionMode === right.interactionMode &&
+    JSON.stringify(left.workspaceSelection ?? null) ===
+      JSON.stringify(right.workspaceSelection ?? null) &&
+    JSON.stringify(left.project ?? null) === JSON.stringify(right.project ?? null)
+  );
+}
+
+function withChangedComposerDraftRevisions(
+  current: Record<string, ComposerDraft>,
+  updated: Record<string, ComposerDraft>,
+  options?: { readonly preserveNewDraftRevisions?: boolean },
+): Record<string, ComposerDraft> {
+  let next: Record<string, ComposerDraft> | null = null;
+  for (const [draftKey, draft] of Object.entries(updated)) {
+    const previous = current[draftKey];
+    if (draft === previous) continue;
+    let draftRevision = draft.draftRevision;
+    if (!previous) {
+      if (!options?.preserveNewDraftRevisions || draftRevision === undefined) {
+        draftRevision = uuidv4();
+      }
+    } else if (!sameComposerDraftRevisionSource(previous, draft)) {
+      draftRevision = uuidv4();
+    } else if (previous.draftRevision !== undefined && draftRevision !== previous.draftRevision) {
+      draftRevision = uuidv4();
+    } else if (previous.draftRevision !== undefined) {
+      draftRevision = previous.draftRevision;
+    }
+    if (draftRevision === draft.draftRevision) continue;
+    next ??= { ...updated };
+    next[draftKey] = { ...draft, draftRevision };
+  }
+  return next ?? updated;
+}
+
+export function ensureComposerDraftRevision(draftKey: string): string | undefined {
+  const draft = appAtomRegistry.get(composerDraftsAtom)[draftKey];
+  if (!draft) return undefined;
+  if (draft.draftRevision !== undefined) return draft.draftRevision;
+  const revision = uuidv4();
+  updateComposerDrafts((current) => {
+    const latest = current[draftKey];
+    return !latest || latest.draftRevision !== undefined
+      ? current
+      : { ...current, [draftKey]: { ...latest, draftRevision: revision } };
+  });
+  return appAtomRegistry.get(composerDraftsAtom)[draftKey]?.draftRevision;
 }
 
 export function setStickyComposerModelSelection(modelSelection: ModelSelection): void {
@@ -1602,7 +1697,10 @@ export async function mergeComposerDraftContent(
     persistTimer = null;
   }
   const current = appAtomRegistry.get(composerDraftsAtom);
-  const next = mergeComposerDraftContentState(current, draftKey, content);
+  const next = withChangedComposerDraftRevisions(
+    current,
+    mergeComposerDraftContentState(current, draftKey, content),
+  );
   const currentAttachmentIds = new Set(
     normalizeDraft(current[draftKey]).attachments.map((attachment) => attachment.id),
   );
@@ -1637,10 +1735,10 @@ export async function restoreComposerDraftSnapshot(
     clearTimeout(persistTimer);
     persistTimer = null;
   }
-  const next = restoreComposerDraftSnapshotState(
-    appAtomRegistry.get(composerDraftsAtom),
-    draftKey,
-    snapshot,
+  const current = appAtomRegistry.get(composerDraftsAtom);
+  const next = withChangedComposerDraftRevisions(
+    current,
+    restoreComposerDraftSnapshotState(current, draftKey, snapshot),
   );
   appAtomRegistry.set(composerDraftsAtom, next);
   await persistenceQueue.run(() =>
@@ -1726,11 +1824,10 @@ export async function undoComposerDraftMerge(
     clearTimeout(persistTimer);
     persistTimer = null;
   }
-  const next = undoComposerDraftMergeState(
-    appAtomRegistry.get(composerDraftsAtom),
-    draftKey,
-    snapshot,
-    merged,
+  const current = appAtomRegistry.get(composerDraftsAtom);
+  const next = withChangedComposerDraftRevisions(
+    current,
+    undoComposerDraftMergeState(current, draftKey, snapshot, merged),
   );
   appAtomRegistry.set(composerDraftsAtom, next);
   await persistenceQueue.run(() =>
@@ -1755,6 +1852,24 @@ export function clearComposerDraftContent(
   if (!options?.deferAttachmentCleanup) {
     scheduleUnusedComposerAttachmentCleanup(previousAttachments);
   }
+}
+
+export function clearComposerDraftContentIfMatchingQueuedMessage(
+  draftKey: string,
+  message: QueuedThreadMessage,
+): boolean {
+  const draft = getComposerDraftSnapshot(draftKey);
+  if (
+    message.sourceDraftRevision === undefined ||
+    draft.draftRevision !== message.sourceDraftRevision
+  ) {
+    return false;
+  }
+
+  // Only the exact persisted draft version that produced this queued message is
+  // safe to clear; identical text can be a deliberate new draft.
+  clearComposerDraftContent(draftKey, { deferAttachmentCleanup: true });
+  return true;
 }
 
 export function clearComposerDraft(

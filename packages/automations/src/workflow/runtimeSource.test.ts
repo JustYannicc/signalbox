@@ -45,16 +45,25 @@ export function load(workflow) {
 }
 `;
 
+const CURSOR_AUTOMATION = `
+export function load(workflow) {
+  return workflow(async (w) => {
+    const after = await w.eventCursor("n1", "Capture event boundary");
+    return await w.waitFor("n2", "Wait for fresh events", { on: "pr.merged", after });
+  });
+}
+`;
+
 const dataUrl = (text: string) => `data:text/javascript,${encodeURIComponent(text)}`;
 
 /** Imports the shipped text as Workers would, with `cloudflare:workers` stubbed. */
-async function importShipped() {
+async function importShipped(automation = SAMPLE_AUTOMATION) {
   const workers = dataUrl(
     "export class WorkerEntrypoint { constructor(ctx, env) { this.ctx = ctx; this.env = env; } }",
   );
   const runtime = RUNTIME_MODULE.replace(`"cloudflare:workers"`, JSON.stringify(workers)).replace(
     `"./${AUTOMATION_MODULE}"`,
-    JSON.stringify(dataUrl(SAMPLE_AUTOMATION)),
+    JSON.stringify(dataUrl(automation)),
   );
   const imported = (await import(/* @vite-ignore */ dataUrl(runtime))) as {
     AutomationRun: EntrypointClass;
@@ -109,5 +118,35 @@ describe("the shipped runtime.js", () => {
     );
     expect(again).toMatchObject({ answer: "yes", loads: 2 });
     expect(host.stepKeys()).toEqual(["n1", "n3"]);
+  });
+
+  it("journals an event cursor and reuses the same boundary after replay", async () => {
+    const AutomationRun = await importShipped(CURSOR_AUTOMATION);
+    const engine = new FakeWorkflows();
+    let currentCursor = { runId: "run-1", sequence: 0 };
+    const host = new FakeHost((request) =>
+      request.verb === "eventCursor"
+        ? { type: "done", value: currentCursor }
+        : { type: "waiting", event: "pr-events", timeoutMs: null },
+    );
+    const entry = new AutomationRun({}, { HOST: host });
+    void entry.run(payload("run-1"), engine.step());
+    await engine.idle();
+    expect(engine.blocked()).toEqual(["n2~wait"]);
+    const wait = host.of("step").find((call) => call.request?.verb === "waitFor")?.request;
+    expect(wait?.args[0]).toMatchObject({ after: { runId: "run-1", sequence: 0 } });
+
+    currentCursor = { runId: "run-1", sequence: 99 };
+    engine.evict();
+    engine.sendEvent("pr-events", {
+      ok: true,
+      value: { event: "pr.merged", headSha: null },
+    });
+    expect(await entry.run(payload("run-1"), engine.step())).toEqual({
+      event: "pr.merged",
+      headSha: null,
+    });
+    expect(host.stepKeys()).toEqual(["n1", "n2"]);
+    expect(host.of("step").filter((call) => call.request?.verb === "eventCursor")).toHaveLength(1);
   });
 });

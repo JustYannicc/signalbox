@@ -12,6 +12,7 @@ import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 
 import { RUNNER_AUTOMATION_TOOLS, RUNNER_NOTE_TOOLS } from "./RunnerAutomationTools.ts";
+import { RUNNER_LEARNER_TOOLS } from "./RunnerLearnerTools.ts";
 import { RUNNER_SCHEDULED_TASK_TOOLS } from "./RunnerScheduledTaskTools.ts";
 import { RUNNER_STATUS_LINE_TOOLS } from "./RunnerStatusLineTools.ts";
 import type { BranchDrive } from "./RunnerBranchTools.ts";
@@ -20,9 +21,10 @@ import { startContextServer } from "./RunnerContextServer.ts";
 import { CONTEXT_SERVER_NAME } from "./RunnerContextTools.ts";
 import type { RunnerPreviewServices } from "./RunnerPreviewServices.ts";
 
-/** Tools the cloud answers (automations, status lines, notes), tested in their own files. */
-const AUTOMATION_SIDE = new Set<string>([
+/** Cloud-backed tools have their own integration tests. */
+const CLOUD_SIDE = new Set<string>([
   ...RUNNER_AUTOMATION_TOOLS,
+  ...RUNNER_LEARNER_TOOLS,
   ...RUNNER_SCHEDULED_TASK_TOOLS,
   ...RUNNER_STATUS_LINE_TOOLS,
   ...Object.keys(RUNNER_NOTE_TOOLS),
@@ -202,6 +204,7 @@ const fakeClient = (calls: Calls): ContextClient => ({
           };
     }),
   folderStatus: Effect.die("Folder roll-ups aren't part of these tests."),
+  learnerTool: () => Effect.die("Learner tools aren't part of these tests."),
   browserSession: Effect.die("The person's browser isn't part of these tests."),
   endBrowser: () => Effect.die("The person's browser isn't part of these tests."),
   browserSignIn: () => Effect.die("The person's browser isn't part of these tests."),
@@ -321,7 +324,7 @@ describe("context server (#141)", () => {
         annotations: { readOnlyHint: boolean };
       }>;
       const reads = tools.filter(
-        (tool) => tool.annotations.readOnlyHint && !AUTOMATION_SIDE.has(tool.name),
+        (tool) => tool.annotations.readOnlyHint && !CLOUD_SIDE.has(tool.name),
       );
       expect(reads.map((tool) => tool.name)).toEqual([
         "search_context",
@@ -331,6 +334,7 @@ describe("context server (#141)", () => {
         "read_drive_file",
         "t3_ask_list",
         "t3_ask_read",
+        "read_pr",
       ]);
 
       const found = yield* call("search_context", {
@@ -497,9 +501,19 @@ describe("context server (#141)", () => {
       }>;
       expect(
         tools
-          .filter((tool) => !tool.annotations.readOnlyHint && !AUTOMATION_SIDE.has(tool.name))
+          .filter((tool) => !tool.annotations.readOnlyHint && !CLOUD_SIDE.has(tool.name))
           .map((tool) => tool.name),
-      ).toEqual(["push", "create_pr", "t3_ask_raise", "t3_ask_answer", "t3_ask_withdraw"]);
+      ).toEqual([
+        "push",
+        "create_pr",
+        "t3_ask_raise",
+        "t3_ask_answer",
+        "t3_ask_withdraw",
+        "edit_pr",
+        "comment_pr",
+        "reply_to_pr_review",
+        "upload_pr_image",
+      ]);
 
       const opened = yield* call("create_pr", {
         title: "Add dark mode",

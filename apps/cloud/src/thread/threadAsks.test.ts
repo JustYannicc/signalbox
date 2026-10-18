@@ -60,7 +60,9 @@ describe("durable cloud asks", () => {
         const database = freshDatabase();
         yield* withObject(database, (engine) =>
           Effect.gen(function* () {
-            yield* launch(engine, "launch", personal, undefined, scriptedModelSelection);
+            yield* launch(engine, "launch", personal, {
+              modelSelection: scriptedModelSelection,
+            });
             yield* engine.dispatch(owner, raise(), personal);
             // A durable ask does not hold the turn open, including its blocking questions.
             yield* settle(engine);
@@ -107,7 +109,7 @@ describe("durable cloud asks", () => {
   it.effect("queues an answer while the agent works and archives the remaining questions", () =>
     withObject(freshDatabase(), (engine) =>
       Effect.gen(function* () {
-        yield* launch(engine, "launch", personal, undefined, scriptedModelSelection);
+        yield* launch(engine, "launch", personal, { modelSelection: scriptedModelSelection });
         yield* engine.dispatch(owner, raise(), personal);
         yield* engine.dispatch(owner, answer(1, "one"), personal);
         expect((yield* snapshot(engine)).projection.runs.map((run) => run.status)).toEqual([
@@ -115,6 +117,10 @@ describe("durable cloud asks", () => {
           "queued",
         ]);
         yield* settle(engine);
+        expect((yield* snapshot(engine)).projection.runs.map((run) => run.status)).toEqual([
+          "completed",
+          "completed",
+        ]);
         yield* engine.dispatch(
           owner,
           { type: "thread.archive", commandId: CommandId.make("archive"), threadId },

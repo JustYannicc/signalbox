@@ -52,9 +52,11 @@ describe("cloud native asks", () => {
   ])("$name", ({ secret, nonBlocking, expiresBetweenRounds }) =>
     withObject(freshDatabase(), (engine, runner) =>
       Effect.gen(function* () {
-        yield* launch(engine, "launch", personal, undefined, {
-          instanceId: ProviderInstanceId.make("claudeAgent"),
-          model: "claude-opus-5-5",
+        yield* launch(engine, "launch", personal, {
+          modelSelection: {
+            instanceId: ProviderInstanceId.make("claudeAgent"),
+            model: "claude-opus-5-5",
+          },
         });
         const machine = yield* connect(runner);
         const turn = yield* liveTurn(runner);

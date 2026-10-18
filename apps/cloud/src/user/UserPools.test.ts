@@ -246,6 +246,13 @@ describe("UserPools config subscriptions", () => {
       expect(config.settings.providerInstances).toHaveProperty(
         poolInstanceId("claude", "personal"),
       );
+      const cachedClaude = config.providers.find(
+        (provider) => provider.instanceId === "claude_hub",
+      );
+      expect(cachedClaude?.models.map((model) => model.slug)).toContain("claude-opus-5-5");
+      expect(cachedClaude?.auth.status).toBe("unknown");
+      expect(cachedClaude?.status).toBe("error");
+      expect(config.settings.defaultModelSelection?.instanceId).toBe("claude_hub");
 
       // A live config subscription retries on its ordinary pool refresh interval.
       const recovered = yield* Deferred.make<void>();

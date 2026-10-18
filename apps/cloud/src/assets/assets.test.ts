@@ -96,6 +96,11 @@ const threads = CloudThreadService.CloudThreadService.of({
   browserTrail: unused,
   browserStep: unused,
   turnDiagnostics: unused,
+  pull: unused,
+  pullOwner: unused,
+  pullTarget: unused,
+  reservePublication: unused,
+  releasePublication: unused,
   canSee: (actor, id) => Effect.succeed(actor.userId === owner && id === threadId),
 });
 

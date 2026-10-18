@@ -112,6 +112,7 @@ const incomingShareStorageMocks = vi.hoisted(() => ({
     async () => [],
   ),
 }));
+const draftRevisionMocks = vi.hoisted(() => ({ sequence: 0 }));
 
 vi.mock("expo-file-system", () => ({
   Directory: composerDraftFileMocks.Directory,
@@ -124,7 +125,10 @@ vi.mock("../lib/composerImages", async (importOriginal) => ({
   removePersistedComposerAttachmentFile: composerAttachmentCleanupMocks.remove,
 }));
 
-vi.mock("../lib/uuid", () => ({ uuidv4: () => "uuid", randomHex: () => "0000" }));
+vi.mock("../lib/uuid", () => ({
+  uuidv4: () => `draft-revision-${++draftRevisionMocks.sequence}`,
+  randomHex: () => "0000",
+}));
 vi.mock("./assets", () => ({ assetEnvironment: {} }));
 vi.mock("./attachments", () => ({ attachmentEnvironment: {} }));
 vi.mock("./session", () => ({ environmentSession: {} }));
@@ -167,11 +171,13 @@ import {
   createComposerDraftContextHistory,
   setComposerDraftContext,
   decodePersistedComposerState,
+  ensureComposerDraftRevision,
   ensureComposerDraftsLoaded,
   type ComposerDraft,
   findNewTaskDraftKeys,
   findLocalComposerClipboardAttachment,
   flushComposerDrafts,
+  flushComposerDraftsAfterOutboxWrite,
   getComposerDraftSnapshot,
   mergeComposerDraftContentState,
   migrateLegacyNewTaskDraft,
@@ -1184,17 +1190,23 @@ describe("mobile composer drafts", () => {
         type === "image"
           ? { ...metadata, type, previewUri: metadata.fileUri }
           : { ...metadata, type };
+      const sourceDraftRevision = "source-draft-revision";
       const queued = {
         environmentId,
         threadId: ThreadId.make("thread-2"),
         messageId: MessageId.make("queued-1"),
         commandId: CommandId.make("command-1"),
+        sourceDraftRevision,
         text: "Send later",
         attachments: [file],
         createdAt: "2026-08-31T12:00:00.000Z",
       };
       appAtomRegistry.set(composerDraftsAtom, {
-        [key]: { text: "Unsent notes", attachments: [file] },
+        [key]: {
+          text: "Unsent notes",
+          attachments: [file],
+          draftRevision: sourceDraftRevision,
+        },
         "direct-environment:thread-1": DRAFT,
         "pending-task:queued-1": { text: "Edited queued task", attachments: [file] },
       });
@@ -1220,7 +1232,7 @@ describe("mobile composer drafts", () => {
       const enqueue = vi.spyOn(threadOutboxManager, "enqueue").mockResolvedValue();
       onTestFinished(() => enqueue.mockRestore());
       await restoreCloudComposerDrafts("account-a");
-      expect(getComposerDraftSnapshot(key)).toEqual(
+      expect(getComposerDraftSnapshot(key)).toMatchObject(
         type === "image"
           ? { text: "Unsent notes", attachments: [file] }
           : {
@@ -1243,6 +1255,7 @@ describe("mobile composer drafts", () => {
               },
             },
       );
+      expect(getComposerDraftSnapshot(key).draftRevision).toBe(sourceDraftRevision);
       expect(getComposerDraftSnapshot("pending-task:queued-1").text).toBe(
         type === "image"
           ? "Edited queued task"
@@ -1996,6 +2009,7 @@ describe("mobile composer drafts", () => {
       drafts: {
         "environment-1:thread-1": DRAFT,
         "new-task:environment-1:project-1": {
+          draftRevision: expect.any(String),
           text: "New prompt",
           attachments: [],
         },
@@ -2038,6 +2052,7 @@ describe("mobile composer drafts", () => {
     const written = JSON.parse(composerDraftFileMocks.getDocument());
     expect(written.drafts["environment-1:thread-1"]).toEqual(DRAFT);
     expect(written.drafts["new-task:environment-1:project-1"]).toEqual({
+      draftRevision: expect.any(String),
       text: "New prompt",
       attachments: [],
     });
@@ -2096,7 +2111,11 @@ describe("mobile composer drafts", () => {
 
     expect(JSON.parse(composerDraftFileMocks.getDocument()).drafts).toEqual({
       "environment-1:saved": DRAFT,
-      "environment-1:new": { text: "New edits", attachments: [] },
+      "environment-1:new": {
+        draftRevision: expect.any(String),
+        text: "New edits",
+        attachments: [],
+      },
     });
   });
 
@@ -2401,6 +2420,90 @@ describe("mobile composer drafts", () => {
     });
   });
 
+  it("persists an identity for a legacy draft before it can be queued", async () => {
+    const draftKey = "environment-1:thread-1";
+    appAtomRegistry.set(composerDraftsAtom, {
+      [draftKey]: { text: "Sent prompt", attachments: [] },
+    });
+
+    const revision = ensureComposerDraftRevision(draftKey);
+    expect(revision).toBeDefined();
+    await flushComposerDrafts();
+
+    expect(JSON.parse(composerDraftFileMocks.getDocument()).drafts[draftKey]).toMatchObject({
+      draftRevision: revision,
+      text: "Sent prompt",
+    });
+  });
+
+  it("persists a new revision when the same text is typed again after sending", async () => {
+    const draftKey = "environment-1:thread-1";
+    setComposerDraftText(draftKey, "continue");
+    const sentRevision = getComposerDraftSnapshot(draftKey).draftRevision;
+    if (!sentRevision) throw new Error("Expected a source draft revision");
+    await flushComposerDrafts();
+
+    clearComposerDraftContent(draftKey, { deferAttachmentCleanup: true });
+    setComposerDraftText(draftKey, "continue");
+    const newerRevision = getComposerDraftSnapshot(draftKey).draftRevision;
+    expect(newerRevision).toBeDefined();
+    expect(newerRevision).not.toBe(sentRevision);
+    await flushComposerDrafts();
+
+    appAtomRegistry.set(composerDraftsAtom, {});
+    resetComposerDraftsLoadState();
+    await waitForComposerDraftsLoaded();
+
+    expect(getComposerDraftSnapshot(draftKey)).toMatchObject({
+      draftRevision: newerRevision,
+      text: "continue",
+    });
+  });
+
+  it.each(["", "New unsent prompt"] as const)(
+    "flushes a cleared draft after the outbox write and preserves the next draft (%s)",
+    async (nextDraft) => {
+      vi.useFakeTimers();
+      const draftKey = "environment-1:thread-1";
+      setComposerDraftText(draftKey, "Sent prompt");
+      await flushComposerDrafts();
+      const outboxWrite = Promise.withResolvers<void>();
+
+      clearComposerDraftContent(draftKey, { deferAttachmentCleanup: true });
+      const persistedClear = flushComposerDraftsAfterOutboxWrite(outboxWrite.promise);
+      await Promise.resolve();
+      expect(JSON.parse(composerDraftFileMocks.getDocument()).drafts[draftKey].text).toBe(
+        "Sent prompt",
+      );
+
+      if (nextDraft) setComposerDraftText(draftKey, nextDraft);
+      outboxWrite.resolve();
+      await persistedClear;
+
+      appAtomRegistry.set(composerDraftsAtom, {});
+      resetComposerDraftsLoadState();
+      await waitForComposerDraftsLoaded();
+      expect(getComposerDraftSnapshot(draftKey).text).toBe(nextDraft);
+    },
+  );
+
+  it("leaves the saved draft intact when the outbox write fails", async () => {
+    vi.useFakeTimers();
+    const draftKey = "environment-1:thread-1";
+    setComposerDraftText(draftKey, "Unsent prompt");
+    await flushComposerDrafts();
+    const outboxWrite = Promise.withResolvers<void>();
+
+    clearComposerDraftContent(draftKey, { deferAttachmentCleanup: true });
+    const persistedClear = flushComposerDraftsAfterOutboxWrite(outboxWrite.promise);
+    outboxWrite.reject(new Error("outbox write failed"));
+
+    await expect(persistedClear).rejects.toThrow("outbox write failed");
+    expect(JSON.parse(composerDraftFileMocks.getDocument()).drafts[draftKey].text).toBe(
+      "Unsent prompt",
+    );
+  });
+
   it("propagates a flush write failure instead of resolving as saved", async () => {
     const draftKey = "environment-1:thread-1";
     setComposerDraftText(draftKey, "unsaved");
@@ -2455,7 +2558,7 @@ describe("mobile composer drafts", () => {
 
     expect(JSON.parse(composerDraftFileMocks.getDocument())).toEqual({
       schemaVersion: 1,
-      drafts: { [draftKey]: snapshot },
+      drafts: { [draftKey]: { ...snapshot, draftRevision: expect.any(String) } },
       stickyModelSelection: {
         instanceId: "codex",
         model: "gpt-5.6-sol",

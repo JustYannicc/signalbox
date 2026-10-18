@@ -65,7 +65,7 @@ export interface VersionRow {
   /** `script` as a Dynamic Worker module, for hosts that run versions on a workflow backend. */
   readonly worker_module: string | null;
   readonly graph_json: string;
-  /** The compiled `meta`, so publishing a draft needn't compile again. Null before drafts. */
+  /** Effective metadata, including resolved cron zones, so publishing keeps the saved schedule. Null before drafts. */
   readonly meta_json: string | null;
   /** The defaults of the thread that saved it, which apply once it's live. Null before drafts. */
   readonly defaults_json: string | null;

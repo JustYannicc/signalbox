@@ -1,3 +1,8 @@
+import type { AtomCommandResult } from "@t3tools/client-runtime/state/runtime";
+import {
+  cloneComposerImageForRetry,
+  isComposerSubmissionUncertain,
+} from "./composerSubmissionRecovery";
 import { stripInlineContextReferences } from "./lib/composerContextReferences";
 import { elementContextToPreviewAnnotation } from "./lib/elementContext";
 import {
@@ -38,7 +43,6 @@ import * as Equal from "effect/Equal";
 import * as Effect from "effect/Effect";
 import { DeepMutable } from "effect/Types";
 import { createModelSelection, normalizeModelSlug } from "@t3tools/shared/model";
-import { useMemo } from "react";
 import { getLocalStorageItem } from "./hooks/useLocalStorage";
 import { readThreadPreviewState } from "./previewStateStore";
 import { resolveAppModelSelection, resolveAppModelSelectionForInstance } from "./modelSelection";
@@ -81,6 +85,8 @@ import {
   toKindScopedComposerContextId,
 } from "@t3tools/shared/composerContextReferences";
 import { UnifiedSettings } from "@t3tools/contracts/settings";
+
+const isElementContextDetails = Schema.is(ElementContextDetails);
 import { ReviewCommentContextSchema, type ReviewCommentContext } from "./reviewCommentContext";
 const isRuntimeMode = Schema.is(RuntimeMode);
 const isProviderDriverKind = Schema.is(ProviderDriverKind);
@@ -380,6 +386,35 @@ export function composerDraftHasUserContent(
     draft.reviewComments.length > 0 ||
     draft.threadContexts.length > 0
   );
+}
+
+export function recoverComposerSubmission(input: {
+  target: ComposerThreadTarget;
+  result: AtomCommandResult<unknown, unknown>;
+  requestStarted: boolean;
+  content: Pick<
+    ComposerThreadDraftState,
+    | "prompt"
+    | "images"
+    | "files"
+    | "terminalContexts"
+    | "previewAnnotations"
+    | "reviewComments"
+    | "threadContexts"
+  >;
+}) {
+  if (isComposerSubmissionUncertain(input.result, input.requestStarted)) return "uncertain";
+  const store = useComposerDraftStore.getState();
+  if (composerDraftHasUserContent(store.getComposerDraft(input.target))) return "occupied";
+  const { target, content } = input;
+  store.setPrompt(target, content.prompt);
+  store.addImages(target, content.images.map(cloneComposerImageForRetry));
+  store.addFiles(target, content.files);
+  store.setTerminalContexts(target, content.terminalContexts);
+  store.setPreviewAnnotations(target, content.previewAnnotations);
+  store.setReviewComments(target, content.reviewComments);
+  store.setThreadContexts(target, content.threadContexts);
+  return "restored";
 }
 
 export interface DraftSessionState {
@@ -1781,7 +1816,7 @@ function normalizePersistedDraftsByThreadId(
         : [];
     for (const element of legacyElements) {
       if (
-        !Schema.is(ElementContextDetails)(element) ||
+        !isElementContextDetails(element) ||
         !("id" in element) ||
         typeof element.id !== "string" ||
         !("pickedAt" in element) ||
@@ -3957,6 +3992,8 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
             }
             return { draftsByThreadKey: nextDraftsByThreadKey };
           });
+          // A reload must not hydrate the last unsent snapshot after a send.
+          composerDebouncedStorage.flush();
         },
         clearComposerPromptAndImages: (threadRef) => {
           const threadKey = resolveComposerDraftKey(get(), threadRef) ?? "";
@@ -3992,6 +4029,7 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
             }
             return { draftsByThreadKey: nextDraftsByThreadKey };
           });
+          composerDebouncedStorage.flush();
         },
         moveComposerPromptAndImages: (from, to) => {
           const fromKey = resolveComposerDraftKey(get(), from) ?? "";
@@ -4241,7 +4279,9 @@ export function useThreadHasUnsentDraft(threadRef: ScopedThreadRef): boolean {
   );
 }
 
-function useComposerDraftModelState(threadRef: ComposerThreadTarget): ComposerDraftModelState {
+export function useComposerDraftModelState(
+  threadRef: ComposerThreadTarget,
+): ComposerDraftModelState {
   return useComposerDraftStore(
     useShallow((state) => {
       const draft = getComposerDraftState(state, threadRef);
@@ -4252,41 +4292,6 @@ function useComposerDraftModelState(threadRef: ComposerThreadTarget): ComposerDr
           }
         : EMPTY_COMPOSER_DRAFT_MODEL_STATE;
     }),
-  );
-}
-
-export function useEffectiveComposerModelState(input: {
-  threadRef?: ComposerThreadTarget;
-  draftId?: DraftId;
-  providers: ReadonlyArray<ServerProvider>;
-  selectedProvider: ProviderDriverKind;
-  selectedInstanceId?: ProviderInstanceId | null | undefined;
-  threadModelSelection: ModelSelection | null | undefined;
-  projectModelSelection: ModelSelection | null | undefined;
-  settings: UnifiedSettings;
-}): EffectiveComposerModelState {
-  const draft = useComposerDraftModelState(input.threadRef ?? input.draftId ?? DraftId.make(""));
-
-  return useMemo(
-    () =>
-      deriveEffectiveComposerModelState({
-        draft,
-        providers: input.providers,
-        selectedProvider: input.selectedProvider,
-        selectedInstanceId: input.selectedInstanceId,
-        threadModelSelection: input.threadModelSelection,
-        projectModelSelection: input.projectModelSelection,
-        settings: input.settings,
-      }),
-    [
-      draft,
-      input.providers,
-      input.settings,
-      input.projectModelSelection,
-      input.selectedInstanceId,
-      input.selectedProvider,
-      input.threadModelSelection,
-    ],
   );
 }
 

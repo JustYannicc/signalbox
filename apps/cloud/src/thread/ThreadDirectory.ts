@@ -8,6 +8,7 @@ import type {
   OrchestrationV2ThreadStreamItem,
   ThreadId,
 } from "@t3tools/contracts";
+import type { PullResult } from "@signalbox/runner-protocol/PullProtocol";
 import type {
   AgentBrowserInput,
   AgentBrowserStep,
@@ -20,7 +21,7 @@ import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
 import type { ModelAuthorization } from "../models/ModelProtocol.ts";
-import type { ModelGatewayRecord } from "../modelGateway/modelGatewayRecord.ts";
+import type { ModelGatewayRecord } from "../models/ModelRecords.ts";
 import type { ThreadContextTurns, ThreadMatch } from "../context/threadContext.ts";
 import type {
   BrowsingCommand,
@@ -31,6 +32,7 @@ import type {
 import type { BrowsingDispatched } from "./browsing/ThreadBrowsing.ts";
 import { browsingWire } from "./browsing/browsingWire.ts";
 import { ThreadObjectError } from "./ThreadAccess.ts";
+import type { PullInput } from "./threadWire.ts";
 import type { PreviewLinkResult } from "./preview/PreviewGateway.ts";
 import type { DriveAuthorization, RemoteAuthorization } from "./ThreadAuthorization.ts";
 import {
@@ -158,6 +160,30 @@ export interface ThreadObjectApi {
   ) => Promise<ThreadObjectReply<unknown>>;
   /** The browsing record now, in its JSON encoding. */
   readonly browsingRecord: (actor: Actor) => Promise<ThreadObjectReply<unknown>>;
+  /** Whether the actor can pull this thread, and the persisted thread owner's drive. */
+  readonly pullOwner: (
+    actor: Actor,
+    driveId: string,
+  ) => Promise<{ readonly userId: string; readonly driveId: string } | null>;
+  /** Selects and applies one remote head, replaying the same operation id after a lost response. */
+  readonly pull: (actor: Actor, input: unknown) => Promise<ThreadObjectReply<unknown>>;
+  /** The remote head already recorded for this operation, even after it completes. */
+  readonly pullTarget: (
+    actor: Actor,
+    driveId: string,
+    operationId: string,
+    branch: string,
+  ) => Promise<string | null>;
+  readonly reservePublication: (
+    actor: Actor,
+    driveId: string,
+    operationId: string,
+  ) => Promise<ThreadObjectReply<void>>;
+  readonly releasePublication: (
+    actor: Actor,
+    driveId: string,
+    operationId: string,
+  ) => Promise<void>;
 }
 
 type CommandFailure = ThreadNotFoundError | ThreadCommandRejectedError | ThreadObjectError;
@@ -261,6 +287,36 @@ export interface ThreadHandle {
   ) => Effect.Effect<
     { readonly sequence: number; readonly record: BrowsingRecord },
     ThreadNotFoundError | ThreadObjectError
+  >;
+  readonly pullOwner: (
+    actor: Actor,
+    driveId: string,
+  ) => Effect.Effect<
+    { readonly userId: string; readonly driveId: string } | null,
+    ThreadObjectError
+  >;
+  readonly pullTarget: (
+    actor: Actor,
+    driveId: string,
+    operationId: string,
+    branch: string,
+  ) => Effect.Effect<string | null, ThreadObjectError>;
+  readonly reservePublication: (
+    actor: Actor,
+    driveId: string,
+    operationId: string,
+  ) => Effect.Effect<void, ThreadNotFoundError | ThreadCommandRejectedError | ThreadObjectError>;
+  readonly releasePublication: (
+    actor: Actor,
+    driveId: string,
+    operationId: string,
+  ) => Effect.Effect<void, ThreadObjectError>;
+  readonly pull: (
+    actor: Actor,
+    input: PullInput,
+  ) => Effect.Effect<
+    PullResult,
+    ThreadNotFoundError | ThreadCommandRejectedError | ThreadObjectError
   >;
 }
 
@@ -425,6 +481,20 @@ export function handleFor(api: ThreadObjectApi): ThreadHandle {
           decodeIn("browsingRecord", () => browsingWire.head.decode(value)),
         ),
       ),
+    pullOwner: (actor, driveId) => call("pullOwner", () => api.pullOwner(actor, driveId)),
+    pullTarget: (actor, driveId, operationId, branch) =>
+      call("pullTarget", () => api.pullTarget(actor, driveId, operationId, branch)),
+    reservePublication: (actor, driveId, operationId) =>
+      call("reservePublication", () => api.reservePublication(actor, driveId, operationId)).pipe(
+        Effect.flatMap(fromReply),
+      ),
+    releasePublication: (actor, driveId, operationId) =>
+      call("releasePublication", () => api.releasePublication(actor, driveId, operationId)),
+    pull: (actor, input) =>
+      call("pull", () => api.pull(actor, wire.pullInput.encode(input))).pipe(
+        Effect.flatMap(fromReply),
+        Effect.flatMap((value) => decodeIn("pull", () => wire.pullResult.decode(value))),
+      ),
     summary: (actor) =>
       call("summary", () => api.summary(actor)).pipe(
         Effect.flatMap((value) =>
@@ -456,6 +526,8 @@ export interface ThreadObjectNamespace {
     readonly statusLine: () => Promise<string | null>;
     /** The agent's note (`statusLineJson.writeRequest`); the stored note, null when the thread is gone. */
     readonly writeStatusNote: (input: string) => Promise<StatusNoteView | null>;
+    /** Private preview operator binding; absent on old builds and ordinary test doubles. */
+    readonly recoveryDrill?: (userId: string, input: unknown) => Promise<unknown>;
   };
 }
 

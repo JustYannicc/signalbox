@@ -753,6 +753,14 @@ export const SETTINGS_SEARCH_ITEMS = [
     targetId: "browser",
   },
   {
+    id: "cloud-browser-profile",
+    title: "Cloud browser profile",
+    to: "/settings/integrations",
+    targetId: "browser",
+    cloudOnly: true,
+    searchTerms: ["clear sign-ins cookies site data"],
+  },
+  {
     id: "browser-default-profile",
     title: "Default browser profile",
     to: "/settings/integrations",

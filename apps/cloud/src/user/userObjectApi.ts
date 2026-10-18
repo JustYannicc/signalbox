@@ -7,6 +7,8 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
+import { learnerTool } from "./learnerTool.ts";
+import * as UserLearner from "./UserLearner.ts";
 import { automationTool } from "../automations/automationTool.ts";
 import * as PersonBrowsers from "../browser/PersonBrowsers.ts";
 import * as CloudAutomations from "../automations/CloudAutomations.ts";
@@ -41,6 +43,8 @@ import * as UserShell from "./UserShell.ts";
 import * as UserStore from "./UserStore.ts";
 import * as UserThreadKinds from "./UserThreadKinds.ts";
 import * as UserThreadStatus from "./UserThreadStatus.ts";
+import * as UserFolders from "./UserFolders.ts";
+import * as ClientTraceContext from "../observability/clientTraceContext.ts";
 
 const decodeDriveEvents = Schema.decodeUnknownSync(Schema.Array(DriveRefEvent));
 
@@ -57,6 +61,7 @@ export const makeUserObjectApi = (
       E,
       | Crypto.Crypto
       | CloudThreadService.CloudThreadService
+      | UserLearner.UserLearner
       | UserStore.UserStore
       | UserShell.UserShell
       | CloudPullRequests.CloudPullRequests
@@ -69,6 +74,7 @@ export const makeUserObjectApi = (
       | GitHubBranches.GitHubBranches
       | UserThreadKinds.UserThreadKinds
       | UserThreadStatus.UserThreadStatus
+      | UserFolders.UserFolders
       | LocalKeys.LocalKeys
       | ResourceBindings.ResourceBindings
       | OnePasswordAccount.OnePasswordAccount
@@ -200,6 +206,9 @@ export const makeUserObjectApi = (
     onePasswordToken: () =>
       run(OnePasswordAccount.OnePasswordAccount.use((account) => account.token)),
     contextIds: () => run(UserDrives.UserDrives.use((drives) => drives.contextIds)),
+    clientTraceDimensions: (threadIds) => run(ClientTraceContext.clientTraceDimensions(threadIds)),
+    clientFolderDimensions: (folderIds) =>
+      run(ClientTraceContext.clientFolderDimensions(folderIds)),
     recordDriveAccess: (entry) =>
       run(UserDriveIndex.UserDriveIndex.use((index) => index.record(entry))),
     driveAccess: (driveId) => run(UserDrives.UserDrives.use((drives) => drives.access(driveId))),
@@ -219,6 +228,7 @@ export const makeUserObjectApi = (
           status.folderStatus(ThreadId.make(threadId)),
         ).pipe(Effect.map(statusLineJson.folder.encode)),
       ),
+    learnerTool: (threadId, name, input) => run(learnerTool(threadId, name, input)),
     browserSession: (input) =>
       run(PersonBrowsers.PersonBrowsers.use((browsers) => browsers.open(input))),
     browserSignIn: (input) => run(LoginService.LoginService.use((logins) => logins.signIn(input))),

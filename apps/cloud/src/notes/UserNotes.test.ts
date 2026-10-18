@@ -97,6 +97,11 @@ const setup = (
         browserTrail: unused,
         browserStep: unused,
         turnDiagnostics: unused,
+        pull: unused,
+        pullOwner: unused,
+        pullTarget: unused,
+        reservePublication: unused,
+        releasePublication: unused,
         canSee: unused,
       });
     }),

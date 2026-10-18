@@ -28,6 +28,11 @@ export const makeDriveObjectApi = (
     return value;
   };
   return {
+    packStorage: (name) => run(store.use((s) => s.packStorage(name))),
+    history: (userId) => run(store.use((s) => s.history(userId))),
+    historyOrigin: (userId) => run(store.use((s) => s.historyOrigin(userId))),
+    startFromHistory: (userId, history) =>
+      run(store.use((s) => s.startFromHistory(userId, history))),
     open: (writer) => run(store.use((s) => s.open(writer))),
     refs: (threadId, packsAfter) => run(store.use((s) => s.refs(threadId, packsAfter))),
     ref: (name) => run(store.use((s) => s.ref(name))),
@@ -41,6 +46,11 @@ export const makeDriveObjectApi = (
         ? changingOutbox(moved)
         : moved;
     },
+    savePull: (writer, request) => {
+      const saved = run(store.use((s) => s.savePull(writer, request)));
+      return request.result.outcome === "refused" ? saved : changingOutbox(saved);
+    },
+    pullReceipt: (writer, id) => run(store.use((s) => s.pullReceipt(writer, id))),
     reconcile: (writer, request) =>
       changingOutbox(run(store.use((s) => s.reconcile(writer, request)))),
     setRemote: (remote) => run(store.use((s) => s.setRemote(remote))),
