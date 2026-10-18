@@ -4,3 +4,5 @@
 export { KernelOpenFlags } from "../kernel/KernelFileSystem.ts";
 export type { NodeFsModules } from "./node/fs/factory.ts";
 export { createNodeFs } from "./node/fs/factory.ts";
+
+export type { AsyncLeafRunner } from "./node/fs/operations.ts";

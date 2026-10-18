@@ -1,7 +1,7 @@
 /* Adapted from Rivet agentOS's Node fs bridge at 63ae3b256749d47c7b3a7c463128d5deda57d1bb.
  * Licensed under Apache-2.0; see ../../bun/LICENSE.agentos and ../../bun/NOTICE.agentos.
  */
-import { callFs } from "./errors.ts";
+import { nodeFsError } from "./errors.ts";
 
 export type FsCallback<T extends unknown[] = []> = (
   error: NodeJS.ErrnoException | null,
@@ -10,7 +10,7 @@ export type FsCallback<T extends unknown[] = []> = (
 
 export function schedule<T extends unknown[]>(
   callback: FsCallback<T>,
-  operation: () => T,
+  operation: () => T | Promise<T>,
   syscall: string,
   path?: string,
   dest?: string,
@@ -18,14 +18,16 @@ export function schedule<T extends unknown[]>(
   if (typeof callback !== "function") {
     throw new TypeError("The callback argument must be a function");
   }
-  queueMicrotask(() => {
-    let result: T;
-    try {
-      result = callFs(syscall, path, operation, dest);
-    } catch (error) {
-      callback(error as NodeJS.ErrnoException, ...([] as unknown as T));
-      return;
-    }
-    callback(null, ...result);
-  });
+  void Promise.resolve()
+    .then(operation)
+    .then(
+      (result) => queueMicrotask(() => callback(null, ...result)),
+      (error: unknown) =>
+        queueMicrotask(() =>
+          callback(
+            nodeFsError(error, syscall, path, dest) as NodeJS.ErrnoException,
+            ...([] as unknown as T),
+          ),
+        ),
+    );
 }

@@ -5,6 +5,7 @@ import * as NodeCrypto from "node:crypto";
 import * as NodeUtil from "node:util";
 import { build, version as esbuildVersion } from "esbuild";
 import { encodeAssetBundle } from "./assetBundle.ts";
+import { prepareProofEnvironment } from "./prepareEnvironment.ts";
 import type { ClaudeTurnProofConfig } from "./ClaudeTurnProof.ts";
 import type { ModuleType } from "../isolateProbe/moduleTransport.ts";
 
@@ -103,9 +104,12 @@ export async function prepareClaudeTurnProof(options: {
   outputDir: string;
   seedAssets?: boolean;
   assetsOnly?: boolean;
+  packagesOnly?: boolean;
   scenario?: "boot" | "tools";
   contextTokenEquivalent?: 50_000 | 200_000;
 }) {
+  if (options.assetsOnly && options.packagesOnly)
+    throw new Error("Choose assets-only or packages-only");
   const artifactRoot = NodePath.resolve(options.releaseDir);
   const outputRoot = NodePath.resolve(options.outputDir);
   // Reserving a fresh directory prevents a failed rerun from mutating prior evidence.
@@ -124,12 +128,38 @@ export async function prepareClaudeTurnProof(options: {
     esbuildVersion,
   };
   const seedAssets = options.seedAssets === true || options.assetsOnly === true;
-  const loadRelease = options.assetsOnly
-    ? 'async()=>{throw new Error("ERR_DIAGNOSTIC_ASSETS_ONLY");}'
-    : `()=>import(${JSON.stringify(`./${manifest.mainModule}`)})`;
+  const environment = options.assetsOnly ? undefined : await prepareProofEnvironment();
+  const environmentModules = [
+    ...(environment?.workerModules ?? []).map((module) => ({
+      path: module.path,
+      type: module.type,
+      bytes: new TextEncoder().encode(module.source),
+    })),
+    ...(environment?.startupWasm ?? []),
+  ];
+  const environmentInventory = environmentModules.map((module) => ({
+    path: module.path,
+    type: module.type,
+    bytes: module.bytes.byteLength,
+    sha256: sha256(module.bytes),
+  }));
+  const reservedNames = new Set(["proof-host.js"]);
+  for (const module of environmentModules) {
+    if (reservedNames.has(module.path) || Object.hasOwn(manifest.modules, module.path))
+      throw new Error(`Release conflicts with environment module name: ${module.path}`);
+    reservedNames.add(module.path);
+  }
+  const loadRelease =
+    options.assetsOnly || options.packagesOnly
+      ? 'async()=>{throw new Error("ERR_DIAGNOSTIC_ASSETS_ONLY");}'
+      : `()=>import(${JSON.stringify(`./${manifest.mainModule}`)})`;
+  const loadPackages =
+    environment === undefined
+      ? 'async()=>{throw new Error("ERR_DIAGNOSTIC_ASSETS_ONLY");}'
+      : `async()=>{const[yaml,undici]=await Promise.all([import(${JSON.stringify(`./${environment.packageEntrypoints.yaml}`)}),import(${JSON.stringify(`./${environment.packageEntrypoints.undici}`)})]);return {yaml:yaml.default,undici:undici.default};}`;
   const runtime = NodePath.join(import.meta.dirname, "ClaudeTurnProof.ts");
   const source = `import {createClaudeTurnProofClass} from ${JSON.stringify(runtime)};
-export const ClaudeTurnProof=createClaudeTurnProofClass({assets:${JSON.stringify(assets)},pins:${JSON.stringify(pins)},requireSeed:${seedAssets},assetsOnly:${options.assetsOnly === true},scenario:${JSON.stringify(options.scenario ?? "boot")},contextTokenEquivalent:${options.contextTokenEquivalent ?? "undefined"},loadRelease:${loadRelease}});`;
+export const ClaudeTurnProof=createClaudeTurnProofClass({assets:${JSON.stringify(assets)},pins:${JSON.stringify(pins)},requireSeed:${seedAssets},assetsOnly:${options.assetsOnly === true},packagesOnly:${options.packagesOnly === true},loadPackages:${loadPackages},scenario:${JSON.stringify(options.scenario ?? "boot")},contextTokenEquivalent:${options.contextTokenEquivalent ?? "undefined"},loadRelease:${loadRelease}});`;
   const bundled = await build({
     stdin: {
       contents: source,
@@ -144,7 +174,12 @@ export const ClaudeTurnProof=createClaudeTurnProofClass({assets:${JSON.stringify
     platform: "browser",
     target: "es2022",
     minifyWhitespace: true,
-    external: ["node:*", "cloudflare:*", `./${manifest.mainModule}`],
+    external: [
+      "node:*",
+      "cloudflare:*",
+      `./${manifest.mainModule}`,
+      ...Object.values(environment?.packageEntrypoints ?? {}).map((path) => `./${path}`),
+    ],
   });
   const host = bundled.outputFiles[0];
   if (!host || bundled.outputFiles.length !== 1)
@@ -152,7 +187,8 @@ export const ClaudeTurnProof=createClaudeTurnProofClass({assets:${JSON.stringify
   if (Object.hasOwn(manifest.modules, "proof-host.js"))
     throw new Error("Release conflicts with proof host module name");
   const releaseBytes = Object.values(manifest.modules).reduce((sum, entry) => sum + entry.bytes, 0);
-  const moduleMapBytes = releaseBytes + host.contents.byteLength;
+  const environmentBytes = environmentInventory.reduce((sum, module) => sum + module.bytes, 0);
+  const moduleMapBytes = releaseBytes + host.contents.byteLength + environmentBytes;
   if (moduleMapBytes > MAX_MODULE_MAP_BYTES) {
     throw new Error(
       `Module map requires ${moduleMapBytes} bytes; budget is ${MAX_MODULE_MAP_BYTES}`,
@@ -167,6 +203,28 @@ export const ClaudeTurnProof=createClaudeTurnProofClass({assets:${JSON.stringify
     await NodeFSP.writeFile(target, bytes);
     modules[name] = { path, type: entry.type! };
   }
+  for (const module of environmentModules) {
+    const path = NodePath.join("environment", module.path);
+    const destination = within(outputRoot, path);
+    await NodeFSP.mkdir(NodePath.dirname(destination), { recursive: true });
+    await NodeFSP.writeFile(destination, module.bytes);
+    modules[module.path] = { path, type: module.type };
+  }
+  for (const module of environment?.raw.workerModules ?? []) {
+    const path = within(outputRoot, NodePath.join("environment-raw", module.path));
+    await NodeFSP.mkdir(NodePath.dirname(path), { recursive: true });
+    await NodeFSP.writeFile(path, module.source);
+  }
+  for (const module of environment?.raw.startupWasm ?? []) {
+    const path = within(outputRoot, NodePath.join("environment-raw", module.path));
+    await NodeFSP.mkdir(NodePath.dirname(path), { recursive: true });
+    await NodeFSP.writeFile(path, module.bytes);
+  }
+  if (environment)
+    await NodeFSP.writeFile(
+      NodePath.join(outputRoot, "environment-provenance.json"),
+      `${JSON.stringify(environment.provenance, null, 2)}\n`,
+    );
   const bundleEntries = [];
   for (const [path, entry] of Object.entries(manifest.assets)) {
     bundleEntries.push({
@@ -188,10 +246,17 @@ export const ClaudeTurnProof=createClaudeTurnProofClass({assets:${JSON.stringify
             bodyFile: "assets.bundle",
             contentType: "application/vnd.signalbox.claude-assets.v1",
           },
-          { path: options.assetsOnly ? "/verify-assets" : "/boot", method: "GET" },
+          {
+            path: options.assetsOnly
+              ? "/verify-assets"
+              : options.packagesOnly
+                ? "/verify-packages"
+                : "/boot",
+            method: "GET",
+          },
         ],
       }
-    : { paths: ["/boot"] };
+    : { paths: [options.packagesOnly ? "/verify-packages" : "/boot"] };
   await NodeFSP.writeFile(
     NodePath.join(outputRoot, "manifest.json"),
     `${JSON.stringify(
@@ -221,6 +286,18 @@ export const ClaudeTurnProof=createClaudeTurnProofClass({assets:${JSON.stringify
     assetBundleSha256: sha256(assetBundle),
     seeded: seedAssets,
     assetsOnly: options.assetsOnly === true,
+    packagesOnly: options.packagesOnly === true,
+    ...(environment
+      ? {
+          environment: {
+            bytes: environmentBytes,
+            modules: environmentInventory,
+            provenanceSha256: sha256(
+              new TextEncoder().encode(JSON.stringify(environment.provenance, null, 2) + "\n"),
+            ),
+          },
+        }
+      : {}),
   };
   await NodeFSP.writeFile(
     NodePath.join(outputRoot, "preparation.json"),
@@ -236,6 +313,7 @@ if (process.argv[1] === import.meta.filename) {
       output: { type: "string" },
       "seed-assets": { type: "boolean", default: false },
       "assets-only": { type: "boolean", default: false },
+      "packages-only": { type: "boolean", default: false },
       scenario: { type: "string", default: "boot" },
       "context-token-equivalent": { type: "string" },
     },
@@ -255,6 +333,7 @@ if (process.argv[1] === import.meta.filename) {
         outputDir: values.output,
         seedAssets: values["seed-assets"],
         assetsOnly: values["assets-only"],
+        packagesOnly: values["packages-only"],
         scenario,
         ...(tokens === undefined
           ? {}

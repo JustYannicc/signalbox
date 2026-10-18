@@ -1,6 +1,8 @@
 /* Adapted from Rivet agentOS's Node fs bridge at 63ae3b256749d47c7b3a7c463128d5deda57d1bb.
  * Licensed under Apache-2.0; see ../../bun/LICENSE.agentos and ../../bun/NOTICE.agentos.
  */
+import { NodeFsAbortError } from "./abort.ts";
+
 export interface NodeFsError extends Error {
   code: string;
   errno?: number;
@@ -91,7 +93,12 @@ export function nodeFsError(
   path?: string,
   dest?: string,
 ): unknown {
-  if (cause instanceof TypeError || cause instanceof RangeError) return cause;
+  if (
+    cause instanceof NodeFsAbortError ||
+    cause instanceof TypeError ||
+    cause instanceof RangeError
+  )
+    return cause;
   const source = typeof cause === "object" && cause !== null ? cause : undefined;
   const sourceCode = source && "code" in source ? source.code : undefined;
   if (typeof sourceCode !== "string") return cause;

@@ -2,9 +2,7 @@
  * Licensed under Apache-2.0; see ../../bun/LICENSE.agentos and ../../bun/NOTICE.agentos.
  */
 import type * as NodeBuffer from "node:buffer";
-import type { KernelFileSystem } from "../../../kernel/KernelFileSystem.ts";
 import { codedError } from "./errors.ts";
-import { readdirSync, type ReaddirOptions } from "./directories.ts";
 import type { PathLike } from "./path.ts";
 import type { NodeDirentLike } from "./metadata.ts";
 
@@ -14,12 +12,9 @@ export class NodeFsDir implements AsyncIterable<NodeDirentLike> {
   #index = 0;
   #closed = false;
 
-  constructor(kernelFs: KernelFileSystem, path: PathLike, options: ReaddirOptions = {}) {
+  constructor(path: PathLike, entries: NodeDirentLike[]) {
     this.path = path;
-    this.#entries = readdirSync(kernelFs, path, {
-      ...options,
-      withFileTypes: true,
-    }) as NodeDirentLike[];
+    this.#entries = entries;
   }
 
   readSync(): NodeDirentLike | null {
