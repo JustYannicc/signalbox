@@ -1,7 +1,3 @@
-/// <reference types="node" />
-
-import * as NodeCrypto from "node:crypto";
-
 import { beforeEach, vi } from "vite-plus/test";
 import { describe, expect, it } from "@effect/vitest";
 import Constants from "expo-constants";
@@ -30,6 +26,7 @@ import type { Preferences } from "../../persistence/mobile-preferences";
 import { makeRelayDeviceRegistrationRequest, resolveApsEnvironment } from "./registrationPayload";
 import {
   AgentAwarenessOperationError,
+  type AgentAwarenessRegistrationError,
   __resetAgentAwarenessRemoteRegistrationForTest,
   armAgentAwarenessLiveActivityForLocalWork,
   getAgentAwarenessRegistrationStatus,
@@ -70,7 +67,11 @@ const environmentConfigsMock = vi.hoisted(() => ({
 }));
 const backgroundRuntime = vi.hoisted(() => ({
   pending: [] as Array<{
-    readonly operation: unknown;
+    readonly operation: Effect.Effect<
+      unknown,
+      AgentAwarenessRegistrationError,
+      ManagedRelay.ManagedRelayClient
+    >;
     readonly resolve: (exit: Exit.Exit<unknown, unknown>) => void;
   }>,
 }));
@@ -132,16 +133,17 @@ vi.mock("expo-crypto", () => ({
     SHA384: "SHA-384",
     SHA512: "SHA-512",
   },
-  getRandomBytes: (byteCount: number) => new Uint8Array(NodeCrypto.randomBytes(byteCount)),
+  getRandomBytes: (byteCount: number) =>
+    globalThis.crypto.getRandomValues(new Uint8Array(byteCount)),
   getRandomBytesAsync: (byteCount: number) =>
-    Promise.resolve(new Uint8Array(NodeCrypto.randomBytes(byteCount))),
+    Promise.resolve(globalThis.crypto.getRandomValues(new Uint8Array(byteCount))),
   digest: (algorithm: string, data: unknown) => {
     if (!(data instanceof Uint8Array)) {
       return Promise.reject(new TypeError("expo-crypto digest data must be a typed array."));
     }
-    return Promise.resolve(
-      new Uint8Array(NodeCrypto.createHash(algorithm).update(data).digest()).buffer,
-    );
+    const buffer = new ArrayBuffer(data.byteLength);
+    new Uint8Array(buffer).set(data);
+    return globalThis.crypto.subtle.digest(algorithm, buffer);
   },
 }));
 
@@ -179,7 +181,13 @@ vi.mock("react-native", () => ({
 
 vi.mock("../../lib/runtime", () => ({
   runtime: {
-    runPromiseExit: (operation: unknown) =>
+    runPromiseExit: (
+      operation: Effect.Effect<
+        unknown,
+        AgentAwarenessRegistrationError,
+        ManagedRelay.ManagedRelayClient
+      >,
+    ) =>
       new Promise((resolve) => {
         backgroundRuntime.pending.push({ operation, resolve });
       }),
@@ -244,9 +252,7 @@ const runBackgroundOperations = Effect.fn("TestRemoteRegistration.runBackgroundO
         continue;
       }
       idlePasses = 0;
-      const exit = yield* Effect.exit(
-        pending.operation as Effect.Effect<unknown, unknown, ManagedRelay.ManagedRelayClient>,
-      );
+      const exit = yield* Effect.exit(pending.operation);
       yield* Effect.sync(() => {
         pending.resolve(exit);
       });
