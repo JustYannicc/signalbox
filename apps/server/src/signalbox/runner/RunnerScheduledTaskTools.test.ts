@@ -20,13 +20,15 @@ interface Saved {
   draft?: { version: number; source: string; outline: string };
 }
 
-const fakeEngine = () => {
+const fakeEngine = (timezone = "Europe/Zurich") => {
   const automations = new Map<string, Saved>();
   let next = 0;
   const ok = (result: unknown): ToolResult => ({ _tag: "ok", result });
   const respond = (request: ToolRequest): ToolResult => {
     const input = (request.input ?? {}) as Record<string, any>;
     switch (request.name) {
+      case "person_timezone":
+        return ok({ timezone });
       case "automation_list":
         return ok({ automations: [...automations.values()].map((a) => a.summary), builtIns: [] });
       case "automation_read": {
@@ -147,6 +149,7 @@ describe("scheduled tasks on a cloud thread's machine (#367)", () => {
       // The thread's folder: the cloud places it where the caller lives.
       expect(input.projectId).toBeUndefined();
       expect(input.compiled.meta.triggers).toEqual([{ cron: "*/5 * * * *", timezone: "UTC" }]);
+      expect(cloud.requests.some((request) => request.name === "person_timezone")).toBe(false);
       expect(input.source).toContain(`"signalbox.t3_thread_send"`);
       expect(input.source).toContain(`threadId: "thread_cloud_1"`);
       expect(engine.automations.size).toBe(1);
@@ -168,6 +171,7 @@ describe("scheduled tasks on a cloud thread's machine (#367)", () => {
       expect(input.compiled.meta.triggers).toEqual([
         { cron: "0 9 * * 1,2,3,4,5", timezone: "Europe/Zurich" },
       ]);
+      expect(cloud.requests.some((request) => request.name === "person_timezone")).toBe(false);
       expect(input.source).toContain(`w.agent("Run the prompt"`);
 
       const refused = yield* json("schedule_task", {
@@ -178,6 +182,40 @@ describe("scheduled tasks on a cloud thread's machine (#367)", () => {
       expect(refused).toMatchObject({ isError: true });
       expect(refused.text).toContain("Mars/Olympus");
       expect(saves(cloud.requests)).toHaveLength(1);
+    }),
+  );
+
+  it.effect("keeps an explicit interval timezone", () =>
+    Effect.gen(function* () {
+      const { json, cloud } = yield* setup;
+      yield* json("schedule_task", {
+        prompt: "Check the queue.",
+        schedule: { type: "interval", everyMs: 300_000 },
+        timezone: "America/New_York",
+      });
+      const input = saves(cloud.requests)[0]!.input as { compiled: any };
+      expect(input.compiled.meta.triggers).toEqual([
+        { cron: "*/5 * * * *", timezone: "America/New_York" },
+      ]);
+      expect(cloud.requests.some((request) => request.name === "person_timezone")).toBe(false);
+    }),
+  );
+
+  it.effect("defaults a new fixed time to the person's saved timezone", () =>
+    Effect.gen(function* () {
+      const { json, cloud } = yield* setup;
+      const scheduled = yield* json("schedule_task", {
+        title: "Standup",
+        prompt: "Summarize yesterday.",
+        schedule: { type: "fixed_time", timeOfDay: "09:00", weekdays: [1, 2, 3, 4, 5] },
+      });
+      expect(scheduled.isError).toBe(false);
+      expect(scheduled.value).toMatchObject({ timezone: "Europe/Zurich" });
+      expect(cloud.requests.map((request) => request.name)).toContain("person_timezone");
+      const input = saves(cloud.requests)[0]!.input as { source: string; compiled: any };
+      expect(input.compiled.meta.triggers).toEqual([
+        { cron: "0 9 * * 1,2,3,4,5", timezone: "Europe/Zurich" },
+      ]);
     }),
   );
 
@@ -283,7 +321,7 @@ describe("scheduled tasks on a cloud thread's machine (#367)", () => {
         compiled: any;
       };
       expect(lastSave.automationId).toBe(task.scheduledTaskId);
-      expect(lastSave.compiled.meta.triggers[0].cron).toBe("*/10 * * * *");
+      expect(lastSave.compiled.meta.triggers[0]).toEqual({ cron: "*/10 * * * *", timezone: "UTC" });
       expect(engine.automations.get(task.scheduledTaskId)!.summary.enabled).toBe(false);
 
       const notATask = yield* json("update_scheduled_task", {

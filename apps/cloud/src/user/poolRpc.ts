@@ -24,6 +24,7 @@ import * as ModelCatalog from "../models/ModelCatalog.ts";
 import * as PoolSignIns from "./PoolSignIns.ts";
 import * as UserPools from "./UserPools.ts";
 import * as UserModelSettings from "./UserModelSettings.ts";
+import * as UserKeybindings from "./UserKeybindings.ts";
 
 /**
  * The account pool RPCs the cloud serves, all from the user's own object: the
@@ -156,6 +157,7 @@ export const makePoolHandlers = (input: {
     const signIns = yield* PoolSignIns.PoolSignIns;
     const catalog = yield* ModelCatalog.ModelCatalog;
     const modelSettings = yield* UserModelSettings.UserModelSettings;
+    const keybindings = yield* UserKeybindings.UserKeybindings;
     const { actor, identity } = input;
     const configNowOf = (state: UserPools.PoolsState) =>
       Effect.flatMap(now, (checkedAt) =>
@@ -182,60 +184,86 @@ export const makePoolHandlers = (input: {
         },
       };
     };
-    const configWithModelSettings = (state: UserPools.PoolsState) =>
-      Effect.all([configNowOf(state), modelSettings.snapshot.pipe(Effect.orDie)]).pipe(
-        Effect.map(([config, saved]) => withModelSettings(config, saved)),
+    const configWithPreferences = (state: UserPools.PoolsState) =>
+      Effect.all([
+        configNowOf(state),
+        modelSettings.snapshot.pipe(Effect.orDie),
+        keybindings.snapshot.pipe(Effect.orDie),
+      ]).pipe(
+        Effect.map(([config, saved, bindings]) => ({
+          ...withModelSettings(config, saved),
+          keybindings: bindings.keybindings,
+        })),
       );
 
-    /**
-     * `subscribeServerConfig`: a snapshot, then each pool change as updates.
-     * Settings change with the pool list and the model new threads start on,
-     * so they go out only then.
-     */
     const configStream = (request: { readonly usageLimitSources?: boolean | undefined }) =>
       Stream.merge(
-        poolStates(pools, actor).pipe(Stream.map((state) => ({ type: "pools" as const, state }))),
-        modelSettings.changes.pipe(
+        Stream.merge(
+          poolStates(pools, actor).pipe(Stream.map((state) => ({ type: "pools" as const, state }))),
+          modelSettings.changes.pipe(
+            Stream.orDie,
+            Stream.map((settings) => ({ type: "settings" as const, settings })),
+          ),
+        ),
+        keybindings.changes.pipe(
           Stream.orDie,
-          Stream.map((settings) => ({ type: "settings" as const, settings })),
+          Stream.map((bindings) => ({ type: "keybindings" as const, bindings })),
         ),
       ).pipe(
         Stream.mapAccum(
           (): {
             readonly state: UserPools.PoolsState | null;
             readonly settings: UserModelSettings.ModelSettingsSnapshot | null;
-          } => ({ state: null, settings: null }),
+            readonly bindings: UserKeybindings.KeybindingsSnapshot | null;
+          } => ({ state: null, settings: null, bindings: null }),
           (previous, change) => {
             const next =
               change.type === "pools"
                 ? { ...previous, state: change.state }
-                : { ...previous, settings: change.settings };
+                : change.type === "keybindings"
+                  ? { ...previous, bindings: change.bindings }
+                  : { ...previous, settings: change.settings };
             return [
               next,
-              next.state === null || next.settings === null
+              next.state === null || next.settings === null || next.bindings === null
                 ? []
-                : [{ state: next.state, saved: next.settings }],
+                : [{ state: next.state, saved: next.settings, bindings: next.bindings }],
             ];
           },
         ),
-        Stream.mapEffect(({ state, saved }) =>
+        Stream.mapEffect(({ state, saved, bindings }) =>
           Effect.map(configNowOf(state), (config) => ({
             state,
-            config: withModelSettings(config, saved),
+            bindingsRevision: bindings.revision,
+            config: { ...withModelSettings(config, saved), keybindings: bindings.keybindings },
           })),
         ),
         Stream.mapAccum(
-          (): string | null => null,
-          (previous, { state, config }) => {
+          (): { readonly settings: string; readonly bindings: number } | null => null,
+          (previous, { state, config, bindingsRevision }) => {
             const key = settingsKey(config);
             return [
-              key,
-              [{ state, config, first: previous === null, settingsChanged: key !== previous }],
+              { settings: key, bindings: bindingsRevision },
+              [
+                {
+                  state,
+                  config,
+                  first: previous === null,
+                  settingsChanged: key !== previous?.settings,
+                  bindingsChanged: bindingsRevision !== previous?.bindings,
+                },
+              ],
             ];
           },
         ),
         Stream.map(
-          ({ state, config, first, settingsChanged }): ReadonlyArray<ServerConfigStreamEvent> => {
+          ({
+            state,
+            config,
+            first,
+            settingsChanged,
+            bindingsChanged,
+          }): ReadonlyArray<ServerConfigStreamEvent> => {
             const sources: ReadonlyArray<ServerConfigStreamEvent> = request.usageLimitSources
               ? [
                   {
@@ -247,6 +275,15 @@ export const makePoolHandlers = (input: {
               : [];
             if (first) return [{ version: 1, type: "snapshot", config }, ...sources];
             return [
+              ...(bindingsChanged
+                ? [
+                    {
+                      version: 1,
+                      type: "keybindingsUpdated",
+                      payload: { keybindings: config.keybindings, issues: [] },
+                    } as const,
+                  ]
+                : []),
               ...(settingsChanged
                 ? [
                     {
@@ -268,7 +305,7 @@ export const makePoolHandlers = (input: {
 
     const configNow = Effect.flatMap(
       pools.state(actor).pipe(Effect.orElseSucceed(() => NO_POOLS)),
-      configWithModelSettings,
+      configWithPreferences,
     );
 
     const updateModelSettings = (input: {

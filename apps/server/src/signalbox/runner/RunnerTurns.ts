@@ -11,6 +11,7 @@ import {
 import type { SecretValue } from "@signalbox/runner-protocol/SecretScrubber";
 import type { SecretsAccess } from "@signalbox/runner-protocol/SecretsProtocol";
 import type { SessionAccess } from "@signalbox/runner-protocol/SessionProtocol";
+import type { PullOperation } from "@signalbox/runner-protocol/PullProtocol";
 import {
   MessageId,
   type OrchestrationV2ProviderThread,
@@ -133,6 +134,11 @@ export interface RunnerTurns {
    * has named it. Each message is taken once, so the thread can repeat itself.
    */
   readonly steer: (runId: RunId, message: RunnerMessageInput) => Effect.Effect<void>;
+  /** Applies one selected remote pull, or reports a durable refusal/result. */
+  readonly pull: (message: {
+    readonly operation: PullOperation;
+    readonly drive: DriveAccess;
+  }) => Effect.Effect<void>;
   /** Stops every turn but `runId`, the one the thread still considers live. */
   readonly keepOnly: (runId: RunId | null) => Effect.Effect<void>;
   /**
@@ -291,6 +297,8 @@ export const makeRunnerTurns = Effect.fn("makeRunnerTurns")(function* (input: {
   const logAnnotations = yield* References.CurrentLogAnnotations;
   const sessions = new Map<ProviderInstanceId, OpenSession>();
   const turns = new Map<RunId, Turn>();
+  /** Drains hold the drive while the machine saves before it leaves. */
+  let draining = false;
   /** Runs this machine already took, so a repeated `turn.start` starts nothing. */
   const taken = new Set<RunId>();
   /** `turn` is off this machine: whatever waits for it to wind down goes on. */
@@ -322,6 +330,7 @@ export const makeRunnerTurns = Effect.fn("makeRunnerTurns")(function* (input: {
   // A run's usage and the items it brackets go out under one lock, so a
   // half-minute report never lands before a run's start or after its end.
   const ordered = yield* Semaphore.make(1);
+  const pullGate = yield* Semaphore.make(1);
 
   /** Emits the usage so far, unless the machine cannot measure any of it. */
   const reportUsage = (runId: RunId | null) =>
@@ -393,26 +402,31 @@ export const makeRunnerTurns = Effect.fn("makeRunnerTurns")(function* (input: {
   /** Turns and preview restoration must not race while preparing the checkout. */
   const preparing = input.preparing ?? (yield* Semaphore.make(1));
 
-  const drain: RunnerTurns["drain"] = Effect.gen(function* () {
-    const unsaved: Array<string> = [];
-    yield* preparing.withPermits(1)(
-      Effect.gen(function* () {
-        // Preview can open the writable checkout before a turn has claimed it.
-        const currentDrive = drive?.drive ?? input.previewDrive?.() ?? null;
-        if (currentDrive === null) return;
-        const saved = yield* Effect.result(currentDrive.saveNow);
-        if (saved._tag === "Failure") {
-          unsaved.push(`Saving this thread's files failed: ${saveFailureReason(saved.failure)}`);
+  const drain: RunnerTurns["drain"] = Effect.suspend(() => {
+    draining = true;
+    return Effect.gen(function* () {
+      const unsaved: Array<string> = [];
+      yield* preparing.withPermits(1)(
+        Effect.gen(function* () {
+          // Preview can open the writable checkout before a turn has claimed it.
+          const currentDrive = drive?.drive ?? input.previewDrive?.() ?? null;
+          if (currentDrive === null) return;
+          const saved = yield* Effect.result(currentDrive.saveNow);
+          if (saved._tag === "Failure") {
+            unsaved.push(`Saving this thread's files failed: ${saveFailureReason(saved.failure)}`);
+          }
+        }),
+      );
+      if (input.sessions !== undefined) {
+        for (const driver of new Set(
+          [...input.adapters.values()].map((adapter) => adapter.driver),
+        )) {
+          const reason = yield* input.sessions.flush(driver);
+          if (reason !== null) unsaved.push(`Saving the agent's session failed: ${reason}`);
         }
-      }),
-    );
-    if (input.sessions !== undefined) {
-      for (const driver of new Set([...input.adapters.values()].map((adapter) => adapter.driver))) {
-        const reason = yield* input.sessions.flush(driver);
-        if (reason !== null) unsaved.push(`Saving the agent's session failed: ${reason}`);
       }
-    }
-    return unsaved;
+      return unsaved;
+    }).pipe(Effect.ensuring(Effect.sync(() => (draining = false))));
   });
 
   /**
@@ -551,6 +565,41 @@ export const makeRunnerTurns = Effect.fn("makeRunnerTurns")(function* (input: {
       drive = { driveId: access.driveId, drive: opened };
       return opened;
     });
+
+  const pull: RunnerTurns["pull"] = (message) =>
+    pullGate.withPermits(1)(
+      Effect.gen(function* () {
+        const opened = yield* driveFor(message.drive);
+        if (opened === null) {
+          yield* input.emit({ kind: "git.pull.interrupted", id: message.operation.id });
+          return;
+        }
+        const blockedReason =
+          turns.size > 0 || finishing.size > 0 || runningRunId !== null
+            ? "This thread is busy; wait for its current turn to finish before pulling."
+            : draining
+              ? "This thread is saving before its machine leaves; try the pull again after it reconnects."
+              : undefined;
+        const result = yield* opened.pull(
+          message.operation,
+          message.drive.remoteToken,
+          blockedReason,
+        );
+        yield* input.emit({
+          kind: "git.pull.result",
+          result: {
+            ...result,
+            ...(result.reason === null ? {} : { reason: mask(result.reason) }),
+          },
+        });
+      }).pipe(
+        Effect.catchCause((cause) =>
+          Effect.logError("applying a selected drive pull failed", Cause.pretty(cause)).pipe(
+            Effect.andThen(input.emit({ kind: "git.pull.interrupted", id: message.operation.id })),
+          ),
+        ),
+      ),
+    );
 
   /**
    * Runs the agent once more in `runId`'s turn and answers whether that
@@ -1322,6 +1371,7 @@ export const makeRunnerTurns = Effect.fn("makeRunnerTurns")(function* (input: {
     start,
     interrupt,
     steer,
+    pull,
     keepOnly,
     drain,
     taken: Effect.sync(() => [...taken]),

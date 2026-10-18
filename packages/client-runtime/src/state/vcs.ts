@@ -7,6 +7,7 @@ import {
 } from "@t3tools/contracts";
 import { applyGitStatusStreamEvent } from "@t3tools/shared/git";
 import * as Duration from "effect/Duration";
+import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Result from "effect/Result";
@@ -24,7 +25,7 @@ import type { EnvironmentRegistry } from "../connection/registry.ts";
 import * as EnvironmentSupervisor from "../connection/supervisor.ts";
 import { safeErrorLogAttributes } from "../errors/safeLog.ts";
 import * as Persistence from "../platform/persistence.ts";
-import { request, subscribe, type EnvironmentRpcInput } from "../rpc/client.ts";
+import { request, requestGuarded, subscribe, type EnvironmentRpcInput } from "../rpc/client.ts";
 import { followStreamInEnvironment } from "./runtime.ts";
 import { vcsCommandConcurrency, vcsCommandScheduler } from "./vcsCommandScheduler.ts";
 import {
@@ -238,7 +239,10 @@ function cachedVcsRefsChanges(
 }
 
 export function createVcsEnvironmentAtoms<R, E>(
-  runtime: Atom.AtomRuntime<EnvironmentRegistry | Persistence.EnvironmentCacheStore | R, E>,
+  runtime: Atom.AtomRuntime<
+    EnvironmentRegistry | Persistence.EnvironmentCacheStore | Crypto.Crypto | R,
+    E
+  >,
 ) {
   /**
    * One flat family on purpose: families hold entries via WeakRef, so a nested
@@ -296,6 +300,14 @@ export function createVcsEnvironmentAtoms<R, E>(
       tag: WS_METHODS.vcsPull,
       scheduler: vcsCommandScheduler,
       concurrency: vcsCommandConcurrency,
+      // signalbox: reuse the operation id if a retry follows an uncertain server response.
+      execute: (input) =>
+        Effect.gen(function* () {
+          const crypto = yield* Crypto.Crypto;
+          const operationId =
+            input.operationId ?? (yield* crypto.randomUUIDv4().pipe(Effect.orDie));
+          return yield* requestGuarded(WS_METHODS.vcsPull, { ...input, operationId });
+        }),
       onSettled: invalidateRefs,
     }),
     refreshStatus: createEnvironmentRpcCommand(runtime, {
