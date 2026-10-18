@@ -1,13 +1,24 @@
-import { CommandId, type OrchestrationV2DomainEvent } from "@t3tools/contracts";
+import {
+  CommandId,
+  ContextHandoffId,
+  EventId,
+  MessageId,
+  type OrchestrationV2DomainEvent,
+  ProviderTurnId,
+  RunAttemptId,
+  TurnItemId,
+} from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 
 import {
   connect,
   claudeDriver,
+  encodeTurnItem,
   freshDatabase,
   launch,
   liveTurn,
+  now,
   owner,
   personal,
   saveSession,
@@ -17,12 +28,18 @@ import {
   turnReport,
   withObject,
 } from "../runnerTesting.ts";
-import { prepareFreshSession } from "./freshSession.ts";
 
 describe("fresh-session handoff delivery", () => {
-  it.effect.each(["failed", "interrupted"] as const)(
-    "retries a handoff whose session loaded but whose prompt was %s before provider acceptance",
-    (ending) =>
+  it.effect.each([
+    { ending: "failed", attempt: "none", type: "assistant_message" },
+    { ending: "interrupted", attempt: "none", type: "assistant_message" },
+    { ending: "interrupted", attempt: "sync", type: "assistant_message" },
+    { ending: "interrupted", attempt: "sync", type: "command_execution" },
+    { ending: "interrupted", attempt: "active", type: "assistant_message" },
+    { ending: "interrupted", attempt: "active", type: "command_execution" },
+  ] as const)(
+    "checks handoff receipt after $ending with $attempt $type output",
+    ({ ending, attempt, type }) =>
       withObject(freshDatabase(), (engine, runner, context) =>
         Effect.gen(function* () {
           yield* launch(engine);
@@ -43,7 +60,7 @@ describe("fresh-session handoff delivery", () => {
               ...secondReport.started.providerThread,
               nativeThreadRef: {
                 ...secondReport.started.providerThread.nativeThreadRef,
-                nativeId: "session-with-no-prompt",
+                nativeId: "handoff-session",
               },
             },
           };
@@ -78,7 +95,79 @@ describe("fresh-session handoff delivery", () => {
               (turn) => turn.runAttemptId === second.attemptId,
             ),
           ).toBe(true);
-          yield* saveSession(context, "session-with-no-prompt");
+          if (attempt !== "none") {
+            const providerTurnId = ProviderTurnId.make(
+              `${attempt === "sync" ? "sync" : "claude"}-turn:${second.runId}`,
+            );
+            yield* runner.batch({
+              generation: machine.generation,
+              sequence: 3,
+              items: [
+                {
+                  kind: "provider",
+                  runId: second.runId,
+                  event: {
+                    type: "provider_turn.updated",
+                    driver: claudeDriver,
+                    providerTurn: {
+                      id: providerTurnId,
+                      providerThreadId: second.providerThread.id,
+                      nodeId: second.rootNodeId,
+                      runAttemptId:
+                        attempt === "sync"
+                          ? RunAttemptId.make(`${second.attemptId}:sync:1`)
+                          : second.attemptId,
+                      nativeTurnRef: null,
+                      ordinal: attempt === "sync" ? 1101 : 1,
+                      status: "running",
+                      startedAt: null,
+                      completedAt: null,
+                    },
+                  },
+                },
+                {
+                  kind: "provider",
+                  runId: second.runId,
+                  event: {
+                    type: "turn_item.updated",
+                    driver: claudeDriver,
+                    turnItem: encodeTurnItem({
+                      id: TurnItemId.make(`output:${second.runId}`),
+                      threadId,
+                      runId: second.runId,
+                      nodeId: second.rootNodeId,
+                      providerThreadId: second.providerThread.id,
+                      providerTurnId,
+                      nativeItemRef: null,
+                      parentItemId: null,
+                      ordinal: 7,
+                      status: "completed",
+                      title: null,
+                      startedAt: now,
+                      completedAt: now,
+                      updatedAt: now,
+                      ...(type === "assistant_message"
+                        ? {
+                            type,
+                            messageId: MessageId.make(`reply:${second.runId}`),
+                            text: "Working on it.",
+                            streaming: false,
+                          }
+                        : { type, input: "git status", output: "On branch main", exitCode: 0 }),
+                    }),
+                  },
+                },
+              ],
+            });
+            const before = yield* snapshot(engine);
+            expect(before.projection.runs[1]?.activeAttemptId).toBe(second.attemptId);
+            expect(
+              before.projection.turnItems.find(
+                (item) => item.runId === second.runId && item.type === type,
+              )?.providerTurnId,
+            ).toBe(providerTurnId);
+          }
+          yield* saveSession(context, "handoff-session");
           if (ending === "failed") {
             yield* runner.batch({
               generation: machine.generation,
@@ -107,13 +196,18 @@ describe("fresh-session handoff delivery", () => {
           yield* send(engine, 3, "Try again.");
           yield* send(engine, 3, "Try again.");
           const retried = yield* liveTurn(runner);
-          expect(retried.providerThread.nativeThreadRef).toBeNull();
-          expect(retried.message.text).toContain("Finish the original work.");
-          expect(retried.message.text).toContain("Hello!");
-          expect(retried.message.text.endsWith("User message:\nTry again.")).toBe(true);
+          if (attempt === "active") {
+            expect(retried.providerThread.nativeThreadRef?.nativeId).toBe("handoff-session");
+            expect(retried.message.text).toBe("Try again.");
+          } else {
+            expect(retried.providerThread.nativeThreadRef).toBeNull();
+            expect(retried.message.text).toContain("Finish the original work.");
+            expect(retried.message.text).toContain("Hello!");
+            expect(retried.message.text.endsWith("User message:\nTry again.")).toBe(true);
+          }
           const after = yield* snapshot(engine);
           expect(after.projection.runs).toHaveLength(3);
-          expect(after.projection.contextHandoffs).toHaveLength(2);
+          expect(after.projection.contextHandoffs).toHaveLength(attempt === "active" ? 1 : 2);
           expect((yield* liveTurn(runner)).message.text).toBe(retried.message.text);
           expect((yield* snapshot(engine)).head).toBe(after.head);
         }),
@@ -262,24 +356,46 @@ describe("fresh-session handoff delivery", () => {
         const second = yield* liveTurn(runner);
         // Reproduce fallback rows written by the previous implementation.
         yield* engine.apply((projection, ctx) => {
-          if (projection === null) throw new Error("Expected a thread");
-          const prepared = prepareFreshSession(projection, second, ctx, 16_000, true);
-          if (prepared._tag !== "ready") throw new Error("Expected a handoff");
-          const events = prepared.events.map((event): OrchestrationV2DomainEvent =>
-            event.type === "context-handoff.updated"
-              ? {
-                  ...event,
-                  payload: {
-                    ...event.payload,
-                    delivery: {
-                      nativeThreadId: "claude-session-1",
-                      status: "pending",
-                      itemIds: [],
-                    },
-                  },
-                }
-              : event,
-          );
+          const run = projection?.runs.find((candidate) => candidate.id === second.runId);
+          if (run === undefined) throw new Error("Expected the active run");
+          const handoffId = ContextHandoffId.make(`legacy-handoff:${second.runId}`);
+          const events: ReadonlyArray<OrchestrationV2DomainEvent> = [
+            {
+              id: EventId.make("legacy-handoff"),
+              threadId,
+              runId: second.runId,
+              type: "context-handoff.updated",
+              occurredAt: ctx.now,
+              payload: {
+                id: handoffId,
+                threadId,
+                targetRunId: second.runId,
+                fromProviderThreadIds: [first.providerThread.id],
+                toProviderThreadId: second.providerThread.id,
+                coveredRunOrdinals: { from: 1, to: 1 },
+                strategy: "full_thread_summary",
+                status: "ready",
+                summaryMessageId: null,
+                summaryText: "User: Hi\nAssistant: Hello!",
+                delivery: {
+                  nativeThreadId: "claude-session-1",
+                  status: "pending",
+                  itemIds: [],
+                },
+                createdByProviderInstanceId: run.providerInstanceId,
+                createdAt: ctx.now,
+                updatedAt: ctx.now,
+              },
+            },
+            {
+              id: EventId.make("legacy-handoff-run"),
+              threadId,
+              runId: second.runId,
+              type: "run.updated",
+              occurredAt: ctx.now,
+              payload: { ...run, contextHandoffId: handoffId },
+            },
+          ];
           return Effect.succeed({ events, result: undefined });
         });
         const started = turnReport(second.runId, second.runOrdinal, second.providerThread).started;
