@@ -123,7 +123,7 @@ export const CLOUD_UNSERVED: Readonly<Record<string, Unserved>> = {
   "terminal.*": gap("#744"),
   "terminalEvents.subscribe": gap("#744"),
   "terminalMetadata.subscribe": gap("#744"),
-  "usage.*": exempt("Pools report usage per account (`pool/poolViews.ts`)."),
+  "usage.*": gap("#786"),
   "vcs.createRef": ownBranch,
   "vcs.switchRef": ownBranch,
   "vcs.createWorktree": ownBranch,
