@@ -4,9 +4,9 @@ import * as Stream from "effect/Stream";
 
 import { AUTOMATIONS_CLOUD_ONLY_MESSAGE } from "../signalbox/automationAvailability.ts";
 
-const unavailable = () => new AutomationError({ message: AUTOMATIONS_CLOUD_ONLY_MESSAGE });
-const failed = () => Effect.fail(unavailable());
-const failedStream = () => Stream.fail(unavailable());
+const failed = () => Effect.fail(new AutomationError({ message: AUTOMATIONS_CLOUD_ONLY_MESSAGE }));
+const failedStream = () =>
+  Stream.fail(new AutomationError({ message: AUTOMATIONS_CLOUD_ONLY_MESSAGE }));
 
 /** WebSocket contract remains stable while self-hosted servers direct users to Cloud. */
 export const automationRpcHandlers = () => ({
