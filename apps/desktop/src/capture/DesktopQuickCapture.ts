@@ -159,6 +159,7 @@ export const make = Effect.gen(function* () {
   const settingsRef = yield* Ref.make(DEFAULT_CLIENT_SETTINGS);
   // `null` means this renderer has not resolved its signed-in folder snapshots yet.
   const activeOwnersRef = yield* Ref.make<ReadonlyArray<DesktopCaptureOwner> | null>(null);
+  const destinationSyncGenerationRef = yield* Ref.make(0);
   const context = yield* Effect.context<
     | CaptureQueue.CaptureQueue
     | DesktopCaptureShutdown.DesktopCaptureShutdown
@@ -194,9 +195,7 @@ export const make = Effect.gen(function* () {
   const sendToMain = (event: DesktopCaptureEvent, createHiddenIfMissing = false) =>
     desktopWindow.dispatchCaptureEvent(event, { createHiddenIfMissing }).pipe(Effect.ignoreCause);
 
-  const isLiveCaptureWindow = (
-    window: Electron.BrowserWindow | undefined,
-  ): boolean =>
+  const isLiveCaptureWindow = (window: Electron.BrowserWindow | undefined): boolean =>
     Boolean(window && !window.isDestroyed() && !window.webContents.isDestroyed());
 
   const queueCaptureFlushRelease = (window: Electron.BrowserWindow, error: string | null) => {
@@ -242,11 +241,7 @@ export const make = Effect.gen(function* () {
         dispatched = true;
         window.webContents.removeListener("did-finish-load", onDidFinishLoad);
         window.webContents.removeListener("did-fail-load", onDidFailLoad);
-        if (
-          captureWindow !== window ||
-          window.isDestroyed() ||
-          window.webContents.isDestroyed()
-        ) {
+        if (captureWindow !== window || window.isDestroyed() || window.webContents.isDestroyed()) {
           fail("Quick capture closed before it finished saving.");
           return;
         }
@@ -571,7 +566,10 @@ export const make = Effect.gen(function* () {
     const settings = yield* Ref.get(settingsRef);
     return {
       destinations,
-      pending: visiblePending.map(({ text: _text, ...capture }) => capture),
+      pending: visiblePending.map((capture) => ({
+        ...capture,
+        text: capture.text.slice(0, 120),
+      })),
       shortcut: {
         enabled: settings.captureGlobalShortcutEnabled,
         shortcut: settings.captureGlobalShortcut,
@@ -582,13 +580,16 @@ export const make = Effect.gen(function* () {
   });
 
   const beginDestinationSync = Effect.gen(function* () {
+    yield* Ref.update(destinationSyncGenerationRef, (generation) => generation + 1);
     yield* Ref.set(activeOwnersRef, null);
     yield* Effect.sync(() => sendToCaptureWindow({ type: "destinations-changed" }));
   });
 
   const setDestinations = (destinations: ReadonlyArray<typeof DesktopCaptureDestination.Type>) =>
     Effect.gen(function* () {
+      const generation = yield* Ref.get(destinationSyncGenerationRef);
       yield* queue.setDestinations(destinations);
+      if ((yield* Ref.get(destinationSyncGenerationRef)) !== generation) return;
       yield* Ref.set(activeOwnersRef, captureOwners(destinations));
       yield* Effect.sync(() => sendToCaptureWindow({ type: "destinations-changed" }));
     });
@@ -683,7 +684,9 @@ export const make = Effect.gen(function* () {
         );
       yield* queue.acknowledge(id);
       yield* sendToMain({ type: "removed", id: id as DesktopCaptureId });
-      yield* Effect.sync(() => sendToCaptureWindow({ type: "removed", id: id as DesktopCaptureId }));
+      yield* Effect.sync(() =>
+        sendToCaptureWindow({ type: "removed", id: id as DesktopCaptureId }),
+      );
     });
 
   const reportFailure = (id: string, message: string) =>
@@ -708,9 +711,7 @@ export const make = Effect.gen(function* () {
       );
     });
 
-  const retryAtOwnerTop = Effect.fn("desktop.quickCapture.retryAtOwnerTop")(function* (
-    id: string,
-  ) {
+  const retryAtOwnerTop = Effect.fn("desktop.quickCapture.retryAtOwnerTop")(function* (id: string) {
     if ((yield* currentPendingCapture(id)) === null)
       return yield* Effect.fail(
         new CaptureQueue.CaptureDestinationUnavailableError({ captureId: id }),

@@ -204,46 +204,74 @@ describe("CaptureQueue", () => {
       }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
   );
 
-  it.effect("refiles a deleted folder to the same owner's top only when that owner is available", () =>
-    Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const homeDirectory = yield* fs.makeTempDirectoryScoped({ prefix: "capture-owner-retry-" });
-      const folderDestination = {
-        ...queuedDestination,
-        key: "account:work",
-        folderId: FolderId.make("folder-work"),
-        label: "Work",
-        inPlace: "in Work",
-      };
-      const destinationB = {
-        ...queuedDestination,
-        key: "account-b:home",
-        environmentId: EnvironmentId.make("environment-b"),
-        ownerProjectId: ProjectId.make("account-b"),
-      };
-      yield* Effect.gen(function* () {
-        const queue = yield* CaptureQueue.CaptureQueue;
-        yield* queue.setDestinations([queuedDestination, folderDestination]);
-        const submitted = yield* queue.submit({
-          ...queuedCapture,
-          destinationKey: folderDestination.key,
-        });
-        yield* queue.reportFailure(submitted.id, "The folder was removed.");
-        yield* queue.setDestinations([queuedDestination]);
+  it.effect(
+    "refiles a deleted folder to the same owner's top only when that owner is available",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const homeDirectory = yield* fs.makeTempDirectoryScoped({ prefix: "capture-owner-retry-" });
+        const folderDestination = {
+          ...queuedDestination,
+          key: "account:work",
+          folderId: FolderId.make("folder-work"),
+          label: "Work",
+          inPlace: "in Work",
+        };
+        const destinationB = {
+          ...queuedDestination,
+          key: "account-b:home",
+          environmentId: EnvironmentId.make("environment-b"),
+          ownerProjectId: ProjectId.make("account-b"),
+        };
+        yield* Effect.gen(function* () {
+          const queue = yield* CaptureQueue.CaptureQueue;
+          yield* queue.setDestinations([queuedDestination, folderDestination]);
+          const submitted = yield* queue.submit({
+            ...queuedCapture,
+            destinationKey: folderDestination.key,
+          });
+          yield* queue.reportFailure(submitted.id, "The folder was removed.");
 
-        const retried = yield* queue.retryAtOwnerTop(submitted.id);
-        assert.equal(retried.destinationKey, queuedDestination.key);
-        assert.deepEqual(retried.owner, submitted.owner);
-        assert.equal(retried.deliveryError, null);
+          const existingFolderUnavailable = yield* queue
+            .retryAtOwnerTop(submitted.id)
+            .pipe(Effect.flip);
+          assert.instanceOf(
+            existingFolderUnavailable,
+            CaptureQueue.CaptureDestinationUnavailableError,
+          );
+          const existingFolderCapture = yield* queue.read(submitted.id);
+          assert.equal(existingFolderCapture.destinationKey, folderDestination.key);
+          assert.equal(existingFolderCapture.deliveryError, "The folder was removed.");
 
-        yield* queue.setDestinations([destinationB]);
-        const unavailable = yield* queue.retryAtOwnerTop(submitted.id).pipe(Effect.flip);
-        assert.instanceOf(unavailable, CaptureQueue.CaptureDestinationUnavailableError);
-        const preserved = yield* queue.read(submitted.id);
-        assert.equal(preserved.destinationKey, queuedDestination.key);
-        assert.deepEqual(preserved.files[0]?.bytes, Uint8Array.of(97, 98, 99));
-      }).pipe(Effect.provide(queueLayer(homeDirectory)));
-    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+          const topCapture = yield* queue.submit({
+            ...queuedCapture,
+            id: "eeee",
+            destinationKey: queuedDestination.key,
+          });
+          yield* queue.reportFailure(topCapture.id, "The top level failed.");
+          const alreadyTopUnavailable = yield* queue
+            .retryAtOwnerTop(topCapture.id)
+            .pipe(Effect.flip);
+          assert.instanceOf(alreadyTopUnavailable, CaptureQueue.CaptureDestinationUnavailableError);
+          const alreadyTopCapture = yield* queue.read(topCapture.id);
+          assert.equal(alreadyTopCapture.destinationKey, queuedDestination.key);
+          assert.equal(alreadyTopCapture.deliveryError, "The top level failed.");
+
+          yield* queue.setDestinations([queuedDestination]);
+
+          const retried = yield* queue.retryAtOwnerTop(submitted.id);
+          assert.equal(retried.destinationKey, queuedDestination.key);
+          assert.deepEqual(retried.owner, submitted.owner);
+          assert.equal(retried.deliveryError, null);
+
+          yield* queue.setDestinations([destinationB]);
+          const unavailable = yield* queue.retryAtOwnerTop(submitted.id).pipe(Effect.flip);
+          assert.instanceOf(unavailable, CaptureQueue.CaptureDestinationUnavailableError);
+          const preserved = yield* queue.read(submitted.id);
+          assert.equal(preserved.destinationKey, queuedDestination.key);
+          assert.deepEqual(preserved.files[0]?.bytes, Uint8Array.of(97, 98, 99));
+        }).pipe(Effect.provide(queueLayer(homeDirectory)));
+      }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
   );
 
   it.effect("backfills a legacy queue owner's last validated destination before replacing it", () =>

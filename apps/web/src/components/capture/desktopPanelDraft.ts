@@ -11,6 +11,15 @@ export interface DesktopPanelDraft {
 
 const STORE = "draft";
 const KEY = "current";
+const FILES_KEY = "files";
+const WRITE_DELAY_MS = 200;
+type DraftFiles = Capture["files"];
+interface StoredDraft {
+  readonly version: 2;
+  readonly id: string;
+  readonly capture: Omit<Capture, "files">;
+  readonly fileIds: ReadonlyArray<string>;
+}
 
 function checkBounds(draft: DesktopPanelDraft) {
   if (
@@ -55,6 +64,7 @@ export function createDesktopPanelDraftStorage(factory: IDBFactory) {
     return database;
   };
 
+  let committedFiles: DraftFiles | undefined;
   const transact = async (draft?: DesktopPanelDraft | null) => {
     const db = await open();
     const transaction = db.transaction(STORE, draft === undefined ? "readonly" : "readwrite", {
@@ -68,14 +78,35 @@ export function createDesktopPanelDraftStorage(factory: IDBFactory) {
       transaction.addEventListener("error", () => reject(transaction.error));
     });
     const store = transaction.objectStore(STORE);
-    let request: IDBRequest;
+    let record: IDBRequest<DesktopPanelDraft | StoredDraft | undefined> | undefined;
+    let files: IDBRequest<DraftFiles | undefined> | undefined;
     try {
-      request =
-        draft === undefined
-          ? store.get(KEY)
-          : draft === null
-            ? store.delete(KEY)
-            : store.put(draft, KEY);
+      if (draft === undefined) {
+        record = store.get(KEY);
+        files = store.get(FILES_KEY);
+      } else if (draft === null) {
+        store.delete(KEY);
+        store.delete(FILES_KEY);
+      } else {
+        const { files: nextFiles, ...capture } = draft.capture;
+        // Text edits must not structured-clone the same potentially 50 MiB of File bytes.
+        if (
+          !committedFiles ||
+          committedFiles.length !== nextFiles.length ||
+          nextFiles.some(
+            ({ id, file }, index) =>
+              id !== committedFiles?.[index]?.id || file !== committedFiles?.[index]?.file,
+          )
+        )
+          store.put(nextFiles, FILES_KEY);
+        const metadata: StoredDraft = {
+          version: 2,
+          id: draft.id,
+          capture,
+          fileIds: nextFiles.map(({ id }) => id),
+        };
+        store.put(metadata, KEY);
+      }
     } catch (cause) {
       transaction.abort();
       await done.catch(() => undefined);
@@ -83,14 +114,66 @@ export function createDesktopPanelDraftStorage(factory: IDBFactory) {
     }
     // Request success is not a committed transaction; quitting must wait for complete.
     await done;
-    const result: DesktopPanelDraft | undefined = request.result;
-    return draft === undefined ? (result ?? null) : null;
+    if (draft !== undefined) {
+      committedFiles = draft?.capture.files;
+      return null;
+    }
+    const result = record?.result;
+    if (!result) return null;
+    // Legacy snapshots stay untouched until a new draft is successfully committed.
+    if (!("version" in result)) {
+      committedFiles = undefined;
+      checkBounds(result);
+      return result;
+    }
+    const restoredFiles = files?.result;
+    if (
+      !restoredFiles ||
+      result.fileIds.length !== restoredFiles.length ||
+      result.fileIds.some((id, index) => id !== restoredFiles[index]?.id)
+    ) {
+      throw new Error("Capture attachments couldn't be restored. Your saved draft is unchanged.");
+    }
+    const restored = { id: result.id, capture: { ...result.capture, files: restoredFiles } };
+    checkBounds(restored);
+    committedFiles = restoredFiles;
+    return restored;
   };
 
   let pending: DesktopPanelDraft | null | undefined;
   let draining: Promise<void> | undefined;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let waiters: Array<{ resolve: () => void; reject: (cause: Error) => void }> = [];
   let failure: Error | null = null;
   let validationFailure: Error | null = null;
+  const drain = (): Promise<void> => {
+    clearTimeout(timer);
+    timer = undefined;
+    draining ??= Promise.resolve().then(async () => {
+      try {
+        while (pending !== undefined) {
+          const next = pending;
+          const batch = waiters;
+          pending = undefined;
+          waiters = [];
+          try {
+            await transact(next);
+            failure = null;
+            for (const waiter of batch) waiter.resolve();
+          } catch (cause) {
+            const error =
+              cause instanceof Error ? cause : new Error("Couldn't keep this capture on this Mac.");
+            // Only unsaved content blocks quit. A queued capture can safely replay its same ID.
+            failure = next === null ? null : error;
+            for (const waiter of batch) waiter.reject(error);
+          }
+        }
+      } finally {
+        draining = undefined;
+      }
+    });
+    return draining;
+  };
   const write = async (draft: DesktopPanelDraft | null): Promise<void> => {
     try {
       if (draft) checkBounds(draft);
@@ -101,36 +184,21 @@ export function createDesktopPanelDraftStorage(factory: IDBFactory) {
       throw validationFailure;
     }
     pending = draft;
-    // Keep only the newest edit while a transaction writes the previous snapshot.
-    draining ??= (async () => {
-      try {
-        while (pending !== undefined) {
-          const next = pending;
-          pending = undefined;
-          await transact(next);
-        }
-        failure = null;
-      } catch (cause) {
-        failure =
-          cause instanceof Error ? cause : new Error("Couldn't keep this capture on this Mac.");
-        throw failure;
-      } finally {
-        draining = undefined;
-      }
-    })();
-    await draining;
+    const committed = new Promise<void>((resolve, reject) => waiters.push({ resolve, reject }));
+    clearTimeout(timer);
+    if (draft === null) void drain();
+    else timer = setTimeout(() => void drain(), WRITE_DELAY_MS);
+    await committed;
   };
 
   return {
     read: async () => {
-      await draining;
-      const draft = await transact();
-      if (draft) checkBounds(draft);
-      return draft;
+      if (pending !== undefined || draining) await drain();
+      return transact();
     },
     write,
     flush: async () => {
-      await draining;
+      if (pending !== undefined || draining) await drain();
       if (validationFailure) throw validationFailure;
       if (failure) throw failure;
     },

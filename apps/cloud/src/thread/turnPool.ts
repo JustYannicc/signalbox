@@ -64,6 +64,7 @@ export const commandOnPool = (
   switch (command.type) {
     case "thread.create":
     case "thread.model-selection.set":
+    case "provider.switch":
       return { ...command, modelSelection: onPool(command.modelSelection, poolId) };
     case "message.dispatch": {
       const selection = command.modelSelection ?? projection?.thread.modelSelection;

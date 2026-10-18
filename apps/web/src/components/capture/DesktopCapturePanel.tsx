@@ -18,6 +18,8 @@ export function DesktopCapturePanel() {
   const [captureStarted, setCaptureStarted] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [draftError, setDraftError] = useState<string | null>(null);
+  const [draftLoaded, setDraftLoaded] = useState(false);
   const [captureId, setCaptureId] = useState(randomUUID);
   const [draft, setDraft] = useState<DesktopPanelDraft | null>(null);
   const [dismissRequest, setDismissRequest] = useState(0);
@@ -35,6 +37,9 @@ export function DesktopCapturePanel() {
     if (!bridge) return;
     void desktopPanelDraftStorage()
       .write(null)
+      .catch((cause: unknown) =>
+        console.error("Couldn't remove the submitted capture draft.", cause),
+      )
       .then(() => bridge.hideCapture())
       .then(() => {
         setDismissRequest(0);
@@ -57,8 +62,8 @@ export function DesktopCapturePanel() {
 
   const dismiss = useEffectEvent(() => {
     if (flushLocked.current) return;
-    if (captureStarted) setDismissRequest((value) => value + 1);
-    else close();
+    if (draftLoaded && state !== null && captureStarted) setDismissRequest((value) => value + 1);
+    else preserveClose();
   });
   const flushForShutdown = useEffectEvent(async (requestId: string) => {
     if (!bridge) return;
@@ -103,20 +108,40 @@ export function DesktopCapturePanel() {
     if (!bridge) return;
     let mounted = true;
     let initialized = false;
-    const initialDraft = Promise.resolve().then(() => desktopPanelDraftStorage().read());
+    let restoring: Promise<void> | undefined;
+    const restoreDraft = () => {
+      if (initialized) return;
+      restoring ??= Promise.resolve()
+        .then(() => desktopPanelDraftStorage().read())
+        .then((restored) => {
+          if (!mounted) return;
+          initialized = true;
+          setDraft(restored);
+          setDraftLoaded(true);
+          setDraftError(null);
+          if (restored) {
+            setCaptureId(restored.id);
+            setCaptureStarted(true);
+          }
+        })
+        .catch((cause: unknown) => {
+          if (mounted)
+            setDraftError(
+              cause instanceof Error
+                ? cause.message
+                : "Couldn't restore your draft. Reopen capture to retry.",
+            );
+        })
+        .finally(() => {
+          restoring = undefined;
+        });
+    };
     const refresh = async () => {
+      restoreDraft();
       const id = ++refreshId.current;
       try {
-        const [next, restored] = await Promise.all([bridge.getCaptureState(), initialDraft]);
+        const next = await bridge.getCaptureState();
         if (mounted && id === refreshId.current) {
-          if (!initialized) {
-            initialized = true;
-            setDraft(restored);
-            if (restored) {
-              setCaptureId(restored.id);
-              setCaptureStarted(true);
-            }
-          }
           setState(next);
           setLoadError(null);
           if (next.destinations.length > 0) setCaptureStarted(true);
@@ -235,9 +260,11 @@ export function DesktopCapturePanel() {
       <div className="contents" inert={flushing}>
         {!bridge ? (
           <p className="p-4 text-sm">Open quick capture from Signalbox for Mac.</p>
-        ) : state === null ? (
+        ) : state === null || !draftLoaded ? (
           <p role="status" className="p-4 text-sm">
-            Loading capture…
+            {loadError || draftError
+              ? "Capture is unavailable. Reopen to retry."
+              : "Loading capture…"}
           </p>
         ) : (
           <>
@@ -274,32 +301,39 @@ export function DesktopCapturePanel() {
               Your captures are kept on this Mac.
             </p>
             {failures.map((capture) => {
-              const topAvailable = state?.destinations.some(
+              const ownerTop = state?.destinations.find(
                 (destination) =>
                   destination.folderId === null &&
                   destination.environmentId === capture.owner?.environmentId &&
                   destination.ownerProjectId === capture.owner?.ownerProjectId,
               );
+              const canRetryAtTop =
+                ownerTop !== undefined &&
+                capture.destinationKey !== null &&
+                capture.destinationKey !== ownerTop.key &&
+                !state?.destinations.some(
+                  (destination) =>
+                    destination.key === capture.destinationKey &&
+                    destination.environmentId === capture.owner?.environmentId &&
+                    destination.ownerProjectId === capture.owner?.ownerProjectId,
+                );
               return (
                 <div key={capture.id} className="flex w-full flex-col items-start gap-2">
                   <p className="line-clamp-2 break-words text-sm">
-                    {capture.text?.trim() || "Capture"}
+                    {capture.text?.trim().slice(0, 120) || capture.files[0]?.name || "Capture"}
                   </p>
                   <p className="text-xs text-muted-foreground">
                     {retryError?.id === capture.id ? retryError.message : capture.deliveryError}
                   </p>
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    disabled={retryingId !== null || !topAvailable}
-                    onClick={() => void retryAtTop(capture)}
-                  >
-                    {retryingId === capture.id ? "Retrying…" : "Retry at top level"}
-                  </Button>
-                  {!topAvailable ? (
-                    <p className="text-xs text-muted-foreground">
-                      Open Signalbox to load this account's top level.
-                    </p>
+                  {canRetryAtTop ? (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      disabled={retryingId !== null}
+                      onClick={() => void retryAtTop(capture)}
+                    >
+                      {retryingId === capture.id ? "Retrying…" : "Retry at top level"}
+                    </Button>
                   ) : null}
                 </div>
               );
@@ -315,9 +349,9 @@ export function DesktopCapturePanel() {
           Saving capture before closing…
         </p>
       ) : null}
-      {error || loadError ? (
+      {error || loadError || draftError ? (
         <p role="alert" className="px-4 pb-3 text-sm text-destructive">
-          {error ?? loadError}
+          {error ?? draftError ?? loadError}
         </p>
       ) : null}
     </main>

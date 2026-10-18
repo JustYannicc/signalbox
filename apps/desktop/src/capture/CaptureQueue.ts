@@ -240,8 +240,9 @@ export const make = Effect.gen(function* () {
         yield* Effect.forEach(
           (yield* fs
             .readDirectory(directory)
-            .pipe(Effect.mapError((cause) => queueError("list-entries", null, cause))))
-            .filter((entry) => CAPTURE_ID_PATTERN.test(entry)),
+            .pipe(Effect.mapError((cause) => queueError("list-entries", null, cause)))).filter(
+            (entry) => CAPTURE_ID_PATTERN.test(entry),
+          ),
           (id) =>
             readEntry(id).pipe(
               Effect.flatMap((entry) => {
@@ -296,7 +297,9 @@ export const make = Effect.gen(function* () {
           (item) => item.key === input.destinationKey && input.destinationKey !== null,
         );
         if (destination === undefined)
-          return yield* Effect.fail(new CaptureDestinationUnavailableError({ captureId: input.id }));
+          return yield* Effect.fail(
+            new CaptureDestinationUnavailableError({ captureId: input.id }),
+          );
         const existing = yield* fs
           .exists(entryDirectory(input.id))
           .pipe(Effect.mapError((cause) => queueError("read-entry", input.id, cause)));
@@ -378,7 +381,15 @@ export const make = Effect.gen(function* () {
             destination.environmentId === owner.environmentId &&
             destination.ownerProjectId === owner.ownerProjectId,
         );
-        if (top === undefined)
+        const originalDestinationExists = currentDestinations.some(
+          (destination) => destination.key === entry.destinationKey,
+        );
+        if (
+          top === undefined ||
+          entry.destinationKey === null ||
+          entry.destinationKey === top.key ||
+          originalDestinationExists
+        )
           return yield* Effect.fail(new CaptureDestinationUnavailableError({ captureId: id }));
         const updated = { ...entry, destinationKey: top.key, deliveryError: null };
         yield* writePendingEntry(updated);
