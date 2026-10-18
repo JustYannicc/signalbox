@@ -1,31 +1,23 @@
 import { describe, expect, it } from "vite-plus/test";
 import { decodeModule, readBunGraph } from "./bun-graph.ts";
 
-function fixture(recordSize = 52) {
-  const prefix = 128;
-  const table = 64;
-  const byteCount = table + recordSize + 1;
-  const bytes = new Uint8Array(prefix + byteCount + 48 + 8);
-  const graph = bytes.subarray(prefix);
-  const data = new DataView(graph.buffer, graph.byteOffset, graph.byteLength);
-  graph.set(new TextEncoder().encode("/$bunfs/root/cli"));
-  graph.set(new TextEncoder().encode("export default 1;"), 32);
-  data.setUint32(table, 0, true);
-  data.setUint32(table + 4, 16, true);
-  data.setUint32(table + 8, 32, true);
-  data.setUint32(table + 12, 17, true);
-  graph.set([1, 1, 1, 0], table + recordSize - 4);
-  data.setBigUint64(byteCount, BigInt(byteCount), true);
-  data.setUint32(byteCount + 8, table, true);
-  data.setUint32(byteCount + 12, recordSize, true);
-  data.setUint32(byteCount + 20, byteCount - 1, true);
-  graph.set(new TextEncoder().encode("\n---- Bun! ----\n"), byteCount + 32);
-  data.setBigUint64(byteCount + 48, BigInt(bytes.length), true);
+import { fixture } from "./graph-fixture.ts";
+
+function legacy24Fixture(recordSize = 36) {
+  const current = fixture(recordSize);
+  const prefix = current.bytes.length - current.byteCount - 48 - 8;
+  const byteCount = current.byteCount - 1;
+  const footerOffset = prefix + byteCount;
+  const bytes = new Uint8Array(prefix + byteCount + 24 + 16 + 8);
+  bytes.set(current.bytes.subarray(0, footerOffset));
+  const data = new DataView(bytes.buffer);
+  data.setBigUint64(footerOffset, BigInt(byteCount), true);
+  data.setUint32(footerOffset + 8, current.table, true);
+  data.setUint32(footerOffset + 12, recordSize, true);
+  data.setUint32(footerOffset + 16, 0, true);
+  bytes.set(new TextEncoder().encode("\n---- Bun! ----\n"), footerOffset + 24);
+  data.setBigUint64(bytes.length - 8, BigInt(bytes.length), true);
   return {
-    bytes,
-    graph,
-    data,
-    table,
     byteCount,
     reader: {
       size: bytes.length,
@@ -42,9 +34,11 @@ describe("Bun graph validation", () => {
     async (recordSize) => {
       const f = fixture(recordSize);
       const parsed = await readBunGraph(f.reader);
+      expect(parsed.offsetsSize).toBe(32);
       expect(parsed.recordSize).toBe(recordSize);
       expect(parsed.modules[parsed.entry]).toMatchObject({
         name: "/$bunfs/root/cli",
+        key: "$bunfs/root/cli",
         encoding: 1,
         loader: 1,
         format: 1,
@@ -52,6 +46,23 @@ describe("Bun graph validation", () => {
       });
     },
   );
+  it("reads the Bun 1.2.0 24-byte footer and 36-byte records without argv or flags", async () => {
+    const f = legacy24Fixture();
+    const parsed = await readBunGraph(f.reader);
+
+    expect(parsed).toMatchObject({
+      offsetsSize: 24,
+      byteCount: f.byteCount,
+      entry: 0,
+      recordSize: 36,
+    });
+    expect(parsed.flags).toBeUndefined();
+    expect(parsed.modules[parsed.entry]).toMatchObject({
+      name: "/$bunfs/root/cli",
+      key: "$bunfs/root/cli",
+      regions: { contents: { offset: 32, length: 17 } },
+    });
+  });
   it("rejects unknown flags even when existing records parse", async () => {
     const f = fixture();
     f.data.setUint32(f.byteCount + 28, 1 << 20, true);

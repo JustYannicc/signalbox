@@ -7,14 +7,13 @@ export type BunGraphLocation = {
   container: "elf" | "macho" | "pe" | "legacy";
   offset: number;
   length: number;
+  offsetsSize: 24 | 32;
 };
 
 const GRAPH_TRAILER = new Uint8Array([
   0x0a, 0x2d, 0x2d, 0x2d, 0x2d, 0x20, 0x42, 0x75, 0x6e, 0x21, 0x20, 0x2d, 0x2d, 0x2d, 0x2d, 0x0a,
 ]);
-// The 64-bit repr(C) Offsets is 32 bytes because StringPointer is two u32s.
-const OFFSETS_SIZE = 32;
-const GRAPH_SUFFIX_SIZE = OFFSETS_SIZE + GRAPH_TRAILER.length;
+const OFFSETS_SIZES = [24, 32] as const;
 const ELF_HEADER_SIZE = 64;
 const ELF_SECTION_HEADER_SIZE = 64;
 const MACH_HEADER_SIZE = 32;
@@ -23,7 +22,7 @@ const MACH_SECTION_SIZE = 80;
 const PE_SECTION_SIZE = 40;
 
 function invalid(container: string, message: string): never {
-  throw new Error(`${container}: ${message}`);
+  throw new Error(`BUN_FORMAT_CHANGED: ${container}: ${message}`);
 }
 
 function checkedAdd(left: number, right: number, label: string): number {
@@ -112,29 +111,43 @@ async function validateGraph(
   length: number,
   container: BunGraphLocation["container"],
 ): Promise<BunGraphLocation> {
-  if (length < GRAPH_SUFFIX_SIZE) invalid(container, "module graph is too short");
+  if (length < OFFSETS_SIZES[0] + GRAPH_TRAILER.length) {
+    invalid(container, "module graph is too short");
+  }
   ensureRange(offset, length, reader.size, `${container} module graph`);
 
-  const offsetsAt = offset + length - GRAPH_SUFFIX_SIZE;
-  const [byteCountBytes, trailer] = await Promise.all([
-    readExact(reader, offsetsAt, 8, `${container} offsets`),
-    readExact(
-      reader,
-      offset + length - GRAPH_TRAILER.length,
-      GRAPH_TRAILER.length,
-      `${container} trailer`,
-    ),
-  ]);
+  const trailer = await readExact(
+    reader,
+    offset + length - GRAPH_TRAILER.length,
+    GRAPH_TRAILER.length,
+    `${container} trailer`,
+  );
   if (!bytesEqualAt(trailer, 0, trailer.byteLength, "\n---- Bun! ----\n")) {
     invalid(container, "module graph trailer is missing or malformed");
   }
 
-  const byteCount = u64(byteCountBytes, 0, `${container} offsets`);
-  if (byteCount !== length - GRAPH_SUFFIX_SIZE) {
-    invalid(container, "offsets struct byte_count does not match the serialized graph length");
+  const matches: BunGraphLocation[] = [];
+  const failures: string[] = [];
+  for (const offsetsSize of OFFSETS_SIZES) {
+    const suffixSize = offsetsSize + GRAPH_TRAILER.length;
+    if (length < suffixSize) continue;
+    try {
+      const offsetsAt = offset + length - suffixSize;
+      const byteCountBytes = await readExact(reader, offsetsAt, 8, `${container} offsets`);
+      const byteCount = u64(byteCountBytes, 0, `${container} offsets`);
+      if (byteCount === length - suffixSize) {
+        matches.push({ container, offset, length, offsetsSize });
+      } else {
+        failures.push(`${offsetsSize}-byte Offsets byte_count disagrees with graph length`);
+      }
+    } catch (error) {
+      failures.push(error instanceof Error ? error.message : String(error));
+    }
   }
 
-  return { container, offset, length };
+  if (matches.length === 1) return matches[0]!;
+  if (matches.length > 1) invalid(container, "module graph Offsets schema is ambiguous");
+  invalid(container, `no supported Offsets schema matches (${failures.join("; ")})`);
 }
 
 async function readLengthPrefixedGraph(
@@ -359,7 +372,7 @@ async function locatePESection(reader: BinaryReader): Promise<BunGraphLocation |
 }
 
 async function locateLegacyGraph(reader: BinaryReader): Promise<BunGraphLocation | undefined> {
-  if (reader.size < 8 + GRAPH_SUFFIX_SIZE) return undefined;
+  if (reader.size < 8 + OFFSETS_SIZES[0] + GRAPH_TRAILER.length) return undefined;
   const footerOffset = reader.size - 8;
   const [totalSizeBytes, trailer] = await Promise.all([
     readExact(reader, footerOffset, 8, "legacy EOF length"),
@@ -368,20 +381,45 @@ async function locateLegacyGraph(reader: BinaryReader): Promise<BunGraphLocation
   if (view(totalSizeBytes).getBigUint64(0, true) !== BigInt(reader.size)) return undefined;
   if (!bytesEqualAt(trailer, 0, trailer.byteLength, "\n---- Bun! ----\n")) return undefined;
 
-  const offsetsAt = footerOffset - GRAPH_TRAILER.length - OFFSETS_SIZE;
-  const byteCountBytes = await readExact(reader, offsetsAt, 8, "legacy offsets");
-  const byteCount = u64(byteCountBytes, 0, "legacy offsets");
-  const length = checkedAdd(byteCount, GRAPH_SUFFIX_SIZE, "legacy graph");
-  if (byteCount > offsetsAt)
-    invalid("legacy", "offsets struct places the graph before the file start");
-  const offset = offsetsAt - byteCount;
-  return validateGraph(reader, offset, length, "legacy");
+  const candidates: BunGraphLocation[] = [];
+  const failures: string[] = [];
+  for (const offsetsSize of OFFSETS_SIZES) {
+    const offsetsAt = footerOffset - GRAPH_TRAILER.length - offsetsSize;
+    try {
+      const byteCountBytes = await readExact(reader, offsetsAt, 8, "legacy offsets");
+      const byteCount = u64(byteCountBytes, 0, "legacy offsets");
+      if (byteCount > offsetsAt) {
+        failures.push(`${offsetsSize}-byte Offsets places the graph before the file start`);
+        continue;
+      }
+      const offset = offsetsAt - byteCount;
+      const length = checkedAdd(byteCount, offsetsSize + GRAPH_TRAILER.length, "legacy graph");
+      const location = await validateGraph(reader, offset, length, "legacy");
+      if (location.offsetsSize === offsetsSize) candidates.push(location);
+      else
+        failures.push(
+          `${offsetsSize}-byte candidate resolves as ${location.offsetsSize}-byte Offsets`,
+        );
+    } catch (error) {
+      if (
+        error instanceof Error &&
+        error.message.includes("module graph Offsets schema is ambiguous")
+      ) {
+        invalid("legacy", "EOF footer matches multiple Offsets schemas");
+      }
+      failures.push(error instanceof Error ? error.message : String(error));
+    }
+  }
+
+  if (candidates.length === 1) return candidates[0]!;
+  if (candidates.length > 1) invalid("legacy", "EOF footer matches multiple Offsets schemas");
+  invalid("legacy", `EOF footer has no supported Offsets schema (${failures.join("; ")})`);
 }
 
 /** Locates Bun's serialized module graph without loading the executable into memory. */
 export async function locateBunGraph(reader: BinaryReader): Promise<BunGraphLocation> {
   if (!Number.isSafeInteger(reader.size) || reader.size < 0) {
-    throw new Error("BinaryReader.size must be a non-negative safe integer");
+    invalid("binary", "BinaryReader.size must be a non-negative safe integer");
   }
 
   let sectionGraph: BunGraphLocation | undefined;
@@ -399,5 +437,5 @@ export async function locateBunGraph(reader: BinaryReader): Promise<BunGraphLoca
 
   const legacyGraph = await locateLegacyGraph(reader);
   if (legacyGraph) return legacyGraph;
-  throw new Error("unsupported executable or Bun graph footer is missing");
+  invalid("binary", "unsupported executable or Bun graph footer is missing");
 }

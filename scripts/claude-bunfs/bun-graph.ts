@@ -14,6 +14,7 @@ export type Region = { offset: number; length: number };
 export type BunModule = {
   index: number;
   name: string;
+  key: string;
   encoding: number;
   loader: number;
   format: number;
@@ -31,15 +32,27 @@ function view(bytes: Uint8Array) {
 
 export async function readBunGraph(reader: BinaryReader) {
   const location = await locateBunGraph(reader);
-  invariant(location.length >= 48, "graph shorter than its footer");
-  const footer = view(await reader.read(location.offset + location.length - 48, 32));
+  const footerSize = location.offsetsSize;
+  const trailerSize = 16;
+  invariant(location.length >= footerSize + trailerSize, "graph shorter than its footer");
+  const footer = view(
+    await reader.read(location.offset + location.length - footerSize - trailerSize, footerSize),
+  );
   const byteCount = Number(footer.getBigUint64(0, true));
-  invariant(byteCount === location.length - 48, "byte_count disagrees with graph length");
+  invariant(
+    byteCount === location.length - footerSize - trailerSize,
+    "byte_count disagrees with graph length",
+  );
   const table = { offset: footer.getUint32(8, true), length: footer.getUint32(12, true) };
   const entry = footer.getUint32(16, true);
-  const argv = { offset: footer.getUint32(20, true), length: footer.getUint32(24, true) };
-  const flags = footer.getUint32(28, true);
-  invariant((flags & ~0x3fff) === 0, `unknown graph flags 0x${flags.toString(16)}`);
+  const argv =
+    footerSize === 32
+      ? { offset: footer.getUint32(20, true), length: footer.getUint32(24, true) }
+      : undefined;
+  const flags = footerSize === 32 ? footer.getUint32(28, true) : undefined;
+  if (flags !== undefined) {
+    invariant((flags & ~0x3fff) === 0, `unknown graph flags 0x${flags.toString(16)}`);
+  }
   const checked = (region: Region) => {
     invariant(
       region.offset <= byteCount && region.length <= byteCount - region.offset,
@@ -48,7 +61,7 @@ export async function readBunGraph(reader: BinaryReader) {
     return region;
   };
   checked(table);
-  checked(argv);
+  if (argv) checked(argv);
   invariant(table.length > 0 && table.length <= 16 * 1024 * 1024, "invalid module table size");
   const records = await reader.read(location.offset + table.offset, table.length);
   const candidates: { recordSize: number; modules: BunModule[] }[] = [];
@@ -92,7 +105,16 @@ export async function readBunGraph(reader: BinaryReader) {
           encoding !== 2 || (contents.length % 2 === 0 && contents.offset % 2 === 0),
           "unaligned UTF-16 contents",
         );
-        modules.push({ index, name, encoding, loader, format, side, regions });
+        modules.push({
+          index,
+          name,
+          key: name.replace(/^\/+/, ""),
+          encoding,
+          loader,
+          format,
+          side,
+          regions,
+        });
       }
       candidates.push({ recordSize, modules });
     } catch (error) {
@@ -105,55 +127,57 @@ export async function readBunGraph(reader: BinaryReader) {
   );
   const candidate = candidates[0]!;
   // Flagged extension records follow the module table, before the compile argv.
-  let cursor = table.offset + table.length;
-  const word = async () => {
-    invariant(cursor + 4 <= argv.offset, "truncated graph extension");
-    const result = view(await reader.read(location.offset + cursor, 4)).getUint32(0, true);
-    cursor += 4;
-    return result;
-  };
-  const pointer = async () => checked({ offset: await word(), length: await word() });
-  const count = candidate.modules.length;
-  if (flags & 32) cursor += count * 4;
-  if (flags & 64) {
-    const builtins = await word();
-    invariant(builtins <= 65536, "invalid builtin count");
-    for (let i = 0; i < builtins; i++) {
-      await word();
+  if (flags !== undefined && argv) {
+    let cursor = table.offset + table.length;
+    const word = async () => {
+      invariant(cursor + 4 <= argv.offset, "truncated graph extension");
+      const result = view(await reader.read(location.offset + cursor, 4)).getUint32(0, true);
+      cursor += 4;
+      return result;
+    };
+    const pointer = async () => checked({ offset: await word(), length: await word() });
+    const count = candidate.modules.length;
+    if (flags & 32) cursor += count * 4;
+    if (flags & 64) {
+      const builtins = await word();
+      invariant(builtins <= 65536, "invalid builtin count");
+      for (let i = 0; i < builtins; i++) {
+        await word();
+        await pointer();
+      }
+    }
+    if (flags & 128) await pointer();
+    if (flags & 256) invariant((await word()) <= count, "invalid startup count");
+    if (flags & 512) await pointer();
+    if (flags & 2048) {
       await pointer();
+      const prelinked = await word();
+      invariant(prelinked <= count, "invalid prelinked count");
+      for (let i = 0; i < prelinked; i++)
+        invariant((await word()) < count, "invalid prelinked module");
     }
-  }
-  if (flags & 128) await pointer();
-  if (flags & 256) invariant((await word()) <= count, "invalid startup count");
-  if (flags & 512) await pointer();
-  if (flags & 2048) {
-    await pointer();
-    const prelinked = await word();
-    invariant(prelinked <= count, "invalid prelinked count");
-    for (let i = 0; i < prelinked; i++)
-      invariant((await word()) < count, "invalid prelinked module");
-  }
-  if (flags & 4096) {
-    await word();
-    await word();
-  }
-  if (flags & 8192) {
-    const payload = await pointer();
-    let previous = 0;
-    // Bun's LINKED_BYTECODE_REGION_COUNT is six at source pin 25ef6936.
-    for (let i = 0; i < 6; i++) {
-      const end = await word();
-      invariant(end >= previous && end <= payload.length, "invalid linked bytecode region");
-      previous = end;
+    if (flags & 4096) {
+      await word();
+      await word();
     }
-    invariant(previous === payload.length, "incomplete linked bytecode payload");
+    if (flags & 8192) {
+      const payload = await pointer();
+      let previous = 0;
+      // Bun's LINKED_BYTECODE_REGION_COUNT is six at source pin 25ef6936.
+      for (let i = 0; i < 6; i++) {
+        const end = await word();
+        invariant(end >= previous && end <= payload.length, "invalid linked bytecode region");
+        previous = end;
+      }
+      invariant(previous === payload.length, "incomplete linked bytecode payload");
+    }
+    invariant(cursor === argv.offset, "unrecognized data after module table");
+    invariant(argv.offset + argv.length + 1 === byteCount, "unexpected data after compile argv");
+    invariant(
+      (await reader.read(location.offset + byteCount - 1, 1))[0] === 0,
+      "compile argv lacks terminator",
+    );
   }
-  invariant(cursor === argv.offset, "unrecognized data after module table");
-  invariant(argv.offset + argv.length + 1 === byteCount, "unexpected data after compile argv");
-  invariant(
-    (await reader.read(location.offset + byteCount - 1, 1))[0] === 0,
-    "compile argv lacks terminator",
-  );
   return {
     ...location,
     byteCount,

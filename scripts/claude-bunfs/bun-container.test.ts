@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vite-plus/test";
-import { locateBunGraph, type BinaryReader } from "./bun-container.js";
+import { locateBunGraph, type BinaryReader } from "./bun-container.ts";
 
 const trailer = new TextEncoder().encode("\n---- Bun! ----\n");
 
@@ -15,11 +15,18 @@ function put64(bytes: Uint8Array, offset: number, value: number): void {
   new DataView(bytes.buffer).setBigUint64(offset, BigInt(value), true);
 }
 
-function makeGraph(bodyLength = 17): Uint8Array {
-  const graph = new Uint8Array(bodyLength + 32 + trailer.length);
+function makeGraph(bodyLength = 17, offsetsSize: 24 | 32 = 32): Uint8Array {
+  const graph = new Uint8Array(bodyLength + offsetsSize + trailer.length);
   graph.fill(0x41, 0, bodyLength);
   put64(graph, bodyLength, bodyLength);
-  graph.set(trailer, bodyLength + 32);
+  put32(graph, bodyLength + 8, 0);
+  put32(graph, bodyLength + 12, 1);
+  put32(graph, bodyLength + 16, 0);
+  if (offsetsSize === 32) {
+    put32(graph, bodyLength + 20, bodyLength - 1);
+    put32(graph, bodyLength + 24, 1);
+  }
+  graph.set(trailer, bodyLength + offsetsSize);
   return graph;
 }
 
@@ -154,6 +161,7 @@ describe("locateBunGraph", () => {
       container: "elf",
       offset: fixture.graphOffset,
       length: makeGraph().length,
+      offsetsSize: 32,
     });
   });
 
@@ -164,6 +172,7 @@ describe("locateBunGraph", () => {
       container: "macho",
       offset: fixture.graphOffset,
       length: makeGraph().length,
+      offsetsSize: 32,
     });
   });
 
@@ -174,6 +183,33 @@ describe("locateBunGraph", () => {
       container: "pe",
       offset: fixture.graphOffset,
       length: makeGraph().length,
+      offsetsSize: 32,
+    });
+  });
+
+  it("detects 24-byte Offsets structs in ELF, Mach-O, and PE sections", async () => {
+    const graph = makeGraph(17, 24);
+    const elf = makeElf(graph);
+    const macho = makeMachO(graph);
+    const pe = makePE(graph);
+
+    await expect(locateBunGraph(reader(elf.bytes))).resolves.toMatchObject({
+      container: "elf",
+      offset: elf.graphOffset,
+      length: graph.length,
+      offsetsSize: 24,
+    });
+    await expect(locateBunGraph(reader(macho.bytes))).resolves.toMatchObject({
+      container: "macho",
+      offset: macho.graphOffset,
+      length: graph.length,
+      offsetsSize: 24,
+    });
+    await expect(locateBunGraph(reader(pe.bytes))).resolves.toMatchObject({
+      container: "pe",
+      offset: pe.graphOffset,
+      length: graph.length,
+      offsetsSize: 24,
     });
   });
 
@@ -186,11 +222,13 @@ describe("locateBunGraph", () => {
       container: "macho",
       offset: macho.graphOffset,
       length: graph.length,
+      offsetsSize: 32,
     });
     await expect(locateBunGraph(reader(pe.bytes))).resolves.toEqual({
       container: "pe",
       offset: pe.graphOffset,
       length: graph.length,
+      offsetsSize: 32,
     });
   });
 
@@ -201,7 +239,30 @@ describe("locateBunGraph", () => {
       container: "legacy",
       offset: fixture.graphOffset,
       length: makeGraph().length,
+      offsetsSize: 32,
     });
+  });
+
+  it("locates a legacy graph with the 24-byte Offsets schema", async () => {
+    const graph = makeGraph(17, 24);
+    const fixture = makeLegacy(graph);
+
+    await expect(locateBunGraph(reader(fixture.bytes))).resolves.toEqual({
+      container: "legacy",
+      offset: fixture.graphOffset,
+      length: graph.length,
+      offsetsSize: 24,
+    });
+  });
+
+  it("rejects a legacy EOF footer that matches both Offsets schemas", async () => {
+    const graph = makeGraph(8, 32);
+    put64(graph, 16, 16);
+    const fixture = makeLegacy(graph);
+
+    await expect(locateBunGraph(reader(fixture.bytes))).rejects.toThrow(
+      /BUN_FORMAT_CHANGED: legacy: EOF footer matches multiple Offsets schemas/,
+    );
   });
 
   it("rejects duplicate .bun sections", async () => {

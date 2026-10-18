@@ -45,11 +45,20 @@ export async function extractRelease(version: string, directory: string, platfor
   if (!existing) {
     const download = await fetch(`${releaseBase}/${version}/${platform}/${artifact.binary}`);
     if (!download.ok || !download.body) throw new Error(`Binary download: HTTP ${download.status}`);
-    const file = await NodeFSP.open(binary, "wx");
+    const partial = `${binary}.partial-${process.pid}`;
+    const file = await NodeFSP.open(partial, "wx");
     try {
       for await (const chunk of download.body) await file.writeFile(chunk);
+      await file.close();
+      if (
+        (await NodeFSP.stat(partial)).size !== artifact.size ||
+        (await binaryHash(partial)) !== artifact.checksum
+      )
+        throw new Error(`Official release checksum mismatch: ${version}/${platform}`);
+      await NodeFSP.rename(partial, binary);
     } finally {
       await file.close();
+      await NodeFSP.rm(partial, { force: true });
     }
   }
   if (

@@ -7,9 +7,27 @@ import * as NodeURL from "node:url";
 import { readBunGraph, regionNames } from "./bun-graph.ts";
 import { cachedReader } from "./range-reader.ts";
 
+export function modulePath(name: string) {
+  const relative = name
+    .replace(/^.*?\/(?:\$bunfs|~BUN)\/root\//, "")
+    .replace(/^B:[\\/]~BUN[\\/]root[\\/]/, "")
+    .replaceAll("\\", "/");
+  if (
+    !relative ||
+    relative.startsWith("/") ||
+    relative.includes(":") ||
+    relative.split("/").some((p) => p === ".." || p === "." || !p) ||
+    relative === "manifest.json" ||
+    relative === ".bun-data" ||
+    relative.startsWith(".bun-data/")
+  )
+    throw new Error(`Unsafe module path: ${name}`);
+  return relative;
+}
+
 export async function extract(binary: string, output: string) {
   const file = await NodeFSP.open(binary, "r");
-  const stage = `${output}.partial-${process.pid}`;
+  let stage: string | undefined;
   try {
     const size = (await file.stat()).size;
     const reader = cachedReader({
@@ -24,24 +42,27 @@ export async function extract(binary: string, output: string) {
     const graph = await readBunGraph(reader);
     const binaryHash = NodeCrypto.createHash("sha256");
     for await (const chunk of NodeFS.createReadStream(binary)) binaryHash.update(chunk);
-    await NodeFSP.mkdir(stage, { recursive: false });
+    stage = await NodeFSP.mkdtemp(`${output}.partial-`);
+    await NodeFSP.mkdir(NodePath.join(stage, ".bun-data"));
+    const graphFile = await NodeFSP.open(NodePath.join(stage, ".bun-data/graph.bin"), "wx");
+    const graphHash = NodeCrypto.createHash("sha256");
+    try {
+      for (let offset = 0; offset < graph.length; offset += 1024 * 1024) {
+        const bytes = await reader.read(
+          graph.offset + offset,
+          Math.min(1024 * 1024, graph.length - offset),
+        );
+        graphHash.update(bytes);
+        await graphFile.writeFile(bytes);
+      }
+    } finally {
+      await graphFile.close();
+    }
     const modules = [];
     const paths = new Set<string>();
     for (const module of graph.modules) {
-      const relative = module.name
-        .replace(/^.*?\/(?:\$bunfs|~BUN)\/root\//, "")
-        .replace(/^B:[\\/]~BUN[\\/]root[\\/]/, "")
-        .replaceAll("\\", "/");
-      if (
-        !relative ||
-        relative.startsWith("/") ||
-        relative.includes(":") ||
-        relative.split("/").some((p) => p === ".." || p === "." || !p) ||
-        relative === "manifest.json" ||
-        relative.startsWith(".bun-data/") ||
-        paths.has(relative)
-      )
-        throw new Error(`Unsafe or colliding module path: ${module.name}`);
+      const relative = modulePath(module.name);
+      if (paths.has(relative)) throw new Error(`Colliding module path: ${module.name}`);
       paths.add(relative);
       const artifacts: Record<string, { path: string; bytes: number; sha256: string }> = {};
       for (const kind of regionNames.slice(1)) {
@@ -62,8 +83,14 @@ export async function extract(binary: string, output: string) {
     const manifest = {
       schemaVersion: 1,
       binary: { bytes: size, sha256: binaryHash.digest("hex") },
+      serializedGraph: {
+        path: ".bun-data/graph.bin",
+        bytes: graph.length,
+        sha256: graphHash.digest("hex"),
+      },
       graph: {
         container: graph.container,
+        offsetsSize: graph.offsetsSize,
         offset: graph.offset,
         length: graph.length,
         byteCount: graph.byteCount,
@@ -83,7 +110,7 @@ export async function extract(binary: string, output: string) {
     await NodeFSP.rename(stage, output);
     return manifest;
   } catch (error) {
-    await NodeFSP.rm(stage, { recursive: true, force: true });
+    if (stage) await NodeFSP.rm(stage, { recursive: true, force: true });
     throw error;
   } finally {
     await file.close();
