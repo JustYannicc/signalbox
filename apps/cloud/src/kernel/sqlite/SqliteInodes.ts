@@ -34,6 +34,9 @@ export class SqliteInodes {
       this.exec(
         "CREATE TABLE IF NOT EXISTS kernel_fs_chunk (ino TEXT NOT NULL, part INTEGER NOT NULL, bin BLOB NOT NULL, PRIMARY KEY (ino, part))",
       );
+      this.exec(
+        "CREATE TABLE IF NOT EXISTS kernel_fs_posix (ino TEXT PRIMARY KEY, mode INTEGER NOT NULL, uid INTEGER NOT NULL, gid INTEGER NOT NULL)",
+      );
       if (!version) {
         this.exec("INSERT INTO kernel_fs_meta (k, v) VALUES ('schema', '1'), ('next_inode', '2')");
         const now = nowNs().toString();
@@ -54,6 +57,9 @@ export class SqliteInodes {
       // Chunks without an inode indicate corruption, not lost handles; leave them intact.
       this.exec(
         "DELETE FROM kernel_fs_chunk WHERE ino IN (SELECT ino FROM kernel_fs_inode WHERE nlink = 0)",
+      );
+      this.exec(
+        "DELETE FROM kernel_fs_posix WHERE ino IN (SELECT ino FROM kernel_fs_inode WHERE nlink = 0)",
       );
       this.exec("DELETE FROM kernel_fs_inode WHERE nlink = 0");
     });
@@ -130,7 +136,12 @@ export class SqliteInodes {
     else this.pins.set(inode, count - 1);
   }
 
-  create(parent: Inode, name: string, options: CreateOptions): Inode {
+  create(
+    parent: Inode,
+    name: string,
+    options: CreateOptions,
+    initialize?: (inode: Inode) => void,
+  ): Inode {
     const result = this.storage.transactionSync(() => {
       validName(name);
       this.directory(parent, true);
@@ -180,6 +191,8 @@ export class SqliteInodes {
         inode.toString(),
       );
       this.parentChanged(parent, options.type === "directory" ? 1 : 0, now);
+      // Initialization must commit before publishing the in-memory pin.
+      initialize?.(inode);
       return { inode, pins: 1 };
     });
     this.pins.set(result.inode, result.pins);
@@ -354,6 +367,7 @@ export class SqliteInodes {
 
   private destroy(inode: Inode): void {
     this.exec("DELETE FROM kernel_fs_chunk WHERE ino = ?", inode.toString());
+    this.exec("DELETE FROM kernel_fs_posix WHERE ino = ?", inode.toString());
     this.exec("DELETE FROM kernel_fs_inode WHERE ino = ?", inode.toString());
   }
 

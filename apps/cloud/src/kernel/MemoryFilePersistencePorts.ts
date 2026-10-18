@@ -6,12 +6,14 @@ import type {
   ForkCommit,
 } from "./FilePersistencePorts.ts";
 import { FILE_CHUNK_BYTES } from "./FacetSqliteStorage.ts";
+import type { PosixMetadata } from "./PosixStorage.ts";
 import type { Stat } from "./storage.ts";
 
 export interface MemoryTreeEntry {
   readonly stat: Readonly<Stat>;
   readonly data: Uint8Array | null;
   readonly symlinkTarget: string | null;
+  readonly posix?: Readonly<PosixMetadata> | null;
 }
 
 export interface MemoryFetchCall {
@@ -58,11 +60,15 @@ const turnKey = (at: ForkCommit, turnId: string): string =>
   JSON.stringify([at.repository, at.fork, at.commit, turnId]);
 
 const cloneStat = (stat: Readonly<Stat>): Stat => ({ ...stat });
+const clonePosix = (posix: Readonly<PosixMetadata>): PosixMetadata => ({ ...posix });
 
 const cloneEntry = (entry: MutableTreeEntry): MemoryTreeEntry => ({
   stat: cloneStat(entry.stat),
   data: entry.data?.slice() ?? null,
   symlinkTarget: entry.symlinkTarget,
+  ...(entry.posix === undefined
+    ? {}
+    : { posix: entry.posix === null ? null : clonePosix(entry.posix) }),
 });
 
 const inspectTree = (
@@ -71,16 +77,7 @@ const inspectTree = (
   Object.fromEntries([...tree].map(([path, entry]) => [path, cloneEntry(entry)]));
 
 const cloneTree = (tree: Map<string, MutableTreeEntry>): Map<string, MutableTreeEntry> =>
-  new Map(
-    [...tree].map(([path, entry]) => [
-      path,
-      {
-        stat: cloneStat(entry.stat),
-        data: entry.data?.slice() ?? null,
-        symlinkTarget: entry.symlinkTarget,
-      } as const,
-    ]),
-  );
+  new Map([...tree].map(([path, entry]) => [path, cloneEntry(entry)]));
 
 const error = (code: "NOT_FOUND" | "STALE_COMMIT" | "CANCELLED" | "IO_ERROR", message: string) =>
   ({ status: "error", error: { code, message } }) as const satisfies FilePersistenceResult<never>;
@@ -277,12 +274,16 @@ export function createMemoryFilePersistencePorts(): MemoryFilePersistenceFixture
               }
               symlinkTarget = changed.symlinkTarget;
             }
+            const posix = changed.posix;
 
             for (const path of changed.paths) {
               staged.set(path, {
                 stat: cloneStat(stat),
                 data: data?.slice() ?? null,
                 symlinkTarget,
+                ...(posix === undefined
+                  ? {}
+                  : { posix: posix === null ? null : clonePosix(posix) }),
               });
             }
           }

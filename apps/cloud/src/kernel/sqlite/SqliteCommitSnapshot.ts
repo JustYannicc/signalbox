@@ -4,7 +4,8 @@ import type {
   FileCommitReceipt,
   ForkCommit,
 } from "../FilePersistencePorts.ts";
-import type { Inode, Stat, Storage } from "../storage.ts";
+import { isPosixMetadata, type PosixMetadata, type PosixStorage } from "../PosixStorage.ts";
+import type { Inode, Stat } from "../storage.ts";
 import { FILE_CHUNK_BYTES } from "./SqliteChunks.ts";
 import { firstRow, type FacetStorage, StorageError } from "./SqliteDatabase.ts";
 
@@ -19,12 +20,19 @@ interface EncodedStat {
   readonly ctimeNs: string;
 }
 
+interface EncodedPosix {
+  readonly mode: number;
+  readonly uid: number;
+  readonly gid: number;
+}
+
 interface SnapshotEntry {
   readonly inode: string;
   readonly paths: readonly string[];
   readonly removedPaths: readonly string[];
   readonly stat: EncodedStat | null;
   readonly symlinkTarget: string | null;
+  readonly posix: EncodedPosix | null;
 }
 
 const encodeStat = (stat: Stat): EncodedStat => ({
@@ -46,6 +54,17 @@ const decodeStat = (value: EncodedStat | null): Stat | null => {
     mtimeNs: BigInt(value.mtimeNs),
     ctimeNs: BigInt(value.ctimeNs),
   };
+};
+
+const encodePosix = (value: Readonly<PosixMetadata>): EncodedPosix => {
+  if (!isPosixMetadata(value)) throw new StorageError("EIO");
+  return { mode: value.mode, uid: value.uid, gid: value.gid };
+};
+
+const decodePosix = (value: unknown): EncodedPosix | null => {
+  if (value === null) return null;
+  if (!isPosixMetadata(value)) throw new StorageError("EIO");
+  return { mode: value.mode, uid: value.uid, gid: value.gid };
 };
 
 function hasCode(error: unknown, code: string): boolean {
@@ -105,12 +124,17 @@ function decodeEntries(value: unknown): SnapshotEntry[] {
       }
       stat = encoded as unknown as EncodedStat;
     }
+    const posix = Object.prototype.hasOwnProperty.call(entry, "posix")
+      ? decodePosix(entry.posix)
+      : null;
+    if (stat === null && posix !== null) throw new StorageError("EIO");
     return {
       inode: entry.inode,
       paths: [...entry.paths] as string[],
       removedPaths: [...entry.removedPaths] as string[],
       stat,
       symlinkTarget: entry.symlinkTarget,
+      posix,
     };
   });
 }
@@ -118,8 +142,8 @@ function decodeEntries(value: unknown): SnapshotEntry[] {
 /** Durable, bounded-memory file snapshots for one turn's remote commit attempt. */
 export class SqliteCommitSnapshot {
   private readonly db: FacetStorage;
-  private readonly fs: Storage;
-  constructor(db: FacetStorage, fs: Storage) {
+  private readonly fs: PosixStorage;
+  constructor(db: FacetStorage, fs: PosixStorage) {
     this.db = db;
     this.fs = fs;
     db.transactionSync(() => {
@@ -226,6 +250,14 @@ export class SqliteCommitSnapshot {
 
         let symlinkTarget: string | null = null;
         if (stat?.type === "symlink") symlinkTarget = this.fs.readlink(item.inode);
+        let posix: EncodedPosix | null = null;
+        if (stat !== null) {
+          try {
+            posix = encodePosix(this.fs.posix.get(item.inode));
+          } catch (error) {
+            if (!hasCode(error, "ENOTSUP")) throw error;
+          }
+        }
         if (stat?.type === "file") {
           this.db.sql.exec(
             "INSERT INTO kernel_fs_commit_snapshot_chunk (turn_id, ino, part, bin) SELECT ?, ino, part, bin FROM kernel_fs_chunk WHERE ino = ?",
@@ -239,6 +271,7 @@ export class SqliteCommitSnapshot {
           removedPaths: [...item.removedPaths],
           stat: stat === null ? null : encodeStat(stat),
           symlinkTarget,
+          posix,
         });
       }
 
@@ -264,6 +297,7 @@ export class SqliteCommitSnapshot {
         removedPaths: Object.freeze([...entry.removedPaths]),
         stat: stat === null ? null : Object.freeze(stat),
         symlinkTarget: entry.symlinkTarget,
+        posix: entry.posix === null ? null : Object.freeze({ ...entry.posix }),
         readChunks: () =>
           this.#readChunks(turnId, entry.inode, stat?.type === "file" ? stat.size : 0n),
       });

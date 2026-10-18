@@ -1,6 +1,6 @@
 // @effect-diagnostics nodeBuiltinImport:off - use native scheduling and clocks; host authority stays explicit.
-import * as NodeProcess from "node:process";
 import * as NodeEvents from "node:events";
+import * as NodeProcess from "node:process";
 
 import { validateNodeProcessHost, type NodeProcessHostContext } from "./node/process/context.ts";
 import { unsupportedNodeOperation } from "./node/process/NodeError.ts";
@@ -129,6 +129,7 @@ function exposeOwnAccessors(target: object, prototype: object, names: readonly s
 class HostProcess extends NodeEvents.EventEmitter {
   readonly env: NodeProcessHostContext["env"];
   readonly argv: string[];
+  readonly execArgv: string[];
   readonly argv0: string;
   readonly execPath: string;
   readonly pid: number;
@@ -153,6 +154,7 @@ class HostProcess extends NodeEvents.EventEmitter {
     this.#host = host;
     this.env = host.env;
     this.argv = [...host.identity.argv];
+    this.execArgv = [...(host.identity.execArgv ?? [])];
     this.argv0 = host.identity.argv0;
     this.execPath = host.identity.execPath;
     this.pid = host.identity.pid;

@@ -15,6 +15,8 @@ export { CodeGeneration } from "./codeGeneration.ts";
 interface ProbeInput {
   id: string;
   path?: string;
+  method?: string;
+  contentType?: string;
   mode?: "facet" | "worker";
   mainModule?: string;
   entrypoint?: string;
@@ -32,6 +34,12 @@ const probeInput = (value: unknown): value is ProbeInput =>
   typeof value.id === "string" &&
   /^[a-zA-Z0-9-]{1,100}$/.test(value.id) &&
   (value.path === undefined || typeof value.path === "string") &&
+  (value.method === undefined ||
+    (typeof value.method === "string" &&
+      /^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/.test(value.method) &&
+      !["CONNECT", "TRACE", "TRACK"].includes(value.method.toUpperCase()))) &&
+  (value.contentType === undefined ||
+    (typeof value.contentType === "string" && !/[\r\n\0]/.test(value.contentType))) &&
   (value.mode === undefined || value.mode === "facet" || value.mode === "worker") &&
   (value.mainModule === undefined || typeof value.mainModule === "string") &&
   (value.entrypoint === undefined || typeof value.entrypoint === "string") &&
@@ -124,6 +132,13 @@ export class ProbeSession extends DurableObject<Env> {
       } catch (error) {
         return rejectedUpload(request, error);
       }
+      const method = input.method ?? "GET";
+      if (
+        upload &&
+        (method.toUpperCase() === "GET" || method.toUpperCase() === "HEAD") &&
+        upload.hasPayload
+      )
+        return new Response("Request body requires a non-GET/HEAD method", { status: 400 });
       try {
         if (input.count !== undefined) {
           if (!Number.isInteger(input.count) || input.count < 1 || input.count > 20) {
@@ -200,7 +215,11 @@ export class ProbeSession extends DurableObject<Env> {
           };
         });
         const invoke = async () => {
-          const probeRequest = new Request(`https://probe.invalid${input.path ?? "/status"}`);
+          const probeRequest = new Request(`https://probe.invalid${input.path ?? "/status"}`, {
+            method,
+            headers: input.contentType === undefined ? {} : { "content-type": input.contentType },
+            body: upload?.readPayload() ?? null,
+          });
           const stub =
             input.mode === "worker"
               ? worker.getEntrypoint(input.entrypoint)
@@ -244,6 +263,11 @@ export default {
     if (!session || !/^[a-zA-Z0-9-]{1,100}$/.test(session)) {
       return new Response("Invalid session", { status: 400 });
     }
-    return env.PROBE.get(env.PROBE.idFromName(session)).fetch(request);
+    try {
+      return await env.PROBE.get(env.PROBE.idFromName(session)).fetch(request);
+    } catch (error) {
+      // Keep native DO failures in the proof evidence instead of an opaque HTML error page.
+      return Response.json({ error: String(error) }, { status: 500 });
+    }
   },
 } satisfies ExportedHandler<Env>;

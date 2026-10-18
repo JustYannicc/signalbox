@@ -27,12 +27,21 @@ beforeAll(async () => {
 import { DurableObject } from "cloudflare:workers";
 import { ModuleUploadStore } from "./moduleUpload.js";
 import { encodeModuleTransport } from "./moduleTransport.js";
+function payloadSummary(bytes) {
+  if (bytes === undefined) return null;
+  const indexes = [0, 1, 65534, 65535, 65536, 65537, 70000];
+  let checksum = 2166136261;
+  for (const byte of bytes) checksum = Math.imul(checksum ^ byte, 16777619) >>> 0;
+  return {byteLength:bytes.byteLength,
+    sample:indexes.filter(index => index < bytes.byteLength).map(index => bytes[index]), checksum};
+}
 export class UploadTest extends DurableObject {
   store = new ModuleUploadStore(this.ctx.storage.sql);
   rows() { return this.ctx.storage.sql.exec("SELECT count(*) AS rows, max(length(data)) AS maxChunk FROM probe_module_upload").one(); }
   async fetch(request) {
     let upload;
     let callbacks = 0;
+    const codeInventories = [];
     try {
       if (new URL(request.url).pathname === "/recovery") {
         let cancellations = 0;
@@ -72,6 +81,12 @@ export class UploadTest extends DurableObject {
         await next.readModules();
         next.dispose();
         result = {overlapping, released};
+      } else if (operation === "payload-disposed") {
+        const bytes = upload.readPayload();
+        upload.dispose();
+        let released;
+        try { upload.readPayload(); } catch(error) { released = String(error); }
+        result = {payload:payloadSummary(bytes), released};
       } else if (operation === "mutate") {
         const first = await upload.readModules();
         first["main.js"].js = "changed";
@@ -84,9 +99,25 @@ export class UploadTest extends DurableObject {
       } else {
         const getCode = async () => {
           callbacks++;
-          return { compatibilityDate:"2026-10-18", mainModule:"main.js",
-            modules:await upload.readModules(), globalOutbound:null };
+          const modules = await upload.readModules();
+          codeInventories.push(Object.keys(modules));
+          const code = { compatibilityDate:"2026-10-18", mainModule:"main.js",
+            modules, globalOutbound:null };
+          return code;
         };
+        if (operation === "payload") {
+          const bytes = upload.readPayload();
+          const payload = payloadSummary(bytes);
+          const worker = this.env.LOADER.get("payload-entry:" + id, getCode);
+          const entry = await (await worker.getEntrypoint().fetch("https://probe.invalid/")).json();
+          const facetWorker = this.env.LOADER.get("payload-facet:" + id, getCode);
+          const facet = this.ctx.facets.get(id, () => ({class:facetWorker.getDurableObjectClass("ProbeFacet")}));
+          const facetResult = await (await facet.fetch("https://probe.invalid/")).json();
+          result = {entry, payload:payload ?? null, hasPayload:upload.hasPayload,
+            facet:facetResult, codeInventories};
+          upload.dispose();
+          return Response.json({result, callbacks, staged, remaining:this.rows().rows});
+        }
         const worker = this.env.LOADER.get("entry:" + id, getCode);
         const entry = await (await worker.getEntrypoint().fetch("https://probe.invalid/")).json();
         // Local workerd can reuse one code callback across both lookups. Distinct cold keys force
@@ -172,7 +203,17 @@ describe("SQL-staged module uploads", () => {
   });
 
   it("replays complete mixed maps for separate entrypoint and facet callbacks, then discards a warm map", async () => {
-    const first = await send("separate-callbacks");
+    const id = "separate-callbacks";
+    const first = await send(
+      id,
+      "execute",
+      encodeModuleTransport(
+        { id, operation: "execute" },
+        modules,
+        {},
+        new Uint8Array([0xff, 0x00, 0x80]),
+      ),
+    );
     expect(first.status).toBe(200);
     expect(await first.json()).toMatchObject({
       callbacks: 2,
@@ -183,10 +224,112 @@ describe("SQL-staged module uploads", () => {
         facet: { answer: 42, length: 70000, calls: 1 },
       },
     });
-    expect(await (await send("separate-callbacks")).json()).toMatchObject({
+    expect(
+      await (
+        await send(
+          id,
+          "execute",
+          encodeModuleTransport({ id, operation: "execute" }, modules, {}, new Uint8Array(0)),
+        )
+      ).json(),
+    ).toMatchObject({
       callbacks: 0,
       remaining: 0,
       result: { facet: { calls: 2 } },
+    });
+  });
+
+  it("reads opaque payload ranges directly from SQLite without adding them to WorkerLoader code", async () => {
+    const binary = Uint8Array.from(
+      { length: 70001 },
+      (_, index) => [0xff, 0x00, 0x80, 0xc3, 0x28][index % 5]!,
+    );
+    const payloadSummary = {
+      byteLength: binary.byteLength,
+      sample: [0, 1, 65534, 65535, 65536, 65537, 70000].map((index) => binary[index]),
+      checksum: binary.reduce((hash, byte) => Math.imul(hash ^ byte, 16777619) >>> 0, 2166136261),
+    };
+    const id = "payload-range";
+    const upload = (payload?: Uint8Array) =>
+      send(
+        id,
+        "payload",
+        encodeModuleTransport({ id, operation: "payload" }, modules, {}, payload),
+      );
+
+    const cold = await upload(binary);
+    expect(cold.status).toBe(200);
+    expect(await cold.json()).toMatchObject({
+      callbacks: 2,
+      remaining: 0,
+      result: {
+        entry: { answer: 42, length: 70000 },
+        payload: payloadSummary,
+        hasPayload: true,
+        codeInventories: [
+          ["main.js", "suspend.wasm", "padding.txt"],
+          ["main.js", "suspend.wasm", "padding.txt"],
+        ],
+        facet: { answer: 42, length: 70000, calls: 1 },
+      },
+    });
+
+    const warm = await upload(new Uint8Array(0));
+    expect(warm.status).toBe(200);
+    expect(await warm.json()).toMatchObject({
+      callbacks: 0,
+      remaining: 0,
+      result: {
+        entry: { answer: 42, length: 70000 },
+        facet: { answer: 42, length: 70000, calls: 2 },
+        payload: {
+          byteLength: 0,
+          sample: [],
+          checksum: 2166136261,
+        },
+        hasPayload: true,
+        codeInventories: [],
+      },
+    });
+
+    const absentId = "payload-absent";
+    const absent = await send(
+      absentId,
+      "payload",
+      encodeModuleTransport({ id: absentId, operation: "payload" }, modules),
+    );
+    expect(await absent.json()).toMatchObject({
+      callbacks: 2,
+      remaining: 0,
+      result: { payload: null, hasPayload: false, facet: { calls: 1 } },
+    });
+  });
+
+  it("keeps direct payload reads behind the same disposal guard", async () => {
+    const id = "payload-disposed";
+    const response = await send(
+      id,
+      "payload-disposed",
+      encodeModuleTransport(
+        { id, operation: "payload-disposed" },
+        [],
+        {},
+        new Uint8Array([0xff, 0x00, 0x80]),
+      ),
+    );
+    expect(await response.json()).toMatchObject({
+      result: {
+        payload: {
+          byteLength: 3,
+          sample: [0xff, 0x00],
+          checksum: [0xff, 0x00, 0x80].reduce(
+            (hash, byte) => Math.imul(hash ^ byte, 16777619) >>> 0,
+            2166136261,
+          ),
+        },
+        released: "Error: Staged module upload has been released",
+      },
+      remaining: 0,
     });
   });
 
@@ -233,6 +376,24 @@ describe("SQL-staged module uploads", () => {
       expect(response.status).toBe(400);
       expect(await response.json()).toMatchObject({ callbacks: 0, remaining: 0 });
       expect((await send(`after-${failure}`)).status).toBe(200);
+    },
+  );
+
+  it.each(["truncated", "trailing"] as const)(
+    "removes partial SQLite staging when a %s payload is rejected",
+    async (failure) => {
+      const id = `malformed-payload-${failure}`;
+      const input = { id, operation: "payload" };
+      const payload = new Uint8Array([0xff, 0x00, 0x80]);
+      const frame = new Uint8Array(
+        await new Response(encodeModuleTransport(input, modules, {}, payload)).arrayBuffer(),
+      );
+      const damaged =
+        failure === "truncated" ? frame.subarray(0, -1) : new Uint8Array([...frame, 0]);
+      const response = await send(id, "payload", new Response(damaged).body!);
+      expect(response.status).toBe(400);
+      expect(await response.json()).toMatchObject({ callbacks: 0, remaining: 0 });
+      expect((await send(`after-payload-${failure}`)).status).toBe(200);
     },
   );
 });
