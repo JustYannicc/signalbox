@@ -93,6 +93,14 @@ export function createAutomationAtoms<R, E>(
     }),
     list,
     lists,
+    /**
+     * The block each name resolves to from one folder's files, nearest level
+     * first, then built-ins. Input `{ projectId }`.
+     */
+    blocks: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:automations:blocks",
+      tag: AUTOMATION_WS_METHODS.automationsListBlocks,
+    }),
     /** How many automations wait on an answer across `lists(key)`; a number, so badges only redraw when it changes. */
     waitingCount: Atom.family((key: string) =>
       Atom.make((get) =>

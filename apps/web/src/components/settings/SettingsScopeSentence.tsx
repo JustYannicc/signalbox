@@ -48,6 +48,7 @@ export const SETTINGS_DEVICE_ONLY_PATHS: ReadonlySet<string> = new Set([
   "/settings/connections",
   "/settings/sign-in", // signalbox: the person's own grants, under no project
   "/settings/trash", // signalbox: the person's own Trash, under no project
+  "/settings/blocks", // signalbox: looks from a folder, not a project or checkout
 ]);
 
 interface SettingsScopeMenuProps {
