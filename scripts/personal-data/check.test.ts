@@ -100,6 +100,16 @@ describe("scanLines", () => {
     ]);
   });
 
+  it("accepts pnpm patch filenames while still checking addresses on the same line", () => {
+    expect(
+      scanLines(
+        line(`patches/${at}lunora__do${at}1.0.0-alpha.218.patch contact${at}realmail.ch`),
+        ALLOWLIST,
+        [],
+      ),
+    ).toEqual([{ kind: "email", file: "f.ts", line: 1, domain: "realmail.ch" }]);
+  });
+
   it("matches denylist terms as whole words, case-insensitively, reporting only the index", () => {
     const denylist = parseDenylist("# comment\n\nAcme Corp\n*globex\n");
 

@@ -1,0 +1,9 @@
+{
+  "main": "worker.ts",
+  "compatibility_date": "2026-10-01",
+  "compatibility_flags": ["nodejs_compat"],
+  "durable_objects": {
+    "bindings": [{ "name": "SHARD", "class_name": "SyncProbeShard" }],
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["SyncProbeShard"] }],
+}

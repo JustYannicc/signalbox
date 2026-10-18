@@ -26,3 +26,7 @@ a@b.co
 
 # pnpm patch filename in scripts/setup-worktree.ts, not a mailbox.
 react-native-ai__apple@0.12.0.patch
+
+# Placeholder mailboxes in the published Lunora distribution patches.
+noreply@lunora.sh
+test@lunora.sh
