@@ -71,6 +71,7 @@ const setup = (
         launch: async () => ({ _tag: "not_found" }),
         commandOutput: async () => null,
         snapshot: async () => ({ _tag: "not_found" }),
+        workspace: async () => ({ _tag: "not_found" }),
         terminalOpen: async () => ({ _tag: "not_found" }),
         terminalWrite: async () => ({ _tag: "not_found" }),
         terminalClose: async () => ({ _tag: "not_found" }),

@@ -31,6 +31,7 @@ import { type Actor, ThreadCommandRejectedError, ThreadNotFoundError } from "../
 import type { ThreadCreation } from "../ThreadEngine.ts";
 import * as Threads from "../Threads.ts";
 import { resuming } from "./resuming.ts";
+import { makeWorkspaceRefresh } from "./remoteWorkspace.ts";
 
 type Batch = ReadonlyArray<OrchestrationV2ThreadStreamItem>;
 
@@ -125,6 +126,13 @@ export const makeThreads = Effect.gen(function* () {
   const attachments = yield* CloudAttachments;
   const kindTurns = yield* ThreadKindTurns;
 
+  const refreshWorkspace = makeWorkspaceRefresh({ directory, threadContexts, crypto });
+
+  const refreshRemoteWorkspace: Threads.Threads["Service"]["refreshRemoteWorkspace"] = (
+    actor,
+    threadId,
+  ) => Effect.asVoid(refreshWorkspace(actor, threadId));
+
   /** The thread's turn from its home's chain, with its kind's level and the status line's last on it. */
   const turnOf = (
     threadId: ThreadId,
@@ -180,6 +188,12 @@ export const makeThreads = Effect.gen(function* () {
           type: command.type,
         });
       }
+      if (
+        command.type !== "thread.create" &&
+        (PICKS_A_POOL.has(command.type) || command.type === "queue.resume")
+      ) {
+        yield* refreshRemoteWorkspace(actor, threadId);
+      }
       const creation = placed(place, threadId, turn);
       if (
         command.type !== "message.dispatch" &&
@@ -222,6 +236,11 @@ export const makeThreads = Effect.gen(function* () {
         id: input.commandId,
         type: "thread.launch",
       });
+      if (input.reuseExistingThread === true && input.threadId !== undefined) {
+        yield* refreshRemoteWorkspace(actor, input.threadId).pipe(
+          Effect.catchTags({ ThreadNotFoundError: () => Effect.void }),
+        );
+      }
       // Receipts live in the thread's object, so a launch without an id needs
       // the same id on every retry: derive it from who launched and the command id.
       const threadId =
@@ -295,7 +314,12 @@ export const makeThreads = Effect.gen(function* () {
 
   const threadSnapshot: Threads.Threads["Service"]["snapshot"] = (actor, threadId) =>
     Effect.map(
-      directory.forThread(threadId).snapshot(actor),
+      Effect.gen(function* () {
+        const handle = directory.forThread(threadId);
+        const snapshot = yield* handle.snapshot(actor);
+        const adopted = yield* refreshWorkspace(actor, threadId, snapshot.projection.thread);
+        return adopted ? yield* handle.snapshot(actor) : snapshot;
+      }).pipe(Effect.catchTags({ ThreadCommandRejectedError: Effect.die })),
       ({ snapshotSequence, projection }) => ({
         snapshotSequence,
         projection,
@@ -319,6 +343,9 @@ export const makeThreads = Effect.gen(function* () {
   const subscribeThread: Threads.Threads["Service"]["subscribe"] = (actor, input) =>
     Stream.unwrap(
       Effect.gen(function* () {
+        yield* refreshRemoteWorkspace(actor, input.threadId).pipe(
+          Effect.catchTags({ ThreadCommandRejectedError: Effect.die }),
+        );
         const handle = directory.forThread(input.threadId);
         const cursor = yield* Ref.make(input.afterSequence);
         yield* traceSynchronization("connecting", {
@@ -378,6 +405,7 @@ export const makeThreads = Effect.gen(function* () {
     stopWorkflow: (actor, input) => directory.forThread(input.threadId).stopWorkflow(actor, input),
     launch: launchThread,
     dispatch: dispatchCommand,
+    refreshRemoteWorkspace,
     snapshot: threadSnapshot,
     history: threadHistoryPage,
     subscribe: subscribeThread,

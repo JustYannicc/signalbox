@@ -573,6 +573,10 @@ export class UserObject extends DurableObject<UserObjectEnv> implements UserObje
     return this.api.completeGitHubConnect(grantId);
   }
 
+  cancelGitHubConnect(grantId: string) {
+    return this.api.cancelGitHubConnect(grantId);
+  }
+
   abortGitHubConnect(grantId: string) {
     return this.api.abortGitHubConnect(grantId);
   }

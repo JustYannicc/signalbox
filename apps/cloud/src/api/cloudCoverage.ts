@@ -62,7 +62,6 @@ export const CLOUD_UNSERVED: Readonly<Record<string, Unserved>> = {
 
   // Git beyond the thread's own branch.
   "sourceControl.cloneRepository": githubImports,
-  "sourceControl.publishRepository": gap("#810"),
 
   // Files in folders without a machine.
   "projects.writeFile": gap("#439"),

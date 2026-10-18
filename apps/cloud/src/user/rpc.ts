@@ -120,6 +120,7 @@ import { CloudAttachments } from "../attachments/CloudAttachments.ts";
 import * as Environment from "../environment.ts";
 import * as GitHubActions from "../github/GitHubActions.ts";
 import * as GitHubBranches from "../github/GitHubBranches.ts";
+import { makeRepositoryPublication } from "../github/GitHubRepositoryPublication.ts";
 import * as CloudPullRequests from "../github/CloudPullRequestsService.ts";
 import { makeGitHubImport } from "../github/GitHubImport.ts";
 import * as DriveBrowsing from "./driveBrowsing.ts";
@@ -245,6 +246,7 @@ const SERVED = [
   // GitHub repositories as drives (`github/`): import, branch status, push and pull requests.
   WS_METHODS.serverDiscoverSourceControl,
   WS_METHODS.sourceControlLookupRepository,
+  WS_METHODS.sourceControlPublishRepository,
   WS_METHODS.projectCloneStart,
   WS_METHODS.projectCloneCancel,
   WS_METHODS.projectCloneRetry,
@@ -363,6 +365,7 @@ const REQUIRED_SCOPES = {
   [WS_METHODS.attachmentsDelete]: AuthOrchestrationOperateScope,
   [WS_METHODS.serverDiscoverSourceControl]: AuthOrchestrationReadScope,
   [WS_METHODS.sourceControlLookupRepository]: AuthOrchestrationReadScope,
+  [WS_METHODS.sourceControlPublishRepository]: AuthSourceControlWriteScope,
   [WS_METHODS.projectCloneStart]: AuthSourceControlWriteScope,
   [WS_METHODS.projectCloneCancel]: AuthSourceControlWriteScope,
   [WS_METHODS.projectCloneRetry]: AuthSourceControlWriteScope,
@@ -580,6 +583,7 @@ export const layerHandlers = (input: {
       );
       const drives = yield* DriveBrowsing.makeDriveBrowsing(userId, actorNow);
       const githubImport = yield* makeGitHubImport();
+      const publishRepository = yield* makeRepositoryPublication(userDrives.access);
       const browsing = yield* makeBrowsingHandlers({
         actorNow,
         you: yield* deviceMember(userId, input.sid),
@@ -963,6 +967,8 @@ export const layerHandlers = (input: {
         [WS_METHODS.attachmentsDelete]: (request) =>
           attachments.deletePending(userId, request.attachmentId),
         [WS_METHODS.serverDiscoverSourceControl]: () => githubImport.discover,
+        [WS_METHODS.sourceControlPublishRepository]: (request) =>
+          Effect.flatMap(actorNow, (actor) => publishRepository(actor, request)),
         [WS_METHODS.sourceControlLookupRepository]: (request) =>
           githubImport.lookup(request.repository),
         [SIGNALBOX_REPOSITORIES_WS_METHODS.list]: (request) => githubImport.list(request.provider),

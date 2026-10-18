@@ -45,6 +45,7 @@ export class ThreadContexts extends Context.Service<
      */
     readonly placeOfProject: (
       projectId: ProjectId,
+      options?: { readonly remoteOnly: true },
     ) => Effect.Effect<ThreadPlace | null, ThreadFolderTrashedError>;
     readonly initialModelSelection: (
       projectId: ProjectId | null,

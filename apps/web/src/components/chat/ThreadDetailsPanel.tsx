@@ -28,6 +28,7 @@ import { ThreadSkippedFoldersRow } from "../threadMachineState/ThreadSkippedFold
 import { TaskLifecycleControl } from "../taskLifecycle/TaskLifecycleControl"; // signalbox: task lifecycle
 import { ThreadStatusLineSection } from "../statusLine/ThreadStatusLineSection"; // signalbox: status line
 import { useEnvironmentSupports } from "../../state/environmentCapabilities"; // signalbox
+import { PublishFolderSection } from "../drives/PublishFolderSection"; // signalbox: #810
 
 const GitActionsControl = memo(BaseGitActionsControl);
 
@@ -76,8 +77,8 @@ export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
     props.activeProjectScripts ? props.gitCwd : null,
   );
   const activeThreadRef = { environmentId: props.environmentId, threadId: props.threadId };
-  // signalbox: without worktrees a folder that isn't a repository never becomes one here
-  // (repositories are imported), so it has no version control to show.
+  // signalbox: without worktrees a folder that isn't a repository can't initialize git here;
+  // the only way in is publishing a cloud folder to GitHub (`PublishFolderSection`).
   const worktreesSupported = useEnvironmentSupports(props.environmentId, "worktrees");
   const branchToolbarProps = {
     showGitControls: props.isGitRepo,
@@ -201,6 +202,14 @@ export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
                 ) : null}
               </div>
             </ThreadDetailsSection>
+          ) : props.gitCwd && !props.isGitRepo ? ( // signalbox: publish a cloud folder (#810)
+            <PublishFolderSection
+              environmentId={props.environmentId}
+              threadId={props.threadId}
+              draftId={props.draftId}
+              gitCwd={props.gitCwd}
+              separated={density === "full"}
+            />
           ) : null}
 
           {density === "full" && !props.draftId ? (

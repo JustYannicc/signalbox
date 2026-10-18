@@ -31,6 +31,10 @@
       "types": "./src/account.ts",
       "import": "./src/account.ts"
     },
+    "./signalboxGitHubConnect": {
+      "types": "./src/signalboxGitHubConnect.ts",
+      "import": "./src/signalboxGitHubConnect.ts"
+    },
     "./accountHub": {
       "types": "./src/accountHub.ts",
       "import": "./src/accountHub.ts"

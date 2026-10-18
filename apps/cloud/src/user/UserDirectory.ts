@@ -188,6 +188,7 @@ export interface UserObjectApi {
     readonly returnTo: string;
   }) => Promise<ConnectStart>;
   readonly completeGitHubConnect: (grantId: string) => Promise<ConnectResult>;
+  readonly cancelGitHubConnect: (grantId: string) => Promise<boolean>;
   /** Ends a connect attempt that came back in another browser, and what it connected. */
   readonly abortGitHubConnect: (grantId: string) => Promise<void>;
   readonly disconnectGitHub: () => Promise<void>;
@@ -386,6 +387,7 @@ const METHODS = Object.keys({
   rebuildThreadIndex: true,
   beginGitHubConnect: true,
   completeGitHubConnect: true,
+  cancelGitHubConnect: true,
   abortGitHubConnect: true,
   disconnectGitHub: true,
   githubAccessToken: true,

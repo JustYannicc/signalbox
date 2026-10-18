@@ -68,6 +68,7 @@ import {
   type LaunchInputWire,
   type ThreadMonitor,
   type ThreadObjectReply,
+  type ThreadWorkspace,
   wire,
 } from "./threadWire.ts";
 
@@ -170,6 +171,7 @@ export interface ThreadObjectApi extends TerminalObjectApi {
     input: WorktreeSetupCancelInput,
   ) => Promise<ThreadObjectReply<{ readonly cancelled: boolean }>>;
   readonly snapshot: (actor: Actor) => Promise<ThreadObjectReply<unknown>>;
+  readonly workspace: (actor: Actor) => Promise<ThreadObjectReply<unknown>>;
   /** Newline-delimited JSON batches, or null when the actor cannot see the thread. */
   readonly subscribe: (actor: Actor, input: unknown) => Promise<ReadableStream<Uint8Array> | null>;
   readonly commandOutput: (
@@ -338,6 +340,9 @@ export interface ThreadHandle extends TerminalHandle {
   readonly snapshot: (
     actor: Actor,
   ) => Effect.Effect<ThreadSnapshot, ThreadNotFoundError | ThreadObjectError>;
+  readonly workspace: (
+    actor: Actor,
+  ) => Effect.Effect<ThreadWorkspace, ThreadNotFoundError | ThreadObjectError>;
   /** One subscription. Ends when the object goes away; resuming is the caller's job. */
   readonly subscribe: (
     actor: Actor,
@@ -615,6 +620,12 @@ export function handleFor(api: ThreadObjectApi): ThreadHandle {
         // Reads decide no command, so a rejection here is a protocol bug.
         Effect.catchTags({ ThreadCommandRejectedError: (error) => Effect.die(error) }),
         Effect.flatMap((value) => decodeIn("snapshot", () => wire.snapshot.decode(value))),
+      ),
+    workspace: (actor) =>
+      call("workspace", () => api.workspace(actor)).pipe(
+        Effect.flatMap(fromReply),
+        Effect.catchTags({ ThreadCommandRejectedError: Effect.die }),
+        Effect.flatMap((value) => decodeIn("workspace", () => wire.workspace.decode(value))),
       ),
     backfill: (actor, requestKey) =>
       call("backfill", () => api.backfill(actor, requestKey)).pipe(
