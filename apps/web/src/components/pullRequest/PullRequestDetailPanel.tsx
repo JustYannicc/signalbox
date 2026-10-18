@@ -1,5 +1,6 @@
 import { parseChangeRequestUrl } from "@t3tools/shared/changeRequestUrl";
 import { useAtomValue } from "@effect/atom-react";
+import { useNavigate } from "@tanstack/react-router";
 import { usePullRequestStack } from "~/state/usePullRequestStack";
 import { RefreshIcon } from "~/components/ui/refresh-icon";
 import { AnimatedWidth } from "~/components/AnimatedWidth";
@@ -898,6 +899,7 @@ export function PullRequestDetailPanel({
   const titleDraft = titleScope?.pullRequestKey === pullRequestKey ? titleScope.text : null;
   const [titleSaving, setTitleSaving] = useState(false);
   const newThread = useNewThreadHandler();
+  const navigate = useNavigate();
   const { environments } = useEnvironments();
   const pickableEnvironments =
     context === "page"
@@ -1208,6 +1210,7 @@ export function PullRequestDetailPanel({
       task,
       hostCheckout,
       newThread,
+      navigate,
       prepare: prepareThread.run,
       writeTask: writeTaskToComposer,
     });
@@ -1517,7 +1520,9 @@ export function PullRequestDetailPanel({
           ) : null}
         </MenuPopup>
       </Menu>
-    ) : context === "page" && canPrepareThread ? (
+    ) : !canCheckOut && canPrepareThread ? (
+      // A cloud thread carries its own copy of the pull request, so another one is just as
+      // useful beside a thread that already works on it.
       <Tooltip>
         <TooltipTrigger
           render={
@@ -1535,7 +1540,11 @@ export function PullRequestDetailPanel({
             </Button>
           }
         />
-        <TooltipPopup>Start a thread on this pull request's latest commit</TooltipPopup>
+        <TooltipPopup>
+          {context === "thread"
+            ? "Start another thread on this pull request's latest commit"
+            : "Start a thread on this pull request's latest commit"}
+        </TooltipPopup>
       </Tooltip>
     ) : null;
 

@@ -9,6 +9,7 @@ import type {
   PullRequestMergeMethod,
   PullRequestRef,
 } from "@t3tools/contracts";
+import { useNavigate } from "@tanstack/react-router";
 import { useRef, useState } from "react";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import { useClientSettings, useEnvironmentSettings } from "~/hooks/useSettings";
@@ -232,6 +233,7 @@ export function usePullRequestHandoffs({
   detail: PullRequestHandoffDetail | null;
 }) {
   const newThread = useNewThreadHandler();
+  const navigate = useNavigate();
   const prepareThread = usePreparePullRequestThreadAction({
     environmentId,
     cwd: detail?.workspaceRoot ?? null,
@@ -316,6 +318,7 @@ export function usePullRequestHandoffs({
       task,
       hostCheckout,
       newThread,
+      navigate,
       prepare: prepareThread.run,
       writeTask: writeTaskToDraft,
     });

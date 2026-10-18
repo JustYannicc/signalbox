@@ -1,18 +1,60 @@
-import type { ScopedProjectRef } from "@t3tools/contracts";
+import type { ScopedProjectRef, ThreadId } from "@t3tools/contracts";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import {
   pullRequestThreadPreparationOperationId,
   resolvePreparedPullRequestThread,
 } from "@t3tools/client-runtime/state/pull-request-thread-preparation";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
+import type { useNavigate } from "@tanstack/react-router";
 
-import type { DraftId } from "~/composerDraftStore";
+import { useComposerDraftStore, type DraftId } from "~/composerDraftStore";
 import type { useNewThreadHandler } from "~/hooks/useHandleNewThread";
 import type { usePreparePullRequestThreadAction } from "~/lib/sourceControlActions";
 import type { ReviewCommentContext } from "~/reviewCommentContext";
-import { waitForThreadShell } from "~/state/entities";
+import { readThreadShell, waitForThreadShell } from "~/state/entities";
+import { buildThreadRouteParams } from "~/threadRoutes";
 
 import { toastManager } from "../ui/toast";
+
+interface OpenedDraft {
+  readonly draftId: DraftId;
+  readonly threadId: ThreadId;
+}
+
+/**
+ * The draft each unanswered preparation was asked for, until the environment answers. A failure
+ * can mean the cloud made the thread and only the reply was lost; the shell then adopts the
+ * draft, so the project's next draft is a different one, and asking again under it would make a
+ * second thread. A retry asks again for the same thread under the same operation id instead, and
+ * concurrent callers share the one open. Memory only: a reload starts over, like any draft does.
+ */
+const unansweredPreparations = new Map<string, Promise<OpenedDraft | null>>();
+
+function preparationKey(input: {
+  readonly projectRef: ScopedProjectRef;
+  readonly reference: string;
+  readonly mode: string;
+}): string {
+  return JSON.stringify([
+    input.projectRef.environmentId,
+    input.projectRef.projectId,
+    input.mode,
+    input.reference,
+  ]);
+}
+
+/**
+ * An unanswered preparation stops being worth repeating once its draft is gone without a thread,
+ * or its thread has had a turn: the environment refuses a used thread, so repeating would pin
+ * every later attempt to that refusal.
+ */
+function stillRepeatable(projectRef: ScopedProjectRef, opened: OpenedDraft): boolean {
+  const shell = readThreadShell(scopeThreadRef(projectRef.environmentId, opened.threadId));
+  if (shell === null) {
+    return useComposerDraftStore.getState().getDraftSession(opened.draftId) !== null;
+  }
+  return shell.latestRun === null && shell.latestUserMessageAt === null;
+}
 
 export interface PullRequestThreadTask {
   prompt: string;
@@ -51,6 +93,7 @@ export async function runPullRequestThreadHandoff(input: {
   /** The environment's filesystem is a machine the user reaches (`localFilesystem`). */
   readonly hostCheckout: boolean;
   readonly newThread: ReturnType<typeof useNewThreadHandler>;
+  readonly navigate: ReturnType<typeof useNavigate>;
   readonly prepare: ReturnType<typeof usePreparePullRequestThreadAction>["run"];
   readonly writeTask: (draftId: DraftId, task: PullRequestThreadTask) => void;
 }): Promise<void> {
@@ -61,11 +104,35 @@ export async function runPullRequestThreadHandoff(input: {
   const toastId = toastManager.add({ type: "loading", title: copy.preparing });
   // The draft comes first: its thread id is what the environment prepares, so a self-hosted
   // setup script knows which thread the checkout is for, and the cloud makes that very thread.
-  const opened = await newThread(projectRef).then(
-    (session) => session,
-    () => null,
-  );
+  const key = preparationKey(input);
+  const unanswered = unansweredPreparations.get(key) ?? null;
+  const repeated = unanswered === null ? null : await unanswered;
+  const repeating = repeated !== null && stillRepeatable(projectRef, repeated);
+  const opening =
+    repeating && unanswered !== null
+      ? unanswered
+      : newThread(projectRef).then(
+          (session) => session,
+          () => null,
+        );
+  unansweredPreparations.set(key, opening);
+  const forget = () => {
+    if (unansweredPreparations.get(key) === opening) unansweredPreparations.delete(key);
+  };
+  const opened = await opening;
+  if (repeating && opened !== null) {
+    // The first attempt opened this draft; bring the reader back to it, or to the thread the
+    // environment already made from it, without asking for another draft.
+    const threadRef = scopeThreadRef(projectRef.environmentId, opened.threadId);
+    await (readThreadShell(threadRef) !== null
+      ? input.navigate({
+          to: "/$environmentId/$threadId",
+          params: buildThreadRouteParams(threadRef),
+        })
+      : input.navigate({ to: "/draft/$draftId", params: { draftId: opened.draftId } }));
+  }
   if (opened === null) {
+    forget();
     toastManager.update(toastId, {
       type: "error",
       title: copy.openFailed,
@@ -73,8 +140,8 @@ export async function runPullRequestThreadHandoff(input: {
     });
     return;
   }
-  // A retry reuses the same empty draft, so the same request repeats under the same id and the
-  // environment answers from its receipt instead of preparing twice.
+  // A retry repeats the same request under the same id, so the environment answers from its
+  // receipt instead of preparing twice.
   const prepared = await input.prepare({
     reference,
     mode,
@@ -94,6 +161,7 @@ export async function runPullRequestThreadHandoff(input: {
     });
     return;
   }
+  forget();
   const outcome = resolvePreparedPullRequestThread(opened.threadId, prepared.value);
 
   if (outcome.kind === "mismatch") {
