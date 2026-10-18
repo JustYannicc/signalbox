@@ -18,6 +18,8 @@ import {
   OrchestrationGetFullThreadDiffError,
   OrchestrationGetTurnDiffError,
   OrchestrationV2DispatchCommandError,
+  OrchestrationGetWorkflowScriptError,
+  OrchestrationV2StopWorkflowError,
   OrchestrationV2CommandOutputError,
   OrchestrationV2GetShellSnapshotError,
   OrchestrationV2GetThreadProjectionError,
@@ -184,6 +186,7 @@ const SERVED = [
   WS_METHODS.serverGetConfig,
   WS_METHODS.serverUpdateSettings,
   WS_METHODS.serverProbe,
+  WS_METHODS.secretsAnswerRequest,
   WS_METHODS.serverReportClientActivity,
   WS_METHODS.subscribeServerLifecycle,
   ORCHESTRATION_V2_WS_METHODS.subscribeShell,
@@ -194,6 +197,8 @@ const SERVED = [
   ORCHESTRATION_V2_WS_METHODS.subscribeThread,
   ORCHESTRATION_V2_WS_METHODS.subscribeCommandOutput,
   ORCHESTRATION_V2_WS_METHODS.getThreadProjection,
+  ORCHESTRATION_V2_WS_METHODS.getWorkflowScript,
+  ORCHESTRATION_V2_WS_METHODS.stopWorkflow,
   // Images tools returned in a thread and attachments (`assets/CloudAssets.ts`).
   WS_METHODS.assetsCreateUrl,
   WS_METHODS.projectsEnsureScratch,
@@ -286,6 +291,7 @@ const REQUIRED_SCOPES = {
   ...ANALYTICS_REQUIRED_SCOPES,
   ...PERSON_TIMEZONE_REQUIRED_SCOPES,
   [WS_METHODS.serverProbe]: AuthOrchestrationReadScope,
+  [WS_METHODS.secretsAnswerRequest]: AuthOrchestrationOperateScope,
   [WS_METHODS.serverReportClientActivity]: AuthOrchestrationReadScope,
   [WS_METHODS.subscribeServerLifecycle]: AuthOrchestrationReadScope,
   [ORCHESTRATION_V2_WS_METHODS.subscribeShell]: AuthOrchestrationReadScope,
@@ -296,6 +302,8 @@ const REQUIRED_SCOPES = {
   [ORCHESTRATION_V2_WS_METHODS.subscribeThread]: AuthOrchestrationReadScope,
   [ORCHESTRATION_V2_WS_METHODS.subscribeCommandOutput]: AuthOrchestrationReadScope,
   [ORCHESTRATION_V2_WS_METHODS.getThreadProjection]: AuthOrchestrationReadScope,
+  [ORCHESTRATION_V2_WS_METHODS.getWorkflowScript]: AuthOrchestrationReadScope,
+  [ORCHESTRATION_V2_WS_METHODS.stopWorkflow]: AuthOrchestrationOperateScope,
   // A cloud serves only tool output images, which a self-hosted server gates on this scope.
   [WS_METHODS.assetsCreateUrl]: AuthOrchestrationReadScope,
   [WS_METHODS.projectsEnsureScratch]: AuthOrchestrationOperateScope,
@@ -623,6 +631,8 @@ export const layerHandlers = (input: {
         [WS_METHODS.subscribeServerConfig]: (request) => pools.configStream(request),
         [WS_METHODS.serverGetConfig]: () => pools.configNow,
         [WS_METHODS.serverProbe]: () => Effect.succeed({}),
+        [WS_METHODS.secretsAnswerRequest]: (request) =>
+          Effect.flatMap(actorNow, (actor) => threads.answerSecret(actor, request)),
         [WS_METHODS.serverReportClientActivity]: () => Effect.void,
         [WS_METHODS.subscribeServerLifecycle]: () =>
           Stream.unwrap(
@@ -720,6 +730,38 @@ export const layerHandlers = (input: {
                   message: failureMessage(error),
                 }),
             ),
+          ),
+        [ORCHESTRATION_V2_WS_METHODS.getWorkflowScript]: (request) =>
+          Effect.flatMap(actorNow, (actor) => coreThreads.getWorkflowScript(actor, request)).pipe(
+            Effect.catchTags({
+              ThreadNotFoundError: () =>
+                Effect.fail(
+                  new OrchestrationGetWorkflowScriptError({
+                    reason: "not-found",
+                    scriptPath: request.scriptPath,
+                  }),
+                ),
+              ThreadObjectError: () =>
+                Effect.fail(
+                  new OrchestrationGetWorkflowScriptError({
+                    reason: "read-failed",
+                    scriptPath: request.scriptPath,
+                  }),
+                ),
+            }),
+          ),
+        [ORCHESTRATION_V2_WS_METHODS.stopWorkflow]: (request) =>
+          Effect.flatMap(actorNow, (actor) => coreThreads.stopWorkflow(actor, request)).pipe(
+            Effect.catchTags({
+              ThreadNotFoundError: () =>
+                Effect.fail(
+                  new OrchestrationV2StopWorkflowError({ ...request, reason: "unavailable" }),
+                ),
+              ThreadObjectError: () =>
+                Effect.fail(
+                  new OrchestrationV2StopWorkflowError({ ...request, reason: "unavailable" }),
+                ),
+            }),
           ),
         [ORCHESTRATION_V2_WS_METHODS.subscribeCommandOutput]: (request) =>
           Stream.unwrap(

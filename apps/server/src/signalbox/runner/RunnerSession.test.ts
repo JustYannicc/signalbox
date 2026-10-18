@@ -5,7 +5,14 @@ import type {
   RunnerTurn,
   ThreadMessage,
 } from "@signalbox/runner-protocol/RunnerProtocol";
-import { RunId, ThreadId } from "@t3tools/contracts";
+import {
+  NodeId,
+  ProviderSessionId,
+  RunAttemptId,
+  RunId,
+  RuntimeRequestId,
+  ThreadId,
+} from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -35,8 +42,11 @@ const item = (label: string): RunnerItem => ({
  */
 const makeFakeThread = Effect.gen(function* () {
   const committed = yield* Ref.make<ReadonlyArray<RunnerItem>>([]);
+  const welcomed = yield* Deferred.make<void>();
   const acked = yield* Ref.make(0);
   const hellos = yield* Ref.make<ReadonlyArray<number>>([]);
+  const workflowStopCapabilities = yield* Ref.make<ReadonlyArray<boolean | undefined>>([]);
+  const runtimeResponseCapabilities = yield* Ref.make<ReadonlyArray<boolean | undefined>>([]);
   const helloPulls = yield* Deferred.make<boolean>();
   /** The runs each `hello` said its process holds. */
   const helloRuns = yield* Ref.make<ReadonlyArray<ReadonlyArray<RunId> | undefined>>([]);
@@ -61,6 +71,11 @@ const makeFakeThread = Effect.gen(function* () {
             case "hello":
               yield* Deferred.succeed(helloPulls, message.pulls === true);
               yield* Ref.update(hellos, (all) => [...all, message.lastAckedSequence]);
+              yield* Ref.update(workflowStopCapabilities, (all) => [...all, message.workflowStops]);
+              yield* Ref.update(runtimeResponseCapabilities, (all) => [
+                ...all,
+                message.runtimeResponses,
+              ]);
               yield* Ref.update(helloRuns, (all) => [...all, message.takenRunIds]);
               yield* reply({
                 type: "welcome",
@@ -68,6 +83,7 @@ const makeFakeThread = Effect.gen(function* () {
                 ackedSequence: yield* Ref.get(acked),
                 activeRunId: runId,
               });
+              yield* Deferred.succeed(welcomed, undefined);
               return;
             case "batch": {
               const last = yield* Ref.get(acked);
@@ -93,13 +109,28 @@ const makeFakeThread = Effect.gen(function* () {
       inbox === null ? Effect.void : Effect.asVoid(Queue.offer(inbox, message)),
     );
 
-  return { transport, committed, acked, hellos, helloPulls, helloRuns, dropAfterCommit, toCurrent };
+  return {
+    transport,
+    welcomed,
+    committed,
+    acked,
+    hellos,
+    workflowStopCapabilities,
+    runtimeResponseCapabilities,
+    helloPulls,
+    helloRuns,
+    dropAfterCommit,
+    toCurrent,
+  };
 });
 
 /** A harness whose reports the test writes by hand. */
 const makeFakeTurns = Effect.gen(function* () {
   const emitRef = yield* Deferred.make<(item: RunnerItem) => Effect.Effect<void>>();
   const startedTurns = yield* Ref.make<ReadonlyArray<RunId>>([]);
+  const runtimeResponses = yield* Ref.make<
+    ReadonlyArray<Extract<ThreadMessage, { type: "runtime-request.respond" }>>
+  >([]);
   /** How often everything was saved for a drain, and what each drain says it couldn't save. */
   const drains = yield* Ref.make(0);
   const unsaved = yield* Ref.make<ReadonlyArray<string>>([]);
@@ -111,6 +142,8 @@ const makeFakeTurns = Effect.gen(function* () {
       interrupt: () => Effect.void,
       keepOnly: () => Effect.void,
       steer: () => Effect.void,
+      respondRuntimeRequest: (response) =>
+        Ref.update(runtimeResponses, (all) => [...all, response]),
       pull: ({ operation }) =>
         Deferred.succeed(pullEntered, operation.id).pipe(
           Effect.andThen(Deferred.await(finishPull)),
@@ -135,7 +168,16 @@ const makeFakeTurns = Effect.gen(function* () {
     } satisfies RunnerTurns);
   const emit = (reported: RunnerItem) =>
     Effect.flatMap(Deferred.await(emitRef), (send) => send(reported));
-  return { make, emit, startedTurns, drains, unsaved, pullEntered, finishPull };
+  return {
+    make,
+    emit,
+    startedTurns,
+    runtimeResponses,
+    drains,
+    unsaved,
+    pullEntered,
+    finishPull,
+  };
 });
 
 /** Lets the session's fibers run until `done` holds, advancing the test clock past reconnect waits. */
@@ -165,6 +207,81 @@ const sessionOf = (
   });
 
 describe("RunnerSession", () => {
+  it.effect("hands workflow stops only to the machine generation they name", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const thread = yield* makeFakeThread;
+        const turns = yield* makeFakeTurns;
+        const stopped = yield* Deferred.make<void>();
+        const requests: Array<string> = [];
+        yield* makeRunnerSession({
+          threadId,
+          generation: 1,
+          token: "token",
+          machineId: "machine",
+          imageVersion: "test",
+          build,
+          transport: thread.transport,
+          makeTurns: (emit) =>
+            Effect.map(turns.make(emit), (fake) => ({
+              ...fake,
+              stopWorkflow: (request) =>
+                Effect.sync(() => {
+                  requests.push(request.taskId);
+                }).pipe(Effect.andThen(Deferred.succeed(stopped, undefined)), Effect.asVoid),
+            })),
+        });
+        yield* Deferred.await(thread.welcomed);
+        expect(yield* Ref.get(thread.workflowStopCapabilities)).toEqual([true]);
+        expect(yield* Ref.get(thread.runtimeResponseCapabilities)).toEqual([true]);
+        const request = {
+          type: "workflow.stop" as const,
+          generation: 2,
+          runId,
+          subagentId: NodeId.make("workflow"),
+          taskId: "stale-task",
+        };
+        yield* thread.toCurrent(request);
+        yield* thread.toCurrent({ ...request, generation: 1, taskId: "current-task" });
+        yield* Deferred.await(stopped);
+        expect(requests).toEqual(["current-task"]);
+        expect(yield* Ref.get(turns.startedTurns)).toEqual([]);
+      }),
+    ),
+  );
+
+  it.effect("advertises and forwards runtime responses to the live turn driver", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const thread = yield* makeFakeThread;
+        const turns = yield* makeFakeTurns;
+        yield* sessionOf(thread, turns);
+        yield* settle(
+          Effect.map(Ref.get(thread.hellos), (all) => all.length === 1),
+          "hello",
+        );
+        const response = {
+          type: "runtime-request.respond",
+          runId,
+          attemptId: RunAttemptId.make("attempt-1"),
+          providerSessionId: ProviderSessionId.make("provider-session-1"),
+          requestId: RuntimeRequestId.make("request-1"),
+          answers: { "question-1": "answer" },
+        } as const;
+
+        yield* thread.toCurrent(response);
+        yield* settle(
+          Effect.map(Ref.get(turns.runtimeResponses), (all) => all.length === 1),
+          "runtime response",
+        );
+
+        expect(yield* Ref.get(thread.runtimeResponseCapabilities)).toEqual([true]);
+        expect(yield* Ref.get(thread.workflowStopCapabilities)).toEqual([false]);
+        expect(yield* Ref.get(turns.runtimeResponses)).toEqual([response]);
+      }),
+    ),
+  );
+
   it.effect("keeps receiving while a selected pull is running", () =>
     Effect.scoped(
       Effect.gen(function* () {

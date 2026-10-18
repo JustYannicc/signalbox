@@ -54,6 +54,7 @@ const setup = (
   const directory = Layer.succeed(ThreadDirectory.ThreadDirectory, {
     forThread: (threadId) =>
       ThreadDirectory.handleFor({
+        answerSecret: async () => "not_found",
         dispatch: async (_actor, command, creation) => {
           options.onArchive?.();
           if (threadId === options.failing) throw new Error("object down");
@@ -61,6 +62,8 @@ const setup = (
           archived.push({ threadId, commandId, idleSinceMs: creation.idleSinceMs });
           return { _tag: "ok", value: { sequence: 1 } };
         },
+        getWorkflowScript: async () => ({ _tag: "not_found" }),
+        stopWorkflow: async () => ({ _tag: "not_found" }),
         launch: async () => ({ _tag: "not_found" }),
         commandOutput: async () => null,
         snapshot: async () => ({ _tag: "not_found" }),
