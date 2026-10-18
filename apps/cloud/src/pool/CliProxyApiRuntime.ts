@@ -1,3 +1,5 @@
+import * as Effect from "effect/Effect";
+
 /** Runtime evidence only. The deployed manifest does not identify a surviving container. */
 export interface CliProxyApiRelease {
   readonly source: "management-headers" | "unknown";
@@ -73,6 +75,26 @@ export const makeReleaseObserver = (changed: (release: CliProxyApiRelease) => vo
         }
         return response;
       });
+    },
+    observeEffect: <E, R>(request: Request, send: () => Effect.Effect<Response, E, R>) => {
+      if (!isManagementRequest(request)) return send();
+      const sentGeneration = generation;
+      return send().pipe(
+        Effect.tap((response) =>
+          Effect.sync(() => {
+            if (sentGeneration !== generation) return;
+            const next = releaseFromHeaders(response.headers);
+            if (
+              next.version !== release.version ||
+              next.commit !== release.commit ||
+              next.buildDate !== release.buildDate
+            ) {
+              release = next;
+              changed(release);
+            }
+          }),
+        ),
+      );
     },
   };
 };

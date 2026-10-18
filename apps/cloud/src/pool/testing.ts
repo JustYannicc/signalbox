@@ -4,7 +4,7 @@ import * as Layer from "effect/Layer";
 import * as ManagedRuntime from "effect/ManagedRuntime";
 
 import * as Platform from "../platform.ts";
-import * as PoolContainer from "./PoolContainer.ts";
+import * as PoolContainerFake from "./adapters/PoolContainerFake.ts";
 import * as PoolDirectory from "./PoolDirectory.ts";
 import * as PoolEngine from "./PoolEngine.ts";
 import * as PoolLinks from "./PoolLinks.ts";
@@ -437,7 +437,7 @@ export const makeMemoryPoolObject = (
   options?: { readonly filename: string },
 ) => {
   const cliProxyApi = makeFakeCliProxyApi();
-  const container = PoolContainer.makeFake((request) => cliProxyApi.serve(request));
+  const container = PoolContainerFake.makeFake((request) => cliProxyApi.serve(request));
   const runtime = ManagedRuntime.make(
     PoolEngine.layer.pipe(
       Layer.provideMerge(PoolLinks.layer),

@@ -5,6 +5,7 @@ import * as Fiber from "effect/Fiber";
 import * as TestClock from "effect/testing/TestClock";
 
 import * as PoolContainer from "./PoolContainer.ts";
+import * as PoolContainerCloudflare from "./adapters/PoolContainerCloudflare.ts";
 
 /**
  * `ctx.container` as far as the pool uses it, serving `respond` once started.
@@ -58,7 +59,7 @@ const makePool = (respond: (request: Request) => Promise<Response>, running = fa
   if (running) fake.container.start({ enableInternet: true });
   const wakes: Array<number> = [];
   const events: Array<{ readonly action: string; readonly fields: Record<string, unknown> }> = [];
-  const layer = PoolContainer.layerCloudflare({
+  const layer = PoolContainerCloudflare.layerCloudflare({
     container: fake.container,
     storeGateway: {} as Fetcher,
     wakeAt: (at) => wakes.push(at),
@@ -69,7 +70,7 @@ const makePool = (respond: (request: Request) => Promise<Response>, running = fa
 
 const send = (path: string) =>
   PoolContainer.PoolContainer.use((container) =>
-    Effect.promise(() => container.fetch(new Request(`http://cliproxyapi${path}`), { store })),
+    container.fetch(new Request(`http://cliproxyapi${path}`), { store }),
   );
 
 const sleepIfIdle = (now: number) =>
@@ -166,10 +167,109 @@ describe("PoolContainer", () => {
     });
   });
 
+  it.effect("counts intercept and inactivity setup against the original readiness deadline", () => {
+    let probes = 0;
+    const fake = fakeContainer(
+      async () => new Response("unused"),
+      undefined,
+      async () => {
+        probes += 1;
+        return new Response(null, { status: 404 });
+      },
+    );
+    const interceptEntered = Promise.withResolvers<void>();
+    const finishIntercept = Promise.withResolvers<void>();
+    const inactivityEntered = Promise.withResolvers<void>();
+    const finishInactivity = Promise.withResolvers<void>();
+    fake.container.interceptOutboundHttp = async () => {
+      fake.calls.push(`intercept ${PoolContainer.STORE_HOST}`);
+      interceptEntered.resolve();
+      await finishIntercept.promise;
+    };
+    fake.container.setInactivityTimeout = async () => {
+      inactivityEntered.resolve();
+      await finishInactivity.promise;
+    };
+    const pool = {
+      ...fake,
+      layer: PoolContainerCloudflare.layerCloudflare({
+        container: fake.container,
+        storeGateway: {} as Fetcher,
+        wakeAt: () => {},
+        log: () => {},
+      }),
+    };
+    return Effect.gen(function* () {
+      const request = yield* Effect.forkChild(send("/x"));
+      yield* Effect.promise(() => interceptEntered.promise);
+      yield* TestClock.adjust(20_000);
+      finishIntercept.resolve();
+      yield* Effect.promise(() => inactivityEntered.promise);
+      yield* TestClock.adjust(10_000);
+      finishInactivity.resolve();
+
+      const error = yield* Effect.flip(Fiber.join(request));
+      expect(error._tag).toBe("PoolContainerReadinessTimeoutError");
+      expect(pool.calls).toContain(`start http://${PoolContainer.STORE_HOST}`);
+      expect(probes).toBe(0);
+    }).pipe(Effect.provide(pool.layer));
+  });
+
+  it.effect("coalesces concurrent cold requests into one container start", () => {
+    const pool = makePool(async () => new Response("ok"));
+    const interceptEntered = Promise.withResolvers<void>();
+    const finishIntercept = Promise.withResolvers<void>();
+    pool.container.interceptOutboundHttp = async () => {
+      pool.calls.push(`intercept ${PoolContainer.STORE_HOST}`);
+      interceptEntered.resolve();
+      await finishIntercept.promise;
+    };
+    return Effect.gen(function* () {
+      const first = yield* Effect.forkChild(send("/first"));
+      const second = yield* Effect.forkChild(send("/second"));
+      yield* Effect.promise(() => interceptEntered.promise);
+      expect(pool.calls.filter((call) => call.startsWith("start "))).toHaveLength(0);
+      finishIntercept.resolve();
+      const [firstResponse, secondResponse] = yield* Effect.all([
+        Fiber.join(first),
+        Fiber.join(second),
+      ]);
+      expect(yield* Effect.promise(() => firstResponse.text())).toBe("ok");
+      expect(yield* Effect.promise(() => secondResponse.text())).toBe("ok");
+      expect(pool.calls.filter((call) => call.startsWith("start "))).toHaveLength(1);
+    }).pipe(Effect.provide(pool.layer));
+  });
+
+  it.effect("coalesces concurrent stop requests into one container destroy", () => {
+    const pool = makePool(async () => new Response("ok"), true);
+    const destroyEntered = Promise.withResolvers<void>();
+    const finishDestroy = Promise.withResolvers<void>();
+    const destroy = pool.container.destroy;
+    let destroys = 0;
+    pool.container.destroy = async () => {
+      destroys += 1;
+      destroyEntered.resolve();
+      await finishDestroy.promise;
+      await destroy();
+    };
+    const stop = PoolContainer.PoolContainer.use((container) => container.stop);
+    return Effect.gen(function* () {
+      const first = yield* Effect.forkChild(stop);
+      const second = yield* Effect.forkChild(stop);
+      yield* Effect.promise(() => destroyEntered.promise);
+      expect(destroys).toBe(1);
+      finishDestroy.resolve();
+      yield* Fiber.join(first);
+      yield* Fiber.join(second);
+      expect(destroys).toBe(1);
+    }).pipe(Effect.provide(pool.layer));
+  });
+
   it.effect("sleeps once nothing has reached it for the idle timeout, never mid-request", () => {
     let release: (response: Response) => void = () => {};
     const pool = makePool(() => new Promise((resolve) => (release = resolve)));
     return Effect.gen(function* () {
+      yield* TestClock.setTime(T0);
       const pending = yield* Effect.forkChild(send("/v1/messages"));
       yield* Effect.promise(() =>
         vi.waitFor(() => expect(pool.calls).toContain(`start http://${PoolContainer.STORE_HOST}`)),
@@ -181,6 +281,7 @@ describe("PoolContainer", () => {
       expect(yield* sleepIfIdle(later)).toBe(later + IDLE);
 
       // The streamed body ends: the idle clock starts then.
+      yield* TestClock.setTime(later);
       release(new Response("streamed"));
       const response = yield* Fiber.join(pending);
       yield* Effect.promise(() => response.text());
@@ -208,7 +309,7 @@ describe("PoolContainer", () => {
         return Response.json({ data: listed < 3 ? [] : [{ id: "m" }] });
       },
     );
-    const layer = PoolContainer.layerCloudflare({
+    const layer = PoolContainerCloudflare.layerCloudflare({
       container: fake.container,
       storeGateway: {} as Fetcher,
       wakeAt: () => {},
@@ -216,15 +317,24 @@ describe("PoolContainer", () => {
     });
     const model = (path: string) =>
       PoolContainer.PoolContainer.use((container) =>
-        Effect.promise(() =>
-          container.fetch(new Request(`http://cliproxyapi${path}`), {
-            store,
-            models: { clientKey: "client" },
-          }),
-        ),
+        container.fetch(new Request(`http://cliproxyapi${path}`), {
+          store,
+          models: { clientKey: "client" },
+        }),
+      );
+    const advanceUntilListed = (count: number): Effect.Effect<void> =>
+      Effect.suspend(() =>
+        listed >= count
+          ? Effect.void
+          : TestClock.adjust(100).pipe(
+              Effect.andThen(Effect.yieldNow),
+              Effect.andThen(advanceUntilListed(count)),
+            ),
       );
     return Effect.gen(function* () {
-      yield* model("/v1/messages");
+      const pending = yield* Effect.forkChild(model("/v1/messages"));
+      yield* advanceUntilListed(3);
+      yield* Fiber.join(pending);
       expect(order).toEqual([
         "models Bearer client",
         "models Bearer client",
@@ -236,6 +346,95 @@ describe("PoolContainer", () => {
       expect(order.at(-1)).toBe("request");
       expect(listed).toBe(3);
     }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("gives model discovery at most ten seconds before sending the request", () => {
+    let listed = 0;
+    const firstProbe = Promise.withResolvers<void>();
+    const fake = fakeContainer(
+      async () => new Response("sent"),
+      async () => {
+        listed += 1;
+        firstProbe.resolve();
+        return Response.json({ data: [] });
+      },
+    );
+    const layer = PoolContainerCloudflare.layerCloudflare({
+      container: fake.container,
+      storeGateway: {} as Fetcher,
+      wakeAt: () => {},
+      log: () => {},
+    });
+    const request = PoolContainer.PoolContainer.use((container) =>
+      container.fetch(new Request("http://cliproxyapi/v1/messages"), {
+        store,
+        models: { clientKey: "client" },
+      }),
+    );
+    return Effect.gen(function* () {
+      const startedAt = yield* Clock.currentTimeMillis;
+      const pending = yield* Effect.forkChild(request);
+      yield* Effect.promise(() => firstProbe.promise);
+      yield* TestClock.adjust(PoolContainer.MODELS_READY_MS);
+      const response = yield* Fiber.join(pending);
+      const elapsed = (yield* Clock.currentTimeMillis) - startedAt;
+      expect(elapsed).toBeLessThanOrEqual(PoolContainer.MODELS_READY_MS);
+      expect(yield* Effect.promise(() => response.text())).toBe("sent");
+      expect(listed).toBeGreaterThan(0);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("cancels model discovery when the container is stopped", () => {
+    let aborted = false;
+    const probeStarted = Promise.withResolvers<void>();
+    const fake = fakeContainer(
+      async () => new Response("sent"),
+      (request) =>
+        new Promise<Response>((_resolve, reject) => {
+          request.signal.addEventListener(
+            "abort",
+            () => {
+              aborted = true;
+              reject(request.signal.reason);
+            },
+            { once: true },
+          );
+          probeStarted.resolve();
+        }),
+    );
+    const layer = PoolContainerCloudflare.layerCloudflare({
+      container: fake.container,
+      storeGateway: {} as Fetcher,
+      wakeAt: () => {},
+      log: () => {},
+    });
+    const request = PoolContainer.PoolContainer.use((container) =>
+      container.fetch(new Request("http://cliproxyapi/v1/messages"), {
+        store,
+        models: { clientKey: "client" },
+      }),
+    );
+    return Effect.gen(function* () {
+      const pending = yield* Effect.forkChild(request);
+      yield* Effect.promise(() => probeStarted.promise);
+      yield* PoolContainer.PoolContainer.use((container) => container.stop);
+      const error = yield* Effect.flip(Fiber.join(pending));
+      expect(aborted).toBe(true);
+      expect(error._tag).toBe("PoolContainerStoppedError");
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("peek fails without starting a sleeping container", () => {
+    const pool = makePool(async () => new Response("unused"));
+    return Effect.gen(function* () {
+      const error = yield* Effect.flip(
+        PoolContainer.PoolContainer.use((container) =>
+          container.peek(new Request("http://cliproxyapi/v1/models")),
+        ),
+      );
+      expect(error._tag).toBe("PoolContainerAsleepError");
+      expect(pool.calls).toEqual([]);
+    }).pipe(Effect.provide(pool.layer));
   });
 
   it.effect("sleeps a container its object found running after a restart, at the alarm", () => {
