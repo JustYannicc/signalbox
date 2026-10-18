@@ -220,8 +220,20 @@ export function findBunApiUses(moduleName: string, source: string): ReadonlyArra
     return "read";
   };
 
-  const visitAssignmentTarget = (target: ts.Expression, scope: Scope): void => {
+  const visitAssignmentTarget = (target: ts.Expression, scope: Scope, readsValue = false): void => {
     target = unwrap(target);
+    if (readsValue) {
+      const value = valueOf(target, scope);
+      if (value?.kind === "member") addMember(target, value.path, "read");
+      else if (value && isBunRelated(value)) addDynamic(target, value, "read");
+      else if (
+        ts.isElementAccessExpression(target) &&
+        staticKey(target.argumentExpression) === undefined
+      ) {
+        const base = valueOf(target.expression, scope);
+        if (base && isBunRelated(base)) addDynamic(target, base, "read");
+      }
+    }
     if (ts.isPropertyAccessExpression(target) || ts.isElementAccessExpression(target)) {
       const base = valueOf(target.expression, scope);
       if (base?.kind === "member") addMember(target.expression, base.path, "read");
@@ -293,6 +305,12 @@ export function findBunApiUses(moduleName: string, source: string): ReadonlyArra
       ts.isBinaryExpression(pattern) &&
       pattern.operatorToken.kind === ts.SyntaxKind.EqualsToken
     ) {
+      const target = unwrap(pattern.left);
+      if (ts.isPropertyAccessExpression(target) || ts.isElementAccessExpression(target)) {
+        visitAssignmentTarget(target, scope);
+        visitDefaultInitializer(pattern.right, scope, visit);
+        return;
+      }
       visitDefaultInitializer(pattern.right, scope, visit);
       bindAssignmentPattern(
         pattern.left,
@@ -358,7 +376,13 @@ export function findBunApiUses(moduleName: string, source: string): ReadonlyArra
       collectVarBindings(node.body, local);
       for (const parameter of node.parameters) {
         if (parameter.initializer) visitDefaultInitializer(parameter.initializer, local, visit);
-        bindPattern(parameter.name, undefined, local);
+        bindPattern(
+          parameter.name,
+          parameter.initializer
+            ? mergeValues([undefined, valueOf(parameter.initializer, local)])
+            : undefined,
+          local,
+        );
       }
       if (node.body) visit(node.body, local);
       return;
@@ -403,7 +427,21 @@ export function findBunApiUses(moduleName: string, source: string): ReadonlyArra
         ts.isObjectLiteralExpression(target) || ts.isArrayLiteralExpression(target);
       if (destructuring) visit(node.right, scope);
       const patternValue = destructuring ? valueOf(node.right, scope) : undefined;
-      if (!destructuring) visitAssignmentTarget(node.left, scope);
+      if (!destructuring) {
+        visitAssignmentTarget(
+          node.left,
+          scope,
+          node.operatorToken.kind !== ts.SyntaxKind.EqualsToken,
+        );
+      }
+      if (!destructuring && isLogicalAssignment(node.operatorToken.kind)) {
+        const evaluated = scope.fork();
+        const skipped = scope.fork();
+        visit(node.right, evaluated);
+        if (ts.isIdentifier(target)) evaluated.set(target.text, valueOf(node.right, evaluated));
+        scope.merge([evaluated, skipped]);
+        return;
+      }
       if (!destructuring) visit(node.right, scope);
       if (node.operatorToken.kind === ts.SyntaxKind.EqualsToken) {
         const value = destructuring ? patternValue : valueOf(node.right, scope);
@@ -413,6 +451,13 @@ export function findBunApiUses(moduleName: string, source: string): ReadonlyArra
         if (destructuring) bindAssignmentPattern(node.left, value, scope);
         else if (ts.isIdentifier(target)) scope.set(target.text, value);
       }
+      return;
+    }
+    if (
+      (ts.isPrefixUnaryExpression(node) || ts.isPostfixUnaryExpression(node)) &&
+      isUpdate(node.operator)
+    ) {
+      visitAssignmentTarget(node.operand, scope, true);
       return;
     }
     if (ts.isIfStatement(node)) {
@@ -800,6 +845,14 @@ function hasDynamicElement(node: ts.Node): boolean {
 
 function isAssignment(operator: ts.SyntaxKind): boolean {
   return operator >= ts.SyntaxKind.FirstAssignment && operator <= ts.SyntaxKind.LastAssignment;
+}
+
+function isLogicalAssignment(operator: ts.SyntaxKind): boolean {
+  return (
+    operator === ts.SyntaxKind.QuestionQuestionEqualsToken ||
+    operator === ts.SyntaxKind.BarBarEqualsToken ||
+    operator === ts.SyntaxKind.AmpersandAmpersandEqualsToken
+  );
 }
 
 function isShortCircuit(operator: ts.SyntaxKind): boolean {

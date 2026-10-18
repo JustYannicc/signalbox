@@ -688,6 +688,117 @@ describe("inventoryBunApis", () => {
     assert.deepStrictEqual(inventory.dynamicAccesses, []);
   });
 
+  it("evaluates property target references before assignment defaults exactly once", () => {
+    for (const source of [
+      "let api; [target[(api = Bun.fs, key)] = api.newAPI()] = values;",
+      "let api; ({value: target[(api = Bun.fs, key)] = api.newAPI()} = values);",
+      "let api; for ([target[(api = Bun.fs, key)] = api.newAPI()] of values) {}",
+    ]) {
+      const inventory = inventoryBunApis([{ name: "target-default-order.js", source }]);
+
+      assert.deepStrictEqual(
+        inventory.members.map(({ path, occurrences }) => ({
+          path,
+          accesses: occurrences.map(({ access }) => access),
+        })),
+        [
+          { path: "fs", accesses: ["read"] },
+          { path: "fs.newAPI", accesses: ["call"] },
+        ],
+        source,
+      );
+      assert.deepStrictEqual(inventory.dynamicAccesses, [], source);
+    }
+  });
+
+  it("preserves possible member aliases supplied by parameter defaults", () => {
+    for (const source of [
+      "function run(api = Bun.fs) { api.newAPI(); }",
+      "function run(api = Bun.fs, x = api.newAPI()) {}",
+      "({readFile} = Bun.fs) => readFile()",
+    ]) {
+      const inventory = inventoryBunApis([{ name: "parameter-default-alias.js", source }]);
+
+      assert.deepStrictEqual(
+        inventory.members.map(({ path }) => path),
+        ["fs"],
+        source,
+      );
+      assert.ok(
+        inventory.dynamicAccesses.some(
+          ({ basePath, access }) => basePath === "" && access === "call",
+        ),
+        source,
+      );
+    }
+  });
+
+  it("records property reads required by updates and compound assignments", () => {
+    for (const source of ["Bun.fs.x++", "--Bun.fs.x", "Bun.fs.x += 1", "Bun.fs.x ??= 1"]) {
+      const inventory = inventoryBunApis([{ name: "target-read.js", source }]);
+
+      assert.deepStrictEqual(
+        inventory.members.map(({ path }) => path),
+        ["fs", "fs.x"],
+        source,
+      );
+    }
+  });
+
+  it("retains unresolved root access when code writes to Bun itself", () => {
+    for (const source of ["Bun.x = 1", "Bun[key] = 1"]) {
+      const inventory = inventoryBunApis([{ name: "root-write.js", source }]);
+
+      assert.deepStrictEqual(inventory.members, [], source);
+      assert.deepStrictEqual(
+        inventory.dynamicAccesses.map(({ basePath, access }) => ({ basePath, access })),
+        [{ basePath: "", access: "read" }],
+        source,
+      );
+    }
+  });
+
+  it("retains unresolved reads in computed updates and compound assignments", () => {
+    for (const source of ["Bun.fs[key]++", "Bun.fs[key] += 1", "Bun.fs[key] ??= 1"]) {
+      const inventory = inventoryBunApis([{ name: "computed-update.js", source }]);
+
+      assert.deepStrictEqual(
+        inventory.members.map(({ path }) => path),
+        ["fs"],
+        source,
+      );
+      assert.deepStrictEqual(
+        inventory.dynamicAccesses.map(({ basePath, access }) => ({ basePath, access })),
+        [{ basePath: "fs", access: "read" }],
+        source,
+      );
+    }
+  });
+
+  it("merges possible aliases and side effects from logical assignment", () => {
+    for (const operator of ["??=", "||=", "&&="]) {
+      for (const source of [
+        `let api; api ${operator} Bun.fs; api.readFile();`,
+        `let api = Bun.fs; api ${operator} other; api.readFile();`,
+        `let api = Bun.fs; let flag; flag ${operator} (api = other); api.readFile();`,
+      ]) {
+        const inventory = inventoryBunApis([{ name: "logical-assignment.js", source }]);
+
+        assert.deepStrictEqual(
+          inventory.members.map(({ path }) => path),
+          ["fs"],
+          source,
+        );
+        assert.ok(
+          inventory.dynamicAccesses.some(
+            ({ basePath, access }) => basePath === "" && access === "call",
+          ),
+          source,
+        );
+      }
+    }
+  });
+
   it("keeps short-circuit Bun aliases as uncertain accesses", () => {
     const inventory = inventoryBunApis([
       {
@@ -890,6 +1001,7 @@ describe("inventoryBunApis", () => {
       inventory.dynamicAccesses.map(({ basePath, access }) => ({ basePath, access })),
       [
         { basePath: "", access: "read" },
+        { basePath: "", access: "call" },
         { basePath: "", access: "read" },
         { basePath: "", access: "read" },
         { basePath: "", access: "read" },
