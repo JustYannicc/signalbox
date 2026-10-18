@@ -5,6 +5,7 @@ import {
   type ChatAttachment,
   ChatAttachmentId,
   CommandId,
+  ComposerContextId,
   MessageId,
   ProjectId,
   ProviderInstanceId,
@@ -137,7 +138,7 @@ describe("CloudAttachments", () => {
         const sent = yield* claim(userId, threadId, [shot]);
         const claimed = sent.attachments[0]!;
         expect(claimed.id.startsWith(`${threadSegment(threadId)}-`)).toBe(true);
-        // A retried command writes the same copy again, under the same id.
+        // A retried command keeps the same copy and id.
         expect((yield* claim(userId, threadId, [shot])).attachments).toEqual([claimed]);
         // The thread's own attachment passes as stored; a made-up one of the thread doesn't.
         expect((yield* claim(userId, threadId, [claimed])).attachments).toEqual([claimed]);
@@ -180,6 +181,18 @@ describe("CloudAttachments", () => {
         yield* service.deletePending(userId, another.id);
         yield* service.deletePending(userId, claimed.id);
         expect(objects.keys()).toEqual([attachmentKey("", claimed.id)]);
+        const replay = yield* claim(userId, threadId, [shot]);
+        expect(replay.attachments).toEqual([claimed]);
+        yield* replay.release;
+        expect(objects.keys()).toEqual([attachmentKey("", claimed.id)]);
+        expect((yield* claim("user_2", threadId, [shot]).pipe(Effect.flip))._tag).toBe(
+          "AttachmentRejectedError",
+        );
+        expect(
+          (yield* claim(userId, threadId, [{ ...shot, sizeBytes: PNG.length + 1 }]).pipe(
+            Effect.flip,
+          ))._tag,
+        ).toBe("AttachmentRejectedError");
       }),
     ),
   );
@@ -474,5 +487,237 @@ describe("the machine's attachments", () => {
         expect((yield* call(SESSION_PATHS.attachments, "sbs1.x.y")).status).toBe(403);
       }),
     ),
+  );
+});
+
+describe("editing queued attachments", () => {
+  it.effect(
+    "claims replacement uploads, remaps context, preserves omitted fields and clears explicit attachments",
+    () =>
+      Effect.gen(function* () {
+        const cloud = makeMemoryCloud();
+        const layer = cloud.layerPersonal(userId);
+        const threads = yield* CloudThreadService.CloudThreadService.pipe(Effect.provide(layer));
+        const attachments = yield* CloudAttachments.pipe(Effect.provide(layer));
+        const threadId = ThreadId.make("queue-attachments");
+        yield* threads.launchThread(actor, {
+          commandId: CommandId.make("queue-launch"),
+          threadId,
+          projectId: Environment.SCRATCH_PROJECT_ID,
+          title: "Queued attachments",
+          modelSelection: scriptedModelSelection,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          workspaceStrategy: { type: "root" },
+          initialMessage: { text: "Live", attachments: [] },
+        });
+        yield* threads.dispatchCommand(actor, {
+          type: "message.dispatch",
+          commandId: CommandId.make("queue-send"),
+          createdBy: "user",
+          creationSource: "web",
+          threadId,
+          messageId: MessageId.make("queued-message"),
+          text: "Later",
+          attachments: [],
+          dispatchMode: { type: "queue_after_active" },
+        });
+        const queued = (yield* threads.threadSnapshot(actor, threadId)).projection.runs[1]!;
+        const shot = yield* upload(attachments, userId, PNG);
+        const command = {
+          type: "queued-run.edit" as const,
+          commandId: CommandId.make("queue-edit-attachments"),
+          threadId,
+          runId: queued.id,
+          text: "Check [context:image:shot]",
+          attachments: [shot],
+          context: {
+            version: 1 as const,
+            records: [
+              {
+                version: 1 as const,
+                contextId: ComposerContextId.make("shot"),
+                kind: "image" as const,
+                label: shot.name,
+                attachmentId: shot.id,
+                name: shot.name,
+                mimeType: shot.mimeType,
+                sizeBytes: shot.sizeBytes,
+              },
+            ],
+          },
+        };
+        const edited = yield* threads.dispatchCommand(actor, command);
+        expect(yield* threads.dispatchCommand(actor, command)).toEqual(edited);
+        yield* attachments.deletePending(userId, shot.id);
+        expect(yield* threads.dispatchCommand(actor, command)).toEqual(edited);
+        const saved = (yield* threads.threadSnapshot(actor, threadId)).projection.messages.find(
+          (message) => message.id === "queued-message",
+        )!;
+        const kept = saved.attachments[0]!;
+        expect(kept.id).not.toBe(shot.id);
+        expect(cloud.attachmentObjects.keys()).toContain(attachmentKey("", kept.id));
+        expect(saved.context?.records[0]).toMatchObject({ attachmentId: kept.id });
+        yield* threads.dispatchCommand(actor, {
+          type: "queued-run.edit",
+          commandId: CommandId.make("queue-text-only"),
+          threadId,
+          runId: queued.id,
+          text: "Text only",
+        });
+        const textOnly = (yield* threads.threadSnapshot(actor, threadId)).projection.messages.find(
+          (message) => message.id === saved.id,
+        )!;
+        expect(textOnly.attachments).toEqual(saved.attachments);
+        expect(textOnly.context).toEqual(saved.context);
+        // Existing sent attachments pass ownership checks and keep stored metadata.
+        yield* threads.dispatchCommand(actor, {
+          type: "queued-run.edit",
+          commandId: CommandId.make("queue-keep-sent"),
+          threadId,
+          runId: queued.id,
+          text: "Still attached",
+          attachments: saved.attachments,
+        });
+        yield* cloud.settle;
+        const delivered = (yield* threads.threadSnapshot(
+          actor,
+          threadId,
+        )).projection.turnItems.find(
+          (item) => item.type === "user_message" && item.messageId === saved.id,
+        );
+        expect(delivered).toMatchObject({
+          type: "user_message",
+          text: "Still attached",
+          attachments: saved.attachments,
+          context: saved.context,
+        });
+      }),
+  );
+
+  it.effect(
+    "rejects foreign and missing attachments, releases refused copies and keeps old message bytes",
+    () =>
+      Effect.gen(function* () {
+        const cloud = makeMemoryCloud();
+        const layer = cloud.layerPersonal(userId);
+        const threads = yield* CloudThreadService.CloudThreadService.pipe(Effect.provide(layer));
+        const attachments = yield* CloudAttachments.pipe(Effect.provide(layer));
+        const threadId = ThreadId.make("queue-attachment-refusals");
+        yield* threads.launchThread(actor, {
+          commandId: CommandId.make("refusal-launch"),
+          threadId,
+          projectId: Environment.SCRATCH_PROJECT_ID,
+          title: "Refusals",
+          modelSelection: scriptedModelSelection,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          workspaceStrategy: { type: "root" },
+          initialMessage: { text: "Live", attachments: [] },
+        });
+        const old = yield* upload(attachments, userId, PNG);
+        yield* threads.dispatchCommand(actor, {
+          type: "message.dispatch",
+          commandId: CommandId.make("queue-old"),
+          createdBy: "user",
+          creationSource: "web",
+          threadId,
+          messageId: MessageId.make("old-message"),
+          text: "Keep me",
+          attachments: [old],
+          dispatchMode: { type: "queue_after_active" },
+        });
+        const before = yield* threads.threadSnapshot(actor, threadId);
+        const runId = before.projection.runs[1]!.id;
+        const foreign = yield* upload(attachments, "user_2", PNG);
+        const crossThread = yield* attachments.claim({
+          userId,
+          threadId: "other-thread",
+          commandId: "other-send",
+          attachments: [old],
+        });
+        const missing = {
+          ...old,
+          id: ChatAttachmentId.make("pending-00000000-0000-0000-0000-000000000000"),
+        };
+        for (const [n, replacement] of [foreign, crossThread.attachments[0]!, missing].entries()) {
+          expect(
+            (yield* threads
+              .dispatchCommand(actor, {
+                type: "queued-run.edit",
+                commandId: CommandId.make(`foreign-${n}`),
+                threadId,
+                runId,
+                text: "Must not land",
+                attachments: [replacement],
+              })
+              .pipe(Effect.flip))._tag,
+          ).toBe("ThreadCommandRejectedError");
+        }
+        expect((yield* threads.threadSnapshot(actor, threadId)).projection).toEqual(
+          before.projection,
+        );
+        const replacement = yield* upload(attachments, userId, PNG);
+        const keys = cloud.attachmentObjects.keys().toSorted();
+        const empty = yield* threads
+          .dispatchCommand(actor, {
+            type: "queued-run.edit",
+            commandId: CommandId.make("empty-edit"),
+            threadId,
+            runId,
+            text: "  ",
+            attachments: [replacement],
+          })
+          .pipe(Effect.flip);
+        expect(empty._tag).toBe("ThreadCommandRejectedError");
+        expect(cloud.attachmentObjects.keys().toSorted()).toEqual(keys);
+        const cleared = yield* threads.dispatchCommand(actor, {
+          type: "queued-run.edit",
+          commandId: CommandId.make("clear-attachments"),
+          threadId,
+          runId,
+          text: "Cleared",
+          attachments: [],
+          context: { version: 1, records: [] },
+        });
+        expect(cleared.sequence).toBeGreaterThan(before.snapshotSequence);
+        const afterClear = yield* threads.threadSnapshot(actor, threadId);
+        expect(
+          afterClear.projection.messages.find((message) => message.id === "old-message"),
+        ).toMatchObject({ attachments: [], context: { version: 1, records: [] } });
+        // Historical message events still refer to these bytes, so edits never delete them.
+        expect(cloud.attachmentObjects.keys()).toContain(
+          attachmentKey(
+            "",
+            before.projection.messages.find((message) => message.id === "old-message")!
+              .attachments[0]!.id,
+          ),
+        );
+        yield* threads.dispatchCommand(actor, {
+          type: "queued-run.cancel",
+          commandId: CommandId.make("cancel-before-edit"),
+          threadId,
+          runId,
+        });
+        const staleKeys = cloud.attachmentObjects.keys().toSorted();
+        const stale = {
+          type: "queued-run.edit" as const,
+          commandId: CommandId.make("stale-with-upload"),
+          threadId,
+          runId,
+          text: "Too late",
+          attachments: [replacement],
+        };
+        expect((yield* threads.dispatchCommand(actor, stale).pipe(Effect.flip))._tag).toBe(
+          "ThreadCommandRejectedError",
+        );
+        expect((yield* threads.dispatchCommand(actor, stale).pipe(Effect.flip))._tag).toBe(
+          "ThreadCommandRejectedError",
+        );
+        expect(cloud.attachmentObjects.keys().toSorted()).toEqual(staleKeys);
+        expect((yield* threads.threadSnapshot(actor, threadId)).projection.messages).toEqual(
+          afterClear.projection.messages,
+        );
+      }),
   );
 });

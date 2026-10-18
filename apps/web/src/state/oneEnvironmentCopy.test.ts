@@ -23,6 +23,33 @@ describe("connection copy with only Signalbox Cloud", () => {
     );
   });
 
+  it("says a feature the cloud lacks isn't available yet", () => {
+    expect(oneEnvironmentCopy("Update your Signalbox servers to browse pull requests.")).toBe(
+      "Pull requests aren't available in Signalbox yet.",
+    );
+    expect(oneEnvironmentCopy("Open provider setup to install Codex on this environment.")).toBe(
+      "Open provider setup to install Codex.",
+    );
+  });
+
+  it("says what the person can't do instead of naming the connection", () => {
+    expect(oneEnvironmentCopy("This connection cannot change the thread's branch.")).toBe(
+      "You can't change the thread's branch.",
+    );
+  });
+
+  it("rewords sign-in errors, including the relay's hinted variant", () => {
+    expect(oneEnvironmentCopy("The environment credential is invalid.")).toBe(
+      "Your Signalbox sign-in expired. Sign in again.",
+    );
+    expect(
+      oneEnvironmentCopy("The environment credential is invalid. Check this device's clock."),
+    ).toBe("Signalbox couldn't verify your sign-in. Check this device's clock.");
+    expect(
+      oneEnvironmentCopy("Your cloud sign-in changed. Sign in again to authorize the environment."),
+    ).toBe("Your sign-in changed. Sign in again.");
+  });
+
   it("leaves text it doesn't know as upstream wrote it", () => {
     expect(oneEnvironmentCopy("Page unavailable")).toBe("Page unavailable");
   });

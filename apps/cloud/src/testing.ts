@@ -682,6 +682,9 @@ export const makeMemoryCloud = (
       Effect.promise(() =>
         threadFor(threadId).run(ThreadStore.ThreadStore.use((store) => Effect.orDie(store.owner))),
       ),
+    /** Runs an effect against one thread's actual Runner service. */
+    threadRun: <A, E>(threadId: string, effect: Effect.Effect<A, E, ThreadRunner.ThreadRunner>) =>
+      Effect.promise(() => threadFor(threadId).run(effect)),
     /** The 1Password Environments a thread's turns get, top level first. */
     threadSecrets: (threadId: string) =>
       Effect.promise(() =>

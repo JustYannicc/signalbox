@@ -71,6 +71,7 @@ const setup = (
         subscribePreparation: async () => null,
         cancelPreparation: async () => ({ _tag: "not_found" }),
         summary: async () => null,
+        authorizeExecutorTurn: async () => false,
         requestPullRequestSync: async () => ({ _tag: "not_found" }),
         diagnostics: async () => null,
         previews: async () => null,
