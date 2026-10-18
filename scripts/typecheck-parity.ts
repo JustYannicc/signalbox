@@ -61,11 +61,14 @@ export function compareDiagnostics(declared: string, effect: string, rust: strin
 export function compilerProjects(directory: string, command: string) {
   const result = [];
   for (const part of command.split(" && ")) {
-    // Cloud generates compiler assets and its probe before checking both compiler configs.
+    // Cloud generates compiler assets and probes before checking both compiler configs.
     if (
       directory === "apps/cloud" &&
-      (part === "node infra/automationCompiler/prepare.ts" ||
-        part === "node infra/syncProbe/prepare.mjs")
+      [
+        "node infra/automationCompiler/prepare.ts",
+        "node infra/syncProbe/prepare.mjs",
+        "node --experimental-strip-types infra/isolateProbe/prepare.ts",
+      ].includes(part)
     )
       continue;
     const match = /^(?:tsc|tsc-rs) --noEmit(?: -p (\S+))?$/.exec(part);

@@ -1,7 +1,7 @@
 # Presence
 
-`Presence.ts` exposes explicit, scoped location joins and live people views.
-`PresenceAccess.ts` is the injected authorization interface owned by Catalog.
+`presence.ts` exposes explicit, scoped location joins and live people views.
+`presence-access.ts` is the injected authorization interface owned by Catalog.
 Opaque target keys identify canonical threads or levels; they never grant access.
 
 Observing does not publish. Multiple connections collapse to one person; closing

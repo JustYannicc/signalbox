@@ -5,7 +5,10 @@ import {
 } from "@t3tools/client-runtime/automations/blockContract";
 import {
   BLOCK_LIBRARY_EMPTY,
+  BLOCK_LIBRARY_UNCONFIRMED,
+  blockLibraryQueryInput,
   blockLibraryStatuses,
+  blockLibraryView,
   blockPermissionsLabel,
   groupBlockLibrary,
   type BlockLibraryTarget,
@@ -15,6 +18,7 @@ import type * as Schema from "effect/Schema";
 import { ChevronRightIcon } from "lucide-react";
 
 import { automationState } from "~/state/automations";
+import { useEnvironments } from "~/state/environments";
 import { useEnvironmentQuery } from "~/state/query";
 import { runtimeModeConfig } from "../chat/runtimeModeConfig";
 import { CodeBlock } from "../automations/CodeBlock";
@@ -29,39 +33,56 @@ export function BlockLibraryList({ target }: { readonly target: BlockLibraryTarg
   const query = useEnvironmentQuery(
     automationState.blocks({
       environmentId: target.environmentId,
-      input: { projectId: target.projectId },
+      input: blockLibraryQueryInput(target),
     }),
   );
-  if (query.data === null) {
+  const connection =
+    useEnvironments().environments.find(
+      (environment) => environment.environmentId === target.environmentId,
+    )?.connection ?? null;
+  const view = blockLibraryView(query, connection);
+  if (view._tag !== "Ready") {
     return (
       <SettingsSection id="block-library-blocks" title="Blocks">
-        <SettingsRow
-          title={
-            <span className="inline-flex items-center gap-2">
-              {query.error === null ? <Spinner size="sm" tone="muted" /> : null}
-              {query.error === null ? "Loading blocks" : "Could not load blocks"}
-            </span>
-          }
-          status={
-            query.error === null ? undefined : (
+        {view._tag === "Failed" ? (
+          <SettingsRow
+            title="Could not load blocks"
+            status={
               <span role="alert" className="text-destructive">
-                {query.error}
+                {view.error}
               </span>
-            )
-          }
-          control={
-            query.error === null ? undefined : (
+            }
+            control={
               <Button size="xs" variant="outline" onClick={query.refresh}>
                 Try again
               </Button>
-            )
-          }
-        />
+            }
+          />
+        ) : view._tag === "Disconnected" ? (
+          <SettingsRow
+            title={
+              <span className="inline-flex items-center gap-2">
+                {view.connecting ? <Spinner size="sm" tone="muted" /> : null}
+                {view.status}
+              </span>
+            }
+            description={BLOCK_LIBRARY_UNCONFIRMED}
+          />
+        ) : (
+          <SettingsRow
+            title={
+              <span className="inline-flex items-center gap-2">
+                <Spinner size="sm" tone="muted" />
+                Loading blocks
+              </span>
+            }
+          />
+        )}
       </SettingsSection>
     );
   }
 
-  const groups = groupBlockLibrary(target, query.data.blocks);
+  const groups = groupBlockLibrary(target, view.blocks);
   if (groups.length === 0) {
     return (
       <SettingsSection id="block-library-blocks" title="Blocks">
@@ -117,7 +138,7 @@ function ContractRow(props: {
     <Collapsible>
       <CollapsibleTrigger className="group inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground">
         <ChevronRightIcon className="size-3 transition-transform group-data-panel-open:rotate-90" />
-        {props.side === "input" ? "Takes" : "Returns"}
+        {props.side === "input" ? "Input" : "Output"}
       </CollapsibleTrigger>
       <CollapsiblePanel>
         <ContractCode contract={props.contract} />

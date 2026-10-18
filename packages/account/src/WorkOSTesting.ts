@@ -102,7 +102,8 @@ const findUsers = (url: URL, codes: WorkOSCodes): Response => {
 
 /**
  * Fake WorkOS: `POST /user_management/authenticate` (recording each request
- * body), the membership listing, and users by email.
+ * body), the membership listing, users by email, and organizations by
+ * external ID (always 404).
  */
 export const workosStubLayer = (
   codes: WorkOSCodes,
@@ -119,6 +120,13 @@ export const workosStubLayer = (
         }
         if (url.pathname === "/user_management/users") {
           return HttpClientResponse.fromWeb(request, findUsers(url, codes));
+        }
+        // Nobody has a personal organization here: tests that need one bring their own client.
+        if (url.pathname.startsWith("/organizations/external_id/")) {
+          return HttpClientResponse.fromWeb(
+            request,
+            Response.json({ code: "entity_not_found" }, { status: 404 }),
+          );
         }
         if (url.pathname === "/user_management/authorize/device") {
           return HttpClientResponse.fromWeb(

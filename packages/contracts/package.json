@@ -11,6 +11,10 @@
       "types": "./src/waitingCost.ts",
       "import": "./src/waitingCost.ts"
     },
+    "./askKit": {
+      "types": "./src/askKit.ts",
+      "import": "./src/askKit.ts"
+    },
     "./clientIssues": {
       "types": "./src/clientIssues.ts",
       "import": "./src/clientIssues.ts"
@@ -62,6 +66,10 @@
     "./poolSettings": {
       "types": "./src/poolSettings.ts",
       "import": "./src/poolSettings.ts"
+    },
+    "./signalboxCatalog": {
+      "types": "./src/signalboxCatalog.ts",
+      "import": "./src/signalboxCatalog.ts"
     },
     "./signalboxContexts": {
       "types": "./src/signalboxContexts.ts",

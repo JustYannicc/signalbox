@@ -2,7 +2,7 @@ import * as Schema from "effect/Schema";
 import * as SchemaRepresentation from "effect/SchemaRepresentation";
 import { describe, expect, it } from "vite-plus/test";
 
-import { blockContract } from "./blockContract.ts";
+import { blockContract } from "@t3tools/client-runtime/automations/blockContract";
 
 /** What the compiler stores for `meta.input`/`meta.output`. */
 const stored = (schema: Schema.Top) =>

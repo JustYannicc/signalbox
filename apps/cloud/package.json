@@ -5,7 +5,7 @@
   "scripts": {
     "dev": "mkdir -p ../web/dist && node ../../packages/shared/src/agentProcesses/cli.ts run -- wrangler dev --env dev --port 8787 --var LOCAL_WORKERD:1 --var ENVIRONMENT_ID:cloud-dev --var 'ENVIRONMENT_LABEL:Signalbox Cloud (dev)'",
     "dev:gateway": "node ../../packages/shared/src/agentProcesses/cli.ts run -- wrangler dev -c wrangler.model-gateway.jsonc --port 8788 --inspector-port 9230",
-    "typecheck": "node infra/automationCompiler/prepare.ts && node infra/syncProbe/prepare.mjs && tsc-rs --noEmit && tsc-rs --noEmit -p tsconfig.infra.json",
+    "typecheck": "node infra/automationCompiler/prepare.ts && node infra/syncProbe/prepare.mjs && node --experimental-strip-types infra/isolateProbe/prepare.ts && tsc-rs --noEmit && tsc-rs --noEmit -p tsconfig.infra.json",
     "test": "vp test run --config ../../vite.config.ts --dir .",
     "compiler:prepare": "node infra/automationCompiler/prepare.ts"
   },
@@ -30,9 +30,19 @@
     "effect": "catalog:",
     "evlog": "https://github.com/JustYannicc/evlog/releases/download/evlog-effect-preview.2/evlog-2.32.0-effect.2.tgz",
     "fractional-indexing": "4.0.0",
+    "fzstd": "0.1.1",
+    "ignore": "7.0.12",
     "jose": "catalog:",
     "lunorash": "1.0.0-alpha.398",
-    "tldts": "catalog:"
+    "re2js": "2.8.6",
+    "semver": "7.8.5",
+    "slice-ansi": "9.0.1",
+    "smol-toml": "1.9.0",
+    "string-width": "8.2.1",
+    "strip-ansi": "7.2.0",
+    "tldts": "catalog:",
+    "wrap-ansi": "9.0.2",
+    "yaml": "catalog:"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20260604.1",
@@ -41,6 +51,7 @@
     "@noble/curves": "catalog:",
     "@noble/hashes": "catalog:",
     "@types/node": "catalog:",
+    "@types/semver": "7.8.0",
     "alchemy": "2.0.0-beta.80",
     "esbuild": "0.28.2",
     "typescript": "catalog:",
