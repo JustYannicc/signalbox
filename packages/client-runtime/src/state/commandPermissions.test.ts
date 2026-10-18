@@ -27,6 +27,7 @@ import { EnvironmentRegistry } from "../connection/registry.ts";
 import { createCommandPermissions } from "./commandPermissions.ts";
 import { createEnvironmentRpcCommand } from "./runtime.ts";
 import { SIGNALBOX_ANALYTICS_WS_METHODS } from "@t3tools/contracts/signalboxAnalytics";
+import { PERSON_TIMEZONE_WS_METHODS } from "@t3tools/contracts/personTimezone";
 
 vi.mock("./session.ts", () => ({
   createEnvironmentSessionAtoms: () => ({ sessionStateAtom: sessions }),
@@ -85,6 +86,34 @@ describe("command permissions", () => {
           yield* command.authorize(registry, env);
           registry.set(sessions(other), AsyncResult.success(grant(false)));
           expect(registry.get(command.permissionAtom(other))).toBe(false);
+        }),
+      ),
+  );
+
+  it.effect.each([PERSON_TIMEZONE_WS_METHODS.set, PERSON_TIMEZONE_WS_METHODS.report])(
+    "requires the destination settings grant for %s",
+    (method) =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const registry = yield* setup;
+          const timezone = createCommandPermissions(runtime, method);
+          registry.set(sessions(env), AsyncResult.success(grant(true)));
+          expect(registry.get(timezone.permissionAtom(env))).toBe(false);
+          expect((yield* timezone.authorize(registry, env).pipe(Effect.flip))._tag).toBe(
+            "EnvironmentAuthorizationError",
+          );
+          registry.set(
+            sessions(env),
+            AsyncResult.success({
+              ...grant(true),
+              scopes: [AuthSettingsWriteScope],
+              permissions: [AuthSettingsWriteScope],
+            }),
+          );
+          expect(registry.get(timezone.permissionAtom(env))).toBe(true);
+          yield* timezone.authorize(registry, env);
+          registry.set(sessions(other), AsyncResult.success(grant(false)));
+          expect(registry.get(timezone.permissionAtom(other))).toBe(false);
         }),
       ),
   );
