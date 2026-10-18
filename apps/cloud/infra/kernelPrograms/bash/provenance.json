@@ -1,0 +1,19 @@
+{
+  "repository": "https://github.com/AshishKumar4/Nimbus",
+  "revision": "e9f019ab4e40cb6037aff7e1a0eaf20842578ed3",
+  "artifact": "packages/worker/wasm/bash/bash.async.wasm",
+  "sha256": "ddc86c1422556654f02edf083f70017275bbc52f53781d1b74ac538bc7d0b102",
+  "bytes": 3887678,
+  "program": "GNU Bash 5.2.37",
+  "programLicense": "GPL-3.0-or-later",
+  "adapterSourceLicense": "MIT",
+  "sourceBuild": "packages/worker/wasm/bash/build-bash.sh",
+  "adapterSource": [
+    "packages/core/src/runtime/bash/preamble.ts",
+    "packages/core/src/runtime/bash/capture-store.ts"
+  ],
+  "abiSource": [
+    "packages/worker/wasm/bash/nimbus-proc.c",
+    "packages/worker/wasm/nimbus-libc/nimbus-accounts.c"
+  ]
+}
