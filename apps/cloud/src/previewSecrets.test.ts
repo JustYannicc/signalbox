@@ -3,6 +3,24 @@ import { describe, expect, it } from "@effect/vitest";
 import { previewSyntheticSecretsEnabled } from "./previewSecrets.ts";
 
 describe("previewSyntheticSecretsEnabled", () => {
+  it.each([
+    { stage: "pr-123", legacy: "production", enabled: true },
+    { stage: "production", legacy: "pr-123", enabled: false },
+    { stage: "pr-124", legacy: "pr-123", enabled: false },
+    { stage: undefined, legacy: "pr-123", enabled: false },
+  ])(
+    "uses only the canonical stage when the retained binding disagrees: $stage",
+    ({ stage, legacy, enabled }) => {
+      const env = {
+        ...(stage === undefined ? {} : { SIGNALBOX_STAGE: stage }),
+        DEPLOYMENT_STAGE: legacy,
+        ENVIRONMENT_ID: "cloud-preview-123",
+        PREVIEW_SYNTHETIC_SECRETS: "1",
+      };
+      expect(previewSyntheticSecretsEnabled(env)).toBe(enabled);
+    },
+  );
+
   it.each([undefined, "", "0", "true", "pr-123"])(
     "stays disabled without the exact preview flag: %s",
     (flag) => {

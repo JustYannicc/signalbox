@@ -41,6 +41,20 @@ const readWrangler = (file: string) =>
 const wrangler = readWrangler("wrangler.jsonc") as WranglerConfig;
 
 describe("cloudStage", () => {
+  it("retains the existing preview stage binding without making it runtime authority", () => {
+    const preview = cloudStage("pr-656");
+    expect(preview.vars.DEPLOYMENT_STAGE).toBe(preview.vars.SIGNALBOX_STAGE);
+    expect(cloudStage("production").vars).not.toHaveProperty("DEPLOYMENT_STAGE");
+    expect(wrangler.vars).not.toHaveProperty("DEPLOYMENT_STAGE");
+    const contradictory = { ...preview, vars: { ...preview.vars, DEPLOYMENT_STAGE: "production" } };
+    expect(syntheticSecretVars(contradictory, "pr-656")).toEqual({
+      PREVIEW_SYNTHETIC_SECRETS: "1",
+    });
+    expect(syntheticSecretVars(contradictory, "production")).toEqual({
+      PREVIEW_SYNTHETIC_SECRETS: "0",
+    });
+  });
+
   it("never enables synthetic secrets in production, even when explicitly requested", () => {
     const production = cloudStage("production");
     expect(production.vars.SIGNALBOX_STAGE).toBe("production");

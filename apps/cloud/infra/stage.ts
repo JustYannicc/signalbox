@@ -173,6 +173,8 @@ export const cloudStage = (stage: string): CloudStage => {
     automationWorkflow: `signalbox-cloud-pr-${number}-automations`,
     vars: {
       SIGNALBOX_STAGE: stage,
+      // Alchemy tracks this existing preview binding; removing it is a forbidden unbind.
+      DEPLOYMENT_STAGE: stage,
       ENVIRONMENT_ID: `cloud-preview-${number}`,
       ENVIRONMENT_LABEL: `Signalbox Cloud (PR #${number})`,
       EXECUTOR_TOKEN_ISSUER: `https://${cloudDomain}`,
