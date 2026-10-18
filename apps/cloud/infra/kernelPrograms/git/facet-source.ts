@@ -129,7 +129,8 @@ export class KernelGitFacet extends DurableObject {
       }
 
       const editedCommit = await runGit(host, filesystem, "/work/repo", "-c", "core.editor=/bin/cat", "commit", "--allow-empty", "--edit", "-m", "Exercise external editor");
-      assertResult(editedCommit, 0);
+      assert(editedCommit.exitCode === 0 && editedCommit.signal === 0 && !editedCommit.coreDumped, "Unexpected editor status: " + JSON.stringify(editedCommit));
+      assert(editedCommit.stderr === "hint: Waiting for your editor to close the file...\n", "Unexpected editor diagnostic: " + JSON.stringify(editedCommit.stderr));
       assert(catRuns > 0, "Git never executed the external BusyBox editor");
 
       const cleanStatus = await runGit(host, filesystem, "/work/repo", "status", "--porcelain=v1");
