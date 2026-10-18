@@ -1,6 +1,6 @@
 import ts from "typescript-legacy";
 import { ScopedBindings } from "./release-inventory-scope.ts";
-import type { ScannableModule } from "./release-inventory-imports.ts";
+import type { ScannableModule } from "./release-inventory-types.ts";
 import {
   factoryRequireEscapes,
   isNodeRequireCall,

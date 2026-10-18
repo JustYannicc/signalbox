@@ -4,7 +4,7 @@ import type {
   BuiltinDynamicMember,
   BuiltinMemberUse,
   ScannableModule,
-} from "./release-inventory-imports.ts";
+} from "./release-inventory-types.ts";
 import { expressionPath, isGuarded, type GuardedAccess } from "./release-inventory-guards.ts";
 import { ScopedBindings } from "./release-inventory-scope.ts";
 import { isNodeRequireCall, type RequireBindings } from "./release-inventory-require.ts";

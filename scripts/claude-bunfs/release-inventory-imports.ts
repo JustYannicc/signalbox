@@ -1,3 +1,11 @@
+import type {
+  ScannableModule,
+  SourceLocation,
+  BuiltinImportKind,
+  BuiltinImport,
+  BuiltinMemberUse,
+  BuiltinUse,
+} from "./release-inventory-types.ts";
 import ts from "typescript-legacy";
 import { traceReleaseReachability } from "./release-inventory-graph.ts";
 import type { UnresolvedReference } from "./release-inventory-graph.ts";
@@ -10,53 +18,15 @@ import { isNodeRequireCall, nodeRequireBindings } from "./release-inventory-requ
 
 export type { UnresolvedReference } from "./release-inventory-graph.ts";
 
-export interface ScannableModule {
-  readonly index: number;
-  readonly key: string;
-  readonly name: string;
-  readonly loader: number;
-  readonly format?: number;
-  readonly bytes: number;
-  readonly source?: string;
-}
-
-export interface SourceLocation {
-  readonly module: string;
-  readonly key: string;
-  readonly line: number;
-  readonly column: number;
-  readonly offset: number;
-}
-
-export type BuiltinImportKind = "named" | "default" | "namespace" | "side-effect" | "require";
-
-export interface BuiltinImport extends SourceLocation {
-  readonly kind: BuiltinImportKind;
-  readonly imported: string;
-  readonly local: string | null;
-}
-
-export interface BuiltinMemberUse extends SourceLocation {
-  readonly member: string;
-  readonly access: "read" | "call" | "construct";
-  readonly via: "namespace" | "default" | "require";
-  readonly guarded: boolean;
-}
-
-export interface BuiltinDynamicMember extends SourceLocation {
-  readonly via: "namespace" | "default" | "require";
-  readonly guarded: boolean;
-}
-
-export interface BuiltinUse {
-  readonly specifier: string;
-  readonly canonicalBuiltin: string;
-  readonly module: string;
-  readonly key: string;
-  readonly imports: ReadonlyArray<BuiltinImport>;
-  readonly memberUses: ReadonlyArray<BuiltinMemberUse>;
-  readonly dynamicMemberUses: ReadonlyArray<BuiltinDynamicMember>;
-}
+export type {
+  ScannableModule,
+  SourceLocation,
+  BuiltinImportKind,
+  BuiltinImport,
+  BuiltinMemberUse,
+  BuiltinDynamicMember,
+  BuiltinUse,
+} from "./release-inventory-types.ts";
 
 export interface ImportInventory {
   readonly builtins: ReadonlyArray<BuiltinUse>;
