@@ -1082,4 +1082,79 @@ describe("cloud thread terminals", () => {
         }),
       ),
   );
+
+  it.effect.each(["thread.archive", "thread.settle"] as const)(
+    "%s closes its terminal before draining and releasing the machine",
+    (type) =>
+      setupIdleThread(({ terminals, runner, engine, store }) =>
+        Effect.gen(function* () {
+          const initial = yield* terminals.open(owner, input);
+          const machine = yield* connect(runner);
+          yield* terminals.connected(machine.generation, "lifecycle-process");
+          const [open] = yield* terminals.work(machine.generation);
+          if (open === undefined) throw new Error("expected an open command");
+          yield* terminals.report(machine.generation, 1, {
+            type: "result",
+            requestId: open.requestId,
+            terminalId: input.terminalId,
+            generation: generationOf(initial),
+            leaseGeneration: machine.generation,
+            result: opened(initial),
+          });
+          yield* engine.dispatch(
+            owner,
+            { type, commandId: CommandId.make("close-terminal-thread"), threadId },
+            personal,
+          );
+          yield* terminals.reconcile;
+          const [close] = yield* terminals.work(machine.generation);
+          expect(close?.command.type).toBe("close");
+          expect((yield* runner.reconcile).drain).toBeNull();
+          if (close === undefined) throw new Error("expected a close command");
+          yield* terminals.report(machine.generation, 1, {
+            type: "result",
+            requestId: close.requestId,
+            terminalId: input.terminalId,
+            generation: generationOf(initial),
+            leaseGeneration: machine.generation,
+            result: { type: "closed" },
+          });
+          const draining = yield* runner.reconcile;
+          expect(draining.drain).not.toBeNull();
+          if (draining.drain === null) throw new Error("expected a drain request");
+          expect(draining.release).toBeNull();
+          yield* runner.batch({
+            generation: machine.generation,
+            sequence: 1,
+            items: [{ kind: "machine.drained", id: draining.drain.id, unsaved: [] }],
+          });
+          expect((yield* runner.reconcile).release).toBe(machine.generation);
+          expect(yield* terminals.held).toBe(false);
+          expect(yield* store.get(input.terminalId)).toMatchObject({ status: "closed" });
+          const rejected = yield* Effect.result(terminals.open(owner, input));
+          expect(rejected._tag).toBe("Failure");
+          expect((yield* runner.reconcile).ensure).toBeNull();
+          yield* engine.dispatch(
+            owner,
+            type === "thread.archive"
+              ? {
+                  type: "thread.unarchive",
+                  commandId: CommandId.make("reopen-terminal-thread"),
+                  threadId,
+                }
+              : {
+                  type: "thread.unsettle",
+                  commandId: CommandId.make("reopen-terminal-thread"),
+                  threadId,
+                  reason: "user",
+                },
+            personal,
+          );
+          const restarted = yield* terminals.restart(owner, input);
+          expect(restarted.status).toBe("starting");
+          expect(restarted.generation).toBe(generationOf(initial) + 1);
+          expect((yield* runner.reconcile).ensure).not.toBeNull();
+        }),
+      ),
+  );
 });

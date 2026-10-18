@@ -525,6 +525,7 @@ const make = Effect.gen(function* () {
             drains: hello.drains === true,
             steers: hello.steers === true,
             pulls: hello.pulls === true,
+            terminals: hello.terminalProcessId !== undefined,
           },
           result: {
             _tag: "welcome",

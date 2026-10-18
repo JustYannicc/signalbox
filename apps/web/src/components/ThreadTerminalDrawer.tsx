@@ -465,6 +465,9 @@ function TerminalSessionViewport({
       readEnvironmentScope(environmentId, AuthOrchestrationOperateScope)
     );
   });
+  const handleTerminalPathLink = useEffectEvent((text: string) =>
+    signalboxTerminalLinks.handlePathLink(text),
+  );
   const serverConfig = useAtomValue(serverEnvironment.configValueAtom(environmentId));
   const openInPreferredEditor = useOpenInPreferredEditor(
     environmentId,
@@ -586,13 +589,7 @@ function TerminalSessionViewport({
     if (linkActivationScopeRef.current === canOpenHostEditor) return;
     linkActivationScopeRef.current = canOpenHostEditor;
     terminalRef.current?.refreshLinkActivation();
-  }, [
-    canOpenHostEditor,
-    signalboxTerminalLinks.canReadFiles,
-    signalboxTerminalLinks.hasLocalFilesystem,
-    cwd,
-    worktreePath,
-  ]);
+  }, [canOpenHostEditor]);
 
   useEffect(() => {
     if (resizeSessionGeneration === null) return;
@@ -956,7 +953,7 @@ function TerminalSessionViewport({
           );
           return;
         }
-        if (signalboxTerminalLinks.handlePathLink(text)) return;
+        if (handleTerminalPathLink(text)) return;
         const target = resolvePathLinkTarget(text, cwd);
         void (async () => {
           const result = await openTerminalPath(target);

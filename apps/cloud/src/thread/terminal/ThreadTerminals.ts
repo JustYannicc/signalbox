@@ -136,9 +136,21 @@ const make = Effect.gen(function* () {
     Effect.gen(function* () {
       if (projection === null) return retain(undefined);
       const lease = yield* Effect.orDie(threadStore.machine);
-      const deleted = projection.thread.deletedAt !== null;
+      const supportsTerminals =
+        lease.terminals ?? (yield* Effect.orDie(records.processId(lease.generation))) !== null;
+      const closing =
+        projection.thread.deletedAt !== null ||
+        projection.thread.archivedAt !== null ||
+        projection.thread.settledOverride === "settled";
       for (const record of yield* Effect.orDie(records.all)) {
         if (!terminalHoldsMachine(record)) continue;
+        if (lease.status === "connected" && !supportsTerminals) {
+          yield* fail(
+            record,
+            "This machine can't run terminals yet. Restart it to use a terminal.",
+          );
+          continue;
+        }
         if (
           record.leaseGeneration > 0 &&
           (lease.status === "none" || record.leaseGeneration !== lease.generation)
@@ -147,7 +159,7 @@ const make = Effect.gen(function* () {
           continue;
         }
         const neverOpened = record.leaseGeneration === 0 || lease.status === "requested";
-        if ((deleted && neverOpened) || (record.status === "closing" && neverOpened)) {
+        if ((closing && neverOpened) || (record.status === "closing" && neverOpened)) {
           yield* Effect.orDie(records.abandon(record.terminalId, record.generation));
           const closed: TerminalStore.TerminalRecord = {
             ...record,
@@ -166,9 +178,9 @@ const make = Effect.gen(function* () {
           });
           continue;
         }
-        if (deleted) yield* queueClose(record);
+        if (closing) yield* queueClose(record);
       }
-      if (!deleted && lease.status === "requested") yield* bindStarting(lease.generation, null);
+      if (!closing && lease.status === "requested") yield* bindStarting(lease.generation, null);
       return retain(undefined);
     }),
   );

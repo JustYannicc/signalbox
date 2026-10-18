@@ -114,6 +114,7 @@ export interface MachineLease {
   /** This generation's Runner takes `steer` (#562), as its `hello` said. */
   readonly steers?: boolean | undefined;
   readonly pulls?: boolean | undefined;
+  readonly terminals?: boolean | undefined;
   /**
    * The idle machine was asked to save everything before it goes (#493), at
    * `id` (when it was asked), and whether it answered and what it couldn't save.
@@ -405,6 +406,7 @@ const MachineLeaseJson = Schema.fromJsonString(
     drains: Schema.optional(Schema.Boolean),
     steers: Schema.optional(Schema.Boolean),
     pulls: Schema.optional(Schema.Boolean),
+    terminals: Schema.optional(Schema.Boolean),
     drain: Schema.optional(
       Schema.Union([
         Schema.Struct({ _tag: Schema.Literal("asked"), id: Schema.Number }),

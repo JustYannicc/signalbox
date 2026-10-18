@@ -129,6 +129,16 @@ const make = Effect.gen(function* () {
           Effect.gen(function* () {
             if (projection === null || !ensureThread(projection, input.threadId))
               return no(new ThreadEngine.ThreadNotFoundError());
+            if (
+              projection.thread.archivedAt !== null ||
+              projection.thread.settledOverride === "settled"
+            )
+              return no(
+                new TerminalOperationError({
+                  operation: force ? "restart" : "open",
+                  reason: "unavailable",
+                }),
+              );
             const root = projectRoot(projection.thread.projectId);
             if (root === null)
               return no(
@@ -373,6 +383,7 @@ const make = Effect.gen(function* () {
               if (record.status === "closing") continue;
               yield* Effect.orDie(records.abandon(record.terminalId, record.generation));
               const processMayExist =
+                lease.terminals !== false &&
                 record.leaseGeneration > 0 &&
                 record.leaseGeneration === lease.generation &&
                 lease.status !== "none" &&

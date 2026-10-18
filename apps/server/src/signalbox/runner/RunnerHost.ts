@@ -215,7 +215,7 @@ export const makeRunnerHost = Effect.fn("makeRunnerHost")(function* (config: Run
             sessionEnvironment: secrets.environment,
             mask: mask.text,
           });
-          const { adapters, layout, stderr, attachmentsDir } = made;
+          const { adapters, layout, stderr, environment, attachmentsDir } = made;
           harnessVariables = made.harnessVariables;
           const dependencies = yield* makeRunnerDependencies({
             cwd,

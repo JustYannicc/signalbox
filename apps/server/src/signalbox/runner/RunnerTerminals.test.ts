@@ -109,6 +109,7 @@ const makeDrive = (actions: Array<string>) => {
     abandonMerge: Effect.succeed({ _tag: "nothing_saved" }),
     saveBranch: () => Effect.succeed({ _tag: "not_saved", reason: "not remote-backed" }),
     published: () => Effect.void,
+    pull: () => Effect.die("Unexpected remote pull in terminal fixture"),
   } satisfies RunnerDrive;
   return { drive, state };
 };
