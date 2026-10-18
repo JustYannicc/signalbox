@@ -26,7 +26,7 @@ type PersonalRoot = typeof CatalogRootHome.Type & {
   readonly owner: Extract<CatalogHome["owner"], { readonly _tag: "person" }>;
 };
 
-// Organization bootstrap and activation of legacy copies need their own trusted authority.
+// Organization roots and activation of legacy copies need their own trusted authority.
 export const CatalogPersonalRoot = CatalogRootHome.pipe(
   Schema.refine(
     (home): home is PersonalRoot => home.owner._tag === "person" && home.legacySource === undefined,
@@ -38,6 +38,18 @@ export class CatalogPolicyFailure extends Schema.TaggedError<CatalogPolicyFailur
   "CatalogPolicyFailure",
   { reason: Schema.Literals(["denied", "invalid_state"]) },
 ) {}
+
+/** Shared root operations accept any root home whose authority supplies its own baseline. */
+export type CatalogRootReadContext = ReadContext<
+  typeof catalogRootTables,
+  typeof CatalogPolicyActor.Type,
+  typeof CatalogRootHome.Type
+>;
+export type CatalogRootWriteContext = TransactionContext<
+  typeof catalogRootTables,
+  typeof CatalogPolicyActor.Type,
+  typeof CatalogRootHome.Type
+>;
 
 export type CatalogPolicyReadContext = ReadContext<
   typeof catalogRootTables,
