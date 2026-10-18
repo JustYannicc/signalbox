@@ -202,6 +202,9 @@ jobs:
       - name: Test preview certificate wait
         run: node --test .github/scripts/wait-own-certificate.test.cjs
 
+      - name: Test preview Worker domain verification
+        run: node --test .github/scripts/cloudflare-preview-domains.test.cjs
+
       - name: Test preview deploy cancellation
         run: node --test .github/scripts/cancel-preview-deploys.test.cjs
 
