@@ -2,6 +2,12 @@
 import type { ExecCommand, ExecReport } from "@signalbox/runner-protocol/ExecProtocol";
 
 type Ack = Extract<ExecReport, { type: "ack" }>;
+
+export class ExecCommandRejected extends Error {
+  constructor(readonly report: Ack) {
+    super(`Runner rejected process command (${report.error?.code ?? "process_error"})`);
+  }
+}
 type PendingAck = {
   readonly operation: ExecCommand["type"];
   readonly requestId?: string;
@@ -47,9 +53,7 @@ export class ExecCommandAcks {
       }
     }).then((report) => {
       if (!report.applied) {
-        throw new Error(
-          `Runner rejected process command (${report.error?.code ?? "process_error"})`,
-        );
+        throw new ExecCommandRejected(report);
       }
       return report;
     });

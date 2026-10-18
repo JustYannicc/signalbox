@@ -6,7 +6,7 @@ import type {
   KernelCommandExit,
 } from "../../kernel/KernelCommandForwarder.ts";
 import { base64ToBytes, byteQueue, bytesToBase64 } from "./ExecBytes.ts";
-import { ExecCommandAcks } from "./ExecCommandAcks.ts";
+import { ExecCommandAcks, ExecCommandRejected } from "./ExecCommandAcks.ts";
 
 export interface RunnerExecChildOptions {
   readonly generation: number;
@@ -132,6 +132,7 @@ export class RunnerExecChild implements KernelCommandChild {
       });
       this.#started = true;
     } catch (error) {
+      if (startCreatedNoProcess(error)) this.#startSent = false;
       this.fail(asError(error));
       throw error;
     }
@@ -259,12 +260,16 @@ export class RunnerExecChild implements KernelCommandChild {
     this.#output.stderr.error(error);
     this.#rejectExit(error);
     this.#acks.fail(error);
-    if (!this.#startSent) this.generationEnded(error);
+    if (!this.#startSent) this.#finishOwnership();
   }
 
   /** Called only when the owner confirms this generation can no longer run processes. */
   generationEnded(error: Error) {
     this.fail(error);
+    this.#finishOwnership();
+  }
+
+  #finishOwnership() {
     if (this.#closedReceived) return;
     this.#closedReceived = true;
     this.#resolveClosed();
@@ -307,6 +312,22 @@ export class RunnerExecChild implements KernelCommandChild {
     });
     return release;
   }
+}
+
+function startCreatedNoProcess(error: unknown) {
+  return (
+    error instanceof ExecCommandRejected &&
+    error.report.operation === "start" &&
+    error.report.error !== undefined &&
+    [
+      "stale_generation",
+      "request_receipt_limit",
+      "process_limit",
+      "workspace_not_ready",
+      "invalid_cwd",
+      "process_error",
+    ].includes(error.report.error.code)
+  );
 }
 
 function asError(error: unknown) {

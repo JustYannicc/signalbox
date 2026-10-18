@@ -6,7 +6,7 @@ import {
 } from "@signalbox/runner-protocol/RunnerProtocol";
 import type { RunId } from "@t3tools/contracts";
 import type { FeedbackResponse } from "@signalbox/runner-protocol/FeedbackProtocol";
-import { EXEC_PROTOCOL_VERSION, type ExecReport } from "@signalbox/runner-protocol/ExecProtocol";
+import { EXEC_PROTOCOL_VERSION } from "@signalbox/runner-protocol/ExecProtocol";
 import type * as Effect from "effect/Effect";
 import * as Hex from "effect/encoding/Hex";
 

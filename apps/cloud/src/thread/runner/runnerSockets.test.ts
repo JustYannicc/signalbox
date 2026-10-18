@@ -160,6 +160,7 @@ describe("runnerSockets", () => {
         disconnected: (_socket, generation, connection) => {
           callbacks.push(`disconnected:${generation}:${connection}`);
         },
+        generationEnded: (generation) => callbacks.push(`ended:${generation}`),
       };
       const filename = freshDatabase();
       yield* withObject(filename, (engine, runner) =>

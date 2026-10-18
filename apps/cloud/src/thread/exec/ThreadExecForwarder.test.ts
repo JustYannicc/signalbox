@@ -312,7 +312,66 @@ describe("ThreadExecForwarder", () => {
       dataBase64: "QQ==",
     });
     expect(released).not.toHaveBeenCalled();
-    fixture.forwarder.generationEnded(4);
+    fixture.forwarder.socketHost.generationEnded(4);
+    await leaseReleased.promise;
+    expect(released).toHaveBeenCalledOnce();
+  });
+
+  it.each(["workspace_not_ready", "invalid_cwd", "process_error", "process_limit"] as const)(
+    "releases a start rejected with %s without waiting for a nonexistent process",
+    async (code) => {
+      const leaseReleased = deferred<void>();
+      const released = vi.fn(async () => leaseReleased.resolve());
+      const fixture = setup({
+        lease: { acquire: async () => ({ generation: 4, connection: 2, release: released }) },
+        workspace: { canonicalCwd: async () => "/workspace" },
+        policy: { authorize: async () => undefined },
+      });
+      const spawning = fixture.forwarder.spawn(command, new AbortController().signal);
+      const rejected = expect(spawning).rejects.toThrow(
+        `Runner rejected process command (${code})`,
+      );
+      const start = await fixture.startSent.promise;
+      fixture.report({
+        type: "ack",
+        generation: 4,
+        processId: start.processId,
+        operation: "start",
+        requestId: start.requestId,
+        applied: false,
+        error: { code, message: "Start rejected" },
+      });
+      await rejected;
+      await leaseReleased.promise;
+      await fixture.forwarder.dispose();
+      expect(fixture.frames.map((frame) => frame.type)).toEqual(["start"]);
+      expect(released).toHaveBeenCalledOnce();
+    },
+  );
+
+  it("retains ownership when a rejected start may refer to an existing process", async () => {
+    const leaseReleased = deferred<void>();
+    const released = vi.fn(async () => leaseReleased.resolve());
+    const fixture = setup({
+      lease: { acquire: async () => ({ generation: 4, connection: 2, release: released }) },
+      workspace: { canonicalCwd: async () => "/workspace" },
+      policy: { authorize: async () => undefined },
+    });
+    const spawning = fixture.forwarder.spawn(command, new AbortController().signal);
+    const rejected = expect(spawning).rejects.toThrow("process_id_conflict");
+    const start = await fixture.startSent.promise;
+    fixture.report({
+      type: "ack",
+      generation: 4,
+      processId: start.processId,
+      operation: "start",
+      requestId: start.requestId,
+      applied: false,
+      error: { code: "process_id_conflict", message: "A process already owns this ID" },
+    });
+    await rejected;
+    expect(released).not.toHaveBeenCalled();
+    fixture.forwarder.socketHost.generationEnded(4);
     await leaseReleased.promise;
     expect(released).toHaveBeenCalledOnce();
   });

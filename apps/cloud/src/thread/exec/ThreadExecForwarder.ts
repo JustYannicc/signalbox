@@ -53,6 +53,8 @@ export interface RunnerExecSocketHost {
     report: ExecReport,
   ) => void;
   readonly disconnected: (socket: WebSocket, generation: number, connection: number) => void;
+  /** The machine owner confirms native execution has ended, rather than merely disconnecting. */
+  readonly generationEnded: (generation: number) => void;
 }
 
 export interface ThreadExecForwarderOptions {
@@ -99,6 +101,7 @@ export class ThreadExecForwarder implements KernelCommandForwarder {
       this.report(socket, generation, connection, report),
     disconnected: (socket, generation, connection) =>
       this.disconnected(socket, generation, connection),
+    generationEnded: (generation) => this.generationEnded(generation),
   };
 
   connected(socket: WebSocket, connection: RunnerExecConnection) {
