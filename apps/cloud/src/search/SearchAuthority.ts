@@ -8,15 +8,18 @@ import { driveOfProject } from "../user/contextProjects.ts";
 import * as UserContexts from "../user/UserContexts.ts";
 import * as UserDrives from "../user/UserDrives.ts";
 import * as UserStore from "../user/UserStore.ts";
+import * as UserFolders from "../user/UserFolders.ts";
 import type { SearchHome } from "./SearchIndex.ts";
 import { searchHomeForThread } from "./searchHome.ts";
 import { SearchIndexError } from "./SearchIndex.ts";
 
-export type SearchActor = Actor & { readonly projectIds?: ReadonlyArray<string> };
+import type { SearchActor } from "./ThreadSearch.ts";
 
 export interface SearchScope {
   readonly actor: Actor;
   readonly revision: number;
+  /** Readable homes independent of whether the thread registry currently has any rows in them. */
+  readonly grants: ReadonlyArray<SearchHome>;
   readonly homes: ReadonlyArray<{
     readonly home: SearchHome;
     readonly threadIds: ReadonlyArray<string>;
@@ -35,6 +38,7 @@ const make = Effect.gen(function* () {
   const store = yield* UserStore.UserStore;
   const contexts = yield* UserContexts.UserContexts;
   const drives = yield* UserDrives.UserDrives;
+  const folders = yield* UserFolders.UserFolders;
   return SearchAuthority.of({
     current: (actor) =>
       Effect.gen(function* () {
@@ -48,16 +52,37 @@ const make = Effect.gen(function* () {
           contextIds,
           ...(actor.projectIds === undefined ? {} : { projectIds: actor.projectIds }),
         };
-        if (profile?.id !== actor.userId) return { actor: currentActor, revision, homes: [] };
+        if (profile?.id !== actor.userId)
+          return { actor: currentActor, revision, grants: [], homes: [] };
         const index = yield* store.threadIndex;
+        const folderTrashes = yield* folders.activeTrashes;
+        const hiddenThreads = new Set(folderTrashes.flatMap((trash) => trash.threadIds));
+        const hiddenDrives = new Set(folderTrashes.flatMap((trash) => trash.driveIds));
         const homes = new Map<string, { home: SearchHome; threadIds: Array<string> }>();
         const access = new Map<string, boolean>();
+        const grants: Array<SearchHome> = [];
+        for (const drive of yield* drives.drives) {
+          if (!contextAllows(contextIds, drive.contextId)) continue;
+          if (actor.projectIds !== undefined && !actor.projectIds.includes(drive.projectId))
+            continue;
+          const allowed = (yield* drives.access(drive.id)) !== null;
+          access.set(drive.id, allowed);
+          if (allowed)
+            grants.push(searchHomeForThread(actor.userId, drive.contextId, drive.projectId));
+        }
+        const granted = new Set(grants.map((home) => `${home.ownerId}/${home.projectId}`));
         for (const row of index.threads) {
           if (!contextAllows(contextIds, row.contextId) || row.shell.deletedAt !== null) continue;
           if (actor.projectIds !== undefined && !actor.projectIds.includes(row.shell.projectId))
             continue;
           const driveId = driveOfProject(row.shell.projectId, actor.userId);
           if (driveId === null || parseDriveId(driveId)?.contextId !== row.contextId) continue;
+          // Folder Trash commits before child tombstones. Explicit filing elsewhere still wins.
+          if (
+            (hiddenThreads.has(row.shell.id) || hiddenDrives.has(driveId)) &&
+            (yield* folders.trashedHomeOfThread(row.shell.id)) !== null
+          )
+            continue;
           let allowed = access.get(driveId);
           if (allowed === undefined) {
             allowed = (yield* drives.access(driveId)) !== null;
@@ -66,6 +91,7 @@ const make = Effect.gen(function* () {
           if (!allowed) continue;
           const home = searchHomeForThread(actor.userId, row.contextId, row.shell.projectId);
           const key = `${home.ownerId}/${home.projectId}`;
+          if (!granted.has(key)) continue;
           const entry = homes.get(key) ?? { home, threadIds: [] };
           entry.threadIds.push(row.shell.id);
           homes.set(key, entry);
@@ -73,6 +99,17 @@ const make = Effect.gen(function* () {
         return {
           actor: currentActor,
           revision,
+          grants: grants.toSorted((a, b) =>
+            a.ownerId < b.ownerId
+              ? -1
+              : a.ownerId > b.ownerId
+                ? 1
+                : a.projectId < b.projectId
+                  ? -1
+                  : a.projectId > b.projectId
+                    ? 1
+                    : 0,
+          ),
           homes: [...homes]
             .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
             .map(([, entry]) => ({

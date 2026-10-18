@@ -37,6 +37,15 @@ export interface CloudFields {
   readonly drive?: { readonly id: string };
   readonly automation?: Record<string, unknown> & { readonly id: string };
   readonly executor?: Record<string, unknown>;
+  // Sentry indexes top-level scalars; nested objects arrive as opaque JSON strings.
+  readonly "durableObject.id"?: string;
+  readonly "durableObject.kind"?: "user" | "home";
+  readonly "durableObject.level"?: "person" | "organization" | "folder";
+  readonly "storage.bytes"?: number;
+  readonly "storage.capBytes"?: number;
+  readonly "storage.utilizationPercent"?: number;
+  readonly "storage.thresholdPercent"?: number;
+  readonly "storage.status"?: "ok" | "high";
   readonly route?: Route;
 }
 

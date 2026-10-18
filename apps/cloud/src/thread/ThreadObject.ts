@@ -132,10 +132,7 @@ const STEP_INTERVAL_MS = 120;
 /** Wait after the `failures`th failure in a row: 5 s, doubling, at most 5 min. */
 const retryDelay = (failures: number) => Math.min(5_000 * 2 ** (failures - 1), 300_000);
 
-type MachineReport = Omit<
-  Parameters<TurnDiagnostics.TurnDiagnostics["Service"]["machineReported"]>[0],
-  "generation" | "runId" | "now"
->;
+type MachineReport = Omit<ThreadRunner.MachineReport, "generation" | "runId">;
 
 /**
  * Records into the turn's diagnostics under the thread's lock, so it never
@@ -160,16 +157,7 @@ const noteMachine = (
     readonly generation?: number | undefined;
     readonly runId: ThreadRunner.MachinePlan["runId"];
   },
-) =>
-  Effect.flatMap(ThreadStore.ThreadStore, (store) =>
-    recordUnderLock((diagnostics) =>
-      Effect.gen(function* () {
-        const generation = input.generation ?? (yield* Effect.orDie(store.machine)).generation;
-        const now = yield* Clock.currentTimeMillis;
-        yield* diagnostics.machineReported({ ...input, generation, now });
-      }),
-    ),
-  );
+) => ThreadRunner.ThreadRunner.use((runner) => runner.machineReported(input));
 
 /** Drives, when bound, and the owner's access to one and commit author, asked of their own object. */
 const layerThreadDrives = (env: ThreadObjectEnv) =>
@@ -450,6 +438,26 @@ export class ThreadObject extends DurableObject<ThreadObjectEnv> implements Thre
   }
 
   // Durable Object RPC dispatches to prototype methods, so each one is spelled out.
+  async trash(...args: Parameters<ThreadObjectApi["trash"]>) {
+    const reply = await this.api.trash(...args);
+    if (
+      reply._tag === "ok" &&
+      reply.value.state === "trashed" &&
+      reply.value.trashId === args[1].trashId
+    ) {
+      await this.gateway.closeForThreadTrash();
+    }
+    return reply;
+  }
+
+  restore(...args: Parameters<ThreadObjectApi["restore"]>) {
+    return this.api.restore(...args);
+  }
+
+  purge(...args: Parameters<ThreadObjectApi["purge"]>) {
+    return this.api.purge(...args);
+  }
+
   answerSecret(...args: Parameters<ThreadObjectApi["answerSecret"]>) {
     return this.api.answerSecret(...args);
   }
@@ -459,6 +467,14 @@ export class ThreadObject extends DurableObject<ThreadObjectEnv> implements Thre
 
   launch(...args: Parameters<ThreadObjectApi["launch"]>) {
     return this.api.launch(...args);
+  }
+
+  subscribePreparation(...args: Parameters<ThreadObjectApi["subscribePreparation"]>) {
+    return this.api.subscribePreparation(...args);
+  }
+
+  cancelPreparation(...args: Parameters<ThreadObjectApi["cancelPreparation"]>) {
+    return this.api.cancelPreparation(...args);
   }
 
   recordNativeChildBatch(...args: Parameters<ThreadObjectApi["recordNativeChildBatch"]>) {
@@ -511,6 +527,10 @@ export class ThreadObject extends DurableObject<ThreadObjectEnv> implements Thre
 
   contextWorkVisible(...args: Parameters<ThreadObjectApi["contextWorkVisible"]>) {
     return this.api.contextWorkVisible(...args);
+  }
+
+  authorizeExecutorTurn(...args: Parameters<ThreadObjectApi["authorizeExecutorTurn"]>) {
+    return this.api.authorizeExecutorTurn(...args);
   }
 
   find(...args: Parameters<ThreadObjectApi["find"]>) {

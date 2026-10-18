@@ -21,6 +21,15 @@ export const makeCapabilities = (access: CollaborationAccess) =>
           .turn({ threadId: source, projectId: thread.projectId })
           .pipe(
             Effect.catchTags({
+              ThreadHomeTrashedError: (cause) =>
+                Effect.fail(
+                  new CollaborationError({
+                    code: "thread_not_found",
+                    message: "Thread not found.",
+                    operation: "read_model_home",
+                    cause,
+                  }),
+                ),
               SqlError: (cause) =>
                 Effect.fail(CollaborationError.unavailable("read_model_home", cause)),
             }),

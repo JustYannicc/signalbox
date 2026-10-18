@@ -12,7 +12,6 @@ import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
-import * as TaskRecords from "../collaboration/taskRecords.ts";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import * as Migrator from "effect/sql/Migrator";
@@ -20,16 +19,19 @@ import * as SqlClient from "effect/sql/SqlClient";
 import type { SqlError } from "effect/sql/SqlError";
 
 import * as ConnectionLinks from "../connections/ConnectionLinks.ts";
+import * as TaskRecords from "../collaboration/taskRecords.ts";
 import * as PushDevices from "../push/PushDevices.ts";
 import * as Migrations from "../storage/migrations.ts";
 import * as UserPreviewSetup from "../previewSetup/UserPreviewSetup.ts";
 import * as GitHubConnection from "../github/GitHubConnection.ts";
 import * as LocalKeys from "../localKeys/LocalKeys.ts";
 import * as NoteTables from "../notes/noteTables.ts";
+import { migrateTrash } from "../trash/trashTables.ts";
 import * as UserContexts from "./UserContexts.ts";
 import * as UserDriveIndex from "./UserDriveIndex.ts";
 import * as ResourceBindings from "./ResourceBindings.ts";
 import * as FolderTables from "./folderTables.ts";
+import * as FolderTrash from "./folderTrash.ts";
 import * as FolderStartReservations from "./folderStartReservations.ts";
 import * as ThreadKindTables from "./threadKindTables.ts";
 import * as StatusNoteTables from "./statusNoteTables.ts";
@@ -140,6 +142,14 @@ export class UserStore extends Context.Service<
       SqlError
     >;
     readonly threadMembers: Effect.Effect<ReadonlyArray<ThreadId>, SqlError>;
+    /** Membership rows are append-only; their SQLite rowids order durable registrations. */
+    readonly threadRegistrations: (
+      after: number,
+      limit: number,
+    ) => Effect.Effect<
+      ReadonlyArray<{ readonly sequence: number; readonly threadId: ThreadId }>,
+      SqlError
+    >;
     /**
      * Replaces every indexed summary (not membership) with `summaries`, in one
      * transaction, so readers see the old index or the new one, never a part.
@@ -234,6 +244,8 @@ const migrations = Migrator.fromRecord({
   }),
   "0020_folder_phases": FolderTables.addPhases,
   "0021_collaboration_task_runs": TaskRecords.createRunLinks,
+  "0021_folder_trash": FolderTrash.createTables,
+  "0022_trash": migrateTrash,
   "0021_keybindings": UserKeybindings.createTables,
   "0021_analytics_preference": UserAnalyticsPreference.createTables,
   "0022_pool_snapshots": PoolSnapshotCache.createTables,
@@ -273,7 +285,11 @@ const GrantRow = Schema.Struct({
 const ShellJson = Schema.fromJsonString(OrchestrationV2ThreadShellJson);
 const encodeShell = Schema.encodeSync(ShellJson);
 const decodeShell = Schema.decodeUnknownSync(ShellJson);
-const IndexRow = Schema.Struct({ context_id: SignalboxContextId, shell: ShellJson });
+const IndexRow = Schema.Struct({
+  context_id: SignalboxContextId,
+  revision: Schema.Number,
+  shell: ShellJson,
+});
 const decodeIndexRows = Schema.decodeUnknownSync(Schema.Array(IndexRow));
 const decodeMemberRows = Schema.decodeUnknownSync(
   Schema.Array(Schema.Struct({ thread_id: ThreadId })),
@@ -454,9 +470,12 @@ const make = Effect.gen(function* () {
     sequence: sql`SELECT sequence FROM thread_index_state WHERE id = 1`.pipe(
       Effect.map((rows) => decodeSequenceRows(rows)[0]?.sequence ?? 0),
     ),
-    threads: sql`SELECT context_id, shell FROM thread_index ORDER BY thread_id`.pipe(
+    threads: sql`SELECT context_id, revision, shell FROM thread_index ORDER BY thread_id`.pipe(
       Effect.map((rows) =>
-        decodeIndexRows(rows).map((row) => ({ contextId: row.context_id, shell: row.shell })),
+        decodeIndexRows(rows).map((row) => ({
+          contextId: row.context_id,
+          shell: { ...row.shell, summaryRevision: row.revision },
+        })),
       ),
     ),
   }).pipe(sql.withTransaction);
@@ -464,6 +483,13 @@ const make = Effect.gen(function* () {
   const threadMembers: UserStore["Service"]["threadMembers"] =
     sql`SELECT thread_id FROM thread_members ORDER BY thread_id`.pipe(
       Effect.map((rows) => decodeMemberRows(rows).map((row) => row.thread_id)),
+    );
+
+  const threadRegistrations: UserStore["Service"]["threadRegistrations"] = (after, limit) =>
+    sql<{ readonly sequence: number; readonly threadId: string }>`
+      SELECT rowid AS sequence, thread_id AS threadId FROM thread_members
+      WHERE rowid > ${after} ORDER BY rowid LIMIT ${limit}`.pipe(
+      Effect.map((rows) => rows.map((row) => ({ ...row, threadId: ThreadId.make(row.threadId) }))),
     );
 
   const replaceThreadIndex: UserStore["Service"]["replaceThreadIndex"] = Effect.fn(
@@ -482,6 +508,7 @@ const make = Effect.gen(function* () {
     recordThreadSummary,
     threadIndex,
     threadMembers,
+    threadRegistrations,
     replaceThreadIndex,
     recordSignIn,
     profile,

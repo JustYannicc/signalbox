@@ -16,8 +16,7 @@ import { transientCause } from "../stepPolicy.ts";
 import { isoAt, isoMs, nowIso } from "../time.ts";
 import type { AutomationRow, InstanceEventRow, RunRow, StepRow } from "../WorkflowStore.ts";
 import { hash64 } from "../hash.ts";
-import type { StepRequest } from "../sandbox/replayWorkflow.ts";
-import type { HostStepStart, Marks, RunEnd } from "../workflow/hostProtocol.ts";
+import type { HostStepStart, Marks, RunEnd, StepRequest } from "../workflow/hostProtocol.ts";
 import { AutomationRunner } from "./AutomationRunner.ts";
 
 /**
@@ -25,7 +24,7 @@ import { AutomationRunner } from "./AutomationRunner.ts";
  * is one backend instance, which runs the version's code and journals every
  * step itself. The instance calls the host handlers below from inside its
  * steps; the engine records each step for people to see and executes it with
- * the same step executors the replay core uses. A step that waits (an agent,
+ * the host's step executors. A step that waits (an agent,
  * a question, an event) gets an event type, and the engine sends the outcome
  * as that event when it settles from outside.
  *
@@ -138,9 +137,6 @@ export const makeHostedDriver = (core: EngineInternals) =>
 
     const timed = yield* makeTimedWork({
       ...core,
-      // Retries are the backend's; nothing here parks or replays.
-      replays: { retryDue: () => Effect.void },
-      execute: () => Effect.void,
       retryOrFail: (step, error, options) =>
         core.complete(step.run_id, step.step_key, {
           ok: false,

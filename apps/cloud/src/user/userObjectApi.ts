@@ -11,9 +11,9 @@ import * as Schema from "effect/Schema";
 
 import type * as Collaboration from "../collaboration/CloudCollaboration.ts";
 import { deliverCompletion } from "../collaboration/completion.ts";
+import * as ThreadSearch from "../search/ThreadSearch.ts";
 import type { CloudThreadService } from "../thread/CloudThreadService.ts";
 import type { ThreadInbox } from "../thread/ThreadInbox.ts";
-import * as ThreadSearch from "../search/ThreadSearch.ts";
 import { learnerTool } from "./learnerTool.ts";
 import * as UserLearner from "./UserLearner.ts";
 import { automationTool } from "../automations/automationTool.ts";
@@ -29,6 +29,9 @@ import * as GitHubConnection from "../github/GitHubConnection.ts";
 import * as LocalKeys from "../localKeys/LocalKeys.ts";
 import * as LoginService from "../signIn/LoginService.ts";
 import * as SignInGrants from "../signIn/SignInGrants.ts";
+import { authorizeExecutorToken as authorizeExecutorTokenNow } from "../executor/ExecutorTokenAuthority.ts";
+import type { ExecutorTokenBinding } from "../executor/ExecutorTokenBindings.ts";
+import * as ThreadDirectory from "../thread/ThreadDirectory.ts";
 import {
   authorizeLocalModel,
   localKeysView,
@@ -42,6 +45,8 @@ import {
   type UserObjectApi,
 } from "./UserDirectory.ts";
 import * as UserContexts from "./UserContexts.ts";
+import * as UserFolders from "./UserFolders.ts";
+import * as DrivePeople from "./DrivePeople.ts";
 import * as OnePasswordAccount from "./OnePasswordAccount.ts";
 import * as UserDriveIndex from "./UserDriveIndex.ts";
 import * as UserDrives from "./UserDrives.ts";
@@ -50,7 +55,7 @@ import * as UserShell from "./UserShell.ts";
 import * as UserStore from "./UserStore.ts";
 import * as UserThreadKinds from "./UserThreadKinds.ts";
 import * as UserThreadStatus from "./UserThreadStatus.ts";
-import * as UserFolders from "./UserFolders.ts";
+import { UserTrash } from "../trash/UserTrash.ts";
 import * as ClientTraceContext from "../observability/clientTraceContext.ts";
 
 const decodeDriveEvents = Schema.decodeUnknownSync(Schema.Array(DriveRefEvent));
@@ -90,6 +95,10 @@ export const makeUserObjectApi = (
       | PersonBrowsers.PersonBrowsers
       | SignInGrants.SignInGrants
       | LoginService.LoginService
+      | UserTrash
+      | ThreadDirectory.ThreadDirectory
+      | DrivePeople.DrivePeople
+      | CloudAutomations.CloudAutomations
     >,
   ) => Promise<A>,
 ): UserObjectApi => {
@@ -112,6 +121,7 @@ export const makeUserObjectApi = (
         : f(automations.value),
     );
   return {
+    trashProgress: (id) => run(UserTrash.use((trash) => trash.progress(id))),
     searchThreads: (actor, input) =>
       run(ThreadSearch.ThreadSearch.use((search) => search.query(actor, input))),
     readSearchItem: (actor, threadId, itemId) =>
@@ -233,7 +243,7 @@ export const makeUserObjectApi = (
                   _tag: "operation-error",
                   operation: error.operation,
                   detail: error.detail,
-                  ...(error.reason === undefined ? {} : { reason: error.reason }),
+                  ...(error.reason === "not-found" ? { reason: error.reason } : {}),
                 }),
             }),
           ),
@@ -268,6 +278,8 @@ export const makeUserObjectApi = (
       run(PersonBrowsers.PersonBrowsers.use((browsers) => browsers.open(input))),
     browserSignIn: (input) => run(LoginService.LoginService.use((logins) => logins.signIn(input))),
     checkSignIn: (input) => run(SignInGrants.SignInGrants.use((grants) => grants.check(input))),
+    authorizeExecutorToken: (claims, binding: ExecutorTokenBinding) =>
+      run(authorizeExecutorTokenNow(claims, binding)),
     endBrowser: (input) =>
       run(PersonBrowsers.PersonBrowsers.use((browsers) => browsers.end(input))),
     automationHost: (call) => run(withAutomations((automations) => automations.host(call))),

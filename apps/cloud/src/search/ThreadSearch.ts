@@ -1,26 +1,27 @@
-import {
-  type OrchestrationSearchThreadsInput,
-  type OrchestrationSearchThreadsResult,
-  type OrchestrationV2SearchThreadInput,
-  type OrchestrationV2SearchThreadResult,
+import type {
+  OrchestrationSearchThreadsInput,
+  OrchestrationSearchThreadsResult,
+  OrchestrationV2SearchThreadInput,
+  OrchestrationV2SearchThreadResult,
   ProjectId,
   ThreadId,
 } from "@t3tools/contracts";
-import {
-  type ThreadSearchInput,
-  type ThreadSearchResult,
+import type { SignalboxContextId } from "@t3tools/contracts/signalboxContexts";
+import type {
+  ThreadSearchInput,
+  ThreadSearchResult,
   ThreadSearchError,
 } from "@t3tools/contracts/signalboxSearch";
 import * as Context from "effect/Context";
-import * as Effect from "effect/Effect";
-import * as Schema from "effect/Schema";
-import * as Layer from "effect/Layer";
+import type * as Effect from "effect/Effect";
 
-import * as ThreadDirectory from "../thread/ThreadDirectory.ts";
-import type { SearchActor } from "./SearchAuthority.ts";
-import * as SearchAuthority from "./SearchAuthority.ts";
 import type * as SearchIndex from "./SearchIndex.ts";
-import * as SearchQuery from "./SearchQuery.ts";
+
+export interface SearchActor {
+  readonly userId: string;
+  readonly contextIds: ReadonlyArray<SignalboxContextId>;
+  readonly projectIds?: ReadonlyArray<string>;
+}
 
 /** The one search service for people, agents and API callers. */
 export class ThreadSearch extends Context.Service<
@@ -55,95 +56,3 @@ export class ThreadSearch extends Context.Service<
     >;
   }
 >()("@signalbox/cloud/search/ThreadSearch") {}
-
-const unavailable = () => new ThreadSearchError({ reason: "unavailable" });
-const expired = () => new ThreadSearchError({ reason: "cursor_expired" });
-const encodeStrings = Schema.encodeSync(Schema.fromJsonString(Schema.Array(Schema.String)));
-
-const make = Effect.gen(function* () {
-  const authority = yield* SearchAuthority.SearchAuthority;
-  const threads = yield* ThreadDirectory.ThreadDirectory;
-  const queryItems = yield* SearchQuery.make;
-
-  const search: ThreadSearch["Service"]["search"] = (actor, input) =>
-    Effect.gen(function* () {
-      const found = new Set<string>();
-      const result: Array<OrchestrationSearchThreadsResult["matches"][number]> = [];
-      let cursor: string | undefined;
-      do {
-        const page = yield* queryItems(
-          actor,
-          {
-            query: input.query,
-            mode: "literal",
-            kinds: ["user", "assistant"],
-            limit: 50,
-            ...(cursor === undefined ? {} : { cursor }),
-          },
-          true,
-        );
-        if (!page.coverage.available) return yield* unavailable();
-        for (const hit of page.hits) {
-          if (found.has(hit.threadId) || (hit.kind !== "user" && hit.kind !== "assistant"))
-            continue;
-          found.add(hit.threadId);
-          result.push({
-            threadId: hit.threadId,
-            projectId: hit.projectId,
-            source: hit.kind,
-            snippet: hit.snippet,
-            messageCreatedAt: null,
-            archived: hit.archived,
-          });
-          if (result.length >= (input.limit ?? 20)) return { matches: result };
-        }
-        cursor = page.nextCursor ?? undefined;
-      } while (cursor !== undefined);
-      return { matches: result };
-    });
-
-  const searchOne: ThreadSearch["Service"]["searchOne"] = (actor, input) =>
-    Effect.gen(function* () {
-      const scope = yield* authority.current(actor);
-      if (!scope.homes.some((home) => home.threadIds.includes(input.threadId)))
-        return yield* unavailable();
-      const result = yield* threads.forThread(input.threadId).find(scope.actor, input);
-      const final = yield* authority.current(actor);
-      if (
-        !final.homes.some((home) => home.threadIds.includes(input.threadId)) ||
-        encodeStrings(final.actor.contextIds) !== encodeStrings(scope.actor.contextIds)
-      )
-        return yield* expired();
-      return { ...result, complete: true };
-    }).pipe(Effect.mapError(() => unavailable()));
-
-  const readItem: ThreadSearch["Service"]["readItem"] = (actor, threadId, itemId) =>
-    Effect.gen(function* () {
-      const scope = yield* authority.current(actor);
-      if (!scope.homes.some((home) => home.threadIds.includes(threadId))) return null;
-      const record = yield* threads.forThread(threadId).searchDocuments(scope.actor, [itemId]);
-      if (record === null || record.deleted) return null;
-      const final = yield* authority.current(actor);
-      if (
-        !final.homes.some(
-          (home) => home.home.projectId === record.projectId && home.threadIds.includes(threadId),
-        ) ||
-        encodeStrings(final.actor.contextIds) !== encodeStrings(scope.actor.contextIds)
-      )
-        return null;
-      const item = record.documents.find((document) => document.itemId === itemId);
-      return item === undefined
-        ? null
-        : {
-            snapshotSequence: record.snapshotSequence,
-            projectId: record.projectId,
-            title: record.title,
-            archived: record.archived,
-            item,
-          };
-    }).pipe(Effect.mapError(() => unavailable()));
-
-  return ThreadSearch.of({ query: queryItems, search, searchOne, readItem });
-});
-
-export const layer = Layer.effect(ThreadSearch, make);

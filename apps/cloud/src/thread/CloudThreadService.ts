@@ -1,16 +1,17 @@
 import {
   type OrchestrationV2Command,
   type OrchestrationV2AppThreadLineage,
+  type OrchestrationV2DispatchCommandResult,
   type OrchestrationV2Run,
-  type OrchestrationV2TurnItem,
-  type TurnItemId,
   type OrchestrationV2SubscribeThreadInput,
   type OrchestrationV2ThreadBoundedSnapshot,
   type OrchestrationV2ThreadHistoryPage,
   type OrchestrationV2ThreadLaunchInput,
   type OrchestrationV2ThreadLaunchResult,
   type OrchestrationV2ThreadStreamItem,
+  type OrchestrationV2TurnItem,
   type ThreadId,
+  type TurnItemId,
   SecretRequestError,
   type SecretRequestAnswerInput,
 } from "@t3tools/contracts";
@@ -65,7 +66,7 @@ export class CloudThreadService extends Context.Service<
       actor: Actor,
       command: OrchestrationV2Command,
       expectedRun?: Pick<OrchestrationV2Run, "id" | "status"> | null,
-    ) => Effect.Effect<{ readonly sequence: number }, CloudThreadError>;
+    ) => Effect.Effect<OrchestrationV2DispatchCommandResult, CloudThreadError>;
     readonly launchThread: (
       actor: Actor,
       input: OrchestrationV2ThreadLaunchInput,

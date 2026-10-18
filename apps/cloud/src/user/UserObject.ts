@@ -12,6 +12,7 @@ import * as Schema from "effect/Schema";
 
 import * as CloudAssets from "../assets/CloudAssets.ts";
 import * as Evlog from "../observability/Evlog.ts";
+import { makeStorageObserver } from "../observability/DurableObjectStorage.ts";
 import * as ClientRpcTracing from "../observability/clientRpcTracing.ts";
 import * as IdentityProvider from "../account/IdentityProvider.ts";
 import * as CloudConfig from "../CloudConfig.ts";
@@ -36,7 +37,8 @@ import * as CloudPullRequests from "../github/CloudPullRequests.ts";
 import * as PullRequestRepository from "../github/PullRequestRepository.ts";
 import * as ConnectionLinks from "../connections/ConnectionLinks.ts";
 import * as GitHubConnection from "../github/GitHubConnection.ts";
-import { API_HEADER, decodeApiCredential, serveApiRequest } from "../api/apiObject.ts";
+import { API_HEADER, decodeApiCredential } from "../api/apiCredential.ts";
+import { serveApiRequest } from "../api/apiObject.ts";
 import { MCP_PATH, makeMcpHandler } from "../api/mcpObject.ts";
 import * as LearnerService from "../learner/LearnerService.ts";
 import * as LearnerJev from "../learner/LearnerJev.ts";
@@ -53,10 +55,12 @@ import * as PoolDirectory from "../pool/PoolDirectory.ts";
 import * as UserPreviewSetup from "../previewSetup/UserPreviewSetup.ts";
 import * as PushNotifier from "../push/PushNotifier.ts";
 import * as CloudCollaboration from "../collaboration/CloudCollaboration.ts";
-import * as ThreadSearch from "../search/ThreadSearch.ts";
+import * as ThreadSearchLive from "../search/ThreadSearchLive.ts";
 import * as SearchCursors from "../search/SearchCursors.ts";
+import { searchSettings } from "../search/searchSettings.ts";
 import * as SearchAuthority from "../search/SearchAuthority.ts";
 import * as SearchBackfill from "../search/SearchBackfill.ts";
+import * as SearchBackfillLive from "../search/SearchBackfillLive.ts";
 import * as CloudflareSearchIndex from "../search/CloudflareSearchIndex.ts";
 import * as CloudThreadService from "../thread/CloudThreadService.ts";
 import * as ThreadInbox from "../thread/ThreadInbox.ts";
@@ -93,6 +97,9 @@ import * as UserFolders from "./UserFolders.ts";
 import * as FolderStarts from "./FolderStarts.ts";
 import * as UserShell from "./UserShell.ts";
 import * as UserStore from "./UserStore.ts";
+import * as UserTrash from "../trash/UserTrash.ts";
+import * as TrashResourcesLive from "../trash/trashResourcesLive.ts";
+import { TrashAlarm, layerPreview as layerTrashPreview } from "../trash/TrashWorkflow.ts";
 import * as UserThreadKinds from "./UserThreadKinds.ts";
 import * as UserThreadStatus from "./UserThreadStatus.ts";
 import * as UserModelSettings from "./UserModelSettings.ts";
@@ -146,6 +153,8 @@ export interface UserObjectEnv
   readonly TRACE_EXPORT?: Pick<Fetcher, "fetch">;
   /** Secret shared with the Worker-side trace intake. */
   readonly TRACE_EXPORT_TOKEN?: string;
+  readonly SIGNALBOX_DO_STORAGE_ALERT_PERCENT?: string;
+  readonly T3CODE_TELEMETRY_ENABLED?: string;
 }
 
 const decodeEnvironmentId = Schema.decodeSync(EnvironmentId);
@@ -162,13 +171,6 @@ const stringVars = (env: UserObjectEnv): Record<string, string> =>
  * it's built once.
  */
 const layerDrives = (env: UserObjectEnv) => {
-  if (env.DRIVES === undefined || env.DRIVE_PACKS === undefined) {
-    return { store: Layer.empty, services: Layer.empty };
-  }
-  const store = Layer.mergeAll(
-    DriveDirectory.layerDurableObjects(env.DRIVES, { localWorkerd: env.LOCAL_WORKERD === "1" }),
-    DrivePacks.layerBucket(env.DRIVE_PACKS, env.DRIVE_PACKS_PREFIX),
-  );
   const people = Layer.unwrap(
     Effect.map(makeProfileId, (profileId) =>
       DrivePeople.layerForUser(
@@ -184,8 +186,16 @@ const layerDrives = (env: UserObjectEnv) => {
       ),
     ),
   ).pipe(Layer.provide(FetchHttpClient.layer));
+  if (env.DRIVES === undefined || env.DRIVE_PACKS === undefined) {
+    return { store: Layer.empty, services: Layer.empty, people };
+  }
+  const store = Layer.mergeAll(
+    DriveDirectory.layerDurableObjects(env.DRIVES, { localWorkerd: env.LOCAL_WORKERD === "1" }),
+    DrivePacks.layerBucket(env.DRIVE_PACKS, env.DRIVE_PACKS_PREFIX),
+  );
   return {
     store,
+    people,
     services: Layer.mergeAll(DriveSharing.layer, DriveShortcuts.layer, DriveFiles.layer).pipe(
       Layer.provide(Layer.mergeAll(store, people)),
     ),
@@ -232,7 +242,14 @@ const layerAlarm = (storage: DurableObjectStorage) =>
 const makeRuntime = (ctx: DurableObjectState, env: UserObjectEnv) => {
   const { storage } = ctx;
   const drives = layerDrives(env);
-  return ManagedRuntime.make(
+  const searchBackfill = SearchBackfillLive.layer.pipe(
+    Layer.provide(
+      Layer.succeed(SearchBackfill.SearchBackfillAlarm, {
+        by: (at) => Effect.promise(() => armBy(storage, at)),
+      }),
+    ),
+  );
+  const services =
     // The user's automations (#434), on the services below.
     CloudEngine.layer.pipe(
       Layer.provide(
@@ -269,22 +286,16 @@ const makeRuntime = (ctx: DurableObjectState, env: UserObjectEnv) => {
         ).pipe(
           Layer.provideMerge(
             Layer.mergeAll(
-              UserShell.layer,
+              UserShell.layer.pipe(Layer.provide(searchBackfill)),
               UserThreadStatus.layer,
               ThreadInbox.layer.pipe(
                 Layer.provideMerge(
                   CloudThreadService.layer.pipe(Layer.provideMerge(ThreadsLive.layer)),
                 ),
               ),
-              ThreadSearch.layer.pipe(
+              ThreadSearchLive.layer.pipe(
                 Layer.provide(Layer.mergeAll(SearchAuthority.layerUser, SearchCursors.layerSql)),
-              ),
-              SearchBackfill.layer.pipe(
-                Layer.provide(
-                  Layer.succeed(SearchBackfill.SearchBackfillAlarm, {
-                    by: (at) => Effect.promise(() => armBy(storage, at)),
-                  }),
-                ),
+                Layer.provideMerge(searchBackfill),
               ),
               UserLearner.layer.pipe(Layer.provideMerge(LearnerHomes.layer)),
               PoolSignIns.layer,
@@ -365,7 +376,7 @@ const makeRuntime = (ctx: DurableObjectState, env: UserObjectEnv) => {
               OnePasswordAccount.layer,
             ),
           ),
-          Layer.provideMerge(drives.store),
+          Layer.provideMerge(Layer.mergeAll(drives.store, drives.people)),
           Layer.provideMerge(
             Layer.mergeAll(
               ThreadDirectory.layerDurableObjects(env.THREADS, {
@@ -401,6 +412,17 @@ const makeRuntime = (ctx: DurableObjectState, env: UserObjectEnv) => {
           Layer.provideMerge(ClientRpcTracing.layer(env, (promise) => ctx.waitUntil(promise))),
         ),
       ),
+    );
+  return ManagedRuntime.make(
+    UserTrash.layer.pipe(
+      Layer.provideMerge(TrashResourcesLive.layer),
+      Layer.provideMerge(
+        Layer.mergeAll(
+          layerTrashPreview,
+          Layer.succeed(TrashAlarm, { armBy: (at) => Effect.promise(() => armBy(storage, at)) }),
+        ),
+      ),
+      Layer.provideMerge(services),
     ),
   );
 };
@@ -411,6 +433,7 @@ export class UserObject extends DurableObject<UserObjectEnv> implements UserObje
   /** The person's MCP server (`api/mcpObject.ts`), made on first use. */
   private mcp: ReturnType<typeof makeMcpHandler> | undefined;
   private readonly sockets: ClientSockets;
+  private readonly observeStorage: () => void;
 
   constructor(ctx: DurableObjectState, env: UserObjectEnv) {
     super(ctx, env);
@@ -427,17 +450,20 @@ export class UserObject extends DurableObject<UserObjectEnv> implements UserObje
       previews: machineSettings(env) !== null && previewSettings(env) !== null,
       scripted: scriptedProviderEnabled(env),
       attachments: env.DRIVE_PACKS !== undefined,
+      searchDisabled: searchSettings(env).disabled,
     };
     this.runtime = makeRuntime(ctx, env);
+    this.observeStorage = makeStorageObserver(ctx, { kind: "user", level: "person" }, env);
     this.sockets = new ClientSockets({
       ctx,
       identity: this.identity,
-      run: (effect) => this.runtime.runPromise(effect),
+      run: (effect) => this.runtime.runPromise(effect).finally(() => this.observeStorage()),
     });
     // Client keepalives are answered without waking a hibernating object.
     ctx.setWebSocketAutoResponse(new WebSocketRequestResponsePair(PING, PONG));
     void ctx.blockConcurrencyWhile(async () => {
       await this.runtime.runPromise(UserStore.migrate);
+      this.observeStorage();
       await armBy(ctx.storage, (await this.now()) + 1_000);
       // Serves sockets that outlived the object's memory before anything else runs.
       await this.sockets.restore(await this.now(), (await this.profile())?.id);
@@ -457,6 +483,11 @@ export class UserObject extends DurableObject<UserObjectEnv> implements UserObje
           Effect.catchCause((cause) => Effect.logError("starting automations failed", { cause })),
         ),
       );
+      await this.runtime.runPromise(
+        UserTrash.UserTrash.use((trash) => trash.armRecovery).pipe(
+          Effect.catchCause((cause) => Effect.logError("arming trash recovery failed", { cause })),
+        ),
+      );
     });
   }
 
@@ -464,8 +495,12 @@ export class UserObject extends DurableObject<UserObjectEnv> implements UserObje
     return this.runtime.runPromise(Clock.currentTimeMillis);
   }
 
+  trashProgress(id: string) {
+    return this.api.trashProgress(id);
+  }
+
   private readonly api: UserObjectApi = makeUserObjectApi((effect) =>
-    this.runtime.runPromise(effect),
+    this.runtime.runPromise(effect).finally(() => this.observeStorage()),
   );
 
   // Durable Object RPC dispatches to prototype methods, so each one is spelled out.
@@ -676,6 +711,10 @@ export class UserObject extends DurableObject<UserObjectEnv> implements UserObje
     return this.api.checkSignIn(input);
   }
 
+  authorizeExecutorToken(...args: Parameters<UserObjectApi["authorizeExecutorToken"]>) {
+    return this.api.authorizeExecutorToken(...args);
+  }
+
   endBrowser(input: Parameters<UserObjectApi["endBrowser"]>[0]) {
     return this.api.endBrowser(input);
   }
@@ -697,6 +736,7 @@ export class UserObject extends DurableObject<UserObjectEnv> implements UserObje
   }
 
   override async fetch(request: Request): Promise<Response> {
+    this.observeStorage();
     const apiCredential = decodeApiCredential(request.headers.get(API_HEADER));
     if (apiCredential._tag === "Some") {
       const profile = await this.profile();
@@ -759,11 +799,17 @@ export class UserObject extends DurableObject<UserObjectEnv> implements UserObje
    * are logged in again (`LoginService`). Each re-arms it.
    */
   override async alarm() {
+    this.observeStorage();
     const next = await this.sockets.expire(await this.now());
     if (next !== null) await armBy(this.ctx.storage, next);
     await this.runtime.runPromise(
       Effect.all(
         [
+          UserTrash.UserTrash.use((trash) => trash.recover).pipe(
+            Effect.catchCause((cause) =>
+              Effect.logError("recovering trash cleanup failed", { cause }),
+            ),
+          ),
           SearchBackfill.SearchBackfill.use((backfill) => backfill.step),
           UserThreadKinds.UserThreadKinds.use((kinds) => kinds.alarm).pipe(
             Effect.catchCause((cause) => Effect.logError("idle-chat sweep failed", { cause })),

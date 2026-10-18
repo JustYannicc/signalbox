@@ -6,15 +6,18 @@ import type {
   SecretRequestAnswerInput,
   SecretRequestFailureReason,
   OrchestrationV2Command,
-  OrchestrationV2CommandOutputFrame,
   OrchestrationV2SearchThreadInput,
   OrchestrationV2SearchThreadResult,
+  OrchestrationV2CommandOutputFrame,
   OrchestrationV2SubscribeCommandOutputInput,
+  OrchestrationV2DispatchCommandResult,
   OrchestrationV2SubscribeThreadInput,
   OrchestrationV2ThreadLaunchResult,
   OrchestrationV2ThreadStreamItem,
   ThreadId,
   ProjectId,
+  WorktreeSetupSnapshot,
+  WorktreeSetupCancelInput,
 } from "@t3tools/contracts";
 import { SecretRequestError } from "@t3tools/contracts";
 import type { PullResult } from "@signalbox/runner-protocol/PullProtocol";
@@ -40,12 +43,12 @@ import type {
 } from "@t3tools/contracts/signalboxBrowsing";
 import type { BrowsingDispatched } from "./browsing/ThreadBrowsing.ts";
 import type { SearchBackfillProgress, SearchThreadDocuments } from "./ThreadEngine.ts";
-import { browsingWire } from "./browsing/browsingWire.ts";
 import {
   nativeChildBatchWire,
   type NativeChildBatchInput,
   type NativeChildBatchResult,
 } from "./runner/nativeChildBatch.ts";
+import { browsingWire } from "./browsing/browsingWire.ts";
 import { ThreadObjectError } from "./ThreadAccess.ts";
 import type { PullInput } from "./threadWire.ts";
 import type { PreviewLinkResult } from "./preview/PreviewGateway.ts";
@@ -95,10 +98,51 @@ export interface ThreadPreviews {
   readonly browsed: boolean;
 }
 
+export interface ThreadLifecycleReceipt {
+  readonly trashId: string;
+  readonly deletedAt: number;
+  readonly purgeAfter: number;
+  readonly state: "trashed" | "restored";
+}
+
+export interface ThreadTrashInput {
+  readonly trashId: string;
+  readonly deletedAt: number;
+  readonly purgeAfter: number;
+}
+
+export interface ThreadRestoreInput {
+  readonly trashId: string;
+}
+
+export interface ThreadPurgeInput {
+  readonly trashId: string;
+  readonly empty?: boolean;
+}
+
 const isBehind = Schema.is(BrowserWatchBehind);
+const ThreadLifecycleReceiptWire = Schema.Struct({
+  trashId: Schema.String,
+  deletedAt: Schema.Number,
+  purgeAfter: Schema.Number,
+  state: Schema.Literals(["trashed", "restored"]),
+});
+const decodeLifecycleReceipt = Schema.decodeUnknownSync(ThreadLifecycleReceiptWire);
 
 /** What a thread object answers. `ThreadObject` implements it method for method. */
 export interface ThreadObjectApi {
+  readonly trash: (
+    actor: Actor,
+    input: ThreadTrashInput,
+  ) => Promise<ThreadObjectReply<ThreadLifecycleReceipt>>;
+  readonly restore: (
+    actor: Actor,
+    input: ThreadRestoreInput,
+  ) => Promise<ThreadObjectReply<ThreadLifecycleReceipt>>;
+  readonly purge: (
+    actor: Actor,
+    input: ThreadPurgeInput,
+  ) => Promise<ThreadObjectReply<ThreadLifecycleReceipt>>;
   readonly getWorkflowScript: (actor: Actor, input: unknown) => Promise<ThreadObjectReply<unknown>>;
   readonly stopWorkflow: (actor: Actor, input: unknown) => Promise<ThreadObjectReply<unknown>>;
   readonly answerSecret: (
@@ -109,7 +153,7 @@ export interface ThreadObjectApi {
     actor: Actor,
     command: unknown,
     creation: ThreadCreation,
-  ) => Promise<ThreadObjectReply<{ readonly sequence: number }>>;
+  ) => Promise<ThreadObjectReply<OrchestrationV2DispatchCommandResult>>;
   readonly launch: (
     actor: Actor,
     input: unknown,
@@ -117,6 +161,11 @@ export interface ThreadObjectApi {
   ) => Promise<ThreadObjectReply<unknown>>;
   /** Internal Runner relay; it does not create or start a provider turn. */
   readonly recordNativeChildBatch: (input: unknown) => Promise<NativeChildBatchResult>;
+  readonly subscribePreparation: (actor: Actor) => Promise<ReadableStream<Uint8Array> | null>;
+  readonly cancelPreparation: (
+    actor: Actor,
+    input: WorktreeSetupCancelInput,
+  ) => Promise<ThreadObjectReply<{ readonly cancelled: boolean }>>;
   readonly snapshot: (actor: Actor) => Promise<ThreadObjectReply<unknown>>;
   /** Newline-delimited JSON batches, or null when the actor cannot see the thread. */
   readonly subscribe: (actor: Actor, input: unknown) => Promise<ReadableStream<Uint8Array> | null>;
@@ -127,7 +176,10 @@ export interface ThreadObjectApi {
   /** The thread's current summary, when `actor` owns it. */
   readonly summary: (actor: Actor) => Promise<unknown>;
   /** Requests/restarts a durable backfill; `not_found` keeps the actor check at the thread. */
-  readonly backfill: (actor: Actor) => Promise<ThreadObjectReply<SearchBackfillProgress>>;
+  readonly backfill: (
+    actor: Actor,
+    requestKey?: string,
+  ) => Promise<ThreadObjectReply<SearchBackfillProgress>>;
   /** Selected current rows only, for stale-candidate checks. */
   readonly searchDocuments: (
     actor: Actor,
@@ -138,6 +190,11 @@ export interface ThreadObjectApi {
     actor: Actor,
     input: unknown,
   ) => Promise<ThreadObjectReply<OrchestrationV2SearchThreadResult>>;
+  /** Whether the exact live run still holds the requested Runner generation. */
+  readonly authorizeExecutorTurn: (
+    actor: Actor,
+    input: { readonly runId: string; readonly generation: number },
+  ) => Promise<boolean>;
   /** Reads a linked pull request now, when `actor` can see the thread and link. */
   readonly requestPullRequestSync: (actor: Actor, key: string) => Promise<ThreadObjectReply<void>>;
   /**
@@ -228,6 +285,27 @@ export interface ThreadObjectApi {
 type CommandFailure = ThreadNotFoundError | ThreadCommandRejectedError | ThreadObjectError;
 
 export interface ThreadHandle {
+  readonly trash: (
+    actor: Actor,
+    input: ThreadTrashInput,
+  ) => Effect.Effect<
+    ThreadLifecycleReceipt,
+    ThreadNotFoundError | ThreadCommandRejectedError | ThreadObjectError
+  >;
+  readonly restore: (
+    actor: Actor,
+    input: ThreadRestoreInput,
+  ) => Effect.Effect<
+    ThreadLifecycleReceipt,
+    ThreadNotFoundError | ThreadCommandRejectedError | ThreadObjectError
+  >;
+  readonly purge: (
+    actor: Actor,
+    input: ThreadPurgeInput,
+  ) => Effect.Effect<
+    ThreadLifecycleReceipt,
+    ThreadNotFoundError | ThreadCommandRejectedError | ThreadObjectError
+  >;
   readonly getWorkflowScript: Threads["Service"]["getWorkflowScript"];
   readonly stopWorkflow: Threads["Service"]["stopWorkflow"];
   readonly answerSecret: (
@@ -238,7 +316,7 @@ export interface ThreadHandle {
     actor: Actor,
     command: OrchestrationV2Command,
     creation: ThreadCreation,
-  ) => Effect.Effect<{ readonly sequence: number }, CommandFailure>;
+  ) => Effect.Effect<OrchestrationV2DispatchCommandResult, CommandFailure>;
   readonly launch: (
     actor: Actor,
     input: typeof LaunchInputWire.Type,
@@ -248,6 +326,13 @@ export interface ThreadHandle {
   readonly recordNativeChildBatch: (
     input: NativeChildBatchInput,
   ) => Effect.Effect<NativeChildBatchResult, ThreadObjectError>;
+  readonly subscribePreparation: (
+    actor: Actor,
+  ) => Stream.Stream<WorktreeSetupSnapshot | null, ThreadNotFoundError | ThreadObjectError>;
+  readonly cancelPreparation: (
+    actor: Actor,
+    input: WorktreeSetupCancelInput,
+  ) => Effect.Effect<{ readonly cancelled: boolean }, CommandFailure>;
   readonly snapshot: (
     actor: Actor,
   ) => Effect.Effect<ThreadSnapshot, ThreadNotFoundError | ThreadObjectError>;
@@ -262,6 +347,7 @@ export interface ThreadHandle {
   readonly summary: (actor: Actor) => Effect.Effect<ThreadSummary | null, ThreadObjectError>;
   readonly backfill: (
     actor: Actor,
+    requestKey?: string,
   ) => Effect.Effect<SearchBackfillProgress, ThreadNotFoundError | ThreadObjectError>;
   readonly searchDocuments: (
     actor: Actor,
@@ -275,6 +361,10 @@ export interface ThreadHandle {
     actor: Actor,
     input: OrchestrationV2SearchThreadInput,
   ) => Effect.Effect<OrchestrationV2SearchThreadResult, ThreadNotFoundError | ThreadObjectError>;
+  readonly authorizeExecutorTurn: (
+    actor: Actor,
+    input: { readonly runId: string; readonly generation: number },
+  ) => Effect.Effect<boolean, ThreadObjectError>;
   readonly commandOutput: (
     actor: Actor,
     input: OrchestrationV2SubscribeCommandOutputInput,
@@ -449,7 +539,28 @@ const lines = <A>(
 
 /** Wraps any `ThreadObjectApi` (a Durable Object stub, or a test double) as Effects. */
 export function handleFor(api: ThreadObjectApi): ThreadHandle {
+  const lifecycle = (
+    operation: "trash" | "restore" | "purge",
+    run: () => Promise<ThreadObjectReply<unknown>>,
+  ) =>
+    call(operation, run).pipe(
+      Effect.flatMap(fromReply),
+      Effect.flatMap((value) => decodeIn(operation, () => decodeLifecycleReceipt(value))),
+    );
   return {
+    trash: (actor, input) => lifecycle("trash", () => api.trash(actor, input)),
+    restore: (actor, input) => lifecycle("restore", () => api.restore(actor, input)),
+    purge: (actor, input) => lifecycle("purge", () => api.purge(actor, input)),
+    subscribePreparation: (actor) =>
+      lines(
+        "subscribePreparation",
+        () => api.subscribePreparation(actor),
+        (line) => wire.preparation.decode(line),
+      ),
+    cancelPreparation: (actor, input) =>
+      call("cancelPreparation", () => api.cancelPreparation(actor, input)).pipe(
+        Effect.flatMap(fromReply),
+      ),
     getWorkflowScript: (actor, input) =>
       call("getWorkflowScript", () =>
         api.getWorkflowScript(actor, wire.workflowScriptInput.encode(input)),
@@ -506,8 +617,8 @@ export function handleFor(api: ThreadObjectApi): ThreadHandle {
         Effect.catchTags({ ThreadCommandRejectedError: (error) => Effect.die(error) }),
         Effect.flatMap((value) => decodeIn("snapshot", () => wire.snapshot.decode(value))),
       ),
-    backfill: (actor) =>
-      call("backfill", () => api.backfill(actor)).pipe(
+    backfill: (actor, requestKey) =>
+      call("backfill", () => api.backfill(actor, requestKey)).pipe(
         Effect.flatMap(fromReply),
         Effect.catchTags({ ThreadCommandRejectedError: (error) => Effect.die(error) }),
       ),
@@ -627,6 +738,8 @@ export function handleFor(api: ThreadObjectApi): ThreadHandle {
             : decodeIn("summary", () => wire.summary.decode(value)),
         ),
       ),
+    authorizeExecutorTurn: (actor, input) =>
+      call("authorizeExecutorTurn", () => api.authorizeExecutorTurn(actor, input)),
   };
 }
 

@@ -17,9 +17,11 @@ import * as ManagedRuntime from "effect/ManagedRuntime";
 
 import * as CloudAccounts from "./account/CloudAccounts.ts";
 import * as IdentityProvider from "./account/IdentityProvider.ts";
-import { API_HEADER, encodeApiCredential, serveApiRequest } from "./api/apiObject.ts";
+import { API_HEADER, encodeApiCredential } from "./api/apiCredential.ts";
+import { serveApiRequest } from "./api/apiObject.ts";
 import { MCP_PATH, makeMcpHandler } from "./api/mcpObject.ts";
 import * as CloudAssets from "./assets/CloudAssets.ts";
+import * as CloudCollaboration from "./collaboration/CloudCollaboration.ts";
 import * as CloudAutomations from "./automations/CloudAutomations.ts";
 import type { KernelApi } from "./browser/KernelApi.ts";
 import type { KernelAuth } from "./browser/KernelAuth.ts";
@@ -45,9 +47,7 @@ import * as PreviewSetup from "./previewSetup/PreviewSetup.ts";
 import * as PushNotifier from "./push/PushNotifier.ts";
 import * as UserPreviewSetup from "./previewSetup/UserPreviewSetup.ts";
 import { makeMemoryPools } from "./pool/testing.ts";
-import * as CloudCollaboration from "./collaboration/CloudCollaboration.ts";
 import * as CloudThreadService from "./thread/CloudThreadService.ts";
-import * as ThreadInbox from "./thread/ThreadInbox.ts";
 import * as ThreadsLive from "./thread/ThreadsLive.ts";
 import * as CloudAnalytics from "./thread/diagnostics/CloudAnalytics.ts";
 import * as DiagnosticsStore from "./thread/diagnostics/DiagnosticsStore.ts";
@@ -55,11 +55,12 @@ import * as TurnDiagnostics from "./thread/diagnostics/TurnDiagnostics.ts";
 import * as TurnReports from "./thread/diagnostics/TurnReports.ts";
 import { deliverPendingEvents } from "./thread/eventOutbox.ts";
 import { deliverPendingSummary } from "./thread/summaryOutbox.ts";
-import * as ThreadSearch from "./search/ThreadSearch.ts";
+import * as ThreadSearchLive from "./search/ThreadSearchLive.ts";
 import * as SearchAuthority from "./search/SearchAuthority.ts";
 import * as SearchCursors from "./search/SearchCursors.ts";
 import * as SearchIndex from "./search/SearchIndex.ts";
 import * as ThreadDirectory from "./thread/ThreadDirectory.ts";
+import * as ThreadInbox from "./thread/ThreadInbox.ts";
 import * as ThreadBrowsing from "./thread/browsing/ThreadBrowsing.ts";
 import * as PreviewState from "./thread/PreviewState.ts";
 import * as ThreadEngine from "./thread/ThreadEngine.ts";
@@ -78,10 +79,6 @@ import { browserUpdateLine, previewsLine } from "./thread/threadWire.ts";
 import * as MachineBackends from "./thread/runner/machineBackends.ts";
 import type * as MachineBackend from "./thread/runner/MachineBackend.ts";
 import * as ThreadRunner from "./thread/runner/ThreadRunner.ts";
-import type {
-  NativeChildBatchInput,
-  NativeChildBatchResult,
-} from "./thread/NativeChildProtocol.ts";
 import * as SessionRows from "./thread/session/SessionRows.ts";
 import * as PullRequestPolls from "./thread/pullRequests/PullRequestPolls.ts";
 import * as PullRequestSync from "./thread/pullRequests/PullRequestSync.ts";
@@ -132,6 +129,9 @@ import * as UserAnalyticsPreference from "./user/UserAnalyticsPreference.ts";
 import * as UserTimezone from "./user/UserTimezone.ts";
 import * as UserThreadKinds from "./user/UserThreadKinds.ts";
 import * as ChatArchive from "./user/chatArchive.ts";
+import * as UserTrash from "./trash/UserTrash.ts";
+import * as TrashResourcesLive from "./trash/trashResourcesLive.ts";
+import { TrashAlarm, layerPreview as layerTrashPreview } from "./trash/TrashWorkflow.ts";
 
 /** Test wiring: fixed config, a fake WorkOS, and user objects on in-memory SQLite. */
 
@@ -248,21 +248,11 @@ export const layerThreadObject = (
     readonly models?: Layer.Layer<TurnModels.TurnModels>;
     /** What writes runtime status notes; no model, unless given. */
     readonly statusNoteModel?: Layer.Layer<StatusNoteModel.StatusNoteModel>;
-    /** Saves an attested provider-native child before acknowledging its parent batch. */
-    readonly nativeChildRelay?: ThreadRunner.NativeChildRelayService;
   } = {},
 ) =>
   ThreadRunner.layer.pipe(
     Layer.provideMerge(ThreadPulls.layerReports.pipe(Layer.provideMerge(ThreadPulls.layer))),
     Layer.provideMerge(options.driveDirectory ?? Layer.empty),
-    Layer.provideMerge(
-      Layer.succeed(
-        ThreadRunner.NativeChildRelay,
-        options.nativeChildRelay ?? {
-          save: () => Effect.die("Unexpected provider-native child relay in this test."),
-        },
-      ),
-    ),
     Layer.provideMerge(
       Layer.succeed(ThreadRunner.ThreadDrives, {
         enabled: options.drives === true,
@@ -334,8 +324,8 @@ const makeUserRuntime = (
   logins: { readonly kernel: KernelAuth | null; readonly executor: ExecutorLogins | null },
   noteReader: Layer.Layer<NoteReader.NoteReader>,
   modelCompletion: Layer.Layer<ModelCompletion.ModelCompletion>,
-) =>
-  ManagedRuntime.make(
+) => {
+  const services =
     // The user's automations, on the same services the object gives them.
     CloudEngine.layer.pipe(
       Layer.provide(Layer.mergeAll(runner, alarm, modelCompletion)),
@@ -371,10 +361,12 @@ const makeUserRuntime = (
                   CloudThreadService.layer.pipe(Layer.provideMerge(ThreadsLive.layer)),
                 ),
               ),
-              ThreadSearch.layer.pipe(
+              ThreadSearchLive.layer.pipe(
                 Layer.provide(Layer.mergeAll(SearchAuthority.layerUser, SearchCursors.layerSql)),
                 Layer.provide(
                   Layer.succeed(SearchIndex.SearchIndex, {
+                    generation: "1",
+                    disabled: false,
                     deliver: () => Effect.void,
                     query: () => Effect.succeed({ candidates: [], hasMore: false }),
                     progress: () => Effect.succeed([]),
@@ -440,8 +432,17 @@ const makeUserRuntime = (
         ),
       ),
       Layer.merge(automations),
+    );
+  return ManagedRuntime.make(
+    UserTrash.layer.pipe(
+      Layer.provideMerge(TrashResourcesLive.layer),
+      Layer.provideMerge(
+        Layer.mergeAll(Layer.succeed(TrashAlarm, { armBy: () => Effect.void }), layerTrashPreview),
+      ),
+      Layer.provideMerge(services),
     ),
   );
+};
 
 /**
  * The cloud's objects in memory: a user object per user id and a thread
@@ -487,6 +488,7 @@ export const makeMemoryCloud = (
           A,
           E,
           | ThreadEngine.ThreadEngine
+          | ThreadRunner.ThreadRunner
           | ThreadStore.ThreadStore
           | UserDirectory.UserDirectory
           | ThreadBrowsing.ThreadBrowsing
@@ -575,28 +577,6 @@ export const makeMemoryCloud = (
       models: TurnModels.layer({ scripted: true }).pipe(
         Layer.provide(Layer.succeed(PoolDirectory.PoolDirectory, pools.directory)),
       ),
-      nativeChildRelay: {
-        save: (input: NativeChildBatchInput) =>
-          Effect.flatMap(
-            Effect.orDie(
-              threadDirectory.forThread(input.childThreadId).recordNativeChildBatch(input),
-            ),
-            (result): Effect.Effect<NativeChildBatchResult> =>
-              result._tag === "child_mismatch"
-                ? Effect.succeed(result)
-                : Effect.as(
-                    Effect.orDie(
-                      userDirectory.forUser(input.owner.userId).copyThreadHome({
-                        parentThreadId: input.parentThreadId,
-                        childThreadId: input.childThreadId,
-                        projectId: input.appThread.projectId,
-                        ownerId: input.owner.contextId,
-                      }),
-                    ),
-                    result,
-                  ),
-          ),
-      },
     });
   const threadFor = (threadId: string) => {
     const existing = threads.get(threadId);
@@ -614,6 +594,7 @@ export const makeMemoryCloud = (
         A,
         E,
         | ThreadEngine.ThreadEngine
+        | ThreadRunner.ThreadRunner
         | ThreadSecretRequests.ThreadSecretRequests
         | ThreadStore.ThreadStore
         | ThreadPulls.ThreadPulls
@@ -704,6 +685,7 @@ export const makeMemoryCloud = (
         A,
         E,
         | ThreadEngine.ThreadEngine
+        | ThreadRunner.ThreadRunner
         | ThreadStore.ThreadStore
         | UserDirectory.UserDirectory
         | ThreadBrowsing.ThreadBrowsing
@@ -736,6 +718,9 @@ export const makeMemoryCloud = (
       Effect.promise(() =>
         threadFor(threadId).run(ThreadStore.ThreadStore.use((store) => Effect.orDie(store.owner))),
       ),
+    /** Runs an effect against one thread's actual Runner service. */
+    threadRun: <A, E>(threadId: string, effect: Effect.Effect<A, E, ThreadRunner.ThreadRunner>) =>
+      Effect.promise(() => threadFor(threadId).run(effect)),
     /** The 1Password Environments a thread's turns get, top level first. */
     threadSecrets: (threadId: string) =>
       Effect.promise(() =>

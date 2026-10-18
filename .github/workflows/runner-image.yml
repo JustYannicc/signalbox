@@ -32,6 +32,8 @@ on:
       - packages/automation-compiler/**
       - packages/runner-protocol/**
       - packages/automations/**
+      - apps/cloud/infra/runner-images.alchemy.ts
+      - apps/cloud/infra/runnerImagePublication.ts
       - .github/workflows/runner-image.yml
   workflow_call:
     inputs:
@@ -109,6 +111,7 @@ jobs:
           run-install: |
             args:
               - --filter=t3...
+              - --filter=@signalbox/cloud...
 
       - name: Bundle the Runner
         working-directory: apps/server
@@ -156,6 +159,7 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Build
+        id: build
         uses: docker/build-push-action@v6
         with:
           context: apps/server/dist/runner
@@ -209,10 +213,15 @@ jobs:
 
       - name: Publish
         if: steps.tags.outputs.push == 'true'
+        working-directory: apps/cloud
         env:
           TAGS: ${{ steps.tags.outputs.tags }}
+          RUNNER_IMAGE_ID: ${{ steps.build.outputs.imageid }}
+          GITHUB_TOKEN: ${{ github.token }}
+          ALCHEMY_TELEMETRY_DISABLED: "1"
         run: |
-          for tag in ${TAGS//,/ }; do docker push "$tag"; done
+          ./node_modules/.bin/alchemy deploy infra/runner-images.alchemy.ts \
+            --stage "run-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT" --yes --no-input
 
       # What a fresh machine gets: it pulls the channel's tag when its Runner
       # starts (BoatMachineBackend.ts), and must find this commit in it.

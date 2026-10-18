@@ -53,6 +53,7 @@ import { SIGNALBOX_CONTEXTS_RPCS } from "./signalboxContexts.ts"; // signalbox: 
 import { SIGNALBOX_DRIVES_RPCS } from "./signalboxDrives.ts"; // signalbox: drives
 import { SIGNALBOX_FOLDERS_RPCS } from "./signalboxFolders.ts"; // signalbox: folders
 import { SIGNALBOX_NOTES_RPCS } from "./signalboxNotes.ts"; // signalbox: notes
+import { SIGNALBOX_TRASH_RPCS } from "./signalboxTrash.ts"; // signalbox: trash
 import { SIGNALBOX_PREVIEWS_RPCS } from "./signalboxPreviews.ts"; // signalbox: previews
 import { SIGNALBOX_BROWSING_RPCS } from "./signalboxBrowsing.ts"; // signalbox: browsing
 import { SIGNALBOX_PUSH_RPCS } from "./signalboxPush.ts"; // signalbox: push devices
@@ -151,6 +152,7 @@ import {
 import {
   WorktreeSetupCancelInput,
   WorktreeSetupCancelResult,
+  WorktreeSetupError,
   WorktreeSetupStreamEvent,
   WorktreeSetupSubscribeInput,
 } from "./worktreeSetup.ts";
@@ -311,6 +313,7 @@ import {
 } from "./preview.ts";
 import {
   DeviceActionInput,
+  DeviceCancelOpenInput,
   DeviceCloseInput,
   DeviceConfigureInput,
   DeviceDetail,
@@ -324,6 +327,7 @@ import {
   DeviceSession,
   DeviceShutdownInput,
 } from "./device.ts";
+import { DeviceAgentCommandFailure } from "./deviceAgentDiagnostics.ts";
 import {} from "./previewAutomation.ts";
 import {
   ServerConfigStreamEvent,
@@ -519,6 +523,7 @@ export const WS_METHODS = {
   deviceList: "device.list",
   deviceTestHost: "device.testHost",
   deviceOpen: "device.open",
+  deviceCancelOpen: "device.cancelOpen",
   deviceClose: "device.close",
   deviceShutdown: "device.shutdown",
   deviceDetail: "device.detail",
@@ -627,6 +632,7 @@ export const WS_METHODS = {
   subscribePreviewEvents: "subscribePreviewEvents",
   subscribeDiscoveredLocalServers: "subscribeDiscoveredLocalServers",
   subscribeDeviceState: "subscribeDeviceState",
+  subscribeDeviceAgentDiagnostics: "subscribeDeviceAgentDiagnostics",
   subscribeServerConfig: "subscribeServerConfig",
   subscribeServerLifecycle: "subscribeServerLifecycle",
   subscribeAuthAccess: "subscribeAuthAccess",
@@ -1509,14 +1515,14 @@ const WsVcsRefreshStatusRpc = Rpc.make(WS_METHODS.vcsRefreshStatus, {
 const WsSubscribeWorktreeSetupRpc = Rpc.make(WS_METHODS.subscribeWorktreeSetup, {
   payload: WorktreeSetupSubscribeInput,
   success: WorktreeSetupStreamEvent,
-  error: EnvironmentAuthorizationError,
+  error: Schema.Union([WorktreeSetupError, EnvironmentAuthorizationError]),
   stream: true,
 });
 
 const WsWorktreeSetupCancelRpc = Rpc.make(WS_METHODS.worktreeSetupCancel, {
   payload: WorktreeSetupCancelInput,
   success: WorktreeSetupCancelResult,
-  error: EnvironmentAuthorizationError,
+  error: Schema.Union([WorktreeSetupError, EnvironmentAuthorizationError]),
 });
 
 const WsGitRunStackedActionRpc = Rpc.make(WS_METHODS.gitRunStackedAction, {
@@ -1728,6 +1734,11 @@ const WsDeviceOpenRpc = Rpc.make(WS_METHODS.deviceOpen, {
   error: Schema.Union([DeviceError, EnvironmentAuthorizationError]),
 });
 
+const WsDeviceCancelOpenRpc = Rpc.make(WS_METHODS.deviceCancelOpen, {
+  payload: DeviceCancelOpenInput,
+  error: Schema.Union([DeviceError, EnvironmentAuthorizationError]),
+});
+
 const WsDeviceCloseRpc = Rpc.make(WS_METHODS.deviceClose, {
   payload: DeviceCloseInput,
   error: Schema.Union([DeviceError, EnvironmentAuthorizationError]),
@@ -1753,6 +1764,13 @@ const WsDeviceActionRpc = Rpc.make(WS_METHODS.deviceAction, {
 const WsSubscribeDeviceStateRpc = Rpc.make(WS_METHODS.subscribeDeviceState, {
   payload: Schema.Struct({}),
   success: DeviceServiceState,
+  error: EnvironmentAuthorizationError,
+  stream: true,
+});
+
+const WsSubscribeDeviceAgentDiagnosticsRpc = Rpc.make(WS_METHODS.subscribeDeviceAgentDiagnostics, {
+  payload: Schema.Struct({}),
+  success: Schema.Array(DeviceAgentCommandFailure),
   error: EnvironmentAuthorizationError,
   stream: true,
 });
@@ -2031,6 +2049,7 @@ export const SIGNALBOX_WS_RPCS = [
   ...SIGNALBOX_DRIVES_RPCS,
   ...SIGNALBOX_FOLDERS_RPCS,
   ...SIGNALBOX_NOTES_RPCS,
+  ...SIGNALBOX_TRASH_RPCS,
   ...SIGNALBOX_PREVIEWS_RPCS,
   ...SIGNALBOX_BROWSING_RPCS,
   ...SIGNALBOX_PUSH_RPCS,
@@ -2215,11 +2234,13 @@ export const WsRpcGroup = RpcGroup.make(
   WsDeviceListRpc,
   WsDeviceTestHostRpc,
   WsDeviceOpenRpc,
+  WsDeviceCancelOpenRpc,
   WsDeviceCloseRpc,
   WsDeviceShutdownRpc,
   WsDeviceDetailRpc,
   WsDeviceActionRpc,
   WsSubscribeDeviceStateRpc,
+  WsSubscribeDeviceAgentDiagnosticsRpc,
   WsSubscribeServerConfigRpc,
   WsSubscribeServerLifecycleRpc,
   WsSubscribeAuthAccessRpc,

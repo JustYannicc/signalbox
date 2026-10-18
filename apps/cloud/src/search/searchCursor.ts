@@ -1,10 +1,18 @@
 import * as Schema from "effect/Schema";
 
 const Cursor = Schema.Struct({
-  version: Schema.Literal(1),
+  version: Schema.Literal(2),
   fingerprint: Schema.String,
-  home: Schema.String,
-  after: Schema.NullOr(Schema.Struct({ threadId: Schema.String, itemId: Schema.String })),
+  session: Schema.String,
+  page: Schema.Int.check(Schema.isGreaterThanOrEqualTo(1)),
+  after: Schema.NullOr(
+    Schema.Struct({
+      matchRank: Schema.Number,
+      threadUpdatedAt: Schema.String,
+      threadId: Schema.String,
+      itemId: Schema.String,
+    }),
+  ),
 });
 export type SearchCursor = typeof Cursor.Type;
 const codec = Schema.fromJsonString(Cursor);

@@ -9,6 +9,8 @@ import type {
   TreeResult,
 } from "@signalbox/runner-protocol/ContextProtocol";
 import { contextJson } from "@signalbox/runner-protocol/ContextProtocol";
+import type { ToolRequest, ToolResult } from "@signalbox/runner-protocol/AutomationProtocol";
+import { PULL_REQUEST_REVIEW_TOOL } from "@signalbox/runner-protocol/PullRequestReviewTools";
 import { ProjectId, ThreadId } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
 import * as Deferred from "effect/Deferred";
@@ -31,6 +33,7 @@ const CLOUD_SIDE = new Set<string>([
   ...RUNNER_LEARNER_TOOLS,
   ...RUNNER_SCHEDULED_TASK_TOOLS,
   ...RUNNER_STATUS_LINE_TOOLS,
+  PULL_REQUEST_REVIEW_TOOL,
   ...Object.keys(RUNNER_NOTE_TOOLS),
 ]);
 
@@ -122,6 +125,8 @@ interface Calls {
   readonly published: Array<PublishRequest>;
   answer: PublishResult;
   readonly notes: Array<{ nextStep: string; whereItGotTo: string }>;
+  readonly automationCalls: Array<{ request: ToolRequest; retry: boolean }>;
+  automationAnswer: ToolResult;
 }
 
 const PUBLISHED: PublishResult = {
@@ -214,7 +219,11 @@ const fakeClient = (calls: Calls): ContextClient => ({
       calls.published.push(request);
       return calls.answer;
     }),
-  automationTool: () => Effect.die("Automation tools aren't part of these tests."),
+  automationTool: (request, { retry }) =>
+    Effect.sync(() => {
+      calls.automationCalls.push({ request, retry });
+      return calls.automationAnswer;
+    }),
   threadStatus: Effect.die("Reading the status line isn't part of these tests."),
   setThreadStatus: (input) =>
     Effect.sync(() => {
@@ -247,6 +256,8 @@ const serve = (
       published: [],
       answer: PUBLISHED,
       notes: [],
+      automationCalls: [],
+      automationAnswer: { _tag: "ok", result: null },
     };
     const server = yield* startContextServer({
       mountPoint: null,
@@ -690,5 +701,112 @@ describe("context server (#141)", () => {
         content: [{ text: "Write it for someone new." }],
       });
     }),
+  );
+
+  it.effect(
+    "reads review thread IDs and routes replies and resolutions without retrying writes",
+    () =>
+      Effect.gen(function* () {
+        const { mcp, call, calls } = yield* serve();
+        const tools = (yield* mcp("tools/list", {})).result.tools as ReadonlyArray<{
+          name: string;
+          description: string;
+          inputSchema: unknown;
+          annotations: { readOnlyHint: boolean; destructiveHint: boolean; openWorldHint: boolean };
+        }>;
+        const review = tools.find((tool) => tool.name === PULL_REQUEST_REVIEW_TOOL);
+        expect(review).toMatchObject({
+          description: expect.stringContaining("thread IDs"),
+          annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: true },
+        });
+        expect(JSON.stringify(review?.inputSchema)).not.toMatch(
+          /projectId|repository|host|driveId|folderId/,
+        );
+
+        calls.automationAnswer = {
+          _tag: "ok",
+          result: {
+            reviewThreads: [{ id: "PRRT_kw_1", isResolved: false, comments: [] }],
+          },
+        };
+        const read = yield* call(PULL_REQUEST_REVIEW_TOOL, { action: "read", number: 12 });
+        expect(JSON.parse(read.content[0]!.text)).toMatchObject({
+          reviewThreads: [{ id: "PRRT_kw_1" }],
+        });
+        expect(calls.automationCalls[0]).toEqual({
+          request: {
+            name: PULL_REQUEST_REVIEW_TOOL,
+            input: { action: "read", number: 12 },
+          },
+          retry: true,
+        });
+
+        calls.automationAnswer = { _tag: "ok", result: { written: true } };
+        const reply = yield* call(PULL_REQUEST_REVIEW_TOOL, {
+          action: "reply",
+          number: 12,
+          threadId: "PRRT_kw_1",
+          body: "Fixed in the latest commit.",
+          operationId: "reply-12-1",
+        });
+        expect(JSON.parse(reply.content[0]!.text)).toEqual({ written: true });
+        expect(calls.automationCalls[1]).toEqual({
+          request: {
+            name: PULL_REQUEST_REVIEW_TOOL,
+            input: {
+              action: "reply",
+              number: 12,
+              threadId: "PRRT_kw_1",
+              body: "Fixed in the latest commit.",
+              operationId: "reply-12-1",
+            },
+          },
+          retry: false,
+        });
+
+        calls.automationAnswer = {
+          _tag: "ok",
+          result: { written: true, resolved: true },
+        };
+        yield* call(PULL_REQUEST_REVIEW_TOOL, {
+          action: "resolve",
+          number: 12,
+          threadId: "PRRT_kw_1",
+          resolved: true,
+        });
+        expect(calls.automationCalls[2]?.retry).toBe(false);
+
+        const cloudError = {
+          _tag: "PullRequestOperationError",
+          reason: "rate-limit",
+          status: 429,
+          retryAt: 123_456,
+        };
+        calls.automationAnswer = {
+          _tag: "failed",
+          message: "The GitHub connection expired.",
+          error: cloudError,
+        };
+        const failed = yield* call(PULL_REQUEST_REVIEW_TOOL, {
+          action: "reply",
+          number: 12,
+          threadId: "PRRT_kw_1",
+          body: "Retry safely with the same operation id.",
+          operationId: "reply-12-2",
+        });
+        expect(failed.isError).toBe(true);
+        expect(JSON.parse(failed.content[0]!.text)).toEqual(cloudError);
+        expect(calls.automationCalls[3]?.retry).toBe(false);
+
+        const beforeInvalidReply = calls.automationCalls.length;
+        const invalidReply = yield* call(PULL_REQUEST_REVIEW_TOOL, {
+          action: "reply",
+          number: 12,
+          threadId: "PRRT_kw_1",
+          body: "Missing the required idempotency key.",
+        });
+        expect(invalidReply.isError).toBe(true);
+        expect(calls.automationCalls).toHaveLength(beforeInvalidReply);
+      }),
   );
 });

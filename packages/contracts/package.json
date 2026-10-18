@@ -67,6 +67,10 @@
       "types": "./src/signalboxNotes.ts",
       "import": "./src/signalboxNotes.ts"
     },
+    "./signalboxTrash": {
+      "types": "./src/signalboxTrash.ts",
+      "import": "./src/signalboxTrash.ts"
+    },
     "./signalboxThreadKinds": {
       "types": "./src/signalboxThreadKinds.ts",
       "import": "./src/signalboxThreadKinds.ts"
@@ -99,6 +103,10 @@
       "types": "./src/signalboxRepositories.ts",
       "import": "./src/signalboxRepositories.ts"
     },
+    "./signalboxSearch": {
+      "types": "./src/signalboxSearch.ts",
+      "import": "./src/signalboxSearch.ts"
+    },
     "./signalboxLearner": {
       "types": "./src/signalboxLearner.ts",
       "import": "./src/signalboxLearner.ts"
@@ -106,10 +114,6 @@
     "./signalboxCollaboration": {
       "types": "./src/signalboxCollaboration.ts",
       "import": "./src/signalboxCollaboration.ts"
-    },
-    "./signalboxSearch": {
-      "types": "./src/signalboxSearch.ts",
-      "import": "./src/signalboxSearch.ts"
     }
   },
   "scripts": {

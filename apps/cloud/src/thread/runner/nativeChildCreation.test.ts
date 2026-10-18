@@ -13,6 +13,7 @@ import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
 import { runnerBatchEvents } from "../ThreadRunnerProof.ts";
+import { handleFor } from "../ThreadDirectory.ts";
 import {
   owner,
   personal,
@@ -21,12 +22,14 @@ import {
   launch,
   liveTurn,
   snapshot,
+  threadObjectApiFor,
   turnReport,
   withObject,
 } from "../ThreadTestKit.ts";
 
 const encodeAdapterEvent = Schema.encodeUnknownSync(Schema.toCodecJson(ProviderAdapterV2Event));
 const decodeRecord = Schema.decodeUnknownSync(Schema.Record(Schema.String, Schema.Unknown));
+const unexpectedBrowserCall = () => Promise.reject(new Error("Unexpected browser call"));
 
 describe("native child creation transport", () => {
   it.effect.each([
@@ -229,9 +232,17 @@ describe("native child creation transport", () => {
         {
           nativeChildRelay: {
             save: (input) =>
-              withObject(childDatabase, (child) => child.recordNativeChildBatch(input)).pipe(
-                Effect.orDie,
-              ),
+              withObject(childDatabase, (_child, _runner, context) =>
+                handleFor({
+                  ...threadObjectApiFor(context),
+                  previews: unexpectedBrowserCall,
+                  previewLink: unexpectedBrowserCall,
+                  browserWatch: unexpectedBrowserCall,
+                  browserInput: unexpectedBrowserCall,
+                  browserTrail: unexpectedBrowserCall,
+                  browserStep: unexpectedBrowserCall,
+                }).recordNativeChildBatch(input),
+              ).pipe(Effect.orDie),
           },
         },
       );

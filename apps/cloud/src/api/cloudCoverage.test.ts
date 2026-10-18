@@ -50,6 +50,15 @@ describe("cloud API coverage", () => {
     }
   });
 
+  it("serves queued edits and reorders through the cloud decider", () => {
+    for (const name of ["threads.queuedRun.edit", "threads.queuedRun.reorder"]) {
+      const operation = operations.find((candidate) => candidate.name === name);
+      if (operation === undefined) throw new Error(`Missing ${name}`);
+      expect(cloudServes(operation)).toBe(true);
+      expect(cloudUnserved(operation)).toBeUndefined();
+    }
+  });
+
   it("serves both keybinding edits rather than leaving the editor with unknown RPCs", () => {
     const keybindings = operations.filter((operation) => operation.name.startsWith("keybindings."));
     expect(keybindings.map((operation) => operation.name).sort()).toEqual([
@@ -115,6 +124,14 @@ describe("cloud API coverage", () => {
       .filter((operation) => !cloudServes(operation) && cloudUnserved(operation) === undefined)
       .map((operation) => operation.name);
     expect(silent).toEqual([]);
+  });
+
+  it("serves review replies and resolution through the public API", () => {
+    for (const name of ["pullRequests.replyToThread", "pullRequests.setThreadResolution"]) {
+      const operation = operations.find((entry) => entry.name === name)!;
+      expect(cloudServes(operation)).toBe(true);
+      expect(cloudUnserved(operation)).toBeUndefined();
+    }
   });
 
   it("serves starting a folder from another folder through the cloud RPC", () => {

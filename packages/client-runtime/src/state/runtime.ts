@@ -1,5 +1,6 @@
 import type { QueryPersistence } from "./queryPersistence.ts";
 import { createCommandPermissions } from "./commandPermissions.ts";
+import { withEnvironmentCommandPermissions } from "../rpc/commandBoundary.ts"; // signalbox: optimistic ledger
 import { followStreamInEnvironment } from "./environmentStreams.ts";
 import { reuseUnchanged } from "./serverConfigProjection.ts";
 export { runStreamInEnvironment, followStreamInEnvironment } from "./environmentStreams.ts";
@@ -29,7 +30,6 @@ import {
   EnvironmentRpcUnavailableError,
   request,
   requestGuarded,
-  RpcPermissionGuard,
   subscribe,
 } from "../rpc/client.ts";
 import * as EnvironmentSupervisor from "../connection/supervisor.ts";
@@ -98,6 +98,7 @@ export interface AtomCommandOptions {
   readonly label?: string;
   readonly reportFailure?: boolean;
   readonly reportDefect?: boolean;
+  readonly signal?: AbortSignal;
 }
 
 export interface AtomCommandReporter {
@@ -107,7 +108,11 @@ export interface AtomCommandReporter {
 
 export interface AtomCommand<W, A, E> {
   readonly label: string;
-  readonly run: (registry: AtomRegistry.AtomRegistry, input: W) => Promise<AtomCommandResult<A, E>>;
+  readonly run: (
+    registry: AtomRegistry.AtomRegistry,
+    input: W,
+    signal?: AbortSignal,
+  ) => Promise<AtomCommandResult<A, E>>;
 }
 
 export type AtomCommandConcurrency<W> =
@@ -302,7 +307,7 @@ export async function runAtomCommand<W, A, E>(
   options: AtomCommandOptions = {},
   reporter: AtomCommandReporter = console,
 ): Promise<AtomCommandResult<A, E>> {
-  const result = await settleAtomCommandResult(() => command.run(registry, input));
+  const result = await settleAtomCommandResult(() => command.run(registry, input, options.signal));
   reportAtomCommandResult(result, { ...options, label: options.label ?? command.label }, reporter);
   return result;
 }
@@ -398,13 +403,17 @@ export function createRuntimeCommand<R, ER, W, A, E>(
   const concurrency = options.concurrency ?? { mode: "parallel" as const };
   return {
     label: options.label,
-    run: (registry, input) =>
+    run: (registry, input, signal) =>
       settleAtomCommandResult(() =>
         scheduler.schedule(registry, concurrency, input, () => {
           const atom = runtime
             .atom(options.execute(input, registry))
             .pipe(Atom.withLabel(options.label));
-          return executeAtomQuery(registry, atom, { reportDefect: false, reportFailure: false });
+          return executeAtomQuery(registry, atom, {
+            reportDefect: false,
+            reportFailure: false,
+            ...(signal === undefined ? {} : { signal }),
+          });
         }),
       ),
   };
@@ -716,7 +725,7 @@ export function createEnvironmentCommand<R, ER, Input, A, E>(
       runInEnvironment(
         target.environmentId,
         options.execute(target.input, registry, target.environmentId),
-      ),
+      ).pipe(withEnvironmentCommandPermissions(runtime, registry)), // signalbox: optimistic ledger
   });
 }
 
@@ -859,10 +868,6 @@ export function createEnvironmentRpcCommand<
       // The transport check below deliberately checks the destination again.
       return permissions.authorize(registry, environmentId, input).pipe(
         Effect.andThen(() => options.execute?.(input) ?? requestGuarded(options.tag, input)),
-        Effect.provideService(RpcPermissionGuard, {
-          authorize: (id, method, payload) =>
-            createCommandPermissions(runtime, method).authorize(registry, id, payload),
-        }),
         Effect.tap((result) => options.onSuccess?.(target, registry, result) ?? Effect.void),
         Effect.ensuring(options.onSettled?.(target, registry) ?? Effect.void),
       );

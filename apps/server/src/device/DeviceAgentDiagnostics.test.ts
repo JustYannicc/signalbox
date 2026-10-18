@@ -1,0 +1,177 @@
+import { describe, expect, it } from "@effect/vitest";
+import {
+  DeviceHostId,
+  DeviceId,
+  ProviderSessionId,
+  ThreadId,
+  type DeviceServiceState,
+} from "@t3tools/contracts";
+import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
+import * as PubSub from "effect/PubSub";
+import * as Stream from "effect/Stream";
+import * as SynchronizedRef from "effect/SynchronizedRef";
+
+import * as DeviceAgentDiagnostics from "./DeviceAgentDiagnostics.ts";
+import type { AgentDeviceSession } from "./AgentDeviceSession.ts";
+import * as DeviceService from "./DeviceService.ts";
+
+const session = (id: string, threadId = `thread-${id}`): AgentDeviceSession => ({
+  sessionId: id,
+  leaseId: `lease-${id}`,
+  ownerKind: "agent",
+  providerSessionId: ProviderSessionId.make(`provider-${id}`),
+  threadId: ThreadId.make(threadId),
+  hostId: DeviceHostId.make("local"),
+  deviceId: DeviceId.make(`device-${id}`),
+  platform: "ios",
+});
+
+const stateWith = (sessions: ReadonlyArray<AgentDeviceSession>) =>
+  ({ sessions }) as unknown as DeviceServiceState;
+
+let setDeviceState: (state: DeviceServiceState) => Effect.Effect<void> = () => Effect.void;
+
+const deviceLayer = Layer.effect(
+  DeviceService.DeviceService,
+  Effect.gen(function* () {
+    const state = yield* SynchronizedRef.make(stateWith([]));
+    const changes = yield* PubSub.unbounded<DeviceServiceState>();
+    setDeviceState = (next) =>
+      SynchronizedRef.set(state, next).pipe(
+        Effect.flatMap(() => PubSub.publish(changes, next)),
+        Effect.asVoid,
+      );
+    return DeviceService.DeviceService.of({
+      state: SynchronizedRef.get(state),
+      subscribe: PubSub.subscribe(changes),
+    } as DeviceService.DeviceService["Service"]);
+  }),
+);
+
+const testLayer = DeviceAgentDiagnostics.layer.pipe(Layer.provideMerge(deviceLayer));
+
+describe("device agent diagnostics", () => {
+  it.effect("keeps concurrent sessions separate and clears only the matching session", () =>
+    Effect.gen(function* () {
+      const first = session("session-1");
+      const second = session("session-2");
+      yield* setDeviceState(stateWith([first, second]));
+      const diagnostics = yield* DeviceAgentDiagnostics.DeviceAgentDiagnostics;
+      const firstGeneration = yield* diagnostics.beginCommand(first);
+      const secondGeneration = yield* diagnostics.beginCommand(second);
+      if (firstGeneration === null || secondGeneration === null) {
+        throw new Error("Expected live device sessions");
+      }
+
+      yield* diagnostics.recordFailure(first, firstGeneration, {
+        command: "press",
+        message: "First command failed.",
+      });
+      yield* diagnostics.recordFailure(second, secondGeneration, {
+        command: "snapshot",
+        message: "Second command failed.",
+      });
+      expect((yield* diagnostics.snapshot).map((failure) => failure.sessionId)).toEqual([
+        "session-1",
+        "session-2",
+      ]);
+
+      yield* diagnostics.clearSessionFailure(first, firstGeneration);
+      expect((yield* diagnostics.snapshot).map((failure) => failure.sessionId)).toEqual([
+        "session-2",
+      ]);
+    }).pipe(Effect.provide(testLayer)),
+  );
+
+  it.effect("does not return diagnostics after the provider session changes", () =>
+    Effect.gen(function* () {
+      const live = session("session-1");
+      yield* setDeviceState(stateWith([live]));
+      const diagnostics = yield* DeviceAgentDiagnostics.DeviceAgentDiagnostics;
+      const generation = yield* diagnostics.beginCommand(live);
+      if (generation === null) throw new Error("Expected a live device session");
+      yield* diagnostics.recordFailure(live, generation, {
+        command: "press",
+        message: "Runner failed.",
+        diagnosticId: "diag-1",
+      });
+      expect(yield* diagnostics.snapshot).toHaveLength(1);
+
+      yield* setDeviceState(
+        stateWith([{ ...live, providerSessionId: ProviderSessionId.make("replacement-provider") }]),
+      );
+      expect(yield* diagnostics.snapshot).toEqual([]);
+    }).pipe(Effect.provide(testLayer)),
+  );
+
+  it.effect("does not return diagnostics after the lease generation changes", () =>
+    Effect.gen(function* () {
+      const live = session("session-1");
+      yield* setDeviceState(stateWith([live]));
+      const diagnostics = yield* DeviceAgentDiagnostics.DeviceAgentDiagnostics;
+      const generation = yield* diagnostics.beginCommand(live);
+      if (generation === null) throw new Error("Expected a live device session");
+      yield* diagnostics.recordFailure(live, generation, {
+        command: "press",
+        message: "Runner failed.",
+      });
+      expect(yield* diagnostics.snapshot).toHaveLength(1);
+
+      yield* setDeviceState(stateWith([{ ...live, leaseId: "replacement-lease" }]));
+      expect(yield* diagnostics.snapshot).toEqual([]);
+    }).pipe(Effect.provide(testLayer)),
+  );
+
+  it.effect("publishes an empty snapshot when the owning session closes", () =>
+    Effect.gen(function* () {
+      const live = session("session-1");
+      yield* setDeviceState(stateWith([live]));
+      const diagnostics = yield* DeviceAgentDiagnostics.DeviceAgentDiagnostics;
+      const subscription = yield* diagnostics.subscribe;
+      const generation = yield* diagnostics.beginCommand(live);
+      if (generation === null) throw new Error("Expected a live device session");
+
+      yield* diagnostics.recordFailure(live, generation, {
+        command: "press",
+        message: "Runner failed.",
+      });
+      expect(
+        Option.getOrNull(yield* Stream.runHead(Stream.fromSubscription(subscription))),
+      ).toHaveLength(1);
+
+      yield* setDeviceState(stateWith([]));
+      expect(
+        Option.getOrNull(yield* Stream.runHead(Stream.fromSubscription(subscription))),
+      ).toEqual([]);
+    }).pipe(Effect.scoped, Effect.provide(testLayer)),
+  );
+
+  it.effect("ignores an older command outcome after a newer failure", () =>
+    Effect.gen(function* () {
+      const live = session("session-1");
+      yield* setDeviceState(stateWith([live]));
+      const diagnostics = yield* DeviceAgentDiagnostics.DeviceAgentDiagnostics;
+      const olderGeneration = yield* diagnostics.beginCommand(live);
+      const newerGeneration = yield* diagnostics.beginCommand(live);
+      if (olderGeneration === null || newerGeneration === null) {
+        throw new Error("Expected a live device session");
+      }
+
+      yield* diagnostics.recordFailure(live, newerGeneration, {
+        command: "swipe",
+        message: "The newer command failed.",
+      });
+      yield* diagnostics.clearSessionFailure(live, olderGeneration);
+      yield* diagnostics.recordFailure(live, olderGeneration, {
+        command: "press",
+        message: "The older command failed later.",
+      });
+
+      expect(yield* diagnostics.snapshot).toMatchObject([
+        { command: "swipe", message: "The newer command failed." },
+      ]);
+    }).pipe(Effect.provide(testLayer)),
+  );
+});

@@ -23,7 +23,7 @@ import { afterEach, describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
-import type { SearchActor } from "../search/SearchAuthority.ts";
+import type { SearchActor } from "../search/ThreadSearch.ts";
 import * as RpcTest from "effect/rpc/RpcTest";
 
 import { DriveDirectory } from "../drive/DriveDirectory.ts";

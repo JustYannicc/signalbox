@@ -54,6 +54,9 @@ const setup = (
   const directory = Layer.succeed(ThreadDirectory.ThreadDirectory, {
     forThread: (threadId) =>
       ThreadDirectory.handleFor({
+        trash: async () => ({ _tag: "not_found" }),
+        restore: async () => ({ _tag: "not_found" }),
+        purge: async () => ({ _tag: "not_found" }),
         answerSecret: async () => "not_found",
         dispatch: async (_actor, command, creation) => {
           options.onArchive?.();
@@ -69,11 +72,14 @@ const setup = (
         commandOutput: async () => null,
         snapshot: async () => ({ _tag: "not_found" }),
         subscribe: async () => null,
+        subscribePreparation: async () => null,
+        cancelPreparation: async () => ({ _tag: "not_found" }),
         summary: async () => null,
         backfill: async () => ({ _tag: "not_found" }),
         searchDocuments: async () => null,
         contextWorkVisible: async () => false,
         find: async () => ({ _tag: "not_found" }),
+        authorizeExecutorTurn: async () => false,
         requestPullRequestSync: async () => ({ _tag: "not_found" }),
         diagnostics: async () => null,
         previews: async () => null,

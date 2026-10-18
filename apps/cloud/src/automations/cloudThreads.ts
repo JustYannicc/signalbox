@@ -19,7 +19,7 @@ import * as Context from "effect/Context";
 
 import * as CloudThreadService from "../thread/CloudThreadService.ts";
 import * as ThreadInbox from "../thread/ThreadInbox.ts";
-import { type Actor, ThreadCommandRejectedError } from "../thread/ThreadAccess.ts";
+import type { Actor } from "../thread/ThreadEngine.ts";
 import * as ThreadDirectory from "../thread/ThreadDirectory.ts";
 import { threadShellFromProjection } from "../thread/threadProjection.ts";
 import * as UserDrives from "../user/UserDrives.ts";
@@ -35,22 +35,11 @@ import { isTerminalRunStatus } from "@signalbox/automations/runs";
  */
 
 const isAutomationError = Schema.is(AutomationError);
-const isThreadCommandRejectedError = Schema.is(ThreadCommandRejectedError);
 
 const hostError =
   (what: string) =>
   (cause: { readonly message: string }): AutomationError =>
     new AutomationError({ message: `${what}: ${cause.message}`, cause });
-
-const launchError = (cause: AutomationError | ThreadInbox.ThreadInboxError) =>
-  hostError("Couldn't start the thread")(
-    cause._tag === "ThreadInboxError" &&
-      cause.code === "rejected" &&
-      isThreadCommandRejectedError(cause.cause) &&
-      cause.cause.commandType === "thread.launch"
-      ? cause.cause
-      : cause,
-  );
 
 /** Feeds the engine's domain event stream; `CloudAutomations.threadEvents` publishes into it. */
 export class ThreadEventFeed extends Context.Service<
@@ -154,11 +143,14 @@ export const layer = Layer.effect(
           Effect.flatMap((actor) => inbox.read(actor, threadId)),
           Effect.mapError(hostError("Couldn't read the thread inbox")),
         ),
-      initialModelSelection: (projectId) => contexts.initialModelSelection(projectId),
+      initialModelSelection: (projectId) =>
+        contexts
+          .initialModelSelection(projectId)
+          .pipe(Effect.mapError(hostError("Couldn't choose the thread's model"))),
       launch: (input) =>
         owner.pipe(
           Effect.flatMap((actor) =>
-            inbox.start(actor, {
+            threads.launchThread(actor, {
               commandId: input.commandId,
               creationSource: "server",
               projectId: input.projectId,
@@ -172,12 +164,12 @@ export const layer = Layer.effect(
             }),
           ),
           Effect.map(({ threadId }) => ({ threadId })),
-          Effect.mapError(launchError),
+          Effect.mapError(hostError("Couldn't start the thread")),
         ),
       send: (input) =>
         Effect.gen(function* () {
           const actor = yield* owner;
-          const receipt = yield* inbox.post(actor, {
+          yield* threads.dispatchCommand(actor, {
             type: "message.dispatch",
             commandId: input.commandId,
             threadId: input.threadId,
@@ -189,8 +181,9 @@ export const layer = Layer.effect(
             ...(input.modelSelection ? { modelSelection: input.modelSelection } : {}),
             dispatchMode: { type: "queue_after_active" },
           });
-          const state = yield* inbox.read(actor, input.threadId);
-          const run = state.runs.find((candidate) => candidate.id === receipt.runId);
+          // The cloud picks start or queue itself; the run is the one this message asked for.
+          const { runs } = yield* projection(input.threadId);
+          const run = runs.find((candidate) => candidate.userMessageId === input.messageId);
           if (!run)
             return yield* new AutomationError({
               message: "The thread took the message but made no run for it.",

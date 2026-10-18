@@ -30,6 +30,7 @@ import { CommandOutputPanel, useCommandOutputStreaming } from "./CommandOutputPa
 import { resolveExternalWebLinkHref } from "./externalLinkContextMenu";
 import type { ExpandedImagePreview } from "./ExpandedImagePreview";
 import { ShellCommandBlock } from "./ShellCommandBlock";
+import { toolInputFindPresentation } from "./toolInputFind";
 
 interface V2ItemInspectorProps {
   readonly projectedItem: OrchestrationV2ProjectedTurnItem;
@@ -58,8 +59,10 @@ function SyntaxTokens({
     lang: language,
     theme: resolveDiffThemeName(resolvedTheme),
   });
+  // signalbox: Find offsets refer to original input, including CRLF separators Shiki removes.
+  const lineEndings = text.match(/\r?\n/gu) ?? [];
   return tokens.flatMap((line, lineIndex) => [
-    lineIndex > 0 ? "\n" : "",
+    lineIndex > 0 ? (lineEndings[lineIndex - 1] ?? "\n") : "",
     ...line.map((token) => (
       <span key={token.offset} style={{ color: token.color }}>
         {token.content}
@@ -85,16 +88,21 @@ function StructuredValue({
   value,
   highlightJson = false,
   language,
+  findAttributes,
 }: {
   readonly value: unknown;
   readonly highlightJson?: boolean;
   readonly language?: "typescript";
+  readonly findAttributes?: ReturnType<typeof toolInputFindPresentation>["attributes"];
 }) {
   const text = typeof value === "string" ? value : JSON.stringify(value, null, 2);
   const isJson = highlightJson && isJsonText(text);
   if (!text) return null;
   return (
-    <pre className={cn("max-h-80 overflow-auto text-muted-foreground", monoClassName)}>
+    <pre
+      {...findAttributes}
+      className={cn("max-h-80 overflow-auto text-muted-foreground", monoClassName)}
+    >
       {language || isJson ? (
         <RenderErrorBoundary fallback={text}>
           <Suspense fallback={text}>
@@ -167,7 +175,12 @@ function ToolOutput(props: ToolOutputState) {
     />
   ));
   const text = props.output ? (
-    <div className="max-h-80 overflow-auto text-muted-foreground">{props.output}</div>
+    <div
+      data-thread-find-text="tool-output"
+      className="max-h-80 overflow-auto text-muted-foreground"
+    >
+      {props.output}
+    </div>
   ) : props.pending ? (
     <div className="text-muted-foreground italic">Loading output…</div>
   ) : props.error ? (
@@ -201,18 +214,36 @@ function ToolCallBody(
     readonly command?: string;
     readonly args?: unknown;
     readonly toolName?: string | null;
+    readonly searchStatus?: string;
     readonly exitCode?: number | undefined;
     /** Replaces the fetched output, e.g. with a command's live output. */
     readonly outputSlot?: ReactNode;
   },
 ) {
-  const call = toolCallLines({ command: props.command, args: props.args });
+  const call = toolCallLines({ command: props.command });
+  // signalbox: Find maps indexed values to the actual input, excluding keys and secrets.
+  const input = props.command === undefined ? toolInputFindPresentation(props.args) : null;
   return (
     <div className={cn("space-y-1.5", monoClassName)}>
-      {call.command ? <ShellCommandBlock command={call.command} /> : null}
-      {call.args ? (
-        <div className="text-foreground/85">
-          {call.args.map(([key, value]) => (
+      {!call.command && props.toolName ? <div data-thread-find-text>{props.toolName}</div> : null}
+      {!call.command && props.searchStatus ? (
+        <div data-thread-find-text className="text-muted-foreground">
+          {props.searchStatus}
+        </div>
+      ) : null}
+      {call.command ? (
+        <div data-thread-find-text="command">
+          <ShellCommandBlock command={call.command} />
+        </div>
+      ) : null}
+      {call.command && props.searchStatus ? (
+        <div data-thread-find-text className="text-muted-foreground">
+          {props.searchStatus}
+        </div>
+      ) : null}
+      {input?.args ? (
+        <div {...input.attributes} className="text-foreground/85">
+          {input.args.map(([key, value]) => (
             <div key={key}>
               <span className="text-muted-foreground">{key} </span>
               {key === "code" && isJavaScriptReplTool(props.toolName) ? (
@@ -224,9 +255,11 @@ function ToolCallBody(
           ))}
         </div>
       ) : null}
-      {call.argsText ? <StructuredValue value={call.argsText} highlightJson /> : null}
+      {input?.argsText ? (
+        <StructuredValue value={input.argsText} findAttributes={input.attributes} highlightJson />
+      ) : null}
       {props.outputSlot ?? <ToolOutput {...props} />}
-      {props.exitCode !== undefined && props.exitCode !== 0 ? (
+      {props.searchStatus === undefined && props.exitCode !== undefined && props.exitCode !== 0 ? (
         <div className="text-destructive">exit {props.exitCode}</div>
       ) : null}
     </div>
@@ -265,6 +298,9 @@ export const V2ItemInspector = memo(function V2ItemInspector(props: V2ItemInspec
       {item.type === "command_execution" ? (
         <ToolCallBody
           command={item.input}
+          searchStatus={
+            item.exitCode === undefined ? item.status : `${item.status} ${item.exitCode}`
+          }
           exitCode={item.exitCode}
           {...outputState}
           onImageExpand={props.onImageExpand}
@@ -377,6 +413,7 @@ export const V2ItemInspector = memo(function V2ItemInspector(props: V2ItemInspec
       {item.type === "dynamic_tool" ? (
         <ToolCallBody
           toolName={item.toolName}
+          searchStatus={item.status}
           args={item.input}
           {...outputState}
           onImageExpand={props.onImageExpand}
