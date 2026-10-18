@@ -160,8 +160,8 @@ describe("KernelProgramPipes", () => {
     const stdin = piped.prepared.filesystem.descriptors.get(0).stdio;
     if (!stdin?.readInto) throw new Error("Missing child stdin");
     const original = stdin.readInto;
-    vi.spyOn(stdin, "readInto").mockImplementation((target) => {
-      const pending = original.call(stdin, target);
+    vi.spyOn(stdin, "readInto").mockImplementation((target, flags) => {
+      const pending = original.call(stdin, target, flags);
       expect(pending).toBeInstanceOf(Promise);
       entered.resolve();
       return pending;

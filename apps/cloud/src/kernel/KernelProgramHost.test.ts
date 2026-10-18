@@ -204,7 +204,7 @@ describe("KernelProgramHost", () => {
       const poll = piped.prepared.filesystem.descriptors.get(1).stdio?.poll;
       if (!poll) throw new Error("Child stdout polling was not installed");
       expect(poll("write", new AbortController().signal)).toEqual({ bytes: 65_536n });
-      await output(bytes("streamed output"));
+      await output(bytes("streamed output"), 0);
       const reader = piped.stdout.getReader();
       await expect(reader.read()).resolves.toMatchObject({
         done: false,

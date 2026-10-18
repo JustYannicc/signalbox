@@ -9,7 +9,8 @@ import { describe, expect, it } from "@effect/vitest";
 import { decodeModuleTransport, MODULE_TRANSPORT_CONTENT_TYPE } from "./moduleTransport.ts";
 
 describe("fixture measurement CLI", () => {
-  it("uploads every full map and records original inventory plus partial HTTP failures", async () => {
+  const optIn = it.each([undefined, true, "true"]);
+  optIn("uploads full maps with opt-in %s", async (allowGeneratedCode) => {
     const dir = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "isolate-fixture-"));
     const requests: Awaited<ReturnType<typeof decodeModuleTransport>>[] = [];
     const failures: unknown[] = [];
@@ -54,6 +55,7 @@ describe("fixture measurement CLI", () => {
           id: "fixture",
           mainModule: "nested/main.js",
           entrypoint: "ProbeFacet",
+          allowGeneratedCode,
           modules: {
             "nested/main.js": { path: "source.js", type: "js" },
             "nested/engine.wasm": { path: "binary.wasm", type: "wasm" },
@@ -97,6 +99,7 @@ describe("fixture measurement CLI", () => {
           id: firstInput.id,
           mode: "facet",
           allowOutbound: false,
+          allowGeneratedCode: allowGeneratedCode === true,
           mainModule: "nested/main.js",
           entrypoint: "ProbeFacet",
           path: ["/first", "/fails", "/last"][index],
