@@ -3,6 +3,7 @@ import type { AgentOsSpawnRequest } from "../AgentOsProcessWire.ts";
 import { AgentOsDescriptorHost } from "../AgentOsDescriptorHost.ts";
 import type { KernelAsyncProgramContext } from "../KernelAsyncProgram.ts";
 import { KERNEL_WNOHANG } from "../KernelProcessTable.ts";
+import { currentKernelSignal } from "../process/KernelExecution.ts";
 import { KernelProcessCancelledError } from "../process/KernelProcessCancellation.ts";
 import { mapErrno, runAsync } from "../wasi/internal_wasi_calls.ts";
 import type { KernelGitCredentials } from "./KernelGitCredentials.ts";
@@ -11,6 +12,7 @@ import {
   decodeGitEnvironment,
   decodeGitStrings,
   encodeGitWaitStatus,
+  gitCloseInheritedPipeAction,
   gitErrnoForKernelError,
   gitErrnoOf,
   gitSpawnFileAction,
@@ -45,6 +47,7 @@ export class KernelGitProcessImports {
   readonly #options: GitProcessImportOptions;
   readonly #descriptors: AgentOsDescriptorHost;
   readonly #children = new Map<number, GitChild>();
+  readonly #pipeEndpoints = new WeakSet<object>();
   #nextPid = 1;
 
   constructor(options: GitProcessImportOptions) {
@@ -54,7 +57,7 @@ export class KernelGitProcessImports {
       descriptors: options.context.filesystem.descriptors,
       wakes: options.context.wakes,
       asyncMode: true,
-      currentSignal: () => options.context.signal,
+      currentSignal: currentKernelSignal,
     });
     this.imports = Object.freeze({
       ids: (pointer: number) => this.#ids(pointer),
@@ -138,7 +141,15 @@ export class KernelGitProcessImports {
   #pipe(fdsPointer: number) {
     const start = fdsPointer >>> 0;
     if (!validGitMemoryRange(this.#options.memory(), start, 8)) return EFAULT;
-    return this.#descriptors.imports.fd_pipe(start, start + 4);
+    const result = this.#descriptors.imports.fd_pipe(start, start + 4);
+    if (result !== 0) return result;
+    const view = new DataView(this.#options.memory().buffer);
+    const descriptors = this.#options.context.filesystem.descriptors;
+    for (const pointer of [start, start + 4]) {
+      const endpoint = descriptors.get(view.getInt32(pointer, true)).stdio;
+      if (endpoint !== undefined) this.#pipeEndpoints.add(endpoint);
+    }
+    return 0;
   }
 
   #dup(fd: number, outPointer: number) {
@@ -193,7 +204,12 @@ export class KernelGitProcessImports {
     const child = this.#children.get(pid | 0);
     if (child?.kernelPid === undefined) return ECHILD;
     const result = await this.#waitForChild(child.kernelPid, options >>> 0);
-    if (result.status === "error") return gitErrnoForKernelError(result.error.code);
+    if (result.status === "error") {
+      if (result.error.code === "CANCELLED" || result.error.code === "IO_ERROR") {
+        this.#children.delete(pid | 0);
+      }
+      return gitErrnoForKernelError(result.error.code);
+    }
     const view = new DataView(memory.buffer);
     if (!("status" in result.value)) {
       view.setInt32(statusPointer >>> 0, 0, true);
@@ -235,6 +251,11 @@ export class KernelGitProcessImports {
       gitSpawnFileAction(1, stdoutFd),
       gitSpawnFileAction(2, stderrFd),
     ];
+    for (const [fd, descriptor] of this.#options.context.filesystem.descriptors.entries()) {
+      if (fd > 2 && descriptor.stdio && this.#pipeEndpoints.has(descriptor.stdio)) {
+        actions.push(gitCloseInheritedPipeAction(fd));
+      }
+    }
     let request: AgentOsSpawnRequest;
     try {
       request = Object.freeze({
@@ -277,30 +298,104 @@ export class KernelGitProcessImports {
       this.#children.delete(childPid);
       return EIO;
     }
-    if (this.#options.context.signal.aborted)
-      throw new KernelProcessCancelledError("Git execution was cancelled");
     if (spawned.status === "would_block") {
       this.#options.context.wakes.release(spawned.wakeToken);
       this.#children.delete(childPid);
+      if (this.#options.context.signal.aborted)
+        throw new KernelProcessCancelledError("Git execution was cancelled");
       return GIT_ERRNO.resourceLimit;
     }
     if (spawned.status !== "ok") {
       this.#children.delete(childPid);
+      if (this.#options.context.signal.aborted)
+        throw new KernelProcessCancelledError("Git execution was cancelled");
       return gitErrnoOf(spawned);
     }
+    // Admission can finish just after cancellation. Record ownership before
+    // observing the signal so the finalizer can still terminate and reap it.
+    child.handle = spawned.value;
     const process = this.#options.context.processes.info(spawned.value);
     if (process.status === "would_block") {
       this.#options.context.wakes.release(process.wakeToken);
-      this.#children.delete(childPid);
+      if (this.#options.context.signal.aborted)
+        throw new KernelProcessCancelledError("Git execution was cancelled");
       return GIT_ERRNO.resourceLimit;
     }
     if (process.status !== "ok") {
-      this.#children.delete(childPid);
+      if (this.#options.context.signal.aborted)
+        throw new KernelProcessCancelledError("Git execution was cancelled");
       return gitErrnoOf(process);
     }
-    child.handle = spawned.value;
     child.kernelPid = process.value.pid;
+    if (this.#options.context.signal.aborted)
+      throw new KernelProcessCancelledError("Git execution was cancelled");
     return 0;
+  }
+
+  async cleanupChildren(): Promise<void> {
+    const errors: unknown[] = [];
+    const children = [...this.#children.values()];
+    this.#children.clear();
+    for (const child of children) {
+      if (child.handle === undefined) continue;
+      try {
+        await this.#terminateAndReap(child.handle);
+      } catch (error) {
+        errors.push(error);
+      }
+    }
+    throwCleanupErrors(errors, "Git child cleanup failed");
+  }
+
+  async #terminateAndReap(handle: KernelHandle<"process">): Promise<void> {
+    const processes = this.#options.context.processes;
+    let terminal = processes.exitStatus(handle);
+    if (terminal.status === "error" && terminal.error.code === "INVALID_HANDLE") return;
+    if (terminal.status === "would_block") {
+      this.#options.context.wakes.release(terminal.wakeToken);
+      const signalled = processes.signal(handle, 9);
+      if (signalled.status === "would_block") {
+        this.#options.context.wakes.release(signalled.wakeToken);
+      }
+      if (
+        signalled.status === "error" &&
+        signalled.error.code !== "NOT_FOUND" &&
+        signalled.error.code !== "INVALID_HANDLE"
+      ) {
+        throw new Error(`Git child could not be killed: ${signalled.error.message}`);
+      }
+      terminal = await this.#waitForTerminal(handle);
+    }
+
+    const reaped = processes.reap(handle);
+    if (
+      reaped.status === "error" &&
+      reaped.error.code !== "CANCELLED" &&
+      reaped.error.code !== "INVALID_HANDLE" &&
+      reaped.error.code !== "NOT_FOUND"
+    ) {
+      throw new Error(`Git child could not be reaped: ${reaped.error.message}`);
+    }
+    if (terminal.status === "error" && terminal.error.code === "IO_ERROR") {
+      throw new Error(`Git child failed before cleanup: ${terminal.error.message}`);
+    }
+  }
+
+  async #waitForTerminal(handle: KernelHandle<"process">) {
+    const processes = this.#options.context.processes;
+    for (;;) {
+      const result = processes.exitStatus(handle);
+      if (result.status !== "would_block") return result;
+      const token = result.wakeToken;
+      try {
+        const woken = await this.#options.context.wakes.wait(token);
+        if (woken.status !== "ok" && woken.error.code !== "EXPIRED") {
+          throw new Error(`Git child cleanup wait failed: ${woken.error.message}`);
+        }
+      } finally {
+        this.#options.context.wakes.release(token);
+      }
+    }
   }
 
   #allocatePid(): number | undefined {
@@ -338,4 +433,9 @@ export class KernelGitProcessImports {
       }
     }
   }
+}
+
+function throwCleanupErrors(errors: readonly unknown[], message: string): void {
+  if (errors.length === 1) throw errors[0];
+  if (errors.length > 1) throw new AggregateError(errors, message);
 }

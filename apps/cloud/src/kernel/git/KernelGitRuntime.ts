@@ -90,15 +90,29 @@ export async function runKernelGitProgram(
     }
   }
 
-  let exitCode: number;
+  let exitCode = 0;
+  let failure: unknown;
+  let failed = false;
   try {
     const instance = new WebAssembly.Instance(module, imports);
     exitCode = await runKernelExecution(context.signal, () => lifecycle.startAsync(instance));
   } catch (error) {
-    if (context.signal.aborted)
-      throw new KernelProcessCancelledError("Git execution was cancelled");
-    throw error;
+    failed = true;
+    failure = context.signal.aborted
+      ? new KernelProcessCancelledError("Git execution was cancelled")
+      : error;
   }
+  try {
+    await processes.cleanupChildren();
+  } catch (cleanupError) {
+    if (failed) {
+      throw new AggregateError([failure, cleanupError], "Git execution and child cleanup failed", {
+        cause: cleanupError,
+      });
+    }
+    throw cleanupError;
+  }
+  if (failed) throw failure;
   return Object.freeze({ exitCode, signal: 0, coreDumped: false });
 }
 

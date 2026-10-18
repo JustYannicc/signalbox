@@ -81,6 +81,10 @@ export function gitSpawnFileAction(fd: number, sourceFd: number) {
     : Object.freeze({ kind: "dup2" as const, ...fields });
 }
 
+export function gitCloseInheritedPipeAction(fd: number) {
+  return Object.freeze({ kind: "close" as const, fd, sourceFd: 0, flags: 0, mode: 0 });
+}
+
 export function validGitMemoryRange(
   memory: WebAssembly.Memory,
   pointer: number,
