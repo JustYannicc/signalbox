@@ -24,7 +24,14 @@ import {
 } from "./runLifecycle.ts";
 import { interruptRunEvents } from "./scriptedTurn.ts";
 import { canSteer, steerEvents, steerTarget } from "./steering.ts";
-import { type DecisionContext, ids, messageEvent, runEvent, threadEvent } from "./threadEvents.ts";
+import {
+  type Decision,
+  type DecisionContext,
+  ids,
+  messageEvent,
+  runEvent,
+  threadEvent,
+} from "./threadEvents.ts";
 import { applyEvents } from "./threadProjection.ts";
 
 /**
@@ -44,15 +51,6 @@ const reject = (message: string, record = true): Decision => ({
   message,
   ...(record ? {} : { record }),
 });
-
-export type Decision =
-  | { readonly _tag: "accepted"; readonly events: ReadonlyArray<OrchestrationV2DomainEvent> }
-  | {
-      readonly _tag: "rejected";
-      readonly message: string;
-      readonly record?: boolean;
-      readonly code?: "run_changed";
-    };
 
 type Projection = OrchestrationV2ThreadProjection;
 type CommandOf<T extends OrchestrationV2Command["type"]> = Extract<

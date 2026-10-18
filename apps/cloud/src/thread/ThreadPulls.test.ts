@@ -992,7 +992,15 @@ describe("durable thread pull", () => {
                 (yield* pulls.begin(owner, { ...input, operationId: "other" }).pipe(Effect.result))
                   ._tag,
               ).toBe("Failure");
-              expect((yield* send(engine, 2, "wait").pipe(Effect.result))._tag).toBe("Failure");
+              const refused = yield* send(engine, 2, "wait").pipe(Effect.flip);
+              expect(refused).toMatchObject({
+                code: "unavailable",
+                message: expect.stringContaining("pull to finish"),
+              });
+              yield* pulls.revoke("pull");
+              yield* send(engine, 2, "wait");
+              yield* send(engine, 2, "wait");
+              expect((yield* engine.snapshot(owner)).projection.runs).toHaveLength(2);
             }),
           { drives: true, driveDirectory: f.directory },
         ),

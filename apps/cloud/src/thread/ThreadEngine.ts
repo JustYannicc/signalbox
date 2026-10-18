@@ -59,8 +59,8 @@ import { searchHomeForThread } from "../search/searchHome.ts";
 import { findProjectedThreadItems } from "../search/threadFind.ts";
 import { traceIdOf } from "./diagnostics/traceId.ts";
 import { hasPendingTurnWork, scriptedStep } from "./scriptedTurn.ts";
-import { decide, decideLaunch, type Decision, type ThreadWorktree } from "./threadDecider.ts";
-import { threadEvent, type DecisionContext } from "./threadEvents.ts";
+import { decide, decideLaunch, type ThreadWorktree } from "./threadDecider.ts";
+import { threadEvent, type Decision, type DecisionContext } from "./threadEvents.ts";
 import { providerEventThreadId, recordedNativeChildEvents } from "./runner/runnerEvents.ts";
 import type { NativeChildBatchInput, NativeChildBatchResult } from "./runner/nativeChildBatch.ts";
 import { expireEndedRuntimeRequests } from "./runtimeRequests.ts";
@@ -742,7 +742,11 @@ const make = Effect.gen(function* () {
             if (options.record && current.thread !== null) {
               yield* Effect.orDie(store.recordRejection({ command, message }));
             }
-            return yield* ThreadCommandRejectedError.forCommand(command, message, options.code);
+            return yield* ThreadCommandRejectedError.forCommand(
+              command,
+              message,
+              options.code ?? (options.record ? undefined : "unavailable"),
+            );
           });
         const refusePool = (error: Parameters<typeof poolErrorMessage>[0]) =>
           Effect.flatMap(poolErrorMessage(error), (message) => refuse(message, { record: false }));
