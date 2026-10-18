@@ -20,6 +20,8 @@ import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
+import * as DateTime from "effect/DateTime";
+import * as TestClock from "effect/testing/TestClock";
 
 import { layerThreadObject } from "../testing.ts";
 import { scriptedModelSelection, scriptedReply } from "./scriptedProvider.ts";
@@ -82,7 +84,10 @@ const launch = (engine: ThreadEngine.ThreadEngine["Service"], text = "Hello clou
     personal,
   );
 
-const send = (commandId: string, text: string): OrchestrationV2Command => ({
+const send = (
+  commandId: string,
+  text: string,
+): Extract<OrchestrationV2Command, { readonly type: "message.dispatch" }> => ({
   type: "message.dispatch",
   commandId: CommandId.make(commandId),
   createdBy: "user",
@@ -147,6 +152,49 @@ describe("ThreadEngine", () => {
         expect(summary?.shell.latestUserMessageAt).not.toBeNull();
       }),
     ),
+  );
+
+  it.effect("keeps the run activity timer anchored through startup and reload", () =>
+    Effect.gen(function* () {
+      const filename = freshDatabase();
+      const beforeReload = yield* withObject(filename, (engine) =>
+        Effect.gen(function* () {
+          const launched = yield* launch(engine);
+          const requestedAt = launched.projection.runs[0]?.requestedAt;
+          if (requestedAt === undefined) throw new Error("launch did not create a run");
+
+          yield* TestClock.adjust("35 seconds");
+          yield* engine.step;
+
+          const { projection } = yield* engine.snapshot(owner);
+          const run = projection.runs[0];
+          expect(run?.status).toBe("running");
+          expect(run?.startedAt).not.toBeNull();
+          expect(
+            DateTime.toEpochMillis(run!.startedAt!) - DateTime.toEpochMillis(requestedAt),
+          ).toBe(35_000);
+
+          const summary = yield* engine.summary(owner);
+          const activityStartedAt = summary?.shell.activityRunStartedAt;
+          return {
+            requestedAt: DateTime.toEpochMillis(requestedAt),
+            activityStartedAt:
+              activityStartedAt === null || activityStartedAt === undefined
+                ? null
+                : DateTime.toEpochMillis(activityStartedAt),
+          };
+        }),
+      );
+      const afterReload = yield* withObject(filename, (engine) => engine.summary(owner));
+      const reloadedActivityStartedAt = afterReload?.shell.activityRunStartedAt;
+
+      expect(beforeReload.activityStartedAt).toBe(beforeReload.requestedAt);
+      expect(
+        reloadedActivityStartedAt === null || reloadedActivityStartedAt === undefined
+          ? null
+          : DateTime.toEpochMillis(reloadedActivityStartedAt),
+      ).toBe(beforeReload.requestedAt);
+    }),
   );
 
   it.effect("returns the original result for a command id it has already decided", () =>
@@ -269,22 +317,116 @@ describe("ThreadEngine", () => {
     ),
   );
 
-  it.effect("queues a message sent mid-turn and starts it when the turn completes", () =>
-    withObject(freshDatabase(), (engine) =>
-      Effect.gen(function* () {
-        yield* launch(engine);
-        yield* engine.step;
-        yield* engine.dispatch(owner, send("send-2", "Second"), personal);
-        const queued = yield* engine.snapshot(owner);
-        expect(queued.projection.runs.map((run) => run.status)).toEqual(["running", "queued"]);
+  it.effect("starts a queued run's timer at activation and preserves it after reload", () =>
+    Effect.gen(function* () {
+      const filename = freshDatabase();
+      const activation = yield* withObject(filename, (engine) =>
+        Effect.gen(function* () {
+          yield* launch(engine);
+          yield* engine.step;
+          yield* engine.dispatch(owner, send("send-2", "Second"), personal);
+          const queued = yield* engine.snapshot(owner);
+          expect(queued.projection.runs.map((run) => run.status)).toEqual(["running", "queued"]);
+          const queuedRun = queued.projection.runs[1]!;
+          expect(queuedRun.workStartedAt).toBeUndefined();
 
-        yield* runToIdle(engine);
-        expect(yield* assistantTexts(engine)).toEqual([
-          scriptedReply("Hello cloud"),
-          scriptedReply("Second"),
-        ]);
-      }),
-    ),
+          yield* TestClock.adjust("10 minutes");
+          let activated:
+            | { readonly requestedAt: number; readonly workStartedAt: number }
+            | undefined;
+          for (let steps = 0; steps < 200; steps++) {
+            yield* engine.step;
+            const { projection } = yield* engine.snapshot(owner);
+            const run = projection.runs[1];
+            if (run?.status === "starting" && run.startedAt === null && run.workStartedAt) {
+              activated = {
+                requestedAt: DateTime.toEpochMillis(queuedRun.requestedAt),
+                workStartedAt: DateTime.toEpochMillis(run.workStartedAt),
+              };
+              break;
+            }
+          }
+          if (activated === undefined) throw new Error("queued run was not activated");
+          expect(activated.workStartedAt).toBeGreaterThan(activated.requestedAt);
+
+          yield* TestClock.adjust("35 seconds");
+          yield* engine.step;
+          const started = yield* engine.snapshot(owner);
+          const runningRun = started.projection.runs[1]!;
+          expect(runningRun.status).toBe("running");
+          expect(runningRun.startedAt).not.toBeNull();
+          expect(DateTime.toEpochMillis(runningRun.workStartedAt!)).toBe(activated.workStartedAt);
+          const runningSummary = yield* engine.summary(owner);
+          expect(DateTime.toEpochMillis(runningSummary!.shell.activityRunStartedAt!)).toBe(
+            activated.workStartedAt,
+          );
+          return activated;
+        }),
+      );
+      const afterReload = yield* withObject(filename, (engine) =>
+        Effect.gen(function* () {
+          const snapshot = yield* engine.snapshot(owner);
+          expect(snapshot.projection.runs[1]?.status).toBe("running");
+          const summary = yield* engine.summary(owner);
+          const activityStartedAt = summary?.shell.activityRunStartedAt;
+          expect(activityStartedAt).not.toBeNull();
+          expect(DateTime.toEpochMillis(activityStartedAt!)).toBe(activation.workStartedAt);
+
+          yield* runToIdle(engine);
+          return yield* assistantTexts(engine);
+        }),
+      );
+      expect(afterReload).toEqual([scriptedReply("Hello cloud"), scriptedReply("Second")]);
+    }),
+  );
+
+  it.effect("preserves a notification wake's work start across reload", () =>
+    Effect.gen(function* () {
+      const filename = freshDatabase();
+      const previousWorkStartedAt = yield* withObject(filename, (engine) =>
+        Effect.gen(function* () {
+          yield* launch(engine);
+          yield* engine.step;
+          const first = (yield* engine.snapshot(owner)).projection.runs[0]!;
+          const workStartedAt = first.workStartedAt;
+          if (workStartedAt === undefined) throw new Error("first run has no work start");
+          yield* runToIdle(engine);
+
+          yield* TestClock.adjust("10 minutes");
+          yield* engine.dispatch(
+            owner,
+            {
+              ...send("wake", "Resume after background work"),
+              createdBy: "agent",
+              creationSource: "provider",
+              notification: {
+                source: { kind: "background_task" },
+                outcome: "completed",
+                summary: "Background work completed",
+              },
+            },
+            personal,
+          );
+          const wake = (yield* engine.snapshot(owner)).projection.runs[1]!;
+          expect(wake.status).toBe("starting");
+          expect(wake.workStartedAt).toEqual(workStartedAt);
+          return workStartedAt;
+        }),
+      );
+      const afterReload = yield* withObject(filename, (engine) =>
+        Effect.gen(function* () {
+          yield* TestClock.adjust("35 seconds");
+          yield* engine.step;
+          const wake = (yield* engine.snapshot(owner)).projection.runs[1]!;
+          expect(wake.status).toBe("running");
+          expect(wake.startedAt).not.toBeNull();
+          expect(wake.workStartedAt).toEqual(previousWorkStartedAt);
+          const summary = yield* engine.summary(owner);
+          return summary?.shell.activityRunStartedAt;
+        }),
+      );
+      expect(afterReload).toEqual(previousWorkStartedAt);
+    }),
   );
 
   it.effect("stops a turn, holds the queue, and resumes it on request", () =>

@@ -58,6 +58,7 @@ describe("rebrandScript", () => {
       "const e = `t3 ${subcommand}`;",
       'const f = "Remove it with `npm uninstall -g t3`.";',
       'const g = "Open t3code://threads/1";',
+      "const h = \"npm install --global --prefix '/opt/node' t3@0.0.45\";",
     ].join("\n");
 
     expect(rebrandScript("apps/server/src/cli/example.ts", code)).toBe(
@@ -69,6 +70,7 @@ describe("rebrandScript", () => {
         "const e = `signalbox ${subcommand}`;",
         'const f = "Remove it with `npm uninstall -g signalbox-cli`.";',
         'const g = "Open signalbox://threads/1";',
+        "const h = \"npm install --global --prefix '/opt/node' signalbox-cli@0.0.45\";",
       ].join("\n"),
     );
   });

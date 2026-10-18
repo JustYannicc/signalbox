@@ -4,6 +4,7 @@ import {
   type CheckpointViews,
   type ThreadRefName,
 } from "@signalbox/runner-protocol/DriveProtocol";
+import type { PullOperation, PullResult } from "@signalbox/runner-protocol/PullProtocol";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
@@ -95,7 +96,7 @@ export const storePacks = Effect.fn("storePacks")(function* (input: {
     const absent = new Set<string>();
     for (const oid of new Set(parents.flatMap((commit) => commit.parents))) {
       const found = yield* input.git.exec(["rev-list", "--no-walk", "--missing=print", oid]);
-      if (found.code !== 0) absent.add(oid);
+      if (found.code !== 0 || input.git.lines(found.stdout).includes(`?${oid}`)) absent.add(oid);
     }
     yield* appendLines(
       path.join(input.gitDir, "shallow"),
@@ -216,6 +217,27 @@ export const makeDriveMirror = Effect.fn("makeDriveMirror")(function* (input: {
       return remote;
     });
 
+  /** Marks a fetched pull target as remote-owned only while it is outside the drive's history. */
+  const pullRemoteBase = (commit: string, target: string, bases: ReadonlyArray<string> = []) =>
+    Effect.gen(function* () {
+      if (!remoteBacked || !(yield* git.isAncestor(target, commit))) return undefined;
+      const have = [
+        ...[known.main, known.thread, known.wip].filter((oid) => oid !== null),
+        ...bases,
+      ];
+      if (have.length === 0) return [target];
+      const held = yield* git.run([
+        "--shallow-file",
+        driveShallow,
+        "rev-list",
+        "-n1",
+        target,
+        "--not",
+        ...have,
+      ]);
+      return held.trim() === "" ? undefined : [target];
+    });
+
   /**
    * Uploads what `commit` reaches that the drive lacks, as one full (not thin)
    * pack, through the drive's view. Remote commits it carries one deep keep
@@ -228,6 +250,7 @@ export const makeDriveMirror = Effect.fn("makeDriveMirror")(function* (input: {
     commit: string,
     options: {
       readonly remoteHead?: boolean;
+      readonly remoteCommits?: ReadonlyArray<string>;
       readonly private?: boolean;
       readonly bases?: ReadonlyArray<string>;
     } = {},
@@ -241,7 +264,7 @@ export const makeDriveMirror = Effect.fn("makeDriveMirror")(function* (input: {
         ...(options.bases ?? []),
         ...(options.private === true ? [known.machine] : []),
       ].filter((oid) => oid !== null);
-      const remote = yield* remoteBase(commit, have);
+      const remote = options.remoteCommits ?? (yield* remoteBase(commit, have));
       if (remote.length > MAX_REMOTE_COMMITS) {
         return yield* new DriveRefusedError({
           message: `This branch builds on ${remote.length} commits from GitHub that Signalbox doesn't hold, more than ${MAX_REMOTE_COMMITS} at once. Rebase it onto the latest main and try again.`,
@@ -359,6 +382,34 @@ export const makeDriveMirror = Effect.fn("makeDriveMirror")(function* (input: {
     /** Saves `commit` as the auto-save. */
     saveWip: (commit: string) =>
       upload(commit).pipe(Effect.andThen(moveRefs([{ ref: "wip", to: commit }]))),
+    /** Saves a pull with both branch refs tied to the exact operation receipt. */
+    savePull: (operation: PullOperation, result: PullResult) =>
+      Effect.gen(function* () {
+        if (result.outcome !== "refused") {
+          if (result.head !== null && result.head !== known.thread) {
+            const remoteCommits = yield* pullRemoteBase(result.head, operation.target);
+            yield* upload(result.head, remoteCommits === undefined ? {} : { remoteCommits });
+          }
+          if (result.wip !== null && result.wip !== result.head && result.wip !== known.wip) {
+            const bases = result.head === null ? [] : [result.head];
+            const remoteCommits = yield* pullRemoteBase(result.wip, operation.target, bases);
+            yield* upload(result.wip, {
+              ...(bases.length === 0 ? {} : { bases }),
+              ...(remoteCommits === undefined ? {} : { remoteCommits }),
+            });
+          }
+        }
+
+        const saved = yield* client.savePull({ operation, result });
+        if (saved.outcome === "refused") return saved;
+        known = { ...known, thread: saved.head, wip: saved.wip };
+        yield* Effect.all(
+          [git.setRef("refs/drive/thread", saved.head), git.setRef("refs/drive/wip", saved.wip)],
+          { concurrency: 2, discard: true },
+        );
+        return saved;
+      }),
+    pullReceipt: client.pullReceipt,
     /** Whether the cloud keeps the thread's machine state. */
     keepsMachine: () => keepsMachine,
     /** Saves `commit` as the thread's machine state, in a pack only this thread is handed. */

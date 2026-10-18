@@ -1,7 +1,7 @@
 import { useAtomValue } from "@effect/atom-react";
 import { useLocation, useParams } from "@tanstack/react-router";
 import { HouseIcon } from "lucide-react";
-import { useCallback, useEffect } from "react";
+import { useEffect } from "react";
 
 import { isCommandPaletteOpen } from "../../commandPaletteBus";
 import { resolveShortcutCommand } from "../../keybindings";
@@ -23,13 +23,10 @@ export function useSidebarViewNavigation() {
   const onUtilityPage = useLocation({
     select: (location) => isSidebarUtilityPage(location.pathname),
   });
-  const changeView = useCallback(
-    (next: SidebarView) => {
-      setView(next);
-      if (onUtilityPage) void navigateToMainApp();
-    },
-    [navigateToMainApp, onUtilityPage, setView],
-  );
+  const changeView = (next: SidebarView) => {
+    setView(next);
+    if (onUtilityPage) void navigateToMainApp();
+  };
   return { view, changeView };
 }
 

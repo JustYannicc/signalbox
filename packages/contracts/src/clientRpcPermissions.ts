@@ -20,6 +20,7 @@ import {
 } from "./signalboxPreviews.ts"; // signalbox: previews
 import { SIGNALBOX_THREAD_KINDS_WS_METHODS } from "./signalboxThreadKinds.ts"; // signalbox: thread kinds
 import { SIGNALBOX_PERSON_BROWSER_WS_METHODS } from "./signalboxPersonBrowser.ts";
+import { PERSON_TIMEZONE_WS_METHODS } from "./personTimezone.ts";
 import { SIGNALBOX_ANALYTICS_WS_METHODS } from "./signalboxAnalytics.ts";
 
 /** Incremental client enforcement; the server still authorizes every request. */
@@ -27,6 +28,8 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   [WS_METHODS.serverUpsertKeybinding]: AuthSettingsWriteScope,
   [WS_METHODS.serverRemoveKeybinding]: AuthSettingsWriteScope,
   [SIGNALBOX_ANALYTICS_WS_METHODS.setEnabled]: AuthSettingsWriteScope,
+  [PERSON_TIMEZONE_WS_METHODS.set]: AuthSettingsWriteScope,
+  [PERSON_TIMEZONE_WS_METHODS.report]: AuthSettingsWriteScope,
   [WS_METHODS.serverRunStorageCleanup]: AuthSettingsWriteScope,
   [WS_METHODS.serverCheckOtlpEndpoint]: AuthSettingsWriteScope,
   [WS_METHODS.pullRequestsRunAction]: AuthSourceControlWriteScope,
@@ -72,6 +75,7 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   [SIGNALBOX_BROWSING_WS_METHODS.dispatch]: AuthPreviewOperateScope, // signalbox: browsing
   [SIGNALBOX_AGENT_BROWSER_WS_METHODS.input]: AuthOrchestrationOperateScope, // signalbox: agent browser
   [SIGNALBOX_FOLDERS_WS_METHODS.create]: AuthOrchestrationOperateScope, // signalbox: folders
+  [SIGNALBOX_FOLDERS_WS_METHODS.startFrom]: AuthOrchestrationOperateScope, // signalbox: folders
   [SIGNALBOX_FOLDERS_WS_METHODS.update]: AuthOrchestrationOperateScope, // signalbox: folders
   [SIGNALBOX_FOLDERS_WS_METHODS.move]: AuthOrchestrationOperateScope, // signalbox: folders
   [SIGNALBOX_FOLDERS_WS_METHODS.delete]: AuthOrchestrationOperateScope, // signalbox: folders
