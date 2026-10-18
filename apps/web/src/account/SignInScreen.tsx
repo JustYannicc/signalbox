@@ -6,9 +6,9 @@ import { APP_BASE_NAME } from "../branding";
 import { Button } from "../components/ui/button";
 import { Spinner } from "../components/ui/spinner";
 import {
-  AccountFlowError,
   cancelNativeSignIn,
   completeNativeSignIn,
+  isAccountFlowError,
   isDesktop,
   readPendingEnvironmentSignIn,
   readAccountSession,
@@ -108,7 +108,7 @@ export function SignInScreen({
     redeemedHandoff.current = handoff;
     completeNativeSignIn(handoff).catch((error: unknown) => {
       setCompleting(false);
-      setNotice(error instanceof AccountFlowError ? error.code : "failed");
+      setNotice(isAccountFlowError(error) ? error.code : "failed");
     });
   }, [environmentReturn, finishEnvironmentSignIn, handoff, hasReturn, onConsumed, returnError]);
 
@@ -133,7 +133,7 @@ export function SignInScreen({
       });
     } catch (error) {
       setPending(null);
-      setNotice(error instanceof AccountFlowError ? error.code : "failed");
+      setNotice(isAccountFlowError(error) ? error.code : "failed");
     }
   };
 
@@ -149,7 +149,7 @@ export function SignInScreen({
       });
       setWaitingOn(screenHint);
     } catch (error) {
-      setNotice(error instanceof AccountFlowError ? error.code : "failed");
+      setNotice(isAccountFlowError(error) ? error.code : "failed");
     }
     setDesktopPending(null);
   };
