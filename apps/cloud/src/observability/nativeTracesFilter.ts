@@ -272,7 +272,7 @@ const applyRule = (rule: AttributeRule, value: Json): OtlpValue | null => {
     }
     case "id": {
       const id = value.stringValue;
-      return typeof id === "string" && id.length <= 64 && rule.format.test(id)
+      return typeof id === "string" && id.length <= 128 && rule.format.test(id)
         ? { stringValue: id }
         : null;
     }

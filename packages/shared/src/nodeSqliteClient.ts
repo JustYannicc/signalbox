@@ -631,6 +631,16 @@ parentPort.on("message", (request) => {
   const isBarrier = request === "barrier";
   if (pendingTruncate !== undefined) {
     if (isBarrier) pendingBarriers++;
+    else if (request && typeof request === "object" && request.type === "check") {
+      // Answer the in-flight check without presenting the pending state as a newer snapshot.
+      parentPort.postMessage({
+        type: "checkpoint",
+        id: request.id,
+        generation: pendingTruncate.generation,
+        ...pendingTruncate.state,
+        blocked: true,
+      });
+    }
     return;
   }
   const checkRequest = request && typeof request === "object" ? request : undefined;

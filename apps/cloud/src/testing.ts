@@ -31,7 +31,7 @@ import * as CloudSessions from "./auth/CloudSessions.ts";
 import * as CloudTokens from "./auth/CloudTokens.ts";
 import * as CloudConfig from "./CloudConfig.ts";
 import { canWrite, myDriveId } from "./drive/driveAccess.ts";
-import type * as DriveDirectory from "./drive/DriveDirectory.ts";
+import * as DriveDirectory from "./drive/DriveDirectory.ts";
 import * as DriveFiles from "./drive/DriveFiles.ts";
 import type { DrivePerson } from "./drive/DriveMembers.ts";
 import type * as DrivePacks from "./drive/DrivePacks.ts";
@@ -75,6 +75,8 @@ import * as SessionRows from "./thread/session/SessionRows.ts";
 import * as PullRequestPolls from "./thread/pullRequests/PullRequestPolls.ts";
 import * as PullRequestSync from "./thread/pullRequests/PullRequestSync.ts";
 import * as ThreadStore from "./thread/ThreadStore.ts";
+import * as ThreadPulls from "./thread/ThreadPulls.ts";
+import * as PullState from "./thread/PullState.ts";
 import * as ModelManifest from "./models/ModelManifest.ts";
 import * as ModelCatalog from "./models/ModelCatalog.ts";
 import * as TurnModels from "./thread/TurnModels.ts";
@@ -90,6 +92,7 @@ import * as UserContexts from "./user/UserContexts.ts";
 import * as GitHub from "./github/GitHub.ts";
 import * as GitHubActions from "./github/GitHubActions.ts";
 import * as GitHubBranches from "./github/GitHubBranches.ts";
+import * as AgentPullRequests from "./github/AgentPullRequests.ts";
 import * as CloudPullRequests from "./github/CloudPullRequests.ts";
 import * as PullRequestRepository from "./github/PullRequestRepository.ts";
 import * as ConnectionLinks from "./connections/ConnectionLinks.ts";
@@ -103,6 +106,7 @@ import * as CloudEngine from "./automations/cloudEngine.ts";
 import type { AutomationRunner } from "@signalbox/automations/runner/AutomationRunner";
 import { makeMemoryWorkflows } from "./automations/memoryWorkflows.ts";
 import * as UserFolders from "./user/UserFolders.ts";
+import * as FolderStarts from "./user/FolderStarts.ts";
 import * as UserDirectory from "./user/UserDirectory.ts";
 import * as UserDrives from "./user/UserDrives.ts";
 import { makeUserObjectApi } from "./user/userObjectApi.ts";
@@ -114,6 +118,7 @@ import * as UserStore from "./user/UserStore.ts";
 import * as UserModelSettings from "./user/UserModelSettings.ts";
 import * as UserKeybindings from "./user/UserKeybindings.ts";
 import * as UserAnalyticsPreference from "./user/UserAnalyticsPreference.ts";
+import * as UserTimezone from "./user/UserTimezone.ts";
 import * as UserThreadKinds from "./user/UserThreadKinds.ts";
 import * as ChatArchive from "./user/chatArchive.ts";
 
@@ -151,6 +156,7 @@ export const layerMemoryStore = LegacySections.layer.pipe(
       UserModelSettings.layer,
       UserKeybindings.layer,
       UserAnalyticsPreference.layer,
+      UserTimezone.layer,
       UserContexts.layerWithDrives,
       ResourceBindings.layer,
       OnePasswordAccount.layer,
@@ -212,6 +218,7 @@ export const layerThreadObject = (
   machines: Layer.Layer<MachineBackend.MachineBackend> = MachineBackends.layerNone,
   options: {
     readonly drives?: boolean;
+    readonly driveDirectory?: Layer.Layer<DriveDirectory.DriveDirectory>;
     /** Whether a thread's owner may change files in its drive; yes unless given. */
     readonly writes?: (
       userId: string,
@@ -233,6 +240,8 @@ export const layerThreadObject = (
   } = {},
 ) =>
   ThreadRunner.layer.pipe(
+    Layer.provideMerge(ThreadPulls.layerReports.pipe(Layer.provideMerge(ThreadPulls.layer))),
+    Layer.provideMerge(options.driveDirectory ?? Layer.empty),
     Layer.provideMerge(
       Layer.succeed(ThreadRunner.ThreadDrives, {
         enabled: options.drives === true,
@@ -257,7 +266,9 @@ export const layerThreadObject = (
     Layer.provideMerge(options.analytics ?? CloudAnalytics.layerOff),
     Layer.provideMerge(machines),
     Layer.provideMerge(DiagnosticsStore.layer),
-    Layer.provideMerge(Layer.mergeAll(ThreadStore.layer, SessionRows.layer, PreviewState.layer)),
+    Layer.provideMerge(
+      Layer.mergeAll(ThreadStore.layer, SessionRows.layer, PreviewState.layer, PullState.layer),
+    ),
     Layer.provideMerge(Layer.mergeAll(NodeSqliteClient.layer({ filename }), Platform.layerCrypto)),
   );
 
@@ -310,6 +321,7 @@ const makeUserRuntime = (
         // The same branches the socket's RPC uses, so the git panel sees what the agent pushed.
         Layer.mergeAll(
           GitHubBranches.layer,
+          AgentPullRequests.layer,
           GitHubActions.layer,
           CloudPullRequests.layer.pipe(Layer.provideMerge(PullRequestRepository.layer)),
           UserPreviewSetup.layer,
@@ -378,6 +390,7 @@ const makeUserRuntime = (
             ),
           ),
           Layer.provideMerge(Layer.mergeAll(drives, people, github)),
+          Layer.provideMerge(FolderStarts.layer),
           Layer.provideMerge(
             Layer.mergeAll(
               Layer.succeed(UserDirectory.UserDirectory, users),
@@ -515,6 +528,9 @@ export const makeMemoryCloud = (
   const layerThreadObjectInMemory = () =>
     layerThreadObject(":memory:", MachineBackends.layerNone, {
       drives: true,
+      driveDirectory: Layer.succeed(DriveDirectory.DriveDirectory, {
+        forDrive: (id) => DriveDirectory.handleFor(drives.apiFor(id)),
+      }),
       writes: (userId, driveId) =>
         Effect.map(userDirectory.forUser(userId).driveAccess(driveId), canWrite),
       secretsToken: (userId) => userDirectory.forUser(userId).onePasswordToken(),
@@ -540,6 +556,7 @@ export const makeMemoryCloud = (
         E,
         | ThreadEngine.ThreadEngine
         | ThreadStore.ThreadStore
+        | ThreadPulls.ThreadPulls
         | UserDirectory.UserDirectory
         | TurnReports.TurnReports
         | ThreadBrowsing.ThreadBrowsing
@@ -621,6 +638,19 @@ export const makeMemoryCloud = (
       userId: string,
       effect: Effect.Effect<A, E, Layer.Success<typeof CloudEngine.layer>>,
     ) => Effect.promise(() => userFor(userId).runtime.runPromise(effect)),
+    inThread: <A, E>(
+      threadId: string,
+      effect: Effect.Effect<
+        A,
+        E,
+        | ThreadEngine.ThreadEngine
+        | ThreadStore.ThreadStore
+        | UserDirectory.UserDirectory
+        | ThreadBrowsing.ThreadBrowsing
+        | PullRequestSync.PullRequestSync
+        | PullRequestPolls.PullRequestPolls
+      >,
+    ) => Effect.promise(() => threadFor(threadId).run(effect)),
     /** The runs' Workflow instances: `idle` lets them run until they block, `advance` moves time. */
     workflows,
     /** When a user object's alarm would fire next; what fired clears it. */

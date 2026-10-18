@@ -1,5 +1,6 @@
 import * as Effect from "effect/Effect";
 
+import { DriveDirectory } from "./DriveDirectory.ts";
 import { DrivePacks, type PackFile } from "./DrivePacks.ts";
 
 /** Answers the drive API's routes share (`driveRoutes.ts`, `shortcutRoutes.ts`, `remoteRoutes.ts`). */
@@ -25,7 +26,9 @@ export const packResponse = (driveId: string, file: string) =>
   Effect.gen(function* () {
     const match = PACK_FILE.exec(file);
     if (match === null) return text("Unknown pack.", 404);
-    const found = yield* (yield* DrivePacks).get(driveId, match[1]!, match[2] as PackFile);
+    const storageDriveId = yield* (yield* DriveDirectory).forDrive(driveId).packStorage(match[1]!);
+    if (storageDriveId === null) return text("Unknown pack.", 404);
+    const found = yield* (yield* DrivePacks).get(storageDriveId, match[1]!, match[2] as PackFile);
     return found === null
       ? text("Unknown pack.", 404)
       : new Response(found.body, {

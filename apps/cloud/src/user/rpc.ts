@@ -1,4 +1,9 @@
 import {
+  PERSON_TIMEZONE_REQUIRED_SCOPES,
+  PERSON_TIMEZONE_WS_METHODS,
+} from "@t3tools/contracts/personTimezone";
+import { makeTimezoneHandlers } from "./timezoneRpc.ts";
+import {
   type ProjectId,
   type AuthEnvironmentScope,
   AuthFilesystemReadScope,
@@ -7,13 +12,13 @@ import {
   AuthSettingsWriteScope,
   AuthPreviewOperateScope,
   AuthSourceControlWriteScope,
-  AuthStandardClientScopes,
   EnvironmentAuthorizationError,
   GitCommandError,
   ORCHESTRATION_V2_WS_METHODS,
   OrchestrationGetFullThreadDiffError,
   OrchestrationGetTurnDiffError,
   OrchestrationV2DispatchCommandError,
+  OrchestrationV2CommandOutputError,
   OrchestrationV2GetShellSnapshotError,
   OrchestrationV2GetThreadProjectionError,
   OrchestrationV2ThreadLaunchError,
@@ -132,9 +137,11 @@ import * as UserContexts from "./UserContexts.ts";
 import * as UserDrives from "./UserDrives.ts";
 import * as LegacySections from "./legacySections.ts";
 import * as UserFolders from "./UserFolders.ts";
+import * as FolderStarts from "./FolderStarts.ts";
 import * as UserShell from "./UserShell.ts";
 import * as UserThreadKinds from "./UserThreadKinds.ts";
 import * as UserThreadStatus from "./UserThreadStatus.ts";
+import { CLOUD_CLIENT_SCOPES } from "../auth/CloudScopes.ts";
 
 /**
  * The slice of the environment RPC protocol a user's object serves: enough
@@ -181,9 +188,11 @@ const SERVED = [
   WS_METHODS.subscribeServerLifecycle,
   ORCHESTRATION_V2_WS_METHODS.subscribeShell,
   ORCHESTRATION_V2_WS_METHODS.getArchivedShellSnapshot,
+  ORCHESTRATION_V2_WS_METHODS.subscribeArchivedShell,
   ORCHESTRATION_V2_WS_METHODS.dispatchCommand,
   ORCHESTRATION_V2_WS_METHODS.launchThread,
   ORCHESTRATION_V2_WS_METHODS.subscribeThread,
+  ORCHESTRATION_V2_WS_METHODS.subscribeCommandOutput,
   ORCHESTRATION_V2_WS_METHODS.getThreadProjection,
   // Images tools returned in a thread and attachments (`assets/CloudAssets.ts`).
   WS_METHODS.assetsCreateUrl,
@@ -252,6 +261,7 @@ const SERVED = [
   ...AUTOMATION_METHODS,
   ...KEYBINDING_METHODS,
   ...ANALYTICS_METHODS,
+  ...Object.values(PERSON_TIMEZONE_WS_METHODS),
 ] as const;
 type ServedTag = (typeof SERVED)[number];
 type WsRpcs = RpcGroup.Rpcs<typeof WsRpcGroup>;
@@ -274,14 +284,17 @@ const REQUIRED_SCOPES = {
   [WS_METHODS.serverUpdateSettings]: AuthSettingsWriteScope,
   ...KEYBINDING_REQUIRED_SCOPES,
   ...ANALYTICS_REQUIRED_SCOPES,
+  ...PERSON_TIMEZONE_REQUIRED_SCOPES,
   [WS_METHODS.serverProbe]: AuthOrchestrationReadScope,
   [WS_METHODS.serverReportClientActivity]: AuthOrchestrationReadScope,
   [WS_METHODS.subscribeServerLifecycle]: AuthOrchestrationReadScope,
   [ORCHESTRATION_V2_WS_METHODS.subscribeShell]: AuthOrchestrationReadScope,
   [ORCHESTRATION_V2_WS_METHODS.getArchivedShellSnapshot]: AuthOrchestrationReadScope,
+  [ORCHESTRATION_V2_WS_METHODS.subscribeArchivedShell]: AuthOrchestrationReadScope,
   [ORCHESTRATION_V2_WS_METHODS.dispatchCommand]: AuthOrchestrationOperateScope,
   [ORCHESTRATION_V2_WS_METHODS.launchThread]: AuthOrchestrationOperateScope,
   [ORCHESTRATION_V2_WS_METHODS.subscribeThread]: AuthOrchestrationReadScope,
+  [ORCHESTRATION_V2_WS_METHODS.subscribeCommandOutput]: AuthOrchestrationReadScope,
   [ORCHESTRATION_V2_WS_METHODS.getThreadProjection]: AuthOrchestrationReadScope,
   // A cloud serves only tool output images, which a self-hosted server gates on this scope.
   [WS_METHODS.assetsCreateUrl]: AuthOrchestrationReadScope,
@@ -490,6 +503,7 @@ export const layerHandlers = (input: {
       const contexts = yield* UserContexts.UserContexts;
       const sections = yield* LegacySections.LegacySections;
       const folders = yield* UserFolders.UserFolders;
+      const folderStarts = yield* FolderStarts.FolderStarts;
       const kinds = yield* UserThreadKinds.UserThreadKinds;
       const statusNotes = yield* UserThreadStatus.UserThreadStatus;
       const userDrives = yield* UserDrives.UserDrives;
@@ -579,12 +593,13 @@ export const layerHandlers = (input: {
       const notes = yield* makeNotesHandlers({ newThreadModel });
       const keys = yield* makeKeysHandlers({
         userId,
-        scopes: input.scopes ?? AuthStandardClientScopes,
+        scopes: input.scopes ?? CLOUD_CLIENT_SCOPES,
       });
       const signIn = yield* makeSignInHandlers({ userId });
       const keybindings = yield* makeKeybindingHandlers;
       const personBrowser = yield* LoginService.LoginService;
       const analytics = yield* makeAnalyticsHandlers;
+      const timezone = yield* makeTimezoneHandlers;
       return {
         ...pools.handlers,
         ...pushes,
@@ -604,6 +619,7 @@ export const layerHandlers = (input: {
             "Cloud browser sign-ins could not be cleared. Try again.",
           ),
         ...analytics,
+        ...timezone,
         [WS_METHODS.subscribeServerConfig]: (request) => pools.configStream(request),
         [WS_METHODS.serverGetConfig]: () => pools.configNow,
         [WS_METHODS.serverProbe]: () => Effect.succeed({}),
@@ -636,6 +652,18 @@ export const layerHandlers = (input: {
                 (cause) =>
                   new OrchestrationV2GetShellSnapshotError({
                     message: "The sidebar is unavailable right now.",
+                    cause,
+                  }),
+              ),
+            ),
+          ),
+        [ORCHESTRATION_V2_WS_METHODS.subscribeArchivedShell]: () =>
+          Stream.unwrap(
+            shell.subscribeArchived.pipe(
+              Effect.mapError(
+                (cause) =>
+                  new OrchestrationV2GetShellSnapshotError({
+                    message: "Archived threads are unavailable right now.",
                     cause,
                   }),
               ),
@@ -691,6 +719,21 @@ export const layerHandlers = (input: {
                   threadId: request.threadId,
                   message: failureMessage(error),
                 }),
+            ),
+          ),
+        [ORCHESTRATION_V2_WS_METHODS.subscribeCommandOutput]: (request) =>
+          Stream.unwrap(
+            Effect.map(actorNow, (actor) => coreThreads.commandOutput(actor, request)),
+          ).pipe(
+            Stream.interruptWhen(lostSight(request.threadId)),
+            Stream.mapError((cause) =>
+              cause._tag === "OrchestrationV2CommandOutputError"
+                ? cause
+                : new OrchestrationV2CommandOutputError({
+                    threadId: request.threadId,
+                    message: "Couldn't read this command's output. It may no longer be available.",
+                    cause,
+                  }),
             ),
           ),
         [ORCHESTRATION_V2_WS_METHODS.getThreadProjection]: (request) =>
@@ -814,17 +857,8 @@ export const layerHandlers = (input: {
         [WS_METHODS.gitResolvePullRequest]: (request) => pullRequests.resolvePullRequest(request),
         [WS_METHODS.gitRunStackedAction]: (request) =>
           Stream.unwrap(Effect.map(actorNow, (actor) => branches.runAction(actor, request))),
-        // A thread's branch only takes commits from its own turns.
         [WS_METHODS.vcsPull]: (request) =>
-          Effect.fail(
-            new GitCommandError({
-              operation: "pull",
-              command: "git pull",
-              cwd: request.cwd,
-              detail:
-                "The branch on GitHub has commits this thread doesn't. Signalbox can't bring them into a thread yet.",
-            }),
-          ),
+          Effect.flatMap(actorNow, (actor) => branches.pull(actor, request)),
         [SIGNALBOX_CONTEXTS_WS_METHODS.subscribe]: () => Stream.orDie(contexts.changes),
         [SIGNALBOX_DRIVES_WS_METHODS.subscribe]: () => Stream.orDie(userDrives.changes),
         [SIGNALBOX_DRIVES_WS_METHODS.create]: (request) =>
@@ -918,6 +952,7 @@ export const layerHandlers = (input: {
             ),
           ),
         [SIGNALBOX_FOLDERS_WS_METHODS.create]: (request) => folderCall(folders.create(request)),
+        [SIGNALBOX_FOLDERS_WS_METHODS.startFrom]: (request) => folderStarts.startFrom(request),
         [SIGNALBOX_FOLDERS_WS_METHODS.update]: (request) => folderCall(folders.update(request)),
         [SIGNALBOX_FOLDERS_WS_METHODS.move]: (request) => folderCall(folders.move(request)),
         [SIGNALBOX_FOLDERS_WS_METHODS.delete]: (request) => folderCall(folders.delete(request)),
