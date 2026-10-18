@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vite-plus/test";
+// @effect-diagnostics-next-line nodeBuiltinImport:off -- Native WebStream backpressure needs an actual event-loop turn, not an Effect scheduler yield.
 import * as NodeTimersPromises from "node:timers/promises";
 
 import { redactEgressResponse } from "../EgressResponse.ts";

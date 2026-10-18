@@ -35,6 +35,12 @@ import * as Review from "./GitHubReviewReads.ts";
 import * as PullRequestRepository from "./PullRequestRepository.ts";
 import * as Listing from "./cloudPullRequestListing.ts";
 import * as CloudPullRequests from "./CloudPullRequests.ts";
+import * as UserFolders from "../user/UserFolders.ts";
+import * as UserModelSettings from "../user/UserModelSettings.ts";
+import * as UserPools from "../user/UserPools.ts";
+import * as ModelCatalog from "../models/ModelCatalog.ts";
+import * as PullRequestGuideGeneration from "./PullRequestGuideGeneration.ts";
+import { PullRequestGuideAlarm } from "./PullRequestReviewGuides.ts";
 
 vi.mock("./GitHubReviewReads.ts", () => ({
   pullRequestSummary: vi.fn(),
@@ -233,6 +239,12 @@ const makeFixture = () => {
     Layer.succeed(UserShell.UserShell, userShell),
     Layer.succeed(UserDrives.UserDrives, userDrives),
     threadLayer,
+    Layer.mock(UserFolders.UserFolders, {}),
+    Layer.mock(UserModelSettings.UserModelSettings, {}),
+    Layer.mock(UserPools.UserPools, {}),
+    Layer.mock(ModelCatalog.ModelCatalog, {}),
+    Layer.mock(PullRequestGuideGeneration.PullRequestGuideGeneration, {}),
+    Layer.succeed(PullRequestGuideAlarm, { armBy: () => Effect.void }),
   );
   return {
     state,
@@ -304,6 +316,8 @@ describe("CloudPullRequests", () => {
         expect(authored.capabilities).toMatchObject({
           comment: true,
           reactions: true,
+          viewedFiles: "environment",
+          viewedFilesInCommitDiff: false,
           edit: { comment: true },
           review: { inlineComment: true, reply: true, resolve: true },
         });

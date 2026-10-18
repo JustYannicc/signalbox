@@ -59,6 +59,8 @@ export const makePoolObjectApi = (
     completeLogin: (actor, callback) =>
       reply((engine) => done(engine.completeLogin(actor, callback))),
     cancelLogin: (actor, state) => reply((engine) => engine.cancelLogin(actor, state)),
+    logoutAccount: (actor, provider, name) =>
+      reply((engine) => done(engine.logoutAccount(actor, provider, name))),
     updateAccount: (actor, name, action) =>
       reply((engine) => done(engine.updateAccount(actor, name, action))),
     openLink: (actor, preview) => reply((engine) => engine.openLink(actor, preview)),

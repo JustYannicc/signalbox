@@ -300,15 +300,45 @@ importers:
       fractional-indexing:
         specifier: 4.0.0
         version: 4.0.0
+      fzstd:
+        specifier: 0.1.1
+        version: 0.1.1
+      ignore:
+        specifier: 7.0.12
+        version: 7.0.12
       jose:
         specifier: 'catalog:'
         version: 6.2.2
       lunorash:
         specifier: 1.0.0-alpha.398
         version: 1.0.0-alpha.398(fe97e229d8cebd38347b524912f7a10f)
+      re2js:
+        specifier: 2.8.6
+        version: 2.8.6
+      semver:
+        specifier: 7.8.5
+        version: 7.8.5
+      slice-ansi:
+        specifier: 9.0.1
+        version: 9.0.1
+      smol-toml:
+        specifier: 1.9.0
+        version: 1.9.0
+      string-width:
+        specifier: 8.2.1
+        version: 8.2.1
+      strip-ansi:
+        specifier: 7.2.0
+        version: 7.2.0
       tldts:
         specifier: 'catalog:'
         version: 7.4.2
+      wrap-ansi:
+        specifier: 9.0.2
+        version: 9.0.2
+      yaml:
+        specifier: ^2.9.0
+        version: 2.9.0
     devDependencies:
       '@cloudflare/workers-types':
         specifier: ^4.20260604.1
@@ -331,9 +361,15 @@ importers:
       '@types/node':
         specifier: 24.12.4
         version: 24.12.4
+      '@types/semver':
+        specifier: 7.8.0
+        version: 7.8.0
       alchemy:
         specifier: 2.0.0-beta.80
         version: 2.0.0-beta.80(patch_hash=012c354b4efc3c84c6e29576642269655f7adc11f94965c70dc99f68724dce6c)(86dcb597ebfabafe1034d8089d191795)
+      esbuild:
+        specifier: 0.28.2
+        version: 0.28.2
       typescript:
         specifier: 'catalog:'
         version: 7.0.2
@@ -2256,7 +2292,6 @@ importers:
         version: 2.9.0
 
 packages:
-
   2g@1.0.1:
     resolution: {integrity: sha512-+uViadKOS/wwR4pFu5g8TPn3QHpKqoX19JHCnp8k/3cLpImdcXozwvZA6Q/5PeW3AcU8neL8faaMidBcv7o8CA==}
     hasBin: true
@@ -7956,6 +7991,9 @@ packages:
   '@types/retry@0.12.5':
     resolution: {integrity: sha512-3xSjTp3v03X/lSQLkczaN9UIEwJMoMCA1+Nb5HfbJEQWogdeQIyVtTvxPXDQjZ5zws8rFQfVfRdz03ARihPJgw==}
 
+  '@types/semver@7.8.0':
+    resolution: {integrity: sha512-1mAINjtQCXXeLkJ9ehXkwOcBpqtLxiVtKhpUf83DdRNdQKV0iXZpaHYqRr7nj+wvxuJzoAmAwXI+sCNMv1CzLQ==}
+
   '@types/send@1.2.1':
     resolution: {integrity: sha512-arsCikDvlU99zl1g69TcAB3mzZPpxgw0UQnaHeC1Nwb015xp8bknZv5rIfri9xTOcMuaVgvabfIRA7PSZVuZIQ==}
 
@@ -11523,6 +11561,9 @@ packages:
   function-bind@1.1.2:
     resolution: {integrity: sha512-7XHNxH7qX9xG5mIwxkhumTox/MIRNcOgDrxWsMt2pAr23WHp6MrRlN7FBSFpCpr+oVO0F744iUgR82nJMfG2SA==}
 
+  fzstd@0.1.1:
+    resolution: {integrity: sha512-dkuVSOKKwh3eas5VkJy1AW1vFpet8TA/fGmVA5krThl8YcOVE/8ZIoEA1+U1vEn5ckxxhLirSdY837azmbaNHA==}
+
   gensync@1.0.0-beta.2:
     resolution: {integrity: sha512-3hN7NaskYvMDLQY55gnW3NQ+mesEAepTqlg+VEbj7zzqEMBVNhzcGYYeqFo/TlYz6eQiFcp1HcsCZO+nGgS8zg==}
     engines: {node: '>=6.9.0'}
@@ -11894,6 +11935,10 @@ packages:
   is-fullwidth-code-point@3.0.0:
     resolution: {integrity: sha512-zymm5+u+sCsSWyD9qNaejV3DFvhCKclKdizYaJUuHA83RLjb7nSuGnddCHGv0hk+KY7BMAlsWeK4Ueg6EV6XQg==}
     engines: {node: '>=8'}
+
+  is-fullwidth-code-point@5.1.0:
+    resolution: {integrity: sha512-5XHYaSyiqADb4RnZ1Bdad6cPp8Toise4TzEjcOYDHZkTCbKgiUl7WTUCpNWHuxmDt91wnsZBc9xinNzopv3JMQ==}
+    engines: {node: '>=18'}
 
   is-hexadecimal@2.0.1:
     resolution: {integrity: sha512-DgZQp241c8oO6cA1SbTEWiXeoxV42vlcJxgH+B3hi1AiqqKruZR3ZGF8In3fj4+/y/7rHvlOZLZtgJ/4ttYGZg==}
@@ -13450,6 +13495,10 @@ packages:
     resolution: {integrity: sha512-K5zQjDllxWkf7Z5xJdV0/B0WTNqx6vxG70zJE4N0kBs4LovmEYWJzQGxC9bS9RAKu3bgM40lrd5zoLJ12MQ5BA==}
     engines: {node: '>= 0.10'}
 
+  re2js@2.8.6:
+    resolution: {integrity: sha512-xLgQil4kIUCrAzVk9fRSkxkFNwmygLFjVxXrLc65aE1F0+Zsb8rxumFBy4XKyvgMCTL6kilDq3EZ0piE2dP/Dg==}
+    engines: {node: '>=18.0.0'}
+
   react-day-picker@10.0.1:
     resolution: {integrity: sha512-eNh6BlwcYInWaJtRv18mXQ06Ys/H6rdTZAnTaSdOYJuTpwP1JMCHNd1FDRadA+gbeinq+psdULN5Xnowy9mV8w==}
     engines: {node: '>=18'}
@@ -14114,6 +14163,10 @@ packages:
 
   sisteransi@1.0.5:
     resolution: {integrity: sha512-bLGGlR1QxBcynn2d5YmDX4MGjlZvy2MRBDRNHLJ8VI6l6+9FUiyTFNJ0IveOSP0bcXgVDPRcfGqA0pjaqUpfVg==}
+
+  slice-ansi@9.0.1:
+    resolution: {integrity: sha512-aBY19bn/XA+hKOKX0qL7Z0UfdBsbQvc9hn993U8ALUjzxCvDcuZqLoRXjGJrUARWAlwMnsRVD9sw2AFNOYvalA==}
+    engines: {node: '>=22'}
 
   slugify@1.6.9:
     resolution: {integrity: sha512-vZ7rfeehZui7wQs438JXBckYLkIIdfHOXsaVEUMyS5fHo1483l1bMdo0EDSWYclY0yZKFOipDy4KHuKs6ssvdg==}
@@ -15381,7 +15434,6 @@ packages:
       '@types/emscripten': '>=1.39.6'
 
 snapshots:
-
   2g@1.0.1(typescript@7.0.2):
     optionalDependencies:
       typescript: 7.0.2
@@ -21894,6 +21946,8 @@ snapshots:
 
   '@types/retry@0.12.5': {}
 
+  '@types/semver@7.8.0': {}
+
   '@types/send@1.2.1':
     dependencies:
       '@types/node': 24.12.4
@@ -25303,6 +25357,8 @@ snapshots:
 
   function-bind@1.1.2: {}
 
+  fzstd@0.1.1: {}
+
   gensync@1.0.0-beta.2: {}
 
   get-caller-file@2.0.5: {}
@@ -25727,6 +25783,10 @@ snapshots:
   is-docker@4.0.0: {}
 
   is-fullwidth-code-point@3.0.0: {}
+
+  is-fullwidth-code-point@5.1.0:
+    dependencies:
+      get-east-asian-width: 1.6.0
 
   is-hexadecimal@2.0.1: {}
 
@@ -27964,6 +28024,8 @@ snapshots:
       iconv-lite: 0.7.2
       unpipe: 1.0.0
 
+  re2js@2.8.6: {}
+
   react-day-picker@10.0.1(@types/react@19.3.0)(react@19.2.6):
     dependencies:
       '@date-fns/tz': 1.5.0
@@ -28884,6 +28946,11 @@ snapshots:
       totalist: 3.0.1
 
   sisteransi@1.0.5: {}
+
+  slice-ansi@9.0.1:
+    dependencies:
+      ansi-styles: 6.2.3
+      is-fullwidth-code-point: 5.1.0
 
   slugify@1.6.9: {}
 
