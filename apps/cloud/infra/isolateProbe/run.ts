@@ -2,11 +2,11 @@
 import * as NodeCrypto from "node:crypto";
 import * as NodePath from "node:path";
 import * as NodeUtil from "node:util";
-import { runProcess, type RunProcess } from "./process.ts";
+import { diagnostics, runProcess, type RunProcess } from "./process.ts";
+import { isolatedStage, stageFile } from "./stageFile.ts";
 
 const cloudDir = NodePath.resolve(import.meta.dirname, "../..");
 const stack = "infra/isolateProbe/alchemy.run.ts";
-const isolatedStage = /^isolate-probe-[a-f0-9]{8,20}$/;
 
 export function probeUrl(output: string, stage: string) {
   const urls = [...output.matchAll(/\burl:\s*(['"])(https:\/\/[^'"\s]+)\1/gu)];
@@ -33,6 +33,8 @@ interface RunOptions {
   output?: string;
   signal?: AbortSignal;
   destroyStage?: string;
+  stageFile?: string;
+  recoverStageFile?: string;
 }
 
 export async function runProbe(
@@ -45,84 +47,126 @@ export async function runProbe(
 ) {
   const run = dependencies.run ?? runProcess;
   const log = dependencies.log ?? ((message) => process.stderr.write(`${message}\n`));
+  if (options.recoverStageFile) {
+    const claim = await stageFile(options.recoverStageFile);
+    try {
+      if (claim.cleanupFailed) {
+        throw new Error(
+          `Cleanup already failed for ${claim.stage}. Recover manually: node apps/cloud/infra/isolateProbe/run.ts --destroy-stage ${claim.stage}`,
+        );
+      }
+      return await runProbe(
+        { destroyStage: claim.stage, stageFile: options.recoverStageFile },
+        dependencies,
+      );
+    } finally {
+      await claim.close();
+    }
+  }
   const stage =
     options.destroyStage ?? `isolate-probe-${NodeCrypto.randomBytes(8).toString("hex")}`;
   if (!isolatedStage.test(stage)) throw new Error("Expected an exact isolate-probe-<hex> stage.");
-  const secret = NodeCrypto.randomBytes(32).toString("base64url");
-  const env: NodeJS.ProcessEnv = { ...process.env, PROBE_SECRET: secret };
-  // Never let an ambient shared endpoint choose which Worker receives this run's credential.
-  delete env.PROBE_URL;
-  const alchemy = (action: "deploy" | "destroy") =>
-    run({
-      command: NodePath.join(cloudDir, "node_modules/.bin/alchemy"),
-      args: [action, stack, "--stage", stage, "--yes", "--no-input"],
-      cwd: cloudDir,
-      env,
-      timeoutMs: action === "destroy" ? 120_000 : 600_000,
-      ...(action === "deploy" && options.signal ? { signal: options.signal } : {}),
-    });
-  const destroy = async () => {
-    const result = await alchemy("destroy");
-    if (result.code !== 0) throw new Error(`Probe cleanup exited ${result.code}.`);
-    log(`Destroyed ${stage}.`);
-  };
-  log(`Probe stage ${stage}.`);
-  const recovery = () =>
-    log(
-      `Cleanup failed for ${stage}. Recover from this checkout with: node apps/cloud/infra/isolateProbe/run.ts --destroy-stage ${stage}`,
-    );
-  if (options.destroyStage) {
-    try {
-      await destroy();
-    } catch (error) {
-      recovery();
-      throw error;
-    }
-    return stage;
-  }
-  let primary: unknown;
-  let failed = false;
+  const claim = options.stageFile
+    ? await stageFile(options.stageFile, options.destroyStage ? undefined : stage)
+    : undefined;
   try {
-    const deployment = await alchemy("deploy");
-    if (deployment.code !== 0) throw new Error(`Probe deployment exited ${deployment.code}.`);
-    const url = probeUrl(deployment.stdout, stage);
-    const measurement = await run({
-      command: process.execPath,
-      args: [
-        "--experimental-strip-types",
-        NodePath.join(import.meta.dirname, "measure.ts"),
-        ...(options.fixture ? ["--fixture", NodePath.resolve(options.fixture)] : []),
-        ...(options.output ? ["--output", NodePath.resolve(options.output)] : []),
-      ],
-      cwd: cloudDir,
-      env: { ...env, PROBE_URL: url },
-      timeoutMs: 600_000,
-      ...(options.signal ? { signal: options.signal } : {}),
-    });
-    if (!options.output) {
-      const safe = measurement.stdout
-        .replaceAll(secret, "[credential]")
-        .replaceAll(new URL(url).host, "[probe]");
-      (dependencies.evidence ?? ((json) => process.stdout.write(json)))(safe);
+    if (claim && (claim.stage !== stage || claim.cleanupFailed))
+      throw new Error(
+        `Stage file does not authorize automatic cleanup for ${stage}. Recover manually without --stage-file.`,
+      );
+    const secret = NodeCrypto.randomBytes(32).toString("base64url");
+    const env: NodeJS.ProcessEnv = { ...process.env, PROBE_SECRET: secret };
+    // Never let an ambient shared endpoint choose which Worker receives this run's credential.
+    delete env.PROBE_URL;
+    const failure = (phase: string, result: Awaited<ReturnType<RunProcess>>) =>
+      new Error(
+        `Probe ${phase} exited ${result.code}.\n${diagnostics(result.stdout, result.stderr, env)}`,
+      );
+    const alchemy = (action: "deploy" | "destroy") =>
+      run({
+        command: NodePath.join(cloudDir, "node_modules/.bin/alchemy"),
+        args: [action, stack, "--stage", stage, "--yes", "--no-input"],
+        cwd: cloudDir,
+        env,
+        timeoutMs: action === "destroy" ? 120_000 : 600_000,
+        ...(action === "deploy" && options.signal ? { signal: options.signal } : {}),
+      });
+    const destroy = async () => {
+      try {
+        const result = await alchemy("destroy");
+        if (result.code !== 0) throw failure("cleanup", result);
+        await claim?.remove();
+        log(`Destroyed ${stage}.`);
+      } catch (error) {
+        try {
+          await claim?.markFailed();
+        } catch {
+          log(`Could not record cleanup failure for ${stage}; retain the manual recovery command.`);
+        }
+        throw error;
+      }
+    };
+    log(`Probe stage ${stage}.`);
+    const recovery = () =>
+      log(
+        `Cleanup failed for ${stage}. Recover from this checkout with: node apps/cloud/infra/isolateProbe/run.ts --destroy-stage ${stage}`,
+      );
+    if (options.destroyStage) {
+      try {
+        await destroy();
+      } catch (error) {
+        recovery();
+        throw error;
+      }
+      return stage;
     }
-    if (measurement.code !== 0) throw new Error(`Probe measurement exited ${measurement.code}.`);
-  } catch (error) {
-    failed = true;
-    primary = error;
-  } finally {
+    let primary: unknown;
+    let failed = false;
     try {
-      await destroy();
+      const deployment = await alchemy("deploy");
+      if (deployment.code !== 0) throw failure("deployment", deployment);
+      const url = probeUrl(deployment.stdout, stage);
+      const measurement = await run({
+        command: process.execPath,
+        args: [
+          "--experimental-strip-types",
+          NodePath.join(import.meta.dirname, "measure.ts"),
+          ...(options.fixture ? ["--fixture", NodePath.resolve(options.fixture)] : []),
+          ...(options.output ? ["--output", NodePath.resolve(options.output)] : []),
+        ],
+        cwd: cloudDir,
+        env: { ...env, PROBE_URL: url },
+        timeoutMs: 600_000,
+        ...(options.signal ? { signal: options.signal } : {}),
+      });
+      if (!options.output) {
+        const safe = measurement.stdout
+          .replaceAll(secret, "[credential]")
+          .replaceAll(new URL(url).host, "[probe]");
+        (dependencies.evidence ?? ((json) => process.stdout.write(json)))(safe);
+      }
+      if (measurement.code !== 0) throw failure("measurement", measurement);
     } catch (error) {
-      recovery();
-      if (!failed) {
-        failed = true;
-        primary = error;
+      failed = true;
+      primary = error;
+    } finally {
+      try {
+        await destroy();
+      } catch (error) {
+        log(error instanceof Error ? error.message : "Probe cleanup failed.");
+        recovery();
+        if (!failed) {
+          failed = true;
+          primary = error;
+        }
       }
     }
+    if (failed) throw primary;
+    if (options.signal?.aborted) throw new Error("Probe run interrupted.");
+    return stage;
+  } finally {
+    await claim?.close();
   }
-  if (failed) throw primary;
-  if (options.signal?.aborted) throw new Error("Probe run interrupted.");
-  return stage;
 }
 
 if (
@@ -145,14 +189,20 @@ if (
         fixture: { type: "string" },
         output: { type: "string" },
         "destroy-stage": { type: "string" },
+        "stage-file": { type: "string" },
+        "recover-stage-file": { type: "string" },
       },
     });
     if (values["destroy-stage"] && (values.fixture || values.output))
       throw new Error("Recovery accepts only --destroy-stage.");
+    if (values["recover-stage-file"] && Object.values(values).filter(Boolean).length !== 1)
+      throw new Error("Recovery accepts only --recover-stage-file.");
     await runProbe({
       ...(values.fixture ? { fixture: values.fixture } : {}),
       ...(values.output ? { output: values.output } : {}),
       ...(values["destroy-stage"] ? { destroyStage: values["destroy-stage"] } : {}),
+      ...(values["stage-file"] ? { stageFile: values["stage-file"] } : {}),
+      ...(values["recover-stage-file"] ? { recoverStageFile: values["recover-stage-file"] } : {}),
       signal: controller.signal,
     });
     if (interrupted) process.exitCode = interrupted === "SIGINT" ? 130 : 143;
