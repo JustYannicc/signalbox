@@ -57,6 +57,7 @@ import * as ThreadDirectory from "./thread/ThreadDirectory.ts";
 import * as ThreadBrowsing from "./thread/browsing/ThreadBrowsing.ts";
 import * as PreviewState from "./thread/PreviewState.ts";
 import * as ThreadEngine from "./thread/ThreadEngine.ts";
+import * as ThreadSecretRequests from "./thread/ThreadSecrets.ts";
 import * as StatusNoteModel from "./thread/statusLine/StatusNoteModel.ts";
 import * as ThreadStatusNotes from "./thread/statusLine/ThreadStatusNotes.ts";
 import * as ThreadKindTurns from "./thread/ThreadKindTurns.ts";
@@ -260,6 +261,7 @@ export const layerThreadObject = (
         Layer.provide(options.statusNoteModel ?? StatusNoteModel.layerNone),
       ),
     ),
+    Layer.provideMerge(ThreadSecretRequests.layer),
     Layer.provideMerge(ThreadEngine.layer),
     Layer.provideMerge(options.models ?? TurnModels.layerUnchecked),
     Layer.provideMerge(Layer.mergeAll(TurnDiagnostics.layer, TurnReports.layer)),
@@ -556,6 +558,7 @@ export const makeMemoryCloud = (
         A,
         E,
         | ThreadEngine.ThreadEngine
+        | ThreadSecretRequests.ThreadSecretRequests
         | ThreadStore.ThreadStore
         | ThreadPulls.ThreadPulls
         | UserDirectory.UserDirectory
@@ -640,6 +643,19 @@ export const makeMemoryCloud = (
       userId: string,
       effect: Effect.Effect<A, E, Layer.Success<typeof CloudEngine.layer>>,
     ) => Effect.promise(() => userFor(userId).runtime.runPromise(effect)),
+    inThread: <A, E>(
+      threadId: string,
+      effect: Effect.Effect<
+        A,
+        E,
+        | ThreadEngine.ThreadEngine
+        | ThreadStore.ThreadStore
+        | UserDirectory.UserDirectory
+        | ThreadBrowsing.ThreadBrowsing
+        | PullRequestSync.PullRequestSync
+        | PullRequestPolls.PullRequestPolls
+      >,
+    ) => Effect.promise(() => threadFor(threadId).run(effect)),
     /** The runs' Workflow instances: `idle` lets them run until they block, `advance` moves time. */
     workflows,
     /** When a user object's alarm would fire next; what fired clears it. */

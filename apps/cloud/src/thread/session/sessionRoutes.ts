@@ -14,6 +14,8 @@ import * as SqlClient from "effect/sql/SqlClient";
 import { ThreadRunner } from "../runner/ThreadRunner.ts";
 import { type ThreadObjectNamespace, threadObjectStub } from "../ThreadDirectory.ts";
 import { ThreadStore } from "../ThreadStore.ts";
+import { ThreadSecretRequests } from "../secrets/ThreadSecretRequests.ts";
+import { isSecretRequestPath, serveSecretRequest } from "../secrets/secretRequestRoutes.ts";
 import { SessionRows } from "./SessionRows.ts";
 import { threadOfSessionToken } from "./sessionToken.ts";
 
@@ -62,7 +64,12 @@ const decodeOrNull =
 const decodeAppend = decodeOrNull(sessionJson.append.decode);
 const decodeRegistration = decodeOrNull(secretsJson.registration.decode);
 
-type SessionServices = ThreadRunner | ThreadStore | SessionRows | SqlClient.SqlClient;
+type SessionServices =
+  | ThreadRunner
+  | ThreadStore
+  | SessionRows
+  | SqlClient.SqlClient
+  | ThreadSecretRequests;
 
 /** One session API call, as the thread object received it. */
 export interface SessionRequest {
@@ -99,6 +106,8 @@ export const serveSessionRequest = (input: SessionRequest) =>
     const { pathname, searchParams } = new URL(input.url);
     const verdict = yield* ThreadRunner.use((runner) => runner.authorizeSession(input.token));
     if (verdict._tag === "denied") return text(verdict.reason, 403);
+    if (input.method === "POST" && isSecretRequestPath(pathname))
+      return yield* serveSecretRequest(verdict.generation, input.body);
     const rows = yield* SessionRows;
     if (input.method === "POST" && pathname === SESSION_PATHS.append) {
       const append = decodeAppend(input.body);
