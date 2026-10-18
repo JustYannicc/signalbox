@@ -9,6 +9,7 @@ import {
 } from "@t3tools/contracts";
 import type { SignalboxAsk, SignalboxAskAnswerCommand } from "@t3tools/contracts/signalboxAsks";
 import * as WorkflowEngine from "@signalbox/automations/WorkflowEngine";
+import { blockingAsk } from "@t3tools/shared/signalboxAsks";
 import { afterEach, describe, expect, it, vi } from "@effect/vitest";
 import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
@@ -21,6 +22,8 @@ import { compileForCloud } from "@signalbox/automation-compiler/compileForCloud"
 import * as Environment from "../environment.ts";
 import { makeMemoryCloud } from "../testing.ts";
 import { ThreadObjectError } from "../thread/ThreadAccess.ts";
+import { threadShellFromProjection } from "../thread/threadProjection.ts";
+import { pushFor } from "../push/pushRules.ts";
 import { scriptedModelSelection } from "../thread/scriptedProvider.ts";
 import * as CloudRpc from "../user/rpc.ts";
 import { CloudCompiler, acceptCompiled } from "./cloudCompiler.ts";
@@ -109,7 +112,7 @@ const setup = Effect.gen(function* () {
     });
   const projection = (threadId: ThreadId) =>
     rpc[ORCHESTRATION_V2_WS_METHODS.getThreadProjection]({ threadId });
-  return { cloud, engine, projection, save, start, thread };
+  return { cloud, engine, projection, rpc, save, start, thread };
 });
 
 let commandNumber = 0;
@@ -134,6 +137,60 @@ afterEach(() => {
 });
 
 describe("automation common asks on the cloud", () => {
+  it.effect("reopening a task keeps its low-importance settle question quiet", () =>
+    Effect.gen(function* () {
+      const { cloud, engine, projection, rpc, save, start, thread } = yield* setup;
+      const threadId = yield* thread("quiet-settle-question");
+      const automation =
+        yield* save(`export const meta = { name: "Quiet settle question" } as const;
+export default workflow(async (w) => w.ask("Why did you settle this task?", {
+  options: ["dropped", "done-enough"], importance: "low",
+}));`);
+      yield* rpc[ORCHESTRATION_V2_WS_METHODS.dispatchCommand]({
+        type: "thread.settle",
+        threadId,
+        commandId: CommandId.make("quiet-settle-question:settle"),
+      });
+      const settled = yield* engine((workflow) =>
+        workflow.taskLifecycle({
+          threadId,
+          action: "record-settle",
+          reason: "done-enough",
+          outcome: "The useful work is complete.",
+          uncertain: true,
+        }),
+      );
+      expect(settled.record?.condition).toBeNull();
+      const runId = yield* start(automation.id, { input: { threadId } });
+      const archived = threadShellFromProjection(yield* projection(threadId));
+      expect(archived.archivedAt).not.toBeNull();
+      expect((yield* projection(threadId)).thread.asks?.[0]?.status).toBe("archived");
+
+      yield* engine((workflow) =>
+        workflow.taskLifecycle({
+          threadId,
+          action: "reopen",
+          expectedGeneration: settled.record!.generation,
+          commandId: "quiet-settle-question:reopen",
+        }),
+      );
+      yield* cloud.settle;
+      const reopened = threadShellFromProjection(yield* projection(threadId));
+      expect(reopened.archivedAt).toBeNull();
+      expect(reopened.asks?.[0]?.status).toBe("pending");
+      expect((yield* engine((workflow) => workflow.getRun(runId))).run.status).toBe("running");
+      expect.soft(blockingAsk(reopened.asks)).toBeUndefined();
+      expect(
+        pushFor({
+          environmentId: identity.environmentId,
+          previous: archived,
+          next: reopened,
+          now: yield* Clock.currentTimeMillis,
+        }),
+      ).toBeNull();
+    }),
+  );
+
   it.effect("the Payment built-in raises a Blocker and resumes after checkout", () =>
     Effect.gen(function* () {
       const { cloud, engine, projection, start, thread } = yield* setup;

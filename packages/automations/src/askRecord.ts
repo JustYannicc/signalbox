@@ -42,7 +42,7 @@ export function automationAskRecord(automation: AutomationRow, step: StepRow): S
           options.recommendation === undefined ? null : askJsonValue(options.recommendation),
         options: ask.options.map((value) => ({ label: automationOptionLabel(value), value })),
         multiSelect: ask.multi,
-        blocking: true,
+        blocking: ask.importance !== "low",
         decisionOwner: text("decisionOwner", "automation owner"),
         ...(options.deciderIds === undefined
           ? {}
