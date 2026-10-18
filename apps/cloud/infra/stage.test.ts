@@ -2,6 +2,7 @@
 import * as NodeFS from "node:fs";
 
 import { ThreadId } from "@t3tools/contracts";
+import { MODEL_GATEWAY_PATHS } from "@signalbox/runner-protocol/RunnerProtocol";
 import { describe, expect, it } from "@effect/vitest";
 
 import { previewLabel } from "@t3tools/shared/preview";
@@ -15,7 +16,9 @@ import {
   DURABLE_OBJECT_BINDINGS,
   previewStageNumber,
   syntheticSecretVars,
+  stageWorkerRouting,
 } from "./stage.ts";
+import { TRACES_PATH } from "../src/observability/nativeTracesWorker.ts";
 
 interface WranglerConfig {
   readonly compatibility_date: string;
@@ -68,6 +71,7 @@ describe("cloudStage", () => {
       drivePacksBucket: "signalbox-drives",
       automationWorkflow: "signalbox-cloud-automations",
       vars: {
+        SIGNALBOX_STAGE: "production",
         ENVIRONMENT_ID: "4bfb70e5-7954-458a-9b75-4834c0ab4e13",
         CLOUD_URL: "https://app.signalbox.run",
         MODEL_GATEWAY_URL: "https://gateway.signalbox.run",
@@ -89,13 +93,69 @@ describe("cloudStage", () => {
       drivePacksBucket: "signalbox-drives-preview",
       automationWorkflow: "signalbox-cloud-pr-298-automations",
       vars: {
+        SIGNALBOX_STAGE: "pr-298",
         ENVIRONMENT_ID: "cloud-preview-298",
         DRIVE_PACKS_PREFIX: "pr-298/",
-        MODEL_GATEWAY_URL: "https://gateway-preview-298.signalbox.run",
+        MODEL_GATEWAY_URL: "https://preview-298.signalbox.run",
         PREVIEW_DOMAIN: "*-pr298.signalbox-preview.dev",
         PREVIEW_SETUP_SOURCE: "https://app.signalbox.run",
       },
     });
+  });
+
+  it("routes preview gateway and trace paths through the app origin", () => {
+    const preview = cloudStage("pr-298");
+    const gateway = stageWorkerRouting(preview, preview.gatewayDomain, [
+      MODEL_GATEWAY_PATHS.anthropic,
+      MODEL_GATEWAY_PATHS.openai,
+    ]);
+    const traces = stageWorkerRouting(preview, `traces-${preview.cloudDomain}`, [TRACES_PATH]);
+    expect(gateway).toEqual({
+      domain: null,
+      routes: [
+        {
+          pattern: `${preview.cloudDomain}${MODEL_GATEWAY_PATHS.anthropic}*`,
+          zoneId: "e817cf0e17e849a0aab7a0bf92c0a053",
+        },
+        {
+          pattern: `${preview.cloudDomain}${MODEL_GATEWAY_PATHS.openai}*`,
+          zoneId: "e817cf0e17e849a0aab7a0bf92c0a053",
+        },
+      ],
+    });
+    expect(traces).toEqual({
+      domain: null,
+      routes: [
+        {
+          pattern: `${preview.cloudDomain}${TRACES_PATH}*`,
+          zoneId: "e817cf0e17e849a0aab7a0bf92c0a053",
+        },
+      ],
+    });
+    expect(
+      [MODEL_GATEWAY_PATHS.anthropic, MODEL_GATEWAY_PATHS.openai].map(
+        (path) => new URL(path, preview.vars.MODEL_GATEWAY_URL).origin,
+      ),
+    ).toEqual([`https://${preview.cloudDomain}`, `https://${preview.cloudDomain}`]);
+  });
+
+  it("keeps production Worker domains and omits preview route props", () => {
+    const production = cloudStage("production");
+    const gateway = stageWorkerRouting(production, production.gatewayDomain, [
+      MODEL_GATEWAY_PATHS.anthropic,
+      MODEL_GATEWAY_PATHS.openai,
+    ]);
+    const traces = stageWorkerRouting(production, `traces-${production.cloudDomain}`, [
+      TRACES_PATH,
+    ]);
+    expect(gateway).toEqual({
+      domain: { name: "gateway.signalbox.run", zoneId: "e817cf0e17e849a0aab7a0bf92c0a053" },
+    });
+    expect(traces).toEqual({
+      domain: { name: "traces-app.signalbox.run", zoneId: "e817cf0e17e849a0aab7a0bf92c0a053" },
+    });
+    expect("routes" in gateway).toBe(false);
+    expect("routes" in traces).toBe(false);
   });
 
   it("routes each stage's dev-server previews to it alone", async () => {

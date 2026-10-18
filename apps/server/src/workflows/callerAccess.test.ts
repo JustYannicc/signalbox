@@ -2,6 +2,7 @@ import { expect, it } from "@effect/vitest";
 import {
   ProjectId,
   ProviderInstanceId,
+  type Automation,
   type AutomationSaveInput,
   type ModelSelection,
   type Project,
@@ -10,14 +11,26 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 
+import { compileWorkflow } from "@signalbox/automation-compiler/compileWorkflow";
+import { AutomationCompiler } from "@signalbox/automations/host";
 import type { CallerLimits } from "../mcp/threadAccess.ts";
 import * as ProjectService from "../project/ProjectService.ts";
-import * as ServerSettings from "../serverSettings.ts";
+import * as ThreadLaunch from "../orchestration-v2/ThreadLaunchService.ts";
 import { saveForCaller } from "./callerAccess.ts";
+import * as ProjectAutomations from "./ProjectAutomations.ts";
 import * as WorkflowEngine from "@signalbox/automations/WorkflowEngine";
 
 const PROJECT = ProjectId.make("project-outside");
-const SOURCE = "export const meta = { name: 'Inbox' }";
+const SOURCE = `export const meta = { name: "Inbox" } as const;
+export default workflow(async (w) => await w.agent("Run", { prompt: "hello" }));`;
+const PLAIN_SOURCE = `export const meta = { name: "Plain" } as const;
+export default workflow(async () => "hello");`;
+const EXPLICIT_SOURCE = `export const meta = { name: "Explicit" } as const;
+export default workflow(async (w) => await w.agent("Run", {
+  prompt: "hello",
+  provider: "codex",
+  model: "gpt-5.6-sol",
+}));`;
 /** An outside client signed in with OAuth: no thread, only its runtime-mode ceiling. */
 const OUTSIDE = {
   caller: undefined,
@@ -43,10 +56,25 @@ const project = (defaultModelSelection: ModelSelection | null): Project => ({
 function harness(options: {
   readonly project: Project;
   readonly environmentModel?: ModelSelection;
+  readonly noModel?: boolean;
+  readonly failModelLookup?: boolean;
+  readonly existingAutomationName?: string;
 }) {
   const saved: AutomationSaveInput[] = [];
-  const layer = Layer.mergeAll(
+  let modelLookups = 0;
+  const automations =
+    options.existingAutomationName === undefined
+      ? []
+      : ([
+          {
+            id: "automation-existing",
+            name: options.existingAutomationName,
+            projectId: PROJECT,
+          },
+        ] as unknown as ReadonlyArray<Automation>);
+  const dependencies = Layer.mergeAll(
     Layer.mock(WorkflowEngine.WorkflowEngine)({
+      list: () => Effect.succeed(automations),
       validate: () => ({ ok: false, diagnostics: [] }),
       save: (input) => {
         saved.push(input);
@@ -59,11 +87,29 @@ function harness(options: {
           projectId === options.project.id ? Option.some(options.project) : Option.none(),
         ),
     }),
-    ServerSettings.layerTest(
-      options.environmentModel ? { defaultModelSelection: options.environmentModel } : {},
-    ),
+    Layer.mock(ThreadLaunch.ThreadLaunchService)({
+      initialModelSelection: () => {
+        modelLookups += 1;
+        if (options.failModelLookup) return Effect.die("unexpected default-model resolution");
+        return Effect.succeed(
+          options.noModel
+            ? null
+            : (options.project.defaultModelSelection ??
+                options.environmentModel ??
+                codex("gpt-6-luna")),
+        );
+      },
+    }),
+    Layer.succeed(AutomationCompiler, AutomationCompiler.of({ compile: compileWorkflow })),
   );
-  return { saved, layer };
+  const layer = ProjectAutomations.layer.pipe(Layer.provideMerge(dependencies));
+  return {
+    saved,
+    layer,
+    get modelLookups() {
+      return modelLookups;
+    },
+  };
 }
 
 it.effect("a caller without a thread saves into the project it names, with its ceiling", () => {
@@ -93,6 +139,37 @@ it.effect("without a project default, a caller without a thread gets the environ
     yield* saveForCaller(OUTSIDE, { source: SOURCE, projectId: PROJECT });
     expect(saved[0]?.defaults.modelSelection).toEqual(codex("gpt-5.6-terra"));
   }).pipe(Effect.provide(layer));
+});
+
+it.effect("saves a plain workflow without looking for a model", () => {
+  const test = harness({ project: project(null), noModel: true });
+  return Effect.gen(function* () {
+    yield* saveForCaller(OUTSIDE, { source: PLAIN_SOURCE, projectId: PROJECT });
+    expect(test.saved[0]?.defaults.modelSelection).toBeNull();
+    expect(test.modelLookups).toBe(0);
+  }).pipe(Effect.provide(test.layer));
+});
+
+it.effect("saves explicit agent models without looking for a default", () => {
+  const test = harness({ project: project(null), noModel: true });
+  return Effect.gen(function* () {
+    yield* saveForCaller(OUTSIDE, { source: EXPLICIT_SOURCE, projectId: PROJECT });
+    expect(test.saved[0]?.defaults.modelSelection).toBeNull();
+    expect(test.modelLookups).toBe(0);
+  }).pipe(Effect.provide(test.layer));
+});
+
+it.effect("saves a name-based edit without resolving a model", () => {
+  const test = harness({
+    project: project(null),
+    failModelLookup: true,
+    existingAutomationName: "Inbox",
+  });
+  return Effect.gen(function* () {
+    yield* saveForCaller(OUTSIDE, { source: SOURCE, projectId: PROJECT });
+    expect(test.saved).toHaveLength(1);
+    expect(test.modelLookups).toBe(0);
+  }).pipe(Effect.provide(test.layer));
 });
 
 it.effect("a caller without a thread has to name a project", () => {

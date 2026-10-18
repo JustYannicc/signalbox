@@ -8,7 +8,6 @@ import { useAtomValue } from "@effect/atom-react";
 import { contextOfProject } from "@t3tools/client-runtime/state/signalboxContexts";
 import { homeOfThread, ownerFilesProject } from "@t3tools/client-runtime/state/signalboxFolders";
 import type { EnvironmentId, ProjectId, ThreadId } from "@t3tools/contracts";
-import { useCallback, useMemo } from "react";
 
 import { environmentContextsAtom } from "../../../state/signalboxContexts";
 import { environmentFoldersAtom } from "../../../state/signalboxFolders";
@@ -28,7 +27,7 @@ export function useFolderBreadcrumb(input: {
   const snapshot = useAtomValue(environmentFoldersAtom).get(input.environmentId)?.snapshot ?? null;
   const contexts = useAtomValue(environmentContextsAtom).get(input.environmentId) ?? null;
   const startInFolder = useStartInFolder();
-  const place = useMemo(() => {
+  const place = (() => {
     if (snapshot === null || contexts === null || input.projectId === null) return null;
     const projectId = input.projectId;
     const owner = contextOfProject(contexts, projectId);
@@ -39,14 +38,14 @@ export function useFolderBreadcrumb(input: {
       ownerProjectId: ownerFilesProject(owner),
       label: homeLabel(snapshot, owner, home),
     };
-  }, [contexts, input.projectId, input.threadId, snapshot]);
-  const onNewThread = useCallback(() => {
+  })();
+  const onNewThread = () => {
     if (place === null) return;
     void startInFolder({
       environmentId: input.environmentId,
       ownerProjectId: place.ownerProjectId,
       folderId: place.home,
     });
-  }, [input.environmentId, place, startInFolder]);
+  };
   return place === null ? null : { label: place.label, onNewThread };
 }

@@ -1,5 +1,10 @@
-import type { RunId } from "@t3tools/contracts";
+import { RunId } from "@t3tools/contracts";
+import {
+  REQUEST_HEAVY_MACHINE_COMMAND,
+  REQUEST_HEAVY_MACHINE_REASON,
+} from "@signalbox/runner-protocol/RunnerProtocol";
 import { describe, expect, it } from "@effect/vitest";
+import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as TestClock from "effect/testing/TestClock";
@@ -17,14 +22,17 @@ import {
   launch,
   liveTurn,
   personal,
+  readTurnReport,
   saveSession,
   snapshot,
   threadId,
   turnReport,
   withObject,
-} from "./runnerTestKit.ts";
+} from "../runnerTesting.ts";
 import { remoteThreadWorktree } from "../../user/contextProjects.ts";
 import { DRAIN_TIMEOUT_MS } from "./ThreadRunner.ts";
+import * as ThreadStore from "../ThreadStore.ts";
+import * as PreviewState from "../PreviewState.ts";
 
 /** A backend that does nothing, with its class's idle tail. */
 const fakeBackend = (kind: "cloudflare" | "boat", idleTailMs: number): MachineBackendShape => {
@@ -61,15 +69,79 @@ const machines = Layer.succeed(MachineBackend, {
 });
 const options = { machines };
 
-const outgrown = (runId: RunId) =>
+const outgrown = (runId: RunId, reason = "It runs `npm build`, which needs a bigger machine.") =>
   ({
     kind: "machine.outgrown",
     runId,
-    reason: "It runs `npm build`, which needs a bigger machine.",
+    reason,
   }) as const;
 
 describe("machine classes", () => {
-  it.effect("runs a thread in its context's own project light, one on a remote repo heavy", () =>
+  it.effect("restores an old light thread's saved preview on heavy without a live turn", () =>
+    Effect.gen(function* () {
+      const filename = freshDatabase();
+      yield* withObject(
+        filename,
+        (engine, runner, context) =>
+          Effect.gen(function* () {
+            yield* launch(engine);
+            const machine = yield* connect(runner);
+            const turn = yield* liveTurn(runner);
+            const report = turnReport(turn.runId, turn.runOrdinal, turn.providerThread);
+            yield* runner.batch({
+              generation: machine.generation,
+              sequence: 1,
+              items: [report.started, report.full, report.terminal],
+            });
+            yield* Context.get(context, PreviewState.PreviewState).saveServices([
+              { port: 5173, command: "npm run dev", cwd: "." },
+            ]);
+            yield* Context.get(context, ThreadStore.ThreadStore).saveMachine({
+              ...ThreadStore.NO_MACHINE,
+              generation: machine.generation,
+              machineClass: "light",
+            });
+          }),
+        options,
+      );
+      yield* withObject(
+        filename,
+        (_engine, runner) =>
+          Effect.gen(function* () {
+            expect(yield* runner.reconcile).toMatchObject({
+              ensure: { generation: 2 },
+              machineClass: "heavy",
+            });
+            expect((yield* runner.work).turn).toBeNull();
+          }),
+        { ...options, previews: { held: true, lastActiveAt: null } },
+      );
+    }),
+  );
+
+  it.effect("keeps a pre-upgrade heavy repo thread heavy after an eviction", () =>
+    Effect.gen(function* () {
+      const filename = freshDatabase();
+      yield* withObject(
+        filename,
+        (engine, _runner, context) =>
+          Effect.gen(function* () {
+            yield* launch(engine, "launch-1", onRemote);
+            // Repo threads used to be heavy without ever setting movedUp.
+            yield* Context.get(context, ThreadStore.ThreadStore).saveMachine({
+              ...ThreadStore.NO_MACHINE,
+              generation: 3,
+              machineClass: "heavy",
+            });
+          }),
+        options,
+      );
+      const next = yield* withObject(filename, (_engine, runner) => runner.reconcile, options);
+      expect(next).toMatchObject({ ensure: { generation: 4 }, machineClass: "heavy" });
+    }),
+  );
+
+  it.effect("starts remote repo threads light until a command needs a heavy machine", () =>
     Effect.gen(function* () {
       const light = yield* withObject(
         freshDatabase(),
@@ -82,7 +154,7 @@ describe("machine classes", () => {
         (engine, runner) => Effect.andThen(launch(engine, "launch-1", onRemote), runner.reconcile),
         options,
       );
-      expect(heavy).toMatchObject({ ensure: { generation: 1 }, machineClass: "heavy" });
+      expect(heavy).toMatchObject({ ensure: { generation: 1 }, machineClass: "light" });
     }),
   );
 
@@ -116,7 +188,10 @@ describe("machine classes", () => {
     ),
   );
 
-  it.effect("moves a light thread's build to a heavy machine mid-turn, losing nothing", () =>
+  it.effect.each([
+    { cause: "an explicit request", reason: REQUEST_HEAVY_MACHINE_REASON },
+    { cause: "a build", reason: "It runs `npm build`, which needs a bigger machine." },
+  ] as const)("moves a light run outgrown by $cause to heavy, then resumes it", ({ reason }) =>
     withObject(
       freshDatabase(),
       (engine, runner, context) =>
@@ -126,30 +201,63 @@ describe("machine classes", () => {
           expect(machine.machineClass).toBe("light");
           const turn = yield* liveTurn(runner);
           const report = turnReport(turn.runId, turn.runOrdinal, turn.providerThread);
-          // The reply so far, then the Runner saved everything and says the turn outgrew it.
+          // The reply so far, then the Runner saved everything before the move.
           yield* saveSession(context, "claude-session-1");
+          const lightWork = yield* runner.work;
+          expect(lightWork.drive?.instructions).toContainEqual(
+            expect.objectContaining({
+              text: expect.stringContaining(REQUEST_HEAVY_MACHINE_COMMAND),
+            }),
+          );
           expect(
             yield* runner.batch({
               generation: machine.generation,
               sequence: 1,
-              items: [report.started, report.partial, outgrown(turn.runId), report.full],
+              items: [report.started, report.partial, outgrown(RunId.make("stale-run"), reason)],
             }),
           ).toEqual({ _tag: "ack", sequence: 1 });
+          expect((yield* snapshot(engine)).projection.runs.map((run) => run.status)).toEqual([
+            "running",
+          ]);
+          expect(
+            yield* runner.batch({
+              generation: machine.generation,
+              sequence: 2,
+              items: [outgrown(turn.runId, reason), report.full],
+            }),
+          ).toEqual({ _tag: "ack", sequence: 2 });
 
           const { projection } = yield* snapshot(engine);
           expect(projection.runs.map((run) => run.status)).toEqual(["interrupted", "starting"]);
           const [cut, continuation] = projection.runs;
           expect(continuation?.restartContinuationOfRunId).toBe(cut?.id);
+          expect(
+            projection.messages.find((message) => message.id === continuation?.userMessageId),
+          ).toMatchObject({ role: "system", text: CONTINUE_PROMPT });
+          expect(
+            projection.turnItems.filter(
+              (item) =>
+                item.runId === continuation?.id &&
+                item.type === "user_message" &&
+                item.text === CONTINUE_PROMPT,
+            ),
+          ).toEqual([]);
           const items = projection.turnItems.filter((item) => item.runId === cut?.id);
           // Nothing the light machine said after the move counts.
           expect(items.find((item) => item.type === "assistant_message")).toMatchObject({
             status: "interrupted",
             text: "Hel",
           });
-          expect(items.find((item) => item.type === "system_notice")).toMatchObject({
-            message:
-              "It runs `npm build`, which needs a bigger machine. This turn picks up on a bigger machine.",
-          });
+          expect(items.filter((item) => item.type === "system_notice")).toEqual([]);
+          const record = yield* readTurnReport(context, projection, turn.runId);
+          if (record === null) throw new Error("expected the turn's diagnostic record");
+          expect(record.machines).toContainEqual(
+            expect.objectContaining({
+              generation: machine.generation,
+              stopReason: "outgrown",
+              stopDetail: reason,
+            }),
+          );
 
           // The light machine is done; the continuation gets a heavy one.
           expect(
@@ -160,14 +268,20 @@ describe("machine classes", () => {
             generation: machine.generation + 1,
             machineClass: "heavy",
           });
-          expect((yield* runner.work).turn).toMatchObject({
+          const heavyWork = yield* runner.work;
+          expect(heavyWork.turn).toMatchObject({
             runId: continuation?.id,
             restartContinuationOfRunId: cut?.id,
             message: { text: CONTINUE_PROMPT },
             providerThread: { nativeThreadRef: { nativeId: "claude-session-1" } },
           });
+          expect(heavyWork.drive?.instructions).not.toContainEqual(
+            expect.objectContaining({
+              text: expect.stringContaining(REQUEST_HEAVY_MACHINE_COMMAND),
+            }),
+          );
         }),
-      options,
+      { ...options, drives: true },
     ),
   );
 

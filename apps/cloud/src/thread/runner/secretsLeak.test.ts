@@ -33,7 +33,7 @@ import {
   threadId,
   turnReport,
   withObject,
-} from "./runnerTestKit.ts";
+} from "../runnerTesting.ts";
 import { DRAIN_TIMEOUT_MS } from "./ThreadRunner.ts";
 
 /**

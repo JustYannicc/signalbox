@@ -38,6 +38,7 @@ export const toSnapshot = (current: FolderState): SignalboxFoldersSnapshot => {
       return {
         id: folder.id,
         name: folder.name,
+        ...(folder.origin == null ? {} : { origin: folder.origin }),
         parentId: folder.parentId,
         position: folder.position,
         ownerId: folder.ownerId,

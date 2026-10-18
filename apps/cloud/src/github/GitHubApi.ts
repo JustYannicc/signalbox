@@ -10,37 +10,17 @@ import * as Stream from "effect/Stream";
 import * as HttpClientError from "effect/http/HttpClientError";
 import { type HttpClient, HttpClientRequest, type HttpClientResponse } from "effect/http";
 
-/**
- * The GitHub calls Signalbox Cloud makes: a few REST and GraphQL reads, opening pull requests, and git's
- * smart HTTP. Every call takes the user's token it acts with; nothing here
- * keeps one. Only the fields used are decoded.
- */
+import {
+  defaultGitHubEndpoints,
+  GitHubError,
+  type GitHubEndpoints,
+  unreadable,
+} from "./GitHubApiSupport.ts";
+import { makeAgentGitHubApi } from "./agentGitHubApi.ts";
 
-export class GitHubError extends Schema.TaggedError<GitHubError>()("GitHubError", {
-  operation: Schema.String,
-  /** HTTP status, or 0 when no answer arrived. */
-  status: Schema.Number,
-  message: Schema.String,
-  /** The protocol used for the request that produced this answer. */
-  requestKind: Schema.optional(Schema.Literals(["rest", "graphql", "git"])),
-  /** A short, sanitized excerpt of the response body, when an answer arrived. */
-  responseExcerpt: Schema.optional(Schema.String),
-  /** Sanitized response headers that help identify malformed GitHub answers. */
-  responseContentType: Schema.optional(Schema.String),
-  responseContentLength: Schema.optional(Schema.String),
-  /** When GitHub's rate limit lets the caller ask again (epoch ms), when it said. */
-  retryAt: Schema.optional(Schema.Number),
-}) {}
+export { GitHubError, type GitHubEndpoints, unreadable };
 
 type GitHubRequestKind = "rest" | "graphql" | "git";
-
-/** An answer GitHub sent that doesn't decode as expected. */
-export const unreadable = (operation: string) =>
-  new GitHubError({
-    operation,
-    status: 200,
-    message: "GitHub sent an answer Signalbox does not understand.",
-  });
 
 /**
  * When a refused request may be retried: `retry-after` (secondary limits), or
@@ -55,17 +35,11 @@ const rateLimitRetryAt = (response: HttpClientResponse.HttpClientResponse, now: 
   return Number.isFinite(reset) ? reset * 1_000 : now + 60_000;
 };
 
-export interface GitHubEndpoints {
-  /** Where OAuth and git live, e.g. `https://github.com`. */
-  readonly web: string;
-  /** The REST API, e.g. `https://api.github.com`. */
-  readonly api: string;
-}
-
-const GITHUB_ENDPOINTS: GitHubEndpoints = {
-  web: "https://github.com",
-  api: "https://api.github.com",
-};
+/**
+ * The GitHub calls Signalbox Cloud makes: a few REST and GraphQL reads, opening pull requests, and git's
+ * smart HTTP. Every call takes the user's token it acts with; nothing here
+ * keeps one. Only the fields used are decoded.
+ */
 
 const MAX_JSON_RESPONSE_BYTES = 8 * 1024 * 1024;
 
@@ -122,7 +96,13 @@ const toPull = (body: typeof PullBody.Type): GitHubPullRequest => ({
 });
 
 const RefBody = Schema.Struct({ object: Schema.Struct({ sha: Schema.String }) });
+const RefsBody = Schema.Array(Schema.Struct({ ref: Schema.String, ...RefBody.fields }));
 const CommitBody = Schema.Struct({ sha: Schema.String });
+const CompareBody = Schema.Struct({
+  ahead_by: Schema.Number,
+  behind_by: Schema.Number,
+  merge_base_commit: Schema.Struct({ sha: Schema.String }),
+});
 const MergeBody = Schema.Struct({ merged: Schema.Boolean });
 const TreeBody = Schema.Struct({
   tree: Schema.Array(
@@ -200,6 +180,9 @@ const boundedDiagnostic = (value: string, token: string, maxLength: number) => {
   return sanitized.length > maxLength ? `${sanitized.slice(0, maxLength)}…` : sanitized;
 };
 
+const boundedResponseHeader = (value: string) =>
+  value.length > 120 ? `${value.slice(0, 120)}…` : value;
+
 const responseDiagnostics = (
   requestKind: GitHubRequestKind,
   response: HttpClientResponse.HttpClientResponse,
@@ -215,11 +198,29 @@ const responseDiagnostics = (
     response.headers["content-length"] === undefined
       ? undefined
       : boundedDiagnostic(response.headers["content-length"], token, 120);
+  const rateLimitHeaders = {
+    ...(response.headers["x-ratelimit-remaining"] === undefined
+      ? {}
+      : { remaining: boundedResponseHeader(response.headers["x-ratelimit-remaining"]) }),
+    ...(response.headers["x-ratelimit-reset"] === undefined
+      ? {}
+      : { reset: boundedResponseHeader(response.headers["x-ratelimit-reset"]) }),
+    ...(response.headers["x-ratelimit-resource"] === undefined
+      ? {}
+      : { resource: boundedResponseHeader(response.headers["x-ratelimit-resource"]) }),
+    ...(response.headers["x-ratelimit-used"] === undefined
+      ? {}
+      : { used: boundedResponseHeader(response.headers["x-ratelimit-used"]) }),
+    ...(response.headers["retry-after"] === undefined
+      ? {}
+      : { retryAfter: boundedResponseHeader(response.headers["retry-after"]) }),
+  };
   return {
     requestKind,
     ...(excerpt === undefined ? {} : { responseExcerpt: excerpt }),
     ...(contentType === undefined ? {} : { responseContentType: contentType }),
     ...(contentLength === undefined ? {} : { responseContentLength: contentLength }),
+    ...(Object.keys(rateLimitHeaders).length === 0 ? {} : { responseRateLimits: rateLimitHeaders }),
   };
 };
 
@@ -234,7 +235,7 @@ export const parseRepository = (input: string): string | null => {
 
 export const makeGitHubApi = (
   client: HttpClient.HttpClient,
-  endpoints: GitHubEndpoints = GITHUB_ENDPOINTS,
+  endpoints: GitHubEndpoints = defaultGitHubEndpoints,
 ) => {
   const web = endpoints.web.replace(/\/+$/, "");
   const api = endpoints.api.replace(/\/+$/, "");
@@ -287,6 +288,9 @@ export const makeGitHubApi = (
       ...(error.responseContentLength === undefined
         ? {}
         : { responseContentLength: error.responseContentLength }),
+      ...(error.responseRateLimits === undefined
+        ? {}
+        : { responseRateLimits: error.responseRateLimits }),
     });
 
   const readResponseText = (
@@ -417,7 +421,7 @@ export const makeGitHubApi = (
                     operation,
                     status: response.status,
                     message: "GitHub's answer is too large to read.",
-                    requestKind,
+                    ...responseDiagnostics(requestKind, response, "", token),
                   }),
                 );
               }
@@ -500,6 +504,7 @@ export const makeGitHubApi = (
     });
 
   return {
+    ...makeAgentGitHubApi(client, endpoints),
     viewer: (token: string) => json("viewer", Viewer, HttpClientRequest.get(`${api}/user`), token),
     repository: (token: string, repository: string) =>
       json("repository", Repository, HttpClientRequest.get(`${api}/repos/${repository}`), token),
@@ -556,6 +561,39 @@ export const makeGitHubApi = (
         ),
         token,
       ).pipe(Effect.map((body) => body?.object.sha ?? null)),
+    /** Exact commit counts between two GitHub-known commits or refs. */
+    compare: (token: string, repository: string, base: string, head: string) =>
+      json(
+        "compare",
+        CompareBody,
+        HttpClientRequest.get(
+          `${api}/repos/${repository}/compare/${encodeURIComponent(base)}...${encodeURIComponent(head)}`,
+        ),
+        token,
+      ).pipe(
+        Effect.map((body) =>
+          body === null
+            ? null
+            : {
+                aheadBy: body.ahead_by,
+                behindBy: body.behind_by,
+                mergeBase: body.merge_base_commit.sha,
+              },
+        ),
+      ),
+    /** All branch refs. GitHub's matching-refs endpoint returns the whole namespace without paging. */
+    listRefs: (token: string, repository: string) =>
+      json(
+        "listRefs",
+        RefsBody,
+        HttpClientRequest.get(`${api}/repos/${repository}/git/matching-refs/heads/`),
+        token,
+      ).pipe(
+        Effect.catchIf(
+          (error) => error.status === 409 && /^Git Repository is empty\.?$/i.test(error.message),
+          () => Effect.succeed([]),
+        ),
+      ),
     /** The newest pull request from `branch` in the same repository, in any state. */
     pullForBranch: (token: string, repository: string, branch: string) => {
       const url = new URL(`${api}/repos/${repository}/pulls`);

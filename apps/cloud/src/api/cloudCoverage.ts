@@ -31,7 +31,6 @@ const poolHarnesses = exempt("Pools run each harness; nothing installs per user.
 /** Keys are operation names, or `prefix.*` for every operation under a prefix. */
 export const CLOUD_UNSERVED: Readonly<Record<string, Unserved>> = {
   "settings.get": gap("#440"),
-  "keybindings.*": gap("#440"),
 
   // Waiting on you: questions and secret requests. Approvals the thread raises are served.
   "threads.dismissQuestion": gap("#410"),
@@ -39,14 +38,8 @@ export const CLOUD_UNSERVED: Readonly<Record<string, Unserved>> = {
 
   // The rest of a thread's lifecycle.
   "threads.delete": gap("#439"),
-  "threads.settle": gap("#439"),
-  "threads.unsettle": gap("#439"),
-  "threads.autoSettle.set": gap("#439"),
   "threads.snooze": gap("#439"),
   "threads.unsnooze": gap("#439"),
-  "threads.pin": gap("#439"),
-  "threads.unpin": gap("#439"),
-  "threads.pin.reorder": gap("#439"),
   "threads.active.reorder": gap("#439"),
   "threads.markUnread": gap("#439"),
   "threads.fork": gap("#439"),
@@ -56,7 +49,6 @@ export const CLOUD_UNSERVED: Readonly<Record<string, Unserved>> = {
   "threads.switchProvider": gap("#439"),
   "threads.stopSubagent": gap("#439"),
   "threads.retryPreparation": gap("#439"),
-  "threads.subscribeArchived": gap("#439"),
   "threads.commandOutput": gap("#439"),
   "threads.getTurnItem": gap("#439"),
   "threads.getWorkflowScript": gap("#439"),
@@ -87,8 +79,6 @@ export const CLOUD_UNSERVED: Readonly<Record<string, Unserved>> = {
   "git.preparePullRequestThread": gap("#818"),
 
   // Git beyond the thread's own branch.
-  "vcs.listRefs": gap("#809"),
-  "review.getDiffFileContents": gap("#809"),
   "sourceControl.cloneRepository": githubImports,
   "sourceControl.publishRepository": gap("#810"),
 

@@ -19,6 +19,10 @@
       "types": "./src/DriveProtocol.ts",
       "import": "./src/DriveProtocol.ts"
     },
+    "./PullProtocol": {
+      "types": "./src/PullProtocol.ts",
+      "import": "./src/PullProtocol.ts"
+    },
     "./SessionProtocol": {
       "types": "./src/SessionProtocol.ts",
       "import": "./src/SessionProtocol.ts"
@@ -38,6 +42,10 @@
     "./StatusLineProtocol": {
       "types": "./src/StatusLineProtocol.ts",
       "import": "./src/StatusLineProtocol.ts"
+    },
+    "./LearnerProtocol": {
+      "types": "./src/LearnerProtocol.ts",
+      "import": "./src/LearnerProtocol.ts"
     },
     "./drivePaths": {
       "types": "./src/drivePaths.ts",
@@ -70,10 +78,14 @@
     "./testing/SecretsFixture": {
       "types": "./src/testing/SecretsFixture.ts",
       "import": "./src/testing/SecretsFixture.ts"
+    },
+    "./PullRequestTools": {
+      "types": "./src/PullRequestTools.ts",
+      "import": "./src/PullRequestTools.ts"
     }
   },
   "scripts": {
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc-rs --noEmit"
   },
   "dependencies": {
     "@t3tools/contracts": "workspace:*",

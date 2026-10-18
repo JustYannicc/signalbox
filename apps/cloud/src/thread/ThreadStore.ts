@@ -20,6 +20,12 @@ import * as SqlClient from "effect/sql/SqlClient";
 import type { SqlError } from "effect/sql/SqlError";
 
 import * as Migrations from "../storage/migrations.ts";
+import {
+  migrateCurrentItemExpansion,
+  migrateCurrentItemHistory,
+  backfillCurrentItemState,
+  recordCurrentItemState,
+} from "./currentItemHistory.ts";
 import { migrateDiagnostics } from "./diagnostics/DiagnosticsStore.ts";
 import { migrateBrowsing } from "./browsing/browsingTables.ts";
 import {
@@ -29,6 +35,7 @@ import {
 } from "./egress/secretSendTables.ts";
 import { migratePullRequestPolls } from "./pullRequests/PullRequestPolls.ts";
 import { migrateStatusNote, readNote, writeNote } from "./statusLine/statusNoteTables.ts";
+import { migratePulls } from "./PullState.ts";
 import { type MachineRecord, MachineRecords, NO_MACHINE_RECORD } from "./runner/MachineBackend.ts";
 import {
   migrateSecretValues,
@@ -108,6 +115,7 @@ export interface MachineLease {
   readonly runScopedSecrets?: boolean | undefined;
   /** Sources of this legacy generation's last redaction-only registration. Never current fills. */
   readonly legacySecretEnvironments?: ReadonlyArray<OnePasswordEnvironmentId> | undefined;
+  readonly pulls?: boolean | undefined;
   /**
    * The idle machine was asked to save everything before it goes (#493), at
    * `id` (when it was asked), and whether it answered and what it couldn't save.
@@ -335,6 +343,9 @@ const migrations = Migrator.fromRecord({
   "0012_current_secret_values": migrateCurrentSecretValues,
   "0012_secret_send_folder_scope": migrateSecretSendFolderScope,
   "0013_secret_run_identity": migrateSecretRunIdentity,
+  "0012_git_pulls": migratePulls,
+  "0012_current_item_history": migrateCurrentItemHistory,
+  "0013_current_item_expansion": migrateCurrentItemExpansion,
 });
 
 /** Applies every migration not recorded yet (`storage/migrations.ts`). Never edit or rename a merged one. */
@@ -403,6 +414,7 @@ const MachineLeaseJson = Schema.fromJsonString(
     steers: Schema.optional(Schema.Boolean),
     runScopedSecrets: Schema.optional(Schema.Boolean),
     legacySecretEnvironments: Schema.optional(Schema.Array(OnePasswordEnvironmentId)),
+    pulls: Schema.optional(Schema.Boolean),
     drain: Schema.optional(
       Schema.Union([
         Schema.Struct({ _tag: Schema.Literal("asked"), id: Schema.Number }),
@@ -520,6 +532,9 @@ const make = Effect.gen(function* () {
       sequence += 1;
       yield* sql`INSERT INTO events (sequence, command_id, format, event)
           VALUES (${sequence}, ${input.command?.id ?? null}, ${EVENT_FORMAT}, ${encodeEvent(event)})`;
+      yield* recordCurrentItemState(sequence, event).pipe(
+        Effect.provideService(SqlClient.SqlClient, sql),
+      );
     }
     if (input.command) {
       yield* sql`INSERT INTO receipts
@@ -624,7 +639,11 @@ const make = Effect.gen(function* () {
 
   return ThreadStore.of({
     initialized,
-    initialize: Effect.asVoid(migrate.pipe(Effect.provideService(SqlClient.SqlClient, sql))),
+    initialize: migrate.pipe(
+      Effect.andThen(backfillCurrentItemState),
+      Effect.provideService(SqlClient.SqlClient, sql),
+      Effect.asVoid,
+    ),
     owner,
     events,
     receipt,

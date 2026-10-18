@@ -349,6 +349,35 @@ describe("deriveProviderEntriesByEnvironment", () => {
 });
 
 describe("resolveSelectableProviderInstance", () => {
+  it("falls back to a cached pool model on a transient account snapshot error only for hub instances", () => {
+    const poolProvider = {
+      ...provider({
+        provider: ProviderDriverKind.make("codex"),
+        instanceId: "codex_hub_work",
+        status: "error",
+        models: [model("gpt-6-astra")],
+      }),
+      auth: { status: "unknown" },
+      unavailableReason: "Pool account status could not be refreshed.",
+    } as ServerProvider;
+    const hubInstances = {
+      codex_hub_work: { driver: ProviderDriverKind.make("codex"), config: { setupMode: "hub" } },
+    } as never;
+    const localInstances = {
+      codex_hub_work: {
+        driver: ProviderDriverKind.make("codex"),
+        config: { setupMode: "managed" },
+      },
+    } as never;
+
+    expect(resolveSelectableProviderInstance([poolProvider], undefined, hubInstances)).toBe(
+      poolProvider.instanceId,
+    );
+    expect(resolveSelectableProviderInstance([poolProvider], undefined, localInstances)).toBe(
+      undefined,
+    );
+  });
+
   it("returns the requested instance when it is enabled and available", () => {
     const requested = ProviderInstanceId.make("claude_work");
     const providers = [

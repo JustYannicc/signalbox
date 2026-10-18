@@ -5,7 +5,7 @@ import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as SqlClient from "effect/sql/SqlClient";
 
-import { scrubModelRequest } from "../../modelGateway/scrubModelRequest.ts";
+import { makeModelAccess } from "../../models/testing.ts";
 import { readSecretSources } from "../secretRegistrationTesting.ts";
 import { ThreadStore } from "../ThreadStore.ts";
 import {
@@ -72,13 +72,30 @@ describe("legacy redaction-only generations", () => {
           expect(
             yield* readSecretSources.pipe(Effect.provideService(SqlClient.SqlClient, sql)),
           ).toEqual(new Map());
-          const scrubbed = scrubModelRequest(
-            new Request("https://model.test/messages", { method: "POST", body: valueA.value }),
-            cached.secrets,
+          let modelBody: string | null = null;
+          const access = yield* makeModelAccess({
+            authorizeThread: async () => cached,
+            authorizeLocal: async () => ({ _tag: "denied", reason: "not a local key" }),
+            forward: async (_pool, _path, request) => {
+              modelBody = await request.text();
+              return { _tag: "forwarded", response: new Response("ok"), upstreamMs: 0 };
+            },
+            recordThread: async () => {},
+            recordLocal: async () => {},
+          });
+          const reply = yield* Effect.promise(() =>
+            access.serve({
+              token: second.modelToken ?? "",
+              provider: "anthropic",
+              path: "/v1/messages",
+              request: new Request("https://model.test/messages", {
+                method: "POST",
+                body: valueA.value,
+              }),
+            }),
           );
-          expect(scrubbed._tag).toBe("scrubbed");
-          if (scrubbed._tag !== "scrubbed") throw new Error("expected model masking");
-          expect(yield* Effect.promise(() => scrubbed.request.text())).toBe("{{secret:KEY}}");
+          expect(reply._tag).toBe("granted");
+          expect(modelBody).toBe("{{secret:KEY}}");
 
           const secondReport = turnReport(
             secondTurn.runId,

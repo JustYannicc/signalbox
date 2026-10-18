@@ -1,4 +1,5 @@
 import {
+  type ModelSelection,
   MessageId,
   type OrchestrationV2AppThread,
   type OrchestrationV2Command,
@@ -11,7 +12,8 @@ import {
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 
-import { isHarnessInstance } from "./providerCatalog.ts";
+import { isHarnessInstance } from "../models/ModelRouting.ts";
+import { decideLifecycleCommand } from "./lifecycleCommands.ts";
 import { pullRequestLinkEvents } from "./pullRequests/pullRequestLinks.ts";
 import {
   activeRun,
@@ -80,6 +82,13 @@ const CLOUD_COMMAND_TYPES = [
   "thread.archive",
   "thread.unarchive",
   "runtime-request.respond",
+  "thread.settle",
+  "thread.auto-settle",
+  "thread.unsettle",
+  "thread.auto-settle.set",
+  "thread.pin",
+  "thread.unpin",
+  "thread.pin.reorder",
 ] as const satisfies ReadonlyArray<OrchestrationV2Command["type"]>;
 type CloudCommand = CommandOf<(typeof CLOUD_COMMAND_TYPES)[number]>;
 
@@ -141,6 +150,20 @@ function dispatchMessage(
   const { thread } = projection;
   const updates: Array<OrchestrationV2DomainEvent> = [];
   let current = thread;
+  if (current.archivedAt !== null) {
+    current = { ...current, archivedAt: null, updatedAt: ctx.now };
+    updates.push(threadEvent(ctx, "thread.unarchived", current));
+  }
+  if (current.settledOverride !== null || current.settledAt !== null) {
+    current = {
+      ...current,
+      settledOverride: null,
+      settledAt: null,
+      unsettledAt: current.settledOverride === "active" ? current.unsettledAt : ctx.now,
+      updatedAt: ctx.now,
+    };
+    updates.push(threadEvent(ctx, "thread.unsettled", current));
+  }
   const firstMessage = !projection.messages.some((message) => message.role === "user");
   if (command.titleSeed !== undefined && firstMessage && command.titleSeed !== thread.title) {
     current = { ...current, title: command.titleSeed, updatedAt: ctx.now };
@@ -183,6 +206,10 @@ function dispatchMessage(
     nodeId: null,
     role: "user",
     text: command.text,
+    ...(command.notification === undefined ? {} : { notification: command.notification }),
+    ...(command.delegatedCompletion === undefined
+      ? {}
+      : { delegatedCompletion: command.delegatedCompletion }),
     ...(command.context === undefined ? {} : { context: command.context }),
     attachments: command.attachments,
     streaming: false,
@@ -212,6 +239,9 @@ function dispatchMessage(
     completedAt: null,
     checkpointId: null,
     contextHandoffId: null,
+    ...(command.restartContinuationOfRunId === undefined
+      ? {}
+      : { restartContinuationOfRunId: command.restartContinuationOfRunId }),
   };
   const recorded = messageEvent(ctx, message);
   if (live !== undefined) {
@@ -248,6 +278,14 @@ export function decide(
   if (projection === null) return reject("This thread does not exist.");
   if (projection.thread.deletedAt !== null) return reject("This thread was deleted.");
   switch (command.type) {
+    case "thread.settle":
+    case "thread.auto-settle":
+    case "thread.unsettle":
+    case "thread.auto-settle.set":
+    case "thread.pin":
+    case "thread.unpin":
+    case "thread.pin.reorder":
+      return decideLifecycleCommand(projection, command, ctx) ?? reject(unsupported(command.type));
     case "message.dispatch":
       return dispatchMessage(projection, command, ctx);
     case "run.interrupt": {
@@ -381,7 +419,10 @@ export function decide(
  */
 export function decideLaunch(
   projection: Projection | null,
-  input: OrchestrationV2ThreadLaunchInput & { readonly threadId: ThreadId },
+  input: OrchestrationV2ThreadLaunchInput & {
+    readonly threadId: ThreadId;
+    readonly modelSelection: ModelSelection;
+  },
   ctx: DecisionContext,
   worktree: ThreadWorktree | null = null,
 ): Decision {

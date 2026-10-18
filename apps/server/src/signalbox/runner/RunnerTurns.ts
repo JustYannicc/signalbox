@@ -13,6 +13,7 @@ import type {
   SecretsRegistration,
 } from "@signalbox/runner-protocol/SecretsProtocol";
 import type { SessionAccess } from "@signalbox/runner-protocol/SessionProtocol";
+import type { PullOperation } from "@signalbox/runner-protocol/PullProtocol";
 import {
   MessageId,
   type OrchestrationV2ProviderThread,
@@ -58,7 +59,7 @@ import { RunnerInstructionsError } from "./RunnerInstructions.ts";
 import { type RunnerSecrets, SecretsRegisterError } from "./RunnerSecrets.ts";
 import type { RunnerSessions } from "./RunnerSessions.ts";
 import { causeText, runnerLog } from "./runnerLog.ts";
-import { outgrownBy } from "./RunnerMachineClass.ts";
+import { type OutgrownCommandDecision, outgrownCommandDecision } from "./RunnerMachineClass.ts";
 import {
   FILE_CHANGING_ITEMS,
   finishDriveTurn,
@@ -135,6 +136,11 @@ export interface RunnerTurns {
    * has named it. Each message is taken once, so the thread can repeat itself.
    */
   readonly steer: (runId: RunId, message: RunnerMessageInput) => Effect.Effect<void>;
+  /** Applies one selected remote pull, or reports a durable refusal/result. */
+  readonly pull: (message: {
+    readonly operation: PullOperation;
+    readonly drive: DriveAccess;
+  }) => Effect.Effect<void>;
   /** Stops every turn but `runId`, the one the thread still considers live. */
   readonly keepOnly: (runId: RunId | null) => Effect.Effect<void>;
   /**
@@ -265,12 +271,14 @@ export const makeRunnerTurns = Effect.fn("makeRunnerTurns")(function* (input: {
   /** What the harness CLIs wrote to stderr, quoted in failure lines (`harnessStderr.ts`). */
   readonly stderr?: Pick<HarnessStderr, "mark" | "since">;
   readonly emit: (item: RunnerItem) => Effect.Effect<void>;
-  /** Installs or reuses the dependencies in `cwd` before each turn. */
+  /** Installs dependencies before a heavy turn; light turns move up when they need them. */
   readonly dependencies?: RunnerDependencies;
   /** Preview restoration shares the checkout preparation lock with turns. */
   readonly preparing?: Semaphore.Semaphore;
   /** The thread's drive, checked out in `cwd`. Absent: turns run in a plain directory. */
   readonly openDrive?: (access: DriveAccess) => Effect.Effect<RunnerDrive, never, Scope.Scope>;
+  /** A drive opened by preview before this Runner has started a turn. */
+  readonly previewDrive?: () => RunnerDrive | null;
   /** Where the harnesses' sessions are kept. Absent: they stay on this machine. */
   readonly sessions?: RunnerSessions;
   /** Brings the thread's attachments to this machine, with the turn's session token (`RunnerAttachments.ts`). */
@@ -291,6 +299,8 @@ export const makeRunnerTurns = Effect.fn("makeRunnerTurns")(function* (input: {
   const logAnnotations = yield* References.CurrentLogAnnotations;
   const sessions = new Map<ProviderInstanceId, OpenSession>();
   const turns = new Map<RunId, Turn>();
+  /** Drains hold the drive while the machine saves before it leaves. */
+  let draining = false;
   /** Runs this machine already took, so a repeated `turn.start` starts nothing. */
   const taken = new Set<RunId>();
   /** `turn` is off this machine: whatever waits for it to wind down goes on. */
@@ -322,6 +332,7 @@ export const makeRunnerTurns = Effect.fn("makeRunnerTurns")(function* (input: {
   // A run's usage and the items it brackets go out under one lock, so a
   // half-minute report never lands before a run's start or after its end.
   const ordered = yield* Semaphore.make(1);
+  const pullGate = yield* Semaphore.make(1);
 
   /** Emits the usage so far, unless the machine cannot measure any of it. */
   const reportUsage = (runId: RunId | null) =>
@@ -343,18 +354,34 @@ export const makeRunnerTurns = Effect.fn("makeRunnerTurns")(function* (input: {
   const mergeProviderTurns = new Set<ProviderTurnId>();
   /** Runs that moved to a heavy machine: this one does nothing more for them. */
   const outgrown = new Set<RunId>();
-  /** Commands already checked, by item and phase: a running one repeats as its output grows. */
+  /** Classified commands and dev-server tools, by item and phase. */
   const classified = new Set<string>();
-  /** Why `event` moves its run up, checking each command once as it starts and once as it ends. */
-  const outgrownByOnce = (event: ProviderAdapterV2Event) => {
-    if (event.type !== "turn_item.updated" || event.turnItem.type !== "command_execution") {
+  /** Moves eligible current-session commands or tools once in each execution phase. */
+  const outgrownByOnce = (
+    event: ProviderAdapterV2Event,
+    runId: RunId | null,
+    runtime: ProviderAdapterV2SessionRuntime,
+    decision: OutgrownCommandDecision,
+  ) => {
+    if (event.type !== "turn_item.updated") return null;
+    const item = event.turnItem;
+    if (item.type !== "command_execution" && item.type !== "dynamic_tool") return null;
+    if (
+      input.machineClass !== "light" ||
+      decision.reason === null ||
+      runId === null ||
+      runId !== latestRunId ||
+      runId !== runningRunId
+    ) {
       return null;
     }
-    const { id, status } = event.turnItem;
+    const owner = turns.get(runId);
+    if (owner === undefined || owner.status !== "running" || owner.session !== runtime) return null;
+    const { id, status } = item;
     const key = `${id}:${status === "running" || status === "pending" ? "start" : "end"}`;
     if (classified.has(key)) return null;
     classified.add(key);
-    return outgrownBy(event);
+    return { runId, reason: decision.reason };
   };
 
   /**
@@ -364,30 +391,52 @@ export const makeRunnerTurns = Effect.fn("makeRunnerTurns")(function* (input: {
    */
   let heldNotices: ReadonlyArray<string> = [];
   const driveNotice = (message: string) =>
-    Effect.suspend(() => {
-      const runId = runningRunId;
-      if (runId !== null) {
-        return ordered.withPermits(1)(input.emit({ kind: "drive.notice", runId, message }));
-      }
-      heldNotices = message === SAVED_AGAIN_NOTICE ? [] : [...heldNotices, message];
-      return Effect.logWarning(message);
-    });
+    ordered.withPermits(1)(
+      Effect.suspend(() => {
+        const runId = runningRunId;
+        if (runId !== null) return input.emit({ kind: "drive.notice", runId, message });
+        heldNotices = message === SAVED_AGAIN_NOTICE ? [] : [...heldNotices, message];
+        return Effect.logWarning(message);
+      }),
+    );
 
-  const drain: RunnerTurns["drain"] = Effect.gen(function* () {
-    const unsaved: Array<string> = [];
-    if (drive !== null) {
-      const saved = yield* Effect.result(drive.drive.saveNow);
-      if (saved._tag === "Failure") {
-        unsaved.push(`Saving this thread's files failed: ${saveFailureReason(saved.failure)}`);
+  /** Installs only on a machine that can keep the turn; a light machine moves up on demand. */
+  const prepareDependencies = (runId: RunId) => {
+    if (input.dependencies === undefined || input.machineClass === "light") return Effect.void;
+    return input.dependencies.prepare(
+      () => Effect.void,
+      (update) => input.emit({ kind: "dependencies.progress", runId, ...update }),
+    );
+  };
+
+  /** Turns and preview restoration must not race while preparing the checkout. */
+  const preparing = input.preparing ?? (yield* Semaphore.make(1));
+
+  const drain: RunnerTurns["drain"] = Effect.suspend(() => {
+    draining = true;
+    return Effect.gen(function* () {
+      const unsaved: Array<string> = [];
+      yield* preparing.withPermits(1)(
+        Effect.gen(function* () {
+          // Preview can open the writable checkout before a turn has claimed it.
+          const currentDrive = drive?.drive ?? input.previewDrive?.() ?? null;
+          if (currentDrive === null) return;
+          const saved = yield* Effect.result(currentDrive.saveNow);
+          if (saved._tag === "Failure") {
+            unsaved.push(`Saving this thread's files failed: ${saveFailureReason(saved.failure)}`);
+          }
+        }),
+      );
+      if (input.sessions !== undefined) {
+        for (const driver of new Set(
+          [...input.adapters.values()].map((adapter) => adapter.driver),
+        )) {
+          const reason = yield* input.sessions.flush(driver);
+          if (reason !== null) unsaved.push(`Saving the agent's session failed: ${reason}`);
+        }
       }
-    }
-    if (input.sessions !== undefined) {
-      for (const driver of new Set([...input.adapters.values()].map((adapter) => adapter.driver))) {
-        const reason = yield* input.sessions.flush(driver);
-        if (reason !== null) unsaved.push(`Saving the agent's session failed: ${reason}`);
-      }
-    }
-    return unsaved;
+      return unsaved;
+    }).pipe(Effect.ensuring(Effect.sync(() => (draining = false))));
   });
 
   /**
@@ -401,11 +450,23 @@ export const makeRunnerTurns = Effect.fn("makeRunnerTurns")(function* (input: {
     Effect.gen(function* () {
       outgrown.add(runId);
       yield* Effect.logInfo("the turn outgrew this machine", { runId, reason });
-      yield* drain;
+      const unsaved = yield* drain;
+      if (unsaved.length > 0) {
+        yield* interrupt(runId);
+        yield* ordered.withPermits(1)(
+          Effect.gen(function* () {
+            if (runningRunId === runId) runningRunId = null;
+            yield* input.emit({
+              kind: "turn.failed",
+              runId,
+              message: `This turn could not move to a larger machine because its state could not be saved. ${unsaved.join(" ")}`,
+            });
+          }),
+        );
+        return;
+      }
       yield* input.emit({ kind: "machine.outgrown", runId, reason });
     });
-  /** One turn readies the working directory at a time, even after a stop left one installing. */
-  const preparing = input.preparing ?? (yield* Semaphore.make(1));
 
   const interruptNow = (turn: Turn) =>
     turn.session === null || turn.providerThread === null || turn.providerTurnId === null
@@ -514,6 +575,41 @@ export const makeRunnerTurns = Effect.fn("makeRunnerTurns")(function* (input: {
       drive = { driveId: access.driveId, drive: opened };
       return opened;
     });
+
+  const pull: RunnerTurns["pull"] = (message) =>
+    pullGate.withPermits(1)(
+      Effect.gen(function* () {
+        const opened = yield* driveFor(message.drive);
+        if (opened === null) {
+          yield* input.emit({ kind: "git.pull.interrupted", id: message.operation.id });
+          return;
+        }
+        const blockedReason =
+          turns.size > 0 || finishing.size > 0 || runningRunId !== null
+            ? "This thread is busy; wait for its current turn to finish before pulling."
+            : draining
+              ? "This thread is saving before its machine leaves; try the pull again after it reconnects."
+              : undefined;
+        const result = yield* opened.pull(
+          message.operation,
+          message.drive.remoteToken,
+          blockedReason,
+        );
+        yield* input.emit({
+          kind: "git.pull.result",
+          result: {
+            ...result,
+            ...(result.reason === null ? {} : { reason: mask(result.reason) }),
+          },
+        });
+      }).pipe(
+        Effect.catchCause((cause) =>
+          Effect.logError("applying a selected drive pull failed", Cause.pretty(cause)).pipe(
+            Effect.andThen(input.emit({ kind: "git.pull.interrupted", id: message.operation.id })),
+          ),
+        ),
+      ),
+    );
 
   /**
    * Runs the agent once more in `runId`'s turn and answers whether that
@@ -682,16 +778,56 @@ export const makeRunnerTurns = Effect.fn("makeRunnerTurns")(function* (input: {
     runtime: ProviderAdapterV2SessionRuntime,
   ) => {
     const instanceId = adapter.instanceId;
+    // A failed handoff can leave a provider winding down while the next run loads.
+    const eventRunId = (event: ProviderAdapterV2Event) => {
+      switch (event.type) {
+        case "message.updated":
+          return event.message.runId ?? latestRunId;
+        case "node.updated":
+          return event.node.runId ?? latestRunId;
+        case "subagent.updated":
+          return event.subagent.runId ?? latestRunId;
+        case "plan.updated":
+          return event.plan.runId ?? latestRunId;
+      }
+      if (event.type === "turn_item.updated" && event.turnItem.runId !== null) {
+        return event.turnItem.runId;
+      }
+      const providerTurnId =
+        event.type === "turn.terminal"
+          ? event.providerTurnId
+          : event.type === "provider_turn.updated"
+            ? event.providerTurn.id
+            : event.type === "turn_item.updated"
+              ? event.turnItem.providerTurnId
+              : event.type === "runtime_request.updated"
+                ? event.runtimeRequest.providerTurnId
+                : null;
+      for (const [runId, turn] of turns) {
+        if (
+          (providerTurnId !== null && turn.providerTurnId === providerTurnId) ||
+          (event.type === "provider_turn.updated" &&
+            turn.attemptId === event.providerTurn.runAttemptId)
+        )
+          return runId;
+      }
+      return latestRunId;
+    };
     const filterAssistant = makeAssistantStreamingFilter(
       DEFAULT_SERVER_SETTINGS.responseStreamingMode,
     );
     /** Sends `event` as `runId`'s; a held end goes out under its own run, whatever runs since. */
-    const deliver = (event: ProviderAdapterV2Event, runId: RunId | null = latestRunId) =>
+    const deliver = (
+      event: ProviderAdapterV2Event,
+      runId: RunId | null = latestRunId,
+      suppressTranscript = false,
+    ) =>
       Effect.gen(function* () {
         const delivered = filterAssistant(event, yield* Clock.currentTimeMillis);
         if (delivered === null || runId === null) return;
         // Complete only once the rows behind it would survive this machine.
         if (input.sessions !== undefined) yield* input.sessions.settle(adapter.driver, delivered);
+        if (suppressTranscript) return;
         const stored =
           delivered.type === "turn_item.updated"
             ? { ...delivered, turnItem: stripUnservedToolOutputImageBytes(delivered.turnItem) }
@@ -714,14 +850,19 @@ export const makeRunnerTurns = Effect.fn("makeRunnerTurns")(function* (input: {
     return runtime.events.pipe(
       Stream.runForEach((event) =>
         Effect.gen(function* () {
-          if (latestRunId !== null && outgrown.has(latestRunId)) return;
-          if (yield* holdForDrive(event, (held, runId) => deliver(held, runId))) return;
-          yield* track(event);
-          yield* deliver(event);
-          const reason = input.machineClass === "light" ? outgrownByOnce(event) : null;
-          if (reason !== null && latestRunId !== null) {
-            yield* moveUp(latestRunId, reason);
+          const runIdBeforeDriveHold = eventRunId(event);
+          if (runIdBeforeDriveHold !== null && outgrown.has(runIdBeforeDriveHold)) {
+            // Its terminal still releases the next run's wait for this provider.
+            yield* track(event);
+            return;
           }
+          if (yield* holdForDrive(event, (held, runId) => deliver(held, runId))) return;
+          const originatingRunId = eventRunId(event);
+          const commandDecision = outgrownCommandDecision(event);
+          yield* track(event);
+          yield* deliver(event, originatingRunId, commandDecision.suppressTranscript);
+          const upgrade = outgrownByOnce(event, originatingRunId, runtime, commandDecision);
+          if (upgrade !== null) yield* moveUp(upgrade.runId, upgrade.reason);
         }),
       ),
       Effect.catchCause((cause) =>
@@ -922,13 +1063,8 @@ export const makeRunnerTurns = Effect.fn("makeRunnerTurns")(function* (input: {
           return true;
         }),
       );
-      // A lockfile main brought in is installed before the turn.
-      if (goOn && merged && input.dependencies !== undefined) {
-        const dependencies = input.dependencies;
-        yield* preparing.withPermits(1)(
-          dependencies.prepare((message) => input.emit({ kind: "drive.notice", runId, message })),
-        );
-      }
+      // A merged lockfile is installed on heavy; light runs move up when they use a package.
+      if (goOn && merged) yield* preparing.withPermits(1)(prepareDependencies(runId));
       return goOn;
     });
 
@@ -956,6 +1092,7 @@ export const makeRunnerTurns = Effect.fn("makeRunnerTurns")(function* (input: {
         cwd: input.cwd,
       };
       latestRunId = turn.runId;
+      classified.clear();
       latestTraceId = turn.traceId;
       // `/drives` and the context tool read one version of everything for the whole
       // turn; the view is taken while the checkout and session load.
@@ -986,13 +1123,11 @@ export const makeRunnerTurns = Effect.fn("makeRunnerTurns")(function* (input: {
                     ),
                   )
               : null;
-          if (input.dependencies !== undefined) {
-            yield* input.dependencies.prepare((message) =>
-              input.emit({ kind: "drive.notice", runId: turn.runId, message }),
-            );
-          }
+          yield* prepareDependencies(turn.runId);
           // Edits the thread made inside dependency trees, once the trees are rebuilt (#490).
-          if (opened !== null) yield* opened.restoreDependencyEdits;
+          if (opened !== null && input.machineClass !== "light") {
+            yield* opened.restoreDependencyEdits;
+          }
           // From the first turn on, changes stream into the drive as they happen (#493).
           if (opened !== null && watching !== opened) {
             watching = opened;
@@ -1248,6 +1383,7 @@ export const makeRunnerTurns = Effect.fn("makeRunnerTurns")(function* (input: {
     start,
     interrupt,
     steer,
+    pull,
     keepOnly,
     drain,
     taken: Effect.sync(() => [...taken]),

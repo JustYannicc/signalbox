@@ -550,7 +550,9 @@ describe("UserFolders", () => {
       yield* sql`DROP TABLE folders_state`;
       yield* sql`DROP TABLE onepassword_account`;
       yield* sql`DELETE FROM effect_sql_migrations
-        WHERE migration_id IN (13, 15) OR (migration_id = 20 AND name = 'folder_phases')`;
+        WHERE migration_id IN (13, 15)
+          OR (migration_id = 20 AND name = 'folder_phases')
+          OR (migration_id = 23 AND name = 'folder_lineage')`;
       yield* sql`INSERT INTO sections (id, context_id, parent_id, name, position) VALUES
         ('work', 'personal', NULL, 'Work', 0),
         ('clients', 'personal', 'work', 'Clients', 0),
