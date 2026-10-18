@@ -252,6 +252,7 @@ const migrations = Migrator.fromRecord({
   "0023_person_timezone": UserTimezone.createTables,
   "0023_folder_lineage": FolderTables.addLineage,
   "0024_folder_start_reservations": FolderStartReservations.createTables,
+  "0025_organization_roles": UserContexts.addRoleSlugs,
 });
 
 /** Applies every migration not recorded yet (`storage/migrations.ts`). Never edit or rename a merged one. */

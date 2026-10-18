@@ -34,8 +34,10 @@ const AutomationSetWebhookSecretTool = tool(
   AUTOMATION_TOOLS.automation_set_webhook_secret,
 );
 const AutomationCustomizeTool = tool("automation_customize", AUTOMATION_TOOLS.automation_customize);
+const TaskLifecycleTool = tool("task_lifecycle", AUTOMATION_TOOLS.task_lifecycle);
 
 export const AutomationToolkit = Toolkit.make(
+  TaskLifecycleTool,
   AutomationReferenceTool,
   AutomationValidateTool,
   AutomationSaveTool,

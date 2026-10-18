@@ -48,12 +48,24 @@ export const layer = Layer.effect(
             })
             .pipe(Effect.orDie);
         }),
-      placeOfProject: (projectId) =>
+      placeOfProject: (projectId, options) =>
         Effect.gen(function* () {
           const userId = yield* drives.userId.pipe(Effect.orDie);
           const driveId = userId === null ? null : driveOfProject(projectId, userId);
           const parsed = driveId === null ? null : parseDriveId(driveId);
           if (driveId === null || parsed === null) return null;
+          if (options?.remoteOnly === true) {
+            // Only a drive with a remote needs adoption. Check it before the separate role RPC.
+            if (
+              parsed.kind === "my" ||
+              directory._tag === "None" ||
+              (yield* directory.value.forDrive(driveId).remote().pipe(Effect.orDie)) === null
+            )
+              return null;
+            if (!canWrite(yield* drives.access(driveId).pipe(Effect.orDie))) return null;
+            if (yield* folders.driveIsTrashed(driveId).pipe(Effect.orDie)) return null;
+            return { contextId: parsed.contextId, driveId, remote: true };
+          }
           // `access` also says whether the user is still in the drive's context.
           if (!canWrite(yield* drives.access(driveId).pipe(Effect.orDie))) return null;
           if (yield* folders.driveIsTrashed(driveId).pipe(Effect.orDie)) {
@@ -81,7 +93,8 @@ export const layer = Layer.effect(
 export const layerWorker = Layer.succeed(
   ThreadContexts,
   ThreadContexts.of({
-    placeOfProject: () => Effect.die("Threads are created in their user's object."),
+    // Worker reads cannot resolve an acting user's writable home. Adoption happens in their object.
+    placeOfProject: () => Effect.succeed(null),
     initialModelSelection: () => Effect.die("Models are resolved in their user's object."),
     turn: () => Effect.die("Turns start in their user's object."),
   }),

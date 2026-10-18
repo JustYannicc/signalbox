@@ -88,6 +88,9 @@ export const SIGNALBOX_RPC_REACH = {
     summary: "Save an automation file in a folder; new, or a new version with automationId.",
     compiles: true,
   }),
+  "automations.taskLifecycle": write({
+    summary: "Read or change a task's completion condition and lifecycle.",
+  }),
 
   "sections.subscribe": read({ name: "sections.list" }),
   "sections.create": write(),

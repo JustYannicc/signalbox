@@ -1,3 +1,4 @@
+import { threadWithAsk } from "@t3tools/shared/signalboxAsks";
 import { applyThreadPullRequestLinkUpdate } from "@t3tools/shared/threadPullRequests";
 import { projectTurnItemForWire } from "./WireProjection.ts";
 import * as Stream from "effect/Stream";
@@ -730,6 +731,8 @@ export function applyToProjection(
   };
 
   switch (event.type) {
+    case "thread.ask-updated":
+      return { ...base, thread: threadWithAsk(projection.thread, event) };
     case "thread.pull-request-link-updated":
       return {
         ...base,
@@ -756,13 +759,13 @@ export function applyToProjection(
     case "thread.provider-switched":
       return {
         ...base,
-        thread: event.payload,
+        thread: { ...event.payload, asks: event.payload.asks ?? projection.thread.asks },
       };
     case "thread.visited":
     case "thread.marked-unread":
       return {
         ...projection,
-        thread: event.payload,
+        thread: { ...event.payload, asks: event.payload.asks ?? projection.thread.asks },
       };
     case "run.created":
     case "run.updated":
@@ -1504,6 +1507,9 @@ export function threadShellFromProjection(
     interactionMode: projection.thread.interactionMode,
     branch: projection.thread.branch,
     worktreePath: projection.thread.worktreePath,
+    ...(projection.thread.asks === undefined
+      ? {}
+      : { asks: projection.thread.asks.filter((ask) => ask.status === "pending") }),
     pullRequests: threadPullRequestsOf(projection.thread),
     ...(projection.thread.linkedPullRequest === undefined
       ? {}
@@ -1761,6 +1767,9 @@ function shellFromState(input: {
     interactionMode: input.state.thread.interactionMode,
     branch: input.state.thread.branch,
     worktreePath: input.state.thread.worktreePath,
+    ...(input.state.thread.asks === undefined
+      ? {}
+      : { asks: input.state.thread.asks.filter((ask) => ask.status === "pending") }),
     pullRequests: threadPullRequestsOf(input.state.thread),
     ...(input.state.thread.linkedPullRequest === undefined
       ? {}
@@ -1846,6 +1855,15 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
     const apply: ProjectionStoreV2Shape["apply"] = (event) =>
       Effect.gen(function* () {
         switch (event.type) {
+          case "thread.ask-updated": {
+            const thread = yield* getThread(event.threadId);
+            yield* apply({
+              ...event,
+              type: "thread.metadata-updated",
+              payload: threadWithAsk(thread, event),
+            });
+            break;
+          }
           case "thread.pull-request-link-updated": {
             const thread = yield* getThread(event.threadId);
             yield* apply({
@@ -1922,7 +1940,12 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 updated_at = excluded.updated_at,
                 archived_at = excluded.archived_at,
                 deleted_at = excluded.deleted_at,
-                payload_json = excluded.payload_json
+                payload_json = CASE
+                  WHEN json_type(excluded.payload_json, '$.asks') IS NULL
+                    AND json_type(orchestration_v2_projection_threads.payload_json, '$.asks') IS NOT NULL
+                  THEN json_set(excluded.payload_json, '$.asks', json_extract(orchestration_v2_projection_threads.payload_json, '$.asks'))
+                  ELSE excluded.payload_json
+                END
             `;
             break;
           }

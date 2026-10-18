@@ -172,7 +172,7 @@
       "rpc": "automations.customize",
       "access": "write",
       "input": "91eb786d",
-      "output": "c1cd1923"
+      "output": "01a21b35"
     },
     {
       "name": "automations.delete",
@@ -187,7 +187,7 @@
       "rpc": "automations.discardDraft",
       "access": "write",
       "input": "e4926bda",
-      "output": "c1cd1923"
+      "output": "01a21b35"
     },
     {
       "name": "automations.disconnect",
@@ -202,7 +202,7 @@
       "access": "read",
       "stream": "snapshot",
       "input": "e4926bda",
-      "output": "db56df35"
+      "output": "67ac3dcf"
     },
     {
       "name": "automations.githubSubscriptions",
@@ -217,7 +217,7 @@
       "access": "read",
       "stream": "snapshot",
       "input": "03c2b661",
-      "output": "25c7d51b"
+      "output": "562f2b59"
     },
     {
       "name": "automations.notices",
@@ -232,14 +232,14 @@
       "rpc": "automations.publish",
       "access": "write",
       "input": "b3f469e7",
-      "output": "c1cd1923"
+      "output": "01a21b35"
     },
     {
       "name": "automations.rotateWebhook",
       "rpc": "automations.rotateWebhook",
       "access": "write",
       "input": "e4926bda",
-      "output": "c1cd1923"
+      "output": "01a21b35"
     },
     {
       "name": "automations.run",
@@ -261,7 +261,7 @@
       "access": "read",
       "stream": "snapshot",
       "input": "5b9c822a",
-      "output": "3998d94e"
+      "output": "7060883e"
     },
     {
       "name": "automations.runs.retry",
@@ -276,21 +276,21 @@
       "access": "write",
       "compiles": true,
       "input": "e4a20fc8",
-      "output": "07cb0ccd"
+      "output": "50e3cd77"
     },
     {
       "name": "automations.setEnabled",
       "rpc": "automations.setEnabled",
       "access": "write",
       "input": "a3f5fcc8",
-      "output": "c1cd1923"
+      "output": "01a21b35"
     },
     {
       "name": "automations.setWebhookSecret",
       "rpc": "automations.setWebhookSecret",
       "access": "write",
       "input": "2af82751",
-      "output": "c1cd1923"
+      "output": "01a21b35"
     },
     {
       "name": "automations.stopAttached",
@@ -298,6 +298,13 @@
       "access": "write",
       "input": "1276a316",
       "output": "78961bd6"
+    },
+    {
+      "name": "automations.taskLifecycle",
+      "rpc": "automations.taskLifecycle",
+      "access": "write",
+      "input": "3213177c",
+      "output": "f42daea9"
     },
     {
       "name": "automations.validate",
@@ -1727,14 +1734,14 @@
       "access": "read",
       "stream": "snapshot",
       "input": "0640135d",
-      "output": "5e95f168"
+      "output": "919dd194"
     },
     {
       "name": "terminal.open",
       "rpc": "terminal.open",
       "access": "write",
       "input": "95f54c5d",
-      "output": "b1e6c6f1"
+      "output": "788cc60f"
     },
     {
       "name": "terminal.resize",
@@ -1748,13 +1755,13 @@
       "rpc": "terminal.restart",
       "access": "write",
       "input": "5a677a5f",
-      "output": "b1e6c6f1"
+      "output": "788cc60f"
     },
     {
       "name": "terminal.write",
       "rpc": "terminal.write",
       "access": "write",
-      "input": "db19ce54",
+      "input": "7554b8ff",
       "output": "794c92c1"
     },
     {
@@ -1763,7 +1770,7 @@
       "access": "read",
       "stream": "snapshot",
       "input": "03c2b661",
-      "output": "b6f8ae30"
+      "output": "af17df5c"
     },
     {
       "name": "terminalMetadata.subscribe",
@@ -1771,7 +1778,7 @@
       "access": "read",
       "stream": "snapshot",
       "input": "03c2b661",
-      "output": "fd689900"
+      "output": "dd899e48"
     },
     {
       "name": "threadKinds.list",
@@ -1805,6 +1812,30 @@
       "output": "c5e5cd7a"
     },
     {
+      "name": "threads.asks.answer",
+      "rpc": "orchestration.dispatchCommand",
+      "command": "thread.ask.answer",
+      "access": "write",
+      "input": "fda7ede6",
+      "output": "c5e5cd7a"
+    },
+    {
+      "name": "threads.asks.raise",
+      "rpc": "orchestration.dispatchCommand",
+      "command": "thread.ask.raise",
+      "access": "write",
+      "input": "f65558db",
+      "output": "c5e5cd7a"
+    },
+    {
+      "name": "threads.asks.withdraw",
+      "rpc": "orchestration.dispatchCommand",
+      "command": "thread.ask.withdraw",
+      "access": "write",
+      "input": "d4a9a92a",
+      "output": "c5e5cd7a"
+    },
+    {
       "name": "threads.autoSettle.set",
       "rpc": "orchestration.dispatchCommand",
       "command": "thread.auto-settle.set",
@@ -1825,7 +1856,7 @@
       "rpc": "orchestration.launchThread",
       "access": "write",
       "input": "d5a4dd19",
-      "output": "52f9de1a"
+      "output": "8123cd29"
     },
     {
       "name": "threads.delete",
@@ -1858,7 +1889,7 @@
       "rpc": "orchestration.getThreadProjection",
       "access": "read",
       "input": "1276a316",
-      "output": "ee88fbda"
+      "output": "9cb42a8b"
     },
     {
       "name": "threads.getFullThreadDiff",
@@ -1879,7 +1910,7 @@
       "rpc": "orchestration.getTurnItem",
       "access": "read",
       "input": "049d9a37",
-      "output": "87de6eed"
+      "output": "bc7f8c58"
     },
     {
       "name": "threads.getWorkflowScript",
@@ -1910,14 +1941,14 @@
       "access": "read",
       "stream": "snapshot",
       "input": "9b1960e6",
-      "output": "427f7cc4"
+      "output": "aa0bc515"
     },
     {
       "name": "threads.listArchived",
       "rpc": "orchestration.getArchivedShellSnapshot",
       "access": "read",
       "input": "03c2b661",
-      "output": "fd235ef9"
+      "output": "74bd1b36"
     },
     {
       "name": "threads.markRead",
@@ -2113,7 +2144,7 @@
       "rpc": "orchestration.dispatchCommand",
       "command": "thread.settle",
       "access": "write",
-      "input": "b1be93e6",
+      "input": "b3fd246d",
       "output": "c5e5cd7a"
     },
     {
@@ -2145,7 +2176,7 @@
       "access": "read",
       "stream": "snapshot",
       "input": "438e44e7",
-      "output": "d1bad755"
+      "output": "24cd235c"
     },
     {
       "name": "threads.subscribeArchived",
@@ -2153,7 +2184,7 @@
       "access": "read",
       "stream": "snapshot",
       "input": "03c2b661",
-      "output": "5ce2ba78"
+      "output": "cde7f5de"
     },
     {
       "name": "threads.switchProvider",

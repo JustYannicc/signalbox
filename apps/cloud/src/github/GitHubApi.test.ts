@@ -22,6 +22,29 @@ const responseClient = (body: unknown, status = 200, headers: Record<string, str
     ),
   );
 
+it.effect("fails repository creation on 404 while preserving missing repository reads", () =>
+  Effect.gen(function* () {
+    const api = makeGitHubApi(responseClient({ message: "Not Found" }, 404));
+    expect(yield* api.repository("token", "missing/repository")).toBeNull();
+    expect(yield* api.publicationRepository("token", "missing/repository")).toBeNull();
+    const error = yield* api
+      .createRepository("token", {
+        owner: "missing",
+        name: "repository",
+        personal: false,
+        private: true,
+        description: "Signalbox publication test",
+      })
+      .pipe(Effect.flip);
+    expect(error).toMatchObject({
+      _tag: "GitHubError",
+      operation: "createRepository",
+      status: 404,
+      requestKind: "rest",
+    });
+  }),
+);
+
 it.effect("keeps transport error text and request credentials out of logs", () => {
   const token = "github-transport-secret-canary";
   const detail = `A request carrying ${token} failed`;

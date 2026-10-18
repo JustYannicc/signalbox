@@ -131,6 +131,7 @@ import {
 import { projectScriptCwd, resolveProjectScripts } from "@t3tools/shared/projectScripts";
 import { CHAT_LIST_ANCHOR_OFFSET } from "@t3tools/shared/chatList";
 import { derivePendingBackgroundWork } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
+import { SignalboxAsksPanel } from "./chat/SignalboxAsksPanel"; // signalbox: durable answer rounds
 import { attachedAutomationTasks } from "@t3tools/client-runtime/automations/attached"; // signalbox: attached automation runs
 import {
   latestUnheldRun,
@@ -1650,7 +1651,10 @@ export default function ChatView(props: ChatViewProps) {
     container: workspaceLayoutElement,
     widthStorageKey: `t3code:preview-panel-width:${activeThreadKey}`,
   });
-  const activeThreadShell = useThreadShell(isServerThread ? activeThreadRef : null);
+  const liveActiveThreadShell = useThreadShell(isServerThread ? activeThreadRef : null);
+  // signalbox: a settled task is archived (#671) and only has its detail shell.
+  const activeThreadShell =
+    liveActiveThreadShell ?? (serverThreadShell === null ? serverThread : null);
   const timelineThreadError =
     serverRuntime?.status === "failed" &&
     serverRuntime.lastErrorClass === "usage_limit" &&
@@ -8492,6 +8496,13 @@ export default function ChatView(props: ChatViewProps) {
                                   ? () => onOpenRelatedThread(parentThreadLink.threadId)
                                   : null
                               }
+                            />
+                          ) : null}
+                          {activeThreadRef ? (
+                            <SignalboxAsksPanel
+                              threadRef={activeThreadRef}
+                              asks={serverProjection?.thread.asks}
+                              requests={serverProjection?.runtimeRequests}
                             />
                           ) : null}
                           {!composerMounted ? null : (

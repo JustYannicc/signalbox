@@ -1,3 +1,4 @@
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import type {
   RunnerBuild,
   RunnerItem,
@@ -5,6 +6,10 @@ import type {
   RunnerTurn,
   ThreadMessage,
 } from "@signalbox/runner-protocol/RunnerProtocol";
+import type {
+  TerminalCommandMessage,
+  TerminalReport,
+} from "@signalbox/runner-protocol/TerminalProtocol";
 import {
   NodeId,
   OrchestrationV2ProviderThread,
@@ -18,7 +23,7 @@ import type {
   FeedbackResponse,
   FeedbackRequest,
 } from "@signalbox/runner-protocol/FeedbackProtocol";
-import { describe, expect, it } from "@effect/vitest";
+import { expect, it } from "@effect/vitest";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Queue from "effect/Queue";
@@ -28,6 +33,7 @@ import * as TestClock from "effect/testing/TestClock";
 
 import { makeRunnerSession, RunnerConnectionError, type RunnerTransport } from "./RunnerSession.ts";
 import type { RunnerTurns } from "./RunnerTurns.ts";
+import type { RunnerTerminals } from "./RunnerTerminals.ts";
 
 const decodeProviderThread = Schema.decodeUnknownEffect(
   Schema.toCodecJson(OrchestrationV2ProviderThread),
@@ -62,6 +68,9 @@ const makeFakeThread = Effect.gen(function* () {
   const workflowStopCapabilities = yield* Ref.make<ReadonlyArray<boolean | undefined>>([]);
   const runtimeResponseCapabilities = yield* Ref.make<ReadonlyArray<boolean | undefined>>([]);
   const helloPulls = yield* Deferred.make<boolean>();
+  const terminalProcessIds = yield* Ref.make<ReadonlyArray<string | undefined>>([]);
+  const terminalReports = yield* Ref.make<ReadonlyArray<TerminalReport>>([]);
+  const dropOnTerminalReport = yield* Ref.make(false);
   /** The runs each `hello` said its process holds. */
   const helloRuns = yield* Ref.make<ReadonlyArray<ReadonlyArray<RunId> | undefined>>([]);
   const dropAfterCommit = yield* Ref.make(false);
@@ -88,6 +97,7 @@ const makeFakeThread = Effect.gen(function* () {
               yield* Ref.update(hellos, (all) => [...all, message.lastAckedSequence]);
               yield* Ref.update(helloRunScopedSecrets, (all) => [...all, message.runScopedSecrets]);
               yield* Ref.update(workflowStopCapabilities, (all) => [...all, message.workflowStops]);
+              yield* Ref.update(terminalProcessIds, (all) => [...all, message.terminalProcessId]);
               yield* Ref.update(runtimeResponseCapabilities, (all) => [
                 ...all,
                 message.runtimeResponses,
@@ -118,6 +128,10 @@ const makeFakeThread = Effect.gen(function* () {
             }
             case "end":
               return yield* close;
+            case "terminal.report":
+              yield* Ref.update(terminalReports, (all) => [...all, message.report]);
+              if (yield* Ref.getAndSet(dropOnTerminalReport, false)) yield* close;
+              return;
           }
         });
       return { send, receive: Queue.take(inbox), close };
@@ -137,8 +151,11 @@ const makeFakeThread = Effect.gen(function* () {
     hellos,
     helloRunScopedSecrets,
     workflowStopCapabilities,
-    runtimeResponseCapabilities,
     helloPulls,
+    terminalProcessIds,
+    terminalReports,
+    dropOnTerminalReport,
+    runtimeResponseCapabilities,
     helloRuns,
     dropAfterCommit,
     toCurrent,
@@ -176,6 +193,7 @@ const makeFakeTurns = Effect.gen(function* () {
       preparationsTaken: Effect.succeed([]),
       keepOnly: () => Effect.void,
       steer: () => Effect.void,
+      watchDrive: () => Effect.void,
       respondRuntimeRequest: (response) =>
         Ref.update(runtimeResponses, (all) => [...all, response]),
       pull: ({ operation }) =>
@@ -215,6 +233,72 @@ const makeFakeTurns = Effect.gen(function* () {
   };
 });
 
+const makeFakeTerminals = Effect.gen(function* () {
+  const commands = yield* Ref.make<ReadonlyArray<string>>([]);
+  const replays = yield* Ref.make(0);
+  const emitRef =
+    yield* Deferred.make<(report: TerminalReport) => Effect.Effect<void, RunnerConnectionError>>();
+  const make = (emit: (report: TerminalReport) => Effect.Effect<void, RunnerConnectionError>) =>
+    Effect.as(Deferred.succeed(emitRef, emit), {
+      handleCommand: (message: TerminalCommandMessage) =>
+        Effect.gen(function* () {
+          yield* Ref.update(commands, (all) => [...all, message.command.type]);
+          yield* emit({
+            type: "result",
+            requestId: message.requestId,
+            terminalId: "term-1",
+            generation: 1,
+            leaseGeneration: 1,
+            result: { type: "cleared" },
+          });
+        }),
+      replayEvents: (activate) =>
+        Effect.gen(function* () {
+          yield* activate;
+          yield* Ref.update(replays, (count) => count + 1);
+          yield* emit({
+            type: "snapshot",
+            terminalId: "term-1",
+            generation: 1,
+            leaseGeneration: 1,
+            snapshot: {
+              threadId,
+              terminalId: "term-1",
+              cwd: ".",
+              worktreePath: null,
+              status: "running",
+              pid: 999,
+              history: "ready",
+              exitCode: null,
+              exitSignal: null,
+              label: "Terminal",
+              updatedAt: "2026-10-17T00:00:00.000Z",
+              sequence: 0,
+            },
+          });
+          yield* emit({
+            type: "event",
+            terminalId: "term-1",
+            generation: 1,
+            leaseGeneration: 1,
+            sequence: 1,
+            event: { type: "output", data: "ready" },
+          });
+        }),
+      drain: Effect.succeed([]),
+    } satisfies RunnerTerminals);
+  const emitReport = (report: TerminalReport) =>
+    Effect.flatMap(Deferred.await(emitRef), (emit) => emit(report));
+  return { make, commands, replays, emitReport };
+});
+
+const noopTerminals = {
+  handleCommand: () => Effect.void,
+  replayEvents: (activate: Effect.Effect<void>) => activate,
+  drain: Effect.succeed([]),
+} satisfies RunnerTerminals;
+const makeNoopTerminals = () => Effect.succeed(noopTerminals);
+
 /** Lets the session's fibers run until `done` holds, advancing the test clock past reconnect waits. */
 const settle = (done: Effect.Effect<boolean>, label = "") =>
   Effect.gen(function* () {
@@ -239,9 +323,10 @@ const sessionOf = (
     build,
     transport: thread.transport,
     makeTurns: turns.make,
+    makeTerminals: makeNoopTerminals,
   });
 
-describe("RunnerSession", () => {
+it.layer(NodeCrypto.layer)("RunnerSession", (it) => {
   it.effect("advertises feedback and returns the requested adapter result over the session", () =>
     Effect.scoped(
       Effect.gen(function* () {
@@ -256,6 +341,7 @@ describe("RunnerSession", () => {
           imageVersion: "test",
           build,
           transport: thread.transport,
+          makeTerminals: makeNoopTerminals,
           makeTurns: (emit) =>
             Effect.map(turns.make(emit), (service) => ({
               ...service,
@@ -323,6 +409,7 @@ describe("RunnerSession", () => {
                   requests.push(request.taskId);
                 }).pipe(Effect.andThen(Deferred.succeed(stopped, undefined)), Effect.asVoid),
             })),
+          makeTerminals: makeNoopTerminals,
         });
         yield* Deferred.await(thread.welcomed);
         expect(yield* Ref.get(thread.workflowStopCapabilities)).toEqual([true]);
@@ -339,6 +426,160 @@ describe("RunnerSession", () => {
         yield* Deferred.await(stopped);
         expect(requests).toEqual(["current-task"]);
         expect(yield* Ref.get(turns.startedTurns)).toEqual([]);
+      }),
+    ),
+  );
+
+  it.effect("replays terminal snapshots and routes commands across same-process reconnects", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const thread = yield* makeFakeThread;
+        const turns = yield* makeFakeTurns;
+        const terminals = yield* makeFakeTerminals;
+        const session = yield* makeRunnerSession({
+          threadId,
+          generation: 1,
+          token: "token",
+          machineId: "machine",
+          imageVersion: "test",
+          build,
+          transport: thread.transport,
+          makeTurns: turns.make,
+          makeTerminals: terminals.make,
+        });
+        yield* settle(
+          Effect.map(Ref.get(thread.hellos), (all) => all.length === 1),
+          "hello",
+        );
+        yield* settle(
+          Effect.map(Ref.get(thread.terminalReports), (all) =>
+            all.some((report) => report.type === "snapshot"),
+          ),
+          "terminal snapshot replayed",
+        );
+        expect((yield* Ref.get(thread.terminalReports)).map((report) => report.type)).toEqual([
+          "snapshot",
+          "event",
+        ]);
+
+        yield* thread.toCurrent({
+          type: "terminal.command",
+          requestId: "clear-1",
+          command: {
+            type: "clear",
+            threadId,
+            terminalId: "term-1",
+            generation: 1,
+            leaseGeneration: 1,
+          },
+        });
+        yield* settle(
+          Effect.map(Ref.get(thread.terminalReports), (all) =>
+            all.some((report) => report.type === "result" && report.requestId === "clear-1"),
+          ),
+          "terminal command result",
+        );
+        expect(yield* Ref.get(terminals.commands)).toEqual(["clear"]);
+
+        const reportCountBeforeReconnect = (yield* Ref.get(thread.terminalReports)).length;
+        yield* session.dropConnection;
+        yield* settle(
+          Effect.map(Ref.get(thread.hellos), (all) => all.length === 2),
+          "reconnect",
+        );
+        const processIds = yield* Ref.get(thread.terminalProcessIds);
+        expect(processIds).toHaveLength(2);
+        expect(processIds[0]).toBeTruthy();
+        expect(processIds[1]).toBe(processIds[0]);
+        expect(yield* Ref.get(terminals.replays)).toBe(2);
+        expect(
+          (yield* Ref.get(thread.terminalReports))
+            .slice(reportCountBeforeReconnect)
+            .map((report) => report.type),
+        ).toEqual(["snapshot", "event"]);
+      }),
+    ),
+  );
+
+  it.effect("clears a failed replay socket before the next connection starts", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const thread = yield* makeFakeThread;
+        const turns = yield* makeFakeTurns;
+        const terminals = yield* makeFakeTerminals;
+        const secondConnectStarted = yield* Deferred.make<void>();
+        const allowSecondConnect = yield* Deferred.make<void>();
+        const thirdConnectStarted = yield* Deferred.make<void>();
+        const allowThirdConnect = yield* Deferred.make<void>();
+        let connects = 0;
+        const transport: RunnerTransport = {
+          connect: Effect.gen(function* () {
+            connects += 1;
+            if (connects === 2) {
+              yield* Deferred.succeed(secondConnectStarted, undefined);
+              yield* Deferred.await(allowSecondConnect);
+            }
+            if (connects === 3) {
+              yield* Deferred.succeed(thirdConnectStarted, undefined);
+              yield* Deferred.await(allowThirdConnect);
+            }
+            return yield* thread.transport.connect;
+          }),
+        };
+        const session = yield* makeRunnerSession({
+          threadId,
+          generation: 1,
+          token: "token",
+          machineId: "machine",
+          imageVersion: "test",
+          build,
+          transport,
+          makeTurns: turns.make,
+          makeTerminals: terminals.make,
+        });
+        yield* settle(
+          Effect.map(Ref.get(thread.hellos), (all) => all.length === 1),
+          "initial hello",
+        );
+        yield* settle(
+          Effect.map(Ref.get(thread.terminalReports), (all) =>
+            all.some((report) => report.type === "event"),
+          ),
+          "initial terminal replay",
+        );
+
+        yield* Ref.set(thread.dropOnTerminalReport, true);
+        yield* session.dropConnection;
+        yield* settle(Deferred.isDone(secondConnectStarted), "second connection gate");
+        yield* Deferred.succeed(allowSecondConnect, undefined);
+        yield* settle(
+          Deferred.isDone(thirdConnectStarted),
+          "third connection gate after replay failure",
+        );
+
+        const result = yield* Effect.result(
+          terminals.emitReport({
+            type: "event",
+            terminalId: "term-1",
+            generation: 1,
+            leaseGeneration: 1,
+            sequence: 2,
+            event: { type: "output", data: "between connections" },
+          }),
+        );
+        expect(result._tag).toBe("Success");
+
+        yield* Deferred.succeed(allowThirdConnect, undefined);
+        yield* settle(
+          Effect.map(Ref.get(thread.hellos), (all) => all.length === 3),
+          "third hello",
+        );
+        const reports = yield* Ref.get(thread.terminalReports);
+        const thirdSnapshot = reports.map((report) => report.type).lastIndexOf("snapshot");
+        expect(reports.slice(thirdSnapshot).map((report) => report.type)).toEqual([
+          "snapshot",
+          "event",
+        ]);
       }),
     ),
   );
@@ -519,6 +760,7 @@ describe("RunnerSession", () => {
           build,
           transport: thread.transport,
           makeTurns: turns.make,
+          makeTerminals: makeNoopTerminals,
         });
         yield* settle(
           Effect.map(Ref.get(thread.hellos), (all) => all.length === 1),
@@ -592,6 +834,7 @@ describe("RunnerSession", () => {
             build,
             transport: thread.transport,
             makeTurns: first.make,
+            makeTerminals: makeNoopTerminals,
           });
           yield* first.emit(item("a"));
           yield* settle(
@@ -620,6 +863,7 @@ describe("RunnerSession", () => {
           connect: Effect.andThen(Deferred.await(connect), thread.transport.connect),
         },
         makeTurns: second.make,
+        makeTerminals: makeNoopTerminals,
       });
       yield* second.emit(item("x"));
       for (let round = 0; round < 3; round++) yield* TestClock.adjust("1 second");
@@ -670,6 +914,7 @@ describe("RunnerSession", () => {
             }),
           },
           makeTurns: turns.make,
+          makeTerminals: makeNoopTerminals,
         });
         expect(yield* session.ended).toContain("stale_generation");
       }),
@@ -697,6 +942,7 @@ describe("RunnerSession", () => {
             ),
           },
           makeTurns: turns.make,
+          makeTerminals: makeNoopTerminals,
         });
         yield* settle(
           Effect.map(Ref.get(thread.committed), (all) => all.length === 1),

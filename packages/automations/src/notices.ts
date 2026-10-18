@@ -44,8 +44,11 @@ export function automationNotice(input: {
   });
   switch (step.verb) {
     case "ask":
-      // A run is blocked until someone answers, so asks always interrupt.
-      return notice("ask", stepAsk(step).ask.question?.trim() || step.label, "high");
+      return notice(
+        "ask",
+        stepAsk(step).ask.question?.trim() || step.label,
+        stepAsk(step).ask.importance,
+      );
     case "notify": {
       const args = stepArgs(step);
       const message = typeof args[0] === "string" ? args[0].trim() : JSON.stringify(args[0] ?? "");

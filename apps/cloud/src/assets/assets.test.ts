@@ -85,6 +85,8 @@ const threads = CloudThreadService.CloudThreadService.of({
           latestLocalTurnOrdinal: 0,
         })
       : Effect.fail(new ThreadNotFoundError()),
+  answerAskAsAssistant: unused,
+  syncAutomationAsk: unused,
   dispatchCommand: unused,
   launchThread: unused,
   threadHistoryPage: unused,

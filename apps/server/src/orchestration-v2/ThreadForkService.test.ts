@@ -12,6 +12,7 @@ import {
   RunId,
   ThreadId,
 } from "@t3tools/contracts";
+import type { SignalboxAsk } from "@t3tools/contracts/signalboxAsks";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 
@@ -106,11 +107,14 @@ function makeSourceProjection(sourceRun: OrchestrationV2Run): OrchestrationV2Thr
   };
 }
 
-const planFork = (sourceRun: OrchestrationV2Run) =>
+const planFork = (
+  sourceRun: OrchestrationV2Run,
+  sourceProjection = makeSourceProjection(sourceRun),
+) =>
   Effect.gen(function* () {
     const service = yield* ThreadForkService.ThreadForkServiceV2;
     return yield* service.plan({
-      sourceProjection: makeSourceProjection(sourceRun),
+      sourceProjection,
       sourceRun,
       sourceProviderThread: undefined,
       canonicalSourcePoint: {
@@ -189,5 +193,47 @@ it.effect("rejects in-progress and rolled-back fork sources", () =>
       assert.equal(error.targetThreadId, targetThreadId);
       assert.equal(error.cause, ThreadForkService.forkableSourceRunStatusError(sourceRun));
     }
+  }),
+);
+
+it.effect("keeps the source asks out of the independent fork", () =>
+  Effect.gen(function* () {
+    const sourceRun = makeSourceRun("completed");
+    const sourceProjection = makeSourceProjection(sourceRun);
+    const ask: SignalboxAsk = {
+      id: "source-approval",
+      kind: "ready",
+      status: "pending",
+      source: { kind: "automation", runId: "workflow", stepKey: "merge" },
+      createdAt: "2026-07-24T09:00:00.000Z",
+      updatedAt: "2026-07-24T09:00:00.000Z",
+      questions: [
+        {
+          id: "merge",
+          question: "Merge?",
+          why: "The checks passed",
+          unblocks: "Release",
+          recommendation: true,
+          options: [],
+          blocking: true,
+          decisionOwner: "Owner",
+          surface: { kind: "kit", component: "text" },
+        },
+      ],
+      rounds: [
+        {
+          number: 1,
+          questionIds: ["merge"],
+          answers: [],
+          deferredQuestionIds: [],
+          openedAt: "2026-07-24T09:00:00.000Z",
+          closedAt: null,
+        },
+      ],
+    };
+    const source = { ...sourceProjection, thread: { ...sourceProjection.thread, asks: [ask] } };
+    const result = yield* planFork(sourceRun, source);
+    assert.deepEqual(result.targetThread.asks, []);
+    assert.deepEqual(source.thread.asks, [ask]);
   }),
 );

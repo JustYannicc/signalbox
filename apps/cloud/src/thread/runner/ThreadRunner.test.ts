@@ -14,6 +14,8 @@ import * as Layer from "effect/Layer";
 import * as TestClock from "effect/testing/TestClock";
 
 import { UserObjectError } from "../../user/UserDirectory.ts";
+import { remoteThreadWorktree } from "../../user/contextProjects.ts";
+import { threadEvent } from "../threadEvents.ts";
 import { CONNECT_TIMEOUT_MS, IDLE_TAIL_MS, MachineBackend } from "./MachineBackend.ts";
 import { DRAIN_TIMEOUT_MS } from "./ThreadRunner.ts";
 import { CONTINUE_PROMPT, MAX_CONTINUATIONS } from "./runRecovery.ts";
@@ -59,6 +61,77 @@ const startupBackend = {
 };
 
 describe("ThreadRunner", () => {
+  it.effect(
+    "keeps a saved native session and checkpoints across publication and object restart",
+    () =>
+      Effect.gen(function* () {
+        const filename = freshDatabase();
+        const driveId = "folder/personal/publication";
+        const place = { ...personal, place: { ...personal.place, driveId } };
+        const before = yield* withObject(filename, (engine, runner, context) =>
+          Effect.gen(function* () {
+            yield* launch(engine, "launch-1", place, {
+              projectId: ProjectId.make(`drive:${driveId}`),
+            });
+            const machine = yield* connect(runner);
+            const turn = yield* liveTurn(runner);
+            const report = turnReport(turn.runId, turn.runOrdinal, turn.providerThread);
+            yield* runner.batch({
+              generation: machine.generation,
+              sequence: 1,
+              items: [
+                report.started,
+                {
+                  kind: "drive.checkpoint",
+                  runId: turn.runId,
+                  start: null,
+                  commit: "a".repeat(40),
+                  files: [{ path: "work.txt", kind: "added", additions: 1, deletions: 0 }],
+                },
+                report.full,
+                report.terminal,
+              ],
+            });
+            yield* saveSession(context, "claude-session-1");
+            yield* runner.ended(machine.generation, "test");
+            return yield* snapshot(engine);
+          }),
+        );
+        yield* withObject(filename, (engine, runner) =>
+          Effect.gen(function* () {
+            const worktree = remoteThreadWorktree(driveId, threadId);
+            yield* engine.dispatch(
+              owner,
+              {
+                type: "thread.metadata.update",
+                commandId: CommandId.make("adopt-publication"),
+                threadId,
+              },
+              { place: null, pools: null, worktree },
+            );
+            const adopted = yield* snapshot(engine);
+            expect(adopted.projection.providerThreads).toEqual(before.projection.providerThreads);
+            expect(adopted.projection.providerThreads[0]?.nativeThreadRef?.nativeId).toBe(
+              "claude-session-1",
+            );
+            expect(adopted.projection.checkpoints).toEqual(before.projection.checkpoints);
+            expect(adopted.projection.checkpoints).toHaveLength(1);
+            expect(adopted.projection.messages).toEqual(before.projection.messages);
+            yield* send(engine, 2, "Continue after publication");
+            yield* connect(runner);
+            expect(yield* liveTurn(runner)).toMatchObject({
+              providerTurnOrdinal: 2,
+              providerThread: { nativeThreadRef: { nativeId: "claude-session-1" } },
+            });
+            expect((yield* snapshot(engine)).projection.thread).toMatchObject({
+              branch: worktree.branch,
+              worktreePath: worktree.path,
+            });
+          }),
+        );
+      }),
+  );
+
   it.effect("accepts legacy runner images during rollout and refuses unsupported protocols", () =>
     withObject(freshDatabase(), (engine, runner) =>
       Effect.gen(function* () {
@@ -794,6 +867,58 @@ describe("ThreadRunner", () => {
     ),
   );
 
+  it.effect("drops a settled task's drain when a new message reopens it", () =>
+    withObject(freshDatabase(), (engine, runner) =>
+      Effect.gen(function* () {
+        yield* launch(engine);
+        const machine = yield* connect(runner);
+        const turn = yield* liveTurn(runner);
+        const report = turnReport(turn.runId, turn.runOrdinal, turn.providerThread);
+        yield* runner.batch({
+          generation: machine.generation,
+          sequence: 1,
+          items: [report.started, report.full, report.terminal],
+        });
+        // A settled task is archived too (#671), so its machine drains straight away.
+        yield* engine.apply((projection, ctx) =>
+          Effect.succeed({
+            events: [
+              threadEvent(ctx, "thread.settled", {
+                ...projection!.thread,
+                archivedAt: ctx.now,
+                settledOverride: "settled",
+                settledAt: ctx.now,
+                updatedAt: ctx.now,
+              }),
+            ],
+            result: undefined,
+          }),
+        );
+        const drain = yield* runner.reconcile;
+        expect(drain.drain?.generation).toBe(machine.generation);
+
+        yield* send(engine, 2, "Please continue");
+        expect(yield* runner.reconcile).toMatchObject({ busy: true, release: null, stop: false });
+        // The answer to the old drain lets nothing go: the reopened task is working again.
+        yield* runner.batch({
+          generation: machine.generation,
+          sequence: 2,
+          items: [{ kind: "machine.drained", id: drain.drain!.id, unsaved: [] }],
+        });
+        expect(yield* runner.reconcile).toMatchObject({ busy: true, release: null, stop: false });
+        const work = yield* runner.work;
+        expect(work.drain).toBeNull();
+        expect(work.turn?.message.text).toContain("Please continue");
+        const { thread } = (yield* snapshot(engine)).projection;
+        expect([thread.settledOverride, thread.settledAt, thread.archivedAt]).toEqual([
+          null,
+          null,
+          null,
+        ]);
+      }),
+    ),
+  );
+
   it.effect("ignores the late close of a connection a reconnect replaced", () =>
     withObject(freshDatabase(), (engine, runner) =>
       Effect.gen(function* () {
@@ -1485,7 +1610,7 @@ describe("ThreadRunner", () => {
           });
           expect(yield* runner.authorizeRemote(remoteToken)).toMatchObject({
             _tag: "denied",
-            reason: "No turn is running on this thread.",
+            reason: "This token is not for a live turn or terminal on this machine.",
           });
         }),
       { drives: true },

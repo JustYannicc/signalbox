@@ -1,4 +1,5 @@
 import {
+  AUTOMATION_WS_METHODS,
   AuthOrchestrationOperateScope,
   AuthOrchestrationReadScope,
   AuthPreviewOperateScope,
@@ -32,6 +33,7 @@ import { SignalboxContextId } from "@t3tools/contracts/signalboxContexts";
 import { SIGNALBOX_TRASH_WS_METHODS } from "@t3tools/contracts/signalboxTrash";
 
 import * as Environment from "../environment.ts";
+import { pauseTaskDone } from "../automations/taskLifecycleTesting.ts";
 import { makeMemoryCloud } from "../testing.ts";
 import { scriptedModelSelection, scriptedReply } from "../thread/scriptedProvider.ts";
 import { Threads } from "../thread/Threads.ts";
@@ -54,6 +56,7 @@ const connect = (
 ) =>
   Effect.gen(function* () {
     yield* cloud.userDirectory.forUser(callerId).recordSignIn({ id: callerId, email: "a@b.c" });
+    yield* pauseTaskDone(cloud, callerId, Environment.SCRATCH_PROJECT_ID);
     const rpc = yield* RpcTest.makeClient(CloudRpc.CloudRpcGroup).pipe(
       Effect.provide(
         Layer.mergeAll(
@@ -599,6 +602,21 @@ describe("cloud RPC", () => {
       const readOnly = yield* client([AuthOrchestrationReadScope]);
       const send = yield* launch(readOnly).pipe(Effect.flip);
       expect(send).toMatchObject({ requiredScope: AuthOrchestrationOperateScope });
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("lets a read-only session read a task's lifecycle but not change it", () =>
+    Effect.gen(function* () {
+      yield* launch(yield* client());
+      const readOnly = yield* client([AuthOrchestrationReadScope]);
+      const lifecycle = readOnly[AUTOMATION_WS_METHODS.automationsTaskLifecycle];
+      const read = yield* lifecycle({ threadId, action: "read" }).pipe(Effect.flip, Effect.option);
+      expect(read).not.toMatchObject({ value: { _tag: "EnvironmentAuthorizationError" } });
+      const reopen = yield* lifecycle({ threadId, action: "reopen" }).pipe(Effect.flip);
+      expect(reopen).toMatchObject({
+        _tag: "EnvironmentAuthorizationError",
+        requiredScope: AuthOrchestrationOperateScope,
+      });
     }).pipe(Effect.scoped),
   );
 

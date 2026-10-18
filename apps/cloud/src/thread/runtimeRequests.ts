@@ -15,6 +15,7 @@ import { isRunAttemptOrContinuation } from "@signalbox/runner-protocol/RunAttemp
 
 import { isSecretSendId } from "./secretSendIdentity.ts";
 import { isLiveRun } from "./runState.ts";
+import * as Schema from "effect/Schema";
 import {
   type Decision,
   type DecisionContext,
@@ -25,6 +26,10 @@ import {
   unstampedEventId,
 } from "./threadEvents.ts";
 import { positionTurnItem } from "./turnItemPosition.ts";
+
+const isJson = Schema.is(Schema.Json);
+const hasAnswer = (answer: unknown) =>
+  typeof answer === "string" ? answer.trim().length > 0 : answer !== null && isJson(answer);
 
 type Projection = OrchestrationV2ThreadProjection;
 type Request = OrchestrationV2RuntimeRequest;
@@ -326,17 +331,11 @@ export function respondToRuntimeRequest(
     if (
       item.questions.some((question) => {
         const answer = answers?.[question.id];
-        return (
-          question.required !== false && (typeof answer !== "string" || answer.trim().length === 0)
-        );
+        return question.required !== false && !hasAnswer(answer);
       })
     )
       return reject("Answer each question before sending.");
-    if (
-      !Object.values(answers ?? {}).some(
-        (answer) => typeof answer === "string" && answer.trim().length > 0,
-      )
-    )
+    if (!Object.values(answers ?? {}).some(hasAnswer))
       return reject("Enter an answer before sending.");
   } else if (request.kind !== "user_input" && decision === undefined) {
     return reject("Choose whether to approve this request.");

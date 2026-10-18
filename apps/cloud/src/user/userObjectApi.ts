@@ -1,3 +1,6 @@
+import { askTool, isAskTool } from "../thread/askTools.ts";
+import type * as Crypto from "effect/Crypto";
+import type * as CloudThreadService from "../thread/CloudThreadService.ts";
 import { statusLineJson } from "@signalbox/runner-protocol/StatusLineProtocol";
 import { AutomationError, ThreadId, type PullRequestDiffInput } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
@@ -29,6 +32,7 @@ import {
   recordLocalModelRequest,
 } from "../localKeys/localModelAccess.ts";
 import * as UserPreviewSetup from "../previewSetup/UserPreviewSetup.ts";
+import { wire as terminalWire } from "../thread/terminalSync.ts";
 import { wire } from "../thread/threadWire.ts";
 import {
   shellSnapshotWire,
@@ -46,6 +50,7 @@ import * as UserShell from "./UserShell.ts";
 import * as UserStore from "./UserStore.ts";
 import * as UserThreadKinds from "./UserThreadKinds.ts";
 import * as UserThreadStatus from "./UserThreadStatus.ts";
+import * as UserTerminals from "./UserTerminals.ts";
 import { UserTrash } from "../trash/UserTrash.ts";
 import * as ClientTraceContext from "../observability/clientTraceContext.ts";
 
@@ -62,6 +67,8 @@ export const makeUserObjectApi = (
     effect: Effect.Effect<
       A,
       E,
+      | Crypto.Crypto
+      | CloudThreadService.CloudThreadService
       | ThreadSearch.ThreadSearch
       | UserLearner.UserLearner
       | UserStore.UserStore
@@ -76,6 +83,7 @@ export const makeUserObjectApi = (
       | GitHubBranches.GitHubBranches
       | UserThreadKinds.UserThreadKinds
       | UserThreadStatus.UserThreadStatus
+      | UserTerminals.UserTerminals
       | UserFolders.UserFolders
       | LocalKeys.LocalKeys
       | ResourceBindings.ResourceBindings
@@ -142,6 +150,10 @@ export const makeUserObjectApi = (
         ),
       );
     },
+    recordTerminalEvents: (encoded) => {
+      const delivery = terminalWire.delivery.decode(encoded);
+      return run(UserTerminals.UserTerminals.use((terminals) => terminals.record(delivery)));
+    },
     // An object without automations yet takes the events and drops them.
     threadEvents: ({ threadId, events }) =>
       run(
@@ -168,6 +180,7 @@ export const makeUserObjectApi = (
     rebuildThreadIndex: () => shell((service) => service.rebuildThreadIndex),
     beginGitHubConnect: (input) => github((service) => service.begin(input)),
     completeGitHubConnect: (grantId) => github((service) => service.complete(grantId)),
+    cancelGitHubConnect: (grantId) => github((service) => service.cancel(grantId)),
     abortGitHubConnect: (grantId) => github((service) => service.abort(grantId)),
     disconnectGitHub: () => github((service) => service.disconnect),
     githubAccessToken: () => github((service) => service.accessToken),
@@ -253,7 +266,8 @@ export const makeUserObjectApi = (
         }),
       ),
     publishBranch: (input) => run(publishBranch(input)),
-    automationTool: (threadId, name, input) => run(automationTool(threadId, name, input)),
+    automationTool: (threadId, name, input) =>
+      run(isAskTool(name) ? askTool(threadId, name, input) : automationTool(threadId, name, input)),
     folderStatus: (threadId) =>
       run(
         UserThreadStatus.UserThreadStatus.use((status) =>

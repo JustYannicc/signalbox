@@ -7,13 +7,25 @@
   ],
   "type": "module",
   "exports": {
+    "./waitingCost": {
+      "types": "./src/waitingCost.ts",
+      "import": "./src/waitingCost.ts"
+    },
     "./clientIssues": {
       "types": "./src/clientIssues.ts",
       "import": "./src/clientIssues.ts"
     },
+    "./clientActionTiming": {
+      "types": "./src/clientActionTiming.ts",
+      "import": "./src/clientActionTiming.ts"
+    },
     ".": {
       "types": "./src/index.ts",
       "import": "./src/index.ts"
+    },
+    "./taskLifecycle": {
+      "types": "./src/taskLifecycle.ts",
+      "import": "./src/taskLifecycle.ts"
     },
     "./settings": {
       "types": "./src/settings.ts",
@@ -26,6 +38,10 @@
     "./account": {
       "types": "./src/account.ts",
       "import": "./src/account.ts"
+    },
+    "./signalboxGitHubConnect": {
+      "types": "./src/signalboxGitHubConnect.ts",
+      "import": "./src/signalboxGitHubConnect.ts"
     },
     "./accountHub": {
       "types": "./src/accountHub.ts",
@@ -110,6 +126,14 @@
     "./signalboxLearner": {
       "types": "./src/signalboxLearner.ts",
       "import": "./src/signalboxLearner.ts"
+    },
+    "./signalboxAskTools": {
+      "types": "./src/signalboxAskTools.ts",
+      "import": "./src/signalboxAskTools.ts"
+    },
+    "./signalboxAsks": {
+      "types": "./src/signalboxAsks.ts",
+      "import": "./src/signalboxAsks.ts"
     }
   },
   "scripts": {

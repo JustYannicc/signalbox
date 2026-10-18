@@ -12,6 +12,8 @@ import {
   AuthSettingsWriteScope,
   AuthPreviewOperateScope,
   AuthSourceControlWriteScope,
+  AUTOMATION_WS_METHODS,
+  clientRpcRequiredScopes,
   EnvironmentAuthorizationError,
   GitCommandError,
   ORCHESTRATION_V2_WS_METHODS,
@@ -118,6 +120,7 @@ import { CloudAttachments } from "../attachments/CloudAttachments.ts";
 import * as Environment from "../environment.ts";
 import * as GitHubActions from "../github/GitHubActions.ts";
 import * as GitHubBranches from "../github/GitHubBranches.ts";
+import { makeRepositoryPublication } from "../github/GitHubRepositoryPublication.ts";
 import * as CloudPullRequests from "../github/CloudPullRequestsService.ts";
 import { makeGitHubImport } from "../github/GitHubImport.ts";
 import * as DriveBrowsing from "./driveBrowsing.ts";
@@ -125,6 +128,7 @@ import * as CloudThreadService from "../thread/CloudThreadService.ts";
 import { ProviderUploadFeedbackError } from "@t3tools/contracts";
 import * as Threads from "../thread/Threads.ts";
 import { deviceMember, makeBrowsingHandlers } from "../thread/browsing/browsingRpc.ts";
+import { makeTerminalHandlers, TERMINAL_METHODS, TERMINAL_SCOPES } from "./terminalRpc.ts";
 import { type Actor, ThreadNotFoundError } from "../thread/ThreadAccess.ts";
 import type { BrowserReply } from "../thread/threadWire.ts";
 import { DriveSharing } from "./DriveSharing.ts";
@@ -198,6 +202,7 @@ const SECTION_METHODS = [
 ] as const;
 
 const SERVED = [
+  ...TERMINAL_METHODS,
   WS_METHODS.providerUploadFeedback,
   WS_METHODS.subscribeWorktreeSetup,
   WS_METHODS.worktreeSetupCancel,
@@ -241,6 +246,7 @@ const SERVED = [
   // GitHub repositories as drives (`github/`): import, branch status, push and pull requests.
   WS_METHODS.serverDiscoverSourceControl,
   WS_METHODS.sourceControlLookupRepository,
+  WS_METHODS.sourceControlPublishRepository,
   WS_METHODS.projectCloneStart,
   WS_METHODS.projectCloneCancel,
   WS_METHODS.projectCloneRetry,
@@ -315,6 +321,7 @@ export const CloudRpcGroup = WsRpcGroup.omit(
 
 /** Same scopes the self-hosted server requires for these RPCs. */
 const REQUIRED_SCOPES = {
+  ...TERMINAL_SCOPES,
   [WS_METHODS.providerUploadFeedback]: AuthOrchestrationOperateScope,
   [WS_METHODS.subscribeServerConfig]: AuthOrchestrationReadScope,
   [WS_METHODS.serverGetConfig]: AuthOrchestrationReadScope,
@@ -358,6 +365,7 @@ const REQUIRED_SCOPES = {
   [WS_METHODS.attachmentsDelete]: AuthOrchestrationOperateScope,
   [WS_METHODS.serverDiscoverSourceControl]: AuthOrchestrationReadScope,
   [WS_METHODS.sourceControlLookupRepository]: AuthOrchestrationReadScope,
+  [WS_METHODS.sourceControlPublishRepository]: AuthSourceControlWriteScope,
   [WS_METHODS.projectCloneStart]: AuthSourceControlWriteScope,
   [WS_METHODS.projectCloneCancel]: AuthSourceControlWriteScope,
   [WS_METHODS.projectCloneRetry]: AuthSourceControlWriteScope,
@@ -427,9 +435,13 @@ const REQUIRED_SCOPES = {
 
 /** Authorizes every RPC on one connection against that connection's session scopes. */
 export const layerScopeAuthorization = (scopes: ReadonlyArray<AuthEnvironmentScope>) =>
-  Layer.succeed(RpcScopeAuthorization)((effect, { rpc }) => {
-    const requiredScope = REQUIRED_SCOPES[rpc._tag as ServedTag];
-    return scopes.includes(requiredScope)
+  Layer.succeed(RpcScopeAuthorization)((effect, { rpc, payload }) => {
+    // Task lifecycle reads need only read scope; its writes operate, as on a self-hosted server.
+    const requiredScope =
+      rpc._tag === AUTOMATION_WS_METHODS.automationsTaskLifecycle
+        ? clientRpcRequiredScopes(rpc._tag, payload).find((scope) => !scopes.includes(scope))
+        : REQUIRED_SCOPES[rpc._tag as ServedTag];
+    return requiredScope === undefined || scopes.includes(requiredScope)
       ? effect
       : Effect.fail(
           new EnvironmentAuthorizationError({
@@ -571,6 +583,7 @@ export const layerHandlers = (input: {
       );
       const drives = yield* DriveBrowsing.makeDriveBrowsing(userId, actorNow);
       const githubImport = yield* makeGitHubImport();
+      const publishRepository = yield* makeRepositoryPublication(userDrives.access);
       const browsing = yield* makeBrowsingHandlers({
         actorNow,
         you: yield* deviceMember(userId, input.sid),
@@ -605,6 +618,7 @@ export const layerHandlers = (input: {
             Stream.runHead,
           );
         }).pipe(Effect.andThen(Effect.fail(new ThreadNotFoundError())));
+      const terminals = yield* makeTerminalHandlers(actorNow, lostSight);
       /** Calls a drive service, which only a cloud that stores drives has. */
       const withDrives =
         <S>(service: Option.Option<S>) =>
@@ -654,9 +668,10 @@ export const layerHandlers = (input: {
       const signIn = yield* makeSignInHandlers({ userId });
       const keybindings = yield* makeKeybindingHandlers;
       const personBrowser = yield* LoginService.LoginService;
-      const analytics = yield* makeAnalyticsHandlers;
+      const analytics = yield* makeAnalyticsHandlers({ userId: input.userId });
       const timezone = yield* makeTimezoneHandlers;
       return {
+        ...terminals,
         [WS_METHODS.providerUploadFeedback]: (request) =>
           Effect.flatMap(actorNow, (actor) => threads.uploadFeedback(actor, request)).pipe(
             Effect.catchTags({
@@ -952,6 +967,8 @@ export const layerHandlers = (input: {
         [WS_METHODS.attachmentsDelete]: (request) =>
           attachments.deletePending(userId, request.attachmentId),
         [WS_METHODS.serverDiscoverSourceControl]: () => githubImport.discover,
+        [WS_METHODS.sourceControlPublishRepository]: (request) =>
+          Effect.flatMap(actorNow, (actor) => publishRepository(actor, request)),
         [WS_METHODS.sourceControlLookupRepository]: (request) =>
           githubImport.lookup(request.repository),
         [SIGNALBOX_REPOSITORIES_WS_METHODS.list]: (request) => githubImport.list(request.provider),

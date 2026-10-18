@@ -62,7 +62,6 @@ export const CLOUD_UNSERVED: Readonly<Record<string, Unserved>> = {
 
   // Git beyond the thread's own branch.
   "sourceControl.cloneRepository": githubImports,
-  "sourceControl.publishRepository": gap("#810"),
 
   // Files in folders without a machine.
   "projects.writeFile": gap("#439"),
@@ -71,7 +70,6 @@ export const CLOUD_UNSERVED: Readonly<Record<string, Unserved>> = {
   "projects.mutate": exempt("Folders hold projects; change them with folders.*."),
 
   // Pools: the cloud signs in Claude and ChatGPT accounts only.
-  "pools.advice": gap("#819"),
   "provider.auth.respond": gap("#205"),
   "provider.auth.logout": gap("#205"),
   "provider.chatgpt.*": exempt("A self-hosted server's ChatGPT desktop handoff."),
@@ -100,9 +98,6 @@ export const CLOUD_UNSERVED: Readonly<Record<string, Unserved>> = {
   "server.updateServer": selfDeploying,
   "server.updateServerWithProgress": selfDeploying,
   "storage.*": noHost,
-  "terminal.*": gap("#744"),
-  "terminalEvents.subscribe": gap("#744"),
-  "terminalMetadata.subscribe": gap("#744"),
   "usage.*": gap("#786"),
   "vcs.createRef": ownBranch,
   "vcs.switchRef": ownBranch,

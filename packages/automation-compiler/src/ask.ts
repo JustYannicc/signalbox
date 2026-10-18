@@ -55,7 +55,7 @@ function checkFields(source: WorkflowSource, node: Node): boolean {
 }
 
 /**
- * `w.ask(label, { question?, options?, multi?, fields?, timeout?, onTimeout? })`.
+ * `w.ask(label, { question?, options?, multi?, fields?, importance?, timeout?, onTimeout? })`.
  * Literal options become the step's outcomes, so code can branch on them:
  * on the answer itself, or on `answer.choice` when the ask has fields.
  * Computed options draw as one "one of …" outcome; `multi` answers are lists,
@@ -65,6 +65,15 @@ export function readAskDetail(source: WorkflowSource, node: Node | undefined): S
   const detail: Record<string, WorkflowDetailValue> = {};
   const properties = node ? objectProperties(node) : null;
   for (const [key, value] of properties ?? []) detail[key] = detailValue(source, value);
+
+  const importanceNode = properties?.get("importance");
+  if (importanceNode) {
+    const literal = evaluateLiteral(importanceNode);
+    if (literal.ok && literal.value !== "low" && literal.value !== "high") {
+      source.error(importanceNode, 'importance must be "low" or "high".', 'importance: "low"');
+      return null;
+    }
+  }
 
   const multiNode = properties?.get("multi");
   const multiLiteral = multiNode ? evaluateLiteral(multiNode) : null;
