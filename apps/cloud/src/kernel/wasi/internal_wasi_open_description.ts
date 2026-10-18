@@ -5,7 +5,7 @@
 import type { Inode, DirectoryEntry } from "../storage.ts";
 import { complete, type WasiCall } from "./internal_wasi_calls.ts";
 import { WasiError } from "./internal_wasi_memory.ts";
-import type { WasiStdio } from "./internal_wasi_descriptors.ts";
+import type { WasiStdio } from "./internal_wasi_stdio.ts";
 import type { WasiMountedStorage } from "./internal_wasi_paths.ts";
 
 const EMFILE = 33;

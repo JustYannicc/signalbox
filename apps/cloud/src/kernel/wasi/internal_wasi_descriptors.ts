@@ -7,6 +7,9 @@ import { WasiError } from "./internal_wasi_memory.ts";
 import type { WasiCall } from "./internal_wasi_calls.ts";
 import type { WasiMountedStorage } from "./internal_wasi_paths.ts";
 import { WasiOpenDescription } from "./internal_wasi_open_description.ts";
+import type { WasiStdio } from "./internal_wasi_stdio.ts";
+
+export type { WasiPollResult, WasiStdio } from "./internal_wasi_stdio.ts";
 
 const EEXIST = 20;
 const EBADF = 8;
@@ -74,22 +77,6 @@ export const FDFLAGS = {
   RSYNC: 8,
   SYNC: 16,
 } as const;
-
-export interface WasiPollResult {
-  bytes: bigint;
-  hangup?: boolean;
-}
-
-export interface WasiStdio {
-  readInto?: (target: Uint8Array) => number | Promise<number>;
-  write?: (source: Uint8Array) => number | Promise<number>;
-  sync?: () => void | Promise<void>;
-  /** Completes when ready; abort detaches a pending readiness subscription. */
-  poll?: (
-    direction: "read" | "write",
-    signal: AbortSignal,
-  ) => WasiPollResult | Promise<WasiPollResult>;
-}
 
 export interface WasiDescriptorSpec {
   readonly kind: "file" | "directory" | "symlink" | "stdio";
