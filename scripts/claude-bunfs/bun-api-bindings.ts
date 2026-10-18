@@ -287,7 +287,12 @@ export function findBunApiUses(moduleName: string, source: string): ReadonlyArra
         if (ts.isShorthandPropertyAssignment(property)) {
           const next = append(base, property.name.text);
           if (next?.kind === "member") addMember(property.name, next.path, "read");
-          scope.set(property.name.text, next);
+          scope.set(
+            property.name.text,
+            property.objectAssignmentInitializer
+              ? mergeValues([next, valueOf(property.objectAssignmentInitializer, scope)])
+              : next,
+          );
         } else if (ts.isPropertyAssignment(property)) {
           const key = propertyKey(property.name);
           const next = append(base, key);
@@ -297,8 +302,9 @@ export function findBunApiUses(moduleName: string, source: string): ReadonlyArra
             addMember(property.name, next.path, "read");
           }
           bindAssignmentPattern(property.initializer, next, scope);
-        } else if (ts.isSpreadAssignment(property) && base && isBunRelated(base)) {
-          addDynamic(property, base, "read");
+        } else if (ts.isSpreadAssignment(property)) {
+          if (base && isBunRelated(base)) addDynamic(property, base, "read");
+          bindAssignmentPattern(property.expression, undefined, scope);
         }
       }
     } else if (ts.isArrayLiteralExpression(pattern)) {

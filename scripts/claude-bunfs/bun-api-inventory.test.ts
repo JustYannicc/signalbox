@@ -441,6 +441,7 @@ describe("inventoryBunApis", () => {
     for (const source of [
       "let api; [api = Bun.fs] = []; api.readFile();",
       "let api; ({value: api = Bun.fs} = other); api.readFile();",
+      "let api; ({api = Bun.fs} = other); api.readFile();",
       "const [api = Bun.fs] = []; api.readFile();",
       "const {value: api = Bun.fs} = other; api.readFile();",
     ]) {
@@ -461,7 +462,12 @@ describe("inventoryBunApis", () => {
   });
 
   it("clears stale aliases overwritten by non-Bun pattern defaults", () => {
-    for (const pattern of ["[api = 0] = [1]", "({value: api = 0} = other)"]) {
+    for (const pattern of [
+      "[api = 0] = [1]",
+      "({value: api = 0} = other)",
+      "({api = 0} = other)",
+      "({...api} = other)",
+    ]) {
       const inventory = inventoryBunApis([
         { name: "overwritten-default.js", source: `let api = Bun.hash; ${pattern}; api();` },
       ]);
