@@ -1,6 +1,7 @@
 import { defineRule, type ESTree } from "@oxlint/plugins";
 
 const EFFECT_HOOKS = new Set(["useEffect", "useLayoutEffect", "useInsertionEffect"]);
+const BROWSER_GLOBAL_METHODS = new Set(["scroll", "scrollTo", "scrollBy", "focus", "blur"]);
 
 // Chromium's scroll methods return promises, which React calls as cleanup on unmount.
 const NON_CLEANUP_METHODS = new Set([
@@ -57,11 +58,18 @@ function calleeName(node: ESTree.Node): string | undefined {
   }
 }
 
-function leaksNonCleanup(body: ESTree.Node): boolean {
+function leaksNonCleanup(
+  body: ESTree.Node,
+  isUnshadowedGlobal: (node: ESTree.Node) => boolean,
+): boolean {
   const expression = unwrap(body);
   if (NON_CLEANUP_BODY_TYPES.has(expression.type)) return true;
   if (expression.type !== "CallExpression") return false;
-  if (unwrap(expression.callee).type !== "MemberExpression") return false;
+  const callee = unwrap(expression.callee);
+  if (callee.type === "Identifier") {
+    return BROWSER_GLOBAL_METHODS.has(callee.name) && isUnshadowedGlobal(callee);
+  }
+  if (callee.type !== "MemberExpression") return false;
   const name = calleeName(expression.callee);
   return name !== undefined && NON_CLEANUP_METHODS.has(name);
 }
@@ -72,6 +80,17 @@ export default defineRule({
     docs: { description: "Prevent React effects from returning a non-cleanup expression." },
   },
   create(context) {
+    const isUnshadowedGlobal = (node: ESTree.Node) => {
+      if (node.type !== "Identifier") return false;
+      let scope = context.sourceCode.getScope(node);
+      while (true) {
+        const variable = scope.set.get(node.name);
+        if (variable !== undefined) return variable.defs.length === 0;
+        if (scope.upper === null) return true;
+        scope = scope.upper;
+      }
+    };
+
     return {
       CallExpression(node) {
         const name = calleeName(node.callee);
@@ -79,7 +98,11 @@ export default defineRule({
         const argument = node.arguments[0];
         if (!argument) return;
         const callback = unwrap(argument);
-        if (callback.type !== "ArrowFunctionExpression" || !leaksNonCleanup(callback.body)) return;
+        if (
+          callback.type !== "ArrowFunctionExpression" ||
+          !leaksNonCleanup(callback.body, isUnshadowedGlobal)
+        )
+          return;
         context.report({
           node: callback,
           message: `Wrap the ${name} callback body in braces. React calls its return value on unmount ("destroy is not a function").`,

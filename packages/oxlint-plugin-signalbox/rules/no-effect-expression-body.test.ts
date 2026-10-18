@@ -24,6 +24,26 @@ describe("no-effect-expression-body", () => {
     "allows imported functions named like DOM methods",
     `import { focus } from "store"; useEffect(() => focus(), []);`,
   );
+  rule.valid(
+    "allows a local scroll function returning cleanup",
+    `function scrollTo() { return () => disconnect(); } useLayoutEffect(() => scrollTo(), []);`,
+  );
+  rule.valid(
+    "allows a parameter shadowing a browser global",
+    `function useStore(scrollBy) { useEffect(() => scrollBy(), []); }`,
+  );
+  rule.valid("allows unknown globals that are not window methods", `useEffect(() => play(), []);`);
+  rule.invalid(
+    "rejects unshadowed browser globals",
+    `
+      useLayoutEffect(() => scrollTo(0, 0), []);
+      useEffect(() => scrollBy(0, 0), []);
+      useEffect(() => scroll(0, 0), []);
+      useEffect(() => focus(), []);
+      useEffect(() => blur(), []);
+    `,
+    5,
+  );
   rule.invalid("rejects assignments", `useEffect(() => (ref.current = value), [value]);`);
   rule.invalid(
     "rejects optional DOM calls",
