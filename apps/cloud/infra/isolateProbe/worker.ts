@@ -3,6 +3,49 @@ import { DurableObject } from "cloudflare:workers";
 import { FACET_SOURCE } from "./facetSource.ts";
 import { JSPI_WASM } from "./wasmFixture.ts";
 import { probe } from "./generated/runtime.js";
+import { decodeModuleTransport, MODULE_TRANSPORT_CONTENT_TYPE } from "./moduleTransport.ts";
+
+interface ProbeInput {
+  id: string;
+  path?: string;
+  mode?: "facet" | "worker";
+  mainModule?: string;
+  entrypoint?: string;
+  count?: number;
+  generatedValue?: number;
+  allowOutbound?: unknown;
+}
+
+const record = (value: unknown): value is Record<string, unknown> =>
+  typeof value === "object" && value !== null && !Array.isArray(value);
+
+const probeInput = (value: unknown): value is ProbeInput =>
+  record(value) &&
+  typeof value.id === "string" &&
+  /^[a-zA-Z0-9-]{1,100}$/.test(value.id) &&
+  (value.path === undefined || typeof value.path === "string") &&
+  (value.mode === undefined || value.mode === "facet" || value.mode === "worker") &&
+  (value.mainModule === undefined || typeof value.mainModule === "string") &&
+  (value.entrypoint === undefined || typeof value.entrypoint === "string") &&
+  (value.count === undefined || typeof value.count === "number") &&
+  (value.generatedValue === undefined || typeof value.generatedValue === "number");
+
+type LegacyModule = WorkerLoaderModule | string | { wasmBase64: string };
+const legacyModules = (value: unknown): value is Record<string, LegacyModule> =>
+  record(value) &&
+  Object.values(value).every((module) => {
+    if (typeof module === "string") return true;
+    if (!record(module)) return false;
+    if ("wasmBase64" in module) return typeof module.wasmBase64 === "string";
+    return (
+      ["js", "cjs", "text", "py"].every(
+        (key) => module[key] === undefined || typeof module[key] === "string",
+      ) &&
+      ["wasm", "data"].every(
+        (key) => module[key] === undefined || module[key] instanceof ArrayBuffer,
+      )
+    );
+  });
 
 interface Env {
   PROBE: DurableObjectNamespace<ProbeSession>;
@@ -17,18 +60,30 @@ export class ProbeSession extends DurableObject<Env> {
       url.pathname = url.pathname.slice("/root".length);
       return probe(new Request(url, request), this.ctx);
     }
-    const input: {
-      id: string;
-      path?: string;
-      mode?: "facet" | "worker";
-      modules?: Record<string, WorkerLoaderModule | string | { wasmBase64: string }>;
-      mainModule?: string;
-      entrypoint?: string;
-      count?: number;
-      generatedValue?: number;
-      allowOutbound?: boolean;
-    } = await request.json();
-    if (!/^[a-zA-Z0-9-]{1,100}$/.test(input.id)) return new Response("Invalid id", { status: 400 });
+    let input: ProbeInput;
+    let suppliedModules: Record<string, LegacyModule> | undefined;
+    try {
+      if (
+        request.headers.get("content-type")?.split(";")[0]?.trim() === MODULE_TRANSPORT_CONTENT_TYPE
+      ) {
+        if (!request.body) return new Response("Missing module transport body", { status: 400 });
+        const decoded = await decodeModuleTransport(request.body);
+        if (!probeInput(decoded.input)) return new Response("Invalid probe input", { status: 400 });
+        input = decoded.input;
+        suppliedModules = decoded.modules;
+      } else {
+        const value: unknown = await request.json();
+        if (!probeInput(value) || !record(value))
+          return new Response("Invalid probe input", { status: 400 });
+        if (value.modules !== undefined && !legacyModules(value.modules)) {
+          return new Response("Invalid modules", { status: 400 });
+        }
+        input = value;
+        suppliedModules = value.modules;
+      }
+    } catch (error) {
+      return new Response(String(error), { status: 400 });
+    }
     const started = Date.now();
     try {
       if (input.count !== undefined) {
@@ -68,7 +123,7 @@ export class ProbeSession extends DurableObject<Env> {
           ? {
               "main.js": `export default {fetch(){return Response.json({value:${input.generatedValue},generated:true})}}`,
             }
-          : (input.modules ?? {
+          : (suppliedModules ?? {
               "main.js": FACET_SOURCE,
               "esm.js": "export const answer = 42;",
               "suspend.wasm": { wasm: new Uint8Array(JSPI_WASM).buffer },

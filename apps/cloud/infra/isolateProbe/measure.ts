@@ -7,6 +7,11 @@ import { createTestHarness } from "wrangler";
 import { prepare } from "./prepare.ts";
 import { verificationErrors } from "./verify.ts";
 import { requestJson } from "./transport.ts";
+import {
+  encodeModuleTransport,
+  MODULE_TRANSPORT_CONTENT_TYPE,
+  type ModuleDescriptor,
+} from "./moduleTransport.ts";
 
 interface Fixture {
   id: string;
@@ -34,34 +39,37 @@ const harness = values.url
   : createTestHarness({
       workers: [{ configPath: NodePath.join(import.meta.dirname, "wrangler.jsonc") }],
     });
-const endpoint = values.url ?? (await harness!.listen()).url.toString();
 const runId = NodeCrypto.randomBytes(8).toString("hex");
 const rows: unknown[] = [];
-const send = async (input: object, session: string) => {
-  const url = new URL("/run", endpoint);
-  url.searchParams.set("session", session);
-  return requestJson(url, {
-    method: "POST",
-    headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
-    body: JSON.stringify(input),
-    signal: AbortSignal.timeout(60_000),
-  });
-};
 
 try {
+  const endpoint = values.url ?? (await harness!.listen()).url.toString();
+  const send = async (input: object, session: string, modules?: readonly ModuleDescriptor[]) => {
+    const url = new URL("/run", endpoint);
+    url.searchParams.set("session", session);
+    // Node fetch requires duplex for a streaming request body, including over HTTP/1.
+    const init: RequestInit & { duplex?: "half" } = {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${token}`,
+        "content-type": modules ? MODULE_TRANSPORT_CONTENT_TYPE : "application/json",
+      },
+      body: modules ? encodeModuleTransport(input, modules) : JSON.stringify(input),
+      ...(modules ? { duplex: "half" } : {}),
+      signal: AbortSignal.timeout(60_000),
+    };
+    return requestJson(url, init);
+  };
   if (values.fixture) {
     const dir = NodePath.resolve(values.fixture);
     const fixture: Fixture = JSON.parse(
       await NodeFSP.readFile(NodePath.join(dir, "manifest.json"), "utf8"),
     );
-    const modules: Record<string, object> = {};
+    const modules: ModuleDescriptor[] = [];
     const inventory: object[] = [];
     for (const [name, module] of Object.entries(fixture.modules)) {
       const bytes = await NodeFSP.readFile(NodePath.resolve(dir, module.path));
-      modules[name] =
-        module.type === "wasm"
-          ? { wasmBase64: bytes.toString("base64") }
-          : { [module.type]: bytes.toString("utf8") };
+      modules.push({ name, type: module.type, bytes });
       inventory.push({
         name,
         type: module.type,
@@ -82,11 +90,11 @@ try {
             mode: fixture.mode ?? "facet",
             allowOutbound: fixture.allowOutbound === true,
             path,
-            modules,
             mainModule: fixture.mainModule,
             entrypoint: fixture.entrypoint,
           },
           id,
+          modules,
         )),
       });
     }

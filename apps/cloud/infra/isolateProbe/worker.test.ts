@@ -4,6 +4,12 @@ import * as NodePath from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "@effect/vitest";
 import { createTestHarness } from "wrangler";
 import { prepare } from "./prepare.ts";
+import {
+  encodeModuleTransport,
+  MODULE_TRANSPORT_CONTENT_TYPE,
+  type ModuleDescriptor,
+} from "./moduleTransport.ts";
+import { JSPI_WASM } from "./wasmFixture.ts";
 
 let harness: ReturnType<typeof createTestHarness> | undefined;
 let endpoint: string;
@@ -74,5 +80,176 @@ describe("isolate fixture outbound access", () => {
     const result = await run("outbound-allowed", true);
     expect(result).toMatchObject({ status: 200, result: { allowed: true, value: { answer: 42 } } });
     expect(outboundRequests).toBe(1);
+  });
+});
+
+const framedRun = async (input: unknown, modules: readonly ModuleDescriptor[] = []) => {
+  const init: RequestInit & { duplex: "half" } = {
+    method: "POST",
+    headers: {
+      authorization: "Bearer local-probe-only",
+      "content-type": MODULE_TRANSPORT_CONTENT_TYPE,
+    },
+    body: encodeModuleTransport(input, modules),
+    duplex: "half",
+  };
+  return fetch(new URL("/run?session=framed-fixture", endpoint), init);
+};
+
+describe("framed fixtures over workerd HTTP", () => {
+  it("keeps legacy baseline, generated-code, concurrency and base64 module requests working", async () => {
+    const send = async (id: string, input: object) => {
+      const response = await fetch(new URL(`/run?session=${id}`, endpoint), {
+        method: "POST",
+        headers: { authorization: "Bearer local-probe-only", "content-type": "application/json" },
+        body: JSON.stringify({ id, ...input }),
+      });
+      expect(response.status).toBe(200);
+      return response.json();
+    };
+    expect(await send("legacy-baseline", { path: "/wasm" })).toMatchObject({
+      status: 200,
+      result: { ok: true, value: 42 },
+    });
+    expect(await send("legacy-generated", { mode: "worker", generatedValue: 37 })).toMatchObject({
+      status: 200,
+      result: { value: 37, generated: true },
+    });
+    expect(await send("legacy-concurrent", { count: 2 })).toMatchObject({
+      count: 2,
+      results: [
+        { ok: true, value: { ok: true } },
+        { ok: true, value: { ok: true } },
+      ],
+    });
+    expect(
+      await send("legacy-base64", {
+        mode: "worker",
+        modules: {
+          "main.js": `import wasm from "./engine.wasm";
+        const instance = new WebAssembly.Instance(wasm,{env:{suspend:value=>value+1}});
+        export default {fetch(){return Response.json({value:instance.exports.run(40)})}};`,
+          "engine.wasm": { wasmBase64: btoa(String.fromCharCode(...JSPI_WASM)) },
+        },
+      }),
+    ).toMatchObject({ status: 200, result: { value: 42 } });
+  });
+
+  it("keeps outbound access denied unless framed input supplies exactly true", async () => {
+    const modules: ModuleDescriptor[] = [
+      {
+        name: "main.js",
+        type: "js",
+        bytes: new TextEncoder().encode(`export default {
+        async fetch() {
+          try {
+            const response = await fetch(${JSON.stringify(outboundUrl)});
+            return Response.json({allowed:true,value:await response.json()});
+          } catch { return Response.json({allowed:false}); }
+        }
+      }`),
+      },
+    ];
+    const before = outboundRequests;
+    for (const [index, allowOutbound] of [undefined, false, "true", true].entries()) {
+      const response = await framedRun(
+        { id: `framed-outbound-${index}`, mode: "worker", allowOutbound },
+        modules,
+      );
+      expect(await response.json()).toMatchObject({
+        status: 200,
+        result: { allowed: allowOutbound === true },
+      });
+      expect(outboundRequests).toBe(before + (allowOutbound === true ? 1 : 0));
+    }
+  });
+
+  it("loads mixed module types and keeps one facet's SQLite state across full-map uploads", async () => {
+    const source = `import {DurableObject} from "cloudflare:workers";
+      import wasm from "./engine.wasm";
+      import {input} from "./esm.js";
+      import common from "./common.cjs";
+      import text from "./greeting.txt";
+      const instance = new WebAssembly.Instance(wasm, {env:{suspend:value=>value+common}});
+      const result = () => ({value:instance.exports.run(input),text});
+      export default {fetch(){return Response.json(result())}};
+      export class ProbeFacet extends DurableObject {
+        fetch(request) {
+          const sql = this.ctx.storage.sql;
+          sql.exec("CREATE TABLE IF NOT EXISTS counter (id INTEGER PRIMARY KEY, value INTEGER)");
+          sql.exec("INSERT OR IGNORE INTO counter VALUES (1, 0)");
+          if (new URL(request.url).pathname === "/increment") sql.exec("UPDATE counter SET value = value + 1 WHERE id = 1");
+          const count = sql.exec("SELECT value FROM counter WHERE id = 1").one().value;
+          return Response.json({...result(),count});
+        }
+      }`;
+    const utf8 = (value: string) => new TextEncoder().encode(value);
+    const modules: ModuleDescriptor[] = [
+      { name: "nested/main.js", type: "js", bytes: utf8(source) },
+      { name: "nested/esm.js", type: "js", bytes: utf8("export const input = 40;") },
+      { name: "nested/common.cjs", type: "cjs", bytes: utf8("module.exports = 1;") },
+      { name: "nested/greeting.txt", type: "text", bytes: utf8("\uFEFFGrüezi 🌍\r\n") },
+      { name: "nested/engine.wasm", type: "wasm", bytes: JSPI_WASM },
+    ];
+    for (const [path, count] of [
+      ["/increment", 1],
+      ["/increment", 2],
+      ["/read", 2],
+    ] as const) {
+      const response = await framedRun(
+        { id: "framed-facet", mainModule: "nested/main.js", path },
+        modules,
+      );
+      expect(response.status).toBe(200);
+      expect(await response.json()).toMatchObject({
+        status: 200,
+        result: { value: 42, text: "\uFEFFGrüezi 🌍\r\n", count },
+      });
+    }
+    const response = await framedRun(
+      {
+        id: "framed-worker",
+        mainModule: "nested/main.js",
+        mode: "worker",
+      },
+      modules,
+    );
+    expect(await response.json()).toMatchObject({
+      status: 200,
+      result: { value: 42, text: "\uFEFFGrüezi 🌍\r\n" },
+    });
+  });
+
+  it("validates opaque input before passing it to WorkerLoader", async () => {
+    for (const input of [
+      null,
+      [],
+      {},
+      { id: 7 },
+      { id: "bad/id" },
+      { id: "valid", mode: "other" },
+      { id: "valid", mainModule: 4 },
+      { id: "valid", entrypoint: [] },
+      { id: "valid", path: false },
+      { id: "valid", count: "2" },
+      { id: "valid", generatedValue: {} },
+    ]) {
+      const response = await framedRun(input);
+      expect(response.status).toBe(400);
+      expect(await response.text()).toBe("Invalid probe input");
+    }
+  });
+
+  it("returns an HTTP error for a truncated frame", async () => {
+    const response = await fetch(new URL("/run?session=truncated", endpoint), {
+      method: "POST",
+      headers: {
+        authorization: "Bearer local-probe-only",
+        "content-type": MODULE_TRANSPORT_CONTENT_TYPE,
+      },
+      body: new Uint8Array([0, 0]),
+    });
+    expect(response.status).toBe(400);
+    expect(await response.text()).toContain("Truncated metadata length");
   });
 });
