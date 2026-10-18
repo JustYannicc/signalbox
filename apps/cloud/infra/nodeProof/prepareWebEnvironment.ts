@@ -46,10 +46,7 @@ export async function prepareNodeWebEnvironmentProof(destination: string): Promi
   );
   await NodeFSP.writeFile(NodePath.join(root, "runtime.js"), await bundleRuntime());
   await NodeFSP.writeFile(NodePath.join(root, "release.js"), await bundleRelease(root));
-  await NodeFSP.writeFile(
-    NodePath.join(root, "main.js"),
-    createMainSource(environment),
-  );
+  await NodeFSP.writeFile(NodePath.join(root, "main.js"), createMainSource(environment));
   await NodeFSP.writeFile(
     NodePath.join(root, "manifest.json"),
     `${JSON.stringify(createManifest(environment), null, 2)}\n`,
@@ -125,8 +122,13 @@ async function bundleRelease(root: string): Promise<string> {
       ),
     ),
   ];
-  const expected = Object.values(MODULE_PATHS).map((path) => `./${path}`).sort();
-  if (remaining.length !== expected.length || remaining.toSorted().some((path, index) => path !== expected[index])) {
+  const expected = Object.values(MODULE_PATHS)
+    .map((path) => `./${path}`)
+    .sort();
+  if (
+    remaining.length !== expected.length ||
+    remaining.toSorted().some((path, index) => path !== expected[index])
+  ) {
     throw new Error(
       `[node-web-environment] unexpected release externals: ${remaining.toSorted().join(", ")}`,
     );
@@ -205,9 +207,11 @@ export async function check() {
   const checks = {
     wsDefaultIdentity: WebSocket === NamedWebSocket && WebSocket === cjsWebSocket,
     wsNamedExports: [
-      WebSocketServer, createWebSocketStream, extension, PerMessageDeflate,
-      Receiver, Sender, subprotocol,
-    ].every(value => typeof value === "function"),
+      WebSocketServer, createWebSocketStream, PerMessageDeflate, Receiver, Sender,
+    ].every(value => typeof value === "function") &&
+      typeof extension.format === "function" && typeof extension.parse === "function" &&
+      typeof subprotocol.parse === "function" &&
+      cjsWebSocket.extension === extension && cjsWebSocket.subprotocol === subprotocol,
     wsCommonJsNamedIdentity: cjsWebSocket.Receiver === Receiver && cjsWebSocket.Sender === Sender &&
       cjsWebSocket.WebSocket === WebSocket,
     wsBinaryFrameRoundTrip: message.isBinary === true &&
