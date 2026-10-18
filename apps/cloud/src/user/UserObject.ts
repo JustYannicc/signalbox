@@ -12,6 +12,7 @@ import * as Schema from "effect/Schema";
 
 import * as CloudAssets from "../assets/CloudAssets.ts";
 import * as Evlog from "../observability/Evlog.ts";
+import { makeStorageObserver } from "../observability/DurableObjectStorage.ts";
 import * as ClientRpcTracing from "../observability/clientRpcTracing.ts";
 import * as IdentityProvider from "../account/IdentityProvider.ts";
 import * as CloudConfig from "../CloudConfig.ts";
@@ -138,6 +139,8 @@ export interface UserObjectEnv
   readonly TRACE_EXPORT?: Pick<Fetcher, "fetch">;
   /** Secret shared with the Worker-side trace intake. */
   readonly TRACE_EXPORT_TOKEN?: string;
+  readonly SIGNALBOX_DO_STORAGE_ALERT_PERCENT?: string;
+  readonly T3CODE_TELEMETRY_ENABLED?: string;
 }
 
 const decodeEnvironmentId = Schema.decodeSync(EnvironmentId);
@@ -388,6 +391,7 @@ export class UserObject extends DurableObject<UserObjectEnv> implements UserObje
   /** The person's MCP server (`api/mcpObject.ts`), made on first use. */
   private mcp: ReturnType<typeof makeMcpHandler> | undefined;
   private readonly sockets: ClientSockets;
+  private readonly observeStorage: () => void;
 
   constructor(ctx: DurableObjectState, env: UserObjectEnv) {
     super(ctx, env);
@@ -406,15 +410,17 @@ export class UserObject extends DurableObject<UserObjectEnv> implements UserObje
       attachments: env.DRIVE_PACKS !== undefined,
     };
     this.runtime = makeRuntime(ctx, env);
+    this.observeStorage = makeStorageObserver(ctx, { kind: "user", level: "person" }, env);
     this.sockets = new ClientSockets({
       ctx,
       identity: this.identity,
-      run: (effect) => this.runtime.runPromise(effect),
+      run: (effect) => this.runtime.runPromise(effect).finally(() => this.observeStorage()),
     });
     // Client keepalives are answered without waking a hibernating object.
     ctx.setWebSocketAutoResponse(new WebSocketRequestResponsePair(PING, PONG));
     void ctx.blockConcurrencyWhile(async () => {
       await this.runtime.runPromise(UserStore.migrate);
+      this.observeStorage();
       // Serves sockets that outlived the object's memory before anything else runs.
       await this.sockets.restore(await this.now(), (await this.profile())?.id);
       // An alarm lost to a crash between sweeps is set again; one that's set is enough.
@@ -441,7 +447,7 @@ export class UserObject extends DurableObject<UserObjectEnv> implements UserObje
   }
 
   private readonly api: UserObjectApi = makeUserObjectApi((effect) =>
-    this.runtime.runPromise(effect),
+    this.runtime.runPromise(effect).finally(() => this.observeStorage()),
   );
 
   // Durable Object RPC dispatches to prototype methods, so each one is spelled out.
@@ -664,6 +670,7 @@ export class UserObject extends DurableObject<UserObjectEnv> implements UserObje
   }
 
   override async fetch(request: Request): Promise<Response> {
+    this.observeStorage();
     const apiCredential = decodeApiCredential(request.headers.get(API_HEADER));
     if (apiCredential._tag === "Some") {
       const profile = await this.profile();
@@ -726,6 +733,7 @@ export class UserObject extends DurableObject<UserObjectEnv> implements UserObje
    * are logged in again (`LoginService`). Each re-arms it.
    */
   override async alarm() {
+    this.observeStorage();
     const next = await this.sockets.expire(await this.now());
     if (next !== null) await armBy(this.ctx.storage, next);
     await this.runtime.runPromise(

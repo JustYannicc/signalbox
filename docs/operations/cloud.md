@@ -819,6 +819,22 @@ and `cloud-production`), passed through `alchemy.run.ts`. Each is optional:
 After each deploy, CI sends one `release` event naming the stage and commit
 (`apps/cloud/infra/release-event.ts`).
 
+User objects report `durableObject.storage` at most hourly during normal
+activity. Sampling reads Cloudflare's database-size counter, never rows, and
+does not wake idle objects. In Sentry Logs, filter by that action, group by
+`durableObject.id`, `durableObject.kind` and `durableObject.level`, and sort
+`max(storage.bytes)` descending. `storage.utilizationPercent` compares the
+sample with the paid-plan cap of 10,000,000,000 bytes. Level labels distinguish
+person and organisation top levels from folders; object IDs are opaque.
+
+Samples at or above 70% create a `DurableObjectStorageCapacity` Sentry issue.
+The deployment variable `SIGNALBOX_DO_STORAGE_ALERT_PERCENT` overrides that
+threshold. To verify production alerting, temporarily lower it, redeploy,
+trigger normal object activity, verify the exact release in Sentry, then
+restore the variable and redeploy. An hour between samples can delay an
+alert after a large write. Home storage is not sampled until Catalog
+provisions home objects; legacy catalog copies stay inactive.
+
 ### Usage analytics
 
 With `SIGNALBOX_POSTHOG_ENABLED=true` and both `SIGNALBOX_POSTHOG_KEY` and
