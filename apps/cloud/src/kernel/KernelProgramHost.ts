@@ -29,6 +29,11 @@ import {
 
 export type { KernelExitStatus } from "./KernelProcessTable.ts";
 export type {
+  KernelAsyncProgram,
+  KernelAsyncProgramContext,
+  KernelAsyncProgramExecRequest,
+} from "./KernelAsyncProgram.ts";
+export type {
   KernelInlineProgram,
   KernelInlineProgramContext,
   KernelProgramBinding,
@@ -173,6 +178,11 @@ export class KernelProgramHost {
         return runKernelInlineExecution(prepared.signal, () =>
           runInlineJavaScript(implementation.runInline, prepared, args, withHome(prepared, env)),
         );
+      }
+      if (implementation.kind === "async") {
+        throw Object.assign(new Error("Asynchronous programs require process execution"), {
+          code: "ENOTSUP",
+        });
       }
       const runtime = createKernelWasiRuntime(implementation.module, {
         prepared,

@@ -8,6 +8,7 @@ import {
   type ResolvedProgram,
 } from "../KernelAbi.ts";
 import type { AgentOsSpawnRequest } from "../AgentOsProcessWire.ts";
+import type { KernelAsyncProgramExecRequest } from "../KernelAsyncProgram.ts";
 import type { KernelFileSystem } from "../KernelFileSystem.ts";
 import {
   KernelProcessTable,
@@ -18,6 +19,7 @@ import type { KernelWakeRegistry } from "../KernelWakeRegistry.ts";
 import { runKernelExecution, runKernelInlineExecution } from "../process/KernelExecution.ts";
 import { KernelProcessCancelledError } from "../process/KernelProcessCancellation.ts";
 import { prepareKernelProgram, type KernelPreparedProgram } from "./KernelPreparedProgram.ts";
+import { runKernelAsyncProgram } from "./KernelProgramExec.ts";
 import {
   createKernelWasiRuntime,
   runInlineJavaScript,
@@ -286,6 +288,59 @@ export class KernelProgramSpawner {
           throw error;
         }
       });
+      return { process: { completion, signal } };
+    }
+
+    if (implementation.kind === "async") {
+      const spawnFor =
+        (
+          context: Pick<
+            KernelAsyncProgramExecRequest,
+            "filesystem" | "identity" | "signal" | "home"
+          >,
+        ) =>
+        (request: AgentOsSpawnRequest) =>
+          this.#spawnNested(
+            context.filesystem,
+            context.identity.handle,
+            context.signal,
+            context.home,
+            request,
+          );
+      const context = {
+        filesystem: prepared.filesystem,
+        home: prepared.home,
+        args: Object.freeze([...args]),
+        env: Object.freeze({ ...env }),
+        identity,
+        signal: controller.signal,
+        processes: this.#processes,
+        wakes: this.#wakes,
+        spawn: spawnFor({
+          filesystem: prepared.filesystem,
+          identity,
+          signal: controller.signal,
+          ...(prepared.home === undefined ? {} : { home: prepared.home }),
+        }),
+      };
+      const completion = runKernelExecution(controller.signal, () =>
+        Promise.resolve().then(async () => {
+          if (controller.signal.aborted) return terminatedStatus(sentSignal);
+          try {
+            const exit = await runKernelAsyncProgram(implementation.run, context, {
+              resolve: this.#resolve,
+              bindingFor: this.#bindingFor,
+              processes: this.#processes,
+              wakes: this.#wakes,
+              spawnFor,
+            });
+            return controller.signal.aborted ? terminatedStatus(sentSignal) : exit;
+          } catch (error) {
+            if (controller.signal.aborted) return terminatedStatus(sentSignal);
+            throw error;
+          }
+        }),
+      );
       return { process: { completion, signal } };
     }
 
