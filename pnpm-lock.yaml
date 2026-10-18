@@ -2215,6 +2215,9 @@ importers:
       dependency-cruiser:
         specifier: 18.6.0
         version: 18.6.0
+      esbuild:
+        specifier: 0.28.2
+        version: 0.28.2
       typescript:
         specifier: 'catalog:'
         version: 7.0.2
