@@ -8,6 +8,11 @@ const test = require("node:test");
 const root = path.resolve(__dirname, "../..");
 const workflow = fs.readFileSync(path.join(root, ".github/workflows/signalbox-ci.yml"), "utf8");
 const gate = workflow.match(/echo "\$RESULTS" \| jq -e '([\s\S]*?)' > \/dev\/null/)[1];
+const detectionAction = fs.readFileSync(
+  path.join(root, ".github/actions/ci-changes/action.yml"),
+  "utf8",
+);
+const detectionShell = detectionAction.split("      run: |\n")[1].replace(/^        /gm, "");
 
 function detect(files, full = false) {
   const temp = fs.mkdtempSync(path.join(os.tmpdir(), "ci-changes-"));
@@ -194,3 +199,89 @@ test("the required check rejects a failed selector and skipped fork guards", () 
     false,
   );
 });
+
+for (const [migration, shallow] of [
+  [false, false],
+  [true, false],
+  [false, true],
+]) {
+  test(`push detection preserves checkout history, fork migration=${migration}, shallow=${shallow}`, () => {
+    const temp = fs.mkdtempSync(path.join(os.tmpdir(), "ci-history-"));
+    const source = path.join(temp, "source");
+    const checkout = path.join(temp, "checkout");
+    const git = (cwd, ...args) =>
+      execFileSync("git", args, {
+        cwd,
+        encoding: "utf8",
+        stdio: ["ignore", "pipe", "pipe"],
+      }).trim();
+    try {
+      fs.mkdirSync(source);
+      git(source, "init", "--quiet", "--initial-branch=main");
+      git(source, "config", "user.name", "Test");
+      git(source, "config", "user.email", "test@example.com");
+      git(source, "config", "commit.gpgsign", "false");
+      fs.writeFileSync(path.join(source, "pnpm-workspace.yaml"), "packages: []\n");
+      git(source, "add", ".");
+      git(source, "commit", "--quiet", "-m", "shared upstream root");
+      const upstream = git(source, "rev-parse", "HEAD");
+      fs.writeFileSync(path.join(source, "README.md"), "fork base\n");
+      git(source, "add", ".");
+      git(source, "commit", "--quiet", "-m", "push base");
+      const before = git(source, "rev-parse", "HEAD");
+      fs.writeFileSync(path.join(source, "README.md"), "push head\n");
+      if (migration) {
+        const dir = path.join(source, "apps/server/src/persistence/Migrations");
+        fs.mkdirSync(dir, { recursive: true });
+        fs.writeFileSync(path.join(dir, "063_ForkOnly.ts"), "export default {};\n");
+      }
+      git(source, "add", ".");
+      git(source, "commit", "--quiet", "-m", "push head");
+      git(
+        temp,
+        "clone",
+        "--quiet",
+        "--no-local",
+        ...(shallow ? ["--depth=2"] : []),
+        source,
+        checkout,
+      );
+      if (!shallow) git(checkout, "update-ref", "refs/remotes/upstream/main", upstream);
+      for (const relative of [
+        ".github/scripts/ci-changes.cjs",
+        "scripts/fork-migrations/check.ts",
+      ]) {
+        const target = path.join(checkout, relative);
+        fs.mkdirSync(path.dirname(target), { recursive: true });
+        fs.copyFileSync(path.join(root, relative), target);
+      }
+      execFileSync("bash", ["-c", detectionShell], {
+        cwd: checkout,
+        env: {
+          ...process.env,
+          EVENT_NAME: "push",
+          BEFORE_SHA: before,
+          RUNNER_TEMP: temp,
+          GITHUB_OUTPUT: path.join(temp, "outputs"),
+        },
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+      if (shallow) {
+        assert.equal(git(checkout, "rev-parse", "--is-shallow-repository"), "true");
+        assert.match(fs.readFileSync(path.join(temp, "outputs"), "utf8"), /typecheck=/);
+        return;
+      }
+      assert.equal(git(checkout, "merge-base", "HEAD", "upstream/main"), upstream);
+      assert.equal(git(checkout, "rev-parse", "--is-shallow-repository"), "false");
+      const guard = spawnSync(
+        process.execPath,
+        ["scripts/fork-migrations/check.ts", "--base", before],
+        { cwd: checkout, encoding: "utf8" },
+      );
+      assert.equal(guard.status, migration ? 1 : 0, guard.stderr);
+      if (migration) assert.match(guard.stderr, /Fork-only server migration/);
+    } finally {
+      fs.rmSync(temp, { recursive: true, force: true });
+    }
+  });
+}

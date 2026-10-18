@@ -140,13 +140,39 @@ export function encodeModuleTransport(
   );
 }
 
-export async function decodeModuleTransport(
+export interface ModuleTransport {
+  readonly input: unknown;
+  readonly moduleNames: readonly string[];
+  readModules(): Promise<Record<string, WorkerLoaderModule>>;
+  discard(): Promise<void>;
+  cancel(reason?: unknown): Promise<void>;
+}
+
+export async function openModuleTransport(
   stream: ReadableStream<Uint8Array>,
   options: Partial<ModuleTransportLimits> = {},
-): Promise<{ input: unknown; modules: Record<string, WorkerLoaderModule> }> {
+): Promise<ModuleTransport> {
   const reader = stream.getReader();
   let chunk: Uint8Array = new Uint8Array(0);
   let offset = 0;
+  let closed = false;
+  function release() {
+    if (closed) return;
+    closed = true;
+    reader.releaseLock();
+    chunk = new Uint8Array(0);
+    offset = 0;
+  }
+  async function cancel(reason?: unknown) {
+    if (closed) return;
+    try {
+      await reader.cancel(reason);
+    } catch {
+      // A source's cancellation error must not hide the framing or source error.
+    } finally {
+      release();
+    }
+  }
   async function nextChunk() {
     while (offset === chunk.byteLength) {
       chunk = new Uint8Array(0);
@@ -162,7 +188,7 @@ export async function decodeModuleTransport(
     let remaining = length;
     while (remaining > 0) {
       if (!(await nextChunk())) throw new Error(`Truncated ${label}`);
-      const count = Math.min(remaining, chunk.byteLength - offset);
+      const count = Math.min(remaining, chunk.byteLength - offset, 64 * 1024);
       accept(chunk.subarray(offset, offset + count));
       offset += count;
       remaining -= count;
@@ -188,40 +214,85 @@ export async function decodeModuleTransport(
       JSON.parse(new TextDecoder("utf-8", utf8).decode(metadataBytes)),
       limits,
     );
-    const modules: Record<string, WorkerLoaderModule> = {};
-    for (const module of metadata.modules) {
-      let value: WorkerLoaderModule;
-      if (module.type === "wasm") {
-        const bytes = await readBytes(module.byteLength, `module ${module.name}`);
-        value = { wasm: bytes.buffer };
-      } else {
-        const decoder = new TextDecoder("utf-8", utf8);
-        let text = "";
-        await consume(module.byteLength, `module ${module.name}`, (part) => {
-          text += decoder.decode(part, { stream: true });
-        });
-        text += decoder.decode();
-        value =
-          module.type === "js" ? { js: text } : module.type === "cjs" ? { cjs: text } : { text };
+    async function consumeModules(retain: boolean) {
+      try {
+        const modules: Record<string, WorkerLoaderModule> = {};
+        for (const module of metadata.modules) {
+          let value: WorkerLoaderModule;
+          if (module.type === "wasm") {
+            if (retain) {
+              const bytes = await readBytes(module.byteLength, `module ${module.name}`);
+              value = { wasm: bytes.buffer };
+            } else {
+              await consume(module.byteLength, `module ${module.name}`, () => {});
+              continue;
+            }
+          } else {
+            const decoder = new TextDecoder("utf-8", utf8);
+            let text = "";
+            await consume(module.byteLength, `module ${module.name}`, (part) => {
+              const decoded = decoder.decode(part, { stream: true });
+              if (retain) text += decoded;
+            });
+            const tail = decoder.decode();
+            if (!retain) continue;
+            text += tail;
+            value =
+              module.type === "js"
+                ? { js: text }
+                : module.type === "cjs"
+                  ? { cjs: text }
+                  : { text };
+          }
+          // Module names are opaque, including ordinary object prototype property names.
+          Object.defineProperty(modules, module.name, {
+            value,
+            enumerable: true,
+            writable: true,
+            configurable: true,
+          });
+        }
+        if (await nextChunk()) throw new Error("Trailing module transport bytes");
+        return modules;
+      } finally {
+        release();
       }
-      // Module names are opaque, including ordinary object prototype property names.
-      Object.defineProperty(modules, module.name, {
-        value,
-        enumerable: true,
-        writable: true,
-        configurable: true,
-      });
     }
-    if (await nextChunk()) throw new Error("Trailing module transport bytes");
-    return { input: metadata.input, modules };
+    let consumption: Promise<void> | undefined;
+    let failure: { error: unknown } | undefined;
+    function start(retain: boolean) {
+      if (consumption || closed) throw new Error("Module bodies already consumed or cancelled");
+      const result = consumeModules(retain);
+      // Retain completion and failure, never the materialized map after the loader receives it.
+      consumption = result.then(
+        () => {},
+        (error: unknown) => {
+          failure = { error };
+        },
+      );
+      return result;
+    }
+    return {
+      input: metadata.input,
+      moduleNames: metadata.modules.map((module) => module.name),
+      readModules: async () => start(true),
+      async discard() {
+        if (!consumption) start(false);
+        await consumption;
+        if (failure) throw failure.error;
+      },
+      cancel,
+    };
   } catch (error) {
-    try {
-      await reader.cancel(error);
-    } catch {
-      // A source's cancellation error must not hide the framing or source error.
-    }
+    release();
     throw error;
-  } finally {
-    reader.releaseLock();
   }
+}
+
+export async function decodeModuleTransport(
+  stream: ReadableStream<Uint8Array>,
+  options: Partial<ModuleTransportLimits> = {},
+): Promise<{ input: unknown; modules: Record<string, WorkerLoaderModule> }> {
+  const transport = await openModuleTransport(stream, options);
+  return { input: transport.input, modules: await transport.readModules() };
 }

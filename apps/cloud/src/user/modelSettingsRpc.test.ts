@@ -11,6 +11,7 @@ import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
 import * as RpcTest from "effect/rpc/RpcTest";
+import * as SqlClient from "effect/sql/SqlClient";
 
 import { makeMemoryCloud } from "../testing.ts";
 import { SCRIPTED_INSTANCE_ID, scriptedModelSelection } from "../thread/scriptedProvider.ts";
@@ -82,6 +83,9 @@ describe("cloud model settings RPC", () => {
           setModelsHidden: [{ provider: SCRIPTED_INSTANCE_ID, model, hidden: true }],
           setProviderModelOrder: { provider: SCRIPTED_INSTANCE_ID, modelOrder: [model] },
           defaultModelSelection: scriptedModelSelection,
+          reviewGuidesEnabled: true,
+          reviewGuideModelSelection: scriptedModelSelection,
+          reviewGuideInstructions: "Check the changed behavior and report concrete evidence.",
         },
       });
       expect(saved.favorites).toEqual([{ provider: SCRIPTED_INSTANCE_ID, model }]);
@@ -90,6 +94,11 @@ describe("cloud model settings RPC", () => {
         modelOrder: [model],
       });
       expect(saved.defaultModelSelection).toEqual(scriptedModelSelection);
+      expect(saved.reviewGuidesEnabled).toBe(true);
+      expect(saved.reviewGuideModelSelection).toEqual(scriptedModelSelection);
+      expect(saved.reviewGuideInstructions).toBe(
+        "Check the changed behavior and report concrete evidence.",
+      );
       const activeConfig = yield* writer[WS_METHODS.serverGetConfig]({});
       expect(activeConfig.environment.capabilities).toMatchObject({
         modelSettingsWrite: true,
@@ -104,19 +113,71 @@ describe("cloud model settings RPC", () => {
         saved.providerModelPreferences,
       );
       expect(event.payload.settings.defaultModelSelection).toEqual(scriptedModelSelection);
+      expect(event.payload.settings.reviewGuidesEnabled).toBe(true);
+      expect(event.payload.settings.reviewGuideModelSelection).toEqual(scriptedModelSelection);
+      expect(event.payload.settings.reviewGuideInstructions).toBe(
+        "Check the changed behavior and report concrete evidence.",
+      );
 
-      // Catalog preferences disappear temporarily, but a saved default stays
-      // selected instead of silently switching work to another model.
+      // Catalog preferences disappear temporarily, but explicit model choices
+      // stay selected instead of silently switching work to another model.
       const withoutCatalog = yield* connectTo(cloud, "without-catalog", false);
       const empty = yield* withoutCatalog[WS_METHODS.serverGetConfig]({});
       expect(empty.settings.favorites).toEqual([]);
       expect(empty.settings.providerModelPreferences).toEqual({});
       expect(empty.settings.defaultModelSelection).toEqual(scriptedModelSelection);
+      expect(empty.settings.reviewGuidesEnabled).toBe(true);
+      expect(empty.settings.reviewGuideModelSelection).toEqual(scriptedModelSelection);
+      expect(empty.settings.reviewGuideInstructions).toBe(
+        "Check the changed behavior and report concrete evidence.",
+      );
 
       const restored = yield* writer[WS_METHODS.serverGetConfig]({});
       expect(restored.settings.favorites).toEqual(saved.favorites);
       expect(restored.settings.providerModelPreferences).toEqual(saved.providerModelPreferences);
       expect(restored.settings.defaultModelSelection).toEqual(scriptedModelSelection);
+      expect(restored.settings.reviewGuidesEnabled).toBe(true);
+      expect(restored.settings.reviewGuideModelSelection).toEqual(scriptedModelSelection);
+      expect(restored.settings.reviewGuideInstructions).toBe(
+        "Check the changed behavior and report concrete evidence.",
+      );
+
+      const disabled = yield* writer[WS_METHODS.serverUpdateSettings]({
+        patch: { reviewGuidesEnabled: false },
+      });
+      expect(disabled.reviewGuidesEnabled).toBe(false);
+      expect(disabled.reviewGuideModelSelection).toEqual(scriptedModelSelection);
+      expect(disabled.reviewGuideInstructions).toBe(
+        "Check the changed behavior and report concrete evidence.",
+      );
+      expect((yield* writer[WS_METHODS.serverGetConfig]({})).settings.reviewGuidesEnabled).toBe(
+        false,
+      );
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("reads saved model settings written before review guide fields existed", () =>
+    Effect.gen(function* () {
+      const cloud = makeMemoryCloud();
+      yield* cloud.userDirectory.forUser(userId).recordSignIn({
+        id: userId,
+        email: "model-settings@example.test",
+      });
+      yield* Effect.gen(function* () {
+        const sql = yield* SqlClient.SqlClient;
+        const legacyValue = JSON.stringify({
+          favorites: null,
+          providerModelPreferences: null,
+          defaultModelSelection: null,
+        });
+        yield* sql`INSERT INTO user_model_settings (id, value) VALUES (1, ${legacyValue})`;
+      }).pipe(Effect.provide(cloud.userObject(userId)));
+
+      const rpc = yield* connectTo(cloud, "legacy-row", true);
+      const { settings } = yield* rpc[WS_METHODS.serverGetConfig]({});
+      expect(settings.reviewGuidesEnabled).toBe(false);
+      expect(settings.reviewGuideModelSelection).toBeNull();
+      expect(settings.reviewGuideInstructions).toBe("");
     }).pipe(Effect.scoped),
   );
 
@@ -142,6 +203,16 @@ describe("cloud model settings RPC", () => {
         },
       }).pipe(Effect.flip);
       expect(unavailableModel._tag).toBe("ServerSettingsError");
+
+      const unavailableGuideModel = yield* rpc[WS_METHODS.serverUpdateSettings]({
+        patch: {
+          reviewGuideModelSelection: {
+            instanceId: SCRIPTED_INSTANCE_ID,
+            model: "retired-model",
+          },
+        },
+      }).pipe(Effect.flip);
+      expect(unavailableGuideModel._tag).toBe("ServerSettingsError");
     }).pipe(Effect.scoped),
   );
 });

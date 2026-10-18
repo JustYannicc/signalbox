@@ -8,6 +8,7 @@ import { describe, expect, it } from "@effect/vitest";
 import { vi } from "vite-plus/test";
 import {
   AuthOrchestrationOperateScope,
+  AuthProvidersManageScope,
   AuthSettingsWriteScope,
   AuthSourceControlWriteScope,
   AuthTerminalOperateScope,
@@ -26,6 +27,7 @@ import * as TestClock from "effect/testing/TestClock";
 import { Atom, AtomRegistry, AsyncResult } from "effect/reactivity";
 import { EnvironmentRegistry } from "../connection/registry.ts";
 import { createCommandPermissions } from "./commandPermissions.ts";
+import { createSignalboxAskCommand } from "./signalboxAsks.ts";
 import { createEnvironmentRpcCommand } from "./runtime.ts";
 import { SIGNALBOX_ANALYTICS_WS_METHODS } from "@t3tools/contracts/signalboxAnalytics";
 import { PERSON_TIMEZONE_WS_METHODS } from "@t3tools/contracts/personTimezone";
@@ -63,6 +65,51 @@ const setup = Effect.gen(function* () {
 });
 
 describe("command permissions", () => {
+  it.effect("requires the destination provider grant for sign-in answers and logout", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const registry = yield* setup;
+        for (const tag of [WS_METHODS.providerAuthRespond, WS_METHODS.providerAuthLogout]) {
+          const command = createCommandPermissions(runtime, tag);
+          registry.set(sessions(env), AsyncResult.success(grant(true)));
+          expect(registry.get(command.permissionAtom(env))).toBe(false);
+          expect((yield* Effect.flip(command.authorize(registry, env)))._tag).toBe(
+            "EnvironmentAuthorizationError",
+          );
+          registry.set(
+            sessions(env),
+            AsyncResult.success({
+              ...grant(true),
+              scopes: [AuthProvidersManageScope],
+              permissions: [AuthProvidersManageScope],
+            }),
+          );
+          expect(registry.get(command.permissionAtom(env))).toBe(true);
+          yield* command.authorize(registry, env);
+          expect(registry.get(command.permissionAtom(other))).toBe(false);
+        }
+      }),
+    ),
+  );
+  it.effect("requires an operate grant to answer durable asks", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const registry = yield* setup;
+        const asks = createCommandPermissions(runtime, ORCHESTRATION_V2_WS_METHODS.dispatchCommand);
+        const input = { type: "thread.ask.answer" };
+        registry.set(sessions(env), AsyncResult.success(grant(false)));
+        expect(registry.get(createSignalboxAskCommand(runtime).permissionAtom(env))).toBe(false);
+        expect(registry.get(asks.permissionAtom(env, { type: "thread.snooze" }))).toBe(false);
+        expect(registry.get(asks.permissionAtom(env, input))).toBe(false);
+        expect((yield* asks.authorize(registry, env, input).pipe(Effect.flip))._tag).toBe(
+          "EnvironmentAuthorizationError",
+        );
+        registry.set(sessions(env), AsyncResult.success(grant(true)));
+        expect(registry.get(asks.permissionAtom(env, input))).toBe(true);
+        yield* asks.authorize(registry, env, input);
+      }),
+    ),
+  );
   it.effect("requires a terminal grant on the destination for terminal mutations", () =>
     Effect.scoped(
       Effect.gen(function* () {

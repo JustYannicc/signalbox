@@ -58,6 +58,7 @@ export function threadDetailToShell(
         : { id: pendingRequest.id, kind: pendingRequest.kind, createdAt: pendingRequest.createdAt },
     latestVisibleMessage: null,
     latestUserMessageAt: latestUserMessageAt(projection),
+    asks: thread.asks,
     hasActionableProposedPlan: false,
     itemCount: projection.turnItems.length,
     visibleItemCount: projection.visibleTurnItems.length,

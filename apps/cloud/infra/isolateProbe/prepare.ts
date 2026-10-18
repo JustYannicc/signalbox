@@ -20,6 +20,7 @@ export const prepare = async () => {
     "facetSource",
     "wasmFixture",
     "moduleTransport",
+    "moduleUpload",
     "codeGeneration",
   ]) {
     const source = await NodeFSP.readFile(new URL(`./${name}.ts`, import.meta.url), "utf8");

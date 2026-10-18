@@ -84,6 +84,11 @@ export interface PoolObjectApi {
   readonly loginStatus: (actor: PoolActor, state: string) => Promise<PoolReply<LoginStatus>>;
   readonly completeLogin: (actor: PoolActor, callback: LoginCallback) => Promise<PoolReply<null>>;
   readonly cancelLogin: (actor: PoolActor, state: string) => Promise<PoolReply<boolean>>;
+  readonly logoutAccount: (
+    actor: PoolActor,
+    provider: PoolLoginProvider,
+    name: string,
+  ) => Promise<PoolReply<null>>;
   readonly updateAccount: (
     actor: PoolActor,
     name: string,
@@ -146,6 +151,7 @@ const METHODS = Object.keys({
   loginStatus: true,
   completeLogin: true,
   cancelLogin: true,
+  logoutAccount: true,
   updateAccount: true,
   openLink: true,
 } satisfies Record<Method, true>) as ReadonlyArray<Method>;

@@ -1,9 +1,9 @@
 import {
   ACCOUNT_NATIVE_RETURN_SCHEMES,
-  ACCOUNT_VERIFY_EMAIL_PATH,
   AccountVerifyEmailFailure,
   AccountVerifyEmailResult,
 } from "@t3tools/contracts/account";
+import { runAccountClient, useAccountClient } from "@t3tools/client-runtime/account";
 import * as Schema from "effect/Schema";
 
 /**
@@ -67,13 +67,12 @@ export async function submitVerifyEmailCode(
   origin: string,
   request: { readonly verify: string; readonly code: string },
 ): Promise<VerifyOutcome> {
-  const response = await fetch(`${origin}${ACCOUNT_VERIFY_EMAIL_PATH}`, {
-    method: "POST",
-    credentials: "include",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify(request),
-  }).catch(() => null);
-  if (!response) return { _tag: "error", error: "failed" };
-  const body: unknown = await response.json().catch(() => null);
-  return classifyVerifyResponse(response.ok, body, origin);
+  try {
+    const response = await runAccountClient(
+      useAccountClient((client) => client.verifyEmailCode({ origin, request })),
+    );
+    return classifyVerifyResponse(response.ok, response.body, origin);
+  } catch {
+    return { _tag: "error", error: "failed" };
+  }
 }

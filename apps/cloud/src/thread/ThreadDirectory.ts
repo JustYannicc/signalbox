@@ -1,3 +1,4 @@
+import { type ThreadCommand } from "./threadCommands.ts";
 import type { Threads } from "./Threads.ts";
 import type { PreviewPort } from "@signalbox/runner-protocol/PreviewTunnel";
 import type { ModelGatewayProvider } from "@signalbox/runner-protocol/RunnerProtocol";
@@ -7,7 +8,6 @@ import type { ProviderUploadFeedbackInput } from "@t3tools/contracts";
 import type {
   SecretRequestAnswerInput,
   SecretRequestFailureReason,
-  OrchestrationV2Command,
   OrchestrationV2SearchThreadInput,
   OrchestrationV2SearchThreadResult,
   OrchestrationV2CommandOutputFrame,
@@ -322,7 +322,7 @@ export interface ThreadHandle extends TerminalHandle {
   ) => Effect.Effect<void, SecretRequestError | ThreadObjectError>;
   readonly dispatch: (
     actor: Actor,
-    command: OrchestrationV2Command,
+    command: ThreadCommand,
     creation: ThreadCreation,
   ) => Effect.Effect<OrchestrationV2DispatchCommandResult, CommandFailure>;
   readonly launch: (
