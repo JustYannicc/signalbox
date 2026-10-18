@@ -20,6 +20,7 @@ const VERB_SYMBOL: Record<WorkflowStepVerb, AppSymbolViewProps["name"]> = {
   notify: "bell.badge",
   sleep: "timer",
   waitFor: "clock",
+  eventCursor: "clock",
   hook: "arrow.uturn.backward",
   recall: "internaldrive",
   remember: "internaldrive",

@@ -98,10 +98,9 @@ registered, the gateway refuses the turn's requests with "This machine hasn't
 registered the folder's secrets to hide them yet."
 
 Production's gateway is `signalbox-model-gateway` at `gateway.signalbox.run`,
-deployed after the cloud Worker. Each pull request preview gets its own,
-`signalbox-model-gateway-pr-<number>` at
-`gateway-preview-<number>.signalbox.run`, bound to the preview's Worker and
-deleted with it. Previews set their `MODEL_GATEWAY_URL` themselves.
+deployed after the cloud Worker. Preview gateways use `/anthropic` and
+`/openai` routes on the preview app origin. The preview's `MODEL_GATEWAY_URL`
+uses that origin; production keeps its gateway domain.
 
 `POST http://127.0.0.1:8790/machines/drop-sockets` cuts every Runner's socket,
 to watch one reconnect mid-turn and resend what the thread has not acknowledged.
@@ -217,16 +216,20 @@ A light thread moves to the heavy class for good when its Runner sees a
 command it should not run there: a build, test, install, dev server, package
 script/executor or Node command
 (`apps/server/src/signalbox/runner/RunnerMachineClass.ts`), or one killed for
-memory (exit 137). The Runner saves the turn's files and session rows, reports
-`machine.outgrown`, and the thread continues the run on a heavy machine the
-same way it continues one whose machine was lost (below): the command shows as
-interrupted and the agent runs it again there. This command-start classifier is
-best effort; commands hidden behind an unrecognized wrapper can stay light.
-If files or session rows cannot be saved, the turn fails with that cause instead
-of continuing from stale state. A light container that runs out
-of memory mid-turn (exit 137) moves its run up too. Any other exit, including
-Cloudflare restarting the container for a deploy's rollout, is a lost machine:
-the run continues on a new light one.
+memory (exit 137), or the agent's explicit `: request-heavy-machine` request.
+The command-start classifier is best effort; commands hidden behind an
+unrecognized wrapper can stay light. For a heavy work command, the Runner saves
+the turn's files and session rows, reports `machine.outgrown`, and the thread
+continues the run on a heavy machine the same way it continues one whose
+machine was lost (below): the command shows as interrupted and the agent runs
+it again there. An explicit request follows the same save and resume path. The
+Runner records the move reason in machine diagnostics. The explicit request
+stays internal; neither it nor a move notice appears in the conversation
+transcript. If files or session rows cannot be saved, the turn fails with the
+save error instead of continuing from stale state. A light container that runs
+out of memory mid-turn (exit 137) moves its run up too. Any other exit,
+including Cloudflare restarting the container during a deploy rollout, is a
+lost machine. The run continues on a new light one.
 
 Each preview gets its own container application,
 `signalbox-cloud-pr-<number>-threads`, deleted with the preview. Containers
@@ -375,11 +378,48 @@ source-build test flag, and restore the managed image's checksummed no-plugin
 archive build. Until a patch applies or is deliberately removed, release sync
 must fail for maintainer review.
 
-To roll back a merged update, revert its sync commit and let the normal main
-deployment rebuild the prior pins. This restores the previous executable; it
-does not roll back config or auth files persisted in a pool or self-hosted
-account hub. Treat any release that may have migrated those files as a data
+After reproducing an upstream regression, choose a good release from successful
+deployment and reproduction evidence, not merely the previous pin. Prepare its
+full manifest with `python3 -m scripts.cliproxyapi.rollback` from the repository
+root. Pass the manifest path, `--expected-version`, `--good-commit` (the full
+repository commit containing that manifest), `--good-evidence`, `--reproduction`,
+`--upstream-issue`, and a one-line `--reason`. Evidence arguments are HTTPS links;
+the caller must establish that the good release passes the same reproduction.
+The command only edits the local manifest. It neither diagnoses the regression
+nor creates an issue, pull request or deployment.
+
+The command restores the source commit, all binary assets and checksums, and the
+container archive from that good commit. It retains current holds and adds an
+open-ended hold starting at the bad version, with the reason and evidence links.
+Submit that manifest on `automation/cliproxyapi-update`, link the reproduction,
+good-release evidence and upstream issue in the PR, and let the same smoke,
+preview and CI gates check the rollback. The normal main deployment rebuilds the
+image after merge. Rollback restores the executable; it does not roll back config
+or auth files persisted in a pool or self-hosted account hub. Treat any release
+that may have migrated those files as a data
 recovery decision as well as an image rollback.
+
+The manifest's `holds` array blocks releases from each entry's inclusive `from`
+version until its optional exclusive `before` version. Scheduled sync skips a
+held latest release and shows the reason and upstream issue in the run summary.
+Auto-merge checks holds from both current main and the release PR, then fetches
+and checks main again immediately before requesting the merge. Updates preserve
+holds. To lift one, remove its entry on main. After a fixed release passes the
+reproduction, set `before` to that version on main and rerun sync.
+
+A final recheck leaves a seconds-long race before GitHub merges. Release sync
+also runs on main manifest pushes. Before fetching an upstream release, it checks
+whether the current pin is held and automatically prepares a rollback PR using
+the hold's full `lastGood` snapshot and evidence. It preserves current holds,
+reuses an identical pending rollback without resetting its checks, and reports
+the PR through the existing release-problem issue. Unrelated branch work or
+unmerged hold edits stop the update for a maintainer. Auto-merge refuses a
+rollback when its recheck sees changed hold metadata on main.
+
+The rollback uses the same smoke, deploy and CI gates. It changes the pin only
+after that PR merges; a failed gate can delay recovery. Detection, reproduction,
+upstream reporting and evidence for a new hold still require a maintainer or an
+agent until the alert automation is connected.
 
 A self-hosted server that moved a pool here keeps a pool link (`pool/poolLink.ts`,
 `/api/pool-link`): a token naming the pool's object plus a secret only that
@@ -745,6 +785,15 @@ sees it, and `src/observability/wideEvents.test.ts` fails if a turn's prompt or
 reply reaches one. Lint fails on `console.*` or another logger in
 `apps/cloud/src`.
 
+Pool HTTP hops emit `pool.call` with response-header latency and the
+CLIProxyAPI release reported by management response headers. A managed
+container keeps that evidence only for its running lifetime; an object that
+finds an old container still running starts with an unknown release until a
+management read identifies it. The deployment pin is never runtime evidence.
+External management replies identify only their own hop. External and linked
+model hops remain unknown because their responses have no verified release
+metadata contract. These events do not measure stream completion or CPU/RAM.
+
 Where they go depends on the deploy environment's secrets (`cloud-preview`
 and `cloud-production`), passed through `alchemy.run.ts`. Each is optional:
 
@@ -754,10 +803,11 @@ and `cloud-production`), passed through `alchemy.run.ts`. Each is optional:
   production's). Native exports must never point directly at Sentry: they
   include SQL statements, full URLs and storage keys outside evlog's redactor.
   Unfiltered trace persistence in Cloudflare is disabled. Each stage has its
-  own destination and receiver at `traces-<app-origin>/v1/traces`, accepting
-  OTLP JSON, plain or gzip, with bearer auth using the DSN's public ingest
-  key. Cloud intake uses the `TRACE_EXPORT` service binding and
-  `TRACE_EXPORT_TOKEN` with that same protocol. The receiver keeps trace IDs,
+  own destination and receiver. Production uses
+  `traces-app.signalbox.run/v1/traces`; previews use `/v1/traces` on the app
+  origin. The receiver accepts OTLP JSON, plain or gzip, with bearer auth
+  using the DSN's public ingest key. Cloud intake uses the `TRACE_EXPORT`
+  service binding and `TRACE_EXPORT_TOKEN` with that same protocol. The receiver keeps trace IDs,
   approved enums, counts and timings; unknown fields, events and content
   are dropped. It has no tracing of its own, preventing export loops.
 - `POSTHOG_API_KEY` with the `POSTHOG_HOST` variable, both required (no

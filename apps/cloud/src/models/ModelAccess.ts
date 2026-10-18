@@ -13,6 +13,7 @@ import { threadOfModelToken } from "../thread/ModelTokens.ts";
 import * as ModelAuthority from "./internal/ModelAuthority.ts";
 import type {
   ModelForwardReply,
+  ModelCallTrace,
   ModelPoolRoute,
   ModelRequest,
   ModelServeReply,
@@ -35,9 +36,14 @@ const make = Effect.gen(function* () {
   const clock = yield* Clock.Clock;
   const now = () => clock.currentTimeMillisUnsafe();
 
-  const forward = async (input: ModelRequest, pool: ModelPoolRoute, thread?: string) => {
+  const forward = async (
+    input: ModelRequest,
+    pool: ModelPoolRoute,
+    thread?: string,
+    trace?: ModelCallTrace,
+  ) => {
     try {
-      return await authority.forward(pool, input.path, input.request, thread);
+      return await authority.forward(pool, input.path, input.request, thread, trace);
     } catch {
       return {
         _tag: "failed",
@@ -90,7 +96,10 @@ const make = Effect.gen(function* () {
       };
     }
     // The pool uses the thread identity to keep its requests on the same account.
-    const reply = await forward({ ...input, request: scrubbed.request }, pool, name ?? undefined);
+    const reply = await forward({ ...input, request: scrubbed.request }, pool, name ?? undefined, {
+      runId,
+      traceId,
+    });
     return { _tag: "granted", runId, traceId, authMs, reply };
   };
 

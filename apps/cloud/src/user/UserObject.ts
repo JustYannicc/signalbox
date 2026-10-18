@@ -31,6 +31,7 @@ import * as Environment from "../environment.ts";
 import * as GitHub from "../github/GitHub.ts";
 import * as GitHubActions from "../github/GitHubActions.ts";
 import * as GitHubBranches from "../github/GitHubBranches.ts";
+import * as AgentPullRequests from "../github/AgentPullRequests.ts";
 import * as CloudPullRequests from "../github/CloudPullRequests.ts";
 import * as PullRequestRepository from "../github/PullRequestRepository.ts";
 import * as ConnectionLinks from "../connections/ConnectionLinks.ts";
@@ -89,12 +90,15 @@ import { makeUserObjectApi } from "./userObjectApi.ts";
 import * as UserPools from "./UserPools.ts";
 import * as LegacySections from "./legacySections.ts";
 import * as UserFolders from "./UserFolders.ts";
+import * as FolderStarts from "./FolderStarts.ts";
 import * as UserShell from "./UserShell.ts";
 import * as UserStore from "./UserStore.ts";
 import * as UserThreadKinds from "./UserThreadKinds.ts";
 import * as UserThreadStatus from "./UserThreadStatus.ts";
 import * as UserModelSettings from "./UserModelSettings.ts";
+import * as UserKeybindings from "./UserKeybindings.ts";
 import * as UserAnalyticsPreference from "./UserAnalyticsPreference.ts";
+import * as UserTimezone from "./UserTimezone.ts";
 import * as ChatArchive from "./chatArchive.ts";
 import { makeProfileId } from "./profileId.ts";
 
@@ -245,6 +249,7 @@ const makeRuntime = (ctx: DurableObjectState, env: UserObjectEnv) => {
         Layer.mergeAll(
           CloudCollaboration.layer,
           GitHubBranches.layer,
+          AgentPullRequests.layer,
           GitHubActions.layer,
           CloudPullRequests.layer.pipe(Layer.provideMerge(PullRequestRepository.layer)),
           UserPreviewSetup.layer,
@@ -325,6 +330,7 @@ const makeRuntime = (ctx: DurableObjectState, env: UserObjectEnv) => {
           ),
           Layer.provideMerge(LegacySections.layer),
           Layer.provideMerge(UserFolders.layer),
+          Layer.provideMerge(FolderStarts.layer),
           Layer.provideMerge(
             Layer.mergeAll(
               LearnerService.layer,
@@ -351,7 +357,9 @@ const makeRuntime = (ctx: DurableObjectState, env: UserObjectEnv) => {
             Layer.mergeAll(
               UserStore.layer,
               UserModelSettings.layer,
+              UserKeybindings.layer,
               UserAnalyticsPreference.layer,
+              UserTimezone.layer,
               UserContexts.layerWithDrives,
               ResourceBindings.layer,
               OnePasswordAccount.layer,
@@ -614,6 +622,10 @@ export class UserObject extends DurableObject<UserObjectEnv> implements UserObje
 
   clientTraceDimensions(threadIds: Parameters<UserObjectApi["clientTraceDimensions"]>[0]) {
     return this.api.clientTraceDimensions(threadIds);
+  }
+
+  clientFolderDimensions(folderIds: Parameters<UserObjectApi["clientFolderDimensions"]>[0]) {
+    return this.api.clientFolderDimensions(folderIds);
   }
 
   recordDriveAccess(entry: Parameters<UserObjectApi["recordDriveAccess"]>[0]) {

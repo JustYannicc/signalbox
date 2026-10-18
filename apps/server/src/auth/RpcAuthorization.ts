@@ -1,3 +1,4 @@
+import { PERSON_TIMEZONE_REQUIRED_SCOPES } from "@t3tools/contracts/personTimezone"; // signalbox: cloud timezone
 import {
   CLIENT_GUARDED_RPC_SCOPES,
   type DeviceListInput,
@@ -61,6 +62,7 @@ type WsRpcMethod = RpcGroup.Rpcs<typeof WsRpcGroup>["_tag"];
 
 export const RPC_REQUIRED_SCOPES = {
   ...SIGNALBOX_COLLABORATION_SCOPES, // signalbox: cloud collaboration
+  ...PERSON_TIMEZONE_REQUIRED_SCOPES,
   ...SIGNALBOX_ANALYTICS_RPC_REQUIRED_SCOPES, // signalbox: analytics
   ...SIGNALBOX_CONTEXTS_REQUIRED_SCOPES, // signalbox: contexts
   ...SIGNALBOX_DRIVES_REQUIRED_SCOPES, // signalbox: drives

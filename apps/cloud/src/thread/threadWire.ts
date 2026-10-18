@@ -22,6 +22,7 @@ import {
   SignalboxThreadPreviews,
 } from "@t3tools/contracts/signalboxPreviews";
 import { ThreadStatusNote } from "@t3tools/contracts/signalboxStatusLine";
+import { PullResult } from "@signalbox/runner-protocol/PullProtocol";
 import * as Schema from "effect/Schema";
 
 /**
@@ -81,6 +82,14 @@ export const ThreadMonitorWire = Schema.Struct({
 });
 export type ThreadMonitor = typeof ThreadMonitorWire.Type;
 
+const PullInputWire = Schema.Struct({
+  driveId: Schema.String,
+  operationId: Schema.String,
+  target: Schema.String.check(Schema.isPattern(/^[0-9a-f]{40}$/)),
+  branch: Schema.String,
+});
+export type PullInput = typeof PullInputWire.Type;
+
 export const wire = {
   summary: jsonCodec(ThreadSummaryWire),
   command: jsonCodec(OrchestrationV2Command),
@@ -99,6 +108,8 @@ export const wire = {
     }),
   ),
   monitors: jsonCodec(Schema.Array(ThreadMonitorWire)),
+  pullInput: jsonCodec(PullInputWire),
+  pullResult: jsonCodec(PullResult),
   browserUpdate: jsonCodec(AgentBrowserUpdate),
   browserInput: jsonCodec(AgentBrowserInput),
   browserSteps: jsonCodec(Schema.Array(AgentBrowserStep)),

@@ -368,6 +368,7 @@ describe("context server (#141)", () => {
         "t3_thread_read",
         "t3_thread_wait",
         "task_status",
+        "read_pr",
       ]);
 
       const found = yield* call("search_context", {
@@ -595,6 +596,10 @@ describe("context server (#141)", () => {
         "t3_thread_interrupt",
         "push",
         "create_pr",
+        "edit_pr",
+        "comment_pr",
+        "reply_to_pr_review",
+        "upload_pr_image",
       ]);
 
       const opened = yield* call("create_pr", {

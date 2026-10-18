@@ -16,6 +16,13 @@ export const SIGNALBOX_RPC_REACH = {
     name: "threads.query",
     summary: "Search thread items across the folders you can see, with anchors and index coverage.",
   }),
+  "signalbox.timezone.get": read({ name: "timezone.get" }),
+  "signalbox.timezone.set": write({
+    name: "timezone.set",
+    summary:
+      "Set your scheduling timezone; null restores device detection. Existing schedules keep their timezone.",
+  }),
+  "signalbox.timezone.report": exempt("client-report", "A client reports its own device timezone."),
   "signalbox.analytics.getSettings": read({ name: "analytics.get" }),
   "signalbox.analytics.setEnabled": write({ name: "analytics.setEnabled" }),
   "signalbox.analytics.recordClientEvent": exempt(
@@ -115,6 +122,10 @@ export const SIGNALBOX_RPC_REACH = {
     summary: "Your folders, nested, with their instructions and pools.",
   }),
   "signalbox.folders.create": write({ summary: "Create a folder." }),
+  "signalbox.folders.startFrom": write({
+    name: "folders.startFrom",
+    summary: "Start a folder from another folder with its existing history.",
+  }),
   "signalbox.folders.update": write({ summary: "Rename a folder or change its settings." }),
   "signalbox.folders.move": write({ summary: "Move a folder under another one." }),
   "signalbox.folders.delete": write({ destructive: true }),

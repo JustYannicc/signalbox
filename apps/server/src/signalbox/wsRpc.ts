@@ -6,6 +6,7 @@
  *
  * @module signalbox/wsRpc
  */
+import { PERSON_TIMEZONE_WS_METHODS, PersonTimezoneError } from "@t3tools/contracts/personTimezone";
 import { RpcScopeAuthorization, SIGNALBOX_WS_RPCS, WS_METHODS } from "@t3tools/contracts";
 import { AccountHubRpcError } from "@t3tools/contracts/accountHub";
 import * as Effect from "effect/Effect";
@@ -63,6 +64,27 @@ export const layer = (clientAnalyticsProps: Readonly<Record<string, unknown>>) =
       const sections = yield* makeSectionsWsHandlers;
       return SignalboxWsRpcGroup.of({
         ...analytics,
+        [PERSON_TIMEZONE_WS_METHODS.get]: () =>
+          Effect.fail(
+            new PersonTimezoneError({
+              operation: "read",
+              message: "Person timezone settings require Signalbox Cloud.",
+            }),
+          ),
+        [PERSON_TIMEZONE_WS_METHODS.set]: () =>
+          Effect.fail(
+            new PersonTimezoneError({
+              operation: "set",
+              message: "Person timezone settings require Signalbox Cloud.",
+            }),
+          ),
+        [PERSON_TIMEZONE_WS_METHODS.report]: () =>
+          Effect.fail(
+            new PersonTimezoneError({
+              operation: "report",
+              message: "Person timezone settings require Signalbox Cloud.",
+            }),
+          ),
         ...automationRpcHandlers(automations),
         ...sections,
         ...signalboxContextsWsHandlers,

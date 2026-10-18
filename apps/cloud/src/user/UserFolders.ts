@@ -6,6 +6,7 @@ import {
   type FolderMoveInput,
   OnePasswordEnvironmentId,
   type FolderMoveThreadInput,
+  FolderOrigin,
   type FolderSetInstructionsInput,
   type FolderSetOnePasswordInput,
   type FolderSetPhaseInput,
@@ -34,6 +35,7 @@ import { moveNotesUp } from "../notes/noteTables.ts";
 import type { TurnInstructions, TurnPools, TurnSecrets } from "../thread/turnPool.ts";
 import { contextOfProject, driveOfProject, projectIdForDrive } from "./contextProjects.ts";
 import { foldDrives } from "./driveFolders.ts";
+import * as FolderStartReservations from "./folderStartReservations.ts";
 import {
   columnsOfPhase,
   initialPhase,
@@ -125,6 +127,18 @@ export class UserFolders extends Context.Service<
     /** `states` as snapshots. */
     readonly changes: Stream.Stream<SignalboxFoldersSnapshot, SqlError>;
     readonly create: (input: FolderCreateInput) => Effect.Effect<SignalboxFoldersSnapshot, Failure>;
+    /** Reserves source identity, name and drive before preparing the history. */
+    readonly reserveStart: (
+      input: FolderStartReservations.FolderStartReservationInput,
+    ) => Effect.Effect<{ readonly name: string; readonly sourceName: string }, Failure>;
+    /** Adds the prepared drive and its immutable source lineage at the tree's top level. */
+    readonly createFrom: (input: {
+      readonly id: FolderId;
+      readonly name: string;
+      readonly ownerId: SignalboxContextId;
+      readonly driveId: string;
+      readonly origin: FolderOrigin;
+    }) => Effect.Effect<SignalboxFoldersSnapshot, Failure>;
     readonly update: (input: FolderUpdateInput) => Effect.Effect<SignalboxFoldersSnapshot, Failure>;
     readonly move: (input: FolderMoveInput) => Effect.Effect<SignalboxFoldersSnapshot, Failure>;
     readonly delete: (input: FolderDeleteInput) => Effect.Effect<SignalboxFoldersSnapshot, Failure>;
@@ -198,6 +212,7 @@ const decodeState = Schema.decodeUnknownSync(
     }),
   ),
 );
+const encodeOrigin = Schema.encodeSync(Schema.fromJsonString(FolderOrigin));
 const toTreeFolder = (row: typeof FolderRow.Type): TreeFolder => ({
   id: row.id,
   ownerId: row.owner_id,
@@ -205,6 +220,7 @@ const toTreeFolder = (row: typeof FolderRow.Type): TreeFolder => ({
   name: row.name,
   position: row.position,
   driveId: row.drive_id,
+  origin: row.origin ?? null,
   instructions: row.instructions,
   secrets: row.secrets_environment_id ?? null,
   phase: phaseOfColumns(row.phases, row.phase),
@@ -246,7 +262,7 @@ const make = Effect.gen(function* () {
 
   const bump = sql`UPDATE folders_state SET revision = revision + 1 WHERE id = 1`;
   const selectFolders = sql`SELECT id, owner_id, parent_id, name, position, drive_id, instructions,
-    secrets_environment_id, phases, phase FROM folders`;
+    secrets_environment_id, phases, phase, origin FROM folders`;
   const selectState = sql`SELECT revision, instructions, secrets_environment_id FROM folders_state`;
 
   /** A span for one operation (`tracing.ts`): never a folder's name or instructions. */
@@ -416,6 +432,48 @@ const make = Effect.gen(function* () {
         }),
       );
     }).pipe(traced("UserFolders.create", { "folder.parent_id": input.parentId }));
+
+  const reserveStart: UserFolders["Service"]["reserveStart"] = (input) =>
+    FolderStartReservations.reserve(input).pipe(
+      Effect.provideService(SqlClient.SqlClient, sql),
+      Effect.flatMap((reservation) =>
+        reservation === null
+          ? refuse("That folder already exists with a different source.")
+          : Effect.succeed(reservation),
+      ),
+    );
+
+  const createFrom: UserFolders["Service"]["createFrom"] = (input) =>
+    mutate((current) =>
+      Effect.gen(function* () {
+        const existing = current.tree.folders.find((folder) => folder.id === input.id);
+        if (existing !== undefined) {
+          const sameOrigin =
+            existing.origin?.legacyCatalogHome === input.origin.legacyCatalogHome &&
+            existing.origin?.folderId === input.origin.folderId &&
+            existing.origin?.driveId === input.origin.driveId &&
+            existing.origin?.head === input.origin.head;
+          return existing.ownerId === input.ownerId &&
+            existing.driveId === input.driveId &&
+            sameOrigin
+            ? false
+            : yield* refuse("That folder already exists.");
+        }
+        yield* annotateOwner(input.ownerId);
+        if (!current.contexts.some((context) => context.id === input.ownerId)) {
+          return yield* refuse("Choose one of your current contexts for the folder.");
+        }
+        const order = [...childIds(current.tree, input.ownerId, null), input.id];
+        yield* sql`INSERT INTO folders (id, owner_id, parent_id, name, position, drive_id, origin)
+          VALUES (${input.id}, ${input.ownerId}, NULL, ${input.name.trim()}, 0,
+            ${input.driveId}, ${encodeOrigin(input.origin)})`;
+        yield* FolderStartReservations.complete(input.id).pipe(
+          Effect.provideService(SqlClient.SqlClient, sql),
+        );
+        yield* setOrder(null, order);
+        return true;
+      }),
+    ).pipe(traced("UserFolders.createFrom", { "folder.id": input.id }));
 
   /** The drive `projectId` names, when it can be a folder's files: given to the user, in `ownerId`'s tree. */
   const filesFor = (current: FolderState, projectId: ProjectId, ownerId: string) => {
@@ -785,10 +843,10 @@ const make = Effect.gen(function* () {
         Effect.gen(function* () {
           for (const row of input.folders) {
             yield* sql`INSERT INTO folders (id, owner_id, parent_id, name, position, instructions,
-                secrets_environment_id, phases, phase)
+                secrets_environment_id, phases, phase, origin)
               VALUES (${row.id}, ${row.owner_id}, ${row.parent_id}, ${row.name}, ${row.position},
                 ${row.instructions}, ${row.secrets_environment_id ?? null}, ${row.phases ?? null},
-                ${row.phase ?? null})
+                ${row.phase ?? null}, ${row.origin == null ? null : encodeOrigin(row.origin)})
               ON CONFLICT (id) DO NOTHING`;
           }
           // A drive's folder takes its place from these the first time it's made.
@@ -852,6 +910,8 @@ const make = Effect.gen(function* () {
     threadHome,
     changes,
     create,
+    reserveStart,
+    createFrom,
     update,
     move,
     delete: remove,

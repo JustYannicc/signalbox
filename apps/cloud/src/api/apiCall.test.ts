@@ -2,7 +2,6 @@ import { operations } from "@signalbox/api/catalog";
 import {
   AuthOrchestrationOperateScope,
   AuthOrchestrationReadScope,
-  AuthStandardClientScopes,
   AuthSettingsWriteScope,
   type AuthEnvironmentScope,
   EnvironmentId,
@@ -17,6 +16,8 @@ import { makeMemoryCloud } from "../testing.ts";
 import { scriptedModelSelection } from "../thread/scriptedProvider.ts";
 import * as UserModelSettings from "../user/UserModelSettings.ts";
 import { type ApiCaller, callOperation } from "./apiCall.ts";
+import { CLOUD_CLIENT_SCOPES } from "../auth/CloudScopes.ts";
+import { DEFAULT_RESOLVED_KEYBINDINGS } from "@t3tools/shared/keybindings";
 
 const identity = { environmentId: EnvironmentId.make("cloud-test"), label: "Cloud" };
 const userId = "user_1";
@@ -107,6 +108,38 @@ describe("public API calls", () => {
       expect(JSON.stringify(read.body)).toContain("From an agent");
     }),
   );
+  it.effect("saves and removes a keybinding through the public reach map", () =>
+    Effect.gen(function* () {
+      const { call } = yield* setup;
+      const binding = {
+        key: "mod+shift+k",
+        command: "commandPalette.toggle",
+        when: "!terminalFocus",
+      };
+      expect(json(yield* call("keybindings.upsert", binding)).status).toBe(403);
+      const writer = person([AuthOrchestrationReadScope, AuthSettingsWriteScope]);
+      expect(json(yield* call("keybindings.upsert", binding, writer))).toMatchObject({
+        status: 200,
+        body: { issues: [] },
+      });
+      expect(json(yield* call("server.config", {}))).toMatchObject({
+        status: 200,
+        body: {
+          keybindings: expect.arrayContaining([
+            expect.objectContaining({
+              command: binding.command,
+              shortcut: expect.objectContaining({ shiftKey: true }),
+            }),
+          ]),
+        },
+      });
+      expect(json(yield* call("keybindings.remove", binding, writer))).toMatchObject({
+        status: 200,
+        body: { keybindings: DEFAULT_RESOLVED_KEYBINDINGS, issues: [] },
+      });
+    }),
+  );
+
   it.effect("reads and saves analytics consent through the public reach map", () =>
     Effect.gen(function* () {
       const { call } = yield* setup;
@@ -241,13 +274,13 @@ describe("public API calls", () => {
   it.effect("creates threads without a model on an economical pool model instead of Fable", () =>
     Effect.gen(function* () {
       const { call, cloud } = yield* setup;
-      yield* call("server.config", {}, person(AuthStandardClientScopes));
+      yield* call("server.config", {}, person(CLOUD_CLIENT_SCOPES));
       const pool = cloud.pools.directory.forPool(`${userId}:personal`);
       const actor = { userId };
       const login = yield* pool.startLogin(actor, "claude");
       yield* pool.completeLogin(actor, `http://localhost/callback?code=c&state=${login.state}`);
       yield* pool.loginStatus(actor, login.state);
-      yield* call("server.refreshProviders", {}, person(AuthStandardClientScopes));
+      yield* call("server.refreshProviders", {}, person(CLOUD_CLIENT_SCOPES));
       const launched = json(
         yield* call("threads.create", {
           commandId: "launch-economical",
@@ -329,7 +362,7 @@ describe("public API calls", () => {
         yield* call(
           "keys.create",
           { label: "relay", scopes: ["relay:write"], model: false },
-          person(AuthStandardClientScopes),
+          person(CLOUD_CLIENT_SCOPES),
         ),
       );
       expect(answer.status).toBe(422);

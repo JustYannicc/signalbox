@@ -17,6 +17,7 @@ import * as Cloudflare from "alchemy/Cloudflare";
 import * as Config from "effect/Config";
 import * as Effect from "effect/Effect";
 import * as Redacted from "effect/Redacted";
+import { MODEL_GATEWAY_PATHS } from "@signalbox/runner-protocol/RunnerProtocol";
 import { testSignInEnv } from "./infra/testSignInEnv.ts";
 
 import { nativeTraceExport } from "./infra/nativeTraceExport.ts";
@@ -29,6 +30,7 @@ import {
   PREVIEW_DRIVE_PACKS_BUCKET,
   PREVIEW_ZONE,
   SIGNALBOX_ZONE_ID,
+  stageWorkerRouting,
 } from "./infra/stage.ts";
 import type {
   DriveObject,
@@ -142,6 +144,8 @@ function workerEnv(target: CloudStage) {
       MACHINE_BACKEND: yield* optional("MACHINE_BACKEND"),
       // Optional: the MCP authorization server (`src/api/mcpRoutes.ts`); unset, MCP takes keys only.
       WORKOS_AUTHKIT_DOMAIN: yield* optional("WORKOS_AUTHKIT_DOMAIN"),
+      // Operators enable a deployed preview temporarily; every normal deploy disables its drills.
+      RECOVERY_DRILLS: "",
       // Optional: the Executor local harness setup adds as an MCP server (`src/localKeys/`).
       EXECUTOR_MCP_URL: yield* optional("EXECUTOR_MCP_URL"),
       SESSION_SECRET: yield* Config.Redacted("SESSION_SECRET"),
@@ -290,7 +294,11 @@ function deploy(
       main: here("src/models/gatewayWorker.ts"),
       compatibility,
       workersDev: false,
-      domain: { name: target.gatewayDomain, zoneId: SIGNALBOX_ZONE_ID },
+      // Preview provider paths share the app origin; production keeps its gateway domain.
+      ...stageWorkerRouting(target, target.gatewayDomain, [
+        MODEL_GATEWAY_PATHS.anthropic,
+        MODEL_GATEWAY_PATHS.openai,
+      ]),
       observability,
       env: {
         ...telemetry,

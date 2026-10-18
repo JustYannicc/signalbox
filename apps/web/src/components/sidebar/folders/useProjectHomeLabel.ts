@@ -2,7 +2,6 @@ import { useAtomValue } from "@effect/atom-react";
 import { contextOfProject } from "@t3tools/client-runtime/state/signalboxContexts";
 import { homeOfProject } from "@t3tools/client-runtime/state/signalboxFolders";
 import type { EnvironmentId, ProjectId } from "@t3tools/contracts";
-import { useCallback } from "react";
 
 import { environmentContextsAtom } from "../../../state/signalboxContexts";
 import { environmentFoldersAtom } from "../../../state/signalboxFolders";
@@ -19,16 +18,13 @@ export function useProjectHomeLabels(): (
 ) => string | null {
   const folders = useAtomValue(environmentFoldersAtom);
   const contexts = useAtomValue(environmentContextsAtom);
-  return useCallback(
-    (environmentId, projectId) => {
-      const snapshot = folders.get(environmentId)?.snapshot ?? null;
-      const owner = contextOfProject(contexts.get(environmentId) ?? null, projectId);
-      return snapshot === null || owner === undefined
-        ? null
-        : homeLabel(snapshot, owner, homeOfProject(snapshot, projectId));
-    },
-    [contexts, folders],
-  );
+  return (environmentId, projectId) => {
+    const snapshot = folders.get(environmentId)?.snapshot ?? null;
+    const owner = contextOfProject(contexts.get(environmentId) ?? null, projectId);
+    return snapshot === null || owner === undefined
+      ? null
+      : homeLabel(snapshot, owner, homeOfProject(snapshot, projectId));
+  };
 }
 
 export function useProjectHomeLabel(
