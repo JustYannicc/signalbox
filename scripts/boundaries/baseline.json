@@ -44,7 +44,6 @@
     "no-circular | apps/cloud/src/drive/DriveDirectory.ts | apps/cloud/src/drive/DriveStore.ts",
     "no-circular | apps/cloud/src/drive/DriveReader.ts | apps/cloud/src/drive/DriveStore.ts",
     "no-circular | apps/cloud/src/pool/PoolDirectory.ts | apps/cloud/src/pool/poolLink.ts",
-    "no-circular | apps/cloud/src/thread/poolModelCapabilities.ts | apps/cloud/src/thread/providerCatalog.ts",
     "no-circular | apps/cloud/src/thread/runner/boat/BoatMachineBackend.ts | apps/cloud/src/thread/runner/machineBackends.ts",
     "no-circular | apps/cloud/src/user/folderSnapshot.ts | apps/cloud/src/user/UserFolders.ts",
     "no-circular | apps/server/src/accountHub/AccountPools.ts | apps/server/src/provider/ProviderInstanceRegistryHydration.ts",

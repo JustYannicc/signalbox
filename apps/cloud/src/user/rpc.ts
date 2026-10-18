@@ -1,4 +1,10 @@
 import {
+  PERSON_TIMEZONE_REQUIRED_SCOPES,
+  PERSON_TIMEZONE_WS_METHODS,
+} from "@t3tools/contracts/personTimezone";
+import { makeTimezoneHandlers } from "./timezoneRpc.ts";
+import {
+  type ProjectId,
   type AuthEnvironmentScope,
   AuthFilesystemReadScope,
   AuthOrchestrationOperateScope,
@@ -6,7 +12,6 @@ import {
   AuthSettingsWriteScope,
   AuthPreviewOperateScope,
   AuthSourceControlWriteScope,
-  AuthStandardClientScopes,
   EnvironmentAuthorizationError,
   GitCommandError,
   ORCHESTRATION_V2_WS_METHODS,
@@ -113,12 +118,18 @@ import type { BrowserReply } from "../thread/threadWire.ts";
 import { DriveSharing } from "./DriveSharing.ts";
 import { makePoolHandlers, POOL_METHODS, POOL_REQUIRED_SCOPES } from "./poolRpc.ts";
 import { AUTOMATION_METHODS, makeAutomationHandlers } from "../automations/automationRpc.ts";
-import { poolFallbackModelSelection } from "../pool/poolViews.ts";
+import { ThreadContexts } from "./threadContexts.ts";
+import { scriptedModelSelection } from "../thread/scriptedProvider.ts";
 import { AUTOMATION_RPC_SCOPES } from "@signalbox/automations/rpcScopes";
 import { makePushHandlers } from "../push/pushRpc.ts";
 import { makeKeysHandlers } from "./keysRpc.ts";
 import { makeSignInHandlers } from "../signIn/signInRpc.ts";
 import * as LoginService from "../signIn/LoginService.ts";
+import {
+  KEYBINDING_METHODS,
+  KEYBINDING_REQUIRED_SCOPES,
+  makeKeybindingHandlers,
+} from "./keybindingsRpc.ts";
 import {
   ANALYTICS_METHODS,
   ANALYTICS_REQUIRED_SCOPES,
@@ -132,9 +143,11 @@ import * as UserContexts from "./UserContexts.ts";
 import * as UserDrives from "./UserDrives.ts";
 import * as LegacySections from "./legacySections.ts";
 import * as UserFolders from "./UserFolders.ts";
+import * as FolderStarts from "./FolderStarts.ts";
 import * as UserShell from "./UserShell.ts";
 import * as UserThreadKinds from "./UserThreadKinds.ts";
 import * as UserThreadStatus from "./UserThreadStatus.ts";
+import { CLOUD_CLIENT_SCOPES } from "../auth/CloudScopes.ts";
 
 /**
  * The slice of the environment RPC protocol a user's object serves: enough
@@ -181,6 +194,7 @@ const SERVED = [
   WS_METHODS.subscribeServerLifecycle,
   ORCHESTRATION_V2_WS_METHODS.subscribeShell,
   ORCHESTRATION_V2_WS_METHODS.getArchivedShellSnapshot,
+  ORCHESTRATION_V2_WS_METHODS.subscribeArchivedShell,
   ORCHESTRATION_V2_WS_METHODS.dispatchCommand,
   ORCHESTRATION_V2_WS_METHODS.launchThread,
   ORCHESTRATION_V2_WS_METHODS.subscribeThread,
@@ -251,7 +265,9 @@ const SERVED = [
   ...POOL_METHODS,
   // The user's automations (`automations/`), run on this object.
   ...AUTOMATION_METHODS,
+  ...KEYBINDING_METHODS,
   ...ANALYTICS_METHODS,
+  ...Object.values(PERSON_TIMEZONE_WS_METHODS),
 ] as const;
 type ServedTag = (typeof SERVED)[number];
 type WsRpcs = RpcGroup.Rpcs<typeof WsRpcGroup>;
@@ -272,12 +288,15 @@ const REQUIRED_SCOPES = {
   [WS_METHODS.subscribeServerConfig]: AuthOrchestrationReadScope,
   [WS_METHODS.serverGetConfig]: AuthOrchestrationReadScope,
   [WS_METHODS.serverUpdateSettings]: AuthSettingsWriteScope,
+  ...KEYBINDING_REQUIRED_SCOPES,
   ...ANALYTICS_REQUIRED_SCOPES,
+  ...PERSON_TIMEZONE_REQUIRED_SCOPES,
   [WS_METHODS.serverProbe]: AuthOrchestrationReadScope,
   [WS_METHODS.serverReportClientActivity]: AuthOrchestrationReadScope,
   [WS_METHODS.subscribeServerLifecycle]: AuthOrchestrationReadScope,
   [ORCHESTRATION_V2_WS_METHODS.subscribeShell]: AuthOrchestrationReadScope,
   [ORCHESTRATION_V2_WS_METHODS.getArchivedShellSnapshot]: AuthOrchestrationReadScope,
+  [ORCHESTRATION_V2_WS_METHODS.subscribeArchivedShell]: AuthOrchestrationReadScope,
   [ORCHESTRATION_V2_WS_METHODS.dispatchCommand]: AuthOrchestrationOperateScope,
   [ORCHESTRATION_V2_WS_METHODS.launchThread]: AuthOrchestrationOperateScope,
   [ORCHESTRATION_V2_WS_METHODS.subscribeThread]: AuthOrchestrationReadScope,
@@ -441,7 +460,10 @@ const kindsCall = <A>(effect: Effect.Effect<A, SqlError>) =>
     }),
   );
 
-const personBrowserCall = <A>(effect: Effect.Effect<A, unknown>, message: string) =>
+const personBrowserCall = <A, E>(
+  effect: Effect.Effect<A, E>,
+  message: string,
+): Effect.Effect<A, SignalboxPersonBrowserError> =>
   effect.pipe(
     Effect.tapError((cause) =>
       Effect.logError("cloud browser profile operation failed", { cause }),
@@ -487,6 +509,7 @@ export const layerHandlers = (input: {
       const contexts = yield* UserContexts.UserContexts;
       const sections = yield* LegacySections.LegacySections;
       const folders = yield* UserFolders.UserFolders;
+      const folderStarts = yield* FolderStarts.FolderStarts;
       const kinds = yield* UserThreadKinds.UserThreadKinds;
       const statusNotes = yield* UserThreadStatus.UserThreadStatus;
       const userDrives = yield* UserDrives.UserDrives;
@@ -560,12 +583,14 @@ export const layerHandlers = (input: {
       const shortcutsCall = withDrives(shortcuts);
       const pools = yield* makePoolHandlers({ identity, actor: { userId } });
       const pushes = yield* makePushHandlers(input.sid);
-      const newThreadModel = pools.configNow.pipe(
-        Effect.map(
-          (config) =>
-            config.settings.defaultModelSelection ?? poolFallbackModelSelection(config.providers),
-        ),
-      );
+      const threadContexts = yield* ThreadContexts;
+      const newThreadModel = (projectId?: ProjectId) =>
+        threadContexts.initialModelSelection(projectId ?? null).pipe(
+          Effect.catchTags({ ThreadFolderTrashedError: () => Effect.succeed(null) }),
+          Effect.map(
+            (selection) => selection ?? (identity.scripted ? scriptedModelSelection : null),
+          ),
+        );
       const automations = yield* makeAutomationHandlers({
         personReviews: input.via === "client",
         newThreadModel,
@@ -575,11 +600,13 @@ export const layerHandlers = (input: {
       const userTrash = yield* UserTrash;
       const keys = yield* makeKeysHandlers({
         userId,
-        scopes: input.scopes ?? AuthStandardClientScopes,
+        scopes: input.scopes ?? CLOUD_CLIENT_SCOPES,
       });
       const signIn = yield* makeSignInHandlers({ userId });
+      const keybindings = yield* makeKeybindingHandlers;
       const personBrowser = yield* LoginService.LoginService;
       const analytics = yield* makeAnalyticsHandlers;
+      const timezone = yield* makeTimezoneHandlers;
       return {
         ...pools.handlers,
         ...pushes,
@@ -588,6 +615,7 @@ export const layerHandlers = (input: {
         ...trash,
         ...keys,
         ...signIn,
+        ...keybindings,
         [SIGNALBOX_PERSON_BROWSER_WS_METHODS.profileStatus]: () =>
           personBrowserCall(
             personBrowser.profileStatus,
@@ -599,6 +627,7 @@ export const layerHandlers = (input: {
             "Cloud browser sign-ins could not be cleared. Try again.",
           ),
         ...analytics,
+        ...timezone,
         [WS_METHODS.subscribeServerConfig]: (request) => pools.configStream(request),
         [WS_METHODS.serverGetConfig]: () => pools.configNow,
         [WS_METHODS.serverProbe]: () => Effect.succeed({}),
@@ -631,6 +660,18 @@ export const layerHandlers = (input: {
                 (cause) =>
                   new OrchestrationV2GetShellSnapshotError({
                     message: "The sidebar is unavailable right now.",
+                    cause,
+                  }),
+              ),
+            ),
+          ),
+        [ORCHESTRATION_V2_WS_METHODS.subscribeArchivedShell]: () =>
+          Stream.unwrap(
+            shell.subscribeArchived.pipe(
+              Effect.mapError(
+                (cause) =>
+                  new OrchestrationV2GetShellSnapshotError({
+                    message: "Archived threads are unavailable right now.",
                     cause,
                   }),
               ),
@@ -809,17 +850,8 @@ export const layerHandlers = (input: {
         [WS_METHODS.gitResolvePullRequest]: (request) => pullRequests.resolvePullRequest(request),
         [WS_METHODS.gitRunStackedAction]: (request) =>
           Stream.unwrap(Effect.map(actorNow, (actor) => branches.runAction(actor, request))),
-        // A thread's branch only takes commits from its own turns.
         [WS_METHODS.vcsPull]: (request) =>
-          Effect.fail(
-            new GitCommandError({
-              operation: "pull",
-              command: "git pull",
-              cwd: request.cwd,
-              detail:
-                "The branch on GitHub has commits this thread doesn't. Signalbox can't bring them into a thread yet.",
-            }),
-          ),
+          Effect.flatMap(actorNow, (actor) => branches.pull(actor, request)),
         [SIGNALBOX_CONTEXTS_WS_METHODS.subscribe]: () => Stream.orDie(contexts.changes),
         [SIGNALBOX_DRIVES_WS_METHODS.subscribe]: () => Stream.orDie(userDrives.changes),
         [SIGNALBOX_DRIVES_WS_METHODS.create]: (request) =>
@@ -913,6 +945,7 @@ export const layerHandlers = (input: {
             ),
           ),
         [SIGNALBOX_FOLDERS_WS_METHODS.create]: (request) => folderCall(folders.create(request)),
+        [SIGNALBOX_FOLDERS_WS_METHODS.startFrom]: (request) => folderStarts.startFrom(request),
         [SIGNALBOX_FOLDERS_WS_METHODS.update]: (request) => folderCall(folders.update(request)),
         [SIGNALBOX_FOLDERS_WS_METHODS.move]: (request) => folderCall(folders.move(request)),
         [SIGNALBOX_FOLDERS_WS_METHODS.delete]: (request) =>

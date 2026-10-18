@@ -4,6 +4,16 @@
 pool forwarding and request reporting. Callers use its `serve` and `report` operations;
 the thread still owns its live turn and the pool still checks access on every request.
 
+`ModelCompletion` runs supplied-text requests without a thread on the owner's pool route
+resolved by the caller. The pool checks access on every request; usage and timing stay on
+completion spans. This path does not substitute secrets into the supplied text.
+
+`ModelCatalog` builds provider views from pool snapshots and resolves an omitted model
+on the destination pool. The user object keeps pool reads, settings and subscriptions;
+metadata never adds models a pool does not serve. `ModelRouting` keeps harness and pool
+identity rules separate from those reads. `ModelManifest` keeps its service key stable
+so callers and test layers resolve the same metadata.
+
 `ModelProtocol` holds the platform-free request and authorization types;
 `ModelRecords` owns the request and usage schemas. `ModelGateway` serves provider
 HTTP requests, with streaming, usage scanning and header handling kept private.

@@ -1,17 +1,18 @@
-import { AuthPreviewOperateScope } from "@t3tools/contracts";
-import { Outlet, createFileRoute, redirect, useParams } from "@tanstack/react-router";
+import { AuthOrchestrationReadScope, AuthPreviewOperateScope } from "@t3tools/contracts";
+import { Outlet, createFileRoute, redirect } from "@tanstack/react-router";
 import { useAtomValue } from "@effect/atom-react";
-import { useEffect, useMemo } from "react";
+import { useEffect } from "react";
 
 import { isCommandPaletteOpen } from "../commandPaletteBus";
 import { isQuickCaptureOpen } from "../components/capture/quickCaptureStore"; // signalbox: quick capture
 import { ThreadRouteView } from "../components/ThreadRouteView";
 import { ThreadLinkPrompt } from "../components/promptLinks/ThreadLinkPrompt";
-import { resolveThreadRouteTarget } from "../threadRoutes";
 import { useClientSettings, useLegacySidebarEnabled } from "../hooks/useSettings";
 import { openCommandPalette } from "../commandPaletteBus";
-import { useProjects } from "../state/entities";
-import { isPreviewAvailableFor } from "../browser/previewRuntime";
+import { useProjects, useEnvironmentSupportsServerBrowser } from "../state/entities";
+import { isPreviewSupportedInRuntime } from "../previewStateStore";
+import { browserLauncher } from "../browser/browserLauncher";
+import { useEnvironmentSupportsSignalboxPreviews } from "../state/signalboxPreviews";
 import { usePrimaryEnvironmentId } from "../state/environments";
 import { useEnvironmentScope } from "../state/session";
 import { selectProjectGroupingSettings } from "../logicalProject";
@@ -32,6 +33,7 @@ import { useThreadSelectionStore } from "../threadSelectionStore";
 import { stackedThreadToast, toastManager } from "~/components/ui/toast";
 import { primaryServerKeybindingsAtom } from "~/state/server";
 import { readEnvironmentSupportsThreadBrowsing } from "~/state/browsing"; // signalbox: synced tabs (#585)
+import { useThreadRouteTarget } from "../hooks/useThreadRouteTarget";
 
 function ChatRouteGlobalShortcuts() {
   const clearSelection = useThreadSelectionStore((state) => state.clearSelection);
@@ -42,22 +44,33 @@ function ChatRouteGlobalShortcuts() {
     routeThreadRef?.environmentId ?? null,
     AuthPreviewOperateScope,
   );
+  const canReadAgentBrowser = useEnvironmentScope(
+    routeThreadRef?.environmentId ?? null,
+    AuthOrchestrationReadScope,
+  );
+  const serverBrowser = useEnvironmentSupportsServerBrowser(routeThreadRef?.environmentId ?? null);
+  const agentBrowser = useEnvironmentSupportsSignalboxPreviews(
+    routeThreadRef?.environmentId ?? null,
+  );
+  const launcher = browserLauncher({
+    desktop: isPreviewSupportedInRuntime(),
+    serverBrowser,
+    agentBrowser,
+    canOperatePreview,
+    canReadAgentBrowser,
+  });
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   const legacySidebarEnabled = useLegacySidebarEnabled();
   const projectGroupingSettings = useClientSettings(selectProjectGroupingSettings);
   const projects = useProjects();
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const { scratchEnvironmentId, startScratchThread } = useScratchProject();
-  const projectGroupCount = useMemo(
-    () =>
-      buildSidebarProjectSnapshots({
-        projects,
-        settings: projectGroupingSettings,
-        primaryEnvironmentId,
-        resolveEnvironmentLabel: () => null,
-      }).length,
-    [primaryEnvironmentId, projectGroupingSettings, projects],
-  );
+  const projectGroupCount = buildSidebarProjectSnapshots({
+    projects,
+    settings: projectGroupingSettings,
+    primaryEnvironmentId,
+    resolveEnvironmentLabel: () => null,
+  }).length;
   const terminalOpen = useTerminalUiStateStore((state) =>
     routeThreadRef
       ? selectThreadTerminalUiState(state.terminalUiStateByThreadKey, routeThreadRef).terminalOpen
@@ -68,7 +81,9 @@ function ChatRouteGlobalShortcuts() {
   // which we invoke via the action bus to avoid duplicating the rule.
   const previewOpen = useRightPanelStore((state) =>
     routeThreadRef
-      ? selectActiveRightPanel(state.byThreadKey, routeThreadRef) === "preview"
+      ? ["preview", "agent-browser"].includes(
+          selectActiveRightPanel(state.byThreadKey, routeThreadRef) ?? "",
+        )
       : false,
   );
   useEffect(() => {
@@ -146,16 +161,16 @@ function ChatRouteGlobalShortcuts() {
       if (command === "preview.toggle") {
         event.preventDefault();
         event.stopPropagation();
-        if (!routeThreadRef || (!canOperatePreview && !previewOpen)) return;
+        if (!routeThreadRef || (!launcher.permitted && !previewOpen)) return;
         if (
-          !isPreviewAvailableFor(routeThreadRef.environmentId) &&
+          !launcher.available &&
           !readEnvironmentSupportsThreadBrowsing(routeThreadRef.environmentId) // signalbox: synced tabs list on web (#585)
         ) {
           toastManager.add(
             stackedThreadToast({
               type: "info",
-              title: "Preview is desktop-only",
-              description: "Open Signalbox in the desktop app to use the in-app preview.",
+              title: "Browser unavailable",
+              description: "This connection has no browser available.",
             }),
           );
           return;
@@ -197,6 +212,8 @@ function ChatRouteGlobalShortcuts() {
     activeThread,
     clearSelection,
     canOperatePreview,
+    launcher.available,
+    launcher.permitted,
     handleNewThread,
     keybindings,
     defaultProjectRef,
@@ -217,10 +234,7 @@ function ChatRouteGlobalShortcuts() {
 function ChatRouteLayout() {
   // Both thread routes render here, not in their own leaf components, so the
   // draft-to-thread promotion keeps one ChatView mounted across the swap.
-  const threadTarget = useParams({
-    strict: false,
-    select: (params) => resolveThreadRouteTarget(params),
-  });
+  const threadTarget = useThreadRouteTarget();
   return (
     <>
       <ChatRouteGlobalShortcuts />

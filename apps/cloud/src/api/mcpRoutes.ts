@@ -1,4 +1,3 @@
-import { AuthStandardClientScopes } from "@t3tools/contracts";
 import * as Config from "effect/Config";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
@@ -8,6 +7,7 @@ import { isLocalKey, verifyLocalKey } from "../localKeys/LocalKeys.ts";
 import * as UserDirectory from "../user/UserDirectory.ts";
 import type { ApiCredential } from "./apiCredential.ts";
 import { MCP_PATH } from "./mcpObject.ts";
+import { CLOUD_CLIENT_SCOPES } from "../auth/CloudScopes.ts";
 
 /**
  * `/mcp` at the Worker. WorkOS AuthKit is the MCP authorization server
@@ -108,7 +108,7 @@ export const handleMcpRequest = (request: Request) =>
       if (person !== null) {
         target = {
           userId: person.userId,
-          credential: { _tag: "agent", sid: person.sid, scopes: AuthStandardClientScopes },
+          credential: { _tag: "agent", sid: person.sid, scopes: CLOUD_CLIENT_SCOPES },
         };
       }
     }

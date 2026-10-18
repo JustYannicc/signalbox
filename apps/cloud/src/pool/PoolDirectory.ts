@@ -4,7 +4,7 @@ import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import type { AccountPoolSetRoutingInput } from "@t3tools/contracts/accountHub";
 
-import type { ModelForwardReply } from "../models/ModelProtocol.ts";
+import type { ModelCallTrace, ModelForwardReply } from "../models/ModelProtocol.ts";
 import type {
   LoginCallback,
   LoginStart,
@@ -105,6 +105,7 @@ export interface PoolModelApi {
     path: string,
     request: Request,
     thread?: string,
+    trace?: ModelCallTrace,
   ) => Promise<ModelForwardReply>;
 }
 

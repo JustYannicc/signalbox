@@ -172,7 +172,7 @@
       "rpc": "automations.customize",
       "access": "write",
       "input": "91eb786d",
-      "output": "2e94ba08"
+      "output": "c1cd1923"
     },
     {
       "name": "automations.delete",
@@ -187,7 +187,7 @@
       "rpc": "automations.discardDraft",
       "access": "write",
       "input": "e4926bda",
-      "output": "2e94ba08"
+      "output": "c1cd1923"
     },
     {
       "name": "automations.disconnect",
@@ -202,7 +202,7 @@
       "access": "read",
       "stream": "snapshot",
       "input": "e4926bda",
-      "output": "3af231ca"
+      "output": "db56df35"
     },
     {
       "name": "automations.githubSubscriptions",
@@ -217,7 +217,7 @@
       "access": "read",
       "stream": "snapshot",
       "input": "03c2b661",
-      "output": "86625594"
+      "output": "25c7d51b"
     },
     {
       "name": "automations.notices",
@@ -232,14 +232,14 @@
       "rpc": "automations.publish",
       "access": "write",
       "input": "b3f469e7",
-      "output": "2e94ba08"
+      "output": "c1cd1923"
     },
     {
       "name": "automations.rotateWebhook",
       "rpc": "automations.rotateWebhook",
       "access": "write",
       "input": "e4926bda",
-      "output": "2e94ba08"
+      "output": "c1cd1923"
     },
     {
       "name": "automations.run",
@@ -261,7 +261,7 @@
       "access": "read",
       "stream": "snapshot",
       "input": "5b9c822a",
-      "output": "022797fa"
+      "output": "3998d94e"
     },
     {
       "name": "automations.runs.retry",
@@ -276,21 +276,21 @@
       "access": "write",
       "compiles": true,
       "input": "e4a20fc8",
-      "output": "4a3e4ebe"
+      "output": "07cb0ccd"
     },
     {
       "name": "automations.setEnabled",
       "rpc": "automations.setEnabled",
       "access": "write",
       "input": "a3f5fcc8",
-      "output": "2e94ba08"
+      "output": "c1cd1923"
     },
     {
       "name": "automations.setWebhookSecret",
       "rpc": "automations.setWebhookSecret",
       "access": "write",
       "input": "2af82751",
-      "output": "2e94ba08"
+      "output": "c1cd1923"
     },
     {
       "name": "automations.stopAttached",
@@ -305,7 +305,7 @@
       "access": "read",
       "compiles": true,
       "input": "b2a7717d",
-      "output": "7c407bde"
+      "output": "c6e7ea50"
     },
     {
       "name": "backgroundPolicy.subscribe",
@@ -550,7 +550,7 @@
       "rpc": "signalbox.folders.create",
       "access": "write",
       "input": "f7e624e5",
-      "output": "f9338f1f"
+      "output": "256ff27d"
     },
     {
       "name": "folders.delete",
@@ -558,7 +558,7 @@
       "access": "write",
       "destructive": true,
       "input": "a3ac90c6",
-      "output": "f9338f1f"
+      "output": "256ff27d"
     },
     {
       "name": "folders.list",
@@ -566,56 +566,63 @@
       "access": "read",
       "stream": "snapshot",
       "input": "03c2b661",
-      "output": "f9338f1f"
+      "output": "256ff27d"
     },
     {
       "name": "folders.move",
       "rpc": "signalbox.folders.move",
       "access": "write",
       "input": "e8e9d1d8",
-      "output": "f9338f1f"
+      "output": "256ff27d"
     },
     {
       "name": "folders.setGitHubLend",
       "rpc": "signalbox.folders.setGitHubLend",
       "access": "write",
       "input": "6c500f30",
-      "output": "f9338f1f"
+      "output": "256ff27d"
     },
     {
       "name": "folders.setInstructions",
       "rpc": "signalbox.folders.setInstructions",
       "access": "write",
       "input": "50051613",
-      "output": "f9338f1f"
+      "output": "256ff27d"
     },
     {
       "name": "folders.setOnePassword",
       "rpc": "signalbox.folders.setOnePassword",
       "access": "write",
       "input": "55e4b414",
-      "output": "f9338f1f"
+      "output": "256ff27d"
     },
     {
       "name": "folders.setPhase",
       "rpc": "signalbox.folders.setPhase",
       "access": "write",
       "input": "6880c000",
-      "output": "f9338f1f"
+      "output": "256ff27d"
     },
     {
       "name": "folders.setSecrets",
       "rpc": "signalbox.folders.setSecrets",
       "access": "write",
       "input": "8c1300cc",
-      "output": "f9338f1f"
+      "output": "256ff27d"
+    },
+    {
+      "name": "folders.startFrom",
+      "rpc": "signalbox.folders.startFrom",
+      "access": "write",
+      "input": "78176c55",
+      "output": "256ff27d"
     },
     {
       "name": "folders.update",
       "rpc": "signalbox.folders.update",
       "access": "write",
       "input": "83f5ef8c",
-      "output": "f9338f1f"
+      "output": "256ff27d"
     },
     {
       "name": "git.preparePullRequestThread",
@@ -643,15 +650,15 @@
       "name": "keybindings.remove",
       "rpc": "server.removeKeybinding",
       "access": "write",
-      "input": "c5599a9e",
-      "output": "364842b6"
+      "input": "d47a6f3a",
+      "output": "6b0d3bc2"
     },
     {
       "name": "keybindings.upsert",
       "rpc": "server.upsertKeybinding",
       "access": "write",
-      "input": "e570ce3e",
-      "output": "364842b6"
+      "input": "3d1d0d0a",
+      "output": "6b0d3bc2"
     },
     {
       "name": "keys.create",
@@ -849,7 +856,7 @@
       "access": "read",
       "stream": "snapshot",
       "input": "03c2b661",
-      "output": "c053554a"
+      "output": "5f63282c"
     },
     {
       "name": "preview.adjust",
@@ -1427,7 +1434,7 @@
       "rpc": "scheduledTasks.list",
       "access": "read",
       "input": "03c2b661",
-      "output": "d21e29dd"
+      "output": "bbeb7192"
     },
     {
       "name": "scheduledTasks.listWebhookDeliveries",
@@ -1441,21 +1448,21 @@
       "rpc": "scheduledTasks.rotateWebhookToken",
       "access": "write",
       "input": "a3ac90c6",
-      "output": "a6fa4606"
+      "output": "be4843bd"
     },
     {
       "name": "scheduledTasks.runNow",
       "rpc": "scheduledTasks.runNow",
       "access": "write",
       "input": "a3ac90c6",
-      "output": "a6fa4606"
+      "output": "be4843bd"
     },
     {
       "name": "scheduledTasks.setEnabled",
       "rpc": "scheduledTasks.setEnabled",
       "access": "write",
       "input": "94a2337a",
-      "output": "a6fa4606"
+      "output": "be4843bd"
     },
     {
       "name": "scheduledTasks.subscribe",
@@ -1463,14 +1470,14 @@
       "access": "read",
       "stream": "snapshot",
       "input": "03c2b661",
-      "output": "d21e29dd"
+      "output": "bbeb7192"
     },
     {
       "name": "scheduledTasks.upsert",
       "rpc": "scheduledTasks.upsert",
       "access": "write",
-      "input": "14e189d6",
-      "output": "a6fa4606"
+      "input": "a07aa6f7",
+      "output": "be4843bd"
     },
     {
       "name": "secrets.answer",
@@ -1543,21 +1550,21 @@
       "rpc": "server.getConfig",
       "access": "read",
       "input": "03c2b661",
-      "output": "3fd55601"
+      "output": "47e8e074"
     },
     {
       "name": "server.refreshProviders",
       "rpc": "server.refreshProviders",
       "access": "read",
       "input": "54bdce9d",
-      "output": "a332da1e"
+      "output": "4e87a982"
     },
     {
       "name": "server.updateProvider",
       "rpc": "server.updateProvider",
       "access": "write",
       "input": "9c17fa1f",
-      "output": "a332da1e"
+      "output": "4e87a982"
     },
     {
       "name": "server.updateServer",
@@ -1580,7 +1587,7 @@
       "access": "read",
       "stream": "snapshot",
       "input": "240ec835",
-      "output": "4c56447a"
+      "output": "274f0093"
     },
     {
       "name": "settings.get",
@@ -1795,8 +1802,8 @@
       "name": "threads.create",
       "rpc": "orchestration.launchThread",
       "access": "write",
-      "input": "49ccbbaa",
-      "output": "1f509429"
+      "input": "d5a4dd19",
+      "output": "c719de80"
     },
     {
       "name": "threads.delete",
@@ -1829,7 +1836,7 @@
       "rpc": "orchestration.getThreadProjection",
       "access": "read",
       "input": "1276a316",
-      "output": "493e2671"
+      "output": "0425f088"
     },
     {
       "name": "threads.getFullThreadDiff",
@@ -1881,14 +1888,14 @@
       "access": "read",
       "stream": "snapshot",
       "input": "9b1960e6",
-      "output": "96399a4c"
+      "output": "bbbd32e7"
     },
     {
       "name": "threads.listArchived",
       "rpc": "orchestration.getArchivedShellSnapshot",
       "access": "read",
       "input": "03c2b661",
-      "output": "99b6eac5"
+      "output": "afaf884a"
     },
     {
       "name": "threads.markRead",
@@ -1927,7 +1934,7 @@
       "rpc": "signalbox.folders.moveThread",
       "access": "write",
       "input": "218150d1",
-      "output": "f9338f1f"
+      "output": "256ff27d"
     },
     {
       "name": "threads.pin",
@@ -2109,7 +2116,7 @@
       "access": "read",
       "stream": "snapshot",
       "input": "438e44e7",
-      "output": "b7ddde4c"
+      "output": "b9fc6dec"
     },
     {
       "name": "threads.subscribeArchived",
@@ -2117,7 +2124,7 @@
       "access": "read",
       "stream": "snapshot",
       "input": "03c2b661",
-      "output": "118e49b8"
+      "output": "f9b5e74e"
     },
     {
       "name": "threads.switchProvider",
@@ -2174,6 +2181,20 @@
       "stream": "snapshot",
       "input": "03c2b661",
       "output": "259e0077"
+    },
+    {
+      "name": "timezone.get",
+      "rpc": "signalbox.timezone.get",
+      "access": "read",
+      "input": "03c2b661",
+      "output": "aaa9ffaf"
+    },
+    {
+      "name": "timezone.set",
+      "rpc": "signalbox.timezone.set",
+      "access": "write",
+      "input": "a63efefe",
+      "output": "aaa9ffaf"
     },
     {
       "name": "trash.empty",
@@ -2240,7 +2261,7 @@
       "name": "vcs.createWorktree",
       "rpc": "vcs.createWorktree",
       "access": "write",
-      "input": "4adbaf91",
+      "input": "31750d9d",
       "output": "6e13b7c2"
     },
     {
@@ -2261,7 +2282,7 @@
       "name": "vcs.pull",
       "rpc": "vcs.pull",
       "access": "write",
-      "input": "34e2f6b6",
+      "input": "95040f97",
       "output": "e27d02d0"
     },
     {
@@ -2313,6 +2334,10 @@
   "exemptions": [
     {
       "rpc": "signalbox.analytics.recordClientEvent",
+      "kind": "client-report"
+    },
+    {
+      "rpc": "signalbox.timezone.report",
       "kind": "client-report"
     },
     {

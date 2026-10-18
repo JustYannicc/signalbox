@@ -34,14 +34,24 @@ const cases = [
   { type: "thread.create", checkpoint: "turn" },
   { type: "thread.launch", checkpoint: "place" },
   { type: "thread.launch", checkpoint: "turn" },
+  { type: "thread.launch", checkpoint: "initial model" },
   { type: "message.dispatch", checkpoint: "turn" },
   { type: "thread.model-selection.set", checkpoint: "turn" },
 ] as const;
 
-const attempt = (service: Threads.Threads["Service"], type: (typeof cases)[number]["type"]) => {
+const attempt = (
+  service: Threads.Threads["Service"],
+  type: (typeof cases)[number]["type"],
+  checkpoint: (typeof cases)[number]["checkpoint"],
+) => {
   switch (type) {
     case "thread.launch":
-      return service.launch(actor, launch).pipe(Effect.asVoid);
+      return service
+        .launch(actor, {
+          ...launch,
+          modelSelection: checkpoint === "initial model" ? undefined : launch.modelSelection,
+        })
+        .pipe(Effect.asVoid);
     case "thread.create":
       return service
         .dispatch(actor, {
@@ -84,6 +94,10 @@ describe("Threads with a home in Trash", () => {
   it.effect.each(cases)("rejects $type at its $checkpoint before reaching the thread", (input) =>
     Effect.gen(function* () {
       const contexts = ThreadContexts.of({
+        initialModelSelection: () =>
+          input.checkpoint === "initial model"
+            ? Effect.fail(new ThreadFolderTrashedError())
+            : Effect.succeed(scriptedModelSelection),
         placeOfProject: () =>
           input.checkpoint === "place"
             ? Effect.fail(new ThreadFolderTrashedError())
@@ -111,7 +125,7 @@ describe("Threads with a home in Trash", () => {
         ),
       );
 
-      expect(yield* Effect.flip(attempt(service, input.type))).toMatchObject({
+      expect(yield* Effect.flip(attempt(service, input.type, input.checkpoint))).toMatchObject({
         _tag: "ThreadCommandRejectedError",
         commandId,
         commandType: input.type,

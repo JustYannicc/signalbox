@@ -53,6 +53,7 @@ import {
   AutomationFunctions,
   AutomationIngress,
   AutomationModels,
+  AutomationModelSteps,
   AutomationThreads,
   forkRoot,
 } from "./host.ts";
@@ -202,6 +203,7 @@ export const makeEngine = <R>(
     const required = yield* Effect.context<EngineServices>();
     // The host's models, when it has a catalog, tell agent steps each model's option names.
     const models = yield* Effect.serviceOption(AutomationModels);
+    const modelSteps = yield* Effect.serviceOption(AutomationModelSteps);
     const services = Option.isSome(models)
       ? Context.add(required, AutomationModels, models.value)
       : required;
@@ -389,8 +391,10 @@ export const makeEngine = <R>(
 
     const startStep = makeStartStep({
       store,
+      links,
       services,
       functions,
+      models: Option.getOrUndefined(modelSteps),
       external,
       connections,
       builtinTools,
@@ -801,8 +805,10 @@ export const makeEngine = <R>(
     return {
       ...catalog,
       // A built-in's host row changes only with the code.
-      save: (input, authorize) =>
-        builtIns.guardSave(input).pipe(Effect.andThen(catalog.save(input, authorize))),
+      save: (input, authorize, approvedBy, defaultTimezone) =>
+        builtIns
+          .guardSave(input)
+          .pipe(Effect.andThen(catalog.save(input, authorize, approvedBy, defaultTimezone))),
       remove,
       startRun,
       builtIns: Effect.sync(() => BUILT_IN_AUTOMATIONS.map(builtInSummary)),

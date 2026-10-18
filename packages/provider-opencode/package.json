@@ -23,6 +23,10 @@
       "types": "./src/server/OpenCodeRuntime.ts",
       "import": "./src/server/OpenCodeRuntime.ts"
     },
+    "./server/modelPricing": {
+      "types": "./src/server/modelPricing.ts",
+      "import": "./src/server/modelPricing.ts"
+    },
     "./server/OpenCodeServerLedger": {
       "types": "./src/server/OpenCodeServerLedger.ts",
       "import": "./src/server/OpenCodeServerLedger.ts"

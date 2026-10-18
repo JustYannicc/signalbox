@@ -207,6 +207,31 @@ export const makeThreads = Effect.gen(function* () {
               .pipe(Effect.map(Hex.encode)),
           )}`,
         );
+      // signalbox: Omitted launch models follow configured defaults while retries keep their accepted selection.
+      let modelSelection =
+        input.modelSelection ??
+        (input.reuseExistingThread === true
+          ? (yield* directory.forThread(threadId).snapshot(actor)).projection.thread.modelSelection
+          : yield* rejectTrashedFolder(
+              threadContexts.initialModelSelection(input.projectId, threadId),
+              { id: input.commandId, type: "thread.launch" },
+            ));
+      if (modelSelection === null) {
+        // A retry still returns the accepted thread after its default is cleared.
+        modelSelection = yield* directory
+          .forThread(threadId)
+          .snapshot(actor)
+          .pipe(
+            Effect.map(({ projection }) => projection.thread.modelSelection),
+            Effect.catchTags({ ThreadNotFoundError: () => Effect.succeed(null) }),
+          );
+      }
+      if (modelSelection === null) {
+        return yield* ThreadCommandRejectedError.forCommand(
+          { id: input.commandId, type: "thread.launch" },
+          "Choose a model or set a default in Settings. No economical model is available.",
+        );
+      }
       const message = input.initialMessage;
       const creation = placed(
         place,
@@ -232,6 +257,7 @@ export const makeThreads = Effect.gen(function* () {
             {
               ...input,
               threadId,
+              modelSelection,
               ...(message === undefined
                 ? {}
                 : { initialMessage: { ...message, attachments: claimed } }),

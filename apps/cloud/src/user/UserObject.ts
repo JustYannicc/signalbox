@@ -18,6 +18,7 @@ import * as CloudConfig from "../CloudConfig.ts";
 import { AutomationAlarm, CloudAutomations } from "../automations/CloudAutomations.ts";
 import * as PersonBrowsers from "../browser/PersonBrowsers.ts";
 import * as CloudEngine from "../automations/cloudEngine.ts";
+import { layerModelCompletion } from "../models/cloudflare.ts";
 import { HookOrigin } from "../automations/cloudIngress.ts";
 import { layerWorkflows } from "../automations/workflowRunner.ts";
 import { type AttachmentObjects, attachmentStorage } from "../attachments/attachmentObjects.ts";
@@ -30,6 +31,7 @@ import * as Environment from "../environment.ts";
 import * as GitHub from "../github/GitHub.ts";
 import * as GitHubActions from "../github/GitHubActions.ts";
 import * as GitHubBranches from "../github/GitHubBranches.ts";
+import * as AgentPullRequests from "../github/AgentPullRequests.ts";
 import * as CloudPullRequests from "../github/CloudPullRequests.ts";
 import * as PullRequestRepository from "../github/PullRequestRepository.ts";
 import * as ConnectionLinks from "../connections/ConnectionLinks.ts";
@@ -53,7 +55,8 @@ import * as UserPreviewSetup from "../previewSetup/UserPreviewSetup.ts";
 import * as PushNotifier from "../push/PushNotifier.ts";
 import * as CloudThreadService from "../thread/CloudThreadService.ts";
 import * as ThreadsLive from "../thread/ThreadsLive.ts";
-import * as ModelManifest from "../thread/ModelManifest.ts";
+import * as ModelManifest from "../models/ModelManifest.ts";
+import * as ModelCatalog from "../models/ModelCatalog.ts";
 import { scriptedProviderEnabled } from "../thread/scriptedProvider.ts";
 import type { MachineBackendEnv } from "../thread/runner/MachineBackend.ts";
 import { type PreviewEnv, previewSettings } from "../thread/preview/previewHost.ts";
@@ -74,13 +77,14 @@ import * as DriveSharing from "./DriveSharing.ts";
 import * as DriveShortcuts from "./DriveShortcuts.ts";
 import * as OnePasswordAccount from "./OnePasswordAccount.ts";
 import * as ResourceBindings from "./ResourceBindings.ts";
-import * as ThreadContexts from "./threadContexts.ts";
+import * as ThreadContextLayers from "./threadContextLayers.ts";
 import * as UserContexts from "./UserContexts.ts";
 import * as UserDrives from "./UserDrives.ts";
 import { makeUserObjectApi } from "./userObjectApi.ts";
 import * as UserPools from "./UserPools.ts";
 import * as LegacySections from "./legacySections.ts";
 import * as UserFolders from "./UserFolders.ts";
+import * as FolderStarts from "./FolderStarts.ts";
 import * as UserShell from "./UserShell.ts";
 import * as UserStore from "./UserStore.ts";
 import * as UserTrash from "../trash/UserTrash.ts";
@@ -89,7 +93,9 @@ import { TrashAlarm, layerPreview as layerTrashPreview } from "../trash/TrashWor
 import * as UserThreadKinds from "./UserThreadKinds.ts";
 import * as UserThreadStatus from "./UserThreadStatus.ts";
 import * as UserModelSettings from "./UserModelSettings.ts";
+import * as UserKeybindings from "./UserKeybindings.ts";
 import * as UserAnalyticsPreference from "./UserAnalyticsPreference.ts";
+import * as UserTimezone from "./UserTimezone.ts";
 import * as ChatArchive from "./chatArchive.ts";
 import { makeProfileId } from "./profileId.ts";
 
@@ -229,6 +235,7 @@ const makeRuntime = (ctx: DurableObjectState, env: UserObjectEnv) => {
         Layer.mergeAll(
           layerWorkflows(env.AUTOMATION_RUNS),
           layerAutomationAlarm(storage),
+          layerModelCompletion({ pools: env.POOLS }, { localWorkerd: env.LOCAL_WORKERD === "1" }),
           Layer.succeed(HookOrigin, env.AUTOMATION_HOOK_ORIGIN ?? ""),
         ),
       ),
@@ -237,6 +244,7 @@ const makeRuntime = (ctx: DurableObjectState, env: UserObjectEnv) => {
       Layer.provideMerge(
         Layer.mergeAll(
           GitHubBranches.layer,
+          AgentPullRequests.layer,
           GitHubActions.layer,
           CloudPullRequests.layer.pipe(Layer.provideMerge(PullRequestRepository.layer)),
           UserPreviewSetup.layer,
@@ -271,8 +279,7 @@ const makeRuntime = (ctx: DurableObjectState, env: UserObjectEnv) => {
           Layer.provideMerge(GitHubConnection.layer),
           Layer.provideMerge(
             Layer.mergeAll(
-              ThreadContexts.layer,
-              UserPools.layer,
+              ThreadContextLayers.layer.pipe(Layer.provideMerge(UserPools.layer)),
               UserThreadKinds.layerTurns,
               // The person's browser for real sites (#574), on Kernel.
               PersonBrowsers.layerFromEnv(env).pipe(Layer.provide(FetchHttpClient.layer)),
@@ -304,6 +311,7 @@ const makeRuntime = (ctx: DurableObjectState, env: UserObjectEnv) => {
           ),
           Layer.provideMerge(LegacySections.layer),
           Layer.provideMerge(UserFolders.layer),
+          Layer.provideMerge(FolderStarts.layer),
           Layer.provideMerge(
             Layer.mergeAll(
               LearnerService.layer,
@@ -318,7 +326,7 @@ const makeRuntime = (ctx: DurableObjectState, env: UserObjectEnv) => {
               ),
             ),
           ),
-          Layer.provideMerge(ModelManifest.layer),
+          Layer.provideMerge(ModelCatalog.layer.pipe(Layer.provideMerge(ModelManifest.layer))),
           Layer.provideMerge(
             GitHub.layerForUsers(GitHub.gitHubEndpoints(env)).pipe(
               Layer.provide(FetchHttpClient.layer),
@@ -329,7 +337,9 @@ const makeRuntime = (ctx: DurableObjectState, env: UserObjectEnv) => {
             Layer.mergeAll(
               UserStore.layer,
               UserModelSettings.layer,
+              UserKeybindings.layer,
               UserAnalyticsPreference.layer,
+              UserTimezone.layer,
               UserContexts.layerWithDrives,
               ResourceBindings.layer,
               OnePasswordAccount.layer,
@@ -598,6 +608,10 @@ export class UserObject extends DurableObject<UserObjectEnv> implements UserObje
 
   clientTraceDimensions(threadIds: Parameters<UserObjectApi["clientTraceDimensions"]>[0]) {
     return this.api.clientTraceDimensions(threadIds);
+  }
+
+  clientFolderDimensions(folderIds: Parameters<UserObjectApi["clientFolderDimensions"]>[0]) {
+    return this.api.clientFolderDimensions(folderIds);
   }
 
   recordDriveAccess(entry: Parameters<UserObjectApi["recordDriveAccess"]>[0]) {

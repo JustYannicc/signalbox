@@ -77,6 +77,18 @@ vi.mock("../state/environments", () => ({
     })),
   }),
 }));
+vi.mock("../rpc/atomRegistry", () => ({
+  appAtomRegistry: {
+    get: () =>
+      new Map(
+        [...state.cloudEnvironments].map((environmentId) => [
+          environmentId,
+          { environment: { capabilities: { folders: true } } },
+        ]),
+      ),
+  },
+}));
+vi.mock("../state/server", () => ({ environmentServerConfigsAtom: "server-configs" }));
 vi.mock("../components/workspacePathLocation", () => ({ readWorkspacePathLocation: () => null }));
 vi.mock("../components/sidebar/folders/useFolderCopy", () => ({
   readProjectSettingsLabel: () => "Project settings",

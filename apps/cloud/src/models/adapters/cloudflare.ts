@@ -29,12 +29,13 @@ export const layerModelAccess = (
               ? { _tag: "denied", reason: "Not a Signalbox key." }
               : userObjectStub(bindings.users, key.userId, options).authorizeLocalModel(key.secret);
           },
-          forward: (pool, path, request, thread) =>
+          forward: (pool, path, request, thread, trace) =>
             poolObjectStub(bindings.pools, pool.objectName, options).forwardModel(
               { userId: pool.userId },
               path,
               request,
               thread,
+              trace,
             ),
           recordThread: (threadId, record) =>
             threadObjectStub(bindings.threads, threadId, options).recordModelRequest(record),
