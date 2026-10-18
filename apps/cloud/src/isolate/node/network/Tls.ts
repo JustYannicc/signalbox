@@ -12,7 +12,7 @@ function connectionOptions(args: readonly unknown[]): Record<string, unknown> {
   const first = args[0];
   if (first instanceof LoopbackSocket) return { socket: first };
   if (isOptions(first)) return first;
-  if (typeof first === "number") {
+  if (typeof first === "number" || (typeof first === "string" && Number(first) >= 0)) {
     const positional: Record<string, unknown> = { port: first };
     let options: unknown;
     if (typeof args[1] === "string") {

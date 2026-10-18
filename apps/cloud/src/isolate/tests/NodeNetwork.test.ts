@@ -87,6 +87,12 @@ describe("Node network bridge", () => {
     expect(nativeTlsConnect.mock.calls[0]?.[2]).toBe(remoteOptions);
 
     nativeTlsConnect.mockClear();
+    const numericStringArgs = ["8443", "example.com"] as const;
+    expect(tls.connect(...numericStringArgs)).toEqual([...numericStringArgs]);
+    expect(nativeTlsConnect.mock.calls).toHaveLength(1);
+    expect(nativeTlsConnect.mock.calls[0]?.[0]).toBe("8443");
+
+    nativeTlsConnect.mockClear();
     let localOverrideError: unknown;
     try {
       tls.connect(443, "example.com", { host: "127.0.0.1" });
