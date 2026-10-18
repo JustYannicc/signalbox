@@ -12,6 +12,7 @@ interface Fixture {
   id: string;
   mainModule: string;
   mode?: "facet" | "worker";
+  allowOutbound?: boolean;
   entrypoint: string;
   modules: Record<string, { path: string; type: "js" | "cjs" | "text" | "wasm" }>;
   paths: string[];
@@ -79,6 +80,7 @@ try {
           {
             id,
             mode: fixture.mode ?? "facet",
+            allowOutbound: fixture.allowOutbound === true,
             path,
             modules,
             mainModule: fixture.mainModule,

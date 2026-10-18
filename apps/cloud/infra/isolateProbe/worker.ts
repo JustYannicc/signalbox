@@ -26,6 +26,7 @@ export class ProbeSession extends DurableObject<Env> {
       entrypoint?: string;
       count?: number;
       generatedValue?: number;
+      allowOutbound?: boolean;
     } = await request.json();
     if (!/^[a-zA-Z0-9-]{1,100}$/.test(input.id)) return new Response("Invalid id", { status: 400 });
     const started = Date.now();
@@ -85,7 +86,7 @@ export class ProbeSession extends DurableObject<Env> {
         compatibilityFlags: ["nodejs_compat"],
         mainModule: input.mainModule ?? "main.js",
         modules: decodedModules,
-        globalOutbound: null,
+        globalOutbound: input.allowOutbound === true ? undefined : null,
       }));
       const probeRequest = new Request(`https://probe.invalid${input.path ?? "/status"}`);
       const stub =
