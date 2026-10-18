@@ -326,24 +326,38 @@ describe("kernel host extension ABI", () => {
 
   it("rejects unknown operations and inherited backend capabilities", () => {
     const programs = new KernelProgramRegistry();
-    for (const capability of ["constructor", "toString", "unknown"] as KernelCapability[]) {
-      expect(programs.register({ ...program, requiredCapabilities: [capability] })).toMatchObject({
+    for (const capability of ["constructor", "toString", "unknown"]) {
+      expect(
+        Reflect.apply(programs.register, programs, [
+          { ...program, requiredCapabilities: [capability] },
+        ]),
+      ).toMatchObject({
         status: "error",
         error: { code: "UNSUPPORTED" },
       });
-      expect(callKernel({}, capability, { reason: "test", capability: "test" })).toMatchObject({
+      expect(
+        Reflect.apply(callKernel, undefined, [
+          {},
+          capability,
+          { reason: "test", capability: "test" },
+        ]),
+      ).toMatchObject({
         status: "error",
         error: { code: "UNSUPPORTED" },
       });
       const backend: KernelBackend = {};
       const unknown = vi.fn(() => kernelOk({ requestId: "unknown" }));
       Object.defineProperty(backend, capability, { value: unknown });
-      expect(callKernel(backend, capability, { reason: "test", capability: "test" })).toMatchObject(
-        {
-          status: "error",
-          error: { code: "UNSUPPORTED" },
-        },
-      );
+      expect(
+        Reflect.apply(callKernel, undefined, [
+          backend,
+          capability,
+          { reason: "test", capability: "test" },
+        ]),
+      ).toMatchObject({
+        status: "error",
+        error: { code: "UNSUPPORTED" },
+      });
       expect(unknown).not.toHaveBeenCalled();
     }
     const inherited: KernelBackend = Object.create({
