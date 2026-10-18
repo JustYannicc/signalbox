@@ -14,7 +14,11 @@ import { useAtomValue } from "@effect/atom-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { PROVIDER_SEND_TURN_MAX_ATTACHMENTS } from "@t3tools/contracts";
 import { Platform, Pressable, ScrollView, View } from "react-native";
-import { KeyboardAvoidingView, KeyboardStickyView } from "react-native-keyboard-controller";
+import {
+  KeyboardAvoidingView,
+  KeyboardStickyView,
+  useKeyboardState,
+} from "react-native-keyboard-controller";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import {
@@ -47,6 +51,8 @@ import { useCaptureDraft } from "./useCaptureDraft";
 export function CaptureRouteScreen() {
   const navigation = useNavigation();
   const insets = useSafeAreaInsets();
+  const keyboardVisible = useKeyboardState((state) => state.isVisible);
+  const footerBottomPadding = keyboardVisible ? 12 : Math.max(insets.bottom, 12);
   const folderEnvironments = useAtomValue(folderEnvironmentsAtom);
   const projects = useProjects();
   const inputRef = useRef<ComposerEditorHandle>(null);
@@ -273,7 +279,8 @@ export function CaptureRouteScreen() {
   }, [openDraft]);
 
   const noPersonalDestination = personal === null && !destinationUnavailable;
-  const showPersonalLoading = noPersonalDestination && (projects.length === 0 || folderEnvironments.size === 0);
+  const showPersonalLoading =
+    noPersonalDestination && (projects.length === 0 || folderEnvironments.size === 0);
   const attachmentMaxVideoBytes =
     selectedConfig?.environment.capabilities.attachmentUploads === true
       ? selectedConfig.environment.capabilities.fileAttachments?.maxUploadBytes
@@ -281,7 +288,7 @@ export function CaptureRouteScreen() {
   const footer = (
     <View
       className="flex-row items-center gap-3 border-t border-border-subtle bg-sheet-solid px-4 pt-3"
-      style={{ paddingBottom: Math.max(insets.bottom, 12) }}
+      style={{ paddingBottom: footerBottomPadding }}
     >
       <CaptureAttachmentButton
         disabled={personal === null || isSaving || isImporting || !selectedTarget}
@@ -363,7 +370,9 @@ export function CaptureRouteScreen() {
         <ScrollView
           className="flex-1"
           keyboardShouldPersistTaps="handled"
-          contentContainerStyle={{ paddingBottom: Platform.OS === "android" ? 72 : 0 }}
+          contentContainerStyle={{
+            paddingBottom: Platform.OS === "android" ? 60 + footerBottomPadding : 0,
+          }}
         >
           <View className="gap-4 px-4 pt-4">
             {destinationUnavailable ? (
@@ -466,7 +475,9 @@ export function CaptureRouteScreen() {
             ) : saved && draftKey ? (
               <Toast
                 message="Saved to drafts"
-                action={selectedTarget ? { label: "Open draft", onPress: openSavedDraft } : undefined}
+                action={
+                  selectedTarget ? { label: "Open draft", onPress: openSavedDraft } : undefined
+                }
               />
             ) : null}
           </View>
