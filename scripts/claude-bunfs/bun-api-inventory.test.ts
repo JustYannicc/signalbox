@@ -845,6 +845,59 @@ describe("inventoryBunApis", () => {
     }
   });
 
+  it("retains uncertain computed aliases through calls and constructors", () => {
+    for (const operation of ["b()", "b.foo()", "new b()", "new b.foo()"]) {
+      const inventory = inventoryBunApis([
+        {
+          name: "uncertain-computed-alias.js",
+          source: `const a = flag ? Bun : other; const b = a[key]; ${operation};`,
+        },
+      ]);
+
+      assert.ok(
+        inventory.dynamicAccesses.some(({ access }) => access === "read"),
+        operation,
+      );
+      assert.ok(
+        inventory.dynamicAccesses.some(
+          ({ access }) => access === (operation.startsWith("new ") ? "construct" : "call"),
+        ),
+        operation,
+      );
+    }
+  });
+
+  it("evaluates write and update targets before classifying their Bun reads", () => {
+    for (const operation of [".x.y = 1", ".x += 1", ".x++", "[(a = other, key)]++"]) {
+      const inventory = inventoryBunApis([
+        {
+          name: "comma-write.js",
+          source: `let a = Bun.spawn; (a = Bun.fs, a)${operation};`,
+        },
+      ]);
+
+      assert.ok(!inventory.members.some(({ path }) => path.startsWith("spawn.")), operation);
+      assert.equal(
+        inventory.members.find(({ path }) => path === "spawn")?.occurrences.length,
+        1,
+        operation,
+      );
+      if (operation.startsWith("[")) {
+        assert.ok(
+          inventory.dynamicAccesses.some(
+            ({ basePath, access }) => basePath === "fs" && access === "read",
+          ),
+          operation,
+        );
+      } else {
+        assert.ok(
+          inventory.members.some(({ path }) => path === "fs.x"),
+          operation,
+        );
+      }
+    }
+  });
+
   it("keeps short-circuit Bun aliases as uncertain accesses", () => {
     const inventory = inventoryBunApis([
       {

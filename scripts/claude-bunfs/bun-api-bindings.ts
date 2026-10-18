@@ -234,26 +234,28 @@ export function findBunApiUses(moduleName: string, source: string): ReadonlyArra
 
   const visitAssignmentTarget = (target: ts.Expression, scope: Scope, readsValue = false): void => {
     target = unwrap(target);
-    if (readsValue) {
-      const value = valueOf(target, scope);
-      if (value?.kind === "member") addMember(target, value.path, "read");
-      else if (value && isBunRelated(value)) addDynamic(target, value, "read");
-      else if (
-        ts.isElementAccessExpression(target) &&
-        staticKey(target.argumentExpression) === undefined
-      ) {
-        const base = valueOf(target.expression, scope);
-        if (base && isBunRelated(base)) addDynamic(target, base, "read");
-      }
-    }
     if (ts.isPropertyAccessExpression(target) || ts.isElementAccessExpression(target)) {
-      const base = valueOf(target.expression, scope);
-      if (base?.kind === "member") addMember(target.expression, base.path, "read");
-      else if (base && isBunRelated(base)) addDynamic(target.expression, base, "read");
       visit(target.expression, scope);
+      const base = valueOf(target.expression, scope);
+      const key = ts.isPropertyAccessExpression(target)
+        ? target.name.text
+        : staticKey(target.argumentExpression);
+      const value = base?.kind === "uncertainBun" ? uncertainBunRoot : append(base, key);
+      evaluatedAccesses.set(target, value);
       if (ts.isElementAccessExpression(target) && target.argumentExpression) {
         visit(target.argumentExpression, scope);
       }
+      if (readsValue) {
+        if (value?.kind === "member") addMember(target, value.path, "read");
+        else if (value && isBunRelated(value)) addDynamic(target, value, "read");
+        else if (key === undefined && base && isBunRelated(base)) addDynamic(target, base, "read");
+      }
+      if (base?.kind === "member") addMember(target.expression, base.path, "read");
+      else if (base && isBunRelated(base)) addDynamic(target.expression, base, "read");
+    } else if (readsValue) {
+      const value = valueOf(target, scope);
+      if (value?.kind === "member") addMember(target, value.path, "read");
+      else if (value && isBunRelated(value)) addDynamic(target, value, "read");
     }
   };
 
@@ -540,7 +542,7 @@ export function findBunApiUses(moduleName: string, source: string): ReadonlyArra
       const key = ts.isPropertyAccessExpression(node)
         ? node.name.text
         : staticKey(node.argumentExpression);
-      const value = append(base, key);
+      const value = base?.kind === "uncertainBun" ? uncertainBunRoot : append(base, key);
       evaluatedAccesses.set(node, value);
       if (!isNestedAccess(node) && !isWriteTarget(node) && !isDestructuringBase(node)) {
         if (value?.kind === "member") addMember(node, value.path, accessKind(node));
