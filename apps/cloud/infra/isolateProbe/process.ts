@@ -52,21 +52,53 @@ export const runProcess: RunProcess = (input) =>
     let bytes = 0;
     let failure: Error | undefined;
     let escalation: ReturnType<typeof setTimeout> | undefined;
-    const kill = (signal: NodeJS.Signals) => {
-      if (!child.pid) return;
+    let confirmation: ReturnType<typeof setTimeout> | undefined;
+    let closed = false;
+    let exitCode: number | null = null;
+    let shutdownComplete = true;
+    const kill = (signal: NodeJS.Signals | 0) => {
+      if (!child.pid) return false;
       try {
-        if (process.platform === "win32") child.kill(signal);
-        else process.kill(-child.pid, signal);
+        return process.platform === "win32" ? child.kill(signal) : process.kill(-child.pid, signal);
       } catch (error) {
-        if (!(error instanceof Error && "code" in error && error.code === "ESRCH"))
-          failure ??= new Error("Could not stop the owned probe subprocess.");
+        if (error instanceof Error && "code" in error && error.code === "ESRCH") return false;
+        if (signal !== 0)
+          failure = new Error(
+            `${failure?.message ?? "Probe subprocess failed."}\nCould not signal the owned probe process group.`,
+          );
+        return undefined;
       }
+    };
+    const finish = () => {
+      if (!closed || !shutdownComplete) return;
+      clearTimeout(escalation);
+      clearTimeout(confirmation);
+      if (failure)
+        reject(new Error(diagnostics(failure.message, `${stdout}\n${stderr}`, input.env)));
+      else resolve({ code: exitCode, stdout, stderr });
+    };
+    const confirmShutdown = (remaining = 40) => {
+      const exists = kill(0);
+      if (exists !== false && remaining > 0) {
+        confirmation = setTimeout(() => confirmShutdown(remaining - 1), 25);
+        return;
+      }
+      if (exists !== false)
+        failure = new Error(
+          `${failure?.message ?? "Probe subprocess failed."}\nCould not confirm owned probe process group exit after SIGKILL.`,
+        );
+      shutdownComplete = true;
+      finish();
     };
     const stop = (reason: string) => {
       if (failure) return;
       failure = new Error(reason);
+      shutdownComplete = false;
       kill("SIGTERM");
-      escalation = setTimeout(() => kill("SIGKILL"), 5_000);
+      escalation = setTimeout(() => {
+        kill("SIGKILL");
+        confirmShutdown();
+      }, 5_000);
     };
     const abort = () => stop("Probe subprocess interrupted.");
     const timeout = setTimeout(() => stop("Probe subprocess timed out."), input.timeoutMs);
@@ -86,12 +118,13 @@ export const runProcess: RunProcess = (input) =>
       failure ??= new Error(`Could not start the probe subprocess: ${error.message}`);
     });
     child.on("close", (code) => {
+      closed = true;
+      exitCode = code;
       clearTimeout(timeout);
-      clearTimeout(escalation);
       input.signal?.removeEventListener("abort", abort);
-      if (failure)
-        reject(new Error(diagnostics(failure.message, `${stdout}\n${stderr}`, input.env)));
-      else resolve({ code, stdout, stderr });
+      // A closed group leader says nothing about descendants with independent stdio.
+      if (!shutdownComplete && kill(0) === false) shutdownComplete = true;
+      finish();
     });
     if (input.signal?.aborted) abort();
   });

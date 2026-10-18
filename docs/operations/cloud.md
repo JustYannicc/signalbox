@@ -39,7 +39,8 @@ on proof failure. Without it, measurement JSON goes to stdout. Failures include
 bounded stdout/stderr excerpts with configured credentials and endpoints redacted.
 
 SIGINT and SIGTERM stop the owned subprocess group and still attempt cleanup.
-Cleanup has a two-minute deadline plus up to five seconds to stop the child.
+Cleanup has a two-minute deadline, then up to five seconds for SIGTERM before
+SIGKILL and one second to confirm the owned process group has exited.
 SIGKILL, host loss or failed cleanup can leave resources behind. Use the exact
 stage printed by the command, from the same checkout and Alchemy account:
 
