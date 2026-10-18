@@ -1,4 +1,4 @@
-import * as diagnosticsChannel from "node:diagnostics_channel";
+import * as NodeDiagnosticsChannel from "node:diagnostics_channel";
 import { describe, expect, it } from "@effect/vitest";
 import { createNodeBridge, installNodeBridge } from "../NodeBridge.ts";
 
@@ -20,10 +20,10 @@ describe("Node builtin routing", () => {
   });
 
   it("diagnostics channels retain native identity through both bridge aliases", () => {
-    const bridge = createNodeBridge({ "node:diagnostics_channel": diagnosticsChannel });
-    expect(bridge.require("diagnostics_channel")).toBe(diagnosticsChannel);
-    expect(bridge.require("node:diagnostics_channel")).toBe(diagnosticsChannel);
-    const channel = diagnosticsChannel.channel(Symbol("bridge-channel"));
+    const bridge = createNodeBridge({ "node:diagnostics_channel": NodeDiagnosticsChannel });
+    expect(bridge.require("diagnostics_channel")).toBe(NodeDiagnosticsChannel);
+    expect(bridge.require("node:diagnostics_channel")).toBe(NodeDiagnosticsChannel);
+    const channel = NodeDiagnosticsChannel.channel(Symbol("bridge-channel"));
     const payload = { value: 42 };
     const received: unknown[] = [];
     const subscriber = (message: unknown) => received.push(message);
