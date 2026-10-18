@@ -6,11 +6,14 @@ import type {
   SecretRequestFailureReason,
   OrchestrationV2Command,
   OrchestrationV2CommandOutputFrame,
+  OrchestrationV2SearchThreadInput,
+  OrchestrationV2SearchThreadResult,
   OrchestrationV2SubscribeCommandOutputInput,
   OrchestrationV2SubscribeThreadInput,
   OrchestrationV2ThreadLaunchResult,
   OrchestrationV2ThreadStreamItem,
   ThreadId,
+  ProjectId,
 } from "@t3tools/contracts";
 import { SecretRequestError } from "@t3tools/contracts";
 import type { PullResult } from "@signalbox/runner-protocol/PullProtocol";
@@ -35,7 +38,13 @@ import type {
   BrowsingStreamItem,
 } from "@t3tools/contracts/signalboxBrowsing";
 import type { BrowsingDispatched } from "./browsing/ThreadBrowsing.ts";
+import type { SearchBackfillProgress, SearchThreadDocuments } from "./ThreadEngine.ts";
 import { browsingWire } from "./browsing/browsingWire.ts";
+import {
+  nativeChildBatchWire,
+  type NativeChildBatchInput,
+  type NativeChildBatchResult,
+} from "./runner/nativeChildBatch.ts";
 import { ThreadObjectError } from "./ThreadAccess.ts";
 import type { PullInput } from "./threadWire.ts";
 import type { PreviewLinkResult } from "./preview/PreviewGateway.ts";
@@ -103,6 +112,8 @@ export interface ThreadObjectApi {
     input: unknown,
     creation: ThreadCreation,
   ) => Promise<ThreadObjectReply<unknown>>;
+  /** Internal Runner relay; it does not create or start a provider turn. */
+  readonly recordNativeChildBatch: (input: unknown) => Promise<NativeChildBatchResult>;
   readonly snapshot: (actor: Actor) => Promise<ThreadObjectReply<unknown>>;
   /** Newline-delimited JSON batches, or null when the actor cannot see the thread. */
   readonly subscribe: (actor: Actor, input: unknown) => Promise<ReadableStream<Uint8Array> | null>;
@@ -112,6 +123,18 @@ export interface ThreadObjectApi {
   ) => Promise<ReadableStream<Uint8Array> | null>;
   /** The thread's current summary, when `actor` owns it. */
   readonly summary: (actor: Actor) => Promise<unknown>;
+  /** Requests/restarts a durable backfill; `not_found` keeps the actor check at the thread. */
+  readonly backfill: (actor: Actor) => Promise<ThreadObjectReply<SearchBackfillProgress>>;
+  /** Selected current rows only, for stale-candidate checks. */
+  readonly searchDocuments: (
+    actor: Actor,
+    itemIds: ReadonlyArray<string>,
+  ) => Promise<SearchThreadDocuments | null>;
+  readonly contextWorkVisible: (actor: Actor, expectedProjectId: ProjectId) => Promise<boolean>;
+  readonly find: (
+    actor: Actor,
+    input: unknown,
+  ) => Promise<ThreadObjectReply<OrchestrationV2SearchThreadResult>>;
   /** Reads a linked pull request now, when `actor` can see the thread and link. */
   readonly requestPullRequestSync: (actor: Actor, key: string) => Promise<ThreadObjectReply<void>>;
   /**
@@ -216,6 +239,10 @@ export interface ThreadHandle {
     input: typeof LaunchInputWire.Type,
     creation: ThreadCreation,
   ) => Effect.Effect<OrchestrationV2ThreadLaunchResult, CommandFailure>;
+  /** Saves a provider-native child transcript batch on the child's own object. */
+  readonly recordNativeChildBatch: (
+    input: NativeChildBatchInput,
+  ) => Effect.Effect<NativeChildBatchResult, ThreadObjectError>;
   readonly snapshot: (
     actor: Actor,
   ) => Effect.Effect<ThreadSnapshot, ThreadNotFoundError | ThreadObjectError>;
@@ -228,6 +255,21 @@ export interface ThreadHandle {
     ThreadNotFoundError | ThreadObjectError
   >;
   readonly summary: (actor: Actor) => Effect.Effect<ThreadSummary | null, ThreadObjectError>;
+  readonly backfill: (
+    actor: Actor,
+  ) => Effect.Effect<SearchBackfillProgress, ThreadNotFoundError | ThreadObjectError>;
+  readonly searchDocuments: (
+    actor: Actor,
+    itemIds: ReadonlyArray<string>,
+  ) => Effect.Effect<SearchThreadDocuments | null, ThreadObjectError>;
+  readonly contextWorkVisible: (
+    actor: Actor,
+    expectedProjectId: ProjectId,
+  ) => Effect.Effect<boolean, ThreadObjectError>;
+  readonly find: (
+    actor: Actor,
+    input: OrchestrationV2SearchThreadInput,
+  ) => Effect.Effect<OrchestrationV2SearchThreadResult, ThreadNotFoundError | ThreadObjectError>;
   readonly commandOutput: (
     actor: Actor,
     input: OrchestrationV2SubscribeCommandOutputInput,
@@ -362,6 +404,7 @@ const fromReply = <A>(
         ThreadCommandRejectedError.forCommand(
           { id: reply.commandId, type: reply.commandType },
           reply.reason,
+          reply.code,
         ),
       );
   }
@@ -423,12 +466,31 @@ export function handleFor(api: ThreadObjectApi): ThreadHandle {
         Effect.flatMap(fromReply),
         Effect.flatMap((value) => decodeIn("launch", () => wire.launchResult.decode(value))),
       ),
+    recordNativeChildBatch: (input) =>
+      call("recordNativeChildBatch", () =>
+        api.recordNativeChildBatch(nativeChildBatchWire.encode(input)),
+      ),
     snapshot: (actor) =>
       call("snapshot", () => api.snapshot(actor)).pipe(
         Effect.flatMap(fromReply),
         // Reads decide no command, so a rejection here is a protocol bug.
         Effect.catchTags({ ThreadCommandRejectedError: (error) => Effect.die(error) }),
         Effect.flatMap((value) => decodeIn("snapshot", () => wire.snapshot.decode(value))),
+      ),
+    backfill: (actor) =>
+      call("backfill", () => api.backfill(actor)).pipe(
+        Effect.flatMap(fromReply),
+        Effect.catchTags({ ThreadCommandRejectedError: (error) => Effect.die(error) }),
+      ),
+    searchDocuments: (actor, itemIds) =>
+      call("searchDocuments", () => api.searchDocuments(actor, itemIds)),
+    contextWorkVisible: (actor, projectId) =>
+      call("contextWorkVisible", () => api.contextWorkVisible(actor, projectId)),
+    find: (actor, input) =>
+      call("find", () => api.find(actor, wire.findInput.encode(input))).pipe(
+        Effect.flatMap(fromReply),
+        Effect.catchTags({ ThreadCommandRejectedError: (error) => Effect.die(error) }),
+        Effect.flatMap((value) => decodeIn("find", () => wire.findResult.decode(value))),
       ),
     subscribe: (actor, input) =>
       lines(

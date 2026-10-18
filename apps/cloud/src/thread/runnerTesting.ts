@@ -48,6 +48,8 @@ import * as ThreadEngine from "./ThreadEngine.ts";
 import * as TurnReports from "./diagnostics/TurnReports.ts";
 import { onRunnerMessage, type RunnerSocketHost } from "./runner/runnerSockets.ts";
 import * as ThreadRunner from "./runner/ThreadRunner.ts";
+import { makeThreadObjectApi } from "./threadObjectApi.ts";
+import { PullRequestSync } from "./pullRequests/PullRequestSync.ts";
 
 /** A Claude thread's object with its Runner, and what a Runner reports, for tests. */
 
@@ -461,3 +463,19 @@ export { onRunnerMessage, pushRunnerWork, type RunnerSocketHost } from "./runner
 export { ThreadRunner } from "./runner/ThreadRunner.ts";
 export { recoverRunEvents } from "./runner/runRecovery.ts";
 export { IDLE_TAIL_MS } from "./runner/MachineBackend.ts";
+/** The Durable Object's Promise boundary over the same scoped engine as the test. */
+export const threadObjectApiFor = (
+  context: Context.Context<Layer.Success<ReturnType<typeof layerThreadObject>>>,
+) =>
+  makeThreadObjectApi(
+    Effect.runPromiseWith(
+      Context.add(context, PullRequestSync, {
+        sync: Effect.die("Unexpected pull request sync in this thread fixture."),
+        requestSync: () => Effect.die("Unexpected pull request sync in this thread fixture."),
+        dueAt: Effect.die("Unexpected pull request sync in this thread fixture."),
+        holdsTurn: Effect.die("Unexpected pull request sync in this thread fixture."),
+      }),
+    ),
+    async () => {},
+    async () => {},
+  );

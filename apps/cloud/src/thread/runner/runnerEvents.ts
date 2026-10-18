@@ -1,11 +1,13 @@
 import type { RunnerItem } from "@signalbox/runner-protocol/RunnerProtocol";
 import {
   type OrchestrationV2DomainEvent,
+  OrchestrationV2AppThread,
   OrchestrationV2DomainEventJson,
   type OrchestrationV2Run,
   type OrchestrationV2ThreadProjection,
   type OrchestrationV2TurnItem,
   type RunId,
+  type ThreadId,
   type TurnItemId,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
@@ -62,10 +64,45 @@ export const stringField = (record: Json, key: string) =>
 const decodeDomainEvent = Schema.decodeUnknownExit(OrchestrationV2DomainEventJson);
 
 /** The thread a payload belongs to, as the adapter names it. */
-const payloadThreadId = (event: Json, payload: Json) =>
+export const payloadThreadId = (event: Json, payload: Json) =>
   stringField(payload, "appThreadId") ??
   stringField(payload, "threadId") ??
   stringField(event, "threadId");
+
+// The Runner encodes explicit undefined fields as null; decode with its codec.
+const decodeAppThread = Schema.decodeUnknownExit(Schema.toCodecJson(OrchestrationV2AppThread));
+
+/** The provider's native child identity, as emitted before its history rows. */
+export function appThreadCreated(
+  item: Extract<RunnerItem, { readonly kind: "provider" }>,
+): OrchestrationV2AppThread | undefined {
+  if (stringField(item.event, "type") !== "app_thread.created") return undefined;
+  const value = item.event.appThread;
+  if (!isRecord(value)) return undefined;
+  const decoded = decodeAppThread(value);
+  return Exit.isFailure(decoded) ? undefined : decoded.value;
+}
+
+/** The raw ID lets the batch retain a decode failure without retaining metadata. */
+export function appThreadCreatedId(
+  item: Extract<RunnerItem, { readonly kind: "provider" }>,
+): ThreadId | undefined {
+  if (stringField(item.event, "type") !== "app_thread.created") return undefined;
+  const value = item.event.appThread;
+  const id = isRecord(value) ? stringField(value, "id") : undefined;
+  return id === undefined ? undefined : (id as ThreadId);
+}
+
+/** The explicitly named thread for a supported provider event. */
+export function providerEventThreadId(item: Extract<RunnerItem, { readonly kind: "provider" }>) {
+  const eventType = stringField(item.event, "type");
+  const recorded =
+    eventType !== undefined && Object.hasOwn(RECORDED, eventType)
+      ? RECORDED[eventType as keyof typeof RECORDED]
+      : undefined;
+  const payload = recorded === undefined ? undefined : item.event[recorded.payload];
+  return isRecord(payload) ? payloadThreadId(item.event, payload) : undefined;
+}
 
 /**
  * Turn items are placed in their run's band in the order they first appear,
@@ -127,6 +164,7 @@ export function recordedEvents(
   item: Extract<RunnerItem, { readonly kind: "provider" }>,
   liveRunId: RunId | undefined,
   ctx: DecisionContext,
+  options: { readonly nativeChild?: boolean } = {},
 ): ReadonlyArray<OrchestrationV2DomainEvent> | "undecodable" {
   const { event } = item;
   const eventType = stringField(event, "type");
@@ -140,7 +178,7 @@ export function recordedEvents(
   // last transcript rows, but not the harness's view of its session.
   if (LIVE_RUN_ONLY.has(recorded.type) && liveRunId !== item.runId) return [];
   const threadId = projection.thread.id;
-  // Subagents' own threads are not served yet; their rows stay on the machine.
+  // A child row is routed by `runnerBatchEvents`, never recorded on its parent.
   const owner = payloadThreadId(event, payload);
   if (owner !== undefined && owner !== threadId) return [];
   const ownNode = recorded.type === "node.updated" || recorded.type === "subagent.updated";
@@ -155,11 +193,16 @@ export function recordedEvents(
     recorded.type === "provider-thread.updated"
       ? { ...payload, providerInstanceId: runInstance }
       : payload;
+  const payloadRunId = stringField(payload, "runId");
   const decoded = decodeDomainEvent({
     id: unstampedEventId,
     type: recorded.type,
     threadId,
-    runId: stringField(payload, "runId") ?? item.runId,
+    ...(payloadRunId === undefined && !options.nativeChild
+      ? { runId: item.runId }
+      : payloadRunId === undefined
+        ? {}
+        : { runId: payloadRunId }),
     ...(ownNode
       ? { nodeId: stringField(payload, "id") }
       : stringField(payload, "nodeId") === undefined
@@ -191,4 +234,13 @@ export function recordedEvents(
   return domainEvent.type === "turn-item.updated"
     ? [{ ...domainEvent, payload: positionTurnItem(projection, domainEvent.payload) }]
     : [domainEvent];
+}
+
+/** Provider-native child rows are stored on the child thread with no cloud run id. */
+export function recordedNativeChildEvents(
+  projection: OrchestrationV2ThreadProjection,
+  item: Extract<RunnerItem, { readonly kind: "provider" }>,
+  ctx: DecisionContext,
+): ReadonlyArray<OrchestrationV2DomainEvent> | "undecodable" {
+  return recordedEvents(projection, item, item.runId, ctx, { nativeChild: true });
 }

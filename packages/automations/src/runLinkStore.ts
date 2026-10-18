@@ -18,6 +18,8 @@ export interface RunLinkRow {
   /** The first run of a `w.restart` chain; the run itself when it isn't one. */
   readonly lineage_id: string;
   readonly started_at: string;
+  /** Computed event patterns a host armed before the workflow reached its wait step. */
+  readonly event_patterns_json: string;
 }
 
 export interface InboxRow {
@@ -45,10 +47,12 @@ export const make = Effect.gen(function* () {
         "insertLink",
         sql`
           INSERT INTO signalbox_automation_run_links (
-            run_id, thread_id, attach_key, label, restart_of_run_id, lineage_id, started_at
+            run_id, thread_id, attach_key, label, restart_of_run_id, lineage_id, started_at,
+            event_patterns_json
           ) VALUES (
             ${row.run_id}, ${row.thread_id}, ${row.attach_key}, ${row.label},
-            ${row.restart_of_run_id}, ${row.lineage_id}, ${row.started_at}
+            ${row.restart_of_run_id}, ${row.lineage_id}, ${row.started_at},
+            ${row.event_patterns_json ?? "[]"}
           )
           ON CONFLICT (run_id) DO NOTHING
         `,
@@ -58,6 +62,22 @@ export const make = Effect.gen(function* () {
         "getLink",
         sql<RunLinkRow>`SELECT * FROM signalbox_automation_run_links WHERE run_id = ${runId}`,
       ).pipe(Effect.map((rows) => rows[0])),
+    /** Patterns explicitly armed before workflow replay reached its event step. */
+    runningEventListeners: () =>
+      run(
+        "runningEventListeners",
+        sql<{ run_id: string; event_patterns_json: string }>`
+          SELECT l.run_id, l.event_patterns_json FROM signalbox_automation_run_links l
+          JOIN signalbox_automation_runs r ON r.run_id = l.run_id
+          WHERE r.status = 'running' AND l.event_patterns_json != '[]'
+        `,
+      ),
+    /** Finished runs no longer need their listener registration. */
+    clearEventPatterns: (runId: string) =>
+      run(
+        "clearEventPatterns",
+        sql`UPDATE signalbox_automation_run_links SET event_patterns_json = '[]' WHERE run_id = ${runId}`,
+      ),
     /** The running run attached to `threadId` under `key`, if any. */
     runningAttached: (threadId: string, key: string) =>
       run(

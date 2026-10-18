@@ -53,6 +53,62 @@ const json = (answer: Effect.Success<ReturnType<typeof callOperation>>) => {
 };
 
 describe("public API calls", () => {
+  it.effect("shares cloud collaboration with agents and enforces the API credential's scope", () =>
+    Effect.gen(function* () {
+      const { call, cloud } = yield* setup;
+      for (const id of ["source", "target"]) {
+        expect(
+          json(
+            yield* call("threads.create", {
+              commandId: `launch-${id}`,
+              threadId: id,
+              projectId: Environment.SCRATCH_PROJECT_ID,
+              title: id,
+              modelSelection: scriptedModelSelection,
+              runtimeMode: "full-access",
+              interactionMode: "default",
+              workspaceStrategy: { type: "root" },
+            }),
+          ).status,
+        ).toBe(200);
+      }
+      yield* cloud.settle;
+      const caller = { ...person(), kind: "agent" as const };
+      expect(
+        json(
+          yield* call(
+            "threads.collaboration.list",
+            { sourceThreadId: "source", input: {} },
+            caller,
+          ),
+        ).status,
+      ).toBe(200);
+      const input = {
+        sourceThreadId: "source",
+        input: { threadId: "target", message: "From an agent", clientRequestId: "api-send" },
+      };
+      expect(
+        json(
+          yield* call("threads.collaboration.send", input, {
+            ...caller,
+            scopes: [AuthOrchestrationReadScope],
+          }),
+        ).status,
+      ).toBe(403);
+      expect(json(yield* call("threads.collaboration.send", input, caller)).status).toBe(200);
+      yield* cloud.settle;
+      const read = json(
+        yield* call(
+          "threads.collaboration.read",
+          { sourceThreadId: "source", input: { threadId: "target" } },
+          caller,
+        ),
+      );
+      expect(read.status).toBe(200);
+      expect(JSON.stringify(read.body)).toContain("From an agent");
+    }),
+  );
+
   it.effect("requires thread read access for a command output snapshot", () =>
     Effect.gen(function* () {
       const { call } = yield* setup;

@@ -45,7 +45,9 @@ import * as PreviewSetup from "./previewSetup/PreviewSetup.ts";
 import * as PushNotifier from "./push/PushNotifier.ts";
 import * as UserPreviewSetup from "./previewSetup/UserPreviewSetup.ts";
 import { makeMemoryPools } from "./pool/testing.ts";
+import * as CloudCollaboration from "./collaboration/CloudCollaboration.ts";
 import * as CloudThreadService from "./thread/CloudThreadService.ts";
+import * as ThreadInbox from "./thread/ThreadInbox.ts";
 import * as ThreadsLive from "./thread/ThreadsLive.ts";
 import * as CloudAnalytics from "./thread/diagnostics/CloudAnalytics.ts";
 import * as DiagnosticsStore from "./thread/diagnostics/DiagnosticsStore.ts";
@@ -53,6 +55,10 @@ import * as TurnDiagnostics from "./thread/diagnostics/TurnDiagnostics.ts";
 import * as TurnReports from "./thread/diagnostics/TurnReports.ts";
 import { deliverPendingEvents } from "./thread/eventOutbox.ts";
 import { deliverPendingSummary } from "./thread/summaryOutbox.ts";
+import * as ThreadSearch from "./search/ThreadSearch.ts";
+import * as SearchAuthority from "./search/SearchAuthority.ts";
+import * as SearchCursors from "./search/SearchCursors.ts";
+import * as SearchIndex from "./search/SearchIndex.ts";
 import * as ThreadDirectory from "./thread/ThreadDirectory.ts";
 import * as ThreadBrowsing from "./thread/browsing/ThreadBrowsing.ts";
 import * as PreviewState from "./thread/PreviewState.ts";
@@ -72,6 +78,10 @@ import { browserUpdateLine, previewsLine } from "./thread/threadWire.ts";
 import * as MachineBackends from "./thread/runner/machineBackends.ts";
 import type * as MachineBackend from "./thread/runner/MachineBackend.ts";
 import * as ThreadRunner from "./thread/runner/ThreadRunner.ts";
+import type {
+  NativeChildBatchInput,
+  NativeChildBatchResult,
+} from "./thread/NativeChildProtocol.ts";
 import * as SessionRows from "./thread/session/SessionRows.ts";
 import * as PullRequestPolls from "./thread/pullRequests/PullRequestPolls.ts";
 import * as PullRequestSync from "./thread/pullRequests/PullRequestSync.ts";
@@ -238,11 +248,21 @@ export const layerThreadObject = (
     readonly models?: Layer.Layer<TurnModels.TurnModels>;
     /** What writes runtime status notes; no model, unless given. */
     readonly statusNoteModel?: Layer.Layer<StatusNoteModel.StatusNoteModel>;
+    /** Saves an attested provider-native child before acknowledging its parent batch. */
+    readonly nativeChildRelay?: ThreadRunner.NativeChildRelayService;
   } = {},
 ) =>
   ThreadRunner.layer.pipe(
     Layer.provideMerge(ThreadPulls.layerReports.pipe(Layer.provideMerge(ThreadPulls.layer))),
     Layer.provideMerge(options.driveDirectory ?? Layer.empty),
+    Layer.provideMerge(
+      Layer.succeed(
+        ThreadRunner.NativeChildRelay,
+        options.nativeChildRelay ?? {
+          save: () => Effect.die("Unexpected provider-native child relay in this test."),
+        },
+      ),
+    ),
     Layer.provideMerge(
       Layer.succeed(ThreadRunner.ThreadDrives, {
         enabled: options.drives === true,
@@ -322,6 +342,7 @@ const makeUserRuntime = (
       Layer.provideMerge(
         // The same branches the socket's RPC uses, so the git panel sees what the agent pushed.
         Layer.mergeAll(
+          CloudCollaboration.layer,
           GitHubBranches.layer,
           AgentPullRequests.layer,
           GitHubActions.layer,
@@ -345,7 +366,21 @@ const makeUserRuntime = (
               LocalKeys.layer,
               SignInGrants.layer,
               PoolSignIns.layer,
-              CloudThreadService.layer.pipe(Layer.provideMerge(ThreadsLive.layer)),
+              ThreadInbox.layer.pipe(
+                Layer.provideMerge(
+                  CloudThreadService.layer.pipe(Layer.provideMerge(ThreadsLive.layer)),
+                ),
+              ),
+              ThreadSearch.layer.pipe(
+                Layer.provide(Layer.mergeAll(SearchAuthority.layerUser, SearchCursors.layerSql)),
+                Layer.provide(
+                  Layer.succeed(SearchIndex.SearchIndex, {
+                    deliver: () => Effect.void,
+                    query: () => Effect.succeed({ candidates: [], hasMore: false }),
+                    progress: () => Effect.succeed([]),
+                  }),
+                ),
+              ),
               UserLearner.layer.pipe(Layer.provideMerge(LearnerHomes.layer)),
               PersonBrowsers.layer(kernel),
             ),
@@ -540,6 +575,28 @@ export const makeMemoryCloud = (
       models: TurnModels.layer({ scripted: true }).pipe(
         Layer.provide(Layer.succeed(PoolDirectory.PoolDirectory, pools.directory)),
       ),
+      nativeChildRelay: {
+        save: (input: NativeChildBatchInput) =>
+          Effect.flatMap(
+            Effect.orDie(
+              threadDirectory.forThread(input.childThreadId).recordNativeChildBatch(input),
+            ),
+            (result): Effect.Effect<NativeChildBatchResult> =>
+              result._tag === "child_mismatch"
+                ? Effect.succeed(result)
+                : Effect.as(
+                    Effect.orDie(
+                      userDirectory.forUser(input.owner.userId).copyThreadHome({
+                        parentThreadId: input.parentThreadId,
+                        childThreadId: input.childThreadId,
+                        projectId: input.appThread.projectId,
+                        ownerId: input.owner.contextId,
+                      }),
+                    ),
+                    result,
+                  ),
+          ),
+      },
     });
   const threadFor = (threadId: string) => {
     const existing = threads.get(threadId);

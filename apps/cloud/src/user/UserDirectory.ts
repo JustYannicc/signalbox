@@ -1,12 +1,16 @@
 import {
   type AuthEnvironmentScope,
   OrchestrationV2ShellSnapshot,
+  type ProjectId,
   type PullRequestDiffInput,
   type PullRequestDiffResult,
   type PullRequestUnavailableReason,
   type SourceControlProviderKind,
   type ServerAuthSessionMethod,
 } from "@t3tools/contracts";
+import type { ThreadSearchInput, ThreadSearchResult } from "@t3tools/contracts/signalboxSearch";
+import type { SearchActor } from "../search/SearchAuthority.ts";
+import type * as ThreadSearch from "../search/ThreadSearch.ts";
 import type { WorkOSOrganization } from "@signalbox/account/WorkOSClient";
 import type { ToolResult } from "@signalbox/runner-protocol/AutomationProtocol";
 import type { PublishRequest, PublishResult } from "@signalbox/runner-protocol/BranchProtocol";
@@ -107,6 +111,15 @@ export type PullRequestDiffReply =
 
 /** What a user's object answers. `UserObject` implements it method for method. */
 export interface UserObjectApi {
+  readonly searchThreads: (
+    actor: SearchActor,
+    input: ThreadSearchInput,
+  ) => Promise<ThreadSearchResult>;
+  readonly readSearchItem: (
+    actor: SearchActor,
+    threadId: Parameters<ThreadSearch.ThreadSearch["Service"]["readItem"]>[1],
+    itemId: string,
+  ) => Promise<Effect.Success<ReturnType<ThreadSearch.ThreadSearch["Service"]["readItem"]>>>;
   readonly receiveHook: (request: HookRequest) => Promise<HookAnswer>;
   readonly recordSignIn: (profile: AccountProfile) => Promise<void>;
   readonly profile: () => Promise<AccountProfile | null>;
@@ -144,6 +157,13 @@ export interface UserObjectApi {
   readonly shellSnapshot: () => Promise<unknown>;
   /** A thread object's summary outbox delivery, in its JSON encoding. */
   readonly recordThreadSummary: (summary: unknown) => Promise<void>;
+  /** Gives a mirrored native child the exact folder home of its parent. */
+  readonly copyThreadHome: (input: {
+    readonly parentThreadId: string;
+    readonly childThreadId: string;
+    readonly projectId: ProjectId;
+    readonly ownerId: SignalboxContextId;
+  }) => Promise<void>;
   /**
    * A thread object's event outbox delivery (`thread/eventOutbox.ts`): the
    * user's thread's next domain events with their sequence, in order and in
@@ -343,6 +363,8 @@ export class UserDirectory extends Context.Service<
 
 // A record, so adding a method to `UserObjectApi` without wrapping it fails to compile.
 const METHODS = Object.keys({
+  searchThreads: true,
+  readSearchItem: true,
   recordSignIn: true,
   profile: true,
   createSession: true,
@@ -354,6 +376,7 @@ const METHODS = Object.keys({
   syncOrganizations: true,
   shellSnapshot: true,
   recordThreadSummary: true,
+  copyThreadHome: true,
   threadEvents: true,
   driveEvents: true,
   receiveHook: true,

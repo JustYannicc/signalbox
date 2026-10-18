@@ -374,6 +374,12 @@ retry and the normal snooze choices.
 On web and desktop, use **Agents** to follow work delegated to subagents.
 Stop on a thread also stops the subagents it delegated to.
 
+In the cloud, ask an agent to read or message another thread, or delegate part of
+its work to a child. Children start in the parent's folder with its pool and
+instructions, and their original result comes back to the parent. An agent can
+only reach threads you can access within the owner tree it represents. Use
+`task_status` to read a child's result or `task_cancel` to stop it.
+
 Subagent threads started by the agent can't take messages; message the parent
 thread instead. When such a subagent needs an approval or an answer, the parent
 thread asks for it.

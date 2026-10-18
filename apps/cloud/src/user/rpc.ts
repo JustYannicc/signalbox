@@ -15,6 +15,8 @@ import {
   EnvironmentAuthorizationError,
   GitCommandError,
   ORCHESTRATION_V2_WS_METHODS,
+  OrchestrationSearchThreadsError,
+  OrchestrationV2SearchThreadError,
   OrchestrationGetFullThreadDiffError,
   OrchestrationGetTurnDiffError,
   OrchestrationV2DispatchCommandError,
@@ -46,6 +48,11 @@ import {
   SIGNALBOX_FOLDERS_WS_METHODS,
   SignalboxFolderError,
 } from "@t3tools/contracts/signalboxFolders";
+import {
+  SIGNALBOX_SEARCH_REQUIRED_SCOPES,
+  SIGNALBOX_SEARCH_WS_METHODS,
+} from "@t3tools/contracts/signalboxSearch";
+import * as ThreadSearch from "../search/ThreadSearch.ts";
 import { SIGNALBOX_NOTES_REQUIRED_SCOPES } from "@t3tools/contracts/signalboxNotes";
 import {
   SIGNALBOX_BROWSING_REQUIRED_SCOPES,
@@ -98,6 +105,11 @@ import * as Stream from "effect/Stream";
 import type * as RpcGroup from "effect/rpc/RpcGroup";
 import type { SqlError } from "effect/sql/SqlError";
 
+import {
+  SIGNALBOX_COLLABORATION_RPCS,
+  SIGNALBOX_COLLABORATION_SCOPES,
+} from "@t3tools/contracts/signalboxCollaboration";
+import { makeCollaborationHandlers } from "../collaboration/rpc.ts";
 import * as CloudAssets from "../assets/CloudAssets.ts";
 import { CloudAttachments } from "../attachments/CloudAttachments.ts";
 import * as Environment from "../environment.ts";
@@ -180,6 +192,7 @@ const SECTION_METHODS = [
 ] as const;
 
 const SERVED = [
+  ...SIGNALBOX_COLLABORATION_RPCS.map((rpc) => rpc._tag),
   WS_METHODS.subscribeServerConfig,
   WS_METHODS.serverGetConfig,
   WS_METHODS.serverUpdateSettings,
@@ -192,9 +205,14 @@ const SERVED = [
   ORCHESTRATION_V2_WS_METHODS.subscribeArchivedShell,
   ORCHESTRATION_V2_WS_METHODS.dispatchCommand,
   ORCHESTRATION_V2_WS_METHODS.launchThread,
+  ORCHESTRATION_V2_WS_METHODS.searchThreads,
+  ORCHESTRATION_V2_WS_METHODS.searchThread,
+  ORCHESTRATION_V2_WS_METHODS.searchThreadStream,
+  SIGNALBOX_SEARCH_WS_METHODS.query,
   ORCHESTRATION_V2_WS_METHODS.subscribeThread,
   ORCHESTRATION_V2_WS_METHODS.subscribeCommandOutput,
   ORCHESTRATION_V2_WS_METHODS.getThreadProjection,
+  ORCHESTRATION_V2_WS_METHODS.getTurnItem,
   // Images tools returned in a thread and attachments (`assets/CloudAssets.ts`).
   WS_METHODS.assetsCreateUrl,
   WS_METHODS.projectsEnsureScratch,
@@ -280,6 +298,7 @@ export const CloudRpcGroup = WsRpcGroup.omit(
 
 /** Same scopes the self-hosted server requires for these RPCs. */
 const REQUIRED_SCOPES = {
+  ...SIGNALBOX_COLLABORATION_SCOPES,
   [WS_METHODS.subscribeServerConfig]: AuthOrchestrationReadScope,
   [WS_METHODS.serverGetConfig]: AuthOrchestrationReadScope,
   [WS_METHODS.serverUpdateSettings]: AuthSettingsWriteScope,
@@ -295,9 +314,14 @@ const REQUIRED_SCOPES = {
   [ORCHESTRATION_V2_WS_METHODS.subscribeArchivedShell]: AuthOrchestrationReadScope,
   [ORCHESTRATION_V2_WS_METHODS.dispatchCommand]: AuthOrchestrationOperateScope,
   [ORCHESTRATION_V2_WS_METHODS.launchThread]: AuthOrchestrationOperateScope,
+  [ORCHESTRATION_V2_WS_METHODS.searchThreads]: AuthOrchestrationReadScope,
+  [ORCHESTRATION_V2_WS_METHODS.searchThread]: AuthOrchestrationReadScope,
+  [ORCHESTRATION_V2_WS_METHODS.searchThreadStream]: AuthOrchestrationReadScope,
+  ...SIGNALBOX_SEARCH_REQUIRED_SCOPES,
   [ORCHESTRATION_V2_WS_METHODS.subscribeThread]: AuthOrchestrationReadScope,
   [ORCHESTRATION_V2_WS_METHODS.subscribeCommandOutput]: AuthOrchestrationReadScope,
   [ORCHESTRATION_V2_WS_METHODS.getThreadProjection]: AuthOrchestrationReadScope,
+  [ORCHESTRATION_V2_WS_METHODS.getTurnItem]: AuthOrchestrationReadScope,
   // A cloud serves only tool output images, which a self-hosted server gates on this scope.
   [WS_METHODS.assetsCreateUrl]: AuthOrchestrationReadScope,
   [WS_METHODS.projectsEnsureScratch]: AuthOrchestrationOperateScope,
@@ -498,8 +522,10 @@ export const layerHandlers = (input: {
 }) =>
   CloudRpcGroup.toLayer(
     Effect.gen(function* () {
+      const collaboration = yield* makeCollaborationHandlers;
       const shell = yield* UserShell.UserShell;
       const threads = yield* CloudThreadService.CloudThreadService;
+      const search = yield* ThreadSearch.ThreadSearch;
       const coreThreads = yield* Threads.Threads;
       const assets = yield* CloudAssets.CloudAssets;
       const contexts = yield* UserContexts.UserContexts;
@@ -609,6 +635,7 @@ export const layerHandlers = (input: {
         ...notes,
         ...keys,
         ...signIn,
+        ...collaboration,
         ...keybindings,
         [SIGNALBOX_PERSON_BROWSER_WS_METHODS.profileStatus]: () =>
           personBrowserCall(
@@ -690,6 +717,26 @@ export const layerHandlers = (input: {
                 }),
             ),
           ),
+        [SIGNALBOX_SEARCH_WS_METHODS.query]: (request) =>
+          Effect.flatMap(actorNow, (actor) => search.query(actor, request)),
+        [ORCHESTRATION_V2_WS_METHODS.searchThreads]: (request) =>
+          Effect.flatMap(actorNow, (actor) => search.search(actor, request)).pipe(
+            Effect.mapError(
+              (cause) =>
+                new OrchestrationSearchThreadsError({
+                  message: "Could not search threads. Please retry.",
+                  cause,
+                }),
+            ),
+          ),
+        [ORCHESTRATION_V2_WS_METHODS.searchThread]: (request) =>
+          Effect.flatMap(actorNow, (actor) => search.searchOne(actor, request)).pipe(
+            Effect.mapError((cause) => new OrchestrationV2SearchThreadError({ cause })),
+          ),
+        [ORCHESTRATION_V2_WS_METHODS.searchThreadStream]: (request) =>
+          Stream.fromEffect(
+            Effect.flatMap(actorNow, (actor) => search.searchOne(actor, request)),
+          ).pipe(Stream.mapError((cause) => new OrchestrationV2SearchThreadError({ cause }))),
         [ORCHESTRATION_V2_WS_METHODS.dispatchCommand]: (command) =>
           threadCall(
             Effect.flatMap(actorNow, (actor) => coreThreads.dispatch(actor, command)),
@@ -745,6 +792,17 @@ export const layerHandlers = (input: {
             Effect.map(
               Effect.flatMap(actorNow, (actor) => coreThreads.snapshot(actor, request.threadId)),
               (snapshot) => snapshot.projection,
+            ),
+            (message) =>
+              new OrchestrationV2GetThreadProjectionError({ threadId: request.threadId, message }),
+          ),
+        [ORCHESTRATION_V2_WS_METHODS.getTurnItem]: (request) =>
+          threadCall(
+            Effect.map(
+              Effect.flatMap(actorNow, (actor) =>
+                threads.getTurnItem(actor, request.threadId, request.itemId),
+              ),
+              (item) => ({ item }),
             ),
             (message) =>
               new OrchestrationV2GetThreadProjectionError({ threadId: request.threadId, message }),

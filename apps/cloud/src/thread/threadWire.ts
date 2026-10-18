@@ -6,6 +6,8 @@ import {
   OrchestrationV2CommandOutputFrame,
   OrchestrationV2SubscribeCommandOutputInput,
   OrchestrationV2DomainEventJson,
+  OrchestrationV2SearchThreadInput,
+  OrchestrationV2SearchThreadResult,
   OrchestrationV2SubscribeThreadInput,
   OrchestrationV2ThreadLaunchInput,
   OrchestrationV2ThreadLaunchResult,
@@ -99,6 +101,8 @@ export const wire = {
   launchResult: jsonCodec(OrchestrationV2ThreadLaunchResult),
   snapshot: jsonCodec(ThreadSnapshotWire),
   subscribeInput: jsonCodec(OrchestrationV2SubscribeThreadInput),
+  findInput: jsonCodec(OrchestrationV2SearchThreadInput),
+  findResult: jsonCodec(OrchestrationV2SearchThreadResult),
   commandOutputInput: jsonCodec(OrchestrationV2SubscribeCommandOutputInput),
   commandOutputFrame: jsonCodec(OrchestrationV2CommandOutputFrame),
   batch: jsonCodec(Schema.Array(OrchestrationV2ThreadStreamItem)),
@@ -132,6 +136,7 @@ export type ThreadObjectReply<A> =
       readonly commandId: string;
       readonly commandType: string;
       readonly reason: string;
+      readonly code?: "run_changed" | "unavailable";
     };
 
 /** The thread's previews travel as newline-delimited JSON too, one snapshot per line. */

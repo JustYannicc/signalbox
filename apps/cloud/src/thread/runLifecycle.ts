@@ -35,6 +35,19 @@ import {
 type Projection = OrchestrationV2ThreadProjection;
 type Run = OrchestrationV2Run;
 
+export const isTerminalRunStatus = (
+  status: string,
+): status is "completed" | "failed" | "cancelled" | "interrupted" | "rolled_back" =>
+  status === "completed" ||
+  status === "failed" ||
+  status === "cancelled" ||
+  status === "interrupted" ||
+  status === "rolled_back";
+
+/** A waiter returns when the run ends or needs a person; waiting is still live work. */
+export const isRunWaitBoundary = (status: string) =>
+  status === "waiting" || isTerminalRunStatus(status);
+
 function wakeWorkStartedAt(
   runs: ReadonlyArray<Run>,
   run: Run,

@@ -12,6 +12,7 @@ import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
+import * as TaskRecords from "../collaboration/taskRecords.ts";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import * as Migrator from "effect/sql/Migrator";
@@ -223,6 +224,7 @@ const migrations = Migrator.fromRecord({
   // Each thread's latest status note (#670, `UserThreadStatus`).
   "0019_status_notes": StatusNoteTables.createTables,
   "0019_notes": NoteTables.createTables,
+  "0019_collaboration_tasks": TaskRecords.createTables,
   "0020_model_settings": Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
     yield* sql`CREATE TABLE user_model_settings (
@@ -231,6 +233,7 @@ const migrations = Migrator.fromRecord({
     )`;
   }),
   "0020_folder_phases": FolderTables.addPhases,
+  "0021_collaboration_task_runs": TaskRecords.createRunLinks,
   "0021_keybindings": UserKeybindings.createTables,
   "0021_analytics_preference": UserAnalyticsPreference.createTables,
   "0022_pool_snapshots": PoolSnapshotCache.createTables,

@@ -3,6 +3,19 @@ import { SIGNALBOX_PERSON_BROWSER_WS_METHODS } from "@t3tools/contracts/signalbo
 
 /** Signalbox's own RPC groups (`SIGNALBOX_WS_RPCS` in contracts' rpc.ts). */
 export const SIGNALBOX_RPC_REACH = {
+  "signalbox.collaboration.capabilities": read({ name: "threads.collaboration.capabilities" }),
+  "signalbox.collaboration.list": read({ name: "threads.collaboration.list" }),
+  "signalbox.collaboration.read": read({ name: "threads.collaboration.read" }),
+  "signalbox.collaboration.send": write({ name: "threads.collaboration.send" }),
+  "signalbox.collaboration.wait": read({ name: "threads.collaboration.wait" }),
+  "signalbox.collaboration.delegate": write({ name: "threads.collaboration.delegate" }),
+  "signalbox.collaboration.status": read({ name: "threads.collaboration.status" }),
+  "signalbox.collaboration.cancel": write({ name: "threads.collaboration.cancel" }),
+  "signalbox.collaboration.interrupt": write({ name: "threads.collaboration.interrupt" }),
+  "signalbox.search.query": read({
+    name: "threads.query",
+    summary: "Search thread items across the folders you can see, with anchors and index coverage.",
+  }),
   "signalbox.timezone.get": read({ name: "timezone.get" }),
   "signalbox.timezone.set": write({
     name: "timezone.set",

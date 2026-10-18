@@ -27,7 +27,12 @@ import type * as DateTime from "effect/DateTime";
 
 export type Decision =
   | { readonly _tag: "accepted"; readonly events: ReadonlyArray<OrchestrationV2DomainEvent> }
-  | { readonly _tag: "rejected"; readonly message: string };
+  | {
+      readonly _tag: "rejected";
+      readonly message: string;
+      readonly record?: boolean;
+      readonly code?: "run_changed";
+    };
 
 export interface DecisionContext {
   readonly now: DateTime.Utc;

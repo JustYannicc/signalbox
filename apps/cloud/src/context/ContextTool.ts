@@ -4,11 +4,16 @@ import {
   type ContextView,
   type DiffResult,
   MAX_CONTEXT_BLOB_BYTES,
-  type SearchResult,
+  type ContextSearchResult,
+  type SearchRequest,
   type ThreadResult,
+  type ThreadRequest,
   type TreeResult,
 } from "@signalbox/runner-protocol/ContextProtocol";
-import { ThreadId } from "@t3tools/contracts";
+import { ThreadId, type ProjectId } from "@t3tools/contracts";
+import type { ThreadSearchInput } from "@t3tools/contracts/signalboxSearch";
+import type { SignalboxContext } from "@t3tools/contracts/signalboxContexts";
+import type { SignalboxDrive } from "@t3tools/contracts/signalboxDrives";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -17,6 +22,7 @@ import * as Schema from "effect/Schema";
 
 import { DriveDirectory, type DriveObjectError } from "../drive/DriveDirectory.ts";
 import { type DrivePackError, DrivePacks } from "../drive/DrivePacks.ts";
+import { parseDriveId } from "../drive/driveAccess.ts";
 import { pathSegments } from "../drive/DriveReader.ts";
 import { remoteDriveReader } from "../drive/remoteFiles.ts";
 import { GitHub } from "../github/GitHub.ts";
@@ -24,9 +30,8 @@ import { MAIN_REF } from "../drive/DriveStore.ts";
 import type { Bytes, Oid } from "../drive/git/gitObjects.ts";
 import { ThreadDirectory, type ThreadObjectError } from "../thread/ThreadDirectory.ts";
 import type { Actor } from "../thread/ThreadEngine.ts";
-import { driveOfProject } from "../user/contextProjects.ts";
 import { UserDirectory, type UserObjectError } from "../user/UserDirectory.ts";
-import { searchContext } from "./contextSearch.ts";
+import { searchDriveHistory } from "./contextSearch.ts";
 import { placeDrives } from "./contextView.ts";
 
 /**
@@ -66,6 +71,52 @@ const MAX_PATCH_CHARS = 150_000;
 
 const NO_ACCESS = "You can't read that drive.";
 
+export interface ReaderSearchScope {
+  readonly actor: Actor;
+  readonly drives: ReadonlyArray<SignalboxDrive>;
+  readonly projectIds: ReadonlyArray<ProjectId>;
+}
+
+/** A machine may search only the owner context of the drive its token names. */
+export const readerSearchScope = (
+  userId: string,
+  readerDriveId: string,
+  contexts: ReadonlyArray<SignalboxContext>,
+  drives: ReadonlyArray<SignalboxDrive>,
+): ReaderSearchScope | null => {
+  const sourceContextId = parseDriveId(readerDriveId)?.contextId;
+  if (sourceContextId === undefined) return null;
+  const context = contexts.find((candidate) => candidate.id === sourceContextId);
+  if (context === undefined || !drives.some((drive) => drive.id === readerDriveId)) return null;
+
+  const ownerDrives = drives.filter((drive) => drive.contextId === sourceContextId);
+  return {
+    actor: { userId, contextIds: [sourceContextId] },
+    drives: ownerDrives,
+    projectIds: ownerDrives.map((drive) => drive.projectId),
+  };
+};
+
+/** Narrow a reader's owner-scoped drives to the requested drive/projects. */
+export const limitReaderSearchScope = (
+  scope: ReaderSearchScope,
+  driveId: string | null,
+  projectIds?: ReadonlyArray<ProjectId>,
+) => {
+  const driveCandidates =
+    driveId === null ? scope.drives : scope.drives.filter((drive) => drive.id === driveId);
+  if (driveId !== null && driveCandidates.length === 0) return null;
+  const allowed = new Set(driveCandidates.map((drive) => drive.projectId));
+  const narrowedProjectIds = (projectIds ?? [...allowed]).filter((projectId) =>
+    allowed.has(projectId),
+  );
+  const narrowed = new Set(narrowedProjectIds);
+  return {
+    drives: driveCandidates.filter((drive) => narrowed.has(drive.projectId)),
+    projectIds: narrowedProjectIds,
+  };
+};
+
 export class ContextTool extends Context.Service<
   ContextTool,
   {
@@ -84,12 +135,12 @@ export class ContextTool extends Context.Service<
     ) => Effect.Effect<DiffResult, ContextAccessError | ContextUnavailable>;
     readonly search: (
       reader: ContextReader,
-      request: { readonly query: string; readonly driveId: string | null },
-    ) => Effect.Effect<SearchResult, ContextAccessError | ContextUnavailable>;
+      request: SearchRequest,
+    ) => Effect.Effect<ContextSearchResult, ContextAccessError | ContextUnavailable>;
     readonly thread: (
       reader: ContextReader,
-      request: { readonly threadId: string; readonly turn: number | null },
-    ) => Effect.Effect<ThreadResult, ContextUnavailable>;
+      request: ThreadRequest,
+    ) => Effect.Effect<ThreadResult, ContextAccessError | ContextUnavailable>;
   }
 >()("@signalbox/cloud/context/ContextTool") {}
 
@@ -111,11 +162,18 @@ const make = Effect.gen(function* () {
       Option.isSome(github) ? Effect.provideService(GitHub, github.value) : (effect) => effect,
     );
 
-  const actorOf = (reader: ContextReader) =>
-    Effect.map(users.forUser(reader.userId).contextIds(), (contextIds): Actor => ({
-      userId: reader.userId,
-      contextIds,
-    }));
+  const readableSearchScope = (reader: ContextReader) =>
+    Effect.gen(function* () {
+      const user = users.forUser(reader.userId);
+      const { contexts, drives } = yield* user.readableDrives();
+      const currentDrives = yield* Effect.filter(
+        drives,
+        (drive) => Effect.map(user.driveAccess(drive.id), (role) => role !== null),
+        { concurrency: 8 },
+      );
+      const scope = readerSearchScope(reader.userId, reader.driveId, contexts, currentDrives);
+      return scope ?? (yield* new ContextAccessError({ message: NO_ACCESS }));
+    });
 
   const canRead = (reader: ContextReader, driveId: string) =>
     Effect.map(users.forUser(reader.userId).driveAccess(driveId), (role) => role !== null);
@@ -285,15 +343,38 @@ const make = Effect.gen(function* () {
     Effect.gen(function* () {
       const threadId = decodeThreadId(request.threadId);
       if (Option.isNone(threadId)) return { _tag: "not_found" } as const;
+      const scope = yield* readableSearchScope(reader);
+      if ("itemId" in request) {
+        const user = users.forUser(reader.userId);
+        const itemScope = limitReaderSearchScope(scope, null, [request.projectId]);
+        if (itemScope === null) return { _tag: "not_found" } as const;
+        const actor = { ...scope.actor, projectIds: itemScope.projectIds };
+        const found = yield* user.readSearchItem(actor, threadId.value, request.itemId);
+        const currentScope = yield* readableSearchScope(reader);
+        if (!currentScope.projectIds.includes(request.projectId)) {
+          return { _tag: "not_found" } as const;
+        }
+        return found === null ||
+          !itemScope.projectIds.includes(found.projectId) ||
+          found.projectId !== request.projectId
+          ? ({ _tag: "not_found" } as const)
+          : ({ _tag: "item", threadId: threadId.value, ...found } as const);
+      }
       const found = yield* threads
         .forThread(threadId.value)
-        .contextTurns(yield* actorOf(reader), request.turn);
-      if (found === null) return { _tag: "not_found" } as const;
-      const driveId = driveOfProject(found.projectId, reader.userId);
-      const visible = driveId !== null && (yield* canRead(reader, driveId));
+        .contextTurns(scope.actor, request.turn);
+      if (found === null || !scope.projectIds.includes(found.projectId)) {
+        return { _tag: "not_found" } as const;
+      }
+      const driveId = scope.drives.find((drive) => drive.projectId === found.projectId)?.id ?? null;
+      const visible = driveId !== null;
       const [work] = visible
         ? yield* directory.forDrive(driveId).unreconciled({ limit: 1, threadId: request.threadId })
         : [];
+      const currentScope = yield* readableSearchScope(reader);
+      if (!currentScope.projectIds.includes(found.projectId)) {
+        return { _tag: "not_found" } as const;
+      }
       return {
         _tag: "thread",
         threadId: request.threadId,
@@ -307,32 +388,54 @@ const make = Effect.gen(function* () {
   const search: ContextTool["Service"]["search"] = (reader, request) =>
     Effect.gen(function* () {
       const user = users.forUser(reader.userId);
-      const scope =
-        request.driveId === null
-          ? Effect.map(user.readableDrives(), ({ contexts, drives }) => ({
-              contextIds: contexts.map((context) => context.id),
-              driveIds: drives.map((drive) => drive.id as string),
-            }))
-          : Effect.map(
-              Effect.all([readable(reader, request.driveId), user.contextIds()], {
-                concurrency: "unbounded",
-              }),
-              ([, contextIds]) => ({ contextIds, driveIds: [request.driveId!] }),
-            );
-      const [{ contextIds, driveIds }, shell] = yield* Effect.all([scope, user.shellSnapshot()], {
-        concurrency: "unbounded",
-      });
-      return yield* searchContext({
-        reader,
-        actor: { userId: reader.userId, contextIds },
-        query: request.query,
-        driveIds,
-        shell,
-      }).pipe(
-        Effect.provideService(ThreadDirectory, threads),
-        Effect.provideService(DriveDirectory, directory),
-        Effect.provideService(DrivePacks, packs),
+      const scope = yield* readableSearchScope(reader);
+      const requestScope = limitReaderSearchScope(scope, request.driveId, request.projectIds);
+      if (requestScope === null) {
+        return yield* new ContextAccessError({ message: NO_ACCESS });
+      }
+      const { driveId: _driveId, projectIds: _projectIds, ...input } = request;
+      const searchInput: ThreadSearchInput = { ...input, projectIds: requestScope.projectIds };
+      const [threadSearch, driveSearch] = yield* Effect.all(
+        [
+          user.searchThreads({ ...scope.actor, projectIds: requestScope.projectIds }, searchInput),
+          searchDriveHistory({
+            reader,
+            query: request.query,
+            driveIds: requestScope.drives.map((drive) => drive.id),
+            workVisible: (threadId, driveId) => {
+              const projectId = scope.drives.find((drive) => drive.id === driveId)?.projectId;
+              if (projectId === undefined) return Effect.succeed(false);
+              return threads
+                .forThread(ThreadId.make(threadId))
+                .contextWorkVisible(scope.actor, projectId);
+            },
+          }).pipe(
+            Effect.provideService(DriveDirectory, directory),
+            Effect.provideService(DrivePacks, packs),
+          ),
+        ],
+        { concurrency: "unbounded" },
       );
+      const currentScope = yield* readableSearchScope(reader);
+      const currentRequestScope = limitReaderSearchScope(
+        currentScope,
+        request.driveId,
+        request.projectIds,
+      );
+      if (
+        currentRequestScope === null ||
+        requestScope.projectIds.some(
+          (projectId) => !currentRequestScope.projectIds.includes(projectId),
+        )
+      ) {
+        return yield* new ContextAccessError({ message: NO_ACCESS });
+      }
+      return {
+        ...threadSearch,
+        driveHits: driveSearch.hits,
+        driveSearched: driveSearch.searched,
+        driveHitsTruncated: driveSearch.truncated,
+      } satisfies ContextSearchResult;
     });
 
   return ContextTool.of({ view, tree, blob, diff, search, thread });

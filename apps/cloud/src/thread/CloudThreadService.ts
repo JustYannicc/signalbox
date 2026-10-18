@@ -1,5 +1,9 @@
 import {
   type OrchestrationV2Command,
+  type OrchestrationV2AppThreadLineage,
+  type OrchestrationV2Run,
+  type OrchestrationV2TurnItem,
+  type TurnItemId,
   type OrchestrationV2SubscribeThreadInput,
   type OrchestrationV2ThreadBoundedSnapshot,
   type OrchestrationV2ThreadHistoryPage,
@@ -60,10 +64,12 @@ export class CloudThreadService extends Context.Service<
     readonly dispatchCommand: (
       actor: Actor,
       command: OrchestrationV2Command,
+      expectedRun?: Pick<OrchestrationV2Run, "id" | "status"> | null,
     ) => Effect.Effect<{ readonly sequence: number }, CloudThreadError>;
     readonly launchThread: (
       actor: Actor,
       input: OrchestrationV2ThreadLaunchInput,
+      lineage?: OrchestrationV2AppThreadLineage,
     ) => Effect.Effect<OrchestrationV2ThreadLaunchResult, CloudThreadError>;
     /**
      * The whole thread at its current sequence. Cloud threads are short
@@ -77,6 +83,11 @@ export class CloudThreadService extends Context.Service<
       OrchestrationV2ThreadBoundedSnapshot,
       ThreadNotFoundError | ThreadObjectError
     >;
+    readonly getTurnItem: (
+      actor: Actor,
+      threadId: ThreadId,
+      itemId: TurnItemId,
+    ) => Effect.Effect<OrchestrationV2TurnItem | null, ThreadNotFoundError | ThreadObjectError>;
     /** Older history before a bounded window: none, since the window is the whole thread. */
     readonly threadHistoryPage: (
       actor: Actor,
@@ -297,6 +308,11 @@ const make = Effect.gen(function* () {
     dispatchCommand: threads.dispatch,
     launchThread: threads.launch,
     threadSnapshot: threads.snapshot,
+    getTurnItem: (actor, threadId, itemId) =>
+      Effect.map(
+        directory.forThread(threadId).snapshot(actor),
+        ({ projection }) => projection.turnItems.find((item) => item.id === itemId) ?? null,
+      ),
     threadHistoryPage: threads.history,
     requestPullRequestSync: (actor, threadId, key) =>
       directory.forThread(threadId).requestPullRequestSync(actor, key),

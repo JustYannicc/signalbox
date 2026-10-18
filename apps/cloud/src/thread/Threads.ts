@@ -1,7 +1,9 @@
 import type {
   OrchestrationV2Command,
+  OrchestrationV2AppThreadLineage,
   OrchestrationV2CommandOutputError,
   OrchestrationV2CommandOutputFrame,
+  OrchestrationV2Run,
   OrchestrationV2SubscribeCommandOutputInput,
   OrchestrationV2SubscribeThreadInput,
   OrchestrationV2ThreadBoundedSnapshot,
@@ -32,11 +34,13 @@ export class Threads extends Context.Service<
     readonly launch: (
       actor: Actor,
       input: OrchestrationV2ThreadLaunchInput,
+      lineage?: OrchestrationV2AppThreadLineage,
     ) => Effect.Effect<OrchestrationV2ThreadLaunchResult, ThreadError>;
     /** Resolves the turn's home and attachments before the serialized command/receipt commit. */
     readonly dispatch: (
       actor: Actor,
       command: OrchestrationV2Command,
+      expectedRun?: Pick<OrchestrationV2Run, "id" | "status"> | null,
     ) => Effect.Effect<{ readonly sequence: number }, ThreadError>;
     readonly snapshot: (
       actor: Actor,

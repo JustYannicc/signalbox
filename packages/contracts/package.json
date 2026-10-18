@@ -102,6 +102,14 @@
     "./signalboxLearner": {
       "types": "./src/signalboxLearner.ts",
       "import": "./src/signalboxLearner.ts"
+    },
+    "./signalboxCollaboration": {
+      "types": "./src/signalboxCollaboration.ts",
+      "import": "./src/signalboxCollaboration.ts"
+    },
+    "./signalboxSearch": {
+      "types": "./src/signalboxSearch.ts",
+      "import": "./src/signalboxSearch.ts"
     }
   },
   "scripts": {

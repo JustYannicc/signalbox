@@ -6,6 +6,18 @@ import { descriptor } from "../environment.ts";
 import { CLOUD_UNSERVED, cloudServes, cloudUnserved, coverageKeyMatches } from "./cloudCoverage.ts";
 
 describe("cloud API coverage", () => {
+  it("serves cloud thread collaboration and individual timeline items", () => {
+    const collaboration = operations.filter(
+      (operation) =>
+        operation.name.startsWith("threads.collaboration.") ||
+        operation.name === "threads.getTurnItem",
+    );
+    expect(collaboration).toHaveLength(10);
+    for (const operation of collaboration) {
+      expect(cloudServes(operation), operation.name).toBe(true);
+      expect(cloudUnserved(operation), operation.name).toBeUndefined();
+    }
+  });
   it("tracks usage history as missing rather than treating account quotas as its replacement", () => {
     const { capabilities } = descriptor({
       environmentId: EnvironmentId.make("cloud"),

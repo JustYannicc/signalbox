@@ -48,6 +48,7 @@ import { DAV_PATH, serveDav } from "./RunnerDrivesDav.ts";
 import { mountDrives } from "./RunnerDrivesMount.ts";
 import { makeDrivesView } from "./RunnerDrivesView.ts";
 import { mcpToolTimeoutSec, type RunnerMcpServers } from "./RunnerModelAccess.ts";
+import { layerThreadTools } from "./RunnerThreadTools.ts";
 import { layerScheduledTaskTools } from "./RunnerScheduledTaskTools.ts";
 import { layerPreviewServiceTools } from "./RunnerPreviewServiceTools.ts";
 import * as RunnerPreviewServiceCommands from "./RunnerPreviewServiceCommands.ts";
@@ -196,6 +197,7 @@ export const startContextServer = Effect.fn("startContextServer")(function* (inp
       : Layer.empty;
   const mcp = Layer.mergeAll(
     layerContextTools(view),
+    layerThreadTools(view),
     layerBranchTools(view, () => drive),
     layerAutomationTools(view),
     layerRunnerPullRequestTools(view).pipe(

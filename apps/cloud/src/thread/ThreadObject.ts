@@ -33,12 +33,14 @@ import * as GitHub from "../github/GitHub.ts";
 import type { PackBucket } from "../drive/DrivePacks.ts";
 import * as Evlog from "../observability/Evlog.ts";
 import * as Platform from "../platform.ts";
+import * as CloudflareSearchIndex from "../search/CloudflareSearchIndex.ts";
 import * as PoolDirectory from "../pool/PoolDirectory.ts";
 import * as PreviewState from "./PreviewState.ts";
 import * as BrowserTrail from "./preview/BrowserTrail.ts";
 import { PreviewGateway } from "./preview/PreviewGateway.ts";
 import { type PreviewEnv, previewSettings } from "./preview/previewHost.ts";
 import * as UserDirectory from "../user/UserDirectory.ts";
+import * as ThreadDirectory from "./ThreadDirectory.ts";
 import * as CloudAnalytics from "./diagnostics/CloudAnalytics.ts";
 import * as DiagnosticsStore from "./diagnostics/DiagnosticsStore.ts";
 import * as TurnDiagnostics from "./diagnostics/TurnDiagnostics.ts";
@@ -56,10 +58,12 @@ import {
   type RunnerSocketHost,
 } from "./runner/runnerSockets.ts";
 import * as ThreadRunner from "./runner/ThreadRunner.ts";
+import type { NativeChildBatchInput, NativeChildBatchResult } from "./runner/nativeChildBatch.ts";
 import * as SessionRows from "./session/SessionRows.ts";
 import { handleSessionRequest, isSessionApiPath } from "./session/sessionRoutes.ts";
 import { deliverPendingEvents } from "./eventOutbox.ts";
 import { deliverPendingSummary } from "./summaryOutbox.ts";
+import { deliverPendingSearch } from "./searchOutbox.ts";
 import { THREAD_OBJECT_JURISDICTION, type ThreadObjectApi } from "./ThreadDirectory.ts";
 import * as ThreadBrowsing from "./browsing/ThreadBrowsing.ts";
 import * as ThreadEngine from "./ThreadEngine.ts";
@@ -103,6 +107,7 @@ import { withRecoveryInspection } from "./RecoveryEvidence.ts";
 export interface ThreadObjectEnv
   extends
     MachineBackend.MachineBackendEnv,
+    CloudflareSearchIndex.SearchIndexEnv,
     CloudAnalytics.CloudAnalyticsEnv,
     PreviewEnv,
     RecoveryDrillEnv,
@@ -110,6 +115,7 @@ export interface ThreadObjectEnv
   /** Set by `vp run dev` only. Local workerd has no jurisdictions. */
   readonly LOCAL_WORKERD?: string;
   readonly USERS: UserDirectory.UserObjectNamespace;
+  readonly THREADS: ThreadDirectory.ThreadObjectNamespace;
   /** Pools' objects: a turn starts only on a model its pool serves (`TurnModels.ts`). */
   readonly POOLS: PoolDirectory.PoolObjectNamespace;
   /** `1` in dev and tests: scripted turns run (`scriptedProvider.ts`). */
@@ -188,6 +194,39 @@ const layerThreadSecrets = Layer.effect(
   })),
 );
 
+const layerNativeChildRelay = (parentThreadId: () => ThreadId) =>
+  Layer.effect(
+    ThreadRunner.NativeChildRelay,
+    Effect.gen(function* () {
+      const users = yield* UserDirectory.UserDirectory;
+      const threads = yield* ThreadDirectory.ThreadDirectory;
+      return {
+        save: (input: NativeChildBatchInput) => {
+          if (input.parentThreadId !== parentThreadId()) {
+            return Effect.die("A native child relay was sent to the wrong parent thread.");
+          }
+          return Effect.flatMap(
+            Effect.orDie(threads.forThread(input.childThreadId).recordNativeChildBatch(input)),
+            (result): Effect.Effect<NativeChildBatchResult> =>
+              result._tag === "child_mismatch"
+                ? Effect.succeed(result)
+                : Effect.as(
+                    Effect.orDie(
+                      users.forUser(input.owner.userId).copyThreadHome({
+                        parentThreadId: input.parentThreadId,
+                        childThreadId: input.childThreadId,
+                        projectId: input.appThread.projectId,
+                        ownerId: input.owner.contextId,
+                      }),
+                    ),
+                    result,
+                  ),
+          );
+        },
+      };
+    }),
+  );
+
 // The whole storage, not just `storage.sql`: commits and migrations run in transactions.
 // `machine`: the object's own container, the light class's machine where the deployment has one.
 const makeRuntime = (
@@ -199,52 +238,56 @@ const makeRuntime = (
   secretChanged: () => Promise<void>,
 ) => {
   const settings = machineSettings(env);
+  const runner = ThreadRunner.layer.pipe(
+    Layer.provide(
+      Layer.succeed(ThreadRunner.PreviewHold, {
+        held: Effect.sync(() => previews.held),
+        lastActiveAt: Effect.sync(() => previews.lastActiveAt),
+      }),
+    ),
+    Layer.provideMerge(layerNativeChildRelay(threadId)),
+    Layer.provideMerge(Layer.mergeAll(layerThreadDrives(env), layerThreadSecrets)),
+    Layer.provideMerge(ThreadPulls.layerReports.pipe(Layer.provideMerge(ThreadPulls.layer))),
+    Layer.provideMerge(
+      env.DRIVES === undefined
+        ? Layer.empty
+        : layerDriveDirectory(env.DRIVES, { localWorkerd: env.LOCAL_WORKERD === "1" }),
+    ),
+    // Its linked pull requests' sync reads GitHub only through the API, with the owner's token.
+    Layer.provideMerge(
+      PullRequestSync.layer.pipe(Layer.provide(GitHub.layer(null, GitHub.gitHubEndpoints(env)))),
+    ),
+    // The thread's browser tabs (#585), beside its conversation.
+    Layer.provideMerge(ThreadBrowsing.layer),
+    // Its status note (#670), written by the runtime through the owner's pool when the agent didn't.
+    Layer.provideMerge(
+      ThreadStatusNotes.layer.pipe(
+        Layer.provide(
+          StatusNoteModel.layerPools(env.POOLS, { localWorkerd: env.LOCAL_WORKERD === "1" }),
+        ),
+      ),
+    ),
+    Layer.provideMerge(
+      ThreadSecretRequests.layer.pipe(
+        Layer.provide(
+          Layer.succeed(ThreadSecretRequests.SecretRequestChanged, Effect.promise(secretChanged)),
+        ),
+      ),
+    ),
+    Layer.provideMerge(ThreadEngine.layer),
+    Layer.provideMerge(CloudflareSearchIndex.layerFromEnv(env)),
+    Layer.provideMerge(
+      TurnModels.layer({ scripted: scriptedProviderEnabled(env) }).pipe(
+        Layer.provide(
+          PoolDirectory.layerDurableObjects(env.POOLS, {
+            localWorkerd: env.LOCAL_WORKERD === "1",
+          }),
+        ),
+      ),
+    ),
+  );
   return ManagedRuntime.make(
-    ThreadRunner.layer.pipe(
-      Layer.provide(
-        Layer.succeed(ThreadRunner.PreviewHold, {
-          held: Effect.sync(() => previews.held),
-          lastActiveAt: Effect.sync(() => previews.lastActiveAt),
-        }),
-      ),
-      Layer.provideMerge(Layer.mergeAll(layerThreadDrives(env), layerThreadSecrets)),
-      Layer.provideMerge(ThreadPulls.layerReports.pipe(Layer.provideMerge(ThreadPulls.layer))),
-      Layer.provideMerge(
-        env.DRIVES === undefined
-          ? Layer.empty
-          : layerDriveDirectory(env.DRIVES, { localWorkerd: env.LOCAL_WORKERD === "1" }),
-      ),
-      // Its linked pull requests' sync reads GitHub only through the API, with the owner's token.
-      Layer.provideMerge(
-        PullRequestSync.layer.pipe(Layer.provide(GitHub.layer(null, GitHub.gitHubEndpoints(env)))),
-      ),
-      // The thread's browser tabs (#585), beside its conversation.
-      Layer.provideMerge(ThreadBrowsing.layer),
-      // Its status note (#670), written by the runtime through the owner's pool when the agent didn't.
-      Layer.provideMerge(
-        ThreadStatusNotes.layer.pipe(
-          Layer.provide(
-            StatusNoteModel.layerPools(env.POOLS, { localWorkerd: env.LOCAL_WORKERD === "1" }),
-          ),
-        ),
-      ),
-      Layer.provideMerge(
-        ThreadSecretRequests.layer.pipe(
-          Layer.provide(
-            Layer.succeed(ThreadSecretRequests.SecretRequestChanged, Effect.promise(secretChanged)),
-          ),
-        ),
-      ),
-      Layer.provideMerge(ThreadEngine.layer),
-      Layer.provideMerge(
-        TurnModels.layer({ scripted: scriptedProviderEnabled(env) }).pipe(
-          Layer.provide(
-            PoolDirectory.layerDurableObjects(env.POOLS, {
-              localWorkerd: env.LOCAL_WORKERD === "1",
-            }),
-          ),
-        ),
-      ),
+    runner.pipe(
       Layer.provideMerge(Layer.mergeAll(TurnDiagnostics.layer, TurnReports.layer)),
       Layer.provideMerge(CloudAnalytics.layerFromEnv(env)),
       Layer.provideMerge(layerMachineBackend(env, machine)),
@@ -262,6 +305,11 @@ const makeRuntime = (
       ),
       Layer.provideMerge(
         UserDirectory.layerDurableObjects(env.USERS, { localWorkerd: env.LOCAL_WORKERD === "1" }),
+      ),
+      Layer.provideMerge(
+        ThreadDirectory.layerDurableObjects(env.THREADS, {
+          localWorkerd: env.LOCAL_WORKERD === "1",
+        }),
       ),
       Layer.provideMerge(
         Layer.mergeAll(
@@ -405,6 +453,10 @@ export class ThreadObject extends DurableObject<ThreadObjectEnv> implements Thre
     return this.api.launch(...args);
   }
 
+  recordNativeChildBatch(...args: Parameters<ThreadObjectApi["recordNativeChildBatch"]>) {
+    return this.api.recordNativeChildBatch(...args);
+  }
+
   snapshot(...args: Parameters<ThreadObjectApi["snapshot"]>) {
     return this.api.snapshot(...args);
   }
@@ -439,6 +491,22 @@ export class ThreadObject extends DurableObject<ThreadObjectEnv> implements Thre
 
   summary(...args: Parameters<ThreadObjectApi["summary"]>) {
     return this.api.summary(...args);
+  }
+
+  backfill(...args: Parameters<ThreadObjectApi["backfill"]>) {
+    return this.api.backfill(...args);
+  }
+
+  searchDocuments(...args: Parameters<ThreadObjectApi["searchDocuments"]>) {
+    return this.api.searchDocuments(...args);
+  }
+
+  contextWorkVisible(...args: Parameters<ThreadObjectApi["contextWorkVisible"]>) {
+    return this.api.contextWorkVisible(...args);
+  }
+
+  find(...args: Parameters<ThreadObjectApi["find"]>) {
+    return this.api.find(...args);
   }
 
   diagnostics(...args: Parameters<ThreadObjectApi["diagnostics"]>) {
@@ -663,6 +731,8 @@ export class ThreadObject extends DurableObject<ThreadObjectEnv> implements Thre
   private nextDeliveryAt = 0;
   private eventFailures = 0;
   private nextEventsAt = 0;
+  private searchFailures = 0;
+  private nextSearchAt = 0;
   private machineFailures = 0;
   private analyticsFailures = 0;
   private sharingFailures = 0;
@@ -700,6 +770,7 @@ export class ThreadObject extends DurableObject<ThreadObjectEnv> implements Thre
           runner.needsUpkeep ||
           (yield* engine.hasTurnWork) ||
           (yield* engine.hasPendingSummary) ||
+          (yield* engine.hasPendingSearch) ||
           (yield* engine.hasPendingEvents) ||
           (yield* Effect.forEach(
             MachineBackend.distinctBackends(yield* MachineBackend.MachineBackend),
@@ -1018,6 +1089,21 @@ export class ThreadObject extends DurableObject<ThreadObjectEnv> implements Thre
       this.nextDeliveryAt = delivered ? 0 : now + retryDelay(this.deliveryFailures);
     }
     await this.deliverEvents(log, now);
+    if (now >= this.nextSearchAt) {
+      const delivered = await this.run(
+        log,
+        deliverPendingSearch.pipe(
+          Effect.map(() => true),
+          Effect.catchCause((cause) =>
+            Effect.logError("thread search delivery failed", Cause.pretty(cause)).pipe(
+              Effect.as(false),
+            ),
+          ),
+        ),
+      );
+      this.searchFailures = delivered ? 0 : this.searchFailures + 1;
+      this.nextSearchAt = delivered ? 0 : now + retryDelay(this.searchFailures);
+    }
     const machineWakeAt = await this.tendMachine(log, now).catch(async (cause: unknown) => {
       await this.run(log, Effect.logError("machine upkeep failed", String(cause)));
       return now + retryDelay(1);
@@ -1070,6 +1156,13 @@ export class ThreadObject extends DurableObject<ThreadObjectEnv> implements Thre
       step.more ? now + (step.ok ? STEP_INTERVAL_MS : retryDelay(this.stepFailures)) : null,
       summaryAt,
       eventsAt,
+      this.nextSearchAt > 0
+        ? this.nextSearchAt
+        : (await this.runtime.runPromise(
+              ThreadEngine.ThreadEngine.use((engine) => engine.hasPendingSearch),
+            ))
+          ? now + STEP_INTERVAL_MS
+          : null,
       machineWakeAt,
       runnerWakeAt,
       diagnosticsWakeAt,

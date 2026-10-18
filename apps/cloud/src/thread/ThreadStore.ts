@@ -9,6 +9,11 @@ import { SignalboxContextId } from "@t3tools/contracts/signalboxContexts";
 import { OnePasswordEnvironmentId } from "@t3tools/contracts/signalboxFolders";
 import type { ThreadStatusNote } from "@t3tools/contracts/signalboxStatusLine";
 import type { SecretValue } from "@signalbox/runner-protocol/SecretScrubber";
+import {
+  SearchDocument,
+  SearchThreadMetadata,
+  type SearchDelivery,
+} from "../search/SearchIndex.ts";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -18,18 +23,6 @@ import * as Migrator from "effect/sql/Migrator";
 import * as SqlClient from "effect/sql/SqlClient";
 import type { SqlError } from "effect/sql/SqlError";
 
-import {
-  advanceCommandOutputSequence,
-  readCommandOutputSequence,
-  migrateCommandOutput,
-  readCommandOutput,
-  writeCommandOutput,
-} from "./commandOutput/outputTables.ts";
-import type {
-  CommandOutputDelta,
-  CommandOutputKey,
-  RetainedCommandOutput,
-} from "./commandOutput/retainedOutput.ts";
 import * as Migrations from "../storage/migrations.ts";
 import {
   migrateCurrentItemExpansion,
@@ -43,6 +36,9 @@ import { migratePullRequestPolls } from "./pullRequests/PullRequestPolls.ts";
 import { migrateStatusNote, readNote, writeNote } from "./statusLine/statusNoteTables.ts";
 import { migratePulls } from "./PullState.ts";
 import { type MachineRecord, MachineRecords, NO_MACHINE_RECORD } from "./runner/MachineBackend.ts";
+import type { NativeChildPending } from "./NativeChildProtocol.ts";
+import { nativeChildPendingWire } from "./runner/nativeChildBatch.ts";
+import type { ThreadOwner } from "./ThreadOwner.ts";
 import {
   migrateSecretValues,
   readSecretValues,
@@ -50,6 +46,20 @@ import {
   type SecretValues,
 } from "./runner/secretValues.ts";
 import { type ThreadMonitor, ThreadMonitorWire } from "./threadWire.ts";
+import {
+  advanceCommandOutputSequence,
+  readCommandOutputSequence,
+  migrateCommandOutput,
+  readCommandOutput,
+  writeCommandOutput,
+} from "./commandOutput/outputTables.ts";
+import type {
+  CommandOutputDelta,
+  CommandOutputKey,
+  RetainedCommandOutput,
+} from "./commandOutput/retainedOutput.ts";
+
+export type { ThreadOwner } from "./ThreadOwner.ts";
 
 /**
  * What one thread's Durable Object persists: its event log, the receipt of
@@ -69,15 +79,10 @@ export interface StoredEvent {
   readonly event: OrchestrationV2DomainEvent;
 }
 
-export interface ThreadOwner {
-  readonly userId: string;
-  /** The context the thread acts as, fixed at creation (see `CloudThreadService`). */
-  readonly contextId: SignalboxContextId;
-  /**
-   * The drive the thread works in, fixed at creation. Null for threads created
-   * before shared drives, which work in their owner's My Drive.
-   */
-  readonly driveId: string | null;
+export interface NativeChildPendingChanges {
+  readonly upsert: ReadonlyArray<NativeChildPending>;
+  readonly removeChildThreadIds: ReadonlyArray<string>;
+  readonly clearRunIds: ReadonlyArray<string>;
 }
 
 export type CommandReceipt =
@@ -151,6 +156,29 @@ export interface OutboxState {
   readonly delivered: number;
 }
 
+export interface SearchOutboxState {
+  readonly revision: number;
+  readonly delivered: number;
+  readonly backfillRequested: boolean;
+  readonly backfillComplete: boolean;
+  readonly backfillRevision: number;
+  readonly backfillGeneration: number;
+  readonly nextBackfillPage: number;
+  readonly backfillSourceSequence: number;
+  readonly backfillHome: SearchDelivery["home"] | null;
+  readonly backfillThread: SearchDelivery["thread"] | null;
+  readonly cursor: { readonly position: number; readonly itemId: string } | null;
+}
+
+export interface SearchDeliveryDraft {
+  readonly home: SearchDelivery["home"];
+  readonly thread: SearchDelivery["thread"];
+  readonly documents: ReadonlyArray<SearchDocument>;
+  readonly removed: ReadonlyArray<string>;
+  readonly complete: boolean;
+  readonly sourceSequence: number;
+}
+
 export class ThreadStore extends Context.Service<
   ThreadStore,
   {
@@ -169,6 +197,8 @@ export class ThreadStore extends Context.Service<
       key: CommandOutputKey,
     ) => Effect.Effect<RetainedCommandOutput | null, SqlError>;
     readonly receipt: (commandId: CommandId) => Effect.Effect<CommandReceipt | null, SqlError>;
+    /** Unattested native child rows buffered until their matching subagent record arrives. */
+    readonly pendingNativeChildren: Effect.Effect<ReadonlyArray<NativeChildPending>, SqlError>;
     /**
      * Appends events after `head`, the command's receipt, the owner (when the
      * thread is being created) and the outbox revision, in one transaction.
@@ -187,6 +217,7 @@ export class ThreadStore extends Context.Service<
       readonly summaryChanged: boolean;
       /** The machine lease as of these events, such as a Runner batch's acknowledgement. */
       readonly machine?: MachineLease;
+      readonly nativeChildPending?: NativeChildPendingChanges;
       readonly commandOutputSeeds?: ReadonlyArray<CommandOutputKey>;
       readonly commandOutput?: ReadonlyArray<CommandOutputDelta>;
       /** The instructions of the thread's chain, for the run these events start. */
@@ -196,6 +227,8 @@ export class ThreadStore extends Context.Service<
       };
       /** The 1Password Environments of the thread's chain as of the run these events start. */
       readonly secrets?: ReadonlyArray<OnePasswordEnvironmentId>;
+      /** Search rows are committed with the events that changed them. */
+      readonly searchDeliveries?: ReadonlyArray<SearchDeliveryDraft>;
     }) => Effect.Effect<number, SqlError>;
     readonly recordRejection: (input: {
       readonly command: { readonly id: CommandId; readonly type: string };
@@ -206,6 +239,18 @@ export class ThreadStore extends Context.Service<
     /** The last event sequence the owner's automations acknowledged (`eventOutbox.ts`). */
     readonly eventsDelivered: Effect.Effect<number, SqlError>;
     readonly acknowledgeEvents: (through: number) => Effect.Effect<void, SqlError>;
+    readonly searchOutbox: Effect.Effect<SearchOutboxState, SqlError>;
+    readonly pendingSearchDelivery: Effect.Effect<SearchDelivery | null, SqlError>;
+    readonly acknowledgeSearchDelivery: (
+      revision: number,
+      deliveryId: string,
+    ) => Effect.Effect<void, SqlError>;
+    readonly requestSearchBackfill: (input: {
+      readonly home: SearchDelivery["home"];
+      readonly thread: SearchDelivery["thread"];
+      readonly documents: ReadonlyArray<SearchDocument>;
+      readonly sourceSequence: number;
+    }) => Effect.Effect<SearchOutboxState, SqlError>;
     /** The automation runs attached to the thread. */
     readonly monitors: Effect.Effect<ReadonlyArray<ThreadMonitor>, SqlError>;
     /**
@@ -341,6 +386,50 @@ const migrations = Migrator.fromRecord({
   "0012_command_output": migrateCommandOutput,
   "0012_git_pulls": migratePulls,
   "0012_current_item_history": migrateCurrentItemHistory,
+  "0012_native_child_pending": Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    yield* sql`CREATE TABLE native_child_pending (
+      child_thread_id TEXT PRIMARY KEY,
+      parent_run_id TEXT NOT NULL,
+      pending TEXT NOT NULL
+    )`;
+  }),
+  "0012_search_outbox": Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    yield* sql`CREATE TABLE search_outbox_state (
+      id INTEGER PRIMARY KEY CHECK (id = 1),
+      revision INTEGER NOT NULL,
+      delivered INTEGER NOT NULL,
+      backfill_requested INTEGER NOT NULL,
+      backfill_complete INTEGER NOT NULL,
+      backfill_revision INTEGER NOT NULL,
+      backfill_generation INTEGER NOT NULL,
+      next_backfill_page INTEGER NOT NULL,
+      cursor_position INTEGER,
+      cursor_item_id TEXT,
+      backfill_source_sequence INTEGER NOT NULL,
+      backfill_home_owner TEXT,
+      backfill_home_project TEXT,
+      backfill_thread TEXT
+    )`;
+    yield* sql`INSERT INTO search_outbox_state
+      (id, revision, delivered, backfill_requested, backfill_complete, backfill_revision, backfill_generation, next_backfill_page, cursor_position, cursor_item_id, backfill_source_sequence)
+      VALUES (1, 0, 0, 0, 0, 0, 0, 0, NULL, NULL, 0)`;
+    yield* sql`CREATE TABLE search_backfill_documents (
+      position INTEGER NOT NULL,
+      item_id TEXT NOT NULL,
+      document TEXT NOT NULL,
+      PRIMARY KEY (position, item_id)
+    )`;
+    yield* sql`CREATE TABLE search_outbox (
+      sequence INTEGER PRIMARY KEY AUTOINCREMENT,
+      revision INTEGER NOT NULL,
+      page INTEGER NOT NULL,
+      delivery_id TEXT NOT NULL UNIQUE,
+      delivery TEXT NOT NULL
+    )`;
+    yield* sql`CREATE INDEX search_outbox_pending ON search_outbox (revision, page)`;
+  }),
   "0013_current_item_expansion": migrateCurrentItemExpansion,
 });
 
@@ -383,6 +472,57 @@ const decodeEventRows = Schema.decodeUnknownSync(Schema.Array(EventRow));
 const decodeOwnerRows = Schema.decodeUnknownSync(Schema.Array(OwnerRow));
 const decodeReceiptRows = Schema.decodeUnknownSync(Schema.Array(ReceiptRow));
 const decodeOutboxRows = Schema.decodeUnknownSync(Schema.Array(OutboxRow));
+const SearchDeliveryJson = Schema.fromJsonString(
+  Schema.Struct({
+    home: Schema.Struct({ ownerId: Schema.String, projectId: Schema.String }),
+    thread: Schema.Struct({
+      threadId: Schema.String,
+      title: Schema.String,
+      archived: Schema.Boolean,
+      deleted: Schema.Boolean,
+    }),
+    revision: Schema.Number,
+    sourceSequence: Schema.Number,
+    deliveryId: Schema.String,
+    documents: Schema.Array(SearchDocument),
+    removed: Schema.Array(Schema.String),
+    complete: Schema.Boolean,
+  }),
+);
+const encodeSearchDelivery = Schema.encodeSync(SearchDeliveryJson);
+const SearchThreadJson = Schema.fromJsonString(SearchThreadMetadata);
+const encodeSearchThread = Schema.encodeSync(SearchThreadJson);
+const decodeSearchThread = Schema.decodeUnknownSync(SearchThreadJson);
+const decodeSearchDeliveryRows = Schema.decodeUnknownSync(
+  Schema.Array(
+    Schema.Struct({ revision: Schema.Number, page: Schema.Number, delivery: SearchDeliveryJson }),
+  ),
+);
+const SearchOutboxRow = Schema.Struct({
+  revision: Schema.Number,
+  delivered: Schema.Number,
+  backfill_requested: Schema.Number,
+  backfill_complete: Schema.Number,
+  backfill_revision: Schema.Number,
+  backfill_generation: Schema.Number,
+  next_backfill_page: Schema.Number,
+  cursor_position: Schema.NullOr(Schema.Number),
+  cursor_item_id: Schema.NullOr(Schema.String),
+  backfill_source_sequence: Schema.Number,
+  backfill_home_owner: Schema.NullOr(Schema.String),
+  backfill_home_project: Schema.NullOr(Schema.String),
+  backfill_thread: Schema.NullOr(Schema.String),
+});
+const decodeSearchOutboxRows = Schema.decodeUnknownSync(Schema.Array(SearchOutboxRow));
+const SearchBackfillDocumentRow = Schema.Struct({
+  position: Schema.Number,
+  item_id: Schema.String,
+  document: Schema.String,
+});
+const SearchBackfillDocumentJson = Schema.fromJsonString(SearchDocument);
+const encodeSearchDocument = Schema.encodeSync(SearchBackfillDocumentJson);
+const decodeSearchBackfillDocument = Schema.decodeUnknownSync(SearchBackfillDocumentJson);
+const decodeSearchBackfillRows = Schema.decodeUnknownSync(Schema.Array(SearchBackfillDocumentRow));
 const decodeDeliveredRows = Schema.decodeUnknownSync(
   Schema.Array(Schema.Struct({ delivered: Schema.Number })),
 );
@@ -482,6 +622,12 @@ const make = Effect.gen(function* () {
       }),
     );
 
+  const pendingNativeChildren: ThreadStore["Service"]["pendingNativeChildren"] = sql<{
+    readonly pending: string;
+  }>`SELECT pending FROM native_child_pending ORDER BY child_thread_id`.pipe(
+    Effect.map((rows) => rows.flatMap((row) => nativeChildPendingWire.decode(row.pending))),
+  );
+
   const machine: ThreadStore["Service"]["machine"] =
     sql`SELECT lease FROM machine WHERE id = 1`.pipe(
       Effect.map((rows) => decodeMachineRows(rows)[0]?.lease ?? NO_MACHINE),
@@ -504,6 +650,7 @@ const make = Effect.gen(function* () {
     input,
   ) {
     const now = yield* Clock.currentTimeMillis;
+    const [searchStateRow] = decodeSearchOutboxRows(yield* readSearchOutboxState);
     let sequence = input.head;
     for (const event of input.events) {
       sequence += 1;
@@ -522,6 +669,27 @@ const make = Effect.gen(function* () {
     if (input.owner) {
       yield* sql`INSERT INTO owner (id, user_id, context_id, drive_id)
           VALUES (1, ${input.owner.userId}, ${input.owner.contextId}, ${input.owner.driveId})`;
+    }
+    const searchRevision =
+      (searchStateRow?.revision ?? 0) + (input.searchDeliveries?.length ? 1 : 0);
+    let page = 0;
+    for (const draft of input.searchDeliveries ?? []) {
+      const delivery = {
+        home: draft.home,
+        thread: draft.thread,
+        revision: searchRevision,
+        sourceSequence: sequence,
+        deliveryId: `${draft.thread.threadId}:${searchRevision}:source:${page}`,
+        documents: draft.documents,
+        removed: draft.removed,
+        complete: draft.complete,
+      };
+      yield* sql`INSERT INTO search_outbox (revision, page, delivery_id, delivery)
+        VALUES (${searchRevision}, ${1_000_000 + page}, ${delivery.deliveryId}, ${encodeSearchDelivery(delivery)})`;
+      page += 1;
+    }
+    if ((input.searchDeliveries?.length ?? 0) > 0) {
+      yield* sql`UPDATE search_outbox_state SET revision = ${searchRevision} WHERE id = 1`;
     }
     if (input.summaryChanged) {
       // Past a revision its attached runs moved beyond the head, too.
@@ -543,6 +711,20 @@ const make = Effect.gen(function* () {
       yield* sql`INSERT INTO thread_secrets (id, environments)
           VALUES (1, ${encodeSecrets(input.secrets)})
           ON CONFLICT (id) DO UPDATE SET environments = excluded.environments`;
+    }
+    if (input.nativeChildPending) {
+      for (const childThreadId of input.nativeChildPending.removeChildThreadIds) {
+        yield* sql`DELETE FROM native_child_pending WHERE child_thread_id = ${childThreadId}`;
+      }
+      for (const runId of input.nativeChildPending.clearRunIds) {
+        yield* sql`DELETE FROM native_child_pending WHERE parent_run_id = ${runId}`;
+      }
+      for (const pending of input.nativeChildPending.upsert) {
+        yield* sql`INSERT INTO native_child_pending (child_thread_id, parent_run_id, pending)
+          VALUES (${pending.childThreadId}, ${pending.parentRunId}, ${nativeChildPendingWire.encode([pending])})
+          ON CONFLICT (child_thread_id) DO UPDATE SET parent_run_id = excluded.parent_run_id,
+            pending = excluded.pending`;
+      }
     }
     return sequence;
   }, sql.withTransaction);
@@ -585,6 +767,157 @@ const make = Effect.gen(function* () {
       Effect.asVoid,
     );
 
+  const readSearchOutboxState = sql`
+    SELECT revision, delivered, backfill_requested, backfill_complete, backfill_revision,
+      backfill_generation, next_backfill_page, cursor_position, cursor_item_id,
+      backfill_source_sequence, backfill_home_owner, backfill_home_project, backfill_thread
+    FROM search_outbox_state WHERE id = 1`;
+  const decodeSearchOutboxState = (rows: unknown): SearchOutboxState => {
+    const row = decodeSearchOutboxRows(rows)[0];
+    return row === undefined
+      ? {
+          revision: 0,
+          delivered: 0,
+          backfillRequested: false,
+          backfillComplete: false,
+          backfillRevision: 0,
+          backfillGeneration: 0,
+          nextBackfillPage: 0,
+          backfillSourceSequence: 0,
+          backfillHome: null,
+          backfillThread: null,
+          cursor: null,
+        }
+      : {
+          revision: row.revision,
+          delivered: row.delivered,
+          backfillRequested: row.backfill_requested === 1,
+          backfillComplete: row.backfill_complete === 1,
+          backfillRevision: row.backfill_revision,
+          backfillGeneration: row.backfill_generation,
+          nextBackfillPage: row.next_backfill_page,
+          backfillSourceSequence: row.backfill_source_sequence,
+          backfillHome:
+            row.backfill_home_owner === null || row.backfill_home_project === null
+              ? null
+              : { ownerId: row.backfill_home_owner, projectId: row.backfill_home_project },
+          backfillThread:
+            row.backfill_thread === null ? null : decodeSearchThread(row.backfill_thread),
+          cursor:
+            row.cursor_position === null || row.cursor_item_id === null
+              ? null
+              : { position: row.cursor_position, itemId: row.cursor_item_id },
+        };
+  };
+  const searchOutbox: ThreadStore["Service"]["searchOutbox"] = readSearchOutboxState.pipe(
+    Effect.map(decodeSearchOutboxState),
+  );
+  const pendingSearchDelivery: ThreadStore["Service"]["pendingSearchDelivery"] = Effect.gen(
+    function* () {
+      const state = decodeSearchOutboxState(yield* readSearchOutboxState);
+      const existingRows = yield* sql`SELECT revision, page, delivery FROM search_outbox
+      ORDER BY revision, page LIMIT 1`;
+      const existing = decodeSearchDeliveryRows(existingRows)[0]?.delivery ?? null;
+      if (
+        existing !== null &&
+        (!state.backfillRequested || existing.revision <= state.backfillRevision)
+      ) {
+        return existing;
+      }
+      if (
+        !state.backfillRequested ||
+        state.backfillHome === null ||
+        state.backfillThread === null
+      ) {
+        return existing;
+      }
+
+      const cursor = state.cursor;
+      const rows = decodeSearchBackfillRows(
+        yield* sql`SELECT position, item_id, document FROM search_backfill_documents
+        WHERE ${cursor === null ? 1 : 0} = 1
+          OR position > ${cursor?.position ?? 0}
+          OR (position = ${cursor?.position ?? 0} AND item_id > ${cursor?.itemId ?? ""})
+        ORDER BY position, item_id LIMIT 49`,
+      );
+      const pageRows = rows.slice(0, 48);
+      const documents = pageRows.map((row) => decodeSearchBackfillDocument(row.document));
+      const complete = rows.length <= 48;
+      const last = pageRows.at(-1);
+      const page = state.nextBackfillPage;
+      const delivery: SearchDelivery = {
+        home: state.backfillHome,
+        thread: state.backfillThread,
+        revision: state.backfillRevision,
+        sourceSequence: state.backfillSourceSequence,
+        deliveryId: `${state.backfillThread.threadId}:${state.backfillRevision}:backfill:${state.backfillGeneration}:${page}`,
+        documents,
+        removed: [],
+        complete,
+      };
+      yield* sql`INSERT INTO search_outbox (revision, page, delivery_id, delivery)
+      VALUES (${state.backfillRevision}, ${page}, ${delivery.deliveryId}, ${encodeSearchDelivery(delivery)})`;
+      yield* sql`UPDATE search_outbox_state SET next_backfill_page = ${page + 1},
+      cursor_position = ${complete || last === undefined ? null : last.position},
+      cursor_item_id = ${complete || last === undefined ? null : last.item_id}
+      WHERE id = 1`;
+      return delivery;
+    },
+  ).pipe(sql.withTransaction);
+  const acknowledgeSearchDelivery: ThreadStore["Service"]["acknowledgeSearchDelivery"] = (
+    revision,
+    deliveryId,
+  ) =>
+    Effect.gen(function* () {
+      const [row] = decodeSearchDeliveryRows(
+        yield* sql`SELECT revision, page, delivery FROM search_outbox WHERE revision = ${revision} AND delivery_id = ${deliveryId}`,
+      );
+      if (row === undefined) return;
+      yield* sql`DELETE FROM search_outbox WHERE revision = ${revision} AND delivery_id = ${deliveryId}`;
+      yield* sql`UPDATE search_outbox_state SET delivered = MAX(delivered, ${revision}) WHERE id = 1`;
+      if (
+        row.delivery.complete &&
+        revision === decodeSearchOutboxState(yield* readSearchOutboxState).backfillRevision
+      ) {
+        yield* sql`UPDATE search_outbox_state SET backfill_requested = 0, backfill_complete = 1,
+          cursor_position = NULL, cursor_item_id = NULL, backfill_home_owner = NULL,
+          backfill_home_project = NULL, backfill_thread = NULL WHERE id = 1`;
+        yield* sql`DELETE FROM search_backfill_documents`;
+      }
+    }).pipe(sql.withTransaction);
+
+  const requestSearchBackfill: ThreadStore["Service"]["requestSearchBackfill"] = (input) =>
+    Effect.gen(function* () {
+      const state = decodeSearchOutboxState(yield* readSearchOutboxState);
+      if (state.backfillRequested) return state;
+      const generation = state.backfillGeneration + 1;
+      const revision = state.revision + 1;
+      yield* sql`DELETE FROM search_backfill_documents`;
+      for (const document of input.documents) {
+        yield* sql`INSERT INTO search_backfill_documents (position, item_id, document)
+          VALUES (${document.position}, ${document.itemId}, ${encodeSearchDocument(document)})`;
+      }
+      yield* sql`UPDATE search_outbox_state SET revision = ${revision}, backfill_requested = 1,
+        backfill_complete = 0, backfill_revision = ${revision}, backfill_generation = ${generation},
+        next_backfill_page = 0, cursor_position = NULL, cursor_item_id = NULL,
+        backfill_source_sequence = ${input.sourceSequence}, backfill_home_owner = ${input.home.ownerId},
+        backfill_home_project = ${input.home.projectId}, backfill_thread = ${encodeSearchThread(input.thread)}
+        WHERE id = 1`;
+      return {
+        revision,
+        delivered: state.delivered,
+        backfillRequested: true,
+        backfillComplete: false,
+        backfillRevision: revision,
+        backfillGeneration: generation,
+        nextBackfillPage: 0,
+        backfillSourceSequence: input.sourceSequence,
+        backfillHome: input.home,
+        backfillThread: input.thread,
+        cursor: null,
+      } satisfies SearchOutboxState;
+    }).pipe(sql.withTransaction);
+
   const monitors: ThreadStore["Service"]["monitors"] =
     sql`SELECT monitors FROM thread_monitors WHERE id = 1`.pipe(
       Effect.map((rows) => decodeMonitorRows(rows)[0]?.monitors ?? []),
@@ -620,6 +953,7 @@ const make = Effect.gen(function* () {
     owner,
     events,
     receipt,
+    pendingNativeChildren,
     commandOutputSequence: readCommandOutputSequence.pipe(
       Effect.provideService(SqlClient.SqlClient, sql),
     ),
@@ -631,6 +965,10 @@ const make = Effect.gen(function* () {
     acknowledgeSummary,
     eventsDelivered,
     acknowledgeEvents,
+    searchOutbox,
+    pendingSearchDelivery,
+    acknowledgeSearchDelivery,
+    requestSearchBackfill,
     monitors,
     saveMonitors,
     statusNote: readNote.pipe(Effect.provideService(SqlClient.SqlClient, sql)),

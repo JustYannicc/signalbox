@@ -18,7 +18,12 @@ export class ThreadNotFoundError extends Schema.TaggedError<ThreadNotFoundError>
 
 export class ThreadCommandRejectedError extends Schema.TaggedError<ThreadCommandRejectedError>()(
   "ThreadCommandRejectedError",
-  { commandId: Schema.String, commandType: Schema.String, reason: Schema.String },
+  {
+    commandId: Schema.String,
+    commandType: Schema.String,
+    reason: Schema.String,
+    code: Schema.optionalKey(Schema.Literals(["run_changed", "unavailable"])),
+  },
 ) {
   override get message(): string {
     return this.reason;
@@ -27,11 +32,13 @@ export class ThreadCommandRejectedError extends Schema.TaggedError<ThreadCommand
   static forCommand(
     command: { readonly id: string; readonly type: string },
     reason: string,
+    code?: "run_changed" | "unavailable",
   ): ThreadCommandRejectedError {
     return new ThreadCommandRejectedError({
       commandId: command.id,
       commandType: command.type,
       reason,
+      ...(code === undefined ? {} : { code }),
     });
   }
 }

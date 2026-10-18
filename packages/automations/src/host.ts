@@ -45,6 +45,13 @@ export type ThreadRecords<K extends ThreadRecordField> = Pick<
   "thread" | K
 >;
 
+/** A thread's messages and run states from one committed sequence, when the host has an inbox. */
+export interface AutomationThreadInboxSnapshot {
+  readonly sequence: number;
+  readonly runs: ReadonlyArray<OrchestrationV2Run>;
+  readonly messages: ReadonlyArray<OrchestrationV2ConversationMessage>;
+}
+
 /** Narrows the records read; every field is optional. */
 export interface ThreadRecordFilter {
   readonly messageRoles?: ReadonlyArray<OrchestrationV2ConversationMessage["role"]>;
@@ -107,6 +114,10 @@ export interface AutomationThreadsShape {
     fields: ReadonlyArray<K>,
     filter?: ThreadRecordFilter,
   ) => Effect.Effect<ThreadRecords<K>, AutomationError>;
+  /** Cloud inboxes keep terminal runs and their messages at the same journal sequence. */
+  readonly readInbox?: (
+    threadId: ThreadId,
+  ) => Effect.Effect<AutomationThreadInboxSnapshot, AutomationError>;
   readonly initialModelSelection: (
     projectId: ProjectId,
   ) => Effect.Effect<ModelSelection | null, AutomationError>;

@@ -1791,6 +1791,69 @@
       "output": "aebf4e45"
     },
     {
+      "name": "threads.collaboration.cancel",
+      "rpc": "signalbox.collaboration.cancel",
+      "access": "write",
+      "input": "7b4d5015",
+      "output": "4852e0e6"
+    },
+    {
+      "name": "threads.collaboration.capabilities",
+      "rpc": "signalbox.collaboration.capabilities",
+      "access": "read",
+      "input": "ad730c9e",
+      "output": "f628a236"
+    },
+    {
+      "name": "threads.collaboration.delegate",
+      "rpc": "signalbox.collaboration.delegate",
+      "access": "write",
+      "input": "74c150c8",
+      "output": "ff199b33"
+    },
+    {
+      "name": "threads.collaboration.interrupt",
+      "rpc": "signalbox.collaboration.interrupt",
+      "access": "write",
+      "input": "6e3bbb0a",
+      "output": "33a97a60"
+    },
+    {
+      "name": "threads.collaboration.list",
+      "rpc": "signalbox.collaboration.list",
+      "access": "read",
+      "input": "120987a5",
+      "output": "3c7a4d56"
+    },
+    {
+      "name": "threads.collaboration.read",
+      "rpc": "signalbox.collaboration.read",
+      "access": "read",
+      "input": "27659eb4",
+      "output": "294187d0"
+    },
+    {
+      "name": "threads.collaboration.send",
+      "rpc": "signalbox.collaboration.send",
+      "access": "write",
+      "input": "4cdaa56c",
+      "output": "466d524f"
+    },
+    {
+      "name": "threads.collaboration.status",
+      "rpc": "signalbox.collaboration.status",
+      "access": "read",
+      "input": "5cabcbc6",
+      "output": "ff199b33"
+    },
+    {
+      "name": "threads.collaboration.wait",
+      "rpc": "signalbox.collaboration.wait",
+      "access": "read",
+      "input": "69203ab0",
+      "output": "cda34068"
+    },
+    {
       "name": "threads.commandOutput",
       "rpc": "orchestration.subscribeCommandOutput",
       "access": "read",
@@ -1977,6 +2040,13 @@
       "output": "aebf4e45"
     },
     {
+      "name": "threads.query",
+      "rpc": "signalbox.search.query",
+      "access": "read",
+      "input": "2f63ad84",
+      "output": "fdcbbe22"
+    },
+    {
       "name": "threads.queue.resume",
       "rpc": "orchestration.dispatchCommand",
       "command": "queue.resume",
@@ -2055,7 +2125,7 @@
       "rpc": "orchestration.searchThreads",
       "access": "read",
       "input": "4851e18f",
-      "output": "7e3c74cc"
+      "output": "655a6572"
     },
     {
       "name": "threads.searchOne",

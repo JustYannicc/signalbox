@@ -1,14 +1,13 @@
 import type { RunnerItem } from "@signalbox/runner-protocol/RunnerProtocol";
 import {
   isOrchestrationV2WorkActive,
-  type OrchestrationV2DomainEvent,
   type OrchestrationV2ThreadProjection,
 } from "@t3tools/contracts";
 
+import type { NativeChildPending } from "../NativeChildProtocol.ts";
 import { isLiveRun } from "../runState.ts";
 import { runnerBatchEvents } from "../runner/runnerTurn.ts";
 import type { DecisionContext } from "../threadEvents.ts";
-import { applyEvents } from "../threadProjection.ts";
 import { type CommandOutputDelta } from "./retainedOutput.ts";
 
 /** Output is checked at its position in the batch, against canonical command rows. */
@@ -17,14 +16,17 @@ export function runnerOutputBatch(
   items: ReadonlyArray<RunnerItem>,
   ctx: DecisionContext,
   steers: boolean,
+  pendingChildren: ReadonlyArray<NativeChildPending> = [],
 ) {
-  const events: Array<OrchestrationV2DomainEvent> = [];
   const commandOutput: Array<CommandOutputDelta> = [];
-  const undecodable: Array<string> = [];
-  let drained: ReturnType<typeof runnerBatchEvents>["drained"] = null;
-  let current = projection;
-  for (const item of items) {
-    if (item.kind === "provider" && item.event.type === "command_output.delta") {
+  // Native child creation and attestation can span items, so mapping keeps one batch context.
+  const batch = runnerBatchEvents(
+    projection,
+    items,
+    ctx,
+    steers,
+    pendingChildren,
+    (current, item) => {
       const { threadId, itemId, chunk } = item.event;
       const command = current.turnItems.find((candidate) => candidate.id === itemId);
       const run = current.runs.find((candidate) => candidate.id === item.runId);
@@ -42,15 +44,7 @@ export function runnerOutputBatch(
       ) {
         commandOutput.push({ itemId: command.id, runId: run.id, chunk });
       }
-      continue;
-    }
-    const next = runnerBatchEvents(current, [item], ctx, steers);
-    events.push(...next.events);
-    undecodable.push(...next.undecodable);
-    drained = next.drained ?? drained;
-    if (next.outgrown !== null)
-      return { events, commandOutput, undecodable, drained, outgrown: next.outgrown };
-    current = applyEvents(current, next.events) ?? current;
-  }
-  return { events, commandOutput, undecodable, drained, outgrown: null };
+    },
+  );
+  return { ...batch, commandOutput };
 }

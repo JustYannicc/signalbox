@@ -52,7 +52,14 @@ import * as Platform from "../platform.ts";
 import * as PoolDirectory from "../pool/PoolDirectory.ts";
 import * as UserPreviewSetup from "../previewSetup/UserPreviewSetup.ts";
 import * as PushNotifier from "../push/PushNotifier.ts";
+import * as CloudCollaboration from "../collaboration/CloudCollaboration.ts";
+import * as ThreadSearch from "../search/ThreadSearch.ts";
+import * as SearchCursors from "../search/SearchCursors.ts";
+import * as SearchAuthority from "../search/SearchAuthority.ts";
+import * as SearchBackfill from "../search/SearchBackfill.ts";
+import * as CloudflareSearchIndex from "../search/CloudflareSearchIndex.ts";
 import * as CloudThreadService from "../thread/CloudThreadService.ts";
+import * as ThreadInbox from "../thread/ThreadInbox.ts";
 import * as ThreadsLive from "../thread/ThreadsLive.ts";
 import * as ModelManifest from "../models/ModelManifest.ts";
 import * as ModelCatalog from "../models/ModelCatalog.ts";
@@ -109,6 +116,7 @@ import { makeProfileId } from "./profileId.ts";
 export interface UserObjectEnv
   extends
     MachineBackendEnv,
+    CloudflareSearchIndex.SearchIndexEnv,
     PreviewEnv,
     GitHub.GitHubEnv,
     LearnerJev.LearnerJevEnv,
@@ -239,6 +247,7 @@ const makeRuntime = (ctx: DurableObjectState, env: UserObjectEnv) => {
       Layer.orDie,
       Layer.provideMerge(
         Layer.mergeAll(
+          CloudCollaboration.layer,
           GitHubBranches.layer,
           AgentPullRequests.layer,
           GitHubActions.layer,
@@ -262,7 +271,21 @@ const makeRuntime = (ctx: DurableObjectState, env: UserObjectEnv) => {
             Layer.mergeAll(
               UserShell.layer,
               UserThreadStatus.layer,
-              CloudThreadService.layer.pipe(Layer.provideMerge(ThreadsLive.layer)),
+              ThreadInbox.layer.pipe(
+                Layer.provideMerge(
+                  CloudThreadService.layer.pipe(Layer.provideMerge(ThreadsLive.layer)),
+                ),
+              ),
+              ThreadSearch.layer.pipe(
+                Layer.provide(Layer.mergeAll(SearchAuthority.layerUser, SearchCursors.layerSql)),
+              ),
+              SearchBackfill.layer.pipe(
+                Layer.provide(
+                  Layer.succeed(SearchBackfill.SearchBackfillAlarm, {
+                    by: (at) => Effect.promise(() => armBy(storage, at)),
+                  }),
+                ),
+              ),
               UserLearner.layer.pipe(Layer.provideMerge(LearnerHomes.layer)),
               PoolSignIns.layer,
               drives.services,
@@ -328,6 +351,7 @@ const makeRuntime = (ctx: DurableObjectState, env: UserObjectEnv) => {
               Layer.provide(FetchHttpClient.layer),
             ),
           ),
+          Layer.provideMerge(CloudflareSearchIndex.layerFromEnv(env)),
           Layer.provideMerge(UserDrives.layer),
           Layer.provideMerge(
             Layer.mergeAll(
@@ -414,6 +438,7 @@ export class UserObject extends DurableObject<UserObjectEnv> implements UserObje
     ctx.setWebSocketAutoResponse(new WebSocketRequestResponsePair(PING, PONG));
     void ctx.blockConcurrencyWhile(async () => {
       await this.runtime.runPromise(UserStore.migrate);
+      await armBy(ctx.storage, (await this.now()) + 1_000);
       // Serves sockets that outlived the object's memory before anything else runs.
       await this.sockets.restore(await this.now(), (await this.profile())?.id);
       // An alarm lost to a crash between sweeps is set again; one that's set is enough.
@@ -444,8 +469,17 @@ export class UserObject extends DurableObject<UserObjectEnv> implements UserObje
   );
 
   // Durable Object RPC dispatches to prototype methods, so each one is spelled out.
-  recordSignIn(profile: AccountProfile) {
-    return this.api.recordSignIn(profile);
+  async recordSignIn(profile: AccountProfile) {
+    await this.api.recordSignIn(profile);
+    await armBy(this.ctx.storage, (await this.now()) + 1_000);
+  }
+
+  searchThreads(...args: Parameters<UserObjectApi["searchThreads"]>) {
+    return this.api.searchThreads(...args);
+  }
+
+  readSearchItem(...args: Parameters<UserObjectApi["readSearchItem"]>) {
+    return this.api.readSearchItem(...args);
   }
 
   profile() {
@@ -488,6 +522,10 @@ export class UserObject extends DurableObject<UserObjectEnv> implements UserObje
 
   recordThreadSummary(summary: unknown) {
     return this.api.recordThreadSummary(summary);
+  }
+
+  copyThreadHome(input: Parameters<UserObjectApi["copyThreadHome"]>[0]) {
+    return this.api.copyThreadHome(input);
   }
 
   rebuildThreadIndex() {
@@ -726,6 +764,7 @@ export class UserObject extends DurableObject<UserObjectEnv> implements UserObje
     await this.runtime.runPromise(
       Effect.all(
         [
+          SearchBackfill.SearchBackfill.use((backfill) => backfill.step),
           UserThreadKinds.UserThreadKinds.use((kinds) => kinds.alarm).pipe(
             Effect.catchCause((cause) => Effect.logError("idle-chat sweep failed", { cause })),
           ),

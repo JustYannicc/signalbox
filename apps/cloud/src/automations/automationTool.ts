@@ -4,6 +4,7 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
+import { collaborationTool, isCollaborationTool } from "../collaboration/tool.ts";
 import * as AgentPullRequests from "../github/AgentPullRequests.ts";
 import { listNotesTool } from "../notes/notesTool.ts";
 import { CloudAutomations } from "./CloudAutomations.ts";
@@ -17,6 +18,7 @@ const decodePullRequest = Schema.decodeUnknownOption(Request);
  */
 export const automationTool = (threadId: string, name: string, input: unknown) =>
   Effect.gen(function* (): Effect.fn.Return<ToolResult> {
+    if (isCollaborationTool(name)) return yield* collaborationTool(threadId, name, input);
     if (name === AGENT_PULL_REQUEST_TOOL) {
       const request = decodePullRequest(input);
       if (Option.isNone(request))

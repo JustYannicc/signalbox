@@ -567,6 +567,10 @@
     "./agentProcessEnvironment": {
       "types": "./src/agentProcesses/environment.ts",
       "import": "./src/agentProcesses/environment.ts"
+    },
+    "./providerChildTasks": {
+      "types": "./src/providerChildTasks.ts",
+      "import": "./src/providerChildTasks.ts"
     }
   },
   "scripts": {

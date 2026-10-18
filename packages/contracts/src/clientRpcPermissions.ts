@@ -22,9 +22,11 @@ import { SIGNALBOX_THREAD_KINDS_WS_METHODS } from "./signalboxThreadKinds.ts"; /
 import { SIGNALBOX_PERSON_BROWSER_WS_METHODS } from "./signalboxPersonBrowser.ts";
 import { PERSON_TIMEZONE_WS_METHODS } from "./personTimezone.ts";
 import { SIGNALBOX_ANALYTICS_WS_METHODS } from "./signalboxAnalytics.ts";
+import { SIGNALBOX_COLLABORATION_OPERATE_SCOPES } from "./signalboxCollaboration.ts"; // signalbox: cloud collaboration
 
 /** Incremental client enforcement; the server still authorizes every request. */
 export const CLIENT_GUARDED_RPC_SCOPES = {
+  ...SIGNALBOX_COLLABORATION_OPERATE_SCOPES, // signalbox: cloud collaboration
   [WS_METHODS.serverUpsertKeybinding]: AuthSettingsWriteScope,
   [WS_METHODS.serverRemoveKeybinding]: AuthSettingsWriteScope,
   [SIGNALBOX_ANALYTICS_WS_METHODS.setEnabled]: AuthSettingsWriteScope,

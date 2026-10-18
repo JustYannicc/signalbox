@@ -129,7 +129,7 @@ export const makeThreads = Effect.gen(function* () {
       }),
     );
 
-  const dispatchCommand: Threads.Threads["Service"]["dispatch"] = (actor, command) =>
+  const dispatchCommand: Threads.Threads["Service"]["dispatch"] = (actor, command, expectedRun) =>
     Effect.gen(function* () {
       const threadId = commandThreadId(command);
       if (threadId === null) {
@@ -152,7 +152,10 @@ export const makeThreads = Effect.gen(function* () {
             messageOf(command),
           )
         : null;
-      const creation = placed(place, threadId, turn);
+      const creation = {
+        ...placed(place, threadId, turn),
+        ...(expectedRun === undefined ? {} : { expectedRun }),
+      };
       if (command.type !== "message.dispatch") {
         return yield* directory.forThread(threadId).dispatch(actor, command, creation);
       }
@@ -171,7 +174,7 @@ export const makeThreads = Effect.gen(function* () {
       );
     });
 
-  const launchThread: Threads.Threads["Service"]["launch"] = (actor, input) =>
+  const launchThread: Threads.Threads["Service"]["launch"] = (actor, input, lineage) =>
     Effect.gen(function* () {
       const place = yield* threadContexts.placeOfProject(input.projectId);
       // Receipts live in the thread's object, so a launch without an id needs
@@ -236,7 +239,7 @@ export const makeThreads = Effect.gen(function* () {
                 ? {}
                 : { initialMessage: { ...message, attachments: claimed } }),
             },
-            creation,
+            { ...creation, ...(lineage === undefined ? {} : { lineage }) },
           ),
       );
     });

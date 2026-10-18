@@ -141,7 +141,8 @@ const TABLES = [
     label TEXT,
     restart_of_run_id TEXT,
     lineage_id TEXT NOT NULL,
-    started_at TEXT NOT NULL
+    started_at TEXT NOT NULL,
+    event_patterns_json TEXT NOT NULL DEFAULT '[]'
   )`,
   /**
    * Events a running run's `w.waitFor({ on })` steps listen for, kept from
@@ -209,6 +210,7 @@ const ADDED_COLUMNS: ReadonlyArray<readonly [string, string, string]> = [
   ["signalbox_automation_runs", "instance_at", "TEXT"],
   ["signalbox_automation_steps", "external_json", "TEXT"],
   ["signalbox_automation_steps", "poll_at", "TEXT"],
+  ["signalbox_automation_run_links", "event_patterns_json", "TEXT NOT NULL DEFAULT '[]'"],
 ];
 
 /** Indexes go last: some cover added columns. */
