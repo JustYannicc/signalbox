@@ -27,6 +27,7 @@ export type KernelProgramImplementation =
       readonly kind: "wasm";
       readonly module: WebAssembly.Module;
       readonly agentOsPreopens?: boolean;
+      readonly cwdEnvironment?: "PWD";
     }
   | { readonly kind: "javascript"; readonly runInline: KernelInlineProgram }
   | { readonly kind: "async"; readonly run: KernelAsyncProgram["run"] };
@@ -48,6 +49,7 @@ export interface KernelWasiRuntimeOptions {
   readonly descriptorOwnership?: "owned" | "borrowed";
   readonly args: readonly string[];
   readonly env: Readonly<Record<string, string>>;
+  readonly cwdEnvironment?: "PWD";
   readonly asyncMode: boolean;
   readonly agentOsPreopens?: boolean;
   readonly identity: KernelProcessIdentity | undefined;
@@ -70,7 +72,10 @@ export function createKernelWasiRuntime(
     validateOptions({
       version,
       args: [...options.args],
-      env: { ...options.env },
+      env:
+        options.cwdEnvironment === "PWD"
+          ? { ...options.env, PWD: options.prepared.filesystem.cwd }
+          : { ...options.env },
       returnOnExit: true,
       mounts: [],
     }),
