@@ -206,6 +206,10 @@ export class KernelPathResolver {
     return this.#mountFor(path);
   }
 
+  assertPathVisible(mount: WasiMountedStorage, pathComponents: readonly string[]): void {
+    this.#assertResolvedMount(mount, pathComponents);
+  }
+
   resolvedDescriptor(descriptor: WasiDescriptor): WasiResolvedPath {
     if (descriptor.mount === undefined || descriptor.inode === undefined) {
       throw kernelError("ENOTSUP", "Descriptor has no storage inode");

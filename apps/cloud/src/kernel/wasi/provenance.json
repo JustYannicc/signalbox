@@ -3,7 +3,7 @@
   "contractCommit": "aefdc2f614973efb9507eb59996ad4c654189c5a",
   "upstreamBase": "2c34e935cea3c8c81412b3ff7a08285db551d6e4",
   "candidateDigest": "c57565a9a73db3a54b93870d2bc1374c2d9ca7c21f0bfccab3d433b3f57eda31",
-  "sourceStatus": "frozen v4 source checks and independent upstream review passed; workerd/JSPI runtime unverified; runtime commit pending",
+  "sourceStatus": "v4 base source checks and independent review passed; the Signalbox carry maps the v5 per-component overlay guard and already carries the v6 path_open NONBLOCK behavior. The focused Signalbox Kernel WASM regression passes; upstream workerd/JSPI runtime remains unverified, and the upstream v6 checks/tests were not run.",
   "files": {
     "src/node/internal/internal_wasi_calls.ts": "7a16209659bb42e70f4b6f5815bede97cde385b297b3b320fec9700f8b3d2791",
     "src/node/internal/internal_wasi_clock.ts": "c90a26557ad8b2b6aed25adff6600341a2ba06af03767c3423f292693a48b4ad",
@@ -25,7 +25,7 @@
   "portableAdaptations": [
     {
       "file": "internal_wasi_paths.ts",
-      "reason": "Optional internal per-component guard lets the Node personality enforce configured mount masking before intermediate symlink traversal. Public WASI behavior and Storage contract are unchanged."
+      "reason": "Optional internal per-component path guard enforces configured mount masking before each lookup, including symlink-expanded components and missing leaves. KernelWasi supplies the existing policy through its internal descriptor context; generic WASI defaults and the Storage contract remain unchanged."
     },
     {
       "file": "internal_wasi_stdio.ts",
@@ -43,5 +43,66 @@
       "file": "internal_wasi_path_calls.ts",
       "reason": "Internal process creation policy delegates atomic inode metadata creation to the shared filesystem and consumes guest mode hints per syscall. The upstream Storage contract and default WASI behavior remain unchanged."
     }
-  ]
+  ],
+  "upstreamAlignment": {
+    "v5": {
+      "candidateDigest": "90ee3c0486cb4197ca6b7d6a2c58f6801c26ec34970e89fdb0080c5419a394b1",
+      "manifestSha256": "6ac56d337987f2c87f600ba0d6733d1221d30dd4fc7d147dc5882912624f93d8",
+      "deltaSha256": "fad53f83caf6f280b923b2edc0244080e8fc792a6de74a912e1dec73dc33c93f",
+      "runtimeStatus": "The immutable upstream manifest reports source checks and independent review; native workerd/JSPI runtime remains unverified.",
+      "storageContract": {
+        "upstreamPath": "src/node/internal/internal_wasi_storage.ts",
+        "upstreamSha256": "72887978e2d6929487b8fa6e77df46b410a43d41a6ff2aa039ebb46684a584b5",
+        "signalboxPath": "apps/cloud/src/kernel/storage.ts",
+        "signalboxSha256": "72887978e2d6929487b8fa6e77df46b410a43d41a6ff2aa039ebb46684a584b5",
+        "byteIdentical": true
+      },
+      "pathGuard": {
+        "upstreamPath": "src/node/internal/internal_wasi_paths.ts",
+        "upstreamSha256": "b05707577ad7963776ac3acdf7b8d11c9953530d8ac8bc109b6faf14ff4c29d5",
+        "signalboxResolver": "apps/cloud/src/kernel/wasi/internal_wasi_paths.ts",
+        "signalboxResolverSha256": "7fc809c2f0b29064cb37e1fedaaa7c825541520009a2d4f68eade142ed6c636c",
+        "kernelPolicy": "apps/cloud/src/kernel/filesystem/KernelPathResolver.ts",
+        "kernelPolicySha256": "bdc35372c9d1b76b30a9ce4427e16896756e281105224f2688fde6a06c7d5c1d",
+        "descriptorContext": "apps/cloud/src/kernel/wasi/internal_wasi_fs.ts",
+        "descriptorContextSha256": "562c4c5f3320d42f6c60ff1670855895ef4f7d746b36eaa36ef8ac4dd83735bb",
+        "kernelWasi": "apps/cloud/src/kernel/KernelWasi.ts",
+        "kernelWasiSha256": "1a5e63a6f04c1b89fd3f25c09d7bee3d6dec5bfe9e1927b1520909f50a59fc91",
+        "filesystem": "apps/cloud/src/kernel/KernelFileSystem.ts",
+        "filesystemSha256": "f4b3e903e56f003102564e2dde95ba585344dfadae244a41c2b48312ca4b099b",
+        "regression": {
+          "path": "apps/cloud/src/kernel/KernelWasiMountOverlay.test.ts",
+          "sha256": "139b6f2ab32faa97717b55685bf759924e9f515dfb4d10051fc52bd58283efc5",
+          "status": "PASS public wasi_snapshot_preview1 imports; hidden absolute-symlink and m/../ traversal truncation returns ENOTCAPABLE, root-backed target remains intact, and root/overlay preopens remain readable."
+        }
+      },
+      "nativeNodeStorage": {
+        "upstreamPath": "src/node/internal/internal_wasi_node_fs.ts",
+        "upstreamSha256": "4c6f82d7802a2b1c0c782e50191f8cdab3202d567520e8db61f075f364bf2c20",
+        "signalboxDisposition": "Intentionally not copied as a second backend. Kernel callers use canonical Storage mounts; the generic native preopen adapter remains explicitly unsupported.",
+        "nativeAdapterPath": "apps/cloud/src/kernel/wasi/native.ts",
+        "nativeAdapterSha256": "8f1842797cb3c2349aa37547e4862aabde9a426bdd056660c4b462d6e89a4cd5"
+      }
+    },
+    "v6": {
+      "candidateDigest": "0cfdbce8b49aa67563a901c6cb872f5b9cfa93e0bc5eef1dd9b53b5800d7fd5e",
+      "manifestSha256": "952efe4934968c47ecc2cb18099be39977a5c4872dbe5edbff1e03e054d5c005",
+      "deltaSha256": "0b4af3ba1f96d379b9dc704e82160adcf34dfa623bfa54e008371333c78dc2d1",
+      "changedFiles": [
+        "src/node/internal/internal_wasi_path_calls.ts",
+        "src/workerd/api/node/tests/BUILD.bazel",
+        "src/workerd/api/node/tests/wasi-preview1-nonblocking-open-test.js",
+        "src/workerd/api/node/tests/wasi-preview1-reactor.wat",
+        "src/workerd/api/node/tests/wasi-preview1-test.js",
+        "src/workerd/api/node/tests/wasi-preview1-test.wd-test"
+      ],
+      "runtimeDelta": "Removes the blanket NONBLOCK rejection from standard path_open and its now-unused ENOTSUP constant; it does not change fd_fdstat_set_flags or add the AgentOS tagged-fdstat shim.",
+      "carryDisposition": {
+        "signalboxPath": "apps/cloud/src/kernel/wasi/internal_wasi_path_calls.ts",
+        "signalboxSha256": "48bdf8fc2f07055f31adc02d7a54c08dd628fde9fcd91fc013b92e629b54e78d",
+        "behavior": "Standard path_open validates the accepted fdflags mask and stores NONBLOCK on the opened descriptor without a blanket ENOTSUP rejection; this behavior was already carried."
+      },
+      "validation": "The immutable v6 manifest marks the source-only snapshot UNVERIFIED and says its formatter, compiler, lint, TypeScript, tests, independent review, and runtime checks were not run. No upstream v6 verification is claimed here."
+    }
+  }
 }
