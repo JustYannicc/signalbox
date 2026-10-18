@@ -1200,7 +1200,7 @@
       "rpc": "pullRequests.detail",
       "access": "read",
       "input": "bf7232ba",
-      "output": "7bdd5122"
+      "output": "2950204e"
     },
     {
       "name": "pullRequests.diffFileContents",
@@ -1220,7 +1220,7 @@
       "name": "pullRequests.generateReviewGuide",
       "rpc": "pullRequests.generateReviewGuide",
       "access": "write",
-      "input": "bf7232ba",
+      "input": "063c3945",
       "output": "80e8460d"
     },
     {
@@ -1318,7 +1318,7 @@
       "name": "pullRequests.setFilesViewed",
       "rpc": "pullRequests.setFilesViewed",
       "access": "write",
-      "input": "81ce5f7e",
+      "input": "19a42c41",
       "output": "794c92c1"
     },
     {

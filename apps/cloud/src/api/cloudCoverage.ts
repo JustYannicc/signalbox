@@ -46,10 +46,6 @@ export const CLOUD_UNSERVED: Readonly<Record<string, Unserved>> = {
 
   // Pull-request reads are served by `github/CloudPullRequests.ts` (#814).
   // The later slices own writes and personal review state.
-  "pullRequests.reviewGuide": gap("#815"),
-  "pullRequests.generateReviewGuide": gap("#815"),
-  "pullRequests.filesViewed": gap("#815"),
-  "pullRequests.setFilesViewed": gap("#815"),
   "pullRequests.runAction": gap("#817"),
   "pullRequests.update": gap("#817"),
   "pullRequests.reviewerCandidates": gap("#817"),
