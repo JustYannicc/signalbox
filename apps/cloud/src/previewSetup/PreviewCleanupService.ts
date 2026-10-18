@@ -1,4 +1,6 @@
+import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
@@ -28,9 +30,9 @@ interface PreviewPackBucket {
   readonly delete: (keys: string[]) => Promise<unknown>;
 }
 
-export interface PreviewCleanupBindings {
-  readonly PREVIEW_DRIVE_PACKS?: PreviewPackBucket;
-  readonly PREVIEW_LINKS: PreviewLinkRegistryNamespace;
+export interface PreviewCleanupDependencies {
+  readonly drivePacks: PreviewPackBucket | undefined;
+  readonly links: PreviewLinkRegistryNamespace;
 }
 
 export type PreviewCleanupCommand =
@@ -82,6 +84,27 @@ export class PreviewPackCursorMissingError extends Schema.TaggedError<PreviewPac
   }
 }
 
+type PreviewCleanupResult =
+  | { readonly prNumbers: ReadonlyArray<number> }
+  | { readonly ok: true }
+  | { readonly ok: true; readonly linksRemoved: number }
+  | { readonly ok: true; readonly linksRemoved: number; readonly packsRemoved: number }
+  | { readonly ok: true; readonly packsRemoved: number };
+
+class PreviewCleanupDependenciesService extends Context.Service<
+  PreviewCleanupDependenciesService,
+  PreviewCleanupDependencies
+>()("@signalbox/cloud/previewSetup/PreviewCleanupDependencies") {}
+
+export class PreviewCleanupService extends Context.Service<
+  PreviewCleanupService,
+  {
+    readonly cleanup: (
+      command: PreviewCleanupCommand,
+    ) => Effect.Effect<PreviewCleanupResult, PreviewCleanupError | PreviewPackCursorMissingError>;
+  }
+>()("@signalbox/cloud/previewSetup/PreviewCleanupService") {}
+
 const cleanupOperation = <A>(operation: PreviewCleanupOperation, run: () => Promise<A>) =>
   Effect.tryPromise({
     try: run,
@@ -115,7 +138,7 @@ const listPages = (bucket: PreviewPackBucket, options: Omit<PreviewPackListOptio
     ),
   );
 
-export const removePreviewPackPrefix = (bucket: PreviewPackBucket, prefix: string) =>
+const removePreviewPackPrefix = (bucket: PreviewPackBucket, prefix: string) =>
   Effect.gen(function* () {
     const removed = yield* Ref.make(0);
     yield* listPages(bucket, { prefix, limit: 1000 }).pipe(
@@ -130,7 +153,7 @@ export const removePreviewPackPrefix = (bucket: PreviewPackBucket, prefix: strin
     return yield* Ref.get(removed);
   });
 
-export const listPreviewPackNumbers = (bucket: PreviewPackBucket) =>
+const listPreviewPackNumbers = (bucket: PreviewPackBucket) =>
   Effect.gen(function* () {
     const numbers = yield* Ref.make(new Set<number>());
     yield* listPages(bucket, { prefix: "pr-", delimiter: "/", limit: 1000 }).pipe(
@@ -149,7 +172,7 @@ export const listPreviewPackNumbers = (bucket: PreviewPackBucket) =>
     return [...(yield* Ref.get(numbers))].sort((left, right) => left - right);
   });
 
-export const removeLegacyPreviewPacks = (bucket: PreviewPackBucket) =>
+const removeLegacyPreviewPacks = (bucket: PreviewPackBucket) =>
   Effect.gen(function* () {
     const removed = yield* Ref.make(0);
     yield* listPages(bucket, { limit: 1000 }).pipe(
@@ -167,13 +190,13 @@ export const removeLegacyPreviewPacks = (bucket: PreviewPackBucket) =>
   });
 
 /** Executes one already-decoded cleanup operation against production storage and link state. */
-export const runPreviewCleanup = (command: PreviewCleanupCommand, env: PreviewCleanupBindings) =>
+const runCleanup = (command: PreviewCleanupCommand, dependencies: PreviewCleanupDependencies) =>
   Effect.gen(function* () {
-    if (env.PREVIEW_DRIVE_PACKS === undefined || env.PREVIEW_LINKS === undefined) {
+    if (dependencies.drivePacks === undefined || dependencies.links === undefined) {
       return yield* new PreviewCleanupError({ operation: "bindings" });
     }
-    const bucket = env.PREVIEW_DRIVE_PACKS;
-    const links = previewLinkRegistry(env.PREVIEW_LINKS);
+    const bucket = dependencies.drivePacks;
+    const links = previewLinkRegistry(dependencies.links);
 
     switch (command.action) {
       case "list": {
@@ -190,12 +213,12 @@ export const runPreviewCleanup = (command: PreviewCleanupCommand, env: PreviewCl
         yield* cleanupOperation("activate-links", () =>
           links.activateOrigin(previewOrigin(command.pullRequestNumber)),
         );
-        return { ok: true };
+        return { ok: true as const };
       case "delete-links": {
         const linksRemoved = yield* cleanupOperation("delete-links", () =>
           links.cleanupOrigin(previewOrigin(command.pullRequestNumber), command.poolObjectIds),
         );
-        return { ok: true, linksRemoved };
+        return { ok: true as const, linksRemoved };
       }
       case "delete": {
         const origin = previewOrigin(command.pullRequestNumber);
@@ -206,9 +229,20 @@ export const runPreviewCleanup = (command: PreviewCleanupCommand, env: PreviewCl
           bucket,
           previewPrefix(command.pullRequestNumber),
         );
-        return { ok: true, linksRemoved, packsRemoved };
+        return { ok: true as const, linksRemoved, packsRemoved };
       }
       case "clear-legacy-packs":
-        return { ok: true, packsRemoved: yield* removeLegacyPreviewPacks(bucket) };
+        return { ok: true as const, packsRemoved: yield* removeLegacyPreviewPacks(bucket) };
     }
   });
+
+const make = Effect.gen(function* () {
+  const dependencies = yield* PreviewCleanupDependenciesService;
+  return PreviewCleanupService.of({ cleanup: (command) => runCleanup(command, dependencies) });
+});
+
+/** The Worker boundary supplies Cloudflare bindings through this layer. */
+export const layer = (dependencies: PreviewCleanupDependencies) =>
+  Layer.effect(PreviewCleanupService, make).pipe(
+    Layer.provide(Layer.succeed(PreviewCleanupDependenciesService, dependencies)),
+  );

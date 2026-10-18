@@ -2,9 +2,10 @@ import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 
 import {
-  listPreviewPackNumbers,
-  removeLegacyPreviewPacks,
-  removePreviewPackPrefix,
+  layer as previewCleanupLayer,
+  PreviewCleanupService,
+  type PreviewCleanupDependencies,
+  type PreviewCleanupCommand,
 } from "./PreviewCleanupService.ts";
 import { handlePreviewCleanup } from "./previewCleanup.ts";
 import type {
@@ -72,14 +73,35 @@ const untouchedRegistry: PreviewLinkRegistryApi = {
   listOrigins: async () => expect.unreachable(),
 };
 
+const emptyRegistry: PreviewLinkRegistryApi = {
+  registerPool: async () => true,
+  cleanupOrigin: async () => 0,
+  activateOrigin: async () => {},
+  listOrigins: async () => [],
+};
+
+const cleanupDependencies = (
+  bucket: NonNullable<PreviewCleanupDependencies["drivePacks"]>,
+  registry: PreviewLinkRegistryApi = emptyRegistry,
+): PreviewCleanupDependencies => ({
+  drivePacks: bucket,
+  links: {
+    idFromName: () => ({}) as DurableObjectId,
+    get: () => registry,
+  } as PreviewLinkRegistryNamespace,
+});
+
 const cleanupEnv = (bucket: ReturnType<typeof memoryBucket>) => ({
   PREVIEW_CLEANUP_TOKEN: "cleanup-token",
   PREVIEW_DRIVE_PACKS: bucket,
-  PREVIEW_LINKS: {
-    idFromName: () => ({}) as DurableObjectId,
-    get: () => untouchedRegistry,
-  } as PreviewLinkRegistryNamespace,
+  PREVIEW_LINKS: cleanupDependencies(bucket, untouchedRegistry).links,
 });
+
+const runCleanup = (command: PreviewCleanupCommand, dependencies: PreviewCleanupDependencies) =>
+  Effect.gen(function* () {
+    const cleanup = yield* PreviewCleanupService;
+    return yield* cleanup.cleanup(command);
+  }).pipe(Effect.provide(previewCleanupLayer(dependencies)));
 
 describe("preview drive pack cleanup", () => {
   it.effect("lists PR prefixes and deletes only the requested prefix", () =>
@@ -94,8 +116,15 @@ describe("preview drive pack cleanup", () => {
         ],
         1,
       );
-      expect(yield* listPreviewPackNumbers(bucket)).toEqual([21, 212]);
-      expect(yield* removePreviewPackPrefix(bucket, "pr-21/")).toBe(2);
+      const dependencies = cleanupDependencies(bucket);
+      expect(yield* runCleanup({ action: "list" }, dependencies)).toEqual({
+        prNumbers: [21, 212],
+      });
+      expect(yield* runCleanup({ action: "delete", pullRequestNumber: 21 }, dependencies)).toEqual({
+        ok: true,
+        linksRemoved: 0,
+        packsRemoved: 2,
+      });
       expect(bucket.keys()).toEqual([
         "drive/packs/pack-old.pack",
         "pr-212/drive/packs/pack-b.idx",
@@ -114,7 +143,9 @@ describe("preview drive pack cleanup", () => {
         ],
         1,
       );
-      expect(yield* removeLegacyPreviewPacks(bucket)).toBe(1);
+      expect(
+        yield* runCleanup({ action: "clear-legacy-packs" }, cleanupDependencies(bucket)),
+      ).toEqual({ ok: true, packsRemoved: 1 });
       expect(bucket.keys()).toEqual([
         "pr-12/drive/packs/pack-a.pack",
         "pr-213/drive/packs/pack-b.idx",
@@ -132,7 +163,7 @@ describe("preview drive pack cleanup", () => {
       delete: async () => {},
     };
     return Effect.gen(function* () {
-      const error = yield* Effect.flip(listPreviewPackNumbers(bucket));
+      const error = yield* Effect.flip(runCleanup({ action: "list" }, cleanupDependencies(bucket)));
       expect(error._tag).toBe("PreviewPackCursorMissingError");
       expect(calls).toBe(1);
     });
